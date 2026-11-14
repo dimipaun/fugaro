@@ -34,12 +34,16 @@ while it was unreachable or was rate limited. It is listed here rather than
 lost, and the list is the same shape.
 
 An update that fixes nothing of the project's prints nothing about issues at
-all — not a heading, not a count, not a "none". A machine that is offline, a
-project nobody has filed an issue with and a run that applied nothing all print
-exactly the bytes they printed before this feature existed. There is nothing to
-act on, so there is nothing to say. A coding agent's session is not one of these
-cases: the findings are printed there as anywhere else, and it is the writing
-the session declines (the last section below).
+all — not a heading, not a count, not a "none". A project nobody has filed an
+issue with and a run that applied nothing both print exactly the bytes they
+printed before this feature existed. There is nothing to act on, so there is
+nothing to say. A machine that is offline is not one of those cases: only the
+pass's own GitHub calls are skipped, and the store's own `resolved` rows in the
+window are still listed, so an update that never reached GitHub prints the
+fixes another machine's pass already recorded — and, with no installation
+record, the whole back catalogue. A coding agent's session is not one of these
+cases either: the findings are printed there as anywhere else, and it is the
+writing the session declines (the last section below).
 
 With `--json` the same list is an additive field on the result document,
 `resolved_issues`, an array of `{number, summary, release, url, hit_by}`. It is
@@ -167,10 +171,13 @@ The pass is best effort in every direction, because the thing it runs inside is
 the whole upgrade. None of the following fails an update, prompts, or makes it
 wait:
 
-- **GitHub unreachable.** The pass ends at the first transport error and an
-  update prints exactly what it printed before this feature existed. With
-  GitHub back, the next `fugaro update` — or the next daily report — lists the
-  issue, which is what the record's window is for.
+- **GitHub unreachable.** The pass ends at the first transport error, so nothing
+  this run would have asked GitHub about is reported from that pass. The store's
+  own `resolved` rows in the window are read with no GitHub call at all and are
+  still listed, so an offline update prints the fixes another machine's pass
+  already recorded; only the issues nobody has asked GitHub about yet wait. With
+  GitHub back, the next `fugaro update` — or the next daily report — asks about
+  those, which is what the record's window is for.
 - **Rate limited.** GitHub's unauthenticated limit is 60 requests an hour for
   one address, shared by everyone behind it. A pass stops on the first 403 or
   429 rather than spending the remainder on refusals, and the issues it did not
