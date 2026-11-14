@@ -72,6 +72,13 @@ import (
 // older than the release, a coder that reads images itself, a slot that is set,
 // a run that never ends, a record that is another run's, and a refusal whose
 // sentence has lost one of the parts an owner needs.
+// Check 301's fakes are a fake `fugaro`, a fake launchd and a fake systemd
+// whose boot id and unit files the test writes, so a reboot, a second
+// instance's refusal and T7's re-render are all readings of files the test
+// owns; Check 302's are a fake `fugaro`, a real `uname` and a real terminal
+// (a pty its helper types the phase's one confirmation into), and it rewrites
+// a copy of its own script to prove the case that expects a quiet daemon log
+// to be a finding is not vacuous.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -89,6 +96,8 @@ var liveCheckScripts = []struct {
 	{"check191.sh", "check191_test.sh"},
 	{"check195.sh", "check195_test.sh"},
 	{"check300.sh", "check300_test.sh"},
+	{"check301.sh", "check301_test.sh"},
+	{"check302.sh", "check302_test.sh"},
 	{"check303.sh", "check303_test.sh"},
 	{"check304.sh", "check304_test.sh"},
 	{"check305.sh", "check305_test.sh"},

@@ -304,14 +304,24 @@ offline verdicts where a newer CLI would be the only fix.
 **The exact skill sentence (D947).** `working`'s opening and `setup`'s first step say, once, in the
 skill's own voice:
 
-> At the start of a session, run `fugaro doctor --offline --json` once. If any check comes back with
-> `skipped: false` and `ok: false`, tell the user in one sentence what it is — in plain words, not the
-> check's own text — and offer the one command that fixes it: `fugaro update`, in their own terminal
-> window, not through the agent. A coding agent's session cannot apply cloud changes, by design: never
-> look for a flag or another command that would let this session apply those writes, and never unset the
-> marker that says this session is one. If everything `--offline` could check is ok, say nothing and
-> carry on: a session that opens with a status report nobody asked for is the failure this sentence
-> exists to avoid.
+> At the start of a session, run `fugaro doctor --offline --json` once. If its `ok` is false, or any check is
+> `ok: false` with a `severity` other than `info`, tell the user in one sentence what it is — in plain words,
+> not the check's own text — and offer the fix that check prints: `fugaro update`, where that `fix` is its own,
+> in their own terminal window, not through the agent; otherwise that `fix` itself, as printed — a pin newer
+> than this binary names `brew upgrade`. A check `--offline` did not run comes back `skipped: true` with
+> severity `info`, and is not one of these. A coding agent's session cannot apply cloud changes, by design:
+> never look for a flag or another command that would let this session apply those writes, and never unset the
+> marker that says this session is one. If everything `--offline` could check is ok, say nothing and carry on: a
+> session that opens with a status report nobody asked for is the failure this sentence exists to avoid.
+
+**Not every warning is `fugaro update`'s.** With the trigger keyed on severity, the checks that reach the
+sentence include ones the update does not put right: a pin newer than this binary names `brew upgrade` and
+says the update never moves a pin down, and a foreign marketplace is the user's own decision
+(`internal/pluginwire/status.go`, `Newer` and `Foreign`); a login unit that could not be read or rendered
+names the shell or the file (`internal/cli/doctor.go`, `orchestrator-unit`). So the sentence offers `fugaro
+update` only where the check's own `fix` is that command's line, and relays the check's own fix otherwise —
+the rule doctor's human output already follows — and `plugin/update_skill_test.go` fails if either skill
+offers it unconditionally.
 
 **Half of that is not new wording, and that is the point.** The last two sentences are
 `plugin/skills/upgrade/SKILL.md:27`'s, already pinned verbatim by `plugin/upgrade_skill_test.go:18,20`
