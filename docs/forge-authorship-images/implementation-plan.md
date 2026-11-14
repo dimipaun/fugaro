@@ -273,9 +273,11 @@ the stage runs (Constraint 1). Commits are now born stamped.
 
 #### B1. One list of forge kinds
 
-- **State:** Kept — there is no `internal/gitprov/kinds.go`: `internal/gitprov/gitprov.go` still
-  declares the two kinds and `internal/gitprov/providers/providers.go` reads them ad hoc. Nothing in
-  the image setup plan creates or moves a forge kind.
+- **State:** Merged — `internal/gitprov/kinds.go` (the two constants and `Kinds`), pinned by
+  `internal/gitprov/kinds_test.go` (`TestKindsListedOnce`, `TestEveryKindSwitchIsInventoried`). It
+  landed after the census below was read, in `9af1fd50` (#2332), which the plan's **Commit** line
+  names; [b1-already-landed.md](../forge-authorship-images-b1-already-landed.md) is the evidence.
+  Nothing in the image setup plan creates or moves a forge kind.
 
 - **Decisions:** D610, D611.
 - **Files:** `internal/gitprov/kinds.go` (new), `internal/gitprov/kinds_test.go` (new),
