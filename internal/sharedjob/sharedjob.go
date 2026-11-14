@@ -97,6 +97,10 @@ type Pairing struct {
 	// an operator reads which repository was refused and edits the profile or
 	// the token's allow_repos. It never carries a credential value, and never
 	// repeats a request's own text beyond the repository's name.
+	//
+	// A pairing that carries one is a refusal whatever Allowed says: these
+	// shapes fail closed, and a sentence naming a repository the call may not
+	// reach is not also a permission.
 	Refusal string
 }
 

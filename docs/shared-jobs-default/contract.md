@@ -27,8 +27,9 @@ verified run identity paired against the profile's repositories, and a shared Bi
 | `BitbucketProfile` | the profile's `Name`, its `Provider`, its own `AllowRepos` and the `Secrets` it mounts | the published policy, projected by whoever reads it |
 
 `Pairing`'s zero value is a refusal and `JobChoice`'s empty `Profile` is the per-repository job, so no shape here reads
-as a decision nobody made. That is deliberate: the sides are written in parallel, and a shape that is not yet an answer
-must not be mistakeable for one.
+as a decision nobody made. A `Pairing` that carries a refusal is a refusal whatever its `Allowed` says: the shapes fail
+closed, and a sentence naming a repository a call may not reach is not also a permission. That is deliberate: the sides
+are written in parallel, and a shape that is not yet an answer must not be mistakeable for one.
 
 ## What each side may rely on
 
