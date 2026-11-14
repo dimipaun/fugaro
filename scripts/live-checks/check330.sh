@@ -322,6 +322,13 @@ def text(value):
 # name which variant it is, and this one recomputes the names instead: what a run
 # was launched on is decided by matching its job against these.
 
+# projectpolicy.DefaultProfileName and gitprov.KindGitHub: the profile and the
+# provider the installation's implicit review-only job (internal/infra's
+# ImplicitReviewJobName) is derived over, whatever profiles the policy declares.
+IMPLICIT_PROFILE = "standard"
+IMPLICIT_PROVIDER = "github"
+
+
 def sanitize_name(value):
     out = re.sub(r"[^a-z0-9-]+", "-", value.lower())
     while "--" in out:
@@ -380,8 +387,9 @@ elif what == "rows":
         ))
 elif what == "policy":
     pol = doc.get("policy")
+    published = pol is not None
     print("project=%s" % flat(doc.get("project")))
-    print("published=%s" % yes(pol is not None))
+    print("published=%s" % yes(published))
     pol = pol or {}
     budget = pol.get("budget") or {}
     print("mode=%s" % text(budget.get("mode")))
@@ -414,15 +422,30 @@ elif what == "policy":
     # account) triples. The account column is the axis's spelling ("" for the
     # profile's no-account job), not the "-review" variant the name carries.
     profiles = pol.get("profiles") or {}
+    derived = set()
     for name in sorted(profiles):
         pr = profiles[name] or {}
         provider = flat(pr.get("provider"))
         for account in project_job_accounts(pr):
-            print("job\tshared\t%s\t%s\t%s\t%s" % (
-                flat(name), provider, flat(account), project_job_name(flat(name), provider, account)))
+            shared = project_job_name(flat(name), provider, account)
+            variant = project_job_name(flat(name), provider, review_job_account(account))
+            derived.update((shared, variant))
+            print("job\tshared\t%s\t%s\t%s\t%s" % (flat(name), provider, flat(account), shared))
             print("job\treview\t%s\t%s\t%s\t%s" % (
-                flat(name), provider, flat(account),
-                project_job_name(flat(name), provider, review_job_account(account))))
+                flat(name), provider, flat(account), variant))
+    # The installation's own implicit review-only job (internal/runner's
+    # implicitReviewCandidate over internal/infra's implicitReviewVariant): the
+    # review variant of the no-account job of the default profile on github, one
+    # per installation, and the ONE project job a policy that declares no profile
+    # at all can place a review run in. A published policy is what the runner
+    # reads it out of — with none published no run is placed by these names at
+    # all — and it carries it only where the policy's own profiles do not derive
+    # that name (the name is the entry then), so this reader does the same.
+    if published:
+        implicit = project_job_name(IMPLICIT_PROFILE, IMPLICIT_PROVIDER, review_job_account(""))
+        if implicit not in derived:
+            print("job\timplicit\t%s\t%s\t%s\t%s" % (
+                IMPLICIT_PROFILE, IMPLICIT_PROVIDER, review_job_account(""), implicit))
 elif what == "record":
     cost = doc.get("cost") or {}
     print("run_id=%s" % flat(doc.get("run_id")))
@@ -1053,6 +1076,8 @@ step_slice_b() {
     fact review-launch FAIL "slice B's run was launched on $job, which the policy derives as the SHARED job of the profile $profile (provider $provider, account ${account:-no account}) and not as that job's review-only variant: the shared job mounts the repository's App key and its account's Claude token, and a review launched on it is the one thing the variant exists to prevent. A review runs on the variant, which is the job the same triple deploys beside the shared one"
   elif [ "$ACCOUNT_ANTHROPIC_KEY" = "$account" ]; then
     fact review-launch PASS "slice B's run was launched on $job, which the policy derives as the review-only variant of the profile $profile (provider $provider) whose account is $ACCOUNT_ANTHROPIC_KEY — the axis's value for the project's own Anthropic API key, and the variant a review of a repository whose profile names that key runs on"
+  elif [ "$class" = implicit ]; then
+    fact review-launch FAIL "slice B's run was launched on $job, which is the installation's own implicit review-only job — the review variant of the no-account job of the $profile profile on $provider, which is the one project job a policy that declares no profile for it deploys. It serves the default Claude account and not the project's Anthropic key, so a review launched here is not the cloud api-key path slice B measures: a policy that declares the profile this repository's key belongs to derives that profile's own review-only variant, and the review runs on it"
   elif [ "$ACCOUNT_PROVIDER_KEY" = "$account" ]; then
     fact review-launch PASS "slice B's run was launched on $job, which the policy derives as the review-only variant of the profile $profile (provider $provider) whose account is $ACCOUNT_PROVIDER_KEY — the axis's OTHER non-account value, which is slice C's (AK6a) and not the Anthropic key this slice measures; read the key that served it with the step below, and note in the register which of the two this run was"
   else
@@ -1165,7 +1190,7 @@ print_plan() {
   say "and the rows it would print, in the block's own order:"
   say "  the guards and the reads: project, sandbox, agent-session, belong, budget, policy, run, contrast-run${REVIEW_REF:+, review-run}"
   say "  slice A: log-coder (the run's own stages' lines carry a route), log-review (the review class's lines carry none and are served as a Claude model), review-dollars (the review stage's model_usd is real and its model_notional_usd absent), route-by (the split carries the run's own stages and not the review's), contrast (the second run's review class reads credential=oauth with model_notional_usd equal to model_usd)"
-  say "  slice B (with --review): review-launch (the job is a name the published policy derives, and it is that triple's review-only variant rather than its shared job — the two names are recomputed here the way the deployment derives them, because the account is the last segment of the name and a long one is cut off it, so the hash alone tells the variant), review-env (the job's environment holds no credential), review-log (the run's calls reached the gateway with no route)"
+  say "  slice B (with --review): review-launch (the job is a name the published policy derives — that triple's review-only variant, not its shared job, and not the installation's own implicit review-only job, whose name is derived here too — and the names are recomputed the way the deployment derives them, because the account is the last segment of the name and a long one is cut off it, so the hash alone tells the variant), review-env (the job's environment holds no credential), review-log (the run's calls reached the gateway with no route)"
   say "  restore: nothing to undo — this check creates nothing"
   say "Nothing was read and no verdict was taken: this dry run made no fugaro call and no gcloud call at all. The steps that stay yours (a browser, a refusal, the key's own name) are printed at the end of a real run, and they are in the register's section."
 }

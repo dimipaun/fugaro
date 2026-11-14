@@ -92,6 +92,12 @@ SENTINEL_JOB=fugaro-p-standard-github-anthropic-a-999810468a57
 # The same triple's SHARED job: it differs from the variant above in the hash
 # alone, so a check that compared readable stems would read one as the other.
 SENTINEL_SHARED_JOB=fugaro-p-standard-github-anthropic-a-71c17459896a
+# The installation's own implicit review-only job (internal/infra's
+# ImplicitReviewJobName): the review variant of the no-account job of the
+# default profile on github, which is the one project job a policy that declares
+# no profile for it deploys. A policy whose profiles declare "standard" on
+# github derives this name itself, so this one is read only where they do not.
+IMPLICIT_REVIEW_JOB=fugaro-p-standard-github-default-rev-04644ca962ed
 
 # Every fact key the block carries, whatever the run measured.
 BLOCK_KEYS=(project sandbox agent-session belong budget policy run contrast-run review-run
@@ -313,7 +319,7 @@ else:
         "budget": {"mode": s("FIX_BUDGET_MODE", "enforce")},
         "default_claude_account": s("FIX_DEFAULT_ACCOUNT", "anthropic-api-key--project"),
         "claude_account_stages": {"review": s("FIX_STAGE_ACCOUNT", "provider-key--project")},
-        "profiles": {"standard": {
+        "profiles": {s("FIX_PROFILE_NAME", "standard"): {
             "provider": "github",
             "claude_accounts": [s("FIX_PROFILE_ACCOUNT", "anthropic-api-key--project")],
         }},
@@ -874,6 +880,22 @@ test_a_review_job_the_policy_does_not_derive_is_a_fail() {
   expect_scratch_gone "a job the policy does not derive"
 }
 
+# A policy that declares no profile for the default account's job derives the
+# installation's own implicit review-only job instead, and the runner places a
+# review run in it (internal/runner's implicitReviewCandidate): the row has to
+# read it as that job — the default account's, not the project's key — rather
+# than call it a name no policy derives.
+test_a_review_on_the_implicit_review_job_is_a_fail() {
+  prepare "$work/slice-b-implicit" FIX_PROFILE_NAME=wide FIX_REVIEW_JOB="$IMPLICIT_REVIEW_JOB"
+  run330_both
+  expect_status "$status" 1 "a review on the implicit job"
+  expect_contains "$(fact_line review-launch)" "FAIL" "a review on the implicit job: the row fails"
+  expect_contains "$(fact_line review-launch)" "implicit review-only job" "a review on the implicit job: and names the job it is"
+  expect_contains "$(fact_line review-launch)" "default Claude account" "a review on the implicit job: and the account that job serves"
+  expect_absent "$(fact_line review-launch)" "no job the published policy derives" "a review on the implicit job: not read as a name no policy derives"
+  expect_scratch_gone "a review on the implicit job"
+}
+
 # The review-only variant mounts no credential of the repository's: a job that
 # carries one is not the variant this slice measures.
 test_a_review_job_carrying_a_secret_is_a_fail() {
@@ -1345,6 +1367,7 @@ t test_a_review_on_an_account_variant_is_a_fail
 t test_a_review_on_the_shared_job_of_the_sentinel_triple_is_a_fail
 t test_slice_b_with_no_published_policy_is_unmeasured
 t test_a_review_job_the_policy_does_not_derive_is_a_fail
+t test_a_review_on_the_implicit_review_job_is_a_fail
 t test_a_review_job_carrying_a_secret_is_a_fail
 t test_a_review_job_carrying_a_secret_volume_is_a_fail
 t test_a_review_run_on_a_route_is_a_fail

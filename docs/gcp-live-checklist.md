@@ -13140,7 +13140,10 @@ read is never a pass and never a finding**: it ends the run at 2 and names itsel
    policy's long ones are cut off it, so the variant and the same triple's shared job differ in the hash alone) — and that account is
    a value with a doubled dash: `anthropic-api-key--project`, which is the project's own Anthropic key, or `provider-key--project`,
    which is slice C's and is noted as such rather than read as this path. A run on the same triple's shared job, or on any job the
-   policy derives for no triple, fails the row — the shared job mounts the App key a review must not be able to read. The job's
+   policy derives for no triple, fails the row — the shared job mounts the App key a review must not be able to read. A run on the
+   installation's own **implicit review-only job** — the review variant of the no-account job of the default profile on github, the
+   one project job a policy that declares no profile for it deploys — fails it too, for the reason an account's own variant does:
+   that job serves the default Claude account, not the project's key. The job's
    described environment and volumes hold **no** secret-sourced entry and
    **no** secret volume: the review container mounts no credential of the repository's, because its read-only token and its model calls
    both come from the credentials service.
