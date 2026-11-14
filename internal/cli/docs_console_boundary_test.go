@@ -271,6 +271,15 @@ var consoleBoundaryAllowList = []string{
 // nothing outside `ee/` imports any of it. At this version it brings no
 // indirect entry with it, so the require line below is the whole of what the
 // module graph gained, and it is not here for the console's sake either.
+//
+// The seventh is the one entry this rule was applied to after the require line
+// had already landed: Dependabot's group bump of 2026-11-14 (33ca6239, "Bump
+// the go_modules group across 1 directory with 2 updates") moved the
+// `go.opentelemetry.io/otel` family from 1.44.0/1.46.0 to 1.47.0, brought
+// `otel/log` with it, and left this baseline recorded at the versions behind.
+// The bump is the toolchain's rather than a person's, and this edit is the one
+// the maintenance rule above asks of it: the versions below are go.mod's, and
+// nothing here is the console's.
 var consoleGoModRequireBaseline = []string{
 	"cel.dev/expr v0.25.2 // indirect",
 	"cloud.google.com/go v0.123.0 // indirect",
@@ -333,11 +342,12 @@ var consoleGoModRequireBaseline = []string{
 	"go.opentelemetry.io/contrib/detectors/gcp v1.44.0 // indirect",
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.68.0 // indirect",
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0 // indirect",
-	"go.opentelemetry.io/otel v1.46.0 // indirect",
-	"go.opentelemetry.io/otel/metric v1.46.0 // indirect",
-	"go.opentelemetry.io/otel/sdk v1.44.0 // indirect",
-	"go.opentelemetry.io/otel/sdk/metric v1.44.0 // indirect",
-	"go.opentelemetry.io/otel/trace v1.46.0 // indirect",
+	"go.opentelemetry.io/otel v1.47.0 // indirect",
+	"go.opentelemetry.io/otel/log v1.47.0 // indirect",
+	"go.opentelemetry.io/otel/metric v1.47.0 // indirect",
+	"go.opentelemetry.io/otel/sdk v1.47.0 // indirect",
+	"go.opentelemetry.io/otel/sdk/metric v1.47.0 // indirect",
+	"go.opentelemetry.io/otel/trace v1.47.0 // indirect",
 	"gocloud.dev v0.46.0",
 	"golang.org/x/crypto v0.57.0 // indirect",
 	"golang.org/x/net v0.59.0 // indirect",
