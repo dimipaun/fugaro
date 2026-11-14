@@ -91,7 +91,6 @@ RESTORE_STATE=untouched
 RESTORE_DETAIL=""
 YAML_CHANGED=no
 ENTRY_ADDED=no
-STAMP_COMMITTED=no
 DOCKERFILE_ADDED=no
 RUNS_LAUNCHED=()
 TAGS=""
@@ -129,6 +128,18 @@ stop() {
   ABORT_REASON=$1
   owner "stopped: $1"
   exit 2
+}
+
+# fail_stop REASON: a reading that came out WRONG is an answer about the
+# installation — the feature does not do what the rule in docs/base-image.md says
+# — and this ends the run with 1, not 2. `stop` is for a guard or a tool that
+# could not answer at all, which says nothing about the feature.
+ANSWER=no
+fail_stop() {
+  ANSWER=yes
+  ABORT_REASON=$1
+  owner "stopped on a reading that FAILED: $1"
+  exit 1
 }
 
 FACTS_FILE=""
@@ -170,9 +181,6 @@ SCRATCH=""
 SCRATCH_MARKER=".chk291-mine"
 SCRATCH_REMOVED=no
 PRINTED=""
-YAML_BACKUP=""
-HAD_DOCKERFILE=no
-DOCKERFILE_LINE=""
 
 scratch_up() {
   SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/chk291.XXXXXXXX") || die "Check 291 cannot make a scratch directory"
@@ -226,14 +234,20 @@ finish() {
   # block that read as a finished run would offer FAILs as a verdict about the
   # image's ENV when the steps that would have filled them never ran.
   if [ "$REACHED_END" = no ]; then
-    if ! printf '%s' "$facts" | grep -q '^aborted|'; then
-      facts="${facts}"$'\n'"aborted|FAIL|the run ended before it reached its last step (exit ${status}): the rows that read 'not reached' were NOT measured"
+    if [ "$ANSWER" = yes ]; then
+      # A reading that FAILED is an answer, and the block's own row says which
+      # one: it ends the run at 1 rather than telling the owner nothing.
+      if [ "$status" -eq 0 ]; then status=1; fi
+    else
+      if ! printf '%s' "$facts" | grep -q '^aborted|'; then
+        facts="${facts}"$'\n'"aborted|FAIL|the run ended before it reached its last step (exit ${status}): the rows that read 'not reached' were NOT measured"
+      fi
+      if [ "$status" -eq 0 ] || [ "$status" -eq 1 ]; then status=2; fi
     fi
-    if [ "$status" -eq 0 ] || [ "$status" -eq 1 ]; then status=2; fi
   fi
   local verdict=PASS
   case "$RESTORE_STATE" in
-  gone | untouched) ;;
+  gone | done | untouched) ;;
   *) verdict=FAIL ;;
   esac
   # The scratch sentence is composed HERE and not in restore_run: that runs
@@ -281,6 +295,7 @@ guard_belong() {
       ;;
     esac
   done
+  fact "$key" PASS "$kind is $value, which is none of belong, edge-devel-dimi or edgeappinc"
 }
 
 # guard_workflow_arg keeps --workflow to a workflow name: everything below hands
@@ -354,6 +369,9 @@ parse_args() {
       shift
       ;;
     -h | --help)
+      # The block below is a run's answer and --help is not a run: the trap that
+      # prints it is off before the usage goes out.
+      trap - EXIT ERR
       printf 'usage: %s\n' "$USAGE"
       exit 0
       ;;
@@ -631,9 +649,6 @@ PY
 field() { sed -n "s/^$1=//p" "$2" | head -1; }
 # jfield NAME JOB FILE: one reading of one job's own line, same vocabulary.
 jfield() { sed -n "s/^$2:$1=//p" "$3" | head -1; }
-# jline FILE: the first job the doctor vocabulary has a reading for.
-jline() { field line "$1"; }
-
 # ------------------------------------------------------------ running things
 # capture OUT CMD...: run a command with its output in OUT and print its exit
 # status. The `if` is what keeps `set -e` from ending the run at a read that
@@ -703,9 +718,11 @@ transcript_of() {
   local st
   st=$(capture "$SCRATCH/show.json" fugaro runs show --repo "$REPO" "$run" --json)
   [ "$st" = 0 ] || return 1
+  st=$(capture "$SCRATCH/show.vocab" python3 "$SCRATCH/reader.py" run "$SCRATCH/show.json")
+  [ "$st" = 0 ] || return 1
   local slug runid
-  slug=$(field slug "$SCRATCH/show.json")
-  runid=$(field run "$SCRATCH/show.json")
+  slug=$(field slug "$SCRATCH/show.vocab")
+  runid=$(field run "$SCRATCH/show.vocab")
   [ -n "$slug" ] && [ -n "$runid" ] || return 1
   [ -n "$BUCKET" ] || return 1
   local uris
@@ -819,23 +836,31 @@ step_workflow() {
     fact workflow FAIL "fugaro.yaml holds no workflow named $WORKFLOW"
     stop "fugaro.yaml holds no workflow named $WORKFLOW. It holds: $(field names "$SCRATCH/wf.txt")"
   fi
+  local covered=""
   case "$key" in
   image_name)
     if [ "$value" != "$ENTRY" ]; then
       fact workflow FAIL "the workflow $WORKFLOW already names image_name: $value"
       stop "the workflow $WORKFLOW already runs on $value, and this check gives it image_name: $ENTRY and then takes that key out again: name another workflow with --workflow, or take that key out yourself first"
     fi
-    ENTRY_ADDED=maybe
+    covered="it already names image_name: $ENTRY, which is this check's own entry"
     ;;
-  dockerfile | image | needs)
+  dockerfile | image)
     fact workflow FAIL "the workflow $WORKFLOW already names $key: $value"
     stop "the workflow $WORKFLOW already carries $key, so it does not run on the project's catalog image and this check would be reading the stamp off a job somebody else chose the image for: name another workflow with --workflow, or take that key out yourself first"
     ;;
-  none) ENTRY_ADDED=no ;;
+  needs)
+    # A workflow covered by tags is a legitimate one (step 2 of the checklist):
+    # the entry's tags are what covers it, and image_name: may sit beside needs:
+    # without either being refused (validateCatalogRef, D1155).
+    [ -n "$TAGS" ] || TAGS=$value
+    covered="its needs: $value are the tags the entry is published with"
+    ;;
+  none) covered="it carries no image key of its own, so image_name: $ENTRY is what covers it" ;;
   esac
   local has_test
   has_test=$(field commands_test "$SCRATCH/wf.txt")
-  fact workflow PASS "the two runs land on workflow $WORKFLOW, which carries no image of its own; step 3 gives it image_name: $ENTRY, step 4 adds the presence-only commands.test (the workflow has none today: $has_test), and the Restore puts both back"
+  fact workflow PASS "the two runs land on workflow $WORKFLOW: $covered. Step 3 gives it image_name: $ENTRY, step 5 replaces that key with a dockerfile: of the repository's own, step 4 adds the presence-only commands.test (the workflow has one today: $has_test), and the Restore puts all of it back"
 }
 
 # step_consent: two Cloud Builds and two real runs of the sandbox repository are
@@ -903,7 +928,7 @@ EOF
     fact entry FAIL "fugaro image ls does not carry a line for $ENTRY"
     stop "fugaro image ls carries no line for $ENTRY after the build, so the catalog does not hold the entry this check is about (the catalog had $BEFORE_ENTRIES entries before it added one)"
   fi
-  fact entry PASS "the catalog entry is published and built: $ENTRY_LINE (the catalog had $BEFORE_ENTRIES entries before this check added one); the build printed ${BUILT_ENTRY:-nothing this reader recognises}"
+  fact entry PASS "catalog entry $ENTRY is published and built: $ENTRY_LINE (the catalog had $BEFORE_ENTRIES entries before this check added one); the build printed ${BUILT_ENTRY:-nothing this reader recognises}"
   if [ -z "$BUILT_ENTRY" ]; then
     fact entry FAIL "the build printed no 'built <image>@<digest>' line this check recognises"
     say "the build's last lines are in $SCRATCH/last.out"
@@ -922,7 +947,6 @@ step_stamp() {
     fact stamp FAIL "the commit or the push of image_name: $ENTRY did not succeed"
     stop "the commit or the push of the image_name: edit did not succeed (git's own words are above): the run reads the configuration off the remote, so nothing below would read what this step wrote"
   fi
-  STAMP_COMMITTED=yes
   owner "next: fugaro update --repo $REPO converges the repository's resources, which is what writes the stamp on its workflow job."
   if ! run_loud fugaro update --repo "$REPO"; then
     fact stamp FAIL "fugaro update --repo $REPO did not exit 0, so the job was not converged from the configuration that names $ENTRY"
@@ -945,13 +969,18 @@ step_stamp() {
   caveat=$(jfield caveat "$JOB" "$SCRATCH/doctor.vocab")
   valued=$(jfield valued "$JOB" "$SCRATCH/doctor.vocab")
   drops=$(jfield drops "$JOB" "$SCRATCH/doctor.vocab")
-  fact stamp PASS "the job's own line is image-env-$JOB: the stamp names catalog entry $ENTRY, a run drops $drops of the names the job sets itself, the caveat that an image's own ENV is not in the line is there: $caveat, and the line prints no value: no-assignment=$([ "$valued" = no ] && echo yes || echo no)"
+  # One row per key, never two: the block prints the FIRST line for a key, so a
+  # FAIL written beside a PASS would be dropped and the run would read as clean.
+  local verdict=PASS why=""
   if [ "$caveat" != yes ]; then
-    fact stamp FAIL "the line for $JOB carries no caveat that an image's own ENV is not in it, and without it 'a run drops none of the names the job sets itself' reads as 'everything the image declares reaches a run'"
+    verdict=FAIL
+    why="$why; the line carries no caveat that an image's own ENV is not in it, and without it 'a run drops none of the names the job sets itself' reads as 'everything the image declares reaches a run'"
   fi
   if [ "$valued" = yes ]; then
-    fact stamp FAIL "the line for $JOB carries a 'name=value' pair, and every reading of this feature prints a name and never a value (D1375)"
+    verdict=FAIL
+    why="$why; the line carries a 'name=value' pair, and every reading of this feature prints a name and never a value (D1375)"
   fi
+  fact stamp "$verdict" "the job's own line is image-env-$JOB: the stamp names catalog entry $ENTRY, a run drops $drops of the names the job sets itself, the caveat that an image's own ENV is not in the line is there: $caveat, and the line prints no value: no-assignment=$([ "$valued" = no ] && echo yes || echo no)${why}"
 }
 
 # read_doctor: `fugaro doctor --all` into the reader's own vocabulary.
@@ -984,14 +1013,20 @@ step_reserved() {
   entry=$(jfield entry "$JOB" "$SCRATCH/doctor.vocab")
   drops=$(jfield drops "$JOB" "$SCRATCH/doctor.vocab")
   valued=$(jfield valued "$JOB" "$SCRATCH/doctor.vocab")
+  local verdict=PASS why=""
   if [ "$entry" != "$ENTRY" ] || [ "$drops" = none ] || [ "${drops#*$RESERVED_NAME}" = "$drops" ]; then
-    fact reserved FAIL "the line for $JOB did not name $RESERVED_NAME among the names a run drops (it reads: entry $entry, drops $drops)"
-    stop "fugaro doctor --all did not name $RESERVED_NAME among the names a run drops of job $JOB, although the name is set on the job by hand. Read the report yourself: 'fugaro doctor --all'"
+    verdict=FAIL
+    why="the line did not name $RESERVED_NAME among the names a run drops (it reads: entry $entry, drops $drops), although the name is set on the job by hand"
+  fi
+  if [ "$valued" = yes ]; then
+    verdict=FAIL
+    why="$why; the line carries a 'name=value' pair, and no reading of this feature prints a value (D1375)"
+  fi
+  if [ "$verdict" = FAIL ]; then
+    fact reserved FAIL "the line for job $JOB reads: $why"
+    fail_stop "fugaro doctor --all did not read the reservation the way this check needs it: $why. Read the report yourself: 'fugaro doctor --all'"
   fi
   fact reserved PASS "with $RESERVED_NAME set on job $JOB by hand, its line names it among the names a run drops: $drops — and the line still prints no value: no-assignment=$([ "$valued" = no ] && echo yes || echo no)"
-  if [ "$valued" = yes ]; then
-    fact reserved FAIL "the line for $JOB carries a 'name=value' pair, and no reading of this feature prints a value (D1375)"
-  fi
 }
 
 # step_converged: the same converge again, which redeploys the job from the
@@ -1006,7 +1041,7 @@ step_converged() {
   drops=$(jfield drops "$JOB" "$SCRATCH/doctor.vocab")
   if [ "${drops#*$RESERVED_NAME}" != "$drops" ]; then
     fact converged FAIL "the line for $JOB still names $RESERVED_NAME among the names a run drops after the converge: $drops"
-    stop "the converge did not take $RESERVED_NAME off job $JOB: take it off yourself with 'gcloud run jobs update $JOB --region $REGION --remove-env-vars $RESERVED_NAME'"
+    fail_stop "the converge did not take $RESERVED_NAME off job $JOB: take it off yourself with 'gcloud run jobs update $JOB --region $REGION --remove-env-vars $RESERVED_NAME'"
   fi
   HELD_ON_JOB=no
   fact converged PASS "the converge redeployed job $JOB from the deployment's own environment and the hand-set $RESERVED_NAME is gone from its line: drops $drops"
@@ -1043,11 +1078,11 @@ EOF
   fi
   grep -q 'marker: present' "$SCRATCH/run1.jsonl" || {
     fact run-marker FAIL "run $RUN1's transcript does not carry 'marker: present'"
-    stop "run $RUN1's transcript carries no 'marker: present', so the catalog entry's own ENV did not reach the environment of a command the run ran through fugaro verify. Read it yourself: 'fugaro logs $RUN_REF'"
+    fail_stop "run $RUN1's transcript carries no 'marker: present', so the catalog entry's own ENV did not reach the environment of a command the run ran through fugaro verify. Read it yourself: 'fugaro logs $RUN_REF'"
   }
   grep -q 'reserved: absent' "$SCRATCH/run1.jsonl" || {
     fact run-marker FAIL "run $RUN1's transcript does not carry 'reserved: absent'"
-    stop "run $RUN1's transcript carries no 'reserved: absent', although the entry's Dockerfile sets $RESERVED_NAME: it reached the agent's environment, which is the one thing the passthrough exists to prevent. Read it yourself: 'fugaro logs $RUN_REF'"
+    fail_stop "run $RUN1's transcript carries no 'reserved: absent', although the entry's Dockerfile sets $RESERVED_NAME: it reached the agent's environment, which is the one thing the passthrough exists to prevent. Read it yourself: 'fugaro logs $RUN_REF'"
   }
   fact run-marker PASS "run $RUN1 ($RUN_REF) of workflow $WORKFLOW read 'marker: present' — the entry's own ENV reached the environment of a command the run ran through fugaro verify — and 'reserved: absent', although the entry's Dockerfile sets $RESERVED_NAME"
 }
@@ -1059,11 +1094,11 @@ EOF
 step_run_value() {
   if grep -q 'example.invalid' "$SCRATCH/run1.jsonl"; then
     fact run-value FAIL "run $RUN1's transcript carries the entry's own marker value"
-    stop "run $RUN1's transcript carries 'example.invalid', which is the value the entry's Dockerfile sets: something printed a value of the image's ENV, and D1375 says no reading of it ever does"
+    fail_stop "run $RUN1's transcript carries 'example.invalid', which is the value the entry's Dockerfile sets: something printed a value of the image's ENV, and D1375 says no reading of it ever does"
   fi
   if grep -qE "$RESERVED_NAME=[^ ]" "$SCRATCH/run1.jsonl"; then
     fact run-value FAIL "run $RUN1's transcript carries an assignment to $RESERVED_NAME"
-    stop "run $RUN1's transcript carries an assignment to $RESERVED_NAME, and the line this check reads off the agent's environment names it without a value"
+    fail_stop "run $RUN1's transcript carries an assignment to $RESERVED_NAME, and the line this check reads off the agent's environment names it without a value"
   fi
   fact run-value PASS "run $RUN1's transcript carries no 'example.invalid' anywhere and no $RESERVED_NAME=value pair: the image's value reached nothing that prints"
 }
@@ -1112,7 +1147,7 @@ EOF
   case "$image" in
   *"catalog-$ENTRY"*)
     fact refutation FAIL "job $JOB still carries the catalog entry's image ($image)"
-    stop "job $JOB carries the catalog entry's own image after the converge, so the refutation below would be read off the wrong image: the --workflow of 'fugaro image build --workflow $WORKFLOW' is what builds the repository's, and D1144 says a bare 'fugaro image build' builds catalog entries"
+    fail_stop "job $JOB carries the catalog entry's own image after the converge, so the refutation below would be read off the wrong image: the --workflow of 'fugaro image build --workflow $WORKFLOW' is what builds the repository's, and D1144 says a bare 'fugaro image build' builds catalog entries"
     ;;
   esac
   read_doctor
@@ -1121,12 +1156,13 @@ EOF
   entry=$(jfield entry "$JOB" "$SCRATCH/doctor.vocab")
   if [ "$stamped" != no ]; then
     fact refutation FAIL "doctor's line for $JOB still reads catalog-stamped (entry $entry) after the converge onto the repository-built image"
-    stop "fugaro doctor --all still reports job $JOB as catalog-stamped after it was converged onto the repository's own image, and the stamp is what the whole check rests on: read it yourself with 'fugaro doctor --all'"
+    fail_stop "fugaro doctor --all still reports job $JOB as catalog-stamped after it was converged onto the repository's own image, and the stamp is what the whole check rests on: read it yourself with 'fugaro doctor --all'"
   fi
-  fact refutation PASS "the workflow now runs on the repository's own image ($image, its own build printed ${BUILT_WORKFLOW:-nothing this reader recognises}), which is not the entry's catalog-$ENTRY one, and doctor's line for $JOB reads not catalog-stamped: no project image_catalog entry chose it"
+  local why=""
   if [ "$entry" = "$ENTRY" ]; then
-    fact refutation FAIL "doctor's line for $JOB still names $ENTRY although it reads not catalog-stamped"
+    why="; the line still names $ENTRY although it reads not catalog-stamped, and the two cannot both be true of one job"
   fi
+  fact refutation "${why:+FAIL}${why:-PASS}" "the workflow now runs on the repository's own image ($image, its own build printed ${BUILT_WORKFLOW:-nothing this reader recognises}), which is not the entry's catalog-$ENTRY one, and doctor's line for $JOB reads not catalog-stamped: no project image_catalog entry chose it${why}"
 }
 
 # step_refutation_run: the second run, on the repository-built image, reading the
@@ -1146,11 +1182,11 @@ step_refutation_run() {
   fi
   grep -q 'marker: absent' "$SCRATCH/run2.jsonl" || {
     fact refutation-run FAIL "run $RUN2's transcript does not carry 'marker: absent'"
-    stop "run $RUN2's transcript carries no 'marker: absent', although its image is the repository's own and D1370 says such an image passes none of its own variables: read it yourself with 'fugaro logs $RUN_REF'"
+    fail_stop "run $RUN2's transcript carries no 'marker: absent', although its image is the repository's own and D1370 says such an image passes none of its own variables: read it yourself with 'fugaro logs $RUN_REF'"
   }
   grep -q 'reserved: absent' "$SCRATCH/run2.jsonl" || {
     fact refutation-run FAIL "run $RUN2's transcript does not carry 'reserved: absent'"
-    stop "run $RUN2's transcript carries no 'reserved: absent': read it yourself with 'fugaro logs $RUN_REF'"
+    fail_stop "run $RUN2's transcript carries no 'reserved: absent': read it yourself with 'fugaro logs $RUN_REF'"
   }
   fact refutation-run PASS "run $RUN2 ($RUN_REF) of the same workflow on the repository-built image read 'marker: absent' and 'reserved: absent' — the same marker, set the same way in the repository's own Dockerfile, reached no run at all"
 }
@@ -1220,7 +1256,7 @@ restore_run() {
   fi
   # 4. The pull requests the two runs opened and the branches they cut. `gh`
   #    takes a branch name here, so the run record is not parsed for a number.
-  local branch state gone n=0
+  local branch state n=0
   for branch in ${RUNS_LAUNCHED[@]+"${RUNS_LAUNCHED[@]}"}; do
     n=$((n + 1))
     if ! gh pr close "$branch" --delete-branch >"$SCRATCH/restore.pr$n" 2>&1; then
@@ -1273,10 +1309,10 @@ restore_run() {
   fi
   if [ -z "$RESTORE_FAIL" ]; then
     RESTORE_STATE=done
-    RESTORE_DETAIL="this check's own things are undone:$detail. What is NOT undone is the fugaro update it ran, which is the point of it — and one ordinary run of $REPO is yours to make, since this check launches no third run"
+    RESTORE_DETAIL="this check's own things are undone: ${detail#; }. What is NOT undone is the fugaro update it ran, which is the point of it — and one ordinary run of $REPO is yours to make, since this check launches no third run"
   else
     RESTORE_STATE=STILL_THERE
-    RESTORE_DETAIL="this check undid part of what it created:$detail. STILL TO DO, by hand, in $CHECKOUT: $RESTORE_FAIL"
+    RESTORE_DETAIL="this check undid part of what it created: ${detail#; }. STILL TO DO, by hand, in $CHECKOUT: $RESTORE_FAIL"
   fi
 }
 
