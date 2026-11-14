@@ -863,7 +863,7 @@ step_verdict() {
 # rather than trusting the delete.
 cleanup() {
   stop_call
-  local bad="" unknown="" out read_back
+  local bad="" unknown="" out
   if [ "$LAUNCHED" = yes ] && [ "$KEEP_OBJECTS" != yes ]; then
     gcloud storage rm -r --project="$P" "gs://$B/runs/$SLUG/$RUN/ab/" >&2 || true
     if out=$(gcloud storage ls --recursive --project="$P" "gs://$B/runs/$SLUG/$RUN/ab/" 2>&1); then
@@ -879,8 +879,7 @@ cleanup() {
   elif [ "$KEEP_OBJECTS" = yes ]; then
     fact restore INFO "the judge run's own ab/ objects were LEFT in place (--keep-objects): they are the evidence, and while they are there the pairs it judged stay judged, so a second run of this check needs five OTHER unjudged pairs. Delete them to put the pairs back: gcloud storage rm -r gs://$B/runs/$SLUG/$RUN/ab/"
   else
-    read_back=", and the prefix was read back: it lists nothing"
-    fact restore PASS "the judge run's own ab/ objects (its manifest, its verdicts and its stored inputs) are gone${read_back}, so the pairs it judged are unjudged again and this check can be run a second time on the same pairs. The run itself and its record are left — a run cannot be un-launched, and its record is what the history shows"
+    fact restore PASS "the judge run's own ab/ objects (its manifest, its verdicts and its stored inputs) are gone, and the prefix was read back: it lists nothing, so the pairs it judged are unjudged again and this check can be run a second time on the same pairs. The run itself and its record are left — a run cannot be un-launched, and its record is what the history shows"
   fi
   # The facts are read into this shell BEFORE the scratch directory goes: the
   # block is printed from that reading, and a `$(cleanup)` would throw it away
