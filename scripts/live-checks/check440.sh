@@ -279,14 +279,28 @@ restore_run() {
     fi
     return 0
   fi
-  local id bad=0 detail=""
+  local id key bad=0 detail=""
   for id in $LAUNCHED; do
-    bounded "$CLI_TIMEOUT" "restore-${id}" "$SCRATCH" env FUGARO_PROJECT="$INSTALLATION" "$FUGARO_BIN" cancel "$SLUG/$id" --json || true
+    # Both runs are still active here by design (no step cancels them), so this
+    # is the graceful cancel's slow path: the CLI waits the run's finalize
+    # reserve plus 40s for the runner to notice the marker — 340s by default —
+    # before it cancels anything, and CLI_TIMEOUT would kill a healthy cancel
+    # and leave the run going, which is the one thing this trap exists to
+    # prevent. ACTIVE_TIMEOUT is the bound that clears that floor, and the
+    # `--now` retry below is what stops the run when even that is not enough
+    # (a repository whose own reserve is longer, or a CLI that never answers).
+    key="restore-${id}"
+    bounded "$ACTIVE_TIMEOUT" "$key" "$SCRATCH" env FUGARO_PROJECT="$INSTALLATION" "$FUGARO_BIN" cancel "$SLUG/$id" --json || true
+    if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" -ne 0 ]; then
+      say "restore: 'cancel $SLUG/$id' did not finish within ${ACTIVE_TIMEOUT}s (exit $BOUNDED_STATUS); cancelling the execution at once with --now, which skips the draft PR the graceful cancel waits for"
+      key="restore-now-${id}"
+      bounded "$CLI_TIMEOUT" "$key" "$SCRATCH" env FUGARO_PROJECT="$INSTALLATION" "$FUGARO_BIN" cancel "$SLUG/$id" --now --json || true
+    fi
     if [ "$BOUNDED_STATUS" -ne 0 ]; then
       bad=1
-      detail="$detail$id: cancel exited $BOUNDED_STATUS ($(one_line "$SCRATCH/restore-${id}.err")); "
+      detail="$detail$id: cancel exited $BOUNDED_STATUS ($(one_line "$SCRATCH/$key.err")); "
     else
-      detail="$detail$id: $(json_field "$SCRATCH/restore-${id}.out" status) (marker $(json_field "$SCRATCH/restore-${id}.out" marker)); "
+      detail="$detail$id: $(json_field "$SCRATCH/$key.out" status) (marker $(json_field "$SCRATCH/$key.out" marker)); "
     fi
   done
   if [ "$bad" -ne 0 ]; then

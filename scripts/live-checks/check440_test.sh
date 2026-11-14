@@ -81,7 +81,9 @@ write_fakes() { # dir
 #     list and one question only at a real terminal;
 #   * `cancel` NEVER acts on an ending: it reads it against the active runs and
 #     answers the full IDs to paste (D1710), and writes the cancel marker only
-#     for a `<slug>/<run-id>`.
+#     for a `<slug>/<run-id>` — with a `cancel-slow` mode that does not answer a
+#     graceful cancel at all, so the Restore's own bound is a reading rather
+#     than a claim.
 # Every call is recorded on $FAKE440_DIR/logs/fugaro.calls, with the directory it
 # was made in, so a case can say what the check read and what it did not.
 set -u
@@ -311,8 +313,12 @@ cmd_runs_ls() { # --json --since W
   printf '],"totals":{"runs":%s},"warnings":[]}\n' "$(wc -l <"$D/.rows" | tr -d ' ')"
 }
 
-cmd_cancel() { # REF [--json]
-  local ref=$1 id="" n
+cmd_cancel() { # REF [--now] [--json]
+  local ref=$1 id="" n now=no a slow
+  shift
+  for a in "$@"; do
+    [ "$a" = --now ] && now=yes
+  done
   case "$ref" in
   */*) id=${ref##*/} ;;
   esac
@@ -338,6 +344,17 @@ cmd_cancel() { # REF [--json]
   if [ "$MODE" = cancel-fails ]; then
     printf 'cancel: the backend refused the cancel of %s\n' "$ref" >&2
     return 1
+  fi
+  if [ "$MODE" = cancel-slow ] && [ "$now" = no ]; then
+    # A graceful cancel waits the run's finalize reserve before it cancels
+    # anything, so the case that reads the Restore's bound needs one that does
+    # not answer: this waits to be killed, and `--now` below answers at once.
+    # The trap is what makes the kill immediate — without one bash finishes the
+    # wait before it acts on the signal, and the case sits through the sleep.
+    sleep 30 &
+    slow=$!
+    trap 'kill "$slow" 2>/dev/null; exit 143' TERM
+    wait "$slow"
   fi
   printf '%s\n' "$id" >"$D/markers/$id"
   printf '{"run":"%s/%s","status":"cancelled","marker":true}\n' "$SLUG" "$id"
@@ -868,6 +885,21 @@ test_a_restore_that_cannot_cancel_is_a_fail() {
   expect_contains "$(fact_line restore)" "the backend refused" "a Restore that cannot cancel: what it saw"
 }
 
+test_a_restore_whose_graceful_cancel_does_not_answer_still_stops_the_runs() {
+  setup_case restore-slow
+  seed_history
+  MODE=cancel-slow
+  ACTIVE_TIMEOUT=2
+  run440_default
+  expect_status "$status" 0 "a Restore whose graceful cancel does not answer"
+  expect_fact restore PASS "a Restore whose graceful cancel does not answer"
+  # The two runs are the point: a bound that gives up on the graceful cancel
+  # without cancelling the execution leaves exactly what this trap exists to
+  # prevent, so the case reads the markers the `--now` fallback wrote.
+  expect_cancelled "a Restore whose graceful cancel does not answer"
+  expect_contains "$(cat "$dir/err")" "cancelling the execution at once with --now" "a Restore whose graceful cancel does not answer: the fallback it took"
+}
+
 test_the_scratch_directory_can_be_kept() {
   setup_case keep-scratch
   seed_history
@@ -939,6 +971,7 @@ t test_an_old_run_inside_the_window_is_a_fail
 t test_an_ending_of_an_active_run_is_not_the_finished_refusal
 t test_a_lookup_that_does_not_widen_is_a_fail
 t test_a_restore_that_cannot_cancel_is_a_fail
+t test_a_restore_whose_graceful_cancel_does_not_answer_still_stops_the_runs
 t test_the_scratch_directory_can_be_kept
 t test_the_block_never_carries_a_run_of_the_owners_own
 
