@@ -721,7 +721,7 @@ serves them.
 
 All three are **offline** — they read and write this config file and reach no bucket, no database
 and no host — and the two writes are the **owner's**: a pool decides where a project's calls may be
-spent, so a coding agent's session is refused, `--yes` included (§7's rule, and the same one
+spent, so a coding agent's session is refused, whatever it passes (§7's rule, and the same one
 `fugaro accounts add` states for the token).
 
 **A pool's members are served by two halves, and one pool cannot cross them.** An `openrouter` or

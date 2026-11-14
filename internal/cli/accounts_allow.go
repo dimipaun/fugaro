@@ -73,7 +73,6 @@ reaches the project's runs in that run and not before it.`,
 			return runAccountsAllowList(cmd, args[0], args[1:], true, o)
 		},
 	}
-	cmd.Flags().BoolVar(&o.yes, "yes", false, "confirm the change without a prompt")
 	return cmd
 }
 
@@ -105,7 +104,6 @@ reaches the project's runs in that run and not before it.`,
 			return runAccountsAllowList(cmd, args[0], args[1:], false, o)
 		},
 	}
-	cmd.Flags().BoolVar(&o.yes, "yes", false, "confirm the change without a prompt")
 	return cmd
 }
 

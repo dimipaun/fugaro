@@ -11,7 +11,7 @@ The owner asked, on 2026-11-13, why marking a project managed takes `--managed`,
 | --- | --- | --- |
 | `fugaro setup` on a first run | Every project it creates is managed from its creation (the `fugaro_managed` label and the creation fact in the runs bucket). | `fugaro setup --help` |
 | `fugaro setup --managed` | Does **not** mark the project. It only records the monthly budget amount the managed apply needs, and requires `--budget`, `--budget-currency` and `--billing-account` together. | `fugaro setup --help` |
-| `fugaro managed flag PROJECT_ID` | Marks an existing project. The exact GCP project ID of the selected installation is an argument; no `--yes`, no prompt. The amount and currency are required flags. | `internal/cli/managed_flag.go`; D1541, D58 |
+| `fugaro managed flag PROJECT_ID` | Marks an existing project. The exact GCP project ID of the selected installation is an argument; no prompt. The amount and currency are required flags. | `internal/cli/managed_flag.go`; D1541, D58 |
 | The amount | The budget alert amount the installation's Terraform creates, and what the apply-time budget read opens the gate on: a marked project that records none is refused by every managed apply. | D64, `internal/cli/managed_apply.go` |
 
 ## Decisions

@@ -440,7 +440,7 @@ These record where the build settled something the design left open. The authori
 - **Rules** are generated, leaf-only for writes, and tie the run's ledger and the counters to each other in both directions (see v1.md §6.1). Cap comparisons read `config/mode`; everything else is enforced in every mode.
 - **Committed `budget.per_day_usd`** is client-enforced and repository-scoped (R1): `Evaluate` takes the effective repository cap; the project's day cap is the database's alone.
 - **`oauth`** records `notional` only (R7) and is bound by the kill switches, the token cap and the grace.
-- **`fugaro budget`** (`show`, `set`, `kill`, `resume`, `prices`): admins write caps with ETag-guarded single-node `PUT`s that show the old and new value; raising a cap, setting one that was unset, lowering the mode to observe and `resume` ask for the project's name (or `--yes`); `kill --all` asks for it too. `show` needs the Viewer role only. `--repo` is `owner/name`.
+- **`fugaro budget`** (`show`, `set`, `kill`, `resume`, `prices`): admins write caps with ETag-guarded single-node `PUT`s that show the old and new value; raising a cap, setting one that was unset, lowering the mode to observe and `resume` ask for the project's name; `kill --all` asks for it too. `show` needs the Viewer role only. `--repo` is `owner/name`.
 - **`init --firebase <id>`** adopts a Firebase project the user created and linked to billing. It refuses a project that is missing, has no billing, or whose database holds data but no Fugaro mark; it runs three confirmed applies, deploys the rules, the mark, the project name, the mode and `maxReserve` over REST, and **refuses `--budget-mode enforce` unless the global daily and per-run caps exist** (an enforcing budget with no global caps would refuse every lease). Data is kept on a rollback (`prevent_destroy`).
 - **Sweeper** (`fugaro budget history --sweep`) as in v1.md §6.1; the rollover (`--rollover`) is M9d, built (§9).
 
@@ -787,7 +787,7 @@ Two of the three things P6.4 adds narrow this and neither closes it. **The devic
 
 - **Adoption and marks:**
   - **Discovery adopts** an existing FP's default RTDB instance and `(default)` Firestore database when they're empty or carry our mark (an unmarked database is adopted only if it has no root collection at all). It **refuses** unmarked data, and refuses a Firestore database whose location isn't the one D4 chose or that isn't Native.
-  - **The Firestore step (M9d).** Read-only planning runs before the first apply (so refusals happen with nothing applied, and `--plan-only` shows it). If there is no database, the real run, after the shared confirmation, tells the person the location is permanent and requires typing `us-east5` before it creates the database (`--yes` confirms it). It then writes the Firestore mark, then deploys deny-all rules and verifies them by reading back; it never replaces an existing non-equivalent release (it refuses with instructions) and never deletes anything.
+  - **The Firestore step (M9d).** Read-only planning runs before the first apply (so refusals happen with nothing applied, and `--plan-only` shows it). If there is no database, the real run, after the shared confirmation, tells the person the location is permanent and requires typing `us-east5` before it creates the database. It then writes the Firestore mark, then deploys deny-all rules and verifies them by reading back; it never replaces an existing non-equivalent release (it refuses with instructions) and never deletes anything.
   - **After the apply,** init deploys the RTDB rules and the mark.
   - **`--budget-mode observe|enforce`** sets the mode. `--budget-admin` repeats, and fills `terraform.budget_admins`.
   - **The guard** adds the database and instance to its `prevent_destroy` list.
@@ -854,7 +854,7 @@ These estimates assume 20 repositories, about 100 runs a day of about 45 minutes
 | Command | Behaviour | Needs |
 |---|---|---|
 | `budget show [--repo R \| --all] [--json]` | Caps, today's counted and spent, notional spend, kill switches, headroom and active runs | Viewer |
-| `budget set (--global \| --defaults \| --repo R) [--daily USD] [--per-run USD] [--max-reserve USD] [--clear]` | An ETag-guarded `PUT` of the cap node, showing old and new values. **Raising** a cap needs typed confirmation (or `--yes`); lowering one doesn't | Admin (D6) |
+| `budget set (--global \| --defaults \| --repo R) [--daily USD] [--per-run USD] [--max-reserve USD] [--clear]` | An ETag-guarded `PUT` of the cap node, showing old and new values. **Raising** a cap needs typed confirmation; lowering one doesn't | Admin (D6) |
 | `budget kill (--all \| --repo R) [--reason TEXT]` | Sets the switch, recording who, when and why. Takes effect within seconds | Admin |
 | `budget resume (--all \| --repo R)` | Clears the switch, after typed confirmation | Admin |
 | `budget prices [--json]` | The effective price table, with sources and check dates. Warns when a check date is over 90 days old | None |

@@ -42,7 +42,7 @@ A run starts with a line `== ` and the checkout's directory, then one line per s
 ## rules
 
 - `the deployed security rules are generation N, this Fugaro's own` (`current`): the project's database already carries the rules generation a project policy is read under, and this Fugaro's document. Nothing was written.
-- `deployed the security rules (generation N) and recorded it` (`done` without `--check`): the plan was printed above `== ` for the checkout and the confirmation under it read nothing — a person at the terminal by being there, or `--yes` — and the generation was deployed and recorded. It ran before the policy step, whose write is gated on that generation.
+- `deployed the security rules (generation N) and recorded it` (`done` without `--check`): the plan was printed above `== ` for the checkout and the confirmation under it read nothing — a person at the terminal by being there — and the generation was deployed and recorded. It ran before the policy step, whose write is gated on that generation.
 - `a coding agent's session` (`skipped`): always, in this session; the user runs the upgrade in their own terminal window.
 - `--check` (`skipped`, with a `note:`): `--check` makes no cloud call, so it cannot tell which generation is deployed; the upgrade without `--check` deploys it.
 - `no local project config selects this checkout`, `not onboarded`, `no fugaro.yaml` (`skipped`): the same verdicts the cloud step's own line gives, and nothing here is the machine's to deploy.
@@ -56,7 +56,7 @@ A run starts with a line `== ` and the checkout's directory, then one line per s
 
 - `the published policy is version Y` (`current`): the project's published policy node is already the version this `fugaro` writes. Asked nothing.
 - `no policy is published at ...` (`current`): the project has a budget backend and no node in it; every run falls back to the ceiling its job's environment carries. Not the same line as the one above, and not something to go looking for.
-- a reason naming the version the node carries and the one this `fugaro` writes (`done` without `--check`): the node is rewritten in place, after the diff printed above `== ` for the checkout and a confirmation that read nothing (a person at the terminal by being there, or `--yes` where the flag reaches the step). Nothing is deleted, and the fields the owner edited into the node by hand are kept.
+- a reason naming the version the node carries and the one this `fugaro` writes (`done` without `--check`): the node is rewritten in place, after the diff printed above `== ` for the checkout and a confirmation that read nothing (a person at the terminal by being there). Nothing is deleted, and the fields the owner edited into the node by hand are kept.
 - `a coding agent's session` (`skipped`): always, in this session; the user runs the upgrade in their own terminal window.
 - `--check` (`skipped`, with a `note:`): `--check` makes no cloud call, so it cannot tell whether the node is current; the upgrade without `--check` migrates it.
 - `no local project config selects this checkout`, `not onboarded` (`skipped`): the same verdicts the cloud step's own line gives, and nothing here is the machine's to migrate.
