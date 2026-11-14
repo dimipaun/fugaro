@@ -72,6 +72,19 @@ import (
 // older than the release, a coder that reads images itself, a slot that is set,
 // a run that never ends, a record that is another run's, and a refusal whose
 // sentence has lost one of the parts an owner needs.
+// Check 212's fakes are a fake `gcloud` that serves the two arms' records and
+// the judge run's verdicts object from the case's own directory, a fake `git`
+// that answers the sandbox checkout's origin, and a fake `fugaro` whose
+// `doctor`, `config layer`, `models ls`, `run`, `runs ls`, `cancel` and `ab`
+// answer the case's documents -- with a mode for each state a case bends: a
+// build older than the release, a layer with no `ab:` block or a rate of zero,
+// a challenger that is a Claude ID or on the direct route or whose route
+// refuses this repository, a sampler that pairs nothing, a shadow that
+// published, a pair whose costs went past the cap, a judge run that will not
+// launch, a verdict that skipped the pair, and a row that concluded under the
+// minimum -- so a case says what the check measured, that no run was launched
+// for a check that stops before its launches, and that nothing this check
+// cancelled was left behind.
 // Check 301's fakes are a fake `fugaro`, a fake launchd and a fake systemd
 // whose boot id and unit files the test writes, so a reboot, a second
 // instance's refusal and T7's re-render are all readings of files the test
@@ -114,6 +127,7 @@ var liveCheckScripts = []struct {
 	{"check511.sh", "check511_test.sh"},
 	{"check520.sh", "check520_test.sh"},
 	{"check521.sh", "check521_test.sh"},
+	{"check212.sh", "check212_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
