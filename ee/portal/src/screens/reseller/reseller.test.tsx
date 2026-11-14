@@ -193,6 +193,35 @@ describe('the reseller screen', () => {
     expect(asked).toEqual(['org_acme', 'org_borealis'])
   })
 
+  it('fails the whole screen when one customer’s keys cannot be read', async () => {
+    render(
+      <ResellerScreen
+        api={api({
+          keys: (organisationId) =>
+            organisationId === 'org_borealis'
+              ? Promise.reject(
+                  new ApiError(503, {
+                    code: 'unavailable',
+                    message: 'That customer’s keys could not be read.',
+                  }),
+                )
+              : Promise.resolve(KEYS[organisationId] ?? []),
+        })}
+      />,
+    )
+
+    expect((await screen.findByRole('alert')).textContent).toBe('That customer’s keys could not be read.')
+    // A read that failed is not a customer with nothing bound. Turning one into
+    // the other -- an empty list, drawn as "No keys yet." -- would tell a
+    // reseller its customer's installation never ran `fugaro setup`, which is a
+    // fact of its own and a chase nobody should be sent on: the screen says the
+    // read failed and draws no part of the page, not even the customer it did
+    // read.
+    expect(screen.queryByText('No keys yet.')).toBeNull()
+    expect(screen.queryByText('Acme Ltd')).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Customers' })).toBeNull()
+  })
+
   it('says a reseller has nothing yet rather than drawing empty tables', async () => {
     render(
       <ResellerScreen api={api({ customers: () => Promise.resolve([]), statements: () => Promise.resolve([]) })} />,
