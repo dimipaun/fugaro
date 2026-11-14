@@ -2386,6 +2386,50 @@ func TestAddingAProfileKeepsTheImplicitReviewJob(t *testing.T) {
 	}
 }
 
+// TestTheDeployedImplicitReviewJobIsTheJobTheRunnerPlaces binds the two
+// spellings of the implicit review job to each other: the name this package
+// deploys (ImplicitReviewJobName, the key of project_review_jobs) and the job
+// the runner places a run in it by (runner.ProjectJobOfPolicy over the
+// published policy of a project that declares no profile).
+//
+// Nothing else holds them together, and drift is silent. The runner cannot
+// import this package (this package imports the runner for SecretEnvsVar) and
+// this package cannot call the runner's candidate, which is unexported, so the
+// triple is spelled twice: here as ImplicitReviewProfile, githubProvider and
+// config.ReviewVariantAccount(""), there as projectpolicy.DefaultProfileName,
+// gitprov.KindGitHub and config.ReviewVariantAccount(""). A profile renamed, a
+// provider swapped or an account spelled differently in one place and not the
+// other leaves the two computing different names, and the consequence is every
+// run of the deployed job halting in the runner's cannotPlaceJob — the
+// container is then a job the published policy does not compute. The runner's
+// own tests cannot see it: each compares its candidate against a third copy of
+// the same name.
+//
+// The policy is the one an installation that declares no profile publishes
+// (implicitReviewLC: no `profiles` block at all), which is the only shape this
+// job is deployed for and the one shape that makes it a project's only job.
+//
+// Mutations (each run and restored): spell the account differently in the
+// runner's implicitReviewCandidate, or stand the deployed job under another
+// profile (ImplicitReviewProfile), and this fails with the runner placing no
+// project job of the name the installation deploys.
+func TestTheDeployedImplicitReviewJobIsTheJobTheRunnerPlaces(t *testing.T) {
+	name := ImplicitReviewJobName()
+	deployed := projectReviewJobsFor(t, implicitReviewLC())
+	if _, ok := deployed[name]; !ok {
+		t.Fatalf("the profile-less installation deploys %v, want the implicit review job %s: this test is about the name it is deployed under", sortedJobNames(deployed), name)
+	}
+	profile, provider, account, ok := runner.ProjectJobOfPolicy(&projectpolicy.Policy{Version: projectpolicy.Version}, name)
+	if !ok {
+		t.Fatalf("the runner places a run in no project job named %s, and this installation deploys it: every run of that job stops in cannotPlaceJob, because its container is a job the published policy does not compute", name)
+	}
+	wantAccount := config.DefaultClaudeAccount + config.ReviewVariantSuffix
+	if profile != ImplicitReviewProfile || provider != githubProvider || account != wantAccount {
+		t.Errorf("the runner places %s as the job of (%s, %s, %s), want (%s, %s, %s): the profile-less policy's only project job is the one this installation deploys, under the provider and the account this job's own name is computed from",
+			name, profile, provider, account, ImplicitReviewProfile, githubProvider, wantAccount)
+	}
+}
+
 // TestImplicitReviewJobNeedsARecordedAppID: an installation with the credentials
 // service on that records no single github App ID gets no implicit job, and gets
 // no error either.
