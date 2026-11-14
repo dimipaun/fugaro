@@ -135,16 +135,19 @@ func providerForSlug(slug, repo string) (kind string, ok bool) {
 // its owner did not choose for it.
 //
 // Only a selection other than the default is checked. A workflow that names
-// none runs on the default (standard), and a policy that carries a profiles
-// block must define it (projectpolicy.validProfiles), so the default can only
-// be defined; a policy with no profiles block at all defines nothing, and a run
-// has no job layout to apply one with yet (task 3.2), so nothing is refused for
-// the default. A workflow that writes `job_profile: standard` says exactly what
-// omitting the key says (docs/project-layer.md), so it is the default too and
-// runs wherever the omission runs. An installation that has published no
-// policy is the phase-2 installation: naming any other job profile there is a
-// claim about a document that does not exist, and it is refused rather than
-// ignored.
+// none runs on the default profile of its repository's provider — `standard`
+// for the project's first provider and `standard-<provider>` for another
+// (D2310, R8), which ProjectJobDefaultProfile resolves — and a policy that
+// carries a profiles block must define its providers' defaults
+// (projectpolicy.validProfiles), so the one a repository on a provider in use
+// resolves to can only be defined; a policy with no profiles block at all
+// defines nothing, and a run has no job layout to apply one with yet (task
+// 3.2), so nothing is refused for the default. A workflow that writes
+// `job_profile: standard` says exactly what omitting the key says
+// (docs/project-layer.md), so it is the default too and runs wherever the
+// omission runs. An installation that has published no policy is the phase-2
+// installation: naming any other job profile there is a claim about a document
+// that does not exist, and it is refused rather than ignored.
 //
 // A run in a project job carries the selection: the job's own name was written
 // from a (profile, provider, account) triple of the policy (task 3.2's layout,
@@ -165,9 +168,27 @@ func (r *run) checkJobProfile(ctx context.Context, workflow string, wf config.Wo
 	if err != nil {
 		return err
 	}
-	if job, project := r.projectJob(); project && job.Profile != wf.JobProfileOrDefault() {
-		return fmt.Errorf("this run is in the Cloud Run job %s, which is the project job of the profile %q, and the workflow %s selects the job profile %q: the job a run is launched as is the one its workflow's selection built, so the two disagreeing means the selection changed after the launch, or the job was chosen by hand. The run stops rather than running the workflow's work on a job nobody selected for it",
-			gcp.ProjectJobName(job.Profile, job.Provider, job.Account), job.Profile, workflow, wf.JobProfileOrDefault())
+	if job, project := r.projectJob(); project {
+		// What the workflow selects, resolved the way the launcher resolved it
+		// when it placed this run in this job: a workflow that names no job
+		// profile runs on the default profile of its repository's provider —
+		// `standard` for the project's first provider and `standard-<provider>`
+		// for another (D2310, R8) — and the provider this job serves is that
+		// repository's. Reading the omission as `standard` halted a run the
+		// launcher had just placed on the other provider's own default job, so
+		// the resolution is the launcher's own (ProjectJobDefaultProfile, which
+		// internal/cli's launchProjectJobFor calls for the same question). want
+		// is "" only when the published policy defines no profile for this
+		// provider at all: nothing then says which profile the workflow meant,
+		// and no omission is refused for it (below).
+		want := wf.JobProfile
+		if want == "" {
+			want = ProjectJobDefaultProfile(p, job.Provider)
+		}
+		if want != "" && job.Profile != want {
+			return fmt.Errorf("this run is in the Cloud Run job %s, which is the project job of the profile %q, and the workflow %s selects the job profile %q: the job a run is launched as is the one its workflow's selection built, so the two disagreeing means the selection changed after the launch, or the job was chosen by hand. The run stops rather than running the workflow's work on a job nobody selected for it",
+				gcp.ProjectJobName(job.Profile, job.Provider, job.Account), job.Profile, workflow, want)
+		}
 	}
 	if wf.JobProfile == "" || wf.JobProfile == projectpolicy.DefaultProfileName {
 		return nil

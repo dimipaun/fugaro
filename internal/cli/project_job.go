@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/sharedjob"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/watch"
 )
@@ -30,12 +31,17 @@ import (
 // task 3.4 step 1): which Cloud Run job a launch runs on.
 //
 // A launch runs on the shared project job of the profile its workflow selects
-// — one job for every repository admitted to that profile — when, and only
-// when, the workflow is a `checkout: clone` one. A baked workflow keeps the
-// per-repository job it has always had until phase 4 ends (design §4.4), and
-// so does every launch of a project that has published no profiles: that is
-// what keeps this change invisible to an installation that has not migrated,
-// down to the request body.
+// — one job for every repository admitted to that profile — when the project
+// has published a profile that serves the repository: the profile the workflow
+// names, or the default profile of the repository's own provider when it names
+// none (D2310, R8), for a provider a shared job serves at all (S1). The
+// checkout mode does not decide the job model (D2304): a `checkout: baked`
+// workflow runs on a shared job like any other, and the mode decides the
+// image that job holds instead — a baked workflow the repository's own derived
+// image, a clone workflow the installation's base image. Every launch of a
+// project that has published no profiles keeps the per-repository job it has
+// always had: that is what keeps this change invisible to an installation that
+// has not migrated, down to the request body.
 //
 // The job's name is computed from the *published policy* — the document the
 // runner matches CLOUD_RUN_JOB against (internal/runner's projectJobCandidates)
@@ -61,6 +67,23 @@ type launchProjectJob struct {
 	// on a short one does not.
 	Timeout time.Duration
 }
+
+// sharedJobProvider is whether a shared project job serves this git provider
+// kind, and it is internal/infra's own answer (SharedJobProvider, the one
+// place the phase-3 list lives) read through a variable for one reason: the
+// Bitbucket half of this launcher is written and tested before the list admits
+// Bitbucket (S1 leaves the list as it is, so that S1 to S4 merge with no effect
+// on a Bitbucket project, and I1 makes the one-line change), and a test
+// admits the provider the way S1's own test for the deployer does. What is
+// admitted here is admitted by the deployer in production: both ask the same
+// predicate.
+//
+// Every question the launcher asks about the provider it is about to launch on
+// goes through this variable, so a test cannot admit a provider for one half
+// of the launch and not the other — and the two halves are the same question:
+// whether a document is worth reading at all (launchConfigWhereTheTreeGivesNone)
+// and whether the profile the document selects has a job (launchProjectJobFor).
+var sharedJobProvider = infra.SharedJobProvider
 
 // launchConfigWhereTheTreeGivesNone is the repository's own document for a
 // launch whose working tree could not answer with one: checkoutParse answers
@@ -91,17 +114,18 @@ type launchProjectJob struct {
 // ask), so the two cost one mint: a read mint is an act the credentials
 // service audits (D904, spec.md §6).
 func (e *cloudEnv) launchConfigWhereTheTreeGivesNone(ctx context.Context, spec *task.Spec) (*config.Config, error) {
-	// The provider is the decision's first question (D908): no shared job
-	// serves Bitbucket (infra.SharedJobProvider — a Bitbucket credential cannot
-	// be scoped to one project's repositories, the owner's ruling of
-	// 2026-10-15), so for such a repository the per-repository job is not a
-	// guess about a document nobody read: it is the same answer the checkout
-	// path gives for the same repository, from the same fact. It is asked of
-	// the repository's own provider rather than of the profile's because there
-	// is no profile to read here, and it is asked through localRepoProvider,
-	// which needs no checkout (F3): the comparison the caller makes would
-	// dereference a nil co, and the local config's entry is the one source that
-	// answers without a document.
+	// The provider is the decision's first question (D908): a provider no
+	// shared job serves (sharedJobProvider, which is internal/infra's list —
+	// GitHub alone until I1 admits Bitbucket, the owner's ruling of 2026-10-15
+	// on a Bitbucket credential a shared job may not hold) has no shared job
+	// for any repository, so for such a repository the per-repository job is
+	// not a guess about a document nobody read: it is the same answer the
+	// checkout path gives for the same repository, from the same fact. It is
+	// asked of the repository's own provider rather than of the profile's
+	// because there is no profile to read here, and it is asked through
+	// localRepoProvider, which needs no checkout (F3): the comparison the
+	// caller makes would dereference a nil co, and the local config's entry is
+	// the one source that answers without a document.
 	//
 	// Only a provider this command knows and no shared job serves rules the
 	// shared job out. An unknown one does not: the local entry's provider is
@@ -112,7 +136,7 @@ func (e *cloudEnv) launchConfigWhereTheTreeGivesNone(ctx context.Context, spec *
 	// through instead, and the refusals below answer as for any other
 	// provider.
 	provider := e.localRepoProvider(spec.Repo)
-	if provider != "" && !infra.SharedJobProvider(provider) {
+	if provider != "" && !sharedJobProvider(provider) {
 		return nil, nil
 	}
 	// The read below is only the question "has this project published profiles
@@ -255,19 +279,20 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, slug string, spec *t
 	} else if ok {
 		return job, nil
 	}
-	// The workflow's own checkout: says whether this is a clone workflow, and
-	// which profile it selects. Both are read from the repository's own
-	// fugaro.yaml, and checkoutParse answers nil for two states that are not
-	// one case: the working directory is not repo's checkout at all (fugaro
-	// run --repo ... from a machine that does not hold it), or it is and the
-	// working tree cannot give the file. Where a checkout is here and its tree
-	// has no document, this launch has already resolved the ref for every
-	// reader of it (withLaunchDocument): checkoutParse answers that document,
-	// so the gates the launch passed and the job decided here are judged by one
-	// file. What is left — the document read out of the checkout's own objects,
-	// and the read at the forge for a machine that holds no checkout at all —
-	// is launchConfigWhereTheTreeGivesNone's ordered decision, and the launch's
-	// own gates ask it too, so both judge one file.
+	// The repository's own document: the workflow and the profile its
+	// selection names are read from its fugaro.yaml, and its checkout mode is
+	// read here not at all — the mode decides the image the job holds and no
+	// longer which job that is (D2304). checkoutParse answers nil for two
+	// states that are not one case: the working directory is not repo's
+	// checkout at all (fugaro run --repo ... from a machine that does not hold
+	// it), or it is and the working tree cannot give the file. Where a checkout
+	// is here and its tree has no document, this launch has already resolved
+	// the ref for every reader of it (withLaunchDocument): checkoutParse
+	// answers that document, so the gates the launch passed and the job decided
+	// here are judged by one file. What is left — the document read out of the
+	// checkout's own objects, and the read at the forge for a machine that
+	// holds no checkout at all — is launchConfigWhereTheTreeGivesNone's ordered
+	// decision, and the launch's own gates ask it too, so both judge one file.
 	co := checkoutConfig(ctx, spec.Repo)
 	if co == nil {
 		// A launch with no config in hand is an ordered decision
@@ -293,7 +318,7 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, slug string, spec *t
 		co = cfg
 	}
 	w, ok := co.Workflows[spec.Workflow]
-	if !ok || w.Checkout != config.CheckoutClone {
+	if !ok {
 		return nil, nil
 	}
 	p, found, err := e.policy.read(ctx, e.lc)
@@ -303,17 +328,34 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, slug string, spec *t
 	if !found || p == nil {
 		return nil, nil
 	}
-	profile := w.JobProfileOrDefault()
-	pr, err := p.ProfileFor(profile)
+	// The repository's provider, first, because it decides more than the job's
+	// provider axis now: a workflow that names no job profile runs on the
+	// default profile of its repository's provider (D2310, R8). That is the
+	// rule the runner's candidate logic answers with the same function
+	// (internal/runner's ProjectJobDefaultProfile), so the two cannot resolve
+	// one repository's workflow onto two profiles. A resolution of no profile
+	// — the policy defines no profile for this provider — is the choice of the
+	// per-repository job, which is what a project that has published none for
+	// its provider keeps giving, down to the request body (contract.md).
+	provider := e.repoProvider(spec.Repo, co)
+	profile := w.JobProfile
+	if profile == "" {
+		profile = runner.ProjectJobDefaultProfile(p, provider)
+	}
+	choice := sharedjob.JobChoice{Repo: spec.Repo, Workflow: spec.Workflow, Profile: profile}
+	if choice.Profile == "" {
+		return nil, nil
+	}
+	pr, err := p.ProfileFor(choice.Profile)
 	if err != nil {
 		// A profile the policy does not define is not this launcher's to
 		// refuse, and falling back to the per-repository job is not falling
 		// back to another profile: an explicit selection the policy does not
 		// define is refused at run start by the runner's own check
-		// (internal/runner's checkJobProfile, task 3.1), and the default
-		// profile is undefined only in a policy that defines no profiles at
-		// all — an installation that has not migrated, which runs on its own
-		// jobs exactly as it did.
+		// (internal/runner's checkJobProfile, task 3.1), and no profile at all
+		// is undefined only in a policy that defines no profiles — an
+		// installation that has not migrated, which runs on its own jobs
+		// exactly as it did.
 		return nil, nil
 	}
 	// A project job serves exactly its profile's provider: the provider is an
@@ -325,17 +367,15 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, slug string, spec *t
 	// And a profile of a provider no shared job serves is no job at all, so a
 	// repository that selects one — its provider agrees with the profile's, and
 	// the runner is content because the policy defines the profile — stays on
-	// its per-repository job too. In phase 3 that is every Bitbucket profile:
-	// internal/infra's ProjectJobs skips one (a Bitbucket credential cannot be
-	// scoped to one project's repositories, the owner's ruling of 2026-10-15,
-	// so no shared job holds one), and infra.SharedJobProvider is the one place
-	// both sides read that fact. Without it this launch computed the name of a
-	// job no installation has, spent the claim and the budget token, and had
-	// Cloud Run answer 404 — the backend's missing job — for a repository that
-	// is supposed to keep the job it has always had (design §4.5, D5 as
-	// amended; docs/project-layer.md).
-	provider := e.repoProvider(spec.Repo, co)
-	if provider != pr.Provider || !infra.SharedJobProvider(pr.Provider) {
+	// its per-repository job too. internal/infra's ProjectJobs skips such a
+	// profile (a Bitbucket credential cannot be scoped to one project's
+	// repositories, the owner's ruling of 2026-10-15, so no shared job holds
+	// one), and sharedJobProvider is the one place both sides read that fact.
+	// Without it this launch computed the name of a job no installation has,
+	// spent the claim and the budget token, and had Cloud Run answer 404 — the
+	// backend's missing job — for a repository that is supposed to keep the job
+	// it has always had (design §4.5, D5 as amended; docs/project-layer.md).
+	if provider != pr.Provider || !sharedJobProvider(pr.Provider) {
 		return nil, nil
 	}
 	// The repository must be admitted to the profile, not only to the
@@ -374,9 +414,14 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, slug string, spec *t
 	// as it is in internal/infra's ProjectJobs, the function that deployed the
 	// job with this same number.
 	timeout, _ := config.ParseDuration(pr.TimeoutClass)
+	// The name is computed from the choice, which is the profile the launch
+	// decided on: the provider and the account are its own two axes, so a name
+	// built from any other profile would be the name of a job nobody deployed
+	// (contract.md: the runner matches CLOUD_RUN_JOB against this same
+	// computation).
 	return &launchProjectJob{
-		Name:    gcp.ProjectJobName(profile, pr.Provider, account),
-		Profile: profile,
+		Name:    gcp.ProjectJobName(choice.Profile, pr.Provider, account),
+		Profile: choice.Profile,
 		Timeout: timeout + backend.TaskTimeoutSlack,
 	}, nil
 }
@@ -1438,10 +1483,11 @@ var errNoConfigAtRef = errors.New("no fugaro.yaml at it")
 //
 // The fix named is the two ways out an operator has: repair the document the
 // message names (a fugaro.yaml that does not resolve, a layer that no longer
-// parses), or take the workflow off the shared-job path — a workflow that is
-// not `checkout: clone` keeps the per-repository job it has always had
-// (design §4.4).
+// parses), or take the repository off the shared-job path — the published
+// policy serving no profile for the repository's provider keeps it on the
+// per-repository job it has always had, and the checkout mode does not decide
+// that (D2304).
 func checkProjectJobAuthUnknown(repo, why string) error {
-	return userErr("cannot tell which Claude credential a run of %s would use on the shared project job its workflow selects, so nothing was launched: %s. A run resolves agent.auth from the fugaro.yaml at the ref it checks out, over the project layer its own task carries (project_layer in task.json), and this launch is judged on that same layer with that same fugaro.yaml — read at that ref out of your checkout's git objects, never out of the working tree — rather than on a guess: a shared job holds the credential its profile was deployed with — the account segment of its own name — so a launch whose credential cannot be resolved is refused instead of started on a job that may not be able to serve it. Fix what the message names, or keep this repository on its own per-repository job (a workflow that is not `checkout: clone` keeps the job it has always had). Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called",
+	return userErr("cannot tell which Claude credential a run of %s would use on the shared project job its workflow selects, so nothing was launched: %s. A run resolves agent.auth from the fugaro.yaml at the ref it checks out, over the project layer its own task carries (project_layer in task.json), and this launch is judged on that same layer with that same fugaro.yaml — read at that ref out of your checkout's git objects, never out of the working tree — rather than on a guess: a shared job holds the credential its profile was deployed with — the account segment of its own name — so a launch whose credential cannot be resolved is refused instead of started on a job that may not be able to serve it. Fix what the message names, or keep this repository on its own per-repository job: a repository the published policy serves no profile for keeps the job it has always had, whatever its workflow's checkout says. Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called",
 		repo, why)
 }

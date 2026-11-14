@@ -392,6 +392,47 @@ func ProjectJobOfPolicy(p *projectpolicy.Policy, job string) (profile, provider,
 	return "", "", "", false
 }
 
+// ProjectJobDefaultProfile is the profile a workflow that names no job profile
+// runs on, for a job serving provider, and "" when the policy defines none for
+// that provider.
+//
+// It is the provider-default rule of D2310 and R8: a project that mixes
+// providers has one default profile per provider, the project's own default
+// (`standard`) for the first of them and `standard-<provider>` for another, so
+// a workflow's silence resolves against the provider of the repository it is
+// written in and not against one profile every repository would land on. The
+// provider is read on both sides of the rule rather than trusted from the
+// name: a profile called `standard-bitbucket` whose provider is github is not
+// the Bitbucket default, and a policy that defines one is a policy whose
+// repository the launch keeps on its per-repository job.
+//
+// It is exported because the launcher and the runner's candidate logic answer
+// the same question over the same policy and must agree (contract.md: they
+// answer `JobChoice` "name for name"). internal/cli's launchProjectJobFor
+// calls it for a workflow that names no profile and computes the job's name
+// from the profile it returns, and this package's candidate set
+// (projectJobCandidates) is the set of names that answer holds over, so the
+// launcher can only compute a name the runner places. A return of "" is the
+// choice of no profile: the policy defines no profile for the repository's
+// provider at all, and the launch keeps the per-repository job it has always
+// had.
+//
+// p may be nil, which is a project that has published no policy and so has no
+// default for any provider.
+func ProjectJobDefaultProfile(p *projectpolicy.Policy, provider string) string {
+	if p == nil || provider == "" {
+		return ""
+	}
+	if pr, err := p.ProfileFor(projectpolicy.DefaultProfileName); err == nil && pr.Provider == provider {
+		return projectpolicy.DefaultProfileName
+	}
+	named := projectpolicy.DefaultProfileName + "-" + provider
+	if pr, err := p.ProfileFor(named); err == nil && pr.Provider == provider {
+		return named
+	}
+	return ""
+}
+
 // legacyVariant is gcp.WorkflowVariant(workflow, token) for the workflow the
 // run's own task.json names, with the two refusals that keep the variant's
 // preconditions honest: WorkflowVariant panics on a workflow or a token outside
