@@ -60,18 +60,52 @@ func StageLimit(g policy.Governance, t tier.Tier, cap pricing.Micros) gateway.St
 	return &stageLimit{g: g, cap: cap, maxAgents: fanoutMax(g, t)}
 }
 
-// stageLimit is one run's limits. It holds no state of its own: everything a
-// decision reads is in the view the gateway hands it, which is what keeps the
-// core's stage state the single account of a stage.
+// stageLimit is one run's limits: the policy it was built from, and what the
+// pass being run has spent on review. Everything else a decision reads arrives
+// with the call it decides, out of the view; the pass's own review figures are
+// the exception, because the gateway's stage state is keyed by stage name and
+// the name a previous pass reviewed under is still in the view (Begin).
 type stageLimit struct {
 	g         policy.Governance
 	cap       pricing.Micros
 	maxAgents int64
+	pass      reviewPass
 }
 
-// Begin does nothing: the limits are the run's resolved policy, and every
-// figure a decision needs arrives with the call it decides.
-func (l *stageLimit) Begin(gateway.StageLimitView) {}
+// reviewPass is one pass's review figures: the review stage names the pass has
+// begun, and what each of them ended at. A pass runs from one stage that is not
+// a review until the next — the review, fix, review of the rounds the runner
+// runs — and what a review budget is spent over is one pass and not the run.
+type reviewPass struct {
+	begun []string
+	ended map[string]spend
+}
+
+// Begin opens a pass at every stage that is not a review, the fix round
+// included: the review stages before it are the previous pass's, and the review
+// that follows spends anew.
+//
+// A review stage's Begin folds in what the review stages already run in this
+// pass ended at. The gateway hands over every ended report it has, by name, and
+// a name that has not begun in this pass is an earlier pass's and is read
+// nowhere here; a name that ran twice in the pass is read at its later report.
+func (l *stageLimit) Begin(v gateway.StageLimitView) {
+	if !config.IsReviewStage(v.Stage.Name) {
+		l.pass = reviewPass{}
+		return
+	}
+	for _, name := range l.pass.begun {
+		rep, ok := v.Ended[name]
+		if !ok {
+			continue
+		}
+		if l.pass.ended == nil {
+			l.pass.ended = map[string]spend{}
+		}
+		l.pass.ended[name] = spend{used: rep.Used, tokens: rep.Tokens, calls: int64(rep.Calls)}
+	}
+	l.pass.begun = append(l.pass.begun, v.Stage.Name)
+}
 
 // Stop is the decision before one call of a stage. The order is the order of
 // the sentences a run is told in: the checkpoint stage first (its allowance is
@@ -87,10 +121,11 @@ func (l *stageLimit) Stop(v gateway.StageLimitView) gateway.StageStop {
 	if !governedStage(v.Stage.Name) {
 		return gateway.StageStop{}
 	}
-	if dec := l.budgetStop(v); dec.Reason != "" {
+	spent := l.stageSpend(v)
+	if dec := l.budgetStop(v, spent); dec.Reason != "" {
 		return dec
 	}
-	if dec := ratioStop(l.g, v); dec.Reason != "" {
+	if dec := ratioStop(l.g, v, spent.calls); dec.Reason != "" {
 		return dec
 	}
 	return fanoutStop(l.maxAgents, v)
@@ -114,9 +149,8 @@ func governedStage(stage string) bool {
 // tokens are decided on what the stage's calls reported: a call's token count
 // is only known once it has been served, so the ceiling bounds what was spent
 // and not what is about to be.
-func (l *stageLimit) budgetStop(v gateway.StageLimitView) gateway.StageStop {
+func (l *stageLimit) budgetStop(v gateway.StageLimitView, spent spend) gateway.StageStop {
 	money, tokens := stageBudget(l.g, l.cap, v.Stage.Name)
-	spent := stageSpend(v)
 	if money > 0 && satAdd(spent.used, v.Needed) > money {
 		return gateway.StageStop{
 			Reason: string(runstore.HaltStageBudget),
@@ -133,35 +167,36 @@ func (l *stageLimit) budgetStop(v gateway.StageLimitView) gateway.StageStop {
 }
 
 // stageSpend is what the stage's budget has already bought: the running
-// stage's own figures, and — for a review stage — those of the review stages
-// that ended before it in the same pass.
+// stage's own figures, and — for a review stage — those of the other review
+// stages of the same pass.
 //
 // The two review stages are one budget (T7.1: "first-line and senior review
 // together"), so the second-line review of a pass starts from what the
-// first-line one spent rather than from a fresh 0.5 of the cap. The gateway
-// keeps one report per stage name, so what a review stage reads is the latest
-// ending of each other review name: a pass's own, in the order the runner runs
-// them, and never a report of a stage name that ran twice.
-func stageSpend(v gateway.StageLimitView) spend {
-	s := spend{used: v.Report.Used, tokens: v.Report.Tokens}
+// first-line one spent rather than from a fresh 0.5 of the cap. That is the
+// pass's spend and not the run's: a review round that follows a fix starts from
+// nothing, because the rounds before it were paid for by their own passes —
+// reading them here would stop the ordinary review, fix, review loop on its
+// second round, with a sentence naming the round being stopped as the spender.
+func (l *stageLimit) stageSpend(v gateway.StageLimitView) spend {
+	s := spend{used: v.Report.Used, tokens: v.Report.Tokens, calls: int64(v.Report.Calls)}
 	if !config.IsReviewStage(v.Stage.Name) {
 		return s
 	}
-	for name, rep := range v.Ended {
-		if name == v.Stage.Name || !config.IsReviewStage(name) {
-			continue
-		}
-		s.used = satAdd(s.used, rep.Used)
-		s.tokens = satAddTokens(s.tokens, rep.Tokens)
+	for _, prev := range l.pass.ended {
+		s.used = satAdd(s.used, prev.used)
+		s.tokens = satAddTokens(s.tokens, prev.tokens)
+		s.calls = satAddTokens(s.calls, prev.calls)
 	}
 	return s
 }
 
 // spend is a stage's budget figure: what it settled in money (the tier-A
-// notional part is not money and is not counted, C1.16) and in tokens.
+// notional part is not money and is not counted, C1.16), what its calls
+// reported in tokens, and the calls themselves, which is what the ratio counts.
 type spend struct {
 	used   pricing.Micros
 	tokens int64
+	calls  int64
 }
 
 // stageBudget is the money and the token ceiling of the named stage's budget:
@@ -205,16 +240,17 @@ func fraction(m pricing.Micros, f float64) pricing.Micros {
 //
 // The floor is what makes a short implementation reviewable: a one-line change
 // costs a dozen calls to implement, and 5 × 12 would allow review fewer calls
-// than reading the change takes (reconciliation F6). The calls are the
-// implementation's own as the gateway counted them — calls sent upstream — and
-// the bound is applied to the call about to be made, so review settles at the
-// bound rather than a call past it.
+// than reading the change takes (reconciliation F6). The calls are the pass's
+// review calls — the running stage's own and the review stages before it in the
+// pass — against the implementation's own as the gateway counted them, and the
+// bound is applied to the call about to be made, so review settles at the bound
+// rather than a call past it.
 //
 // A run whose review stage is not preceded by an implement stage has no ratio
 // at all: the rule is review's calls against the implementation's, and a
 // review-only run (`mode: review`, which reviews a branch somebody else wrote)
 // has no implementation of its own to be measured against (F6).
-func ratioStop(g policy.Governance, v gateway.StageLimitView) gateway.StageStop {
+func ratioStop(g policy.Governance, v gateway.StageLimitView, calls int64) gateway.StageStop {
 	if !config.IsReviewStage(v.Stage.Name) {
 		return gateway.StageStop{}
 	}
@@ -225,13 +261,6 @@ func ratioStop(g policy.Governance, v gateway.StageLimitView) gateway.StageStop 
 	bound := max(g.ReviewFloorCalls, satMul(g.ReviewRatio, int64(impl.Calls)))
 	if bound <= 0 {
 		return gateway.StageStop{}
-	}
-	calls := int64(v.Report.Calls)
-	for name, rep := range v.Ended {
-		if name == v.Stage.Name || !config.IsReviewStage(name) {
-			continue
-		}
-		calls += int64(rep.Calls)
 	}
 	if calls >= bound {
 		return gateway.StageStop{

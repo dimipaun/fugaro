@@ -446,3 +446,90 @@ func TestReviewFirstCountsAsReview(t *testing.T) {
 		r.refused("", mainSession, "review calls (1) reached max(1, 1 x 1 implement calls)")
 	})
 }
+
+// TestReviewBudgetIsPerPass: a review budget is spent over one pass and not
+// over the run. The gateway hands every stage the reports of the stages it has
+// ended, by name, and a name a previous round reviewed under is still one of
+// them — so a second pass that read those figures would start from what the
+// first pass ended at, and the ordinary review, fix, review loop would have its
+// second round refused on its first calls by a sentence naming the round being
+// stopped as the spender.
+//
+// Each subtest runs a first pass to its bound, the fix round, and then asserts
+// that the review round after it reviews on its own budget.
+func TestReviewBudgetIsPerPass(t *testing.T) {
+	t.Run("the money", func(t *testing.T) {
+		g := policy.Governance{StageBudget: policy.StageBudget{Review: 0.1}}
+		r := newLimitRun(t, g, tier.Small, 20*dollar)
+		r.stage("implement")
+		r.ok("", mainSession)
+		r.end()
+		r.stage("review_first")
+		r.ok("", mainSession)
+		r.end()
+		// The first pass's senior review spends the whole review budget of
+		// $2.00 in one call, which is the figure a later pass must not read.
+		r.answer(pricing.Usage{Input: 1_000_000, Output: 1})
+		r.stage("review")
+		r.ok("", mainSession)
+		r.end()
+		// The fix round ends the pass, and the review after it has spent
+		// nothing of its own: its call is admitted.
+		r.answer(pricing.Usage{Input: 1, Output: 1})
+		r.stage("fix")
+		r.ok("", mainSession)
+		r.end()
+		r.stage("review_first")
+		r.ok("", mainSession)
+		r.noHalt()
+	})
+	t.Run("the tokens", func(t *testing.T) {
+		g := policy.Governance{StageTokens: policy.StageTokens{Review: 100}}
+		r := newLimitRun(t, g, tier.Small, 50*dollar)
+		r.stage("implement")
+		r.ok("", mainSession)
+		r.end()
+		r.stage("review_first")
+		r.ok("", mainSession)
+		r.end()
+		// One call of the first pass's senior review reports 101 tokens, so
+		// the pass ends past its ceiling.
+		r.answer(pricing.Usage{Input: 100, Output: 1})
+		r.stage("review")
+		r.ok("", mainSession)
+		r.end()
+		r.answer(pricing.Usage{Input: 1, Output: 1})
+		r.stage("fix")
+		r.ok("", mainSession)
+		r.end()
+		// The second pass's first-line review has reported 2 tokens.
+		r.stage("review_first")
+		r.ok("", mainSession)
+		r.ok("", mainSession)
+		r.noHalt()
+	})
+	t.Run("the ratio", func(t *testing.T) {
+		g := policy.Governance{ReviewRatio: 2, ReviewFloorCalls: 3}
+		r := newLimitRun(t, g, tier.Small, 50*dollar)
+		r.stage("implement")
+		r.ok("", mainSession)
+		r.end()
+		// The first pass's senior review spends its three calls, which is
+		// max(3, 2 x 1 implement call).
+		r.stage("review")
+		for i := 0; i < 3; i++ {
+			r.ok("", mainSession)
+		}
+		r.end()
+		r.stage("fix")
+		r.ok("", mainSession)
+		r.end()
+		// The review round after the fix has three of its own, and the
+		// implementation it is measured against is still the run's one call.
+		r.stage("review_first")
+		for i := 0; i < 3; i++ {
+			r.ok("", mainSession)
+		}
+		r.noHalt()
+	})
+}
