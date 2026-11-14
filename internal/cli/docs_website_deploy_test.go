@@ -13,6 +13,13 @@ package cli
 // does for images.yml, so neither a copy that dropped a guarantee nor a later
 // edit to the copied file can pass unnoticed.
 //
+// website-promote.yml has been copied in and is checked where it runs;
+// website-preview.yml is staged again for one change, the F40 gate the portal
+// plan's P9.2 adds to its vetting step (a firebase.json naming a Hosting `site`
+// or `target` is refused as well as one naming another public dir or a
+// lifecycle hook). A staged copy wins while it exists, which is what lets a
+// later task stage a further change to an already-copied workflow.
+//
 // What is asserted here is the fields GitHub executes, parsed out of the YAML,
 // not strings in comments: the trigger block, the pinned actions, the
 // permission scopes, the environment and actor guard on the promote job, the
@@ -80,26 +87,20 @@ var siteRepositoryOwnerRE = regexp.MustCompile(`(?m)^repository:\s*https://githu
 
 // websiteWorkflowBytes reads a staged workflow while its staged copy exists
 // and the real file once it is gone, the fallback images/base_workflow_test.go
-// documents for images.yml. exactlyOneCopy fails when both exist or neither
-// does: the copy-in is one commit that adds the real file and removes the
-// staged one, so a state where both are present (the tests would pin the
-// frozen staged copy forever) or neither is (the file vanished with nothing
-// saying so) is itself a defect.
+// documents for images.yml: the staged copy is the newer text while it is
+// there, and the file GitHub runs is the one to check once the owner has
+// copied it in and removed the staged copy. The real file is held to
+// mustContain, the change the copy-in carries, so a staged file that vanished
+// without its change reaching .github/workflows/ is reported rather than
+// silently passing on the old text.
 func websiteWorkflowBytes(t *testing.T, staged, real, mustContain string) []byte {
 	t.Helper()
-	_, stagedErr := os.Stat(staged)
-	realData, realErr := os.ReadFile(real)
-	switch {
-	case stagedErr == nil && realErr == nil:
-		t.Fatalf("both %s and %s exist: the copy-in removes the staged copy, and while both exist these checks read the staged one and would never notice an edit to the file GitHub runs", staged, real)
-	case stagedErr == nil:
-		data, err := os.ReadFile(staged)
-		if err != nil {
-			t.Fatal(err)
-		}
+	if data, err := os.ReadFile(staged); err == nil {
 		return data
-	case realErr != nil:
-		t.Fatalf("neither %s (staged) nor %s (copied in) can be read: %v", staged, real, realErr)
+	}
+	realData, err := os.ReadFile(real)
+	if err != nil {
+		t.Fatalf("neither %s (staged) nor %s (copied in) can be read: %v", staged, real, err)
 	}
 	if !strings.Contains(string(realData), mustContain) {
 		t.Fatalf("%s does not contain %q and the staged copy %s is gone: was it copied in and the staged copy removed without the change?", real, mustContain, staged)
@@ -433,7 +434,11 @@ func websiteWorkflowProblems(name string, want websiteWorkflowExpectations, data
 		// dependency and runs no site script, and takes the build as an
 		// artifact whose firebase.json it vets first (a lifecycle hook is a
 		// shell command from the ref, run with the credential; a widened
-		// public dir would publish the credential file the auth step writes).
+		// public dir would publish the credential file the auth step writes;
+		// and a `site` or a `target` is a destination the command line does
+		// not name, so a ref carrying the portal's own firebase.json -- which
+		// names a Hosting site -- would publish the SPA's bytes onto the
+		// website's domain, F40).
 		for jobID, job := range doc.Jobs {
 			if !authenticates(job) {
 				continue
@@ -454,8 +459,9 @@ func websiteWorkflowProblems(name string, want websiteWorkflowExpectations, data
 			}) {
 				add("build-isolation", "%s job %q deploys without taking the build as an artifact from a credential-free job", name, jobID)
 			}
-			if !jobRuns("predeploy") || !jobRuns("postdeploy") || !jobRuns(`"website/dist"`) {
-				add("build-isolation", "%s job %q does not refuse a firebase.json with lifecycle hooks or a public dir other than website/dist", name, jobID)
+			if !jobRuns("predeploy") || !jobRuns("postdeploy") || !jobRuns(`"website/dist"`) ||
+				!jobRuns(".hosting.site == null") || !jobRuns(".hosting.target == null") {
+				add("build-isolation", "%s job %q does not refuse a firebase.json with lifecycle hooks, a public dir other than website/dist, or a hosting site or target", name, jobID)
 			}
 		}
 	case websitePromoteKind:
@@ -540,23 +546,21 @@ func TestWebsiteDeployWorkflowsHoldTheirShape(t *testing.T) {
 	}
 }
 
-// TestWebsiteDeployWorkflowsAreStagedNotCopiedIn: while a staged copy exists,
-// the real file must not, and the staged README must name the two files and the
-// owner's setup doc. (websiteWorkflowBytes itself fails if both exist.)
+// TestWebsiteDeployWorkflowsAreStagedNotCopiedIn: the README that carries the
+// copy procedure names both files and the owner's one-time setup doc, and the
+// staged copy the README calls pending is really there. website-promote.yml has
+// been copied in already, so what is staged is the README's own list rather
+// than a fixed pair: the F40 gate stages the preview workflow again without the
+// promote one.
 func TestWebsiteDeployWorkflowsAreStagedNotCopiedIn(t *testing.T) {
-	if _, err := os.Stat(websitePreviewStaged); err != nil {
-		t.Skip("the staged copies are gone: they were copied into .github/workflows/")
-	}
 	readme := readDoc(t, "docs/pending-workflows/README.md")
 	for _, want := range []string{"website-preview.yml", "website-promote.yml", websitePreviewDocNamed} {
 		if !strings.Contains(readme, want) {
 			t.Errorf("docs/pending-workflows/README.md does not name %q", want)
 		}
 	}
-	for _, want := range []string{websitePreviewStaged, websitePromoteStaged} {
-		if _, err := os.Stat(want); err != nil {
-			t.Errorf("%s is missing: the README says it is staged", want)
-		}
+	if _, err := os.Stat(websitePreviewStaged); err != nil {
+		t.Skip("the staged preview copy is gone: it was copied into .github/workflows/")
 	}
 	if _, err := os.Stat(websitePreviewDoc); err != nil {
 		t.Errorf("%s is missing: the README points the owner at it for the one-time setup", websitePreviewDoc)
@@ -565,19 +569,25 @@ func TestWebsiteDeployWorkflowsAreStagedNotCopiedIn(t *testing.T) {
 
 // TestWebsiteDeployWorkflowsAreNotInGithubWorkflows pins the Global Constraint
 // mechanically: no run of this task created or edited anything under
-// .github/workflows/, so neither file may appear there while it is staged.
+// .github/workflows/, so while a change is staged the file GitHub runs must not
+// already carry it. A run that wrote the staged change into the real file
+// anyway, and a hand copy-in that left the staged copy behind, both leave the
+// two files identical, which is what is refused here.
 func TestWebsiteDeployWorkflowsAreNotInGithubWorkflows(t *testing.T) {
 	dir := filepath.Dir(websitePreviewStaged)
 	if filepath.Base(dir) != "pending-workflows" {
 		t.Fatalf("this test's staged path %s no longer points at docs/pending-workflows", websitePreviewStaged)
 	}
-	for _, real := range []string{websitePreviewReal, websitePromoteReal} {
-		if _, err := os.Stat(real); err != nil {
-			continue // the expected state: the owner has not copied it in yet
-		}
-		if _, err := os.Stat(strings.Replace(real, ".github/workflows", "docs/pending-workflows", 1)); err == nil {
-			t.Errorf("%s and its staged copy both exist: the copy-in removes the staged file in the same commit", real)
-		}
+	staged, err := os.ReadFile(websitePreviewStaged)
+	if err != nil {
+		t.Skip("the staged copy is gone: it was copied into .github/workflows/")
+	}
+	real, err := os.ReadFile(websitePreviewReal)
+	if err != nil {
+		return // the expected state: the owner has not copied it in yet
+	}
+	if string(real) == string(staged) {
+		t.Errorf("%s already holds the staged copy of %s verbatim: a run may not write under .github/workflows/, and the owner's copy-in removes the staged copy in the same commit", websitePreviewReal, websitePreviewStaged)
 	}
 }
 
@@ -619,6 +629,8 @@ func TestWebsiteWorkflowChecksFindEveryMutation(t *testing.T) {
 		{"the deploy job checking the ref out", preview, previewData, "      - name: take the build from the credential-free job\n", "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n      - name: take the build from the credential-free job\n", "build-isolation"},
 		{"the deploy job running the site's npm tree", preview, previewData, "        run: npm install --global --no-audit --no-fund firebase-tools@15.19.0", "        run: npm ci && npm install --global --no-audit --no-fund firebase-tools@15.19.0", "build-isolation"},
 		{"the deploy job's firebase.json vetting dropped", preview, previewData, `.hosting.public == "website/dist"`, `.hosting.public != ""`, "build-isolation"},
+		{"the deploy job's site refusal dropped", preview, previewData, ".hosting.site == null", ".hosting.site != null", "build-isolation"},
+		{"the deploy job's target refusal dropped", preview, previewData, ".hosting.target == null", ".hosting.target != null", "build-isolation"},
 		{"a job granted contents: write", promote, promoteData, "    permissions:\n      # Nothing is checked out, so there is no contents scope to either grant\n      # or withhold; the federation exchange is the job's only need.\n      id-token: write", "    permissions:\n      contents: write\n      id-token: write", "permissions"},
 		{"the federation exchange replaced by a key", promote, promoteData, "          service_account: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}", "          credentials_json: ${{ secrets.GCP_SA_KEY }}", "no-credential"},
 		{"a token flag on a command line", preview, previewData, "            --expires 7d \\", "            --token \"$FIREBASE_TOKEN\" --expires 7d \\", "no-credential"},
