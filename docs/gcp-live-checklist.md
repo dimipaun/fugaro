@@ -873,6 +873,9 @@ probe account carries predefined grants only).
 | 520 | A text-only coder reads a screenshot, on the vision model ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 520** and task **V8**; **V1**'s `agent.models.vision`, **V2**'s `model_prices.*.image_tokens`, **V7**'s rewrite of the coder role, and **D2016** — which is why the state this measures is the coder priced **without** an image rate and not the plan's "with"): the sandbox repository's coder is priced without an image rate and `agent.models.vision` names a model that can read one, and one run whose task names a console `__screenshots__` PNG (the issue's own case, run `20261107-104613-b2af`) passes `implement` — and `fix`, where the recipe runs one — reaches its own `result.json`, and there every coder-role stage timing names the **vision** model's ID while `cost.model_by` carries that same model, so the split the issue is about is read from the record and not from the configuration; `fugaro diagnose <run> --json` prints the same split through the command an owner reads a run with | See "Check 520" below; `bash scripts/live-checks/check520.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check520_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | ONE sandbox run and what its task costs — the model spend of its coder-role stages, on the sandbox's own budget — plus the pull request that run opens: **billable, and `--yes` is required** before anything is launched. Every other call is a read (doctor, `models ls`, the run record, `diagnose`), and `CHECK520_MAX_MODEL_USD` turns the run's own figure into a criterion when you set it. The run's pull request and branch are left open for you to close. **OWNER-RUN, NOT RUN.** |
 | 521 | The early refusal, and the sentence an owner acts on ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 521** and task **V8**; **V5**'s bootstrap refusal — "the coder can't read an image the task names" — and **D2005**, **D2006** and **D2001**): a repository whose coder is priced without an image rate and with **no** `agent.models.vision`, and a task whose text names a `.png`: the run is refused at **bootstrap**, before its first stage, so no stage's work is paid for and thrown away — the failure the refusal exists to remove; its record's `failure_class` is `config_invalid`, its `reason` names the slot to set and the price member that gives that slot's model an image rate, its stage list is **empty** and its cost is **zero** | See "Check 521" below; `bash scripts/live-checks/check521.sh --sandbox <a sandbox repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check521_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | **NOTHING billable and no model call**: the run is refused at bootstrap, before its first stage, so no stage's work is paid for and the budget is not touched — which is why this check needs no `--yes`. It does start one Cloud Run job execution, and **nothing it launches outlives it**: a run that has not ended within `CHECK521_RUN_TIMEOUT_SECONDS` is cancelled with `fugaro cancel --now`, from the step that gives up on it and from the script's own exit trap. **OWNER-RUN, NOT RUN.** |
 | 292 | A catalog entry whose source names a build `context:` is built with the repository's files in it ([`docs/catalog-build-context/`](catalog-build-context/implementation-plan.md) §6, its **Check 292** and task **CB5**; that folder's **F22**, **F29**, **F30**, **F32** and **F33**, and **D1402**, **D1403**, **D1408** and **D1409**; the amendment it folds into is [`docs/project-image-catalog/context-design.md`](project-image-catalog/context-design.md), its §A5, §A6, §C3, §C4, §C5 and the fold-in at §11): one entry built from a repository's Dockerfile in a **subdirectory**, whose `COPY` reaches a file of the repository — the build the catalog could not run before this work — read back four ways: the built image **contains the copied file**, the record names **one** commit (`source_commit` and `context_commit` the same, and the image's `org.opencontainers.image.revision` that commit), the staged context **fires** the nightly decision with the `catalog-context` reason and the rebuild it submits is pinned to the staged commit, and after that rebuild the same entry decides **without** that reason. **What the plan's own step 4 cannot be run as written is the point of the section below:** the trigger's subject is the digest the operator's own copy **staged**, not the branch, so a pushed commit fires nothing by itself — the check is written against the code and says so | See "Check 292" below; **you** run it, on the **sandbox installation and the sandbox repository only, never `belong`**, from the sandbox repository's checkout, and **no agent runs any step of it** (there is **no script**: the check is the steps below) | One Cloud Build that runs (`fugaro image build <entry>`), one submitted-and-cancelled before its steps run (the staging that leaves the record behind), and the one rebuild the project's catalog check job submits when the entry fires: **all billable, and the rebuild is the point of the step**. Nothing is granted, no run is launched and no model is called, so there is no run spend. Two commits are pushed to the sandbox repository's branch and reverted (a third when step 5 loses its race with the build it cancels), and the entry, its staged objects, its record, its check state and its image are the check's own — the entry and its objects are removed in the Restore, the image is left in the shared registry (`fugaro image rm` never deletes one). **OWNER-RUN, NOT RUN.** |
+| 420 | Pool failover on a real installation ([`docs/model-crafts/`](model-crafts/implementation-plan.md), its **Check 420** and task **MC10**; **MC5**'s ordered failover in a run and **MC6**'s credentials service behind it, with **D1622**/**D1626** for the `subscription_spread` switch a mixed pool needs on and **D1629**/**MC8** for the record's additive `craft_credentials`): the coder craft's effective access names a **failover** pool (`fugaro craft ls --json`) whose members the credentials service serves (`fugaro project policy show --json`, `fugaro creds ls --json`), one member is exhausted at a deliberately tiny cap at the provider, and one sandbox run then shows the pool moving off it — the run ends `succeeded`, its `switches` log carries the move onto another member (the credentials service's own record, C1.16 and D140, and not a reading the script made up), and the credential the record names is a member of that pool | See "Check 420" below; `bash scripts/live-checks/check420.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check420_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused by name, and so is a coding agent's session); **no agent runs any step of it**. **The pool is yours to declare**: no command of this release stores a key under a credential's own name (`fugaro accounts add --type` takes claude-oauth alone), so the two API-key credentials Check 420's sentence names are entries in your own project configuration with their keys stored under their own names, and the pool that lists them is yours too — the check adds no credential and writes no config, and its FAIL rows say which piece is missing | ONE sandbox run and what its task costs, on the sandbox's own budget, plus the pull request it opens: **billable, and `--yes` is required** before anything is launched. Every other call is a read (`doctor`, `craft ls`, `accounts pool ls`, `project policy show`, `creds ls` and the run's own record), and `CHECK420_MAX_MODEL_USD` turns the run's own figure into a criterion when you set it. The pull request and its branch are left open for you to close. **OWNER-RUN, NOT RUN.** |
+| 421 | Round-robin spread over N runs ([`docs/model-crafts/`](model-crafts/implementation-plan.md), its **Check 421** and task **MC10**; **MC7**, whose red step is this check's reading — "three selections must not all pick member 1" — with **D154**'s per-run stickiness and **D1625**'s counter): the coder craft's effective access names a **round-robin** pool of two or more members the credentials service serves, and **no craft the service serves is pinned** to a credential, an OpenRouter key or the built-in `vertex`, because one call hands the service one candidate list and the rotation is only taken up when every craft contributing to it goes out on a pool asking for it; N sandbox runs (two by default) are launched and followed to their ends, and over them **at least two different members served one run each**, read from each run's own record (`craft_credentials` where the build writes it, else `oauth_account`, `stage_accounts` or the switch log). One member serving every run is the pool NOT rotating, which is the state MC7 exists to remove | See "Check 421" below; `bash scripts/live-checks/check421.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check421_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused by name, and so is a coding agent's session); **no agent runs any step of it**. The pool is yours to declare, as Check 420's row says: this check reads the installation's own crafts, published node and bundle, writes no config and no credential, and launches only the runs | N sandbox runs (two by default; `--runs N`, 2 or more) and what their tasks cost, on the sandbox's own budget, plus the pull requests they open: **billable, and `--yes` is required** before anything is launched. Every other call is a read, and `CHECK421_MAX_MODEL_USD` turns the TOTAL figure into a criterion when you set it. The runs' pull requests and branches are left open for you to close. **OWNER-RUN, NOT RUN.** |
+| 422 | `fugaro update` on an installation at the previous version converges with no manual step ([`docs/model-crafts/`](model-crafts/implementation-plan.md), its **Check 422** and task **MC10**; **MC4**'s migration and the reconciliation's **F17** and **D1621**): on a machine whose local config still carries the accounts design's keys (`claude_accounts`, `default_claude_account`, `stages`), one converge converts them in place — a typed `claude-oauth` credential per named account, and a craft access per craft — and finishes with **nothing left for the person**: exit 0, no `left_for_you`, no failed stage. The older keys stay (the migration only ADDS; MC5 moves the readers), a second converge of the same installation leaves the migrated keys byte for byte as the first left them, the crafts the config states resolve through `fugaro craft ls`, and the published policy node's craft members did **not** move — no command of this release writes them, so a converge that rewrote the operator's published crafts is the silent loosening this row catches | See "Check 422" below; `bash scripts/live-checks/check422.sh` is the whole of it — nothing is required but the script's own path, because the installation is the one `fugaro doctor --json` answers and the config is that installation's own local config as the CLI's own default documents it — its sibling test `scripts/live-checks/check422_test.sh` drives it against fake tools only, and **you** run it, on a **sandbox installation**, **never `belong`** (a name or a config path naming that installation is refused, and so is a coding agent's session); **no agent runs any step of it** | **TWO converges of the sandbox installation** — the whole of what `fugaro update` does: the Terraform plan and apply, the rules deploy, the published policy, the job images behind their own confirmation and the local config — the second being the idempotence reading. Nothing here is billable on its own (no run is launched and no model call is made) and `--yes` is passed to each converge, so run it where an image rebuild, a deploy or a first policy publish an unrelated stage decides it wants is acceptable. Two reads of the published policy node with your own credentials are the only other call. On disk it is one scratch directory, removed at the end, and **the migration STAYS**: it is the installation's own state, `fugaro update --forget` is your own rollback and the check never runs it. **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -14109,3 +14112,255 @@ repositories and carries `pull_requests: write` alone.
 **What waits on it.** D4 (the advisory merge order) and the change-set half of the spec's promise
 that a set is ready or not ready as a whole: this run is the only reading of it, and a set that
 flips one pull request and leaves the other draft is a finding for this plan's owner.
+
+## Check 420: pool failover — one member exhausted, the pool moves off it, and the record names the member that served (sandbox project and sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **MC10** of
+[docs/model-crafts/implementation-plan.md](model-crafts/implementation-plan.md) — its "Checks 420, 421,
+422" — and **run by you**: what it measures is one real sandbox run on a real installation, and neither a
+run's model calls nor the credentials service's own record of a switch is something an offline run can
+answer. The check is `scripts/live-checks/check420.sh` (its sibling test
+`scripts/live-checks/check420_test.sh` drives it against fake `gcloud`, `fugaro` and `curl` only, with a
+fake credentials service behind the `curl`), the owner types
+`bash scripts/live-checks/check420.sh --sandbox <a sandbox repository checkout> --yes`, and **no agent runs
+any step of it**. Nothing here goes near the dev installation: a project or region naming `belong` is
+refused by name before a single call, and so is a coding agent's session, which is what **never `belong`**
+means on this row.
+
+**What it settles.** **MC5** — the ordered failover of an access that names a pool, and the switch a run's
+own ledger records when one member runs out — and **MC6** with the credentials service behind it, which is
+the thing that actually notices an exhausted member. **D1622** and **D1626** are read with it: a mixed
+pool's Claude OAuth subscription member is stepped over unless the project's `subscription_spread` switch
+is on, so the check reads the switch rather than assuming it. **D1629** and **MC8** are the record's half:
+the additive `craft_credentials` names the member that served. All of it is read from outside — the
+installation's own crafts, the published node, the service's bundle and a real run's record.
+
+- **The premise, from the installation's own words rather than assumed.** `fugaro craft ls --json` names
+  the coder craft's effective access; it must be a pool, and `fugaro project policy show --json` — the node
+  the credentials service itself reads — must say that pool is a **failover** pool of two or more members.
+  Every member must be in the service's bundle (`fugaro creds ls --json`, names only and never a value),
+  and a pool that lists a Claude OAuth subscription must have `subscription_spread` on. A build without
+  the four verbs stops on the `features` row instead of measuring a pool that cannot exist.
+- **The pool is yours to declare.** No command of this release stores a key under a credential's own name —
+  `fugaro accounts add --type` takes `claude-oauth` alone — so the two API-key credentials Check 420's own
+  sentence names are entries in your project configuration with their keys stored under their own names,
+  and the pool that lists them is yours too. The check adds no credential, writes no config and publishes
+  no node; its FAIL rows name exactly which piece is missing.
+- **The exhaustion is at the provider, and it is deliberate.** One member is at a deliberately tiny cap
+  there, so the provider refuses it and the credentials service's failover steps to the next member of the
+  pool. That refusal is what the check is buying: a pool whose members are all healthy never fails over,
+  and a run on it says nothing about the feature.
+- **The run is the reading.** One sandbox run with a small task, launched with `fugaro run --json` from the
+  checkout, followed with `fugaro runs ls --json` until it is terminal (a record read while a run is still
+  working is whatever was there before), and then its `result.json` from the runs bucket at the key that
+  listing's own row gives — read against the run id this check launched, because a record read by listing
+  alone could be another run's. The run must end **succeeded**.
+- **The switch, and the member the record names.** The record's `switches` log must carry the move from the
+  pool's first member onto another: that is the failover, and it is the credentials service's own record
+  (**C1.16**, **D140**) rather than a reading this script made up. The credential the record names —
+  `stage_accounts`/`oauth_account`, and the additive `craft_credentials` of **D1629** — must be a member of
+  that pool. **This build's record carries no `craft_credentials`**, so that one row is a finding until
+  MC8's record half lands; it is reported rather than hidden, because Check 420's own sentence is that the
+  field names the member that served.
+
+**What a run costs.** ONE sandbox run and what its task costs, on the sandbox's own budget, plus the pull
+request it opens: **billable, and `--yes` is required** before anything is launched — a dry run prints the
+same sentence and asks for nothing. Every other call is a read (`doctor`, `craft ls`, `accounts pool ls`,
+`project policy show`, `creds ls` and the run's own record), and `CHECK420_MAX_MODEL_USD` turns the run's
+own figure into a criterion when you set it. On disk it is one scratch directory, removed at the end; the
+pull request and its branch are **not** closed by the script and the Restore row names them.
+
+**The commands.**
+
+```sh
+bash scripts/live-checks/check420.sh --dry-run
+bash scripts/live-checks/check420.sh --sandbox <a sandbox repository checkout> --yes
+```
+
+Progress goes to stderr and one `CHECK 420 RESULT` block goes to stdout at the end: paste that block here
+and nothing else. **Exit `0`** is every criterion that was measured holding; **`1`** is a measured criterion
+that did not hold, or a guard that stopped the check — a build without the vocabulary, a craft that names no
+pool, a pool that is not a failover pool, a member the bundle does not hold, `subscription_spread` off on a
+mixed pool, a run that did not end succeeded, no switch in the log, a credential the record names that is
+not a member, the missing `craft_credentials`; **`2`** is the check not being able to measure (a tool
+missing, the checkout not being one, a `--json` document unreadable, the run never ending). A key the run
+never reached reads `FAIL — not reached`. The block's keys, in order, are `fugaro-version`, `features`,
+`xtrace`, `agent-session`, `belong`, `bound`, `sandbox`, `crafts`, `pool`, `bundle`, `run-launched`,
+`terminal`, `result-json`, `run-succeeded`, `budget`, `failover`, `served`, `craft-credentials`, `restore`
+and `scratch-removed`. The knobs are `CHECK420_DRY_RUN`, `CHECK420_KEEP_SCRATCH`, `CHECK420_SANDBOX`,
+`CHECK420_YES`, `CHECK420_REPO`, `CHECK420_TASK`, `CHECK420_RECIPE`, `CHECK420_REGION` (us-east5: the guard
+that refuses a project or region naming `belong` reads it), `CHECK420_RUN_TIMEOUT_SECONDS` (3600),
+`CHECK420_POLL_SECONDS` (15), `CHECK420_CLI_TIMEOUT_SECONDS` (180),
+`CHECK420_LAUNCH_TIMEOUT_SECONDS` (600), `CHECK420_DOCTOR_TIMEOUT_SECONDS` (300) and
+`CHECK420_MAX_MODEL_USD` (unset: the run's figure is read and not graded). No credential value reaches the
+script's stdout, stderr, block or scratch directory.
+
+**What waits on it.** MC8's record half — the `craft_credentials` this build's record does not yet carry —
+and MC9's surfaces, which read the same record; a finding here that is about the record rather than the
+build is what MC8 and MC9 answer. Nothing gates on it: it is the outside reading of the failover the
+folder's own tests can only fake.
+
+## Check 421: round-robin spread over N runs — at least two members served, or the pool is not rotating (sandbox project and sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **MC10** of
+[docs/model-crafts/implementation-plan.md](model-crafts/implementation-plan.md) and **run by you**: the
+rotation is a property of N real runs on a real installation, and no offline test can make the credentials
+service take it up. The check is `scripts/live-checks/check421.sh` (its sibling test
+`scripts/live-checks/check421_test.sh` drives it against fake `gcloud`, `fugaro` and `curl` only), the
+owner types `bash scripts/live-checks/check421.sh --sandbox <a sandbox repository checkout> --yes`, and
+**no agent runs any step of it**. A project or region naming `belong` is refused by name, and so is a
+coding agent's session — **never `belong`**, as on the row.
+
+**What it settles.** That **MC7**'s rotation is really taken up by the service, on an installation rather
+than in a unit test. MC7's own red step is this check's reading — "three selections must not all pick
+member 1" — and what the check reports is the live form of it: over N runs, **at least two different
+members of the pool served one run each**. **D154** is the per-run stickiness the reading depends on (one
+member serves a whole run, and the rotation is between runs), and **D1625** is the counter behind it.
+
+- **The premise, including the part that is easy to get wrong.** The coder craft's effective access must
+  name a pool whose strategy is `round-robin`, of two or more members, every one of them in the service's
+  bundle (`fugaro creds ls --json`). And **no craft the service serves may be pinned** — to a credential,
+  to an OpenRouter key or to the built-in `vertex` — because one call hands the service one candidate list,
+  so the rotation is only taken up when every craft that contributes to that list goes out on a pool asking
+  for it. A craft on `vertex` or on an OpenRouter key contributes nothing to the list, and the check names
+  it as such rather than reading a spread that could not have happened.
+- **The pool is yours to declare.** This check writes no config and no credential: it reads the
+  installation's own crafts, published node and bundle, and launches the N runs. The FAIL rows say exactly
+  which piece is missing.
+- **The runs are the reading.** N sandbox runs (two by default, `--runs` 2 or more) with a small task, each
+  launched with `fugaro run --json`, each followed to its terminal state with `fugaro runs ls --json`, and
+  each one's `result.json` read from the runs bucket against its own run id.
+- **The credential each run names.** `craft_credentials` where the build writes it (D1629, MC8 — this build
+  does not), else `oauth_account`, `stage_accounts` or the switch log: the per-run member is read however
+  the build records it.
+- **THE reading: the spread.** Over the N runs, at least two different members of the pool served one run
+  each. One member serving every run is the pool **not** rotating — the state MC7 exists to remove — and the
+  `spread` row is the FAIL that says so. Two runs are the fewest that can show a spread at all, which is
+  why the check refuses `--runs 1`.
+
+**What a run costs.** N sandbox runs (two by default) and what their tasks cost, on the sandbox's own
+budget, plus the pull requests they open: **billable, and `--yes` is required** before anything is
+launched. Every other call is a read, and `CHECK421_MAX_MODEL_USD` turns the **total** figure into a
+criterion when you set it. On disk it is one scratch directory, removed at the end; the runs' pull requests
+and branches are **not** closed by the script and the Restore row names them.
+
+**The commands.**
+
+```sh
+bash scripts/live-checks/check421.sh --dry-run
+bash scripts/live-checks/check421.sh --sandbox <a sandbox repository checkout> --yes
+bash scripts/live-checks/check421.sh --sandbox <a sandbox repository checkout> --runs 3 --yes
+```
+
+Progress goes to stderr and one `CHECK 421 RESULT` block goes to stdout at the end: paste that block here
+and nothing else. **Exit `0`** is every criterion that was measured holding; **`1`** is a measured criterion
+that did not hold, or a guard that stopped the check — a build without the vocabulary, a craft that names no
+pool, a pool that is not round-robin or holds fewer than two members, a member the bundle does not hold, a
+craft the service serves that is pinned, a run that did not end succeeded, a credential the record names
+that is not a member, one member serving every run; **`2`** is the check not being able to measure (a tool
+missing, the checkout not being one, a `--json` document unreadable, a run never ending). A key the run
+never reached reads `FAIL — not reached`. The block's keys, in order, are `fugaro-version`, `features`,
+`xtrace`, `agent-session`, `belong`, `bound`, `sandbox`, `crafts`, `pool`, `bundle`, `runs-launched`,
+`runs-ended`, `records`, `succeeded`, `budget`, `spread`, `restore` and `scratch-removed`. The knobs are
+`CHECK421_DRY_RUN`, `CHECK421_KEEP_SCRATCH`, `CHECK421_SANDBOX`, `CHECK421_YES`, `CHECK421_REPO`,
+`CHECK421_TASK`, `CHECK421_RECIPE`, `CHECK421_RUNS` (2; two or more, and a smaller count is refused before
+anything is launched), `CHECK421_REGION` (us-east5), `CHECK421_RUN_TIMEOUT_SECONDS` (3600),
+`CHECK421_POLL_SECONDS` (15), `CHECK421_CLI_TIMEOUT_SECONDS` (180),
+`CHECK421_LAUNCH_TIMEOUT_SECONDS` (600), `CHECK421_DOCTOR_TIMEOUT_SECONDS` (300) and
+`CHECK421_MAX_MODEL_USD` (unset: the total is read and not graded). No credential value reaches the
+script's stdout, stderr, block or scratch directory.
+
+**What waits on it.** Nothing gates on it: it is the outside reading of MC7's rotation, and the one to take
+again whenever the candidate list, the pool shape or the counter behind the rotation changes — the three
+things a unit test can pin and a real service's answer cannot be inferred from.
+
+## Check 422: `fugaro update` on an installation at the previous version converges with no manual step (a sandbox installation; never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **MC10** of
+[docs/model-crafts/implementation-plan.md](model-crafts/implementation-plan.md) — its "Checks 420, 421,
+422" — and **run by you**: no test in this tree runs Terraform, the rules deploy and a policy publish
+against a project, and that is exactly what the check's first converge is. The check is
+`scripts/live-checks/check422.sh` (its sibling test `scripts/live-checks/check422_test.sh` drives it
+against a fake `fugaro` whose converge **really** migrates the case's own local config the way the release
+does, a fake `gcloud` that prints an access token and a fake `curl` that serves the published policy node
+before and after), the owner types `bash scripts/live-checks/check422.sh` and nothing else, and **no agent
+runs any step of it**. A name or a config path naming `belong` is refused, whether you typed it or `fugaro
+doctor` answers it, and so is a coding agent's session — **never `belong`**, as on the row.
+
+**What it settles.** **MC4**'s migration and the reconciliation's **F17** and **D1621**, on one installation
+whose local config is still at the previous version: `claude_accounts`, `default_claude_account` and
+`stages` are converted **in place** into the craft vocabulary, and the converge finishes with nothing left
+for the person. The hermetic halves of the same claim are two tests in this tree —
+`TestUpdateConvergesPreviousInstallation` (`internal/cli/init_craft_migrate_test.go`), which drives the
+migration on a config in a temp directory, and `TestUpdateIsIdempotent` (same file), which pins the second
+converge — and the check is what they cannot be: the same claim against a real project.
+
+- **The migration, read from the config rather than from the CLI's account of itself.** The local config's
+  shape is read before the converge (`claude_accounts`, `default_claude_account`, `stages` — the accounts
+  design's keys — and the typed `credentials` and `crafts` the migration writes) and again after it. What
+  is asserted is what **MC4** does: one typed `claude-oauth` credential per named account, and one craft
+  access per craft whose stages all run on one of those accounts.
+- **The older keys stay.** The migration only **ADDS** — the launch, the runner and `fugaro models` still
+  read the account keys until MC5 moves them — so a converge that emptied them would be the finding, not
+  the success: an installation whose runs resolve no model and no credential at all.
+- **Nothing left for the person.** Exit 0, no `left_for_you`, no failed stage. That is the row the task's
+  own sentence is about ("converges with no manual step"), and it is read from the converge's own `--json`
+  document, which the check refuses to proceed without.
+- **The unconvertible key is reported, not refused.** MC4 reports a key it cannot convert as a `note:` line
+  on **every** write, so the check reads the note rather than assuming silence, and an account left
+  unconverted **with** its note is a different row from one left unconverted **without** it.
+- **The idempotence is a second converge of the same installation.** The migrated keys must be left byte for
+  byte as the first converge left them; a second converge that re-appends or rewrites them is the FAIL, and
+  the check compares the two documents rather than re-reading the file for a substring.
+- **The crafts resolve.** `fugaro craft ls --json` must resolve the crafts the migrated config states.
+- **The published policy node did NOT move.** No command of this release writes the crafts members of the
+  published policy — `fugaro project policy publish` keeps whatever the node holds — so the check reads the
+  node `config/policy/shared` **outside the CLI**, with your own credentials (`gcloud auth print-access-token`
+  and the Realtime Database REST endpoint), before and after the converge. A release that started rewriting
+  the operator's published crafts from a local file would be the silent loosening this row exists to catch,
+  and MC5 is where the node's writer is decided.
+
+**What it costs.** TWO converges of the sandbox installation — the whole of what `fugaro update` does: the
+Terraform plan and apply, the rules deploy, the published policy, the job images behind their own
+confirmation and the local config — the second being the idempotence reading. Nothing here is billable on
+its own (no run is launched and no model call is made) and `--yes` is passed to each converge, so run it
+where an image rebuild, a deploy or a first policy publish that an unrelated stage decides it wants is
+acceptable. The plugin stage writes your own Claude Code plugin at user scope, outside every checkout. Two
+reads of the published policy node with your own credentials are the only other call. On disk it is one
+scratch directory, removed at the end — and **the migration STAYS**: it is the installation's own state,
+`fugaro update --forget` is your own rollback and the check never runs it.
+
+**The commands.**
+
+```sh
+bash scripts/live-checks/check422.sh --dry-run
+bash scripts/live-checks/check422.sh
+bash scripts/live-checks/check422.sh --installation <a sandbox project> --config <its local config>
+```
+
+Nothing is required but the script's own path: the installation is the one `fugaro doctor --json` answers
+(run it from a checkout of the sandbox project, or with `$FUGARO_PROJECT`/`$FUGARO_CONFIG` naming it), and
+the config is that installation's own local config as the CLI's own `--config` default documents it
+(`$XDG_CONFIG_HOME/fugaro/projects/<name>.yaml`, else under `~/.config`). `--installation` and `--config`
+are both compared against doctor and against the config's own `name` and `gcp_project`, and a disagreement
+is a STOP before anything runs. Run it on an installation you have **not** yet converged with this CLI;
+on one whose config already holds the typed credentials and the crafts, the check says so and asserts the
+end state and the idempotence alone. Progress goes to stderr and the plan of a dry run, then one
+`CHECK 422 RESULT` block, go to stdout: paste that block here and nothing else. **Exit `0`** is every
+criterion that was measured holding; **`1`** is a measured criterion that did not hold, or a guard that
+stopped the check — a converge that failed, one that left a step for the person, a key migrated with no
+note, a second converge that moved the keys, crafts that do not resolve, a policy node that moved; **`2`**
+is the check not being able to measure (a tool missing, the installation or the config unreadable or
+disagreeing, the converge's `--json` document unreadable, the node unreadable). A key the run never
+reached reads `FAIL — not reached`. The block's keys, in order, are `fugaro-version`, `features`, `xtrace`,
+`agent-session`, `belong`, `bound`, `installation`, `config-before`, `update`, `no-step-left`, `crafts`,
+`policy`, `config-after`, `second-update`, `restore` and `scratch-removed`. The knobs are
+`CHECK422_DRY_RUN`, `CHECK422_KEEP_SCRATCH`, `CHECK422_INSTALLATION`, `CHECK422_CONFIG` (the config path;
+`$FUGARO_CONFIG` is honoured when neither is set) and `CHECK422_TIMEOUT` (3600: how long **one** converge
+may take).
+
+**What waits on it.** MC5 — the task that moves the readers off the account keys and onto the crafts — which
+is why the migration only adds today; when MC5 lands, the older keys' row here is the one to re-read. And
+the release's own `### For operators`: MC4's PR carries the entry that says `fugaro update` converges
+accounts, the auto list and model keys to credentials, pools and crafts in place, which is the step this
+check takes twice.
