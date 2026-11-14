@@ -72,7 +72,7 @@ func (s *Server) stoppedStageLocked() (string, bool) {
 //
 // A stage limit decides first (T7.2): it is the tighter bound, its stage
 // budget being a fraction of the cap this reserve enforces, and the stop it
-// leaves is a run halt with the stage's name on it.
+// leaves is the stopped stage's own, never a run-wide halt (stageLimitLocked).
 func (s *Server) reserve(ctx context.Context, st *stageState, w pricing.Micros) (refusal string, status int) {
 	s.mu.Lock()
 	msg, status := s.stageLimitLocked(st, w)
