@@ -250,11 +250,21 @@ func TestDocsForgeChecksWritten(t *testing.T) {
 	}
 
 	// Appended, not inserted: the five come after every section that was already
-	// in the register and in their own ascending order. A block written in the
-	// middle of older ones is how a reader loses track of which numbers are live.
+	// in the register **when they were written** and in their own ascending
+	// order. A block written in the middle of older ones is how a reader loses
+	// track of which numbers are live. "Already written" is read as the sections
+	// above the block's own first heading, because the register's rule is that a
+	// later work appends its own sections at the end -- the mobile-auth
+	// allocation of 2026-11-14 writes Checks 620 to 627 below these five, and a
+	// reading of "the sections already written" as everything the file holds
+	// would fail here for a reason that is not about this block.
+	first := strings.Index(register, "\n## Check "+forgeCheckNumbers[0]+":")
+	if first < 0 {
+		t.Fatalf("%s has no `## Check %s:` section: the row above it points at a section that has to be there", liveChecksDoc, forgeCheckNumbers[0])
+	}
 	lastOld := -1
 	for _, m := range forgeCheckHeadingRE.FindAllStringSubmatchIndex(register, -1) {
-		if !slices.Contains(forgeCheckNumbers, register[m[2]:m[3]]) {
+		if m[0] < first && !slices.Contains(forgeCheckNumbers, register[m[2]:m[3]]) {
 			lastOld = m[0]
 		}
 	}
