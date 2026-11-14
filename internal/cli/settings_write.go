@@ -125,15 +125,18 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	// The one thing that lifts the refusal is the managed gate's answer
 	// (D1012): a caller that read the gate and was admitted for THIS edit passes
 	// it in e.Managed, and the step proceeds as it would for a person. Every
-	// other value — the zero value every other caller passes, a step no plan
-	// gate may judge, an edit whose document a rule refused — keeps the refusal
-	// exactly as it was, and a caller that passes nothing changes nothing. The
-	// marker is the fence itself for a widening (D1552, D1555): the widening is
-	// refused by the verdict's own rule (settingsOwnerOnlyRule) rather than by a
-	// confirmation class, so a fence read off a class the same release deletes
-	// would leave the ceiling unfenced.
+	// other value — the zero value every other caller passes, a verdict that
+	// refused, an inventory that fell back — keeps the refusal exactly as it
+	// was, and a caller that passes nothing changes nothing. A widening is
+	// never lifted (D1552, D1555): no document a plan gate judges admits one
+	// (D1026), and the class that used to say so is gone with the class
+	// system, so the edit's own widening marker says it here — a fence read off
+	// a class the same release deletes would have left the ceiling unfenced.
+	// Everything the gate does not stand in for keeps the refusal beside it:
+	// --ask puts this step's own question back (GateStandsIn answers false
+	// under it), and a marker is asked for one, which is the refusal here.
 	conds := settingsEditConditions(cmd, e)
-	if marker := conds.Agent; marker != "" && (!e.insideRepo() || e.Typed) && !e.Managed.Removes() {
+	if marker := conds.Agent; marker != "" && (!e.insideRepo() || e.Typed) && (e.Typed || !initflow.GateStandsIn(conds, e.Managed)) {
 		fmt.Fprintf(out, "%s\n%s", e.Path, diff)
 		return userErr("refusing to write %s in a coding agent's session (%s is set): %s; run this yourself at your own terminal: %s; nothing was written",
 			e.Path, marker, e.What, e.Command)

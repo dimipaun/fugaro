@@ -97,13 +97,19 @@ func (e *initEngine) authState(o originInfo) (repoAuth, error) {
 // both front doors — and in both of their modes, the converge and the
 // standalone --repo engine, which is what W3.4's row recorded as "Typed,
 // covered after W5.1" and what W5.1's commit inverts — and the run's own
-// confirmation is actually given. r.o.yes is the way to give it, and no flag
-// sets it any more (T11): a run that still has one is a command's own internal
-// converge, opened on an answer the person already gave, and --plan-only turns
-// it off. A run that cannot give it leaves the repository for the user, and at
-// a terminal the gate's own note is the step's confirmation, shown where it
-// always was (confirmRepo, which reads nothing: T7, docs/no-prompt-policy). A
-// coding agent's session, --json, a pipe and --non-interactive give nothing.
+// confirmation is actually given. An answer a run carries is the way to give it,
+// and no flag sets one any more (T11): a run that still has one is a command's
+// own internal converge, opened on an answer the person already gave, and
+// --plan-only turns it off. A run that cannot give it leaves the repository for
+// the user, and at a terminal the gate's own note is the step's confirmation,
+// shown where it always was (confirmRepo, which reads nothing: T7,
+// docs/no-prompt-policy). A coding agent's session, --json, a pipe and a
+// session nobody is at give nothing.
+//
+// The answer is read through stepConfirmation rather than written out again, so
+// that this gate covers exactly the steps the run's own answer reaches and
+// nothing else: the one rule of what that answer reaches lives in one place,
+// and a session the marker keeps out of a write is kept out of this one too.
 //
 // It reads the run's conditions and never r.review: the review's own answer
 // (init_review.go) covers the installation's ordinary steps, and the repository
@@ -126,7 +132,11 @@ func (e *initEngine) onboardCovered(o originInfo) bool {
 		// gate's own question rather than a step of the converge's.
 		return false
 	}
-	return r.o.yes && !r.o.planOnly
+	// The run's own answer and nothing beside it (stepConfirmation's stepByYes,
+	// which ownAnswer covers for this step in both doors, D12): --plan-only
+	// turns it off, and a coding agent's session never reaches it, whatever the
+	// run carries.
+	return r.stepConfirmation(true) == stepByYes
 }
 
 // checkoutNote is printed once, immediately before the gate's note, when

@@ -2393,12 +2393,16 @@ const (
 // stepConfirmation says which of the three this run is at, for a step the run's
 // own answer reaches (ownAnswer) or does not.
 //
-// The run's own answer is read first and decides the whole answer, and ownAnswer
-// is what keeps it from widening a step: creating the
-// project, linking the billing account and the Firestore location are the
-// person's alone (D12, 2026-10-20), and only a billable first image build and
-// replacing a registry tag are covered by the answer the command was opened
-// with.
+// A coding agent's session is settled first: the marker is the whole of what
+// keeps an agent out of a write, and no answer a run carries reaches past it —
+// the class rule this function replaces refused a marked session in every one
+// of its branches, whatever it had been given.
+//
+// What is left is the run's own answer, which decides the whole answer, and
+// ownAnswer is what keeps it from widening a step: creating the project,
+// linking the billing account and the Firestore location are the person's alone
+// (D12, 2026-10-20), and only a billable first image build and replacing a
+// registry tag are covered by the answer the command was opened with.
 //
 // The run's own answer is r.o.yes, which no flag sets any more (T11): what
 // still carries one is an internal converge a command opens on an answer the
@@ -2406,6 +2410,8 @@ const (
 // not given it, so such a run applies nothing whatever it is passed.
 func (r *initRun) stepConfirmation(ownAnswer bool) stepConfirmation {
 	switch {
+	case agentMarker(os.Getenv, r.stdinTerminal()) != "":
+		return stepLeave
 	case r.o.yes && !r.o.planOnly:
 		if ownAnswer {
 			return stepByYes
