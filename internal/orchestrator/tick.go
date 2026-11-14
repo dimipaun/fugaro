@@ -69,6 +69,13 @@ type Tick struct {
 	// cycle triages nothing at all, which is the direction a daemon that was
 	// given no host, no run storage and no log fails in.
 	Triage TriageSeams
+	// Ladder is what this cycle walks the escalation ladder through (E10a):
+	// the readings the decision's facts are gathered from, the launcher a rung
+	// starts its run through, the comment a move posts and the log every move
+	// leaves a line in. Left unset the cycle escalates nothing at all, which is
+	// the direction a daemon that was given no run store, no provider and no
+	// log fails in.
+	Ladder LadderSeams
 	// Now is the database server's clock (rtdb.ServerNow). Every stamp a cycle
 	// writes comes from it, and a cycle that cannot read it refuses rather
 	// than stamping anything with this machine's clock (D1230).
@@ -89,9 +96,19 @@ type Report struct {
 	// under the threshold — is not counted, and neither is one whose line the
 	// log already carries.
 	Triaged int
+	// Escalated is how many moves the cycle's ladder made: a rung a run was
+	// started for, and a rung recorded for the hook the rungs past rung 2
+	// attach through. The floor, rung 1, is not a move — the item's own loop
+	// is what resumes it — and neither is an item the ladder asked a person
+	// about.
+	Escalated int
 	// NotifyErr is a notification a sink would not take. It never fails the
 	// cycle: what a cycle must not lose is the write behind the notification.
 	NotifyErr error
+	// LadderErr is a ladder comment a host would not take, which never fails
+	// the cycle for the same reason: the comment is a channel and the ledger
+	// is the record.
+	LadderErr error
 }
 
 // Step runs one cycle.
@@ -167,7 +184,11 @@ func (c *cycle) run(ctx context.Context) error {
 	if err := c.fold(ctx, reports); err != nil {
 		return err
 	}
-	if err := c.carry(ctx, viewOf(reports)); err != nil {
+	view := viewOf(reports)
+	if err := c.carry(ctx, view); err != nil {
+		return err
+	}
+	if err := c.escalate(ctx); err != nil {
 		return err
 	}
 	if err := c.triage(ctx); err != nil {
@@ -224,7 +245,7 @@ func (c *cycle) carry(ctx context.Context, view RunView) error {
 // go by (D1228) — and anything else did nothing at all.
 func (c *cycle) outcome() CycleOutcome {
 	switch {
-	case c.rep.Folded > 0 || c.rep.Carried > 0 || c.rep.Triaged > 0:
+	case c.rep.Folded > 0 || c.rep.Carried > 0 || c.rep.Triaged > 0 || c.rep.Escalated > 0:
 		return CycleProgress
 	case hasOpenIntent(c.state):
 		return CycleInFlight
