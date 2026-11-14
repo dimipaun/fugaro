@@ -72,9 +72,11 @@
 # Usage:      bash scripts/live-checks/check310.sh [--installation <name>] [--dry-run]
 #             --installation is the installation whose `fugaro update` this
 #             check drives; without it, the installation in force is read from
-#             `fugaro doctor --json`. It is never `belong` (the register's own
-#             installation), and the terminal readings do not depend on which
-#             installation it is — run it against any other one you have.
+#             `fugaro doctor --json`. It is never one of the installations the
+#             register refuses by name — `belong` (the owner's own,
+#             `edge-devel-dimi`) and `fugaro-dev` — and the terminal readings do
+#             not depend on which installation it is: run it against any other
+#             one you have.
 #             `--dry-run` prints the commands a real run would make and runs
 #             nothing at all: no `fugaro` call, no seed, no write.
 # Needs:      bash, mktemp, sed, python3 (the terminal, the captures and the
@@ -84,7 +86,8 @@
 # Where:      your own machine, in your own terminal, and NOT from inside a
 #             Fugaro checkout whose `fugaro.yaml` names another project (the
 #             CLI refuses that pairing itself; the row would say so). The
-#             installation is refused by name when it is `belong`.
+#             installation is refused by name when it is `belong`, `belong-*`,
+#             `fugaro-dev`, `fugaro-belong` or `edge-devel-dimi`.
 # Costs:      four `fugaro update` runs and one `fugaro setup --plan-only`, all
 #             of them re-converges of an installation that exists: on a
 #             converged one each applies nothing and costs nothing billable.
@@ -356,30 +359,32 @@ guard_agent() {
   fact agent PASS "this is not a coding agent's session (no agentenv marker is set), so the four converges below are the ones a person runs and not a session's own"
 }
 
-# guard_belong: `belong` is the installation the register refuses by name, and
-# this check runs `fugaro update` against whatever is selected. The terminal
-# readings do not depend on which installation it is, so any other one will do —
-# and pointing this at the owner's own installation by accident is what the
-# refusal is for. GCP may be empty: the name alone is checked before the first
-# `fugaro` call, and the GCP project is added once doctor has read it.
+# guard_belong: the installations this check must never drive — the register's
+# own guard list, the one check111.sh refuses by name: `belong` is the owner's
+# own (edge-devel-dimi) and `fugaro-dev` is the sandbox its rows run on. This
+# check re-converges whatever is selected four times and reads the log directory
+# it writes. The terminal readings do not depend on which installation it is, so
+# any other one will do. GCP may be empty: the name alone is checked before the
+# first `fugaro update` — and before any call at all where you name the
+# installation yourself — and the GCP project is added once doctor has read it.
 guard_belong() {
   if grep -q '^belong|' "$FACTS_FILE" 2>/dev/null; then return 0; fi
   case "$INSTALLATION" in
-  belong | belong-* | Belong | BELONG)
-    fact belong FAIL "the installation is $INSTALLATION, which the register refuses by name: Check 310 re-converges it four times and reads the log directory it writes, and it is never pointed at belong. Name another installation (--installation <name>): the terminal readings do not depend on which one it is"
-    stop "Check 310 never runs against 'belong'. Name another installation: --installation <name>"
+  belong | belong-* | Belong | BELONG | fugaro-dev | fugaro-belong | edge-devel-dimi)
+    fact belong FAIL "the installation is $INSTALLATION, which the register refuses by name (belong on edge-devel-dimi, fugaro-dev): Check 310 re-converges it four times and reads the log directory it writes, and it is never pointed at one of them. Name another installation (--installation <name>): the terminal readings do not depend on which one it is"
+    stop "Check 310 never runs against 'belong', 'fugaro-dev' or 'edge-devel-dimi'. Name another installation: --installation <name>"
     ;;
   esac
   case "$(printf '%s' "$GCP" | tr '[:upper:]' '[:lower:]')" in
-  *belong*)
-    fact belong FAIL "the GCP project of $INSTALLATION is $GCP, which contains the name 'belong': Check 310 is never pointed at the owner's own installation. Name another one (--installation <name>)"
-    stop "the GCP project '$GCP' matches the installation 'belong', which this check must never touch"
+  *belong* | *fugaro-dev* | *edge-devel-dimi*)
+    fact belong FAIL "the GCP project of $INSTALLATION is $GCP, which names an installation this check never touches (belong on edge-devel-dimi, fugaro-dev): Check 310 is never pointed at the owner's own installation. Name another one (--installation <name>)"
+    stop "the GCP project '$GCP' names an installation this check must never touch"
     ;;
   esac
   if [ -n "$INSTALLATION" ]; then
-    fact belong PASS "the installation ($INSTALLATION${GCP:+, GCP project $GCP}) is not the owner's own installation (nothing typed or read contains 'belong')"
+    fact belong PASS "the installation ($INSTALLATION${GCP:+, GCP project $GCP}) is not one of the installations the register refuses by name — belong, fugaro-dev, edge-devel-dimi — and its GCP project names none of them"
   else
-    fact belong INFO "not read: no installation is named yet (a real run reads it from fugaro doctor --json and refuses it here when it is 'belong')"
+    fact belong INFO "not read: no installation is named yet (a real run reads it from fugaro doctor --json, after the version and doctor reads the name itself needs, and refuses it here when it is belong, fugaro-dev or edge-devel-dimi)"
   fi
 }
 
@@ -1869,7 +1874,7 @@ main() {
 
   step_environment
   guard_belong
-  fact installation PASS "$INSTALLATION${GCP:+ (GCP $GCP)}${REGION:+, $REGION}: the installation this run drives, and never belong"
+  fact installation PASS "$INSTALLATION${GCP:+ (GCP $GCP)}${REGION:+, $REGION}: the installation this run drives, and never belong, fugaro-dev or edge-devel-dimi"
   fact logdir PASS "the CLI's logs are kept in $LOGDIR (XDG_STATE_HOME where it is set, else ~/.local/state, then fugaro/logs — the one directory rule the CLI has, F5)"
 
   # The log directory before and after each command, so the log a run filed is

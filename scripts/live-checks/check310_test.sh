@@ -760,6 +760,25 @@ case_belong() {
   expect_contains "$(errout)" "never runs against 'belong'" "the refusal on the terminal"
 }
 
+# The rest of the register's own guard list: `edge-devel-dimi` is the owner's
+# own installation and `fugaro-dev` is the sandbox its rows run on, so a check
+# that re-converges its installation four times is never pointed at either — and
+# a refusal that named only `belong` would let both through.
+case_other_refused_names() {
+  local name
+  for name in edge-devel-dimi fugaro-dev fugaro-belong belong-prod; do
+    setup_case "other_refused_${name}" happy
+    CASE_ARGS=(--installation "$name")
+    run310
+    local out
+    out=$(block)
+    expect_status "$status" 2 "an installation named $name"
+    expect_fact "$out" belong FAIL "an installation named $name"
+    [ -z "$(calls)" ] || fail "the check ran fugaro against '$name': $(calls)"
+    expect_contains "$(errout)" "never runs against 'belong'" "the refusal on the terminal"
+  done
+}
+
 case_agent() {
   setup_case agent happy
   CASE_ENV=(CLAUDECODE=1)
@@ -828,6 +847,7 @@ tests=(
   restore_eat_owner
   owner_logs_removed_early
   belong
+  other_refused_names
   agent
   dry_run
   help
