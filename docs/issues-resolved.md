@@ -126,10 +126,14 @@ update is otherwise unchanged. An operator reads it with their own login:
 gcloud storage cat gs://<runs bucket>/fugaro/installed.json
 ```
 
-An absent record, or one this build cannot read, means **no window**: the
-update still prints what this pass itself found, and the daily report omits its
-Resolved list rather than guessing. An installation that has never updated with
-a build that writes the object is in exactly that state. A value that is wrong
+An absent record, or one this build cannot read, means **no window**: the update
+prints the sweep — every issue the store already holds as `resolved` at or below
+this build, under the `Also fixed since the last pass:` block — so the first
+update after this feature lists the project's whole back catalogue of fixed
+issues rather than only what its own pass found; the daily report, which has no
+release to compare against, omits its Resolved list rather than guessing. An
+installation that has never updated with a build that writes the object is in
+exactly that state. A value that is wrong
 and too high has no automatic recovery — an operator deletes the object
 (`gcloud storage rm gs://<runs bucket>/fugaro/installed.json`) and the next
 update writes a fresh one.

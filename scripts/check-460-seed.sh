@@ -15,8 +15,14 @@
 # is no command that puts a record linked to somebody else's GitHub issue into
 # the store, and this script writes those three records itself, in the store's
 # own format: `issues/records/<NNNN>` with the record, `issues/fingerprints/
-# <sha256>` naming it, and the `issues/counter` the three numbers came from, so
-# no later upload can take one of them.
+# <sha256>` naming it, and the `issues/counter` the three numbers came from. It
+# takes those numbers the way the store itself does (`takeNumber`,
+# internal/issues/shared.go): the counter is written back before the first
+# record, create-only when the store had none and generation-matched when it had
+# one, and every record is copied with `--no-clobber`. A launcher filing an
+# issue in the same minute therefore takes a number after these three rather
+# than one of them, and a store that moves under this run stops it before
+# anything of anybody's is overwritten.
 #
 # Usage:      bash scripts/check-460-seed.sh --bucket gs://<runs bucket> \
 #                 --milestone <issue N: closed as completed, with a milestone> \
@@ -60,10 +66,10 @@ Usage:
       --not-planned <issue N: closed as not planned>
 
 Writes three records under `issues/` on that bucket, in the store's own format,
-and the counter that accounts for their numbers. It writes nothing anywhere
-else, refuses to overwrite a number the store already holds, and spends nothing:
-no model call, no run, no GitHub request. Read this file's header for what Check
-460 then measures.
+and the counter that accounts for their numbers. It takes the numbers before it
+writes a record and never overwrites one, writes nothing anywhere else, and
+spends nothing: no model call, no run, no GitHub request. Read this file's
+header for what Check 460 then measures.
 USAGE
 }
 
@@ -107,35 +113,70 @@ done
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 
-# The last number the store handed out, 0 when it has handed out none: the
-# three seed issues take the numbers after it, so an upload that follows takes
-# its own and never one of these.
+# The last number the store handed out, 0 when it has handed out none, and the
+# generation its counter object was read at. The three seed issues take the
+# numbers after it, and the counter goes back with all three accounted for
+# before the first record is written, so an upload that follows takes its own
+# number and never one of these.
 counter_json=$(gcloud storage cat "$BUCKET/issues/counter" 2>/dev/null || printf '')
 last=0
+counter_exists=no
+counter_gen=""
 if [ -n "$counter_json" ]; then
+	counter_exists=yes
 	last=$(printf '%s' "$counter_json" | python3 -c 'import json,sys; print(int(json.load(sys.stdin)["number"]))' 2>/dev/null) ||
 		die "$BUCKET/issues/counter is not a counter this store wrote ('$counter_json'): fix or remove it, then run this again"
+	counter_gen=$(gcloud storage ls --json "$BUCKET/issues/counter" 2>/dev/null |
+		python3 -c 'import json, sys
+data = json.load(sys.stdin)
+def find(node):
+    if isinstance(node, dict):
+        gen = node.get("generation")
+        if isinstance(gen, (str, int)) and str(gen) not in ("", "0"):
+            return str(gen)
+        for value in node.values():
+            got = find(value)
+            if got:
+                return got
+    elif isinstance(node, list):
+        for value in node:
+            got = find(value)
+            if got:
+                return got
+    return ""
+print(find(data))' 2>/dev/null) || counter_gen=""
+	[ -n "$counter_gen" ] ||
+		die "$BUCKET/issues/counter exists and its generation could not be read, so the counter cannot be written back under the condition that keeps another client's number: run 'gcloud storage ls --json $BUCKET/issues/counter' yourself and check the answer, then run this again"
+fi
+
+# The numbers are taken here, before any record: the counter write is the one
+# atomic step the store has, and doing it first is what keeps a launcher's
+# number and a seeded one from being the same number. Anything that moves the
+# counter in the window stops the run with nothing written.
+next=$((last + 3))
+first=$((last + 1))
+second=$((last + 2))
+third=$next
+printf '{"format":1,"number":%d}\n' "$next" >"$scratch/counter"
+if [ "$counter_exists" = no ]; then
+	gcloud storage cp --no-clobber "$scratch/counter" "$BUCKET/issues/counter" >/dev/null ||
+		die "$BUCKET/issues/counter appeared while this ran: another client took a number in that window, so nothing was written — run this again"
+else
+	gcloud storage cp --if-generation-match="$counter_gen" "$scratch/counter" "$BUCKET/issues/counter" >/dev/null ||
+		die "$BUCKET/issues/counter changed while this ran (generation $counter_gen is gone): another client took a number in that window, so nothing was written — run this again"
 fi
 
 stamp=$(date -u +%Y%m%d%H%M%S)
 project="dimipaun/fugaro"
 
-# seed <number the GitHub issue> <summary> writes one record and its two
-# companions, and leaves the project number it took in seed_number. It is not
-# run in a subshell: the number it takes is the number the next one starts
-# after.
-seed_number=0
+# seed <number> <GitHub issue number> <summary> writes one record and its two
+# companions. The number is given: the counter already accounts for all three,
+# so none of them is taken here.
 seed() {
-	github="$1"
-	summary="$2"
-	number=$((last + 1))
-	last="$number"
-	seed_number="$number"
+	number="$1"
+	github="$2"
+	summary="$3"
 	key=$(printf '%s/issues/records/%04d' "$BUCKET" "$number")
-
-	if gcloud storage ls "$key" >/dev/null 2>&1; then
-		die "$key exists: this store already holds issue $number, so the counter ($last) and the records disagree — fix that by hand rather than by overwriting an issue"
-	fi
 
 	fingerprint=$(printf 'check-460:%s' "$github" | sha256sum | cut -d' ' -f1)
 	run="check460-${stamp}-$$"
@@ -203,20 +244,19 @@ PY
 
 	# The record first, then the entry that names it: a reader that meets the
 	# record before its entry cannot see it, while an entry with no record is
-	# a number the store has handed out and nothing else.
-	gcloud storage cp "$scratch/envelope" "$key" >/dev/null
+	# a number the store has handed out and nothing else. The record is copied
+	# only if the number is free, so a record this run did not write is never
+	# replaced — the counter was taken first, and a number it accounts for that
+	# is nevertheless occupied is a store for a person to fix, not for a
+	# fixture to overwrite.
+	gcloud storage cp --no-clobber "$scratch/envelope" "$key" >/dev/null ||
+		die "$key already exists: the store holds issue $number although the counter said it did not — nothing was overwritten, and the counter already accounts for the three numbers this run took, so remove what it wrote under $BUCKET/issues/records/ and fix the store by hand, then run this again"
 	gcloud storage cp "$scratch/fingerprint" "$BUCKET/issues/fingerprints/$fingerprint" >/dev/null
 }
 
-seed "$WITH_MILESTONE" "Check 460: closed as completed, with a milestone"
-first="$seed_number"
-seed "$NO_MILESTONE" "Check 460: closed as completed, with no milestone"
-second="$seed_number"
-seed "$NOT_PLANNED" "Check 460: closed as not planned"
-third="$seed_number"
-
-printf '{"format":1,"number":%d}\n' "$last" >"$scratch/counter"
-gcloud storage cp "$scratch/counter" "$BUCKET/issues/counter" >/dev/null
+seed "$first" "$WITH_MILESTONE" "Check 460: closed as completed, with a milestone"
+seed "$second" "$NO_MILESTONE" "Check 460: closed as completed, with no milestone"
+seed "$third" "$NOT_PLANNED" "Check 460: closed as not planned"
 
 printf '\nseeded three submitted issues on %s:\n' "$BUCKET"
 printf '  #%04d -> https://github.com/%s/issues/%s  (closed as completed, with a milestone)\n' "$first" "$project" "$WITH_MILESTONE"

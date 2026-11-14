@@ -20,9 +20,10 @@ package cli
 //
 // Mutation (run and restored): delete the milestone rule's sentence from the
 // page -> this fails naming "at or below the release that was installed"; drop
-// the `fugaro/installed.json` sentence -> fails naming the object; take the
-// link out of docs/issues.md -> fails naming "issues-resolved.md". Nothing else
-// in the tree reads the page.
+// the `fugaro/installed.json` sentence -> fails naming the object; unwrap the
+// link in docs/issues.md to a bare `issues-resolved.md` -> fails, because the
+// assertion is on the link's own syntax and a page nobody links is a page
+// nobody reads. Nothing else in the tree reads the page.
 
 import (
 	"path/filepath"
@@ -53,14 +54,15 @@ func TestDocsIssuesResolvedNamesTheObjectAndTheRule(t *testing.T) {
 		{"Resolved since the last update:", "the daily report's own list of the same fixes (report.go's resolvedHead)"},
 		{"writes nothing", "F16d: a coding agent's session prints the findings and writes none of them"},
 		{"The findings are printed", "the half of F16d a reader gets wrong: a session is not one of the cases that print nothing, it prints the list and declines the write"},
+		{"the update prints the sweep", "F17: with no record there is no window, so the whole back catalogue already at or below this build is listed rather than only this pass's own findings"},
 		{"20 seconds", "the pass's own bound, which is why an update stays quick even with GitHub slow (F7, F8)"},
 	} {
 		if !strings.Contains(page, want.text) {
 			t.Errorf("%s does not say %q (%s): the page is where a reader finds that fact, and nothing else in the tree carries it", docsIssuesResolvedPage, want.text, want.why)
 		}
 	}
-	if link := flattenDoc(readDoc(t, docsIssuePage)); !strings.Contains(link, "issues-resolved.md") {
-		t.Errorf("%s never links %s: the issues page is where a reader of the family ends up, and the resolved page is the other half of an issue's life", docsIssuePage, docsIssuesResolvedPage)
+	if link := flattenDoc(readDoc(t, docsIssuePage)); !strings.Contains(link, "](issues-resolved.md)") {
+		t.Errorf("%s never links %s: the issues page is where a reader of the family ends up, and the resolved page is the other half of an issue's life — the path has to be a link, not a mention of one", docsIssuePage, docsIssuesResolvedPage)
 	}
 }
 
