@@ -16,13 +16,15 @@
 // lost safe to send again: a customer who types the number they believe they are
 // buying cannot buy it twice by reloading.
 //
-// **Only the newest seat request is believed.** A whole quantity being safe to
-// repeat does not make two of them safe to interleave: 5 and then 7, answered in
-// the other order, would leave the screen saying five while Paddle took seven,
-// and the field beside it -- a whole quantity again -- invites the click that
-// buys back down. So each request is numbered and a reply that is not the newest
-// is dropped, which is what the button being left enabled rests on: the second
-// click is a request of its own, not a race with the first.
+// **One seat request is out at a time, and only the newest is believed.** A
+// whole quantity being safe to repeat does not make two of them safe to
+// interleave: 5 and then 7, answered in the other order, would leave the screen
+// saying five while Paddle took seven, and the field beside it -- a whole
+// quantity again -- invites the click that buys back down. So the button is
+// disabled while a request is out, and each request is numbered besides: a reply
+// that is not the newest is dropped, which is the half that holds for a submit
+// that arrives anyway, since a disabled button does not refuse a dispatched
+// event.
 //
 // **Paddle's customer portal is asked for when it is wanted, and only followed
 // when it is https.** A portal session is minted per request and goes stale, so
@@ -102,8 +104,17 @@ const RENEWAL_DAY = new Intl.DateTimeFormat('en-GB', {
   timeZone: 'UTC',
 })
 
+/**
+ * Paddle's instant as the day a person reads. **A stamp the browser cannot read
+ * is drawn as it arrived**: `Intl` raises a RangeError on an invalid date, and
+ * the stamp is a string off the wire -- a malformed one would take the whole
+ * screen down, there being no boundary above this to catch it. The fact is kept
+ * either way (the `<time>` element carries the instant), so only the wording is
+ * lost, which is the half a reader can do without.
+ */
 function day(stamp: string): string {
-  return RENEWAL_DAY.format(new Date(stamp))
+  const instant = new Date(stamp)
+  return Number.isNaN(instant.getTime()) ? stamp : RENEWAL_DAY.format(instant)
 }
 
 /** The sentence a person is shown for a failure. */
@@ -162,6 +173,7 @@ function WorkspaceBilling({ workspaceId }: { workspaceId: string | undefined }) 
   const [seats, setSeats] = useState('')
   const [portal, setPortal] = useState<string | null>(null)
   const [waiting, setWaiting] = useState(workspaceId !== undefined)
+  const [buying, setBuying] = useState(false)
   const latest = useRef(0)
 
   useEffect(() => {
@@ -211,6 +223,7 @@ function WorkspaceBilling({ workspaceId }: { workspaceId: string | undefined }) 
     setNotice(null)
     const body: SubscriptionSeats = { seats: quantity }
     const mine = ++latest.current
+    setBuying(true)
     void api
       .request<Subscription>(ROUTES.seats(workspaceId), { method: 'POST', body })
       .then((answer: Subscription | undefined) => {
@@ -228,6 +241,11 @@ function WorkspaceBilling({ workspaceId }: { workspaceId: string | undefined }) 
       .catch((error: unknown) => {
         if (mine === latest.current) {
           setFailure(sentence(error))
+        }
+      })
+      .finally(() => {
+        if (mine === latest.current) {
+          setBuying(false)
         }
       })
   }
@@ -308,7 +326,9 @@ function WorkspaceBilling({ workspaceId }: { workspaceId: string | undefined }) 
                 setSeats(event.target.value)
               }}
             />
-            <button type="submit">Update seats</button>
+            <button type="submit" disabled={buying}>
+              Update seats
+            </button>
           </form>
 
           <div>

@@ -239,6 +239,24 @@ describe('the billing screen', () => {
     expect(fact('Status')).toBe('canceled')
   })
 
+  it('draws a renewal instant it cannot read as the stamp it was given', async () => {
+    // The stamp is a string off the wire and nothing validated it: a malformed
+    // one is a date the browser refuses to read, and `Intl` raises on it. There
+    // is no boundary above this screen, so a raise here is the whole page gone
+    // -- over a wording, when the fact itself survives: the element still
+    // carries what Paddle said.
+    stubFetch([() => answer(200, { ...SUBSCRIPTION, renews_at: 'the tenth of March' })])
+    show()
+
+    await screen.findByText('Renews on')
+    expect(fact('Renews on')).toBe('the tenth of March')
+    expect(screen.getByText('the tenth of March').getAttribute('datetime')).toBe(
+      'the tenth of March',
+    )
+    expect(fact('Seats')).toBe('3')
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
   it('buys the whole quantity a person asks for, and shows what came back', async () => {
     const calls = stubFetch([
       () => answer(200, SUBSCRIPTION),
@@ -263,18 +281,58 @@ describe('the billing screen', () => {
     )
   })
 
-  it('refuses a quantity the schema would refuse, without asking the API', async () => {
-    const calls = stubFetch([() => answer(200, SUBSCRIPTION)])
+  it.each(['0', '2.5'])(
+    'refuses a quantity the schema would refuse, without asking the API: %s',
+    async (typed) => {
+      const calls = stubFetch([() => answer(200, SUBSCRIPTION)])
+      show()
+
+      const field = (await screen.findByLabelText(SEATS)) as HTMLInputElement
+      fireEvent.change(field, { target: { value: typed } })
+      fireEvent.submit(field.closest('form')!)
+
+      // The wire's shape is what decides this, not the field's `step`: the
+      // schema's `seats` is an integer of one or more, so a half seat is a
+      // quantity Paddle would refuse, and the request is one this screen should
+      // not spend a round trip on.
+      expect((await screen.findByRole('alert')).textContent).toBe(
+        'Enter a whole number of seats, one or more.',
+      )
+      expect(calls).toHaveLength(1)
+    },
+  )
+
+  it('cannot be sent again while the request it made is still out', async () => {
+    let answerFive: ((response: Response) => void) | null = null
+    const calls = stubFetch([
+      () => answer(200, SUBSCRIPTION),
+      () => new Promise<Response>((resolve) => {
+        answerFive = resolve
+      }),
+    ])
     show()
 
     const field = (await screen.findByLabelText(SEATS)) as HTMLInputElement
-    fireEvent.change(field, { target: { value: '0' } })
+    const submit = screen.getByRole('button', { name: 'Update seats' })
+    fireEvent.change(field, { target: { value: '5' } })
     fireEvent.submit(field.closest('form')!)
 
-    expect((await screen.findByRole('alert')).textContent).toBe(
-      'Enter a whole number of seats, one or more.',
-    )
-    expect(calls).toHaveLength(1)
+    // A whole quantity being safe to repeat does not make two of them safe to
+    // interleave, and the field beside the button is a whole quantity again:
+    // while an answer is owed, the click that would send a second one is not
+    // offered.
+    await waitFor(() => {
+      expect((submit as HTMLButtonElement).disabled).toBe(true)
+    })
+    expect(calls).toHaveLength(2)
+
+    await act(async () => {
+      answerFive?.(answer(200, { ...SUBSCRIPTION, seats: 5 }))
+    })
+    await waitFor(() => {
+      expect((submit as HTMLButtonElement).disabled).toBe(false)
+    })
+    expect(fact('Seats')).toBe('5')
   })
 
   it('believes the newest seat request when the replies come back in the other order', async () => {
