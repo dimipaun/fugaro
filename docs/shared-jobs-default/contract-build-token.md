@@ -40,13 +40,14 @@ wider.
   bounds it, the same way a run's token is bounded (spec decision 4).
 - **Bitbucket: a proxy grant, no token.** The build holds no token at all (D2302, R6): the service pairs the
   build's identity to the entry's repositories **for this build** — the pairing is keyed on the identity *and* the
-  build the request names (rule 2) — and the build's git talks to the credentials service's proxy, as a job's does.
-  The grant is not a secret: what every call presents is the build identity's own ID token, which the generated
-  clone step fetches for itself and which reaches **that step alone** — never the entry's build. It carries an
-  expiry all the same, on the service's own instant: the pairing is what stands between the build's git and the
-  entry's repositories, so it is bounded by its build instead of left standing for the next one. Two builds of one
-  project at once are not isolated from each other, and this contract does not say they are
-  ([below](#what-this-contract-cannot-promise)).
+  build the request names (rule 2) — and the build's git talks to the credentials service's proxy, as a job's does,
+  on the proxy route the service already serves (rule 9). The grant is not a secret: what every call presents is
+  the build identity's own ID token, which the generated clone step fetches for itself and which this contract
+  hands to no other step — the entry's build is handed none, though it runs as the same account and can ask the
+  metadata server for one ([below](#what-this-contract-cannot-promise)). It carries an expiry all the same, on the
+  service's own instant: the pairing is what stands between the build's git and the entry's repositories, so it is
+  bounded by its build instead of left standing for the next one. Two builds of one project at once are not
+  isolated from each other, and this contract does not say they are ([below](#what-this-contract-cannot-promise)).
 
 ## The rules (F19)
 
@@ -64,14 +65,18 @@ wider.
    it (rules 8 and 9), never the build id. What the key cannot do, and what closing it would take, is
    [below](#what-this-contract-cannot-promise).
 3. **The clone runs in a step Fugaro generates entirely.** The generated step is a Dockerfile of the engine's own,
-   built from the pinned base digest with `GIT_CONFIG_NOSYSTEM=1`, and it alone holds the credential (B8). It is a
+   built from the pinned base digest with `GIT_CONFIG_NOSYSTEM=1`, and it alone is handed the credential (B8). It is a
    **separate build step**, not a stage of the entry's Dockerfile: BuildKit hands a build's secret to every `RUN`
    that asks for it by id, so a stage inside the entry's build is readable by the entry's own steps, however the
    clone is scoped (F19, review round 2). The checkout reaches the entry's build as a **named build context**.
-4. **The entry's build holds no secret and no identity.** No `--secret` argument, no secret mount, no service
-   account of its own: a catalog entry may not ask for either, and one that does is refused by name, with the line
-   it is written on (B9, D2311). The entry's `RUN` steps cannot read the credential and cannot alter the clone's
-   tools, because they never share a stage with them.
+4. **The entry's build is handed no secret and no identity of its own.** No `--secret` argument, no secret mount,
+   no service account of its own: a catalog entry may not ask for either, and one that does is refused by name,
+   with the line it is written on (B9, D2311). The entry's `RUN` steps cannot read the credential the clone was
+   given and cannot alter the clone's tools, because they never share a stage with them. **What this rule is not
+   is a statement that the entry's build has no identity**: the entry's Dockerfile is built by the same Cloud
+   Build execution as the clone (B2, B8), which runs as the project's build identity (B5), so an entry's `RUN` can
+   ask the metadata server for that account's token. That is the hole this rule does not close, and what closing
+   it would take is [below](#what-this-contract-cannot-promise).
 5. **The credential is written per host, and offered to that host alone.** A clone, fetch, push or LFS URL on any
    other host — a URL written in `.gitmodules` or `.lfsconfig` included — is refused **before any credential is
    offered**, and `protocol.ext` and `protocol.file` are set to never (B8). A repository that names another host
@@ -90,21 +95,48 @@ wider.
    repositories, the service refuses anything outside them by name, and every mint is audited (B1). **This is the
    contract's sharpest edge and the reason the rules above are the fence**: the identity is the project's, so the
    narrowing lives in the route and in the generated step, never in the identity's grants.
-9. **The route is the build's alone.** Every other caller class is refused on the build route, and the build
-   identity is refused on every other route of the service (B1). A request the service refuses is passed to the
-   caller as it is; a client that retried wider, or fell back to a credential of its own, would undo rule 8.
+9. **The build route is the build's alone, and the proxy route is the one other route it reaches.** Every other
+   caller class is refused on the build route (B1), and the build identity is refused on every other route of the
+   service **except the Bitbucket proxy route** — `/v1/bitbucket/proxy/` (`internal/credsvc/wire.go`), which is
+   where the grant's git traffic goes: a Bitbucket build's clone, fetch and LFS requests reach it presenting the
+   build identity's ID token, and the pairing decides which repositories it answers for, refusing one outside them
+   by name. That route is the Bitbucket answer seen from the data plane (above) and not a second way in. A request
+   the service refuses is passed to the caller as it is; a client that retried wider, or fell back to a credential
+   of its own, would undo rule 8.
 
 ## What this contract cannot promise
 
-**Two Bitbucket builds of one project at once are not isolated from each other.** The grant's URL and the ID
-token a call presents are the project's build identity's, so the proxy attributes a call to the identity and not
-to a build: whichever pairing is live for that identity is what a call is served against. The per-build key
-(rule 2) keeps two builds from colliding over one pairing and bounds each pairing's life; it does not separate
-them, and a contract over a shape cannot. The key is not what protects a project's repositories either: the
-identity can already ask for any of the project's entries by name, and the service answers from that entry's map
-(rule 8), so a build that wanted another entry's repositories would name that entry rather than take a pairing
-over. What keeps the credential out of an entry's own hands is the fence F19 builds around the clone (rules 3 to
-7).
+### An entry's Dockerfile can reach the project's build identity
+
+The whole catalog build runs as the project's one build account (B5), and the entry's Dockerfile is built by that
+same Cloud Build execution (B2, B8). What that means for a container in it is in this repository's own words: the
+one step that runs repository code does it through `docker run --network none`, because a container in this build
+is otherwise on the cloudbuild network "next to the metadata server and the build account's token"
+(`images/derived/cloudbuild.yaml`). An entry's `RUN` can therefore mint that account's token. For the Bitbucket
+answer that token **is** the credential the proxy accepts, so an entry can reach the proxy without any `--secret`;
+for the GitHub answer the same token is what the build route accepts, and the entry can name any entry of the
+project there (rule 8). B9's refusal of `--secret` does not close this, and the test B8 owes
+(`TestEntryBuildCarriesNoSecretAndNoIdentity`) checks the build's configuration, not what its containers can
+reach.
+
+Closing it is a decision, and it is B2's and B8's rather than this contract's:
+
+1. **Build the entry's Dockerfile where the build identity is not obtainable** — a separate execution, or an
+   account with no invoker on the build route — with the test those tasks then owe: the entry's build step has no
+   path to the build account's token.
+2. **Take the entry's Dockerfile as trusted code**, which is what it is today, and say so where an entry is
+   accepted: an entry is repository-controlled code that runs as the project's build identity.
+
+### Two Bitbucket builds of one project at once are not isolated from each other
+
+The grant's URL and the ID token a call presents are the project's build identity's, so the proxy attributes a
+call to the identity and not to a build: whichever pairing is live for that identity is what a call is served
+against. The per-build key (rule 2) keeps two builds from colliding over one pairing and bounds each pairing's
+life; it does not separate them, and a contract over a shape cannot. The key is not what protects a project's
+repositories either: the identity can already ask for any of the project's entries by name, and the service
+answers from that entry's map (rule 8), so a build that wanted another entry's repositories would name that entry
+rather than take a pairing over. What keeps the clone's credential out of the entry's own hands is F19's fence
+around the clone (rules 3 to 7) — with the exception above, which is the hole that fence does not close.
 
 Closing the gap is a decision, and there are four ways to take it:
 
@@ -113,9 +145,9 @@ Closing the gap is a decision, and there are four ways to take it:
 2. **One Bitbucket catalog build per project at a time**, a rule on how builds are launched — B2's or the
    launcher's, not this contract's.
 3. **The grant's URL is the build's own**, and the proxy serves a call on it against the pairing that URL was
-   issued for rather than against the identity's. No token: the handle is worth nothing without the identity's ID
-   token, which reaches the clone step alone. That closes the gap inside D2302's decision, and whether B1's proxy
-   can key on the URL is B1's to say.
+   issued for rather than against the identity's. That separates two honest builds without a token, and whether
+   B1's proxy can key on the URL is B1's to say — but it fences nothing against an entry, which can read the
+   clone's URL out of the checkout it was handed and mint the account's token itself.
 4. **A per-build credential at the proxy** — the Fugaro-issued token D2302 rejected, which would have to be
    reopened, and which F19 exists to avoid.
 
@@ -126,9 +158,9 @@ in it says they are.
 
 - **The build (B2, B8)** may rely on: the two answer shapes above and nothing else; a refusal naming the thing
   that was refused (the repository, the line, the host); a credential or pairing keyed to its own build and not
-  to a neighbour's, though not isolation from that neighbour (see above); and no credential of its own to hold —
-  for Bitbucket it holds none at all. It may not read anything out of a `Stub` in a shipped path (I2 deletes the
-  stub) and may not fall back to a wider credential.
+  to a neighbour's, though not isolation from that neighbour (see above); and no credential handed to it — for
+  Bitbucket it is handed none at all, though an entry's `RUN` can mint the account's own (above). It may not read
+  anything out of a `Stub` in a shipped path (I2 deletes the stub) and may not fall back to a wider credential.
 - **The service (B1)** may rely on: a request that names an entry, **the build it is made for**, one provider and
   the canonical names of the entry's repositories; a build identity it can verify; and a caller that does no
   narrowing of its own, so every rule is the service's to apply. The build id and the provider are the caller's
