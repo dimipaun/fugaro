@@ -431,3 +431,59 @@ func TestProjectLookupFollowsNoRedirect(t *testing.T) {
 		t.Fatalf("the lookup made %d calls, want the 1 that asked the API root", len(seen))
 	}
 }
+
+func TestProjectOfServesNoTokenTheBundleLacks(t *testing.T) {
+	f := newProjectFake(t)
+	f.reply("acme", "app", http.StatusOK, projectUUID)
+	// Both records state the same project, and only one of them has a value in
+	// the bundle: a half-published token has a node record and no key (R14).
+	l := NewProjectLookup([]Record{
+		projectRecord(tokCI, projectUUID),
+		projectRecord("bitbucket-token--half", projectUUID),
+	}, testTokens{tokCI: "ci-value"}, f.client())
+
+	if _, err := l.ProjectOf(context.Background(), "bitbucket/acme/app", tokCI); err != nil {
+		t.Fatalf("the first lookup: %v", err)
+	}
+	// The repository's answer is held now, and it must not serve the token the
+	// bundle holds no value for: the record and the value are the token's own
+	// two guards, and they are read before the repository's memory is.
+	got, err := l.ProjectOf(context.Background(), "bitbucket/acme/app", "bitbucket-token--half")
+	if err != nil {
+		t.Fatalf("the lookup with a token the bundle lacks: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("a token the bundle holds no value for was answered %q, want not covered", got)
+	}
+	if n := len(f.seen()); n != 1 {
+		t.Fatalf("a token the bundle holds no value for made a call (%d calls in total)", n)
+	}
+}
+
+func TestProjectOfRefusesAnotherProvidersRepository(t *testing.T) {
+	f := newProjectFake(t)
+	f.reply("acme", "app", http.StatusOK, projectUUID)
+	l := NewProjectLookup([]Record{projectRecord(tokCI, projectUUID)}, testTokens{tokCI: "ci-value"}, f.client())
+
+	// A canonical naming another provider, and one that is not
+	// "<provider>/<workspace>/<repo>", are refused rather than put to
+	// Bitbucket's API with a project token: this lookup addresses one
+	// provider's API and must never send a token for a repository it cannot
+	// place.
+	for _, canonical := range []string{
+		"github/acme/app",
+		"acme/app",
+		"bitbucket/acme",
+		"bitbucket/acme/app/extra",
+		"bitbucket//app",
+		"",
+	} {
+		got, err := l.ProjectOf(context.Background(), canonical, tokCI)
+		if err == nil {
+			t.Fatalf("the lookup of %q was answered %q, want a refusal", canonical, got)
+		}
+	}
+	if n := len(f.seen()); n != 0 {
+		t.Fatalf("a canonical that names no Bitbucket repository made %d calls, want none", n)
+	}
+}

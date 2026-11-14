@@ -36,6 +36,23 @@ package bbtokens
 //     G10): no option, no environment value and no record can name a host, and
 //     a redirect is not followed, so a token is never presented to a host the
 //     adapter's constant does not name.
+//
+// The order of the guards is itself a rule: the record is read first, then the
+// bundle's value for it, and the repository's held answer last. An answer held
+// in memory is a fact about the REPOSITORY, so reading it before the token's
+// own two guards would answer "covered" for a token whose record the node
+// carries and whose value the bundle does not — the half-published token R14
+// fails closed on.
+//
+// What this file expects from C1: it names Record (Name, Type, ProjectUUID),
+// Name, TypeProject, BundleTokens (its value accessor called here as
+// Value(Name) (string, bool)) and ProjectResolver, and declares none of them.
+// They are C1's, in internal/bbtokens/bbtokens.go, which this file is written
+// beside and merges after (the plan's launch gate). Until C1 is on the branch
+// the package does not compile, and that is the launch gate rather than a
+// defect: a copy of those declarations here would collide with C1's own the
+// moment the two meet, and a branch that stopped main from building is worse
+// than one that builds only after C1.
 
 import (
 	"context"
@@ -151,11 +168,12 @@ func (l *ProjectLookup) ProjectOf(ctx context.Context, canonical string, tok Nam
 	if err != nil {
 		return "", err
 	}
+	// Every question about the TOKEN is asked before the repository's held
+	// answer is read: a held answer is a fact about the repository, and the
+	// token this call names is still a token the bundle may hold no value for,
+	// so reading the memory first would serve a token that cannot be spent.
 	if !l.statesAProject(tok) {
 		return "", nil
-	}
-	if uuid, ok := l.held(canonical); ok {
-		return uuid, nil
 	}
 	if l.tokens == nil {
 		return "", nil
@@ -163,6 +181,9 @@ func (l *ProjectLookup) ProjectOf(ctx context.Context, canonical string, tok Nam
 	value, ok := l.tokens.Value(tok)
 	if !ok {
 		return "", nil
+	}
+	if uuid, ok := l.held(canonical); ok {
+		return uuid, nil
 	}
 	uuid, status, err := l.ask(ctx, workspace, repo, value)
 	if err != nil {
