@@ -1560,11 +1560,15 @@ func TestAPurchaseMailsTheKeyAndItsRenewalSecret(t *testing.T) {
 	}
 }
 
-// TestRefundRevokesTheKey: §8 and D2131 — a refund or a chargeback writes one
-// entry of the revocation list, for the one key the merchant names, and that is
-// the whole of the event's effect. The list is what the customer's own job and
-// §8's status check read, so an entry written for the wrong key is a licence
-// withdrawn that nobody was refunded for, and a key left live that was.
+// TestRefundRevokesTheKey: §8, D2131 and D2147 — a refund or a chargeback
+// withdraws the whole licence the event names: the key it names, and with it
+// every other key of the subscription that key's record names, the rotations of
+// each among them. The licence and not the key is what the money bought, so an
+// entry written for the named key alone leaves the customer's own keys working
+// on a term nobody paid for, while an entry that reaches another licence's key
+// is a licence withdrawn that nobody was refunded for. The list is what the
+// customer's own job and §8's status check read, and both halves of that are
+// what this test holds.
 //
 // The body is verified before it is read, and a refund is the event where that
 // matters most: an unsigned one accepted would let anyone who knows a key_id

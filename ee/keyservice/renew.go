@@ -291,9 +291,15 @@ func (s *Service) status(w http.ResponseWriter, r *http.Request) {
 // what makes a leaked secret cost the holder one renewal rather than the
 // licence, and the hash the successor carries is the new secret's, so the old
 // secret authenticates nothing after the window below. Everything else about the
-// key is carried over — the row it was minted from, its seats, its organisation
-// and its own workspace — because a renewal is the same licence for a later
-// term, and a term bound to another workspace would be a different licence.
+// key is carried over — the row it was minted from, its organisation and its own
+// workspace — because a renewal is the same licence for a later term, and a term
+// bound to another workspace would be a different licence. The seats are the one
+// field that comes from the subscription rather than from the key: §5.3 moves
+// the seats inside the term the customer has already paid for, so the key a seat
+// change supersedes runs out still stating the count it was minted with, while
+// the term after it is licensed, and priced, for the count the customer is on now
+// (`merchant.Renew` mints from the subscription's count already, so both routes
+// into that term agree — TestASupersededKeysChainCarriesTheSubscriptionsSeats).
 //
 // A row nothing renews is refused: an air-gapped key and a trial carry
 // `renewal_mode: none`, and the whole of that row is that nothing contacts the
