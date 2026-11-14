@@ -15177,6 +15177,287 @@ not holding, and **A2.1**'s job is where it is fixed. A check that cannot reach 
 says what the sampler refused (`no-challenger`, `daily-count`, `unrouted`, `unpriced`, `needs-enforce`
 and the rest), which is a reading of the installation's own configuration rather than of the release.
 
+## Check 380: `fugaro update` with stdin closed finishes without a prompt (the sandbox installation only, never `belong`; one script you run; NOT RUN)
+
+**NOT RUN.** Written by task **T14** of
+[docs/no-prompt-policy/implementation-plan.md](no-prompt-policy/implementation-plan.md) — its "Checks 380–382"
+— and it reads the policy's first rule on the command the rule is worth most on: **no command waits on stdin**
+(T7). This repository's HARD RULE is that `fugaro update` is the whole upgrade, so a run that stopped to ask
+would stop a person's upgrade on a screen they may never be looking at. **T7 is UNVERIFIED on an installation
+until you run this**, and no unit test can take the reading: `internal/cli/noprompt_harness_test.go` walks every
+leaf of the command tree with a closed stdin in a hermetic world, and `fugaro update` there refuses on that
+world's own runs bucket name before its first stage — the harness says so itself in `closedStdinUnreached`. The
+check is `scripts/live-checks/check-380-no-prompt-update.sh` (its sibling test
+`scripts/live-checks/check-380-no-prompt-update_test.sh` drives it against a fake `fugaro` only and converges
+nothing), and **no agent runs any step of it**: a project naming `belong` is refused in what you type and in
+what `doctor` answers, and so is a coding agent's session.
+
+**What a PASS means, and what it does not.** A PASS means the run **ended by itself and asked nothing**: nothing
+waited, and no question was put to a person who was not there. It does **not** mean the converge finished.
+`fugaro update` with no terminal leaves a step it cannot confirm for you and exits 1 with its own sentence
+naming what is left — that is the policy's answer and not a prompt (T7: removing a prompt is not the same as
+applying a step nobody asked for) — and the `update` row quotes the run's own last line so you can read which
+of the two you got. An exit 2 (a cloud failure) is a FAIL row: the run stopped on the cloud and read little of
+its steps. A run that printed nothing at all is a row this check could not measure, and it says so rather than
+passing on an empty transcript.
+
+**What it reads, in this order.** Every row goes into the one `CHECK 380 RESULT` block on stdout:
+
+- **`xtrace`** — this shell was not started with tracing on. `bash -x` would print the converge's own output
+  and any credential it reads, so a shell that arrived tracing is stopped before anything is run.
+- **`agent-session`** — no coding agent's marker is set (`CLAUDECODE` and the like). This one is yours to run at
+  your own terminal: the run inside an agent's session would measure the agent's path and not yours.
+- **`project`** — which installation this is about, and where the answer came from (you typed it, or `doctor`
+  answered it), the two held to each other.
+- **`belong`** — the project is **not** the owner's own installation, refused in what you typed and again in
+  what `doctor` answered; a name that merely contains `belong` is refused too.
+- **`stdin`** — the run's own streams: **`/dev/null`** for stdin, stdout and stderr in files in the check's own
+  mode-0700 scratch directory, and no pty attached to any of them. `/dev/null` is not a terminal and delivers
+  EOF to the first read, so a prompt site that refuses when it cannot see a terminal returns at once — and one
+  that reads, gets EOF and asks again never returns at all, which is what the deadline is for.
+- **`update`** — the fact this check is: `fugaro update` under the deadline (`--deadline`, 1800 seconds by
+  default). Exit 0 (it converged what it had to, or had nothing to do) and exit 1 (a refusal, or a step left
+  for you) are the two endings a PASS can carry; a run still going at the deadline is **killed (TERM, then
+  KILL)** and FAILs, because a run waiting on a terminal looks exactly like that; exit 2, and any status
+  `update` does not own, FAIL.
+- **`prompt`** — the question, which is what the transcript must not contain. The shapes refused are the ones a
+  prompt leaves behind: `[y/N]` in any casing, `(y/n)` and `(yes/no)`, a `to confirm:` left open, an
+  enter-prompt, and a question mark followed by a blank (a question left waiting), which is not the shape this
+  CLI's own text has. The `⚠ CONFIRM` banner is **not** one of them — the policy keeps the banner, which is the
+  note of a step and not a read (`askBanner` prints no `[y/N]`), and the runs that print it are fine here.
+- **`noprompt`** — the verdict: T7 **HOLDS** (the run ended by itself and asked nothing), **does NOT hold** (it
+  had to be killed, or it asked), or **NOT MEASURED** (a row above could not be read).
+- **`teardown`** — what this run left behind, which is nothing: it wrote nothing outside its scratch directory,
+  which the trap removes on any exit, a Ctrl-C included.
+
+Exit `0` means the claim held (the run ended by itself and asked nothing); `1` means it did not (each row says
+which); `2` means the run could not tell (a guard stopped it, the transcript was empty, a tool is missing, an
+internal error ended it).
+
+**Run it:**
+
+```sh
+bash scripts/live-checks/check-380-no-prompt-update.sh --dry-run
+bash scripts/live-checks/check-380-no-prompt-update.sh
+```
+
+`--dry-run` prints the plan and makes **no call at all**: it asks nothing of your installation and starts no
+run. `--project <name>` is the Fugaro project; leave it out where a project config is in force, since `doctor`
+answers with it and the check holds the two to each other. `--fugaro-flags '<flags>'` adds flags to every
+`fugaro` call (it is split on whitespace, so a value with a space in it cannot be passed). The knobs are
+`CHECK380_FUGARO`, `CHECK380_DEADLINE`, `CHECK380_DRY_RUN` and `CHECK380_KEEP_SCRATCH`, which keeps the scratch
+directory — the run's whole transcript is in `update.out` and `update.err` — so you can read what a failing run
+printed.
+
+**What it costs, and what it does to your installation.** One `fugaro doctor --json` (read-only) and one real
+`fugaro update`, which is the command itself: it may build an image, apply Terraform and spend what a converge
+spends. No model call of this check's own and no run is launched. It converges your installation, or refuses to,
+exactly as `fugaro update` would if you typed it, and it **rolls nothing back**: a converge is not something to
+undo, and it is what you asked the command for. Run it on the sandbox installation, and know that the release
+under test is the one installed — that is what makes the reading worth having.
+
+**Paste back:** the whole `CHECK 380 RESULT` block and nothing else. The run's own last line is in it; the
+transcript itself stays in the scratch directory unless you set `CHECK380_KEEP_SCRATCH=1`.
+
+## Check 381: an image build over the cap is refused, with the estimate, the cap, the day's figure and the command that raises it (a sandbox repository checkout only, never `belong`; one script you run; NOT RUN)
+
+**NOT RUN.** Written by task **T14** of
+[docs/no-prompt-policy/implementation-plan.md](no-prompt-policy/implementation-plan.md) — its "Checks 380–382"
+— and it reads what replaced the typed confirmation in front of a billable build. The no-prompt policy removed
+that confirmation from `fugaro image build` (T7), and what stands in front of the build instead is the **build
+lease** (T8, **D1543**): the build's cost is estimated from the Cloud Billing catalog and judged against the
+project's caps **before** the submission, and a build no cap has room for is refused, non-zero, with the four
+things an operator needs — what it reserves, the cap it met, the figure that cap compared, and the one command
+that raises it (`BuildOverCapError`). That refusal is the whole of what replaced the confirmation, so a release
+that lost it would have replaced a question with nothing at all. The check is
+`scripts/live-checks/check-381-over-cap-build.sh` (its sibling test
+`scripts/live-checks/check-381-over-cap-build_test.sh` drives it against a fake `fugaro` whose `budget set`
+really applies what it is handed, beside a real git checkout and its origin, and builds nothing), and **no agent
+runs any step of it**: a project naming `belong` is refused before anything is run, and so is a coding agent's
+session.
+
+**How the over-cap state is made.** The check does not ask you to spend anything: it makes the state itself by
+**tightening**. The repository's OWN caps node — the one `fugaro project show --json` carries and
+`fugaro budget show --json` reports the effective caps and their sources from — is lowered to **$0.00** with one
+`fugaro budget set`, which is a **tightening and no raise** (**D1542**), so nothing is asked; the per-run cap of
+that node goes to $0.00 too where the repository keeps one of its own, because a node's per-run may not sit
+above its daily, which is the state the CLI itself refuses to leave behind. The lowering is **read back before
+anything is built**: a mid-air project is not worth a reading. A node the check cannot read is a **refusal to
+run** — a cap it cannot put back is a change to your project, not a reading — and the exit trap puts the caps
+back on every way out, reading them back afterwards to say so.
+
+**The mode has to be `enforce`.** A cap only REFUSES a build in enforce (**D1548**): in `observe` the over-cap
+decision comes back as an advisory and the build is submitted anyway, which is money. So a mode that is not
+enforce makes the over-cap refusal **NOT MEASURED** (exit 2) rather than passed, and the row names the one
+command that raises it. The check does not set the mode: that write records **your own** choice of a risk
+posture, and `fugaro update` is what raises it on a project whose owner has not chosen one.
+
+**What it reads, in this order.** Every row goes into the one `CHECK 381 RESULT` block on stdout:
+
+- **`xtrace`** — this shell was not started with tracing on. The check writes to your project's budget and
+  prints a block you would paste back, so a shell that arrived tracing is stopped first.
+- **`agent-session`** — no coding agent's marker is set. This one lowers a real cap on a real project, so it is
+  yours to run at your own terminal.
+- **`project`** — which installation this is about, and where the answer came from, the two held to each other.
+- **`belong`** — the project is not the owner's own installation, refused in what you typed and in what `doctor`
+  answered.
+- **`checkout`** — the checkout is a git work tree and its `origin` remote names the repository, read as
+  `owner/name`. The build runs from here and is charged to this repository, and it is **this** repository's own
+  cap the check lowers: nothing is taken from a flag, so the cap and the build cannot end up on two different
+  repositories.
+- **`mode`** — the project's budget mode, and that it is enforce (above).
+- **`caps`** — the repository's own caps node (what the check puts back) and the effective caps in force with
+  where each comes from, the day's counted figure and the max reserve.
+- **`write`** — the lowering: `fugaro budget set --repo <this repository> --daily 0` (and the node's own per-run
+  with it where it keeps one), and the read-back that says the repository's daily cap now reads $0.00, so a
+  build of it cannot be submitted while the check runs.
+- **`build`** — the fact this check is: `fugaro image build --no-wait` from the checkout, its stdin on
+  `/dev/null`, under the deadline (900 seconds by default). `--no-wait` is there because the refusal comes
+  **before** the submission: a build that WAS submitted must not hold the check open, and the row says so
+  rather than pretending otherwise. Exit 1 is the refusal; exit 0 is a FAIL and the loudest row here, because a
+  build of this repository was submitted with its daily cap at $0.00 and money may be being spent right then;
+  any other status FAILs, and a run still going at the deadline is killed and FAILs.
+- **`refusal`** — the sentence, whitespace-collapsed and read for all four parts: what the build reserves at
+  most and where that price came from (the `N s` build timeout at the machine's rate, read from the Cloud
+  Billing catalog), the cap it met ($0.00, the one this check just set), the figure that cap compared (the day's
+  counted figure for the daily cap, what the build holds for its per-run one) and what the build needed, and the
+  one command that raises that cap. A refusal missing any of them is a FAIL: an operator handed half that
+  sentence cannot act on it.
+- **`overcap`** — the verdict: the over-cap refusal **HOLDS** (the build was refused, non-zero, with all four
+  parts and nothing built), **does NOT hold**, or **NOT MEASURED** (the mode was not enforce, the build never
+  ended, a row above could not be read).
+- **`teardown`** — what goes back: the repository's own caps node restored from the exit trap, on every way
+  out, with the values it wrote and a read-back that says they are there. It reads rather than trusts, because a
+  putting back that printed no error is not one that landed.
+
+Exit `0` means the claim held; `1` means it did not (each row says which); `2` means the check could not tell (a
+guard stopped it, the mode is not enforce, the caps could not be read, a tool is missing).
+
+**Run it:**
+
+```sh
+bash scripts/live-checks/check-381-over-cap-build.sh --checkout <a sandbox repository checkout> --dry-run
+bash scripts/live-checks/check-381-over-cap-build.sh --checkout <a sandbox repository checkout>
+```
+
+`--dry-run` prints the plan and makes **no call at all**: it lowers no cap and starts no build. `--checkout` is
+the checkout to build from (default `.`). `--project <name>` is the Fugaro project; leave it out where a project
+config is in force. `--fugaro-flags '<flags>'` adds flags to every `fugaro` call, and `--deadline` bounds how
+long the build command may take. The knobs are `CHECK381_FUGARO`, `CHECK381_DEADLINE`, `CHECK381_DRY_RUN` and
+`CHECK381_KEEP_SCRATCH`, which keeps the scratch directory with every call's own output.
+
+**What it costs.** `fugaro doctor --json`, `fugaro project show --json`, two or three `fugaro budget show
+--json`, **two** `fugaro budget set` (the lowering and the putting back) and one `fugaro image build --no-wait`
+that is refused before it is submitted: **no model call, no image and no Cloud Build**, and the day counts
+nothing for a build that was refused. On a healthy installation nothing is built at all. A FAIL where the build
+was **not** refused is the exception, and the row says money may be being spent: a build that was submitted
+under `--no-wait` keeps running in Cloud Build, and the check does not cancel it — that is the finding, and the
+build's own transcript's last line is in the block.
+
+**Paste back:** the whole `CHECK 381 RESULT` block and nothing else — it carries the caps before and after, the
+sentence the refusal printed and the row that says the caps are back.
+
+## Check 382: a coding agent's `budget set` raise is refused, and the refusal carries the command its owner can run (a sandbox repository checkout only, never `belong`; one script you run; NOT RUN)
+
+**NOT RUN.** Written by task **T14** of
+[docs/no-prompt-policy/implementation-plan.md](no-prompt-policy/implementation-plan.md) — its "Checks 380–382"
+— and it reads the fence the policy put where the typed confirmation in front of a raise used to be. That
+confirmation is gone from every raise form (T7), and what replaced it is **`raiseOwnerOnly`** (**D1542**): the
+owner's own terminal asks nothing, and a **coding agent's session is refused** — because a cap the session it
+bounds can lift is not a limit (**F8**). The fence is a courtesy and as strong as the markers themselves, no
+stronger (**F20**); what this check reads is that it is there at all, that it fires on the **raise** and not on
+the command, and that an agent's report carries a command its owner can act on without reconstructing the flags
+from a transcript. The check is `scripts/live-checks/check-382-agent-cannot-raise-a-cap.sh` (its sibling test
+`scripts/live-checks/check-382-agent-cannot-raise-a-cap_test.sh` drives it against a fake `fugaro` whose fence
+refuses on the marker set in **its own** environment and can bend the sentence each way, beside a real git
+checkout and its origin, and raises nothing), and **no agent runs any step of it**: a project naming `belong` is
+refused before anything is run, and so is a coding agent's session.
+
+**The raise is made a raise, always.** A no-op answers "nothing changed" without asking the fence, so the value
+is chosen out of the node's own caps: `max(own daily, own per-run) + 0.01`, or `0.01` where the node holds
+nothing of its own. Setting a cap where none existed is a raise as much as an increase is (the CLI's own
+`editMicroNode` rule), and one cent above everything the node holds keeps the call a raise whatever the node
+held, and keeps the per-run cap from being pushed above the daily. The marker (`CLAUDECODE=1`) is set on the
+**child's own command line** and nowhere else, so the environment the check was started in must carry no marker
+either — which is the `agent-session` guard.
+
+**What it reads, in this order.** Every row goes into the one `CHECK 382 RESULT` block on stdout:
+
+- **`xtrace`** — this shell was not started with tracing on. The check prints the command the refusal carries
+  and the block you would paste back, so a shell that arrived tracing is stopped first.
+- **`agent-session`** — no coding agent's marker is set **in this check's environment**: the marker the raise
+  below carries is the one the check put there and nothing else.
+- **`project`** — which installation this is about, and where the answer came from, the two held to each other.
+- **`belong`** — the project is not the owner's own installation, refused in what you typed and in what `doctor`
+  answered.
+- **`checkout`** — the checkout's `origin` remote names the repository this raise is about, read as
+  `owner/name`: the command carries that repository explicitly, so the check and `fugaro budget set` agree on
+  which caps the raise would move.
+- **`caps`** — the repository's own caps node out of `fugaro project show --json` (what a raise would move and
+  what gets put back) and the effective caps out of `fugaro budget show --json`. A node the check cannot read
+  is a **refusal to run**: a cap it cannot put back is a change to your project rather than a reading.
+- **`raise`** — the invocation this check runs, printed so the block says exactly what was attempted:
+  `budget set --repo <this repository> --daily <the value above>`.
+- **`marker`** — the fact this check is: the raise, from the checkout, its stdin on `/dev/null`, under the
+  deadline (300 seconds by default), with `CLAUDECODE=1` on the child alone. Exit **1** is the refusal; exit 0
+  is a FAIL and the loudest one here (the fence let a coding agent's session raise this repository's cap, and
+  the cap has almost certainly moved); any other status FAILs, and a run still going at the deadline is killed
+  and FAILs.
+- **`refusal`** — the sentence, whitespace-collapsed and read for all of it: the act in the fence's own words
+  ("raising a cap is the owner's own step"), the marker it read, that **nothing was applied**, and the same
+  invocation you would type at your own terminal. A refusal missing any part is a FAIL: an agent handed half
+  that sentence has nothing to hand over.
+- **`help`** — `fugaro budget set --help` printed the command's own flags, so the printed command below is read
+  against the CLI this check actually ran rather than against a list the check carries. A help that did not
+  answer makes the `command` row NOT MEASURED.
+- **`command`** — the invocation parsed out of the sentence, held to: the same program this check ran, `budget
+  set`, `--repo` naming this repository, the same value this check raised to, your project, and **no flag that
+  `budget set --help` does not name**. A command with an invented flag is one the owner cannot run, which is the
+  half of the refusal that makes it actionable.
+- **`unchanged`** — the caps read back out of `fugaro budget show --json` and held to what was there before. A
+  raise that **LANDED** is the loudest FAIL there is: the fence did not hold and a cap moved.
+- **`fence`** — the verdict: the fence **HOLDS** on this installation (exit 1, the whole sentence, a runnable
+  command, and the caps exactly as they were), **does NOT hold**, or **NOT MEASURED** (a row above could not be
+  read).
+- **`teardown`** — what goes back. On a PASS, **nothing at all**: the refusal comes before the write and the
+  read-back row says so. Where the raise landed, or where the caps could not be read back at all, the exit trap
+  writes the caps back — the exact values the node held, or `--clear` where it held none — on every way out, and
+  reads them back to say so.
+
+Exit `0` means the claim held; `1` means it did not (each row says which); `2` means the check could not tell (a
+guard stopped it, the caps could not be read, a tool is missing).
+
+**Run it:**
+
+```sh
+bash scripts/live-checks/check-382-agent-cannot-raise-a-cap.sh --checkout <a sandbox repository checkout> --dry-run
+bash scripts/live-checks/check-382-agent-cannot-raise-a-cap.sh --checkout <a sandbox repository checkout>
+```
+
+`--dry-run` prints the plan and makes **no call at all**: it raises nothing. `--checkout` is the checkout the
+raise runs from (default `.`). `--project <name>` is the Fugaro project; leave it out where a project config is
+in force. `--fugaro-flags '<flags>'` adds flags to every `fugaro` call, and `--deadline` bounds how long the
+raise may take. The knobs are `CHECK382_FUGARO`, `CHECK382_DEADLINE`, `CHECK382_DRY_RUN` and
+`CHECK382_KEEP_SCRATCH`, which keeps the scratch directory with every call's own output.
+
+**What it costs.** `fugaro doctor --json`, `fugaro project show --json`, three `fugaro budget show --json`, one
+`fugaro budget set --help` and **one** `fugaro budget set` that is refused before it is applied: no model call,
+no build, no run and **no cloud write at all** unless a row says the raise landed. On a PASS your project is
+untouched and there is nothing to restore.
+
+**What it cannot settle.** The fence is a **marker test**, not a barrier: a session that unsets `CLAUDECODE` is
+outside it (**F20**), and nothing here says anything about a session that clears its own marker — the reading is
+of the marker the check sets itself. The hermetic half is
+`scripts/live-checks/check-382-agent-cannot-raise-a-cap_test.sh`, run from `scripts/live_checks_test.go`: the
+fence there is the fake's own, refusing exactly when one of the markers `agentMarker` knows is set in **its**
+environment, and a case that bends the sentence — a part missing, the command naming another repository, another
+value, another project, an invented flag, another program — proves the FAIL the check reads is the reading's and
+not a word the fake was told to say.
+
+**Paste back:** the whole `CHECK 382 RESULT` block and nothing else. It carries the caps before and after, the
+refusal's sentence and the command it printed; nothing in it is a secret, and the block is what says whether the
+fence is there on your installation.
+
 ## Check 230: the author, the committer and the trailers, on GitHub and on Bitbucket (two sandbox repositories carrying `git.author: launcher`, a third with no such key, and their forges; never `belong`; run by you; NOT RUN)
 
 **NOT RUN.** Written by task **X1** of
@@ -15498,285 +15779,3 @@ repositories and carries `pull_requests: write` alone.
 **What waits on it.** D4 (the advisory merge order) and the change-set half of the spec's promise
 that a set is ready or not ready as a whole: this run is the only reading of it, and a set that
 flips one pull request and leaves the other draft is a finding for this plan's owner.
-
-## Check 380: `fugaro update` with stdin closed finishes without a prompt (the sandbox installation only, never `belong`; one script you run; NOT RUN)
-
-**NOT RUN.** Written by task **T14** of
-[docs/no-prompt-policy/implementation-plan.md](no-prompt-policy/implementation-plan.md) — its "Checks 380–382"
-— and it reads the policy's first rule on the command the rule is worth most on: **no command waits on stdin**
-(T7). This repository's HARD RULE is that `fugaro update` is the whole upgrade, so a run that stopped to ask
-would stop a person's upgrade on a screen they may never be looking at. **T7 is UNVERIFIED on an installation
-until you run this**, and no unit test can take the reading: `internal/cli/noprompt_harness_test.go` walks every
-leaf of the command tree with a closed stdin in a hermetic world, and `fugaro update` there refuses on that
-world's own runs bucket name before its first stage — the harness says so itself in `closedStdinUnreached`. The
-check is `scripts/live-checks/check-380-no-prompt-update.sh` (its sibling test
-`scripts/live-checks/check-380-no-prompt-update_test.sh` drives it against a fake `fugaro` only and converges
-nothing), and **no agent runs any step of it**: a project naming `belong` is refused in what you type and in
-what `doctor` answers, and so is a coding agent's session.
-
-**What a PASS means, and what it does not.** A PASS means the run **ended by itself and asked nothing**: nothing
-waited, and no question was put to a person who was not there. It does **not** mean the converge finished.
-`fugaro update` with no terminal leaves a step it cannot confirm for you and exits 1 with its own sentence
-naming what is left — that is the policy's answer and not a prompt (T7: removing a prompt is not the same as
-applying a step nobody asked for) — and the `update` row quotes the run's own last line so you can read which
-of the two you got. An exit 2 (a cloud failure) is a FAIL row: the run stopped on the cloud and read little of
-its steps. A run that printed nothing at all is a row this check could not measure, and it says so rather than
-passing on an empty transcript.
-
-**What it reads, in this order.** Every row goes into the one `CHECK 380 RESULT` block on stdout:
-
-- **`xtrace`** — this shell was not started with tracing on. `bash -x` would print the converge's own output
-  and any credential it reads, so a shell that arrived tracing is stopped before anything is run.
-- **`agent-session`** — no coding agent's marker is set (`CLAUDECODE` and the like). This one is yours to run at
-  your own terminal: the run inside an agent's session would measure the agent's path and not yours.
-- **`project`** — which installation this is about, and where the answer came from (you typed it, or `doctor`
-  answered it), the two held to each other.
-- **`belong`** — the project is **not** the owner's own installation, refused in what you typed and again in
-  what `doctor` answered; a name that merely contains `belong` is refused too.
-- **`stdin`** — the run's own streams: **`/dev/null`** for stdin, stdout and stderr in files in the check's own
-  mode-0700 scratch directory, and no pty attached to any of them. `/dev/null` is not a terminal and delivers
-  EOF to the first read, so a prompt site that refuses when it cannot see a terminal returns at once — and one
-  that reads, gets EOF and asks again never returns at all, which is what the deadline is for.
-- **`update`** — the fact this check is: `fugaro update` under the deadline (`--deadline`, 1800 seconds by
-  default). Exit 0 (it converged what it had to, or had nothing to do) and exit 1 (a refusal, or a step left
-  for you) are the two endings a PASS can carry; a run still going at the deadline is **killed (TERM, then
-  KILL)** and FAILs, because a run waiting on a terminal looks exactly like that; exit 2, and any status
-  `update` does not own, FAIL.
-- **`prompt`** — the question, which is what the transcript must not contain. The shapes refused are the ones a
-  prompt leaves behind: `[y/N]` in any casing, `(y/n)` and `(yes/no)`, a `to confirm:` left open, an
-  enter-prompt, and a question mark followed by a blank (a question left waiting), which is not the shape this
-  CLI's own text has. The `⚠ CONFIRM` banner is **not** one of them — the policy keeps the banner, which is the
-  note of a step and not a read (`askBanner` prints no `[y/N]`), and the runs that print it are fine here.
-- **`noprompt`** — the verdict: T7 **HOLDS** (the run ended by itself and asked nothing), **does NOT hold** (it
-  had to be killed, or it asked), or **NOT MEASURED** (a row above could not be read).
-- **`teardown`** — what this run left behind, which is nothing: it wrote nothing outside its scratch directory,
-  which the trap removes on any exit, a Ctrl-C included.
-
-Exit `0` means the claim held (the run ended by itself and asked nothing); `1` means it did not (each row says
-which); `2` means the run could not tell (a guard stopped it, the transcript was empty, a tool is missing, an
-internal error ended it).
-
-**Run it:**
-
-```sh
-bash scripts/live-checks/check-380-no-prompt-update.sh --dry-run
-bash scripts/live-checks/check-380-no-prompt-update.sh
-```
-
-`--dry-run` prints the plan and makes **no call at all**: it asks nothing of your installation and starts no
-run. `--project <name>` is the Fugaro project; leave it out where a project config is in force, since `doctor`
-answers with it and the check holds the two to each other. `--fugaro-flags '<flags>'` adds flags to every
-`fugaro` call (it is split on whitespace, so a value with a space in it cannot be passed). The knobs are
-`CHECK380_FUGARO`, `CHECK380_DEADLINE`, `CHECK380_DRY_RUN` and `CHECK380_KEEP_SCRATCH`, which keeps the scratch
-directory — the run's whole transcript is in `update.out` and `update.err` — so you can read what a failing run
-printed.
-
-**What it costs, and what it does to your installation.** One `fugaro doctor --json` (read-only) and one real
-`fugaro update`, which is the command itself: it may build an image, apply Terraform and spend what a converge
-spends. No model call of this check's own and no run is launched. It converges your installation, or refuses to,
-exactly as `fugaro update` would if you typed it, and it **rolls nothing back**: a converge is not something to
-undo, and it is what you asked the command for. Run it on the sandbox installation, and know that the release
-under test is the one installed — that is what makes the reading worth having.
-
-**Paste back:** the whole `CHECK 380 RESULT` block and nothing else. The run's own last line is in it; the
-transcript itself stays in the scratch directory unless you set `CHECK380_KEEP_SCRATCH=1`.
-
-## Check 381: an image build over the cap is refused, with the estimate, the cap, the day's figure and the command that raises it (a sandbox repository checkout only, never `belong`; one script you run; NOT RUN)
-
-**NOT RUN.** Written by task **T14** of
-[docs/no-prompt-policy/implementation-plan.md](no-prompt-policy/implementation-plan.md) — its "Checks 380–382"
-— and it reads what replaced the typed confirmation in front of a billable build. The no-prompt policy removed
-that confirmation from `fugaro image build` (T7), and what stands in front of the build instead is the **build
-lease** (T8, **D1543**): the build's cost is estimated from the Cloud Billing catalog and judged against the
-project's caps **before** the submission, and a build no cap has room for is refused, non-zero, with the four
-things an operator needs — what it reserves, the cap it met, the figure that cap compared, and the one command
-that raises it (`BuildOverCapError`). That refusal is the whole of what replaced the confirmation, so a release
-that lost it would have replaced a question with nothing at all. The check is
-`scripts/live-checks/check-381-over-cap-build.sh` (its sibling test
-`scripts/live-checks/check-381-over-cap-build_test.sh` drives it against a fake `fugaro` whose `budget set`
-really applies what it is handed, beside a real git checkout and its origin, and builds nothing), and **no agent
-runs any step of it**: a project naming `belong` is refused before anything is run, and so is a coding agent's
-session.
-
-**How the over-cap state is made.** The check does not ask you to spend anything: it makes the state itself by
-**tightening**. The repository's OWN caps node — the one `fugaro project show --json` carries and
-`fugaro budget show --json` reports the effective caps and their sources from — is lowered to **$0.00** with one
-`fugaro budget set`, which is a **tightening and no raise** (**D1542**), so nothing is asked; the per-run cap of
-that node goes to $0.00 too where the repository keeps one of its own, because a node's per-run may not sit
-above its daily, which is the state the CLI itself refuses to leave behind. The lowering is **read back before
-anything is built**: a mid-air project is not worth a reading. A node the check cannot read is a **refusal to
-run** — a cap it cannot put back is a change to your project, not a reading — and the exit trap puts the caps
-back on every way out, reading them back afterwards to say so.
-
-**The mode has to be `enforce`.** A cap only REFUSES a build in enforce (**D1548**): in `observe` the over-cap
-decision comes back as an advisory and the build is submitted anyway, which is money. So a mode that is not
-enforce makes the over-cap refusal **NOT MEASURED** (exit 2) rather than passed, and the row names the one
-command that raises it. The check does not set the mode: that write records **your own** choice of a risk
-posture, and `fugaro update` is what raises it on a project whose owner has not chosen one.
-
-**What it reads, in this order.** Every row goes into the one `CHECK 381 RESULT` block on stdout:
-
-- **`xtrace`** — this shell was not started with tracing on. The check writes to your project's budget and
-  prints a block you would paste back, so a shell that arrived tracing is stopped first.
-- **`agent-session`** — no coding agent's marker is set. This one lowers a real cap on a real project, so it is
-  yours to run at your own terminal.
-- **`project`** — which installation this is about, and where the answer came from, the two held to each other.
-- **`belong`** — the project is not the owner's own installation, refused in what you typed and in what `doctor`
-  answered.
-- **`checkout`** — the checkout is a git work tree and its `origin` remote names the repository, read as
-  `owner/name`. The build runs from here and is charged to this repository, and it is **this** repository's own
-  cap the check lowers: nothing is taken from a flag, so the cap and the build cannot end up on two different
-  repositories.
-- **`mode`** — the project's budget mode, and that it is enforce (above).
-- **`caps`** — the repository's own caps node (what the check puts back) and the effective caps in force with
-  where each comes from, the day's counted figure and the max reserve.
-- **`write`** — the lowering: `fugaro budget set --repo <this repository> --daily 0` (and the node's own per-run
-  with it where it keeps one), and the read-back that says the repository's daily cap now reads $0.00, so a
-  build of it cannot be submitted while the check runs.
-- **`build`** — the fact this check is: `fugaro image build --no-wait` from the checkout, its stdin on
-  `/dev/null`, under the deadline (900 seconds by default). `--no-wait` is there because the refusal comes
-  **before** the submission: a build that WAS submitted must not hold the check open, and the row says so
-  rather than pretending otherwise. Exit 1 is the refusal; exit 0 is a FAIL and the loudest row here, because a
-  build of this repository was submitted with its daily cap at $0.00 and money may be being spent right then;
-  any other status FAILs, and a run still going at the deadline is killed and FAILs.
-- **`refusal`** — the sentence, whitespace-collapsed and read for all four parts: what the build reserves at
-  most and where that price came from (the `N s` build timeout at the machine's rate, read from the Cloud
-  Billing catalog), the cap it met ($0.00, the one this check just set), the figure that cap compared (the day's
-  counted figure for the daily cap, what the build holds for its per-run one) and what the build needed, and the
-  one command that raises that cap. A refusal missing any of them is a FAIL: an operator handed half that
-  sentence cannot act on it.
-- **`overcap`** — the verdict: the over-cap refusal **HOLDS** (the build was refused, non-zero, with all four
-  parts and nothing built), **does NOT hold**, or **NOT MEASURED** (the mode was not enforce, the build never
-  ended, a row above could not be read).
-- **`teardown`** — what goes back: the repository's own caps node restored from the exit trap, on every way
-  out, with the values it wrote and a read-back that says they are there. It reads rather than trusts, because a
-  putting back that printed no error is not one that landed.
-
-Exit `0` means the claim held; `1` means it did not (each row says which); `2` means the check could not tell (a
-guard stopped it, the mode is not enforce, the caps could not be read, a tool is missing).
-
-**Run it:**
-
-```sh
-bash scripts/live-checks/check-381-over-cap-build.sh --checkout <a sandbox repository checkout> --dry-run
-bash scripts/live-checks/check-381-over-cap-build.sh --checkout <a sandbox repository checkout>
-```
-
-`--dry-run` prints the plan and makes **no call at all**: it lowers no cap and starts no build. `--checkout` is
-the checkout to build from (default `.`). `--project <name>` is the Fugaro project; leave it out where a project
-config is in force. `--fugaro-flags '<flags>'` adds flags to every `fugaro` call, and `--deadline` bounds how
-long the build command may take. The knobs are `CHECK381_FUGARO`, `CHECK381_DEADLINE`, `CHECK381_DRY_RUN` and
-`CHECK381_KEEP_SCRATCH`, which keeps the scratch directory with every call's own output.
-
-**What it costs.** `fugaro doctor --json`, `fugaro project show --json`, two or three `fugaro budget show
---json`, **two** `fugaro budget set` (the lowering and the putting back) and one `fugaro image build --no-wait`
-that is refused before it is submitted: **no model call, no image and no Cloud Build**, and the day counts
-nothing for a build that was refused. On a healthy installation nothing is built at all. A FAIL where the build
-was **not** refused is the exception, and the row says money may be being spent: a build that was submitted
-under `--no-wait` keeps running in Cloud Build, and the check does not cancel it — that is the finding, and the
-build's own transcript's last line is in the block.
-
-**Paste back:** the whole `CHECK 381 RESULT` block and nothing else — it carries the caps before and after, the
-sentence the refusal printed and the row that says the caps are back.
-
-## Check 382: a coding agent's `budget set` raise is refused, and the refusal carries the command its owner can run (a sandbox repository checkout only, never `belong`; one script you run; NOT RUN)
-
-**NOT RUN.** Written by task **T14** of
-[docs/no-prompt-policy/implementation-plan.md](no-prompt-policy/implementation-plan.md) — its "Checks 380–382"
-— and it reads the fence the policy put where the typed confirmation in front of a raise used to be. That
-confirmation is gone from every raise form (T7), and what replaced it is **`raiseOwnerOnly`** (**D1542**): the
-owner's own terminal asks nothing, and a **coding agent's session is refused** — because a cap the session it
-bounds can lift is not a limit (**F8**). The fence is a courtesy and as strong as the markers themselves, no
-stronger (**F20**); what this check reads is that it is there at all, that it fires on the **raise** and not on
-the command, and that an agent's report carries a command its owner can act on without reconstructing the flags
-from a transcript. The check is `scripts/live-checks/check-382-agent-cannot-raise-a-cap.sh` (its sibling test
-`scripts/live-checks/check-382-agent-cannot-raise-a-cap_test.sh` drives it against a fake `fugaro` whose fence
-refuses on the marker set in **its own** environment and can bend the sentence each way, beside a real git
-checkout and its origin, and raises nothing), and **no agent runs any step of it**: a project naming `belong` is
-refused before anything is run, and so is a coding agent's session.
-
-**The raise is made a raise, always.** A no-op answers "nothing changed" without asking the fence, so the value
-is chosen out of the node's own caps: `max(own daily, own per-run) + 0.01`, or `0.01` where the node holds
-nothing of its own. Setting a cap where none existed is a raise as much as an increase is (the CLI's own
-`editMicroNode` rule), and one cent above everything the node holds keeps the call a raise whatever the node
-held, and keeps the per-run cap from being pushed above the daily. The marker (`CLAUDECODE=1`) is set on the
-**child's own command line** and nowhere else, so the environment the check was started in must carry no marker
-either — which is the `agent-session` guard.
-
-**What it reads, in this order.** Every row goes into the one `CHECK 382 RESULT` block on stdout:
-
-- **`xtrace`** — this shell was not started with tracing on. The check prints the command the refusal carries
-  and the block you would paste back, so a shell that arrived tracing is stopped first.
-- **`agent-session`** — no coding agent's marker is set **in this check's environment**: the marker the raise
-  below carries is the one the check put there and nothing else.
-- **`project`** — which installation this is about, and where the answer came from, the two held to each other.
-- **`belong`** — the project is not the owner's own installation, refused in what you typed and in what `doctor`
-  answered.
-- **`checkout`** — the checkout's `origin` remote names the repository this raise is about, read as
-  `owner/name`: the command carries that repository explicitly, so the check and `fugaro budget set` agree on
-  which caps the raise would move.
-- **`caps`** — the repository's own caps node out of `fugaro project show --json` (what a raise would move and
-  what gets put back) and the effective caps out of `fugaro budget show --json`. A node the check cannot read
-  is a **refusal to run**: a cap it cannot put back is a change to your project rather than a reading.
-- **`raise`** — the invocation this check runs, printed so the block says exactly what was attempted:
-  `budget set --repo <this repository> --daily <the value above>`.
-- **`marker`** — the fact this check is: the raise, from the checkout, its stdin on `/dev/null`, under the
-  deadline (300 seconds by default), with `CLAUDECODE=1` on the child alone. Exit **1** is the refusal; exit 0
-  is a FAIL and the loudest one here (the fence let a coding agent's session raise this repository's cap, and
-  the cap has almost certainly moved); any other status FAILs, and a run still going at the deadline is killed
-  and FAILs.
-- **`refusal`** — the sentence, whitespace-collapsed and read for all of it: the act in the fence's own words
-  ("raising a cap is the owner's own step"), the marker it read, that **nothing was applied**, and the same
-  invocation you would type at your own terminal. A refusal missing any part is a FAIL: an agent handed half
-  that sentence has nothing to hand over.
-- **`help`** — `fugaro budget set --help` printed the command's own flags, so the printed command below is read
-  against the CLI this check actually ran rather than against a list the check carries. A help that did not
-  answer makes the `command` row NOT MEASURED.
-- **`command`** — the invocation parsed out of the sentence, held to: the same program this check ran, `budget
-  set`, `--repo` naming this repository, the same value this check raised to, your project, and **no flag that
-  `budget set --help` does not name**. A command with an invented flag is one the owner cannot run, which is the
-  half of the refusal that makes it actionable.
-- **`unchanged`** — the caps read back out of `fugaro budget show --json` and held to what was there before. A
-  raise that **LANDED** is the loudest FAIL there is: the fence did not hold and a cap moved.
-- **`fence`** — the verdict: the fence **HOLDS** on this installation (exit 1, the whole sentence, a runnable
-  command, and the caps exactly as they were), **does NOT hold**, or **NOT MEASURED** (a row above could not be
-  read).
-- **`teardown`** — what goes back. On a PASS, **nothing at all**: the refusal comes before the write and the
-  read-back row says so. Where the raise landed, or where the caps could not be read back at all, the exit trap
-  writes the caps back — the exact values the node held, or `--clear` where it held none — on every way out, and
-  reads them back to say so.
-
-Exit `0` means the claim held; `1` means it did not (each row says which); `2` means the check could not tell (a
-guard stopped it, the caps could not be read, a tool is missing).
-
-**Run it:**
-
-```sh
-bash scripts/live-checks/check-382-agent-cannot-raise-a-cap.sh --checkout <a sandbox repository checkout> --dry-run
-bash scripts/live-checks/check-382-agent-cannot-raise-a-cap.sh --checkout <a sandbox repository checkout>
-```
-
-`--dry-run` prints the plan and makes **no call at all**: it raises nothing. `--checkout` is the checkout the
-raise runs from (default `.`). `--project <name>` is the Fugaro project; leave it out where a project config is
-in force. `--fugaro-flags '<flags>'` adds flags to every `fugaro` call, and `--deadline` bounds how long the
-raise may take. The knobs are `CHECK382_FUGARO`, `CHECK382_DEADLINE`, `CHECK382_DRY_RUN` and
-`CHECK382_KEEP_SCRATCH`, which keeps the scratch directory with every call's own output.
-
-**What it costs.** `fugaro doctor --json`, `fugaro project show --json`, three `fugaro budget show --json`, one
-`fugaro budget set --help` and **one** `fugaro budget set` that is refused before it is applied: no model call,
-no build, no run and **no cloud write at all** unless a row says the raise landed. On a PASS your project is
-untouched and there is nothing to restore.
-
-**What it cannot settle.** The fence is a **marker test**, not a barrier: a session that unsets `CLAUDECODE` is
-outside it (**F20**), and nothing here says anything about a session that clears its own marker — the reading is
-of the marker the check sets itself. The hermetic half is
-`scripts/live-checks/check-382-agent-cannot-raise-a-cap_test.sh`, run from `scripts/live_checks_test.go`: the
-fence there is the fake's own, refusing exactly when one of the markers `agentMarker` knows is set in **its**
-environment, and a case that bends the sentence — a part missing, the command naming another repository, another
-value, another project, an invented flag, another program — proves the FAIL the check reads is the reading's and
-not a word the fake was told to say.
-
-**Paste back:** the whole `CHECK 382 RESULT` block and nothing else. It carries the caps before and after, the
-refusal's sentence and the command it printed; nothing in it is a secret, and the block is what says whether the
-fence is there on your installation.
-
