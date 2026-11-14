@@ -277,6 +277,18 @@ func layerPlanFor(ctx context.Context, lc *localcfg.Config, mode rigor.Mode) (*l
 	// what would catch a layer that moved in the meantime, so the answer is not
 	// gated on it twice.
 	if mode != "" {
+		// The answer is read again where it is written. The question's own
+		// reader is the one reading (setupRigorMode), so the value that reaches
+		// the file is a mode and not whatever a run carried here: a walk that
+		// skips the question — `fugaro update` on a machine with no project
+		// config, whose wizard returns before it — must not be able to publish
+		// a mode no layer may set, hotfix above all (D834), and a near miss
+		// would otherwise be written and refused only at the read-back below.
+		read, err := setupRigorMode(string(mode))
+		if err != nil {
+			return nil, userErr("--rigor %s: %v", pluginwire.Printable(string(mode)), err)
+		}
+		mode = read
 		base, writeBase := p.local, false
 		switch {
 		case p.exists:

@@ -288,6 +288,15 @@ func (s *wizardStage) ask(ctx context.Context) error {
 			if o.door != updateDoor.name {
 				return freshOnlyInstalled(o.cloud.gcpProject, installed, o.cloud.region)
 			}
+			// The run returns below, before the question is asked, so --rigor
+			// is refused here rather than honoured: left alone, an unvalidated
+			// value would ride the run's options into the layer stage, which
+			// splices it into defaults.rigor.default and publishes it — hotfix
+			// included, the one mode no layer may set (D834). The installation
+			// is there, so its mode is its own and the flag is a first run's.
+			if err := setupRigorRefusal(o.rigor); err != nil {
+				return err
+			}
 			o.name = installed
 			fmt.Fprintf(r.w, "%sthe installation of project %s is in GCP project %s and this machine has no local config for it: writing it from the installation, and applying nothing\n",
 				o.programPrefix(), pluginwire.Printable(installed), pluginwire.Printable(o.cloud.gcpProject))

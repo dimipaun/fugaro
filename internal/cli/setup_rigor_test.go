@@ -121,22 +121,28 @@ func TestSetupAsksTheRigorModeWithNoSilentDefault(t *testing.T) {
 }
 
 // TestSetupRigorAnswerRefusesANearMiss: the answer is read by the closed
-// vocabulary (rigor.Parse, through setupRigorMode), and everything outside it
-// is refused in the words `fugaro run --mode` refuses it with — the list is
-// rigor.ModeList's one spelling (F8), so the wizard and the runner name the
-// same modes.
+// vocabulary (rigor.Known, through setupRigorMode), and everything outside it
+// is refused with the modes this question accepts — the ones it printed a line
+// above (rigorChoices) and not rigor.ModeList, whose hotfix the same function
+// refuses two lines later: a refusal that named it would send the reader to a
+// second refusal.
 func TestSetupRigorAnswerRefusesANearMiss(t *testing.T) {
 	r, out := wizardRun(t, rigorStdin("Pro\npro\n"), nil)
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	printed := out.String()
-	want := "not a rigor mode: use " + rigor.ModeList()
+	want := "not a rigor mode: use " + rigorAnswerModes()
 	if !strings.Contains(printed, want) {
-		t.Errorf("a near miss is not refused in the vocabulary's own words (%q):\n%s", want, printed)
+		t.Errorf("a near miss is not refused with the modes the question takes (%q):\n%s", want, printed)
 	}
-	if !strings.Contains(printed, rigor.ModeList()) {
-		t.Errorf("the refusal does not name the modes that are accepted:\n%s", printed)
+	for _, c := range rigorChoices {
+		if !strings.Contains(want, string(c.mode)) {
+			t.Errorf("the refusal does not name %q, a mode the question accepts:\n%s", c.mode, printed)
+		}
+	}
+	if strings.Contains(want, string(rigor.Hotfix)) {
+		t.Errorf("the refusal tells the reader to use hotfix, which this question refuses:\n%s", printed)
 	}
 	if r.o.rigor != string(rigor.Pro) {
 		t.Errorf("after the run the answer is %q, want pro: the value typed after the refusal", r.o.rigor)
@@ -358,6 +364,39 @@ func TestUpdateNeverAsksTheRigorQuestion(t *testing.T) {
 				if strings.Contains(out+errOut, asked) {
 					t.Errorf("the run asked the rigor question (%q) on a project that already has a config:\n%s\n%s", asked, out, errOut)
 				}
+			}
+		})
+	}
+}
+
+// TestUpdateRefusesRigorOnAMachineWithNoProjectConfig: the one walk that
+// reaches the installation lookup below is `fugaro update` on a machine with no
+// project config, and it settles the name from the installation and returns
+// BEFORE the question — so `--rigor` was neither asked nor refused there, and an
+// unread value rode the run's options into the layer stage, whose
+// write-and-publish path splices it into `defaults.rigor.default`. hotfix is
+// what that path may not carry (D834, and neither other door writes it), so a
+// flag on this walk is refused in the same sentence the converge gives it.
+func TestUpdateRefusesRigorOnAMachineWithNoProjectConfig(t *testing.T) {
+	for _, mode := range []string{string(rigor.Hotfix), "Pro", string(rigor.Critical)} {
+		t.Run(mode, func(t *testing.T) {
+			old := installationName
+			installationName = func(context.Context, string, string, string) string { return initProjectName }
+			t.Cleanup(func() { installationName = old })
+
+			r, out := wizardRun(t, "proj-1234\n\n", &initOptions{rigor: mode})
+			r.o.door = updateDoor.name
+			err := r.gatherInputs(t.Context())
+			if err == nil || ExitCode(err) != ExitUserError {
+				t.Fatalf("fugaro update --rigor %s on a machine with no project config went on: %v\n%s", mode, err, out)
+			}
+			for _, want := range []string{"--rigor is a first run's flag", "fugaro rigor set", "nothing was written"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal lacks %q: %v", want, err)
+				}
+			}
+			if asked := out.String(); strings.Contains(asked, questionFor("--name").what) || strings.Contains(asked, rigorQuestionLead) {
+				t.Errorf("the run asked a question on its way to refusing the flag:\n%s", asked)
 			}
 		})
 	}

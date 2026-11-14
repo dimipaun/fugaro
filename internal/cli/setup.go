@@ -566,10 +566,24 @@ func rigorReviewWords(l rigor.Levels) string {
 	return "no review at all"
 }
 
+// rigorAnswerModes is the list a near miss is refused with: the modes this
+// question accepts, in the order it prints them (rigorChoices).
+//
+// It is not rigor.ModeList(), which is the whole vocabulary with hotfix in it:
+// hotfix is the one value this question refuses a line below, so a refusal that
+// named it would send the reader to a second refusal. Taking the list off the
+// table the question prints is also what keeps the two from drifting — a mode
+// added to the question is in its refusal, and one taken out is not.
+func rigorAnswerModes() string {
+	modes := make([]string, 0, len(rigorChoices))
+	for _, c := range rigorChoices {
+		modes = append(modes, string(c.mode))
+	}
+	return strings.Join(modes, ", ")
+}
+
 // setupRigorMode is the rigor question's own reading of an answer: the mode it
-// names, or the refusal the closed vocabulary gives everything else — the list
-// is rigor.ModeList's one spelling, so a near miss is refused in the wizard's
-// words exactly as `fugaro run --mode` refuses it (F8).
+// names, or the refusal the closed vocabulary gives everything else.
 //
 // hotfix is in the vocabulary and not in this answer: it is off the axis and an
 // operator's own per-run mode, so no layer sets it, and the refusal is D834's
@@ -578,7 +592,7 @@ func rigorReviewWords(l rigor.Levels) string {
 func setupRigorMode(v string) (rigor.Mode, error) {
 	mode := rigor.Mode(strings.TrimSpace(v))
 	if !rigor.Known(mode) {
-		return "", errors.New("not a rigor mode: use " + rigor.ModeList())
+		return "", errors.New("not a rigor mode: use " + rigorAnswerModes())
 	}
 	if mode == rigor.Hotfix {
 		return "", errors.New(rigorHotfixRefusal)
@@ -631,7 +645,10 @@ func (s *wizardStage) askRigor() error {
 		// is not a looser door to the same key.
 		mode, err := setupRigorMode(o.rigor)
 		if err != nil {
-			return userErr("--rigor %s is %v", pluginwire.Printable(o.rigor), err)
+			// ": " and not " is ": D834's sentence names hotfix itself
+			// ("hotfix is not a mode a layer sets"), so the flag's own line
+			// cannot complete it with a second "is".
+			return userErr("--rigor %s: %v", pluginwire.Printable(o.rigor), err)
 		}
 		o.rigor = string(mode)
 		return nil

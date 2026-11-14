@@ -718,10 +718,12 @@ closed as its duplicate, as above), and **R4**'s refusal of `hotfix` (D834) and 
   The four lines are printed before the prompt, the way the billing question prints its list, and the
   prompt itself carries **no suggestion**: it is `initRun.prompt` with `def` empty
   (`internal/cli/init_inputs.go`), so Enter is not an answer — an empty line prints "a value is
-  needed" and asks again — and the answer is validated against the closed vocabulary (`rigor.Parse`,
-  whose refusal names `rigor.ModeList()`), so a near miss is refused in the wizard's words exactly as
-  `fugaro run --mode` refuses it (F8). A default nobody typed is the state this task exists to end: on
-  every other question the wizard takes Enter as the answer, and here it must not.
+  needed" and asks again — and the answer is validated against the closed vocabulary (`rigor.Known`,
+  through `setupRigorMode`), so a near miss is refused the way `fugaro run --mode` refuses it (F8),
+  with the modes this question printed: the four a layer may set (`rigorChoices`), and not
+  `rigor.ModeList`'s `hotfix`, the one value that same reading refuses a line later (D834). A default
+  nobody typed is the state this task exists to end: on every other question the wizard takes Enter as
+  the answer, and here it must not.
 - **`hotfix` is not offered and not writable — D834 stands.** It is a per-run mode (D12's own door,
   `fugaro run --mode hotfix`), the prompt does not list it, and `--rigor hotfix` is refused with the
   sentence `fugaro rigor set` refuses it with: R4's refusal (D834), which names that operator door and

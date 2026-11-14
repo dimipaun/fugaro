@@ -865,6 +865,31 @@ func TestSetupWritesTheRigorAnswerAndPublishesItInTheSameRun(t *testing.T) {
 	}
 }
 
+// TestTheLayerStageRefusesAModeNoLayerMaySet is the stage's own half of the
+// door above (task W; D834): the mode this stage writes is read by the
+// question's own reader (setupRigorMode) where it is spliced, so a walk whose
+// wizard returned before asking the question — `fugaro update` on a machine
+// with no project config — cannot publish a value no layer may carry. hotfix is
+// the one that matters: it is off the axis, an operator's own per-run mode, and
+// a project-wide default of it is exactly what D834 forbids.
+func TestTheLayerStageRefusesAModeNoLayerMaySet(t *testing.T) {
+	for _, mode := range []string{string(rigor.Hotfix), "fast"} {
+		t.Run(mode, func(t *testing.T) {
+			r := newRigorStageRig(t, "", "", "", mode)
+			st, err := r.s.Check(t.Context())
+			if err == nil {
+				t.Fatalf("the layer stage planned a write of %q (%s):\n%s", mode, st.Detail, r.out)
+			}
+			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--rigor") {
+				t.Errorf("the refusal is not the run's own, naming the flag the value came from: %v", err)
+			}
+			if obj, ok := rigorObject(t, r); ok {
+				t.Errorf("a mode no layer may set was published: %s", obj)
+			}
+		})
+	}
+}
+
 // put publishes text as the project layer of this rig's bucket, as another
 // publisher would.
 func (r *layerStageRig) put(t *testing.T, text string) {
