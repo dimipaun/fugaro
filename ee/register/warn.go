@@ -38,16 +38,17 @@ import (
 
 // licenceWarningTerms are the facts of a key a window is read against: the
 // windows the key carries, the end of its paid term they are counted from, the
-// grace it carries, and the state the clock puts it in. It is assembled from a
-// claim set where one is in hand (`set`, `refresh`) and from the project store's
-// View where the reader is not entitled to the claim set — `licence status`
-// shows a viewer the state and never the key (D2137) — so the rules below read
-// neither shape directly.
+// grace it carries, the state the clock puts it in, and the renewal mode the
+// sentence below acts on. It is assembled from a claim set where one is in hand
+// (`set`, `refresh`) and from the project store's View where the reader is not
+// entitled to the claim set — `licence status` shows a viewer the state and
+// never the key (D2137) — so the rules below read neither shape directly.
 type licenceWarningTerms struct {
 	Warnings    []licence.WarningV1
 	PaidThrough time.Time
 	GraceDays   int
 	State       licence.State
+	RenewalMode string
 }
 
 // licenceWarningTermsOfKey reads the terms off a claim set, which `set` and
@@ -58,6 +59,7 @@ func licenceWarningTermsOfKey(claims licence.Claims, state licence.State) licenc
 		PaidThrough: claims.PaidThrough,
 		GraceDays:   claims.GraceDays,
 		State:       state,
+		RenewalMode: claims.RenewalMode,
 	}
 }
 
@@ -70,6 +72,7 @@ func licenceWarningTermsOfView(view project.View) licenceWarningTerms {
 		PaidThrough: view.PaidThrough,
 		GraceDays:   view.GraceDays,
 		State:       view.State,
+		RenewalMode: view.RenewalMode,
 	}
 }
 
@@ -209,13 +212,24 @@ func licenceWarningFor(terms licenceWarningTerms, now time.Time, role access.Rol
 // acts. Which roles are told is the window's business and is never in the
 // sentence, so a product that shows it — the console, the app — shows one text
 // to everyone the window reaches.
+//
+// The command is the key's own renewal mode and not always `refresh`: an
+// offline key (renewal_mode: none) never contacts the licence server, and
+// `fugaro licence refresh` answers it with a note saying exactly that and no
+// renewal, so the one command that does anything for it is the one that pastes
+// a new key in (spec section 7; ee/register/licence.go's refresh answers the
+// same way).
 func licenceWarningMessage(terms licenceWarningTerms) string {
 	paid := terms.PaidThrough.UTC().Format(time.RFC3339)
 	grace := licenceWarnGraceEnd(terms).UTC().Format(time.RFC3339)
-	if terms.State == licence.Expired {
+	switch {
+	case terms.State == licence.Expired:
 		return fmt.Sprintf("licence: the paid period ended on %s and the grace ended on %s: install a new key with `fugaro licence set`", paid, grace)
+	case terms.RenewalMode == licence.RenewalNone:
+		return fmt.Sprintf("licence: the paid period ended on %s and the grace ends on %s: this key never asks the licence server for another one, so install a new key with `fugaro licence set` before then", paid, grace)
+	default:
+		return fmt.Sprintf("licence: the paid period ended on %s and the grace ends on %s: renew it with `fugaro licence refresh` before then", paid, grace)
 	}
-	return fmt.Sprintf("licence: the paid period ended on %s and the grace ends on %s: renew it with `fugaro licence refresh` before then", paid, grace)
 }
 
 // licenceWarnLine writes the warning a tagged CLI's own command owes, and

@@ -17,12 +17,15 @@ package register
 // term reaches nobody.
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/ee/keyservice"
 	"github.com/dimipaun/fugaro/ee/licence"
 	"github.com/dimipaun/fugaro/internal/access"
 )
@@ -287,5 +290,112 @@ func TestAnAbsurdGraceOrWindowIsNotAShorterOne(t *testing.T) {
 	}
 	if !strings.Contains(errOut, end.UTC().Format(time.RFC3339)) {
 		t.Errorf("no line of the command names the end of the grace (%s):\n%s", end.UTC().Format(time.RFC3339), errOut)
+	}
+}
+
+// TestSettingAKeySaysTheGraceItLandedIn pins the line at the second of the
+// three commands that write it: a key that lands in its grace is one a person
+// has to act on, and the command that just installed it is where they are
+// looking.
+func TestSettingAKeySaysTheGraceItLandedIn(t *testing.T) {
+	f := newLicenceFixture(t)
+	key, secret, claims := f.bundle(t, func(c *licence.Claims) {
+		c.PaidThrough = f.now
+		c.GraceDays = 30
+		c.Warnings = licenceWarnPolicy
+	})
+	f.seedSecretContainer(nil)
+	f.now = claims.PaidThrough.Add(3 * 24 * time.Hour)
+
+	if out, errOut, err := f.exec(t, key+"\n"+secret+"\n", "licence", "set"); err != nil {
+		t.Fatalf("licence set = %v (stdout %q, stderr %q)", err, out, errOut)
+	} else {
+		assertTheLineNames(t, errOut, claims)
+		if strings.Contains(out, "grace ends") {
+			t.Errorf("the warning landed in licence set's standard output:\n%s", out)
+		}
+	}
+	if got := f.status(t)["state"]; got != string(licence.Grace) {
+		t.Errorf("the key set three days into its grace reads %v, want %s", got, licence.Grace)
+	}
+}
+
+// TestRefreshingAKeySaysTheGraceItLandedIn pins the line at the third command
+// that writes it. The renewal is answered with a key that is already inside its
+// own grace — a term that starts in the past, which is what a server catching
+// up an installation it has not heard from sends — so the writer and the reader
+// of the line are the same key's.
+func TestRefreshingAKeySaysTheGraceItLandedIn(t *testing.T) {
+	f := newLicenceFixture(t)
+	installed, installedSecret, installedClaims := f.bundle(t, func(c *licence.Claims) {
+		c.PaidThrough = f.now
+		c.GraceDays = 30
+		c.Warnings = licenceWarnPolicy
+	})
+	f.seedSecretContainer([]byte(installedSecret))
+	f.secrets.AllowAccess()
+	install(t, f, installed)
+	f.now = installedClaims.PaidThrough.Add(3 * 24 * time.Hour)
+
+	next, nextSecret, nextClaims := f.bundle(t, func(c *licence.Claims) {
+		c.KeyID = "lk_test_k35_successor"
+		c.PaidThrough = installedClaims.PaidThrough.Add(24 * time.Hour)
+		c.GraceDays = 30
+		c.Warnings = licenceWarnPolicy
+	})
+	f.serveLicenceServer(t, func(keyservice.RenewalCall) (int, string) {
+		answer, err := json.Marshal(keyservice.Answer{Status: keyservice.StatusOK, Key: next, RenewalSecret: nextSecret})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return http.StatusOK, string(answer)
+	})
+
+	out, errOut, err := f.exec(t, "", "licence", "refresh")
+	if err != nil {
+		t.Fatalf("licence refresh = %v (stdout %q, stderr %q)", err, out, errOut)
+	}
+	assertTheLineNames(t, errOut, nextClaims)
+	if strings.Contains(out, "grace ends") {
+		t.Errorf("the warning landed in licence refresh's standard output:\n%s", out)
+	}
+}
+
+// TestAnOfflineKeyIsNotToldToRefresh holds the sentence to the key's own
+// renewal mode: a `renewal_mode: none` key never contacts the licence server
+// (spec section 7), and `fugaro licence refresh` answers it with a note and no
+// renewal, so a warning that sent its owner there would send them to a command
+// that does nothing.
+func TestAnOfflineKeyIsNotToldToRefresh(t *testing.T) {
+	f := newLicenceFixture(t)
+	claims := f.claims(func(c *licence.Claims) {
+		c.PaidThrough = f.now
+		c.GraceDays = 30
+		c.RenewalMode = licence.RenewalNone
+		c.CheckInterval = nil
+		c.Warnings = licenceWarnPolicy
+	})
+	install(t, f, f.issuer.mint(t, claims))
+	f.now = claims.PaidThrough.Add(3 * 24 * time.Hour)
+
+	_, errOut, err := f.exec(t, "", "licence", "status")
+	if err != nil {
+		t.Fatalf("licence status = %v", err)
+	}
+	assertTheLineNames(t, errOut, claims)
+	if strings.Contains(errOut, "fugaro licence refresh") {
+		t.Errorf("an offline key is told to renew with a command that answers it with a note and no renewal:\n%s", errOut)
+	}
+	if !strings.Contains(errOut, "fugaro licence set") {
+		t.Errorf("the line for an offline key does not name the one command that installs its successor:\n%s", errOut)
+	}
+
+	warning, open := warningField(t, f.status(t))
+	if !open {
+		t.Fatal("an offline key three days into its grace warns nobody: licence status --json's warning is null")
+	}
+	message, _ := warning["message"].(string)
+	if strings.Contains(message, "fugaro licence refresh") || !strings.Contains(message, "fugaro licence set") {
+		t.Errorf("the field's message is %q, want the one command that renews an offline key (`fugaro licence set`) and not the one that cannot", message)
 	}
 }
