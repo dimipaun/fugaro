@@ -1295,7 +1295,7 @@ func (r *run) admissionCheck(ctx context.Context) error {
 			// The installation's implicit default review-only job is not a job
 			// of any profile this policy defines: it is the ONE review job a
 			// project has whether or not it declares a profile
-			// (implicitReviewTriple, internal/infra's implicitReviewVariant),
+			// (implicitReviewCandidate, internal/infra's implicitReviewVariant),
 			// and the repositories it may be about are the project's own
 			// allow_repos — the very gate the launch of such a repository met,
 			// worded by the same function the launcher's advisory twin uses
