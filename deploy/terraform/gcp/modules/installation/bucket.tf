@@ -10,8 +10,9 @@
 # the operator, who holds objectAdmin here and can delete every generation. What
 # it buys is that erasure needs that role. The lifecycle rules below delete
 # noncurrent versions under every prefix the rules above empty — runs/, cache/,
-# locks/, tokens/ and issues/ — so the bucket does not grow without bound, while
-# fugaro/ and builds/ have none: that is the half the record depends on.
+# locks/, tokens/, issues/ and reports/ — so the bucket does not grow without
+# bound, while fugaro/ and builds/ have none: that is the half the record
+# depends on.
 resource "google_storage_bucket" "runs" {
   project  = var.project
   name     = var.runs_bucket
@@ -75,20 +76,40 @@ resource "google_storage_bucket" "runs" {
     }
   }
 
+  # The stored reports (slice P, ruling E3): a report of a repository and a
+  # period, and the project's year roll-up beside them, are kept 18 months —
+  # long enough that the policy review reads a whole year back and the one
+  # before it — and then deleted. reports_days is internal/infra's 548, in
+  # whole days as this variable's other members are. The age is from creation
+  # and not from a custom time: the job writes each report once and overwrites
+  # it with the same content on a rerun, so a report cannot be kept alive by
+  # being rewritten.
+  lifecycle_rule {
+    action {
+      type = "Delete"
+    }
+    condition {
+      age            = var.bucket_lifecycle.reports_days
+      matches_prefix = ["reports/"]
+    }
+  }
+
   # builds/ has no rule: a build record must outlive any age.
 
   # A versioned bucket keeps every deleted object as a noncurrent version, so
   # every prefix the rules above delete in has to be purged too — without one the
-  # bucket grows for ever. That is runs/ and cache/ by age, and locks/, tokens/
-  # and issues/, which a run's lock release, a token's expiry and a closed issue
-  # empty. fugaro/ and builds/ stay out: the record and a build are never purged.
+  # bucket grows for ever, and a report the 18-month rule deleted would stay
+  # readable as the version it left. That is runs/, cache/ and reports/ by age,
+  # and locks/, tokens/ and issues/, which a run's lock release, a token's
+  # expiry and a closed issue empty. fugaro/ and builds/ stay out: the record
+  # and a build are never purged.
   lifecycle_rule {
     action {
       type = "Delete"
     }
     condition {
       days_since_noncurrent_time = var.bucket_lifecycle.noncurrent_days
-      matches_prefix             = ["runs/", "cache/", "locks/", "tokens/", "issues/"]
+      matches_prefix             = ["runs/", "cache/", "locks/", "tokens/", "issues/", "reports/"]
     }
   }
 

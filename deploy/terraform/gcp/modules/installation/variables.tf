@@ -107,12 +107,13 @@ variable "log_bucket_description" {
 }
 
 variable "bucket_lifecycle" {
-  description = "The runs bucket's lifecycle, in days: the three rules the bootstrap set, and the one the bucket's versioning adds (a noncurrent version under runs/, cache/, locks/, tokens/ or issues/ is purged this many days after it stops being current)."
+  description = "The runs bucket's lifecycle, in days: the three rules the bootstrap set, the one the bucket's versioning adds (a noncurrent version under runs/, cache/, locks/, tokens/ or issues/ is purged this many days after it stops being current), and the one the stored reports get (reports/ is deleted this many days after an object is created, which is E3's 18 months held in whole days, as the other members are)."
   type = object({
     runs_days              = optional(number, 90)
     cache_custom_time_days = optional(number, 30)
     cache_age_days         = optional(number, 180)
     noncurrent_days        = optional(number, 7)
+    reports_days           = optional(number, 548)
   })
   default  = {}
   nullable = false
@@ -388,6 +389,61 @@ variable "catalog_check" {
   validation {
     condition     = var.catalog_check == null ? true : contains(keys(var.catalog_check.env), "FUGARO_CATALOG_CHECK_SPEC")
     error_message = "catalog_check.env must carry FUGARO_CATALOG_CHECK_SPEC: it is the whole run's assignment (fugaro image check --job --catalog refuses to start without it)."
+  }
+}
+
+variable "reports" {
+  description = "The project's reports job (slice P, ruling E1), or null on an installation that has not asked for one: the one scheduled Cloud Run job that runs `fugaro runs reports --job` and writes, into reports/ of the runs bucket, one report per repository and period and the project's aggregate beside them, keeping 18 months of them (bucket.tf's reports_days, E3). Its job name must start with fugarorpt-: fugaro runs ls and max_parallel count the fugaro- jobs, and the alert policy matches ^fugarorpt- (reports.tf). env is internal/infra's, and carries FUGARO_REPORTS_JOB_SPEC — the assignment the job refuses to start without — beside the platform variables every job has. The two IAM conditions are the input's (the runs/ read under which the job lists and reads a repository's records, internal/backend/gcp's gcp.ReportsReadCondition, and the reports/ write, gcp.ReportsWriteCondition): what makes a grant narrow here is its condition, and it is the bytes the plan review reads. paused is the schedule's own state and defaults to true, so the job ships stopped and the installation that wants the nightly run writes jobs.reports.paused = false in its project layer. account_id is the one ID internal/infra/tf reads as this job's own kind of principal, so it is pinned to that literal and not to the shape a service account ID has."
+  type = object({
+    account_id       = string
+    job              = string
+    image            = string
+    scheduler_job    = string
+    scheduler_region = string
+    schedule         = optional(string, "37 5 * * *")
+    paused           = optional(bool, true)
+    env              = map(string)
+    read_condition = object({
+      title      = string
+      expression = string
+    })
+    write_condition = object({
+      title      = string
+      expression = string
+    })
+  })
+  default = null
+
+  validation {
+    condition = var.reports == null ? true : (
+      # Pinned to the one ID the plan review knows as the reports job's account
+      # (tf.ReportsAccountID), for the catalog check's reason: an ID the review
+      # reads as one of the project's job accounts (fugaro-<readable>-<8 hex>,
+      # tf's jobAccount) would be a member every toAccounts row accepts, and the
+      # two rows this account's own kind opens are narrowed by the conditions
+      # below alone.
+      var.reports.account_id == "fugaro-reports" &&
+      can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.reports.job)) &&
+      startswith(var.reports.job, "fugarorpt-") &&
+      can(regex("^[a-zA-Z][a-zA-Z0-9_-]{0,62}$", var.reports.scheduler_job)) &&
+      can(regex("^[a-z]+-[a-z]+[0-9]+$", var.reports.scheduler_region)) &&
+      length(var.reports.schedule) > 0 &&
+      length(var.reports.image) > 0 &&
+      length(var.reports.read_condition.title) > 0 &&
+      length(var.reports.read_condition.expression) > 0 &&
+      length(var.reports.write_condition.title) > 0 &&
+      length(var.reports.write_condition.expression) > 0
+    )
+    error_message = "reports needs the service account ID fugaro-reports — the one internal/infra/tf reads as this job's own kind of principal, so a job-account-shaped ID would be covered by the rows that accept those — an image, a job name that starts with fugarorpt- (ls counts the fugaro- ones as workflow jobs, and the alert policy matches ^fugarorpt-), a Scheduler job name and region, and the two IAM conditions."
+  }
+
+  # The job's whole assignment arrives in its environment: the mode refuses to
+  # start without it, so an installation that deployed the job without the
+  # variable would deploy a job that can only fail, once a night, unnoticed
+  # until the alert fires.
+  validation {
+    condition     = var.reports == null ? true : contains(keys(var.reports.env), "FUGARO_REPORTS_JOB_SPEC")
+    error_message = "reports.env must carry FUGARO_REPORTS_JOB_SPEC: it is the whole run's assignment (fugaro runs reports --job refuses to start without it)."
   }
 }
 
