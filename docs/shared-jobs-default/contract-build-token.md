@@ -112,7 +112,11 @@ Closing the gap is a decision, and there are three ways to take it:
    closed: the second concurrent build's clone fails. That is a behaviour B1 has to choose and implement.
 2. **One Bitbucket catalog build per project at a time**, a rule on how builds are launched — B2's or the
    launcher's, not this contract's.
-3. **A per-build credential at the proxy** — the Fugaro-issued token D2302 rejected, which would have to be
+3. **The grant's URL is the build's own**, and the proxy serves a call on it against the pairing that URL was
+   issued for rather than against the identity's. No token: the handle is worth nothing without the identity's ID
+   token, which reaches the clone step alone. That closes the gap inside D2302's decision, and whether B1's proxy
+   can key on the URL is B1's to say.
+4. **A per-build credential at the proxy** — the Fugaro-issued token D2302 rejected, which would have to be
    reopened, and which F19 exists to avoid.
 
 Until one of them is taken, the answer this contract gives is that the two builds are not isolated, and nothing
