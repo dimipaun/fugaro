@@ -690,7 +690,6 @@ func (e *initEngine) planOnlyReview(ctx context.Context, stages []initflow.Stage
 	fmt.Fprint(e.r.w, "A run without --plan-only asks once at a terminal, with nothing typed: the person reading this screen is the whole of the answer — and in a managed project it asks nothing at all, because the deterministic gate judges each document as it writes. --plan-only never takes --yes or it.\n")
 }
 
-// alertEmail is the alert email in effect and where it comes from.
 // projectRigor is the mode every run of this project resolves to where nothing
 // narrower sets one, with the layer that set it: the run's own answer to the
 // wizard's question when it has one (the mode this very run writes into the
@@ -735,6 +734,7 @@ func (e *initEngine) projectRigor() (rigor.Resolved, bool) {
 	return rigor.Resolve(cfg, rigor.Request{}), true
 }
 
+// alertEmail is the alert email in effect and where it comes from.
 func (e *initEngine) alertEmail() (string, string) {
 	switch o := e.r.o; {
 	case o.alertEmail != "":
