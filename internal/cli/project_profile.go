@@ -596,7 +596,7 @@ func projectProfileCheck(path string, lc *localcfg.Config) error {
 		return nil
 	}
 	profiles := policyProfiles(lc)
-	accounts, err := projectpolicy.DeriveAccounts(profiles, lc.ClaudeAccounts, lc.ProjectSecrets)
+	accounts, err := projectpolicy.DeriveAccounts(profiles, lc.ClaudeAccounts, lc.ProjectSecrets, lc.PolicyRepoAccounts())
 	if err == nil {
 		err = projectpolicy.CheckProfiles(profiles, accounts)
 	}

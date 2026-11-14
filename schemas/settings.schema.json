@@ -1280,6 +1280,9 @@
         "repos.*.base_branch": {
           "default": "unset = the project's base_branch"
         },
+        "repos.*.claude_accounts": {
+          "default": "unset = nobody: the repository's runs are served by the accounts the profiles of its jobs name"
+        },
         "repos.*.credentials_service_ready": {
           "default": "unset = false: no update has applied this repository's root with the service on \u2014 its bundle holds no model credential, or its agent.auth is not the cascade"
         },

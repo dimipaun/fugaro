@@ -264,6 +264,56 @@ func TestAppIDAskedOnceAndStored(t *testing.T) {
 	}
 }
 
+// A repository's own account list lives in its repos entry and in no document
+// an update reads, so the write that rebuilds that entry — `fugaro update
+// --repo .`, the documented onboarding and the whole upgrade — must carry it
+// over. Dropping it would erase in silence the only admission a
+// per-repository job can state: the node the publish writes would keep the
+// account while the config that asked for it stopped saying so, and that
+// repository's runs would be answered 503 state_unavailable.
+//
+// The mutation is the missing ClaudeAccounts in writeRepoConfig's own literal:
+// the list comes back empty out of the file this writes.
+func TestUpdateRepoKeepsTheRepositorysOwnAccountList(t *testing.T) {
+	e, _ := stageEngine(t, "", &initOptions{yes: true})
+	path := filepath.Join(t.TempDir(), "aurora.yaml")
+	e.lc = &localcfg.Config{
+		Version: 1, Name: "aurora", GCPProject: initProject, Region: "us-east5", RunsBucket: initRunsBucket,
+		Repos: map[string]localcfg.Repo{"acme/app": {
+			Provider: "github", BaseBranch: "trunk", ClaudeAccounts: []string{"ops"},
+			CredentialsServiceReady: localcfg.RecordSwitch(true),
+		}},
+	}
+	cfg, problems := config.Parse([]byte(checkoutYAML("github", "oauth", "aurora", "")))
+	if cfg == nil {
+		t.Fatal(problems)
+	}
+	e.r.cmd.SetErr(io.Discard)
+	if err := e.r.writeRepoConfig(t.Context(), e.lc, infra.RepoSpec{Name: "acme/app", Provider: "github", BaseBranch: "main", GitHubAppID: "12345"}, cfg, path, nil); err != nil {
+		t.Fatal(err)
+	}
+	lc, err := localcfg.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := lc.Repos["acme/app"]
+	if !ok {
+		t.Fatalf("the repository's entry is gone from %s", path)
+	}
+	if got := entry.ClaudeAccounts; len(got) != 1 || got[0] != "ops" {
+		t.Fatalf("the entry's claude_accounts = %v, want [ops]: the write rebuilt the entry without the repository's own admission", got)
+	}
+	// Everything else is the spec's, as before: the account list and the
+	// switch record are the entry's two fields this write is not the author
+	// of (the record is the test above).
+	if entry.Provider != "github" || entry.BaseBranch != "main" || entry.GitHubAppID != "12345" || len(entry.Workflows) == 0 {
+		t.Errorf("the entry is not the one the spec describes: %+v", entry)
+	}
+	if !entry.CredentialsServiceOn() {
+		t.Errorf("the switch record did not survive the write either: %+v", entry.CredentialsServiceReady)
+	}
+}
+
 // update --repo is the engine unchanged: its flag checks, its --print-vars
 // output (the variables alone on stdout, no result), and the embedded run's
 // refusal of an installation of another project, with the same words.

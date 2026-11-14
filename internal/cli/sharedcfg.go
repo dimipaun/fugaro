@@ -421,6 +421,16 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 		if c.Repos[name].BaseBranch != "" {
 			return bad("repos."+name+".base_branch", "%q is set; it is never published: the base branch comes from the checkout's reviewed fugaro.yaml", c.Repos[name].BaseBranch)
 		}
+		// claude_accounts is refused here for claude_accounts' own reason, one
+		// level down (localcfg.Config.Shared clears it, and the top-level key
+		// is in sharedForbidden): it is what admits the repository to an
+		// account, so a launcher who could publish one would be adding a
+		// repository to an account's admission by editing the runs bucket's
+		// file — and the machine whose next publish derives the block would be
+		// deriving the admission they wrote.
+		if len(c.Repos[name].ClaudeAccounts) > 0 {
+			return bad("repos."+name+".claude_accounts", "%v is set; it is never published: the accounts a repository's own runs may be served by are the operator's statement in the local config, and the policy node is where they are published", c.Repos[name].ClaudeAccounts)
+		}
 	}
 	// Every value of the published batch block that names a cloud resource is
 	// held to the anchor's project, for the reason the fields above are. The
