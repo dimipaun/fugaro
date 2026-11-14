@@ -155,6 +155,17 @@ type Request struct {
 	// m3) and recorded, and nothing is decided from it (which job called is
 	// JobAccount's, in Identity).
 	Job string
+	// AuthMode is HeaderAuthMode: the auth the run declares its repository goes
+	// out on. It is the caller's claim as Job is, held to the closed set of
+	// agent auths (ValidAuthMode), and it decides nothing on its own: the
+	// service narrows a call to what the repository's own record says and reads
+	// this only to check the two agree (creds/repoauth, B2.1).
+	AuthMode string
+	// AuthAccount is HeaderAuthAccount: the Claude account an oauth run
+	// declares. It is the caller's claim too, held to the shape an account's
+	// name has (ValidAuthAccount), and read only to check it against the
+	// accounts the repository's record names.
+	AuthAccount string
 }
 
 // Identity is a verified run: who is spending, on what, and until when.
@@ -200,6 +211,13 @@ type Identity struct {
 	// repository and no profile, and a review job's row carries the value of
 	// the account axis its call is served by instead.
 	Profile string
+	// AuthMode and AuthAccount are what the call declared about its own
+	// repository's auth (Request's fields of the same names). They are claims
+	// and not facts about this run, carried here so the one place that decides
+	// a call's reach reads them beside the identity they arrived with rather
+	// than from the request a second time.
+	AuthMode    string
+	AuthAccount string
 }
 
 // KeySource returns the RSA public key a token's kid names. A kid that is not
@@ -846,6 +864,7 @@ func (a *Authenticator) Verify(ctx context.Context, req Request) (Identity, erro
 		return Identity{}, err
 	}
 	id.Job, id.JobAccount, id.JobClass, id.Profile = req.Job, account, class, profile
+	id.AuthMode, id.AuthAccount = req.AuthMode, req.AuthAccount
 	// The review claim rule (spec §3.3) is NOT asked here. It is the pairing's
 	// first step (pairReview), and that is where it is answered — because a
 	// refusal from this function returns Identity{} and is answered by

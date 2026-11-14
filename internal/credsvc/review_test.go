@@ -24,6 +24,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gateway"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
@@ -340,6 +341,174 @@ func TestReviewAccountIsRefusedTheModelPathForAnotherAccount(t *testing.T) {
 	if n := s.src.readCount(); n != 0 {
 		t.Errorf("the bundle was read %d times, want none: the pairing comes first", n)
 	}
+}
+
+// implicitReviewRow is the deployment's own row for the installation's
+// implicit default review-only job (internal/infra's implicitReviewVariant,
+// named by ImplicitReviewJobName): the derivation internal/cli's
+// credentialsServiceConfig renders into FUGARO_REVIEW_JOB_ACCOUNTS, which is
+// where BOTH of this service's lists come from — the verifier's
+// AuthConfig.ReviewJobAccounts and the pairing's Config.ReviewAccounts are one
+// document read twice, which is why a fixture sets them from one value.
+//
+// The account segment is the axis's empty one and not a name: the deployment
+// derives the row from the job's triple, and config.ReviewVariantAccount is
+// what spells the axis's default account, so the row's account is the
+// config.DefaultClaudeAccount the published accounts block spells its own
+// entries with.
+func implicitReviewRow() ReviewJobAccount {
+	return ReviewJobAccountFor(projectpolicy.DefaultProfileName, gitprov.KindGitHub, "", testFirebase)
+}
+
+// profilelessPolicyDoc is the document a project that declares no profile
+// publishes, with its accounts block DERIVED rather than spelled out:
+// projectpolicy.DeriveAccounts over no profiles and one repos entry naming the
+// default account is exactly what `fugaro project policy publish` writes for
+// such a project — the block is the union of what the profiles name (nothing
+// here) and what the repositories' own claude_accounts name, kept where the
+// project_secrets entry that decides the default token's project-wide copy
+// reaches the repository.
+//
+// It is derived here because that derivation is the U2 answer this test pins:
+// a project with no profiles admits the default account to a repository by the
+// accounts block its own publish writes, and a test that spelled the block
+// itself would pass while publish wrote nothing.
+func profilelessPolicyDoc(t *testing.T, allowRepos []string, entry string, accounts ...string) string {
+	t.Helper()
+	block, err := projectpolicy.DeriveAccounts(nil, nil,
+		map[string]config.ProjectSecret{
+			config.ClaudeAccountSecret(config.DefaultClaudeAccount): {AllowDataTo: []string{entry}},
+		},
+		map[string]projectpolicy.RepoAccount{
+			entry: {Provider: gitprov.KindGitHub, Accounts: accounts},
+		})
+	if err != nil {
+		t.Fatalf("the fixture's own local config is not one DeriveAccounts accepts: %v", err)
+	}
+	written, err := json.Marshal(block)
+	if err != nil {
+		t.Fatalf("the fixture's own accounts block is not one json can write: %v", err)
+	}
+	list, err := json.Marshal(allowRepos)
+	if err != nil {
+		t.Fatalf("the fixture's own allow-list is not one json can write: %v", err)
+	}
+	return `{
+		"version": 5,
+		"budget": ` + testBudgetDoc + `,
+		"allow_repos": ` + string(list) + `,
+		"accounts": ` + string(written) + `,
+		"credentials": {"fallback": "auto"}
+	}`
+}
+
+// TestPairReviewAdmitsTheDefaultAccountWithNoProfiles is C1 piece 2's other
+// half, and the one the deployment's table alone does not decide (reconciliation
+// F4, the plan's constraint "the default account must be admitted to the
+// repository by the policy, not by the table alone").
+//
+// The installation's implicit review-only job is a row of the deployment's own
+// table — FUGARO_REVIEW_JOB_ACCOUNTS, which is what makes the caller a review
+// one at all and which no profile of a profile-less project could derive — and
+// what the row buys is one gate further in: the pairing, which serves the call
+// by the account the published admissions admit. So a review run of the
+// implicit job is served by the default account where the policy says so, and
+// refused where it does not, with the row in place both times.
+//
+// U2's answer, and what the positive case is derived from: no profile has to
+// exist for the policy to admit the default account to a repository. What
+// admits it is the accounts block `fugaro project policy publish` derives for a
+// project that declares none — the repository's own repos.<owner/name>
+// .claude_accounts naming the default account — read as O4's intersection
+// (admittedAccounts): the repository's node, the account's allow_repos and the
+// project's own allow-list, all three of them.
+//
+// Mutation (run, restored): read the deployment's row alone (serve the call by
+// ra.Account without asking admittedAccounts). The two refused cases below are
+// served, and a review caller of the implicit job is admitted to a repository
+// the project never enrolled, whose child names no account, or whose accounts
+// block offers it to another repository.
+func TestPairReviewAdmitsTheDefaultAccountWithNoProfiles(t *testing.T) {
+	row := implicitReviewRow()
+	if row.Account != config.DefaultClaudeAccount {
+		t.Fatalf("the implicit review job's row is of the account %q, want %q: the deployment derives it from the axis's empty account, which config.ReviewVariantAccount spells for the default one", row.Account, config.DefaultClaudeAccount)
+	}
+	// A review run of the implicit job: the run identity names its pull requests
+	// and pushes nothing, the caller's token is the job's own service account
+	// (row.Email, the address the verifier matches), and the fixture's policy is
+	// the caller's.
+	reviewSvc := func(t *testing.T, doc string, admit bool) *svc {
+		t.Helper()
+		return newReviewSvcSpelled(t, row.Email, row.Email, func(s *svc, cfg *Config) {
+			cfg.ReviewAccounts = []ReviewJobAccount{row}
+			s.policy.shared = decodeTestPolicy(t, doc)
+			if admit {
+				s.policy.admissions[s.slug] = decodeTestChild(t, testChildDoc(config.DefaultClaudeAccount))
+			} else {
+				delete(s.policy.admissions, s.slug)
+			}
+		})
+	}
+	call := func(t *testing.T, s *svc) (*http.Response, []byte) {
+		t.Helper()
+		return s.callTokens(t, callBody("implicit-review"), s.reviewRunToken(),
+			s.jobToken(func(c map[string]any) { c["email"] = row.Email }), s.job)
+	}
+
+	t.Run("the policy admits the default account to the repository", func(t *testing.T) {
+		s := reviewSvc(t, profilelessPolicyDoc(t, []string{testRepo}, testRepoPath, config.DefaultClaudeAccount), true)
+		resp, body := call(t, s)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("the implicit review job's caller was answered %d, want the upstream's 200: %s", resp.StatusCode, body)
+		}
+		if got := resp.Header.Get(HeaderCredential); got != config.DefaultClaudeAccount {
+			t.Errorf("%s = %q, want the account the policy admits it by, %q", HeaderCredential, got, config.DefaultClaudeAccount)
+		}
+		if got := resp.Header.Get(HeaderTier); got != TierA {
+			t.Errorf("%s = %q, want %q: the default account is a tier-A entry of the bundle", HeaderTier, got, TierA)
+		}
+		if n := s.up.Count(); n != 1 {
+			t.Fatalf("the upstream saw %d requests, want 1", n)
+		}
+		if auth := s.up.Seen()[0].Header.Get("Authorization"); !strings.Contains(auth, fakeCred(t, config.DefaultClaudeAccount)) {
+			t.Error("the call did not carry the account the pairing resolved")
+		}
+	})
+	t.Run("the repository's node admits no account", func(t *testing.T) {
+		// The deployment's row is in place and the policy's own node names
+		// nothing: an absent child is an empty admission, never the row's.
+		s := reviewSvc(t, profilelessPolicyDoc(t, []string{testRepo}, testRepoPath, config.DefaultClaudeAccount), false)
+		resp, body := call(t, s)
+		if resp.StatusCode != StatusUnverified {
+			t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnverified, body)
+		}
+		if got := refusal(t, resp.StatusCode, body); got.Error != ErrorUnverifiedRunIdentity || !strings.Contains(got.Message, "not admitted to the run identity's repository") {
+			t.Errorf("the refusal is %q (%s), want the pairing's own: the row admits the caller to the class, and the policy decides the repository", got.Error, got.Message)
+		}
+		if n := s.up.Count(); n != 0 {
+			t.Errorf("the upstream saw %d requests, want none: the caller was refused before a credential was chosen", n)
+		}
+		if n := s.src.readCount(); n != 0 {
+			t.Errorf("the bundle was read %d times, want none: the pairing comes first", n)
+		}
+	})
+	t.Run("the accounts block offers the default account to another repository", func(t *testing.T) {
+		// The repository's node names the default account and the accounts block
+		// does not offer it here: the block is what projectpolicy.DeriveAccounts
+		// wrote for the project's OTHER repository, and the project's own
+		// allow-list names both, so the intersection is empty for this one.
+		s := reviewSvc(t, profilelessPolicyDoc(t, []string{testRepo, testOtherRepo}, testOtherRepoPath, config.DefaultClaudeAccount), true)
+		resp, body := call(t, s)
+		if resp.StatusCode != StatusUnverified {
+			t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnverified, body)
+		}
+		if got := refusal(t, resp.StatusCode, body); got.Error != ErrorUnverifiedRunIdentity || !strings.Contains(got.Message, "not admitted to the run identity's repository") {
+			t.Errorf("the refusal is %q (%s), want the pairing's own: the account's own allow_repos is the leg that does not reach this repository", got.Error, got.Message)
+		}
+		if n := s.up.Count(); n != 0 {
+			t.Errorf("the upstream saw %d requests, want none", n)
+		}
+	})
 }
 
 // TestReviewCallerOnAnUnpublishedRepositoryIsRefused: the pairing reads what

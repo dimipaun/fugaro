@@ -55,17 +55,31 @@ import (
 // It is the same constant the runner resolves the node with.
 const craftNodeKeyPrefix = "crafts"
 
-// poolRefusal is why the project's crafts leave a call nothing this service can
-// serve it by. It is a type of its own rather than one more error string for
-// the handler's single sentence: the refusal's own sentence is what the run
-// needs to read — the pool, its members, and the switch or the path that would
-// let it serve — and the caller's error branch has no other case it could be
-// confused with.
+// poolRefusal is why this service's own rules leave a call nothing it can serve
+// it by. It is a type of its own rather than one more error string for the
+// handler's single sentence: the refusal's own sentence is what the run needs
+// to read — the pool and its members, the repository's recorded auth and what
+// the call declared, the switch or the path that would let it serve — and the
+// caller's error branch has no other case it could be confused with.
 //
-// The sentence names credentials and pools by NAME and never by value, the way
-// every other refusal on this path does: it is built from the published node,
-// which is the document an operator wrote, and from the names of the bundle's
-// entries, which is all this service ever says about them (F27, C1.13).
+// Two walks refuse with it, and they are the two that decide a call's candidate
+// list from a document rather than from the bundle: the project's crafts
+// (poolOffering), which leave a call nothing when every access of theirs serves
+// nothing, and the repository's own recorded auth (narrowToRepoAuth, B2.1),
+// which serves a repository only what its own configuration names and refuses
+// a call whose declaration disagrees with that record. Neither answers an empty
+// list, which the selector would turn into a sentence about the bundle and send
+// an operator looking in the wrong document.
+//
+// The sentence names credentials, pools and accounts by NAME and never by
+// value, the way every other refusal on this path does: it is built from the
+// published node, which is the document an operator wrote, from the record the
+// repository's own update wrote, and from the names of the bundle's entries,
+// which is all this service ever says about them (F27, C1.13). The auth and the
+// account a call DECLARED are the caller's own text, so they reach this
+// sentence only through the closed set of agent auths and the shape an account
+// name has (ValidAuthMode, ValidAuthAccount): what is printed is a value this
+// contract already admitted, never an arbitrary string.
 type poolRefusal struct{ message string }
 
 func (e *poolRefusal) Error() string { return e.message }
