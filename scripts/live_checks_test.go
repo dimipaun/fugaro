@@ -153,6 +153,20 @@ const liveCheckTimeout = 12 * time.Minute
 // package is about the longest shard instead of the sum.
 const liveCheckShards = 3
 
+// liveCheckWorkers is how many shards run at once. Splitting a script into
+// shards only shortens the package if the shards really run side by side, and
+// subtests under t.Parallel() are capped at -parallel, which defaults to
+// GOMAXPROCS -- five on the machine this comment was written on. A shard spends
+// most of its life waiting on the child processes it starts rather than on a
+// CPU, so that cap left the machine half idle and the package ran to 848s: no
+// room against the `go test -timeout 15m` of this repository's verify command,
+// and three more scripts of the model-crafts plan (Checks 420 to 422, MC10)
+// took it past the deadline. The same package with -parallel 20 ran in 573s, so
+// what the cap limited was the shards and not the work. The pool below is that
+// without the flag: the checks are independent programs that share nothing but
+// this test, and each one still gets its own deadline and its own temp dir.
+const liveCheckWorkers = 8
+
 // syncBuffer collects a command's output and can be read while a copy
 // goroutine may still be writing to it. procgroup.Run gives up on its drain
 // after its own bound and returns anyway when something outside the killed
@@ -177,50 +191,95 @@ func (b *syncBuffer) String() string {
 }
 
 // TestLiveCheckScripts runs the bash test of each live check.
+//
+// The shards go through liveCheckWorkers goroutines rather than through
+// t.Parallel() subtests, so that how much of the package runs at once is this
+// file's decision and not -parallel's: see the comment on that constant.
 func TestLiveCheckScripts(t *testing.T) {
 	for _, tool := range []string{"bash", "python3"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skipf("%s is not installed", tool)
 		}
 	}
+	type shard struct {
+		test string
+		n    int
+	}
+	var shards []shard
 	for _, c := range liveCheckScripts {
-		for shard := 0; shard < liveCheckShards; shard++ {
-			shardEnv := fmt.Sprintf("CHECK_TEST_SHARD=%d/%d", shard, liveCheckShards)
-			t.Run(fmt.Sprintf("%s/shard%d", c.name, shard), func(t *testing.T) {
-				t.Parallel()
-				ctx, cancel := context.WithTimeout(context.Background(), liveCheckTimeout)
-				defer cancel()
-				path := filepath.Join(testutil.ModuleRoot(), "scripts", "live-checks", c.test)
-				// procgroup, not exec.CommandContext: both suites deliberately leave
-				// background processes holding the output pipe (Check 90's proxy and
-				// upstream, Check 91's sleeping fake gcloud and its interrupt tests),
-				// and a context kill reaches the direct child only -- bash -- so
-				// CombinedOutput would keep reading a pipe its grandchild still holds
-				// and block past the deadline: the hang would then surface as Go's own
-				// package timeout, a panic naming the package, which is the one thing
-				// the deadline above exists to avoid. procgroup.Run puts the run in
-				// its own process group, SIGTERMs the whole group when the deadline
-				// fires (the scripts trap it and clean up after themselves), SIGKILLs
-				// whatever is left once the grace period is over, bounds its own drain
-				// -- so this returns, by script name, however the child misbehaves.
-				var out syncBuffer
-				code, err := procgroup.Run(ctx, procgroup.Cmd{
-					Name:   "bash",
-					Args:   []string{path},
-					Env:    append(os.Environ(), shardEnv),
-					Stdout: &out,
-					Stderr: &out,
-				})
-				if ctx.Err() != nil {
-					t.Fatalf("%s did not finish within %s and was killed:\n%s", c.test, liveCheckTimeout, out.String())
-				}
-				if err != nil {
-					t.Fatalf("%s: %v\n%s", c.test, err, out.String())
-				}
-				if code != 0 {
-					t.Fatalf("%s exited %d:\n%s", c.test, code, out.String())
-				}
-			})
+		for i := 0; i < liveCheckShards; i++ {
+			shards = append(shards, shard{c.test, i})
 		}
 	}
+	queue := make(chan shard)
+	var (
+		mu       sync.Mutex
+		failures []string
+		wg       sync.WaitGroup
+	)
+	for i := 0; i < liveCheckWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for s := range queue {
+				// One failure must not end the package: the message is kept and
+				// the rest of the shards still run, so one run says what every
+				// live check did rather than what the first failure hid.
+				if msg := runLiveCheckShard(s.test, s.n); msg != "" {
+					mu.Lock()
+					failures = append(failures, msg)
+					mu.Unlock()
+				}
+			}
+		}()
+	}
+	for _, s := range shards {
+		queue <- s
+	}
+	close(queue)
+	wg.Wait()
+	for _, msg := range failures {
+		t.Error(msg)
+	}
+}
+
+// runLiveCheckShard runs one shard of one live check's bash test and returns
+// the message to report, or "" when it passed. The shard's name is in every
+// message: the -run filter no longer reaches into a subtest, so the name is
+// what says which check a hang or a failure is about.
+func runLiveCheckShard(test string, shard int) string {
+	name := fmt.Sprintf("%s/shard%d", test, shard)
+	ctx, cancel := context.WithTimeout(context.Background(), liveCheckTimeout)
+	defer cancel()
+	path := filepath.Join(testutil.ModuleRoot(), "scripts", "live-checks", test)
+	// procgroup, not exec.CommandContext: both suites deliberately leave
+	// background processes holding the output pipe (Check 90's proxy and
+	// upstream, Check 91's sleeping fake gcloud and its interrupt tests),
+	// and a context kill reaches the direct child only -- bash -- so
+	// CombinedOutput would keep reading a pipe its grandchild still holds
+	// and block past the deadline: the hang would then surface as Go's own
+	// package timeout, a panic naming the package, which is the one thing
+	// the deadline above exists to avoid. procgroup.Run puts the run in
+	// its own process group, SIGTERMs the whole group when the deadline
+	// fires (the scripts trap it and clean up after themselves), SIGKILLs
+	// whatever is left once the grace period is over, bounds its own drain
+	// -- so this returns, by script name, however the child misbehaves.
+	var out syncBuffer
+	code, err := procgroup.Run(ctx, procgroup.Cmd{
+		Name:   "bash",
+		Args:   []string{path},
+		Env:    append(os.Environ(), fmt.Sprintf("CHECK_TEST_SHARD=%d/%d", shard, liveCheckShards)),
+		Stdout: &out,
+		Stderr: &out,
+	})
+	if ctx.Err() != nil {
+		return fmt.Sprintf("%s did not finish within %s and was killed:\n%s", name, liveCheckTimeout, out.String())
+	}
+	if err != nil {
+		return fmt.Sprintf("%s: %v\n%s", name, err, out.String())
+	}
+	if code != 0 {
+		return fmt.Sprintf("%s exited %d:\n%s", name, code, out.String())
+	}
+	return ""
 }
