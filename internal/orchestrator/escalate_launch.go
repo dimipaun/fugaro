@@ -313,7 +313,7 @@ func (c *cycle) ladderAct(ctx context.Context, w WorkItem, step escalation.Step,
 // carries the spend, escalation.Decide answers rung 3 for an item past the
 // ceiling whatever rung it is at, and rung 3 starts nothing here — the hook
 // past rung 2 is where that stop is carried out. The per-item ceiling a rung 1
-// resume is held by is RunView.Spend's (ladder.go).
+// resume is held by is RunView.Spend's (launch.go).
 func (c *cycle) ladderOuter(w WorkItem, step escalation.Step, read LadderReading) (LadderRequest, bool) {
 	if !startable(w.Phase) || !dependenciesDone(c.state, w) {
 		// A ladder run is a run: an item a run is moving through is not one to
