@@ -794,7 +794,7 @@ parse_args() {
   B=""
   CO=""
   MODE=470
-  DRY_RUN=${CHECK470_DRY_RUN:-}
+  DRY_RUN=""
   NO_PROMPT=""
   while [ $# -gt 0 ]; do
     case "$1" in
