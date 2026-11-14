@@ -78,6 +78,13 @@ import (
 // older than the release, a coder that reads images itself, a slot that is set,
 // a run that never ends, a record that is another run's, and a refusal whose
 // sentence has lost one of the parts an owner needs.
+// Check LC4's fakes are a fake `gcloud` and a fake `fugaro`: the fake `fugaro`
+// answers `doctor --json` from the case's own directory, and the fake `gcloud`
+// serves the job list (applying the label filter, so a check that filtered on
+// the wrong labels is caught), the job, each secret and each secret's policy,
+// keyed by the ID the check asks about -- so a case can say the account's job
+// was found by its labels, that its own token secret was read and that no
+// other account's was mounted or made readable.
 // Check 313's fakes are a fake `fugaro` and a fake `curl` that performs the
 // handshake, beside a daemon of the test's own -- a real loopback server holding
 // the id's lock and writing its registry file -- so the mode and the nonce, the
@@ -145,6 +152,7 @@ var liveCheckScripts = []struct {
 	{"check511.sh", "check511_test.sh"},
 	{"check520.sh", "check520_test.sh"},
 	{"check521.sh", "check521_test.sh"},
+	{"check-lc4.sh", "check-lc4_test.sh"},
 	{"check119.sh", "check119_test.sh"},
 	{"check57b.sh", "check57b_test.sh"},
 	{"check124.sh", "check124_test.sh"},
