@@ -112,12 +112,12 @@ pull requests' documents was D2379). Answers given are the owner's own words fro
 | D2380 | Which fix for "review refuses on a project with no shared job"? | Option C, one review-only job per (provider, account) | **Answered 2026-11-13 by the owner: option C**, over A (a sibling per repository job) and B (a default profile) |
 | D2381 | Piece order and review levels | pieces 1 to 4 in that order, L3/L3/L2/L2 | **Answered 2026-11-13 by the owner**; piece 3 was launched ahead of piece 2 (run `a709`), see D2384 |
 | D2382 | Trace Bitbucket and the catalog-image mapping after piece 1 | yes | **Answered 2026-11-13 by the owner**; the trace is F6, F7 and U3 |
-| D2383 | Does Bitbucket review need a workspace-level token? | No token type in particular: the proxy's narrowest-covering selection (token-types D2355) serves any mix; the review job holds none | **OPEN**; the owner suspected yes, F7 says the token-types plan already makes it moot. Confirm with Check 191 |
-| D2384 | May piece 3 (launcher) merge before piece 2 (runner placement)? | Yes: nothing ships between them (no user is on a build between two merges), but the pull request body says a review on the implicit job halts until piece 2 | **OPEN** |
-| D2385 | Which accounts get an implicit job: the default account only (today), or one per account the installation admits? | Default only now; add named-account rows only when a project with no profile can name an account (`config.ProjectJobAccounts` on a profile-less project yields one) | **OPEN** |
-| D2386 | When does the Bitbucket implicit job (RJ7) build: now, or after the token-types selector (T8) and the shared-jobs default's Bitbucket deployer (S1) land? | After, because it needs the proxy's token to be selected and `fugaro review` on a default profile may then need no implicit job | **OPEN** |
-| D2387 | The implicit job's timeout: the 3 h constant, or the repository's workflow's `timeout_class` carried by the launcher? | The constant (a review is bounded as a default repository is); a workflow-specific bound is a later change | **OPEN** |
-| D2388 | A baked or catalog-image repository is reviewed in the base image: is that sufficient? | Yes while the review recipe only reads the checkout; revisit when a review runs the repository's tests | **OPEN**; U1 |
+| D2383 | Does Bitbucket review need a workspace-level token? | No token type in particular: the proxy's narrowest-covering selection (token-types D2355) serves any mix; the review job holds none | **Answered 2026-11-14 by the owner: no workspace token** (the recommendation); the proxy's narrowest-covering selection serves any mix, so a workspace token would add nothing. Confirm with Check 191 |
+| D2384 | May piece 3 (launcher) merge before piece 2 (runner placement)? | Yes: nothing ships between them (no user is on a build between two merges), but the pull request body says a review on the implicit job halts until piece 2 | **Answered 2026-11-14 by the owner: yes** (the recommendation); the pull request states the halt window, a review on the implicit job halts until piece 2 |
+| D2385 | Which accounts get an implicit job: the default account only (today), or one per account the installation admits? | Default only now; add named-account rows only when a project with no profile can name an account (`config.ProjectJobAccounts` on a profile-less project yields one) | **Answered 2026-11-14 by the owner: the default account only** (the recommendation); no named-account rows until a profile-less project can name an account |
+| D2386 | When does the Bitbucket implicit job (RJ7) build: now, or after the token-types selector (T8) and the shared-jobs default's Bitbucket deployer (S1) land? | After, because it needs the proxy's token to be selected and `fugaro review` on a default profile may then need no implicit job | **Answered 2026-11-14 by the owner: RJ8 builds in parallel now** with token-types T8 and shared-jobs-default S1. **Not the recommendation** (after they merge); the owner's word was followed. Collision risk is on the RJ8 task |
+| D2387 | The implicit job's timeout: the 3 h constant, or the repository's workflow's `timeout_class` carried by the launcher? | The constant (a review is bounded as a default repository is); a workflow-specific bound is a later change | **Answered 2026-11-14 by the owner: the 3 h constant** (the recommendation); a review is bounded as a default repository is |
+| D2388 | A baked or catalog-image repository is reviewed in the base image: is that sufficient? | Yes while the review recipe only reads the checkout; revisit when a review runs the repository's tests | **Answered 2026-11-14 by the owner: yes for now** (the recommendation); Check 610 settles it (U1) |
 
 ## Open tensions
 
@@ -132,7 +132,7 @@ pull requests' documents was D2379). Answers given are the owner's own words fro
 
 ## Open items
 
-D2383 to D2388 and T1, T2 are listed in the pull request's Open items.
+D2383 to D2388 were answered on 2026-11-14 (see Decisions); only T1 and T2 remain open, listed in the pull request's Open items.
 
 ## UNVERIFIED
 

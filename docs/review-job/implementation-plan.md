@@ -1,7 +1,7 @@
 # Implementation plan: the review job (option C)
 
 Builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md) (findings F1 to F11, decisions D2380 to
-D2388, open tensions T1 and T2). **This plan approves nothing: every task not already merged or live needs the owner's
+D2388 all answered 2026-11-14, open tensions T1 and T2). **Approved: RJ2 and RJ8 (owner word 2026-11-14). Every other task not already merged or live is not approved and needs the owner's
 explicit go.** Number block taken: decisions D2380 to D2399, checks 610 to 619 (610 is used here). The answers that
 shaped it: option C over A and B (D2380); pieces in the order 1 to 4, then Bitbucket, at levels L3/L3/L2/L2 (D2381).
 
@@ -14,7 +14,7 @@ placement, Terraform or IAM is marked opus with an independent review.
 ## Status as of 2026-11-14
 
 Pieces 1 and 3 are in runs or merged; see the tasks. RJ1, RJ6 and RJ7 are merged (3 of 10). RJ3 is live (run
-`20261114-130709-a709`). RJ2, RJ4, RJ5, RJ8, RJ9 and RJ10 are not started and unapproved.
+`20261114-130709-a709`). RJ2 and RJ8 are approved (owner word 2026-11-14); RJ4, RJ5, RJ9 and RJ10 are not started and not approved.
 
 ## Conventions
 
@@ -52,6 +52,7 @@ Pieces 1 and 3 are in runs or merged; see the tasks. RJ1, RJ6 and RJ7 are merged
 - Status: **merged**, #2523 (`cebdbe628`), run `20261113-021818-58aa` and its follow-up `20261113-132712-96ca`.
 
 ### RJ2: piece 2, the runner places the implicit job and the policy admits its account
+- Approval: **approved** (owner word 2026-11-14), level L3. D2385: the default account only; D2384: RJ3 may merge first.
 - Acceptance: a run whose Cloud Run job is the implicit review-only job, on a project that published no profile,
   is placed as a review run (profile `ImplicitReviewProfile`, provider github, account default), not halted by
   `cannotPlaceJob`; `ProjectJobOfPolicy` answers the same triple for the launcher; `pairReview` admits the default
@@ -130,7 +131,11 @@ Pieces 1 and 3 are in runs or merged; see the tasks. RJ1, RJ6 and RJ7 are merged
   launcher test; mutation check as RJ2's.
 - Depends on: RJ2 and RJ3 (the same files, and the placement and resolution it generalises), and the token-types
   plan's selector (`docs/bitbucket-token-types` T4 and T8) as a launch gate, since the job holds no token and the proxy
-  must pick one (D2383, D2386). Not started; its timing is an open decision.
+  must pick one (D2383, D2386). Not started; **approved** (owner word 2026-11-14), level L3. D2386 (2026-11-14, not the recommendation): the owner
+  ruled RJ8 builds in parallel now with token-types T8 and shared-jobs-default S1, so the launch gate above no longer
+  holds it. **Collision risk:** RJ8, T8 and S1 may all touch the credentials service and deployer files
+  (`internal/credsvc/**`, `internal/infra/projectjobs.go` and the Bitbucket deployer); whichever merges second rebases
+  and proves the first still works.
 - Level: L3; reviewer tier opus.
 
 ## Slice 3: the live checks (owner-run)
