@@ -6196,13 +6196,15 @@ Review a pull request in a job of its own, on a named account
 Launch an independent review of pull request N, in a container the coding
 run never ran in and with the account you name.
 
-The review runs on the review-only variant of the repository's job: no App
-key, no Claude token and no signing key are mounted in it, and its git
-credential is a read-only one it fetches from the installation's credentials
-service. It reads a fresh clone of the pull request's head, writes its verdict
-as an artifact (fugaro review show RUN prints it) and posts no comment and no
-review on the pull request: what reaches the pull request is the owner's and
-the coordinator's to decide.
+The review runs in a job of its own and never in the repository's coding job:
+the review-only variant of the repository's shared project job, or, where the
+repository's workflow resolves no shared project job, the installation's
+implicit default review-only job. No App key, no Claude token and no signing
+key are mounted in it, and its git credential is a read-only one it fetches
+from the installation's credentials service. It reads a fresh clone of the
+pull request's head, writes its verdict as an artifact (fugaro review show
+RUN prints it) and posts no comment and no review on the pull request: what
+reaches the pull request is the owner's and the coordinator's to decide.
 
 The account is picked as everywhere else: --token, else agent.oauth_token in
 fugaro.yaml at the run's ref, else the project's default_claude_account.
