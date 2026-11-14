@@ -1,0 +1,82 @@
+/* SPDX-License-Identifier: LicenseRef-Fugaro-Subscription */
+/* See ee/LICENSE for the terms. */
+/*
+ * The workspace screen's own styles (portal plan P3.4). They live beside the
+ * screen rather than in `src/styles.css` because of the plan's rule that adding
+ * a screen edits no shared file: a section per screen in the app's sheet would
+ * make that file the one every screen task writes, and it would grow a section
+ * per task until nobody could tell what it still needs. The token layer is the
+ * app's and is already in scope (`src/styles.css` imports it), so this file
+ * names variables and never a colour, a size or a radius of its own.
+ *
+ * Mobile-first, as the app's sheet is: one column, and the cards stack in it.
+ * A wide window needs no query for that, because the column is bounded by the
+ * measure token -- the screen reads the same on a phone and on a desktop, and a
+ * second layout for the desktop would be a second thing to keep true.
+ */
+
+.workspaces {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: var(--space-xl) var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.workspaces code {
+  font-family: var(--font-mono);
+}
+
+.workspaces__refresh {
+  margin: 0;
+  padding: var(--space-sm) var(--space-md);
+  border: var(--border-width) solid var(--accent);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+}
+
+.workspace,
+.workspaces__pending,
+.workspaces__bundle {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+}
+
+.workspace > h2,
+.workspaces__pending > h2,
+.workspaces__bundle > h2 {
+  margin: 0;
+  font-size: var(--font-size-lg);
+}
+
+.workspace > p,
+.workspaces__pending p,
+.workspaces__bundle > p {
+  margin: 0;
+}
+
+/* A key and a renewal secret are long and have no spaces: they wrap rather than
+ * pushing the card wider than the window. */
+.workspaces__value {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.workspace form,
+.pending form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.workspace button,
+.pending form button,
+.workspaces__bundle button {
+  align-self: flex-start;
+}
