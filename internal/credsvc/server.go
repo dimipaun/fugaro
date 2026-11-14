@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/bbtokens"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
@@ -385,6 +386,17 @@ type Config struct {
 	// Policy reads the published policy: the shared node and a repository's
 	// own (C1.2).
 	Policy PolicyReader
+	// Selector chooses the Bitbucket token one proxied call is served with
+	// (T8, D2355). It is the contract's Selector (internal/bbtokens), and the
+	// proxy asks it only after Decide admitted the call and with the one
+	// policy-and-bundle snapshot the decision itself used.
+	//
+	// nil is a service whose token store is not wired: every proxied call is
+	// served with the bundle's legacy bitbucket-token entry, which is the
+	// release behind's behaviour and the state of an installation between this
+	// field and the store's wiring (I1). It is a field of the deployment and
+	// not of the request: no caller, no record and no policy can set it.
+	Selector bbtokens.Selector
 	// State is the cascade's shared state under creds/.
 	State creds.Store
 	// Kills reads the operator's two stop switches.

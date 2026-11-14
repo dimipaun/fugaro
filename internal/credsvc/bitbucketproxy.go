@@ -9,7 +9,7 @@ package credsvc
 // forwarder (B1.6, D495): the agent's own git runs against 127.0.0.1, the
 // forwarder attaches a fresh job ID token and the run identity, and this route
 // is what decides whether the request may reach Bitbucket and forwards it with
-// the one token the bundle holds.
+// the token it chooses for that one request out of the installation's store.
 //
 // Seven things are the whole of its design.
 //
@@ -36,15 +36,19 @@ package credsvc
 //     query from the classified query. Not one byte of the caller's path or
 //     query string is copied upstream, so a spelling the rules read one way and
 //     bitbucket.org reads another cannot move a ref nobody checked.
-//   - The caller's credentials are dropped and the bundle's token is attached
-//     (G5): the Authorization header the caller presented is its job's Google
-//     ID token and never leaves this process, and the token that goes upstream
-//     is the one the bundle holds — `x-token-auth:<token>` Basic for git
-//     (bitbucket.GitUsername) and `Bearer <token>` for the REST API.
+//   - The caller's credentials are dropped and the token this request is
+//     served with is attached (G5): the Authorization header the caller
+//     presented is its job's Google ID token and never leaves this process, and
+//     the token that goes upstream is the one the selection chose out of the
+//     store — `x-token-auth:<token>` Basic for git (bitbucket.GitUsername) and
+//     `Bearer <token>` for the REST API. Which token that is, is decided per
+//     request (T8, D2355): the narrowest one of the installation's that covers
+//     the pairing's repository, chosen only after the rules admitted the call.
 //   - A pull-request write is checked against facts THIS SERVICE read
-//     (G12): it fetches the pull request with the bundle's token, and
-//     CheckPRWrite decides on what the API answered and on the body the caller
-//     is about to send — never on what the caller said the pull request was.
+//     (G12): it fetches the pull request with the token the request was served
+//     with, and CheckPRWrite decides on what the API answered and on the body
+//     the caller is about to send — never on what the caller said the pull
+//     request was.
 //   - Both directions are streamed and no pack is ever held: the push's update
 //     request is read in front of the pack (B1.3, G2) and forwarded byte for
 //     byte after the rules allowed it, and the rest of the body and the whole
@@ -52,12 +56,13 @@ package credsvc
 //     what the 33 MiB push (Check 190) and the h2c listener (B1.0) exist for.
 //   - Every request that reaches this route writes exactly one audit line
 //     (G7, C1.13): its purpose is git or bitbucket-api, its credential is the
-//     bundle's Bitbucket token, and its status is StatusOK for a forwarded call
-//     and the refusal's own type otherwise. A line carries names — the run, the
-//     repository, the job, the account, the credential, the purpose — and never
-//     a ref, a header, a body or a token: the refusal's CLASS (gitproxy's own
-//     vocabulary) is what the service's own log line carries, and the caller's
-//     text is in neither.
+//     DOCUMENT KEY of the token the request was served with (R9) — the legacy
+//     bitbucket-token for an installation that stored no named one — and its
+//     status is StatusOK for a forwarded call and the refusal's own type
+//     otherwise. A line carries names — the run, the repository, the job, the
+//     account, the credential, the purpose — and never a ref, a header, a body
+//     or a token: the refusal's CLASS is what the service's own log line
+//     carries, and the caller's text is in neither.
 //
 // An owner-listed API root is not served here (O4, and the plan's own default):
 // the two upstream hosts are the adapter's own constants
@@ -79,6 +84,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/bbtokens"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/gitproxy"
@@ -128,13 +134,18 @@ const proxyUnaudited = "the Bitbucket call is refused because this service could
 // rather than about what the service did with it (routeAct's pair, read off the
 // classification instead of off the path): the purpose the call asked for —
 // git's own traffic or the Bitbucket API's — and the credential a line for it
-// names, which is the bundle's Bitbucket token whichever way the call goes.
+// names.
 //
-// The credential is the route's own name for it and not a value read out of the
-// bundle (config.BitbucketSecret is the logical name the bundle's entry
-// carries), so a line is the same whether the bundle has been read or not, and
-// an operator greps one word for every call this route served (routeAct's rule
-// for the mint's App key).
+// The credential answered here is the one a line carries BEFORE any token is
+// chosen: the route's own name for the installation's Bitbucket credential,
+// which is config.BitbucketSecret — the legacy key, and the document key of
+// every token an installation that stored no named one has. It is not a value
+// read out of the bundle, so a line is the same whether the bundle has been
+// read or not, and an operator greps one word for every refusal this route
+// takes above the selection (routeAct's rule for the mint's App key). A line
+// for a call that got as far as a choice names the CHOSEN token's document key
+// instead (T8, R9), which is what tells an operator which of several tokens
+// served a request.
 func gitproxyAct(kind gitproxy.Kind) (purpose, credential string) {
 	if kind == gitproxy.KindREST {
 		return PurposeBitbucketAPI, config.BitbucketSecret
@@ -165,6 +176,127 @@ func proxyIdentity(id Identity) gitproxy.Identity {
 	}
 }
 
+// chooseBitbucketToken chooses the token one admitted call is served with, and
+// answers the value to forward with (T8, D2355).
+//
+// It is asked only AFTER Decide admitted the call, and with the snapshot the
+// decision was made from: the rules decide whether the run may reach the
+// repository at all, and the selection only decides which of the
+// installation's tokens serves a call they allowed — so no choice made here can
+// widen what a run reaches (D2354). A request the rules refuse never reaches
+// this, and the refusal it gets is the rules' own class rather than one of the
+// token store's.
+func (s *Server) chooseBitbucketToken(ctx context.Context, snap bbtokens.Snapshot, canonical string, write bool) (bbtokens.Name, string, error) {
+	sel := s.cfg.Selector
+	if sel == nil {
+		sel = legacySelector{}
+	}
+	choice, err := sel.Select(ctx, snap, canonical, write)
+	if err != nil {
+		return "", "", err
+	}
+	// A name the snapshot holds no value for is a name this service cannot
+	// forward with. The contract's own rule is that a token has to be in both
+	// documents to serve anything (R14), so a store that answered a name the
+	// bundle does not hold is refused rather than served — a call with no
+	// credential to attach is never made (D143).
+	value, ok := snapshotValue(snap, choice.Name)
+	if !ok {
+		return "", "", &bbtokens.Refusal{Class: bbtokens.ClassNoToken}
+	}
+	return choice.Name, value, nil
+}
+
+// legacySelector is the token store of a service that has none wired: the
+// bundle's legacy bitbucket-token entry and nothing else (R3). It is what makes
+// the release behind's behaviour this route's default — an installation that
+// stored only that key is served exactly as it was, with no step and no record
+// — and it answers the contract's no_bitbucket_token class when the bundle
+// holds no Bitbucket token at all, which is the one case in which a proxied run
+// must be refused rather than served (D143).
+//
+// It ranks nothing and reads nothing. The legacy record's coverage IS the
+// node's bitbucket_token.allow_repos list (R3), and Decide has already held the
+// call to it, so a choice made here cannot widen what a run reaches.
+type legacySelector struct{}
+
+func (legacySelector) Select(_ context.Context, snap bbtokens.Snapshot, _ string, _ bool) (bbtokens.Choice, error) {
+	if _, ok := snapshotValue(snap, bbtokens.LegacyName); !ok {
+		return bbtokens.Choice{}, &bbtokens.Refusal{Class: bbtokens.ClassNoToken}
+	}
+	return bbtokens.Choice{Name: bbtokens.LegacyName}, nil
+}
+
+// snapshotValue is the value a snapshot holds for one token: the one path a
+// value is read on. A snapshot holding no bundle and a bundle holding no such
+// entry answer the same way, so no caller has to tell the two apart.
+func snapshotValue(snap bbtokens.Snapshot, name bbtokens.Name) (string, bool) {
+	if snap.Bundle == nil {
+		return "", false
+	}
+	return snap.Bundle.Value(name)
+}
+
+// proxyWrite reports whether a classified call changes something upstream,
+// which is the flag the selection is asked with (T8, D2355): a git push, and
+// the three REST writes CheckPRWrite exists for. It is gitproxy's own set (its
+// Call.writes, which is unexported) read off the classification this route has
+// already made, and every other call this route names — the advertisement, a
+// fetch, the REST reads — is a read.
+func proxyWrite(req gitproxy.Request) bool {
+	if req.Kind == gitproxy.KindPush {
+		return true
+	}
+	switch req.Call {
+	case gitproxy.CallPRCreate, gitproxy.CallPRUpdate, gitproxy.CallPRComment:
+		return true
+	}
+	return false
+}
+
+// bundleTokens is the bundle's Bitbucket tokens as one request's snapshot holds
+// them (C1's BundleTokens): the legacy entry under its own document key — the
+// implicit untyped record R3 reads it as — and the named family beside it.
+//
+// The legacy key comes first and the family follows in its accessor's own
+// order (the keys sorted), so two reads of one document answer the same list
+// and a selection cannot move between them. A bundle that holds neither answers
+// an empty one rather than nil, so every reader of a snapshot reads the same
+// shape.
+type bundleTokens struct {
+	names  []bbtokens.Name
+	values map[bbtokens.Name]string
+}
+
+// bundleTokensOf reads one loaded bundle into the snapshot's own shape.
+func bundleTokensOf(b *Bundle) bundleTokens {
+	bt := bundleTokens{values: map[bbtokens.Name]string{}}
+	if entry, ok := b.BitbucketToken(); ok {
+		bt.add(bbtokens.Name(entry.Name), entry.Value())
+	}
+	for _, entry := range b.BitbucketTokens() {
+		bt.add(bbtokens.Name(entry.Name), entry.Value())
+	}
+	return bt
+}
+
+func (b *bundleTokens) add(name bbtokens.Name, value string) {
+	if _, dup := b.values[name]; dup {
+		return
+	}
+	b.names = append(b.names, name)
+	b.values[name] = value
+}
+
+// Names are the document keys the bundle holds, in a stable order.
+func (b bundleTokens) Names() []bbtokens.Name { return append([]bbtokens.Name(nil), b.names...) }
+
+// Value is the token named, and false when the bundle holds none.
+func (b bundleTokens) Value(name bbtokens.Name) (string, bool) {
+	value, ok := b.values[name]
+	return value, ok
+}
+
 // bitbucketProxy answers one call of the run's Bitbucket traffic. It is reached
 // from ServeHTTP's branch, below the two identities, the pairing and the stop
 // switches, and it does there what every other route does: it names the call,
@@ -187,11 +319,14 @@ func proxyIdentity(id Identity) gitproxy.Identity {
 //     the call names and whether this installation proxies it at all are the
 //     block's answer (G3, G9), so nothing is decided before it is read.
 //   - the pull-request facts, for a write only: the service reads the pull
-//     request with the bundle's token and decides on what the API answered
-//     (G12). A write whose facts cannot be read is refused rather than allowed.
-//   - the bundle and its Bitbucket token, failing closed (D143): a proxied run
-//     has no token of its own, so a bundle that holds none is a refusal and
-//     never a call forwarded without one.
+//     request with the token this request is served with and decides on what
+//     the API answered (G12). A write whose facts cannot be read is refused
+//     rather than allowed.
+//   - the bundle and the one snapshot of it and the policy the request is
+//     decided and served from, and then the token this request is served with,
+//     failing closed (D143, T8): a proxied run has no token of its own, so a
+//     selection that answers none is a refusal and never a call forwarded
+//     without one.
 //   - the upstream call, rebuilt from the classified parts (G13).
 //   - the audit line, written before the answer is handed over: an act this
 //     service will not record is not made (C1.13, D143), and what "not made"
@@ -311,24 +446,44 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 
 	// The bundle, read before the decision can be acted on: the token this
 	// route forwards with is the only credential it has, and a proxied run
-	// holds none of its own. A bundle that cannot be read, or holds no
-	// Bitbucket token, is a refusal and never a call forwarded without one.
+	// holds none of its own. A bundle that cannot be read is a refusal and
+	// never a call forwarded without one.
 	b, err := s.cfg.Bundles.Load(ctx)
 	if err != nil {
 		s.refuseUnavailable(ctx, w, id, purpose, BundleRefusal(err))
 		return
 	}
-	entry, ok := b.BitbucketToken()
-	if !ok {
-		s.refuseUnavailable(ctx, w, id, purpose, "the bundle holds no Bitbucket token, and a proxied run holds none of its own")
+
+	// The one snapshot this request is decided and served from (C1's
+	// Snapshot): the policy Decide just read, and the bundle. One read of each
+	// is the whole of it, so the token chosen below cannot be chosen under a
+	// policy other than the one that admitted the call and a policy published
+	// between two reads of this request is never half-applied.
+	snap := bbtokens.Snapshot{Policy: shared, Bundle: bundleTokensOf(b)}
+	name, token, err := s.chooseBitbucketToken(ctx, snap, canonical, proxyWrite(req))
+	if err != nil {
+		var refusal *bbtokens.Refusal
+		if errors.As(err, &refusal) {
+			// The contract's class is the refusal (C1): it names the repository
+			// it is about and never a token, and the caller is told the class
+			// alone — the refusal's own sentence, which names the repository, is
+			// what the operator's line carries as the cause.
+			s.refuseProxyReason(ctx, w, id, purpose, string(refusal.Class), refusal)
+			return
+		}
+		// A store that could not answer is not the caller's refusal: nothing
+		// was chosen, so nothing may be forwarded.
+		s.refuseUnavailable(ctx, w, id, purpose, "the Bitbucket token could not be chosen")
 		return
 	}
-	token := entry.Value()
+	credential = string(name)
 
 	// A pull-request write is decided on facts this service read for itself
 	// (G12). The read is made here rather than in the rules because it needs
 	// the token, and it is made with the same rebuilt URL and the same client
-	// the write itself will use.
+	// the write itself will use — and with the token THIS request was served
+	// with, so the facts a write is judged on are read with the credential that
+	// will make it.
 	if req.Kind == gitproxy.KindREST {
 		switch req.Call {
 		case gitproxy.CallPRCreate, gitproxy.CallPRUpdate, gitproxy.CallPRComment:
