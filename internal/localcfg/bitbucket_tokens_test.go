@@ -94,6 +94,35 @@ func TestLocalConfigRefusesABitbucketTokenTypeMismatch(t *testing.T) {
 	}
 }
 
+// TestLocalConfigSharedDropsBitbucketTokens: the block is operator-only, so the
+// converge never publishes it — the shared file is written into the runs
+// bucket, which any launcher of the project can write, and a launcher who could
+// put a record there would be stating which requests its own token carries (the
+// coverage is what a request is matched against, R1, D2351). The drop is also
+// what keeps an older CLI's strict ParseShared from meeting the key at all: a
+// shared file carrying it is refused whole there, which would lock an
+// un-upgraded teammate out of every run.
+func TestLocalConfigSharedDropsBitbucketTokens(t *testing.T) {
+	lc, err := Parse([]byte(sample + bitbucketTokensFixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := lc.Shared()
+	if s.BitbucketTokens != nil {
+		t.Errorf("Shared published %+v, want the block dropped", s.BitbucketTokens)
+	}
+	if len(lc.BitbucketTokens) != 3 {
+		t.Errorf("Shared cleared the receiver's own records: %+v", lc.BitbucketTokens)
+	}
+	out, err := s.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "bitbucket_tokens") {
+		t.Errorf("the published document carries the block:\n%s", out)
+	}
+}
+
 // TestLocalConfigBitbucketTokenExpiryIsADate: `expires` is the one expiry
 // source a typed token has (R6) — no secret_expires entry is read for it — so
 // a date this file cannot use is refused here, where the operator wrote it,

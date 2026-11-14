@@ -179,14 +179,19 @@ func bitbucketCoverageRule(typ string) string {
 // The two-segment half is held to project_secrets' own alphabet
 // (invalidAllowDataToEntry), for its reason and one more: the owner segment
 // must be literal, so "*/api" — every workspace's repository — is not a
-// coverage any token can state, and neither is the bare "*".
+// coverage any token can state, and neither is the bare "*". The one-segment
+// half is held to that same rule per segment, and not to the alphabet alone:
+// "." and ".." pass the character class, and a workspace slug that is a path
+// step is a coverage the ledger and the request path would carry into a URL
+// rather than a workspace, so it is refused here as the sibling branch refuses
+// it inside "myworkspace/..".
 func bitbucketCoverageForm(entry string) (typ, msg string) {
 	if entry == "" {
 		return "", "a coverage entry names what the token reaches, and this one is empty"
 	}
 	segs := strings.Split(entry, "/")
 	if len(segs) == 1 {
-		if strings.Contains(entry, "*") || !repoPatternSegmentRE.MatchString(entry) {
+		if strings.Contains(entry, "*") || entry == "." || entry == ".." || !repoPatternSegmentRE.MatchString(entry) {
 			return "", fmt.Sprintf("%q is not a coverage entry: a project token's is its workspace slug alone, as in \"myworkspace\"", pluginwire.Printable(entry))
 		}
 		return BitbucketTokenTypeProject, ""

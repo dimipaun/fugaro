@@ -42,6 +42,10 @@ func TestBitbucketTokenRecordForms(t *testing.T) {
 		{"bare wildcard coverage", BitbucketToken{Name: "ci", Type: BitbucketTokenTypeWorkspace, Coverage: []string{"*"}}, "coverage"},
 		{"wildcard owner coverage", BitbucketToken{Name: "ci", Type: BitbucketTokenTypeRepo, Coverage: []string{"*/api"}}, "coverage"},
 		{"three-segment coverage", BitbucketToken{Name: "ci", Type: BitbucketTokenTypeRepo, Coverage: []string{"acme/group/api"}}, "coverage"},
+		{"project coverage a dot segment", BitbucketToken{Name: "ci", Type: BitbucketTokenTypeProject, Coverage: []string{"."}, ProjectUUID: "{b7f1c2d0}"}, "coverage entry"},
+		{"project coverage a parent segment", BitbucketToken{Name: "ci", Type: BitbucketTokenTypeProject, Coverage: []string{".."}, ProjectUUID: "{b7f1c2d0}"}, "coverage entry"},
+		{"repository coverage a parent segment", BitbucketToken{Name: "ci", Type: BitbucketTokenTypeRepo, Coverage: []string{"acme/.."}}, "coverage entry"},
+		{"empty coverage entry", BitbucketToken{Name: "ci", Type: BitbucketTokenTypeRepo, Coverage: []string{""}}, "empty"},
 		{"no name", BitbucketToken{Type: BitbucketTokenTypeRepo, Coverage: []string{"acme/api"}}, "name is required"},
 		{"name with a doubled dash", BitbucketToken{Name: "bitbucket-token--ci", Type: BitbucketTokenTypeRepo, Coverage: []string{"acme/api"}}, "must match"},
 	} {
