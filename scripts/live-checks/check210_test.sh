@@ -21,8 +21,10 @@
 # challenger that did not start, an arm that never ends, a batch with a third
 # row, a challenger whose record carries a branch, a publish mode or an outcome,
 # a challenger that really pushed a branch, a champion with no pull request, a
-# missing patch object, a report without the pair, and a teardown that cannot
-# close what it opened.
+# missing patch object, a report without the pair, a teardown that cannot close
+# what it opened, and — of the Restore itself — a launch still going when the
+# check gives up, a cancel that answers while the run keeps going, and a launch
+# the runs list does not carry.
 #
 # Every command is bounded (see `bounded` below): a check that hangs fails here
 # with the case's own name rather than hanging the suite that runs this file.
@@ -177,8 +179,9 @@ write_fake_fugaro() { # dir
 # A stand-in for `fugaro`, for scripts/live-checks/check210.sh's test only. The
 # `--json` reads come from files the case wrote, `ab --help` prints the usage
 # line the real command prints (the check's offline feature probe), the launches
-# are a counter the case reads back, and every call is logged with the directory
-# it was made in.
+# are a counter the case reads back, `cancel` really ends the run it names (the
+# teardown's read-back is what sees it), and every call is logged with the
+# directory it was made in.
 set -euo pipefail
 printf 'fugaro %s (in %s)\n' "$*" "$PWD" >>"$FAKE_LOG_DIR/fugaro.calls"
 mode=${FAKE_MODE:-default}
@@ -186,6 +189,13 @@ mode=${FAKE_MODE:-default}
 # The rows `fugaro runs ls` answers with: one per launch the fake launcher made,
 # plus the challenger's own row for a launch that sampled a pair. The mode bends
 # the shape a case is about.
+# ended_yes ID: whether a run the fake `cancel` stopped reads as ended. The
+# cancel really changes what the runs list says, which is what makes the
+# teardown's own read-back a reading of state that changed.
+ended_yes() {
+  [ -f "$FAKE_JSON_DIR/ended" ] && grep -qx "$1" "$FAKE_JSON_DIR/ended"
+}
+
 rows_doc() {
   local want=$1 id batch arm pr branch outcome terminal status runref
   local first=1
@@ -198,6 +208,7 @@ rows_doc() {
         id="$id"b
       fi
       if [ -n "$want" ] && [ "$batch" != "$want" ]; then continue; fi
+      if [ -f "$FAKE_JSON_DIR/omit" ] && grep -qx "$id" "$FAKE_JSON_DIR/omit"; then continue; fi
       terminal=true
       status=succeeded
       branch="fugaro/$id"
@@ -208,9 +219,26 @@ rows_doc() {
         outcome=none
         pr=0
         case "$mode" in
-        arms-not-ended) terminal=false; status=running ;;
+        # An arm that does not end on its own — and that the teardown's cancel
+        # does end, which is what the run's own row reads afterwards.
+        arms-not-ended)
+          if ! ended_yes "$id"; then
+            terminal=false
+            status=running
+          fi
+          ;;
         esac
       fi
+      # A launch in flight: the run has not ended, and it reads as ended only
+      # once something stops it. `rows-running-stuck` is the run nothing stops.
+      case "$mode" in
+      rows-running | rows-running-stuck)
+        if [ "$mode" = rows-running-stuck ] || ! ended_yes "$id"; then
+          terminal=false
+          status=running
+        fi
+        ;;
+      esac
       runref="$FAKE_SLUG/$id"
       # The record's key is read out of this ref, so a row whose ref names
       # another run is the one shape that would make the check read a record
@@ -324,6 +352,24 @@ run)
       "$FAKE_PROJECT" "$n" "$id" "$id"
     ;;
   esac
+  ;;
+cancel)
+  # The teardown's stop. It really changes what the runs list answers: the run
+  # reads as ended afterwards, which is the state the check reads back.
+  id=${2:-}
+  printf '%s\n' "$id" >>"$FAKE_JSON_DIR/cancelled"
+  case "$mode" in
+  cancel-fails)
+    printf 'fugaro: the run could not be cancelled\n' >&2
+    exit 1
+    ;;
+  rows-running-stuck)
+    printf '{"project":"%s","run":"%s","status":"running"}\n' "$FAKE_PROJECT" "$id"
+    exit 0
+    ;;
+  esac
+  printf '%s\n' "$id" >>"$FAKE_JSON_DIR/ended"
+  printf '{"project":"%s","run":"%s","status":"cancelled","marker":true,"hard":true}\n' "$FAKE_PROJECT" "$id"
   ;;
 runs)
   case "$mode" in
@@ -504,17 +550,18 @@ JSON
 write_champion() { # write_champion DIR RUN_ID
   local id=$2
   cat >"$1/json/records/$id.json" <<JSON
-{"version":1,"run_id":"$id","repo":"acme/sandbox","workflow":"agent","branch":"fugaro/$id","status":"succeeded","stage":"finalize","outcome":"pr","pr":41,"patch_object":"runs/$slug/$id/ab/patch.diff","patch_truncated":false,"ab":{"pair_id":"pair-$id","arm":"champion"}}
+{"version":1,"run_id":"$id","repo":"acme/sandbox","workflow":"agent","branch":"fugaro/$id","status":"succeeded","stage":"finalize","outcome":"pr","pr":{"number":41,"url":"https://example.invalid/acme/sandbox/pull/41"},"patch_object":"runs/$slug/$id/ab/patch.diff","patch_truncated":false,"ab":{"pair_id":"pair-$id","arm":"champion"}}
 JSON
 }
 
 # write_challenger DIR RUN_ID: the challenger's own record — the shadow's whole
 # claim: the arm, the publish mode, the owner's model, no branch, no pull
-# request, outcome none.
+# request, outcome none. It carries no `pr` field at all: runstore.Record.PR is
+# a pointer with `omitempty`, so a run that opened no pull request has none.
 write_challenger() { # write_challenger DIR RUN_ID
   local id=$2
   cat >"$1/json/records/$id.json" <<JSON
-{"version":1,"run_id":"$id","repo":"acme/sandbox","workflow":"agent","branch":"","status":"succeeded","stage":"finalize","outcome":"none","pr":0,"patch_object":"runs/$slug/$id/ab/patch.diff","patch_truncated":false,"ab":{"pair_id":"pair-${id%b}","arm":"challenger","publish":"none","challenger":"$challenger_model","challenger_source":"owner"}}
+{"version":1,"run_id":"$id","repo":"acme/sandbox","workflow":"agent","branch":"","status":"succeeded","stage":"finalize","outcome":"none","patch_object":"runs/$slug/$id/ab/patch.diff","patch_truncated":false,"ab":{"pair_id":"pair-${id%b}","arm":"challenger","publish":"none","challenger":"$challenger_model","challenger_source":"owner"}}
 JSON
 }
 
@@ -638,6 +685,7 @@ run_one() { # run_one DIR SCRIPT ENV... [-- ARGS...]
     FAKE_PAIR_AFTER="${FAKE_PAIR_AFTER:-0}" \
     CHECK210_SANDBOX="$dir/sandbox" CHECK210_YES=1 CHECK210_MAX_LAUNCHES=3 \
     CHECK210_RUN_TIMEOUT_SECONDS=6 CHECK210_POLL_SECONDS=1 \
+    CHECK210_CANCEL_TIMEOUT_SECONDS=3 \
     CHECK210_CLI_TIMEOUT_SECONDS=20 CHECK210_LAUNCH_TIMEOUT_SECONDS=20 \
     CHECK210_DOCTOR_TIMEOUT_SECONDS=20 \
     ${args[@]+"${args[@]}"} \
@@ -1044,7 +1092,7 @@ test_a_challenger_that_did_not_start_is_a_finding() {
   expect_status "$status" 1 "a challenger that did not start"
   expect_contains "$out" "FACT pair: FAIL" "a challenger that did not start: the row"
   expect_contains "$out" "sampled a pair (pair-$(run_of 1)) and the challenger did not start" "a challenger that did not start: what it found"
-  expect_contains "$out" "not cancelled by stopping here" "a challenger that did not start: the champion is real work"
+  expect_contains "$out" "this check's teardown cancels it with 'fugaro cancel $(run_of 1) --now'" "a challenger that did not start: the champion is real work, and the teardown stops it"
 }
 
 test_an_arm_that_never_ends_is_not_measured() {
@@ -1055,7 +1103,9 @@ test_an_arm_that_never_ends_is_not_measured() {
   expect_contains "$out" "FACT arms: FAIL" "an arm that never ends: the row"
   expect_contains "$err" "could NOT measure arms" "an arm that never ends: the exit names the row"
   expect_contains "$out" "had not both ended" "an arm that never ends: what it found"
-  expect_contains "$out" "watch $(run_of 1)" "an arm that never ends: the runs are not cancelled"
+  expect_contains "$out" "'fugaro runs show $(run_of 1)' or 'fugaro runs show $(challenger_of 1)' reads what they did" "an arm that never ends: the runs are real, and the teardown stops the one that is still going"
+  expect_contains "$calls" "cancel $(challenger_of 1) --now --json" "an arm that never ends: the arm that had not ended is cancelled"
+  expect_contains "$out" "FACT restore: PASS" "an arm that never ends: the teardown reads it back as ended"
 }
 
 test_a_batch_with_a_third_row_is_a_finding() {
@@ -1237,7 +1287,7 @@ test_a_champion_without_a_pull_request_is_a_finding() {
 import json, sys
 p = sys.argv[1]
 d = json.load(open(p))
-d["pr"] = 0
+d.pop("pr", None)
 json.dump(d, open(p, "w"))
 PY
   run_check "$dir"
@@ -1253,7 +1303,7 @@ test_a_challenger_that_opened_a_pull_request_is_a_finding() {
 import json, sys
 p = sys.argv[1]
 d = json.load(open(p))
-d["pr"] = 42
+d["pr"] = {"number": 42, "url": "https://example.invalid/acme/sandbox/pull/42"}
 json.dump(d, open(p, "w"))
 PY
   run_check "$dir"
@@ -1307,7 +1357,7 @@ test_a_teardown_that_cannot_close_is_a_finding() {
   expect_status "$status" 1 "a teardown that cannot delete a branch"
   expect_contains "$out" "FACT restore: FAIL" "a teardown that cannot delete a branch: the row"
   expect_contains "$out" "could NOT be closed or deleted" "a teardown that cannot delete a branch: what it found"
-  expect_contains "$out" "run this check again" "a teardown that cannot delete a branch: the idempotence"
+  expect_contains "$out" "closing a closed pull request and deleting a deleted branch are the state this wants" "a teardown that cannot delete a branch: the remedy is the commands, not a rerun"
 }
 
 test_a_pull_request_that_cannot_be_closed_is_a_finding() {
@@ -1317,6 +1367,62 @@ test_a_pull_request_that_cannot_be_closed_is_a_finding() {
   expect_status "$status" 1 "a pull request that cannot be closed"
   expect_contains "$out" "FACT restore: FAIL" "a pull request that cannot be closed: the row"
   expect_contains "$out" "pull request 41" "a pull request that cannot be closed: which one"
+}
+
+# The Restore's hardest shape: the check gives up before any pair — so no record
+# is read and nothing below the launches ran — with its launches still IN FLIGHT.
+# A teardown that read only what each run had left so far would report PASS over
+# a branch and a pull request the run was about to push and open, so it stops
+# each one with `fugaro cancel <run> --now`, reads it back as ended, and tears
+# down what that run did leave.
+test_a_launch_still_going_is_cancelled_and_read_back() {
+  local dir=$work/inflight
+  prepare "$dir" 99
+  run_check "$dir" CHECK210_MAX_LAUNCHES=2 FAKE_MODE=rows-running
+  expect_status "$status" 1 "a launch still going"
+  expect_contains "$out" "FACT pair: FAIL" "a launch still going: no pair in the bound"
+  expect_contains "$calls" "cancel $(run_of 1) --now --json" "a launch still going: the first launch is stopped"
+  expect_contains "$calls" "cancel $(run_of 2) --now --json" "a launch still going: the second launch is stopped"
+  expect_contains "$out" "FACT restore: PASS" "a launch still going: the teardown row"
+  expect_contains "$out" "the launches that had not ended ($(run_of 1), $(run_of 2)) were cancelled with 'fugaro cancel <run> --now' and read back as ended" "a launch still going: what the row says it had to stop"
+  # And the teardown is not skipped for a run that was going: the branch and the
+  # pull request it had left are dealt with after the cancel, and the read-backs
+  # are readings of state that changed.
+  expect_contains "$gitcalls" "push origin --delete fugaro/$(run_of 1)" "a launch still going: the branch it had left is deleted"
+  # By line, not by substring: the fixture's remote also holds the hundredth
+  # run's branch, which starts with the first run's name.
+  if grep -qx "fugaro/$(run_of 1)" "$dir/json/branches"; then
+    fail "a launch still going: the branch is still on the remote"
+  fi
+  expect_contains "$ghcalls" "pr close 41 --repo acme/sandbox" "a launch still going: the pull request it had left is closed"
+}
+
+test_a_launch_the_cancel_does_not_end_is_a_finding() {
+  # A cancel that answers while the run keeps going is the state the Restore row
+  # may NOT read PASS over: the run can still push and open after the check is
+  # over, and nothing else here will be looking.
+  local dir=$work/stillgoing
+  prepare "$dir" 99
+  run_check "$dir" CHECK210_MAX_LAUNCHES=1 FAKE_MODE=rows-running-stuck
+  expect_status "$status" 1 "a launch the cancel does not end"
+  expect_contains "$out" "FACT restore: FAIL" "a launch the cancel does not end: the row"
+  expect_contains "$out" "the runs list still reads them as going" "a launch the cancel does not end: what it found"
+  expect_contains "$out" "$(run_of 1) (still going after 'fugaro cancel $(run_of 1) --now' answered 'running')" "a launch the cancel does not end: the run it names"
+  expect_contains "$out" "stop it with 'fugaro cancel <run> --now'" "a launch the cancel does not end: the remedy names the command"
+  expect_contains "$out" "Running this check again does not settle them" "a launch the cancel does not end: a rerun is refused as a remedy"
+}
+
+test_a_launch_the_runs_list_does_not_carry_is_a_finding() {
+  # A launched run the runs list does not answer for is a teardown that cannot
+  # read what the run left, so the row says so and names it rather than skipping
+  # it: a run nobody can read is not a run that left nothing.
+  local dir=$work/unlisted
+  prepare "$dir" 99
+  printf '%s\n' "$(run_of 1)" >"$dir/json/omit"
+  run_check "$dir" CHECK210_MAX_LAUNCHES=1 FAKE_MODE=pair-skipped
+  expect_status "$status" 1 "a launch the runs list does not carry"
+  expect_contains "$out" "FACT restore: FAIL" "a launch the runs list does not carry: the row"
+  expect_contains "$out" "the runs list does not carry these launches at all: $(run_of 1)" "a launch the runs list does not carry: the run it names"
 }
 
 test_a_launch_that_hangs_is_not_measured() {
@@ -1454,6 +1560,9 @@ t test_a_report_at_no_pairs_is_a_finding
 t test_a_report_that_cannot_be_read_is_not_measured
 t test_a_teardown_that_cannot_close_is_a_finding
 t test_a_pull_request_that_cannot_be_closed_is_a_finding
+t test_a_launch_still_going_is_cancelled_and_read_back
+t test_a_launch_the_cancel_does_not_end_is_a_finding
+t test_a_launch_the_runs_list_does_not_carry_is_a_finding
 t test_a_launch_that_hangs_is_not_measured
 t test_a_kept_scratch_directory_is_reported
 t test_an_unknown_argument_is_refused

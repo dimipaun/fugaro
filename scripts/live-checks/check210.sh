@@ -41,8 +41,9 @@
 # runs (each billable, and each champion among them pushes its branch and opens
 # its pull request, as an ordinary sandbox run does), and nothing else. Its
 # teardown is part of the check rather than a list of commands for the owner:
-# every pull request this check's launches opened is closed and every branch
-# they pushed is deleted, each read back afterwards.
+# a launch that has not ended is cancelled, every pull request this check's
+# launches opened is closed and every branch they pushed is deleted, each read
+# back afterwards.
 #
 # Usage:      bash scripts/live-checks/check210.sh --sandbox <a sandbox repository checkout> --yes
 #             bash scripts/live-checks/check210.sh --sandbox <path> --yes --max-launches 12
@@ -77,8 +78,10 @@
 #             (check210_test.sh) drives it against fake tools only.
 # Cleanup:    the branches this check's launches pushed and the pull requests
 #             their champions opened, closed and deleted by the Restore, which
-#             reads each one back; and the scratch directory, removed from the
-#             exit trap even on a failed assertion or a Ctrl-C.
+#             reads each one back; a launch that has not ended, stopped with
+#             `fugaro cancel --now` and read back as ended, so that no run of
+#             this check's own outlives it; and the scratch directory, removed
+#             from the exit trap even on a failed assertion or a Ctrl-C.
 # Output:     progress on stderr, ONE block on stdout headed CHECK 210 RESULT,
 #             then CHECK 210 RESULT END (exit N). Exit 0: every criterion held.
 #             1: a criterion did not hold — the layer samples nothing, no pair
@@ -97,7 +100,8 @@
 # launched with), MAX_LAUNCHES (30), RELEASE (0.24.0: the release the pair
 # launch ships in), SINCE (1d: the window `fugaro ab` is read over), REGION
 # (us-east5), RUN_TIMEOUT_SECONDS (3600), POLL_SECONDS (15), CLI_TIMEOUT_SECONDS
-# (180), LAUNCH_TIMEOUT_SECONDS (600), DOCTOR_TIMEOUT_SECONDS (300). --sandbox,
+# (180), CANCEL_TIMEOUT_SECONDS (300), LAUNCH_TIMEOUT_SECONDS (600),
+# DOCTOR_TIMEOUT_SECONDS (300). --sandbox,
 # --task and --max-launches are the same three values as flags, and a value you
 # type as a flag beats the same value in the environment: the environment is how
 # a script sets a knob, and a run that quietly used the other one would spend
@@ -486,7 +490,10 @@ elif what == "record":
     print("outcome=%s" % flat(doc.get("outcome")))
     print("reason=%s" % flat(doc.get("reason")))
     print("branch=%s" % flat(doc.get("branch")))
-    print("pr=%s" % (doc.get("pr") or 0))
+    # runstore.Record.PR is an object, not a number (result.schema.json's `pr`:
+    # {number,url}), so the field is read for what it holds: a reader that took
+    # it for a number would paste a Python repr into the row.
+    print("pr=%s" % ((doc.get("pr") or {}).get("number") or 0))
     print("patch_object=%s" % flat(doc.get("patch_object")))
     print("patch_truncated=%s" % yes(doc.get("patch_truncated")))
     print("ab_pair_id=%s" % flat(ab.get("pair_id")))
@@ -796,7 +803,7 @@ step_pair() {
     say "launching ${n} of at most ${MAX_LAUNCHES} from ${SANDBOX} (a real sandbox run, with what its task costs)"
     run_bounded "$LAUNCH_TIMEOUT" launch "$SANDBOX" "$FUGARO_BIN" run --repo "$SANDBOX" --json "$TASK"
     if [ "$BOUNDED_TIMED_OUT" = yes ]; then
-      unmeasured pair "launch ${n} did not finish inside ${LAUNCH_TIMEOUT}s and was ended: the launches before it are real sandbox runs and are not cancelled by stopping here. What it printed is in $SCRATCH/launch.out and $SCRATCH/launch.err"
+      unmeasured pair "launch ${n} did not finish inside ${LAUNCH_TIMEOUT}s and was ended: the launches before it are real sandbox runs, and this check's teardown cancels the ones that have not ended with 'fugaro cancel <run> --now' when it ends. What it printed is in $SCRATCH/launch.out and $SCRATCH/launch.err"
       return 0
     fi
     if [ "$BOUNDED_STATUS" != 0 ]; then
@@ -824,7 +831,7 @@ step_pair() {
     pair_reason=$(field "$SCRATCH/launch.txt" pair_reason)
     if [ -n "$pair_id" ]; then
       if [ -z "$pair_challenger" ]; then
-        fact pair FAIL "launch ${n} sampled a pair (${pair_id}) and the challenger did not start: fugaro run --json names the pair and no second run in it. The champion ${run_id} is a real sandbox run and is not cancelled by stopping here; its stderr names why the arm did not start and is in $SCRATCH/launch.err"
+        fact pair FAIL "launch ${n} sampled a pair (${pair_id}) and the challenger did not start: fugaro run --json names the pair and no second run in it. The champion ${run_id} is a real sandbox run: this check's teardown cancels it with 'fugaro cancel ${run_id} --now' when it ends, unless it has ended by then. Its stderr names why the arm did not start and is in $SCRATCH/launch.err"
         return 0
       fi
       PAIR_ID=$pair_id
@@ -878,7 +885,7 @@ step_arms() {
     waited=$((waited + POLL_SECONDS))
   done
   if [ "$both" != yes ]; then
-    unmeasured arms "${PAIR_ID}'s two arms had not both ended after ${RUN_TIMEOUT}s (fugaro runs ls --batch ${BATCH} answered ${count:-no} row(s): champion ${RUN_ID} $([ -n "$champion_row" ] && echo "status=$(rcol "$champion_row" 3)" || echo 'is not in the list'), challenger ${CHALLENGER_ID} $([ -n "$challenger_row" ] && echo "status=$(rcol "$challenger_row" 3)" || echo 'is not in the list')). The two arms are real sandbox runs and are not cancelled by stopping here: watch them with 'fugaro watch ${RUN_ID}' and 'fugaro watch ${CHALLENGER_ID}' and run this check again when both have ended"
+    unmeasured arms "${PAIR_ID}'s two arms had not both ended after ${RUN_TIMEOUT}s (fugaro runs ls --batch ${BATCH} answered ${count:-no} row(s): champion ${RUN_ID} $([ -n "$champion_row" ] && echo "status=$(rcol "$champion_row" 3)" || echo 'is not in the list'), challenger ${CHALLENGER_ID} $([ -n "$challenger_row" ] && echo "status=$(rcol "$challenger_row" 3)" || echo 'is not in the list')). The two arms are real sandbox runs: this check's teardown cancels the ones that have not ended with 'fugaro cancel <run> --now' when it ends, and 'fugaro runs show ${RUN_ID}' or 'fugaro runs show ${CHALLENGER_ID}' reads what they did"
     return 0
   fi
   if [ "$count" != 2 ]; then
@@ -994,8 +1001,8 @@ step_challenger() {
     fact challenger FAIL "the challenger's record carries outcome '${outcome:-absent}' and a challenger's is 'none' (A2.1): the outcome is what a reader takes the arm's pull request from, and an arm that records one is an arm that opened something. The record is in $SCRATCH/challenger.out"
     return 0
   fi
-  if [ -n "$branch" ] || [ "$pr" != 0 ]; then
-    fact challenger FAIL "the challenger's record carries branch '${branch:-none}' and pr ${pr}: a challenger pushes nothing and opens nothing (D554, A2.1), so a record that names either is the shadow having published. The record is in $SCRATCH/challenger.out, and the branch and pull request it names are yours to remove"
+  if [ -n "$branch" ] || [ "${pr:-0}" != 0 ]; then
+    fact challenger FAIL "the challenger's record carries branch '${branch:-none}' and pr ${pr:-0}: a challenger pushes nothing and opens nothing (D554, A2.1), so a record that names either is the shadow having published. The record is in $SCRATCH/challenger.out, and the branch and pull request it names are yours to remove"
     return 0
   fi
   fact challenger PASS "the challenger's record at runs/${CHALLENGER_REF}/result.json carries ab.arm challenger, ab.publish none, ab.challenger ${CHALLENGER_MODEL} with challenger_source owner, outcome none, and NO branch and NO pull request (status=$(field "$SCRATCH/challenger.txt" status)): the same task, at the same commit, on another coder model — and it published nothing"
@@ -1119,30 +1126,80 @@ step_report() {
   fact ab-report PASS "fugaro ab --repo ${REPO_NAME} --since ${SINCE} --json shows the pair — mode $(printf '%s' "$pairs" | awk -F'\t' '{ print $2 }'), tier $(printf '%s' "$pairs" | awk -F'\t' '{ print $3 }'), champion $(printf '%s' "$pairs" | awk -F'\t' '{ print $4 }'), challenger $(printf '%s' "$pairs" | awk -F'\t' '{ print $5 }'), pairs $(printf '%s' "$pairs" | awk -F'\t' '{ print $6 }') — so a pair the launcher made is a pair the report scores"
 }
 
-# restore: what this check changed, said rather than assumed. It is the
-# teardown the plan asks a check of this shape to carry: every pull request
-# these launches opened is closed and every branch they pushed is deleted, each
-# one read back. It is idempotent — a pull request already closed and a branch
-# already gone are the state it wants, not a failure — and it names whatever it
-# could not do instead of leaving it to be discovered.
+# restore_rows: the runs list as the teardown reads it, and whether the read
+# worked. It is read again after every cancel below, because a run that was
+# going can push its branch and open its pull request in the seconds before the
+# cancel reaches it, and a teardown that read the list once would report what
+# the run had left when it looked.
+restore_rows() {
+  run_bounded "$CLI_TIMEOUT" teardown "$SANDBOX" "$FUGARO_BIN" runs ls --repo "$SANDBOX" --json --limit "$LS_LIMIT"
+  if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then return 1; fi
+  read_json rows "$SCRATCH/teardown.out" "$SCRATCH/teardown.txt"
+}
+
+# restore_wait_ended ID: wait, up to CANCEL_TIMEOUT, for a run this check
+# cancelled to read as ended. `fugaro cancel --now` cancels the execution
+# through the backend, and the run's own row is what says it stopped.
+restore_wait_ended() {
+  local waited=0 row
+  while [ "$waited" -lt "$CANCEL_TIMEOUT" ]; do
+    restore_rows || return 1
+    row=$(rows_row "$SCRATCH/teardown.txt" "$1")
+    if [ -n "$row" ] && [ "$(rcol "$row" 4)" = true ]; then return 0; fi
+    sleep "$POLL_SECONDS"
+    waited=$((waited + POLL_SECONDS))
+  done
+  return 1
+}
+
+# restore: what this check changed, said rather than assumed. It is the teardown
+# the plan asks a check of this shape to carry, and nothing this check launches
+# outlives it: a launched run that has not ended is cancelled with `fugaro cancel
+# <run> --now` and read back as ended before its branch and its pull request are
+# dealt with, because a run still going pushes and opens AFTER a teardown that
+# read only what it had left so far — a Restore that skipped it would read PASS
+# over a push that had not happened yet. Then every pull request these launches
+# opened is closed and every branch they pushed is deleted, each read back. A
+# pull request already closed and a branch already gone are the state it wants,
+# not a failure; a launched run still going after the cancel, or one the runs
+# list does not carry at all, IS one — the row names it, and names the commands
+# that settle it by run id, because this check's list of its own launches goes
+# with its scratch directory and running the check again does not reach them.
 restore() {
   RESTORE_VERDICT=PASS
   local ids="" id row branch pr close_failed="" deleted="" kept="" note=""
+  local going="" absent="" cancelled="" cancel_status="" cancel_note="" why=""
   if [ ! -s "$LAUNCHES_FILE" ] || [ -z "$PROJECT" ]; then
     RESTORE_NOTE="nothing was created: ${LAUNCHED:-no} launch(es) were made and no branch or pull request of this check's own is left. The scratch directory held the commands' output"
     return 0
   fi
   ids=$(sort -u "$LAUNCHES_FILE" | tr '\n' ' ')
-  run_bounded "$CLI_TIMEOUT" teardown "$SANDBOX" "$FUGARO_BIN" runs ls --repo "$SANDBOX" --json --limit "$LS_LIMIT"
-  if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ] || ! read_json rows "$SCRATCH/teardown.out" "$SCRATCH/teardown.txt"; then
+  if ! restore_rows; then
     RESTORE_VERDICT=FAIL
-    RESTORE_NOTE="the runs this check launched are ${ids}and their branches and pull requests could not be read back (fugaro runs ls --json exited ${BOUNDED_STATUS}; its output is in $SCRATCH/teardown.out and $SCRATCH/teardown.err), so nothing was closed or deleted. Close the pull requests and delete the branches by hand, or run this check again — its teardown is idempotent"
+    RESTORE_NOTE="the runs this check launched are ${ids}and their branches and pull requests could not be read back (fugaro runs ls --json exited ${BOUNDED_STATUS}; its output is in $SCRATCH/teardown.out and $SCRATCH/teardown.err), so nothing was closed or deleted. Settle them by run id: read one with 'fugaro runs show <run>', stop one that is still going with 'fugaro cancel <run> --now', then close its pull request with 'gh pr close <n> --repo ${REPO_NAME:-<owner/name>}' and delete its branch with 'git push origin --delete <branch>' in ${SANDBOX}"
     return 0
   fi
   [ -n "$REPO_NAME" ] || REPO_NAME=$(field "$SCRATCH/teardown.txt" repo)
   for id in $ids; do
     row=$(rows_row "$SCRATCH/teardown.txt" "$id")
-    [ -n "$row" ] || continue
+    if [ -z "$row" ]; then
+      absent="${absent}${absent:+, }${id}"
+      continue
+    fi
+    if [ "$(rcol "$row" 4)" != true ]; then
+      run_bounded "$CANCEL_TIMEOUT" "teardown-cancel" "$SANDBOX" "$FUGARO_BIN" cancel "$id" --now --json
+      if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
+        going="${going}${going:+, }${id} ('fugaro cancel ${id} --now' exited ${BOUNDED_STATUS})"
+        continue
+      fi
+      cancel_status=$(python3 -c 'import json,sys; print(((json.load(open(sys.argv[1])) or {}).get("status") or ""))' "$SCRATCH/teardown-cancel.out" 2>/dev/null || true)
+      if ! restore_wait_ended "$id"; then
+        going="${going}${going:+, }${id} (still going after 'fugaro cancel ${id} --now' answered '${cancel_status:-no status}')"
+        continue
+      fi
+      cancelled="${cancelled}${cancelled:+, }${id}"
+      row=$(rows_row "$SCRATCH/teardown.txt" "$id")
+    fi
     branch=$(rcol "$row" 7)
     pr=$(rcol "$row" 8)
     if [ -n "$branch" ]; then
@@ -1191,9 +1248,20 @@ restore() {
       fi
     fi
   done
+  if [ -n "$going" ]; then
+    why="these launches had not ended: 'fugaro cancel <run> --now' was run on each of them and the runs list still reads them as going — ${going}"
+  fi
+  if [ -n "$absent" ]; then
+    why="${why}${why:+; }the runs list does not carry these launches at all: ${absent}"
+  fi
+  if [ -n "$why" ]; then
+    RESTORE_VERDICT=FAIL
+    RESTORE_NOTE="the runs this check launched are ${ids}and ${why}. A run that is still going is settled by nothing this teardown reads — it can push its branch and open its pull request after this check is over — so settle each one by run id: read it with 'fugaro runs show <run>', stop it with 'fugaro cancel <run> --now', then close its pull request with 'gh pr close <n> --repo ${REPO_NAME:-<owner/name>}' and delete its branch with 'git push origin --delete <branch>' in ${SANDBOX}. Running this check again does not settle them: the list of the runs it launched is removed with its scratch directory"
+    return 0
+  fi
   if [ -n "$close_failed" ]; then
     RESTORE_VERDICT=FAIL
-    RESTORE_NOTE="the runs this check launched are ${ids}and ${close_failed} could NOT be closed or deleted. Close the pull request with 'gh pr close <n> --repo ${REPO_NAME}' and delete the branch with 'git push origin --delete <branch>' in ${SANDBOX}, then run this check again — its teardown is idempotent"
+    RESTORE_NOTE="the runs this check launched are ${ids}and ${close_failed} could NOT be closed or deleted. Close the pull request with 'gh pr close <n> --repo ${REPO_NAME}' and delete the branch with 'git push origin --delete <branch>' in ${SANDBOX}: closing a closed pull request and deleting a deleted branch are the state this wants, so both commands are safe to run again"
     return 0
   fi
   note="${deleted:+ deleted ${deleted};}"
@@ -1202,7 +1270,10 @@ restore() {
     RESTORE_NOTE="the runs this check launched are ${ids}their branches were${note:-} deleted, and ${kept} could NOT be closed: 'gh' is not on PATH, and a pull request is the one thing no other tool here closes. Close each one with 'gh pr close <n> --repo ${REPO_NAME:-<owner/name>}' — they are sandbox pull requests and closing them is the whole of it"
     return 0
   fi
-  RESTORE_NOTE="the runs this check launched are ${ids}every branch they pushed was deleted${note:-} and every pull request their champions opened is closed, each read back from the forge. The scratch directory held the commands' output; the records stay in the bucket, which is what the rows above were read from"
+  if [ -n "$cancelled" ]; then
+    cancel_note="the launches that had not ended (${cancelled}) were cancelled with 'fugaro cancel <run> --now' and read back as ended, and "
+  fi
+  RESTORE_NOTE="the runs this check launched are ${ids}${cancel_note}every branch they pushed was deleted${note:-} and every pull request their champions opened is closed, each read back from the forge. The scratch directory held the commands' output; the records stay in the bucket, which is what the rows above were read from"
 }
 
 cleanup() {
@@ -1254,7 +1325,7 @@ plan() {
   say "  [network, read] git ls-remote --heads origin 'refs/heads/fugaro/*' in ${SANDBOX} — the remote's own branch list, which is where 'exactly one branch' is read"
   say "  [read] gcloud storage ls of both arms' patch_object keys"
   say "  [read] fugaro ab --repo <the sandbox repository> --since ${SINCE} --json — the pair through the command you read pairs with"
-  say "  [WRITE, the teardown] every branch these launches pushed is deleted and every pull request their champions opened is closed with gh, each read back"
+  say "  [WRITE, the teardown] a launch that has not ended is stopped with fugaro cancel --now and read back, then every branch these launches pushed is deleted and every pull request their champions opened is closed with gh, each read back"
   for key in release sandbox layer pair arms champion challenger branch pr patch-objects ab-report; do
     fact "$key" INFO "planned: a real run measures this row; --dry-run did not"
   done
@@ -1383,6 +1454,10 @@ REGION=${CHECK210_REGION:-us-east5}
 RUN_TIMEOUT=${CHECK210_RUN_TIMEOUT_SECONDS:-3600}
 POLL_SECONDS=${CHECK210_POLL_SECONDS:-15}
 CLI_TIMEOUT=${CHECK210_CLI_TIMEOUT_SECONDS:-180}
+# The bound for both halves of the teardown's cancel: the `fugaro cancel --now`
+# this check runs on a launched run that has not ended, and the wait for that
+# run's row to read as ended afterwards.
+CANCEL_TIMEOUT=${CHECK210_CANCEL_TIMEOUT_SECONDS:-300}
 LAUNCH_TIMEOUT=${CHECK210_LAUNCH_TIMEOUT_SECONDS:-600}
 DOCTOR_TIMEOUT=${CHECK210_DOCTOR_TIMEOUT_SECONDS:-300}
 # Resolved before anything runs, and by absolute path: this check drives a real
