@@ -79,18 +79,18 @@ clock, never about the network: the check is offline, so no outage on Fugaro's s
 
 ### 3.1 What the console has today
 
-The console's whole surface is `CONSOLE_OPERATIONS` (`console/src/main/ipc.ts:600`): thirty-six
-operations, twenty-five of which spawn the CLI under an exact-argv allow-list
-(`SPAWN_COMMANDS`, `console/src/main/spawn.ts:761`). Twenty-three of the twenty-five are reads; two
+The console's whole surface is `CONSOLE_OPERATIONS` (`console/src/main/ipc.ts:600`): forty
+operations, twenty-nine of which spawn the CLI under an exact-argv allow-list
+(`SPAWN_COMMANDS`, `console/src/main/spawn.ts:761`). Twenty-six of the twenty-nine are reads; three
 are writes. The eleven that spawn nothing at all are the nine the console answers from its own state,
-`licence.read`, and `licence.save` — which is a third write, the console's own store's, and the only
+`licence.read`, and `licence.save` — which is a fourth write, the console's own store's, and the only
 one with no child.
 
 | Class | Operations | Child |
 | --- | --- | --- |
-| reads | `live.watch`, `budget.show`, `spend.report`, `runs.list`, `runs.stats`, `runs.summary`, `plan.status`, `graph.read`, `run.diagnose`, `run.logs`, `run.logLink`, `secrets.inventory`, `accounts.inventory`, `models.list`, `settings.read`, `cli.version`, `environment.report`, `installation.list`, `coordinator.status`, `coordinator.show`, `coordinator.intents`, `managed.status`, `policy.show` | the CLI |
+| reads | `live.watch`, `budget.show`, `spend.report`, `runs.list`, `runs.stats`, `runs.summary`, `plan.status`, `graph.read`, `graph.watch`, `run.diagnose`, `run.logs`, `run.logLink`, `secrets.inventory`, `accounts.inventory`, `models.list`, `settings.read`, `cli.version`, `environment.report`, `installation.list`, `coordinator.status`, `coordinator.show`, `coordinator.intents`, `managed.status`, `policy.show`, `seats.read`, `members.list` | the CLI |
 | the console's own | `startup.compatibility`, `installation.current`, `installation.choose`, `installation.checkout`, `installation.remove`, `installation.reveal`, `installation.open`, `link.openExternal`, `link.openPullRequest`, `licence.read` | none |
-| writes | **`run.launch`** (`run --task-file - --json`), **`settings.edit`** (`settings`) | the CLI |
+| writes | **`run.launch`** (`run --task-file - --json`), **`settings.edit`** (`settings`), **`roadmap.move`** (`coordinator roadmap move --json TASK --to <release> --expect <release>`) | the CLI |
 | the store's write | **`licence.save`** — the key the operator pasted, verified before it is kept, into the console's own file beside `installations.json` (`licence-store.ts`, S2.7) | none |
 
 `settings.edit` writes one setting of the installation's configuration document at the layer the read
@@ -103,7 +103,7 @@ of the eleven rows of that table that **spawn nothing at all** (`command: null`,
 `SPAWN_COMMANDS`) — the first two of the eleven that keep a **credential**: the key is not a child's
 argument, so the console keeps it in a file of its own (`licence.json`, 0600 in a 0700 directory, one
 entry per installation) and hands it to every child afterwards **in the environment and never in an
-argv**. That write is the console's third, and **neither operation is gated by the licence state in
+argv**. That write is the console's fourth, and **neither operation is gated by the licence state in
 any mode** — on no reduced view, refused at no state — which is what the sentence above about the key
 screen means now that the screen exists: an expired installation is exactly the one whose operator
 has to be able to reach the box that takes a renewal.
@@ -113,15 +113,17 @@ The plan's F20 counted **fifteen read operations, and no launch or cancel**
 launch landed since — D22 answered "one write, launch", and the row is annotated "the launch, and the
 console's only write" (`console/src/main/spawn.ts:1216`,
 [desktop-console-v2.md](desktop-console-v2.md)) — and the settings write landed after it, saying of
-itself in the same table that it is "the second write" (`console/src/main/ipc.ts:1162`). **Cancel and the
-kill switch are still absent, and deliberately so**: D2 keeps v1 strictly read-only, D14 makes the
-allow-list the whole fence, and D34 leaves cancel and retry unscheduled
+itself in the same table that it is "the second write" (`console/src/main/ipc.ts:1162`). The record's
+move landed last, on 2026-11-12 (the dependency-graph plan's GV3.2,
+[desktop-console.md](desktop-console.md) rule 14), and it is the console's **third** write. **Cancel
+and the kill switch are still absent, and deliberately so**: D2 keeps v1 strictly read-only, D14 makes
+the allow-list the whole fence, and D34 leaves cancel and retry unscheduled
 ([desktop-console.md](desktop-console.md), [desktop-console-v2.md](desktop-console-v2.md)); the CLI's
 `budget kill` and `budget resume` are on `NEVER_REACHABLE` as "a write: it turns a kill switch on,
 which halts running work" (`console/src/main/ipc.ts:1705`).
 
 So the console is where T12's "cannot launch" has teeth today and "cancel" has none yet: the lapse
-has exactly two operations to refuse, and reads that are easy to mistake for paid features to keep.
+has exactly three operations to refuse, and reads that are easy to mistake for paid features to keep.
 
 ### 3.2 What the lapse keeps, and what it refuses
 
@@ -146,9 +148,9 @@ renewal reminder in the console" ([spec.md](../subscriptions/spec.md)) — so §
 
 This document reads the closing clause in the grammar of the sentence it ends: what a User "may not
 initiate or modify", and which features are not available to *do* that with. On that reading "no paid
-feature is available" forbids doing paid things — the launch and the settings write refused below —
-and leaves a view of the customer's own records readable, which is what the grant's first sentence
-names. The strictest reading, where a view is part of the feature so Spend and the project view come
+feature is available" forbids doing paid things — the launch, the settings write and the record's move
+refused below — and leaves a view of the customer's own records readable, which is what the grant's
+first sentence names. The strictest reading, where a view is part of the feature so Spend and the project view come
 down, is T12's choice (b): §8 item 6 names it as the alternative, and taking it changes this section
 and §5's copy rather than §3.3's gate.
 
@@ -167,9 +169,10 @@ Three more reasons for the kept reading:
 Seats, when S4.2 builds them, go with the same call: the panel is a read, it stays, and the estimate
 is warned and never enforced (D439).
 
-**Refused: the two writes.** After a lapse `run.launch` and `settings.edit` are refused in the
-console's main process. Those are the console's launches and its configuration changes — T12's words
-for them.
+**Refused: the three writes.** After a lapse `run.launch`, `settings.edit` and `roadmap.move` are
+refused in the console's main process. Those are the console's launches, its configuration changes and
+its record's moves — T12's words for the first two, and the third joining them on 2026-11-12 (the
+dependency-graph plan's GV3.2, [desktop-console.md](desktop-console.md) rules 13 and 14).
 
 **Kept: the console's own surface.** Which installation the rail points at, the rail's own list, the
 reveal and open, and the two link operations are the console's bookkeeping and the desktop's shell.
@@ -443,8 +446,9 @@ the plan says. Nothing else gains a check:
 Checks **176** and **177** (owner-run, S6.4, written into
 [docs/gcp-live-checklist.md](../gcp-live-checklist.md)) are the plan's
 measure of this document, one product each: within grace everything works; after grace the reads and
-cancel remain while the launch and the configuration write are refused in the console's main process;
-with no key the console behaves as §5.3 says and with an expired evaluation key as §5.5 says; the app
+cancel remain while the launch, the configuration write and the record's move are refused in the
+console's main process; with no key the console behaves as §5.3 says and with an expired evaluation
+key as §5.5 says; the app
 still cancels through the mailbox and still shows the kill switch, and refuses launch and
 configuration; and the MIT CLI launches and cancels throughout. Both are OWNER-RUN: an agent builds,
 and a person with a packed console and an app build runs them.

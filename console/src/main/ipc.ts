@@ -544,10 +544,10 @@ export interface ConsoleOperation {
    * `refusedAfterLapse` is the field that makes an operation part of the
    * **refused class** of the design's lapse state (subscriptions plan S6.2;
    * `docs/design/lapse-read-only.md` §3.2, D436, T12): after the key's grace
-   * period this console does not launch a run and does not change a setting, and
-   * `lapseHandlers` (`src/main/licence-state.ts`) refuses exactly the rows that
-   * carry this field, before the handler -- and so before any child -- is
-   * reached.
+   * period this console does not launch a run, does not change a setting and
+   * does not move a task of a record, and `lapseHandlers`
+   * (`src/main/licence-state.ts`) refuses exactly the rows that carry this
+   * field, before the handler -- and so before any child -- is reached.
    *
    * **It is a field of the row and never a list of names beside the table.** The
    * design states the rule and its reason: a later cancel is admitted to the kept
@@ -619,7 +619,7 @@ export const LAUNCH_PAYLOAD_WIDTH =
   LAUNCH_TASK_RAW_LIMIT + LAUNCH_TITLE_RAW_LIMIT + LAUNCH_PLAN_TASK_RAW_LIMIT + 4096
 
 /**
- * CONSOLE_OPERATIONS is the whole surface. Thirty-nine operations, and the table
+ * CONSOLE_OPERATIONS is the whole surface. Forty operations, and the table
  * is the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
  *
@@ -1132,9 +1132,10 @@ export const CONSOLE_OPERATIONS = [
     // launcher resolves the name below against this console's records and spawns
     // *that* installation (`launch.ts`), handing its child that installation's
     // key -- so the gate has to ask about the name the renderer sent, not about
-    // the binding the console happens to be driving. `settings.edit`, the lapse's
-    // other row, carries no such column: its flow reads and writes the active
-    // installation's own settings document.
+    // the binding the console happens to be driving. `settings.edit` and
+    // `roadmap.move`, the lapse's other rows, carry no such column: each acts on
+    // the installation the console is already driving, which its payload does not
+    // name.
     installationArgument: 'installation',
     // The five fields, and nothing else: no `--pr`, no `--retry`, no `--recipe`,
     // no mode, no path, no ref, no workflow, no budget escape. Every one of them
@@ -1330,10 +1331,11 @@ export const CONSOLE_OPERATIONS = [
     command: 'settings',
     flags: [],
     summary: 'the second write: one setting set or unset, at the layer the read named, after the operator confirms it',
-    // The lapse's other row: T12 takes the launch and the configuration change
-    // away (design §3.2 rule 1). `settings.read` -- the same command, as a read
-    // -- is not this row and keeps answering, which is the design's line between
-    // reading a setting and writing one.
+    // One of the lapse's rows: T12 takes the launch and the configuration change
+    // away (design §3.2 rule 1), and the record's move joined them on 2026-11-12
+    // (`roadmap.move` below, the console's third write). `settings.read` -- the
+    // same command, as a read -- is not this row and keeps answering, which is
+    // the design's line between reading a setting and writing one.
     refusedAfterLapse: true,
     args: [
       {
@@ -1851,7 +1853,7 @@ export const CONSOLE_OPERATIONS = [
   // this document carries no money at all: a seat is a contract pricing rule of
   // the Subscription Terms and not a figure of this installation's spend, and
   // the estimate the CLI publishes is a count of people. It is not gated by a
-  // lapse either, and for the same reason a read is never gated: only the two
+  // lapse either, and for the same reason a read is never gated: only the three
   // writes that walk an installation out of a lapse carry
   // `refusedAfterLapse` (`docs/design/lapse-read-only.md`).
   //
@@ -3962,9 +3964,10 @@ export function assertReachableSurface(operations: readonly ConsoleOperation[]):
         throw new Error(`${operation.name} fixes ${flag}, which is not a flag the surface may fix`)
       }
     }
-    // The lapse's refused class is the two writes, and the design's kept set
-    // includes every answer the console gives out of its own process: a row with
-    // no command spawns nothing, so refusing it would take away a read, the key
+    // The lapse's refused class is the three writes (`run.launch`, `settings.edit`
+    // and `roadmap.move`), and the design's kept set includes every answer the
+    // console gives out of its own process: a row with no command spawns
+    // nothing, so refusing it would take away a read, the key
     // screen (the way out, §5.6), or the console's own surface -- and never a
     // capability the licence granted. A later task that wants to refuse one of
     // these has to come back here and say why, which is the point.

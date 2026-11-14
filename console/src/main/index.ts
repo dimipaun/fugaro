@@ -1015,8 +1015,9 @@ let registered = false
  *
  * **`lapseHandlers` is outermost.** The two gates refuse disjoint sets today --
  * reduced mode withholds the spend, caps and kill views' *reads*, and the lapse
- * takes the launch and the settings write, which reduced mode admits -- so the
- * order is unobservable, and it is written down rather than left to chance: the
+ * takes the three writes (the launch, the settings edit and GV3.2's record
+ * move), which reduced mode admits -- so the order is unobservable, and it is
+ * written down rather than left to chance: the
  * lapse gate is outside because its state is the installation's own and it is
  * read per call from the licence store, exactly as the handshake's is from the
  * stored answer, so a renewal pasted during a session lifts the launch's refusal

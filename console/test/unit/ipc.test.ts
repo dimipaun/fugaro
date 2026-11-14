@@ -1481,12 +1481,13 @@ describe('the never-reachable table', () => {
 
   it('refuses the lapse\'s column on a row that spawns nothing', () => {
     // The lapse's refused class is a column of the row (`refusedAfterLapse`,
-    // subscriptions plan S6.2, design §3.2): the two operations a lapsed
-    // installation loses are the launch and the settings write, and both spawn a
-    // command. A row that spawns **nothing** answers out of this process, and
-    // those answers are the design's kept set -- the reads, the console's own
-    // surface, and the key screen, which §5.6 keeps ungated as the way out of
-    // the lapse -- so a table that refused one of them fails closed here, at
+    // subscriptions plan S6.2, design §3.2): the three operations a lapsed
+    // installation loses are the launch, the settings write and GV3.2's record
+    // move, and all three spawn a command. A row that spawns **nothing** answers
+    // out of this process, and those answers are the design's kept set -- the
+    // reads, the console's own surface, and the key screen, which §5.6 keeps
+    // ungated as the way out of the lapse -- so a table that refused one of them
+    // fails closed here, at
     // registration, rather than at the operator.
     const withheldScreen: readonly ConsoleOperation[] = [
       ...CONSOLE_OPERATIONS,
