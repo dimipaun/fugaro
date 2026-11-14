@@ -454,13 +454,13 @@ func TestReposAddRefusesAnotherInstallationsDatabase(t *testing.T) {
 	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := execute(t, "project", "repos", "add", "github/acme/new"); err != nil {
+	if _, _, err := execute(t, "project", "repos", "add", "--allow-list-only", "github/acme/new"); err != nil {
 		t.Fatalf("repos add on the installation's own marked database was refused: %v", err)
 	}
 	own := f.db.Value(projectpolicy.PathShared())
 
 	f.db.Set(budget.PathMark, birchMark())
-	_, _, err := execute(t, "project", "repos", "add", "github/acme/second")
+	_, _, err := execute(t, "project", "repos", "add", "--allow-list-only", "github/acme/second")
 	refusedByTheOwnershipCheck(t, "project repos add", err, "nothing was added to the allow-list")
 	if err != nil && !strings.Contains(err.Error(), "one Firebase project serves one installation") {
 		t.Errorf("the refusal is not the shared one: %v", err)
@@ -473,7 +473,7 @@ func TestReposAddRefusesAnotherInstallationsDatabase(t *testing.T) {
 
 	// Data and no mark at all: the same answer, from the other half.
 	f.db.Set(budget.PathMark, nil)
-	_, _, err = execute(t, "project", "repos", "add", "github/acme/third")
+	_, _, err = execute(t, "project", "repos", "add", "--allow-list-only", "github/acme/third")
 	refusedByTheOwnershipCheck(t, "project repos add", err, "nothing was added to the allow-list")
 	if !reflect.DeepEqual(f.db.Value(projectpolicy.PathShared()), own) {
 		t.Error("the refused edit rewrote the policy node with the mark removed")

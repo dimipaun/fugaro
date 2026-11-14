@@ -284,7 +284,7 @@ func TestAccessReposAllReposAdminCannotEditTheAllowList(t *testing.T) {
 	accessAs(t, f.db, accessAdminAddr,
 		userStored(t, accessMember(t, accessAdminAddr), accesslib.RoleAdmin, "all-repos"))
 	before := allowReposOf(t, f.db)
-	_, _, err := execute(t, "project", "repos", "add", "github/acme/new")
+	_, _, err := execute(t, "project", "repos", "add", "--allow-list-only", "github/acme/new")
 	accessRefused(t, err, "nothing was added to the allow-list", "admin at project scope", "(user:admin@example.com) hold admin at all-repos")
 	if after := allowReposOf(t, f.db); !slices.Equal(after, before) {
 		t.Errorf("the refused add rewrote the published allow-list: %v, want %v", after, before)

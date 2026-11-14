@@ -583,7 +583,7 @@ func reposDoorThenEdit(t *testing.T, door func(t *testing.T, f *projectFixture))
 
 func TestReposAddThenEditThenUpdatePublishes(t *testing.T) {
 	reposDoorThenEdit(t, func(t *testing.T, f *projectFixture) {
-		if _, _, err := execute(t, "project", "repos", "add", "github/acme/new"); err != nil {
+		if _, _, err := execute(t, "project", "repos", "add", "--allow-list-only", "github/acme/new"); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -627,7 +627,7 @@ func TestReposAddLeavesAStaleRecordStale(t *testing.T) {
 	if now := nodeETag(t, f); now == stale {
 		t.Fatalf("the other machine's node carries the generation this file records (%q): nothing is stale in this fixture", now)
 	}
-	out, _, err := execute(t, "project", "repos", "add", "github/acme/new")
+	out, _, err := execute(t, "project", "repos", "add", "--allow-list-only", "github/acme/new")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
