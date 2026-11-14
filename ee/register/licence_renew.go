@@ -21,9 +21,11 @@ package register
 //     line and a record rather than a refusal. The installation's state is the
 //     object, and `fugaro licence status` reads it there. What it does fail on
 //     is what no later run would fix by itself: a store or a container it cannot
-//     write — a broken installation — and an answer that is not the pair this
-//     installation renews with, which is a licence server contradicting itself
-//     and a state a person has to be told about.
+//     use — one it cannot read or write, or one whose versions prove no key,
+//     which is a broken installation and `fugaro licence set`'s to repair — and
+//     an answer that is not the pair this installation renews with, which is a
+//     licence server contradicting itself and a state a person has to be told
+//     about.
 //   - it runs on every installation with a coordinator (K4.2's condition), and
 //     an installation with no key is the ordinary state of one that never
 //     bought a licence: the command no-ops and says so.
@@ -373,6 +375,16 @@ func licenceRenew(cmd *cobra.Command, o *licenceRenewOptions) error {
 		return fcli.RemoteErr(fmt.Errorf("the licence server answered key %s (paid through %s) and this installation applies key %s (paid through %s): nothing was written, because the project keeps the later term and the answer would not be the key this installation runs on",
 			safetext.Field(next.KeyID), next.PaidThrough.UTC().Format(time.RFC3339),
 			safetext.Field(would.Claims.KeyID), would.Claims.PaidThrough.UTC().Format(time.RFC3339)))
+	}
+	if would.Revoked {
+		// The installation's own revoked list names this key id, which is the
+		// server having answered a revocation for it once: the store reads a key
+		// on that list as Free however good its term is (markRevoked), so writing
+		// this answer would land the downgrade it names and nothing else. `set`
+		// refuses the same key, and a rotation mints a new key id, so this is a
+		// server contradicting its own records rather than a successor.
+		return fcli.RemoteErr(fmt.Errorf("the licence server answered key %s, and this installation has already recorded that key as revoked: nothing was written, because the project reads the key as revoked whatever its term says",
+			safetext.Field(next.KeyID)))
 	}
 	added := answer.RenewalSecret != "" && !bytes.Equal([]byte(answer.RenewalSecret), newest)
 	if added {

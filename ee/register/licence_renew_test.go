@@ -956,11 +956,12 @@ func TestTheJobCompletesAPairACrashLeftOpen(t *testing.T) {
 	assertNoKeyMaterial(t, "the job's answer", out, next, nextSecret)
 }
 
-// TestARenewalThatIsNotThePairWritesNothing holds the two guards between the
-// answer and the writes. Both are refusals of an answer the server may send and
-// this installation may not act on, and both are answered before either write:
+// TestARenewalThatIsNotThePairWritesNothing holds the three guards between the
+// answer and the writes. All are refusals of an answer the server may send and
+// this installation may not act on, and all are answered before either write:
 // the renewal secret written beside a key the installation does not run on
-// takes the renewal away from the key it does.
+// takes the renewal away from the key it does, and the key written beside one it
+// has recorded revoked is the downgrade that record names.
 func TestARenewalThatIsNotThePairWritesNothing(t *testing.T) {
 	t.Run("a key whose digest names another secret", func(t *testing.T) {
 		// D2135: the key carries the digest of the secret it renews with, and a
@@ -1045,6 +1046,54 @@ func TestARenewalThatIsNotThePairWritesNothing(t *testing.T) {
 			t.Errorf("the refusal %q does not say why the answer was refused", err.Error())
 		}
 		assertNoKeyMaterial(t, "the job's refusal", out+errOut+err.Error(), key, staleSecret)
+	})
+
+	t.Run("a key the installation has recorded revoked", func(t *testing.T) {
+		// The revoked list is the installation's own record of what the server
+		// answered once, and it is not the check's: a key on it stays revoked
+		// however many checks follow (D2140, spec section 8). A server that
+		// answered a key on that list would be handing back a key this project
+		// reads as Free, so the answer is refused before either write rather
+		// than landing a downgrade as a renewal.
+		f := newLicenceFixture(t)
+		key, secret, claims := f.installed(t, shortTerm(f))
+		next, nextSecret, nextClaims := f.successor(t, claims)
+		if err := f.store(t).RecordCheck(context.Background(), f.now, project.CheckRevoked, nextClaims.KeyID); err != nil {
+			t.Fatal(err)
+		}
+		server := f.serveJobServer(t, func(route string, call keyservice.RenewalCall) (int, string) {
+			if route == keyservice.RouteStatus {
+				return licenceAnswerJSON(t, keyservice.Answer{Status: keyservice.StatusOK})
+			}
+			return licenceAnswerJSON(t, keyservice.Answer{Status: keyservice.StatusOK, Key: next, RenewalSecret: nextSecret})
+		})
+		wrote := secretWrites(f)
+
+		out, errOut, err := f.renewJob(t)
+		if err == nil {
+			t.Fatal("a key this installation has recorded revoked was written as a renewal")
+		}
+		if code := fcli.ExitCode(err); code != fcli.ExitRemoteError {
+			t.Errorf("the refusal exited %d, want %d: %v", code, fcli.ExitRemoteError, err)
+		}
+		if got := len(server.callsTo(keyservice.RouteRenew)); got != 1 {
+			t.Errorf("the job asked /renew %d times, want once: the answer is what the guard refused", got)
+		}
+		if got := secretWrites(f); got != wrote {
+			t.Errorf("the container was given %d further versions, want none: the key they would renew with is the key this installation has revoked", got-wrote)
+		}
+		obj := f.object(t)
+		if len(obj.Keys) != 1 || obj.Keys[0] != key {
+			t.Errorf("the project holds %d keys after an answer naming a revoked key, want the one it had", len(obj.Keys))
+		}
+		if got := string(f.secrets.Latest(f.secretContainer())); got != secret {
+			t.Error("the container's newest version is not the secret the installed key renews with")
+		}
+		if !strings.Contains(err.Error(), "already recorded that key as revoked") {
+			t.Errorf("the refusal %q does not say why the answer was refused", err.Error())
+		}
+		assertNoKeyMaterial(t, "the job's refusal", out+errOut+err.Error(), key, secret)
+		assertNoKeyMaterial(t, "the job's refusal", out+errOut+err.Error(), next, nextSecret)
 	})
 }
 
