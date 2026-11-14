@@ -78,7 +78,11 @@ import (
 // owns; Check 302's are a fake `fugaro`, a real `uname` and a real terminal
 // (a pty its helper types the phase's one confirmation into), and it rewrites
 // a copy of its own script to prove the case that expects a quiet daemon log
-// to be a finding is not vacuous.
+// to be a finding is not vacuous. Check 211's fakes are a fake `gcloud` that
+// holds the object tree the case's fixture writes, a fake `fugaro` that
+// answers the one launch the check makes, and a fake `claude` that answers its
+// label-guess probes, so a case says which identifiers the stored judge input
+// carried and what the judge named when it was asked.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -95,6 +99,7 @@ var liveCheckScripts = []struct {
 	{"check190.sh", "check190_test.sh"},
 	{"check191.sh", "check191_test.sh"},
 	{"check195.sh", "check195_test.sh"},
+	{"check211.sh", "check211_test.sh"},
 	{"check300.sh", "check300_test.sh"},
 	{"check301.sh", "check301_test.sh"},
 	{"check302.sh", "check302_test.sh"},
