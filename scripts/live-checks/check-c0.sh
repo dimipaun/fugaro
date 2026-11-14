@@ -104,8 +104,8 @@
 #             read. A `--dry-run` is not a run and ends 0 whatever it was given
 #             — it measures nothing, so it has no hole and no finding to end on,
 #             and a checkout it was not given is not one either — and the only
-#             things it refuses are a shell that is tracing and a name carrying
-#             `belong`.
+#             things it refuses are a shell that is tracing and a name it cannot
+#             carry: one that is not a project name, or one carrying `belong`.
 set -Eeuo pipefail
 
 # No xtrace, whatever the shell it was started from had: the documents this
@@ -427,6 +427,13 @@ guard_projects() {
 # command you are about to run is the wrong one before you run it.
 guard_checkout_names() {
   local path
+  # The same hazard as guard_checkouts below: `"${CHECKOUTS[@]}"` on an array
+  # that is still empty is an unbound variable under `set -u` before bash 4.4,
+  # which is the bash a Mac ships. This one runs in a dry run too, where naming
+  # no checkout is the ordinary case rather than a mistake.
+  if [ "${#CHECKOUTS[@]}" -eq 0 ]; then
+    return 0
+  fi
   for path in "${CHECKOUTS[@]}"; do
     case "$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')" in
     *belong*)
@@ -514,7 +521,8 @@ step_coordinator() {
 }
 
 read_coordinator() { # read_coordinator PROJECT
-  local name=$1 key="coordinator-$name"
+  local name=$1
+  local key="coordinator-$name"
   local display="fugaro coordinator status --from-store --all --json"
   read_run "$key" "$display" "$NEUTRAL_CWD" env FUGARO_PROJECT="$name" \
     "$FUGARO_BIN" coordinator status --from-store --all --json
@@ -658,7 +666,13 @@ print_block() { # print_block FACTS STATUS — always on the owner's own stdout
   local facts=$1 status=$2
   local key printed=""
   printf '\nCHECK C0 RESULT\n' >&3
-  for key in "${BLOCK_KEYS[@]}"; do
+  # `${BLOCK_KEYS[@]+...}` and not a bare expansion: a run that dies before
+  # build_block_keys — a missing tool, a scratch directory it cannot make —
+  # reaches this trap with the array still empty, and on bash before 4.4 (the
+  # bash a Mac ships) an empty array expands to an unbound variable under
+  # `set -u`. The trap would then fail instead of printing the block, which is
+  # the one thing the owner has to see when a run stops early.
+  for key in ${BLOCK_KEYS[@]+"${BLOCK_KEYS[@]}"}; do
     local line
     line=$(printf '%s\n' "$facts" | grep -m1 "^$key|" || true)
     if [ -n "$line" ]; then
