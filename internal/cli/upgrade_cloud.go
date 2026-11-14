@@ -653,8 +653,8 @@ func cloudStep(ctx context.Context, u *stepCtx) stepResult {
 // (init_checkout_upgrade.go). One refusal, one wording, so the step and the
 // stage that plans it say the same thing about the same session.
 func cloudAgentRefusal(u *stepCtx) string {
-	reason := fmt.Sprintf("a coding agent's session (%s is set) never applies cloud changes, by design; in your own terminal window, not through the agent, run %s (it confirms every step itself, each billable build included), or %s to be asked at each step",
-		u.agent, u.o.cloudLine(u.loc.Root, true), u.o.cloudLine(u.loc.Root, false))
+	reason := fmt.Sprintf("a coding agent's session (%s is set) never applies cloud changes, by design; in your own terminal window, not through the agent, run %s (that terminal is what confirms every step, each billable build included)",
+		u.agent, u.o.cloudLine(u.loc.Root))
 	if h := initflow.IDEHint(u.agent); h != "" {
 		reason += " (" + h + ")"
 	}
@@ -662,9 +662,13 @@ func cloudAgentRefusal(u *stepCtx) string {
 }
 
 // cloudLine is the command that runs the cloud step for root in the user's
-// own terminal: this run's flags without --check, with or without --yes.
-func (o stepOptions) cloudLine(root string, yes bool) string {
+// own terminal: this run's flags without --check. It is one line and not two —
+// the pair that once ran the same step with and without the flag that answered
+// its confirmations is one command now that the flag is gone (T11), and a
+// refusal that named the same line twice would be read as two ways of doing
+// one thing.
+func (o stepOptions) cloudLine(root string) string {
 	c := o
-	c.check, c.yes = false, yes
+	c.check = false
 	return c.again(root)
 }

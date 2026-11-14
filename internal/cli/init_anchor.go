@@ -143,7 +143,7 @@ func (r *initRun) runAnchor(ctx context.Context) error {
 		return err
 	}
 	if !written {
-		return userErr("nothing was written: add the line by hand, or rerun fugaro update --anchor at a terminal or with --yes")
+		return userErr("nothing was written: add the line by hand, or rerun fugaro update --anchor at a terminal")
 	}
 	res.State = "written"
 	return r.printResult()

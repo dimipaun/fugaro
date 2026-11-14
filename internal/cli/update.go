@@ -72,9 +72,9 @@ still printed exactly as it applies and every verdict is still recorded, and
 only a step that is money, permanence or a secret still asks for your own word
 (D1026). The steps that keep their own typed confirmation — a project's creation
 and the billing link are setup's, and here they cannot arise at all, and a
-secret is a value, typed in a hidden prompt, which --yes cannot supply — against
-the steps --yes covers, which by D12's answer of 2026-10-20 is every ordinary
-step this door owns: the Firestore database's permanent location, a billable
+secret is a value, typed in a hidden prompt, which no flag can supply — against
+the ordinary steps this door owns, which by D12's answer of 2026-10-20 are every
+one of them: the Firestore database's permanent location, a billable
 first image build, replacing a registry tag and onboarding an unlisted
 repository on a provider's own host with an origin git config that does not
 rewrite it (the build, the tag and the repository are covered in setup too); the

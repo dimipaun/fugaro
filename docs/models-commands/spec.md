@@ -59,7 +59,7 @@ limits, and whether a route of the selected project already claims it (and which
 the network (D788). A model the catalog does not carry is not found, and the output says so with the
 one way to use it anyway: `fugaro models add <id> --price-in X --price-out Y`.
 
-## 4. `fugaro models add <id> [--route NAME] [--price-in X --price-out Y] [--yes]`
+## 4. `fugaro models add <id> [--route NAME] [--price-in X --price-out Y]`
 
 Edits the **selected local project config** and nothing else (D780). In order:
 
@@ -83,14 +83,14 @@ Edits the **selected local project config** and nothing else (D780). In order:
    use the model); when it is absent, it stays absent (D786).
 5. **Check, show, back up, write.** The new file must parse with `localcfg.Parse` (strict) and pass
    the same provider, price and routing checks `fugaro validate` runs. The command prints the line diff,
-   asks for confirmation at a terminal (`--yes` confirms outside a terminal), backs up the old file to
+   asks for confirmation at a terminal, backs up the old file to
    `<file>.bak-<UTC timestamp>` (mode 0600) and writes the new one atomically (temporary file, rename,
    mode 0600). Only the keys it changes are rewritten: comments, ordering and every other key are kept
    byte for byte (D790, §9).
 6. **Hand off.** It prints `next: fugaro update` and, when a repository pins nothing that uses the
    model, `fugaro models use <repo> <role> <id>` as the way to use it.
 
-## 5. `fugaro models rm <id> [--yes]`
+## 5. `fugaro models rm <id>`
 
 The reverse of `add`, through the same check, diff, backup and atomic write: it drops the ID's exact
 entry from its route's `models` (a pattern that claims it is left, and the command says the ID stays
@@ -101,7 +101,7 @@ the warning says the next run of that repository fails at launch with a no-provi
 changed (`fugaro models use`) or the model is added back. `budget.allowed_models` is never left as an empty list,
 which the loader refuses: removing its last entry is refused with the reason.
 
-## 6. `fugaro models use <repo> <coder|reviewer|background|vision> <id> [--yes]`
+## 6. `fugaro models use <repo> <coder|reviewer|background|vision> <id>`
 
 Prepares the change to the repository's own `fugaro.yaml` (`agent.models.<role>`), never silently
 (D781):
@@ -115,8 +115,8 @@ Prepares the change to the repository's own `fugaro.yaml` (`agent.models.<role>`
   the refusal and nothing is written; the message names the `models add` that would fix a missing
   claim or price.
 - It edits **only** that one line of the working tree's `fugaro.yaml` (inserting `agent.models` when
-  absent), keeping comments and every other byte, prints the diff, and asks for confirmation (`--yes`
-  outside a terminal). It never commits, pushes or opens a pull request: the change reaches runs when
+  absent), keeping comments and every other byte, prints the diff, and asks for confirmation. It never
+  commits, pushes or opens a pull request: the change reaches runs when
   the user's own branch is merged to the base branch, which is what every run reads.
 - The roles are the four keys `agent.models` has today: `coder`, `reviewer`, `background` and, since the
   vision-model work, `vision` (D2013). The review levels' own per-level models (D720–D737) are added to
@@ -147,7 +147,7 @@ Prepares the change to the repository's own `fugaro.yaml` (`agent.models.<role>`
 - **No config write in a coding agent's session when the config is outside the repository.** `models
   add` and `models rm` write `~/.config/fugaro/projects/<project>.yaml`, outside every repository: under a
   coding agent's environment variable (`CLAUDECODE` and the like, `agentenv.Marker`) they print the diff
-  and the command for the user to run, and write nothing, `--yes` included (D789). `models use` writes the
+  and the command for the user to run, and write nothing (D789). `models use` writes the
   repository's own `fugaro.yaml` in the working tree, which an agent may edit anyway; it is allowed there.
   `ls` and `search` read only and run anywhere.
 - **No secret** is read, printed or stored by these commands. A new route's key is `fugaro secrets

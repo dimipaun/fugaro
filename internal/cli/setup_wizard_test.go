@@ -3,9 +3,9 @@ package cli
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -100,9 +100,9 @@ func optionsFor(flag string) *initOptions {
 // and shows. A question added without a row — or a row for a question nobody
 // asks any more — fails here.
 //
-// The last column is the one --non-interactive prints, and it is read off the
-// product too: a run with no terminal names every question it cannot answer,
-// and every row is one it cannot answer for itself.
+// The last column is the one a run that never prompts prints, and it is read
+// off the product too: a run with no terminal names every question it cannot
+// answer, and every row is one it cannot answer for itself.
 func TestEveryWizardQuestionHasAFlag(t *testing.T) {
 	if len(setupQuestions) == 0 {
 		t.Fatal("setupQuestions is empty: the wizard asks something, and every question has a flag")
@@ -162,9 +162,9 @@ func TestEveryWizardQuestionHasAFlag(t *testing.T) {
 		})
 	}
 
-	// Cannot be asked: --non-interactive names exactly the rows whose answer
-	// it needs, and no others.
-	t.Run("--non-interactive", func(t *testing.T) {
+	// Cannot be asked: a run with no terminal and no question asked of it names
+	// exactly the rows whose answer it needs, and no others.
+	t.Run("a run that never prompts", func(t *testing.T) {
 		firstRunEnv(t)
 		r := &initRun{o: &initOptions{nonInteractive: true}, w: &strings.Builder{}, in: bufio.NewReader(strings.NewReader("")), cmd: NewRootCmd()}
 		err := r.gatherInputs(t.Context())
@@ -317,11 +317,9 @@ func TestCreationFlagsNeedACreation(t *testing.T) {
 // TestSetupCreatesOnlyForAPersonAtTheTerminal: the creation is not its own
 // confirmation, and no flag takes a person's place. A first run's project is
 // created only where a person is at the terminal, with nothing typed for it
-// (T7, docs/no-prompt-policy); --yes is the one way a person there leaves the
-// step instead, because the creation is initflow.Typed and --yes never covers a
-// Typed step, and --json, a pipe and --non-interactive each leave it for you
-// (D12: creating the project is `setup`'s). This is the row W0.1's matrix gains
-// for the door that creates.
+// (T7, docs/no-prompt-policy): --json and a pipe leave it for you, and the
+// flags that used to answer it are gone (T11). This is the row W0.1's matrix
+// gains for the door that creates.
 func TestSetupCreatesOnlyForAPersonAtTheTerminal(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -331,11 +329,8 @@ func TestSetupCreatesOnlyForAPersonAtTheTerminal(t *testing.T) {
 		created  bool
 	}{
 		{"a person at the terminal", true, newProj + "\n", nil, true},
-		{"--yes does not stand in for it", true, "yes\n", []string{"--yes"}, false},
-		{"--yes at a terminal leaves it for a rerun", true, newProj + "\n", []string{"--yes"}, false},
 		{"a pipe cannot confirm it", false, newProj + "\n", nil, false},
 		{"--json cannot confirm it", true, newProj + "\n", []string{"--json"}, false},
-		{"--non-interactive cannot confirm it", true, newProj + "\n", []string{"--non-interactive", "--yes"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newProjectRig(t)
@@ -361,23 +356,19 @@ func TestSetupCreatesOnlyForAPersonAtTheTerminal(t *testing.T) {
 // and registers no project stage (D11).
 func TestSetupOnAnExistingInstallationConvergesAndSaysSo(t *testing.T) {
 	newInitRig(t)
-	out, _, err := executeStdin(t, "", "setup", "--yes")
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, "", "setup")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if !strings.Contains(out, setupAlreadySetUp) {
 		t.Errorf("the run does not say the installation is already set up:\n%s", out)
 	}
-	js, _, err := executeStdin(t, "", "setup", "--yes", "--json")
-	if err != nil {
-		t.Fatalf("%v\n%s", err, js)
-	}
-	var res convergeJSON
-	if err := json.Unmarshal([]byte(js), &res); err != nil {
-		t.Fatalf("%v:\n%s", err, js)
-	}
-	if got := res.state(initflow.Project); got != "" {
-		t.Errorf("the project stage ran on an installation that exists: %q\n%s", got, js)
+	// The account the run prints is where the one --json result document used to
+	// be read: --json confirms no step (T7), and the question here is only which
+	// steps the run opened.
+	if names := stepNames(out); slices.Contains(names, initflow.Project) {
+		t.Errorf("the project stage ran on an installation that exists: %q\n%s", names, out)
 	}
 }
 
@@ -552,9 +543,9 @@ func TestSetupAsksBakeDefaultYes(t *testing.T) {
 		args  func(*initOptions)
 		plain bool
 	}{
-		{"--yes", func(o *initOptions) { o.yes = true }, false},
+		{"a run that carries its own answer", func(o *initOptions) { o.yes = true }, false},
 		{"--json", func(o *initOptions) { o.asJSON = true }, false},
-		{"--non-interactive", func(o *initOptions) { o.nonInteractive = true }, false},
+		{"a run that never prompts", func(o *initOptions) { o.nonInteractive = true }, false},
 		{"--print-vars", func(o *initOptions) { o.printVars = true }, false},
 		// The billing question refuses a pipe by naming its flag (T7), so the
 		// run carries the answer and the bake question is the one left to see.
@@ -565,8 +556,8 @@ func TestSetupAsksBakeDefaultYes(t *testing.T) {
 			tc.args(o)
 			r, out := wizardRun(t, "", o)
 			if tc.plain {
-				// No terminal on stdin: the same state --yes is in, without a
-				// flag saying so.
+				// No terminal on stdin: the same state a run that carries its
+				// own answer is in, without a flag saying so.
 				noTerminal(t)
 			}
 			if err := r.gatherInputs(t.Context()); err != nil {
@@ -586,7 +577,7 @@ func TestSetupAsksBakeDefaultYes(t *testing.T) {
 	// not something the images that exist can be given afterwards.
 	t.Run("the answer is what the run writes", func(t *testing.T) {
 		r := newInitRig(t)
-		out, _, err := executeStdin(t, "", "setup", "--yes", "--bake-repos=false")
+		out, _, err := executeStdin(t, "", "setup", "--bake-repos=false")
 		if err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}
@@ -678,7 +669,8 @@ func TestSetupUpdateConvergesBake(t *testing.T) {
 
 	t.Run("the answer a run gives the question", func(t *testing.T) {
 		r := newConvergeRig(t, v6Node())
-		out, errOut, err := executeStdin(t, "", "setup", "--yes", "--bake-repos=false")
+		fakeTerminal(t)
+		out, errOut, err := executeStdin(t, "", "setup", "--bake-repos=false")
 		if err != nil {
 			t.Fatalf("fugaro setup --bake-repos=false stopped at %s (exit %d): %v\n%s\n%s", stoppedStage(out), ExitCode(err), err, out, errOut)
 		}

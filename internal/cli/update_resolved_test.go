@@ -468,8 +468,11 @@ func TestSetupDoorResolvesNothing(t *testing.T) {
 	newInitRig(t)
 	stubResolvedBucketFatal(t)
 	stubUpdateResolve(t, resolvedUntouched{t})
+	// The owner's own terminal, which is what confirms the steps the run asks
+	// about now the flag that stood in for it is gone (T11).
+	fakeTerminal(t)
 
-	out, _, err := executeStdin(t, "", "setup", "--yes")
+	out, _, err := executeStdin(t, "", "setup")
 	if err != nil {
 		t.Fatalf("fugaro setup stopped at %s:\n%s", stoppedStage(out), out)
 	}
@@ -679,7 +682,10 @@ func TestUpdateDoesNotAdvanceRecordInExcludedModes(t *testing.T) {
 		// step off at all (init_stages.go's outcome returns before the hooks).
 		r.script["plan"] = map[string]any{"exit": 1, "stderr": "Error: quota exceeded\n"}
 		r.save(t)
-		if _, _, err := executeStdin(t, "", "update", "--yes"); err == nil {
+		// The owner's own terminal, so the run reaches the apply this case is
+		// about and fails there rather than at a confirmation nothing answers (T11).
+		fakeTerminal(t)
+		if _, _, err := executeStdin(t, "", "update"); err == nil {
 			t.Fatal("the plan failed, yet the update succeeded")
 		}
 		if _, _, err := resolvedRunsBucket(t).ReadMax(t.Context(), installrec.Object, 4<<10); err == nil {
@@ -794,8 +800,9 @@ func TestUpdateAgentSessionPrintsNoSharedCommand(t *testing.T) {
 func TestUpdateAtPreviousVersionConverges(t *testing.T) {
 	newConvergeRig(t, v6Node())
 	currentRelease(t)
+	fakeTerminal(t)
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("fugaro update stopped at %s (exit %d), so this installation needs a second command:\n%s\n%s",
 			stoppedStage(out), ExitCode(err), out, errOut)

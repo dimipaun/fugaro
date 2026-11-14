@@ -95,7 +95,7 @@ func TestRigorSetRefusesAModeBelowTheResolvedOne(t *testing.T) {
 	before := readFileString(t, path)
 
 	agentSession(t)
-	out, _, err := execute(t, "rigor", "set", "startup", "--yes")
+	out, _, err := execute(t, "rigor", "set", "startup")
 	if err == nil {
 		t.Fatalf("a coding agent's session lowered the project's rigor mode:\n%s", out)
 	}
@@ -179,7 +179,7 @@ func TestRigorSetRefusesARaisingWriteInAnAgentSession(t *testing.T) {
 
 	for _, args := range [][]string{
 		{"rigor", "set", "critical"},
-		{"rigor", "set", "critical", "--yes"},
+		{"rigor", "set", "critical"},
 		{"rigor", "set", "critical", "--area", "docs/**", "--name", "docs"},
 	} {
 		out, _, err := execute(t, args...)

@@ -1307,7 +1307,7 @@ terminal including the ones that can do it, and the two modes of
 **Recommend: both are in scope, in the last slices, after the non-interactive
 paths — and neither is a blocker for the release.** The reason: the wizard is
 `internal/initflow`, which reads a terminal through `x/term` (F14, portable)
-and has a non-interactive mode (`--yes`, `--non-interactive`, `--json`) that
+and has a non-interactive mode (`--json`) that
 already works; the TUI is Bubble Tea (F17, portable). So both are *expected*
 to work and neither is *verified*, and F36's rule — do not claim what was not
 run — says to keep them in the plan as tasks with their own verification

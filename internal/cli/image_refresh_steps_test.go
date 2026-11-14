@@ -87,21 +87,22 @@ func TestRefreshBaseStep(t *testing.T) {
 	}
 }
 
-// 2026-10-08 decision: --yes confirms the base copy without a terminal (a
-// closed stdin, as CI would give it), with its own "confirmed by --yes"
-// line; the digest is still shown first.
-func TestRefreshBaseStepYesNoTerminal(t *testing.T) {
+// At a real terminal the base copy is confirmed by the person being there,
+// with nothing typed at it (T7): the step pins the release's image and shows
+// the digest first, and its own empty stdin is what says no confirmation was
+// read.
+func TestRefreshBaseStepConfirmsWithNothingTyped(t *testing.T) {
 	r := newImagesRig(t, "1.2.3")
 	t.Chdir(repoCheckout(t, githubOrigin, refreshYAML))
-	e := rigEngine(t, r.initRig, &initOptions{yes: true})
-	out := atNoTerminal(e)
+	e := rigEngine(t, r.initRig, &initOptions{})
+	out := atTerminal(t, e, "")
 	if err := e.r.refreshBase(t.Context(), e, []string{"base"}); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
 	if got, want := r.localConfig(t).BaseImages["base"], r.pinnedBase("base", "1.2.3"); got != want {
 		t.Fatalf("base_images.base = %s, want %s", got, want)
 	}
-	for _, want := range []string{"⚠ CONFIRM", "sha256:", "confirmed by --yes"} {
+	for _, want := range []string{"⚠ CONFIRM", "sha256:"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output lacks %q:\n%s", want, out.String())
 		}
@@ -439,12 +440,13 @@ func TestRefreshCheckJobStep(t *testing.T) {
 	}
 }
 
-// 2026-10-08 decision: --yes confirms the check-job update without a
-// terminal, after showing the same old/new diff as a run at the owner's
-// terminal, with its own "confirmed by --yes" line.
-func TestRefreshCheckJobStepYesNoTerminal(t *testing.T) {
+// At a real terminal the check-job update is confirmed by the person being
+// there, with nothing typed at it (T7): the step shows the same old/new diff
+// and updates the job, and its own empty stdin is what says no confirmation was
+// read.
+func TestRefreshCheckJobStepConfirmsWithNothingTyped(t *testing.T) {
 	r := newInitRig(t)
-	e := rigEngine(t, r, &initOptions{yes: true})
+	e := rigEngine(t, r, &initOptions{})
 	slug, label := checkJobOwner(t, "bitbucket", "acme/sandbox")
 	oldRef, newRef := managedRef("base", "0.4.0"), managedRef("base", "0.5.1")
 	spec, _ := json.Marshal(infra.CheckJobSpec{Repo: "acme/sandbox", BaseImages: map[string]string{"base": oldRef}})
@@ -456,11 +458,11 @@ func TestRefreshCheckJobStepYesNoTerminal(t *testing.T) {
 	}
 	lc.BaseImages = map[string]string{"base": newRef}
 	tg := &refreshTarget{lc: lc, spec: infra.RepoSpec{Name: "acme/sandbox", Slug: slug, Label: label}, kinds: []string{"base"}}
-	out := atNoTerminal(e)
+	out := atTerminal(t, e, "")
 	if err := e.r.refreshCheckJob(t.Context(), tg); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
-	for _, want := range []string{"image " + oldRef + " -> " + newRef, "⚠ CONFIRM", "confirmed by --yes", "updated the daily image check job"} {
+	for _, want := range []string{"image " + oldRef + " -> " + newRef, "⚠ CONFIRM", "updated the daily image check job"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output lacks %q:\n%s", want, out.String())
 		}

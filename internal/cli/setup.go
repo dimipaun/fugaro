@@ -32,7 +32,7 @@ import (
 const setupLong = `setup plans the installation's shared resources (the runs bucket, registries,
 custom roles, the scheduler account, log isolation, an optional budget) with
 Terraform, importing what the bootstrap already made, and applies the plan it
-showed once a person at the terminal confirms it (or pass --yes). It
+showed once a person at the terminal confirms it. It
 then writes the project config from the installation's outputs. With no
 project config yet, --name, --gcp-project and --region say what to create:
 projects/<name>.yaml.
@@ -41,7 +41,7 @@ It enables the Cloud Resource Manager API when it is disabled (setup reads
 the project's number through it before Terraform can enable it), creates
 the Terraform state bucket first when it doesn't exist, and offers to remove
 project Viewers' read access to the runs bucket, each after its own
-confirmation. --plan-only never takes --yes: what the plan needs made first
+confirmation. --plan-only applies nothing and confirms nothing: what the plan needs made first
 (the state bucket, the API) takes a person at the terminal, or the run stops
 and says so. A plan that would delete or replace anything is
 refused unless --allow-delete names the address.
@@ -64,7 +64,7 @@ baked into the image its job runs (--bake-repos; yes, which makes jobs start
 faster; asked only where it can be answered, so a run with a project config
 keeps that project's answer). Every question has its flag, so only the
 confirmations below need a terminal at all: without one, or with
---non-interactive, --yes or --json, the run names every missing flag in one
+--json, the run names every missing flag in one
 error — the bake switch needs no flag there, because an absent key means the
 same as a written yes. An ID that already exists is refused before anything is
 asked or changed ("Fugaro only starts fresh: <id> already exists; pick
@@ -128,12 +128,12 @@ it names is: that removal when needed, fugaro image refresh --repo
 base image and pins it by digest, points the daily image check job at it and
 rebuilds the image), then fugaro setup --anchor. The image checks trust the build records (written by
 the builds, unsigned: the same trust as the shared config), and a hand-pushed
-image under a release-looking tag passes them. Then the diff; --yes writes, a person at the
-terminal confirms it there (nothing is typed), and a run that is neither
+image under a release-looking tag passes them. Then the diff; a person at the
+terminal confirms it there (nothing is typed), and a run with no terminal
 prints the line and writes nothing. Exit codes: 0 written or already present
 and safe, 1 a check failed or nothing was written, 2 a build record could not
 be read from the cloud (missing credentials included). A coding agent's
-session may run it, --yes included: it edits only a local file.
+session may run it: it edits only a local file.
 
 setup --firebase-project <gcp-project-id> turns the shared budget on: it
 builds the budget backend in the installation's own GCP project. The value is
@@ -153,8 +153,7 @@ largest lease, after a confirmation of their own, then writes the local
 config. The same step creates the Firestore database for the spend history
 (fugaro report) if the project has none: its location, us-east5, is permanent
 (chosen once, never changed or deleted by Fugaro), so the location's
-confirmation is the person at a real terminal (nothing is typed; --yes,
---non-interactive, --json and a pipe never confirm it, and the step is then
+confirmation is the person at a real terminal (nothing is typed; --json and a pipe never confirm it, and the step is then
 left for you), and it
 refuses a database that holds data or is in another location; it also deploys
 deny-everything Firestore rules and the Fugaro mark. --plan-only stops after the installation's plan. Each repository then
@@ -165,8 +164,8 @@ the current directory), whose fugaro.yaml says what it needs, into the
 installation fugaro setup applied. It imports what the bootstrap made for it
 (checking each resource's marks and live grants first), creates the rest,
 and deploys each workflow's job once its secrets are stored and its image is
-built. It offers each workflow's first image build (billable: --yes covers it, and a
-person at a terminal without --yes confirms it there), then deploys the built image and unpauses the daily check. It
+built. It offers each workflow's first image build (billable: the person at the
+terminal confirms it there), then deploys the built image and unpauses the daily check. It
 prints the fugaro secrets set commands still needed, and adds the
 repository to the local config. A repository the local config does not list
 takes the same opt-in as the converge's stages (below): the confirmation of a
@@ -188,7 +187,9 @@ still prints its own exact plan. It never covers creating a project, linking
 billing, the Firestore database's permanent location, a Cloud Build, replacing
 a registry tag (--replace-image), an unlisted repository or a secret. Those are
 their own steps: the build, the tag and onboarding an unlisted repository are
-covered by --yes in either door (D12's answer of 2026-10-20), and a project's
+covered by the run's own confirmation in a project whose gate stands in for it,
+and taken by the person at the terminal otherwise (D12's answer of 2026-10-20
+keeps them one class in either door), and a project's
 creation, the billing link, the location and a secret value keep a
 confirmation of their own, taken with the person at the terminal. The state bucket and the API enable are fixed, announced, free steps; every
 Terraform plan is shown as it runs and is covered only if it is creates and
@@ -203,12 +204,11 @@ widened role) is not covered by the run's confirmation: it is shown and then
 applied, and left for you where nobody is at the terminal. The confirmation is
 per run and never stored. Any other project
 (one an earlier run created and this one resumed, unmarked, or a mark that
-fails to read) keeps its own confirmation at each step;
---yes covers the ordinary steps as ever and takes no review; --non-interactive,
---json, a pipe and a coding agent never take it; --plan-only shows the review
-and applies nothing.
+fails to read) keeps its own confirmation at each step, taken at your own
+terminal; --json, a pipe and a coding agent never give one; --plan-only shows
+the review and applies nothing.
 
-What --yes covers: the ordinary steps, which are the installation's and the
+What that confirmation covers: the ordinary steps, which are the installation's and the
 Firebase root's Terraform applies, the images' copy, the local config's
 writes, the plugin wiring, a repository's steps — onboarding one the project
 does not list included — a billable first image build and replacing a tag in
@@ -217,25 +217,24 @@ your registry (--replace-image KIND names the intent). D12's answer of
 door, while a repository whose origin git config rewrites, or whose host is not
 a provider's own, takes the confirmation of a person at the terminal whatever
 the run was given. What
---yes still never covers: creating a project or linking billing, a secret, and
+it still never covers: creating a project or linking billing, a secret, and
 the Firestore database's permanent location, this door's first-time question.
-With --yes, --non-interactive or --json each of those is left for you, with the
-one line to run. A first run that does ask the billing question — a pipe for
-standard input, none of those flags given — stops there instead: with no
-terminal the question is refused at once, in the sentence naming --link-billing,
-before any account of yours is read. In a coding agent's environment (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT,
+With no terminal, or with --json, each of those is left for you, with the
+one line to run: a first run that reaches the billing question is refused at
+once, in the sentence naming --link-billing, before any account of yours is
+read. In a coding agent's environment (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT,
 CLAUDE_CODE_REMOTE, CURSOR_AGENT or AI_AGENT is set) setup
-applies nothing, --yes included, and says to run it in your own terminal
+applies nothing and says to run it in your own terminal
 window; --plan-only and the read-only checks still work, and so does setup
---anchor (with --yes), which edits only the checkout's fugaro.yaml. That is a mitigation,
+--anchor, which edits only the checkout's fugaro.yaml. That is a mitigation,
 not a barrier: an agent can unset its own environment. CLAUDE_CODE_SSE_PORT is
 read the same way and is the one case that is not an agent's: the Claude Code
 IDE extension sets it in a person's own terminal too, so on its own it counts
 as a coding agent's session only where standard input is not a real terminal,
 and with a real terminal it types the same confirmations as any other — one
 line says the confirmation was accepted from an IDE terminal. Set beside any
-of the markers above it is an agent's session like theirs, and a pipe, --json,
---non-interactive and --yes behave exactly as they did. A run that writes this
+of the markers above it is an agent's session like theirs, and a pipe and
+--json behave exactly as they did. A run that writes this
 machine's local config from an installation that already exists (fugaro
 update on a new machine) changes nothing in the cloud in the same run (the
 local config and, in a checkout, the plugin installed in your own Claude Code
@@ -245,7 +244,7 @@ In a checkout of a repository of this project, the converge's secrets stage
 asks, at hidden prompts, for the secrets its jobs mount (the git credential,
 the Claude credential agent.auth names, none for vertex, the allowed model
 providers' keys, the workflows' own), and skips what is already stored. It
-prompts only in your own terminal: never with --yes, --non-interactive or
+prompts only in your own terminal: never with
 --json (--json never prompts; the stage then exits 1 with the one-line
 fugaro secrets set commands), never when stdin, stdout or stderr is not a
 terminal (a pipe is never read), and never when a coding agent's variable is set (CLAUDECODE
@@ -262,7 +261,7 @@ changes nothing else. --gcp-project <id> is the new project's ID: the run
 creates it and adds Firebase to it, as you, at your own terminal, where being
 at it is what confirms the step; --link-billing <account> then links that
 billing account (it may incur charges), at your own terminal too. Each is its
-own confirmation, never given by --yes, --non-interactive or --json, and the ID
+own confirmation, taken by the person at the terminal and never by --json, and the ID
 is never the gcloud default project. Without a billing link, setup pauses at
 billing (above) and the rerun resumes the project it created. The project is labelled fugaro_created=true at its creation, and the
 run that created it marks it Fugaro-managed (its runs bucket's
@@ -271,8 +270,8 @@ installation; --managed with --budget, --budget-currency and --billing-account
 also records the monthly budget the managed apply needs. A creation that a
 later run finished is marked by that run only where the person at your own
 terminal confirms it: the fugaro_created=true label anyone may set says which
-project to ask about, and never marks one by itself (--yes, --json,
---non-interactive and a coding agent's session leave it for fugaro managed
+project to ask about, and never marks one by itself (--json
+and a coding agent's session leave it for fugaro managed
 flag). Marking any other project the owner runs an installation in is fugaro
 managed flag's. An ID that already exists and was not created by fugaro
 setup, or that is pending deletion, is refused.
@@ -290,9 +289,8 @@ and keeps its own confirmations, the first image build's included.
 In a checkout whose repository the local config does not list yet, the converge
 onboards it at the gate, before any stage plans, and asks nothing: the note the
 gate prints names the repository, its host and the checkout's path, a person at
-the terminal reads it and the repository is onboarded with nothing typed — and
-where the origin's identity is the one it claims, --yes covers the step
-outright. A run that can confirm neither (--non-interactive, --json, a pipe, a
+the terminal reads it and the repository is onboarded with nothing typed. A run
+that cannot confirm it (--json, a pipe, a
 coding agent's environment) leaves the repository as it is for the rest of the
 run — no later stage asks for it again — and says how to enrol it later. Run
 outside a checkout there is nothing to ask about, so setup prints the one line
@@ -303,9 +301,9 @@ or one you opt in: a repository not listed yet is onboarded when you opt it in
 — the confirmation of a person at your own terminal (naming the checkout's
 path), or
 --onboard-repo owner/name, which must equal the origin (setup --repo takes both
-too) — or by the run's own --yes, which covers onboarding one whose origin git
+too) — or by the run's own confirmation, which covers onboarding one whose origin git
 config does not rewrite and whose host is a provider's own (D12's answer of
-2026-10-20). --non-interactive without --yes, --json, a pipe and a coding
+2026-10-20). --json, a pipe and a coding
 agent's environment confirm none of it (the flag is refused there), so a cloned
 third-party repository cannot onboard itself. The secrets stage is behind the
 same gate.`
@@ -354,8 +352,8 @@ const setupAlreadySetUp = "this installation is already set up"
 
 // wizardQuestion is one question the wizard asks, in the order it asks it: the
 // flag that answers the same question without a terminal — so a scripted run
-// needs no terminal for anything but the typed confirmations — and the name
-// `--non-interactive` prints when the run cannot proceed without an answer.
+// needs no terminal for it — and the name the refusal prints when the run
+// cannot proceed without an answer.
 //
 // missing is what a run that cannot ask is refused with when nothing else
 // answers the question.
@@ -443,8 +441,8 @@ func questionFor(flag string) wizardQuestion {
 // publishes it in the same run, and a later change goes through `fugaro
 // settings set bake_repos` and its own rebuild (noteBakeRebuild).
 //
-// It asks nothing where nobody can answer (canAsk: --yes, --json,
-// --non-interactive, a pipe) and nothing on a run that does not create the
+// It asks nothing where nobody can answer (canAsk: --json, a pipe) and
+// nothing on a run that does not create the
 // installation — a run with a project config, `fugaro update` too — which is
 // the owner's rule for a managed project: there the value is the flag's or the
 // published node's, and a question nobody asked for would replace the project's

@@ -183,7 +183,7 @@ A condition known only after apply is not covered. `grantRules` moves `objectUse
 
 Nothing else is allowed: a member dropped from both lists still needs `--allow-delete`, with today's hint. The installation stage passes `append(r.o.allowDelete, HardeningAllowDelete(...)...)` to `guard`.
 
-A delete is never covered (`Cover.NotCovered` refuses every action but create, update, no-op and read), so this step asks its own typed project name (or takes `--yes`) after a banner:
+A delete is never covered (`Cover.NotCovered` refuses every action but create, update, no-op and read), so this step asks its own typed project name after a banner:
 
 ```
 bucket access (0.7.0): these launchers keep reading the runs bucket and writing runs/, and lose write access to fugaro/, builds/, cache/ and locks/:

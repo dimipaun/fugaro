@@ -787,10 +787,10 @@ func setCatalogConfigWithNoRepos(t *testing.T, f *projectFixture) {
 // TestUpdatePolicyFirstPublishIsRefusedWithoutAConfirmation: the node the stage
 // now writes when nothing is published is the one every run of the project is
 // admitted by from here on, chosen where none was, so it is the operator's own
-// write and not one a session makes: --yes does not stand in for the project's
-// name, and a session with no terminal is refused — the confirmation D846
-// reserves for the boundary every run is admitted by, and the class a coding
-// agent's session never reaches under the managed gate (D1026).
+// write and not one a session makes: no flag stands in for the project's
+// name (T11 removed --yes), and a session with no terminal is refused — the
+// confirmation D846 reserves for the boundary every run is admitted by, and the
+// class a coding agent's session never reaches under the managed gate (D1026).
 //
 // A config that lists no repository is the publisher's own warning instead
 // (#1674): that node admits nothing, so every run of the project stops before
@@ -804,10 +804,12 @@ func TestUpdatePolicyFirstPublishIsRefusedWithoutAConfirmation(t *testing.T) {
 
 	out, err := h.apply(t, true)
 	if err == nil {
-		t.Fatalf("--yes published the project's first policy node with no terminal:\n%s", out)
+		t.Fatalf("a run with no confirmation published the project's first policy node with no terminal:\n%s", out)
 	}
-	if !strings.Contains(err.Error(), "does not stand in") {
-		t.Errorf("the refusal does not say that --yes is no stand-in: %v", err)
+	for _, want := range []string{"no flag stands in", "The project's own name is what confirms it"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
 	}
 	if v := f.db.Value(projectpolicy.PathShared()); v != nil {
 		t.Fatalf("the refused publish wrote a node: %v", v)
@@ -1642,7 +1644,7 @@ func TestPolicyPublishRefusesOverUnknownFields(t *testing.T) {
 		"version": projectpolicy.Version, "budget": map[string]any{"mode": "enforce", "per_run_usd": 5},
 		"allow_repos": []string{"github/acme/app"}, "future_key": true,
 	})
-	_, _, err := execute(t, "project", "policy", "publish", "--yes")
+	_, _, err := execute(t, "project", "policy", "publish")
 	if err == nil {
 		t.Fatal("the publish went ahead over a node carrying a key it does not know")
 	}

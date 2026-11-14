@@ -58,7 +58,8 @@ func TestMarkCreatedWritesOnlyForACreationThisRunCreatedOrResumed(t *testing.T) 
 	t.Run("update --firebase-project on an existing project", func(t *testing.T) {
 		r := newFBRig(t)
 		r.markedRuns(t, initProjectName, initProject)
-		if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
+		fakeTerminal(t)
+		if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID); err != nil {
 			t.Fatal(err)
 		}
 		noMarker(t, r.gcs, initRunsBucket)
@@ -608,7 +609,7 @@ func TestManagedInitRefusalNamesNoFlag(t *testing.T) {
 	r := newInitRig(t)
 	r.managedRuns(t, initProjectName, initProject)
 	r.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
-	out, _, err := executeStdin(t, "", "setup", "--yes")
+	out, _, err := executeStdin(t, "", "setup")
 	managedRefusal(t, err, address, true)
 	if len(r.ran(t, "apply")) != 0 {
 		t.Fatalf("a plan the guard refused was applied\n%s", out)
@@ -618,7 +619,7 @@ func TestManagedInitRefusalNamesNoFlag(t *testing.T) {
 	r2 := newInitRig(t)
 	r2.stateBucket()
 	r2.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
-	out2, _, err := executeStdin(t, "", "setup", "--yes")
+	out2, _, err := executeStdin(t, "", "setup")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out2)
 	}
@@ -641,6 +642,10 @@ func TestManagedInitRefusalNamesNoFlag(t *testing.T) {
 func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 	const a = "user:a@example.com"
 	address := `module.installation.google_storage_bucket_iam_member.state["` + a + `"]`
+	// The person at the terminal is what confirms the applies the flag used to
+	// (T11, docs/no-prompt-policy): (c) is still the guard's own refusal, before
+	// any confirmation, and (d) and (e) are the applies that go through.
+	fakeTerminal(t)
 
 	// (c) An address on the owner's list does not permit a fugaro setup --yes
 	// delete, and the entry here is the strongest one there is: it names this
@@ -690,7 +695,7 @@ func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 	}
 	r.allowDeleteList(t, initProject, entry)
 	r.setPlan(t, ch)
-	_, _, err := executeStdin(t, "", "setup", "--yes")
+	_, _, err := executeStdin(t, "", "setup")
 	managedRefusal(t, err, bucket, true)
 	if len(r.ran(t, "apply")) != 0 {
 		t.Fatal("the owner's delete list approved a delete in fugaro's own root")
@@ -706,7 +711,7 @@ func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 			r.stateBucket()
 		}
 		r.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
-		out, _, err := executeStdin(t, "", "setup", "--yes", "--allow-delete", address)
+		out, _, err := executeStdin(t, "", "setup", "--allow-delete", address)
 		if err != nil || len(r.ran(t, "apply")) != 1 {
 			t.Errorf("%s: --allow-delete for the plan's delete: err %v, %d applies\n%s", name, err, len(r.ran(t, "apply")), out)
 		}
@@ -725,7 +730,7 @@ func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 		t.Fatal(err)
 	}
 	reads := stubManagedFact(t, false, nil)
-	out, _, err := executeStdin(t, "", "setup", "--yes", "--allow-delete", address)
+	out, _, err := executeStdin(t, "", "setup", "--allow-delete", address)
 	if err != nil || len(r.ran(t, "apply")) != 1 {
 		t.Fatalf("a plan with no delete: err %v, %d applies\n%s", err, len(r.ran(t, "apply")), out)
 	}
@@ -756,6 +761,9 @@ func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 // absent or false where the fence is owed, so the installation plans no scoped
 // role and no conditioned binding at all.
 func TestManagedInitWritesTheDeployerScopeFromTheCreationFact(t *testing.T) {
+	// The person at the terminal is what confirms the apply the flag used to
+	// (T11, docs/no-prompt-policy).
+	fakeTerminal(t)
 	for name, managedProject := range map[string]bool{"managed": true, "not managed": false} {
 		r := newInitRig(t)
 		if managedProject {
@@ -763,7 +771,7 @@ func TestManagedInitWritesTheDeployerScopeFromTheCreationFact(t *testing.T) {
 		} else {
 			r.stateBucket()
 		}
-		if out, _, err := executeStdin(t, "", "setup", "--yes"); err != nil {
+		if out, _, err := executeStdin(t, "", "setup"); err != nil {
 			t.Fatalf("%s: %v\n%s", name, err, out)
 		}
 		if n := len(r.ran(t, "apply")); n != 1 {
@@ -818,7 +826,7 @@ func TestForgetRefusesAManagedInstallation(t *testing.T) {
 	r := newInitRig(t)
 	r.managedRuns(t, initProjectName, initProject)
 	r.setPlan(t, forgetPlan()...)
-	out, _, err := executeStdin(t, "", "update", "--forget", "--yes")
+	out, _, err := executeStdin(t, "", "update", "--forget")
 	if err == nil {
 		t.Fatalf("the rollback of a managed installation ran:\n%s", out)
 	}
@@ -891,7 +899,7 @@ func TestForgetRefusesAManagedInstallationAndLeavesTheWorkdirAlone(t *testing.T)
 	// and one that stopped for a missing bucket would not.
 	r.stateBucket()
 	r.setPlan(t, forgetPlan()...)
-	out, _, err := executeStdin(t, "", "update", "--forget", "--yes")
+	out, _, err := executeStdin(t, "", "update", "--forget")
 	if err == nil {
 		t.Fatalf("the rollback of an installation the project's marks call managed ran:\n%s", out)
 	}
@@ -1016,10 +1024,14 @@ func workdirDiff(before, after map[string]string) string {
 func TestForgetRefusesAFenceTheMarksNoLongerAdmitTo(t *testing.T) {
 	r := newInitRig(t)
 	r.managedRuns(t, initProjectName, initProject)
+	// The person at the terminal is what confirms the fixture's apply the flag
+	// used to (T11, docs/no-prompt-policy); the rollback itself is refused for
+	// the fence before any confirmation, so a terminal changes nothing there.
+	fakeTerminal(t)
 	// The fixture's own run writes the fence into the installation's document,
 	// which is the record this test is about; without it the second run has
 	// nothing to refuse for and this test would pass for the wrong reason.
-	if out, _, err := executeStdin(t, "", "setup", "--yes"); err != nil {
+	if out, _, err := executeStdin(t, "", "setup"); err != nil {
 		t.Fatalf("the fixture's setup of a managed project: %v\n%s", err, out)
 	}
 	if got := r.tfvars(t)["managed_deployer_scoped"]; got != true {
@@ -1044,7 +1056,7 @@ func TestForgetRefusesAFenceTheMarksNoLongerAdmitTo(t *testing.T) {
 	// that stopped for a missing bucket would not.
 	r.stateBucket()
 	r.setPlan(t, forgetPlan()...)
-	out, _, err := executeStdin(t, "", "update", "--forget", "--yes")
+	out, _, err := executeStdin(t, "", "update", "--forget")
 	if err == nil {
 		t.Fatalf("the rollback of an installation whose marks no longer admit to the fence ran:\n%s", out)
 	}
@@ -1113,13 +1125,16 @@ func TestForgetRefusesAFenceTheMarksNoLongerAdmitTo(t *testing.T) {
 func TestConfigOnlyKeepsTheManagedDeployerScope(t *testing.T) {
 	r := newInitRig(t)
 	r.managedRuns(t, initProjectName, initProject)
-	if out, _, err := executeStdin(t, "", "setup", "--yes"); err != nil {
+	// The person at the terminal is what confirms the fixture's apply the flag
+	// used to (T11, docs/no-prompt-policy).
+	fakeTerminal(t)
+	if out, _, err := executeStdin(t, "", "setup"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if got := r.tfvars(t)["managed_deployer_scoped"]; got != true {
 		t.Fatalf("the fixture's own run wrote tfvars[managed_deployer_scoped] = %v, want true: without it the second run has nothing to carry and this test would pass for the wrong reason", got)
 	}
-	out, _, err := executeStdin(t, "", "update", "--config-only", "--yes")
+	out, _, err := executeStdin(t, "", "update", "--config-only")
 	if err != nil {
 		t.Fatalf("update --config-only: %v\n%s", err, out)
 	}
@@ -1140,7 +1155,10 @@ func TestConfigOnlyKeepsTheManagedDeployerScope(t *testing.T) {
 func TestPrintVarsKeepsTheManagedDeployerScope(t *testing.T) {
 	r := newInitRig(t)
 	r.managedRuns(t, initProjectName, initProject)
-	if out, _, err := executeStdin(t, "", "setup", "--yes"); err != nil {
+	// The person at the terminal is what confirms the fixture's apply the flag
+	// used to (T11, docs/no-prompt-policy).
+	fakeTerminal(t)
+	if out, _, err := executeStdin(t, "", "setup"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	out, _, err := executeStdin(t, "", "setup", "--print-vars")
@@ -1202,7 +1220,7 @@ func TestManagedInitRefusalOfWhatNoApprovalClearsHasNoAdvice(t *testing.T) {
 			r.setPlan(t, ch)
 			// Listed on the command line, so the moved object's refusal is
 			// the moved one rather than an unlisted delete's.
-			_, _, err := executeStdin(t, "", "setup", "--yes", "--allow-delete", addr)
+			_, _, err := executeStdin(t, "", "setup", "--allow-delete", addr)
 			managedRefusal(t, err, addr, false)
 			if len(r.ran(t, "apply")) != 0 {
 				t.Fatal("a plan the guard refused was applied")
@@ -1223,7 +1241,7 @@ func TestManagedInitFactReadErrorFailsClosed(t *testing.T) {
 	r.stateBucket()
 	r.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
 	reads := stubManagedFact(t, false, errors.New("the storage API answered 400"))
-	out, _, err := executeStdin(t, "", "setup", "--yes")
+	out, _, err := executeStdin(t, "", "setup")
 	// A remote failure, not a refusal: the run is stopped by the read itself,
 	// before any plan exists to refuse.
 	if ExitCode(err) != ExitRemoteError {
@@ -1321,7 +1339,7 @@ func TestManagedInitRefusalAtEveryCallSite(t *testing.T) {
 		r.script["plan@installation"] = map[string]any{"exit": 0}
 		r.script["show@installation"] = map[string]any{"stdout": `{"format_version":"1.2","resource_changes":[]}`}
 		r.save(t)
-		_, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
+		_, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID)
 		managedRefusal(t, err, addr, true)
 		if len(r.applies(t)) != 0 {
 			t.Errorf("applied: %v", r.applies(t))
@@ -1345,7 +1363,7 @@ func TestManagedInitRefusalAtEveryCallSite(t *testing.T) {
 		r := newInitRig(t)
 		r.stateBucket()
 		r.setPlan(t, append(forgetPlan(), change("module.installation.google_service_account.scheduler", "delete"))...)
-		out, _, err := executeStdin(t, "", "update", "--forget", "--yes")
+		out, _, err := executeStdin(t, "", "update", "--forget")
 		if err == nil {
 			t.Fatalf("the rollback of a managed project ran:\n%s", out)
 		}
@@ -1367,7 +1385,7 @@ func TestManagedInitRefusalAtEveryCallSite(t *testing.T) {
 		if strings.Contains(err.Error(), "fugaro --") {
 			t.Errorf("the refusal offers a fugaro flag:\n%s", err)
 		}
-		for _, never := range []string{"--allow-delete", "--allow-job-delete", "--managed", "--yes", "--non-interactive", "hint: "} {
+		for _, never := range []string{"--allow-delete", "--allow-job-delete", "--managed", "hint: "} {
 			if strings.Contains(err.Error(), never) {
 				t.Errorf("the refusal carries %q:\n%s", never, err)
 			}
@@ -1395,7 +1413,7 @@ func TestManagedInitRefusalBoundsUntrustedText(t *testing.T) {
 				r := newInitRig(t)
 				r.stateBucket()
 				r.setPlan(t, change(v, "delete"))
-				_, _, err := executeStdin(t, "", "setup", "--yes")
+				_, _, err := executeStdin(t, "", "setup")
 				// A read that failed stops the run at installRoot's own read of
 				// the fact (a remote failure, before any plan), while a refusal
 				// is the guard's, once the plan exists.
@@ -1460,7 +1478,7 @@ func noFlagName(t *testing.T, s string) {
 	t.Helper()
 	for _, flag := range []string{
 		"--allow-delete", "--allow-job-delete", "--operator", "--admin", "--alert-email",
-		"--budget", "--billing-account", "--yes", "--non-interactive", "--managed",
+		"--budget", "--billing-account", "--managed",
 	} {
 		if strings.Contains(s, flag) {
 			t.Errorf("the refusal names %s:\n%s", flag, s)

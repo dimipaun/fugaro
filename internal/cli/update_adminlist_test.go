@@ -178,8 +178,11 @@ func adminListStepEngine(t *testing.T, mutate func(*localcfg.Config)) (e *initEn
 func TestSetupWritesNoAdminList(t *testing.T) {
 	r := newConvergeRig(t, v6Node())
 	setRoster(t, r, rosterGrant("owner@example.com", "admin", "project"))
+	// The owner's own terminal, which is what confirms the steps the run asks
+	// about now the flag that stood in for it is gone (T11).
+	fakeTerminal(t)
 
-	out, _, err := executeStdin(t, "", "setup", "--yes")
+	out, _, err := executeStdin(t, "", "setup")
 	if err != nil {
 		t.Fatalf("fugaro setup failed over an installation that exists (%v)\n%s", err, out)
 	}
@@ -222,7 +225,7 @@ func TestUpdateInACodingAgentsSessionWritesNoAdminList(t *testing.T) {
 	// session the door runs in.
 	agentSession(t)
 
-	out, _, err := executeStdin(t, "", "update", "--yes")
+	out, _, err := executeStdin(t, "", "update")
 	if err == nil {
 		t.Errorf("the run reported success in a coding agent's session, over an installation it applied nothing to:\n%s", out)
 	}

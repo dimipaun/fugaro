@@ -108,8 +108,8 @@ func TestRigorFloorRefusesAnAgentSession(t *testing.T) {
 	noTerminal(t)
 
 	for _, args := range [][]string{
-		{"rigor", "floor", "unset", "pro", "--yes"},
-		{"rigor", "floor", "set", "pro", "l2", "--yes"},
+		{"rigor", "floor", "unset", "pro"},
+		{"rigor", "floor", "set", "pro", "l2"},
 	} {
 		out, _, err := execute(t, args...)
 		if err == nil {

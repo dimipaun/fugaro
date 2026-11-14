@@ -341,7 +341,7 @@ func TestPolicyPublishManagedRefusesDelete(t *testing.T) {
 	before := nodeOf(t, f.db)
 	t.Setenv("CLAUDECODE", "1") // a coding agent's session
 
-	out, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
+	out, _, err := execute(t, "project", "policy", "publish", "--delete")
 	if err == nil {
 		t.Fatalf("a coding agent's session deleted the policy of a managed project:\n%s", out)
 	}

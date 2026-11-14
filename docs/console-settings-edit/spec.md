@@ -22,5 +22,11 @@ The ruling on D1107 is a decision about the CLI's behaviour, not only about this
 one answer here that a later task changes in `internal/cli`, and it is written into
 [reconciliation.md](reconciliation.md)'s D1107 entry and into the plan's **P4**.
 
+**T11 of [docs/no-prompt-policy](../no-prompt-policy/implementation-plan.md) has since removed that
+flag.** No command registers `--yes` any more, so a widening is answered by the owner at the CLI's
+own real terminal and the agent-session refusal stands whatever is passed; the console, which has no
+terminal, passes **no flag at all** and its own confirmation window is what answers the widening
+(`console/src/main/spawn.ts`). Ruling 3 above is the record of 2026-11-01 and is kept as written.
+
 An answer is not an approval: the tasks in [implementation-plan.md](implementation-plan.md) start only
 when the owner approves them.

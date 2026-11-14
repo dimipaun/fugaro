@@ -63,7 +63,7 @@ func TestCheckRecipeImage(t *testing.T) {
 		}
 		if tc.wantErr != "" && err != nil {
 			for _, want := range []string{"recipe mine needs a job image whose runner knows recipes (fugaro 0.5.0 or later)",
-				imageGateRemedy + ", in your own terminal window, or with --yes from CI or a script (never in a coding agent's session", "this release's base base image", "--recipe default"} {
+				imageGateRemedy + ", in your own terminal window (never in a coding agent's session", "this release's base base image", "--recipe default"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("%q: %v lacks %q", tc.baseRef, err, want)
 				}

@@ -1326,7 +1326,7 @@ func TestManagedApplyRefusesAMissingImpersonationGrant(t *testing.T) {
 		t.Errorf("the refusal does not say which grant is missing: %v", err)
 	}
 	// And it names no flag: what the operator does about it is ask the owner.
-	for _, banned := range []string{"--impersonate", "--yes", "export ", "GOOGLE_"} {
+	for _, banned := range []string{"--impersonate", "export ", "GOOGLE_"} {
 		if strings.Contains(err.Error(), banned) {
 			t.Errorf("the refusal names %q, which its reader would take as a way through: %v", banned, err)
 		}

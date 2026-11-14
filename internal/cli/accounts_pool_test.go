@@ -125,7 +125,7 @@ func accountsPoolBlock(t *testing.T, path string) string {
 func TestPoolAddReplacesTheWholeMemberListInPlace(t *testing.T) {
 	path := accountsPoolHome(t, "")
 
-	out, _, err := execute(t, "accounts", "pool", "add", "claude", "key-one", "oauth-two", "oauth-one", "--yes")
+	out, _, err := execute(t, "accounts", "pool", "add", "claude", "key-one", "oauth-two", "oauth-one")
 	if err != nil {
 		t.Fatalf("accounts pool add: %v\n%s", err, out)
 	}
@@ -158,7 +158,7 @@ func TestPoolAddReplacesTheWholeMemberListInPlace(t *testing.T) {
 func TestPoolAddWritesANewPoolWithFailoverByDefault(t *testing.T) {
 	path := accountsPoolHome(t, "")
 
-	_, _, err := execute(t, "accounts", "pool", "add", "fresh", "oauth-one", "key-one", "--yes")
+	_, _, err := execute(t, "accounts", "pool", "add", "fresh", "oauth-one", "key-one")
 	if err != nil {
 		t.Fatalf("accounts pool add: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestPoolAddWritesANewPoolWithFailoverByDefault(t *testing.T) {
 func TestPoolAddStrategyFlag(t *testing.T) {
 	path := accountsPoolHome(t, "")
 
-	_, _, err := execute(t, "accounts", "pool", "add", "fresh", "oauth-one", "oauth-two", "--strategy", "round-robin", "--yes")
+	_, _, err := execute(t, "accounts", "pool", "add", "fresh", "oauth-one", "oauth-two", "--strategy", "round-robin")
 	if err != nil {
 		t.Fatalf("accounts pool add --strategy: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestPoolAddStrategyFlag(t *testing.T) {
 	}
 
 	before := readFileString(t, path)
-	out, _, err := execute(t, "accounts", "pool", "add", "fresh", "oauth-one", "--strategy", "spread", "--yes")
+	out, _, err := execute(t, "accounts", "pool", "add", "fresh", "oauth-one", "--strategy", "spread")
 	if err == nil {
 		t.Fatalf("a strategy outside the vocabulary was written:\n%s", out)
 	}
@@ -227,7 +227,7 @@ func TestPoolAddRefusesWhatTheBlockRefuses(t *testing.T) {
 			path := accountsPoolHome(t, "")
 			before := readFileString(t, path)
 
-			args := append(append([]string{"accounts", "pool", "add"}, tc.args...), "--yes")
+			args := append([]string{"accounts", "pool", "add"}, tc.args...)
 			out, _, err := execute(t, args...)
 			if err == nil {
 				t.Fatalf("the write was not refused:\n%s", out)
@@ -249,7 +249,7 @@ func TestPoolAddRefusesWhatTheBlockRefuses(t *testing.T) {
 func TestPoolAddAcceptsTheBuiltInVertex(t *testing.T) {
 	path := accountsPoolHome(t, "")
 
-	out, _, err := execute(t, "accounts", "pool", "add", "routes", "oauth-one", "vertex", "--yes")
+	out, _, err := execute(t, "accounts", "pool", "add", "routes", "oauth-one", "vertex")
 	if err != nil {
 		t.Fatalf("accounts pool add with vertex: %v\n%s", err, out)
 	}
@@ -276,7 +276,7 @@ func TestPoolAddRefusesAFlowMemberList(t *testing.T) {
 	path := accountsPoolHomeWith(t, flow)
 	before := readFileString(t, path)
 
-	out, _, err := execute(t, "accounts", "pool", "add", "flow", "oauth-one", "key-one", "--yes")
+	out, _, err := execute(t, "accounts", "pool", "add", "flow", "oauth-one", "key-one")
 	if err == nil {
 		t.Fatalf("a flow member list was written:\n%s", out)
 	}
@@ -296,13 +296,13 @@ func TestPoolAddRefusesAFlowMemberList(t *testing.T) {
 func TestPoolRmDropsThePoolAndAnEmptyBlock(t *testing.T) {
 	path := accountsPoolHome(t, "")
 
-	if _, _, err := execute(t, "accounts", "pool", "rm", "routes", "--yes"); err != nil {
+	if _, _, err := execute(t, "accounts", "pool", "rm", "routes"); err != nil {
 		t.Fatalf("accounts pool rm: %v", err)
 	}
 	if block := accountsPoolBlock(t, path); strings.Contains(block, "name: routes") {
 		t.Errorf("the pool was not removed:\n%s", block)
 	}
-	out, _, err := execute(t, "accounts", "pool", "rm", "claude", "--yes")
+	out, _, err := execute(t, "accounts", "pool", "rm", "claude")
 	if err != nil {
 		t.Fatalf("accounts pool rm (last): %v\n%s", err, out)
 	}
@@ -330,7 +330,7 @@ func TestPoolRmDropsThePoolAndAnEmptyBlock(t *testing.T) {
 func TestPoolRmClearsTheCraftThatNamedThePool(t *testing.T) {
 	path := accountsPoolHomeWith(t, accountsPoolCredentials+accountsPoolCraftsOnPool+accountsPoolPools)
 
-	out, _, err := execute(t, "accounts", "pool", "rm", "claude", "--yes")
+	out, _, err := execute(t, "accounts", "pool", "rm", "claude")
 	if err != nil {
 		t.Fatalf("accounts pool rm with a craft naming the pool: %v\n%s", err, out)
 	}
@@ -364,7 +364,7 @@ func TestPoolRmRefusesAPoolThatIsNotDefined(t *testing.T) {
 	path := accountsPoolHome(t, "")
 	before := readFileString(t, path)
 
-	_, _, err := execute(t, "accounts", "pool", "rm", "claud", "--yes")
+	_, _, err := execute(t, "accounts", "pool", "rm", "claud")
 	if err == nil {
 		t.Fatal("an undefined pool was removed without a complaint")
 	}
@@ -400,7 +400,7 @@ func TestPoolWritesRefuseInAgentSession(t *testing.T) {
 				before := readFileString(t, path)
 				t.Setenv(marker, "1")
 
-				out, _, err := execute(t, append(tc.args, "--yes")...)
+				out, _, err := execute(t, tc.args...)
 				if err == nil {
 					t.Fatalf("the write landed in a coding agent's session:\n%s", out)
 				}
@@ -516,7 +516,7 @@ func TestAccountsAddTypeRefusesATypeNoRunCouldServe(t *testing.T) {
 			path := accountsPoolHome(t, "")
 			before := readFileString(t, path)
 
-			out, _, err := execute(t, "accounts", "add", "team-a", "--repos", "acme/app", "--type", tc.typ, "--yes")
+			out, _, err := execute(t, "accounts", "add", "team-a", "--repos", "acme/app", "--type", tc.typ)
 			if err == nil {
 				t.Fatalf("--type %q was accepted:\n%s", tc.typ, out)
 			}
@@ -564,7 +564,7 @@ func TestAccountsAddTypeRefusesToRetypeACredential(t *testing.T) {
 	path := accountsAddFixture(t, accountsPoolTypedLocal)
 	before := readFileString(t, path)
 
-	_, _, addErr := executeStdin(t, "", "accounts", "add", "key-one", "--repos", "owner/repo-a", "--type", "claude-oauth", "--yes")
+	_, _, addErr := executeStdin(t, "", "accounts", "add", "key-one", "--repos", "owner/repo-a", "--type", "claude-oauth")
 
 	if addErr == nil {
 		t.Fatalf("the credential key-one, defined as anthropic, was retyped as claude-oauth")
@@ -584,7 +584,7 @@ func TestAccountsAddTypeRefusesToRetypeACredential(t *testing.T) {
 func TestAccountsAddTypeKeepsASameTypedCredential(t *testing.T) {
 	path := accountsAddFixture(t, accountsPoolTypedLocalSameType)
 
-	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "key-one", "--repos", "owner/repo-a", "--type", "claude-oauth", "--yes")
+	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "key-one", "--repos", "owner/repo-a", "--type", "claude-oauth")
 	if err != nil {
 		t.Fatalf("accounts add --type claude-oauth beside a claude-oauth credential: %v\n%s", err, out)
 	}
@@ -609,7 +609,7 @@ func TestAccountsAddTypeKeepsASameTypedCredential(t *testing.T) {
 func TestAccountsAddTypeWritesTheCredentialEntry(t *testing.T) {
 	accountsAddFixture(t, accountsAddLocal)
 
-	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "acme/app", "--type", "claude-oauth", "--yes")
+	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "acme/app", "--type", "claude-oauth")
 	if err != nil {
 		t.Fatalf("accounts add --type: %v\n%s", err, out)
 	}

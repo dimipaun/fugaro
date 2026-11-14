@@ -68,7 +68,7 @@ func TestUpdateLeavesARunInFlightRunning(t *testing.T) {
 	if !strings.Contains(line, "1 run(s) are in flight") {
 		t.Errorf("the update's line does not say how many runs are running: %q", line)
 	}
-	for _, banned := range []string{"wait for them", "--yes", "refus", "finish first, then"} {
+	for _, banned := range []string{"wait for them", "refus", "finish first, then"} {
 		if strings.Contains(line, banned) {
 			t.Errorf("the update's line asks the operator to act (%q): %q", banned, line)
 		}

@@ -660,7 +660,7 @@ func (r *initRun) confirmLocation() error {
 		lf := promptLeft(initflow.Firebase, "run the command below: it prints the note about the Firestore database's permanent location and then creates the database, asking you nothing", r.o.doorName(), "--firebase-project", quoteWord(r.o.firebaseProject()))
 		return &initflow.NeedsYouError{Left: lf}
 	case stepByYes:
-		fmt.Fprintln(r.w, "  confirmed by --yes")
+		fmt.Fprintln(r.w, "  confirmed by this run's own answer")
 		return nil
 	}
 	ok, err := r.confirmNow("create the Firestore database in " + infra.FirestoreLocation + ", a location that can never be changed?")

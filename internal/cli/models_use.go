@@ -43,7 +43,6 @@ func newModelsUseCmd() *cobra.Command {
 			return runModelsUse(cmd, args[0], args[1], args[2], &o)
 		},
 	}
-	cmd.Flags().BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
 	return cmd
 }
 

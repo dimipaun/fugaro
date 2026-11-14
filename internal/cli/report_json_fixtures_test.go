@@ -573,7 +573,7 @@ var jsonCases = map[string]jsonCase{
 	"setup": {
 		run: func(t *testing.T) []string {
 			newInitRig(t)
-			return []string{"setup", "--yes"}
+			return []string{"setup"}
 		},
 	},
 	"stats runs": {
@@ -603,7 +603,7 @@ var jsonCases = map[string]jsonCase{
 	"update": {
 		run: func(t *testing.T) []string {
 			updateRig(t)
-			return []string{"update", "--yes"}
+			return []string{"update"}
 		},
 	},
 	"update-skills": {

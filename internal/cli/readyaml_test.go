@@ -110,7 +110,7 @@ func TestSetupRepoMissingFugaroYAMLPrintsTheSentence(t *testing.T) {
 	r.stateBucket()
 	dir := repoCheckout(t, "https://github.com/acme/app.git", "")
 	t.Chdir(t.TempDir())
-	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--yes", "--github-app-id", "42", dir)
+	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--github-app-id", "42", dir)
 	if err == nil {
 		t.Fatalf("setup --repo accepted a checkout with no fugaro.yaml:\n%s%s", out, errOut)
 	}

@@ -5966,7 +5966,7 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     // value, and the pencil is a control that opens a box (C3). What leaves the
     // renderer is the three members `settings.edit`'s schema closes -- the
     // subcommand, the key and the value -- and the layer, the dry run, the
-    // window and the `--yes` are the main process's.
+    // window and the phase are the main process's.
     const sent: unknown[] = []
     const { bridge } = fakeBridge({
       replies: {

@@ -134,12 +134,10 @@ func newProjectProfileAddCmd() *cobra.Command {
 	f.IntVar(&o.cpu, "cpu", 0, "the vCPUs the job's Cloud Run task gets")
 	f.StringVar(&o.memory, "memory", "", "the memory the job's task gets, for example 4Gi")
 	f.StringVar(&o.timeoutClass, "timeout-class", "", "the job's task timeout, for example 6h")
-	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
 	return cmd
 }
 
 func newProjectProfileSetCmd() *cobra.Command {
-	var yes bool
 	cmd := &cobra.Command{
 		Use:   "set NAME KEY VALUE",
 		Short: "Change one key of one job profile",
@@ -158,15 +156,13 @@ func newProjectProfileSetCmd() *cobra.Command {
 			"that publishes is not always one whose job deploys.",
 		Args: cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runProjectProfileSet(cmd, args[0], args[1], args[2], yes)
+			return runProjectProfileSet(cmd, args[0], args[1], args[2])
 		},
 	}
-	cmd.Flags().BoolVar(&yes, "yes", false, "confirm the write without a prompt")
 	return cmd
 }
 
 func newProjectProfileRmCmd() *cobra.Command {
-	var yes bool
 	cmd := &cobra.Command{
 		Use:   "rm NAME",
 		Short: "Remove a job profile no workflow selects",
@@ -182,9 +178,8 @@ func newProjectProfileRmCmd() *cobra.Command {
 			"config says it sets no profile at all. Only the keys it removes are\n" +
 			"rewritten: every comment and every other key of the file is kept.",
 		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error { return runProjectProfileRm(cmd, args[0], yes) },
+		RunE: func(cmd *cobra.Command, args []string) error { return runProjectProfileRm(cmd, args[0]) },
 	}
-	cmd.Flags().BoolVar(&yes, "yes", false, "confirm the write without a prompt")
 	return cmd
 }
 
@@ -393,7 +388,7 @@ func projectProfileAddWhat(missing []string) string {
 	return strings.Join(what[:len(what)-1], ", ") + " and " + what[len(what)-1]
 }
 
-func runProjectProfileSet(cmd *cobra.Command, name, key, value string, yes bool) error {
+func runProjectProfileSet(cmd *cobra.Command, name, key, value string) error {
 	sel, lc, err := settingsLocalFile("project profile set")
 	if err != nil {
 		return err
@@ -432,7 +427,6 @@ func runProjectProfileSet(cmd *cobra.Command, name, key, value string, yes bool)
 		New:     next,
 		What:    fmt.Sprintf("set profiles.%s.%s to %s in %s", name, key, projectProfileValueText(key, value), sel.Path),
 		Command: fmt.Sprintf("fugaro project profile set %s %s %s", name, key, value),
-		Yes:     yes,
 	}
 	if err := projectConfigEditLocal(cmd, lc, sel, e); err != nil {
 		return err
@@ -517,7 +511,7 @@ func projectProfileScalar(path string, src []byte, at []string, value string) ([
 	return workspaceEditResult(path, out, err)
 }
 
-func runProjectProfileRm(cmd *cobra.Command, name string, yes bool) error {
+func runProjectProfileRm(cmd *cobra.Command, name string) error {
 	sel, lc, err := settingsLocalFile("project profile rm")
 	if err != nil {
 		return err
@@ -543,7 +537,6 @@ func runProjectProfileRm(cmd *cobra.Command, name string, yes bool) error {
 		New:     next,
 		What:    fmt.Sprintf("remove job profile %s from %s: nothing selects it, so no run reads it; removing the last profile takes the profiles: block with it, and a config with no block sets no profile at all", name, sel.Path),
 		Command: "fugaro project profile rm " + name,
-		Yes:     yes,
 	}
 	if err := projectConfigEditLocal(cmd, lc, sel, e); err != nil {
 		return err

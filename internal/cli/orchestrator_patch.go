@@ -45,7 +45,7 @@ func newOrchestratorPatchCmd() *cobra.Command {
 			"that lands: the spec an approval binds, and every op the document carries,\n" +
 			"because the whole of it lands as the person who confirms it. Every other\n" +
 			"session, --json, a pipe and a coding agent's environment are refused and write\n" +
-			"nothing, and --yes never covers them.\n" +
+			"nothing, and no flag covers them.\n" +
 			"No flag, environment variable or field of the document makes this command the\n" +
 			"daemon or the decision agent: the daemon's bookkeeping is the daemon's.",
 		Args: cobra.NoArgs,

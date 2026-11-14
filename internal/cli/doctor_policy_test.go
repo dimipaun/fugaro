@@ -1701,7 +1701,7 @@ func TestDoctorBrokenMarkFixRuns(t *testing.T) {
 	// The prescribed command, on the same installation: the name is not in
 	// this machine's claude_accounts (the rig's config has none), and the mark
 	// is what makes it one this installation has.
-	if _, _, err := execute(t, "accounts", "clear", "team-shared", "--yes"); err != nil {
+	if _, _, err := execute(t, "accounts", "clear", "team-shared"); err != nil {
 		t.Fatalf("the fix doctor printed does not run: %v", err)
 	}
 	if m, _ := db.Value(credsMarkPath("team-shared")).(map[string]any); m["state"] != "available" {

@@ -236,7 +236,8 @@ func TestInitFirebaseThreeAppliesConfirmedSeparately(t *testing.T) {
 // The Firebase project is only read: never created, no billing linked.
 func TestInitFirebaseNeverCreatesProject(t *testing.T) {
 	r := newFBRig(t)
-	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
+	fakeTerminal(t)
+	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID); err != nil {
 		t.Fatal(err)
 	}
 	for name, reqs := range map[string][]gcpfake.Request{"crm": r.crm.Requests(), "billing": r.billing.Requests()} {
@@ -252,7 +253,7 @@ func TestInitFirebaseNeverCreatesProject(t *testing.T) {
 	// starts fresh, and the budget backend goes in the installation's own
 	// project and nowhere else.
 	r2 := newFBRig(t)
-	_, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", "aurora-missing", "--yes")
+	_, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", "aurora-missing")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "is not the installation's GCP project") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -271,7 +272,7 @@ func TestInitFirebaseNeverCreatesProject(t *testing.T) {
 func TestInitFirebaseBillingAPIDisabled(t *testing.T) {
 	r := newFBRig(t)
 	r.su.Disable("cloudbilling.googleapis.com", r.billing.Server)
-	_, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
+	_, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID)
 	if ExitCode(err) != ExitUserError || err == nil {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -288,7 +289,7 @@ func TestInitFirebaseBillingAPIDisabled(t *testing.T) {
 func TestInitFirebaseNoBilling(t *testing.T) {
 	r := newFBRig(t)
 	r.billing.SetBilling(fpID, false)
-	_, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
+	_, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID)
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "no billing") || !strings.Contains(err.Error(), "--link-billing") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -374,8 +375,9 @@ func TestInitFirebaseRefusesAnotherProject(t *testing.T) {
 // Firebase root is applied, and again before anything is written.
 func TestInitFirebaseRefusesUnmarkedData(t *testing.T) {
 	r := newFBRig(t)
+	fakeTerminal(t)
 	r.db.Set("somebody/else", "data")
-	_, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
+	_, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID)
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "no Fugaro mark") || !strings.Contains(err.Error(), "somebody") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -389,7 +391,7 @@ func TestInitFirebaseRefusesUnmarkedData(t *testing.T) {
 	// Another Fugaro project's mark.
 	r2 := newFBRig(t)
 	r2.db.Set("fugaro/mark", map[string]any{"managed_by": "fugaro", "project": "other", "gcp_project": "proj-1234", "version": 1})
-	_, _, err = executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
+	_, _, err = executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID)
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), `mark of project "other"`) {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -397,7 +399,7 @@ func TestInitFirebaseRefusesUnmarkedData(t *testing.T) {
 	// The same Fugaro name in another GCP project is another installation.
 	r4 := newFBRig(t)
 	r4.db.Set("fugaro/mark", map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": "other-gcp-project", "version": 1})
-	_, _, err = executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
+	_, _, err = executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID)
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "other-gcp-project") || len(r4.applies(t)) != 0 {
 		t.Fatalf("exit %d, err %v, applies %v", ExitCode(err), err, r4.applies(t))
 	}
@@ -406,7 +408,7 @@ func TestInitFirebaseRefusesUnmarkedData(t *testing.T) {
 	r3 := newFBRig(t)
 	r3.db.Set("fugaro/mark", map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
 	r3.db.Set("fugaro/project", "other")
-	_, _, err = executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
+	_, _, err = executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID)
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "belongs to another Fugaro project") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -420,7 +422,8 @@ func TestInitFirebaseRefusesUnmarkedData(t *testing.T) {
 // deleted members are left out, and nothing Fugaro manages is accepted.
 func TestInitFirebaseOwnersToTfvars(t *testing.T) {
 	r := newFBRig(t)
-	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes", "--budget-admin", "user:boss@example.com",
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--budget-admin", "user:boss@example.com",
 		"--operator", "user:l@example.com", "--admin", "user:op@example.com")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
@@ -469,7 +472,7 @@ func TestInitFirebaseRefusesBadMembers(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newFBRig(t)
-			_, _, err := executeStdin(t, "us-east5\n", append([]string{"setup", "--firebase-project", fpID, "--yes"}, args...)...)
+			_, _, err := executeStdin(t, "us-east5\n", append([]string{"setup", "--firebase-project", fpID}, args...)...)
 			if ExitCode(err) != ExitUserError {
 				t.Fatalf("exit %d, err %v", ExitCode(err), err)
 			}
@@ -485,7 +488,8 @@ func TestInitFirebaseRefusesBadMembers(t *testing.T) {
 func TestRulesDeployedAfterSecondApply(t *testing.T) {
 	r := newFBRig(t)
 	r.historyImage()
-	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
+	fakeTerminal(t)
+	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID); err != nil {
 		t.Fatal(err)
 	}
 	want, err := rules.Generate()
@@ -551,11 +555,13 @@ func TestRulesMarkerOnlyAfterTheRulesDeploy(t *testing.T) {
 	wsMarker := func(r *fbRig) any { return r.db.Value(rules.PathWorkspaceRulesMarker()) }
 	orchMarker := func(r *fbRig) any { return r.db.Value(rules.PathOrchestratorRulesMarker()) }
 
+	fakeTerminal(t)
+
 	// A refused rules deploy: init fails and leaves no marker.
 	refused := newFBRig(t)
 	refused.historyImage()
 	refused.db.DenyRules(1)
-	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err == nil {
+	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID); err == nil {
 		t.Fatal("init reported success although the rules deploy was refused")
 	}
 	if got := marker(refused); got != nil {
@@ -589,7 +595,7 @@ func TestRulesMarkerOnlyAfterTheRulesDeploy(t *testing.T) {
 	// A deploy that succeeds records this generation.
 	r := newFBRig(t)
 	r.historyImage()
-	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID); err != nil {
 		t.Fatal(err)
 	}
 	if r.db.RulePuts() != 1 {
@@ -633,7 +639,8 @@ func TestRulesMarkerOnlyAfterTheRulesDeploy(t *testing.T) {
 func TestInitRefusesADatabaseFromANewerFugaro(t *testing.T) {
 	r := newFBRig(t)
 	r.historyImage()
-	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
+	fakeTerminal(t)
+	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID); err != nil {
 		t.Fatal(err)
 	}
 	if n := r.db.RulePuts(); n != 1 {
@@ -642,7 +649,7 @@ func TestInitRefusesADatabaseFromANewerFugaro(t *testing.T) {
 	newer := projectpolicy.RulesVersion + 1
 	r.db.Set(projectpolicy.PathRulesMarker(), newer)
 	puts := len(r.db.Requests())
-	_, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
+	_, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID)
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want a user error: an older binary must not deploy over a newer installation's rules", err)
 	}
@@ -670,11 +677,12 @@ func TestInitRefusesADatabaseFromANewerFugaro(t *testing.T) {
 func TestInitLeavesAnUpToDateMarkerAlone(t *testing.T) {
 	r := newFBRig(t)
 	r.historyImage()
-	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
+	fakeTerminal(t)
+	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID); err != nil {
 		t.Fatal(err)
 	}
 	puts := len(r.db.Requests())
-	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID); err != nil {
 		t.Fatal(err)
 	}
 	if n := r.db.RulePuts(); n != 1 {
@@ -691,7 +699,8 @@ func TestInitLeavesAnUpToDateMarkerAlone(t *testing.T) {
 // lease are written.
 func TestMarkAndProjectWritten(t *testing.T) {
 	r := newFBRig(t)
-	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
+	fakeTerminal(t)
+	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID); err != nil {
 		t.Fatal(err)
 	}
 	mark, _ := r.db.Value("fugaro/mark").(map[string]any)
@@ -719,10 +728,12 @@ func TestBudgetModeSeedsRTDB(t *testing.T) {
 	// raises a seeded observe to enforce (D1548, task T16).
 	modeSet := func(r *fbRig) any { return r.db.Value("config/modeSet") }
 
+	fakeTerminal(t)
+
 	// Without the flag an absent mode is seeded observe, and the jobs'
 	// mode (the local config) is left alone.
 	r := newFBRig(t)
-	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
+	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -737,7 +748,7 @@ func TestBudgetModeSeedsRTDB(t *testing.T) {
 	}
 	// ... and a mode set since is kept by a run without the flag.
 	r.db.Set("config/mode", "enforce")
-	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID); err != nil {
 		t.Fatal(err)
 	}
 	if mode(r) != "enforce" {
@@ -746,7 +757,7 @@ func TestBudgetModeSeedsRTDB(t *testing.T) {
 
 	// observe on a fresh project sets both.
 	r = newFBRig(t)
-	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes", "--budget-mode", "observe"); err != nil {
+	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--budget-mode", "observe"); err != nil {
 		t.Fatal(err)
 	}
 	if mode(r) != "observe" || r.localConfig(t).BudgetMode() != localcfg.BudgetObserve {
@@ -759,7 +770,7 @@ func TestBudgetModeSeedsRTDB(t *testing.T) {
 
 	// enforce needs the per-run cap the jobs enforce; refused before any apply.
 	r = newFBRig(t)
-	_, _, err = executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes", "--budget-mode", "enforce")
+	_, _, err = executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--budget-mode", "enforce")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "per_run_usd") || len(r.ran(t, "apply")) != 0 {
 		t.Fatalf("exit %d, err %v, calls %q", ExitCode(err), err, r.calls(t))
 	}
@@ -767,7 +778,7 @@ func TestBudgetModeSeedsRTDB(t *testing.T) {
 	// caps (an absent cap is a refusal in the rules: every run would halt),
 	// before anything is applied or written, and says what to do instead.
 	r.appendConfig(t, "budget: { per_run_usd: 5 }\n")
-	_, _, err = executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes", "--budget-mode", "enforce")
+	_, _, err = executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--budget-mode", "enforce")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro budget set --global") || !strings.Contains(err.Error(), "--budget-mode observe") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -777,12 +788,12 @@ func TestBudgetModeSeedsRTDB(t *testing.T) {
 	// Half the caps is no caps (on a database that is ours: marked).
 	r.db.Set("fugaro/mark", map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
 	r.db.Set("config/caps/global", map[string]any{"dailyMicros": 150_000_000})
-	if _, _, err = executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes", "--budget-mode", "enforce"); ExitCode(err) != ExitUserError {
+	if _, _, err = executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--budget-mode", "enforce"); ExitCode(err) != ExitUserError {
 		t.Fatalf("daily cap alone: exit %d, err %v", ExitCode(err), err)
 	}
 	// Both caps: enforce is allowed and written.
 	r.db.Set("config/caps/global", map[string]any{"dailyMicros": 150_000_000, "perRunMicros": 20_000_000})
-	out, _, err = executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes", "--budget-mode", "enforce")
+	out, _, err = executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--budget-mode", "enforce")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -799,7 +810,7 @@ func TestBudgetModeSeedsRTDB(t *testing.T) {
 
 	// off turns the jobs' backend off in the config and leaves the database's
 	// mode as it is; it still deploys the database, and says so.
-	out, _, err = executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes", "--budget-mode", "off")
+	out, _, err = executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--budget-mode", "off")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -814,6 +825,7 @@ func TestBudgetModeSeedsRTDB(t *testing.T) {
 // A first run with no database yet refuses enforce before any apply.
 func TestBudgetModeEnforceRefusedOnFirstRun(t *testing.T) {
 	r := newFBRig(t)
+	fakeTerminal(t)
 	r.appendConfig(t, "budget: { per_run_usd: 5 }\n")
 	// Point the probe at a fake that lists no database.
 	empty := gcpfake.NewFirebaseDB(t)
@@ -821,12 +833,12 @@ func TestBudgetModeEnforceRefusedOnFirstRun(t *testing.T) {
 	if err := os.WriteFile(r.cfg, []byte(strings.Replace(string(b), "firebase_database: "+r.fbdb.URL, "firebase_database: "+empty.URL, 1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes", "--budget-mode", "enforce")
+	_, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--budget-mode", "enforce")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--budget-mode observe") || len(r.applies(t)) != 0 {
 		t.Fatalf("exit %d, err %v, applies %v", ExitCode(err), err, r.applies(t))
 	}
 	// Observe is fine, and the post-apply path would check the new database.
-	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes", "--budget-mode", "observe"); err != nil {
+	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--budget-mode", "observe"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -836,8 +848,9 @@ func TestBudgetModeEnforceRefusedOnFirstRun(t *testing.T) {
 func TestInitFirebaseIdempotent(t *testing.T) {
 	r := newFBRig(t)
 	r.historyImage()
+	fakeTerminal(t)
 	before := logNames(t, "setup")
-	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes", "--budget-mode", "observe"); err != nil {
+	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--budget-mode", "observe"); err != nil {
 		t.Fatal(err)
 	}
 	cfgBefore, _ := os.ReadFile(r.cfg)
@@ -848,7 +861,6 @@ func TestInitFirebaseIdempotent(t *testing.T) {
 	r.save(t)
 	applies := len(r.applies(t))
 
-	fakeTerminal(t) // a confirmation would fail: nothing is typed
 	out, _, err := executeStdin(t, "", "setup", "--firebase-project", fpID, "--budget-mode", "observe")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
@@ -881,7 +893,8 @@ func TestInitFirebaseIdempotent(t *testing.T) {
 // asked; the history job waits for its image.
 func TestInitFirebaseWritesConfigAndHistoryJob(t *testing.T) {
 	r := newFBRig(t)
-	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes", "--budget-mode", "observe"); err != nil {
+	fakeTerminal(t)
+	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--budget-mode", "observe"); err != nil {
 		t.Fatal(err)
 	}
 	b := r.localConfig(t).Budget
@@ -899,7 +912,7 @@ func TestInitFirebaseWritesConfigAndHistoryJob(t *testing.T) {
 
 	r = newFBRig(t)
 	r.historyImage()
-	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID); err != nil {
 		t.Fatal(err)
 	}
 	h, _ = r.tfvars(t)["history"].(map[string]any)
@@ -913,8 +926,9 @@ func TestInitFirebaseWritesConfigAndHistoryJob(t *testing.T) {
 func TestInitKeepsBudgetBackend(t *testing.T) {
 	r := newFBRig(t)
 	r.historyImage()
+	fakeTerminal(t)
 	r.appendConfig(t, "budget:\n  mode: observe\n  firebase_project: "+fpID+"\n  rtdb_url: "+r.db.URL+"\n")
-	if _, _, err := executeStdin(t, "", "setup", "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "", "setup"); err != nil {
 		t.Fatal(err)
 	}
 	v := r.tfvars(t)
@@ -924,7 +938,7 @@ func TestInitKeepsBudgetBackend(t *testing.T) {
 	}
 	// Without a Firebase project, no budget backend in the installation.
 	r = newFBRig(t)
-	if _, _, err := executeStdin(t, "", "setup", "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "", "setup"); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := r.tfvars(t)["enable_budget"]; ok || r.tfvars(t)["history"] != nil {
@@ -936,6 +950,7 @@ func TestInitKeepsBudgetBackend(t *testing.T) {
 // have happened; --allow-delete names it when intended.
 func TestGuardListsRemovedAdminGrant(t *testing.T) {
 	r := newFBRig(t)
+	fakeTerminal(t)
 	addr := `module.firebase.google_project_iam_member.admin["user:old@example.com"]`
 	r.setPlan(t, planChange{"address": addr, "type": "google_project_iam_member",
 		"change": map[string]any{"actions": []string{"delete"}, "before": map[string]any{}, "after": nil}})
@@ -944,7 +959,7 @@ func TestGuardListsRemovedAdminGrant(t *testing.T) {
 	r.script["plan@installation"] = map[string]any{"exit": 0}
 	r.script["show@installation"] = map[string]any{"stdout": `{"format_version":"1.2","resource_changes":[]}`}
 	r.save(t)
-	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
+	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID)
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), addr) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
@@ -963,7 +978,7 @@ func TestGuardListsRemovedAdminGrant(t *testing.T) {
 	if len(r.applies(t)) != 0 {
 		t.Errorf("applied: %v", r.applies(t))
 	}
-	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes", "--allow-delete", addr); err != nil {
+	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--allow-delete", addr); err != nil {
 		t.Fatal(err)
 	}
 	if got := r.applies(t); !slices.Equal(got, []string{"firebase"}) {
@@ -989,7 +1004,7 @@ func TestInitFirebaseFlagsRefused(t *testing.T) {
 	}
 	// Another Firebase project than the one the config records.
 	r.appendConfig(t, "budget: { firebase_project: other-fp }\n")
-	_, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
+	_, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID)
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "other-fp") {
 		t.Errorf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -1071,7 +1086,8 @@ func TestInitRepoPassesRTDBEnv(t *testing.T) {
 func TestInitFirebasePrintsHistoryImageCommands(t *testing.T) {
 	r := newFBRig(t)
 	_ = r
-	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -1084,8 +1100,9 @@ func TestInitFirebasePrintsHistoryImageCommands(t *testing.T) {
 
 func TestIdentityPlatformInitializedWhenMissing(t *testing.T) {
 	r := newFBRig(t)
+	fakeTerminal(t)
 	r.idt.UninitializeIdentityPlatform()
-	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
+	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -1134,7 +1151,8 @@ func TestIdentityPlatformStepNotRunWithoutConfirmation(t *testing.T) {
 
 func TestIdentityPlatformAlreadyInitializedNoPost(t *testing.T) {
 	r := newFBRig(t)
-	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
+	fakeTerminal(t)
+	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID); err != nil {
 		t.Fatal(err)
 	}
 	if n := r.idt.InitializeAuthCalls(); n != 0 {
@@ -1144,9 +1162,10 @@ func TestIdentityPlatformAlreadyInitializedNoPost(t *testing.T) {
 
 func TestIdentityPlatformAlreadyEnabledRaceIsOK(t *testing.T) {
 	r := newFBRig(t)
+	fakeTerminal(t)
 	r.idt.UninitializeIdentityPlatform()
 	r.idt.RaceInitialize()
-	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
+	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -1183,7 +1202,8 @@ func TestIdentityPlatformRefusesPublicSignUp(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			r := newFBRig(t)
 			r.idt.SetIdentityPlatformConfig(cfg)
-			_, stderr, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
+			fakeTerminal(t)
+			_, stderr, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID)
 			if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error()+stderr, "public sign-up") {
 				t.Fatalf("err = %v, stderr = %s", err, stderr)
 			}
@@ -1572,21 +1592,18 @@ func TestTheFirebaseProjectDefaultNamesTheIdAndNotTheStage(t *testing.T) {
 	// The same id, and no backend: the two spellings of "no project named"
 	// converge nothing of the Firebase stage's.
 	for name, extra := range map[string][]string{
-		"no flag at all": {"--yes"},
-		"an empty value": {"--yes", "--firebase-project="},
+		"no flag at all": {},
+		"an empty value": {"--firebase-project="},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newInitRig(t)
-			out, _, err := executeStdin(t, "", append([]string{"setup", "--json"}, extra...)...)
+			fakeTerminal(t)
+			out, _, err := executeStdin(t, "", append([]string{"setup"}, extra...)...)
 			if err != nil {
 				t.Fatalf("%v:\n%s", err, out)
 			}
-			var res convergeJSON
-			if err := json.Unmarshal([]byte(out), &res); err != nil {
-				t.Fatalf("%v:\n%s", err, out)
-			}
-			if got := res.state("firebase"); got != "skipped" {
-				t.Errorf("with %s the Firebase stage is %q, want skipped: the default names which project a backend would use, it does not ask for one", name, got)
+			if l := stepLineOf(reportLines(out), "firebase"); !strings.HasPrefix(l, markSkipped+" firebase") {
+				t.Errorf("with %s the Firebase stage is %q, want skipped: the default names which project a backend would use, it does not ask for one\n%s", name, l, out)
 			}
 			for _, c := range r.calls(t) {
 				if strings.Contains(strings.Join(c, " "), "firebase") {
@@ -1674,7 +1691,8 @@ func rulesMarkerOn(t *testing.T, db *gcpfake.RTDB) string {
 func TestUpdateConvergesV3NodeWithoutRulesMarkerInOneRun(t *testing.T) {
 	_, db := updateBudgetRig(t)
 	db.Set(projectpolicy.PathShared(), v3Node(nil))
-	out, _, err := executeStdin(t, "", "update", "--yes")
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("one fugaro update --yes did not converge a version-3 node under rules that carry no policy marker: %v\n%s", err, out)
 	}
@@ -1740,22 +1758,20 @@ func TestUpdateRulesStageRunsBeforePolicy(t *testing.T) {
 // and an installation that has one does not need to adopt it again.
 func TestUpdateDeploysStaleRulesWithoutFirebaseProjectFlag(t *testing.T) {
 	_, db := updateBudgetRig(t)
+	fakeTerminal(t)
 	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.PolicyRulesVersion)
 	db.SetRules([]byte(`{"rules":{".read":false}}`))
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("fugaro update did not deploy stale rules: %v\n%s%s", err, out, errOut)
 	}
-	var res convergeJSON
-	if err := json.Unmarshal([]byte(out), &res); err != nil {
-		t.Fatalf("%v:\n%s", err, out)
+	account := reportLines(out)
+	if l := stepLineOf(account, initflow.Firebase); !strings.HasPrefix(l, markSkipped+" "+initflow.Firebase) {
+		t.Errorf("the firebase stage is %q: no --firebase-project was given, so the rules stage is what deploys the rules", l)
 	}
-	if got := res.state(initflow.Firebase); got != "skipped" {
-		t.Errorf("the firebase stage is %q: no --firebase-project was given, so the rules stage is what deploys the rules", got)
-	}
-	if got := res.state(initflow.Rules); got != "changed" {
-		t.Errorf("the rules stage is %q, want changed:\n%s", got, out)
+	if l := stepLineOf(account, initflow.Rules); !strings.HasPrefix(l, markDone+" "+initflow.Rules) {
+		t.Errorf("the rules stage is %q, want a tick:\n%s", l, out)
 	}
 	gen, err := rules.Generate()
 	if err != nil {
@@ -1781,12 +1797,13 @@ func TestUpdateDeploysStaleRulesWithoutFirebaseProjectFlag(t *testing.T) {
 // gate) and which the doctor's own check leaves to the policy-published line.
 func TestUpdateDeploysWhenRulesMarkerAbsent(t *testing.T) {
 	_, db := updateBudgetRig(t)
+	fakeTerminal(t)
 	db.SetRules([]byte(`{"rules":{}}`))
 	if got := rulesMarkerOn(t, db); got != "" {
 		t.Fatalf("the fixture has a marker: %q", got)
 	}
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("fugaro update did not deploy rules under an absent marker: %v\n%s%s", err, out, errOut)
 	}
@@ -1811,21 +1828,18 @@ func TestUpdateDeploysWhenRulesMarkerAbsent(t *testing.T) {
 // way through but an upgrade they may not be able to take yet.
 func TestUpdateNeverDowngradesNewerRules(t *testing.T) {
 	_, db := updateBudgetRig(t)
+	fakeTerminal(t)
 	newer := projectpolicy.RulesVersion + 1
 	theirs := []byte(`{"rules":{".read":"auth != null"}}`)
 	db.Set(projectpolicy.PathRulesMarker(), newer)
 	db.SetRules(theirs)
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("a newer deployed generation stopped the whole update: %v\n%s%s", err, out, errOut)
 	}
-	var res convergeJSON
-	if err := json.Unmarshal([]byte(out), &res); err != nil {
-		t.Fatalf("%v:\n%s", err, out)
-	}
-	if got := res.state(initflow.Rules); got != "skipped" {
-		t.Errorf("the rules stage is %q, want skipped: nothing may be deployed over a newer generation:\n%s", got, out)
+	if l := stepLineOf(reportLines(out), initflow.Rules); !strings.HasPrefix(l, markSkipped+" "+initflow.Rules) {
+		t.Errorf("the rules stage is %q, want skipped: nothing may be deployed over a newer generation:\n%s", l, out)
 	}
 	if db.RulePuts() != 0 {
 		t.Error("the run deployed this binary's rules over a newer generation")
@@ -1836,7 +1850,7 @@ func TestUpdateNeverDowngradesNewerRules(t *testing.T) {
 	if got, want := rulesMarkerOn(t, db), strconv.Itoa(newer); got != want {
 		t.Errorf("the rules generation marker is %q, want %q: the marker must not be rewritten down", got, want)
 	}
-	if text := out + errOut + res.stageDetail(t, initflow.Rules); !strings.Contains(text, "a newer Fugaro deployed them") {
+	if text := out + errOut + newestLog(t, "update"); !strings.Contains(text, "a newer Fugaro deployed them") {
 		t.Errorf("the run does not report why it deployed nothing: %s", text)
 	}
 }
@@ -1849,6 +1863,7 @@ func TestUpdateNeverDowngradesNewerRules(t *testing.T) {
 // line exists to keep quiet about.
 func TestUpdateLeavesCurrentRulesAlone(t *testing.T) {
 	_, db := updateBudgetRig(t)
+	fakeTerminal(t)
 	gen, err := rules.Generate()
 	if err != nil {
 		t.Fatal(err)
@@ -1856,16 +1871,12 @@ func TestUpdateLeavesCurrentRulesAlone(t *testing.T) {
 	db.SetRules(gen)
 	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
-	var res convergeJSON
-	if err := json.Unmarshal([]byte(out), &res); err != nil {
-		t.Fatalf("%v:\n%s", err, out)
-	}
-	if got := res.state(initflow.Rules); got != "done" {
-		t.Errorf("the rules stage is %q, want done:\n%s", got, out)
+	if l := stepLineOf(reportLines(out), initflow.Rules); !strings.HasPrefix(l, markDone+" "+initflow.Rules) {
+		t.Errorf("the rules stage is %q, want a tick:\n%s", l, out)
 	}
 	if db.RulePuts() != 0 {
 		t.Error("the run rewrote rules that are already this generation")
@@ -1876,8 +1887,8 @@ func TestUpdateLeavesCurrentRulesAlone(t *testing.T) {
 	if text := out + errOut; strings.Contains(text, "deploys the security rules listed") {
 		t.Errorf("the run asked to deploy rules that are already current:\n%s", text)
 	}
-	if detail := res.stageDetail(t, initflow.Rules); !strings.Contains(detail, "this Fugaro's own") {
-		t.Errorf("the account of the settled state is %q", detail)
+	if detail := out + errOut + newestLog(t, "update"); !strings.Contains(detail, "this Fugaro's own") {
+		t.Errorf("the account of the settled state does not say the rules are this Fugaro's own:\n%s", detail)
 	}
 }
 
@@ -1888,6 +1899,7 @@ func TestUpdateLeavesCurrentRulesAlone(t *testing.T) {
 // project that never adopted a Firebase backend converges as it always did.
 func TestUpdateWithoutSharedBudgetDoesNotTouchFirebase(t *testing.T) {
 	r := updateRig(t)
+	fakeTerminal(t)
 	db := gcpfake.NewRTDB(t)
 	db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
 	db.Set(budget.PathProject, initProjectName)
@@ -1896,19 +1908,15 @@ func TestUpdateWithoutSharedBudgetDoesNotTouchFirebase(t *testing.T) {
 	r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5, rtdb_url: "+db.URL+" }\n")
 	r.save(t)
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
-	var res convergeJSON
-	if err := json.Unmarshal([]byte(out), &res); err != nil {
-		t.Fatalf("%v:\n%s", err, out)
+	if l := stepLineOf(reportLines(out), initflow.Rules); !strings.HasPrefix(l, markSkipped+" "+initflow.Rules) {
+		t.Errorf("the rules stage is %q, want skipped:\n%s", l, out)
 	}
-	if got := res.state(initflow.Rules); got != "skipped" {
-		t.Errorf("the rules stage is %q, want skipped:\n%s", got, out)
-	}
-	if !strings.Contains(res.stageDetail(t, initflow.Rules), "budget.firebase_project") {
-		t.Errorf("the skip does not say what is missing: %q", res.stageDetail(t, initflow.Rules))
+	if detail := out + errOut + newestLog(t, "update"); !strings.Contains(detail, "budget.firebase_project") {
+		t.Errorf("the skip does not say what is missing:\n%s", detail)
 	}
 	if db.RulePuts() != 0 || rulesMarkerOn(t, db) != "" {
 		t.Errorf("the run wrote to a database no shared budget names: %d rule deploy(s), marker %q", db.RulePuts(), rulesMarkerOn(t, db))
@@ -1937,7 +1945,8 @@ func TestUpdateWithoutSharedBudgetDoesNotTouchFirebase(t *testing.T) {
 func TestUpdateRulesUnconfirmedRefusesPolicyWrite(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir()) // the machine's record is this test's, not the developer's
 	_, db := updateBudgetRig(t)
-	if out, _, err := executeStdin(t, "", "update", "--yes"); err != nil {
+	fakeTerminal(t) // the converging run is a person's; the second run below takes the terminal away
+	if out, _, err := executeStdin(t, "", "update"); err != nil {
 		t.Fatalf("the converging run: %v\n%s", err, out)
 	}
 	checkoutFile(t, filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "plugins", "installed_plugins.json"),
@@ -1953,9 +1962,7 @@ func TestUpdateRulesUnconfirmedRefusesPolicyWrite(t *testing.T) {
 	stale := []byte(`{"rules":{".read":false}}`)
 	db.SetRules(stale)
 
-	old := stdinIsTerminal
-	stdinIsTerminal = func(io.Reader) bool { return false }
-	t.Cleanup(func() { stdinIsTerminal = old })
+	noTerminal(t)
 
 	out, errOut, err := executeStdin(t, "", "update")
 	if err == nil {
@@ -1993,25 +2000,22 @@ func TestUpdateRulesUnconfirmedRefusesPolicyWrite(t *testing.T) {
 // rule of 2026-10-30). The sentence is the database step's own.
 func TestUpdateRulesStageReportsADatabaseThatIsNotOurs(t *testing.T) {
 	r := updateRig(t)
+	fakeTerminal(t)
 	db := gcpfake.NewRTDB(t)
 	// Someone else's data, and no mark of ours: marked databases only.
 	db.Set("their/data", true)
 	r.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, rtdb_url: "+db.URL+", firebase_project: \""+initProject+"\" }\n")
 	r.save(t)
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("a database that is not ours stopped the whole update: %v\n%s%s", err, out, errOut)
 	}
-	var res convergeJSON
-	if err := json.Unmarshal([]byte(out), &res); err != nil {
-		t.Fatalf("%v:\n%s", err, out)
+	if l := stepLineOf(reportLines(out), initflow.Rules); !strings.HasPrefix(l, markSkipped+" "+initflow.Rules) {
+		t.Errorf("the rules stage is %q, want skipped:\n%s", l, out)
 	}
-	if got := res.state(initflow.Rules); got != "skipped" {
-		t.Errorf("the rules stage is %q, want skipped:\n%s", got, out)
-	}
-	if detail := res.stageDetail(t, initflow.Rules); !strings.Contains(detail, "no Fugaro mark") {
-		t.Errorf("the skip does not say why nothing was deployed: %q", detail)
+	if detail := out + errOut + newestLog(t, "update"); !strings.Contains(detail, "no Fugaro mark") {
+		t.Errorf("the skip does not say why nothing was deployed:\n%s", detail)
 	}
 	if db.RulePuts() != 0 || db.Value(projectpolicy.PathRulesMarker()) != nil {
 		t.Errorf("the run wrote into a database that is not ours: %d rule deploy(s)", db.RulePuts())
@@ -2107,19 +2111,16 @@ func separateFirebaseRig(t *testing.T) (*initRig, *gcpfake.RTDB) {
 // `--firebase-project other-project` would send them to a refusal.
 func TestUpdateRulesSkipsUnadoptedSeparateFirebaseProject(t *testing.T) {
 	_, db := separateFirebaseRig(t)
+	fakeTerminal(t)
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("a Firebase project the installation never adopted stopped the whole update: %v\n%s%s", err, out, errOut)
 	}
-	var res convergeJSON
-	if err := json.Unmarshal([]byte(out), &res); err != nil {
-		t.Fatalf("%v:\n%s", err, out)
+	if l := stepLineOf(reportLines(out), initflow.Rules); !strings.HasPrefix(l, markSkipped+" "+initflow.Rules) {
+		t.Errorf("the rules stage is %q, want skipped:\n%s", l, out)
 	}
-	if got := res.state(initflow.Rules); got != "skipped" {
-		t.Errorf("the rules stage is %q, want skipped:\n%s", got, out)
-	}
-	detail := res.stageDetail(t, initflow.Rules)
+	detail := out + errOut + newestLog(t, "update")
 	for _, want := range []string{"other-project", initProject, "fugaro update --firebase-project " + initProject, "budget.firebase_project"} {
 		if !strings.Contains(detail, want) {
 			t.Errorf("the skip does not name %q: %q", want, detail)
@@ -2146,20 +2147,17 @@ func TestUpdateRulesSkipsUnadoptedSeparateFirebaseProject(t *testing.T) {
 // report which database it found rather than the fact that a project is named.
 func TestUpdateRulesNeverAdoptedSeparateProjectDoesNotMark(t *testing.T) {
 	_, db := separateFirebaseRig(t)
+	fakeTerminal(t)
 	db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": "workspace-a", "gcp_project": "proj-9999", "version": 1})
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("another installation's database stopped the whole update: %v\n%s%s", err, out, errOut)
 	}
-	var res convergeJSON
-	if err := json.Unmarshal([]byte(out), &res); err != nil {
-		t.Fatalf("%v:\n%s", err, out)
+	if l := stepLineOf(reportLines(out), initflow.Rules); !strings.HasPrefix(l, markSkipped+" "+initflow.Rules) {
+		t.Errorf("the rules stage is %q, want skipped:\n%s", l, out)
 	}
-	if got := res.state(initflow.Rules); got != "skipped" {
-		t.Errorf("the rules stage is %q, want skipped:\n%s", got, out)
-	}
-	detail := res.stageDetail(t, initflow.Rules)
+	detail := out + errOut + newestLog(t, "update")
 	for _, want := range []string{"workspace-a", "proj-9999"} {
 		if !strings.Contains(detail, want) {
 			t.Errorf("the skip does not name the installation whose database this is (%q): %q", want, detail)
@@ -2221,6 +2219,7 @@ func TestUpdateRulesVerifyIsQuietOnADatabaseItDidNotDeployInto(t *testing.T) {
 // still converge, and the sentence names the way out.
 func TestUpdatePolicyMigrationSkipsUnadoptedSeparateFirebaseProject(t *testing.T) {
 	_, db := updateBudgetRigFor(t, "other-project")
+	fakeTerminal(t)
 	// Another installation's database: its mark names a Fugaro project and a
 	// GCP project that are not this installation's.
 	db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": "workspace-a", "gcp_project": "proj-9999", "version": 1})
@@ -2229,18 +2228,14 @@ func TestUpdatePolicyMigrationSkipsUnadoptedSeparateFirebaseProject(t *testing.T
 	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.PolicyRulesVersion)
 	db.Set(projectpolicy.PathShared(), v3Node(nil))
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("another installation's database stopped the whole update: %v\n%s%s", err, out, errOut)
 	}
-	var res convergeJSON
-	if err := json.Unmarshal([]byte(out), &res); err != nil {
-		t.Fatalf("%v:\n%s", err, out)
+	if l := stepLineOf(reportLines(out), initflow.Policy); !strings.HasPrefix(l, markSkipped+" "+initflow.Policy) {
+		t.Errorf("the policy stage is %q, want skipped:\n%s", l, out)
 	}
-	if got := res.state(initflow.Policy); got != "skipped" {
-		t.Errorf("the policy stage is %q, want skipped:\n%s", got, out)
-	}
-	detail := res.stageDetail(t, initflow.Policy)
+	detail := out + errOut + newestLog(t, "update")
 	for _, want := range []string{"workspace-a", "proj-9999"} {
 		if !strings.Contains(detail, want) {
 			t.Errorf("the skip does not name the installation whose database this is (%q): %q", want, detail)
@@ -2272,19 +2267,16 @@ func TestUpdatePolicyMigrationSkipsUnadoptedSeparateFirebaseProject(t *testing.T
 // refusal.
 func TestUpdatePolicyMigrationNamesTheWayOutBeforeItReadsTheNode(t *testing.T) {
 	_, db := separateFirebaseRig(t)
+	fakeTerminal(t)
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("a config naming another project stopped the whole update: %v\n%s%s", err, out, errOut)
 	}
-	var res convergeJSON
-	if err := json.Unmarshal([]byte(out), &res); err != nil {
-		t.Fatalf("%v:\n%s", err, out)
+	if l := stepLineOf(reportLines(out), initflow.Policy); !strings.HasPrefix(l, markSkipped+" "+initflow.Policy) {
+		t.Errorf("the policy stage is %q, want skipped:\n%s", l, out)
 	}
-	if got := res.state(initflow.Policy); got != "skipped" {
-		t.Errorf("the policy stage is %q, want skipped:\n%s", got, out)
-	}
-	detail := res.stageDetail(t, initflow.Policy)
+	detail := out + errOut + newestLog(t, "update")
 	// The command the skip names is `selfCommand() + " update"`, which in a
 	// test binary is the test binary's own path (selfCommand is how the binary
 	// was run, os.Args[0]); what the assertion is about is the flag and the
@@ -2422,21 +2414,19 @@ func TestUpdatePolicyStageSkipsTheDatabaseTheRulesStageSkipped(t *testing.T) {
 	for _, s := range unadoptedShapes {
 		t.Run(s.name, func(t *testing.T) {
 			_, db, _ := unadoptedRig(t, s)
-			out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+			fakeTerminal(t)
+			out, errOut, err := executeStdin(t, "", "update")
 			if err != nil {
 				t.Fatalf("a database the pair does not prove is ours stopped the whole update: %v\n%s%s", err, out, errOut)
 			}
-			var res convergeJSON
-			if err := json.Unmarshal([]byte(out), &res); err != nil {
-				t.Fatalf("%v:\n%s", err, out)
+			account := reportLines(out)
+			if l := stepLineOf(account, initflow.Rules); !strings.HasPrefix(l, markSkipped+" "+initflow.Rules) {
+				t.Errorf("the rules stage is %q, want skipped:\n%s", l, out)
 			}
-			if got := res.state(initflow.Rules); got != "skipped" {
-				t.Errorf("the rules stage is %q, want skipped:\n%s", got, out)
+			if l := stepLineOf(account, initflow.Policy); !strings.HasPrefix(l, markSkipped+" "+initflow.Policy) {
+				t.Errorf("the policy stage is %q, want skipped: the rules stage skipped this database, and the migration behind it wrote there anyway\n%s", l, out)
 			}
-			if got := res.state(initflow.Policy); got != "skipped" {
-				t.Errorf("the policy stage is %q, want skipped: the rules stage skipped this database, and the migration behind it wrote there anyway\n%s", got, out)
-			}
-			detail := res.stageDetail(t, initflow.Policy)
+			detail := out + errOut + newestLog(t, "update")
 			for _, want := range s.wants {
 				if !strings.Contains(detail, want) {
 					t.Errorf("the skip does not name %q: %q", want, detail)
@@ -2459,7 +2449,8 @@ func TestUpdateRulesConvergesAdoptedLegacyInstallation(t *testing.T) {
 	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.PolicyRulesVersion)
 	db.SetRules([]byte(`{"rules":{".read":false}}`))
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("plain fugaro update did not converge an installation that adopted its Firebase project: %v\n%s%s", err, out, errOut)
 	}
@@ -2523,6 +2514,7 @@ func TestUpdateRulesStageRefusedInAgentSession(t *testing.T) {
 // projectpolicy.RulesVersion` guard and this test fails, no other one does).
 func TestUpdateRulesRedeploysADocumentUnderACurrentMarker(t *testing.T) {
 	_, db := updateBudgetRig(t)
+	fakeTerminal(t)
 	gen, err := rules.Generate()
 	if err != nil {
 		t.Fatal(err)
@@ -2531,7 +2523,7 @@ func TestUpdateRulesRedeploysADocumentUnderACurrentMarker(t *testing.T) {
 	db.SetRules([]byte(`{"rules":{".read":false}}`))
 	db.Deny(projectpolicy.PathRulesMarker())
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("the deploy of a hand-edited document rewrote the marker it is already at: %v\n%s%s", err, out, errOut)
 	}
@@ -2569,6 +2561,7 @@ func TestUpdateRulesRedeploysADocumentUnderACurrentMarker(t *testing.T) {
 // this binary's document, and the diagnosis is gone afterwards.
 func TestPreviousRulesGenerationConvergesOnUpdate(t *testing.T) {
 	r, db := updateBudgetRig(t)
+	fakeTerminal(t)
 	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
 	db.SetRules(previousRulesDocument(t))
 	currentRelease(t)
@@ -2579,16 +2572,12 @@ func TestPreviousRulesGenerationConvergesOnUpdate(t *testing.T) {
 		t.Fatalf("the fixture is not the previous release's: policy-rules-skew is %+v", c)
 	}
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("fugaro update did not reach the build lease family, so this installation needs a second command: %v\n%s%s", err, out, errOut)
 	}
-	var res convergeJSON
-	if err := json.Unmarshal([]byte(out), &res); err != nil {
-		t.Fatalf("%v:\n%s", err, out)
-	}
-	if got := res.state(initflow.Rules); got != "changed" {
-		t.Errorf("the rules stage is %q, want changed:\n%s", got, out)
+	if l := stepLineOf(reportLines(out), initflow.Rules); !strings.HasPrefix(l, markDone+" "+initflow.Rules) {
+		t.Errorf("the rules stage is %q, want a tick:\n%s", l, out)
 	}
 	gen, err := rules.Generate()
 	if err != nil {
@@ -2694,6 +2683,7 @@ func TestUpdateRulesVerifySaysTheGenerationIsNotDeployed(t *testing.T) {
 // deployed.
 func TestUpdateRulesRecoversFromAFailureAfterTheDeploy(t *testing.T) {
 	_, db := updateBudgetRig(t)
+	fakeTerminal(t)
 	gen, err := rules.Generate()
 	if err != nil {
 		t.Fatal(err)
@@ -2702,7 +2692,7 @@ func TestUpdateRulesRecoversFromAFailureAfterTheDeploy(t *testing.T) {
 	db.SetRules([]byte(`{"rules":{".read":false}}`))
 	db.Deny(projectpolicy.PathRulesMarker())
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err == nil {
 		t.Fatalf("the run reported success with the marker write refused:\n%s%s", out, errOut)
 	}
@@ -2717,7 +2707,7 @@ func TestUpdateRulesRecoversFromAFailureAfterTheDeploy(t *testing.T) {
 	}
 
 	db.Deny("")
-	out, errOut, err = executeStdin(t, "", "update", "--yes")
+	out, errOut, err = executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("the second update did not repair the marker: %v\n%s%s", err, out, errOut)
 	}
@@ -2736,9 +2726,10 @@ func TestUpdateRulesRecoversFromAFailureAfterTheDeploy(t *testing.T) {
 // write of a database it has no business touching.
 func TestUpdateTwiceLeavesTheRulesAndMarkerAlone(t *testing.T) {
 	_, db := updateBudgetRig(t)
+	fakeTerminal(t)
 	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.PolicyRulesVersion)
 	db.SetRules([]byte(`{"rules":{".read":false}}`))
-	if out, errOut, err := executeStdin(t, "", "update", "--yes"); err != nil {
+	if out, errOut, err := executeStdin(t, "", "update"); err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
 	puts, marker := db.RulePuts(), rulesMarkerOn(t, db)
@@ -2746,16 +2737,12 @@ func TestUpdateTwiceLeavesTheRulesAndMarkerAlone(t *testing.T) {
 		t.Fatalf("the first run deployed nothing: %d rule deploy(s), marker %q", puts, marker)
 	}
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
-	var res convergeJSON
-	if err := json.Unmarshal([]byte(out), &res); err != nil {
-		t.Fatalf("%v:\n%s", err, out)
-	}
-	if got := res.state(initflow.Rules); got != "done" {
-		t.Errorf("the rules stage is %q on the second update, want done:\n%s", got, out)
+	if l := stepLineOf(reportLines(out), initflow.Rules); !strings.HasPrefix(l, markDone+" "+initflow.Rules) {
+		t.Errorf("the rules stage is %q on the second update, want a tick:\n%s", l, out)
 	}
 	if db.RulePuts() != puts {
 		t.Errorf("the second update deployed the rules again: %d deploy(s), was %d", db.RulePuts(), puts)
@@ -2847,6 +2834,7 @@ func TestRulesStageNotCoveredNoteWithoutTheFlag(t *testing.T) {
 // nor the binding — the state of every installation that belongs to none.
 func TestSetupBindsTheWorkspaceReadToThePinnedAccount(t *testing.T) {
 	r := newFBRig(t)
+	fakeTerminal(t)
 	b, err := os.ReadFile(r.cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -2857,7 +2845,7 @@ func TestSetupBindsTheWorkspaceReadToThePinnedAccount(t *testing.T) {
 	if err := os.WriteFile(r.cfg, append(b, "\n"+wsPin...), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
+	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -2873,7 +2861,7 @@ func TestSetupBindsTheWorkspaceReadToThePinnedAccount(t *testing.T) {
 	// A member of no workspace passes "" — and the module's count then creates
 	// nothing, so the key is present and empty rather than absent.
 	plain := newFBRig(t)
-	if out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
+	if out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if got := plain.fbVars(t)["workspace_service_account"]; got != "" {

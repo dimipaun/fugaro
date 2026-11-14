@@ -21,16 +21,14 @@
 //      `SETTINGS_EDIT_REFUSED`).
 //   3. **the window** -- `confirm.ts`'s, one implementation for both questions
 //      (D1115), showing C2's `settingsView` of that dry run.
-//   4. **the write** -- `settings set|unset KEY --layer <L> --yes -- <VALUE>`,
-//      reached only from a yes on that window's own top frame. `--yes` is on the
-//      write whatever the dry run classified the edit (D1107, C3): the CLI asks
-//      the flag, and the console answers it with the word the CLI named rather
-//      than with a hook of its own -- so `CHILD_ENV_KEYS` gains no key for this
-//      task and the `--yes` is a word of the argv the window shows (rule 5's
-//      count and rule 6's rows, same commit). The classification decides the
-//      console's own gate -- the tick a widening needs (D1109) -- and not this
-//      word: a narrowing spawns with no terminal either, and the CLI's ordinary
-//      y/N has nobody to ask.
+//   4. **the write** -- `settings set|unset KEY --layer <L> -- <VALUE>`,
+//      reached only from a yes on that window's own top frame. The write carries
+//      no flag (D1107, C3): the CLI asks nothing -- `applySettingsEdit` refuses
+//      only inside a coding agent's session, never a plain piped one
+//      (`internal/cli/settings_write.go`) -- so there is no word to answer with
+//      and `CHILD_ENV_KEYS` gains no key for this task. The classification
+//      decides the console's own gate -- the tick a widening needs (D1109) --
+//      and not a word of this argv.
 //
 // **Why the read is run here and D1114's layer route is (i).** The layer is the
 // one argument of this operation a renderer must not be able to name: a
@@ -458,7 +456,7 @@ export function createSettingsEdit(deps: SettingsEditDeps): SettingsEditRunner {
       if (dryRead.dryRun.refusal !== '') return refused(SETTINGS_EDIT_REFUSED)
 
       // Which of the two write phases this edit is -- the tick's question, and
-      // not the argv's: both write phases carry `--yes` (D1107) -- is the dry
+      // not the argv's: the two write phases spell one argv (D1107) -- is the dry
       // run's classification, and the classification is a member of the window
       // C2 builds. So the document is read again here, for `widening` alone:
       // `settingsView` is a pure function of it, so this call cannot answer

@@ -456,7 +456,6 @@ commands whose own output is an approval of a later cloud change.`,
 		RunE: func(cmd *cobra.Command, args []string) error { return accountsClear(cmd, o, args[0]) },
 	}
 	addCloudFlags(cmd, &o.cloud)
-	cmd.Flags().BoolVar(&o.yes, "yes", false, "skip the typed confirmation (read what it does first)")
 	return cmd
 }
 

@@ -385,7 +385,7 @@ func TestSettingsJSONTargetLayerMatchesWhatSetWrites(t *testing.T) {
 	if row.TargetLayer == nil || *row.TargetLayer != settingsLayerLocal {
 		t.Fatalf("commit_name: target_layer = %v, and a write with no --layer lands in %s", row.TargetLayer, settingsLayerLocal)
 	}
-	if out, _, err := execute(t, "settings", "set", "commit_name", "Fugaro", "--yes"); err != nil {
+	if out, _, err := execute(t, "settings", "set", "commit_name", "Fugaro"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if got := readFileString(t, localPath); !strings.Contains(got, "commit_name: Fugaro") {
@@ -397,7 +397,7 @@ func TestSettingsJSONTargetLayerMatchesWhatSetWrites(t *testing.T) {
 	if row.TargetLayer == nil || *row.TargetLayer != settingsLayerRepo {
 		t.Fatalf("git.base_branch: target_layer = %v, and a write with no --layer lands in %s", row.TargetLayer, settingsLayerRepo)
 	}
-	if out, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--yes"); err != nil {
+	if out, _, err := execute(t, "settings", "set", "git.base_branch", "develop"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if got := readFileString(t, checkout); !strings.Contains(got, "base_branch: develop") {

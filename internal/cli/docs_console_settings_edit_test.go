@@ -118,9 +118,10 @@ func TestDocsConsoleSettingsEditIsWritten(t *testing.T) {
 		"pull request **#1525**",
 		"**S5 (#1525) has merged → P1 → C1 → C2 → C3 → C4 → C5 → C6.**",
 		// How the widening is confirmed, which is the whole of what the owner's
-		// D1107 ruling changed in this plan: the CLI accepts `--yes` for it and
-		// the console gets no flag of its own.
-		"`settings set|unset` accept `--yes` for a widening, outside an agent session (**D1107**)",
+		// D1107 ruling changed in this plan and what T11 changed again: the CLI
+		// answers it at its own terminal, the console gets no flag of its own,
+		// and the flag D1107 allowed is gone.
+		"**T11 of `docs/no-prompt-policy/` has since taken that flag out of every command, this one included:** a widening is answered at the CLI's own terminal and refused in a coding agent's session, the console's own window is what asks for it, and no flag answers anything.",
 		"**There is no console side to this task.**",
 	} {
 		if !strings.Contains(plan, want) {

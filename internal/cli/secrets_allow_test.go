@@ -242,7 +242,6 @@ func TestSecretsAllowRefusesInAnAgentSession(t *testing.T) {
 				t.Setenv(marker, "1")
 
 				args := append([]string{"secrets", tc.verb}, tc.args...)
-				args = append(args, "--yes")
 				_, _, err := execute(t, args...)
 				if err == nil {
 					t.Fatal("the command wrote in a coding agent's session")

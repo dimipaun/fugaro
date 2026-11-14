@@ -293,7 +293,7 @@ func (s *workspaceProjectStage) Apply(ctx context.Context, _ initflow.Env) (init
 		return initflow.Outcome{Detail: "the workspace's own service account and its one grant are already there"}, nil
 	}
 	fmt.Fprint(s.e.r.w, tf.Summary(plan))
-	confirmed, reachable, err := s.e.r.askTyped(fmt.Sprintf("creates the workspace's own service account %s in GCP project %s and grants it %s on that project's database (%s): the account is the one identity that reaches the workspace's database, because the database's rules deny every client — and it is a GRANT, so --yes never confirms it; %s)", account, project, tf.WorkspaceDatabaseRole(project), counts.String(), initflow.AgentAdvice))
+	confirmed, reachable, err := s.e.r.askTyped(fmt.Sprintf("creates the workspace's own service account %s in GCP project %s and grants it %s on that project's database (%s): the account is the one identity that reaches the workspace's database, because the database's rules deny every client — and it is a GRANT, so no flag confirms it; %s)", account, project, tf.WorkspaceDatabaseRole(project), counts.String(), initflow.AgentAdvice))
 	if err != nil {
 		return initflow.Outcome{}, err
 	}

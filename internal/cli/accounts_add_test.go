@@ -144,7 +144,7 @@ func accountsAddCheckout(t *testing.T, repo string) {
 func TestAccountsAddKeepsCommentsAndOrder(t *testing.T) {
 	path := accountsAddFixture(t, accountsAddLocal)
 
-	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "acme/app", "--yes")
+	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "acme/app")
 	if err != nil {
 		t.Fatalf("accounts add: %v\n%s", err, out)
 	}
@@ -218,7 +218,7 @@ diff:
 func TestAccountsAddWritesTheDeclarationAndTheProfile(t *testing.T) {
 	path := accountsAddFixture(t, accountsAddLocal)
 
-	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "acme/app,acme/lib", "--profile", "standard", "--yes")
+	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "acme/app,acme/lib", "--profile", "standard")
 	if err != nil {
 		t.Fatalf("accounts add: %v", err)
 	}
@@ -256,7 +256,7 @@ func TestAccountsAddConfirmsTheWideningItMakes(t *testing.T) {
 	t.Run("beyond this checkout", func(t *testing.T) {
 		accountsAddCheckout(t, "acme/other")
 		accountsAddFixture(t, accountsAddLocal)
-		out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "acme/app", "--yes")
+		out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "acme/app")
 		if err != nil {
 			t.Fatalf("accounts add: %v", err)
 		}
@@ -273,7 +273,7 @@ func TestAccountsAddConfirmsTheWideningItMakes(t *testing.T) {
 	t.Run("this checkout only", func(t *testing.T) {
 		accountsAddCheckout(t, "acme/app")
 		accountsAddFixture(t, accountsAddLocal)
-		out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--yes")
+		out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a")
 		if err != nil {
 			t.Fatalf("accounts add: %v", err)
 		}
@@ -295,7 +295,7 @@ func TestAccountsAddConfirmsTheRotationItMakes(t *testing.T) {
 	accountsAddCheckout(t, "acme/app")
 	path := accountsAddFixture(t, accountsAddLocalExistingAccount)
 
-	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "legacy", "--repos", "acme/other", "--yes")
+	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "legacy", "--repos", "acme/other")
 	if err != nil {
 		t.Fatalf("accounts add: %v", err)
 	}
@@ -326,7 +326,7 @@ func TestSettingsWritesTheAccountChoiceKeys(t *testing.T) {
 		{"default_claude_account", "team-b"},
 		{"stages.review.claude_account", "team-b"},
 	} {
-		if _, _, err := execute(t, "settings", "set", kv[0], kv[1], "--layer", "local", "--yes"); err != nil {
+		if _, _, err := execute(t, "settings", "set", kv[0], kv[1], "--layer", "local"); err != nil {
 			t.Fatalf("settings set %s: %v", kv[0], err)
 		}
 	}
@@ -359,7 +359,7 @@ func TestSettingsWritesTheAccountChoiceKeys(t *testing.T) {
 		{"stages.review.claude_account", "team-b", "project"},
 		{"claude_account_auto", "true", "repo"},
 	} {
-		_, _, err := execute(t, "settings", "set", tc.key, tc.value, "--layer", tc.layer, "--yes")
+		_, _, err := execute(t, "settings", "set", tc.key, tc.value, "--layer", tc.layer)
 		if err == nil {
 			t.Fatalf("settings set %s --layer %s: local config is not the only document that may name an account", tc.key, tc.layer)
 		}
@@ -380,7 +380,7 @@ func TestSettingsWritesTheAccountChoiceKeys(t *testing.T) {
 		{"default_claude_account", "Team-B"},
 		{"stages.review.claude_account", "bitbucket-token"},
 	} {
-		_, _, err := execute(t, "settings", "set", tc.key, tc.value, "--layer", "local", "--yes")
+		_, _, err := execute(t, "settings", "set", tc.key, tc.value, "--layer", "local")
 		if err == nil {
 			t.Fatalf("settings set %s %q was accepted", tc.key, tc.value)
 		}
@@ -412,7 +412,7 @@ func TestSettingsWritesTheAccountChoiceKeys(t *testing.T) {
 	if _, _, err := execute(t, "settings", "set", "claude_account_auto", "true", "--layer", "local"); err != nil {
 		t.Fatalf("turning claude_account_auto on asked for an answer: %v", err)
 	}
-	if _, _, err := execute(t, "settings", "set", "claude_account_auto", "false", "--layer", "local", "--yes"); err != nil {
+	if _, _, err := execute(t, "settings", "set", "claude_account_auto", "false", "--layer", "local"); err != nil {
 		t.Fatalf("settings set claude_account_auto false: %v", err)
 	}
 	if lc, err := localcfg.Parse([]byte(readFileString(t, localPath))); err != nil {
@@ -440,7 +440,7 @@ func TestSettingsRefusesAPerStageAccountTheProjectDoesNotAllow(t *testing.T) {
 		{"stages.review.claude_account", "team-z"},
 		{"default_claude_account", "team-z"},
 	} {
-		_, _, err := execute(t, "settings", "set", tc.key, tc.value, "--layer", "local", "--yes")
+		_, _, err := execute(t, "settings", "set", tc.key, tc.value, "--layer", "local")
 		if err == nil {
 			t.Fatalf("settings set %s %s was accepted, and no run can use that account", tc.key, tc.value)
 		}
@@ -466,7 +466,7 @@ func TestSettingsRefusesAPerStageAccountTheProjectDoesNotAllow(t *testing.T) {
 
 	// The same key with an account the file does define is written, so the
 	// refusal above is the account's and not the key's.
-	if _, _, err := execute(t, "settings", "set", "stages.review.claude_account", "team-b", "--layer", "local", "--yes"); err != nil {
+	if _, _, err := execute(t, "settings", "set", "stages.review.claude_account", "team-b", "--layer", "local"); err != nil {
 		t.Fatalf("settings set stages.review.claude_account team-b: %v", err)
 	}
 	if readFileString(t, localPath) == before {
@@ -497,7 +497,7 @@ func TestAccountsAddPrintsNoValueShape(t *testing.T) {
 		}
 	}
 
-	out, errOut, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "acme/app", "--yes")
+	out, errOut, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "acme/app")
 	if err != nil {
 		t.Fatalf("accounts add: %v", err)
 	}

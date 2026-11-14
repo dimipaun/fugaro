@@ -192,20 +192,19 @@ func TestCreateProjectNeedsFlagAndConfirm(t *testing.T) {
 	}
 }
 
-// --yes, --non-interactive, --json, a pipe and a coding agent's session
-// never confirm the creation, whatever else is on stdin.
-func TestYesNeverCreatesProject(t *testing.T) {
+// Nothing but a person at a real terminal confirms the creation: --json, a pipe
+// and a coding agent's session never do, whatever else is on stdin (T11,
+// docs/no-prompt-policy — the flags that claimed to are gone).
+func TestOnlyATerminalCreatesTheProject(t *testing.T) {
 	cases := []struct {
 		name     string
 		terminal bool
 		args     []string
 		env      string
 	}{
-		{"--yes, piped stdin", false, []string{"--yes"}, ""},
-		{"--yes --non-interactive", true, []string{"--yes", "--non-interactive"}, ""},
-		{"--yes --json at a terminal", true, []string{"--yes", "--json"}, ""},
-		{"terminal, no flags but a coding agent", true, nil, "CLAUDECODE"},
-		{"piped stdin without --yes", false, nil, ""},
+		{"--json at a terminal", true, []string{"--json"}, ""},
+		{"a coding agent's session", true, nil, "CLAUDECODE"},
+		{"piped stdin", false, nil, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -224,24 +223,30 @@ func TestYesNeverCreatesProject(t *testing.T) {
 		})
 	}
 
-	// --yes at a terminal, with the ID not typed (EOF): still nothing.
+	// A person at the terminal is the confirmation, with nothing typed at the
+	// name (T7): the flag's project is created and Firebase is added to it,
+	// and billing stays for the flag that names it.
 	r := newProjectRig(t)
-	_, _, err := r.run(t, true, "", "--yes", "--create-project")
-	if err == nil {
-		t.Error("exit 0")
+	out, _, _ := r.run(t, true, "", "--create-project")
+	if cs := r.crm.Creates(); len(cs) != 1 || cs[0].ID != newProj {
+		t.Errorf("creates = %+v, want exactly one, %s\n%s", cs, newProj, out)
 	}
-	r.nothingDone(t, "--yes with nothing typed")
+	if adds := r.fb.Adds(); len(adds) != 1 || adds[0] != newProj {
+		t.Errorf("Firebase adds = %v", adds)
+	}
+	if len(r.bill.Links()) != 0 {
+		t.Error("billing was linked without --link-billing")
+	}
 }
 
-func TestYesNeverLinksBilling(t *testing.T) {
+func TestOnlyATerminalLinksBilling(t *testing.T) {
 	for name, tc := range map[string]struct {
 		terminal bool
 		stdin    string
 		args     []string
 	}{
-		"--yes, piped":                       {false, billingAcc + "\n", []string{"--yes"}},
-		"--yes --non-interactive":            {true, billingAcc + "\n", []string{"--yes", "--non-interactive"}},
-		"terminal, --yes, account not typed": {true, "", []string{"--yes"}},
+		"piped":                {false, billingAcc + "\n", nil},
+		"--json at a terminal": {true, billingAcc + "\n", []string{"--json"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newProjectRig(t)
@@ -251,9 +256,9 @@ func TestYesNeverLinksBilling(t *testing.T) {
 		})
 	}
 
-	// A person at the terminal, without --yes: nothing is typed at the link
-	// and nothing is read for it (T7), so the account named by the flag is
-	// the one linked — including where the line on stdin is another account.
+	// A person at the terminal: nothing is typed at the link and nothing is
+	// read for it (T7), so the account named by the flag is the one linked —
+	// including where the line on stdin is another account.
 	r := newProjectRig(t)
 	r.bill.AddAccount(billingAcc, true)
 	out, _, _ := r.run(t, true, billingAcc+"\n", "--create-project", "--link-billing", billingAcc)
@@ -337,7 +342,6 @@ func TestCreateRefusesAnExistingProjectItDidNotCreate(t *testing.T) {
 		{"billing linked", true, nil},
 		{"no billing, --link-billing", false, []string{"--link-billing", billingAcc}},
 		{"--plan-only", false, []string{"--plan-only"}},
-		{"--yes", true, []string{"--yes"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newProjectRig(t)
@@ -462,7 +466,7 @@ func TestBillingGuidedByDefault(t *testing.T) {
 func TestBillingGuidedJSON(t *testing.T) {
 	r := newProjectRig(t)
 	r.existing(false)
-	out, _, err := r.run(t, false, "", "--create-project", "--json", "--non-interactive")
+	out, _, err := r.run(t, false, "", "--create-project", "--json")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d (%v)", ExitCode(err), err)
 	}
@@ -1321,7 +1325,7 @@ func TestBillingLeftForTheAdminAndTheRerunResumes(t *testing.T) {
 func TestBillingPendingIsAStatusInJSON(t *testing.T) {
 	r := newProjectRig(t)
 	r.existing(false)
-	out, _, err := r.run(t, false, "", "--create-project", "--json", "--yes")
+	out, _, err := r.run(t, false, "", "--create-project", "--json")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d (%v), want 1\n%s", ExitCode(err), err, out)
 	}

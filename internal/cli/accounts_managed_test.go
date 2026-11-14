@@ -210,7 +210,7 @@ func TestAccountsAddManagedAdmitsTheDeclarationInAnAgentSession(t *testing.T) {
 	before := readFileString(t, r.cfg)
 	t.Setenv(accountsAddAgent, "1")
 
-	out, _, err := executeStdin(t, "", "accounts", "add", "team-a", "--repos", "owner/repo-a", "--yes")
+	out, _, err := executeStdin(t, "", "accounts", "add", "team-a", "--repos", "owner/repo-a")
 	after := readFileString(t, r.cfg)
 	if after == before {
 		t.Fatalf("the declaration was not written in a managed project's coding agent session: %v\nstdout:\n%s", err, out)
@@ -325,7 +325,7 @@ func TestAccountsAddManagedRefusesAWideningInAnAgentSession(t *testing.T) {
 	before := readFileString(t, r.cfg)
 	t.Setenv(accountsAddAgent, "1")
 
-	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a,acme/other", "--yes")
+	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a,acme/other")
 	if err == nil {
 		t.Fatalf("a widening was applied in a coding agent's session:\n%s", out)
 	}
@@ -369,7 +369,7 @@ func TestAccountsAddManagedRefusesClaudeInAnAgentSession(t *testing.T) {
 	before := readFileString(t, r.cfg)
 	t.Setenv(accountsAddAgent, "1")
 
-	out, _, err := executeStdin(t, "", "accounts", "add", "team-a", "--repos", "owner/repo-a", "--claude", "--yes")
+	out, _, err := executeStdin(t, "", "accounts", "add", "team-a", "--repos", "owner/repo-a", "--claude")
 	if err == nil {
 		t.Fatalf("a run carrying a token entry was admitted:\n%s", out)
 	}
@@ -404,7 +404,7 @@ func TestAccountsAddManagedRefusesACredentialInAnAgentSession(t *testing.T) {
 	before := readFileString(t, r.cfg)
 	t.Setenv(accountsAddAgent, "1")
 
-	out, _, err := executeStdin(t, "", "accounts", "add", "team-a", "--repos", "owner/repo-a", "--type", "claude-oauth", "--yes")
+	out, _, err := executeStdin(t, "", "accounts", "add", "team-a", "--repos", "owner/repo-a", "--type", "claude-oauth")
 	if err == nil {
 		t.Fatalf("a coding agent's session declared a credential:\n%s", out)
 	}
@@ -432,7 +432,7 @@ func TestAccountsAddManagedDoesNotReadAPastedToken(t *testing.T) {
 	writes := r.secretWrites(t)
 	t.Setenv(accountsAddAgent, "1")
 
-	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a", "--yes")
+	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a")
 	if err == nil {
 		t.Fatalf("a token entry was read and applied in a coding agent's session:\n%s", out)
 	}
@@ -465,7 +465,7 @@ func TestAccountsAddManagedRecordsNothingWhenThereIsNoWrite(t *testing.T) {
 	before := readFileString(t, r.cfg)
 	t.Setenv(accountsAddAgent, "1")
 
-	out, _, err := executeStdin(t, "", "accounts", "add", "team-a", "--repos", "owner/repo-a", "--yes")
+	out, _, err := executeStdin(t, "", "accounts", "add", "team-a", "--repos", "owner/repo-a")
 	if err == nil {
 		t.Fatalf("a rotation re-run in a coding agent's session reported success:\n%s", out)
 	}
@@ -486,7 +486,7 @@ func TestAccountsAddUnmanagedKeepsTheRefusalInAnAgentSession(t *testing.T) {
 	before := readFileString(t, r.cfg)
 	t.Setenv(accountsAddAgent, "1")
 
-	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a", "--yes")
+	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a")
 	if err == nil {
 		t.Fatalf("the command wrote in a coding agent's session:\n%s", out)
 	}
@@ -524,7 +524,7 @@ func TestAccountsAddManagedUnreadMarksKeepTheRefusal(t *testing.T) {
 			before := readFileString(t, r.cfg)
 			t.Setenv(accountsAddAgent, "1")
 
-			out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a", "--yes")
+			out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a")
 			if err == nil {
 				t.Fatalf("a project this program cannot prove is managed was admitted:\n%s", out)
 			}
@@ -545,15 +545,14 @@ func TestAccountsAddManagedUnreadMarksKeepTheRefusal(t *testing.T) {
 }
 
 // A caller that is not a person at a terminal and is not a session either — a
-// pipe, a run with no terminal, or the same command with --yes — is refused on
-// a managed project before a byte is written. It is the half of this row that
-// had no fence at all: the hidden token prompt is fed by a pipe as readily as
-// by a hand, so before the owner's ruling of 2026-11-09 a run could store the
-// token of an account a managed project is owed a question about.
+// pipe, a run with no terminal — is refused on a managed project before a byte
+// is written. It is the half of this row that had no fence at all: the hidden
+// token prompt is fed by a pipe as readily as by a hand, so before the owner's
+// ruling of 2026-11-09 a run could store the token of an account a managed
+// project is owed a question about.
 //
-// --yes is the case worth naming: it is a flag, and a flag answers nothing
-// here. It never makes a run the owner's own, so a scripted `accounts add
-// --yes` on a managed project is refused exactly as a bare pipe is.
+// No flag answers it: a flag never makes a run the owner's own, and the one
+// that claimed to is gone (T11 of docs/no-prompt-policy).
 func TestAccountsAddManagedRefusesARunThatAnswersNothing(t *testing.T) {
 	for _, tc := range []struct {
 		what  string
@@ -561,12 +560,6 @@ func TestAccountsAddManagedRefusesARunThatAnswersNothing(t *testing.T) {
 		args  []string
 		want  string
 	}{
-		{
-			what:  "--yes",
-			local: func(*testing.T) string { return addRigLocal },
-			args:  []string{"--repos", "owner/repo-a", "--yes"},
-			want:  accountsAddRefusalRun,
-		},
 		{
 			what:  "a pipe with no flag",
 			local: func(*testing.T) string { return addRigLocal },
@@ -578,9 +571,9 @@ func TestAccountsAddManagedRefusesARunThatAnswersNothing(t *testing.T) {
 			// rule runs before the gate, and a declaration this run could not
 			// make at all would be refused by that rule and never reach the
 			// door this file is about.
-			what:  "--yes and a widening",
+			what:  "a widening",
 			local: managedAddLocalWide,
-			args:  []string{"--repos", "owner/repo-a,acme/other", "--yes"},
+			args:  []string{"--repos", "owner/repo-a,acme/other"},
 			want: "This would send the token of Claude account team-a to acme/other, beyond this checkout.\n" +
 				"Run this in your own terminal.",
 		},
@@ -621,12 +614,15 @@ func TestAccountsAddManagedRefusesARunThatAnswersNothing(t *testing.T) {
 	}
 }
 
-// The one door this step has on a managed project, and the four terms that make
-// it the owner's own: a coding agent's marker, --yes, a terminal on the run's
-// input, and a terminal on its output. Each case below is one term dropped —
-// the mutation each catches is named with it — and each asserts the two lines
-// and the state the run left behind, so a build that admitted the case fails on
-// the file rather than on the wording alone.
+// The one door this step has on a managed project, and the three terms a run's
+// own argv can drop to fall outside it: a coding agent's marker, a terminal on
+// the run's input, and a terminal on its output. Each case below is one term
+// dropped — the mutation each catches is named with it — and each asserts the
+// two lines and the state the run left behind, so a build that admitted the
+// case fails on the file rather than on the wording alone. The fourth term the
+// gate reads, --yes, is no longer a flag a run can carry (T11,
+// docs/no-prompt-policy): a flag is not the owner's terminal, so there is no
+// case left to drive for it.
 //
 // The marker case is the one that ends differently, and deliberately: a session
 // is not refused the declaration (D1012 admits a bounded one), so what it reads
@@ -649,12 +645,6 @@ func TestAccountsAddManagedAdmitsOnlyTheOwnerAtTheirOwnTerminal(t *testing.T) {
 			setup:    func(t *testing.T) { ownerAtTheTerminal(t); t.Setenv(accountsAddAgent, "1") },
 			want:     accountsAddRefusalToken,
 			declared: true,
-		},
-		{
-			what:   "--yes at a real terminal",
-			mutate: "accountsAddOwnTerminal without its --yes term",
-			setup:  ownerAtTheTerminal,
-			want:   accountsAddRefusalRun,
 		},
 		{
 			what:   "a terminal on the run's input only",
@@ -682,9 +672,6 @@ func TestAccountsAddManagedAdmitsOnlyTheOwnerAtTheirOwnTerminal(t *testing.T) {
 			tc.setup(t)
 
 			args := []string{"accounts", "add", "team-a", "--repos", "owner/repo-a"}
-			if strings.Contains(tc.what, "--yes") {
-				args = append(args, "--yes")
-			}
 			// The owner's answer is on stdin for every case: the run that is
 			// admitted is admitted because of the terminal and not because a
 			// line happened to be there, and the run that is refused is refused

@@ -55,7 +55,7 @@ func TestInitPluginStageMovesInAgentSessionAheadOfARepositoryStop(t *testing.T) 
 	// leave an applying stage for the user.
 	t.Setenv("CLAUDECODE", "1")
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	out, errOut, err := executeStdin(t, "", "update", "--json")
 	if err == nil {
 		t.Fatalf("the run reported success while the checkout's cloud half is parked:\n%s", out)
 	}

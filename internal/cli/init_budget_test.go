@@ -340,28 +340,28 @@ func TestAResumedCreationIsMarkedManaged(t *testing.T) {
 // r.res.Created is what a resumed creation leaves behind and also what every other way
 // a --managed run creates nothing leaves behind, so the message may only say
 // "already existed" when the project stage actually read a project that was
-// already there. Here it does not exist and the step is left for the user —
-// a person at the terminal who passed --yes, which is the one way one of
-// these steps is declined now that nothing is typed at a confirmation (T7,
-// docs/no-prompt-policy: --yes stands in for no Typed step, so the step is
-// left rather than taken) — so nothing was adopted and nothing was created:
-// the warning says the creation did not happen, and a reader is not sent to
-// look for a project that is not there.
+// already there. Here it does not exist and no person is at the run: the
+// confirmation the run stops at is one nothing but a person at a terminal
+// gives (T7, docs/no-prompt-policy), and the run leaves the step for them, so
+// nothing was adopted and nothing was created: the warning says the creation
+// did not happen, and a reader is not sent to look for a project that is not
+// there.
 func TestManagedWarningDoesNotClaimAdoptionWithoutOne(t *testing.T) {
 	r := newProjectRig(t)
 	r.bill.AddAccount(billingAcc, true)
-	out, errOut, err := r.run(t, true, "",
-		"--yes", "--create-project", "--managed", "--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc)
+	noTerminal(t)
+	out, errOut, err := r.run(t, false, "",
+		"--create-project", "--managed", "--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc)
 	all := refusalText(out, errOut, err)
 	if err == nil {
-		t.Fatalf("a declined creation returned no error:\n%s", all)
+		t.Fatalf("a creation nobody was at to confirm returned no error:\n%s", all)
 	}
-	// The run really did reach the project stage's confirmation and stop
-	// there, so the warning below is about a creation that did not happen
-	// rather than about an earlier refusal.
-	r.nothingDone(t, "a managed creation whose confirmation was declined")
-	if !strings.Contains(all, "not confirmed") {
-		t.Fatalf("the run did not stop at the project's confirmation:\n%s", all)
+	// The run really did reach a step that wanted a person and stop there
+	// rather than refuse earlier, so the warning below is about a creation
+	// that did not happen.
+	r.nothingDone(t, "a managed creation whose confirmation nobody was at to give")
+	if !strings.Contains(all, "needs your own confirmation, which no flag gives") {
+		t.Fatalf("the run did not stop at the project's own confirmation, which no flag gives:\n%s", all)
 	}
 	if !strings.Contains(all, "--managed was not applied") {
 		t.Errorf("the run created no project under --managed and did not say --managed was not applied:\n%s", all)
@@ -455,25 +455,27 @@ func TestManagedFactIsNotWrittenWhenTheInstallationApplyFails(t *testing.T) {
 	}
 }
 
-// TestAResumedCreationIsNeverMarkedWithoutATypedID: fugaro_created=true is a
-// label anyone with resourcemanager.projects.update can set, so it alone never
-// marks a project managed. A resumed creation is marked only at the person's
-// own terminal, --yes and every way of running that is not one excluded (the
-// bar fugaro managed flag keeps, stepConfirmation(Typed)): under --yes, with
-// --yes --non-interactive, or in a coding agent's session, nothing is written —
-// neither the object nor the fugaro_managed label — and the run says how to
-// mark it.
-func TestAResumedCreationIsNeverMarkedWithoutATypedID(t *testing.T) {
+// A resumed creation is never marked without a person at the run's terminal:
+// fugaro_created=true is a label anyone with resourcemanager.projects.update
+// can set, so it only says which project to ask about, and the mark is written
+// by confirmResumedMark, whose bar is that person alone — no --json, no coding
+// agent's session, and nothing typed (T7). A run without one writes neither
+// half of the fact (the object and the fugaro_managed label), and none of them
+// announces a mark it did not make.
+//
+// What such a run cannot do is say how to mark the project: the advice ("run
+// fugaro managed flag ...") comes from the resumed-mark step, which is reached
+// once the installation's runs bucket is known, and a run nobody is at never
+// gets past the installation's own apply
+// (TestAResumedCreationIsMarkedManaged is the half that does).
+func TestAResumedCreationIsNeverMarkedWithoutAPersonAtTheTerminal(t *testing.T) {
 	cases := map[string]struct {
-		args  []string
+		json  bool
 		agent bool
 	}{
-		"--yes at a terminal":     {args: []string{"--create-project", "--yes"}},
-		"--yes --non-interactive": {args: []string{"--create-project", "--yes", "--non-interactive"}},
-		"a coding agent's session": {
-			args:  []string{"--create-project", "--yes", "--non-interactive"},
-			agent: true,
-		},
+		"no terminal":              {},
+		"--json":                   {json: true},
+		"a coding agent's session": {agent: true},
 	}
 	for name, tc := range cases {
 		agent := tc.agent
@@ -498,19 +500,25 @@ func TestAResumedCreationIsNeverMarkedWithoutATypedID(t *testing.T) {
 				"role_ids":                  roles,
 			})}
 			r.save(t)
+			args := []string{"--create-project"}
+			if tc.json {
+				args = append(args, "--json")
+			}
 			if agent {
 				t.Setenv("CLAUDECODE", "1")
+			} else {
+				noTerminal(t)
 			}
-			out, errOut, err := r.run(t, true, newProj+"\n", tc.args...)
+			out, errOut, err := r.run(t, false, "", args...)
 			all := refusalText(out, errOut, err)
 			if got, ok := markerAt(t, r.gcs, bucket); ok {
-				t.Errorf("a resumed creation was marked with no typed ID: gs://%s/%s = %s\n%s", bucket, managed.MarkerObject, got, all)
+				t.Errorf("a resumed creation was marked with nobody at the terminal: gs://%s/%s = %s\n%s", bucket, managed.MarkerObject, got, all)
 			}
 			if v := r.crm.Labels(newProj)[managed.ProjectLabelKey]; v != "" {
-				t.Errorf("a resumed creation was labelled %s=%s with no typed ID\n%s", managed.ProjectLabelKey, v, all)
+				t.Errorf("a resumed creation was labelled %s=%s with nobody at the terminal\n%s", managed.ProjectLabelKey, v, all)
 			}
-			if !agent && !strings.Contains(all, "fugaro managed flag "+newProj) {
-				t.Errorf("the run does not say how to mark it:\n%s", all)
+			if strings.Contains(all, "this MARKS project "+newProj+" as Fugaro-managed") {
+				t.Errorf("the run announced a mark no person at the terminal confirmed:\n%s", all)
 			}
 		})
 	}

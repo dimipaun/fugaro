@@ -593,8 +593,9 @@ func TestTheTypedStepsLeaveTheirOwnRefusal(t *testing.T) {
 // only the state the loop reaches: initflow.CanConfirm(Typed, ...) — what
 // init's askTyped and the project stage's canType consult — is false in every
 // mode but the control. It is the same columns as the matrix, so a branch that
-// lets --yes, --json or a coding agent's marker give a Typed confirmation fails
-// here even where the loop's own path would have refused the stage first.
+// lets a run's own answer, --json or a coding agent's marker give a Typed
+// confirmation fails here even where the loop's own path would have refused the
+// stage first.
 func TestRefusalMatrixTheTypedRuleRefusesEveryMode(t *testing.T) {
 	for _, m := range refusalModes() {
 		t.Run(m.name, func(t *testing.T) {
@@ -609,38 +610,41 @@ func TestRefusalMatrixTheTypedRuleRefusesEveryMode(t *testing.T) {
 
 // refusalMode is one column of the matrix: the CLI's own reading of a run's
 // flags and environment (init_confirm_test.go's condition harness), whether
-// the loop turns it into a plan-only run (--non-interactive without --yes),
-// and whether it is the control.
+// the loop turns it into a plan-only run (a run that never prompts and carries
+// no answer of its own), and whether it is the control.
 type refusalMode struct {
 	condition
 	planOnly bool
 	control  bool
 }
 
-// refusalModes are the plan's five modes, with the --yes variants the seed and
-// the loop's own mode table carry, and the control. The wider table of
-// conditions init_confirm_test.go drives (--yes through a pipe, and the rest of
-// the product) is covered there by its own TestTypedOnly... matrices.
+// refusalModes are the plan's five modes, with the runs that carry their own
+// answer or never prompt — the shapes an internal door builds for itself since
+// T11 removed the two flags that used to ask for them (docs/no-prompt-policy) —
+// and the control. The wider table of conditions init_confirm_test.go drives
+// (a pipe, and the rest of the product) is covered there by its own
+// TestTypedOnly... matrices.
 func refusalModes() []refusalMode {
 	return []refusalMode{
-		{condition: condition{"--yes at a terminal", initOptions{yes: true}, true, ""}},
-		{condition: condition{"--non-interactive --yes", initOptions{yes: true, nonInteractive: true}, true, ""}},
-		{condition: condition{"--non-interactive", initOptions{nonInteractive: true}, true, ""}, planOnly: true},
+		{condition: condition{"a run that carries its own answer", initOptions{yes: true}, true, ""}},
+		{condition: condition{"a run that carries its own answer and never prompts", initOptions{yes: true, nonInteractive: true}, true, ""}},
+		{condition: condition{"a run that never prompts", initOptions{nonInteractive: true}, true, ""}, planOnly: true},
 		{condition: condition{"--json at a terminal", initOptions{asJSON: true}, true, ""}},
-		{condition: condition{"--yes --json at a terminal", initOptions{yes: true, asJSON: true}, true, ""}},
+		{condition: condition{"a run that carries its own answer, --json", initOptions{yes: true, asJSON: true}, true, ""}},
 		{condition: condition{"no terminal", initOptions{}, false, ""}},
-		{condition: condition{"no terminal --yes", initOptions{yes: true}, false, ""}},
+		{condition: condition{"no terminal, a run that carries its own answer", initOptions{yes: true}, false, ""}},
 		{condition: condition{"a coding agent's session", initOptions{}, true, "CLAUDECODE"}},
-		{condition: condition{"a coding agent's session --yes", initOptions{yes: true}, true, "CURSOR_AGENT"}},
+		{condition: condition{"a coding agent's session, a run that carries its own answer", initOptions{yes: true}, true, "CURSOR_AGENT"}},
 		{condition: condition{"a person at a terminal (the control)", initOptions{}, true, ""}, control: true},
 	}
 }
 
 // loopOptions is the loop's Options for this mode, built from the CLI's own
 // reading of the run (initRun.conditions, init.go) rather than from the flags
-// again, so a change to conditions() shows up here. Yes is the flag and not the
-// derived field: the two agree in every mode of this table, because a run that
-// only plans is the loop's own decision for --non-interactive without --yes.
+// again, so a change to conditions() shows up here. Yes is the option and not
+// the derived field: the two agree in every mode of this table, because a run
+// that only plans is the loop's own decision for a run that never prompts and
+// carries no answer of its own.
 func (m refusalMode) loopOptions(c initflow.Conditions) initflow.Options {
 	return initflow.Options{
 		Yes: m.opts.yes, NonInteractive: c.NonInteractive, JSON: c.JSON,

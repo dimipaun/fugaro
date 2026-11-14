@@ -304,15 +304,14 @@ outside every repository, which is why the agent-session refusal is here.
   `TestSettingsSetRepoLayerOutsideACheckoutIsRefused` (the other half of that step: no `--repo` and no
   checkout is refused rather than guessed),
   `TestSettingsSetRefusesInAnAgentSessionEvenWithYes`, `TestSettingsSetRepoLayerIsAllowedInAnAgentSession`,
-  `TestSettingsSetLooseningACeilingAsksForTheTypedProjectName` (and `--yes` does not stand in),
+  `TestSettingsSetLooseningACeilingAsksForTheTypedProjectName`,
   `TestSettingsSetRepoLayerRefusesALooseningInAnAgentSession` (spec §4.2 step 4: the typed-name
-  carve-out — a ceiling loosened at `--layer repo` is refused in an agent session, `--yes` included),
+  carve-out — a ceiling loosened at `--layer repo` is refused in an agent session),
   `TestSettingsSetBacksUpAndWritesAtomically`, `TestSettingsSetKeepsTheRestOfTheFile`,
   `TestSettingsAddAndRemoveOnAListKey`, `TestSettingsRefusesEmptyingAListKey`,
   `TestSettingsUnsetRemovesTheKeyRatherThanWritingTheDefault`,
   `TestSettingsUnsetOfACeilingAsksForTheTypedProjectName` (spec §4.3: removal crosses the same
-  boundary as loosening, so `unset` of a ceiling or a floor asks for the typed name and `--yes` does
-  not stand in),
+  boundary as loosening, so `unset` of a ceiling or a floor asks for the typed name),
   `TestSettingsUnsetOfNothingIsAnExitZeroSentence`, `TestSettingsSetPrintsOnlyFugaroUpdateNext`,
   `TestSettingsSetWritesNothingInTheCloud`, `TestTheThreeEditorsPreserveBytesTheSameWay` (D847's
   cross-document test), and `TestSettingsGetOnAKeySetNowhereIsTheDefaultRowAndExitZero` — `get` is

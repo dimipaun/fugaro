@@ -370,6 +370,10 @@ func TestTheRemediesPrintedFromAnEmptyConfigCarryAProject(t *testing.T) {
 // project --firebase-project takes.
 func TestTheUpdateWarningsCarryAProject(t *testing.T) {
 	r, _ := updateBudgetRig(t)
+	// The steps this update confirms are confirmed by the person at their own
+	// terminal (T11 of docs/no-prompt-policy: the flag that used to stand in for
+	// them is gone).
+	fakeTerminal(t)
 	// The recorded opt-in is what makes a plain update plan the coordinator at
 	// all (opts.Coordinator = o.coordinator || lc.Terraform.Coordinator), and a
 	// GitHub repository with no App ID recorded is what makes its job
@@ -385,7 +389,7 @@ func TestTheUpdateWarningsCarryAProject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}

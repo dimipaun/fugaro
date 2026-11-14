@@ -44,12 +44,11 @@ deleting it:
    cannot be read fails closed;
 5. it prints **one diff** — what each step changes, what is kept as it is, what
    was derived from the local config — and writes the node back with the ETag
-   it read, after the project's name is typed at a real terminal (or `--yes`
-   where a confirmation is enough for the operator; a run that is still in
-   flight stops the write unless `--yes` is passed, exactly as `publish
-   --delete` does with it — except in a **managed** project, where the runs in
+   it read, after the project's name is typed at a real terminal (a run that is still in
+   flight stops the write, exactly as `publish
+   --delete` does — except in a **managed** project, where the runs in
    flight are printed as a note and the write proceeds, and in a coding agent's
-   session, which keeps the refusal). The one write `fugaro update`'s `--yes` never
+   session, which keeps the refusal). The one write `fugaro update` never
    confirms is the one that leaves the node **looser** than the node it replaces
    — a ceiling raised or removed, a wider `budget.allowed_models` — because that
    is the node every run of the project is admitted by: the stage asks for the
@@ -69,8 +68,8 @@ deleting it:
    agent's session among them, an unmanaged project, and a run with no terminal,
    which is refused as it always was. The comparison `settings set` makes
    decides it, so a ceiling raised is asked about the same way whichever of the
-   two doors writes it — and `settings set|unset` themselves take `--yes` for
-   that widening outside a coding agent's session, the owner's ruling of
+   two doors writes it — and `settings set|unset` themselves confirm that widening
+   at the owner's own real terminal outside a coding agent's session, the owner's ruling of
    2026-11-01 (D1107, docs/console-settings-edit/spec.md): this command is the
    one that still refuses it. A publish that tightens a ceiling, or that writes
    a node already carrying what the config states, asks exactly the confirmation
@@ -112,7 +111,7 @@ from (`policy_generation`, the ETag the node was read at), and a
 and says so: it prints the three-way state — the generation this file was
 written from, the one the node carries now, and the members the two differ on —
 and offers to **re-seed** the file from the published node instead, under the
-same typed confirmation (`--yes` where that is enough), with a backup of the
+same typed confirmation, with a backup of the
 file it replaces. Nothing of the older file is published. An installation whose
 config records no generation adopts the one it reads: refusing once would ask a
 question with no information in it, since the machine has no baseline to compare
@@ -218,7 +217,7 @@ sees what their policy becomes.
 Run `fugaro update`. It brings the installation, the repository and — new in
 this release — the published policy node up to this version: a node an earlier
 release wrote is migrated in place, after a diff of what changes and what is
-kept, and it asks for the project's name (or `--yes`) before writing. It also
+kept, and it asks for the project's name at the owner's own real terminal before writing. It also
 now publishes the policy node from the local config — a config edit reaches
 every run of the project through this one command, with no separate publish —
 and `fugaro project policy publish`, which writes the same node by hand, is

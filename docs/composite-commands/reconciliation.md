@@ -16,7 +16,7 @@ points at; this package depends on it and says where (External edges in the plan
 | A single apply command | **None.** `apply` is not a top-level command; the only apply is `fugaro managed apply ROOT` (`managed_apply.go`, `newManagedCmd`), the managed Terraform root's |
 | Pending-steps record | **None** (`git grep` finds no pending/needs-publish state) |
 | `--no-apply` / `--only` | Neither exists in `internal/cli`; `--only` is unused |
-| Console through the same commands | Reads: exact argv in `consoleReadPaths` (`internal/cli/project.go`). **Writes too**: `consoleLaunchPaths` (`internal/cli/docs_desktop_console_test.go`) and the `settings.edit` row of `console/src/main/spawn.ts` spawn `settings set`/`settings unset` with `--layer` and the phase words `--dry-run`/`--yes` |
+| Console through the same commands | Reads: exact argv in `consoleReadPaths` (`internal/cli/project.go`). **Writes too**: `consoleLaunchPaths` (`internal/cli/docs_desktop_console_test.go`) and the `settings.edit` row of `console/src/main/spawn.ts` spawn `settings set`/`settings unset` with `--layer` and the phase words `--dry-run`/`--json` |
 | A subset of the stages run by one command | `accounts add` already runs three stages in-process (`accountsAddStages` in `accounts_add_converge.go`, built from `initStages`: `Policy`, `Installation`, `Repository`) |
 
 ## 2. Findings
@@ -51,9 +51,9 @@ points at; this package depends on it and says where (External edges in the plan
   unmanaged project must not reach a billable build unasked through `--no-apply` then `apply` before
   the no-prompt slices land (Global constraint).
 - **F7 (Wrong, corrected).** The console **already spawns write verbs**: `settings set`/`unset` through
-  `consoleLaunchPaths` and the `settings.edit` row of `spawn.ts`, which always passes `--yes` (and
-  `--dry-run` for the preview). After AP5 a console settings edit would run the chain and its `--yes`
-  would be read as answering steps. D1572.
+  `consoleLaunchPaths` and the `settings.edit` row of `spawn.ts`, which passes `--dry-run` for the
+  preview and no flag on the write. After AP5 a console settings edit would run the chain, with no flag
+  to be read as answering its steps. D1572.
 - **F8 (Rule).** `plugin/skills` name commands and flags that the lint checks, within `maxSkillBytes`
   (24 KiB) per file; docs are tested (`go test ./internal/cli -run Docs`).
 - **F9 (Rule).** A new wire shape (pending file, `apply --status --json`) obeys "a field never changes

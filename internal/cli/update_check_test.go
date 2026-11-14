@@ -183,7 +183,7 @@ func TestUpdateCheckRefusesTheConvergeFlags(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"--check", "--yes"}, "--yes is the converge's"},
+		{[]string{"--check", "--yes"}, "unknown flag: --yes"},
 		{[]string{"--check", "--repo"}, "--repo is the converge's"},
 		{[]string{"--check", "--plan-only"}, "--plan-only is the converge's"},
 		{[]string{"--check", "--json"}, "--json is the converge's"},
