@@ -30,10 +30,6 @@ import (
 	"github.com/dimipaun/fugaro/ee/licence"
 )
 
-// trialSeats is what a test asks a trial for. The number is the caller's (the
-// trial row names none, K2.1) and the fixture's own.
-const trialSeats = 3
-
 // trialAccount is the account a test signs in as. It is an address at the
 // fixture's own domain and obviously not a real one.
 const trialAccount = "founder@acme.example"
@@ -129,10 +125,12 @@ func (b *blindAfterAClaim) Trials(ctx context.Context) ([]Trial, error) {
 	return b.Store.Trials(ctx)
 }
 
-// trialBody is the request one test sends: the workspace's project id and the
-// seats the trial is asked for.
-func trialBody(workspace string, seats int) string {
-	body, err := json.Marshal(TrialCall{WorkspaceID: workspace, Seats: seats})
+// trialBody is the request one test sends: the workspace's project id, and
+// nothing else (§10.3's self-serve trial is single-seat, so this door reads no
+// seat count — where a test wants to send one it writes the body out itself,
+// which is what pins the refusal).
+func trialBody(workspace string) string {
+	body, err := json.Marshal(TrialCall{WorkspaceID: workspace})
 	if err != nil {
 		panic(err)
 	}
@@ -146,7 +144,7 @@ func trialBody(workspace string, seats int) string {
 // claim set an installation receives and not this package's own record of one.
 func TestTrialIsTeamTierFourteenDays(t *testing.T) {
 	f := trialAs(t)
-	rec := f.ask(trialBody(workspaceID, trialSeats))
+	rec := f.ask(trialBody(workspaceID))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("a trial ask answered %d (%s), want 200", rec.Code, rec.Body.String())
 	}
@@ -177,8 +175,8 @@ func TestTrialIsTeamTierFourteenDays(t *testing.T) {
 	if claims.WorkspaceID != workspaceID {
 		t.Errorf("the trial's key binds to workspace %q, want the installation's own project id %q (TN2)", claims.WorkspaceID, workspaceID)
 	}
-	if claims.Seats != trialSeats {
-		t.Errorf("the trial's key is minted for %d seat(s), want the %d that were asked for", claims.Seats, trialSeats)
+	if claims.Seats != 1 {
+		t.Errorf("the trial's key is minted for %d seat(s), want the row's one: the self-serve trial is single-seat (§10.3, B6) and the ask cannot name another", claims.Seats)
 	}
 
 	// The store's trial names the two things §14 counts, and the record names
@@ -226,19 +224,19 @@ func TestTrialIsTeamTierFourteenDays(t *testing.T) {
 // still holds the one trial the first ask claimed.
 func TestSecondTrialIsRefused(t *testing.T) {
 	f := trialAs(t)
-	if rec := f.ask(trialBody(workspaceID, trialSeats)); rec.Code != http.StatusOK {
+	if rec := f.ask(trialBody(workspaceID)); rec.Code != http.StatusOK {
 		t.Fatalf("the first ask answered %d (%s), want 200", rec.Code, rec.Body.String())
 	}
 
 	// The same account, another installation: the account has had its trial.
-	sameAccount := f.ask(trialBody("acme-other", trialSeats))
+	sameAccount := f.ask(trialBody("acme-other"))
 	if sameAccount.Code != http.StatusConflict {
 		t.Errorf("a second ask from the same account answered %d (%s), want 409", sameAccount.Code, sameAccount.Body.String())
 	}
 	// Another account, the installation the first trial was minted for: the
 	// installation has had its trial.
 	f.signsInAs("uid-other", "other@acme.example")
-	sameInstallation := f.ask(trialBody(workspaceID, trialSeats))
+	sameInstallation := f.ask(trialBody(workspaceID))
 	if sameInstallation.Code != http.StatusConflict {
 		t.Errorf("a second ask for the same installation answered %d (%s), want 409", sameInstallation.Code, sameInstallation.Body.String())
 	}
@@ -268,12 +266,12 @@ func TestSecondTrialIsRefused(t *testing.T) {
 // twice within it.
 func TestTrialIsHeldPerOrganisationAndInstallation(t *testing.T) {
 	f := trialAs(t)
-	if rec := f.ask(trialBody(workspaceID, trialSeats)); rec.Code != http.StatusOK {
+	if rec := f.ask(trialBody(workspaceID)); rec.Code != http.StatusOK {
 		t.Fatalf("the owning organisation's ask answered %d (%s), want 200", rec.Code, rec.Body.String())
 	}
 
 	f.signsInAs("uid-other", "founder@widgets.example")
-	naming := f.askFrom("198.51.100.30:4040", trialBody(workspaceID, trialSeats))
+	naming := f.askFrom("198.51.100.30:4040", trialBody(workspaceID))
 	if naming.Code != http.StatusOK {
 		t.Errorf("another organisation asking for the same project id answered %d (%s), want 200: the id is a caller's own string, so the trial it names is that organisation's and not the one it named (D2201)",
 			naming.Code, naming.Body.String())
@@ -295,7 +293,7 @@ func TestTrialIsHeldPerOrganisationAndInstallation(t *testing.T) {
 	}
 	// Within the pair the rule is what it was: the same organisation asking
 	// again for the same installation has had its trial.
-	again := f.askFrom("198.51.100.31:4040", trialBody(workspaceID, trialSeats))
+	again := f.askFrom("198.51.100.31:4040", trialBody(workspaceID))
 	if again.Code != http.StatusConflict {
 		t.Errorf("the same organisation asking again for the same installation answered %d (%s), want 409", again.Code, again.Body.String())
 	}
@@ -333,7 +331,7 @@ func TestTrialIsRefusedWithoutAVerifiedSignIn(t *testing.T) {
 			}
 			f.deps.SignIn = spy
 			f.start()
-			req := httptest.NewRequest(http.MethodPost, intakeOrigin+RouteTrial, strings.NewReader(trialBody(workspaceID, trialSeats)))
+			req := httptest.NewRequest(http.MethodPost, intakeOrigin+RouteTrial, strings.NewReader(trialBody(workspaceID)))
 			req.Header.Set("Content-Type", "application/json")
 			if tc.token != "" {
 				req.Header.Set("Authorization", "Bearer "+tc.token)
@@ -369,7 +367,7 @@ func TestTrialIsRefusedForAFreeMailOrganisation(t *testing.T) {
 	f := trialAs(t)
 	for _, account := range []string{"founder@gmail.example", "founder@Outlook.Example"} {
 		f.signsInAs("uid-"+account, account)
-		rec := f.askFrom("198.51.100.40:4040", trialBody(workspaceID, trialSeats))
+		rec := f.askFrom("198.51.100.40:4040", trialBody(workspaceID))
 		if rec.Code != http.StatusForbidden {
 			t.Errorf("an ask from %s answered %d (%s), want 403: a free mail domain is not an organisation (D453)", account, rec.Code, rec.Body.String())
 		}
@@ -381,7 +379,7 @@ func TestTrialIsRefusedForAFreeMailOrganisation(t *testing.T) {
 		t.Errorf("an ask from a free mail domain minted %d key(s), want none", len(minted))
 	}
 	f.signsInAs("uid-trial", trialAccount)
-	if rec := f.ask(trialBody(workspaceID, trialSeats)); rec.Code != http.StatusOK {
+	if rec := f.ask(trialBody(workspaceID)); rec.Code != http.StatusOK {
 		t.Errorf("an address at a domain of its own answered %d (%s), want 200: the refusal is the account's domain's, not the route's", rec.Code, rec.Body.String())
 	}
 }
@@ -401,17 +399,17 @@ func trialFaultCode(t *testing.T, rec *httptest.ResponseRecorder) string {
 }
 
 // TestTrialIsRefusedForABodyItCannotRead: the body is the API's own JSON and it
-// is read strictly, so a body with a field this route does not know, a body
-// naming no workspace and one naming no seat count are refused before anything
+// is read strictly, so a body with a field this route does not know — a seat
+// count above all — and a body naming no workspace are refused before anything
 // is minted. The id itself is not checked for shape here: a value that is not a
 // project id mints a key no installation accepts, which is the asker's own loss.
 func TestTrialIsRefusedForABodyItCannotRead(t *testing.T) {
 	f := trialAs(t)
 	bodies := map[string]string{
-		"a field the route does not know": `{"workspace_id":"acme-widgets","seats":3,"note":"please"}`,
-		"no workspace":                    `{"seats":3}`,
-		"no seat count":                   `{"workspace_id":"acme-widgets"}`,
+		"a field the route does not know": `{"workspace_id":"acme-widgets","note":"please"}`,
+		"a seat count":                    `{"workspace_id":"acme-widgets","seats":3}`,
 		"a seat count of none":            `{"workspace_id":"acme-widgets","seats":0}`,
+		"no workspace":                    `{"note":"please"}`,
 		"not an object at all":            `"acme-widgets"`,
 	}
 	for name, body := range bodies {
@@ -424,6 +422,43 @@ func TestTrialIsRefusedForABodyItCannotRead(t *testing.T) {
 	}
 	if minted := f.mintedKeys(); len(minted) != 0 {
 		t.Errorf("a body the route cannot read minted %d key(s), want none", len(minted))
+	}
+}
+
+// TestTrialIsSingleSeatWhateverTheAskNames: the self-serve trial is single-seat
+// — §10.3 of the Subscription Terms makes the free seat's renewable key "the
+// self-serve, single-seat trial" and B6 rules the same, while §17 keeps a
+// multi-seat trial to the manual request form, which a person reads — so this
+// door reads no seat count at all. A body naming one is refused, strictly, as
+// every field the route does not read is, and the ask that is served mints the
+// row's one seat: the row names it, the ask cannot, and the minter refuses a
+// request that names another. The case exists because the opposite was true
+// once: the row named no seats, so whatever the ask said was minted — a million
+// seats, for a signed-in stranger.
+func TestTrialIsSingleSeatWhateverTheAskNames(t *testing.T) {
+	f := trialAs(t)
+	greedy := f.ask(`{"workspace_id":"acme-widgets","seats":1000000}`)
+	if greedy.Code != http.StatusBadRequest {
+		t.Errorf("an ask naming a million seats answered %d (%s), want 400: a self-serve trial is single-seat and this door reads no seat count (§10.3, B6)", greedy.Code, greedy.Body.String())
+	}
+	if minted := f.mintedKeys(); len(minted) != 0 {
+		t.Errorf("an ask naming a seat count minted %d key(s), want none", len(minted))
+	}
+
+	rec := f.ask(trialBody(workspaceID))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the ask this route reads answered %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	keys := f.mintedKeys()
+	if len(keys) != 1 {
+		t.Fatalf("the served ask minted %d key(s), want one", len(keys))
+	}
+	claims, _, err := licence.Verify([]byte(keys[0]), f.now, f.ring, workspaceID)
+	if err != nil {
+		t.Fatalf("the trial's key does not verify: %v", err)
+	}
+	if claims.Seats != 1 {
+		t.Errorf("the served trial carries %d seat(s), want the row's one", claims.Seats)
 	}
 }
 
@@ -462,20 +497,20 @@ func TestTrialIsThrottledPerDomain(t *testing.T) {
 		f.cfg.Throttle = Limits{Requests: 1, Window: time.Hour}
 		f.signIn.caller = Caller{UID: "uid-trial", Email: trialAccount, Provider: "google.com", AuthTime: f.now}
 	})
-	if rec := f.askFrom(applicantIP, trialBody(workspaceID, trialSeats)); rec.Code != http.StatusOK {
+	if rec := f.askFrom(applicantIP, trialBody(workspaceID)); rec.Code != http.StatusOK {
 		t.Fatalf("the first ask answered %d (%s), want 200", rec.Code, rec.Body.String())
 	}
 	// The same organisation, another account, another address: this is the ask a
 	// per-address bucket would have served.
 	f.signsInAs("uid-two", "colleague@acme.example")
-	second := f.askFrom("198.51.100.44:4040", trialBody("acme-other", trialSeats))
+	second := f.askFrom("198.51.100.44:4040", trialBody("acme-other"))
 	if second.Code != http.StatusTooManyRequests {
 		t.Errorf("a second account at the same domain answered %d (%s), want 429: §14's trial is throttled per domain and not per address", second.Code, second.Body.String())
 	}
 	// Another organisation asks and is served: what the bucket counts is the
 	// domain and not the trial route as a whole.
 	f.signsInAs("uid-three", "founder@widgets.example")
-	third := f.askFrom("198.51.100.45:4040", trialBody("widgets-workspace", trialSeats))
+	third := f.askFrom("198.51.100.45:4040", trialBody("widgets-workspace"))
 	if third.Code != http.StatusOK {
 		t.Errorf("an ask from another domain answered %d (%s), want 200: the bucket is the domain's and not the route's", third.Code, third.Body.String())
 	}
@@ -498,7 +533,7 @@ func TestTrialIsServedWhenItsOwnClaimWentUnanswered(t *testing.T) {
 	f := trialAs(t)
 	f.deps.Store = unansweredClaim{Store: f.store}
 	f.start()
-	rec := f.ask(trialBody(workspaceID, trialSeats))
+	rec := f.ask(trialBody(workspaceID))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the ask answered %d (%s), want 200: its own claim landed and only its answer was lost", rec.Code, rec.Body.String())
 	}
@@ -544,7 +579,7 @@ func TestTrialIsNotWithdrawnWhenTheStoreCannotSay(t *testing.T) {
 	f := trialAs(t)
 	f.deps.Store = &blindAfterAClaim{Store: f.store}
 	f.start()
-	rec := f.ask(trialBody(workspaceID, trialSeats))
+	rec := f.ask(trialBody(workspaceID))
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("the ask answered %d (%s), want 500: the claim failed and the trials could not be read", rec.Code, rec.Body.String())
 	}
@@ -572,7 +607,7 @@ func TestTrialIsNotSpentByAnAccountThatAlreadyHadOne(t *testing.T) {
 		f.cfg.Throttle = Limits{Requests: 2, Window: time.Hour}
 		f.signIn.caller = Caller{UID: "uid-trial", Email: trialAccount, Provider: "google.com", AuthTime: f.now}
 	})
-	if rec := f.askFrom(applicantIP, trialBody(workspaceID, trialSeats)); rec.Code != http.StatusOK {
+	if rec := f.askFrom(applicantIP, trialBody(workspaceID)); rec.Code != http.StatusOK {
 		t.Fatalf("the account's own ask answered %d (%s), want 200", rec.Code, rec.Body.String())
 	}
 	// The same account again, three times, each from its own address: every one
@@ -582,14 +617,14 @@ func TestTrialIsNotSpentByAnAccountThatAlreadyHadOne(t *testing.T) {
 		{"198.51.100.21:4040", "acme-repeat-two"},
 		{"198.51.100.22:4040", "acme-repeat-three"},
 	} {
-		rec := f.askFrom(repeat.ip, trialBody(repeat.installation, trialSeats))
+		rec := f.askFrom(repeat.ip, trialBody(repeat.installation))
 		if rec.Code != http.StatusConflict {
 			t.Errorf("a repeat ask for %s answered %d (%s), want 409: the account has had its trial, and a refusal mints nothing and must not spend the domain's allowance",
 				repeat.installation, rec.Code, rec.Body.String())
 		}
 	}
 	f.signsInAs("uid-two", "colleague@acme.example")
-	colleague := f.askFrom("198.51.100.23:4040", trialBody("acme-colleague", trialSeats))
+	colleague := f.askFrom("198.51.100.23:4040", trialBody("acme-colleague"))
 	if colleague.Code != http.StatusOK {
 		t.Errorf("a colleague at the same domain answered %d (%s), want 200: the allowance the repeats would have spent is still there",
 			colleague.Code, colleague.Body.String())
@@ -610,7 +645,7 @@ func TestTrialIsWithdrawnWhenTheClaimCannotBeWritten(t *testing.T) {
 	f := trialAs(t)
 	f.deps.Store = claimRefuser{Store: f.store, err: errors.New("the store could not be written")}
 	f.start()
-	rec := f.ask(trialBody(workspaceID, trialSeats))
+	rec := f.ask(trialBody(workspaceID))
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("the ask answered %d (%s), want 500: the claim could not be written", rec.Code, rec.Body.String())
 	}

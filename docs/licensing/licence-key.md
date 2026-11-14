@@ -252,8 +252,10 @@ These are stated as limits rather than defended against; the Terms are the enfor
 - **One trial per installation is a speed bump.** Uniqueness is keyed by the organisation and the
   workspace's Firebase project id (D2201), because a project id is a caller's own string and proves
   nothing (F37); an address at a free mail provider is refused a trial rather than counted as an
-  organisation (D453), since everyone who holds an address there would share one; and the trial path
-  is throttled per domain (K2.7). Another account, or another Firebase project, can still ask again.
+  organisation (D453), since everyone who holds an address there would share one; the self-serve trial
+  is one seat and the ask cannot name another (§10.3, B6 — a multi-seat trial is the request form's,
+  §17); and the trial path is throttled per domain (K2.7). Another account, or another Firebase
+  project, can still ask again.
 - **The hand-off reaches one child only where the build has the check.** The removal the storage
   section states is the registration point's, so an **untagged build** — no store, no key check and
   therefore no removal — passes `FUGARO_LICENCE_KEY` on to every child it starts, the same four the

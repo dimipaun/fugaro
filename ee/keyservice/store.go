@@ -261,6 +261,20 @@ func trialPair(organisation, installation string) string {
 	return url.PathEscape(organisation) + "|" + url.PathEscape(installation)
 }
 
+// trialAccountName is the name an account's trial is filed under in the
+// document store, and it is escaped for the reason the pair's two names are: the
+// account is the address §14's rule counts, and §4.2's `address` admits a slash
+// in a local part (its `isAtext`), which the document store reads as a
+// subcollection rather than as part of a document's name. Escaped, the address
+// is one the store can file whatever it holds. Unescaped, the two stores
+// disagreed on a real input: a verified caller at `a/b@acme.example` was served
+// by the memory store and met `docstore.ErrUnstorableName` in the deployed one,
+// which the route answers as a failure — and, on that path, by a key it had
+// already minted and then withdraws.
+func trialAccountName(account string) string {
+	return url.PathEscape(account)
+}
+
 // Store is the service's memory. Save is an upsert by the record's own id
 // (Source for an issuance, ID for the rest), except for an issuance the store
 // already holds under that source, which is ErrAlreadyRecorded -- so two

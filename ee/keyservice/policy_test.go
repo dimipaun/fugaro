@@ -104,7 +104,7 @@ func TestDefaultPolicyPerTier(t *testing.T) {
 		{name: PolicyTeamAnnual, tier: licence.TierTeam, kind: licence.KindPaid, term: 365 * day, graceDays: 30, renewalMode: licence.RenewalAuto, checkInterval: &daily, renewBeforeDays: 7},
 		{name: PolicyEnterprise, tier: licence.TierEnterprise, kind: licence.KindPaid, term: 365 * day, graceDays: 30, renewalMode: licence.RenewalAuto, checkInterval: &daily, renewBeforeDays: 7},
 		{name: PolicyEnterpriseAirGapped, tier: licence.TierEnterprise, kind: licence.KindPaid, term: 365 * day, graceDays: 30, renewalMode: licence.RenewalNone, checkInterval: nil, renewBeforeDays: 0},
-		{name: PolicyTrial, tier: licence.TierTeam, kind: licence.KindTrial, term: 14 * day, graceDays: 0, renewalMode: licence.RenewalNone, checkInterval: &daily, renewBeforeDays: 0},
+		{name: PolicyTrial, tier: licence.TierTeam, kind: licence.KindTrial, term: 14 * day, seats: 1, graceDays: 0, renewalMode: licence.RenewalNone, checkInterval: &daily, renewBeforeDays: 0},
 		{name: PolicyFreeSeat, tier: licence.TierTeam, kind: licence.KindComped, term: 365 * day, seats: 1, graceDays: 30, renewalMode: licence.RenewalAuto, checkInterval: &daily, renewBeforeDays: 7},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

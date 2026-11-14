@@ -309,8 +309,14 @@ func TestTheV1MinterRefusesWhatItCannotMint(t *testing.T) {
 		// the next year is paid for, so a caller that named either a longer span
 		// would be granting what the row says it does not (section 7, D2138).
 		// The row's own term is still taken, because a caller may say it.
-		{name: "a trial for a term of its own choosing", termDays: 30, edit: func(r *RequestV1, _ *Minter) { r.Policy = PolicyTrial }, notTheCeiling: true},
-		{name: "a trial for its own fourteen days", termDays: 14, edit: func(r *RequestV1, _ *Minter) { r.Policy = PolicyTrial }, signed: 1, mints: true, term: 14 * day},
+		// The trial row names its own seat, so the requests below that mint from
+		// it name that one: what those cases are about is the row's term, and the
+		// seat a trial carries is the row's by §10.3 (B6).
+		{name: "a trial for a term of its own choosing", termDays: 30, edit: func(r *RequestV1, _ *Minter) { r.Policy, r.Seats = PolicyTrial, trialSeats }, notTheCeiling: true},
+		{name: "a trial for its own fourteen days", termDays: 14, edit: func(r *RequestV1, _ *Minter) { r.Policy, r.Seats = PolicyTrial, trialSeats }, signed: 1, mints: true, term: 14 * day},
+		// A row whose seats are its own takes none other: the trial row names
+		// one, so a request naming more is minted for nobody (D2184, §10.3).
+		{name: "a trial for more seats than its row names", termDays: 14, edit: func(r *RequestV1, _ *Minter) { r.Policy, r.Seats = PolicyTrial, 5 }},
 		{name: "an air-gapped key for more than its own year", termDays: 366, edit: func(r *RequestV1, _ *Minter) { r.Policy = PolicyEnterpriseAirGapped }, notTheCeiling: true},
 		{name: "an air-gapped key for its own year", termDays: 365, edit: func(r *RequestV1, _ *Minter) { r.Policy = PolicyEnterpriseAirGapped }, signed: 1, mints: true, term: 365 * day},
 		{name: "no key id for the environment", termDays: 30, edit: func(_ *RequestV1, m *Minter) { m.Keys = Keys{Staging: stagingKeyID} }},

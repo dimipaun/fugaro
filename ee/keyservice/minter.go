@@ -382,9 +382,10 @@ func (m Minter) MintV1(ctx context.Context, req RequestV1) (MintedV1, error) {
 	if !known {
 		return MintedV1{}, fmt.Errorf("the tier %q is not one a key can be issued for", policy.Tier)
 	}
-	// The one row whose seats are its own: a free seat is one seat, and a request
-	// that asks this row for a hundred has not been given them by anything, so it
-	// mints a key for nobody rather than a key for a hundred (D2184, D2199).
+	// The rows whose seats are their own — the free seat and the trial, one seat
+	// each — and a request that asks one of them for a hundred has not been given
+	// them by anything, so it mints a key for nobody rather than a key for a
+	// hundred (D2184, D2199; §10.3 makes the self-serve trial single-seat).
 	if policy.Seats != 0 && req.Seats != policy.Seats {
 		return MintedV1{}, fmt.Errorf("the %s row is minted for its own %d seat(s) and the request names %d: this row's seats are the row's (D2184)",
 			policy.Name, policy.Seats, req.Seats)

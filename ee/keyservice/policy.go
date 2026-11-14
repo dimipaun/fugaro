@@ -74,6 +74,13 @@ const (
 	// project drops to Free rather than keeping the paid features for another
 	// month.
 	trialGraceDays = 0
+	// trialSeats is the one seat the trial row is issued for. §10.3 makes the
+	// self-serve trial single-seat and B6 rules a multi-seat trial §17's — the
+	// manual request form, which a person reads — so the row names the count and
+	// a request cannot: with the count zero the row took whatever a signed-in
+	// stranger's request said, and the minter's guard is what refuses a request
+	// naming another (D2184, minter.go).
+	trialSeats = 1
 
 	// renewalLeadDays is how early the renewal job starts asking for the next
 	// key. Section 12.1 does not state it and the payload example of section
@@ -254,10 +261,18 @@ var defaultPolicies = []Policy{
 		Warnings:        defaultWarnings(),
 	},
 	{
-		Name:            PolicyTrial,
-		Tier:            licence.TierTeam,
-		Kind:            licence.KindTrial,
-		Term:            trialTerm,
+		Name: PolicyTrial,
+		Tier: licence.TierTeam,
+		Kind: licence.KindTrial,
+		Term: trialTerm,
+		// The row's own seat, and one of them: the self-serve trial is
+		// single-seat, and a trial of more seats is §17's manual request form,
+		// read by a person (B6, §10.3 of the Subscription Terms). Naming it here
+		// rather than letting the caller name it is what makes that true — with
+		// the count zero the row took whatever a request said, and a request is
+		// a signed-in stranger's — and the minter refuses a request naming
+		// another, the way it does for the free seat (D2184).
+		Seats:           trialSeats,
 		GraceDays:       trialGraceDays,
 		RenewalMode:     licence.RenewalNone,
 		RenewBeforeDays: 0,

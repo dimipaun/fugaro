@@ -290,7 +290,7 @@ func (s *DocStore) ClaimTrial(ctx context.Context, t Trial) error {
 	return s.db.RunTransaction(ctx, func(ctx context.Context, tx docstore.Transaction) error {
 		for _, claim := range []struct{ collection, id string }{
 			{trialCollection, trialPair(t.Organisation, t.Installation)},
-			{trialAccountCollection, t.Account},
+			{trialAccountCollection, trialAccountName(t.Account)},
 		} {
 			held, err := tx.Get(ctx, claim.collection, claim.id, nil)
 			if err != nil {
@@ -308,8 +308,10 @@ func (s *DocStore) ClaimTrial(ctx context.Context, t Trial) error {
 		// ask arrives for an account whose trial is already out: the installation
 		// alone does not say which of two organisations' trials it is. It is an
 		// object like every other document here: what the store holds is
-		// documents.
-		return tx.Put(ctx, trialAccountCollection, t.Account, map[string]string{
+		// documents. It is filed under the escaped account for the reason the
+		// pair is (`trialAccountName`): an address may hold characters this
+		// store cannot name a document with.
+		return tx.Put(ctx, trialAccountCollection, trialAccountName(t.Account), map[string]string{
 			"organisation": t.Organisation,
 			"installation": t.Installation,
 		})

@@ -62,13 +62,18 @@ func init() {
 }
 
 // TrialCall is what a trial ask carries: the installation's Firebase project id,
-// and the seats the trial is asked for.
+// and nothing else.
 //
 // It carries no term, no tier and no policy, because those are the row's
 // (D2133): a caller that could name them could mint a trial that never checks at
-// all. The seats are the one number that is the caller's — the row names none,
-// and how many people an organisation tries the tier with is its own decision
-// (K2.1's policy table).
+// all. It carries no seat count either: this door is the self-serve trial, and
+// that one is **single-seat** by the owner's ruling — §10.3 of the Subscription
+// Terms makes the free seat's renewable key the self-serve, single-seat trial,
+// and B6 keys the same ruling to it — while a trial asked for more seats is
+// §17's: the manual request form, which a person reads and approves one at a
+// time. The row names the one seat and the minter refuses a request that names
+// another (policy.go, minter.go), so a body carrying a seat count at all is a
+// body this route no longer reads.
 //
 // The body is read through decodeWire like the portal's other requests, strictly
 // (P1.1). The shape has no entry in the wire registry (wire.go) yet: a
@@ -78,7 +83,6 @@ func init() {
 // reading of it.
 type TrialCall struct {
 	WorkspaceID string `json:"workspace_id"`
-	Seats       int    `json:"seats"`
 }
 
 // trialPrefix opens the source a trial's issuance is written under, the way
@@ -100,30 +104,29 @@ func trialSource(organisation, installation string) string {
 const (
 	trialRateRefusal     = "Too many requests from this address just now. Try again shortly."
 	trialSignInRefusal   = "This request's sign-in could not be verified, so no trial was issued for it. Sign in to the licence project and ask again."
-	trialBodyRefusal     = "This request is not the ask this route reads: it carries the workspace's Firebase project id and the seats the trial is asked for, and nothing else."
+	trialBodyRefusal     = "This request is not the ask this route reads: it carries the workspace's Firebase project id and nothing else. A trial of more than one seat is asked for through the request form."
 	trialClaimedRefusal  = "This account or this workspace has already had its trial, and §14's trial is one per installation and account."
 	trialWorkspaceEmpty  = "A trial names the workspace it is for, and this request names none."
 	trialFreeMailRefusal = "A trial is granted to an organisation, and this account's address is at a free mail provider, where anyone can hold an address and the domain is not one organisation's. Ask again with an address at your organisation's own domain."
-	trialSeatsRefusal    = "A trial is asked for a number of seats, and this request asks for none."
 )
-
-// trialSeatFloor is the seat count below which an ask is not an ask. It is one:
-// a key for nobody is not a licence (minter.go refuses one), and a request that
-// named none has left the field out rather than asked for none.
-const trialSeatFloor = 1
 
 // trial is §14's trial route: a signed-in account asks for a trial for one
 // installation and is mailed its key.
 //
 // The order is the address's allowance, then the body, then the sign-in, then
-// the account's domain's allowance, then the cheap half of §14's rule, then the
-// mint, then the claim, and then the mail and the two records. The address's
-// allowance is spent first for the reason renew.go's is (a body this service
-// never parses is as cheap to serve as a good one), the sign-in is read before
-// the domain's allowance and before the rule because the account is half of what
-// the rule counts, and the rule is read before the mint because minting for an
-// ask that is going to be refused spends the key ring's authority on a key
-// nobody is given.
+// the free mail refusal, then the cheap half of §14's rule, then the account's
+// domain's allowance, then the mint, then the claim, and then the mail and the
+// two records. The address's allowance is spent first for the reason renew.go's
+// is (a body this service never parses is as cheap to serve as a good one); the
+// sign-in is read before the rule and before the mint because the account is
+// half of what both count; the free mail refusal follows the sign-in because it
+// is the organisation the sign-in proved that it reads (D453); the rule is read
+// before the mint because minting for an ask that is going to be refused spends
+// the key ring's authority on a key nobody is given; and the domain's allowance
+// comes after everything that can refuse the ask without a key, because a domain
+// is shared — an ask that is refused mints nothing and must not spend an
+// allowance other accounts on that domain still need (the throttle is documented
+// per domain: docs/licensing/licence-key.md, "Limits, accepted").
 //
 // The mint stands before the claim and not after it, and that order costs
 // something either way: the claim is the store's check-and-write and it needs
@@ -220,7 +223,10 @@ func (s *Service) trial(w http.ResponseWriter, r *http.Request) {
 		// of it: what the key says its organisation is and what the rule counted
 		// are one thing (D2201).
 		Organisation: organisation,
-		Seats:        call.Seats,
+		// The row's own seat count, which the request has to name and cannot
+		// change: a self-serve trial is one seat (§10.3, B6) and the minter
+		// refuses a request naming another (minter.go's guard, D2184).
+		Seats: trialSeats,
 		// No term and no end: the row runs for its own fourteen days and the
 		// minter refuses a term on a row nothing renews (D2136, minter.go).
 	})
@@ -330,11 +336,14 @@ func (s *Service) trialLanded(ctx context.Context, keyID string) (bool, error) {
 	return false, nil
 }
 
-// trialCall reads the ask's body: the route's own JSON, strictly, with the two
-// fields it names present and the workspace and the seat count checked for being
-// there at all. What the values say is not this route's to judge beyond that —
-// a project id that is not one mints a key that verifies and binds to nothing
-// anybody owns, which is the asker's own loss (wire.go's split, `decodeWire`).
+// trialCall reads the ask's body: the route's own JSON, strictly, with the one
+// field it names present and non-empty. A body that carries anything else — a
+// seat count above all, which is the field this route used to read — is refused
+// here rather than ignored, because `decodeWire` is strict and a trial of more
+// than one seat is not this door's to give (§10.3, B6, §17). What the id says is
+// not this route's to judge beyond that: a project id that is not one mints a
+// key that verifies and binds to nothing anybody owns, which is the asker's own
+// loss (wire.go's split, `decodeWire`).
 func (s *Service) trialCall(w http.ResponseWriter, r *http.Request) (TrialCall, bool) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -352,10 +361,6 @@ func (s *Service) trialCall(w http.ResponseWriter, r *http.Request) (TrialCall, 
 	// something nobody asked for.
 	if strings.TrimSpace(call.WorkspaceID) == "" {
 		refuseAPI(w, http.StatusBadRequest, "unreadable_body", trialWorkspaceEmpty)
-		return TrialCall{}, false
-	}
-	if call.Seats < trialSeatFloor {
-		refuseAPI(w, http.StatusBadRequest, "unreadable_body", trialSeatsRefusal)
 		return TrialCall{}, false
 	}
 	return call, true

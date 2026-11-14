@@ -384,6 +384,16 @@ func testTrialOnce(t *testing.T, open func(t *testing.T) Store) {
 		t.Errorf("ClaimTrial for an account that was only named by a refused claim = %v, want the trial handed out", err)
 	}
 
+	// The account is filed under an escaped name too, and it needs to be: §4.2's
+	// `address` admits a slash in a local part (its `isAtext`), which the
+	// document store reads as a subcollection rather than as part of a name
+	// (`trialAccountName`). Unescaped, this claim is one the memory store hands
+	// out and the document store refuses as unnameable, so the two stores answer
+	// a verified caller two ways on the same input.
+	if err := store.ClaimTrial(ctx, Trial{Organisation: "slash.example", Installation: "acme-slash", Account: "a/b@slash.example", KeyID: "fgk_11", At: issuedAt}); err != nil {
+		t.Errorf("ClaimTrial for an account holding a slash = %v, want the trial handed out: the account is escaped into the name its document is filed under", err)
+	}
+
 	// The pair is joined under an escape, and these are the two names that say
 	// why it has to be (D2201, `trialPair`). Values the separator joins into one
 	// string are still two pairs — an organisation called "a" with an
@@ -408,8 +418,8 @@ func testTrialOnce(t *testing.T, open func(t *testing.T) Store) {
 	if err != nil {
 		t.Fatalf("Trials = %v", err)
 	}
-	if len(held) != 6 {
-		t.Errorf("the store holds %d trial(s), want the six that were claimed and no refused one: %+v", len(held), held)
+	if len(held) != 7 {
+		t.Errorf("the store holds %d trial(s), want the seven that were claimed and no refused one: %+v", len(held), held)
 	}
 	named := map[string]bool{}
 	for _, h := range held {
@@ -419,6 +429,7 @@ func testTrialOnce(t *testing.T, open func(t *testing.T) Store) {
 		{"a", "x|y"},
 		{"a|x", "y"},
 		{"a.example", "acme/widget"},
+		{"slash.example", "acme-slash"},
 	} {
 		if !named[want.organisation+"\x00"+want.installation] {
 			t.Errorf("the store does not hold the trial for %q at %q, so the two are one name: %+v", want.organisation, want.installation, held)
