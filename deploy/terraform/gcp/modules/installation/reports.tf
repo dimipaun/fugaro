@@ -209,18 +209,20 @@ resource "google_monitoring_alert_policy" "reports" {
   conditions {
     display_name = "A reports run failed"
     # What one filter reaches is Cloud Run's own record of a dead execution,
-    # and NOT the failure the job logs itself: with log isolation on (the
-    # default) logging.tf routes every fugaro=managed line to the logs bucket
-    # and excludes it from _Default, and a log-based alert reads neither, so a
+    # NOT the failure the job logs itself: with log isolation on (the default)
+    # logging.tf routes every fugaro=managed line to the logs bucket and
+    # excludes it from _Default, and a log-based alert reads neither, so a
     # reports run that logs its own error and exits cleanly is silent here.
-    # The one managed line the exclusion keeps in _Default is Cloud Run's
-    # system log, and an execution that died before its container started is
-    # only the audit system event, in _Required, which no exclusion touches:
-    # the job prefix and the severity reach both. The filter names no logName
-    # on purpose — a list of the two log names would lose the job's own line on
-    # an installation whose log_isolation is off. Alerts on what the job logs
-    # under isolation would need the exclusion to keep a reports line in
-    # _Default the way it keeps the image check's (logging.tf).
+    # The lines the exclusion keeps in _Default are the catalog check's own
+    # image-check line, which this job never logs, and the Cloud Run system
+    # log, which its executions do leave; an execution that died before its
+    # container started is only the audit system event, in _Required, which no
+    # exclusion touches. The job prefix and the severity reach both, so the
+    # filter names no logName on purpose — a list of the two log names would
+    # lose the job's own line on an installation whose log_isolation is off.
+    # Alerting on what the job logs under isolation would need the exclusion to
+    # keep a reports decision line in _Default the way it keeps the image
+    # check's (logging.tf).
     condition_matched_log {
       filter = "resource.type=\"cloud_run_job\" AND resource.labels.job_name=~\"^fugarorpt-\" AND severity>=ERROR"
     }
