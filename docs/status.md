@@ -38,7 +38,6 @@ As of 2026-11-14, read from `main`, the open pull requests and each plan's task 
 | run-limit-carry-over | 9/10 | L8 (docs) |
 | run-without-checkout | 6/8 | B2 and C1 |
 | roles-scopes | 11/12 | RS10 (docs, skills and release notes; unblocked, not started) |
-| mobile-auth | 6/7 | P5 (live, run 20261114-056012-9a0c, no pull request yet) |
 
 ## In progress, a lot left
 
@@ -108,3 +107,4 @@ As of 2026-11-14, read from `main`, the open pull requests and each plan's task 
 | website-changelog | WC4 lands with the next release |
 | central-orchestrator | superseded by stateless-orchestrator |
 | windows-cli | superseded by console-windows |
+| mobile-auth | owner live checks, proposed by name and not numbered |
