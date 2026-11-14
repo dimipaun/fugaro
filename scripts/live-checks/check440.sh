@@ -273,7 +273,8 @@ remove_scratch() {
 }
 
 # --------------------------------------------------------------- the Restore
-# The Restore is the cancel of both launched runs and the read-back that says so.
+# The Restore is the cancel of the runs this check launched — one, when a second
+# launch failed — and the read-back that says so.
 # It runs from the exit trap, so it has to tolerate a run that stopped anywhere:
 # every command is guarded, and a cancel that fails is a FAILed row rather than
 # the end of the shell before the block is printed.
@@ -284,6 +285,17 @@ restore_run() {
     else
       fact restore PASS "nothing of this check's was created: no run was launched, so there is nothing to cancel"
     fi
+    return 0
+  fi
+  if [ -z "$SLUG" ]; then
+    # A run of this check's really was started and the repository it is in was
+    # never read — the launch whose document would have carried it is the one
+    # that failed, or named no run. A cancel names a run as `<slug>/<run-id>`
+    # and nothing else (runstore.ParseRef), so the ref this could send is
+    # "/<run-id>", which the CLI refuses: the cancel would fail and the run
+    # would keep going while the row below read as a cancel. Better a FAIL that
+    # says which run is out there than a command that cannot stop it.
+    fact restore FAIL "the runs this check launched ($LAUNCHED) cannot be cancelled by name: the repository they are in was never read, so no <repo-slug>/<run-id> ref can be built for them — check 'fugaro runs ls' and cancel $LAUNCHED by hand"
     return 0
   fi
   local id key bad=0 detail=""
@@ -312,6 +324,15 @@ restore_run() {
   done
   if [ "$bad" -ne 0 ]; then
     fact restore FAIL "a cancel of this check's own runs failed: $detail"
+    return 0
+  fi
+  # The row names what was cancelled, not what the check meant to launch: a
+  # launch that failed before this left one run, and a cancel of one run is not
+  # a cancel of both.
+  local n
+  n=$(printf '%s\n' $LAUNCHED | grep -c .)
+  if [ "$n" -eq 1 ]; then
+    fact restore PASS "the launched run was cancelled ($detail) — a run stops at its next lease, so a row still reading active right after this is one on its way out. Its record stays where it is (a run's history is the installation's) and any pull request it opened is YOURS to close"
     return 0
   fi
   fact restore PASS "both launched runs were cancelled ($detail) — a run stops at its next lease, so a row still reading active right after this is one on its way out. Their records stay where they are (a run's history is the installation's) and any pull request they opened is YOURS to close"
@@ -810,13 +831,19 @@ step_launch() {
     fi
     LAUNCHED="$LAUNCHED $id"
     if [ "$i" = 1 ]; then LAUNCH_DOC_A="$SCRATCH/launch1.out"; else LAUNCH_DOC_B="$SCRATCH/launch2.out"; fi
+    # The slug is the launch's own answer rather than a guess from the directory
+    # name: one run ID can exist in two repositories, and every read below names
+    # the run as `<slug>/<run-id>`. It is read as soon as a launch answers and
+    # not after the loop, because a second launch that fails ends the check from
+    # inside this loop: the Restore, which runs from the exit trap, would then
+    # hold no slug for the run the first launch really started, and would have
+    # nothing to name it by.
+    if [ -z "$SLUG" ]; then
+      SLUG=$(json_field "$SCRATCH/launch$i.out" run)
+      SLUG=${SLUG%%/*}
+    fi
     say "launched $id: $(json_field "$SCRATCH/launch$i.out" status)"
   done
-  # The slug is the launch's own answer rather than a guess from the directory
-  # name: one run ID can exist in two repositories, and every read below names
-  # the run as `<slug>/<run-id>`.
-  SLUG=$(json_field "$LAUNCH_DOC_A" run)
-  SLUG=${SLUG%%/*}
   [ -n "$SLUG" ] || stop "the launch's own document named no run: $(one_line "$LAUNCH_DOC_A")"
   LOG_URL_A=$(json_field "$LAUNCH_DOC_A" log_url)
 

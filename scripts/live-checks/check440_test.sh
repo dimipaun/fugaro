@@ -277,6 +277,15 @@ cmd_run() { # --run-id ID --json TASK
     printf 'fugaro: run: the launch was refused: the sandbox repository is not configured\n' >&2
     return 1
     ;;
+  launch-fail-second)
+    # Only the SECOND launch is refused: the first one's run really is going
+    # when this ends the check from inside the launch loop, which is the state
+    # the Restore has to cancel out of.
+    if [ -s "$D/launched" ]; then
+      printf 'fugaro: run: the launch was refused: the sandbox repository is not configured\n' >&2
+      return 1
+    fi
+    ;;
   launch-sleep)
     sleep 30
     return 0
@@ -348,7 +357,20 @@ cmd_cancel() { # REF [--now] [--json]
     [ "$a" = --now ] && now=yes
   done
   case "$ref" in
-  */*) id=${ref##*/} ;;
+  */*)
+    # A full ref is `<repo-slug>/<run-id>` and the CLI parses it as exactly that
+    # (runstore.ParseRef): a leading slash is an EMPTY slug and is refused, never
+    # read as the run ID alone, because "" names no repository. A fake that
+    # stripped the ref to its last slash would cancel happily through a ref the
+    # real CLI refuses, and a Restore that sent one would read here as a cancel.
+    case "$ref" in
+    /*)
+      printf 'fugaro: run "%s" must look like <repo-slug>/<run-id>\n' "$ref" >&2
+      return 1
+      ;;
+    esac
+    id=${ref##*/}
+    ;;
   esac
   if [ -z "$id" ]; then
     ids_of active >"$D/.cands"
@@ -733,6 +755,27 @@ test_a_launch_that_fails_stops_the_run() {
   expect_contains "$(fact_line restore)" "may still be going" "a launch that fails: what to do"
 }
 
+# The pair the Restore exists for: the FIRST launch answered, so its run really
+# is going when the second launch is refused. The trap has to cancel that run,
+# and the ref it names it by has to carry the repository the run is in — a ref
+# whose slug is empty is one the CLI refuses (runstore.ParseRef), so the run
+# would be left going while the row read as a cancel.
+test_a_second_launch_that_fails_still_cancels_the_first_run() {
+  setup_case launch-fail-second
+  seed_history
+  MODE=launch-fail-second
+  run440_default
+  local id
+  id=$(launched_ids)
+  expect_status "$status" 2 "a second launch that fails"
+  expect_contains "$(fact_line aborted)" "the launch of" "a second launch that fails: the reason"
+  expect_fact restore PASS "a second launch that fails: the Restore"
+  expect_cancelled "a second launch that fails"
+  expect_contains "$(fugaro_calls)" "cancel $SLUG/$id" "a second launch that fails: the ref the cancel names"
+  expect_absent "$(fugaro_calls)" "cancel /$id" "a second launch that fails: an empty-slug ref"
+  expect_absent "$(fact_line restore)" "both launched runs" "a second launch that fails: the row claims two runs were cancelled"
+}
+
 test_a_launch_that_hangs_is_bounded() {
   setup_case launch-sleep
   seed_history
@@ -778,6 +821,11 @@ test_a_launch_that_names_no_run_stops_the_run() {
   run440_default
   expect_status "$status" 2 "a launch that names no run"
   expect_contains "$(fact_line aborted)" "named no run" "a launch that names no run: the reason"
+  # The other door to the same defect: two runs really were started and the
+  # repository they are in is unknown, so the Restore cannot name them at all.
+  # It says so rather than sending a ref with an empty slug.
+  expect_fact restore FAIL "a launch that names no run: the Restore"
+  expect_absent "$(fugaro_calls)" "cancel /" "a launch that names no run: an empty-slug ref"
 }
 
 test_a_minimum_that_is_not_refused_is_a_fail() {
@@ -992,6 +1040,7 @@ t test_yes_is_required_before_a_run_is_launched
 t test_a_directory_that_is_not_a_checkout_is_refused
 t test_help_prints_no_block
 t test_a_launch_that_fails_stops_the_run
+t test_a_second_launch_that_fails_still_cancels_the_first_run
 t test_a_launch_that_hangs_is_bounded
 t test_a_listing_that_fails_stops_the_run
 t test_a_listing_whose_json_cannot_be_read_stops_the_run
