@@ -35,24 +35,11 @@ import type { Membership, Organisation } from '../../api/types/orgs'
 import type {
   OpsEntitlementAction,
   OpsEventResolution,
+  OpsLists,
   OpsProjectTransfer,
 } from '../../api/types/ops'
 import type { ReportMonth } from '../../api/types/reports'
 import type { Workspace } from '../../api/types/workspaces'
-
-/**
- * The two lists as the wire spells them, which is `ops.schema.json`'s
- * `microsoft_directories` and not `OpsLists`' `microsoft_tenants`: D2207 was
- * amended on 2026-11-13 to pin the Microsoft (Entra ID) directory a verified
- * token names, and `src/api/types/ops.ts` still carries the name the amendment
- * replaced, so a request typed by it would send a field `wire_ops.go` refuses
- * (its decode is strict). The rename is that file's, and this is the name the
- * API answers and reads today.
- */
-export interface OpsListsWire {
-  email_domains: string[]
-  microsoft_directories: string[]
-}
 
 /** Everything the operations screens ask of the API. */
 export interface OpsApi {
@@ -70,8 +57,8 @@ export interface OpsApi {
   ledger(month: string): Promise<LedgerEntry[]>
   audit(): Promise<AuditEntry[]>
   report(month: string): Promise<ReportMonth>
-  lists(): Promise<OpsListsWire>
-  saveLists(lists: OpsListsWire): Promise<OpsListsWire>
+  lists(): Promise<OpsLists>
+  saveLists(lists: OpsLists): Promise<OpsLists>
   mint(mint: EntitlementMint): Promise<Entitlement>
   act(action: OpsEntitlementAction): Promise<Entitlement>
   transfer(transfer: OpsProjectTransfer): Promise<Workspace>
@@ -104,8 +91,8 @@ export function opsApi(client: ApiClient): OpsApi {
     ledger: (month) => client.request<LedgerEntry[]>(`/ops/ledger?${query({ month })}`),
     audit: () => client.request<AuditEntry[]>('/ops/audit'),
     report: (month) => client.request<ReportMonth>(`/ops/reports?${query({ month })}`),
-    lists: () => client.request<OpsListsWire>('/ops/lists'),
-    saveLists: (lists) => client.request<OpsListsWire>('/ops/lists', { method: 'PUT', body: lists }),
+    lists: () => client.request<OpsLists>('/ops/lists'),
+    saveLists: (lists) => client.request<OpsLists>('/ops/lists', { method: 'PUT', body: lists }),
     mint: (mint) => client.request<Entitlement>('/ops/mints', { method: 'POST', body: mint }),
     act: (action) =>
       client.request<Entitlement>('/ops/entitlement-actions', { method: 'POST', body: action }),

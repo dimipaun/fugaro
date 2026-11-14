@@ -34,7 +34,7 @@ import type { ReportMonth } from '../../api/types/reports'
 import type { Workspace } from '../../api/types/workspaces'
 import type { AuthPort, SignedInUser } from '../../auth/session'
 import { SessionProvider } from '../../auth/session'
-import type { OpsListsWire } from './api'
+import type { OpsLists } from '../../api/types/ops'
 import { opsApi } from './api'
 import { OpsScreen } from './ops'
 
@@ -156,7 +156,7 @@ const MONTH: ReportMonth = {
   ],
 }
 
-const LISTS: OpsListsWire = { email_domains: ['example.com'], microsoft_directories: [] }
+const LISTS: OpsLists = { email_domains: ['example.com'], microsoft_directories: [] }
 
 /** The membership row the API answers about the signed-in person. */
 function member(role: Role): Membership {
@@ -408,6 +408,37 @@ describe('the operations screens', () => {
       decision: 'dismiss',
       entitlement_id: null,
     })
+  })
+
+  it('loads the month again when Show is pressed after a refusal', async () => {
+    const replies = routes({
+      'GET /api/ops/ledger': refusal(503, 'unavailable', 'The ledger is not answering right now.'),
+    })
+    show(person(0), replies)
+    await screen.findByText('The ledger is not answering right now.')
+
+    // The month the form holds is the month that was just refused, so a Show
+    // that did nothing but clear the sentence would leave the section loading
+    // for ever: the load has to run again.
+    replies['GET /api/ops/ledger'] = { body: [ENTRY] }
+    send('Show the ledger')
+
+    expect(await screen.findByText(/24.00 USD/)).toBeDefined()
+    expect(screen.queryByText('The ledger is not answering right now.')).toBeNull()
+  })
+
+  it('loads the report again when Show is pressed after a refusal', async () => {
+    const replies = routes({
+      'GET /api/ops/reports': refusal(503, 'unavailable', 'The reports are not answering right now.'),
+    })
+    show(person(0), replies)
+    await screen.findByText('The reports are not answering right now.')
+
+    replies['GET /api/ops/reports'] = { body: MONTH }
+    send('Show the report')
+
+    expect(await screen.findByText(/24.00 direct/)).toBeDefined()
+    expect(screen.queryByText('The reports are not answering right now.')).toBeNull()
   })
 
   it('reads a customer’s records, and every id an action would name', async () => {

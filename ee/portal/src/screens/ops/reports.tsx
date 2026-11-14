@@ -22,12 +22,17 @@ import { sentence } from './state'
 export function ReportsSection({ api }: { api: OpsApi }) {
   const [month, setMonth] = useState(() => thisMonth(new Date()))
   const [asked, setAsked] = useState(month)
+  const [attempt, setAttempt] = useState(0)
   const [report, setReport] = useState<ReportMonth | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
 
   useEffect(() => {
     let live = true
     setReport(null)
+    // A load that starts clears the last refusal, so a month that answers this
+    // time is not drawn under the sentence the month before it was refused
+    // with.
+    setFailure(null)
     api.report(asked).then(
       (answered) => {
         if (live) {
@@ -43,12 +48,15 @@ export function ReportsSection({ api }: { api: OpsApi }) {
     return () => {
       live = false
     }
-  }, [api, asked])
+  }, [api, asked, attempt])
 
   function show(event: FormEvent): void {
     event.preventDefault()
-    setFailure(null)
+    // Pressing Show on the month already asked for changes nothing the effect
+    // depends on, and a refused load would then stay on screen forever: the
+    // attempt is what makes the same month a new load.
     setAsked(month)
+    setAttempt((tried) => tried + 1)
   }
 
   return (

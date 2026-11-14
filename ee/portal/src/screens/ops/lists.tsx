@@ -27,7 +27,8 @@
 // guesses at.
 
 import { useEffect, useState } from 'react'
-import type { OpsApi, OpsListsWire } from './api'
+import type { OpsLists } from '../../api/types/ops'
+import type { OpsApi } from './api'
 import type { OpsActions } from './state'
 import { sentence, useSubmission } from './state'
 
@@ -51,7 +52,7 @@ export function ListsSection({ api, actions }: { api: OpsApi; actions: OpsAction
   useEffect(() => {
     let live = true
     api.lists().then(
-      (lists: OpsListsWire) => {
+      (lists: OpsLists) => {
         if (live) {
           setDomains(text(lists.email_domains))
           setDirectories(text(lists.microsoft_directories))
