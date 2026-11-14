@@ -35,7 +35,13 @@ import (
 // step of any of them is run by an agent. Check 130's fake is a fake `curl`
 // alone, answering the three anonymous GETs the check makes about a
 // repository; its fake `gcloud` and `fugaro` log any call and fail, so the
-// test can say the check never reaches a cloud tool. Check 300's fakes are a
+// test can say the check never reaches a cloud tool. Check 69's fakes are a
+// fake `curl` (the origin probe, the four pages and one status per HEAD, all
+// out of the case's own files), a fake `openssl` for the certificate's subject
+// and its names, and a fake `npm` that writes the artifact `check69.sh` then
+// compares the deployed page against -- with fake `gcloud`, `fugaro` and
+// `belong` that log any call and fail, since the check names no cloud project
+// and runs no `fugaro` command. Check 300's fakes are a
 // fake `gcloud`, a fake `fugaro` and a fake RTDB behind a fake `curl`, and
 // Checks 303 and 304's fake is a fake `fugaro` alone -- 303's answers `doctor`,
 // `version`, the daemon's `run`, the node's `state` and `events` and the
@@ -72,6 +78,44 @@ import (
 // older than the release, a coder that reads images itself, a slot that is set,
 // a run that never ends, a record that is another run's, and a refusal whose
 // sentence has lost one of the parts an owner needs.
+// Check 470's fakes are a fake `fugaro` that holds the three sources `issue
+// mine` answers from (`shared`, `snapshot`, `local`), the snapshot file the real
+// CLI writes on a successful read and the two cache files the check's Restore is
+// about, and a fake `gcloud` holding the issue store's three prefixes, refusing
+// them on a knob in the two shapes a case has to tell apart -- a permission
+// denial, which is the reading U1 asks for, and a call that did not answer,
+// which stops the run -- so a case says what the check read, in which directory
+// it read it, and that a dry run made no call at all; the network the offline
+// mode turns off is the fake's own switch, because no test and no agent turns a
+// machine's network off.
+// Check LC4's fakes are a fake `gcloud` and a fake `fugaro`: the fake `fugaro`
+// answers `doctor --json` from the case's own directory, and the fake `gcloud`
+// serves the job list (applying the label filter, so a check that filtered on
+// the wrong labels is caught), the job, each secret and each secret's policy,
+// keyed by the ID the check asks about -- so a case can say the account's job
+// was found by its labels, that its own token secret was read and that no
+// other account's was mounted or made readable.
+// Check 313's fakes are a fake `fugaro` and a fake `curl` that performs the
+// handshake, beside a daemon of the test's own -- a real loopback server holding
+// the id's lock and writing its registry file -- so the mode and the nonce, the
+// handshake, the SIGKILL, the removed dead file and the pid a live process takes
+// are all readings of processes and files the case owns; Check 314's are a fake
+// `fugaro` whose `doctor --json` and `orchestrator ls --json` answer out of the
+// case's own files and a fake `gcloud` that answers the account and the project's
+// IAM policy, so a case says which project the policy was read on, which person's
+// roles it carries, and that a run which stopped earlier called nothing more.
+// Check 119's script is the one whose subject is a file rather than a cloud or
+// an installation: it reads the installer a manual dispatch of
+// `console-windows.yml` uploaded -- its name, its size, its SHA-256 and whether
+// its PE header really says x64 -- so it needs no fake at all, and its test
+// builds those bytes in a temporary directory and bends them one at a time (a
+// text file, a DOS stub, a truncated download, a 32-bit image, an empty
+// upload), asserting what the script printed and what it refused.
+// Check 210's fakes are a fake `fugaro`, a fake `gcloud`, a fake `git` and a
+// fake `gh`: the fake launcher is a counter, so the run IDs are the case's own,
+// and the fake `git` and `gh` really delete a branch and really move a pull
+// request from OPEN to CLOSED, so the teardown's own read-backs are readings of
+// state that changed.
 // Check 301's fakes are a fake `fugaro`, a fake launchd and a fake systemd
 // whose boot id and unit files the test writes, so a reboot, a second
 // instance's refusal and T7's re-render are all readings of files the test
@@ -89,9 +133,11 @@ var liveCheckScripts = []struct {
 	name string
 	test string
 }{
+	{"check69.sh", "check69_test.sh"},
 	{"check90.sh", "check90_test.sh"},
 	{"check91.sh", "check91_test.sh"},
 	{"check111.sh", "check111_test.sh"},
+	{"check210.sh", "check210_test.sh"},
 	{"check130.sh", "check130_test.sh"},
 	{"check145.sh", "check145_test.sh"},
 	{"check146.sh", "check146_test.sh"},
@@ -107,6 +153,8 @@ var liveCheckScripts = []struct {
 	{"check303.sh", "check303_test.sh"},
 	{"check304.sh", "check304_test.sh"},
 	{"check305.sh", "check305_test.sh"},
+	{"check313.sh", "check313_test.sh"},
+	{"check314.sh", "check314_test.sh"},
 	{"check340.sh", "check340_test.sh"},
 	{"check96.sh", "check96_test.sh"},
 	{"check361.sh", "check361_test.sh"},
@@ -121,6 +169,11 @@ var liveCheckScripts = []struct {
 	{"check520.sh", "check520_test.sh"},
 	{"check521.sh", "check521_test.sh"},
 	{"check350.sh", "check350_test.sh"},
+	{"check470.sh", "check470_test.sh"},
+	{"check-lc4.sh", "check-lc4_test.sh"},
+	{"check119.sh", "check119_test.sh"},
+	{"check57b.sh", "check57b_test.sh"},
+	{"check124.sh", "check124_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent

@@ -7,7 +7,9 @@ number and where the same failure reported by somebody else is attached to the
 same record as an occurrence. An issue is named by its number — `#0007` — once
 the store has given it one, and by its local ID `local-<run stem>` until then;
 `show`, `dismiss` and `submit` take either spelling (`7` and `#0007` are the
-same reference), and `list` prints the one a reader can copy.
+same reference), and `list` prints the one a reader can copy. What happens to
+an issue once a release fixes it — which release that was, and what `fugaro
+update` says about it — is [issues-resolved.md](issues-resolved.md).
 
 | Command | What it is for |
 | --- | --- |
