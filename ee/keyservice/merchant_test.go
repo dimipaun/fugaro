@@ -1715,6 +1715,12 @@ func TestARefundRevokesTheWholeRotationChain(t *testing.T) {
 	second, secondSecret := renewThroughTheEndpoint(t, f, refunded.KeyID, mailedSecret(t, f, f.mintedKeys()[0]))
 	theSubscriptionCovers(t, f, second.KeyID)
 	third, _ := renewThroughTheEndpoint(t, f, second.KeyID, secondSecret)
+	// The two successors are left naming no subscription, which is the shape a
+	// rotation written before the record carried one has: the walk's subscription
+	// step cannot reach them, so what this test pins from here on is the other
+	// step of D2147 — the `rotation:<key>` the successor's own source is.
+	setSubscription(t, f, second.KeyID, "")
+	setSubscription(t, f, third.KeyID, "")
 
 	at := f.now
 	f.event(Event{ID: "evt-3", Type: EventRefund, OccurredAt: at, Subscription: refunded.Subscription, KeyID: refunded.KeyID})
