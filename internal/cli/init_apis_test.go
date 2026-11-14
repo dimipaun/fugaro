@@ -24,8 +24,8 @@ func noEnableWait(t *testing.T, n int) {
 
 // With Cloud Resource Manager disabled, the project's name typed at a terminal
 // enables it through Service Usage (a change even under --plan-only), waits
-// for the enable to propagate, and carries on. --yes never does it under
-// --plan-only (TestPlanOnlyYesChangesNothing).
+// for the enable to propagate, and carries on. Nothing confirms it under
+// --plan-only (TestPlanOnlyChangesNothing).
 func TestInitEnablesResourceManager(t *testing.T) {
 	noEnableWait(t, 5)
 	r := newInitRig(t)
@@ -182,17 +182,18 @@ func TestInitStorageDisabledIsRemote(t *testing.T) {
 	}
 }
 
-// --plan-only never creates anything on --yes: not the state bucket, not an
-// enabled API. What the plan needs first is the project's name typed at a
-// terminal, or the run stops with the route (no "pass --yes" among it).
-func TestPlanOnlyYesChangesNothing(t *testing.T) {
+// --plan-only never creates anything: not the state bucket, not an enabled
+// API. What the plan needs first is the project's name typed at a terminal, or
+// the run stops with the route — and no route names a flag any more, which is
+// why the refusal is checked for one (T11, docs/no-prompt-policy).
+func TestPlanOnlyChangesNothing(t *testing.T) {
 	noEnableWait(t, 1)
 	t.Run("Resource Manager disabled", func(t *testing.T) {
 		r := newInitRig(t)
 		r.stateBucket()
 		r.su.Disable(infra.ServiceResourceManager, r.crm.Server)
 		_, _, err := executeStdin(t, initProjectName+"\n", "setup", "--plan-only")
-		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), enableCommand) || strings.Contains(err.Error(), "or pass --yes") {
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), enableCommand) || strings.Contains(err.Error(), "--yes") {
 			t.Fatalf("exit %d, err %v", ExitCode(err), err)
 		}
 		if len(r.su.Enables()) != 0 {
@@ -202,7 +203,7 @@ func TestPlanOnlyYesChangesNothing(t *testing.T) {
 	t.Run("no state bucket", func(t *testing.T) {
 		r := newInitRig(t) // no r.stateBucket()
 		_, _, err := executeStdin(t, initProjectName+"\n", "setup", "--plan-only")
-		if ExitCode(err) != ExitUserError || strings.Contains(err.Error(), "or pass --yes") {
+		if ExitCode(err) != ExitUserError || strings.Contains(err.Error(), "--yes") {
 			t.Fatalf("exit %d, err %v", ExitCode(err), err)
 		}
 		for _, q := range r.gcs.Requests() {
@@ -213,18 +214,17 @@ func TestPlanOnlyYesChangesNothing(t *testing.T) {
 	})
 }
 
-// --plan-only never lets --yes confirm anything, in any mode: the converge,
-// --firebase-project, --repo, with or without --json and --non-interactive. With the
-// Cloud Resource Manager API disabled no enable call is made.
-func TestPlanOnlyYesNeverConfirmsInAnyMode(t *testing.T) {
+// --plan-only confirms nothing, in any mode: the converge, --firebase-project,
+// --repo, with or without --json. With the Cloud Resource Manager API disabled
+// no enable call is made.
+func TestPlanOnlyNeverConfirmsInAnyMode(t *testing.T) {
 	noEnableWait(t, 1)
 	for name, args := range map[string][]string{
-		"converge":                 {"setup", "--plan-only"},
-		"--json":                   {"setup", "--plan-only", "--json"},
-		"--non-interactive":        {"setup", "--plan-only"},
-		"--firebase-project":       {"setup", "--plan-only", "--firebase-project", initProject},
-		"--repo":                   {"setup", "--repo", "--plan-only"},
-		"--repo --non-interactive": {"setup", "--repo", "--plan-only", "--json"},
+		"converge":           {"setup", "--plan-only"},
+		"--json":             {"setup", "--plan-only", "--json"},
+		"--firebase-project": {"setup", "--plan-only", "--firebase-project", initProject},
+		"--repo":             {"setup", "--repo", "--plan-only"},
+		"--repo --json":      {"setup", "--repo", "--plan-only", "--json"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newInitRig(t)
@@ -239,13 +239,14 @@ func TestPlanOnlyYesNeverConfirmsInAnyMode(t *testing.T) {
 			}
 		})
 	}
-	// The one place --yes is read, in any path that reaches it.
+	// The internal half a covered run carries, at the one place it is read: no
+	// flag sets it any more (T11), and --plan-only outranks it whatever it says.
 	var out strings.Builder
 	r := &initRun{o: &initOptions{yes: true, planOnly: true}, w: &out, cmd: NewRootCmd()}
 	if ok, err := r.ask("changes something"); err != nil || ok {
-		t.Fatalf("ask under --plan-only --yes: %v, %v", ok, err)
+		t.Fatalf("ask under --plan-only with a covered run: %v, %v", ok, err)
 	}
 	if r.conditions().Yes {
-		t.Error("conditions carry --yes under --plan-only")
+		t.Error("conditions carry a covered run's answer under --plan-only")
 	}
 }

@@ -1035,7 +1035,8 @@ func TestProjectPolicyDeleteDeletesUnderTheETagItValidated(t *testing.T) {
 	budgetTransport = &policyChangedDuringDelete{rt: http.DefaultTransport, db: f.db, val: other}
 	t.Cleanup(func() { budgetTransport = nil })
 
-	out, _, err := execute(t, "project", "policy", "publish", "--delete")
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, "aurora\n", "project", "policy", "publish", "--delete")
 	if err == nil {
 		t.Fatalf("a publish that landed while the deletion was being confirmed was deleted unconfirmed:\n%s", out)
 	}
@@ -1094,7 +1095,8 @@ func TestProjectPolicyDeleteRemovesChildrenThenTheSharedNode(t *testing.T) {
 	child := projectpolicy.PathRepo(slug)
 	f.db.Set(child, map[string]any{"allow_repos": []string{"github/acme/app"}})
 
-	out, _, err := execute(t, "project", "policy", "publish", "--delete")
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, "aurora\n", "project", "policy", "publish", "--delete")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1132,7 +1134,8 @@ func TestProjectPolicyDeleteRemovesChildrenBeforeTheSharedNode(t *testing.T) {
 	f.db.Set(child, map[string]any{"allow_repos": []string{"github/acme/app"}})
 	f.db.Deny(projectpolicy.PathShared())
 
-	out, _, err := execute(t, "project", "policy", "publish", "--delete")
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, "aurora\n", "project", "policy", "publish", "--delete")
 	if err == nil {
 		t.Fatalf("a refused delete of the shared node was reported as a success:\n%s", out)
 	}
@@ -1147,9 +1150,14 @@ func TestProjectPolicyDeleteRemovesChildrenBeforeTheSharedNode(t *testing.T) {
 	}
 }
 
-// TestProjectPolicyDeleteRefusesWithoutYesWhileARunIsInFlight: a repository
-// that is mid-run keeps the policy until it finishes (B5).
-func TestProjectPolicyDeleteRefusesWithoutYesWhileARunIsInFlight(t *testing.T) {
+// TestProjectPolicyDeleteRefusesWhileARunIsInFlight: a repository that is
+// mid-run keeps the policy until it finishes (B5). The gate is about the runs
+// and not about the session, so nothing gets past it: with a pipe for stdin the
+// `--delete` is refused in the sentence that names the runs and the wait, and
+// the policy stays. There is no second half any more — T11 of
+// docs/no-prompt-policy removed the flag that used to override the gate, so no
+// word of a run's own deletes a policy a run still holds.
+func TestProjectPolicyDeleteRefusesWhileARunIsInFlight(t *testing.T) {
 	f := newProjectFixture(t, "")
 	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
 		t.Fatal(err)
@@ -1162,31 +1170,26 @@ func TestProjectPolicyDeleteRefusesWithoutYesWhileARunIsInFlight(t *testing.T) {
 
 	_, _, err = execute(t, "project", "policy", "publish", "--delete")
 	if err == nil {
-		t.Fatal("--delete without --yes was allowed while a run is in flight")
+		t.Fatal("--delete was allowed while a run is in flight")
 	}
-	if !strings.Contains(err.Error(), "--yes") {
-		t.Errorf("the refusal does not name --yes: %v", err)
+	if !strings.Contains(err.Error(), "in flight") || !strings.Contains(err.Error(), "wait for them") {
+		t.Errorf("the refusal does not say the runs hold the policy and that waiting is the way through: %v", err)
+	}
+	if strings.Contains(err.Error(), "--yes") {
+		t.Errorf("the refusal names --yes, which no longer exists and would not get past the gate: %v", err)
 	}
 	if f.db.Value(projectpolicy.PathShared()) == nil {
-		t.Fatal("the policy was removed anyway")
-	}
-	if _, _, err := execute(t, "project", "policy", "publish", "--delete"); err != nil {
-		t.Fatalf("--yes must delete while a run is in flight: %v", err)
-	}
-	if f.db.Value(projectpolicy.PathShared()) != nil {
-		t.Fatal("--yes did not delete the policy")
+		t.Fatal("the policy was removed although a run is in flight")
 	}
 }
 
 // TestProjectPolicyDeleteRefusesTheTypedNameWhileARunIsInFlight is the same
-// gate at a terminal, which is where it can actually be walked past: with a
-// terminal, typing the project's name is what every other confirmation here
-// accepts, and --delete must still refuse while a run is in flight — a run
-// mid-flight keeps the policy until it finishes (B5). The test above cannot
-// see this: with stdin that is not a terminal, confirmRemovalStrict refuses
-// for its own reason, so deleting the in-flight gate there would pass it.
-// --yes is the way through, because the gate is about the runs, not about
-// whether the operator was asked.
+// gate at a terminal, the one session every other confirmation here is answered
+// at: typing the project's name is what confirmRemoval takes, and `--delete`
+// still refuses while a run is in flight — a run mid-flight keeps the policy
+// until it finishes (B5). No flag stands in for the wait either (T11 of
+// docs/no-prompt-policy), so this test and the one above say it between them:
+// nothing deletes the policy while a run is in flight.
 func TestProjectPolicyDeleteRefusesTheTypedNameWhileARunIsInFlight(t *testing.T) {
 	f := newProjectFixture(t, "")
 	typed(t)
@@ -1203,17 +1206,14 @@ func TestProjectPolicyDeleteRefusesTheTypedNameWhileARunIsInFlight(t *testing.T)
 	if err == nil {
 		t.Fatalf("--delete was allowed with the project's name typed while a run is in flight:\n%s", out)
 	}
-	if !strings.Contains(err.Error(), "--yes") {
-		t.Errorf("the refusal does not name --yes: %v", err)
+	if !strings.Contains(err.Error(), "in flight") || !strings.Contains(err.Error(), "wait for them") {
+		t.Errorf("the refusal does not say the runs hold the policy and that waiting is the way through: %v", err)
+	}
+	if strings.Contains(err.Error(), "--yes") {
+		t.Errorf("the refusal names --yes, which no longer exists and would not get past the gate: %v", err)
 	}
 	if f.db.Value(projectpolicy.PathShared()) == nil {
-		t.Fatal("the policy was removed anyway")
-	}
-	if _, _, err := execute(t, "project", "policy", "publish", "--delete"); err != nil {
-		t.Fatalf("--yes must delete while a run is in flight: %v", err)
-	}
-	if f.db.Value(projectpolicy.PathShared()) != nil {
-		t.Fatal("--yes did not delete the policy")
+		t.Fatal("the policy was removed although a run is in flight")
 	}
 }
 
@@ -1331,7 +1331,8 @@ func TestProjectShowDoesNotCallAPatternEntryIdleWhileItsRepositoriesRun(t *testi
 	if _, _, err := execute(t, "project", "repos", "add", "github/acme/*"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := execute(t, "project", "repos", "rm", "github/acme/app"); err != nil {
+	fakeTerminal(t)
+	if _, _, err := executeStdin(t, "aurora\n", "project", "repos", "rm", "github/acme/app"); err != nil {
 		t.Fatal(err)
 	}
 	// The pattern admits github/acme/app, and a run of it is in flight.
@@ -1420,7 +1421,8 @@ func TestProjectShowEnrolledIsTheAllowListNotTheSeed(t *testing.T) {
 	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := execute(t, "project", "repos", "rm", "bitbucket/acme/other"); err != nil {
+	fakeTerminal(t)
+	if _, _, err := executeStdin(t, "aurora\n", "project", "repos", "rm", "bitbucket/acme/other"); err != nil {
 		t.Fatal(err)
 	}
 	js, _, err := execute(t, "project", "show", "--json")
@@ -2985,7 +2987,8 @@ func TestProjectPolicyPublishRefusesAnOlderNodeWithAWorkingRemedy(t *testing.T) 
 				t.Fatal("the node was removed by a refused publish")
 			}
 			// And the remedy it names works.
-			if _, _, err := execute(t, "project", "policy", "publish", "--delete"); err != nil {
+			fakeTerminal(t)
+			if _, _, err := executeStdin(t, "aurora\n", "project", "policy", "publish", "--delete"); err != nil {
 				t.Fatalf("the remedy the refusal names does not work: %v", err)
 			}
 			if f.db.Value(projectpolicy.PathShared()) != nil {
