@@ -496,13 +496,6 @@ func (s *wizardStage) askBake() error {
 // (askRigor).
 const rigorQuestionLead = "the project's rigor mode decides how much review every run of it gets; type one of them (this is the one question of the wizard with no suggestion, so Enter is not an answer):"
 
-// rigorHotfixRefusal is D834's sentence, in the words `fugaro rigor set` refuses
-// hotfix with (rigor.go's runRigorSet). It is spelled twice rather than
-// referenced because that command's sentence is built inline in a call this
-// task does not own; the test that holds the two doors to one sentence is what
-// keeps them from drifting (TestSetupRigorRefusesHotfix).
-const rigorHotfixRefusal = "hotfix is not a mode a layer sets: it is an operator's own per-run mode, reached with `fugaro run --mode hotfix`, and no layer may set it as a default or as an area rule; nothing was written"
-
 // rigorChoice is one line of the rigor question: the mode, and the wizard's own
 // sentence about what it costs. Everything else the line says is read from the
 // two tables that hold it — the review a mode runs by default
@@ -580,8 +573,8 @@ func rigorReviewWords(l rigor.Levels) string {
 //
 // hotfix is in the vocabulary and not in this answer: it is off the axis and an
 // operator's own per-run mode, so no layer sets it, and the refusal is D834's
-// sentence — the one `fugaro rigor set` gives it, not a second one saying the
-// same thing (rigorHotfixRefusal).
+// sentence — the one `fugaro rigor set` gives it (rigorHotfixRefusal, rigor.go)
+// rather than a second spelling of it.
 func setupRigorMode(v string) (rigor.Mode, error) {
 	mode := rigor.Mode(strings.TrimSpace(v))
 	if !rigor.Known(mode) {
