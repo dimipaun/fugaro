@@ -841,11 +841,12 @@ version_at_least() { # version_at_least HAVE NEED
 
 # step_release: the gate every check of a released feature carries. The pair
 # launch and the judge both ship in 0.24.0 (docs/releases/v0.24.0.md), and a
-# build before it samples nothing at all. Both probes are offline: `fugaro
-# version`, the usage line `fugaro ab` prints — the A/B results command is the
-# Subscription's, so a core build answers with D522's stub instead of the
-# command, and a stub names no flag — and the catalog's own recipe list, which
-# is where `ab-judge` has to be for the judge run below to be launchable at all.
+# build before it samples nothing at all. Both probes are offline and read the
+# installed binary alone, no checkout: `fugaro version`, and the usage line
+# `fugaro ab` prints — the A/B results command is the Subscription's, so a core
+# build answers with D522's stub instead of the command, and a stub names no
+# flag. The recipe catalog is read by step_judge_recipe instead, because that
+# read takes a checkout with it.
 step_release() {
   local v feature=no
   v=$("$FUGARO_BIN" version 2>/dev/null | head -n 1 || true)
@@ -869,25 +870,6 @@ step_release() {
     fact release PASS "fugaro reports '${v}', which is not a release number (a dev build or a commit): the feature probe decides, and 'fugaro ab --help' names the command, so this build carries the work"
     ;;
   esac
-
-  say "reading the recipe catalog: fugaro recipes ls --json (offline)"
-  run_bounded "$CLI_TIMEOUT" recipes "$PWD" "$FUGARO_BIN" recipes ls --json
-  if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ] || ! read_json recipes "$SCRATCH/recipes.out" "$SCRATCH/recipes.txt"; then
-    unmeasured judge-recipe "'fugaro recipes ls --json' did not answer (exit ${BOUNDED_STATUS}): the judge run below is 'fugaro run --recipe ab-judge', and without the catalog this check cannot say whether the build you have carries that recipe. Its output is in $SCRATCH/recipes.out and $SCRATCH/recipes.err"
-    return 0
-  fi
-  local row
-  row=$(awk -F'\t' '$1 == "recipe" && $2 == "ab-judge" { print; exit }' "$SCRATCH/recipes.txt")
-  if [ -z "$row" ]; then
-    fact judge-recipe FAIL "the catalog carries no recipe named ab-judge (it carries $(awk -F'\t' '$1 == "recipe" { printf "%s%s", (n++ ? ", " : ""), $2 }' "$SCRATCH/recipes.txt")): the judge run below is launched with 'fugaro run --recipe ab-judge' (docs/releases/v0.24.0.md), and a build whose catalog does not carry it is one no pair of it can be judged on. Run 'fugaro update' at your terminal and run this check again on the build it leaves you"
-    return 0
-  fi
-  if [ "$(printf '%s' "$row" | awk -F'\t' '{ print $4 }')" != true ]; then
-    fact judge-recipe FAIL "the catalog's ab-judge recipe is not launchable (source $(printf '%s' "$row" | awk -F'\t' '{ print $3 }')): 'fugaro run --recipe ab-judge' is refused for it, and the verdict row below has nothing to read. Run 'fugaro update' at your terminal and run this check again"
-    return 0
-  fi
-  JUDGE_RECIPE_OK=yes
-  fact judge-recipe PASS "the catalog carries ab-judge (source $(printf '%s' "$row" | awk -F'\t' '{ print $3 }')) and it is launchable, so the judge run below is one this build can start"
 }
 
 # step_bound: the spend this check is about to commit, said before it commits
@@ -938,6 +920,40 @@ step_sandbox() {
     return 0
   fi
   fact sandbox PASS "${SANDBOX} is a Fugaro repository's checkout, it belongs to ${PROJECT}, and its origin is ${REPO_NAME}: the check launches from this checkout, matches the layer's allow-lists against ${REPO_NAME}, and reads the pair's records in this project's bucket"
+}
+
+# step_judge_recipe: the catalog the judge run's recipe has to be in. `fugaro
+# recipes ls --json` reads the checkout it is run in and re-reads that
+# checkout's project layer from the bucket, so it is read in the sandbox
+# checkout and after step_sandbox rather than offline: run anywhere else it
+# would answer for another project's catalog, and it is the sandbox project the
+# judge run below is launched in. A catalog without `ab-judge`, or with one
+# that is not launchable, is the FAIL row here — and no pair is launched for it
+# (step_pair's guard), because a pair whose verdict no build can write is money
+# spent on half a reading.
+step_judge_recipe() {
+  if [ -z "$PROJECT" ]; then
+    unmeasured judge-recipe "there is no project to read the catalog for: the row above says why"
+    return 0
+  fi
+  say "reading the recipe catalog: fugaro recipes ls --json, in ${SANDBOX}"
+  run_bounded "$CLI_TIMEOUT" recipes "$SANDBOX" "$FUGARO_BIN" recipes ls --json
+  if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ] || ! read_json recipes "$SCRATCH/recipes.out" "$SCRATCH/recipes.txt"; then
+    unmeasured judge-recipe "'fugaro recipes ls --json' did not answer in ${SANDBOX} (exit ${BOUNDED_STATUS}): the judge run below is 'fugaro run --recipe ab-judge', and without ${PROJECT}'s catalog this check cannot say whether the build you have carries that recipe. Its output is in $SCRATCH/recipes.out and $SCRATCH/recipes.err"
+    return 0
+  fi
+  local row
+  row=$(awk -F'\t' '$1 == "recipe" && $2 == "ab-judge" { print; exit }' "$SCRATCH/recipes.txt")
+  if [ -z "$row" ]; then
+    fact judge-recipe FAIL "the catalog carries no recipe named ab-judge (it carries $(awk -F'\t' '$1 == "recipe" { printf "%s%s", (n++ ? ", " : ""), $2 }' "$SCRATCH/recipes.txt")): the judge run below is launched with 'fugaro run --recipe ab-judge' (docs/releases/v0.24.0.md), and a build whose catalog does not carry it is one no pair of it can be judged on. Run 'fugaro update' at your terminal and run this check again on the build it leaves you"
+    return 0
+  fi
+  if [ "$(printf '%s' "$row" | awk -F'\t' '{ print $4 }')" != true ]; then
+    fact judge-recipe FAIL "the catalog's ab-judge recipe is not launchable (source $(printf '%s' "$row" | awk -F'\t' '{ print $3 }')): 'fugaro run --recipe ab-judge' is refused for it, and the verdict row below has nothing to read. Run 'fugaro update' at your terminal and run this check again"
+    return 0
+  fi
+  JUDGE_RECIPE_OK=yes
+  fact judge-recipe PASS "the catalog carries ab-judge (source $(printf '%s' "$row" | awk -F'\t' '{ print $3 }')) and it is launchable, so the judge run below is one this build can start"
 }
 
 # step_layer: the state every launch below is a reading of. The published
@@ -1339,7 +1355,7 @@ step_walltimes() {
   fi
   local ratio
   ratio=$(awk -v a="$ssec" -v b="$csec" 'BEGIN { printf "%.2f", a / b }')
-  fact wall-times PASS "U4's two wall times, each read from its own record's started_at and finished_at: champion ${RUN_ID} ${csec}s (${cstart} to ${cfinish}), challenger ${CHALLENGER_ID} on ${CHALLENGER_MODEL} ${ssec}s (${sstart} to ${sfinish}). The challenger's is ${ratio}x the champion's, against the same provider route and the shared rate limit U4 asks about. This row RECORDS the two, which is what the plan asks of Check 212: it sets no threshold for the ratio, so the figure is yours to read rather than a bar this check applies"
+  fact wall-times PASS "U4's two wall times, each read from its own record's started_at and finished_at: champion ${RUN_ID} ${csec}s (${cstart} to ${cfinish}), challenger ${CHALLENGER_ID} on ${CHALLENGER_MODEL} ${ssec}s (${sstart} to ${sfinish}). The challenger's is ${ratio}x the champion's. This row RECORDS the two, which is what the plan asks of Check 212: it sets no threshold for the ratio, so the figure is yours to read rather than a bar this check applies"
 }
 
 # step_costs: D567's own reading. The challenger runs on the champion's per-run
@@ -1753,8 +1769,9 @@ finish() {
 # -------------------------------------------------------------------- the plan
 plan() {
   say "CHECK 212 plan (dry run: nothing below is run, and no row in the block was measured)"
-  say "  [offline] fugaro version, fugaro ab --help and fugaro recipes ls --json — the release ${RELEASE} gate and the ab-judge recipe the judge below needs"
+  say "  [offline] fugaro version and fugaro ab --help — the release ${RELEASE} gate, read off the installed build and no checkout"
   say "  [network, read] fugaro doctor --json and git remote get-url origin in ${SANDBOX} — the project this checkout belongs to and its owner/name"
+  say "  [network, read] fugaro recipes ls --json in ${SANDBOX} — the project's own catalog, which has to carry a launchable ab-judge recipe for the judge run below"
   say "  [network, read] fugaro config layer --json in ${SANDBOX} — the published project layer, whose ab: block must set a rate above zero, name challengers and name a judge_model (and ${SANDBOX}/fugaro.yaml must carry no opt-out)"
   say "  [offline, read] fugaro models ls --json in ${SANDBOX} — each challenger must be a provider model (not the direct route) whose allow-list admits ${REPO_NAME:-<owner/name>}"
   say "  [network, BILLABLE] fugaro run --repo ${SANDBOX} --json \"${TASK}\" — up to ${MAX_LAUNCHES} sandbox runs, stopped at the first pair. About ten are expected at 0.10; nothing forces a sample"
@@ -1767,7 +1784,7 @@ plan() {
   for key in release judge-recipe sandbox layer route pair arms champion challenger wall-times costs judge-run verdict ab-report; do
     fact "$key" INFO "planned: a real run measures this row; --dry-run did not"
   done
-  fact dry-run PASS "the plan was printed and nothing was run: no doctor, no layer read, no model read, no launch, no judge run, no remote read and no teardown"
+  fact dry-run PASS "the plan was printed and nothing was run: no doctor, no catalog read, no layer read, no model read, no launch, no judge run, no remote read and no teardown"
 }
 
 # The block's shape does not depend on how far the run got: the keys below are
@@ -1930,6 +1947,7 @@ main() {
     die "Check 212 launches up to ${MAX_LAUNCHES} sandbox runs and one judge run, and spends what their tasks cost, so it asks for --yes. Nothing has been launched. Type: bash scripts/live-checks/check212.sh --sandbox ${SANDBOX} --yes (or read the plan first with --dry-run)"
   fi
   step_sandbox
+  step_judge_recipe
   step_layer
   step_route
   step_pair

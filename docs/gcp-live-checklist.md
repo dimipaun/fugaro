@@ -15272,7 +15272,8 @@ bash scripts/live-checks/check212.sh --sandbox <a sandbox repository checkout> -
 bash scripts/live-checks/check212.sh --sandbox <a sandbox repository checkout> --yes --task "<the small task>"
 ```
 
-`--dry-run` prints what would be read, launched and removed, runs nothing and is the way to check the
+`--dry-run` prints what would be read, launched and removed and runs none of it: it reads no project,
+no catalog, no layer, no model and no run, and it launches nothing. It is the way to look at the
 premise before spending anything. A value given as a flag wins over the same value in the environment.
 
 Progress goes to stderr and one `CHECK 212 RESULT` block goes to stdout at the end: paste that whole

@@ -954,7 +954,6 @@ test_dry_run() {
   expect_status "$status" 0 "dry run"
   expect_contains "$out" "CHECK 212 RESULT" "dry run: the block"
   expect_contains "$out" "FACT fugaro-version: PASS" "dry run: the version row"
-  expect_contains "$out" "FACT judge-recipe: PASS" "dry run: the recipe probe ran"
   expect_contains "$out" "FACT agent-session: PASS" "dry run: the session guard"
   expect_contains "$out" "FACT belong: PASS" "dry run: the belong guard"
   expect_contains "$out" "FACT bound: PASS" "dry run: the spend is stated"
@@ -964,9 +963,11 @@ test_dry_run() {
   # A row the plan did not measure reads INFO, never PASS: a plan is not a
   # reading, and a block that said PASS would be one nobody took.
   expect_contains "$out" "FACT layer: INFO — planned" "dry run: a planned row is INFO"
+  expect_contains "$out" "FACT judge-recipe: INFO — planned" "dry run: the recipe row is planned too"
   expect_contains "$out" "FACT judge-run: INFO — planned" "dry run: the judge row is planned too"
   expect_contains "$err" "up to 3 sandbox runs" "dry run: the plan names the spend"
   expect_absent "$calls" "doctor" "dry run: the installation is not read"
+  expect_absent "$calls" "recipes ls" "dry run: the catalog is not read"
   expect_absent "$calls" "config layer" "dry run: the layer is not read"
   expect_absent "$calls" "models ls" "dry run: the model table is not read"
   expect_absent "$gcalls" "storage" "dry run: the bucket is not read"
