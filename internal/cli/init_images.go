@@ -806,7 +806,7 @@ func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 		return initflow.Outcome{}, err
 	}
 	if m == nil {
-		return s.catalogOutcome(set, initflow.Outcome{Detail: "No changes"}, false)
+		return s.catalogOutcome(set, initflow.Outcome{Detail: "No changes"}), nil
 	}
 	pl, err := s.read(ctx, m, items)
 	if err != nil {
@@ -826,14 +826,8 @@ func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 		return initflow.Outcome{}, err
 	}
 	base := pins(pl)
-	// The catalog rebuilds are this stage's too, so they are covered by this
-	// one confirmation: the clause below names them, and `asked` tells the
-	// catalog half it has nothing left to ask (the state the owner met twice
-	// is a base already current, where the ordinary half asks nothing at all
-	// and the catalog half asks on its own).
-	asked := n > 0 || len(base) > 0
 	var done []planned // the plans whose destination tag is, now, the release image
-	if asked || len(set.here) > 0 {
+	if n > 0 || len(base) > 0 {
 		o := r.o
 		yes := o.yes
 		o.yes = env.Yes
@@ -843,7 +837,7 @@ func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 				notCovered = "it replaces a tag in your registry"
 			}
 		}
-		err := r.confirmOrdinary(s.confirmText(pl, n, bytes, unpinned, set.here), "nothing was copied, nothing was pinned and no catalog image was rebuilt", notCovered)
+		err := r.confirmOrdinary(s.confirmText(pl, n, bytes, unpinned), "nothing was copied and nothing was pinned", notCovered)
 		o.yes = yes
 		if err != nil {
 			return initflow.Outcome{}, err
@@ -872,9 +866,9 @@ func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 		return initflow.Outcome{}, err
 	}
 	if !changed && len(base) == 0 {
-		return s.catalogOutcome(set, initflow.Outcome{Detail: "No changes"}, asked)
+		return s.catalogOutcome(set, initflow.Outcome{Detail: "No changes"}), nil
 	}
-	return s.catalogOutcome(set, initflow.Outcome{Changed: true, Detail: applyDetail(changed, len(base))}, asked)
+	return s.catalogOutcome(set, initflow.Outcome{Changed: true, Detail: applyDetail(changed, len(base))}), nil
 }
 
 // confirmText is the stage's own confirmation: what it copies (and how big,
@@ -882,7 +876,7 @@ func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 // things about trust, and the difference is the point — a copy's digest is
 // what the registry says, while a base pin's digest is what a signature
 // was verified for — so they are never merged into one claim.
-func (s *imagesStage) confirmText(pl []planned, n int, bytes int64, unpinned []string, catalog []catalogStaleEntry) string {
+func (s *imagesStage) confirmText(pl []planned, n int, bytes int64, unpinned []string) string {
 	r := s.e.r
 	var parts []string
 	if n > 0 {
@@ -904,9 +898,6 @@ func (s *imagesStage) confirmText(pl []planned, n int, bytes int64, unpinned []s
 		}
 		parts = append(parts, fmt.Sprintf("pins %d base image(s) to this release's image at the digest its cosign signature was verified for%s, read back through the remote repository %s/%s (nothing is copied, and nothing is pushed into %s): %s",
 			len(base), verifier, r.gcpProject, infra.GhcrRegistry, mirror.BaseRepository, strings.Join(refs, "; ")))
-	}
-	if clause := catalogConfirmClause(catalog); clause != "" {
-		parts = append(parts, clause)
 	}
 	return strings.Join(parts, " — and it ") + " (as you, with your own credentials)"
 }

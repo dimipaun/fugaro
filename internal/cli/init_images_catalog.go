@@ -21,9 +21,11 @@ import (
 //
 // So the stage reads the catalog's build records too. Every entry whose last
 // build was built FROM a release base image older than this release's is
-// rebuilt here, in process, behind the confirmation the rest of the stage
-// asks (runImageBuildCatalogOrDerived, the command `fugaro image build
-// <entry>` runs). An entry whose build belongs to another checkout is NOT
+// rebuilt here, in process, by the machinery `fugaro image build <entry>`
+// runs (runImageBuildCatalogOrDerived) — bounded the way that command's builds
+// are, by the banner, the lease and the managed gate, never by a confirmation
+// of this stage's, which a Cloud Build does not ask. An entry whose build
+// belongs to another checkout is NOT
 // passed over in silence: a catalog build runs as the build account of the
 // checkout it is submitted from, holding that repository's credential and
 // secrets, so this run cannot submit it — it prints one line per such entry
@@ -194,11 +196,12 @@ func catalogEntryNames(entries []catalogStaleEntry) []string {
 // its credential and secrets, it is bounded by its own lease, and the record
 // it writes names this release's base for the next check to read.
 //
-// The command's own confirmation is not asked here: the images stage's is,
-// before this runs, and it names these builds. Its progress and its closing
-// line go where this run's do — the nested reporter reads the same command's
-// flags, so under --json they land on stderr with the rest of this run's
-// account rather than in the document on stdout.
+// Nothing of the command's own account is captured: what bounds the build is
+// the banner it prints, the lease it takes and the gate's verdict, and its
+// progress and its closing line go where any nested run's do — the nested
+// reporter reads the same command's flags, so under --json they land on stderr
+// with the rest of this run's account rather than in the document on stdout,
+// and the stage's own lines below are what the reading of this run needs.
 func (s *imagesStage) rebuildCatalogEntry(se catalogStaleEntry) error {
 	r := s.e.r
 	o := imageBuildOptions{cloud: r.o.cloud, asJSON: r.o.asJSON}
@@ -214,19 +217,17 @@ func (s *imagesStage) rebuildCatalogEntry(se catalogStaleEntry) error {
 // these lines: the stage may not report nothing to do while a catalog image
 // of this installation is on an older base.
 //
-// confirmed is whether the stage's ordinary confirmation has already been
-// asked with these rebuilds in it. It has not when the ordinary half had
-// nothing to copy and nothing to pin — the state the owner met twice, a base
-// already current — so the rebuilds ask on their own there.
-func (s *imagesStage) catalogOutcome(set catalogStaleSet, out initflow.Outcome, confirmed bool) (initflow.Outcome, error) {
+// These rebuilds ask the run's one confirmation nothing, and that is the rule
+// and not an omission: a Cloud Build keeps its own bounds (a new file may not
+// call init_review.go's run confirmation at all, TestRunConfirmationCallSites),
+// and what bounds one is the banner the build prints, the lease it takes and —
+// in a managed project — the gate's own verdict, exactly as they bound the
+// checkout stage's image rebuilds and `fugaro image build <entry>` itself. A
+// session the gate refuses builds nothing here either: it is left the command,
+// which is the same step a stale entry of another checkout is left.
+func (s *imagesStage) catalogOutcome(set catalogStaleSet, out initflow.Outcome) initflow.Outcome {
 	if !set.any() && set.unread == "" {
-		return out, nil
-	}
-	if len(set.here) > 0 && !confirmed {
-		what := catalogConfirmClause(set.here) + " (as you, with your own credentials)"
-		if err := s.e.r.confirmOrdinary(what, "nothing was copied, nothing was pinned and no catalog image was rebuilt", ""); err != nil {
-			return initflow.Outcome{}, err
-		}
+		return out
 	}
 	w := s.e.r.w
 	var parts []string
@@ -264,7 +265,7 @@ func (s *imagesStage) catalogOutcome(set catalogStaleSet, out initflow.Outcome, 
 	if detail == "" {
 		detail = "No changes"
 	}
-	return initflow.Outcome{Changed: out.Changed || len(built) > 0, Detail: detail, Left: catalogLeftFor(missed)}, nil
+	return initflow.Outcome{Changed: out.Changed || len(built) > 0, Detail: detail, Left: catalogLeftFor(missed)}
 }
 
 // catalogLeftFor is the step this run leaves for the person when a stale
@@ -295,15 +296,4 @@ func catalogLeftFor(missed []catalogLeft) *initflow.Left {
 // process for the entries of this checkout.
 func catalogBuildCommand(entry string) string {
 	return selfCommand() + " image build " + quoteWord(entry)
-}
-
-// catalogConfirmClause is what the stage's own confirmation says about the
-// catalog rebuilds it is about to submit, so the one confirmation covers them
-// too.
-func catalogConfirmClause(entries []catalogStaleEntry) string {
-	if len(entries) == 0 {
-		return ""
-	}
-	return fmt.Sprintf("rebuilds %d catalog image(s) FROM this release's base image with Cloud Build, as %s's build account (each billed to this project and bounded by its own lease): %s",
-		len(entries), pluginwire.Printable(entries[0].repo.Repo), strings.Join(catalogEntryNames(entries), ", "))
 }
