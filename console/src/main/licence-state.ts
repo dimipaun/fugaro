@@ -5,10 +5,10 @@
 //
 // **What this file is.** One mapping from the verifier's answer about the key an
 // installation holds to the five states of the design's table, and the gate that
-// takes exactly two operations away in the state the design calls the lapse: the
-// launch and the configuration change. Everything else -- every read, the
-// console's own surface, the kill switch's state, the key screen -- answers
-// exactly as it does today.
+// takes exactly three operations away in the state the design calls the lapse:
+// the launch, the configuration change and the record's move (GV3.2's
+// `roadmap.move`). Everything else -- every read, the console's own surface, the
+// kill switch's state, the key screen -- answers exactly as it does today.
 //
 // **Why the gate is here and not in the renderer.** The design puts enforcement
 // "in the console's main process, at the operation dispatch, before any child is

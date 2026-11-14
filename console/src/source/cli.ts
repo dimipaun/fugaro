@@ -62,6 +62,7 @@ import type {
   ChildSpawner,
   JSONObject,
   Notice,
+  RoadmapMoveWords,
   SettingsEditPhase,
   Sidecar,
   SpawnOperationName,
@@ -73,13 +74,26 @@ import type { SpawnLogWriter } from '../main/spawnlog'
 import type { OperationName, ValidatedArguments } from '../main/ipc'
 import { MAX_TEXT_INPUT_LENGTH } from '../shared/sanitize'
 import { licenceKeySupported } from '../shared/version'
-import { SourceRefusal, refusalFrom, GRAPH_SCOPE_ALL, NO_GRAPH_SCOPE, NO_PLAN_CHECKOUT, SETTINGS_EDIT_MOVED } from './source'
+import {
+  SourceRefusal,
+  refusalFrom,
+  GRAPH_SCOPE_ALL,
+  NO_GRAPH_SCOPE,
+  NO_PLAN_CHECKOUT,
+  NO_ROADMAP_NODE,
+  NO_ROADMAP_READ,
+  NO_ROADMAP_RELEASE,
+  ROADMAP_MOVE_MOVED,
+  SETTINGS_EDIT_MOVED,
+} from './source'
 import type {
   FeedEnd,
   FugaroSource,
   InstallationRef,
   JSONDoc,
   LiveFeed,
+  RoadmapMoveAnswer,
+  RoadmapMoveOutcome,
   SettingsEditSpawn,
   Snapshot,
   TextSnapshot,
@@ -398,6 +412,17 @@ export class CliSource implements FugaroSource {
   /** The live feeds, keyed by the argv that produced them: one child per
    * subscription, not one per call. See `subscribeLive`. */
   readonly #feeds = new Map<string, LiveStream>()
+  /**
+   * `#roadmap` is the project's roadmap record as **this** source knows it: what
+   * its own `graph --json` answers listed, and the one move it last showed. It
+   * is `null` until a document has been read, which is what tells a move that
+   * arrived first -- before any graph was drawn -- from one whose task the last
+   * document simply did not carry; and it is per source rather than per process,
+   * because `createBoundSource` builds one source per binding and closes it when
+   * the installation, the checkout or the config changes, so nothing here
+   * outlives the graph it was read out of.
+   */
+  #roadmap: RoadmapRecord | null = null
 
   private constructor(options: CliSourceOptions, bucket: ResolvedSource) {
     this.#options = options
@@ -473,7 +498,16 @@ export class CliSource implements FugaroSource {
   #plan(
     operation: OperationName,
     args: ValidatedArguments,
-    settingsEdit?: { readonly phase: SettingsEditPhase; readonly layer: string },
+    // The words a plan may take from main-process state rather than from the
+    // payload: the settings write's phase and layer, and the move's three
+    // (GV3.2). They are one optional object because the two rows that carry one
+    // are the two rows `argvFor` refuses to spell any other way (D1105, D1107),
+    // and neither is a value a caller may invent: `settingsEdit` reads them off
+    // the document it classified and the move off the document it read.
+    facts?: {
+      readonly settingsEdit?: { readonly phase: SettingsEditPhase; readonly layer: string }
+      readonly roadmapMove?: RoadmapMoveWords
+    },
   ): SpawnPlan {
     // Read here rather than carried on the instance: the store answers for the
     // project this source drives, and a key pasted a moment ago is the key the
@@ -493,7 +527,8 @@ export class CliSource implements FugaroSource {
       directory: this.#directory,
       appEnv: this.#env,
       ...(licenceKey === undefined ? {} : { licenceKey }),
-      ...(settingsEdit === undefined ? {} : { settingsEdit }),
+      ...(facts?.settingsEdit === undefined ? {} : { settingsEdit: facts.settingsEdit }),
+      ...(facts?.roadmapMove === undefined ? {} : { roadmapMove: facts.roadmapMove }),
     })
   }
 
@@ -689,9 +724,89 @@ export class CliSource implements FugaroSource {
    * builds the argv it is handed and would spawn a scope that exists nowhere.
    * Nothing here names a path, a directory or an id: the scope is the row's one
    * declared argument (`src/main/spawn.ts`), and a document the CLI refuses is a
-   * refusal this class raises like any other. */
-  graphRead(args: ValidatedArguments): Promise<Snapshot> {
-    return this.#readDocument('graph.read', args)
+   * refusal this class raises like any other.
+   *
+   * **It is also the read that teaches this source the roadmap record**
+   * (`readRoadmapInto`): what a document listed is what a later `roadmap.move`
+   * may name, and the read is the only way any of it arrives, since the live
+   * feed does not teach (`graph.watch`'s own F21 rule). What it learned is
+   * recorded whatever the caller does with the answer, and a refused read
+   * records nothing: it has no document to read.
+   */
+  async graphRead(args: ValidatedArguments): Promise<Snapshot> {
+    const snapshot = await this.#readDocument('graph.read', args)
+    const record = this.#roadmap ?? { tasks: new Map(), releases: new Map(), preview: null }
+    readRoadmapInto(snapshot.document, record)
+    this.#roadmap = record
+    return snapshot
+  }
+
+  /**
+   * roadmapMove puts one task of the roadmap record into a release box or takes
+   * it out of one (`coordinator roadmap move`, GV3.2). The caller names two keys
+   * and no word of the command line; `FugaroSource.roadmapMove` states the rule
+   * and this is where it is kept.
+   *
+   * **`confirmed` decides which half of it runs.** Without it this call is the
+   * preview: the argv is built (and its three words are the document's own -- the
+   * node's `id`, the box's key or the CLI's `none`, and the release the document
+   * recorded for the node), it is remembered, and **no child is spawned**. With
+   * it the same plan is built again and spawned only when its line is the one the
+   * preview answered (`sameArgv`); otherwise the answer is `ROADMAP_MOVE_MOVED`
+   * and nothing runs.
+   *
+   * **A non-zero exit is a returned answer and not a thrown one**, on
+   * `settingsEdit`'s rule: the write asks for §6.24's document, and a request
+   * that reached the queue answers one whatever the exit code -- a `refused`
+   * record is exit 1 and a `failed` installation exit 2, and both are the
+   * record's answer to a request that exists. What is thrown stays thrown: a
+   * spawn that could not start at all rejects out of `runToCompletion`, because
+   * there is no CLI sentence to show.
+   *
+   * **The one case with no document is the CLI's sentence.** A call the door
+   * refuses *before* it queues anything is a refusal about a call rather than an
+   * answer about a request, and §6.24 says nothing reaches standard output for
+   * it with or without `--json`: that sentence is on standard error, and it is
+   * what this answer carries.
+   */
+  async roadmapMove(args: ValidatedArguments): Promise<RoadmapMoveAnswer> {
+    const record = this.#roadmap
+    if (record === null) throw new SourceRefusal(NO_ROADMAP_READ)
+    const node = typeof args['node'] === 'string' ? args['node'] : ''
+    const task = record.tasks.get(node)
+    if (task === undefined) throw new SourceRefusal(NO_ROADMAP_NODE)
+    const toRelease = typeof args['toRelease'] === 'string' ? args['toRelease'] : ''
+    if (toRelease !== '' && !record.releases.has(toRelease)) throw new SourceRefusal(NO_ROADMAP_RELEASE)
+    const plan = this.#plan('roadmap.move', args, {
+      roadmapMove: { task: task.id, to: toRelease, expect: task.release },
+    })
+    const answer: Omit<RoadmapMoveAnswer, 'refusal' | 'outcome' | 'sentence'> = {
+      argv: plan.argv,
+      task: { key: node, id: task.id, title: task.title },
+      from: releaseOf(record, task.release),
+      to: releaseOf(record, toRelease),
+    }
+    if (args['confirmed'] !== true) {
+      record.preview = plan.argv
+      return { ...answer, refusal: null, outcome: null, sentence: null }
+    }
+    const shown = record.preview
+    record.preview = null
+    if (shown === null || !sameArgv(shown, plan.argv)) {
+      return { ...answer, refusal: ROADMAP_MOVE_MOVED, outcome: null, sentence: null }
+    }
+    const result = await runToCompletion(plan, {
+      log: this.#log,
+      ...(this.#options.spawner === undefined ? {} : { spawner: this.#options.spawner }),
+    })
+    const outcome = roadmapOutcomeOf(parseStdout(result.stdout, this.#stamp()).document)
+    if (outcome !== null) return { ...answer, refusal: null, outcome, sentence: null }
+    return {
+      ...answer,
+      refusal: null,
+      outcome: null,
+      sentence: cliSentence(result.stderr) ?? `${plan.operation} failed`,
+    }
   }
 
   /** coordinatorStatus reads `coordinator status --from-store --all --json`,
@@ -853,7 +968,7 @@ export class CliSource implements FugaroSource {
    * `#plan` is the only caller that adds this binary, this directory and this
    * environment to it). */
   settingsEditArgv(args: ValidatedArguments, phase: SettingsEditPhase, layer: string): Promise<readonly string[]> {
-    return Promise.resolve(this.#plan('settings.edit', args, { phase, layer }).argv)
+    return Promise.resolve(this.#plan('settings.edit', args, { settingsEdit: { phase, layer } }).argv)
   }
 
   /**
@@ -889,7 +1004,7 @@ export class CliSource implements FugaroSource {
     layer: string,
     shown: readonly string[],
   ): Promise<SettingsEditSpawn> {
-    const plan = this.#plan('settings.edit', args, { phase, layer })
+    const plan = this.#plan('settings.edit', args, { settingsEdit: { phase, layer } })
     if (!sameArgv(plan.argv, shown)) {
       return { refusal: SETTINGS_EDIT_MOVED, document: null, text: '' }
     }
@@ -1078,11 +1193,158 @@ function graphSourcesOf(document: JSONDoc): readonly string[] {
   if (!Array.isArray(sources)) return []
   const found: string[] = []
   for (const member of sources) {
-    if (member === null || typeof member !== 'object' || Array.isArray(member)) continue
-    const source = (member as Record<string, unknown>)['source']
+    const entry = memberOf(member)
+    const source = entry === null ? undefined : entry['source']
     if (typeof source === 'string') found.push(source)
   }
   return found
+}
+
+/** memberOf is one array member of a raw document, when it is an object at all.
+ * Every `[]` read out of a CLI answer is walked through this, so the four
+ * shapes a JSON array can hold that are not an object are refused in one place
+ * instead of once per field. */
+function memberOf(value: unknown): Record<string, unknown> | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
+  return value as Record<string, unknown>
+}
+
+/** releaseOf is one release box as a move's answer names it: the key and the
+ * name a person reads, or `null` for the empty key -- a task the record places
+ * in no box (D2114), which is the CLI's `none` spelled the other way.
+ *
+ * A key the last documents did not list falls back to the key itself. That is a
+ * document whose `nodes[]` and `releases[]` disagree, which the drawing already
+ * has a rule for (D2115); the answer still names the box the record holds, and
+ * an opaque key says which one without pretending to know its name. */
+function releaseOf(record: RoadmapRecord, key: string): { readonly key: string; readonly name: string } | null {
+  if (key === '') return null
+  return { key, name: record.releases.get(key) ?? key }
+}
+
+/** ROADMAP_OUTCOME_VERSION is the one version of §6.24's document this console
+ * reads. The CLI refuses a document whose version is not the one its build
+ * knows, by number and with `fugaro update` as its advice, so a number beside
+ * this one is an answer this console is not entitled to read field by field --
+ * and it reads none of it rather than a status out of a shape that means
+ * something else. */
+const ROADMAP_OUTCOME_VERSION = 1
+
+/**
+ * roadmapOutcomeOf reads §6.24's answer to a roadmap write -- what the record
+ * did with a request that reached the queue -- or `null` when there is no such
+ * document, which is the case for every call the door refused before it queued
+ * anything and for an answer this build does not know how to read.
+ *
+ * Every field is checked before any is used: the version, `kind`'s `move` (the
+ * request's own discriminator, the only trace of which write it was), the one
+ * `status` of the four, and the id a screen names when the request is still
+ * queued. `reason` and `current` are read when they are strings and are `null`
+ * otherwise -- they are absent for the statuses that carry none, and a document
+ * that spelled one as something else has said nothing this console may show.
+ *
+ * **A document that fails any check is no document**, and the caller falls back
+ * to the sentence the child printed: a console that answered `applied` out of a
+ * shape it half-read would tell an operator their task moved when nothing had.
+ */
+function roadmapOutcomeOf(document: JSONDoc | null): RoadmapMoveOutcome | null {
+  if (document === null) return null
+  if (document['version'] !== ROADMAP_OUTCOME_VERSION) return null
+  if (document['kind'] !== 'move') return null
+  const status = document['status']
+  if (status !== 'applied' && status !== 'refused' && status !== 'failed' && status !== 'pending') return null
+  const request = document['request']
+  if (typeof request !== 'string' || request === '') return null
+  const reason = document['reason']
+  const current = document['current']
+  return {
+    status,
+    request,
+    reason: typeof reason === 'string' ? reason : null,
+    current: typeof current === 'string' ? current : null,
+  }
+}
+
+/** RoadmapTaskFact is one task of the roadmap record as a graph document
+ * spelled it: the `id` the command reads (`<plan>/<task>`, D2111), the title a
+ * person reads, and the release the record places it in -- a box `key`, or `''`
+ * for a task in no box (D2114), which is also what the compare-and-set is built
+ * from. */
+interface RoadmapTaskFact {
+  readonly id: string
+  readonly title: string
+  readonly release: string
+}
+
+/**
+ * RoadmapRecord is what one source knows about the project's roadmap record: the
+ * tasks and the release boxes every graph document it has read **listed**, and
+ * the one move it last answered as a preview.
+ *
+ * `preview` is the argv that preview answered, and it is the whole of what makes
+ * a confirmation binding: `roadmapMove` refuses a write whose plan builds a
+ * different line (`ROADMAP_MOVE_MOVED`) and clears it, so one preview authorises
+ * exactly one write. It is held here rather than handed in by the caller -- the
+ * `settingsEdit` seam takes the argv the window drew because the window is
+ * another process -- because this source both previews and writes: the renderer
+ * cannot name the line it was shown, so it cannot name one to be believed about.
+ */
+interface RoadmapRecord {
+  readonly tasks: Map<string, RoadmapTaskFact>
+  readonly releases: Map<string, string>
+  preview: readonly string[] | null
+}
+
+/**
+ * readRoadmapInto records what one graph document listed about the roadmap
+ * record into `record`. It is a **union** and not a replacement, for the reason
+ * `graphScopes` is one: a scoped read's document lists the scopes it covers and
+ * not the whole graph, and a task a person can still see in the drawing must not
+ * become unmovable because a later read was narrower. A key both documents carry
+ * takes the newer reading -- the document is the record's own answer, and the
+ * later one is the truer.
+ *
+ * Only well-shaped members are read, and nothing is invented for a document that
+ * carries no `nodes[]` or no `releases[]`: the document is decoded somewhere
+ * else (in the renderer) and refused there if it is malformed, and a value this
+ * function cannot read is one that must not become an admitted key.
+ *
+ * **A node is the record's own task only when its `plan` is non-empty**
+ * (contract §6.22, GV4.1): that field is what marks a task as the roadmap
+ * record's, since the record and the sweep's stored view draw nodes of the same
+ * source, and `coordinator roadmap move` reads a qualified `<plan>/<task>` id
+ * that a node of any other kind does not carry.
+ */
+function readRoadmapInto(document: JSONDoc, record: RoadmapRecord): void {
+  const releases = document['releases']
+  if (Array.isArray(releases)) {
+    for (const member of releases) {
+      const box = memberOf(member)
+      if (box === null) continue
+      const key = box['key']
+      const name = box['name']
+      if (typeof key === 'string' && key !== '' && typeof name === 'string') record.releases.set(key, name)
+    }
+  }
+  const nodes = document['nodes']
+  if (!Array.isArray(nodes)) return
+  for (const member of nodes) {
+    const node = memberOf(member)
+    if (node === null) continue
+    if (node['kind'] !== 'task') continue
+    const plan = node['plan']
+    if (typeof plan !== 'string' || plan === '') continue
+    const key = node['key']
+    const id = node['id']
+    if (typeof key !== 'string' || key === '' || typeof id !== 'string' || id === '') continue
+    const title = node['title']
+    const release = node['release']
+    record.tasks.set(key, {
+      id,
+      title: typeof title === 'string' ? title : '',
+      release: typeof release === 'string' ? release : '',
+    })
+  }
 }
 
 /**
@@ -1151,6 +1413,11 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
    * graphReads is the same cache for `graph.read`, keyed by the binding *and*
    * the scope: one scope's document is not another's, and the read is one child
    * per scope, so two scopes must not share a floor.
+   *
+   * **One event empties it, and it is not a binding change**: a write the record
+   * applied. The floor is a claim about the document, and §6.24's `applied` is
+   * the record changed under it -- so `roadmapMove` below drops every entry,
+   * which is what makes the screen's own re-read after a move a real read.
    */
   const graphReads = new Map<string, { readonly reading: Promise<Snapshot>; at: number | null }>()
 
@@ -1652,6 +1919,50 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
      * replaces the records in place as declarations arrive, so holding a floor
      * between two calls would hide the newest one for no gain. */
     coordinatorIntents: (args) => read('coordinator.intents', (source) => source.coordinatorIntents(args)),
+    /**
+     * roadmapMove is the record's one write (GV3.2). It goes through `read`'s
+     * resolution for the reason every other call does -- a console with no
+     * installation must refuse rather than plan over nothing -- and it takes no
+     * cadence of its own: a preview and the confirmation that follows it are two
+     * calls the operator made, and the source's own `#roadmap` is what the second
+     * is checked against. The three checks that decide whether a move may be
+     * attempted at all (the record was read, the task's key was listed, the box's
+     * key was listed) are that class's too, on the document it holds -- and the
+     * state the record has moved past since (`--expect`) is the CLI's, whose
+     * refusal is the sentence the screen shows.
+     *
+     * **It is the one call that empties the graph read's floor, and it does so
+     * on the two answers that say the record moved under the document.** An
+     * `applied` outcome is the record changed (§6.24), so every `graph.read`
+     * answer held here was read before the move: served from that floor, the
+     * screen's own re-read of the document the move changed would be the pre-move
+     * document, the source would not be re-taught what the record holds now, and
+     * the undo the sheet offers next -- `--expect` is the release the record
+     * holds **now** (design section 5.1 rule 14) -- would be built with the
+     * release from before the move and refused as stale by the CLI's
+     * compare-and-set, as would any further move of that task, for up to a
+     * minute.
+     *
+     * **A `refused` outcome carrying `current` is the same defect and not a
+     * hypothetical one** (GV3.1's compare-and-set): the writer checks `expect`
+     * again when the apply job runs, and the refusal it answers with carries the
+     * release the record holds now -- so the record is precisely *not* where this
+     * source's document left it, and the drawing, the preview's `in` field and
+     * every `--expect` built from it are all about a record that is gone. Left
+     * cached, the screen's own re-read is the pre-move document for the rest of
+     * the floor and each retry is refused the same way, which is what makes a
+     * string of confirmations after someone else's move look like a console that
+     * refuses everything. `failed` and `pending` change nothing and leave the
+     * floor where it is: neither says what the record now holds.
+     */
+    roadmapMove: async (args) => {
+      const answer = await read('roadmap.move', (source) => source.roadmapMove(args))
+      const outcome = answer.outcome
+      if (outcome?.status === 'applied' || (outcome?.status === 'refused' && outcome.current !== null)) {
+        graphReads.clear()
+      }
+      return answer
+    },
     /** managedStatus has no precondition and no cadence, for
      * coordinatorIntents's reason: the marks and the audit record are the
      * caller's own database node, so there is no directory on this machine to

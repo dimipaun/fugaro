@@ -131,6 +131,87 @@ export interface SettingsEditSpawn {
   readonly text: string
 }
 
+/**
+ * RoadmapMoveOutcome is §6.24's answer to a write that reached the queue, as
+ * this console reads it: what the record did with the request.
+ *
+ * **The four statuses are the contract's and the console reads no other.** The
+ * document's version is checked first, because a document whose number this
+ * build does not know is one whose fields mean something else -- the CLI refuses
+ * such an answer itself (`fugaro update` is its advice), and a console that read
+ * the fields anyway would be drawing a status out of a shape it does not hold.
+ * A document that is not this shape at all is no document, and the call is
+ * reported by the sentence it came with instead.
+ *
+ * `reason` is the record's own words for a `refused` or a `failed` request and
+ * is absent for the two statuses that carry none, and `current` is the value the
+ * record holds now beside a refusal that was a stale `expect` -- the one field
+ * that says what to ask for next (GV3.1's compare-and-set). Both are **untrusted
+ * text**: they were written by a server and read by a person, and a screen puts
+ * them through `sanitizeText` like every other word off the wire.
+ */
+export interface RoadmapMoveOutcome {
+  readonly status: 'applied' | 'refused' | 'failed' | 'pending'
+  /** the request's id, which is the handle `coordinator roadmap request` reads
+   * it back by: the value a screen names when it says the move is still queued. */
+  readonly request: string
+  readonly reason: string | null
+  readonly current: string | null
+}
+
+/**
+ * RoadmapMoveAnswer is one `roadmap.move` as the surface answered it: the
+ * move's own preview, and -- when the caller confirmed it -- what the record
+ * did with it.
+ *
+ * **`argv` is the whole of the answer's point.** It is the exact command line
+ * the confirmed call will spawn, built by the same `argvFor` and the same
+ * main-process facts the write itself uses, so a confirmation drawn from this
+ * answer shows what is spawned rather than a summary of it. `task`, `from` and
+ * `to` are the document's own words for the three things a reader has to
+ * recognise -- and they are **not** the fields a screen puts on the wire: those
+ * are keys, and these are what the record calls them.
+ *
+ * `from` and `to` are `null` for a move out of or into no release at all (the
+ * record's `none`): a task the record places in no box has no release to name,
+ * and a preview that spelled one anyway would be the forging this answer's shape
+ * exists to prevent.
+ *
+ * The three names are the **document's** text, unsanitized: they are what the
+ * display layer reads a title and a release name in (`sanitizeText`, the
+ * `title` and `name` classes), exactly as it reads the same fields out of the
+ * document, so the confirmation and the drawing cannot render one title two
+ * ways.
+ *
+ * **The write's half is two fields and they are never both set.** `outcome` is
+ * §6.24's document, which every write that reached the queue answers -- the
+ * request was queued and the record's answer is a `status`, whatever the exit
+ * code was -- and `sentence` is the CLI's own words for the one case where there
+ * is no document at all: a call the door refused **before** it queued anything,
+ * which is a refusal about a call rather than an answer about a request (a stale
+ * `expect` read at the door, an argument its schema does not hold). A preview
+ * answers neither, and a screen reads "nothing is set" as the preview it asked
+ * for.
+ */
+export interface RoadmapMoveAnswer {
+  readonly refusal: string | null
+  /** the words the confirmed call spawns, as the move's preview answers them */
+  readonly argv: readonly string[]
+  /** the task the move is about: the node's document key, the `id` the record
+   * holds for it (`<plan>/<task>`), and the record's own title for it. */
+  readonly task: { readonly key: string; readonly id: string; readonly title: string }
+  /** the release the task is in now, or null for a task in no box. */
+  readonly from: { readonly key: string; readonly name: string } | null
+  /** the release the move puts it in, or null for the unassign. */
+  readonly to: { readonly key: string; readonly name: string } | null
+  /** what the record did with the request, or null when no document came back
+   * (a preview, and every call refused before it queued). */
+  readonly outcome: RoadmapMoveOutcome | null
+  /** the CLI's own sentence when there is no document to read, or null when
+   * there is one. */
+  readonly sentence: string | null
+}
+
 /** FeedEndReason says why a live feed stopped. */
 export type FeedEndReason =
   /** the console stopped it */
@@ -295,6 +376,43 @@ export interface FugaroSource {
    * distinction is what a screen draws its empty state from.
    */
   graphRead(args: ValidatedArguments): Promise<Snapshot>
+  /**
+   * roadmapMove puts one task of the roadmap record into a release box or takes
+   * it out of one (`coordinator roadmap move`, the dependency-graph plan's
+   * GV3.2).
+   *
+   * **It is the console's third write, and the one whose whole command line the
+   * main process spells.** The caller names two **keys and nothing else**: the
+   * document key of the task (`nodes[].key`, what the drawing carries on the
+   * row) and the record's key for the release box it was dropped on -- or the
+   * empty string for the unassign. Both are checked against the last document
+   * this console read, which the implementation holds (`CliSource.#roadmap`),
+   * and the three words the CLI reads come from that same document: the task
+   * word is the node's own `id`, `--to` is the box's key or the CLI's `none`,
+   * and `--expect` is the release the document recorded for the node -- the
+   * compare-and-set that makes a move safe against somebody else's (GV3.1). A
+   * key no answer listed is refused with this source's own sentence, before any
+   * child of the move exists, exactly as `graphRead`'s scope is.
+   *
+   * **`confirmed` decides whether anything is written.** Without it the answer
+   * is the move's preview: the exact command line the write would spawn, the
+   * task, and the release it is leaving and the one it is going to -- and no
+   * child. With it the child runs, and only if the argv this call builds is the
+   * argv the preview this console drew answered (`ROADMAP_MOVE_MOVED`
+   * otherwise, and no child): what the operator read is what is spawned, which
+   * is the property rule 11 gives the launch's window and this operation keeps
+   * without one.
+   *
+   * It throws only what a read throws -- no installation, or a pair of keys the
+   * last document does not carry (`SourceRefusal`). A child that exits non-zero
+   * is answered, not thrown: the write asks for `--json` (contract §6.25), so a
+   * request that reached the queue answers §6.24's document whatever its exit
+   * code -- a `refused` record is exit 1 and a `failed` installation exit 2, and
+   * both carry the reason a screen shows beside the task that did not move --
+   * and the CLI's own sentence is the answer for the one case with no document
+   * at all, a call the door refused before it queued anything.
+   */
+  roadmapMove(args: ValidatedArguments): Promise<RoadmapMoveAnswer>
   /**
    * coordinatorStatus is the project view: every repository the installation's
    * local config lists, drawn from the view the coordinator's sweep last stored
@@ -594,6 +712,54 @@ export const SETTINGS_EDIT_MOVED =
   'the installation changed since this edit was read: nothing was written; open the settings again'
 
 /**
+ * ROADMAP_MOVE_MOVED is what a confirmed move answers when the argv its plan
+ * builds is not the argv the preview drew. It is `SETTINGS_EDIT_MOVED`'s rule on
+ * the record's own terms, and it differs in what can move: the graph document
+ * this installation last read is what the three words of a move come from, so a
+ * task somebody else moved between the preview and the confirmation -- or a
+ * re-read that dropped the node, or a project or a checkout changed under the
+ * console -- is refused here rather than written under a command line the
+ * operator never read.
+ *
+ * It is the console's own sentence, like the two above: no child ran, so there
+ * is no CLI refusal to show.
+ */
+export const ROADMAP_MOVE_MOVED =
+  'the move is not the one the console showed: nothing was written; read the graph again and drop the task once more'
+
+/**
+ * NO_ROADMAP_READ is what a move answers for an installation whose graph has not
+ * been read: the move's arguments are **keys of a document**, so with no
+ * document there is nothing to check them against and nothing to spell the three
+ * words from. It is a state and not a guess -- the console says which fact is
+ * missing rather than spawning a write built out of whatever it happens to hold,
+ * which is `NO_PLAN_CHECKOUT`'s rule one read over.
+ */
+export const NO_ROADMAP_READ =
+  'the graph has not been read for this installation yet: read it before moving a task'
+
+/**
+ * NO_ROADMAP_NODE is what a move answers for a task no answer of this
+ * installation listed. The node key a renderer sends is a value from a document
+ * -- not a grammar this process can check an identity with (`local:o1:t-042`
+ * carries two colons, contract §6.22) -- so the membership rule is the whole of
+ * the check, and it is `NO_GRAPH_SCOPE`'s rule on the record's own terms: the
+ * move is refused before a binary is probed and before a child exists.
+ */
+export const NO_ROADMAP_NODE =
+  'this task is not one the last graph read listed: read the graph again and drop a task it shows'
+
+/**
+ * NO_ROADMAP_RELEASE is what a move answers for a release box no answer of this
+ * installation listed, on `NO_ROADMAP_NODE`'s terms. It is the *destination*'s
+ * check rather than the record's: the record refuses a release its own state
+ * calls finished, and that refusal is the CLI's sentence to show -- what this
+ * one refuses is a key the document the operator is looking at never carried.
+ */
+export const NO_ROADMAP_RELEASE =
+  'this release is not one the last graph read listed: read the graph again and drop the task in a box it shows'
+
+/**
  * GRAPH_SCOPE_ALL is the graph read's default scope and its only **selector**:
  * the CLI's `--source` defaults to it, and it is the read a Graph screen opens
  * on. It is deliberately not a member of a document's `sources[]` -- there is no
@@ -734,6 +900,11 @@ export function handlersFor(
     'coordinator.status': (args) => source.coordinatorStatus(args),
     'coordinator.show': (args) => source.coordinatorShow(args),
     'coordinator.intents': (args) => source.coordinatorIntents(args),
+    // The record's one write (GV3.2). Its answer is sentences and keys rather
+    // than a document, so it is `settings.edit`'s shape and not `graph.read`'s:
+    // what the handler returns is what the source's own answer carried, refusal
+    // included, because the refusal is the sentence the operator reads.
+    'roadmap.move': (args) => source.roadmapMove(args),
     'managed.status': (args) => source.managedStatus(args),
     'policy.show': (args) => source.policyShow(args),
     'run.diagnose': (args) => source.diagnoseRun(args),

@@ -54,6 +54,12 @@ describe('the stub’s command keys', () => {
       // word, so `--watch` is what tells the two apart -- and a key shared with
       // the read above would leave this row's scenarios answered by `default`.
       'graph --watch',
+      // The dependency-graph plan's GV3.2 (`roadmap.move` /
+      // `moveRoadmapTask`): `coordinator roadmap move`, the console's third
+      // write and the one this table's group prefix narrows -- the key is the
+      // command's three words, because the task, `--to` and `--expect` are the
+      // row's own arguments and never words of the key.
+      'coordinator roadmap move',
       'diagnose',
       'logs',
       'logs --url',

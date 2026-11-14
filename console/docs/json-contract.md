@@ -2023,10 +2023,12 @@ the console does not pass), `--json`, and the cloud flags `--project`,
 **Command:** `internal/cli/run.go` (`newRunCmd`), printed by `printLaunch` with
 `json.Encoder` and `SetIndent("", "  ")`: **one indented object**, the shape
 every command in the console's set prints (§9.2). **This was the one write in the
-whole console, and it is the first of the two it has now** — the operation
+whole console, and it is the first of the three it has now** — the operation
 `run.launch`, the row V2.5.1a added to the IPC allow-list (2026-10-28/29), the
-surface's twenty-fourth; the settings edit (§6.20) is the second — and it is one
-of the two documents below that a write produces rather than a read. The argv the console builds from the form's
+surface's twenty-fourth; the settings edit (§6.20) is the second, and the
+record's move (§6.25, design §5.1 rule 14, the dependency-graph plan's GV3.2)
+the third — and it is one
+of the three documents below that a write produces rather than a read. The argv the console builds from the form's
 five fields, and the confirmation window the main process owns, are design §5.1
 rule 11's and are not repeated here; what this section settles is the shape of
 the answer those fields come back as.
@@ -3648,11 +3650,16 @@ table against the live constructors.
 
 ## 9. What the console may do with all this
 
-1. **Every document in the console's set is read-only** — with **two
-   exceptions, and both are writes the console's own confirmation windows
-   answer**: the launch (§6.14, design §5.1 rule 11), which was the console's
-   **first write**, and the settings edit (§6.20, design §5.1 rule 12, the
-   settings-edit plan's C3), which is its **second write**. **A third write
+1. **Every document in the console's set is read-only** — with **three
+   exceptions, and all three are writes the console's own confirmation
+   answers**: the launch (§6.14, design §5.1 rule 11), which was the console's
+   **first write**; the settings edit (§6.20, design §5.1 rule 12, the
+   settings-edit plan's C3), which is its **second write**; and the record's
+   move (§6.25, design §5.1 rule 14, the dependency-graph plan's GV3.2), which
+   is its **third write** — the first two behind a window the main process opens
+   (rules 11 and 12), and the move behind a sheet of the Graph screen's own
+   whose every word is still the main process's, so a confirmation authorises
+   nothing the preview did not draw. **A fourth write
    reads no document of this file at all**, so it neither widens nor narrows
    this sentence: `licence.save` (design §5.1 rule 5, the subscriptions plan's
    S2.7) keeps the licence key the operator pasted in the console's own store
@@ -3660,15 +3667,16 @@ table against the live constructors.
    and needs no confirmation window because there is no child and no cloud
    object to confirm — what it writes is a file of the console's own, and what
    it refuses is a key that does not verify. The allow-list is by
-   exact argv (design §5.1 rule 6), and both are on it: `run.launch` and
-   `settings.edit` are the two **spawning** operations of the surface that write
-   — `licence.save` is the third that writes and spawns nothing, which is why
+   exact argv (design §5.1 rule 6), and all three are on it: `run.launch`,
+   `settings.edit` and `roadmap.move` are the three **spawning** operations of
+   the surface that write
+   — `licence.save` is the fourth that writes and spawns nothing, which is why
    there is no row of §8 for it (V2.5.1a,
    2026-10-28/29, took the surface to twenty-four; K2a's
    `link.openPullRequest` took it to twenty-five and writes nothing, and C4c's
    `coordinator.intents` took it to twenty-six and writes nothing — **the
    counts in this parenthesis are the history up to that commit, and rule 5's
-   thirty-nine is today's**), and no other argv that writes is reachable
+   forty is today's**), and no other argv that writes is reachable
    from a renderer. Two further commands this file
    describes are writes, and **neither is in the console's set**: `fugaro cancel
    RUN --json` (§6.3), which is on the design's "never" table and which no v1

@@ -1375,7 +1375,7 @@ func firstBacktick(cell string) string {
 // is what a review of the first revision found here: the table could lose a
 // row -- or gain one -- and the test would still pass. This parses both tables
 // §5.1 rule 6 carries and compares their first cells exactly: the allow-list is
-// the twenty-eight argvs and nothing else -- the console's one spawn table
+// the twenty-nine argvs and nothing else -- the console's one spawn table
 // (SPAWN_COMMANDS) since the installation rail took the picker's read onto the
 // dashboard's surface -- and a review of an earlier revision found the picker's own
 // read, `config list --json`, absent here, which left the specification
@@ -1523,6 +1523,14 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// the console's first write and the one thing this table is a fence
 		// against, spelled as rule 11's exact argv and nothing else.
 		"run --task-file - --json --run-id <run id> --repo <owner/name> [--title=<T>] [--plan-task=<P>] --project <name> [--config <path>]",
+		// The record's move (the dependency-graph plan's GV3.2, the
+		// `roadmap.move` operation, rule 14): one task of the project's roadmap
+		// record into a release box or out of one. The two flag words carry the
+		// record's own keys -- `--to` the box the task was dropped on, `--expect`
+		// the release the same document recorded for it -- and the positional is
+		// that document's own `id`, so the row spells the command's argv and
+		// names the argument in its parenthesis, as the `graph --json` row does.
+		"coordinator roadmap move --json TASK --to <release> --expect <release>",
 	}
 	rows := docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |")
 	got := map[string]bool{}
@@ -1566,6 +1574,130 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 	for _, argv := range []string{"doctor --check-github-app", "logs --follow"} {
 		if !never[argv] {
 			t.Errorf("%s: the never table no longer names %q", path, argv)
+		}
+	}
+}
+
+// consoleRowCommand is the command a §5.1 allow-list row's argv spells: the
+// words before the row's first flag, with the placeholders an operation's own
+// schema fills taken out (`RUN`, `<name>`, `--title=<T>`). The rows state exact
+// argvs and §5.1's census sentence names commands, so this is the reduction that
+// makes the two comparable -- and the command of `settings set KEY --layer …` is
+// the `settings` the census counts once, because the row's subcommand is the
+// operation's own argument (rule 12).
+func consoleRowCommand(t *testing.T, argv string) string {
+	t.Helper()
+	var words []string
+	for _, tok := range consoleArgvWords(argv) {
+		if strings.HasPrefix(tok, "-") {
+			break
+		}
+		words = append(words, tok)
+	}
+	if len(words) == 0 {
+		t.Fatalf("the allow-list row %q states no command before its flags, so this test cannot read it as a command", argv)
+	}
+	if len(words) > 1 && words[0] == "settings" {
+		return "settings"
+	}
+	return strings.Join(words, " ")
+}
+
+// TestDocsDesktopConsoleProjectFlagCensus: §5.1 rule 6's sentence "The
+// twenty-four commands that do take the flag are …" is the one place that says
+// which commands the console aims at a named installation, and it was read by no
+// test -- so it went stale: the dependency-graph plan's GV3.2 added the table's
+// twenty-ninth row, `coordinator roadmap move`, and the console spawns it with
+// `--project` like every other row, while the sentence still said twenty-three
+// and did not name it. Nothing else could catch it, because the census is about
+// the *design's* rows -- `craft ls` is on this table with no console row yet --
+// and not about `SPAWN_COMMANDS`, which the surface test above reads.
+//
+// Both halves are read off the document rather than remembered here: the two
+// exceptions are the sentence's own ("except two: `version`, … and the rail's
+// `config list --json`"), and everything else is what the table's rows spell
+// before their flags, so a row that lands moves this sentence in the same
+// commit and nothing in Go.
+//
+// Mutations that prove it: leave the row and the sentence alone (this test fails
+// naming `coordinator roadmap move`); name a command no row carries; move the
+// spelled count without moving the list; and drop a row's own command from the
+// list (the same failure from the other side).
+func TestDocsDesktopConsoleProjectFlagCensus(t *testing.T) {
+	const path = "docs/design/desktop-console.md"
+	// Whitespace is normalised, as the sibling docs tests do: the sentence is
+	// wrapped across lines and a re-wrap is the same sentence.
+	doc := readDoc(t, path)
+	flat := strings.Join(strings.Fields(doc), " ")
+
+	// The paragraph whole, from its own first words to its last: the exceptions
+	// and the census are read out of this segment, so an "except two" or a list
+	// elsewhere in the document is not one of them.
+	block := regexp.MustCompile("Every row above carries (.+?) read off theirs:").FindStringSubmatch(flat)
+	if block == nil {
+		t.Fatalf("%s's §5.1 rule 6 no longer carries its census paragraph (\"Every row above carries … read off theirs: …\"): this test reads the count, the list and the two exceptions from it", path)
+	}
+
+	census := regexp.MustCompile("The ([a-z]+(?:-[a-z]+)?) commands that do take the flag are (.+?) — the count and the list moved").FindStringSubmatch(block[1])
+	if census == nil {
+		t.Fatalf("%s's census sentence no longer says \"The … commands that do take the flag are … — the count and the list moved\": %q", path, block[1])
+	}
+	count := consoleSpelledNumber(t, census[1])
+
+	var listed []string
+	for _, m := range regexp.MustCompile("`([^`]+)`").FindAllStringSubmatch(census[2], -1) {
+		listed = append(listed, m[1])
+	}
+	if len(listed) == 0 {
+		t.Fatalf("%s's census sentence names no command between \"are\" and \"— the count and the list moved\": %q", path, census[2])
+	}
+	if len(listed) != count {
+		t.Errorf("%s's census spells %s (%d) and names %d commands: the count and the list are one fact and move together", path, census[1], count, len(listed))
+	}
+
+	// The exceptions, from the sentence's own clause: what it excludes from the
+	// census is what the table's rows below may leave out of it.
+	at := strings.Index(block[1], "except two:")
+	if at < 0 {
+		t.Fatalf("%s's §5.1 rule 6 no longer says how many rows carry no `--project` (\"except two: …\"): the census is read against that clause", path)
+	}
+	clause := block[1][at:]
+	if end := strings.Index(clause, "That is not a table annotation"); end >= 0 {
+		clause = clause[:end]
+	}
+	exempt := map[string]bool{}
+	for _, m := range regexp.MustCompile("`([^`]+)`").FindAllStringSubmatch(clause, -1) {
+		exempt[consoleRowCommand(t, m[1])] = true
+	}
+	if len(exempt) != 2 {
+		t.Errorf("%s's §5.1 rule 6 says \"except two\" and names %d commands that carry no `--project` (%v): the census counts the rest of the table, so the two exceptions are read from that clause", path, len(exempt), exempt)
+	}
+
+	// The table's own rows, minus the exceptions: what the census must name.
+	carried := map[string]bool{}
+	for _, cells := range docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |") {
+		argv := firstBacktick(cells[0])
+		if argv == "" {
+			t.Errorf("%s: the allow-list row %q states no exact argv in its first cell", path, cells[0])
+			continue
+		}
+		name := consoleRowCommand(t, argv)
+		if exempt[name] {
+			continue
+		}
+		carried[name] = true
+	}
+	if len(carried) != count {
+		t.Errorf("%s's §5.1 rule 6 allow-list carries %d commands that take `--project` and its census spells %s (%d): the sentence is the table's own count", path, len(carried), census[1], count)
+	}
+	for _, name := range listed {
+		if !carried[name] {
+			t.Errorf("%s's census names %q and no row of §5.1 rule 6's allow-list carries that command: the list is what the rows above spell", path, name)
+		}
+	}
+	for name := range carried {
+		if !slices.Contains(listed, name) {
+			t.Errorf("%s's census omits %q, whose §5.1 rule 6 row takes the flag: name it and move the spelled count in the same commit -- the census is the console's own answer to which commands it aims at an installation", path, name)
 		}
 	}
 }
@@ -1657,7 +1789,7 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	// Twenty-seven commands: the thirteen dashboard reads (logs has two argvs), the
+	// Twenty-eight commands: the thirteen dashboard reads (logs has two argvs), the
 	// rail's `config list --json` (D13's amendment of 2026-10-20), the graph
 	// screen's `plan status --json` (GV2.1), the dependency graph read
 	// `graph --json` (the graph plan's CG9a), the project view's
@@ -1673,14 +1805,16 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	// `managed status --json` and `project policy show --json` (the managed
 	// screens' CM3: the marks with their trail, and the policy node), the
 	// effective-craft read `craft ls --json` (the model-crafts plan's MC8), the
-	// seat estimate `seats --json` (the subscriptions plan's S4.2, D439) and
-	// the launch `fugaro run` (V2.5.1a), and the members read
+	// seat estimate `seats --json` (the subscriptions plan's S4.2, D439), the
+	// launch `fugaro run` (V2.5.1a), the record's move
+	// `coordinator roadmap move` (the dependency-graph plan's GV3.2, rule 14,
+	// and the third row that is not a read at all) and the members read
 	// `user ls --json --repo R` (the roles-and-scopes plan's RS7, roles.md
 	// D691(b)), whose one argument is optional and whose five writing relatives
 	// -- `user grant`, `user revoke`, `user add`, `user rm` and `user offboard`
 	// -- the never table below keeps off this list.
-	if len(allowed) != 27 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 27 (logs has two argvs)", path, argvs, len(allowed))
+	if len(allowed) != 28 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 28 (logs has two argvs)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the read the design names for the console and §5.1 has not grown
@@ -1848,11 +1982,14 @@ func consoleSpelledNumber(t *testing.T, spelled string) int {
 //     `graph.watch`, the surface's one long-lived child -- to the thirty-seven
 //     it carried from 2026-11-09, and the subscriptions plan's S4.2 -- the
 //     Project tab's seat estimate, `seats.read`, the surface's one read whose
-//     child walks the runs bucket -- to thirty-eight, and the roles-and-scopes
-//     plan's RS7 -- the Members view's read of the installation's grants,
-//     `members.list`, the second row whose command is a word of a group the
-//     console otherwise may not touch (`models.list` was the first) -- to the
-//     thirty-nine rule 5 carries today.
+//     child walks the runs bucket -- to the thirty-eight rule 5 carried from
+//     2026-11-11, and the dependency-graph plan's GV3.2 -- the record's move,
+//     `roadmap.move`, the surface's third write and the only operation whose
+//     every argv word is main-process state read out of a document -- to the
+//     thirty-nine, and the roles-and-scopes plan's RS7 -- the Members view's
+//     read of the installation's grants, `members.list`, the second row whose
+//     command is a word of a group the console otherwise may not touch
+//     (`models.list` was the first) -- to the forty rule 5 carries today.
 //   - **every row of spawn.ts's `SPAWN_COMMANDS` is admitted by rule 6's table**:
 //     the row's own words lead some row of the design's table **and what that row
 //     carries after them is flags, nothing else**. The second half is the whole
@@ -1957,16 +2094,19 @@ func TestDocsDesktopConsoleDesignSurfaceIsTheConsoleSource(t *testing.T) {
 // consoleLaunchPaths is §5.1's allow-list written as an exemption rather
 // than as a hole: the writers the console spawns are deliberately absent from
 // consoleReadPaths -- a write is not a read and must not be -- and this map is
-// where each one is named instead. There are two: `fugaro run` is the launch
-// (rule 11, D22), and `fugaro settings set`/`fugaro settings unset` are the
+// where each one is named instead. There are three: `fugaro run` is the launch
+// (rule 11, D22), `fugaro settings set`/`fugaro settings unset` are the
 // settings write (the settings-edit plan's C3, D1103, rule 12), whose row on
 // §5.1's table is the `set` form and whose two words share this one entry's
-// reason. The exemption is the security claim, so it sits beside the reason:
-// a table that grew a third writer comes back here and says so.
+// reason, and `fugaro coordinator roadmap move` is the record's move (the
+// dependency-graph plan's GV3.2, rule 14), whose row the same task added on
+// 2026-11-12. The exemption is the security claim, so it sits beside the
+// reason: a table that grew another writer comes back here and says so.
 var consoleLaunchPaths = map[string]bool{
-	"fugaro run":            true,
-	"fugaro settings set":   true,
-	"fugaro settings unset": true,
+	"fugaro run":                      true,
+	"fugaro settings set":             true,
+	"fugaro settings unset":           true,
+	"fugaro coordinator roadmap move": true,
 }
 
 // planPhaseRow returns the "What ships" cell of the project-centric plan's

@@ -80,6 +80,7 @@ import {
   isSafeArgumentValue,
   keyedArguments,
   locationsFor,
+  MAX_ARGUMENT_LENGTH,
   nodeSpawner,
   parseVersionLine,
   planFor,
@@ -172,10 +173,12 @@ const WINDOWS_PATH = 'C:\\Windows\\System32;C:\\Windows'
  * are one command each, and the subscriptions plan's S4.2's seat estimate,
  * `seats.read`, the twenty-fifth -- a read of the active installation's own
  * config and its bucket, so it takes the project flag like every other read of
- * a project -- and the roles-and-scopes plan's RS7's members read,
- * `members.list`, the twenty-sixth: `fugaro user ls` resolves the checkout on
- * its way to the installation whose grants it lists, so it takes the flag the
- * way every cloud read here does. The
+ * a project -- and the dependency-graph plan's GV3.2, `roadmap.move`, the
+ * twenty-sixth: the record's move writes one project's roadmap, so it resolves
+ * the same installation every other write here does -- and the roles-and-scopes
+ * plan's RS7's members read, `members.list`, the twenty-seventh: `fugaro user
+ * ls` resolves the checkout on its way to the installation whose grants it
+ * lists, so it takes the flag the way every cloud read here does. The
  * complement -- the commands
  * that take no
  * flag at all -- is the *module's* `COMMANDS_WITHOUT_PROJECT`, keyed by the
@@ -205,6 +208,7 @@ const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
   'coordinator.status',
   'coordinator.show',
   'coordinator.intents',
+  'roadmap.move',
   'managed.status',
   'policy.show',
   'run.launch',
@@ -290,9 +294,20 @@ const LAUNCH_RUN_ID = '20261028-152618-a2fc'
  * loop that builds it. */
 const SETTINGS_EDIT_CONTEXT = Object.freeze({ phase: 'narrowing', layer: 'project' } as const)
 
+/** ROADMAP_MOVE_CONTEXT is the three words the move cannot be built without
+ * (the dependency-graph plan's GV3.2). Every one of them is the **main
+ * process's** -- the task's qualified id, the box the drop named or the CLI's
+ * `none`, and the release the record holds for the task -- and the source spells
+ * all three out of the graph document it read, so no schema key declares any of
+ * them. The loops over the whole table supply them here, so the row that needs
+ * them is built like every other one, and a row that starts requiring a fourth
+ * fact fails in the loop that builds it. */
+const ROADMAP_MOVE_CONTEXT = Object.freeze({ task: 'GV/GV3.2', to: 'a'.repeat(64), expect: '' } as const)
+
 /** contextFor is the plan context one row is built with: `safeContext` for
  * every read, and the same plus the run id for the launch, which cannot be
- * built without one, or the phase and the layer for the settings write. A loop
+ * built without one, the phase and the layer for the settings write, or the
+ * move's three words for the roadmap write. A loop
  * over the whole table goes through here rather than asking each row what it
  * needs, so a row that starts requiring a new piece of main-process state fails
  * in the loop that builds it. */
@@ -303,6 +318,7 @@ function contextFor(
   const context = safeContext(overrides)
   if (operation === 'run.launch') return { ...context, runId: LAUNCH_RUN_ID }
   if (operation === 'settings.edit') return { ...context, settingsEdit: SETTINGS_EDIT_CONTEXT }
+  if (operation === 'roadmap.move') return { ...context, roadmapMove: ROADMAP_MOVE_CONTEXT }
   return context
 }
 
@@ -553,10 +569,16 @@ describe('the spawn table and the argv it builds', () => {
     // added the seat estimate, `seats --json` -- the Project tab's advisory
     // count of who launches jobs, whose whole argv is its own two words and the
     // installation's: the 90 days it is measured over are the command's own and
-    // no flag moves them, so a caller can name nothing -- and the roles-and-scopes
-    // plan's RS7 added the members read, `user ls --json`, the Members view's own
-    // argv: the `user` group's one reachable word, whose one argument is the
-    // repository a role is asked about and which the caller may leave out. The Go
+    // no flag moves them, so a caller can name nothing. The dependency-graph
+    // plan's GV3.2 added the twenty-eighth: the record's move,
+    // `coordinator roadmap move --json`, the console's third write. Its
+    // positional word and its `--to` are the two arguments a renderer names as
+    // ids and the main process spells, and its `--expect` is no argument at all
+    // -- it is the release the document recorded for the node, which the row's
+    // own `expectFlag` emits -- and the roles-and-scopes plan's RS7 added the
+    // members read, `user ls --json`, the Members view's own argv: the `user`
+    // group's one reachable word, whose one argument is the repository a role is
+    // asked about and which the caller may leave out. The Go
     // side pins
     // the document's list (`internal/cli/docs_desktop_console_test.go`,
     // TestDocsDesktopConsoleDesignAllowListIsExactArgv) and this case pins the
@@ -570,10 +592,18 @@ describe('the spawn table and the argv it builds', () => {
       'runs summary --json',
       'plan status --json',
       'graph --json',
-      // The same command with one word more (the graph plan's CG9b): the feed a
+      // The same command as a live feed (the graph plan's CG9b): the feed a
       // screen subscribes to while the Graph tab is on screen, whose `--watch`
       // is a word of the command path rather than a flag a caller controls.
       'graph --watch --json',
+      // The record's move (the dependency-graph plan's GV3.2): the Graph
+      // screen's drag, and this surface's third write. It sits beside the two
+      // graph rows because the record it writes is the one the Graph draws, and
+      // its words are the command, its own `--json` and the installation's two
+      // -- the task, the box and the release the record holds for the task are
+      // the row's arguments, built by the main process out of the document it
+      // read.
+      'coordinator roadmap move --json',
       'diagnose --json',
       'logs --json',
       'logs --url',
@@ -608,7 +638,7 @@ describe('the spawn table and the argv it builds', () => {
       'run --task-file - --json',
     ])
     // The commands that take the flag (addCloudFlags, internal/cli/cloud.go:51)
-    // are twenty-six rows over twenty-three commands: `logs` has two rows,
+    // are twenty-seven rows over twenty-four commands: `logs` has two rows,
     // `--json` and `--url`, and neither of them may be the one that forgets
     // --project, and `settings` (a read and a write) and `graph` (a read and its
     // feed) have two each as well.
@@ -642,10 +672,11 @@ describe('the spawn table and the argv it builds', () => {
         'project policy show',
         'seats',
         'user ls',
+        'coordinator roadmap move',
         'run',
       ]),
     )
-    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(26)
+    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(27)
     // ...and the table's own flags agree with the list the tests above use.
     for (const row of SPAWN_COMMANDS) {
       expect(row.takesProject, row.operation).toBe(COMMANDS_TAKING_PROJECT.includes(row.operation))
@@ -709,6 +740,99 @@ describe('the spawn table and the argv it builds', () => {
     // An undeclared key cannot smuggle a word in either: the row's arguments are
     // the whole of what reaches this argv.
     expect(() => argvFor('graph.read', { watch: true } as never, safeContext())).toThrow(/does not declare/)
+  })
+
+  it('roadmap.move argv is exactly the declared row, and its three words are the main process’s', () => {
+    // `fugaro coordinator roadmap move <plan>/<task> --to <release|none>
+    // --expect <release|none> --json` (the dependency-graph plan's GV3.2;
+    // `console/docs/json-contract.md` §6.25). Written out here rather than read
+    // back off the table, for `graph.read`'s reason: the row is the whole of
+    // what this console may say to the command, and "which word does the drag
+    // put where" is the question.
+    const row = SPAWN_COMMANDS.find((candidate) => candidate.operation === 'roadmap.move')
+    expect(row?.words.join(' ')).toBe('coordinator roadmap move --json')
+    expect(row?.takesProject).toBe(true)
+    expect(row?.dirFlag).toBe(false)
+    expect(row?.expectFlag).toBe('--expect')
+    expect(row?.args).toEqual([
+      { key: 'node', flag: null, kind: 'roadmapTask' },
+      { key: 'toRelease', flag: '--to', kind: 'roadmapRelease' },
+      { key: 'confirmed', flag: null, kind: 'boolean' },
+    ])
+    // Both flags are on the module's own list, which is what `assertArgvFlags`
+    // holds every emitted word to, and the two roadmap kinds are words of this
+    // row alone (`assertSpawnSurface`).
+    expect(SPAWN_FLAGS).toContain('--to')
+    expect(SPAWN_FLAGS).toContain('--expect')
+
+    // `node` and `toRelease` are the payload's -- the node's **document key**
+    // and the box's key -- and neither is emitted: the positional word is the
+    // document's own `id` for that node (`<plan>/<task>`, D2111), the `--to`
+    // word is the box's key or the CLI's `none`, and `--expect` is the release
+    // the document recorded for the task, which is GV3.1's compare-and-set. The
+    // context below is deliberately **not** what the payload says, so a row that
+    // read the payload for either word would fail here.
+    const node = 'coordinator:plans/gv/plan.md#GV3.2'
+    const box = 'b'.repeat(64)
+    const rest = 'c'.repeat(64)
+    const move = { ...safeContext(), roadmapMove: { task: 'gv/plan.md/GV3.2', to: box, expect: rest } }
+    expect([...argvFor('roadmap.move', { node, toRelease: 'd'.repeat(64) }, move)]).toEqual([
+      'coordinator',
+      'roadmap',
+      'move',
+      '--json',
+      'gv/plan.md/GV3.2',
+      '--to',
+      box,
+      '--expect',
+      rest,
+      '--project',
+      PROJECT,
+    ])
+    // A node the payload names is never a word: the key it sent chose which
+    // node's `id` the main process spells, and it is that id -- not the key --
+    // that reaches the argv.
+    expect([...argvFor('roadmap.move', { node, toRelease: box }, contextFor('roadmap.move'))]).not.toContain(node)
+    // The unassign is the CLI's own word for the empty key, spelled here rather
+    // than by whoever dropped the task -- and it is spelled for both of the
+    // words a move takes, so an unassigned task moved out of a box reads `none`
+    // twice.
+    const unassign = { ...safeContext(), roadmapMove: { task: 'gv/plan.md/GV3.2', to: '', expect: '' } }
+    expect([...argvFor('roadmap.move', { node, toRelease: '' }, unassign)].filter((word) => word === 'none')).toHaveLength(2)
+    // An undeclared key cannot smuggle a word in either.
+    expect(() => argvFor('roadmap.move', { node, toRelease: box, expect: 'x' } as never, contextFor('roadmap.move'))).toThrow(
+      /does not declare/,
+    )
+    // **The words a renderer names never reach the argv**: the two the row
+    // declares are ids, and the third -- `--expect`, which is no argument of the
+    // row at all -- is the release the main process read. A move built with no
+    // main-process context is not a shorter argv: it is refused.
+    expect(() => argvFor('roadmap.move', { node, toRelease: box }, safeContext())).toThrow(/has no move to spell/)
+  })
+
+  it('refuses a move word that is merely long by its length, and not by its alphabet', () => {
+    // **A task id longer than any argv element may be is not a bad spelling.**
+    // The word is the document's own `<plan>/<task>` and every character of it is
+    // one `isSafeArgumentValue` admits, so the only true sentence about it names
+    // the bound it passed (`MAX_ARGUMENT_LENGTH`) -- and that bound is also the
+    // node key's own in `ipc.ts`, which is what keeps a key from being admitted
+    // by the schema and refused here, one step later, for the wrong reason.
+    const long = 'gv/plan.md/'.concat('x'.repeat(MAX_ARGUMENT_LENGTH))
+    const move = { ...safeContext(), roadmapMove: { task: long, to: 'a'.repeat(64), expect: '' } }
+    expect(() => argvFor('roadmap.move', { node: 'coordinator:gv/T1', toRelease: 'a'.repeat(64) }, move)).toThrow(
+      `roadmap.move's node is longer than ${String(MAX_ARGUMENT_LENGTH)} characters`,
+    )
+    // One character inside the bound is a command line like any other: the guard
+    // is the whole of the check, so nothing about the task's own text is read.
+    const fits = 'x'.repeat(MAX_ARGUMENT_LENGTH)
+    const ok = { ...safeContext(), roadmapMove: { task: fits, to: 'a'.repeat(64), expect: '' } }
+    expect([...argvFor('roadmap.move', { node: 'coordinator:gv/T1', toRelease: 'a'.repeat(64) }, ok)]).toContain(fits)
+    // And a word the bound does not explain is still refused by the alphabet's
+    // own sentence: the length is asked first, and only it.
+    const newline = { ...safeContext(), roadmapMove: { task: 'gv/plan.md\nT1', to: 'a'.repeat(64), expect: '' } }
+    expect(() => argvFor('roadmap.move', { node: 'coordinator:gv/T1', toRelease: 'a'.repeat(64) }, newline)).toThrow(
+      "roadmap.move's node is not a value this console will pass to the CLI",
+    )
   })
 
   it('keys a subscription on the arguments that reach a word, and no others', () => {
@@ -1853,6 +1977,91 @@ describe('the spawn table and the argv it builds', () => {
     expect(() => assertSpawnSurface(SPAWN_COMMANDS.filter((row) => row.operation !== 'runs.list'))).toThrow(
       /runs.list has no row/,
     )
+  })
+
+  // **The move (GV3.2) is the one row whose argv carries words no `row.words`
+  // holds**: its positional and its `--to` are the document's own -- the source
+  // checks the two keys the payload sent and spells the words itself -- and its
+  // `--expect` is emitted from the main process's copy of the record, so
+  // `assertArgvFlags`, which reads `row.words`, can see none of the three. The
+  // four cases below are the whole of what keeps those words one row's and keeps
+  // the flag on `SPAWN_FLAGS`, and each is a mutation of the real table (or of a
+  // real call) that only its own guard refuses -- so a guard dropped in a later
+  // edit fails here instead of at a spawn. The flag one is the `--cd` hazard the
+  // wrapper's case pins, one column over: an emitted `--expect` word that is not
+  // on `SPAWN_FLAGS` would reach a child with nothing left to refuse it.
+  const rowFor = (operation: string): SpawnCommand => {
+    const row = SPAWN_COMMANDS.find((candidate) => candidate.operation === operation)
+    if (row === undefined) throw new Error(`${operation} has no row in the spawn table`)
+    return row
+  }
+  const replacingRow = (operation: string, change: Partial<SpawnCommand>): SpawnCommand[] =>
+    SPAWN_COMMANDS.map((row) => (row.operation === operation ? { ...row, ...change } : row))
+
+  it('fails a table that lends the move’s two kinds to another row, or takes them from the record’s (GV3.2)', () => {
+    // The record's own row may not lose them: it would still carry its
+    // compare-and-set, so nothing after this guard notices the kinds went.
+    expect(() =>
+      assertSpawnSurface(
+        replacingRow('roadmap.move', {
+          args: rowFor('roadmap.move').args.filter(
+            (spec) => spec.kind !== 'roadmapTask' && spec.kind !== 'roadmapRelease',
+          ),
+        }),
+      ),
+    ).toThrow(/declares no move argument/)
+    // ...and a row that is not the record's may not spell one. The payload check
+    // behind this one refuses the same table with a sentence of its own
+    // (`graph.read declares toRelease, which the operation does not accept`), so
+    // which of the two a reader meets is what this case pins.
+    expect(() =>
+      assertSpawnSurface(
+        replacingRow('graph.read', {
+          args: [...rowFor('graph.read').args, { key: 'toRelease', flag: '--to', kind: 'roadmapRelease' }],
+        }),
+      ),
+    ).toThrow(/spells a word of a move/)
+    expect(() => assertSpawnSurface(SPAWN_COMMANDS)).not.toThrow()
+  })
+
+  it('fails a table that lends the move’s compare-and-set to another row, or drops it from the record’s (GV3.2)', () => {
+    expect(() => assertSpawnSurface(replacingRow('graph.read', { expectFlag: '--expect' }))).toThrow(
+      /carries a compare-and-set/,
+    )
+    // The column is the only thing that makes `argvFor` emit the word at all, so
+    // dropping it is a move with no compare-and-set rather than a shorter argv --
+    // and no other guard reads the column.
+    expect(() => assertSpawnSurface(replacingRow('roadmap.move', { expectFlag: undefined }))).toThrow(
+      /has no compare-and-set/,
+    )
+    expect(() => assertSpawnSurface(SPAWN_COMMANDS)).not.toThrow()
+  })
+
+  it('fails a table whose move emits a flag this module may not spawn (GV3.2)', () => {
+    // `--cd` is `wsl.exe`'s own flag and is on no `SPAWN_FLAGS` row: a move that
+    // emitted it would put a flag of the wrapper's into the CLI's command line,
+    // and -- because the word never appears in `row.words` -- `assertArgvFlags`
+    // would have nothing to refuse.
+    expect(() => assertSpawnSurface(replacingRow('roadmap.move', { expectFlag: '--cd' }))).toThrow(
+      /--cd, which is not a flag this console may spawn/,
+    )
+    expect(SPAWN_FLAGS).not.toContain('--cd')
+    expect(() => assertSpawnSurface(SPAWN_COMMANDS)).not.toThrow()
+  })
+
+  it('refuses the move’s context on a row that is not the record’s (GV3.2)', () => {
+    // The runtime half of the same rule, and the one a table mutation cannot
+    // reach: the three words travel in the plan context rather than in the
+    // payload, so a row that carries no compare-and-set has to refuse a context
+    // that has one -- otherwise a read's argv would be built with the record's
+    // own release on it. (`argvFor` refuses the reverse case -- the record's row
+    // with a context that has no move -- one argument earlier, at "has no move to
+    // spell", which its own case pins.)
+    expect(() => argvFor('graph.read', {}, contextFor('roadmap.move'))).toThrow(/takes no move/)
+    expect(() => argvFor('graph.read', {}, safeContext())).not.toThrow()
+    expect(() =>
+      argvFor('roadmap.move', { node: 'coordinator:gv/T1', toRelease: '' }, contextFor('roadmap.move')),
+    ).not.toThrow()
   })
 
   it('builds argv as an array and hands the spawner `shell: false`', async () => {
