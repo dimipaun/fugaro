@@ -15306,8 +15306,9 @@ route, and with `--coding-job` that job's account on the sign route as well — 
 refusal of an identity the service **will not verify**, which it answers before there is an identity, a run
 or a job for an audit line to name. A refusal of that kind writes **no** audit line (the service's rule is
 that every refusal from the identity on writes exactly one), so these calls leave nothing at all and the
-service's log is exactly as the check found it — and the block's `restore` row says exactly that. What an owner's own review run
-left — the artifact, the record, the spend — is left where it is, and the ID tokens this check minted die
+service's log is exactly as the check found it — and the block's `restore` row says exactly that. What an
+owner's own review run left — the artifact, the record, the spend — is left where it is, and the ID tokens
+this check minted die
 with the scratch directory that held them: one directory at mode `0700`, removed from the exit trap even on
 a failed assertion or a Ctrl-C, and kept with a message saying where it is when `CHECK601_KEEP_SCRATCH` is
 set. **No agent runs any step of it.**
