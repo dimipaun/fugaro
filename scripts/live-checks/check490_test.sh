@@ -902,7 +902,20 @@ test_the_verdict_and_the_deferral_rows_are_load_bearing() {
   expect_contains "$out" "${finding_summary}" "load-bearing: the deferral names the reviewer's summary"
 }
 
-t() { "$1"; }
+# Sharding, so the Go test that runs this file can run its cases side by side:
+# CHECK_TEST_SHARD="i/n" runs every n-th test starting at i (each case works in
+# its own directory under $work), CHECK_TEST_ONLY=name runs that one alone.
+test_index=0
+t() {
+  local i=$test_index
+  test_index=$((test_index + 1))
+  if [ -n "${CHECK_TEST_ONLY:-}" ]; then
+    [ "$1" = "$CHECK_TEST_ONLY" ] || return 0
+  elif [ -n "${CHECK_TEST_SHARD:-}" ]; then
+    [ $((i % ${CHECK_TEST_SHARD#*/})) -eq "${CHECK_TEST_SHARD%/*}" ] || return 0
+  fi
+  "$1"
+}
 t test_help
 t test_dry_run
 t test_happy_path
