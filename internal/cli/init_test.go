@@ -1176,7 +1176,9 @@ func TestInitForgetWarnsLogBucketUndelete(t *testing.T) {
 // --json confirms no step, at a terminal or not (initflow.CanConfirmRun reads
 // it out), so the run is left at the confirmation; it still prints its one
 // result document on stdout, with the changes it planned and the reason it
-// stopped (T7, docs/no-prompt-policy).
+// stopped (T7, docs/no-prompt-policy). The reason lives on the stage the run
+// stopped at (failed), not in error: error is what a run refused with before
+// any stage ran, and this run planned first.
 func TestInitJSON(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
@@ -1189,13 +1191,20 @@ func TestInitJSON(t *testing.T) {
 		GCPProject string           `json:"gcp_project"`
 		Applied    bool             `json:"applied"`
 		Changes    infra.PlanCounts `json:"changes"`
-		Error      string           `json:"error"`
+		Failed     *struct {
+			Stage string `json:"stage"`
+			Error string `json:"error"`
+		} `json:"failed"`
+		Error string `json:"error"`
 	}
 	if jerr := json.Unmarshal([]byte(out), &res); jerr != nil {
 		t.Fatalf("%v:\n%s", jerr, out)
 	}
-	if res.Project != initProjectName || res.GCPProject != initProject || res.Applied || res.Changes.Creates != 1 || res.Error != err.Error() {
+	if res.Project != initProjectName || res.GCPProject != initProject || res.Applied || res.Changes.Creates != 1 || res.Error != "" {
 		t.Fatalf("result = %+v", res)
+	}
+	if res.Failed == nil || res.Failed.Stage != "installation" || res.Failed.Error != err.Error() {
+		t.Fatalf("failed = %+v, want the installation stage's own --json refusal", res.Failed)
 	}
 }
 

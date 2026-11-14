@@ -223,13 +223,20 @@ func TestOnlyATerminalCreatesTheProject(t *testing.T) {
 		})
 	}
 
-	// At a terminal, with the ID not typed (EOF): still nothing.
+	// A person at the terminal is the confirmation, with nothing typed at the
+	// name (T7): the flag's project is created and Firebase is added to it,
+	// and billing stays for the flag that names it.
 	r := newProjectRig(t)
-	_, _, err := r.run(t, true, "", "--create-project")
-	if err == nil {
-		t.Error("exit 0")
+	out, _, _ := r.run(t, true, "", "--create-project")
+	if cs := r.crm.Creates(); len(cs) != 1 || cs[0].ID != newProj {
+		t.Errorf("creates = %+v, want exactly one, %s\n%s", cs, newProj, out)
 	}
-	r.nothingDone(t, "nothing typed at the name")
+	if adds := r.fb.Adds(); len(adds) != 1 || adds[0] != newProj {
+		t.Errorf("Firebase adds = %v", adds)
+	}
+	if len(r.bill.Links()) != 0 {
+		t.Error("billing was linked without --link-billing")
+	}
 }
 
 func TestOnlyATerminalLinksBilling(t *testing.T) {
@@ -240,7 +247,6 @@ func TestOnlyATerminalLinksBilling(t *testing.T) {
 	}{
 		"piped":                {false, billingAcc + "\n", nil},
 		"--json at a terminal": {true, billingAcc + "\n", []string{"--json"}},
-		"account not typed":    {true, "", nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newProjectRig(t)

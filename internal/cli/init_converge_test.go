@@ -62,8 +62,8 @@ func (c convergeJSON) state(name string) string {
 // creates, applies and reports each stage; the Firebase stage is skipped
 // without --firebase-project. --json confirms no step (T7,
 // docs/no-prompt-policy), so the run is read off its own account at a real
-// terminal instead: one line per stage, and a closing line that is a Done
-// because nothing is left for the user.
+// terminal instead: one line per stage, and a Done line — setup's own line
+// about `gh` is printed after it — because nothing is left for the user.
 func TestConvergeFromNothing(t *testing.T) {
 	r := newInitRig(t)
 	fakeTerminal(t)
@@ -83,8 +83,8 @@ func TestConvergeFromNothing(t *testing.T) {
 	if l := stepLineOf(account, "preflight"); !strings.HasPrefix(l, markDone+" preflight") {
 		t.Errorf("the preflight is not a tick: %q\n%s", l, out)
 	}
-	if last := account[len(account)-1]; !strings.HasPrefix(last, "Done in ") {
-		t.Errorf("the closing line is %q, want the Done summary: nothing is left for the user", last)
+	if !slices.ContainsFunc(account, func(l string) bool { return strings.HasPrefix(l, "Done in ") }) {
+		t.Errorf("no Done closing line: nothing is left for the user\n%s", out)
 	}
 	if len(r.ran(t, "apply")) != 1 {
 		t.Errorf("calls %q", r.calls(t))

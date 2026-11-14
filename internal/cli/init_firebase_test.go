@@ -1202,6 +1202,7 @@ func TestIdentityPlatformRefusesPublicSignUp(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			r := newFBRig(t)
 			r.idt.SetIdentityPlatformConfig(cfg)
+			fakeTerminal(t)
 			_, stderr, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID)
 			if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error()+stderr, "public sign-up") {
 				t.Fatalf("err = %v, stderr = %s", err, stderr)
@@ -1596,16 +1597,13 @@ func TestTheFirebaseProjectDefaultNamesTheIdAndNotTheStage(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newInitRig(t)
-			out, _, err := executeStdin(t, "", append([]string{"setup", "--json"}, extra...)...)
+			fakeTerminal(t)
+			out, _, err := executeStdin(t, "", append([]string{"setup"}, extra...)...)
 			if err != nil {
 				t.Fatalf("%v:\n%s", err, out)
 			}
-			var res convergeJSON
-			if err := json.Unmarshal([]byte(out), &res); err != nil {
-				t.Fatalf("%v:\n%s", err, out)
-			}
-			if got := res.state("firebase"); got != "skipped" {
-				t.Errorf("with %s the Firebase stage is %q, want skipped: the default names which project a backend would use, it does not ask for one", name, got)
+			if l := stepLineOf(reportLines(out), "firebase"); !strings.HasPrefix(l, markSkipped+" firebase") {
+				t.Errorf("with %s the Firebase stage is %q, want skipped: the default names which project a backend would use, it does not ask for one\n%s", name, l, out)
 			}
 			for _, c := range r.calls(t) {
 				if strings.Contains(strings.Join(c, " "), "firebase") {
@@ -2416,21 +2414,19 @@ func TestUpdatePolicyStageSkipsTheDatabaseTheRulesStageSkipped(t *testing.T) {
 	for _, s := range unadoptedShapes {
 		t.Run(s.name, func(t *testing.T) {
 			_, db, _ := unadoptedRig(t, s)
-			out, errOut, err := executeStdin(t, "", "update", "--json")
+			fakeTerminal(t)
+			out, errOut, err := executeStdin(t, "", "update")
 			if err != nil {
 				t.Fatalf("a database the pair does not prove is ours stopped the whole update: %v\n%s%s", err, out, errOut)
 			}
-			var res convergeJSON
-			if err := json.Unmarshal([]byte(out), &res); err != nil {
-				t.Fatalf("%v:\n%s", err, out)
+			account := reportLines(out)
+			if l := stepLineOf(account, initflow.Rules); !strings.HasPrefix(l, markSkipped+" "+initflow.Rules) {
+				t.Errorf("the rules stage is %q, want skipped:\n%s", l, out)
 			}
-			if got := res.state(initflow.Rules); got != "skipped" {
-				t.Errorf("the rules stage is %q, want skipped:\n%s", got, out)
+			if l := stepLineOf(account, initflow.Policy); !strings.HasPrefix(l, markSkipped+" "+initflow.Policy) {
+				t.Errorf("the policy stage is %q, want skipped: the rules stage skipped this database, and the migration behind it wrote there anyway\n%s", l, out)
 			}
-			if got := res.state(initflow.Policy); got != "skipped" {
-				t.Errorf("the policy stage is %q, want skipped: the rules stage skipped this database, and the migration behind it wrote there anyway\n%s", got, out)
-			}
-			detail := res.stageDetail(t, initflow.Policy)
+			detail := out + errOut + newestLog(t, "update")
 			for _, want := range s.wants {
 				if !strings.Contains(detail, want) {
 					t.Errorf("the skip does not name %q: %q", want, detail)

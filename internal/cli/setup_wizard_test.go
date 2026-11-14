@@ -669,6 +669,7 @@ func TestSetupUpdateConvergesBake(t *testing.T) {
 
 	t.Run("the answer a run gives the question", func(t *testing.T) {
 		r := newConvergeRig(t, v6Node())
+		fakeTerminal(t)
 		out, errOut, err := executeStdin(t, "", "setup", "--bake-repos=false")
 		if err != nil {
 			t.Fatalf("fugaro setup --bake-repos=false stopped at %s (exit %d): %v\n%s\n%s", stoppedStage(out), ExitCode(err), err, out, errOut)

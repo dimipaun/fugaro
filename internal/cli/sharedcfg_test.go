@@ -145,6 +145,7 @@ func TestInitPublishConfigAsLauncherIsRefused(t *testing.T) {
 func TestInitWarnsWhenSharedConfigPublishIsForbidden(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
+	fakeTerminal(t)
 	old := sharedBucketOpener
 	sharedBucketOpener = func(ctx context.Context, _ string) (*blobx.Bucket, error) {
 		return r.gcs.Bucket(t, initRunsBucket), nil
@@ -193,6 +194,7 @@ func TestInitPublishConfigExcludesTheOtherModes(t *testing.T) {
 func TestInitPublishFailureWarnsAndSucceeds(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
+	fakeTerminal(t)
 	dir := sharedRuns(t)
 	if err := os.Chmod(dir, 0o500); err != nil {
 		t.Fatal(err)

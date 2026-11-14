@@ -1311,6 +1311,7 @@ func TestUpgradeNoteNamesTheStage(t *testing.T) {
 	stubCurrentRefresh(t, r)
 	setJobConfigCopyEnv(t, r, "api", nil)
 	fakeSteps(t, "", nil)
+	fakeTerminal(t)
 	out, _, err := runCloudStep(t)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)

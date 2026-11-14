@@ -342,9 +342,10 @@ func TestAResumedCreationIsMarkedManaged(t *testing.T) {
 // "already existed" when the project stage actually read a project that was
 // already there. Here it does not exist and no person is at the run: the
 // confirmation the run stops at is one nothing but a person at a terminal
-// gives now (T7, docs/no-prompt-policy), so nothing was adopted and nothing
-// was created: the warning says the creation did not happen, and a reader is
-// not sent to look for a project that is not there.
+// gives (T7, docs/no-prompt-policy), and the run leaves the step for them, so
+// nothing was adopted and nothing was created: the warning says the creation
+// did not happen, and a reader is not sent to look for a project that is not
+// there.
 func TestManagedWarningDoesNotClaimAdoptionWithoutOne(t *testing.T) {
 	r := newProjectRig(t)
 	r.bill.AddAccount(billingAcc, true)
@@ -359,8 +360,8 @@ func TestManagedWarningDoesNotClaimAdoptionWithoutOne(t *testing.T) {
 	// rather than refuse earlier, so the warning below is about a creation
 	// that did not happen.
 	r.nothingDone(t, "a managed creation whose confirmation nobody was at to give")
-	if !strings.Contains(all, "needs a real terminal") {
-		t.Fatalf("the run did not stop at a step no run nobody is at can take:\n%s", all)
+	if !strings.Contains(all, "needs your own confirmation, which no flag gives") {
+		t.Fatalf("the run did not stop at the project's own confirmation, which no flag gives:\n%s", all)
 	}
 	if !strings.Contains(all, "--managed was not applied") {
 		t.Errorf("the run created no project under --managed and did not say --managed was not applied:\n%s", all)

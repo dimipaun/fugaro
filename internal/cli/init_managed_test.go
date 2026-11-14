@@ -58,6 +58,7 @@ func TestMarkCreatedWritesOnlyForACreationThisRunCreatedOrResumed(t *testing.T) 
 	t.Run("update --firebase-project on an existing project", func(t *testing.T) {
 		r := newFBRig(t)
 		r.markedRuns(t, initProjectName, initProject)
+		fakeTerminal(t)
 		if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID); err != nil {
 			t.Fatal(err)
 		}
