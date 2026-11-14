@@ -225,7 +225,7 @@ func TestGrantRulesNameOnlyKnownTypesAndRoles(t *testing.T) {
 			t.Errorf("%s has no roles", typ)
 		}
 		for key, w := range row {
-			if w == 0 || w&^(toPeople|toAccounts|toDeployer|toCredentials|toCoordinator|toVerifier|toCatalogCheck|toMCP|toIntake) != 0 {
+			if w == 0 || w&^(toPeople|toAccounts|toDeployer|toCredentials|toCoordinator|toVerifier|toCatalogCheck|toMCP|toIntake|toReports) != 0 {
 				t.Errorf("%s %s: bad principal kinds %d", typ, key, w)
 			}
 			if id, ok := strings.CutPrefix(key, customKey); ok {
@@ -1685,6 +1685,216 @@ func TestCatalogCheckRecordsGrant(t *testing.T) {
 				t.Errorf("NotCovered = %q, want it to contain %q", got[0], tc.want)
 			}
 		})
+	}
+}
+
+// reportsMember is the project's reports job account as a plan names it: the
+// account the installation module's reports resource creates (reports.tf,
+// ReportsAccountID).
+const reportsMember = "serviceAccount:" + ReportsAccountID + "@proj-1234.iam.gserviceaccount.com"
+
+// TestReportsAccountIsItsOwnPrincipalKind: the project's reports job (slice P,
+// ruling E4) is a principal of its own kind, like the credentials service's
+// account, the coordinator's writer and the project's catalog check job, and
+// for the same reason: as one of FugaroAccounts every toAccounts row would
+// have accepted it, and this account's reach is not a job account's — it reads
+// every repository's run records and it is the one writer of reports/, a write
+// no launcher and no job holds. Nothing else may accept it either: an account
+// that could ride one of the tables' rows would be one whose next grant (a
+// secret accessor, an IAM admin role, a key) is covered silently.
+//
+// Exactly two rows carry the bit — the bucket's objectViewer and objectUser —
+// and what makes each grant the modules' own is the CONDITION and the bucket,
+// which the matrix below does not reach and TestReportsGrantsAreTheConditions
+// does: the account, one of its two prefixes of one of this run's buckets,
+// under the title built from it.
+//
+// Mutation (run, restore): give a third row the toReports bit and the row loop
+// fails; drop the isReportsMember case from checkGrant and the kind-sentence
+// case fails; add ReportsAccountID to FugaroAccounts and the first check fails.
+func TestReportsAccountIsItsOwnPrincipalKind(t *testing.T) {
+	if slices.Contains(FugaroAccounts, ReportsAccountID) {
+		t.Errorf("the project's reports job is one of FugaroAccounts, so every toAccounts row accepts it")
+	}
+	rows := 0
+	for typ, row := range grantRules {
+		for key, w := range row {
+			if w&toReports == 0 {
+				continue
+			}
+			rows++
+			if typ != "google_storage_bucket_iam_member" || (key != "roles/storage.objectViewer" && key != "roles/storage.objectUser") {
+				t.Errorf("%s %s: the row accepts the reports job's account, whose grants are its two conditioned bucket bindings and are refused here one by one", typ, key)
+			}
+		}
+	}
+	if rows != 2 {
+		t.Errorf("%d rows carry toReports, want the two the modules write for this account: the bucket's objectViewer and objectUser", rows)
+	}
+
+	roles := map[string][]string{}
+	for typ, row := range grantRules {
+		for key := range row {
+			roles[typ] = append(roles[typ], grantRoleString(key))
+		}
+	}
+	roles["google_project_iam_member"] = append(roles["google_project_iam_member"],
+		"roles/owner", "roles/editor", "roles/iam.serviceAccountAdmin",
+		"roles/iam.serviceAccountTokenCreator", "roles/iam.serviceAccountKeyAdmin", "roles/storage.objectAdmin")
+	c := Cover{Projects: []string{"proj-1234"}, Buckets: []string{cbBucket}, Listed: []string{cbPerson}, Region: testCover.Region}
+	for typ, list := range roles {
+		for _, role := range slices.Sorted(slices.Values(list)) {
+			after := map[string]any{"member": reportsMember, "role": role, "bucket": cbBucket}
+			withCondFor(after, typ, role, false)
+			ch := rc(typ, after, map[string]any{}, "create")
+			if got := c.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) == 0 {
+				t.Errorf("%s: %s to the reports job is covered: every grant to this account is an owner-run apply", typ, role)
+			}
+		}
+	}
+
+	// The refusal says which kind of principal this is, and not that the
+	// address is missing from the review screen.
+	ch := rc("google_project_iam_member", map[string]any{"member": reportsMember, "role": "roles/logging.logWriter", "bucket": cbBucket}, map[string]any{}, "create")
+	if got := c.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) != 1 ||
+		!strings.Contains(got[0], "a kind of principal the installation's modules do not grant it to") {
+		t.Errorf("a project grant to the reports job: NotCovered = %q, want the refusal that names its own kind of principal", got)
+	}
+
+	// The account is the installation's: a lookalike in another project is
+	// nobody Fugaro creates.
+	ch = rc("google_project_iam_member", map[string]any{"member": "serviceAccount:" + ReportsAccountID + "@fp-2.iam.gserviceaccount.com", "role": "roles/logging.logWriter", "bucket": cbBucket}, map[string]any{}, "create")
+	if got := c.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) == 0 {
+		t.Errorf("the log writer is covered for %s@fp-2: the reports job is %s@proj-1234 and nothing else", ReportsAccountID, ReportsAccountID)
+	}
+
+	// Listed on the review screen by mistake, it is still not a person: the
+	// kind is read before the list, as the deployer's and the catalog check
+	// job's are.
+	listed := Cover{Projects: c.Projects, Buckets: c.Buckets, Listed: []string{reportsMember}, Region: c.Region}
+	for _, role := range []string{"roles/storage.objectViewer", "roles/run.invoker", "roles/logging.logWriter"} {
+		ch := rc("google_project_iam_member", map[string]any{"member": reportsMember, "role": role, "bucket": cbBucket}, map[string]any{}, "create")
+		if got := listed.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) == 0 {
+			t.Errorf("%s to the reports job, listed on the review screen, is covered", role)
+		}
+	}
+}
+
+// reportsGrantPlan is one of the reports job's two bucket grants as a plan
+// carries it: the account created in the same module (a computed member, which
+// is what the first apply's plan writes) or named outright (an update plan),
+// and the one condition the case writes.
+func reportsGrantPlan(computed bool, role string, cnd map[string]any) *Plan {
+	conds := []any{}
+	if cnd != nil {
+		conds = []any{cnd}
+	}
+	after := map[string]any{"bucket": cbBucket, "role": role, "condition": conds}
+	unk := map[string]any{"condition": []any{map[string]any{}}}
+	if computed {
+		unk["member"] = true
+	} else {
+		after["member"] = reportsMember
+	}
+	return &Plan{ResourceChanges: []ResourceChange{
+		{Address: "module.installation.google_service_account.reports", Type: "google_service_account",
+			Change: Change{Actions: []string{"create"}, After: map[string]any{"account_id": ReportsAccountID}}},
+		{Address: "module.installation.google_storage_bucket_iam_member.reports_read", Type: "google_storage_bucket_iam_member",
+			Change: Change{Actions: []string{"create"}, After: after, AfterUnknown: unk}},
+	}}
+}
+
+// TestReportsGrantsAreTheConditions: the two rows that accept the reports job's
+// account accept exactly the two bindings the module writes, and the CONDITION
+// is what makes them the modules' own — the account, one prefix of one of this
+// run's buckets, under the title built from that account, byte for byte
+// gcp.ReportsReadCondition or gcp.ReportsWriteCondition.
+//
+// The two the plan must REFUSE are the ones a reader reaches for: the write
+// role under the read condition (objectUser on runs/, which is the launchers'
+// own area) and the read role under the write one, and — the shape the whole
+// task exists for — either condition with its two clauses joined by " && "
+// instead of " || ", which reads like a grant carrying both halves and matches
+// no request at all. Neither prefix may be widened, the whole-bucket objectViewer
+// and objectAdmin are refused outright, and the other half of the pair is the
+// other grant's: the title says which one the plan meant to write, so a grant
+// carrying the right bytes under the other title is refused too.
+//
+// Mutation (run, restore): drop either toReports bit and TestGrantRulesMatrix's
+// row loop and this test's accepted cases fail; accept the writes on runs/ and
+// the writes that must be refused pass.
+func TestReportsGrantsAreTheConditions(t *testing.T) {
+	c := Cover{Projects: []string{"proj-1234"}, Buckets: []string{cbBucket}, Listed: []string{cbPerson}, Region: testCover.Region}
+	read := cond(gcp.ReportsReadConditionTitle(ReportsAccountID), gcp.ReportsReadCondition(cbBucket))
+	write := cond(gcp.ReportsWriteConditionTitle(ReportsAccountID), gcp.ReportsWriteCondition(cbBucket))
+	andJoined := cond(gcp.ReportsReadConditionTitle(ReportsAccountID),
+		strings.Replace(gcp.ReportsReadCondition(cbBucket), " || ", " && ", 1))
+	for _, tc := range []struct {
+		name     string
+		role     string
+		cond     map[string]any
+		computed bool
+		covered  bool
+		want     string
+	}{
+		{"the job reads runs/", "roles/storage.objectViewer", read, false, true, ""},
+		{"the job writes reports/", "roles/storage.objectUser", write, false, true, ""},
+		{"a first plan's computed member reads runs/", "roles/storage.objectViewer", read, true, true, ""},
+		{"a first plan's computed member writes reports/", "roles/storage.objectUser", write, true, true, ""},
+		// The two roles swapped: objectUser on runs/ is the launchers' own
+		// write area, and the job holds no part of it.
+		{"the job writes runs/", "roles/storage.objectUser", read, false, false, "reports/"},
+		// ... and the reader role under the writer's condition, which is the
+		// other half of the same mistake: each role is bound to its own prefix
+		// and to no other.
+		{"the job reads reports/ under the reader's role", "roles/storage.objectViewer", write, false, false, "runs/"},
+		// The conjunction, which is the shape this task exists to refuse: both
+		// halves written, and no request carries both.
+		{"runs/ read under an && join", "roles/storage.objectViewer", andJoined, false, false, "reports job's condition"},
+		// The title is what says whose grant it is, so the right bytes under
+		// another account's title are not the module's grant.
+		{"runs/ read under another account's title", "roles/storage.objectViewer",
+			cond(gcp.ReportsReadConditionTitle("fugaro-other"), gcp.ReportsReadCondition(cbBucket)), false, false, "not the project's reports account"},
+		// ... and the other bucket: the same bytes on a bucket of another run
+		// are not this run's module.
+		{"runs/ read of another bucket", "roles/storage.objectViewer",
+			cond(gcp.ReportsReadConditionTitle(ReportsAccountID), gcp.ReportsReadCondition("fugaro-runs-other")), false, false, "reports job's condition"},
+		{"runs/ read with its listing half dropped", "roles/storage.objectViewer",
+			cond(gcp.ReportsReadConditionTitle(ReportsAccountID), `resource.name.startsWith("projects/_/buckets/`+cbBucket+`/objects/runs/")`), false, false, "reports job's condition"},
+		{"unconditioned objectViewer", "roles/storage.objectViewer", nil, false, false, "unconditioned"},
+		{"unconditioned objectAdmin", "roles/storage.objectAdmin", nil, false, false, "objectAdmin"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := c.NotCovered(reportsGrantPlan(tc.computed, tc.role, tc.cond), nil)
+			if tc.covered {
+				if len(got) != 0 {
+					t.Errorf("NotCovered = %q, want the module's own grant", got)
+				}
+				return
+			}
+			if len(got) == 0 {
+				t.Fatal("NotCovered = nil, want a refusal: only the module's two bindings are the modules' own")
+			}
+			if !strings.Contains(got[0], tc.want) {
+				t.Errorf("NotCovered = %q, want it to contain %q", got[0], tc.want)
+			}
+		})
+	}
+
+	// The account alone is not the grant: the same rule for a lookalike in
+	// another project, under the right bytes and the right title.
+	lookalike := reportsGrantPlan(false, "roles/storage.objectViewer", read)
+	lookalike.ResourceChanges[1].Change.After["member"] = "serviceAccount:" + ReportsAccountID + "@fp-2.iam.gserviceaccount.com"
+	if got := c.NotCovered(lookalike, nil); len(got) == 0 {
+		t.Errorf("runs/ read of %s@fp-2 is covered: the account is the installation's own", ReportsAccountID)
+	}
+
+	// A computed member the grant's module does not create is not this
+	// account's grant either, whatever its title says.
+	orphan := reportsGrantPlan(true, "roles/storage.objectViewer", read)
+	orphan.ResourceChanges[0].Change.After["account_id"] = "fugaro-something-else"
+	if got := c.NotCovered(orphan, nil); len(got) == 0 {
+		t.Error("a computed member with no reports account beside it is covered")
 	}
 }
 

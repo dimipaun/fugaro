@@ -129,6 +129,16 @@ var allowedTypes = map[string]bool{
 // the state group's by its role and the project it is in
 // (mcpauthStateReadGrant, TestMCPAccountIsItsOwnPrincipalKind).
 //
+// Reports is the project's reports job account (slice P, ruling E4), its own
+// kind for the catalog check job's reason: as one of FugaroAccounts every
+// toAccounts row would have accepted it, and this account's reach is not a job
+// account's — it reads every repository's run records under runs/ and it is
+// the ONE writer of reports/ (ruling 3), a write no launcher and no job holds.
+// Exactly two rows carry the bit, the bucket's objectViewer and objectUser,
+// and each is narrowed further by the condition the grant must carry
+// (reportsReadGrant, reportsWriteGrant): the account, one of its two prefixes
+// of a run bucket, and the title built from the account.
+//
 // Intake is the secrets intake's own account (D1931, DS2.2), its own kind for
 // the catalog check job's reason: as one of FugaroAccounts every toAccounts row
 // would have accepted it, and this is the one account that may CREATE, add a
@@ -150,6 +160,10 @@ const (
 	toCatalogCheck
 	toMCP
 	toIntake
+	// Appended rather than inserted: the bits above are the ones a test's
+	// mask and every row in grantRules are written with, and a shift would
+	// rewrite all of them for no reason.
+	toReports
 )
 
 // customKey is how grantRules names a custom role of the installation (by its
@@ -283,12 +297,29 @@ var grantRules = map[string]map[string]who{
 		// check the bit would let a plan hand this account every repository's
 		// records and check state (the account's own read is
 		// TestCatalogCheckRecordsGrant's subject).
-		"roles/storage.objectUser": toPeople | toAccounts | toCatalogCheck,
+		//
+		// objectUser's toReports is the reports job writing reports/ — the one
+		// writer that prefix has (ruling 3), which is why no launcher's write
+		// condition grows it and no job account holds it. Like the catalog
+		// check's row, what makes the grant the modules' own is the condition
+		// and not the member: reports/<the prefix> of one of this run's
+		// buckets, byte for byte gcp.ReportsWriteCondition, under the title
+		// built from that account (reportsWriteGrant). Without that check the
+		// bit would let a plan hand this account objectUser on runs/ — the
+		// launchers' own write area — or on another bucket.
+		"roles/storage.objectUser": toPeople | toAccounts | toCatalogCheck | toReports,
 		// The intake's bit is on the reader row and not on the writer's: what
 		// the class reads is the derived admin list, one object of the runs
 		// bucket (intakeAdminListGrant checks the bucket AND the object), and
 		// its own writes go to Secret Manager, never to the runs bucket.
-		"roles/storage.objectViewer": toPeople | toAccounts | toCoordinator | toIntake,
+		//
+		// objectViewer's toReports is the reports job reading runs/: every
+		// repository's run records, which is what its reports summarise, under
+		// the same title rule and reportsReadGrant's own bytes. The two bits
+		// are on the two rows and not one: the read is objectViewer, and a
+		// grant of the write role under the read condition (or the reverse) is
+		// refused rather than read as either.
+		"roles/storage.objectViewer": toPeople | toAccounts | toCoordinator | toIntake | toReports,
 	},
 	"google_artifact_registry_repository_iam_member": {
 		customKey + "fugaroTagMover":    toAccounts,
@@ -500,6 +531,26 @@ const VerifierAccountID = "fugaro-verifier"
 // find again in `doctor`, not a question asked before the grant is made.
 const CatalogCheckAccountID = "fugaro-catalog-check"
 
+// ReportsAccountID is the project's reports job account (slice P): the account
+// the installation module's reports resource creates, one per project, and the
+// one the module's variable validation pins the ID to, so a plan cannot hand
+// the account a name this package reads differently. It is NOT among
+// FugaroAccounts, for the catalog check job's reason: it reads every
+// repository's run records and it is the one writer of reports/, a reach no
+// `fugaro update` confirmation announced on a job account's behalf, so it is a
+// kind of its own (toReports).
+//
+// Its two grants are the two rows that carry that bit (the bucket's
+// objectViewer and objectUser), each further narrowed by reportsReadGrant and
+// reportsWriteGrant: one prefix of one of this run's buckets, under the
+// condition title built from this account, byte for byte
+// gcp.ReportsReadCondition or gcp.ReportsWriteCondition. Everything else the
+// account is given is refused and the update that carries it asks its owner —
+// which for this account includes its own two prefixes on another bucket, the
+// other prefix under the other role, and any condition the two builders do not
+// write.
+const ReportsAccountID = "fugaro-reports"
+
 // CatalogLeaseRole is the custom role the catalog check job's account holds in
 // the installation's Firebase project: the two Realtime Database DATA
 // permissions its build leases are written with (catalogcheck.tf, D1554). It
@@ -601,7 +652,9 @@ const (
 // writer (CoordinatorAccountID) is not among them either, and neither is the
 // project's catalog check job (CatalogCheckAccountID), nor the front door's
 // own account (MCPServerAccountID), for the same reason (toCoordinator,
-// toCatalogCheck, toMCP).
+// toCatalogCheck, toMCP). The reports job's account (ReportsAccountID) is not
+// among them either: its read of runs/ and its write of reports/ are a reach
+// no job holds, so it is a kind of its own too (toReports).
 var (
 	FugaroRoles    = []string{"fugaroLauncher", ViewerRole, "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, CatalogLeaseRole, WorkspaceReadRole, IntakeSecretsRole, SecretListerRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole, MCPStateReadRole}
 	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload"}
@@ -947,6 +1000,14 @@ func (c Cover) isCatalogCheckMember(m string) bool {
 	return p != "" && m == "serviceAccount:"+CatalogCheckAccountID+"@"+p+".iam.gserviceaccount.com"
 }
 
+// isReportsMember is whether m is exactly the project's reports job account as
+// an IAM member, in the installation's project: the account the installation
+// module's reports resource creates (var.project, ReportsAccountID).
+func (c Cover) isReportsMember(m string) bool {
+	p := c.installationProject()
+	return p != "" && m == "serviceAccount:"+ReportsAccountID+"@"+p+".iam.gserviceaccount.com"
+}
+
 // isMCPMember is whether m is exactly the front door's own account as an IAM
 // member, in the installation's project: the account coordinator.tf creates
 // and the service runs as (MCPServerAccountID).
@@ -1224,14 +1285,15 @@ var RolePermissions = map[string][]string{
 // knownCommands are the container command and args the modules set: none for a
 // workflow's job and for the credentials service (whose image's own entrypoint
 // is the service, credentials.tf), the history sweep, the coordinator's
-// aggregation sweep, the image check and the project catalog's check
-// (catalogcheck.tf).
+// aggregation sweep, the image check, the project catalog's check
+// (catalogcheck.tf) and the reports job (reports.tf).
 var knownCommands = [][2][]string{
 	{nil, nil},
 	{{"/usr/local/bin/fugaro"}, {"budget", "history", "--sweep"}},
 	{{"/usr/local/bin/fugaro"}, {"coordinator", "sweep"}},
 	{{"fugaro"}, {"image", "check", "--job"}},
 	{{"fugaro"}, {"image", "check", "--job", "--catalog"}},
+	{{"fugaro"}, {"runs", "reports", "--job"}},
 }
 
 // credentialsServiceEnv are the only environment variables the credentials
@@ -1958,6 +2020,17 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, creates
 			// otherwise be able to grant it a launcher's or an operator's
 			// role.
 			kind = toCatalogCheck
+		case c.isReportsMember(m):
+			// ... and the project's reports job (slice P): its own kind, which
+			// two rows accept — objectViewer on runs/ and objectUser on
+			// reports/, and only under the condition of the one prefix each
+			// holds (reportsReadGrant, reportsWriteGrant) — so every other
+			// grant it is given, and every other role a plan might reach for,
+			// is refused and the update that carries them asks its owner. Read
+			// here, before the review screen's list, for the deployer's
+			// reason: a plan that listed its address would otherwise be able
+			// to grant it a launcher's or an operator's role.
+			kind = toReports
 		case c.isMCPMember(m):
 			// ... and the front door's own account (D920, D935, O16b): its own
 			// kind, which two rows accept — objectAdmin on D935's store and the
@@ -2472,9 +2545,14 @@ func IntakeAdminListCondition(bucket string) string {
 // account carries exactly one repository's builds/<slug>/catalog/ clause
 // (gcp.CatalogRecordsCondition, the job's read-write reach into the records
 // and check state of the repository an entry belongs to, D1148), under that
-// condition's own title and that account alone (catalogRecordsGrant). The
-// modules never set a description, and a condition known only after apply is
-// not covered.
+// condition's own title and that account alone (catalogRecordsGrant) — and the
+// reports job's account carries exactly the two-clause condition of ONE prefix
+// of one of this run's buckets: the runs/ one under objectViewer
+// (gcp.ReportsReadCondition, the records its reports summarise) and the
+// reports/ one under objectUser (gcp.ReportsWriteCondition, the one write that
+// prefix has), each under its own condition title and that account alone
+// (reportsReadGrant, reportsWriteGrant). The modules never set a description,
+// and a condition known only after apply is not covered.
 //
 // What a tokens/<slug>/ clause is *not* checked against is the grant's own
 // repository. A job account's ID is derived and does not read back: a project
@@ -2523,11 +2601,24 @@ func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[st
 			if c.catalogReadGrant(rc, createdSAIDs, heldSAIDs, title, expr) {
 				return ""
 			}
+			if ok, why := c.reportsReadGrant(rc, createdSAIDs, title, expr); ok {
+				return ""
+			} else if why != "" {
+				return why
+			}
 			// The title says which grant this claims to be: when it is the
 			// catalog builder's spelling, the refusal names that grant rather
 			// than the tokens/ ones the expression alone would suggest.
 			if strings.HasPrefix(title, gcp.CatalogReadConditionTitlePrefix) {
 				return "grants objectViewer on the bucket under a build account's builds/catalog/ condition to a member that is not the build account its title names, which the modules never do"
+			}
+			// The reports job's account is admitted by this branch's row for
+			// its runs/ read and for nothing else, so its name under any other
+			// condition is refused HERE, with the grant named: the account
+			// reads its source records and holds no other read of the bucket
+			// (ruling E4).
+			if c.isReportsMember(str(ch.After["member"])) {
+				return "grants objectViewer on the bucket to the project's reports job under a condition that is not its runs/ condition of this run's bucket (gcp.ReportsReadCondition), which is the only objectViewer the modules give it (ruling E4)"
 			}
 			return "grants objectViewer on the bucket to an account under a condition that is not one repository's tokens/ condition of this run's bucket, a project job's whole-tokens/ one, nor a build account's builds/catalog/ one"
 		}
@@ -2547,6 +2638,15 @@ func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[st
 	case role == "roles/storage.objectAdmin" || role == "roles/storage.objectViewer":
 		if len(conds) != 0 {
 			return "grants " + role + " on the bucket under a condition, which the modules never do"
+		}
+		// An unconditioned grant to the reports job is the bucket-wide one:
+		// every other account's objectViewer here is a job reading the whole
+		// bucket, which is the modules' own choice for them, but this account
+		// holds objectViewer under its runs/ condition alone — a whole-bucket
+		// read of it would reach tokens/, cache/, locks/ and the issue store,
+		// none of which the job has any business reading (ruling E4).
+		if c.isReportsMember(str(ch.After["member"])) {
+			return "grants " + role + " on the bucket, unconditioned, to the project's reports job: the modules give it objectViewer under its runs/ condition and objectUser under its reports/ one, and nothing else (ruling E4)"
 		}
 	case role == "roles/storage.objectUser" && person:
 		for _, b := range c.Buckets {
@@ -2572,6 +2672,11 @@ func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[st
 		if c.catalogRecordsGrant(rc, createdSAIDs, title, expr) {
 			return ""
 		}
+		if ok, why := c.reportsWriteGrant(rc, createdSAIDs, title, expr); ok {
+			return ""
+		} else if why != "" {
+			return why
+		}
 		// The catalog check job's account is admitted by this branch's row for
 		// its one records grant and for nothing else, so its name under any
 		// other condition is refused HERE, before the clause loop below: that
@@ -2580,6 +2685,15 @@ func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[st
 		// would otherwise be covered as some repository's own.
 		if c.isCatalogCheckMember(str(ch.After["member"])) {
 			return "grants objectUser on the bucket to the project's catalog check job under a condition that is not one repository's builds/<slug>/catalog/ records condition of this run's bucket (gcp.CatalogRecordsCondition), which is the only objectUser the modules give it (D1148)"
+		}
+		// The reports job's account is admitted by the same row and for the
+		// same reason: objectUser
+		// under reports/ is the ONE write the modules give it, so its name
+		// under a per-repository clause — runs/ included, which is the
+		// launchers' own area — is refused here rather than read as some
+		// repository's job grant by the clause loop below.
+		if c.isReportsMember(str(ch.After["member"])) {
+			return "grants objectUser on the bucket to the project's reports job under a condition that is not its reports/ condition of this run's bucket (gcp.ReportsWriteCondition), which is the only objectUser the modules give it (ruling E4)"
 		}
 		for _, clause := range strings.Split(expr, " || ") {
 			m := accountClause.FindStringSubmatch(clause)
@@ -2692,6 +2806,65 @@ func (c Cover) catalogReadGrant(rc ResourceChange, createdSAIDs, heldSAIDs map[s
 		}
 	}
 	return false
+}
+
+// reportsGrant is the account rule the reports job's two conditions share: the
+// condition's title is titlePrefix + the account's ID, the account is the
+// reports account itself, and the expression is the builder's bytes for one of
+// this run's buckets. It returns whether the grant passed and, when the title
+// claims to be one of the reports ones and the grant is not, why — a sentence
+// the caller uses instead of the generic refusal, since the title says which
+// grant the plan meant to write.
+//
+// The member rule is catalogRecordsGrant's: the account named outright on the
+// plan that carries it after a first deploy, or a computed member that the
+// grant's own module creates in this plan — and it has to be THIS account,
+// since the title is built from it. The account's ID is fixed (the module's
+// variable validation pins it), so unlike a job account's there is nothing to
+// derive from the member. The title is what says whose grant it is: the two
+// expressions name no prefix of their own beyond the objects path, so without
+// it any member could hold one of these two conditions and be covered.
+//
+// The bucket loop is the other half: the same bytes on another bucket are a
+// grant the modules never write, and a grant that carries no bucket of its own
+// yet (a computed one) is accepted only for a bucket of this run.
+func (c Cover) reportsGrant(rc ResourceChange, createdSAIDs map[string]bool, title, expr, titlePrefix string, build func(bucket string) string) (bool, string) {
+	id, ok := strings.CutPrefix(title, titlePrefix)
+	if !ok {
+		return false, ""
+	}
+	if id != ReportsAccountID {
+		return false, "grants a bucket role under the reports job's condition to the account " + id + ", which is not the project's reports account (" + ReportsAccountID + ")"
+	}
+	if !c.isReportsMember(str(rc.Change.After["member"])) &&
+		(!unknown(rc.Change, "member") || !createdSAIDs[modulePrefix(rc)+"|"+ReportsAccountID]) {
+		return false, "grants a bucket role under the reports job's condition to a member that is not the reports account its title names, which the modules never do"
+	}
+	bucket := str(rc.Change.After["bucket"])
+	for _, b := range c.Buckets {
+		if !gcp.ValidBucketName(b) || (bucket != "" && bucket != b) {
+			continue
+		}
+		if expr == build(b) {
+			return true, ""
+		}
+	}
+	return false, "grants a bucket role under the reports job's condition with an expression that is not the reports condition of this run's bucket (" + titlePrefix + ReportsAccountID + ")"
+}
+
+// reportsReadGrant reports whether a bucket grant is the reports job reading
+// runs/ (gcp.ReportsReadCondition, slice P): objectViewer, which the branch
+// this is called from has already established, on exactly runs/ of one of this
+// run's buckets, with the condition title built from the reports account.
+func (c Cover) reportsReadGrant(rc ResourceChange, createdSAIDs map[string]bool, title, expr string) (bool, string) {
+	return c.reportsGrant(rc, createdSAIDs, title, expr, gcp.ReportsReadConditionTitlePrefix, gcp.ReportsReadCondition)
+}
+
+// reportsWriteGrant is reportsReadGrant for the job's other binding: objectUser
+// on exactly reports/ (gcp.ReportsWriteCondition) — the write the job alone
+// holds, and the one row this account may reach beyond the reader's.
+func (c Cover) reportsWriteGrant(rc ResourceChange, createdSAIDs map[string]bool, title, expr string) (bool, string) {
+	return c.reportsGrant(rc, createdSAIDs, title, expr, gcp.ReportsWriteConditionTitlePrefix, gcp.ReportsWriteCondition)
 }
 
 // catalogRecordsGrant reports whether a bucket grant is the project's catalog
