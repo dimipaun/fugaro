@@ -11,6 +11,7 @@ decided per job by the credential service; `fugaro update` migrates existing pro
 | [spec.md](spec.md) | The spec as received, byte for byte (no typo was fixed). **Where [reconciliation.md](reconciliation.md) disagrees with it, the reconciliation wins** |
 | [reconciliation.md](reconciliation.md) | The spec against the code: capability map, assumptions, findings F1–F23, decisions D2300–D2313 with the owner's answers, open items, UNVERIFIED |
 | [implementation-plan.md](implementation-plan.md) | Four slices, 32 tasks (including two contracts and two integration tasks) and two anticipated change requests, levels, critical path, shared-files table. Nothing in it is approved |
+| [contract.md](contract.md) | C1's prose half: the shapes `internal/sharedjob` declares, what each side of the contract may rely on, what none of them may, and what amending C1 costs |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's tasks as the graph `fugaro plan graph` reads |
 
 ## Number blocks taken
