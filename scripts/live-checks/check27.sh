@@ -105,9 +105,11 @@
 #             Registry — all of it created by `fugaro setup`, none of it created
 #             by this script, which only runs it and reads the result back. The
 #             config root under `--dir` stays when the run ends, on purpose: the
-#             section's own remaining steps (5 to 22) run against that
-#             installation in the very shell you are in, and the one line to
-#             remove it is printed with them.
+#             section's own block reads `C=…` back from the same vars.env, and a
+#             run that ended before its create has nothing else to start from.
+#             What does NOT stay is the installation: the Restore deletes the
+#             project and everything on it, so the steps printed below as yours
+#             are run on a throwaway project of your own.
 # Costs:      a real project, and what a real installation costs (the images,
 #             the job, the buckets): this is step 22's own acceptance path and
 #             the section records its price. No model call is made: this script
@@ -149,15 +151,20 @@ set -E
 exec 3>&1 4>&2
 
 PROG=${0##*/}
+# Set to yes by guard_account once --billing-account has matched its shape. Until
+# then redact() is a no-op: the account is sed's PATTERN here, so a value still
+# unvalidated would be sed syntax, and `--billing-account 'x/a/;e touch f;#'`
+# would run the shell through sed's `e` command while a guard was refusing it.
+A_CHECKED=no
 # redact TEXT: TEXT with the billing account's ID written as <ACCOUNT_ID>, the
 # way the section writes the argument. This script quotes tool output — a
 # `--plan-only` row, a billing read-back, a refusal — into its own lines and into
 # the block, so ONE filter under each of those three printers is what makes "the
 # ID is in the wizard's output and in nothing this script writes" true by
-# construction rather than by hoping. The account is shape-checked before
-# anything runs, so what reaches sed holds no metacharacter.
+# construction rather than by hoping. Only a shape-checked account is redacted
+# (A_CHECKED above), and one of that shape holds no metacharacter.
 redact() {
-  if [ -z "${A:-}" ]; then printf '%s' "$1"; return 0; fi
+  if [ "$A_CHECKED" != yes ] || [ -z "${A:-}" ]; then printf '%s' "$1"; return 0; fi
   printf '%s' "$1" | sed "s/$A/<ACCOUNT_ID>/g"
 }
 say() { printf '%s: %s\n' "$PROG" "$(redact "$*")" >&2; }
@@ -672,6 +679,7 @@ guard_account() {
   [0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z]-[0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z]-[0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z]) ;;
   *) stop "--billing-account must be an account ID such as 0123AB-4567CD-89EF01 (it was refused: nothing of that shape). Nothing was run" ;;
   esac
+  A_CHECKED=yes
   fact billing-account PASS "the account ID you gave has the shape of one, and it is NOT repeated in this block: the link the run makes is read back from the project itself"
 }
 
@@ -963,7 +971,11 @@ step_installation() {
 
 # step_doctor: `fugaro doctor --project fugaro --all`, which is the section's
 # sixth stop and the check's own read that the installation resolves to THIS
-# project. An exit that is not 0 fails it.
+# project. The criterion is that read alone: the stop is a pipe into grep, so
+# doctor's own exit status is not part of it, and on a fresh project it is
+# expected not to be 0 — step 15's subject is the fix line doctor prints for a
+# default Compute account holding roles/editor, which the owner runs by hand.
+# A non-zero exit is therefore recorded in the row, not failed on.
 step_doctor() {
   LOG_FOR_MODE=$DOCTOR_LOG
   run_plain doctor "$QUICK_SECONDS" "$WIZARD_DIR" "$DOCTOR_LOG" -- \
@@ -973,17 +985,18 @@ step_doctor() {
     fact doctor FAIL "fugaro doctor did not finish in ${QUICK_SECONDS}s and was killed ($DOCTOR_LOG)"
     stop "fugaro doctor blocked (transcript $DOCTOR_LOG): it asks nothing, so a wait in it is a finding"
   fi
-  local line
+  local line finding
   line=$(grep -m1 "(GCP $P," "$DOCTOR_LOG" 2>/dev/null || true)
   if [ -z "$line" ]; then
     fact doctor FAIL "doctor's project line does not name (GCP $P,: $(one_line "$(grep -m1 -i 'project' "$DOCTOR_LOG" 2>/dev/null)")"
     stop "fugaro doctor --project $N does not resolve the throwaway project ($P): the section's sixth stop is exactly this read. Transcript: $DOCTOR_LOG"
   fi
-  if [ "$DOCTOR_STATUS" -ne 0 ]; then
-    fact doctor FAIL "doctor exits $DOCTOR_STATUS on a fresh installation, and the project line is $(one_line "$line"): $(one_line "$(grep -m1 -iE 'fail|warn|error' "$DOCTOR_LOG" 2>/dev/null)")"
-    stop "fugaro doctor exits $DOCTOR_STATUS on the installation this run just converged (transcript $DOCTOR_LOG): step 15's own subject is the fix line it prints, and this one is not a pass"
+  if [ "$DOCTOR_STATUS" -eq 0 ]; then
+    fact doctor PASS "exit 0, and its project line names the throwaway one: $(one_line "$line")"
+    return 0
   fi
-  fact doctor PASS "exit 0, and its project line names the throwaway one: $(one_line "$line")"
+  finding=$(one_line "$(grep -m1 -iE 'fail|warn|error' "$DOCTOR_LOG" 2>/dev/null || true)")
+  fact doctor PASS "the line this block's sixth stop reads is $(one_line "$line"). Doctor exits $DOCTOR_STATUS, which is step 15's own reading rather than a failure: what it flags is the owner's to clear by hand${finding:+ — it printed: $finding}"
 }
 
 # step_images: Artifact Registry holds the release's history image (step 14's
@@ -1068,6 +1081,7 @@ step_secrets() {
 step_human() {
   owner ""
   owner "the steps this script did NOT run, in Check 27's own numbering — they are a person's, a browser's or a second machine's, and this script never fakes one:"
+  owner "  (they are yours on a throwaway project of your OWN, from step 1 of the section: this run's own project is deleted by the Restore when it ends, and the block's Restore row is that deletion)"
   owner "  step 3  the billing PICKER's own success path: a run that creates a project with NO --link-billing, at your terminal, where it lists your open accounts by number and says which source answered (the API, or the gcloud fallback). Draw a fresh id for it: rm -rf $DIR"
   owner "  step 5  fugaro update-skills --check, then update-skills: the plugin at user scope, and the checkout left byte for byte alone"
   owner "  steps 6-10  V1 to V4 in Claude Code and in the base image (a folder trust dialog, a Marketplace refresh, and docker run for the container)"

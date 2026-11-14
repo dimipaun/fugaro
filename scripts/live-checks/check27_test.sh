@@ -750,13 +750,16 @@ test_doctor_that_does_not_name_the_project_is_a_fail() {
   expect_contains "$out" "sixth stop" "the run names the section's sixth stop as the read that failed"
 }
 
-test_doctor_that_exits_nonzero_is_a_fail() {
+test_doctor_that_reports_a_finding_is_recorded_and_not_failed() {
   setup_case doctor-fails
   RUN27_ENV=(FAKE27_DOCTOR_FAILS=1)
   run27_default
-  expect_status "$status" 2 "doctor exiting 1"
-  expect_contains "$(fact_line doctor)" "FAIL" "the doctor row"
+  expect_status "$status" 0 "doctor reporting a finding on a fresh project"
+  expect_contains "$(fact_line doctor)" "PASS" "the doctor row"
+  expect_contains "$(fact_line doctor)" "(GCP $PROJECT," "the criterion is the line the section's sixth stop reads"
+  expect_contains "$(fact_line doctor)" "exits 1" "the row records the exit status"
   expect_contains "$(fact_line doctor)" "fix" "the row says what doctor printed"
+  expect_contains "$(cat "$dir/err")" "your OWN" "the printed list sends the owner to their own project"
 }
 
 test_an_update_that_still_has_work_is_a_fail() {
@@ -938,6 +941,21 @@ test_an_account_of_the_wrong_shape_is_refused() {
   expect_no_calls "nothing runs with an account that is not one"
 }
 
+test_an_account_value_with_sed_syntax_executes_nothing() {
+  setup_case account-injection
+  # The account is redact()'s sed PATTERN, so a value that is itself sed syntax
+  # would run sed's `e` command while a guard was refusing it. This one closes
+  # the s command and asks sed to execute `touch`: redact() must not have been
+  # handed it before guard_account matched the shape.
+  run27 --project "$PROJECT" --billing-account "x/a/;e touch $dir/pwned;#" --repo "$REPO"
+  expect_status "$status" 2 "an account ID of the wrong shape"
+  expect_contains "$out" "account ID such as" "the refusal names the shape it wants"
+  if [ -e "$dir/pwned" ]; then
+    fail "the account value reached sed's program: $dir/pwned exists"
+  fi
+  expect_no_calls "nothing runs with an account that is not one"
+}
+
 # ================================================================= registration
 test_index=0
 t() {
@@ -978,7 +996,7 @@ t test_a_missing_bucket_stops_the_installation_row
 t test_a_missing_job_stops_the_installation_row
 t test_a_missing_image_is_a_fail
 t test_doctor_that_does_not_name_the_project_is_a_fail
-t test_doctor_that_exits_nonzero_is_a_fail
+t test_doctor_that_reports_a_finding_is_recorded_and_not_failed
 t test_an_update_that_still_has_work_is_a_fail
 t test_an_update_that_fails_is_a_fail
 t test_the_restore_deletes_the_jobs_the_buckets_and_the_project
@@ -994,6 +1012,7 @@ t test_the_negative_uses_a_config_root_of_its_own
 t test_usage_and_arguments
 t test_a_region_that_is_not_one_is_refused
 t test_an_account_of_the_wrong_shape_is_refused
+t test_an_account_value_with_sed_syntax_executes_nothing
 
 if [ "$failures" -ne 0 ]; then
   echo "$failures test(s) failed" >&2
