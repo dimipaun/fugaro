@@ -10,8 +10,10 @@ reopens no answered decision, and approves nothing.
 overlap, "about 16 of forge-authorship-images' tasks being image work"; every task here must say
 which task of that plan, or which code on `main`, already builds it.
 
-**The answer.** Of this plan's **25 tasks**: **9 are merged** on `main`, **1 is closed as
-superseded** (E0 — and by [docs/roles-scopes](../roles-scopes/), *not* by image-setup), and **15 are
+**The answer.** Of this plan's **25 tasks**: **12 are merged** on `main` — the census below read nine,
+and **B1** (`9af1fd50`, #2332, 2026-11-11), **X1** (`90cfd931`, #2331, 2026-11-11) and **C1**
+(`d37c8af6`, #2428, 2026-11-12) landed after it — **1 is closed as
+superseded** (E0 — and by [docs/roles-scopes](../roles-scopes/), *not* by image-setup), and **12 are
 open**, one of which (**C8**) has its first third built (C8a). **The image overlap is four tasks, not
 sixteen**: the two merged ones (C3, C4) and the two open ones (C6, and C8's C8b/C8c). What "about 16"
 was is the number of tasks *left* when the status row was written — §1.
@@ -38,11 +40,11 @@ today against `main`, are:
 
 | State | Count | Tasks |
 | --- | --- | --- |
-| **Merged** (path and symbol on `main`, §2) | 9 | A1, A2a, A2b, A3, A4, C3, C4, C7, E1 |
+| **Merged** (path and symbol on `main`, §2) | 12 | A1, A2a, A2b, A3, A4, B1, C1, C3, C4, C7, E1, X1 — B1, C1 and X1 after the census |
 | **Superseded** (closed, winner named) | 1 | E0 — by [docs/roles-scopes](../roles-scopes/) |
-| **Open** | 15 | A5, B1, B2, B3, C1, C5a, C5b, C5c, C6, C8, D1, D2, D3, D4, X1 |
+| **Open** | 12 | A5, B2, B3, C5a, C5b, C5c, C6, C8, D1, D2, D3, D4 |
 
-Of the 15 open, **C8's C8a is built** (`internal/imagecheck`'s key, lock and superset, 2026-10-30);
+Of the 12 open, **C8's C8a is built** (`internal/imagecheck`'s key, lock and superset, 2026-10-30);
 C8b and C8c are not, and `checkout: shared` is refused until a release ships them
 (`config.SharedCheckoutRefusal`, `internal/config/image.go`).
 
@@ -92,11 +94,11 @@ IS1–IS13 with IS6 unused); its own folder's merged count is stale in both dire
 | **A2b** — the launcher fills the author | **Merged** | `localcfg.Config.CommitName`, `localcfg.Config.CommitEmail` (`internal/localcfg/localcfg.go`); the `authorSince` and `gitAuthorSince` gates (`internal/cli/recipes_skew.go`) |
 | **A3** — the runner stamps commits as they are made | **Merged** | `internal/runner/runner.go` (`stampHooks`, `stampAuthor`, `writeStampHooks`), pinned by `internal/runner/stamp_test.go` (`TestRunnerVerifiedCommitIsTheStampedCommit`, `TestRunnerOwnCommitsCarryTrailers`, `TestRunnerLogsUnstampedCommitCount`, `TestRunnerReviewAndArtifactNeverStamp`) |
 | **A4** — docs | **Merged** | `docs/git-providers.md` §"Commit author and trailers"; `SECURITY.md` §"Known limits" ("A run's commit author is the launcher's claim, and its trailers are a record"); pinned by `internal/cli/docs_commit_author_test.go` (`TestDocsCommitAuthorIsAClaim`, `TestDocsTrailerNames`, `TestDocsSupportedForges`) |
-| **A5** — Check 230 (OWNER-RUN) | **Kept** | the check it measures can run — A3 is merged — but the entry is not written: `docs/gcp-live-checklist.md` has no Check 230 section, and X1 (the entry's only writer) is not merged. image-setup writes into the same file with its own numbers (IS13: Checks 500, 501), and no task of its plan writes a Check 230 entry |
-| **B1** — one list of forge kinds | **Kept** | no `internal/gitprov/kinds.go`; `internal/gitprov/gitprov.go` still declares `KindGitHub`/`KindBitbucket` and `internal/gitprov/providers/providers.go` reads them ad hoc. image-setup names forge kinds nowhere; its IS10 survey consumes `gitprov.ContentsReader` and so is forge-agnostic |
+| **A5** — Check 230 (OWNER-RUN) | **Kept** | the check it measures can run — A3 is merged — and its entry is written now that X1 has landed (`90cfd931`, #2331): what is left is the owner's run, and `docs/gcp-live-checklist.md`'s Check 230 section reads NOT RUN. image-setup writes into the same file with its own numbers (IS13: Checks 500, 501), and no task of its plan writes a Check 230 entry |
+| **B1** — one list of forge kinds | **Merged** (the census read **Kept**) | The census: no `internal/gitprov/kinds.go`; `internal/gitprov/gitprov.go` still declared `KindGitHub`/`KindBitbucket` and `internal/gitprov/providers/providers.go` read them ad hoc. image-setup names forge kinds nowhere; its IS10 survey consumes `gitprov.ContentsReader` and so is forge-agnostic. **`9af1fd50` (#2332) landed the task after this census was read**: `internal/gitprov/kinds.go` declares the two constants and `Kinds`, `FromEnv`'s unknown-kind refusal is built from the list, and `internal/gitprov/kinds_test.go` pins `TestKindsListedOnce` and `TestEveryKindSwitchIsInventoried` — [evidence, point by point](../forge-authorship-images-b1-already-landed.md) |
 | **B2** — a CI-status read | **Kept** | no `Checks` on `gitprov.Provider` (`internal/gitprov/gitprov.go`). image-setup's IS11 smokes a catalog entry's prebuilt image — a build-time contract check, not a commit's CI status |
 | **B3** — GitLab | **Kept** | gated on D610 ("build"); no file under `docs/` reconciles GitLab, and the plan's own first output (the tokens/`Draft:` reconciliation) is unwritten |
-| **C1** — `fugaro project sync` for Bitbucket, with `--check` | **Kept** | `internal/gitprov/bitbucket/` has no `list.go`, and `newProjectSyncCmd` (`internal/cli/project_enroll.go`) offers the GitHub App's installed repositories only |
+| **C1** — `fugaro project sync` for Bitbucket, with `--check` | **Merged** (the census read **Kept**) | The census: `internal/gitprov/bitbucket/` has no `list.go`, and `newProjectSyncCmd` (`internal/cli/project_enroll.go`) offered the GitHub App's installed repositories only. **`d37c8af6` (#2428, 2026-11-12) landed the task after this census was read**: `internal/gitprov/bitbucket/list.go` lists a workspace's repositories, `newProjectSyncCmd` offers them behind `--bitbucket` (narrowed by `--bitbucket-project`), `--check` reports without writing, pinned by `internal/cli/project_sync_bitbucket_test.go` and `internal/gitprov/bitbucket/list_test.go` |
 | **C3** — lockfiles before source in the derived image | **Merged** | `image.RenderInput.KeyFiles` and `ShellKeyFiles` (`internal/image/render.go`), pinned by `internal/image/render_test.go` `TestRenderPutsKeyFilesBeforeSource` (merged as `4c3d50ee`). Its subject is the path image-setup's IS1/IS2 retire — F1 above |
 | **C4** — the image digest checked at launch | **Merged** | `warnImageDigestDrift` (`internal/cli/run.go`), pinned by `internal/cli/run_image_digest_test.go` `TestRunDigestWarnsOnMismatch`. The catalog kept the same shape (project-image-catalog D1152: `:latest` in the job, a warning at launch) |
 | **C5a** — context repositories in the task | **Kept** | no `Spec.ContextRepos` (`internal/task/task.go`), no `--context` flag on `fugaro run`. image-setup's baked repos (IS7's `bake_repos`, IS8b) put a repository's *source in the image*; a context repository is a *read-only clone for one run* — §5 D652 |
@@ -111,7 +113,7 @@ IS1–IS13 with IS6 unused); its own folder's merged count is stale in both dire
 | **D4** — advisory merge order | **Kept** | same, and on D3 |
 | **E0** — the roles design (D446) | **Superseded** | E0's own text says it is "a separate spec and reconciliation, owned by the owner"; that spec is now [docs/roles-scopes](../roles-scopes/) (spec 2026-11-07, D1580–D1593, tasks RS1–RS10), extending the roles design E0 names (`docs/design/roles.md`). Reconciliation §6's **O5** — "the roles design (D446) is a prerequisite of Slice E's writes; nobody owns it yet" — is answered by that folder, so nothing is left for E0 to write here. Its one shipped output, `fugaro user`, is E1's |
 | **E1** — `fugaro user ls\|add\|rm` over the IAM lists | **Merged** | `internal/cli/user.go` `newUserCmd` (registered in `internal/cli/root.go`), pinned by `internal/cli/user_test.go` (`TestUserAddWritesLauncher`, `TestUserAddRefusesDomain`, `TestUserRefusesStaleLocalList`, `TestUserInviteHasNoSecret`); `plugin/skills/working/SKILL.md` names the command |
-| **X1** — the live-check entries | **Kept** | `docs/gcp-live-checklist.md` has no Check 230, 231, 232, 234 or 235 section, and `internal/cli/docs_forge_checks_test.go` does not exist. image-setup reserves Checks 500–509 (its own; IS13 assigns 500 and 501), and secrets-brokering's dynamic-delivery holds Checks 510–519 (510 and 511 assigned, 512–519 reserved): neither block is this folder's, and this folder's 230–249 stays reserved |
+| **X1** — the live-check entries | **Merged** (the census read **Kept**) | The census: `docs/gcp-live-checklist.md` has no Check 230, 231, 232, 234 or 235 section, and `internal/cli/docs_forge_checks_test.go` does not exist. image-setup reserves Checks 500–509 (its own; IS13 assigns 500 and 501), and secrets-brokering's dynamic-delivery holds Checks 510–519 (510 and 511 assigned, 512–519 reserved): neither block is this folder's, and this folder's 230–249 stays reserved. **`90cfd931` (#2331, 2026-11-11) landed the five entries after this census was read**: the register carries a `## Check` section for each of 230, 231, 232, 234 and 235, all reading NOT RUN, pinned by `internal/cli/docs_forge_checks_test.go` (`TestDocsForgeChecksWritten`, `TestDocsForgeChecksNotRun`) |
 
 ## 3. What image-setup does *not* cover
 
