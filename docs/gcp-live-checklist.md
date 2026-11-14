@@ -502,6 +502,24 @@ wrong in a way no byte and no link is — it can promise a date, it can state a 
 tense, or it can ask a reader for something the project has nowhere to keep. The check is
 owner-run and it is **NOT RUN**.
 
+**Check 119 is the console-on-Windows work's, and the owner claimed it on 2026-11-14** (the
+console-windows plan, [implementation-plan.md](console-windows/implementation-plan.md) §4, "The
+owner's manual checklist"). Its D12(a), answered 2026-10-20, **proposed** the number and claimed
+nothing — the register's own rule is that the phase which ships the check writes it, and no phase of
+that work was approved then — and the owner's claim of **2026-11-14** is what changes that: §4 and
+the plan's D12 row now say the owner claimed it, and the row and the section are written here. The
+check is the one part of that work no runner can do: a person, a real Windows 10 or 11 machine with
+WSL 2, and the installer a **manual dispatch** of `console-windows.yml` produced (the job runs at
+release time only, so a dispatch is the only way to have one before a release). **Two works wanted
+119**: the rigor-modes work proposes it for its own live check
+(`docs/rigor-modes/implementation-plan.md` §3 — *"So the next free number is **119**, and this plan
+takes it"* — and its `docs/rigor-modes/README.md`'s own row), and the register's rule for two open
+claims is that **whichever merges second renumbers itself**. This one is the owner's, it is dated,
+and it is the row and the section written below; that plan's T8.1 is where its check's text is
+written, and it takes another number if it merges after this. The check is owner-run — **no agent
+runs any step of it** — it reads and writes on your own Windows machine and in one WSL distribution,
+**never `belong`**, and it is **NOT RUN**.
+
 **Check 124 is the Cloud Batch backend's own, and it is the next number free above 123** (the
 compute-backend plan `docs/plans/2026-10-19-compute-backend.md`, whose design is
 `docs/design/compute-backend.md`; the subject is the **opt-in Cloud Batch backend** — the
@@ -547,9 +565,10 @@ ones above and is taken the same way: the highest **written** `## Check N` secti
 read at **`c4d04bd6`** — the commit this change is based on — was **113**; **119** is taken by the
 rigor-modes work, whose plan says so in its own words ("So the next free number is **119**, and
 this plan takes it", `docs/rigor-modes/implementation-plan.md` §3), and proposed besides by the
-console-windows work for its owner's manual checklist, which claims nothing by that work's own
-**D12(a)** (`docs/console-windows/implementation-plan.md` §4, "proposed, not claimed"), so 119 is
-not this work's whichever way that collision falls;
+console-windows work for its owner's manual checklist — which claimed nothing when this paragraph
+was written (`docs/console-windows/implementation-plan.md` §4, then headed "proposed, not claimed")
+and which **the owner claimed on 2026-11-14**, so 119 is the console-windows work's and not this
+work's whichever way that collision falls;
 **123** is claimed by the console dependency-graph work
 (`docs/console-dependency-graph/README.md`, "Numbers this work holds"); **124** is the Cloud
 Batch backend's, written above by #1022, which merged after this work's base; and **130** was free either way, so the section is **written below**. Its subject is the
@@ -818,6 +837,7 @@ probe account carries predefined grants only).
 | 111 | The billing picker's failure modes (setup-wizard plan Task W0.3; D3 and D6): the Cloud Billing API disabled on the quota project — in D3's two cases, the quota project **being** the project set up and the quota project being **another** one — a caller without `billing.accounts.list` on a project whose API **is** enabled (so the API answers **403** rather than the disabled-API refusal), and the three sessions that never list anything at all (no TTY, `--json`, an agent session) — each asserting the guided `gcloud billing projects link` line, that **nothing was enabled**, and that **no account list appears in any output** (the one run where a list *is* expected is the `gcloud` fallback answering an API that refused) | See "Check 111" below; **you** run it as ONE script — `bash scripts/live-checks/check111.sh`, with its own test `scripts/live-checks/check111_test.sh` — at your own terminal, on installation `fugaro` (never `belong`), and **no agent runs any step of it** (an agent session is one of the five modes it observes). | Three throwaway projects of your own — `P` (the installation's), `Q` (API off) and `S` (API on) — and the ADC quota project is repointed by three of the runs. Every step is a refusal, and nothing is created, enabled or linked by the check itself. **NOT RUN.** |
 | 112 | The four zoom levels, drawn once and drawn as stills (zoom-diagrams plan §3, Part 4; D237, D244, D245, D247): the section sits on `/how-it-works/`, **under "The run, end to end" and its diagram** (D237); the four levels are four `<figure>`s in the owner's boards' order, each named by its own `<figcaption>`; **every entity is one `<symbol>` of one `<defs>`, drawn through `<use>`** (D244) — seventeen of them, the job tile, the orchestrator, the developer and its planned form, the person and its planned form, the plain, accent and planned cards, the laptop, the phone, the project, the loop, the draft pull request, the Firebase card, the cloud and the level's own box — so a job tile is the same tile at every level, and no level draws its own copy of one; every label of every level is a string of the board it is drawn from, held word for word in both directions; the four markers are one `<nav>` of anchors with accessible names (D245), each jumping to its own level by keyboard and by pointer; the four levels and every label are in the document **with JavaScript off** (the section ships no script of its own); and the drawings are legible — labels at the palette's own contrast, nothing clipped, nothing drawn as an empty box — on a desktop and at 360, 390 x 844 and 320 (ZU4) | See "Check 112" below; **you** run it, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the live site — read-only, no account, no cloud project touched, no `fugaro` command, and **No agent runs any step of it**. The pinned scroll-driven zoom is **Part 5** and is not in this tree: that step of the section is written and cannot be run yet, and an unrun step is not a pass | One browser, a hard reload, one look at the section with script on and one with it off, and one narrow viewport. Nothing is created, enabled, linked or written. **USER-RUN, NOT RUN.** |
 | 113 | The phone app's page, and every claim on it marked shipped or planned (zoom-diagrams plan §3, Part 3; D239, D240, D241, D242): `/mobile/` is the app's own page and it is a **"coming soon"** page, so it carries a **preview badge** over its headline reading "Coming soon" (D240's third condition) and **no date anywhere** — no year, no month, no season, in the page's text, its title or its description (D240's first condition) — and **every bullet is marked**: the claims of `website/data/mobile-claims.yaml` render as two lists under two headings, *What the app does today* and *What is still to come*, each card carrying its own word, **Shipped** or **Planned**, so the mark is a word and not a colour alone (D240's second condition, D241's answer: shipped is status and spend, planned is the roster, switching by name, the wake word, QR pairing and the three roles); the **wake word's bullet says the listening and the recognition happen on the phone** and the page names no speech service and no cloud (D242); **nothing asks a reader for anything** — no form, no field, no button, no `mailto:`, no third party, no waitlist (D239) — and the page shows **no empty frame**: with no row in `website/data/mobile-screens.yaml` there is no slider, no heading and no picture-shaped hole, and when your captures land the slider appears with this page's own slot and ids (D251); and the page reads at a phone's width, with the marks and the badge legible at 360, 390 x 844 and 320 | See "Check 113" below; **you** run it, in a browser, against the **built artifact** (`website/dist/`, served on localhost) or the live site — read-only, no account, no cloud project touched, no `fugaro` command, and **No agent runs any step of it**. The pictures are yours and are **not** in this tree: step 6's second half is written and cannot be run until they land, and an unrun step is not a pass | One browser, a hard reload, one look at the page, one look at the menu, and one narrow viewport. Nothing is created, enabled, linked or written, and no address is entered anywhere. **USER-RUN, NOT RUN.** |
+| 119 | The console on Windows, installed from the dispatch's artifact ([`docs/console-windows/`](console-windows/implementation-plan.md), its §4 "The owner's manual checklist", claimed by the owner on **2026-11-14**; **U13**, **U15**, **U16**, **U18**, **U5**, **U6**, **U7**, **U10** and **U14** of its reconciliation §6, and findings **F7**, **F14**, **F16**, **F19**, **F21**, **F22**, **F24**, **F26**, **F29**, **F30**, **F31** and **F32**): on one real Windows 10 or 11 machine with WSL 2 — the installer a **manual dispatch** of `console-windows.yml` produced, installed and launched; the header showing the resolved **Linux** path of a `fugaro` inside a distribution, never a Windows and never a UNC spelling; the first-run pages for **no WSL**, **no distribution** and **no `fugaro`** each saying the true thing with the remedy that fits and no dashboard drawn around it; two distributions with the wrong one chosen stated rather than silently swapped; a read whose numbers are the ones the CLI prints in a terminal inside that distribution; a cancelled `watch` leaving no process inside the distribution; a killed distribution reading as a distribution that went away rather than as a dead CLI; the credentials reported as the **distribution's**; the store written to `%APPDATA%` on the host and nothing written inside the distribution; a `wsl.exe` command line carrying a distro name, a directory and flags and **no token, no key and no environment dump**; a cold start inside the read deadline or a timeout that names the distribution; and an uninstall that leaves the store alone. It is the one part of that work no runner can do — the console's e2e specs drive its real window on macOS, and this is the machine they cannot reach | See "Check 119" below, sixteen steps, each saying what must be true and which **U**-row or finding it settles; **you** run it, at your own machine, with the installer from a **manual dispatch** of `console-windows.yml` (the job runs at release time only — the tag or a dispatch, **never on a pull request** — so a dispatch is the only way to have one before a release) and a Linux `fugaro` inside a distribution installed by [docs/windows-cli/wsl.md](windows-cli/wsl.md); the one step with no Windows in it is `scripts/live-checks/check119.sh` (name, size, SHA-256 and `x64` of the downloaded installer, refusing an empty, non-PE, DOS-stub or truncated file), its own test `scripts/live-checks/check119_test.sh`, and **no agent runs any step of it** | Nothing in the cloud: no project, no installation, no bucket, no run and no grant. On the machine, one unsigned NSIS installer and the store it writes at `%APPDATA%\Fugaro Console` — left behind on purpose, which is what step 16 reads — plus a second distribution if you make one for step 7. **One `windows-latest` runner and one pack, about an hour at the machine, and no model spend.** **OWNER-RUN, NOT RUN.** |
 | 123 | The console's **dependency graph in the packed, signed macOS app** (the console dependency-graph work: `docs/console-dependency-graph/README.md` "Numbers this work holds" — 123 is the only number it takes — and `docs/console-dependency-graph/implementation-plan.md` §6, "Checks", task **GV2.6**): the **elkjs worker loads from `app://`** in the packaged build, under the Electron fuses (the plan's **U5**) — the graph draws, with no blank frame and no worker or CSP error in the app; the **graph renders** for the sandbox installation's checkout, its nodes carrying their state words; and with **Reduce motion** on, every state is **static** and **keeps its text label** (the reduced-motion style GV2.4 landed) — no comet, no pulse, no flow along an edge, and no state left unlabelled | See "Check 123" below; **you** run it, on your own Mac, on installation `fugaro` (never `belong`) and the sandbox checkout only — one local build and one local launch, and the one read the app makes itself: it spawns that installation's `fugaro plan status --json`, so the check reads the sandbox project's runs bucket (`fugaro-dev`) with your CLI's own credentials — a **read**, and the only cloud project it touches; **No agent performs any step of it** | One local build (`cd console && npm ci && npm run package`), one app launch, one look at the graph, and one look again with Reduce motion on. Nothing is created, enabled, linked or written anywhere in the cloud. **USER-RUN, NOT RUN.** |
 | 124 | The Cloud Batch backend's own live check (compute-backend plan `docs/plans/2026-10-19-compute-backend.md`, its Task 12; design `docs/design/compute-backend.md` — **57 is this backend's reserved number and 124 is a second one taken above it**, which the claim paragraph above states with the overlap named: 57's section is Task 12's and this check's parts are the owner's, so the two are read together rather than one replacing the other; the opt-in `--provision-batch` backend, shipped in 0.9.5, whose live check was never written — 57a measured it in hand-made scripts and 57b lives inside that plan): **four owner-run parts.** **124a** — `fugaro setup --provision-batch --project fugaro`: the plan the compute root prints (the two APIs, the run accounts' IAM, the reaper's and the preload's accounts and their two custom roles, the Cloud NAT and its router, the preload's scheduled rebuild, the reaper's job), the typed confirmation nothing is applied before, the apply's `provisioned; the preloaded boot image …` line, the second run's `No changes: the compute backend's provisioning matches the plan.`, and the two read-backs — the lines `fugaro doctor`'s Batch half prints, which is the one `info batch-artifact-boundary: …` line it always prints for an installation carrying a `batch:` block and `fugaro doctor: everything checked is ok`; the other seven ids print nothing while their read is OK, so a `warning batch-…: …` line is the finding — and `fugaro validate`'s refusal, which is the pass today and `<path> is valid` after **the enable task**. **This part is the first one to run**: the enable task landed, so `internal/localcfg` accepts `backend: cloud-batch` and `fugaro doctor` is what reports an installation that selects it, failing until every Batch check passes — the report is doctor's own verdict and no launch reads it — **124b, 124c and 124d are runnable once this part has run**. **124b** — one ordinary sandbox task through a Batch job to its **draft pull request**, then declined and its branch deleted (Bitbucket, the sandbox's own repository). **124c** — a forced preemption: the run's own VM, selected by the label value the **job itself** records (`fugaro_run=<slug>-<run-id>`, never a typed name, and the step refuses a VM whose label is not its own job's), deleted by hand; the job must end `FAILED` with the task's exit code equal to the value read out of the tree (`grep -n 'preemptExitCode =' internal/backend/batch/run.go` — the number has one home and is written nowhere under `docs/`), and `fugaro runs ls` must read `failed (preempted)` — a **derived** reading, because nothing writes a preempted run's record; the reaper then reports what it would reap and what it reaped. **no Fugaro run is Spot today**, so this is a **simulated** reclaim and the design's §7.2 step 7 stays unrun. **124d** — the check's own cost and the cleanup: the runs' dollars, the budget lease released, and `gcloud batch jobs list` / `gcloud compute instances list` diffed against the before-state the check recorded, with the installation's own provisioning — **the installation's own, never deleted**: the preload image family, the reaper's and the preload's service accounts, **the two custom roles**, the Cloud NAT and its router, the preload rebuild's and the reaper sweep's scheduler jobs, the reaper job — named as what no restore here may touch | See "Check 124a"–"Check 124d" below; **you** run it, on installation `fugaro` (GCP project `fugaro-dev`, never `belong`), a sandbox checkout only, at your own terminal, with the guard block re-run before every part; the apply's confirmation and `fugaro setup` are refused a coding agent's session, and **no agent performs any step of the check** | 124a: one installation-root apply and the compute root's, one Cloud Build for the preload image and the scheduled rebuilds after it, and nothing else; 124b and 124c: **two** small sandbox runs on Batch (one ordinary, one preempted by hand), the check's own dollars recorded in 124d, with the batch jobs' own records kept. Nothing in the register is deleted by the check except 124b's declined pull request and its branch, and **the installation's own provisioning is never deleted**. **USER-RUN, NOT RUN — and 124b, 124c and 124d are runnable once 124a has run**, for the reason the sections record in as many words: the enable task (the plan's Task 10) landed, so `backend: cloud-batch` is a name `internal/localcfg` accepts and `fugaro doctor` is what reports an installation that selects it without the provisioning behind it, failing on the checks until they pass — a report, not a fence: `fugaro run` still launches. |
 | 130 | The licence detectors after the open-core skeleton ([`docs/licensing/`](licensing/implementation-plan.md), its Check 130, task L1.10, and the reconciliation's F8 and U1 under the owner's **O2** answer of 2026-10-24; the block **130–134** is that work's and only 130 is written): that GitHub **still reports MIT** for the repository with the skeleton's new root `LICENSING.md` beside an untouched `LICENSE` — read twice and recorded both times, as the repository page's own licence label and the file it opens, and as the licence API's machine-readable reading (`spdx_id: MIT`, `key: mit`, and **`path: LICENSE`**, so the file GitHub classified is the untouched one and not the new statement file, which is what a `path` of `LICENSING.md` would mean) — and that **`LICENSING.md` renders on GitHub** as a page whose every relative link works — every link the guard's `grep` reads out of the file and not a list remembered here, among them `LICENSE`, `ee/README.md`, the vendored skills' `.agents/LICENSE` and the README's trademark paragraph anchor. **What it is not:** pkg.go.dev's classification (U2, not this check's after O2) and the release labels — the plugin manifest's, the Homebrew cask's and the archive's — which stay `MIT` at 0.11.0 because the release build sets no `ee` tag (D303 as amended) and move together in the release that first sets it (plan slice L5) | See "Check 130" below; **you** run it as ONE script — `bash scripts/live-checks/check130.sh`, with its own test `scripts/live-checks/check130_test.sh` — read-only, in a browser and with three `curl` calls against `api.github.com` — the repository read out of the checkout's origin and cross-checked against `go.mod`, so the tree and the page are the same repository — on no cloud project and no installation, never `belong`, holding no credential and writing nothing anywhere, and **no agent runs any step of it**. Its guard stops until task L1.3's `LICENSING.md` is in the tree, so it is run in full by task L1.11, after L1.3 merges | Nothing: three anonymous API reads, which spend part of the anonymous rate limit and change nothing; no image, no bucket, no model call, no Terraform, no node and no file. **USER-RUN, RUN 2026-11-11: PASS.** |
@@ -9320,6 +9340,188 @@ yet, that step 6's second half was not run. Until it has been, this row stays **
 - **Never touch `belong`, EdgeWeb or EdgeServer**: no step here reads or writes a project at all,
   and the only host this check fetches is the built artifact on localhost or the canonical origin
   the site's own `site.yaml` names.
+
+## Check 119: the console on Windows, installed from the dispatch's artifact — the WSL resolver, the first-run pages, a cancelled watch, and the credential boundary (one real Windows 10 or 11 machine with WSL 2, the installer from a manual dispatch of `console-windows.yml`, and a Linux `fugaro` inside a distribution; never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written for the **console-on-Windows work**
+([docs/console-windows/implementation-plan.md](console-windows/implementation-plan.md) §4, "The
+owner's manual checklist"), and **claimed by the owner on 2026-11-14**: that plan's D12(a) proposed
+the number on 2026-10-20 and claimed nothing, on the register's own rule that the phase which ships
+the check writes it — the owner's claim is what changes that, and the plan's §4 and its D12 row now
+say so. It is the one part of that work no runner can do: a person, a real Windows machine, and the
+installer a manual dispatch produced. **No agent runs any step of it**, and the one step that needs
+no Windows at all — reading the installer's own bytes — is
+`scripts/live-checks/check119.sh`, with its own test `scripts/live-checks/check119_test.sh`.
+
+**The mutation-proof discipline the plan's §0 states does not reach these steps, and saying so is
+part of the discipline rather than an excuse from it.** Every task of that plan is finished by
+planting the bug its red step names, watching its guard fail and removing the bug; a checklist a
+person runs on a Windows machine has no guard that can be run that way, and its redness is what step
+1's SmartScreen warning is. What stands in the discipline's place is what this section is made of:
+every step names what must be true and the finding or **U**-row of
+[docs/console-windows/reconciliation.md](console-windows/reconciliation.md) §6 it settles, so a step
+that passes can be read against the claim it was written for.
+
+**What this check measures.** The console's Windows half, end to end on a machine that is not this
+repository's: that the installer a dispatch uploaded **installs** and the console **launches** from
+it; that the console finds a **Linux** `fugaro` inside a WSL distribution and drives it through
+`wsl.exe`; that each of its first-run pages says the true thing about the machine it is on (no WSL,
+no distribution, no `fugaro`, two distributions and the wrong one chosen); that a `watch` cancels
+without leaving a process inside the distribution and that killing the distribution is a sentence
+distinct from the CLI dying; that the paths it shows are the **Linux** ones and the UNC spelling is
+only where Windows itself opens one; that the credentials it reports are the **distribution's**;
+that the console's store is on the host and nothing is written inside the distribution; that no
+secret crosses `wsl.exe`'s command line; and that uninstalling leaves the store alone. It is the
+whole of **U13** (that the console can launch on Windows at all) and the Windows half of **U18**,
+**U15**, **U16**, **U7**, **U14**, **U10**, **U5** and **U6**.
+
+**What this check is not.** It is not a reading of the Windows **pack** — the typecheck, the unit
+suite on `windows-latest`, the NSIS target and the fuse bytes are the job's own subject, and the
+dispatch that produced the installer is where they are read. It is not the **signature**: there is no
+Authenticode identity for this project and none is planned (D10(a)), so the installer is unsigned and
+step 1's SmartScreen warning is expected rather than a failure. It is not about a Windows-native
+`fugaro`: there is none, and [docs/windows-cli/](windows-cli/wsl.md) owns that track. And it is not
+the **console's own** tests: `console/test/e2e/` drives the console's real window on macOS, and this
+is the machine those specs cannot reach.
+
+**Prerequisites.** All four, before step 1:
+
+1. **A Windows 10 or 11 machine with WSL 2.** Nothing here is emulated and nothing runs on a Linux
+   box: every step below but the installer read is about what Windows itself does with the console.
+2. **The installer, from a manual dispatch of `console-windows.yml`** — Actions → `console-windows`
+   → **Run workflow** on `main` — and not from a release. The job runs at release time only (the
+   owner's answer to that plan's D7: the tag, or a dispatch, and **never on a pull request**), so a
+   dispatch is the only way to have an installer before a release, and the artifact is kept for
+   **90 days** so that it is still there for the release it was dispatched for. It is one `.exe`,
+   named `Fugaro.Console-<version>-win-x64.exe` — the pack's own `artifactName`
+   (`Fugaro.Console-${version}-win-${arch}.${ext}`) with `arch: ['x64']` and the `version` of
+   `console/package.json`, which the job packs from and which no step of it stamps over — and step
+   1's first act is to check it is that:
+   `bash scripts/live-checks/check119.sh --installer <the downloaded .exe>`. It prints the file's
+   name, size, SHA-256 and `installer-arch=x64`, and refuses anything that is not a 64-bit PE image.
+3. **One distribution with a Linux `fugaro` in it**, installed by
+   [docs/windows-cli/wsl.md](windows-cli/wsl.md)'s procedure — the release's **linux** archive,
+   verified against `checksums.txt`, on the distribution's `PATH`. Steps 4 to 7 need a machine or a
+   state that is *missing* something — 4 needs **no WSL at all**, 5 needs WSL with **no
+   distribution**, 6 a distribution with **no `fugaro`** — and 7 needs a **second** distribution
+   beside the one that has it. The other steps are the other way round: 1 and 2 are the console's
+   install-and-launch pair, and 3 and 8 to 16 need the `fugaro` this step installs. So the order that
+   works is **1 to 3**, then **4 to 7** in their own states (or on a second machine, which is the
+   cleaner way to have all of them at once), then **8 to 16**.
+4. **A checkout of this repository inside the distribution** (`~/src/fugaro`, not `/mnt/c/...` — the
+   mode-bit trap [docs/windows-cli/wsl.md](windows-cli/wsl.md) §1 records), and **no signing
+   certificate**: this check buys no Authenticode identity and the installer it installs is unsigned.
+
+**The steps.** Each says what to do, what must be true, and what it settles.
+
+1. **Read the installer, then run it.** First
+   `bash scripts/live-checks/check119.sh --installer <the .exe the dispatch uploaded>` — it prints
+   the name, the size, the SHA-256 and `installer-arch=x64`, and refuses a file that is empty, not a
+   PE image, a DOS stub or a truncated download. Then double-click it and follow the NSIS installer
+   through. **True when:** the read prints four lines and no refusal, and the installer completes.
+   Windows shows the **SmartScreen** warning (the publisher reads as unknown, because there is no
+   signature), and **More info → Run anyway** gets past it. **Settles:** U18 — the warning's exact
+   wording against what the plan's D10(a) says.
+2. **Launch the console from the Start menu.** **True when:** the window opens; the theme is the one
+   macOS draws (the same palette and type, not the platform's default); and no console error appears
+   — no CSP refusal, no blank frame, no "Failed to load" in the app's own error surface or in
+   DevTools. **Settles:** U13 — that the Windows console can launch at all, which is the whole of the
+   e2e half no runner can take.
+3. **With one distribution installed and a `fugaro` in it, open the console.** **True when:** the
+   header shows the resolved **Linux** path — `/home/<you>/.local/bin/fugaro` — and **not** a Windows
+   path (`C:\…`) and **not** a UNC path (`\\wsl.localhost\…`). **Settles:** F16 and D3(a) — the Linux
+   spelling wherever the console states or passes a path.
+4. **Open the first-run page with WSL not installed** (a machine or a state without it; on Windows 11
+   the feature can be turned off under "Turn Windows features on or off"). **True when:** the page
+   says WSL is **missing**, in the console's own words, and the remedy points at the WSL install; and
+   no dashboard is drawn around it. **Settles:** F30 and F31.
+5. **With WSL installed and no distribution, open the console.** **True when:** the page says there
+   is **no distribution**, and it offers the **distro picker** rather than a file dialog. **Settles:**
+   C2 and F31.
+6. **With a distribution that has no `fugaro`, open the console.** **True when:** the page says the
+   distribution has no `fugaro`, and the remedy names the WSL install procedure
+   ([docs/windows-cli/wsl.md](windows-cli/wsl.md)) rather than carrying a second copy of it.
+   **Settles:** C1, F31 and F32.
+7. **With two distributions, one holding `fugaro`, pick the one that does not.** **True when:** the
+   failure is **stated** — the console says this distribution has no `fugaro` — and it does **not**
+   silently switch to the other distribution's CLI. A console that answers with the other
+   distribution's numbers is the failure this step exists to catch. **Settles:** F7 and T-C5.
+8. **Pick the distribution that does hold `fugaro`.** **True when:** a read succeeds, and the numbers
+   on the screen are the ones `fugaro` prints for the same command in a terminal **inside** that
+   distribution — same run count, same spend, same states. A feed that arrives with a lost final
+   line or interleaved NULs reads differently from the terminal, which is what this step is for.
+   **Settles:** U7 (the child's exit status through `wsl.exe`) and U14 (the `--json` feed through the
+   wrapper).
+9. **Start a `watch`, then cancel it.** **True when:** the feed stops, **and**
+   `ps aux | grep fugaro` inside the distribution shows no leftover process within the grace period —
+   which is the second reading, because killing the Windows-side `wsl.exe` is not the same act as
+   killing the Linux process it started. **Settles:** F24, U5 and U6.
+10. **Start a `watch`, then kill the distribution while it runs:** `wsl --shutdown` in a Windows
+    shell. **True when:** the screen says the **distribution went away**, which is a different
+    sentence from the one it prints when the CLI dies — a reader has to be able to tell a stopped
+    distribution from a broken command. **Settles:** F26 and F29.
+11. **Open a project with a remembered checkout under the distribution's home.** **True when:** the
+    path shown is the **Linux** one and it is the same directory the CLI read, and a
+    reveal-in-Explorer affordance opens the **UNC** path (`\\wsl.localhost\<distro>\home\<you>\…`) —
+    the one place Windows itself opens one. **Settles:** F16 and U10 — whether `wslpath -a -u`
+    round-trips a `\\wsl.localhost\…` path.
+12. **Run the environment view (`doctor`).** **True when:** it says the credentials are the
+    **distribution's**; and with no login inside the distribution it says so, rather than claiming
+    the console has a credential of its own — the ADC inside WSL is a different file from the
+    Windows one, and the console has none either way. **Settles:** F21.
+13. **Check the console's store on the host.** **True when:** `%APPDATA%\Fugaro Console\installations.json`
+    exists, holds the WSL installation, and **nothing** was written inside the distribution — no
+    config, no state file, no scratch directory. **Settles:** F14 and T-D5.
+14. **Open Task Manager while a long read runs, and look at the command lines.** **True when:** the
+    `wsl.exe` command line carries a distro name, a directory and CLI flags — **no token, no key, no
+    environment dump**; and the judgement this step asks for is whether that is visible to *other*
+    users on the machine and whether it matters for the paths it carries. **Settles:** F19, F22 and
+    U16.
+15. **Time the first invocation after `wsl --shutdown`.** **True when:** it completes inside the
+    console's own read deadline (90 seconds), **or** the screen says it **timed out** and names the
+    distribution. A cold-started distribution taking longer than the budget and being reported as a
+    hang is the failure; a timeout that names the distribution is a pass. **Settles:** U15.
+16. **Uninstall the console from Settings → Apps.** **True when:** it uninstalls cleanly and leaves
+    `%APPDATA%\Fugaro Console` alone — the store survives a reinstall, which is the half of the
+    install/uninstall contract a machine can only show once. **Settles:** D7(c) — the release-time
+    pack and what its installer does and does not take away with it.
+
+**Passes when:** every step above reads as its "true when". **Fails when:** the installer will not
+run or SmartScreen has no **Run anyway**; the window does not open, or opens blank with a CSP or
+worker error; a path is shown in Windows or UNC spelling where it must be the Linux one; a first-run
+page draws a dashboard around its remedy, or names the wrong remedy; the console silently switches
+distributions; a cancelled `watch` leaves a `fugaro` process inside the distribution; a killed
+distribution reads as a dead CLI; `doctor` claims a credential the console does not have; anything is
+written inside the distribution; a token, a key or an environment dump appears in the `wsl.exe`
+command line; a cold start is reported as a hang rather than as a timeout that names the
+distribution; or uninstalling takes the store with it.
+
+**Paste back** (no secret, no account and nothing from any project): the four lines
+`check119.sh` printed; your Windows build and your WSL version (`wsl --version`); the
+distribution's name and `fugaro version` inside it; what each of steps 2 to 16 showed, one line
+each — and for the steps that settle a **U**-row, the answer itself rather than "as expected" (the
+SmartScreen wording verbatim, the exit status of `wsl.exe -d <d> -- sh -c 'exit 7'`, whether
+`ps aux` was empty after the cancel, the seconds the cold start took, and whether the `wsl.exe`
+command line was visible from another account). Plus the date and the commit the console was built
+from. Until it runs, **U13**, **U15**, **U16**, **U18**, **U5**, **U6**, **U7**, **U10** and
+**U14** stay **UNVERIFIED**, and their rows stay **NOT RUN**.
+
+**Restore.** Nothing in the cloud is created, so there is nothing to undo there: no project, no
+installation, no bucket, no run and no grant. The check's footprint is the machine it runs on:
+
+- **Uninstall the console** (step 16) when you are done with it, and delete the downloaded `.exe`.
+- **The store is yours to keep**: `%APPDATA%\Fugaro Console` is left behind on purpose — step 16 is
+  where that is read — and deleting it forgets the installation the console was pointed at.
+- **A second distribution** installed for step 7 is yours to keep or remove
+  (`wsl --unregister <distro>` — that deletes everything inside it, so do it on the one you made for
+  this check and not on the one carrying your `fugaro`).
+- **Never touch `belong`**: no step here points the console at it, and the installations this check
+  uses are your own machine's own.
+
+**Cost.** No model call, no run and no billable execution: one dispatch of `console-windows.yml`
+(a `windows-latest` runner and one unsigned NSIS pack, which the repository's Actions minutes pay
+for) and about an hour at the machine. What the console reads are its own installation's reads,
+through the CLI inside the distribution.
 
 ## Check 123: the dependency graph in the packed, signed macOS app — the worker under the fuses, the render, and Reduce motion (installation `fugaro`, the sandbox checkout only, never `belong`; run by you; NOT RUN)
 

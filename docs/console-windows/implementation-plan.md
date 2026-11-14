@@ -124,8 +124,9 @@ B ─────────────────────────►
   request), and the release checklist gains the by-hand dry run that stands in for the pull-request
   check there is not.
 - **The owner's manual checklist (§4) runs after H is copied in and a manual dispatch has produced a
-  real installer.** It is the only part of this work that needs a Windows machine, and it is the reason
-  Check 119 is *proposed* rather than claimed.
+  real installer.** It is the only part of this work that needs a Windows machine, and it is Check
+  119: proposed by D12(a), answered 2026-10-20, and claimed by the owner on **2026-11-14**, whose
+  section and row are now in [docs/gcp-live-checklist.md](../gcp-live-checklist.md).
 
 ---
 
@@ -835,15 +836,18 @@ Commit: `docs(pending-workflows): the Windows file's section, its copy-in and wh
 
 ---
 
-## 4. The owner's manual checklist — Check 119 (proposed, not claimed)
+## 4. The owner's manual checklist — Check 119 (claimed by the owner, 2026-11-14)
 
 **What this is.** The one part of this work no runner can do: a person, a real Windows machine, and an
-hour. It is written as a checklist because that is what the register's checks are, and it is
-**proposed** as **Check 119** and **claimed by nobody** (D12(a)). The register's written sections run
-to 89; 90–99, 100–109, 110, 111, 112 and 113–118 are taken or named; 119 is the next free number after
-reading the register name by name. **Nothing writes the row into
-[docs/gcp-live-checklist.md](../gcp-live-checklist.md)**: the register's rule is that the phase which
-ships the check writes it, and no phase here is approved.
+hour. It is written as a checklist because that is what the register's checks are. D12(a), answered
+2026-10-20, **proposed** the number and claimed nothing — the register's rule is that the phase which
+ships the check writes it, and no phase of this work was approved then — and **the owner claimed
+Check 119 on 2026-11-14**: its row and its sixteen-step section are written into
+[docs/gcp-live-checklist.md](../gcp-live-checklist.md), the one step with no Windows in it is
+`scripts/live-checks/check119.sh` with its own test, and this section is the table those steps were
+written from. **Two works wanted the number**: the rigor-modes work proposes 119 for its own live
+check, and the register's rule for two open claims is that whichever merges second renumbers itself —
+so the number is the owner's, dated, and that plan's check takes another one if it merges after this.
 
 **The mutation-proof discipline §0 states does not reach these steps, and saying so is part of the
 discipline rather than an excuse from it.** Every task above is finished by planting the bug its red
@@ -920,7 +924,7 @@ the *decisions* from the gate; it did not pass it. The approval of the plan itse
 | **D9** | (a) | T-G1's remedy text: it points at [docs/windows-cli/wsl.md](../windows-cli/wsl.md) rather than carrying a second copy of the procedure. |
 | **D10** | (a) | T-H3: one SmartScreen sentence in the release notes, `docs/release.md` and the download page, and no claim anywhere that the installer is signed. |
 | **D11** | (a) | Part A, and therefore the test strategy of every other part: a fake `wsl.exe` built on `installStub`, asserting what the Linux side received. |
-| **D12** | (a) | §4 stays *proposed*: Check 119 is named and unclaimed, and no row is written into the register. |
+| **D12** | (a) | §4 was written *proposed* and unclaimed, and no row was written into the register then. **The owner claimed Check 119 on 2026-11-14**: the number is the owner's, its row and its section are in the register, and the claim is what settles the collision with the rigor-modes work's own proposal of 119. |
 
 **What the approval covers, and in what order.** **Part A** — built, and it touches no production
 code, no `console/src/` file and no document outside this folder, its only claim being that the tests
@@ -930,5 +934,6 @@ waited on answers — theirs are above — they waited on the gate, and now on t
 
 **What the approval does *not* cover, and what still needs the owner**: copying
 `docs/pending-workflows/console-windows.yml` into `.github/workflows/` (that is Tier C, and the file's
-own header says what must land first); writing Check 119's row into the register (D12); touching
-`website/data/install.yaml` (F47); and anything under `.github/workflows/` by an agent (F44).
+own header says what must land first); touching `website/data/install.yaml` (F47); and anything under
+`.github/workflows/` by an agent (F44). Writing Check 119's row into the register was on this list
+too, under D12, and **the owner did it on 2026-11-14**.
