@@ -57,11 +57,12 @@ func projectRecord(name Name, uuid string) Record {
 // The fake API
 // ---------------------------------------------------------------------------
 
-// projectFake stands in for api.bitbucket.org. It records every call as the
-// resolver built it — scheme, host, path, method and the credential — and
-// refuses a call to any other host, which is what pins the lookup to the
-// adapter's constant API root (F22): a resolver that addressed somewhere else
-// fails here rather than being answered.
+// projectFake stands in for api.bitbucket.org. EVERY hop is recorded as it was
+// built — scheme, host, path, method and the credential — before it is served
+// or refused, and a call to a host that is not Bitbucket's own API root is
+// refused rather than answered. That is what pins both rules of F22: a lookup
+// that addressed somewhere else is seen here, and one that followed a redirect
+// to another host is seen as the second hop it made.
 type projectFake struct {
 	srv *httptest.Server
 
@@ -80,10 +81,12 @@ type projectSeen struct {
 	auth   string
 }
 
-// projectReply is what the fake answers one repository with.
+// projectReply is what the fake answers one repository with: a project UUID on
+// a 200, and optionally a Location to answer a redirect with.
 type projectReply struct {
-	status int
-	uuid   string
+	status   int
+	uuid     string
+	location string
 }
 
 func newProjectFake(t *testing.T) *projectFake {
@@ -96,6 +99,9 @@ func newProjectFake(t *testing.T) *projectFake {
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
 			return
+		}
+		if reply.location != "" {
+			w.Header().Set("Location", reply.location)
 		}
 		if reply.status != http.StatusOK {
 			w.WriteHeader(reply.status)
@@ -115,6 +121,14 @@ func (f *projectFake) reply(workspace, repo string, status int, uuid string) {
 	f.answers["/2.0/repositories/"+workspace+"/"+repo] = projectReply{status: status, uuid: uuid}
 }
 
+// redirect says that the API answers one repository with a redirect to another
+// host, which no lookup may follow.
+func (f *projectFake) redirect(workspace, repo string, status int, location string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.answers["/2.0/repositories/"+workspace+"/"+repo] = projectReply{status: status, location: location}
+}
+
 // client is the HTTP client the resolver under test makes its lookups with:
 // a call to any host but Bitbucket's own API root is refused.
 func (f *projectFake) client() *http.Client {
@@ -131,9 +145,6 @@ type projectTransport struct {
 }
 
 func (h *projectTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	if r.URL.Host != "api.bitbucket.org" {
-		return nil, fmt.Errorf("the project lookup addressed %s://%s, and Bitbucket's API root is api.bitbucket.org alone", r.URL.Scheme, r.URL.Host)
-	}
 	h.fake.record(projectSeen{
 		method: r.Method,
 		scheme: r.URL.Scheme,
@@ -142,6 +153,9 @@ func (h *projectTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 		accept: r.Header.Get("Accept"),
 		auth:   r.Header.Get("Authorization"),
 	})
+	if r.URL.Host != "api.bitbucket.org" {
+		return nil, fmt.Errorf("the project lookup addressed %s://%s, and Bitbucket's API root is api.bitbucket.org alone", r.URL.Scheme, r.URL.Host)
+	}
 	c := r.Clone(r.Context())
 	c.URL.Scheme = h.base.Scheme
 	c.URL.Host = h.base.Host
@@ -267,9 +281,12 @@ func TestProjectOfUsesTheCandidateProjectToken(t *testing.T) {
 	records := []Record{
 		projectRecord(tokCI, projectUUID),
 		projectRecord("bitbucket-token--other", otherUUID),
-		{Name: "bitbucket-token--all", Type: TypeWorkspace, Coverage: []string{"acme/*"}},
-		{Name: "bitbucket-token--one", Type: TypeRepo, Coverage: []string{"acme/app"}},
-		{Name: "bitbucket-token", Coverage: []string{"acme/app"}},
+		// These three state a project UUID of their own, as a record of any
+		// kind may: the TYPE is the only thing that keeps a workspace, a
+		// repository or the untyped legacy key off this lookup (R2).
+		{Name: "bitbucket-token--all", Type: TypeWorkspace, Coverage: []string{"acme/*"}, ProjectUUID: projectUUID},
+		{Name: "bitbucket-token--one", Type: TypeRepo, Coverage: []string{"acme/app"}, ProjectUUID: projectUUID},
+		{Name: "bitbucket-token", Coverage: []string{"acme/app"}, ProjectUUID: projectUUID},
 	}
 	tokens := testTokens{
 		tokCI:                    "ci-value",
@@ -386,5 +403,31 @@ func TestProjectLookupHostIsConstant(t *testing.T) {
 	}
 	if seen[0].accept != "application/json" {
 		t.Fatalf("the lookup sent Accept %q, want application/json", seen[0].accept)
+	}
+}
+
+func TestProjectLookupFollowsNoRedirect(t *testing.T) {
+	f := newProjectFake(t)
+	const elsewhere = "https://not-bitbucket.example/2.0/repositories/acme/app"
+	f.redirect("acme", "app", http.StatusFound, elsewhere)
+	l := NewProjectLookup([]Record{projectRecord(tokCI, projectUUID)}, testTokens{tokCI: "ci-value"}, f.client())
+
+	// A redirect is not an answer about the repository: it is an error, and the
+	// hop it names is never made, because that hop would present the candidate
+	// token to a host the adapter's constant does not name (F22, G10).
+	if _, err := l.ProjectOf(context.Background(), "bitbucket/acme/app", tokCI); err == nil {
+		t.Fatal("a redirect was answered as a lookup result, want an error")
+	}
+	seen := f.seen()
+	if len(seen) == 0 {
+		t.Fatal("the lookup made no call at all")
+	}
+	for _, call := range seen {
+		if call.host != "api.bitbucket.org" {
+			t.Fatalf("the lookup reached %s://%s carrying %q, and no host but Bitbucket's API root may be addressed", call.scheme, call.host, call.auth)
+		}
+	}
+	if len(seen) != 1 {
+		t.Fatalf("the lookup made %d calls, want the 1 that asked the API root", len(seen))
 	}
 }
