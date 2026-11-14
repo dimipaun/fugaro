@@ -3885,6 +3885,7 @@ Flags:
 Subcommands:
 
 - `fugaro licence refresh` -- Ask the licence server for the next key now (Subscription Edition)
+- `fugaro licence renew` -- Run the installation's licence check and renewal, as its job does (Subscription Edition)
 - `fugaro licence set` -- Install the installation's licence key (Subscription Edition)
 - `fugaro licence status` -- Show the installation's licence: tier, seats, expiry, state and last check
 
@@ -3923,6 +3924,57 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for refresh |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro licence renew`
+
+Run the installation's licence check and renewal, as its job does (Subscription Edition)
+
+Run the installation's licence check and renewal.
+
+This is the command K4.2's Scheduler job runs on the installation's timer, and
+`--job` is what says so: it is the job's own verb, and running it by hand is
+not what a person means — `fugaro licence refresh` renews the key they are
+watching, now.
+
+What the job does, in the order it does it: it reads the project's key and the
+renewal secret that renews it, asks the licence server's status route once the
+key's own `check_interval` has passed, asks its renewal route from
+`renew_before_days`, and writes the next key beside the old one (the new secret
+version first, then the key). It records the check — the answer, whether it
+reached the server, and how many checks in a row have not — and warns after
+thirty days without an answer, because that is how long an installation may be
+unable to verify a revocation at all (D2140).
+
+It renews an auto key and only an auto key (spec section 7): a key whose
+`renewal_mode` is `manual` is checked and never renewed — the check is what
+tells the installation whether the key is still good — and its next term is
+fetched by a person running `fugaro licence refresh`. A key whose mode is
+`none` contacts nothing at all.
+
+It never revokes: only an explicit answer from the licence server does, so a
+server that cannot be reached leaves the key exactly as it was. An offline key
+contacts nothing at all, an installation with no key does nothing, and a key the
+server answers revoked is recorded and left in place — nothing is deleted.
+
+It is refused inside a coding agent's session, before anything is read, as every
+cloud write is. No line of its output carries the key or the renewal secret.
+
+Usage: `fugaro licence renew`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for renew |
+| `--job` | bool | `false` | no | run as the installation's renewal job, which is the only way this verb runs |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
