@@ -137,13 +137,14 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 		//
 		// The rule lives in the policy package
 		// (projectpolicy.CheckSharedJobProfile) so that its wording has one
-		// home, and the publisher asks the same function (internal/cli's
-		// buildProjectPolicy, since the owner's ruling of 2026-11-14): a config
-		// that would deploy this job is refused at the publish, one step from
-		// the file that carries the entry. This door is what holds for a node
-		// the publish did not write — one published before the ruling, or
-		// written by an older Fugaro — so the mount can reach a deploy without
-		// passing a publish at all.
+		// home, and the operator's publish asks the same function
+		// (internal/cli's refuseAProfileMountingTheBitbucketCredential, since
+		// the owner's ruling of 2026-11-14): a config that would deploy this
+		// job is refused at the publish, one step from the file that carries
+		// the entry. This door is what holds for every node anyway — one
+		// published before the ruling, and one `fugaro update`'s policy stage
+		// writes after it, which converges an installation whose config already
+		// mounts rather than stopping the update.
 		if err := projectpolicy.CheckSharedJobProfile("profiles."+name, profiles[name]); err != nil {
 			return nil, userErr("%v", err)
 		}

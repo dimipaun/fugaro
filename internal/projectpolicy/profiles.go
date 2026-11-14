@@ -612,16 +612,27 @@ func CheckBitbucketProfileRepos(profiles map[string]Profile, token *BitbucketTok
 // owns the "only a bitbucket profile mounts it" half, and a bitbucket profile
 // mounting it is refused here.
 //
-// Publish asks it too, and so does every door that builds the node a shared job
-// is deployed from: the owner's ruling of 2026-11-14 is that such a profile is
-// not a policy's to carry, so the entry is refused where it is written rather
-// than at the deploy, one step from the file that owns it — the publisher
-// (internal/cli's buildProjectPolicy) and the deployer (internal/infra's
-// ProjectJobs) ask this one function, so the two refusals are one sentence
-// rather than two that can drift. What this rule does not reach is a node
-// already published: the reader that decodes one (Decode) does not ask it, so a
-// node written before the ruling is still read, and its own profile is refused
-// when the next publish or the deployer reaches it.
+// The two callers are the doors that own the decision: `fugaro project policy
+// publish` (internal/cli's refuseAProfileMountingTheBitbucketCredential, since
+// the owner's ruling of 2026-11-14 that the rule holds at the publish as well as
+// at the deploy) and the deployer (internal/infra's ProjectJobs). A publish
+// asks it of the config it is about to write, so the entry is refused at the
+// file that owns it rather than at the deploy — in this one sentence, because
+// both doors call this function.
+//
+// What deliberately does not ask it is `fugaro update`'s policy stage, which
+// builds its node through the same shared build the publish command takes
+// (policyNodeForPublish). A stage that refused would stop the update whole for
+// an installation whose local config already mounts the credential — a config
+// this repository published without complaint before the ruling — and an update
+// that cannot converge is the one thing the project's hard rule forbids. The
+// stage writes the node the config states, and the deployer's door below is
+// what refuses the job.
+//
+// What this rule does not reach is a node already published: the reader that
+// decodes one (Decode) does not ask it, so a node written before the ruling is
+// still read, and its own profile is refused when the next publish or the
+// deployer reaches it.
 func CheckSharedJobProfile(at string, pr Profile) error {
 	i := slices.Index(pr.Secrets, config.BitbucketSecret)
 	if i < 0 {
