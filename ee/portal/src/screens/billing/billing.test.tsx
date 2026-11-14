@@ -99,7 +99,7 @@ function port(who: SignedInUser | null = PERSON): AuthPort {
  * `idToken` has nobody to mint for. Until `answer()` the screen is mounted with
  * the session unanswered, which is the moment this screen must not ask in.
  */
-function pendingPort(): { auth: AuthPort; answer: () => void } {
+function pendingPort(): { auth: AuthPort; answer: () => void; leave: () => void } {
   let answered: SignedInUser | null = null
   let notify: ((user: SignedInUser | null) => void) | null = null
   return {
@@ -118,6 +118,13 @@ function pendingPort(): { auth: AuthPort; answer: () => void } {
     answer: () => {
       answered = PERSON
       notify?.(PERSON)
+    },
+    // The other thing the SDK does under a mounted screen: a session that ends
+    // -- a sign-out, a token the server no longer accepts -- is a change of
+    // user to nobody, and the screen is still there when it arrives.
+    leave: () => {
+      answered = null
+      notify?.(null)
     },
   }
 }
@@ -373,6 +380,30 @@ describe('the billing screen', () => {
     })
     expect(calls).toHaveLength(0)
     expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('draws none of the subscription once the session has gone', async () => {
+    stubFetch([() => answer(200, SUBSCRIPTION)])
+    const { auth, answer: answerSession, leave } = pendingPort()
+    show('/billing/ws_example', '/billing/:workspaceId', auth)
+
+    act(() => {
+      answerSession()
+    })
+    await screen.findByText('Seats')
+
+    act(() => {
+      leave()
+    })
+
+    // What was on screen was one workspace's billing, shown to somebody who had
+    // signed in to read it: a session that ends is not a reason to keep drawing
+    // it, and the seat field is the sharp end -- a whole quantity, so a click
+    // would move a subscription the person on this machine no longer is.
+    expect(screen.getByText(SIGN_IN).textContent).toBe(SIGN_IN)
+    expect(screen.queryByText('Seats')).toBeNull()
+    expect(screen.queryByLabelText(SEATS)).toBeNull()
+    expect(screen.queryByRole('button', { name: PORTAL_BUTTON })).toBeNull()
   })
 
   it('answers the path and the workspace its own route declares', async () => {

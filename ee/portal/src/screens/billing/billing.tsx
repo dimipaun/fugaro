@@ -234,7 +234,12 @@ function WorkspaceBilling({ workspaceId }: { workspaceId: string | undefined }) 
       ) : null}
       {failure === null ? null : <p role="alert">{failure}</p>}
 
-      {subscription === null ? null : (
+      {/* The facts are read for somebody signed in, and a session can end while
+          this screen is up: kept on screen under the sentence above, they would
+          be one workspace's billing drawn for whoever is at the machine now --
+          and the field below is a whole quantity, so one click would move a
+          subscription that person no longer is. */}
+      {subscription === null || !signedIn ? null : (
         <>
           <dl>
             <dt>Status</dt>
