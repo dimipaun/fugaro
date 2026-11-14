@@ -87,6 +87,13 @@ esac
 key=${uri#gs://*/}
 case "$key" in
 runs/*/result.json)
+  # A record that is not there at all: gcloud answers a non-zero status and no
+  # document, which is what an identity without a read grant on the runs bucket
+  # and a run that wrote none both look like from here.
+  if [ "${FAKE200_NO_RECORD:-no}" = yes ]; then
+    printf 'fake gcloud: no object at %s\n' "$key" >&2
+    exit 1
+  fi
   printf '{\n'
   printf '  "version": 1,\n'
   printf '  "run_id": "%s",\n' "${FAKE200_RECORD_RUN_ID:-${FAKE200_RUN_ID:-20261114-101010-abcd}}"
@@ -165,7 +172,17 @@ runs)
     esac
     ;;
   ls)
-    printf '{"runs": [{"run_id": "%s", "status": "%s", "terminal": %s, "stage": "implement", "run": "%s"}]}\n' \
+    # FAKE200_LIST_NEWER names another run that the listing answers with FIRST,
+    # which is what a run someone else started in the same repository after this
+    # check's own looks like from here: the newest row is not the run the check
+    # launched, and its record is not one this check may read.
+    printf '{"runs": ['
+    if [ -n "${FAKE200_LIST_NEWER:-}" ]; then
+      printf '{"run_id": "%s", "status": "%s", "terminal": %s, "stage": "implement", "run": "%s"},' \
+        "$FAKE200_LIST_NEWER" "${FAKE200_LIST_NEWER_STATUS:-halted}" \
+        "${FAKE200_LIST_NEWER_TERMINAL:-true}" "${FAKE200_LIST_NEWER_REF:-alpha/20261114-090909-beef}"
+    fi
+    printf '{"run_id": "%s", "status": "%s", "terminal": %s, "stage": "implement", "run": "%s"}]}\n' \
       "${FAKE200_RUN_ID:-20261114-101010-abcd}" "${FAKE200_RUN_STATUS:-halted}" \
       "${FAKE200_TERMINAL:-true}" "${FAKE200_RUN_REF:-alpha/20261114-101010-abcd}"
     ;;
@@ -208,7 +225,12 @@ case "$out" in
 esac
 cat >"$out" <<'CORE_EOF'
 #!/usr/bin/env bash
+# The binary the fake go writes. It records every call it is given, so that a
+# case can say what the check ran the UNTAGGED build for: the fake go's own log
+# holds the build and never a digest, which is the core's call and not the
+# build's.
 set -euo pipefail
+printf 'core %s\n' "$*" >>"${FAKE200_DIR:?FAKE200_DIR is not set}/core-calls"
 case "$1" in
 report)
   if [ "${FAKE200_CORE_STUB:-yes}" = yes ]; then
@@ -246,6 +268,7 @@ setup_case() {
   : >"$dir/state/calls"
   : >"$dir/state/fugaro-calls"
   : >"$dir/state/go-calls"
+  : >"$dir/state/core-calls"
   : >"$dir/src/go.mod"
   : >"$dir/src/cmd/fugaro/main.go"
   mkdir -p "$dir/sandbox"
@@ -278,8 +301,14 @@ setup_case() {
 # not sit through the real hour.
 run200() {
   status=0
+  # The git identity is the case's own — the checkout's local config — and never
+  # the one the machine running the suite happens to carry: a case that takes the
+  # identity away has to see the commit fail, which it cannot while an ambient
+  # GIT_AUTHOR_* answers for it.
   out=$(env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_REMOTE \
     -u CURSOR_AGENT -u AI_AGENT \
+    -u GIT_AUTHOR_NAME -u GIT_AUTHOR_EMAIL \
+    -u GIT_COMMITTER_NAME -u GIT_COMMITTER_EMAIL \
     TMPDIR="$dir/tmp" HOME="$dir/home" \
     GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null \
     FAKE200_DIR="$dir/state" \
@@ -483,7 +512,14 @@ test_a_build_that_is_not_untagged_stops_the_digest_row() {
   expect_contains "$(fact_line digest-untagged)" "FAIL" "a source build that is not untagged: the digest row"
   expect_contains "$(fact_line digest-untagged)" "no untagged build to run the digest from" \
     "a source build that is not untagged: the digest row says why"
-  expect_absent "$(cat "$dir/state/go-calls" 2>/dev/null || true)" "digest" "a source build that is not untagged: no digest was run"
+  # Neither build ran a digest: not the core the fake go wrote (its own log), and
+  # not the installed release, which is the binary this row must never be
+  # measured with. The fake go's log holds the build and nothing else, so an
+  # assertion reading it could not fail.
+  expect_absent "$(cat "$dir/state/core-calls" 2>/dev/null || true)" "digest" \
+    "a source build that is not untagged: the untagged build ran no digest"
+  expect_absent "$(cat "$dir/state/fugaro-calls" 2>/dev/null || true)" "runs digest --period" \
+    "a source build that is not untagged: the installed release ran no digest either"
 }
 
 test_a_run_that_never_ends_is_could_not_tell() {
@@ -503,6 +539,56 @@ test_the_record_of_another_run_is_a_fail() {
   expect_status "$status" 1 "a record of another run"
   expect_contains "$(fact_line result-json)" "FAIL" "a record of another run: the record row"
   expect_contains "$(fact_line result-json)" "records run_id=20261114-999999-ffff" "a record of another run: what it read"
+}
+
+# A record the check cannot read is not a finding about the release: an identity
+# without a read grant on the runs bucket and a run that wrote no record both
+# answer a non-zero status and no document, and neither says the tag's halt is
+# broken. Nothing below can be measured, so the block says so and the check ends
+# as one that could not measure.
+test_a_record_that_cannot_be_read_is_could_not_tell() {
+  setup_case no-record
+  RUN200_ENV=(FAKE200_NO_RECORD=yes)
+  run200_default
+  expect_status "$status" 2 "a record that could not be read"
+  expect_contains "$(fact_line result-json)" "could not be read" "a record that could not be read: the row"
+  expect_contains "$(fact_line halt)" "no record to read the halt from" "a record that could not be read: the halt row says why"
+  expect_contains "$(cat "$dir/err")" "could NOT measure result-json" "a record that could not be read: the exit names the row"
+}
+
+# The listing answers newest first, and another run started in the same
+# repository after this check's own is its first row: following that row would
+# read a record this check did not launch, from a bucket key that is not its own.
+test_the_listings_newest_row_of_another_run_is_not_followed() {
+  setup_case listing-newer
+  RUN200_ENV=(FAKE200_LIST_NEWER=20261114-090909-beef)
+  run200_default
+  expect_status "$status" 0 "a listing whose newest row is another run's"
+  expect_contains "$(fact_line terminal)" "$RUN_ID ended" "a listing whose newest row is another run's: the run it followed"
+  expect_contains "$(fact_line result-json)" "PASS" "a listing whose newest row is another run's: the record row"
+  expect_contains "$(cat "$dir/state/calls")" "runs/$RUN_REF/result.json" \
+    "a listing whose newest row is another run's: the record it read is its own run's"
+  expect_absent "$(cat "$dir/state/calls")" "20261114-090909-beef" \
+    "a listing whose newest row is another run's: the other run's record was not read"
+  expect_clean "a listing whose newest row is another run's"
+}
+
+# git itself refuses the commit — no identity on this machine, or a hook that
+# says no. The ceiling then is not on any ref origin has, so nothing below is
+# measured; and the edit the check made to the owner's fugaro.yaml has to be put
+# back by name, because the branch it was committed to is still at its own start
+# and switching to it carries the edit over rather than undoing it.
+test_a_commit_git_refuses_leaves_the_file_as_it_was() {
+  setup_case commit-refused
+  git -C "$dir/sandbox" config --unset user.email
+  git -C "$dir/sandbox" config --unset user.name
+  run200_default
+  expect_status "$status" 2 "a git that refuses the commit"
+  expect_contains "$(fact_line config)" "git commit exited" "a git that refuses the commit: the row"
+  expect_contains "$(cat "$dir/err")" "could NOT measure config" "a git that refuses the commit: the exit names the row"
+  expect_absent "$(cat "$dir/state/fugaro-calls")" "run --repo" "a git that refuses the commit: no run was launched"
+  expect_contains "$out" "FACT restore: PASS" "a git that refuses the commit: the restore row"
+  expect_clean "a git that refuses the commit"
 }
 
 # The check writes the ceiling itself on the branch it throws away, and it reads
@@ -694,6 +780,9 @@ t test_a_digest_that_refuses_is_a_fail
 t test_a_build_that_is_not_untagged_stops_the_digest_row
 t test_a_run_that_never_ends_is_could_not_tell
 t test_the_record_of_another_run_is_a_fail
+t test_a_record_that_cannot_be_read_is_could_not_tell
+t test_the_listings_newest_row_of_another_run_is_not_followed
+t test_a_commit_git_refuses_leaves_the_file_as_it_was
 t test_a_governance_block_already_there_stops_before_the_run
 t test_a_dirty_fugaro_yaml_stops_before_writing
 t test_belong_in_the_checkout_path_is_refused

@@ -51,7 +51,10 @@
 #             `fugaro doctor --json` rather than guessed. `--source` is a Fugaro
 #             source checkout, and it defaults to the tree this script lives in.
 #             `--dry-run` prints every command a real run would make and runs
-#             nothing at all: no fugaro call, no gcloud call, no git call.
+#             nothing at all: no fugaro call, no git call and no gcloud call
+#             against the installation. The one reading it makes is the local
+#             `gcloud config get-value account` that the belong guard compares
+#             against, which touches no cloud.
 # Needs:      bash, mktemp, date, python3 (the `--json` documents are read with
 #             it), git (the throwaway branch), go (the untagged build), gcloud
 #             (authenticated as YOU, and able to read the runs bucket) and
@@ -332,8 +335,14 @@ field() { # field FILE KEY — the value of one `key=value` line, "" when absent
   sed -n "s/^$2=//p" "$1" 2>/dev/null | head -n 1
 }
 
-row_field() { # row_field COLUMN — one column of the first `row\t...` line
-  awk -F'\t' -v col="$1" '$1 == "row" { print $col; exit }' "$SCRATCH/rows.txt" 2>/dev/null || true
+# run_row_fields — status, terminal, stage and ref of the `row` line whose
+# run_id is THIS check's run, tab-separated, and empty while the listing carries
+# no row for it. The listing answers newest first, and a run another launch put
+# in the same repository after this one would be its first row: following that
+# row would read a record this check did not launch.
+run_row_fields() {
+  awk -F'\t' -v id="$RUN_ID" '$1 == "row" && $2 == id { print $3 "\t" $4 "\t" $5 "\t" $6; exit }' \
+    "$SCRATCH/rows.txt" 2>/dev/null || true
 }
 
 run_bounded() { # run_bounded SECONDS KEY DIR CMD...
@@ -549,6 +558,14 @@ step_source() {
 # the run's bootstrap, which would read as a finding about the release.
 write_ceiling() {
   local f=$1
+  # A file that is not there is refused rather than created: the commit of a
+  # brand-new file is one the Restore could not undo — `git checkout <the branch
+  # it was on> -- fugaro.yaml` has nothing to take it from — so the check writes
+  # only into a file the repository already tracks.
+  if [ ! -f "$f" ]; then
+    CEILING_WHY="${f} is not there: the ceiling has to be committed on a ref origin has and then undone by the Restore, and a file no branch carries cannot be put back. Run this check from a checkout of the sandbox repository, whose fugaro.yaml is the one the run reads"
+    return 1
+  fi
   if grep -qE '^governance:' "$f"; then
     CEILING_WHY="${f} already carries a governance: block, and this check adds one of its own rather than edit yours: the ceiling has to sit at governance.stage_timeout.implement on the ref the run is cut from, and that block is your work. Run this check from a checkout of a sandbox repository whose fugaro.yaml writes no governance: block"
     return 1
@@ -598,19 +615,19 @@ step_config() {
   diff=$(git -C "$SANDBOX" diff -- fugaro.yaml 2>/dev/null || true)
   printf '%s\n' "$diff" >"$SCRATCH/config.diff"
   if ! printf '%s' "$diff" | grep -q 'stage_timeout'; then
-    fact config FAIL "the edit left no stage_timeout in ${SANDBOX}/fugaro.yaml (git diff names none): the ceiling the run is launched under is that edit, and the halt below is a reading of it. What git diff printed is in $SCRATCH/config.diff"
+    unmeasured config "the edit left no stage_timeout in ${SANDBOX}/fugaro.yaml (git diff names none): the ceiling the run is launched under is that edit, and the halt below is a reading of it. What git diff printed is in $SCRATCH/config.diff"
     return 0
   fi
   run_bounded "$CLI_TIMEOUT" commit "$SANDBOX" git add fugaro.yaml
   run_bounded "$CLI_TIMEOUT" commit "$SANDBOX" git commit -m "Check 200: a ${STAGE_TIMEOUT} implement ceiling, for one run" -- fugaro.yaml
   if [ "$BOUNDED_STATUS" != 0 ]; then
-    fact config FAIL "git commit exited ${BOUNDED_STATUS} in ${SANDBOX}: the ceiling has to be a commit on the branch the run is cut from. What git printed is in $SCRATCH/commit.err"
+    unmeasured config "git commit exited ${BOUNDED_STATUS} in ${SANDBOX}: the ceiling has to be a commit on the branch the run is cut from, and this is git on this machine rather than anything the release does. What git printed is in $SCRATCH/commit.err"
     return 0
   fi
   COMMITTED=yes
   run_bounded "$CLI_TIMEOUT" push "$SANDBOX" git push --quiet origin "refs/heads/${BRANCH}:refs/heads/${BRANCH}"
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
-    fact config FAIL "git push of ${BRANCH} exited ${BOUNDED_STATUS} in ${SANDBOX}: a run is cut from a ref origin has, and this is the ref that carries the ceiling. What git printed is in $SCRATCH/push.err"
+    unmeasured config "git push of ${BRANCH} exited ${BOUNDED_STATUS} in ${SANDBOX}: a run is cut from a ref origin has, and this is the ref that carries the ceiling. Whether origin refused the push or the network did is not a fact about the release. What git printed is in $SCRATCH/push.err"
     return 0
   fi
   BRANCH_PUSHED=yes
@@ -664,17 +681,17 @@ step_terminal() {
     unmeasured terminal "there is no run to follow: the row above says why"
     return 0
   fi
-  say "waiting for ${RUN_ID} to end (up to ${RUN_TIMEOUT}s; fugaro runs ls --repo ${LAUNCH_REPO} --json --limit 1)"
-  local waited=0 run_status="" ended="" stage=""
+  say "waiting for ${RUN_ID} to end (up to ${RUN_TIMEOUT}s; fugaro runs ls --repo ${LAUNCH_REPO} --json --limit ${LIST_ROWS})"
+  local waited=0 run_status="" ended="" stage="" ours=""
   while [ "$waited" -lt "$RUN_TIMEOUT" ]; do
-    run_bounded "$CLI_TIMEOUT" rows "$SANDBOX" "$FUGARO_BIN" runs ls --repo "$LAUNCH_REPO" --json --limit 1
+    run_bounded "$CLI_TIMEOUT" rows "$SANDBOX" "$FUGARO_BIN" runs ls --repo "$LAUNCH_REPO" --json --limit "$LIST_ROWS"
     run_status="" ended="" stage=""
     if [ "$BOUNDED_STATUS" = 0 ] && read_json rows "$SCRATCH/rows.out" "$SCRATCH/rows.txt"; then
-      run_status=$(row_field 3)
-      ended=$(row_field 4)
-      stage=$(row_field 5)
-      RUN_REF=$(row_field 6)
-      if [ "$ended" = true ]; then break; fi
+      ours=$(run_row_fields)
+      if [ -n "$ours" ]; then
+        IFS=$'\t' read -r run_status ended stage RUN_REF <<<"$ours"
+        if [ "$ended" = true ]; then break; fi
+      fi
     fi
     sleep "$POLL_SECONDS"
     # The clock advances by the poll at least: a poll of 0 — the knob's own
@@ -684,7 +701,7 @@ step_terminal() {
     waited=$((waited + step))
   done
   if [ "$ended" != true ]; then
-    unmeasured terminal "${RUN_ID} had not ended after ${RUN_TIMEOUT}s (last row: status=${run_status:-unknown}, stage=${stage:-unknown}): this check reads a terminal run's own record, and reading one while the run is still working would read whatever was there before. Watch it with 'fugaro watch ${RUN_ID}' and run this check again when it has ended — the run it launched is a real one and is not cancelled by stopping here"
+    unmeasured terminal "${RUN_ID} had not ended after ${RUN_TIMEOUT}s (its own last row: status=${run_status:-unknown}, stage=${stage:-unknown}; a row it never appeared in reads unknown): this check reads a terminal run's own record, and reading one while the run is still working would read whatever was there before. Watch it with 'fugaro watch ${RUN_ID}' and run this check again when it has ended — the run it launched is a real one and is not cancelled by stopping here"
     return 0
   fi
   SETTLED=yes
@@ -713,11 +730,11 @@ step_record() {
   say "reading the record: gcloud storage cat gs://fugaro-runs-${PROJECT}/${key}"
   run_bounded "$CLI_TIMEOUT" record "$SANDBOX" gcloud storage cat "gs://fugaro-runs-${PROJECT}/${key}" --project="${PROJECT}"
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
-    fact result-json FAIL "gs://fugaro-runs-${PROJECT}/${key} could not be read (exit ${BOUNDED_STATUS}): a run that ended has a record, and the record is where its halt and its checkpoint are written. What gcloud printed is in $SCRATCH/record.err"
+    unmeasured result-json "gs://fugaro-runs-${PROJECT}/${key} could not be read (exit ${BOUNDED_STATUS}): the record is where the halt and the checkpoint below are written, and either this identity cannot read the runs bucket or a run that ended wrote no record there. Both readings are settled outside the check, so nothing below measures until one of them is. What gcloud printed is in $SCRATCH/record.err"
     return 0
   fi
   if ! read_json record "$SCRATCH/record.out" "$SCRATCH/record.txt"; then
-    fact result-json FAIL "${key} is not a document this check could read: what gcloud printed is in $SCRATCH/record.out"
+    unmeasured result-json "${key} is not a document this check could read: the row's halt and checkpoint cannot be read from it, and what gcloud answered is not a shape this release writes or not the object that was meant. What gcloud printed is in $SCRATCH/record.out"
     return 0
   fi
   local recorded
@@ -864,6 +881,16 @@ restore() {
     if [ "$BOUNDED_STATUS" != 0 ]; then
       RESTORE_VERDICT=FAIL
       notes="${notes} the checkout could not be put back on ${ORIG_REF} (git checkout exited ${BOUNDED_STATUS});"
+    fi
+    # The file is put back from ${ORIG_REF} by name, and not left to the branch
+    # switch: a commit that failed — no git identity, a hook that refuses — leaves
+    # the check's own edit staged with the branch's tip where it started, so the
+    # switch carries the edit over instead of undoing it and deleting the branch
+    # would keep it in the owner's working tree.
+    run_bounded "$CLI_TIMEOUT" restore "$SANDBOX" git checkout --quiet "$ORIG_REF" -- fugaro.yaml || true
+    if [ "$BOUNDED_STATUS" != 0 ]; then
+      RESTORE_VERDICT=FAIL
+      notes="${notes} ${ORIG_REF}'s fugaro.yaml could not be put back by name (git checkout exited ${BOUNDED_STATUS});"
     fi
     run_bounded "$CLI_TIMEOUT" restore "$SANDBOX" git branch -D "$BRANCH" || true
     if [ "$BOUNDED_STATUS" != 0 ]; then
@@ -1074,6 +1101,11 @@ KEEP_SCRATCH=${CHECK200_KEEP_SCRATCH:-}
 REGION=${CHECK200_REGION:-us-east5}
 RUN_TIMEOUT=${CHECK200_RUN_TIMEOUT_SECONDS:-3600}
 POLL_SECONDS=${CHECK200_POLL_SECONDS:-15}
+# LIST_ROWS is how many rows `fugaro runs ls` is asked for: the row of this
+# check's own run has to be among them even when another run reached the same
+# repository after this one was launched, which is the row the listing answers
+# first. One row would be that other run's.
+LIST_ROWS=20
 CLI_TIMEOUT=${CHECK200_CLI_TIMEOUT_SECONDS:-180}
 BUILD_TIMEOUT=${CHECK200_BUILD_TIMEOUT_SECONDS:-900}
 LAUNCH_TIMEOUT=${CHECK200_LAUNCH_TIMEOUT_SECONDS:-600}

@@ -14405,7 +14405,8 @@ bash scripts/live-checks/check200.sh --sandbox <a sandbox repository checkout> -
 `fugaro.yaml` is where the ceiling is written, and the project is read from `fugaro doctor --json` rather
 than guessed. `--source` is a Fugaro source checkout, and it defaults to the tree this script lives in.
 `--dry-run` prints every command a real run would make and runs **nothing at all** — no `fugaro` call, no
-`gcloud` call, no `git` call — and prints no verdict. `--yes` is required to launch: without it the check
+`git` call and no `gcloud` call against the installation (the one reading it makes is the local
+`gcloud config get-value account` its `belong` guard compares against) — and prints no verdict. `--yes` is required to launch: without it the check
 prints the plan and exits. Needs `bash`, `mktemp`, `date`, `python3` (the `--json` documents are read with
 it), `git`, `go` (the untagged build), `gcloud` authenticated as you and able to read the runs bucket, and
 `fugaro` — the installed release, which is the whole point.
@@ -14416,7 +14417,8 @@ confirming what it deleted; **`1`** is a measured criterion that did not hold �
 not halt on the stage timeout — or a Restore that could not confirm its deletion, which its own `restore`
 row names and which you then finish by hand; **`2`** is the check not being able to measure (a tool
 missing, the checkout not being one, a `--json` document that could not be read, the build record absent,
-the untagged build not being made, or a run that never ended). A key the run never reached reads
+a commit or a push `git` refused, the untagged build not being made, or a run that never ended). A key the
+run never reached reads
 `FAIL — not reached`. The knobs are `CHECK200_DRY_RUN`, `CHECK200_KEEP_SCRATCH`, `CHECK200_SANDBOX`,
 `CHECK200_SOURCE`, `CHECK200_YES`, `CHECK200_REPO` (the project configuration's key for the sandbox
 repository: the checkout directory's name by default), `CHECK200_TASK`, `CHECK200_STAGE_TIMEOUT` (1m),
