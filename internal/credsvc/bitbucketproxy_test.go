@@ -29,9 +29,11 @@ package credsvc
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -43,6 +45,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/bbtokens"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/gitproxy"
@@ -1295,6 +1298,597 @@ func TestBitbucketRouteNotAdmitted(t *testing.T) {
 
 	if n := up.count(); n != 0 {
 		t.Fatalf("a repository the block does not admit made %d upstream calls", n)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The selection step (T8, D2355)
+// ---------------------------------------------------------------------------
+
+// proxyNamedToken is the document key of the second token these tests store:
+// the family's spelling of the name "ci" (R13), built through the repository's
+// own key function rather than written out, so the key family has one spelling.
+var proxyNamedToken = bbtokens.Name(config.BitbucketTokenKey("ci"))
+
+// proxyFamilyBundleDoc is the installation's bundle with the legacy Bitbucket
+// token and one NAMED token beside it (D2350), so a test can tell which of the
+// two a call was served with. Both values are built at run time (fakeCred), as
+// every credential in this file is.
+func proxyFamilyBundleDoc(t *testing.T) (doc []byte, legacy, named string) {
+	t.Helper()
+	legacy = fakeCred(t, "bitbucket")
+	named = fakeCred(t, "ci")
+	doc = append(testBundleDoc(t), []byte(config.BitbucketSecret+": "+legacy+"\n"+
+		string(proxyNamedToken)+": "+named+"\n")...)
+	return doc, legacy, named
+}
+
+// proxyTokensSvc is proxySvc with a named token stored beside the legacy one
+// and the token store the test sets: the fixture every test of the selection
+// step is written against. It answers the two values the bundle holds, so a
+// test holds what bitbucket.org was shown to the entry it should have been
+// served with without either value being written down.
+func proxyTokensSvc(t *testing.T, sel bbtokens.Selector, mutate ...func(*svc, *Config)) (s *svc, up *proxyUpstream, legacy, named string) {
+	t.Helper()
+	s, up, legacy = proxySvc(t, append([]func(*svc, *Config){
+		func(s *svc, cfg *Config) {
+			doc, _, n := proxyFamilyBundleDoc(t)
+			s.src.docs = [][]byte{doc}
+			cfg.Selector = sel
+			named = n
+		},
+	}, mutate...)...)
+	return s, up, legacy, named
+}
+
+// policyReads is how many times the service read the project's shared node. One
+// request is decided and served from one snapshot (T8), so it is one read —
+// which is what a second read added by the selection would fail.
+func (s *svc) policyReads() int {
+	s.policy.mu.Lock()
+	defer s.policy.mu.Unlock()
+	return s.policy.sharedReads
+}
+
+// proxyAsks is a Selector that records what it was asked before answering what
+// a test set. The contract's stub answers without looking, which cannot hold
+// "the pairing's repository is what is asked" or "a write is asked as a write"
+// to anything, and those are two facts the route owes the contract.
+type proxyAsks struct {
+	name bbtokens.Name
+	err  error
+
+	mu    sync.Mutex
+	asked []proxyAsked
+	snap  bbtokens.Snapshot
+}
+
+// proxyAsked is one question the route put to the store: the canonical
+// repository the pairing produced, and whether the call changes something.
+type proxyAsked struct {
+	canonical string
+	write     bool
+}
+
+func (p *proxyAsks) Select(_ context.Context, snap bbtokens.Snapshot, canonical string, write bool) (bbtokens.Choice, error) {
+	p.mu.Lock()
+	p.asked = append(p.asked, proxyAsked{canonical: canonical, write: write})
+	p.snap = snap
+	p.mu.Unlock()
+	if p.err != nil {
+		return bbtokens.Choice{}, p.err
+	}
+	return bbtokens.Choice{Name: p.name}, nil
+}
+
+// questions is what the store was asked, in order.
+func (p *proxyAsks) questions() []proxyAsked {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]proxyAsked(nil), p.asked...)
+}
+
+// snapshot is the last snapshot the route handed the store: the two documents
+// the request was decided and served from, as a Selector implementation
+// receives them.
+func (p *proxyAsks) snapshot() bbtokens.Snapshot {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.snap
+}
+
+// proxyAuth is the credential the upstream was shown for a git call: the
+// scheme and the token, so a test compares one string with what it expects
+// rather than reading a header apart.
+func proxyGitAuth(token string) string {
+	return "Basic " + base64.StdEncoding.EncodeToString([]byte(bitbucket.GitUsername+":"+token))
+}
+
+// TestProxyChoosesTokenAfterDecide is this task's red step. The route forwards
+// every call with the token its store chose for that one request, and it puts
+// the question to the store only once the rules admitted the call: a token
+// chosen before that would be a credential picked for a request nobody had
+// decided on.
+//
+// The red half is the first sub-test: with a store answering the named token,
+// a route that still forwards with the bundle's legacy entry shows
+// bitbucket.org the wrong credential — the token of the whole installation
+// rather than the narrowest one that covers this repository, which is exactly
+// the widening D2355 exists to prevent.
+func TestProxyChoosesTokenAfterDecide(t *testing.T) {
+	canonical := testCanonical(t, testBitbucketRepo)
+	fetch := proxyPath(proxyGitPath("info/refs") + "?service=git-upload-pack")
+
+	t.Run("the token the store chose is the one forwarded", func(t *testing.T) {
+		sel := &proxyAsks{name: proxyNamedToken}
+		s, up, legacy, named := proxyTokensSvc(t, sel)
+		up.answerWith(http.StatusOK, "001e# service=git-upload-pack\n0000")
+
+		resp, ans := s.proxyCall(t, http.MethodGet, fetch, nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("the fetch answered %d, want 200 (%s)", resp.StatusCode, ans)
+		}
+		got := up.only(t)
+		if want := proxyGitAuth(named); got.auth != want {
+			t.Errorf("the upstream was shown %q, want the token the store chose (%s): a route that forwards with the legacy entry sends %s the credential of the whole installation", got.auth, proxyNamedToken, config.BitbucketSecret)
+		}
+		if strings.Contains(got.auth, legacy) {
+			t.Errorf("the upstream was shown the legacy entry's value, and the store chose %s", proxyNamedToken)
+		}
+
+		// One read of each document: the policy the decision was made from and
+		// the bundle. A selection that read either again would be deciding on a
+		// second document (T8's one snapshot).
+		if reads := s.policyReads(); reads != 1 {
+			t.Errorf("the project's policy was read %d times for one request, want once: the decision and the selection share one snapshot", reads)
+		}
+		if reads := s.src.readCount(); reads != 1 {
+			t.Errorf("the bundle was read %d times for one request, want once", reads)
+		}
+
+		// And the store was asked the pairing's repository and that this call
+		// reads: the repository is the one the JOB ACCOUNT is bound to, never
+		// the one a caller's path spells (G3, N1).
+		qs := sel.questions()
+		if len(qs) != 1 {
+			t.Fatalf("the store was asked %d times for one request, want once: %+v", len(qs), qs)
+		}
+		if qs[0].canonical != canonical {
+			t.Errorf("the store was asked about %q, want the pairing's repository %q", qs[0].canonical, canonical)
+		}
+		if qs[0].write {
+			t.Error("a fetch was asked for as a write")
+		}
+	})
+
+	t.Run("GET /user is asked the pairing's repository", func(t *testing.T) {
+		// /user is the one admitted call whose own request names no
+		// repository, and the pairing is what fixes one for it (U3): a
+		// selection asked about the empty repository would have no token to
+		// choose from.
+		sel := &proxyAsks{name: proxyNamedToken}
+		s, up, _, named := proxyTokensSvc(t, sel)
+		up.answerWith(http.StatusOK, `{"uuid":"{user}"}`)
+
+		resp, ans := s.proxyCall(t, http.MethodGet, proxyPath("2.0/user"), nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("the call answered %d, want 200 (%s)", resp.StatusCode, ans)
+		}
+		if got := up.only(t); got.auth != "Bearer "+named {
+			t.Errorf("the call was shown %q, want the token the store chose (%s) as a REST bearer", got.auth, proxyNamedToken)
+		}
+		qs := sel.questions()
+		if len(qs) != 1 || qs[0].canonical != canonical {
+			t.Errorf("the store was asked %+v, want the pairing's repository %q for a call that names none", qs, canonical)
+		}
+	})
+
+	t.Run("a write is asked for as a write", func(t *testing.T) {
+		sel := &proxyAsks{name: proxyNamedToken}
+		s, up, _, _ := proxyTokensSvc(t, sel)
+		up.answerWith(http.StatusOK, "{}")
+
+		// A push, of the ref the run owns, and the comment on the pull request
+		// its identity names: the two ways a request changes something
+		// upstream.
+		body := proxyUpdateRequest("refs/heads/" + s.proxyBranch())
+		if resp, ans := s.proxyCall(t, http.MethodPost, proxyPath(proxyGitPath("git-receive-pack")), []byte(body)); resp.StatusCode != http.StatusOK {
+			t.Fatalf("the push answered %d, want 200 (%s)", resp.StatusCode, ans)
+		}
+		if resp, ans := s.proxyCallAs(t, http.MethodPost, proxyPath(proxyRESTPath("/pullrequests/7/comments")),
+			[]byte(`{"content":{"raw":"a review note"}}`),
+			s.runToken(proxyClaims(s.proxyBranch(), 7)...), s.jobToken(), s.job); resp.StatusCode != http.StatusOK {
+			t.Fatalf("the comment answered %d, want 200 (%s)", resp.StatusCode, ans)
+		}
+		qs := sel.questions()
+		if len(qs) != 2 {
+			t.Fatalf("the store was asked %+v, want the two writes", qs)
+		}
+		for i, q := range qs {
+			if !q.write {
+				t.Errorf("question %d was asked as a read, and %s", i, map[int]string{0: "a push", 1: "a pull-request comment"}[i])
+			}
+			if q.canonical != canonical {
+				t.Errorf("question %d named %q, want the pairing's repository %q", i, q.canonical, canonical)
+			}
+		}
+	})
+
+	t.Run("a call the rules refuse is never put to the store", func(t *testing.T) {
+		// The selection happens after Decide and never before it: a push of a
+		// ref the run does not own is refused by the rules, and the store is
+		// not asked to choose a credential for a call nobody allowed.
+		sel := &proxyAsks{name: proxyNamedToken}
+		s, up, _, _ := proxyTokensSvc(t, sel)
+
+		body := proxyUpdateRequest(proxyOtherRef) + "PACK"
+		resp, ans := s.proxyCall(t, http.MethodPost, proxyPath(proxyGitPath("git-receive-pack")), []byte(body))
+		proxyRefused(t, resp, ans, http.StatusBadRequest, ErrorRequestRefused, gitproxy.ReasonOtherRef)
+
+		if qs := sel.questions(); len(qs) != 0 {
+			t.Errorf("the store was asked %+v for a call the rules refused, want nothing", qs)
+		}
+		if n := up.count(); n != 0 {
+			t.Fatalf("the upstream saw %d calls, and a refused push forwards no byte", n)
+		}
+		// The line names the route's own credential and not the token the store
+		// would have chosen: no token served this call.
+		line := s.onlyAuditLine(t)
+		if got := auditField(line, "credential"); got != config.BitbucketSecret {
+			t.Errorf("the audit line names the credential %q, want %q: no token was chosen for a refused call", got, config.BitbucketSecret)
+		}
+		if strings.Contains(fmt.Sprint(line), string(proxyNamedToken)) {
+			t.Errorf("the audit line names the token the store would have chosen: %v", line)
+		}
+	})
+
+	t.Run("a name the bundle does not hold is refused", func(t *testing.T) {
+		// A store that answers a name the bundle holds no value for is refused
+		// rather than served: a call with no credential to attach is never
+		// made (D143).
+		sel := &bbtokens.Stub{Selected: bbtokens.Name(config.BitbucketTokenKey("other"))}
+		s, up, _, _ := proxyTokensSvc(t, sel)
+
+		resp, ans := s.proxyCall(t, http.MethodGet, fetch, nil)
+		proxyRefused(t, resp, ans, http.StatusBadRequest, ErrorRequestRefused, string(bbtokens.ClassNoToken))
+		if n := up.count(); n != 0 {
+			t.Fatalf("the upstream saw %d calls, and a request with no token to attach forwards none", n)
+		}
+	})
+
+	t.Run("a store that cannot answer is refused", func(t *testing.T) {
+		// A failure of the store is not the caller's refusal: it is answered as
+		// state_unavailable, and nothing is forwarded.
+		sel := &bbtokens.Stub{Err: errors.New("credsvc: the token store could not be read")}
+		s, up, _, _ := proxyTokensSvc(t, sel)
+
+		resp, ans := s.proxyCall(t, http.MethodGet, fetch, nil)
+		proxyRefused(t, resp, ans, http.StatusServiceUnavailable, ErrorStateUnavailable, "")
+		if n := up.count(); n != 0 {
+			t.Fatalf("the upstream saw %d calls, and a request whose token could not be chosen forwards none", n)
+		}
+	})
+}
+
+// TestProxyAuditNamesTheToken: the line a served request writes names the
+// DOCUMENT KEY of the token it was served with (R9, F12) — the operator's only
+// way to tell which of several tokens a call used — and never the token's
+// value, in the line, in the service's log or in the answer.
+func TestProxyAuditNamesTheToken(t *testing.T) {
+	s, up, legacy, named := proxyTokensSvc(t, &bbtokens.Stub{Selected: proxyNamedToken})
+	up.answerWith(http.StatusOK, "{}")
+
+	resp, ans := s.proxyCall(t, http.MethodGet, proxyPath(proxyRESTPath("")), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the read answered %d, want 200 (%s)", resp.StatusCode, ans)
+	}
+	line := s.onlyAuditLine(t)
+	if got := auditField(line, "credential"); got != string(proxyNamedToken) {
+		t.Errorf("the audit line names the credential %q, want the document key of the token the request was served with (%q)", got, proxyNamedToken)
+	}
+	if line["purpose"] != PurposeBitbucketAPI || line["status"] != StatusOK {
+		t.Errorf("the audit line = %v, want the Bitbucket API purpose and ok", line)
+	}
+	for what, text := range map[string]string{
+		"the answer":     string(ans),
+		"the log":        s.logs.String(),
+		"the audit line": s.audit.String(),
+	} {
+		if strings.Contains(text, named) {
+			t.Errorf("%s carries the value of the token that served the call", what)
+		}
+		if strings.Contains(text, legacy) {
+			t.Errorf("%s carries the value of the legacy entry, which did not serve this call", what)
+		}
+	}
+
+	// A refusal taken AFTER the token was chosen names that token too, on both
+	// of this route's refusal helpers — and the facts read that refusal is
+	// about really was made with it. A line naming the installation's own key
+	// instead would describe a request that never happened: the chosen token
+	// was already presented to bitbucket.org by the time either refusal is
+	// taken, so the installation's key never touched this request at all.
+	foreignFacts := `{"source":{"branch":{"name":"someone-elses-branch"},"repository":{"full_name":"` +
+		testBitbucketRepo + `"}},"destination":{"branch":{"name":"main"}}}`
+	write := []byte(`{"title":"the run's work"}`)
+
+	t.Run("a refusal of the facts read names the chosen token", func(t *testing.T) {
+		// The facts read answers an error status: refuseUnavailable, taken past
+		// the choice.
+		s, up, _, _ := proxyTokensSvc(t, &bbtokens.Stub{Selected: proxyNamedToken})
+		up.answerWith(http.StatusInternalServerError, foreignFacts)
+
+		resp, ans := s.proxyCall(t, http.MethodPut, proxyPath(proxyRESTPath("/pullrequests/7")), write)
+		proxyRefused(t, resp, ans, http.StatusServiceUnavailable, ErrorStateUnavailable, "could not be read")
+		if got := auditField(s.onlyAuditLine(t), "credential"); got != string(proxyNamedToken) {
+			t.Errorf("the refusal's line names the credential %q, want the chosen token (%q): it was the one presented to bitbucket.org for the facts read that failed", got, proxyNamedToken)
+		}
+	})
+
+	t.Run("a refusal of the write names the chosen token", func(t *testing.T) {
+		// The facts read succeeds and reports a source that is not this run's:
+		// the CheckPRWrite refusal, also taken past the choice.
+		s, up, _, named := proxyTokensSvc(t, &bbtokens.Stub{Selected: proxyNamedToken})
+		up.mu.Lock()
+		up.answer = func(r *http.Request) proxyAnswer {
+			if r.Method != http.MethodGet {
+				return proxyAnswer{status: http.StatusOK, body: []byte("{}")}
+			}
+			return proxyAnswer{status: http.StatusOK, body: []byte(foreignFacts)}
+		}
+		up.mu.Unlock()
+
+		resp, ans := s.proxyCall(t, http.MethodPut, proxyPath(proxyRESTPath("/pullrequests/7")), write)
+		proxyRefused(t, resp, ans, http.StatusBadRequest, ErrorRequestRefused, gitproxy.ReasonOtherPullRequest)
+
+		seen := up.calls()
+		if len(seen) != 1 || seen[0].auth != "Bearer "+named {
+			t.Errorf("the upstream saw %+v, want the facts read alone and made with the chosen token (%s)", seen, proxyNamedToken)
+		}
+		if got := auditField(s.onlyAuditLine(t), "credential"); got != string(proxyNamedToken) {
+			t.Errorf("the refusal's line names the credential %q, want the chosen token (%q): it is the credential the facts the write was refused on were read with", got, proxyNamedToken)
+		}
+	})
+
+	t.Run("the snapshot the store is handed renders no value", func(t *testing.T) {
+		// The snapshot is a public struct handed to every Selector
+		// implementation, and the values it carries are the installation's
+		// Bitbucket tokens: a rendering of it must name the document keys and
+		// nothing else (C1's BundleTokens, and Entry's rule on this side).
+		sel := &proxyAsks{name: proxyNamedToken}
+		s, up, legacy, named := proxyTokensSvc(t, sel)
+		up.answerWith(http.StatusOK, "{}")
+
+		resp, ans := s.proxyCall(t, http.MethodGet, proxyPath(proxyRESTPath("")), nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("the read answered %d, want 200 (%s)", resp.StatusCode, ans)
+		}
+		snap := sel.snapshot()
+		var buf bytes.Buffer
+		slog.New(slog.NewTextHandler(&buf, nil)).Info("the snapshot", "snapshot", snap, "tokens", snap.Bundle)
+
+		rendered := []string{
+			fmt.Sprintf("%v", snap.Bundle),
+			fmt.Sprintf("%+v", snap.Bundle),
+			fmt.Sprintf("%#v", snap.Bundle),
+			fmt.Sprintf("%s", snap.Bundle),
+			fmt.Sprintf("%v", snap),
+			fmt.Sprintf("%#v", snap),
+			buf.String(),
+		}
+		for _, text := range rendered {
+			if strings.Contains(text, named) || strings.Contains(text, legacy) {
+				t.Errorf("a rendering of the snapshot carries a token value: %s", text)
+			}
+		}
+		if !strings.Contains(rendered[0], string(proxyNamedToken)) {
+			t.Errorf("%%v = %q, want the document keys (it is what an operator reads)", rendered[0])
+		}
+	})
+}
+
+// TestProxyRefusesUncoveredRepository: a repository no token covers is refused
+// with the contract's own class, before anything reaches bitbucket.org, and the
+// refusal names the repository — the operator reads it off the line the service
+// writes — and never a token.
+func TestProxyRefusesUncoveredRepository(t *testing.T) {
+	canonical := testCanonical(t, testBitbucketRepo)
+	sel := &bbtokens.Stub{Err: &bbtokens.Refusal{Class: bbtokens.ClassNotCovered, Repo: canonical}}
+	s, up, legacy, named := proxyTokensSvc(t, sel)
+
+	resp, ans := s.proxyCall(t, http.MethodGet, proxyPath(proxyGitPath("info/refs")+"?service=git-upload-pack"), nil)
+	proxyRefused(t, resp, ans, http.StatusBadRequest, ErrorRequestRefused, string(bbtokens.ClassNotCovered))
+
+	if n := up.count(); n != 0 {
+		t.Fatalf("the upstream saw %d calls, and a repository no token covers forwards nothing", n)
+	}
+	line := s.onlyAuditLine(t)
+	if line["status"] != ErrorRequestRefused || line["purpose"] != PurposeGit {
+		t.Errorf("the audit line = %v, want the refusal's own type under the git purpose", line)
+	}
+	if strings.Contains(fmt.Sprint(line), string(proxyNamedToken)) {
+		t.Errorf("the audit line names a token, and no token served this call: %v", line)
+	}
+	// The class and the repository are on the service's own line, which is the
+	// only place an operator reads either (the caller is told the class alone).
+	logged := s.logs.String()
+	if !strings.Contains(logged, "class="+string(bbtokens.ClassNotCovered)) {
+		t.Errorf("the service's own log does not carry the class %q: %s", bbtokens.ClassNotCovered, logged)
+	}
+	if !strings.Contains(logged, canonical) {
+		t.Errorf("the service's own log does not name the repository the refusal is about (%s): %s", canonical, logged)
+	}
+	for what, text := range map[string]string{"the log": logged, "the refusal": string(ans)} {
+		if strings.Contains(text, named) || strings.Contains(text, legacy) {
+			t.Errorf("%s carries a token's value", what)
+		}
+	}
+}
+
+// TestProxyLegacySingleTokenUnchanged: an installation that holds only the
+// legacy bitbucket-token and no node bitbucket_tokens key behaves exactly as
+// the release behind did (R3, F14) — both with the store unwired, which is the
+// state a deployment is in until I1 wires it, and with a store that answers the
+// legacy record, which is the state after it.
+func TestProxyLegacySingleTokenUnchanged(t *testing.T) {
+	t.Run("the store is not wired", func(t *testing.T) {
+		s, up, token := proxySvc(t)
+		up.answerWith(http.StatusOK, "001e# service=git-upload-pack\n0000")
+
+		resp, ans := s.proxyCall(t, http.MethodGet, proxyPath(proxyGitPath("info/refs")+"?service=git-upload-pack"), nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("the fetch answered %d, want 200 (%s)", resp.StatusCode, ans)
+		}
+		if got := up.only(t); got.auth != proxyGitAuth(token) {
+			t.Errorf("the upstream was shown %q, want the bundle's legacy token as git's own x-token-auth Basic", got.auth)
+		}
+		line := s.onlyAuditLine(t)
+		if line["credential"] != config.BitbucketSecret {
+			t.Errorf("the audit line names the credential %v, want %q", line["credential"], config.BitbucketSecret)
+		}
+		if reads := s.policyReads(); reads != 1 {
+			t.Errorf("the project's policy was read %d times, want once", reads)
+		}
+		if reads := s.src.readCount(); reads != 1 {
+			t.Errorf("the bundle was read %d times, want once", reads)
+		}
+	})
+
+	t.Run("the store answers the legacy record", func(t *testing.T) {
+		s, up, token := proxySvc(t, func(_ *svc, cfg *Config) {
+			cfg.Selector = &bbtokens.Stub{Selected: bbtokens.LegacyName}
+		})
+		up.answerWith(http.StatusOK, "{}")
+
+		resp, ans := s.proxyCall(t, http.MethodGet, proxyPath(proxyRESTPath("")), nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("the read answered %d, want 200 (%s)", resp.StatusCode, ans)
+		}
+		if got := up.only(t); got.auth != "Bearer "+token {
+			t.Errorf("the read was shown %q, want the bundle's legacy token as a REST bearer", got.auth)
+		}
+		line := s.onlyAuditLine(t)
+		if line["credential"] != config.BitbucketSecret || line["purpose"] != PurposeBitbucketAPI {
+			t.Errorf("the audit line = %v, want the Bitbucket API purpose and the legacy credential", line)
+		}
+	})
+
+	// The unwired store is the one every production run has until I1 wires it
+	// (nothing outside these tests sets Config.Selector), so both of its
+	// branches are held here rather than left to the tests that set a store: an
+	// unwired service that picked a NAMED token would forward every proxied call
+	// with a credential the release behind never chose, and one that refused a
+	// bundle holding no token as anything but the contract's class would answer
+	// a shape no caller and no operator has been told to expect.
+
+	t.Run("a named token beside the legacy one is not picked", func(t *testing.T) {
+		// The bundle holds the family's token as well, and the unwired store
+		// still serves the legacy entry: it ranks nothing and reads nothing, so
+		// a named token is not a candidate for it (R3, D2355).
+		s, up, legacy, named := proxyTokensSvc(t, nil)
+		up.answerWith(http.StatusOK, "001e# service=git-upload-pack\n0000")
+
+		resp, ans := s.proxyCall(t, http.MethodGet, proxyPath(proxyGitPath("info/refs")+"?service=git-upload-pack"), nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("the fetch answered %d, want 200 (%s)", resp.StatusCode, ans)
+		}
+		got := up.only(t)
+		if want := proxyGitAuth(legacy); got.auth != want {
+			t.Errorf("the upstream was shown %q, want the bundle's legacy token: an unwired store serves %s and never the named token it also holds", got.auth, config.BitbucketSecret)
+		}
+		if strings.Contains(got.auth, named) {
+			t.Errorf("the upstream was shown the named token %s, and the unwired store chooses the legacy entry alone", proxyNamedToken)
+		}
+		line := s.onlyAuditLine(t)
+		if line["credential"] != config.BitbucketSecret || line["purpose"] != PurposeGit {
+			t.Errorf("the audit line = %v, want the git purpose and %q", line, config.BitbucketSecret)
+		}
+	})
+
+	t.Run("a bundle holding no Bitbucket token is refused", func(t *testing.T) {
+		// The installation stored no Bitbucket token at all: the unwired store
+		// has nothing to answer, so the request is refused with the contract's
+		// class (C1's no_bitbucket_token) and not one byte reaches
+		// bitbucket.org (D143).
+		s, up, _ := proxySvc(t, func(s *svc, _ *Config) {
+			s.src.docs = [][]byte{testBundleDoc(t)}
+		})
+
+		resp, ans := s.proxyCall(t, http.MethodGet, proxyPath(proxyGitPath("info/refs")+"?service=git-upload-pack"), nil)
+		proxyRefused(t, resp, ans, http.StatusBadRequest, ErrorRequestRefused, string(bbtokens.ClassNoToken))
+
+		if n := up.count(); n != 0 {
+			t.Fatalf("the upstream saw %d calls, and a request with no token to attach forwards none", n)
+		}
+		line := s.onlyAuditLine(t)
+		if line["status"] != ErrorRequestRefused || line["purpose"] != PurposeGit {
+			t.Errorf("the audit line = %v, want the refusal's own type under the git purpose", line)
+		}
+	})
+}
+
+// proxyHostLikeWorkspace is a workspace slug spelled like the API host this
+// route talks to. It is a legal segment of a coverage pattern — dots are — so
+// the node can spell a record's coverage as the host's own name, which is the
+// most host-like string the record shapes admit.
+const proxyHostLikeWorkspace = "api.bitbucket.org"
+
+// proxyRecordedHostPolicyDoc is the fixture's published policy with that
+// spelling in both places a token's coverage is written: the legacy block's
+// allow_repos — which IS the legacy record's coverage (R3) and which this
+// route's decision already reads — and the node's bitbucket_tokens key, whose
+// reader is T3's. The block also keeps the pairing's repository on its list, so
+// the call is admitted and the host-shaped entry is a token's reach rather than
+// a policy that refuses everything.
+func proxyRecordedHostPolicyDoc(t *testing.T) string {
+	t.Helper()
+	canonical := testCanonical(t, testBitbucketRepo)
+	host := "bitbucket/" + proxyHostLikeWorkspace + "/*"
+	return `{
+		"version": 5,
+		"budget": ` + testBudgetDoc + `,
+		"allow_repos": ["` + canonical + `"],
+		"accounts": {"default": {"allow_repos": ["` + canonical + `"]}},
+		"credentials": {"fallback": "auto"},
+		"bitbucket_tokens": {"entries": [{"name": "` + string(proxyNamedToken) + `", "type": "workspace", "coverage": ["` + host + `"]}]},
+		"bitbucket_token": {"allow_repos": ["` + canonical + `", "` + host + `"], "proxy": true}
+	}`
+}
+
+// TestProxyNeverForwardsToARecordedHost: the host a proxied call reaches is the
+// adapter's own constant and nothing a record says (G13, F22, O4). The policy
+// spells a token's coverage as the API host's own name, in both places a
+// coverage is written, and the calls still go to bitbucket.org and
+// api.bitbucket.org — at the paths this service rebuilt, never the ones the
+// caller sent.
+func TestProxyNeverForwardsToARecordedHost(t *testing.T) {
+	s, up, _, _ := proxyTokensSvc(t, &bbtokens.Stub{Selected: proxyNamedToken}, func(_ *svc, cfg *Config) {
+		pol := cfg.Policy.(*fakePolicy)
+		pol.shared = decodeTestPolicy(t, proxyRecordedHostPolicyDoc(t))
+	})
+	up.answerWith(http.StatusOK, "001e# service=git-upload-pack\n0000")
+
+	resp, ans := s.proxyCall(t, http.MethodGet, proxyPath("Workspace-A/Repo-A.git/info/refs?service=git-upload-pack"), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the fetch answered %d, want 200 (%s)", resp.StatusCode, ans)
+	}
+	got := up.only(t)
+	if got.host != "bitbucket.org" || got.scheme != "https" {
+		t.Errorf("the fetch was addressed to %s://%s, and a record cannot name a host: the two are the adapter's own constants", got.scheme, got.host)
+	}
+	if want := "/" + proxyGitPath("info/refs"); got.path != want {
+		t.Errorf("the fetch's upstream path = %q, want %q: the path is rebuilt from the classification and never copied from the caller", got.path, want)
+	}
+
+	up.mu.Lock()
+	up.seen = nil
+	up.mu.Unlock()
+	resp, ans = s.proxyCall(t, http.MethodGet, proxyPath(proxyRESTPath("/pullrequests/7")), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the read answered %d, want 200 (%s)", resp.StatusCode, ans)
+	}
+	if got := up.only(t); got.host != "api.bitbucket.org" {
+		t.Errorf("the read was addressed to %q, want api.bitbucket.org", got.host)
 	}
 }
 

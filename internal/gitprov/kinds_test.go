@@ -79,6 +79,7 @@ var forgeKindGoSites = map[string]string{
 	"internal/repourl/cloneurl.go":             "the host a clone URL is built on per kind",
 	"internal/runner/prflow.go":                "the PR flow's Bitbucket form",
 	"internal/runner/project.go":               "the runner's kind for a slug, and the list the refusal names",
+	"internal/runner/projectjob.go":            "the provider the implicit review-only job's candidate is named for, which internal/infra deploys for github alone",
 	"internal/runner/provision.go":             "the follow-up gate only the GitHub repositories pass",
 	"internal/runner/refused.go":               "the refusals only a GitHub repository reaches",
 	"internal/runner/reviewmode.go":            "review mode's Bitbucket form",
