@@ -305,6 +305,12 @@ VERSION_LOG=""
 LOG_FOR_MODE=""
 # Whether the run got as far as creating, which is what the Restore keys on.
 CREATED=no
+# Set the moment the create run is STARTED, before the runner is called: a create
+# that was started and never came back may have made the project anyway — the CLI
+# answers an interrupt by cancelling gracefully, so a call it had already sent
+# lands after this run ends — and that is the state the Restore has to report
+# rather than read a project back and call it nothing.
+CREATE_STARTED=no
 LIFECYCLE=""
 # Whether the run made ANY call at all: a run a guard refused before its first
 # call has no cloud state to undo, and the Restore then makes no call either —
@@ -401,6 +407,14 @@ timeout the child's process group is killed, a CHECK27-RUNNER line is appended t
 the transcript and the exit status is 124. The transcript is echoed to --echo (the
 shell's fd 4, the owner's stderr) as it arrives, so the run is watched live while
 the RESULT block stays clean.
+
+A signal THIS runner is handed — INT, TERM or HUP, which is what Ctrl-C sends to
+the shell's whole process group — is forwarded to the child's process group, and
+the child is then given GRACE seconds to end on it before that group is killed:
+the child is a session of its own (forkpty; start_new_session below), so nothing
+else would reach it, and the CLI answers a signal by cancelling GRACEFULLY rather
+than dying (cmd/fugaro's signalContext handles INT, TERM and HUP). The exit
+status is then 128 plus the signal, with a CHECK27-RUNNER line saying so.
 """
 import os
 import select
@@ -410,6 +424,47 @@ import sys
 import time
 
 KEEP = 65536
+
+# The child's process group, and the signal this runner was handed. A Ctrl-C at
+# the owner's terminal reaches the shell and THIS process and nothing else: the
+# pty child is put in a session of its own by forkpty, and a plain child is
+# started in one below. A signal that is not forwarded therefore leaves the CLI
+# RUNNING — and the CLI answers a signal by cancelling gracefully, so the create
+# it had already sent lands seconds later, after the check has read the project
+# back and called it absent.
+GRACE = 5.0
+CHILD_PGID = [None]
+INTERRUPT = {"signum": None, "at": 0.0}
+
+
+def kill_group(signum):
+    if CHILD_PGID[0] is None:
+        return
+    try:
+        os.killpg(CHILD_PGID[0], signum)
+    except OSError:
+        pass
+
+
+def on_signal(signum, _frame):
+    INTERRUPT["signum"] = signum
+    INTERRUPT["at"] = time.monotonic()
+    kill_group(signum)
+
+
+def interrupted():
+    return INTERRUPT["signum"] is not None
+
+
+def grace_over():
+    return interrupted() and time.monotonic() - INTERRUPT["at"] >= GRACE
+
+
+def interrupt_note(killed):
+    how = ("the child's process group was killed after %g s"
+           % GRACE) if killed else "the child ended on it"
+    return ("\nCHECK27-RUNNER: INTERRUPTED: signal %d ended this run; %s\n"
+            % (INTERRUPT["signum"], how))
 
 
 def parse(argv):
@@ -471,17 +526,32 @@ def run_pty(o, echo):
         except OSError as e:
             sys.stderr.write("run.py: cannot run %s: %s\n" % (o["cmd"][0], e))
             os._exit(127)
+    CHILD_PGID[0] = pid
     deadline = time.monotonic() + o["timeout"]
     pending = list(zip(o["expect"], o["answer"]))
     buf = b""
     timed_out = False
+    killed = False
+    drain_until = None
     while True:
-        left = deadline - time.monotonic()
-        if left <= 0:
+        now = time.monotonic()
+        if not interrupted() and now >= deadline:
             timed_out = True
+        # A child that was signalled is still READ until it ends, so the cancel
+        # it is doing is watched and its output kept; only one that does not end
+        # within its grace is killed, and its group goes with it. The drain after
+        # the kill is bounded too: the child's own end is what normally ends this
+        # loop, and a pty some process outside that group still holds must not
+        # hold the check.
+        if (timed_out or grace_over()) and not killed:
+            kill_group(signal.SIGKILL)
+            killed = True
+            drain_until = now + 2.0
+        if killed and now >= drain_until:
             break
+        left = deadline - now
         try:
-            r, _, _ = select.select([fd], [], [], min(left, 0.2))
+            r, _, _ = select.select([fd], [], [], min(max(left, 0.05), 0.2))
         except InterruptedError:
             continue
         if not r:
@@ -508,11 +578,6 @@ def run_pty(o, echo):
                 os.write(fd, (text + "\n").encode())
             except OSError:
                 pass
-    if timed_out:
-        try:
-            os.killpg(pid, signal.SIGKILL)
-        except OSError:
-            pass
     status = wait_status(pid)
     if timed_out:
         note = ("\nCHECK27-RUNNER: TIMEOUT: the run was killed after %d s\n"
@@ -520,6 +585,10 @@ def run_pty(o, echo):
         write_out(log, echo, note.encode())
         log.close()
         return 124
+    if interrupted():
+        write_out(log, echo, interrupt_note(killed).encode())
+        log.close()
+        return 128 + INTERRUPT["signum"]
     if pending:
         note = ("\nCHECK27-RUNNER: the prompt this run was to answer never "
                 "appeared: %s\n" % "; ".join(p for p, _ in pending))
@@ -533,23 +602,37 @@ def run_plain(o, echo):
     with open(os.devnull, "rb") as devnull:
         proc = subprocess.Popen(o["cmd"], stdin=devnull, stdout=out,
                                 stderr=out, start_new_session=True)
-    try:
-        status = proc.wait(timeout=o["timeout"])
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except OSError:
-            pass
-        proc.wait()
+    CHILD_PGID[0] = proc.pid
+    deadline = time.monotonic() + o["timeout"]
+    timed_out = False
+    killed = False
+    while proc.poll() is None:
+        now = time.monotonic()
+        if not interrupted() and now >= deadline:
+            timed_out = True
+        if (timed_out or grace_over()) and not killed:
+            kill_group(signal.SIGKILL)
+            killed = True
+        time.sleep(0.05)
+    status = proc.returncode
+    if timed_out:
         note = ("\nCHECK27-RUNNER: TIMEOUT: the run was killed after %d s\n"
                 % int(o["timeout"])).encode()
         write_out(out, echo, note)
         status = 124
+    elif interrupted():
+        write_out(out, echo, interrupt_note(killed).encode())
+        status = 128 + INTERRUPT["signum"]
     out.close()
     return status
 
 
 def main():
+    # Armed before anything else: the signal has to be caught from the moment the
+    # child exists, and a shell that dies before the handler is installed is a
+    # child left running.
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, on_signal)
     o = parse(sys.argv[1:])
     if not o["mode"] or not o["kind"] or not o["out"] or not o["cmd"]:
         sys.stderr.write("run.py: --mode, --kind, --out and a command are required\n")
@@ -861,6 +944,10 @@ step_negative_run() {
 # (no checkout, so D5 skips the repository stage and nothing is baked).
 step_create() {
   LOG_FOR_MODE=$CREATE_LOG
+  # Recorded BEFORE the run: what the Restore has to know is that this run was
+  # started and never came back, not that it was reached — a signal, a hang or a
+  # failure can end it between the two.
+  CREATE_STARTED=yes
   run_pty create "$CREATE_SECONDS" "$WIZARD_DIR" \
     "Type the GCP project's ID" "$P" -- \
     fugaro setup --name "$N" --region "$REGION" --budget-mode observe \
@@ -1186,6 +1273,25 @@ restore_run() {
     return 0
   fi
   if [ "$CREATED" != yes ]; then
+    # The create run was STARTED and never came back — interrupted, hung, or
+    # failed on its way. What it made is unknowable from here: the CLI answers a
+    # signal by cancelling GRACEFULLY rather than dying (cmd/fugaro's
+    # signalContext), so a create it had already sent lands after this run ends,
+    # and a read-back that says the project is not there yet says nothing about
+    # the seconds after it. So the project is not deleted either: a delete would
+    # race the very run it is cleaning up after. The read-back is recorded as
+    # evidence, and the one command that ends the project goes into the row.
+    if [ "$CREATE_STARTED" = yes ]; then
+      local seen
+      read_out gcloud projects describe "$P" --format='value(projectId,lifecycleState)'
+      if [ "$READ_STATUS" -eq 0 ]; then
+        seen="$P is there: $(one_line "$READ_OUT")"
+      else
+        seen="$P does not answer yet ($(one_line "$READ_OUT"))"
+      fi
+      fact restore FAIL "the create run was STARTED and never came back, so what it made cannot be known from here and this check deleted nothing: $seen. A create it had already sent can still land, so delete the throwaway project yourself: gcloud projects delete $P --quiet"
+      return 0
+    fi
     if [ -n "${P:-}" ] && [ -n "${C:-}" ]; then
       read_out gcloud projects describe "$P" --format='value(projectId)'
       if [ "$READ_STATUS" -eq 0 ]; then

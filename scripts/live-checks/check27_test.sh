@@ -380,6 +380,21 @@ setup)
   if [ -n "$acct" ]; then
     printf 'CONFIRM: linking billing account %s (its own confirmation; may incur charges)\n' "$acct"
   fi
+  # FAKE27_CREATE_HANGS: the create run is IN FLIGHT when the person interrupts
+  # — the call is out, the project is not made yet, and it is made only when the
+  # run would have finished. The signals are ignored on purpose, because that is
+  # what the real CLI does with the first of them: cmd/fugaro's signalContext
+  # cancels gracefully instead of dying, so a child left alone goes on and
+  # creates the project the check has already read back as absent. The pid is
+  # recorded so a case can say the run did not leave it behind.
+  if [ -n "${FAKE27_CREATE_HANGS:-}" ]; then
+    printf '%s\n' "$$" >"$state/create-pid"
+    trap '' INT TERM HUP
+    printf 'the create run is still working: the project is not there yet\n'
+    sleep "${FAKE27_CREATE_HANGS_SECONDS:-20}"
+    installation_of "$answer"
+    exit 0
+  fi
   if [ -n "${FAKE27_CREATE_FAILS:-}" ]; then
     if [ -n "${FAKE27_CREATE_FAILS_HALF:-}" ]; then
       installation_of "${FAKE27_FAIL_ID:-not-a-project}"
@@ -421,6 +436,19 @@ update)
       exit 1
     fi
     converged_steps '✔ installation creates the runs bucket'
+    exit 0
+  fi
+  # FAKE27_UPDATE2_HANGS: the second update is in flight when the run is
+  # interrupted, and it is a PLAIN child — no pty, a session of its own (the
+  # runner's start_new_session) — which is the other kind of run the same
+  # forward-then-kill has to cover. Its signals are ignored for the same reason
+  # as the create run's above, and its pid is recorded so a case can say it did
+  # not outlive the check.
+  if [ "$n" -ge 2 ] && [ -n "${FAKE27_UPDATE2_HANGS:-}" ]; then
+    printf '%s\n' "$$" >"$state/update-pid"
+    trap '' INT TERM HUP
+    sleep "${FAKE27_UPDATE2_HANGS_SECONDS:-20}"
+    converged_steps
     exit 0
   fi
   if [ "$n" -ge 2 ] && [ -n "${FAKE27_UPDATE2_WORK:-}" ]; then
@@ -504,18 +532,30 @@ setup_case() { # name
 # session in CI, and Check 27's first guard is exactly that marker — a case that
 # wants one re-adds it through RUN27_ENV, and the xtrace case runs the script
 # under `bash -x` through RUN27_XTRACE.
+# run27_env: the environment EVERY run of the check is given, built in one place
+# so a run a case has to interrupt is the same run as any other. It includes the
+# two fakes' knobs, this check's own scratch and timeouts, and the markers a case
+# re-adds through RUN27_ENV.
+RUN27_ENVV=()
+run27_env() {
+  RUN27_ENVV=(
+    TMPDIR="$dir/tmp" FAKE27_DIR="$dir" FAKE27_PROJECT="$PROJECT"
+    CHECK27_DIR="$dir/root" SECRETS_SKIP="$SECRETS_SKIP"
+    CHECK27_PLAN_SECONDS="${PLAN_SECONDS:-30}"
+    CHECK27_CREATE_SECONDS="${CREATE_SECONDS:-30}"
+    CHECK27_CONVERGE_SECONDS="${CONVERGE_SECONDS:-30}"
+    CHECK27_QUICK_SECONDS="${QUICK_SECONDS:-30}"
+    PATH="$dir/bin:$PATH"
+    ${RUN27_ENV[@]+"${RUN27_ENV[@]}"}
+  )
+}
+
 run27() { # [args...]
   status=0
+  run27_env
   out=$(env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_REMOTE \
     -u CURSOR_AGENT -u AI_AGENT -u CLAUDE_CODE_SSE_PORT -u XDG_CONFIG_HOME \
-    TMPDIR="$dir/tmp" FAKE27_DIR="$dir" FAKE27_PROJECT="$PROJECT" \
-    CHECK27_DIR="$dir/root" SECRETS_SKIP="$SECRETS_SKIP" \
-    CHECK27_PLAN_SECONDS="${PLAN_SECONDS:-30}" \
-    CHECK27_CREATE_SECONDS="${CREATE_SECONDS:-30}" \
-    CHECK27_CONVERGE_SECONDS="${CONVERGE_SECONDS:-30}" \
-    CHECK27_QUICK_SECONDS="${QUICK_SECONDS:-30}" \
-    PATH="$dir/bin:$PATH" \
-    ${RUN27_ENV[@]+"${RUN27_ENV[@]}"} \
+    ${RUN27_ENVV[@]+"${RUN27_ENVV[@]}"} \
     bash ${RUN27_XTRACE:+-x} "$script" \
     ${RUN27_ARGS[@]+"${RUN27_ARGS[@]}"} "$@" 2>"$dir/err") || status=$?
   RUN27_ARGS=()
@@ -526,6 +566,68 @@ run27() { # [args...]
   CONVERGE_SECONDS=30
   QUICK_SECONDS=30
   return 0
+}
+
+# start27_bg [args...]: the same run as run27, in a SESSION OF ITS OWN, so that
+# the signal a case sends it reaches the check and the runner it started and
+# nothing else in this suite. That is what Ctrl-C at the owner's terminal does:
+# the shell and the runner it started share one foreground group, and the wizard
+# itself is put in a session of the runner's own making — so the runner is the
+# process that has to forward the signal, which is what these cases are about.
+# `$$` stays the pid through setsid's exec, so the check is its own group leader
+# and `kill -INT -- -$BG_PID` is the group the terminal would signal.
+BG_PID=""
+start27_bg() { # [args...]
+  run27_env
+  setsid env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_REMOTE \
+    -u CURSOR_AGENT -u AI_AGENT -u CLAUDE_CODE_SSE_PORT -u XDG_CONFIG_HOME \
+    ${RUN27_ENVV[@]+"${RUN27_ENVV[@]}"} \
+    bash "$script" "$@" >"$dir/out" 2>"$dir/err" &
+  BG_PID=$!
+  RUN27_ENV=()
+  RUN27_ARGS=()
+}
+
+# interrupt_run PID: the signal a terminal sends the shell's whole foreground
+# group, to the group this run leads. It is SIGHUP and not SIGINT on purpose:
+# this suite starts the run as an ASYNCHRONOUS command, and bash gives one SIGINT
+# ignored — a disposition the whole group inherits, so a Ctrl-C's own signal would
+# be ignored by the check, its runner and its child alike and the case would pass
+# for the wrong reason. HUP is what the terminal itself sends when it goes away,
+# it is not ignored here, and it takes exactly the same path through check27.sh's
+# on_signal and through the runner's forwarding as an interrupt does.
+interrupt_run() { # pid
+  kill -HUP -- "-$1" 2>/dev/null || kill -HUP "$1" 2>/dev/null || true
+}
+
+# wait_for FILE WHAT: up to ten seconds for a run in the background to reach the
+# point a case interrupts it at. The check itself polls nothing.
+wait_for() { # file what
+  local i=0
+  while [ ! -e "$1" ] && [ "$i" -lt 200 ]; do
+    sleep 0.05
+    i=$((i + 1))
+  done
+  [ -e "$1" ] || fail "$2: $1 never appeared"
+}
+
+# wait_gone PID WHAT: the process is not there any more, checked for up to ten
+# seconds. The runner is given a bounded grace period to let its child end on the
+# signal (the CLI cancels gracefully rather than dying), and the check's own exit
+# does not wait for that grace — so "the check has exited" is not yet "the child
+# is gone", and a case has to look. A runner that never ends its child is what
+# this fails on: the child outlives the check by fifteen seconds or forever.
+wait_gone() { # pid what
+  local i=0
+  [ -n "$1" ] || return 0
+  while kill -0 "$1" 2>/dev/null && [ "$i" -lt 200 ]; do
+    sleep 0.05
+    i=$((i + 1))
+  done
+  if kill -0 "$1" 2>/dev/null; then
+    fail "$2: pid $1 is STILL RUNNING after the check exited"
+    kill -KILL "$1" 2>/dev/null || true
+  fi
 }
 
 run27_default() { run27 --project "$PROJECT" --billing-account "$ACCOUNT" --repo "$REPO" "$@"; }
@@ -788,10 +890,68 @@ test_a_create_that_blocks_is_killed_and_fails() {
   expect_status "$status" 2 "a create run that blocked"
   expect_contains "$(fact_line wizard)" "FAIL" "the wizard row"
   expect_contains "$(fact_line wizard)" "was killed" "the row says it was killed"
-  expect_contains "$(fact_line restore)" "PASS" "the Restore still runs"
+  # The create run was STARTED and did not come back, so the Restore may not read
+  # "nothing was created" off a read-back: the run was killed rather than
+  # finished, and a call it had already sent can still land.
+  expect_contains "$(fact_line restore)" "FAIL" "the Restore row"
+  expect_contains "$(fact_line restore)" "gcloud projects delete $PROJECT --quiet" "the row names the command that deletes the project"
 }
 
-test_a_create_that_fails_stops_and_nothing_was_created() {
+# An interrupt in the middle of the create run — the case the Restore's own header
+# paragraph is about. Ctrl-C at the owner's terminal reaches the shell and the
+# runner it started, and NOT the wizard: the runner gave it a session of its own
+# (forkpty), and the CLI answers a signal by cancelling GRACEFULLY rather than
+# dying (cmd/fugaro's signalContext), so a runner that does not forward the signal
+# leaves a create in flight and the project lands seconds later. The check must
+# report the create as started-and-unknown, with the one command that deletes the
+# project, rather than reading the project back as absent.
+test_an_interrupt_during_the_create_run_is_a_failed_restore() {
+  setup_case interrupt-create
+  RUN27_ENV=(FAKE27_CREATE_HANGS=1)
+  start27_bg --project "$PROJECT" --billing-account "$ACCOUNT" --repo "$REPO"
+  local pid=$BG_PID child
+  wait_for "$dir/state/create-pid" "the create run to be in flight"
+  interrupt_run "$pid"
+  status=0
+  wait "$pid" || status=$?
+  out=$(cat "$dir/out" 2>/dev/null || true)
+  expect_status "$status" 2 "an interrupted run"
+  expect_contains "$out" "CHECK 27 RESULT" "the block"
+  expect_contains "$(fact_line restore)" "FAIL" "the Restore row"
+  expect_contains "$(fact_line restore)" "STARTED" "the row says the create run was started and never came back"
+  expect_contains "$(fact_line restore)" "gcloud projects delete $PROJECT --quiet" "the row names the command that deletes the project"
+  # The wizard's own child does not outlive the run, and it never made the
+  # project: the runner forwarded the signal and killed its group.
+  child=$(cat "$dir/state/create-pid" 2>/dev/null || true)
+  wait_gone "$child" "the interrupted create run"
+  expect_absent "$(cat "$dir/state/project" 2>/dev/null || true)" "$PROJECT" "the project the interrupted create never made"
+}
+
+# And the same for a run of the OTHER kind: the second update is a plain child —
+# no pty, a session of its own — which is what the negative and doctor runs are
+# too. A runner that forwarded a signal only for its pty runs would leave this one
+# working after the check had ended.
+test_an_interrupt_during_a_plain_run_does_not_leave_it_running() {
+  setup_case interrupt-plain
+  RUN27_ENV=(FAKE27_UPDATE2_HANGS=1)
+  start27_bg --project "$PROJECT" --billing-account "$ACCOUNT" --repo "$REPO"
+  local pid=$BG_PID child
+  wait_for "$dir/state/update-pid" "the second update to be in flight"
+  interrupt_run "$pid"
+  status=0
+  wait "$pid" || status=$?
+  out=$(cat "$dir/out" 2>/dev/null || true)
+  expect_status "$status" 2 "an interrupted run"
+  expect_contains "$(fact_line restore)" "PASS" "the Restore row: the create run had finished, so the project is this check's to delete"
+  child=$(cat "$dir/state/update-pid" 2>/dev/null || true)
+  wait_gone "$child" "the interrupted second update"
+}
+
+# A create run that FAILED is a create run that did not come back, and the Restore
+# may not read "nothing was created" off a read-back for it either: the run was
+# started, and a call it had already sent can still land. What it reports is the
+# one command that ends the project, and it deletes nothing itself.
+test_a_create_that_fails_stops_and_the_restore_reports_it() {
   setup_case create-fails
   RUN27_ENV=(FAKE27_CREATE_FAILS=1)
   run27_default
@@ -801,9 +961,9 @@ test_a_create_that_fails_stops_and_nothing_was_created() {
   # billing banner, which names the account: whatever line the row quotes, the
   # block stays safe to paste back.
   expect_absent "$out" "$ACCOUNT" "the block"
-  expect_contains "$(fact_line restore)" "PASS" "the Restore with nothing to delete"
-  expect_contains "$(fact_line restore)" "nothing of this check's was created" "nothing was created to delete"
-  expect_absent "$(calls_gcloud)" "projects delete" "the Restore never deletes a project that is not there"
+  expect_contains "$(fact_line restore)" "FAIL" "the Restore row"
+  expect_contains "$(fact_line restore)" "gcloud projects delete $PROJECT --quiet" "the row names the command that deletes the project"
+  expect_absent "$(calls_gcloud)" "projects delete" "the Restore never deletes a create run's project itself"
 }
 
 test_a_create_that_half_created_is_reported_by_the_restore() {
@@ -1228,7 +1388,9 @@ t test_the_negative_that_is_not_refused_is_a_fail
 t test_the_negative_that_created_the_id_is_a_fail
 t test_a_create_that_never_asks_the_project_id_is_a_fail
 t test_a_create_that_blocks_is_killed_and_fails
-t test_a_create_that_fails_stops_and_nothing_was_created
+t test_an_interrupt_during_the_create_run_is_a_failed_restore
+t test_an_interrupt_during_a_plain_run_does_not_leave_it_running
+t test_a_create_that_fails_stops_and_the_restore_reports_it
 t test_a_create_that_half_created_is_reported_by_the_restore
 t test_a_billing_link_to_another_account_is_a_fail
 t test_a_billing_readback_is_redacted_in_the_block
