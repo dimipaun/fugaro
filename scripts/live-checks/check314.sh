@@ -15,9 +15,11 @@
 #   1. The credential the CLI reads the database with. The CLI's token source is
 #      `google.DefaultTokenSource` (internal/cli/cloud.go), which is the
 #      application-default credential: $GOOGLE_APPLICATION_CREDENTIALS where it
-#      is set, else $CLOUDSDK_CONFIG/application_default_credentials.json, else
-#      $XDG_CONFIG_HOME/gcloud/application_default_credentials.json (else
-#      ~/.config/gcloud). T2 is about a PERSON's credential, so a file whose
+#      is set, else $HOME/.config/gcloud/application_default_credentials.json —
+#      oauth2's own wellKnownFile(), which reads neither CLOUDSDK_CONFIG nor
+#      XDG_CONFIG_HOME, while `gcloud` honours both: on a machine that sets
+#      either, the file read here and the account `gcloud` names can be two
+#      different people's. T2 is about a PERSON's credential, so a file whose
 #      `type` is a service account's, an impersonation's or a workload-identity
 #      federation's stops the run: it would answer a different question. One
 #      field is read out of the file — its type, with its quota project — and
@@ -281,19 +283,19 @@ guard_belong() { # name where
 }
 
 # ------------------------------------------------- where the credential lives
-# adc_path mirrors what google.DefaultTokenSource reads: the file the variable
-# names, else gcloud's own config directory, which CLOUDSDK_CONFIG moves and
-# XDG_CONFIG_HOME (else ~/.config) places.
+# adc_path mirrors google.DefaultTokenSource exactly: the file
+# $GOOGLE_APPLICATION_CREDENTIALS names, else oauth2's wellKnownFile(),
+# $HOME/.config/gcloud/application_default_credentials.json. Neither
+# CLOUDSDK_CONFIG nor XDG_CONFIG_HOME appears in that module, so honouring them
+# here would read the type of a credential the listing is not made with -- and
+# `gcloud`, whose account the row below records, moves with CLOUDSDK_CONFIG, so
+# this would also pair the policy's answer with another person.
 adc_path() {
   if [ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]; then
     printf '%s\n' "$GOOGLE_APPLICATION_CREDENTIALS"
     return 0
   fi
-  if [ -n "${CLOUDSDK_CONFIG:-}" ]; then
-    printf '%s\n' "$CLOUDSDK_CONFIG/application_default_credentials.json"
-    return 0
-  fi
-  printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/gcloud/application_default_credentials.json"
+  printf '%s\n' "$HOME/.config/gcloud/application_default_credentials.json"
 }
 
 write_adc_reader() {
@@ -676,7 +678,7 @@ report_teardown() {
 # and never makes one.
 print_plan() {
   say "dry run: NOTHING below was done. A real run would do, in this order:"
-  say "  [reads the filesystem] the application-default credential file your fugaro reads the database with (\$GOOGLE_APPLICATION_CREDENTIALS where it is set, else \$CLOUDSDK_CONFIG, else \$XDG_CONFIG_HOME/gcloud/application_default_credentials.json): its type is read and nothing else of it -- a file that is not a person's (authorized_user) stops the run"
+  say "  [reads the filesystem] the application-default credential file your fugaro reads the database with (\$GOOGLE_APPLICATION_CREDENTIALS where it is set, else \$HOME/.config/gcloud/application_default_credentials.json, which is oauth2's own wellKnownFile -- not \$CLOUDSDK_CONFIG, which only gcloud honours): its type is read and nothing else of it -- a file that is not a person's (authorized_user) stops the run"
   say "  [reads] ${FUGARO_BIN} doctor --json$( [ ${#FUGARO_FLAGS[@]} -gt 0 ] && printf ' %s' "${FUGARO_FLAGS[*]}" )$( [ -n "$PROJECT" ] && printf ' --project %s' "$PROJECT" ): project.name and project.gcp_project, held to --project where one was typed"
   say "  [reads the filesystem] the installation's config file (\$XDG_CONFIG_HOME/fugaro/projects/<name>.yaml, or the --config inside --fugaro-flags): gcp_project and budget.firebase_project -- the second is the project the database, and orchestrator/ with it, belongs to"
   say "  [reads] ${GCLOUD_BIN} config get-value account$( [ -n "$ACCOUNT" ] && printf ' (not called: --account %s was typed)' "$ACCOUNT" ): the person the policy below is read for"

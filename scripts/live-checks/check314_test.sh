@@ -479,6 +479,24 @@ test_no_application_default_credential_stops() {
   expect_no_calls "no credential"
 }
 
+# The credential the CLI reads is oauth2's own wellKnownFile, and CLOUDSDK_CONFIG
+# moves only gcloud: a machine that sets it for a service-account config would
+# otherwise be reported as having no person's credential at all, and stopped,
+# while the listing is in fact made with the ADC file under $HOME.
+test_cloudsdk_config_does_not_move_the_credential_file() {
+  setup_case cloudsdk-config
+  mkdir -p "$dir/other-config"
+  printf '{"type":"service_account","private_key_id":"redacted"}\n' \
+    >"$dir/other-config/application_default_credentials.json"
+  RUN314_ENV=(CLOUDSDK_CONFIG="$dir/other-config")
+  run314_default
+  expect_contains "$(fact_line credential)" "PASS — " "CLOUDSDK_CONFIG: the person's own file is the one read"
+  expect_contains "$(fact_line credential)" "$dir/home/.config/gcloud/application_default_credentials.json" "CLOUDSDK_CONFIG: the row names the file it read"
+  expect_absent "$(fact_line credential)" "$dir/other-config/application_default_credentials.json" "CLOUDSDK_CONFIG: the other config directory's file"
+  expect_absent "$(fact_line credential)" "service_account" "CLOUDSDK_CONFIG: the type that is not the one read"
+  expect_status "$status" 0 "CLOUDSDK_CONFIG"
+}
+
 # GOOGLE_APPLICATION_CREDENTIALS is what the CLI reads first, so it is what this
 # check reads first: a federation's credential file is not a person's either.
 test_google_application_credentials_names_the_file() {
@@ -814,6 +832,7 @@ t test_a_listing_that_is_not_the_document_fails
 t test_an_empty_subtree_is_not_measured
 t test_a_service_account_credential_stops_before_any_call
 t test_no_application_default_credential_stops
+t test_cloudsdk_config_does_not_move_the_credential_file
 t test_google_application_credentials_names_the_file
 t test_a_credential_file_that_is_not_json_stops
 t test_a_credential_with_no_type_is_a_fail

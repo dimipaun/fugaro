@@ -24,7 +24,11 @@
 #      <the file's token>`, and the answer must carry `X-Fugaro-Orchestrator`
 #      equal to the id and `X-Fugaro-Nonce` equal to the file's nonce -- a port
 #      another process took over, and a pid another process took over, both
-#      answer without that nonce. Then the `<id>.lock` beside the file must be
+#      answer without that nonce. The status is not part of the handshake
+#      (endpoint.Probe compares the two headers and nothing else): the endpoint's
+#      answer before its first tick is a 503 that carries both, deliberately, and
+#      reading that as a dead daemon is the one mistake this rule exists to stop.
+#      Then the `<id>.lock` beside the file must be
 #      HELD (an exclusive flock taken here fails), which is what the daemon holds
 #      for its life.
 #   3. `fugaro graph --source local:<id> --json` answers while the daemon is
@@ -568,10 +572,10 @@ handshake() {
   got_id=$(sed -n 's/^[Xx]-[Ff]ugaro-[Oo]rchestrator: *\([^ ]*\).*/\1/p' "$SCRATCH/state.headers" | head -1)
   got_nonce=$(sed -n 's/^[Xx]-[Ff]ugaro-[Nn]once: *\([^ ]*\).*/\1/p' "$SCRATCH/state.headers" | head -1)
   nonce=$(field nonce)
-  if [ "$code" = 200 ] && [ "$got_id" = "$ID" ] && [ -n "$got_nonce" ] && [ "$got_nonce" = "$nonce" ]; then
-    fact handshake PASS "the endpoint at $(field addr) answered $code and read back the id ($got_id) and the nonce the file carries: the process behind that address is the one that wrote the file, which a port another process took over cannot fake"
+  if [ "$got_id" = "$ID" ] && [ -n "$got_nonce" ] && [ "$got_nonce" = "$nonce" ]; then
+    fact handshake PASS "the endpoint at $(field addr) read back the id ($got_id) and the nonce the file carries: the process behind that address is the one that wrote the file, which a port another process took over cannot fake. The two identity headers are the whole handshake and the status is not part of it (endpoint.Probe compares these two and nothing else), so the HTTP $code here is not a reading of the daemon's state -- a daemon answering 503 before its first tick is live and carries both headers (CG13b)"
   else
-    fact handshake FAIL "the handshake at $(field addr) answered HTTP $code with X-Fugaro-Orchestrator '$got_id' and X-Fugaro-Nonce '${got_nonce:-<none>}', and the file it must match carries id $ID and nonce ${nonce:-<none>}. A daemon whose listener is gone, and a port another process has taken, both read this way (CG13b)"
+    fact handshake FAIL "the handshake at $(field addr) answered HTTP $code with X-Fugaro-Orchestrator '$got_id' and X-Fugaro-Nonce '${got_nonce:-<none>}', and the file it must match carries id $ID and nonce ${nonce:-<none>}. A daemon whose listener is gone, and a port another process has taken, both read this way; a refusal carries no identity header at all, so this is not a daemon that had simply not ticked yet (CG13b)"
   fi
 }
 

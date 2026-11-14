@@ -230,6 +230,7 @@ parser.add_argument("--no-lock", action="store_true")
 parser.add_argument("--token-other", action="store_true", help="answer with a token the file does not carry")
 parser.add_argument("--nonce-other", action="store_true", help="answer with a nonce the file does not carry")
 parser.add_argument("--nonce-same-as-token", action="store_true")
+parser.add_argument("--no-tick", action="store_true", help="answer the handshake the way the endpoint does before its first tick: 503, both identity headers")
 # The two words `orchestrator run` on this fake's command line are there on
 # purpose: the check signals a pid only when ps says the command line is the
 # daemon's, and this fake has to be the daemon for those cases to measure
@@ -276,6 +277,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if self.headers.get("Authorization", "") != "Bearer " + answered_token:
             self.reply(401, b'{"error":"unauthorized"}')
+            return
+        if args.no_tick:
+            self.reply(503, b'{"error":"no snapshot yet: the daemon has not completed its first tick"}', {
+                "X-Fugaro-Orchestrator": args.id,
+                "X-Fugaro-Nonce": answered_nonce,
+            })
             return
         self.reply(200, json.dumps({"id": args.id, "started_at": started_at}).encode(), {
             "X-Fugaro-Orchestrator": args.id,
@@ -357,11 +364,14 @@ def handshake(doc):
         "http://%s/state" % doc.get("addr", ""),
         headers={"Authorization": "Bearer %s" % doc.get("token", "")})
     try:
-        with urllib.request.urlopen(request, timeout=2) as response:
-            return (response.headers.get("X-Fugaro-Orchestrator") == doc.get("id")
-                    and response.headers.get("X-Fugaro-Nonce") == doc.get("nonce"))
+        response = urllib.request.urlopen(request, timeout=2)
+    except urllib.error.HTTPError as e:  # a refusal is still the daemon's own answer
+        response = e
     except Exception:  # noqa: BLE001 - nothing answering is the answer this fake wants
         return False
+    with response:
+        return (response.headers.get("X-Fugaro-Orchestrator") == doc.get("id")
+                and response.headers.get("X-Fugaro-Nonce") == doc.get("nonce"))
 
 
 def lock_free():
@@ -578,6 +588,20 @@ test_a_daemon_whose_listener_is_gone_fails() {
   expect_fail_row handshake "a file whose address nothing answers"
   expect_pass_row lock-held "the lock is what says the file is still owned"
   expect_status "$status" 1 "a file whose address nothing answers"
+}
+
+test_a_daemon_before_its_first_tick_is_live() {
+  # The endpoint answers 503 with both identity headers before its first tick,
+  # deliberately (server.go's identify runs before refuse(noTick)), and
+  # endpoint.Probe compares those headers and never the status. A check that
+  # required 200 read a daemon a fraction of a second old as dead.
+  setup_case notick
+  start_daemon --no-tick
+  run313 --id "$ID"
+  expect_pass_row handshake "a 503 that carries both identity headers is the live daemon"
+  expect_contains "$out" "HTTP 503" "the row prints the status it did not read"
+  expect_pass_row graph-live "the scope reads the endpoint the handshake proved"
+  expect_status "$status" 0 "a daemon that had not ticked yet"
 }
 
 test_a_lock_that_is_not_held_fails() {
@@ -899,6 +923,7 @@ t test_a_registry_file_that_is_not_0600_fails
 t test_a_run_directory_that_is_not_0700_fails
 t test_a_nonce_that_is_the_token_fails
 t test_a_daemon_whose_listener_is_gone_fails
+t test_a_daemon_before_its_first_tick_is_live
 t test_a_lock_that_is_not_held_fails
 t test_a_handshake_answered_with_another_nonce_fails
 t test_a_handshake_answered_with_another_token_is_refused
