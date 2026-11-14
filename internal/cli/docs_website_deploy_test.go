@@ -569,25 +569,49 @@ func TestWebsiteDeployWorkflowsAreStagedNotCopiedIn(t *testing.T) {
 
 // TestWebsiteDeployWorkflowsAreNotInGithubWorkflows pins the Global Constraint
 // mechanically: no run of this task created or edited anything under
-// .github/workflows/, so while a change is staged the file GitHub runs must not
-// already carry it. A run that wrote the staged change into the real file
-// anyway, and a hand copy-in that left the staged copy behind, both leave the
-// two files identical, which is what is refused here.
+// .github/workflows/. A staged copy is the file that runs plus the change
+// waiting for the owner, so both files are present until the copy-in removes
+// the staged one, and the write to refuse is the file that runs carrying the
+// change -- byte for byte, or with the change written into it in another
+// shape, which is what a hand-applied copy-in leaves. website-promote.yml has
+// nothing staged (the copy-in took its staged copy with it), so for that pair
+// the state is the write and is refused as it stands.
 func TestWebsiteDeployWorkflowsAreNotInGithubWorkflows(t *testing.T) {
 	dir := filepath.Dir(websitePreviewStaged)
 	if filepath.Base(dir) != "pending-workflows" {
 		t.Fatalf("this test's staged path %s no longer points at docs/pending-workflows", websitePreviewStaged)
 	}
-	staged, err := os.ReadFile(websitePreviewStaged)
-	if err != nil {
-		t.Skip("the staged copy is gone: it was copied into .github/workflows/")
-	}
-	real, err := os.ReadFile(websitePreviewReal)
-	if err != nil {
-		return // the expected state: the owner has not copied it in yet
-	}
-	if string(real) == string(staged) {
-		t.Errorf("%s already holds the staged copy of %s verbatim: a run may not write under .github/workflows/, and the owner's copy-in removes the staged copy in the same commit", websitePreviewReal, websitePreviewStaged)
+	for _, pair := range []struct {
+		staged, real string
+		// The change the staged copy carries, by the names it writes into the
+		// file: the staged preview copy's gate refuses a firebase.json naming
+		// either Hosting key, and no spelling of that check can leave the key
+		// out. Empty where nothing is staged, and then the two files being
+		// present is itself the write.
+		change []string
+	}{
+		{websitePreviewStaged, websitePreviewReal, []string{".hosting.site", ".hosting.target"}},
+		{websitePromoteStaged, websitePromoteReal, nil},
+	} {
+		staged, err := os.ReadFile(pair.staged)
+		if err != nil {
+			continue // copied in: the staged copy is what the copy-in removes
+		}
+		real, err := os.ReadFile(pair.real)
+		if err != nil {
+			continue // not under .github/workflows/ yet: nothing was written there
+		}
+		if pair.change == nil {
+			t.Errorf("%s and its staged copy %s both exist: the copy-in removes the staged copy in the same commit, and a run may not write under .github/workflows/", pair.real, pair.staged)
+			continue
+		}
+		carries := string(real) == string(staged)
+		for _, name := range pair.change {
+			carries = carries || strings.Contains(string(real), name)
+		}
+		if carries {
+			t.Errorf("%s already carries what %s stages: a run may not write under .github/workflows/, and the owner's copy-in removes the staged copy in the same commit", pair.real, pair.staged)
+		}
 	}
 }
 
