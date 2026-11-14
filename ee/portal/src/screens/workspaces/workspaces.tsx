@@ -11,12 +11,13 @@
 // why the unbound licences get their own section with the one instruction that
 // finishes the job (D2196, D2197, D2205).
 //
-// **The reveal is the only credential this app ever holds, and it holds it for
-// one mount.** `POST /keys/reveal` rotates and answers the key and its renewal
-// secret once (D2182 as amended); this screen keeps them in React state, draws
-// them, and does nothing else with them -- no storage, no refetch on the way
-// back, no copy kept beside the request. A key that a screen could redraw is a
-// key the app has stored, which is the thing D2182 refuses. An air-gapped
+// **The reveals are the only credentials this app ever holds, and it holds each
+// for one mount.** `POST /keys/reveal` rotates and answers the key and its
+// renewal secret once (D2182 as amended); this screen keeps them in React state,
+// draws them on the workspace they belong to, and does nothing else with them --
+// no storage, no refetch on the way back, no copy kept beside the request. A key
+// that a screen could redraw is a key the app has stored, which is the thing
+// D2182 refuses. An air-gapped
 // entitlement is the opposite case and the same rule: it has no secret at all
 // (D2206), so it is offered as a file to download instead of a reveal -- and it
 // is offered no rebind either, because its key is never revoked and a rebind
@@ -140,7 +141,13 @@ export function WorkspacesScreen({ client }: WorkspacesScreenProps) {
   const [data, setData] = useState<PortalData | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
   const [hint, setHint] = useState(false)
-  const [bundle, setBundle] = useState<KeyReveal | null>(null)
+  // The bundles are the only credentials this app ever holds, and there is one
+  // per workspace rather than one for the screen: a reveal rotates the secret
+  // and answers once per workspace per day (P3.2), so the copy on the screen is
+  // the only one there is until tomorrow. A single slot would mean revealing a
+  // second workspace silently threw the first workspace's new key away, and
+  // left a key drawn with no workspace said on it.
+  const [bundles, setBundles] = useState<Record<string, KeyReveal>>({})
   const [licence, setLicence] = useState<{ workspaceId: string; file: KeyLicence } | null>(null)
 
   useEffect(() => {
@@ -210,7 +217,7 @@ export function WorkspacesScreen({ client }: WorkspacesScreenProps) {
         method: 'POST',
         body: { workspace_id: workspaceId },
       })
-      setBundle(answer)
+      setBundles((current) => ({ ...current, [workspaceId]: answer }))
     })
   }
 
@@ -265,8 +272,6 @@ export function WorkspacesScreen({ client }: WorkspacesScreenProps) {
 
       {failure === null ? null : <p role="alert">{failure}</p>}
 
-      {bundle === null ? null : <Revealed bundle={bundle} onCopy={copy} />}
-
       {pending.length === 0 ? null : (
         <section className="workspaces__pending" aria-label="Licences not bound yet">
           <h2>Not bound yet</h2>
@@ -287,10 +292,12 @@ export function WorkspacesScreen({ client }: WorkspacesScreenProps) {
               data.entitlements.find((one) => one.id === workspace.entitlement_id) ?? null
             }
             licence={licence?.workspaceId === workspace.id ? licence.file : null}
+            bundle={bundles[workspace.id] ?? null}
             onBind={bind}
             onReveal={reveal}
             onDownload={download}
             onAsk={ask}
+            onCopy={copy}
           />
         ))
       )}
@@ -298,13 +305,27 @@ export function WorkspacesScreen({ client }: WorkspacesScreenProps) {
   )
 }
 
-function Revealed({ bundle, onCopy }: { bundle: KeyReveal; onCopy: (value: string) => void }) {
+/**
+ * One workspace's revealed bundle, drawn on that workspace's own card. It is
+ * inside the card rather than above the list so the key is never read without
+ * the workspace it belongs to: two of them can be on the screen at once, and a
+ * bundle named only "your key" is one a person has to guess the target of.
+ */
+function Revealed({
+  bundle,
+  workspace,
+  onCopy,
+}: {
+  bundle: KeyReveal
+  workspace: Workspace
+  onCopy: (value: string) => void
+}) {
   return (
-    <section className="workspaces__bundle" aria-label="The key you revealed">
-      <h2>Your key</h2>
+    <section className="workspaces__bundle" aria-label={`The key for ${workspace.name}`}>
+      <h3>The key for {workspace.name}</h3>
       <p>
         This is shown once and nothing keeps it. Copy the key and its renewal secret into the
-        installation now.
+        installation bound to {workspace.project_id} now.
       </p>
       <p className="workspaces__value">{bundle.key}</p>
       <button type="button" onClick={() => onCopy(bundle.key)}>
@@ -362,18 +383,22 @@ function Card({
   workspace,
   entitlement,
   licence,
+  bundle,
   onBind,
   onReveal,
   onDownload,
   onAsk,
+  onCopy,
 }: {
   workspace: Workspace
   entitlement: Entitlement | null
   licence: KeyLicence | null
+  bundle: KeyReveal | null
   onBind: (entitlementId: string, projectId: string) => Promise<void>
   onReveal: (workspaceId: string) => Promise<void>
   onDownload: (workspaceId: string) => Promise<void>
   onAsk: (path: string, workspaceId: string) => Promise<void>
+  onCopy: (value: string) => void
 }) {
   const [projectId, setProjectId] = useState('')
   return (
@@ -386,6 +411,10 @@ function Card({
           {entitlement.tier} licence, {entitlement.seats} seats, renews on{' '}
           {day(entitlement.ends_at)}.
         </p>
+      )}
+
+      {bundle === null ? null : (
+        <Revealed bundle={bundle} workspace={workspace} onCopy={onCopy} />
       )}
 
       {entitlement === null ? null : workspace.project_id === null ? null : (

@@ -48,9 +48,11 @@
   background: var(--panel);
 }
 
+/* The bundle's own heading is an `h3`: it sits inside a workspace's card, below
+ * that card's `h2`, which is where a key belongs -- on the workspace it is for. */
 .workspace > h2,
 .workspaces__pending > h2,
-.workspaces__bundle > h2 {
+.workspaces__bundle > h3 {
   margin: 0;
   font-size: var(--font-size-lg);
 }

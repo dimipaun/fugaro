@@ -23,13 +23,16 @@
 // the paths below and refuses anything else. Nothing here reaches the network,
 // and the two credential-shaped values are fixture text that is not a key.
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { API_BASE, ApiError } from '../../api/client'
 import type { ApiCall, ApiClient } from '../../api/client'
 import type { Entitlement } from '../../api/types/entitlements'
 import type { Workspace, WorkspaceBind } from '../../api/types/workspaces'
+import { SessionProvider } from '../../auth/session'
+import type { AuthPort, SignedInUser } from '../../auth/session'
+import { route } from './route'
 import { WorkspacesScreen } from './workspaces'
 
 afterEach(cleanup)
@@ -41,7 +44,17 @@ const BOUND_AT = '2026-02-11T08:00:00Z'
 // a person reads.
 const KEY = 'a-fixture-value-that-is-not-a-licence-key'
 const SECRET = 'a-fixture-value-that-is-not-the-renewal-secret'
+// The second workspace's, because a reveal rotates the secret and answers once
+// per workspace per day (P3.2): a screen that kept only the last one would
+// throw away the other workspace's only copy of its new key.
+const SECOND_KEY = 'another-fixture-value-that-is-not-a-licence-key'
+const SECOND_SECRET = 'another-fixture-value-that-is-not-the-renewal-secret'
 const LICENCE = 'a-fixture-value-that-is-not-a-licence-file'
+
+const REVEALS: Record<string, { key: string; renewal_secret: string }> = {
+  ws_example: { key: KEY, renewal_secret: SECRET },
+  ws_second: { key: SECOND_KEY, renewal_secret: SECOND_SECRET },
+}
 
 function unbound(): Workspace {
   return {
@@ -57,6 +70,10 @@ function unbound(): Workspace {
 
 function bound(): Workspace {
   return { ...unbound(), project_id: 'example-portal', bound_at: BOUND_AT }
+}
+
+function second(): Workspace {
+  return { ...bound(), id: 'ws_second', name: 'Second portal', project_id: 'second-portal' }
 }
 
 function paid(): Entitlement {
@@ -77,6 +94,10 @@ function paid(): Entitlement {
     bound_at: null,
     rebindable_at: null,
   }
+}
+
+function secondPaid(): Entitlement {
+  return { ...paid(), id: 'ent_2', workspace_id: 'ws_second' }
 }
 
 interface Portal {
@@ -127,14 +148,14 @@ function portal(state: Portal, refusals: Record<string, Refusal> = {}) {
 }
 
 function answer(state: Portal, method: string, path: string, body: unknown): unknown {
-  const route = new URL(path, 'https://app.fugaro.dev').pathname
-  if (method === 'GET' && route === '/api/workspaces') {
+  const pathname = new URL(path, 'https://app.fugaro.dev').pathname
+  if (method === 'GET' && pathname === '/api/workspaces') {
     return { workspaces: state.workspaces }
   }
-  if (method === 'GET' && route === '/api/entitlements') {
+  if (method === 'GET' && pathname === '/api/entitlements') {
     return { entitlements: state.entitlements }
   }
-  if (method === 'POST' && route === '/api/workspaces/bind') {
+  if (method === 'POST' && pathname === '/api/workspaces/bind') {
     const bind = body as WorkspaceBind
     for (const workspace of state.workspaces) {
       if (workspace.entitlement_id === bind.entitlement_id) {
@@ -149,18 +170,31 @@ function answer(state: Portal, method: string, path: string, body: unknown): unk
     }
     return undefined
   }
-  if (method === 'POST' && route === '/api/keys/reveal') {
-    return { key_id: 'key_1', key: KEY, renewal_secret: SECRET, paid_through: '2026-03-10T11:00:00Z' }
+  if (method === 'POST' && pathname === '/api/keys/reveal') {
+    const reveal = body as { workspace_id: string }
+    const revealed = REVEALS[reveal.workspace_id]
+    if (revealed === undefined) {
+      throw new ApiError(404, {
+        code: 'not_found',
+        message: `This suite has no key for ${reveal.workspace_id}.`,
+      })
+    }
+    return {
+      key_id: `key_${reveal.workspace_id}`,
+      key: revealed.key,
+      renewal_secret: revealed.renewal_secret,
+      paid_through: '2026-03-10T11:00:00Z',
+    }
   }
-  if (method === 'GET' && route === '/api/keys/licence') {
+  if (method === 'GET' && pathname === '/api/keys/licence') {
     return { key_id: 'key_1', licence: LICENCE, paid_through: '2026-03-10T11:00:00Z' }
   }
-  if (method === 'POST' && (route === '/api/trial' || route === '/api/opensource')) {
+  if (method === 'POST' && (pathname === '/api/trial' || pathname === '/api/opensource')) {
     return undefined
   }
   throw new ApiError(404, {
     code: 'not_found',
-    message: `This suite has no route for ${method} ${route}.`,
+    message: `This suite has no route for ${method} ${pathname}.`,
   })
 }
 
@@ -215,6 +249,140 @@ function Return() {
 function card(name: string): HTMLElement {
   return screen.getByRole('region', { name })
 }
+
+interface WireCall {
+  url: string
+  method: string
+  headers: Record<string, string>
+}
+
+/** A response the client can read, without a real `fetch` behind it. */
+function reply(status: number, body: unknown): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: () => Promise.resolve(body),
+  } as unknown as Response
+}
+
+/**
+ * The transport the route's *own* client is built over. The suite's other cases
+ * hand the screen an `ApiClient`; the route makes its own from the session, so
+ * what a route case has to watch is `fetch` itself.
+ *
+ * A request with no bearer token is refused with 401, which is what the API
+ * does. That is the whole point of the two cases below: the answer to a request
+ * made before the session was restored is a refusal, and a screen that showed
+ * it would be showing a person a wall for something that was only slow.
+ */
+function wire(state: Portal): WireCall[] {
+  const calls: WireCall[] = []
+  const fetch = ((url: string, init: RequestInit = {}) => {
+    const headers = (init.headers ?? {}) as Record<string, string>
+    const method = init.method ?? 'GET'
+    calls.push({ url, method, headers })
+    if (headers.Authorization === undefined) {
+      return Promise.resolve(
+        reply(401, { error: { code: 'unauthenticated', message: 'Sign in to continue.' } }),
+      )
+    }
+    const body = typeof init.body === 'string' ? JSON.parse(init.body) : undefined
+    return Promise.resolve(reply(200, answer(state, method, url, body)))
+  }) as unknown as typeof globalThis.fetch
+  vi.spyOn(globalThis, 'fetch').mockImplementation(fetch)
+  return calls
+}
+
+/**
+ * A session that answers when the test says so, which is what a full page load
+ * is: Firebase restores `currentUser` asynchronously, so the first render
+ * happens with nobody signed in and `idToken()` answers null until it does
+ * (`src/auth/firebase.ts`).
+ */
+function pending(token: string) {
+  const person: SignedInUser = {
+    uid: 'uid_example',
+    email: 'person@example.com',
+    provider: 'google.com',
+    authTime: 1,
+  }
+  let current: SignedInUser | null = null
+  let answer: ((user: SignedInUser | null) => void) | null = null
+  const port: AuthPort = {
+    watch: (onUser) => {
+      answer = onUser
+      return () => {
+        answer = null
+      }
+    },
+    idToken: () => Promise.resolve(current === null ? null : token),
+    signIn: () => Promise.resolve(),
+    sendSignInLink: () => Promise.resolve(),
+    isSignInLink: () => false,
+    completeSignInLink: () => Promise.resolve(),
+    signOut: () => Promise.resolve(),
+  }
+  function restore(user: SignedInUser | null): void {
+    current = user
+    act(() => {
+      answer?.(user)
+    })
+  }
+  return {
+    port,
+    signedIn: () => restore(person),
+    signedOut: () => restore(null),
+  }
+}
+
+/** The route itself, mounted the way `src/app.tsx` mounts it. */
+function showRoute(session: ReturnType<typeof pending>): void {
+  render(
+    <SessionProvider port={session.port}>
+      <MemoryRouter initialEntries={['/workspaces']}>
+        <Routes>
+          <Route path={route.path} element={route.element} />
+          <Route path="/signin" element={<p>the sign-in screen</p>} />
+        </Routes>
+      </MemoryRouter>
+    </SessionProvider>,
+  )
+}
+
+describe('the workspace route', () => {
+  it('mounts the screen only once it knows who is signed in', async () => {
+    const session = pending('a-fixture-id-token')
+    const calls = wire({ workspaces: [bound()], entitlements: [paid()] })
+    showRoute(session)
+
+    // Nothing may be asked for while the session is still being restored: a
+    // request without the token is one the API refuses, and the screen's read
+    // runs once over a client that never changes, so that refusal would be
+    // what the person is left looking at.
+    await act(async () => {})
+    expect(calls).toHaveLength(0)
+
+    session.signedIn()
+
+    const workspace = await screen.findByRole('region', { name: 'Example portal' })
+    expect(within(workspace).getByText('example-portal')).toBeDefined()
+    expect(calls.map((call) => call.url)).toEqual(['/api/workspaces', '/api/entitlements'])
+    for (const call of calls) {
+      expect(call.headers.Authorization).toBe('Bearer a-fixture-id-token')
+    }
+  })
+
+  it('sends a visitor with no session to the sign-in screen', async () => {
+    const session = pending('a-fixture-id-token')
+    const calls = wire({ workspaces: [bound()], entitlements: [paid()] })
+    showRoute(session)
+
+    session.signedOut()
+
+    expect(await screen.findByText('the sign-in screen')).toBeDefined()
+    expect(calls).toHaveLength(0)
+  })
+})
 
 describe('the workspace screen', () => {
   it('shows a workspace’s licence, its seats and its renewal date', async () => {
@@ -335,6 +503,33 @@ describe('the workspace screen', () => {
     expect(screen.queryByText(KEY)).toBeNull()
     expect(screen.queryByText(SECRET)).toBeNull()
     expect(calls.filter((call) => call.path === '/api/keys/reveal')).toHaveLength(1)
+  })
+
+  it('keeps each workspace’s revealed key on its own card', async () => {
+    const { client } = portal({
+      workspaces: [bound(), second()],
+      entitlements: [paid(), secondPaid()],
+    })
+    show(client)
+
+    const first = await screen.findByRole('region', { name: 'Example portal' })
+    fireEvent.click(within(first).getByRole('button', { name: 'Reveal the key' }))
+    expect(await within(first).findByText(KEY)).toBeDefined()
+
+    const other = card('Second portal')
+    fireEvent.click(within(other).getByRole('button', { name: 'Reveal the key' }))
+    expect(await within(other).findByText(SECOND_KEY)).toBeDefined()
+
+    // A reveal rotates the secret and answers once per workspace per day (P3.2),
+    // so the first workspace's bundle is the only copy of its new key there
+    // will be until tomorrow: revealing the second must not take it off the
+    // screen, and each key has to be on the card of the workspace it belongs to.
+    expect(within(card('Example portal')).getByText(KEY)).toBeDefined()
+    expect(within(card('Example portal')).getByText(SECRET)).toBeDefined()
+    expect(within(card('Second portal')).getByText(SECOND_SECRET)).toBeDefined()
+    expect(
+      within(card('Second portal')).getByRole('heading', { name: 'The key for Second portal' }),
+    ).toBeDefined()
   })
 
   it('copies the key it showed', async () => {
