@@ -1349,6 +1349,23 @@ func TestSharedCodingCallerRefusedForARepositoryOutsideItsProfile(t *testing.T) 
 // account it lists — that rule is about the token's reach and says nothing
 // about the project's enrollment, which is the gate this document narrows.
 func testPolicyDocProfileWiderThanTheProject() string {
+	return testPolicyDocProfilesNameBoth(`["` + testRepo + `"]`)
+}
+
+// testPolicyDocTheProjectEnrollsBothRepositories is the same document with the
+// project's own list as wide as the profiles': the state in which
+// projectpolicy.Admits says yes to the second repository, so the only thing
+// left that can refuse a shared caller for it is the row its job was deployed
+// over (SharedJobAccountFor carries the list as it stood when the job was
+// deployed, and nothing widens it when the published profile grows).
+func testPolicyDocTheProjectEnrollsBothRepositories() string {
+	return testPolicyDocProfilesNameBoth(`["` + testRepo + `", "` + testOtherRepo + `"]`)
+}
+
+// testPolicyDocProfilesNameBoth is the document the two policy tests are told
+// apart by: both profiles list BOTH repositories, and the project's own
+// allow_repos is the one axis the caller sets — one repository, or both.
+func testPolicyDocProfilesNameBoth(project string) string {
 	both := `["` + testRepo + `", "` + testOtherRepo + `"]`
 	body := `{"provider": "github", "cpu": 2, "memory": "8Gi", "timeout_class": "6h",
 			"allow_repos": ` + both + `,
@@ -1360,7 +1377,7 @@ func testPolicyDocProfileWiderThanTheProject() string {
 	return `{
 		"version": 5,
 		"budget": ` + testBudgetDoc + `,
-		"allow_repos": ["` + testRepo + `"],
+		"allow_repos": ` + project + `,
 		"accounts": {
 			"default": {"allow_repos": ` + both + `},
 			"` + testAccount + `": {"allow_repos": ` + both + `}
@@ -1450,6 +1467,86 @@ func TestSharedCodingCallerRefusedForARepositoryTheProjectDenies(t *testing.T) {
 		}
 		if n := gh.count(); n != 0 {
 			t.Errorf("GitHub saw %d requests, want none: no installation token is minted for a repository the project denies", n)
+		}
+		if lines := parseAuditLines(t, m.audit.String()); len(lines) != 1 {
+			t.Fatalf("the refusal wrote %d audit lines, want exactly one: %s", len(lines), m.audit.String())
+		}
+	})
+}
+
+// TestSharedCodingCallerRefusedForARepositoryTheRowDoesNotName: the row is the
+// pairing's OTHER gate, and this is the state in which only the row can refuse.
+//
+// The row is the repositories the calling job was DEPLOYED for
+// (SharedJobAccountFor writes the published profile's allow_repos into it), and
+// a published profile is a document an owner edits: the live profile and the
+// project's enrollment may have been widened since. projectpolicy.Admits then
+// answers yes for a repository the row never named, so a pairing held to the
+// project's verdict alone would serve this job — which was never deployed for
+// that repository — the GitHub write token and the project's model credential
+// over it. The row is what says the job's own reach, and both gates are read.
+//
+// The fixture asserts its own premise: the live policy admits the second
+// repository, so the refusal below is the row's and not the project's, on the
+// model path and on the mint alike.
+func TestSharedCodingCallerRefusedForARepositoryTheRowDoesNotName(t *testing.T) {
+	other := testSlug(t, testOtherRepoPath)
+	s := newSharedCodingSvc(t, func(s *svc, cfg *Config) {
+		doc := decodeTestPolicy(t, testPolicyDocTheProjectEnrollsBothRepositories())
+		s.policy.shared = doc
+		// The row as a deployment derived it: the profile's list as it stood
+		// when the job was deployed, which names the fixture's repository alone.
+		cfg.SharedAccounts = []SharedJobAccount{{
+			Email:   testSharedSA,
+			Profile: sharedCodingProfile,
+			Repos:   []string{testRepo},
+		}}
+		if admits, err := doc.Admits(sharedCodingProfile, testOtherRepo); err != nil || !admits {
+			t.Fatalf("the fixture's policy does not admit the second repository (%v, %v): the refusal below would be the project's, and this test would pin the other gate", admits, err)
+		}
+	})
+	resp, body := s.callTokens(t, callBody("shared-row-names-one-repo"), s.sharedRunTokenOf(other), s.sharedJobToken(), s.job)
+	if resp.StatusCode != StatusUnverified {
+		t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnverified, body)
+	}
+	got := refusal(t, resp.StatusCode, body)
+	if got.Error != ErrorUnverifiedRunIdentity {
+		t.Errorf("the refusal is %q, want %q", got.Error, ErrorUnverifiedRunIdentity)
+	}
+	if !strings.Contains(got.Message, "bound to") {
+		t.Errorf("the refusal is %q, want it to name the calling job's own binding: the live policy admits this repository", got.Message)
+	}
+	if n := s.up.Count(); n != 0 {
+		t.Errorf("the upstream saw %d requests, want none: the caller was refused before a credential was chosen", n)
+	}
+	if n := s.src.readCount(); n != 0 {
+		t.Errorf("the bundle was read %d times, want none: the pairing comes first", n)
+	}
+	if lines := parseAuditLines(t, s.audit.String()); len(lines) != 1 {
+		t.Fatalf("the refusal wrote %d audit lines, want exactly one: %s", len(lines), s.audit.String())
+	}
+
+	t.Run("the GitHub mint", func(t *testing.T) {
+		gh := newGHFake(t)
+		m := newSharedCodingSvc(t, func(s *svc, cfg *Config) {
+			cfg.Client = &http.Client{Transport: ghTransport{srv: gh.srv}}
+			s.src.docs = [][]byte{mintBundleDoc(t)}
+			s.policy.shared = decodeTestPolicy(t, testPolicyDocTheProjectEnrollsBothRepositories())
+			cfg.SharedAccounts = []SharedJobAccount{{
+				Email:   testSharedSA,
+				Profile: sharedCodingProfile,
+				Repos:   []string{testRepo},
+			}}
+		})
+		resp, body := m.mintTokens(t, mintBody(testAppID), m.sharedRunTokenOf(other), m.sharedJobToken(), m.job)
+		if resp.StatusCode != StatusUnverified {
+			t.Fatalf("the mint answered %d, want %d: %s", resp.StatusCode, StatusUnverified, body)
+		}
+		if got := refusal(t, resp.StatusCode, body); got.Error != ErrorUnverifiedRunIdentity {
+			t.Errorf("the refusal is %q, want %q", got.Error, ErrorUnverifiedRunIdentity)
+		}
+		if n := gh.count(); n != 0 {
+			t.Errorf("GitHub saw %d requests, want none: no installation token is minted for a repository the calling job was not deployed for", n)
 		}
 		if lines := parseAuditLines(t, m.audit.String()); len(lines) != 1 {
 			t.Fatalf("the refusal wrote %d audit lines, want exactly one: %s", len(lines), m.audit.String())
