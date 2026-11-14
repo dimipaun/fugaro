@@ -316,9 +316,12 @@ the credentials service, and the other way round.
 
 A run's five **crafts** — coder, first-line review, senior review, security review and the escalation
 ladder's merge judge — each name a model and an **access**, the credential or pool their calls go out
-on, and the two halves inherit separately: the first-line review follows the coder, and the security
-review and the merge judge follow the senior review
-(§"The senior reviewer on a provider route" above is that rule for the reviewer's model).
+on, and the two halves inherit separately: the first-line review and the merge judge follow the coder,
+and the security review follows the senior review
+(§"The senior reviewer on a provider route" above is that rule for the reviewer's model). The judge
+follows the coder because it runs the coder's role slot — the ladder's grade is written there — so a
+craft that took the senior review's access would be served by a pool judged against a model the judge
+does not run.
 `fugaro craft ls` prints, per craft, the model and the access it resolves to and where each came
 from — offline. A craft's access is written in the repository's own `fugaro.yaml`
 (`agent.crafts.<craft>.access`) and **only** there: a project sets a craft's model for every

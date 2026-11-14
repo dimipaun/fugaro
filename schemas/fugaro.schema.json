@@ -79,7 +79,7 @@
             "review": { "$ref": "#/$defs/craft", "description": "review, level 1" },
             "senior-review": { "$ref": "#/$defs/craft", "description": "senior review, level 2" },
             "security-review": { "$ref": "#/$defs/craft", "description": "security review, level 3; setting it does not turn the level on" },
-            "merge-judge": { "$ref": "#/$defs/craft", "description": "the merge judge, the escalation ladder's rung 3 (docs/outer-loop-escalation E6); it follows the senior review and answers whether a handed-over pull request may merge" }
+            "merge-judge": { "$ref": "#/$defs/craft", "description": "the merge judge, the escalation ladder's rung 3 (docs/outer-loop-escalation E6); it follows the coder, whose role slot its stage runs, and answers whether a handed-over pull request may merge" }
           }
         },
         "max_output_tokens": {

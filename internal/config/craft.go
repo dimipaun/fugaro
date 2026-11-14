@@ -33,9 +33,15 @@ const (
 	// (F14).
 	CraftSecurityReview = "security-review"
 	// CraftMergeJudge is the merge judge (E6, D2031): the stage a judge run
-	// charges its one call to. It follows the senior review, which is the
-	// second opinion a run already needs, so an installation that sets nothing
-	// for it runs the judge where its senior reviews run.
+	// charges its one call to. It follows the coder, and both halves of a craft
+	// have to answer for one model: the judge stage runs the coder's role slot
+	// (config.StageRole knows no merge_judge case, and the ladder's grade is
+	// written into the coder's slot, E4), so a judge that took the senior
+	// review's access while running the coder's model would be served by a pool
+	// whose members are judged against a model it does not run (F23,
+	// poolMember) — a project whose senior review goes out on a pool of its own
+	// would then refuse every judge stage, and a refused judge is a veto on
+	// every head.
 	CraftMergeJudge = "merge-judge"
 )
 
@@ -43,14 +49,14 @@ const (
 var CraftNames = []string{CraftCoder, CraftReview, CraftSeniorReview, CraftSecurityReview, CraftMergeJudge}
 
 // craftParent is the craft a craft follows when it sets no model or access of
-// its own: the first-line review follows the coder and the security review
-// follows the senior review. The coder and the senior review follow nobody —
-// the spec makes both required — and a craft no key of this table names is no
-// craft at all, so an unknown name inherits nothing.
+// its own: the first-line review and the merge judge follow the coder, and the
+// security review follows the senior review. The coder and the senior review
+// follow nobody — the spec makes both required — and a craft no key of this
+// table names is no craft at all, so an unknown name inherits nothing.
 var craftParent = map[string]string{
 	CraftReview:         CraftCoder,
 	CraftSecurityReview: CraftSeniorReview,
-	CraftMergeJudge:     CraftSeniorReview,
+	CraftMergeJudge:     CraftCoder,
 }
 
 // CraftParent is the craft name follows: the craft whose model and access it

@@ -162,9 +162,9 @@ func Resolve(layers []Layer, subscriptionSpread bool) (map[string]Effective, []c
 
 	// eff answers one craft, resolving the craft it follows first: a half the
 	// craft sets nowhere is that craft's answer, already resolved itself. The
-	// chain is config's own and short — the review follows the coder, the
-	// security review the senior review — and a craft that follows nobody ends
-	// it.
+	// chain is config's own and short — the first-line review and the merge
+	// judge follow the coder, the security review the senior review — and a
+	// craft that follows nobody ends it.
 	var eff func(string) Effective
 	eff = func(name string) Effective {
 		e := Effective{ModelFrom: SourceDefault, AccessFrom: SourceDefault}

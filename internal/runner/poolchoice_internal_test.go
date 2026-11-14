@@ -9,6 +9,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/recipe"
 )
 
 // The two placeholders the pool tests mount as provider keys. Neither is a
@@ -30,6 +31,11 @@ const poolCoderModel = "anthropic/claude-sonnet-5.5"
 // subscription or the built-in vertex is judged against.
 const poolDirectModel = "claude-sonnet-5-5"
 
+// poolOtherModel is what every provider but the primary claims (poolProviders):
+// the senior review's own model in a mixed project, and so the model its craft's
+// pool is judged against.
+const poolOtherModel = "meta/llama-4"
+
 // poolSpec is the run a pool test needs: the craft's access as the owner's node
 // publishes it, the credentials and pools beside it, the providers this job
 // holds, and the subscription switch.
@@ -39,6 +45,13 @@ type poolSpec struct {
 	creds     []config.Credential
 	providers map[string]config.ModelProvider
 	env       []string
+	// senior is the senior review craft's own access, "" for a craft that sets
+	// none: a test that needs the judge's craft told apart from the senior
+	// review's sets both.
+	senior string
+	// judge is the merge judge craft's own access, "" for a craft that sets none
+	// and follows the coder (config.CraftParent).
+	judge string
 	// accounts are the Claude accounts the fixture policy admits for the
 	// fixture repository, which is the list a pool's subscription members are
 	// judged against (F10, stageAccountCandidates).
@@ -78,6 +91,12 @@ func poolRun(t *testing.T, s poolSpec) (*run, *bytes.Buffer) {
 		accounts[name] = projectpolicy.Account{AllowRepos: []string{"github/acme/app"}}
 	}
 	crafts := config.Crafts{Coder: config.Craft{Access: s.access}}
+	if s.senior != "" {
+		crafts.SeniorReview = config.Craft{Access: s.senior}
+	}
+	if s.judge != "" {
+		crafts.MergeJudge = config.Craft{Access: s.judge}
+	}
 	p := &projectpolicy.Policy{
 		Crafts: &crafts, CraftCredentials: s.creds, CraftPools: s.pools, Accounts: accounts,
 	}
@@ -108,7 +127,7 @@ func poolProviders(names ...string) map[string]config.ModelProvider {
 		if name == "or-primary" {
 			p.Models = []string{poolCoderModel}
 		} else {
-			p.Models = []string{"meta/llama-4"}
+			p.Models = []string{poolOtherModel}
 		}
 		out[name] = p
 	}
@@ -185,6 +204,106 @@ func TestStageCraftFollowsF13(t *testing.T) {
 			t.Errorf("the run's stage %q maps to no craft", stage)
 		}
 	}
+}
+
+// TestJudgeCraftFollowsTheCoder pins the craft the judge's two halves come from
+// (E6): the judge stage runs the coder's role slot — the ladder's grade is
+// written there (E4, applyGrade) — so its access is the coder's too, and never
+// the senior review's.
+//
+// The configuration below is the one that tells the two apart, and the one a
+// mixed project is in: the coder runs a provider's model and the senior review's
+// craft goes out on a pool of a provider that serves another model. A judge that
+// followed the senior review would take that pool and then be judged against the
+// coder's model (poolMember, F23), so checkPoolModels would refuse the run at
+// bootstrap and checkStagePool would refuse the stage — and a judge stage that
+// does not run is a veto on every head (G1), for a reason that has nothing to do
+// with the change under review.
+func TestJudgeCraftFollowsTheCoder(t *testing.T) {
+	ctx := context.Background()
+	r, _ := poolRun(t, poolSpec{
+		access: "or-main", senior: "review-pool",
+		pools:     []config.Pool{{Name: "review-pool", Members: []string{"or-foreign"}}},
+		creds:     poolCreds("or-main", "or-foreign"),
+		providers: poolProviders("or-primary", "or-foreign"),
+		env:       poolEnv("or-primary", "or-foreign"),
+	})
+	// The senior review runs its own model on that pool, which is what makes the
+	// senior review's craft a coherent one for this run to be served by.
+	r.cfg.Agent.Models.Reviewer = poolOtherModel
+	// The run's recipe holds the judge step, so the walk judges its craft too
+	// (poolStages): the assertions below are about which craft that is.
+	r.rcp = judgeRecipe()
+
+	eff := r.stageCrafts(ctx)
+	if got := eff[config.CraftSeniorReview].Access; got != "review-pool" {
+		t.Fatalf("the fixture's senior review goes out on %q, want its own pool: the test tells the two crafts apart by it", got)
+	}
+	if got := eff[config.CraftMergeJudge].Access; got != "or-main" {
+		t.Errorf("the merge judge goes out on %q, want the coder's access: the judge stage runs the coder's model, so a craft taking another craft's access is judged against a model it does not run (F23)", got)
+	}
+	if _, reason := r.checkStagePool(ctx, stageMergeJudge); reason != "" {
+		t.Errorf("the judge's own stage was refused: %s", reason)
+	}
+	if err := r.checkPoolModels(ctx); err != nil {
+		t.Errorf("the run was refused at bootstrap over the judge's craft: %v", err)
+	}
+}
+
+// TestPoolJudgedForTheJudgeStage: the judge's stage is judged by the same two
+// checks as the run's own stages (E6), so a judge run whose craft names a pool
+// that cannot serve the judge's model — or one holding the built-in vertex under
+// enforce — is refused at bootstrap rather than when its one stage starts, which
+// in a judge run is the verdict's absence and so a veto on the head (G1).
+//
+// The stage is judged where the run's recipe holds the judge step, and nowhere
+// else: a repository may name an access for a craft its recipes never reach, and
+// a refusal over a stage this run does not open would stop runs that never
+// judge.
+func TestPoolJudgedForTheJudgeStage(t *testing.T) {
+	ctx := context.Background()
+	// The merge judge's own access, and only its: the coder goes out on a
+	// credential, so no other stage of this run names this pool.
+	spec := poolSpec{access: "or-main", judge: "judge-pool",
+		pools:     []config.Pool{{Name: "judge-pool", Members: []string{"or-foreign"}}},
+		creds:     poolCreds("or-main", "or-foreign"),
+		providers: poolProviders("or-primary", "or-foreign"),
+		env:       poolEnv("or-primary", "or-foreign")}
+
+	judge, _ := poolRun(t, spec)
+	judge.rcp = judgeRecipe()
+	err := judge.checkPoolModels(ctx)
+	if err == nil || !strings.Contains(err.Error(), "crafts.merge-judge.access") || !strings.Contains(err.Error(), poolCoderModel) {
+		t.Fatalf("a judge run whose craft names a pool that cannot serve the judge's model was admitted at bootstrap, got %v", err)
+	}
+	if _, reason := judge.checkStagePool(ctx, stageMergeJudge); reason == "" {
+		t.Error("the judge's stage is served by a member the model check refuses")
+	}
+
+	// The negative control: a run whose recipe holds no judge step never opens
+	// the stage, so the same craft is not judged and the run is admitted.
+	ordinary, _ := poolRun(t, spec)
+	if err := ordinary.checkPoolModels(ctx); err != nil {
+		t.Errorf("a run that never opens the judge stage was refused over its craft: %v", err)
+	}
+
+	// D1626's half: a judge craft on a pool holding the built-in credential
+	// cannot be capped by the gateway, so under enforce it is refused here.
+	vertex, _ := poolRun(t, poolSpec{access: "or-main", judge: "judge-vertex",
+		pools:     []config.Pool{{Name: "judge-vertex", Members: []string{config.CredentialVertex}}},
+		creds:     poolCreds("or-main"),
+		providers: poolProviders("or-primary"), env: poolEnv("or-primary")})
+	vertex.rcp = judgeRecipe()
+	reason := vertex.vertexPoolRefusal(ctx)
+	if !strings.Contains(reason, "judge-vertex") {
+		t.Errorf("a judge craft on a pool holding the built-in vertex was not refused under enforce, got %q", reason)
+	}
+}
+
+// judgeRecipe is a judge run's recipe as the pool walk reads it: the one step a
+// mode: evaluate run of rung 3 holds (recipe.UsesMergeJudge).
+func judgeRecipe() *recipe.Recipe {
+	return &recipe.Recipe{Steps: []recipe.Step{{Kind: recipe.StepMergeJudge}}}
 }
 
 // TestPoolServesTheMemberItsModelNames pins what this path does with a pool: it

@@ -260,7 +260,7 @@ Reviewer tier is **standard** unless stated. Every task's tests are targeted; no
 
 ### E6. The merge judge
 
-- **Files:** `internal/config/craft.go` (craft `merge-judge`, following `senior-review`), `internal/runner/mergejudge.go` (new),
+- **Files:** `internal/config/craft.go` (craft `merge-judge`, following `coder`: the judge stage runs the coder's role slot, so both halves of its craft come from the coder), `internal/runner/mergejudge.go` (new),
   `internal/runner/prompts.go` (the prompt: only the diff, the open findings and the fundamentals checklist, never the
   reviewer's fix framing), `schemas/merge-judge.schema.json` (new), `schemas/result.schema.json` (an optional `merge_judge`
   block), `internal/recipe/catalog/merge-judge.yaml` (new), `internal/recipe/stages.go` (a read-only judge stage), `schemas/schemas_test.go` (the new schema), `internal/runner/routing.go` (the judge's grade; E4 wrote it a level earlier), tests.

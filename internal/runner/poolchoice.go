@@ -10,6 +10,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/craft"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/recipe"
 )
 
 // The run's pools (docs/model-crafts/spec.md §2, reconciliation F5, F8, F10,
@@ -369,6 +370,29 @@ func poolMemberServesNothing(model string) string {
 	return fmt.Sprintf("it does not serve %s as written, and a pool is admitted only if every member serves the model the stage runs", model)
 }
 
+// poolStages are the stages the pool checks below are asked about: the run's
+// own (config.RunStages) and, where this run's recipe holds the judge step, the
+// merge judge's (E6).
+//
+// The judge stage is not in config.RunStages, and it is not added there: that
+// list is also the published policy's stage-account vocabulary
+// (config.RunStages' own note), and the judge has no account in it. It is still
+// a stage this run may open, so a walk that read the list alone would leave the
+// judge's craft unjudged — a pool that cannot serve the judge's model, or a
+// Vertex pool under enforce, would be admitted at bootstrap and refused when the
+// stage starts, which in a judge run is the verdict's absence and so a veto on
+// the head for a reason that has nothing to do with it (G1).
+//
+// The recipe is what says the judge runs, and not the craft's own access: a
+// repository may name an access for a craft its recipes never reach, and a
+// refusal over a stage this run does not open would stop runs that never judge.
+func (r *run) poolStages() []string {
+	if r.rcp != nil && recipe.UsesMergeJudge(r.rcp) {
+		return append(slices.Clone(config.RunStages), stageMergeJudge)
+	}
+	return config.RunStages
+}
+
 // vertexPoolRefusal is D1626's other half, asked once per run before any
 // stage: a pool one of the run's crafts goes out on that lists the built-in
 // Vertex credential cannot be capped by the gateway — those calls are the
@@ -377,7 +401,7 @@ func poolMemberServesNothing(model string) string {
 // own words plus the reason (VertexPoolRefusal). "" is a run whose crafts name
 // no such pool, which is every run that names no pool at all.
 func (r *run) vertexPoolRefusal(ctx context.Context) string {
-	for _, stage := range config.RunStages {
+	for _, stage := range r.poolStages() {
 		pool, creds, ok := r.stagePool(ctx, stage)
 		if !ok {
 			continue
@@ -405,7 +429,7 @@ func (r *run) vertexPoolRefusal(ctx context.Context) string {
 func (r *run) checkPoolModels(ctx context.Context) error {
 	judged := map[string]bool{}
 	var ps []config.Problem
-	for _, stage := range config.RunStages {
+	for _, stage := range r.poolStages() {
 		name := stageCraft(stage)
 		if name == "" {
 			continue
