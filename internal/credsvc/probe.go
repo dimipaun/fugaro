@@ -777,10 +777,6 @@ func (l *BundleLoader) Scrub(s string) string {
 	return s
 }
 
-// ---------------------------------------------------------------------------
-// A Bitbucket token's probe (T6, D2356, R14)
-// ---------------------------------------------------------------------------
-
 // The probe's own bounds for a Bitbucket token. bitbucketCountBudget is how long
 // the best-effort write of a token's request count may take; the token's own
 // probe reuses the model probe's two budgets (probeBudget, probeRecordBudget)
