@@ -873,6 +873,7 @@ probe account carries predefined grants only).
 | 520 | A text-only coder reads a screenshot, on the vision model ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 520** and task **V8**; **V1**'s `agent.models.vision`, **V2**'s `model_prices.*.image_tokens`, **V7**'s rewrite of the coder role, and **D2016** — which is why the state this measures is the coder priced **without** an image rate and not the plan's "with"): the sandbox repository's coder is priced without an image rate and `agent.models.vision` names a model that can read one, and one run whose task names a console `__screenshots__` PNG (the issue's own case, run `20261107-104613-b2af`) passes `implement` — and `fix`, where the recipe runs one — reaches its own `result.json`, and there every coder-role stage timing names the **vision** model's ID while `cost.model_by` carries that same model, so the split the issue is about is read from the record and not from the configuration; `fugaro diagnose <run> --json` prints the same split through the command an owner reads a run with | See "Check 520" below; `bash scripts/live-checks/check520.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check520_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | ONE sandbox run and what its task costs — the model spend of its coder-role stages, on the sandbox's own budget — plus the pull request that run opens: **billable, and `--yes` is required** before anything is launched. Every other call is a read (doctor, `models ls`, the run record, `diagnose`), and `CHECK520_MAX_MODEL_USD` turns the run's own figure into a criterion when you set it. The run's pull request and branch are left open for you to close. **OWNER-RUN, NOT RUN.** |
 | 521 | The early refusal, and the sentence an owner acts on ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 521** and task **V8**; **V5**'s bootstrap refusal — "the coder can't read an image the task names" — and **D2005**, **D2006** and **D2001**): a repository whose coder is priced without an image rate and with **no** `agent.models.vision`, and a task whose text names a `.png`: the run is refused at **bootstrap**, before its first stage, so no stage's work is paid for and thrown away — the failure the refusal exists to remove; its record's `failure_class` is `config_invalid`, its `reason` names the slot to set and the price member that gives that slot's model an image rate, its stage list is **empty** and its cost is **zero** | See "Check 521" below; `bash scripts/live-checks/check521.sh --sandbox <a sandbox repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check521_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | **NOTHING billable and no model call**: the run is refused at bootstrap, before its first stage, so no stage's work is paid for and the budget is not touched — which is why this check needs no `--yes`. It does start one Cloud Run job execution, and **nothing it launches outlives it**: a run that has not ended within `CHECK521_RUN_TIMEOUT_SECONDS` is cancelled with `fugaro cancel --now`, from the step that gives up on it and from the script's own exit trap. **OWNER-RUN, NOT RUN.** |
 | 292 | A catalog entry whose source names a build `context:` is built with the repository's files in it ([`docs/catalog-build-context/`](catalog-build-context/implementation-plan.md) §6, its **Check 292** and task **CB5**; that folder's **F22**, **F29**, **F30**, **F32** and **F33**, and **D1402**, **D1403**, **D1408** and **D1409**; the amendment it folds into is [`docs/project-image-catalog/context-design.md`](project-image-catalog/context-design.md), its §A5, §A6, §C3, §C4, §C5 and the fold-in at §11): one entry built from a repository's Dockerfile in a **subdirectory**, whose `COPY` reaches a file of the repository — the build the catalog could not run before this work — read back four ways: the built image **contains the copied file**, the record names **one** commit (`source_commit` and `context_commit` the same, and the image's `org.opencontainers.image.revision` that commit), the staged context **fires** the nightly decision with the `catalog-context` reason and the rebuild it submits is pinned to the staged commit, and after that rebuild the same entry decides **without** that reason. **What the plan's own step 4 cannot be run as written is the point of the section below:** the trigger's subject is the digest the operator's own copy **staged**, not the branch, so a pushed commit fires nothing by itself — the check is written against the code and says so | See "Check 292" below; **you** run it, on the **sandbox installation and the sandbox repository only, never `belong`**, from the sandbox repository's checkout, and **no agent runs any step of it** (there is **no script**: the check is the steps below) | One Cloud Build that runs (`fugaro image build <entry>`), one submitted-and-cancelled before its steps run (the staging that leaves the record behind), and the one rebuild the project's catalog check job submits when the entry fires: **all billable, and the rebuild is the point of the step**. Nothing is granted, no run is launched and no model is called, so there is no run spend. Two commits are pushed to the sandbox repository's branch and reverted (a third when step 5 loses its race with the build it cancels), and the entry, its staged objects, its record, its check state and its image are the check's own — the entry and its objects are removed in the Restore, the image is left in the shared registry (`fugaro image rm` never deletes one). **OWNER-RUN, NOT RUN.** |
+| 210 | A sampled run's shadow publishes nothing ([`docs/model-ab-testing/`](model-ab-testing/implementation-plan.md), its **Check 210** and task **A2.2**; **D550**–**D557**'s sampler — `ab.rate` and its ceiling, the daily cap, the champion's own hash of the run ID — **D554**'s publish mode `none`, and **A2.1**'s tests for the boundary this plan's Global constraints table states, "a challenger never pushes, never opens, updates or comments on a PR"): on the sandbox installation whose published project layer sets `ab.rate: 0.10` with one challenger named and whose repository carries no `ab.rate: 0` opt-out, small sandbox tasks launched until `fugaro runs ls` shows a pair (about ten launches expected at 0.10, the owner stopping at thirty, and **no flag forces a sample**) — and then, of that pair's two arms, exactly one `fugaro/<run-id>` branch on the remote and one pull request, both the champion's: the challenger's own record carries `ab.arm: challenger`, `ab.publish: none`, `ab.challenger` (the model the owner named) with `challenger_source: owner` and `outcome: none`, and **no** branch and **no** pull request, while **both** arms' patch objects are in the bucket — each fact read where it is written rather than from the row that claims it | See "Check 210" below; `bash scripts/live-checks/check210.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check210_test.sh` drives it against fake `fugaro`, `gcloud`, `git` and `gh` only and launches nothing, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project, account or region naming that installation is refused by name, and so is a coding agent's session); **no agent runs any step of it** | Up to **THIRTY sandbox runs** and what their tasks cost — each champion's implement stage and its review rounds, on the sandbox's own budget — plus the branches and pull requests those champions leave: **billable, and `--yes` is required** before anything is launched. Everything else is a read (the layer, `doctor`, both records out of the runs bucket, the remote's branch list, both patch objects, `fugaro ab --json`), and the launches stop at the **first** pair, so a sandbox already sampling at 0.10 costs a fraction of the bound. The teardown is part of the check: every pull request this check's champions opened is closed and every branch they pushed is deleted, each read back. **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -13787,6 +13788,111 @@ built from, and the one a person can take over the log that actually failed on t
 6. **Restore.** Push the sandbox branch back — the commits this check made go with it — remove the entry (`fugaro image rm <name>`; it refuses while a job still runs the entry, which is why step 2 keeps it off every `needs:`) and publish with `fugaro update`, then `fugaro update --repo <the sandbox repository>` so its jobs are back on the config step 1 recorded. The entry's staged objects, its record and its check state are the check's own and live under `builds/`: `gcloud storage rm "gs://<runs bucket>/builds/catalog/<entry>/*"` and `gcloud storage rm "gs://<runs bucket>/builds/<slug>/catalog/<entry>/*"` remove them — the second is the record and the `check.json` beside it, which is where the check's own back-off lives — so the next nightly run has nothing of this entry to decide and no back-off of the check's to read. **Do not remove `builds/image-lock.json`**: that lock is the project's, shared with every other entry, and it is not this check's to delete. The **image** stays in the installation's shared registry: `fugaro image rm` never deletes one, and deleting it is not this check's to do. **FACT:** `fugaro image ls` reads the catalog as step 1 recorded it, and `fugaro doctor` is quiet.
 
 **Paste back:** every `FACT` line above — the entry's `fugaro image ls` line, the built image's reference and digest, the record's `source_commit`, `context_commit`, `context_sha256` and `template_salt`, the image's `org.opencontainers.image.revision`, the check job's two lines for the entry with their `decision` and `reasons`, and the copied file's bytes as the image holds them — and **never a secret and never a token value**: this check prints none, and the one file it reads out of the image is one it wrote. Until this check runs, the feature is built and **unverified live**: the two things no hermetic test can hold are a real provider's tree read at a real commit (the tree read and the digest it produces) and a real Cloud Build carrying a context through the clone step and `docker build --file` — which is exactly what steps 3 to 5 measure. **Never run any step against `belong`**: this is the sandbox installation and the sandbox repository only, and no agent runs any step of it.
+
+## Check 210: a sampled run's shadow publishes nothing (sandbox project and sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **A2.2** of
+[docs/model-ab-testing/implementation-plan.md](model-ab-testing/implementation-plan.md) — its "A2.2
+Check 210" — and **run by you**: nothing below is a claim that a shadow publishes nothing. What it
+measures is a real installation sampling a real pair: small sandbox runs launched with the published
+project layer at `ab.rate: 0.10` and one challenger named, until one of them is sampled. The check is
+`scripts/live-checks/check210.sh` (its sibling test `scripts/live-checks/check210_test.sh` drives it
+against fake `fugaro`, `gcloud`, `git` and `gh` only, and launches nothing), what it starts is **up to
+thirty sandbox runs, which are billable**, and **no agent runs any step of it**: a project, account or
+region naming `belong` is refused by name, and so is a coding agent's session.
+
+**Why it launches at all, and what it may not do.** The plan's own line is that no flag forces a sample:
+a sample is the sampler's hash of the run ID (**D553**), so a flag that steered it would measure a
+different program — which is also why the pair cannot be reached any other way. The check therefore
+launches, as the plan's sentence says, "small sandbox tasks ... until `fugaro runs ls` shows a pair",
+about ten launches expected at 0.10; `--max-launches` **widens the bound** and never steers the roll,
+and thirty is the bound the plan sets. What it must not do is what a check is usually asked to do with
+money: it stops at the **first** pair, and it launches nothing at all once a row above it has failed —
+a launch made on a premise that does not hold is an owner's spend on a reading nobody could grade.
+
+**What it settles.** Every fact at the place it is written, so that no row is the record's own word for
+itself:
+
+- **The release, and the premise.** `fugaro version` at **0.24.0** or later — the release the pair
+  launch ships in, `docs/releases/v0.24.0.md` — and the offline probe `fugaro ab --help`, which names
+  the command's own `--since` flag where a core build answers with **D522**'s stub instead. Then the
+  state every launch below is a reading of: the **published project layer**, whose `ab:` block is read
+  out of the layer's own text by `fugaro config layer --json` — **no command in this release prints an
+  effective `ab.rate`** (`policy.Layer.ABRate` is filled by the launcher and read by the sampler), so
+  the row says in as many words that it is a text read — carrying `rate` at **0.10** (the plan's figure
+  and **D557**'s ceiling, compared numerically so `0.10` and `0.1` are one rate), at least one
+  challenger named (an empty list is the closed reason `no-challenger`, **D556**), and no `ab.rate: 0`
+  opt-out in the sandbox repository's own `fugaro.yaml` (also **D556**, **D557**).
+- **The pair, through the command the plan's sentence names.** The launch's own `fugaro run --json`
+  names the pair it sampled (`pair.id`, `pair.batch`, `pair.challenger`), and `fugaro runs ls --repo
+  <checkout> --batch <the label it carried> --json` is read back as exactly **two** rows, both ended,
+  both carrying that one label — the label is what makes the two rows a pair (**A3.0**), and a third
+  row under it is the pairing a reader cannot take the two arms from. A batch whose rows are keyed to
+  another run (`run` = `<slug>/<run id>`, **one path segment**) is a finding too: the records below are
+  read at the keys those rows carry.
+- **Both records, as you read them.** `runs/<the slug>/<run>/result.json` out of the runs bucket, for
+  each arm, checked against the run id this check launched. The champion's carries `ab.arm: champion`
+  and the pair's id, and publishes exactly as an unsampled run does (its branch on the remote, its pull
+  request number in `pr`). The challenger's is the whole claim: `ab.arm: challenger`, `ab.publish:
+  none` (**D554**), `ab.challenger` naming the model with `challenger_source: owner` (**D556** — the
+  model came from the project layer, not from the repository's own file), `outcome: none`, and **no**
+  branch and **no** pull request.
+- **The forge's own branch list.** `git ls-remote --heads origin 'refs/heads/fugaro/*'` in the sandbox
+  checkout, so "exactly one branch" is read from the remote rather than from the record that claims it:
+  the champion's `fugaro/<run-id>` is there and the challenger's is **not**. A challenger's branch on
+  the remote is the finding this check exists for, and it is reported for what it is — the record's own
+  row above still holds, because the finding is the push and not the document.
+- **Both arms' patch objects.** `patch_object` on each record, listed in the bucket: **A2.1** uploads
+  one per arm, the champion included, and the key is what a later judge reads the pair's two tree diffs
+  from (**D728**).
+- **The pair through the report.** `fugaro ab --json` — the command the release notes name and the one
+  you read pairs with — shows a row whose challenger is the admitted model with at least one pair in
+  it. A pair the launcher made and the report does not show is a pair nobody can act on.
+
+**What a run costs.** Up to **THIRTY sandbox runs** and what their tasks cost — each champion's
+implement stage and its review rounds, on the sandbox's own budget — plus the branches and pull
+requests those champions leave. **Billable, and the check requires `--yes`**: without it the check
+prints the plan, changes nothing and exits. The launches stop at the **first** pair, so a sandbox
+already sampling at 0.10 usually costs a fraction of the bound, and every other call is a read (the
+layer, `doctor`, both records, the remote's branch list, both patch objects, `fugaro ab`). On disk it is
+one scratch directory, removed at the end. Unlike Check 520, the pull requests and branches **are** this
+check's to remove: the `restore` row closes every pull request its champions opened (`gh pr close`) and
+deletes every branch they pushed (`git push --delete`), **each read back afterwards**, so a teardown
+that could not confirm what it removed is a finding rather than a silence. It is idempotent: a pull
+request already closed and a branch already gone are the state it wants.
+
+**Run it:**
+
+```sh
+bash scripts/live-checks/check210.sh --sandbox <a sandbox repository checkout> --dry-run
+bash scripts/live-checks/check210.sh --sandbox <a sandbox repository checkout> --yes
+bash scripts/live-checks/check210.sh --sandbox <a sandbox repository checkout> --yes --max-launches 12
+bash scripts/live-checks/check210.sh --sandbox <a sandbox repository checkout> --yes --task "<the small task>"
+```
+
+`--dry-run` prints what would be read, launched and removed, runs nothing and is the way to check the
+premise before spending anything. A value given as a flag wins over the same value in the environment.
+
+Progress goes to stderr and one `CHECK 210 RESULT` block goes to stdout at the end: paste that whole
+block here and nothing else. The block's last line carries the run's status: **`0`** is every criterion
+that was measured holding; **`1`** is a measured criterion that did not hold, or a guard that stopped
+the run — among them a build older than 0.24.0, a layer with no `ab:` block or at a rate other than
+0.10, no pair within the bound, a challenger that pushed, published or opened something, and a teardown
+that could not close what it opened; **`2`** is the check not being able to measure (a tool missing, the
+checkout not being one, a `--json` document that could not be read, or an arm that had not ended). A key
+the run never reached reads `FAIL — not reached`. The knobs are `CHECK210_DRY_RUN`, `CHECK210_YES`, `CHECK210_KEEP_SCRATCH`,
+`CHECK210_SANDBOX`, `CHECK210_TASK`, `CHECK210_MAX_LAUNCHES` (30), `CHECK210_RELEASE` (0.24.0),
+`CHECK210_SINCE` (1d: the window `fugaro ab` is read over), `CHECK210_REGION` (us-east5),
+`CHECK210_RUN_TIMEOUT_SECONDS` (3600), `CHECK210_POLL_SECONDS` (15), `CHECK210_CLI_TIMEOUT_SECONDS`
+(180), `CHECK210_LAUNCH_TIMEOUT_SECONDS` (600) and `CHECK210_DOCTOR_TIMEOUT_SECONDS` (300).
+
+**What waits on it.** Nothing merges on it: A/B is off until the owner sets `ab.rate` in the project
+layer (the release notes' `### For operators`), and this check is the first reading of a sampled pair
+in the installation it is run on. A failed 210 is a **product** finding rather than a task — a
+challenger that pushed, opened a pull request or carried an outcome is the shadow boundary of **D554**
+not holding, and **A2.1**'s job is where it is fixed. A check that cannot reach a pair inside its bound
+says what the sampler refused (`no-challenger`, `daily-count`, `unrouted`, `unpriced`, `needs-enforce`
+and the rest), which is a reading of the installation's own configuration rather than of the release.
 
 ## Check 230: the author, the committer and the trailers, on GitHub and on Bitbucket (two sandbox repositories carrying `git.author: launcher`, a third with no such key, and their forges; never `belong`; run by you; NOT RUN)
 
