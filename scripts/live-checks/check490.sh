@@ -486,7 +486,7 @@ step_release() {
   v=$(fugaro version 2>/dev/null | head -n 1 || true)
   fact "fugaro-version" PASS "${v:-fugaro version printed nothing}"
   if ! "$FUGARO_BIN" followups --help >/dev/null 2>&1; then feature=no; fi
-  if ! "$FUGARO_BIN" runs ls --help 2>/dev/null | grep -q -- '--debt'; then feature=no; fi
+  if ! { out=$("$FUGARO_BIN" runs ls --help 2>/dev/null || true); grep -q -- '--debt' <<<"$out"; }; then feature=no; fi
   if [ "$feature" = no ]; then
     fact release FAIL "this fugaro has no follow-ups: either 'fugaro followups --help' does not answer or 'fugaro runs ls --help' does not name --debt, so neither the triage block this run is read through nor the command Check 491 runs is in this build. Check 490 needs release ${RELEASE} (the post-review triage work) or later. Run 'fugaro update' at your terminal — that one command is the whole upgrade — and run this check again on the build it leaves you"
     stop "the installed fugaro does not carry the triage work: this check needs release ${RELEASE}"
