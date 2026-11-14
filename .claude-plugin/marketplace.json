@@ -8,7 +8,7 @@
     {
       "name": "fugaro",
       "source": "./plugin",
-      "description": "Eight skills for Fugaro: set a repository up, work with runs, route work between cloud and local, plan parallel work, upgrade a checkout to the installed fugaro, read and record a project's orchestrator state, set up a project's images, and turn a spec into one reviewed documents pull request with a parallel plan. Fugaro runs coding-agent tasks in fleeting cloud containers and always ends with a pull request."
+      "description": "Nine skills for Fugaro: set a repository up, work with runs, route work between cloud and local, plan parallel work, upgrade a checkout to the installed fugaro, read and record a project's orchestrator state, set up a project's images, turn a spec into one reviewed documents pull request with a parallel plan, and land a pull request that is ready or stalled. Fugaro runs coding-agent tasks in fleeting cloud containers and always ends with a pull request."
     }
   ]
 }
