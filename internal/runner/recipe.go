@@ -125,10 +125,9 @@ func ApplyRoles(a *config.Agent, rcp *recipe.Recipe) {
 }
 
 // runDigestRecipe is the catalog recipe of a report run (digest.go, T3.2). It
-// draws the line between the two things a recipe may say about a run's models
-// and limits: every other recipe leaves them to the repository, while this one
-// bounds its own review, because a report run is launched on a schedule by a
-// routine rather than by a person watching what it costs.
+// is the one recipe whose stage limits the runner sets rather than the
+// repository: a report run is launched on a schedule by a routine, with nobody
+// watching what one costs.
 const runDigestRecipe = "run-digest"
 
 // runDigestReviewerMaxOutput is the per-call output bound a report run's review
