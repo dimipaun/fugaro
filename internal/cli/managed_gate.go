@@ -40,15 +40,15 @@ import (
 //	gate, err := readManagedGate(ctx, env, facts)         // marks, ownership
 //	if err != nil { return err }
 //	// the command judges ITS OWN document with ITS OWN rules, and builds a
-//	// managed.Converge from the class, the bytes it read and the rules
-//	m, err := gate.admit(ctx, class, conv)                // re-read, verdict
+//	// managed.Converge from the bytes it read and the rules
+//	m, err := gate.admit(ctx, conv)                       // re-read, verdict
 //	if err != nil { return err }                          // the gate refused it
-//	if !initflow.CanConfirmManaged(class, cond, m) { ... }// the command's own rule
+//	if !initflow.GateStandsIn(cond, m) { ... }            // the command's own rule
 //	// the command's write
 //	if err := gate.recorded(ctx); err != nil { return err }// after the write
 //
 // Why the verdict is handed back as an initflow.Managed rather than as a
-// boolean. That value is the rule D55 already has (initflow.CanConfirmManaged),
+// boolean. That value is the rule D55 already has (initflow.GateStandsIn),
 // and its zero value is "not managed", so a command that never read the gate —
 // or that ignored the error and carried on — keeps today's refusal exactly. A
 // helper that answered "you may proceed" as an error-or-nil would be a second

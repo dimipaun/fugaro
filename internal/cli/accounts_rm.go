@@ -865,9 +865,8 @@ func accountsRmGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config
 	if len(refused) > 0 {
 		conv = managedmode.ConvergeRefused(doc, refused)
 	}
-	// YesOrTyped is the class this step is: the ordinary edit the diff
-	// describes, and not a Typed step — the value D846 reserves for a loosened
-	// ceiling is what the declaration's own rules already refuse here.
+	// This step is the ordinary edit the diff describes and not the loosened
+	// ceiling D846 reserves: the declaration's own rules refuse that one here.
 	m, err := gate.admit(ctx, conv)
 	if err == nil {
 		return m, gate, nil
@@ -883,7 +882,7 @@ func accountsRmGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config
 // accountsRmRules are the rules the gate judges this removal by, in the words
 // the record and the refusal carry: the rules that were applied and passed, and
 // the ones that refused. They are this command's own and live here rather than
-// in internal/managed, where the SHAPE of a verdict and the one class rule are
+// in internal/managed, where the SHAPE of a verdict and its one narrowing rule are
 // (D1021).
 //
 // The rule is the design's whole content for this command (managed spec §4.2,

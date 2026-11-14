@@ -2395,7 +2395,7 @@ const (
 //
 // A coding agent's session is settled first: the marker is the whole of what
 // keeps an agent out of a write, and no answer a run carries reaches past it —
-// the class rule this function replaces refused a marked session in every one
+// the rule this function replaces refused a marked session in every one
 // of its branches, whatever it had been given.
 //
 // What is left is the run's own answer, which decides the whole answer, and

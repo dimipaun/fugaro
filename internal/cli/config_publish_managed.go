@@ -109,11 +109,11 @@ func configPublishGate(ctx context.Context, env *cloudEnv, marker string) *manag
 // configPublishConverge judges the layer document an agent's session is about
 // to publish, with this command's rules, and answers the verdict the gate
 // decides the session's confirmation under (M0's Converge: the bytes judged,
-// the class, the rules that fired).
+// the rules that fired).
 //
-// The class is YesOrTyped: publishing a layer is an ordinary confirmed step and
-// never a Typed one, so the gate may judge it at all (D1026 — and a Typed step
-// could not be admitted by these rules however clean the document looked).
+// Publishing a layer is an ordinary step and not money-or-permanent, so the gate
+// may judge it at all (D1026 — and a step no plan gate may judge could not be
+// admitted by these rules however clean the document looked).
 //
 // It also answers the object as IT read it, for the write to be conditioned on
 // that read and on no other (D1024's rule, one step further out): the rules

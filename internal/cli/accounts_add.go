@@ -307,7 +307,7 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	// which is the write the refusal is about and the change the sentence names.
 	// A session writes nothing, --yes included (spec §2.4), and the marker fence
 	// comes first, as it does in applySettingsEdit — the same rule, lifted by
-	// the same answer and for the same class, so a session the gate admitted to
+	// the same answer and for the same step, so a session the gate admitted to
 	// the declaration is not refused the step it declared.
 	if !changed {
 		if marker := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); marker != "" && !m.Removes() {

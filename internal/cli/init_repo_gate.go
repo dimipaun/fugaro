@@ -71,9 +71,9 @@ func (e *initEngine) authState(o originInfo) (repoAuth, error) {
 		// door and in either mode — the converge and the standalone --repo
 		// engine, whose gate this is too (gateRepo) — for an origin whose
 		// identity is the one it claims. It is still never given by a pipe,
-		// --json, --non-interactive or a coding agent's session
-		// (canConfirmTyped), and the review's own answer is not it either
-		// (onboardCovered).
+		// --json, --non-interactive or a coding agent's session (the run's
+		// own answer is the whole of it), and the review's own answer is not
+		// it either (onboardCovered).
 		//
 		// The two cases onboardCovered refuses stay the gate's own question
 		// wherever they arise: an origin git config rewrites or a host that is
@@ -358,7 +358,7 @@ func unknownBecause(project string, o originInfo, optIn string) string {
 // onboardCovered's three refusals — an origin whose identity is not the one it
 // claims (a rewritten URL, a host that is not a provider's own), a name the
 // config knows at another host, and a coding agent's session, which confirms
-// nothing at all (initflow.CanConfirmManaged) and where the flag must not be
+// nothing at all (initflow.PersonAtTheTerminal) and where the flag must not be
 // named as a way in at all, since it would be a line for the agent to paste
 // (AgentAdvice). A door that does not enrol has its own sentence
 // (unknownDetailNotEnrolled), so it never reaches this clause.

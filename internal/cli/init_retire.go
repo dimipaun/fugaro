@@ -30,8 +30,8 @@ import (
 //
 //   - Nothing leaves the state, and nothing is deleted, without the project's
 //     name typed at a real terminal -- twice. askTyped is the primitive, and
-//     ask is never used here: --yes satisfies ask, --json, a pipe,
-//     --non-interactive and a coding agent's session satisfy neither.
+//     ask is never used here: an answer a run carries satisfies ask, --json, a
+//     pipe, --non-interactive and a coding agent's session satisfy neither.
 //   - The state removal is the narrow one Removals computes: the protected
 //     addresses the state still holds, and nothing else. An unprotected
 //     address stays in the state for the apply to delete -- taking it out
@@ -735,17 +735,17 @@ func (r *initRun) retireLeftover(spec infra.RepoSpec, err error) error {
 }
 
 // retireConfirm is one of the retirement's two confirmations. It is askTyped
-// and never ask: ask is covered by --yes, and a retirement that --yes could
-// confirm is exactly what the design forbids -- the Typed class is what keeps
-// it out. Nothing is typed for it any more (T7, docs/no-prompt-policy): the
+// and never ask: ask is covered by the run's own answer, and a retirement that
+// answer could confirm is exactly what the design forbids -- this step
+// reaching no answer a run carries is what keeps it out. Nothing is typed for it any more (T7, docs/no-prompt-policy): the
 // person at their own terminal is the confirmation, and --ask asks the y/N of
 // the managed project that passed it. reachable=false means the run cannot ask
 // at all (--yes, --non-interactive, --json, a pipe, a coding agent), and then
 // nothing is removed and nothing is deleted.
 //
 // The refusal for that case is the retirement's own, not notConfirmed's
-// (review round 4): askTyped showed no prompt at all -- canConfirmTyped
-// refuses before typed runs -- so a step that was never put to anybody is not
+// (review round 4): askTyped showed no prompt at all -- the rule refuses
+// before a typed confirmation runs -- so a step that was never put to anybody is not
 // a step that was declined, and the ordinary refusal's ", or pass --yes once
 // you have read what it does" names the one flag design §4.2 forbids for a
 // retirement, which would send the reader straight back to the same refusal.

@@ -977,7 +977,7 @@ type Conditions struct {
 // passes the zero value and keeps today's behaviour exactly.
 //
 // It is not a field of Conditions, and that is deliberate: Conditions is what
-// a RUN says about who is there — its six fields are enumerated exactly by
+// a RUN says about who is there — its four fields are enumerated exactly by
 // internal/cli's completeness test, and the property test runs over the whole
 // product of them — while these two facts are about a plan ONE step is about
 // to apply. A run has one Conditions, and one Managed per applying step.

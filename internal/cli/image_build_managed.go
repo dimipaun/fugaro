@@ -90,11 +90,12 @@ import (
 // records that all carried one digest would not say which build was admitted
 // (refreshBuildDoc's own reason for naming the build).
 //
-// Why the class is YesOrTyped, and why it decides less than it used to. YesOrTyped
-// is D12's answer of 2026-10-20 and the class `fugaro image refresh`'s per-build
-// document already carried (askBuild), and it is the class a build's admission is
-// still made under. What it decides now is what the verdict is spent on — the
-// record, and the line the session that was admitted reads (GateProceeded at a
+// Why a build is a step the run's own answer reaches, and why that answer
+// decides less than it used to. It is D12's answer of 2026-10-20, and the one
+// `fugaro image refresh`'s per-build document already carried (askBuild), so a
+// build's admission is still made under it. What it decides now is what the
+// verdict is spent on — the record, and the line the session that was admitted
+// reads (GateProceeded at a
 // terminal, AgentProceeded under a marker) — and no longer whether anything is
 // asked: with the confirmation gone, a managed project's terminal and a coding
 // agent's session are judged by the same document and submit their builds under
