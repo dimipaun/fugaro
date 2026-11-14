@@ -350,13 +350,39 @@ func (s *Service) trial(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.store.SaveIssuance(r.Context(), answer.Record); err != nil {
-		// Unlike the paid path this one withdraws nothing here: the key was
-		// minted for a trial the store has already claimed and handed to the
-		// account, and a trial renews at no row's hand (its row's renewal mode
-		// is none), so a record that did not land costs the licensor the
-		// bookkeeping and costs the customer nothing it can still use.
-		s.trialFailed(w, err)
-		return
+		// The store's answer is not the state, and this is where the two are told
+		// apart — as they are for the claim above and on the paid path
+		// (merchant.go's `paid`): the deployed store writes an issuance in a
+		// transaction that is re-run when its result is lost, and its re-run
+		// answers `ErrAlreadyRecorded` about its own commit
+		// (firestore_store.go's `SaveIssuance`). The key has been minted, claimed
+		// and mailed by now, so answering that as a failure would hand the account
+		// a key this store holds no state for — and a key with no state fails the
+		// proof the daily status check makes (renew.go's `proved`), so it is
+		// refused like any key nobody issued while asking again is answered 409:
+		// the trial is spent, and no method of the Store interface repairs one. So
+		// the record is re-read under the source this ask wrote it to, and only a
+		// source holding no record, or one holding another key's, is a failure.
+		held, recorded, readErr := s.recorded(r.Context(), installation)
+		if readErr != nil {
+			s.trialFailed(w, errors.Join(err, readErr))
+			return
+		}
+		if !recorded || held.KeyID != answer.Record.KeyID {
+			// Unlike the paid path this one withdraws nothing: the key is one the
+			// store has claimed a trial for and mailed, so a withdrawal would take
+			// the account's own key away and leave the trial spent with nothing in
+			// hand — the trial's claim names the key, which is what an operator
+			// reads it off (§8's list, K2.2). Nothing is written for it either, so
+			// what the account holds is a key its check-in is refused for, and the
+			// failure is reported rather than papered over.
+			s.trialFailed(w, err)
+			return
+		}
+		// The record is this key's, so the write landed and only its answer was
+		// lost: the rest of the pair is finished below rather than left unwritten,
+		// because the state written there is what the account's own key needs to
+		// be checked in (renew.go's `proved`).
 	}
 	if err := s.store.SaveKeyState(r.Context(), KeyState{
 		KeyID:             answer.Record.KeyID,

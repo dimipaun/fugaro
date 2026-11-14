@@ -126,6 +126,22 @@ func (b *blindAfterAClaim) Trials(ctx context.Context) ([]Trial, error) {
 	return b.Store.Trials(ctx)
 }
 
+// unansweredIssuance is the store whose answer to an issuance write was lost:
+// the record lands — the fixture's store holds it — and the error that reaches
+// the route is the one a re-run of the deployed store's transaction answers when
+// it reads the document its own first attempt committed
+// (firestore_store.go's `SaveIssuance`, re-run when its result is lost).
+type unansweredIssuance struct {
+	Store
+}
+
+func (u unansweredIssuance) SaveIssuance(ctx context.Context, r Record) error {
+	if err := u.Store.SaveIssuance(ctx, r); err != nil {
+		return err
+	}
+	return ErrAlreadyRecorded
+}
+
 // trialBody is the request one test sends: the workspace's project id, and
 // nothing else (§10.3's self-serve trial is single-seat, so this door reads no
 // seat count — where a test wants to send one it writes the body out itself,
@@ -657,6 +673,80 @@ func TestTrialInstallationIsANameTheStoreCanFile(t *testing.T) {
 				other[0], other[1], pair[0], pair[1], name)
 		}
 		seen[name] = pair
+	}
+}
+
+// TestTrialIsServedWhenItsIssuanceWentUnanswered: an error from the issuance
+// write is not the same as a record that did not land. The store the deploy
+// names writes one in a transaction that is re-run when its result is lost, and
+// the re-run answers `ErrAlreadyRecorded` about its own commit — the case
+// merchant.go's paid path re-reads for, and the claim above it here. The key has
+// been minted, claimed and mailed by then, so answering a failure would hand the
+// account a key the store holds no state for: the daily status check proves a
+// key by its state (renew.go's `proved`), so that key is refused as one nobody
+// issued, and asking again is answered 409 because the trial is spent — no
+// method of the Store interface repairs a trial. The ask is served instead, and
+// what the account was mailed is a key it can really check in.
+func TestTrialIsServedWhenItsIssuanceWentUnanswered(t *testing.T) {
+	f := trialAs(t)
+	f.deps.Store = unansweredIssuance{Store: f.store}
+	f.start()
+	rec := f.ask(trialBody(workspaceID))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the ask answered %d (%s), want 200: its issuance landed and only its answer was lost", rec.Code, rec.Body.String())
+	}
+	minted := f.mintedKeys()
+	if len(minted) != 1 {
+		t.Fatalf("the ask minted %d key(s), want one", len(minted))
+	}
+	// The pair is finished despite the store's error: the state is what the key
+	// mailed to the account is checked in by.
+	claims, _, err := licence.Verify([]byte(minted[0]), f.now, f.ring, workspaceID)
+	if err != nil {
+		t.Fatalf("the served key does not verify: %v", err)
+	}
+	held, known, err := f.store.KeyState(t.Context(), claims.KeyID)
+	if err != nil || !known {
+		t.Fatalf("the mailed key has no state (known=%v err=%v), so the account cannot check it in (§8, renew.go's `proved`)", known, err)
+	}
+	if held.WorkspaceID != workspaceID {
+		t.Errorf("the key's state names workspace %q, want %q", held.WorkspaceID, workspaceID)
+	}
+	if records := f.records(); len(records) != 1 || records[0].KeyID != claims.KeyID {
+		t.Errorf("the store recorded %+v, want the one issuance of the key this ask served", records)
+	}
+	if len(f.mail.sent) != 1 || !strings.Contains(f.mail.sent[0].Body, minted[0]) {
+		t.Errorf("the ask mailed %d message(s) and the key is not in them: %+v", len(f.mail.sent), f.mail.sent)
+	}
+}
+
+// TestTrialIsNotServedWhenTheIssuanceIsAnotherKeys: the re-read is what tells a
+// lost answer from a record that really did not land, and it has to answer about
+// **this** key: a source the store already holds under another key's name is a
+// write that did not land, and serving the ask would mail a key the store
+// records nothing for and check in nothing for. What the account is handed is a
+// failure, so the ask is one an operator reads (the trial's claim names the key
+// it was minted for), and nothing is written for the key the mint answered.
+func TestTrialIsNotServedWhenTheIssuanceIsAnotherKeys(t *testing.T) {
+	f := trialAs(t)
+	installation := trialInstallation("acme.example", workspaceID)
+	if err := f.store.SaveIssuance(t.Context(), Record{Source: installation, KeyID: "lk_someone_elses_key"}); err != nil {
+		t.Fatalf("seeding the store with another key's issuance: %v", err)
+	}
+	rec := f.ask(trialBody(workspaceID))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("the ask answered %d (%s), want 500: the source is held under a key this ask did not mint", rec.Code, rec.Body.String())
+	}
+	minted := f.mintedKeys()
+	if len(minted) != 1 {
+		t.Fatalf("the ask minted %d key(s), want the one it could not record", len(minted))
+	}
+	claims, _, err := licence.Verify([]byte(minted[0]), f.now, f.ring, workspaceID)
+	if err != nil {
+		t.Fatalf("the minted key does not verify: %v", err)
+	}
+	if _, known, err := f.store.KeyState(t.Context(), claims.KeyID); err != nil || known {
+		t.Errorf("the store holds a state for the key this ask did not record (known=%v err=%v), want none: the record it re-read is another key's", known, err)
 	}
 }
 
