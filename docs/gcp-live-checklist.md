@@ -12650,7 +12650,8 @@ refusal named.
 **NOT RUN.** Written by task **AK8** of the api-key review
 ([`docs/api-key-review/implementation-plan.md`](api-key-review/implementation-plan.md), its **AK8** and its Check 330), under the
 number the register had free at that merge, and the plan's §5 is the check's text. **D1410** (both slices) and **D1421** (after
-0.20.0) are the answers it runs under; **F10**, **F11** and **F22** are the three things it must not mistake for a finding. **Nothing
+0.20.0) are the answers it runs under: **F10** is the admission `fugaro review` needs and **F11** the gateway the review class needs,
+both premises it reads rather than findings it could reach, and **F22** is slice C's, which is not run. **Nothing
 in this section has been run, and it is not a claim that the api-key path works.** It is **OWNER-RUN**: **no agent runs any step of
 it**.
 
