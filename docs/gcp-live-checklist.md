@@ -13844,14 +13844,19 @@ A3.1's sampler, A3.3's launcher, A5.2's recipe and A4.3's report, over one pair 
   and five caps is what D573's margin is computed from), and both arms' `cost.model_usd` must be inside it.
   The shadow's `cost.model_by` must then name the **provider model** with a non-zero figure: a shadow whose
   spend is all some other model is a pair that never ran the challenger, whatever its `ab` block says.
-- **The judge run.** `fugaro run --repo <checkout> --recipe ab-judge --json`, followed to terminal. A
+- **The judge run.** `fugaro run --repo <checkout> --recipe ab-judge --json`, followed to terminal, and
+  launched only for a pair whose **arms both ended**: a pair whose arms were cancelled has no records and
+  nothing for a judge to read, so no judge run is started — and billed — for it, and everything after it
+  reads `unmeasured` with the row above as the reason. A
   repository has one judge run at a time, so a refusal to launch is a state to settle and reads `unmeasured`
   (`2`) rather than a finding about the release. Its verdicts object, at
   `runs/<slug>/<judge-run-id>/ab/verdicts.json`, must be version 1, must carry an entry for **this** pair
   (a judge that judged other pairs and skipped this one decided nothing), must not mark the pair skipped,
   must name the layer's `ab.judge_model` as the model that wrote it (D553), must hold exactly **two** passes
-  — one from each labelling of the arms — and both must agree with the winner the entry records; a winner
-  outside `champion`/`challenger`/`tie` is a finding.
+  — one from each labelling of the arms — and must carry the winner those passes decide between them, which is
+  D552's own rule: the arm both of them name, and a **tie** where they name different arms or either names
+  none, so a judge that answers differently on the two labellings is a tie rather than a finding. A winner
+  outside `champion`/`challenger`/`tie`, or one its own passes do not decide, is a finding.
 - **The report.** `fugaro ab --repo <sandbox repository> --since 0 --json`: a row for this challenger with at
   least one pair in it, whose own `wins` and `losses` add up to its `decisive` count — a row whose figures
   disagree is one every number is then wrong from — and, below the minimum of 20, a recommendation of

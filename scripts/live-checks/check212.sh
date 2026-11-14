@@ -37,7 +37,8 @@
 #   * the two wall times (U4), and both costs against the run's own per-run cap;
 #   * the judge run (`fugaro run --recipe ab-judge`) and the verdict object it
 #     leaves at ab/verdicts.json: the entry for THIS pair, judged by the model
-#     the layer names, with its two passes agreeing on the winner;
+#     the layer names, with the winner its two passes decide between them —
+#     the arm both name, or a tie where they do not (D552);
 #   * `fugaro ab --repo <owner/name> --json`: the pair is in the figures, and
 #     the row for the two models carries the pair — with fewer than the
 #     minimum's decisive pairs, no conclusion and the rule below-minimum.
@@ -176,6 +177,11 @@ RATE=""
 LAYER_OK=no
 MODELS_OK=no
 PAIRED=no
+# PAIR_COMPLETE is set where both arms are terminal. Everything after that —
+# the records, the judge run, the report — is a reading of a finished pair, and
+# a pair whose arms never ended has none of them to read; running those steps
+# anyway is what would launch a billable judge run for a pair nothing can judge.
+PAIR_COMPLETE=no
 LAUNCHES=0
 # FOLLOW_RUNS is every run this check is still waiting on. A run leaves it the
 # moment it ends on its own, and what is left when the check gives up is what it
@@ -554,9 +560,10 @@ run_bounded() { # run_bounded SECONDS KEY DIR CMD...
 
 follow() { FOLLOW_RUNS="${FOLLOW_RUNS:+$FOLLOW_RUNS }$1"; }
 
-# settled: this run ended on its own, so nothing is left to cancel. It is what
-# makes the cancelled row's "not needed" true: a run that left the follow set
-# ended by itself and only a run still in it can be cancelled.
+# settled: this run left the follow set — it ended on its own, or this check has
+# already handed it to `fugaro cancel` — so it is not cancelled again. It is what
+# makes the cancelled row's "not needed" true: only a run still in the set is one
+# this check still has to cancel.
 settled() { # settled RUN_ID
   local kept="" id
   for id in $FOLLOW_RUNS; do
@@ -566,13 +573,19 @@ settled() { # settled RUN_ID
   FOLLOW_RUNS=$kept
 }
 
+# cancel_run cancels every run still in the follow set and takes each out of it
+# as it is handled, rather than cancelling once for the whole check: the set is
+# not final — the judge run joins it after the arms have left it — so a check
+# that gave up on the arms and later on the judge has to cancel both, and the
+# exit trap after either has nothing left to do.
 cancel_run() { # cancel_run WHY
   [ -n "$FOLLOW_RUNS" ] || return 0
-  [ "$CANCEL_DONE" = yes ] && return 0
+  local ids id ok=yes
+  ids=$FOLLOW_RUNS
   CANCEL_DONE=yes
-  local id ok=yes
   say "cancelling the runs this check is still following ($1): fugaro cancel <run> --now"
-  for id in $FOLLOW_RUNS; do
+  for id in $ids; do
+    settled "$id"
     run_bounded "$CANCEL_TIMEOUT" cancel "$SANDBOX" "$FUGARO_BIN" cancel "$id" --now --json
     if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
       ok=no
@@ -581,7 +594,7 @@ cancel_run() { # cancel_run WHY
     fi
     fact cancelled PASS "the run ${id} did not end on its own, so this check cancelled it with 'fugaro cancel ${id} --now' (status $(field "$SCRATCH/cancel.txt" status)): nothing this check was still following outlives it"
   done
-  [ "$ok" = yes ] && CANCEL_OK=yes
+  [ "$ok" = yes ] || CANCEL_OK=no
   return 0
 }
 
@@ -942,6 +955,7 @@ step_terminal() {
   fi
   settled "$CHAMPION_ID"
   settled "$CHALLENGER_ID"
+  PAIR_COMPLETE=yes
   fact arms-terminal PASS "both arms ended in ${waited}s (champion ${CHAMPION_ID}: status ${champ_status:-unknown}; shadow ${CHALLENGER_ID}: status ${chal_status:-unknown}, read from fugaro runs ls --json --batch ${PAIR_BATCH}): the pair is complete, which is what a judge run takes and what the report counts"
 }
 
@@ -950,8 +964,8 @@ step_terminal() {
 # carry, the arm each is, and the shadow's own two facts — it publishes nothing
 # and it runs the challenger model the owner's layer named.
 step_records() {
-  if [ "$PAIRED" != yes ] || [ -z "$SLUG" ]; then
-    unmeasured records "there is no pair whose records could be read: the rows above say why"
+  if [ "$PAIR_COMPLETE" != yes ] || [ -z "$SLUG" ]; then
+    unmeasured records "there is no complete pair whose records could be read: the rows above say why"
     return 0
   fi
   local arm id key
@@ -1107,8 +1121,8 @@ step_challenger_ran() {
 # per repository at a time, so a launch while one has not finished is refused,
 # and the refusal's own sentence is reported rather than swallowed.
 step_judge_run() {
-  if [ "$PAIRED" != yes ]; then
-    unmeasured judge-run "there is no pair for a judge run to judge: the row above says why"
+  if [ "$PAIR_COMPLETE" != yes ]; then
+    unmeasured judge-run "there is no complete pair for a judge run to judge: the row above says why"
     return 0
   fi
   say "launching the judge run: fugaro run --repo ${LAUNCH_REPO} --recipe ab-judge --json"
@@ -1203,18 +1217,37 @@ step_verdict() {
     return 0
     ;;
   esac
-  local pass bad=""
-  while IFS=$'\t' read -r tag id index _swap label arm; do
+  # decide's own rule (D552; ee/ab/judge.go): the arm both passes name, and a tie
+  # in every other case. A pass carries no arm when its answer sat outside the
+  # vocabulary, which the judge reads as a tie, and two passes that name
+  # different arms are a tie too — so a check that demanded the winner equal
+  # every pass would call a correct installation's own disagreement a coin toss.
+  local first="" second="" seen=0 _swap _label arm
+  while IFS=$'\t' read -r tag id index _swap _label arm; do
     [ "$tag" = pass ] || continue
     [ "$id" = "$PAIR_ID" ] || continue
-    pass="${arm:-(${label:-none})}"
-    [ "$pass" = "$winner" ] || bad="${bad:+$bad, }pass ${index} (label ${label:-none}, arm ${arm:-none})"
+    case "${arm:-}" in
+    champion | challenger) ;;
+    *) arm=tie ;;
+    esac
+    seen=$((seen + 1))
+    if [ "$seen" = 1 ]; then first=$arm; else second=$arm; fi
   done <"$SCRATCH/verdicts.txt"
-  if [ -n "$bad" ]; then
-    fact verdict FAIL "the pair ${PAIR_ID} carries the winner '${winner}' and its passes disagree with it: ${bad}. The two passes label the arms the other way round on purpose (D552), so a verdict read from two answers that do not meet is a coin toss counted as a decision, not a pair the judge decided. The verdicts object is in $SCRATCH/verdicts.out"
+  local expected=tie
+  if [ "$seen" = 2 ] && [ "$first" = "$second" ] && [ "$first" != tie ]; then expected=$first; fi
+  if [ "$winner" != "$expected" ]; then
+    if [ "$expected" = tie ]; then
+      fact verdict FAIL "the pair ${PAIR_ID} carries the winner '${winner}' where its two passes name '${first}' and '${second}': D552's rule is that a pair is decided only when both passes name the same arm, so a pass that names none and two passes that name different arms are a tie, and a tie is what the judge writes for them. A winner written where its own passes decide a tie is a decision the judge did not make. The verdicts object is in $SCRATCH/verdicts.out"
+    else
+      fact verdict FAIL "the pair ${PAIR_ID} carries the winner '${winner}' where both of its passes name '${expected}': the two passes label the arms the other way round on purpose (D552), and the arm both of them name is the verdict. The verdicts object is in $SCRATCH/verdicts.out"
+    fi
     return 0
   fi
-  fact verdict PASS "${key} carries the pair ${PAIR_ID} judged by ${judge}: the winner is '${winner}', and both passes — one from each labelling of the arms — agree on it. The object holds $(field "$SCRATCH/verdicts.txt" count) pair(s) of this repository, which is what the report reads a pair's winner out of"
+  if [ "$winner" = tie ]; then
+    fact verdict PASS "${key} carries the pair ${PAIR_ID} judged by ${judge}: the winner is 'tie', its two passes naming '${first}' and '${second}' — by D552 a pair is decided only when both passes name the same arm, and a tie is the reading that takes nothing from either arm. The object holds $(field "$SCRATCH/verdicts.txt" count) pair(s) of this repository, which is what the report reads a pair's winner out of"
+    return 0
+  fi
+  fact verdict PASS "${key} carries the pair ${PAIR_ID} judged by ${judge}: the winner is '${winner}', and both passes — one from each labelling of the arms — name it. The object holds $(field "$SCRATCH/verdicts.txt" count) pair(s) of this repository, which is what the report reads a pair's winner out of"
 }
 
 # step_ab: `fugaro ab`, the report the plan's last criterion names. The row for
@@ -1222,8 +1255,8 @@ step_verdict() {
 # minimum its own rule answers below-minimum — the figures the plan is about,
 # read from the same object a person reads.
 step_ab() {
-  if [ -z "$LAUNCH_REPO" ]; then
-    unmeasured ab-listed "there is no repository to report on: the rows above say why"
+  if [ "$PAIR_COMPLETE" != yes ] || [ -z "$LAUNCH_REPO" ]; then
+    unmeasured ab-listed "there is no pair of this check's own for the report to list: the row above says why"
     return 0
   fi
   say "reading the report: fugaro ab --repo ${LAUNCH_REPO} --since 0 --json"

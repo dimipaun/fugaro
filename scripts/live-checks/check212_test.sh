@@ -14,11 +14,12 @@
 # a rate of zero, a challenger that is a Claude ID or on the direct route or
 # whose route refuses this repository, a sampler that pairs nothing, a pair whose
 # shadow never started, arms that never end (which the check has to cancel — this
-# check may leave nothing running it was following), a record that is another
+# check may leave nothing running it was following — and which leave the pair
+# below unfit for the judge run it would otherwise launch), a record that is another
 # run's, a shadow that published, a shadow that ran another model, a pair whose
 # costs went past the cap or whose records carry none, a judge run that will not
-# launch, a verdict that skipped the pair or came from another judge or whose
-# passes disagree, a pair missing from the report, and a row that concluded below
+# launch, a verdict the judge skipped or wrote for another model or decided
+# against its own passes, a pair missing from the report, and a row that concluded below
 # the minimum.
 #
 # Every command is bounded (see `bounded` below): a check that hangs fails here
@@ -388,6 +389,7 @@ write_rows() { # write_rows DIR STATE
   case "$2" in
   arms-running) champ_term=false; chal_term=false ;;
   judge-running) judge_term=false ;;
+  all-running) champ_term=false; chal_term=false; judge_term=false ;;
   esac
   cat >"$1/json/rows.json" <<JSON
 {"project":"$project","runs":[{"run":"$slug/$champion_id","repo":"$repo","run_id":"$champion_id","status":"succeeded","stage":"finalize","terminal":$champ_term,"settled":$champ_term,"batch":"ab-$pair_id","branch":"fugaro/20261114-130000-aaaa"},{"run":"$slug/$challenger_id","repo":"$repo","run_id":"$challenger_id","status":"succeeded","stage":"finalize","terminal":$chal_term,"settled":$chal_term,"batch":"ab-$pair_id","branch":"fugaro/20261114-130001-aaab"},{"run":"$slug/$judge_id","repo":"$repo","run_id":"$judge_id","status":"succeeded","stage":"finalize","terminal":$judge_term,"settled":$judge_term,"recipe":"$judge_recipe","branch":"fugaro/20261114-130002-bbbb"}],"totals":{"runs":3},"warnings":[]}
@@ -442,27 +444,64 @@ write_records() { # write_records DIR STATE
   write_record "$1" "$challenger_id" "$chal_arm" "$chal_pair" "$chal_model" "$chal_publish" "$chal_usd" "$chal_start" "$chal_end" "$chal_split"
 }
 
+# pass_arm is the judge's own mapping of one pass's word to an arm
+# (ee/ab/judge.go's labelArm): the same word in the two passes means the two
+# different arms, because the second pass swapped the order, and a word outside
+# the vocabulary is a tie. Every fixture below is written through it, so a pass
+# in the object is one the judge really produces.
+pass_arm() { # pass_arm SWAP LABEL
+  case "$2" in
+  a)
+    if [ "$1" = true ]; then printf 'challenger'; else printf 'champion'; fi
+    ;;
+  b)
+    if [ "$1" = true ]; then printf 'champion'; else printf 'challenger'; fi
+    ;;
+  *) printf 'tie' ;;
+  esac
+}
+
+# pass_json is one pass as the judge writes it: the word the model answered, the
+# arm that word meant, and the reason beside it — a tie has no winner to give a
+# reason for, which is why the field is absent there.
+pass_json() { # pass_json SWAP LABEL ARM
+  local reason=',"reason":"clearer"'
+  [ "$3" = tie ] && reason=""
+  printf '{"swap":%s,"label":"%s","arm":"%s"%s}' "$1" "$2" "$3" "$reason"
+}
+
 # write_verdicts DIR STATE: the judge run's own object. Its `judge_model` is the
-# layer's, and the pair entry is THIS pair unless a case says otherwise.
+# layer's, and the pair entry is THIS pair unless a case says otherwise. The
+# labels are what the model answered on each labelling; the arms beside them are
+# pass_arm's reading, and the winner is what decide makes of the two arms — a
+# case that wants a verdict no judge writes bends the winner alone.
 write_verdicts() { # write_verdicts DIR STATE
   local judge=$judge_model entry_pair=$pair_id winner=challenger skipped=""
-  local pass1=challenger pass2=challenger
+  local label1=b label2=a two=yes
   case "$2" in
   another-judge) judge=claude-haiku-4-5 ;;
   skipped) skipped=identified ;;
   another-pair) entry_pair=pair-other ;;
-  no-pass) pass2="" ;;
-  disagree) pass2=champion ;;
-  tie) winner=tie; pass1=tie; pass2=tie ;;
+  no-pass) two=no ;;
+  # The two passes answered differently, so decide reads the pair as a tie: a
+  # judge that disagrees with itself is not a verdict the check may fail.
+  disagree) winner=tie; label2=b ;;
+  # A word outside the vocabulary carries the tie arm decide reads as well.
+  no-vocabulary) winner=tie; label1=""; label2="" ;;
+  # Both passes named the champion, so the winner decide makes of them is the
+  # champion: a tie written beside them is an object no judge produces.
+  decided-tie) winner=tie; label1=a; label2=b ;;
+  tie) winner=tie; label1=tie; label2=tie ;;
   esac
-  local passes='{"swap":false,"label":"b","arm":"'"$pass1"'","reason":"clearer"}'
-  if [ -n "$pass2" ]; then
-    passes="$passes"',{"swap":true,"label":"b","arm":"'"$pass2"'","reason":"clearer"}'
-  fi
+  local passes
+  passes=$(pass_json false "$label1" "$(pass_arm false "$label1")")
+  [ "$two" = yes ] && passes="$passes,$(pass_json true "$label2" "$(pass_arm true "$label2")")"
+  local reason_json=',"reason":"clearer"'
+  [ "$winner" = tie ] && reason_json=""
   local skipped_json=""
   [ -n "$skipped" ] && skipped_json=',"skipped":"'"$skipped"'"'
   cat >"$1/json/verdicts-$judge_id.json" <<JSON
-{"version":1,"judge_model":"$judge","pairs":[{"pair_id":"$entry_pair","winner":"$winner","reason":"clearer"$skipped_json,"passes":[$passes]}]}
+{"version":1,"judge_model":"$judge","pairs":[{"pair_id":"$entry_pair","winner":"$winner"$reason_json$skipped_json,"passes":[$passes]}]}
 JSON
 }
 
@@ -934,6 +973,12 @@ test_arms_that_never_end_are_cancelled() {
   expect_contains "$out" "FACT arms-terminal: FAIL" "arms never end: the row"
   expect_contains "$out" "FACT cancelled: PASS" "arms never end: the cancel"
   expect_contains "$out" "nothing this check was still following outlives it" "arms never end: what the cancel means"
+  # A pair whose arms never ended has nothing for a judge to read, so no billable
+  # judge run is launched for it — the report and the records below it are not
+  # reached either.
+  expect_absent "$(cat "$dir/logs/judge.calls")" "ab-judge" "arms never end: no judge run is launched"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "ab --repo" "arms never end: the report is not read"
+  expect_contains "$out" "FACT judge-run: FAIL — there is no complete pair" "arms never end: the judge row says why"
   # Both arms were cancelled, once each: the check may leave nothing running it
   # was following.
   local cancels
@@ -942,6 +987,27 @@ test_arms_that_never_end_are_cancelled() {
   expect_contains "$cancels" "$challenger_id" "arms never end: the shadow is cancelled"
   expect_contains "$cancels" "--now" "arms never end: the cancel is the hard one"
   assert_scratch_removed "$dir" "arms never end"
+}
+
+# The pair's arms and the judge run of the same rows: neither ends here, and the
+# one judge run the check would otherwise launch for a pair nothing can judge
+# must not be launched — nor cancelled later, because it was never started. The
+# cancels name the two arms and nothing else.
+test_arms_and_the_judge_run_that_never_end_launch_no_judge() {
+  local dir=$work/allneverends
+  prepare "$dir"
+  write_rows "$dir" "all-running"
+  run_check "$dir"
+  expect_status "$status" 2 "arms and judge never end"
+  expect_contains "$out" "FACT arms-terminal: FAIL" "arms and judge never end: the row"
+  expect_contains "$out" "FACT cancelled: PASS" "arms and judge never end: the cancel"
+  expect_absent "$(cat "$dir/logs/judge.calls")" "ab-judge" "arms and judge never end: no judge run is launched"
+  local cancels
+  cancels=$(cat "$dir/logs/cancel.calls")
+  expect_contains "$cancels" "$champion_id" "arms and judge never end: the champion is cancelled"
+  expect_contains "$cancels" "$challenger_id" "arms and judge never end: the shadow is cancelled"
+  expect_absent "$cancels" "$judge_id" "arms and judge never end: the judge run was never started, so it is not cancelled"
+  assert_scratch_removed "$dir" "arms and judge never end"
 }
 
 test_a_cancel_that_does_not_answer_is_a_finding() {
@@ -1106,14 +1172,38 @@ test_a_verdict_with_one_pass_is_a_finding() {
   expect_contains "$out" "carries 1 pass(es) where the judge makes exactly two" "one pass: the row"
 }
 
-test_a_verdict_whose_passes_disagree_is_a_finding() {
+# A judge that answers differently on the two labellings has not decided the
+# pair, and D552's own reading of that is a tie — the object a real judge writes
+# for it, which this check may not call a coin toss counted as a decision.
+test_a_judge_that_disagrees_with_itself_is_a_tie() {
   local dir=$work/disagree
   prepare "$dir"
   write_verdicts "$dir" "disagree"
   run_check "$dir"
-  expect_status "$status" 1 "passes disagree"
-  expect_contains "$out" "its passes disagree with it" "passes disagree: the row"
-  expect_contains "$out" "pass 2 (label b, arm champion)" "passes disagree: which pass"
+  expect_status "$status" 0 "passes disagree"
+  expect_contains "$out" "the winner is 'tie', its two passes naming 'challenger' and 'champion'" "passes disagree: the row"
+}
+
+# A word outside the vocabulary has no arm either, and two passes that named
+# none are the same tie.
+test_an_answer_outside_the_vocabulary_is_a_tie() {
+  local dir=$work/novocab
+  prepare "$dir"
+  write_verdicts "$dir" "no-vocabulary"
+  run_check "$dir"
+  expect_status "$status" 0 "no vocabulary"
+  expect_contains "$out" "the winner is 'tie', its two passes naming 'tie' and 'tie'" "no vocabulary: the row"
+}
+
+# The other way round is the finding: decide makes the arm both passes named the
+# winner, so a tie beside two agreed passes is a decision the judge did not make.
+test_a_winner_its_own_passes_do_not_decide_is_a_finding() {
+  local dir=$work/decidedtie
+  prepare "$dir"
+  write_verdicts "$dir" "decided-tie"
+  run_check "$dir"
+  expect_status "$status" 1 "winner the passes do not decide"
+  expect_contains "$out" "carries the winner 'tie' where both of its passes name 'champion'" "winner the passes do not decide: the row"
 }
 
 test_a_tie_is_a_verdict() {
@@ -1123,7 +1213,7 @@ test_a_tie_is_a_verdict() {
   run_check "$dir"
   expect_status "$status" 0 "a tie"
   expect_contains "$out" "the winner is 'tie'" "a tie: the winner"
-  expect_contains "$out" "both passes — one from each labelling of the arms — agree on it" "a tie: the agreement"
+  expect_contains "$out" "its two passes naming 'tie' and 'tie'" "a tie: what the passes name"
 }
 
 test_a_pair_missing_from_the_report_is_a_finding() {
@@ -1258,6 +1348,7 @@ t test_a_launch_that_names_a_reason_is_a_finding
 t test_a_pair_whose_shadow_never_started_is_a_finding
 t test_a_launch_that_fails_is_a_finding
 t test_arms_that_never_end_are_cancelled
+t test_arms_and_the_judge_run_that_never_end_launch_no_judge
 t test_a_cancel_that_does_not_answer_is_a_finding
 t test_a_record_that_cannot_be_read_is_a_finding
 t test_records_of_two_pairs_are_a_finding
@@ -1274,7 +1365,9 @@ t test_a_verdict_that_skipped_the_pair_is_a_finding
 t test_a_verdict_from_another_judge_model_is_a_finding
 t test_a_verdict_missing_this_pair_is_a_finding
 t test_a_verdict_with_one_pass_is_a_finding
-t test_a_verdict_whose_passes_disagree_is_a_finding
+t test_a_judge_that_disagrees_with_itself_is_a_tie
+t test_an_answer_outside_the_vocabulary_is_a_tie
+t test_a_winner_its_own_passes_do_not_decide_is_a_finding
 t test_a_tie_is_a_verdict
 t test_a_pair_missing_from_the_report_is_a_finding
 t test_a_row_that_concluded_below_the_minimum_is_a_finding
