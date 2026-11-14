@@ -107,4 +107,4 @@ As of 2026-11-14, read from `main`, the open pull requests and each plan's task 
 | website-changelog | WC4 lands with the next release |
 | central-orchestrator | superseded by stateless-orchestrator |
 | windows-cli | superseded by console-windows |
-| mobile-auth | owner live checks, proposed by name and not numbered |
+| mobile-auth | owner live checks, proposed by name and not numbered; P5's D231 gap is a follow-up awaiting the owner's decision — revoking the last device empties the node, so the next publish re-seeds the revoked entry |
