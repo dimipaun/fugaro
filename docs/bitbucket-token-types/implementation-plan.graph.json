@@ -1,0 +1,572 @@
+{
+  "schema_version": 3,
+  "plan": "docs/bitbucket-token-types/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "C1",
+      "title": "the token-store contract",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/bbtokens/bbtokens.go",
+          "internal/bbtokens/stub.go",
+          "internal/bbtokens/bbtokens_test.go",
+          "internal/bbtokens/stub_test.go",
+          "internal/projectpolicy/tokens_shape.go",
+          "docs/bitbucket-token-types/contract.md"
+        ]
+      },
+      "kind": "contract",
+      "stubs": [
+        "internal/bbtokens/stub.go",
+        "internal/bbtokens/stub_test.go"
+      ]
+    },
+    {
+      "id": "T1",
+      "title": "the bundle's token key family",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/bundle.go",
+          "internal/credsvc/bundle_test.go",
+          "schemas/creds-bundle.schema.json",
+          "internal/config/config.go"
+        ]
+      }
+    },
+    {
+      "id": "T2",
+      "title": "the local config's token records and their validation",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/localcfg/localcfg.go",
+          "internal/localcfg/bitbucket_tokens_test.go",
+          "internal/config/bitbucket_tokens.go",
+          "internal/config/bitbucket_tokens_test.go",
+          "internal/settings/registry.go",
+          "schemas/settings.schema.json"
+        ]
+      }
+    },
+    {
+      "id": "T3",
+      "title": "the node carries each token's coverage",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/projectpolicy/bitbucket.go",
+          "internal/projectpolicy/bitbucket_test.go",
+          "internal/projectpolicy/policy.go",
+          "internal/cli/project_cmd_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T4",
+      "title": "the selector: narrowest covering token",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/bbtokens/select.go",
+          "internal/bbtokens/select_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T5",
+      "title": "the project-UUID lookup and its cache",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/bbtokens/projectlookup.go",
+          "internal/bbtokens/projectlookup_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T6",
+      "title": "a Bitbucket token's shared status marks",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/creds/state.go",
+          "internal/creds/marks.go",
+          "internal/creds/marks_test.go",
+          "internal/credsvc/probe.go",
+          "internal/credsvc/probe_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T7",
+      "title": "the add-time verifier",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/bbtokens/verify.go",
+          "internal/bbtokens/verify_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T8",
+      "title": "the proxy chooses a token per request and names it",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/bitbucketproxy.go",
+          "internal/credsvc/bitbucketproxy_test.go",
+          "internal/credsvc/server.go"
+        ]
+      }
+    },
+    {
+      "id": "T9",
+      "title": "the proxy reacts to 401, 403, 404 and 429",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/bitbucketproxy.go",
+          "internal/credsvc/bitbucketproxy_react_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T10",
+      "title": "creds ls and doctor show each token's status",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/creds.go",
+          "internal/cli/doctor_brokering.go",
+          "internal/cli/doctor_brokering_test.go",
+          "internal/cli/creds_test.go",
+          "website/content/cli-reference.md"
+        ]
+      }
+    },
+    {
+      "id": "T11",
+      "title": "creds set adds a typed, checked token",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/creds.go",
+          "internal/cli/creds_bitbucket.go",
+          "internal/cli/creds_bitbucket_test.go",
+          "website/content/cli-reference.md"
+        ]
+      }
+    },
+    {
+      "id": "T12",
+      "title": "update publishes the tokens key and converges an old installation",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/init_policy_migrate.go",
+          "internal/cli/project_cmd.go",
+          "internal/cli/project_profile.go",
+          "internal/cli/update_bitbucket_tokens_test.go",
+          "docs/design/update-in-flight.md"
+        ]
+      }
+    },
+    {
+      "id": "T13",
+      "title": "own-identity over the set of token identities",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/gitprov/bitbucket/bitbucket.go",
+          "internal/gitprov/bitbucket/comments.go",
+          "internal/gitprov/bitbucket/comments_test.go",
+          "internal/followup/select.go",
+          "internal/followup/select_test.go",
+          "internal/runner/reviewmode_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T14",
+      "title": "the documents say it",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/git-providers.md",
+          "SECURITY.md",
+          "website/content/security.md",
+          "docs/credentials-service/runbook.md"
+        ]
+      }
+    },
+    {
+      "id": "T15",
+      "title": "dated pointers in the earlier plans",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/bitbucket-credentials/README.md",
+          "docs/bitbucket-workspace-token/README.md",
+          "docs/shared-jobs-default/README.md"
+        ]
+      }
+    },
+    {
+      "id": "I1",
+      "title": "wire the proxy to the real store and prove it",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/bbtokens/stub.go",
+          "internal/bbtokens/stub_test.go",
+          "internal/credsvc/server.go",
+          "internal/credsvc/tokens_wire.go",
+          "internal/credsvc/bitbucketproxy_tokens_e2e_test.go"
+        ]
+      },
+      "kind": "integration"
+    },
+    {
+      "id": "CR1",
+      "title": "amend the token-store contract",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/bbtokens/bbtokens.go",
+          "docs/bitbucket-token-types/contract.md"
+        ]
+      },
+      "kind": "contract_change"
+    },
+    {
+      "id": "CK",
+      "title": "Checks 590 and 591: a token of each type, and a mixed-token run (owner-run)",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check590.sh",
+          "scripts/live-checks/check590_test.sh",
+          "scripts/live-checks/check591.sh",
+          "scripts/live-checks/check591_test.sh",
+          "docs/gcp-live-checklist.md"
+        ]
+      }
+    },
+    {
+      "id": "T16",
+      "title": "the runner hands the identity set to the adapter",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/project.go",
+          "internal/runner/projectpolicy.go",
+          "internal/gitprov/providers/providers.go",
+          "internal/runner/bitbucket_identities_test.go"
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "task": "T3",
+      "needs": "C1",
+      "reason": "the node member is built against the contract's coverage shape"
+    },
+    {
+      "task": "T4",
+      "needs": "C1",
+      "reason": "the selector takes the contract's project resolver"
+    },
+    {
+      "task": "T8",
+      "needs": "C1",
+      "reason": "the proxy calls the contract's selector and refusal classes"
+    },
+    {
+      "task": "T9",
+      "needs": "C1",
+      "reason": "the proxy reacts through the contract's status store"
+    },
+    {
+      "task": "T9",
+      "needs": "T8",
+      "reason": "the same file, internal/credsvc/bitbucketproxy.go"
+    },
+    {
+      "task": "T13",
+      "needs": "C1",
+      "reason": "the adapter reads the contract's identity set"
+    },
+    {
+      "task": "I1",
+      "needs": "T1",
+      "reason": "wires the bundle reader"
+    },
+    {
+      "task": "I1",
+      "needs": "T3",
+      "reason": "wires the node member"
+    },
+    {
+      "task": "I1",
+      "needs": "T4",
+      "reason": "wires the selector"
+    },
+    {
+      "task": "I1",
+      "needs": "T5",
+      "reason": "wires the lookup"
+    },
+    {
+      "task": "I1",
+      "needs": "T6",
+      "reason": "wires the status marks"
+    },
+    {
+      "task": "I1",
+      "needs": "T8",
+      "reason": "removes the stub T8 was built against"
+    },
+    {
+      "task": "I1",
+      "needs": "T9",
+      "reason": "wires the reaction"
+    },
+    {
+      "task": "I1",
+      "needs": "T2",
+      "reason": "proves the records reach the node and the proxy"
+    },
+    {
+      "task": "I1",
+      "needs": "T13",
+      "reason": "proves the identity set reaches the adapter"
+    },
+    {
+      "task": "T11",
+      "needs": "T7",
+      "reason": "creds set runs the real verifier"
+    },
+    {
+      "task": "T11",
+      "needs": "T2",
+      "reason": "it writes the record T2 validates, in T2's localcfg member"
+    },
+    {
+      "task": "T10",
+      "needs": "T6",
+      "reason": "the listing reads the real marks"
+    },
+    {
+      "task": "T10",
+      "needs": "T11",
+      "reason": "the same file, internal/cli/creds.go"
+    },
+    {
+      "task": "T14",
+      "needs": "I1",
+      "reason": "documents what I1 wires"
+    },
+    {
+      "task": "T14",
+      "needs": "T11",
+      "reason": "documents creds set"
+    },
+    {
+      "task": "CK",
+      "needs": "I1",
+      "reason": "the check runs the real proxy"
+    },
+    {
+      "task": "CK",
+      "needs": "T11",
+      "reason": "the check runs the real add path"
+    },
+    {
+      "task": "T12",
+      "needs": "T2",
+      "reason": "it passes T2's records to the derivation"
+    },
+    {
+      "task": "T12",
+      "needs": "T3",
+      "reason": "it calls T3's derivation"
+    },
+    {
+      "task": "T11",
+      "needs": "T6",
+      "reason": "it writes the status store T6 builds"
+    },
+    {
+      "task": "T16",
+      "needs": "C1",
+      "reason": "the runner reads the contract's node key shape"
+    },
+    {
+      "task": "T16",
+      "needs": "T13",
+      "reason": "the adapter Options field T13 adds and T16 fills"
+    },
+    {
+      "task": "I1",
+      "needs": "T16",
+      "reason": "proves the identity set reaches the adapter"
+    },
+    {
+      "task": "T12",
+      "needs": "T6",
+      "reason": "it reads the identities from the state store T6 builds"
+    }
+  ],
+  "decoupling": [
+    {
+      "contract": "C1",
+      "was": {
+        "task": "T8",
+        "needs": "T4"
+      },
+      "integration": "I1",
+      "reason": "T8 needed the selector's signature, not its matching"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "T8",
+        "needs": "T1"
+      },
+      "integration": "I1",
+      "reason": "T8 needed the bundle accessor's shape, not the loader"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "T8",
+        "needs": "T3"
+      },
+      "integration": "I1",
+      "reason": "T8 needed the node member's shape, not its derivation"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "T9",
+        "needs": "T6"
+      },
+      "integration": "I1",
+      "reason": "T9 needed the status store's shape, not the marks"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "T4",
+        "needs": "T5"
+      },
+      "integration": "I1",
+      "reason": "T4 needed the resolver's signature, not the lookup"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "T3",
+        "needs": "T2"
+      },
+      "integration": "I1",
+      "reason": "T3 needed the record types, not the config's persistence"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "T13",
+        "needs": "T3"
+      },
+      "integration": "I1",
+      "reason": "T13 needed the identity set's shape, not the node's derivation"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "T16",
+        "needs": "T3"
+      },
+      "integration": "I1",
+      "reason": "T16 needed the node key's shape, not its derivation"
+    }
+  ],
+  "contract_changes": [
+    {
+      "change": "CR1",
+      "contract": "C1",
+      "raised_by": "T8",
+      "reason": "the snapshot or the selector's signature may need another input, such as the request's method",
+      "affects": [
+        "T9",
+        "T13",
+        "T16"
+      ]
+    }
+  ]
+}

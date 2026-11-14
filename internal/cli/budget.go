@@ -76,7 +76,7 @@ func newBudgetCmd() *cobra.Command {
 			"which a plain project Viewer cannot (see docs/gcp-setup.md).",
 	}
 	cmd.AddCommand(newBudgetShowCmd(), newBudgetSetCmd(), newBudgetKillCmd(true), newBudgetKillCmd(false),
-		newBudgetPreviewCmd(), newBudgetPricesCmd(), newBudgetHistoryCmd())
+		newBudgetPreviewCmd(), newBudgetChainCmd(), newBudgetPricesCmd(), newBudgetHistoryCmd())
 	return cmd
 }
 
@@ -296,9 +296,10 @@ func raiseOwnerOnly(cmd *cobra.Command, what, command string) error {
 }
 
 // ownerRaiseCommand is the invocation this run is, as the owner would type it:
-// the program, the command path, and the flags this run set, each with its
-// value quoted as one shell word. A flag that is not printed is one this run
-// did not set, which the command's own defaults answer for.
+// the program, the command path, the words this run was handed that are not
+// flags, and the flags this run set, each quoted as one shell word. A flag that
+// is not printed is one this run did not set, which the command's own defaults
+// answer for.
 //
 // --repo is printed as the repository this run resolved it to and never as the
 // value that was typed: a bare --repo and a path both mean the checkout the
@@ -315,6 +316,12 @@ func raiseOwnerOnly(cmd *cobra.Command, what, command string) error {
 // The name is a project's, so it is quoted like any other value.
 func ownerRaiseCommand(cmd *cobra.Command, repo, project string) string {
 	words := append([]string{selfCommand()}, strings.Fields(cmd.CommandPath())[1:]...)
+	// What the command was asked to act on, before its flags: `budget chain
+	// raise` names a run on the command line, and a refusal that handed its
+	// owner a command without it would hand back one they cannot run.
+	for _, arg := range cmd.Flags().Args() {
+		words = append(words, quoteWord(arg))
+	}
 	cmd.Flags().Visit(func(f *pflag.Flag) {
 		if f.Name == "project" {
 			return // printed once below, from this run's own project

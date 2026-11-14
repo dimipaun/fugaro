@@ -243,10 +243,17 @@ the token cap and the clock follow the same figure. Nothing in the gateway chang
 it is simply handed a smaller one (D1059).
 
 **A chain that has spent its limit is raised by rewriting the root launch's task, with its reason recorded**
-(D1061, F22). No new command, no new node and no operator-only write path: a chain limit lives in the root
-run's `task.json` `overrides` (§2), so raising it is an edit of that stored task — the root run's record under
-`runs/$slug/` — carrying the reason for the raise, which the record keeps the way its policy record already
-keeps the reason a looser value was dropped (`policy.ignored`, `internal/runstore/runstore.go:865`). **Said
+(D1061, F22). No new node and no operator-only write path: a chain limit lives in the root run's `task.json`
+`overrides` (§2), so raising it is an edit of that stored task, and the reason for the raise is written into
+that run's own record under `runs/$slug/` — the `chain_raises` member of §7 — which keeps it the way the
+record already keeps the reason a looser policy value was dropped (`policy.ignored`,
+`internal/runstore/runstore.go:865`). **The supported path is one command, `fugaro budget chain raise` (§7):**
+it makes those two writes through the runs-bucket access a launcher already holds, refuses a raise with
+no reason and a figure that is not above the one in force, and opens neither the budget database nor the
+published policy, because a chain has no cap of its own for it to move. It is a **raise**, so it carries the
+fence every other raise form carries (D1542, D1552): a coding agent's session is refused and handed the
+invocation its owner runs themselves, which the no-prompt policy states as a rule of its own — no raise form
+is open to a session (`docs/no-prompt-policy/implementation-plan.md:56`, T3). **Said
 plainly, because the alternative is a claim this design cannot support: a launcher can do the same.** It holds
 `objectUser` on the `runs/` and `tokens/` prefixes (F21) and can rewrite that task exactly as an operator can,
 so the rule is
@@ -334,10 +341,12 @@ block for a halted run, because a halted run's first question is "how much is le
 | `task.json` (`schemas/task.schema.json`) | `overrides.max_usd`, `.max_tokens`, `.max_time`, `.max_review_rounds` | the runner at bootstrap |
 | `runs show --json` (new document) | `chain`, `enforced`, `limits[]` (`dimension`, `limit`, `used`, `remaining`, `source`) | the console, the coordinator, an orchestrator |
 | `fugaro run --json`'s reply (`launchResult`) | `chain` (the root run id), `enforced` and `limits[]`, the same shape | the console's launch reply decoder, which ignores keys it does not know |
+| `result.json` (`schemas/result.schema.json`) | `chain_raises[]`: `by`, `at`, `reason`, and `limits[]` (`dimension`, `from`, `to`), one entry per raise of that chain — written on the **root** run's record, where the chain's limit is (D1046) | nothing yet: the raise is kept for the reader the reason exists for, and no command prints it back — `runs show` prints the chain and what is left of its limit, and nothing else of the record (L9 adds the write and leaves the read-back surface open) |
 
-**`result.json` does not change at all** (D1051): the ledger carries the token total, so nothing is added to
-a run's record for this work. No member is renamed, retyped or removed, and no version is bumped
-(`internal/task/task.go:880`, `schemas/result.schema.json`).
+**`result.json` gains that one member and nothing else** (D1051, D1061). The token dimension is the ledger's
+figure, so *that* adds nothing to a run's record — the only addition is `chain_raises`, which no chain read is
+built from and no figure of the budget is computed out of. No member is renamed, retyped or removed, and no
+version is bumped (`internal/task/task.go:880`, `schemas/result.schema.json`).
 
 ## 8. Rigor modes and the cloud senior reviewer
 
@@ -425,7 +434,9 @@ by anything here.
 
 - It adds **no** new ceiling, cap or default of its own: every number is one the owner, the team or the
   branch already set, and a chain limit exists only when a launch sets one (§2).
-- It adds **no node, no rule and no wire field** to the budget database or to `result.json` (D1046, D1051).
+- It adds **no node, no rule and no wire field** to the budget database — and to `result.json`, whose
+  additions §7 lists with the rest of this design's, it adds one: `chain_raises`, the log of the raises L9
+  makes, which no read is built from (D1046, D1051, §7).
 - It does not touch the gateway's ledger, the lease, the sweeper or the budget rules (D1059).
 - It does not make the console pass a limit; the console's never-table keeps `--total-timeout` and gains
   nothing (D1055).

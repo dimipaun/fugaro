@@ -190,6 +190,13 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 			f.db.Set(budget.PathKillGlobal, map[string]any{"on": true, "by": "boss@example.com", "at": int64(1)})
 		},
 	},
+	// The raise is the fourth writing leaf of the budget family: a run
+	// reference, one figure and the reason are the whole of what stands
+	// between a bare run and its body. This world's bucket holds no such run,
+	// so what the body answers here is its own refusal rather than the write —
+	// which is still the body, reached with the stdin closed and asking
+	// nothing, and the whole of what a bare run cannot get to.
+	"fugaro budget chain raise": {args: []string{"run-1", "--max-usd", "6", "--reason", "one more round"}},
 	// The write used to ask before it rewrote the project's claude_accounts
 	// block; it asks nothing now (D1540) and the diff of that block is the proof
 	// this fixture reaches it.

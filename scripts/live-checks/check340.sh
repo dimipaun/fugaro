@@ -517,6 +517,18 @@ guard_bucket_reachable() {
     fact bucket-reachable FAIL "$why"
     stop "$why"
   fi
+  # IAM conditions, which both bindings below carry, are refused with a 412 on a
+  # bucket that still has fine-grained object ACLs, and the run would stop only
+  # after the account and the seeded objects were made. The attribute is read
+  # here so that stop comes before anything is created.
+  local ubla
+  ubla=$(gcloud storage buckets describe "gs://$B" --project="$P" \
+    --format="value(uniform_bucket_level_access)" 2>/dev/null || true)
+  if [ "$ubla" = "False" ]; then
+    why="gs://$B/ does not have uniform bucket-level access, and the two conditioned bindings this check grants are refused on such a bucket (HTTP 412). Nothing was created. Enable it on this SANDBOX bucket and run the check again: gcloud storage buckets update gs://$B --project=$P --uniform-bucket-level-access"
+    fact bucket-reachable FAIL "$why"
+    stop "$why"
+  fi
   fact bucket-reachable PASS "gs://$B/ is there and listable by your own identity, so every reading below is about the throwaway account and not about a bucket that cannot be reached ($(printf '%s' "$out" | grep -c . || true) entries at the root)"
 }
 

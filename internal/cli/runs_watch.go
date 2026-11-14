@@ -244,11 +244,28 @@ func watchRead(ctx context.Context, env *cloudEnv, o *runsWatchOptions, since ti
 	if since > 0 {
 		f.since = now.Add(-since)
 	}
+	// The roles are read before the runs are, the way runs ls reads them: a
+	// credential this command is about to refuse has no run to print, and the
+	// refusal is made before the window's own objects are read.
+	gate, err := accessRowsGate(ctx, env)
+	if err != nil {
+		return watchDoc{}, err
+	}
 	rows, err := loadRows(ctx, env, f, now)
 	if err != nil {
 		return watchDoc{}, err
 	}
 	doc.Warnings = append(doc.Warnings, watchLines(lines.String())...)
+	// The filter is runs ls's own, and the reason is the listing's: this
+	// command's rows carry each run's repository, its pull request and the
+	// triage's outcome, so a credential whose runs ls hides another
+	// repository's runs must not read them here (D1586's read half). A run this
+	// command does not print is a run a listing does not show, which is what
+	// watchRead's own comment promises.
+	if kept, dropped := gate.listed(rows); dropped > 0 {
+		rows = kept
+		doc.Warnings = append(doc.Warnings, oneLine(fmt.Sprintf("note: %d of the runs read are of repositories this credential holds no role in, and are not printed here: the roles come from the credential (finding F21), and '%s user ls --repo <repo>' prints what it holds there", dropped, selfCommand())))
+	}
 
 	warn := func(format string, args ...any) {
 		doc.Warnings = append(doc.Warnings, oneLine(fmt.Sprintf(format, args...)))
