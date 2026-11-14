@@ -631,6 +631,30 @@ nothing on the list does neither, and its record carries no escalation member. I
 agent runs any step of it** — it reads and writes in the sandbox installation and the sandbox
 repository only, **never `belong`**, and it is **NOT RUN**.
 
+**Check 600 is the accounts-add work's, and it is the first number free past every reservation above
+it** (the handoff row of [`docs/accounts-add/implementation-plan.md`](accounts-add/implementation-plan.md)
+sends its **LC1 to LC4** here — "`docs/gcp-live-checklist.md`, under the number free at that merge, as
+Check 35's own row asks (**D870**)" — and that folder's
+[reconciliation.md](accounts-add/reconciliation.md) **D870** is why the number is the writer's to take
+rather than one reserved in that design). The highest **written** `## Check N` section in this file,
+**read at `6497de24` — the commit this change is based on**, was **521**; above it **540–549**
+(`docs/outer-loop-escalation`), **550–554** (`docs/account-aliases`), **560–569**
+(`docs/licence-key-v2`), **580–589** (`docs/shared-jobs-default`) and **590–599**
+(`docs/bitbucket-token-types`) are claimed by other work streams and none of them is written into this
+file — so **600 is the number free at this change's merge**, which is the register's rule for a work
+that reserved none, and this paragraph is the record of the one taken. Like every claim above the
+highest written section it is **claimed, not reserved**: a claim is settled at its merge, and
+whichever of two claims merges second renumbers itself. Its subject is the four live checks of
+**named Claude accounts**, in **four sections** because each is run on its own and on a different
+machine: **600a** and **600b** are what Anthropic's own `claude setup-token` prints and asks — the
+second of them is the U2 half of the Check 35 row above — **600c** is the one command that gives that
+login the owner's own terminal and the hidden prompt behind it, and **600d** is the deployment that
+follows it: the account's own Cloud Run job, its one token mount and its service account's accessor
+on that secret and on no other account's. 600d is the one part a **script** can carry
+(`scripts/live-checks/check-lc4.sh`, whose sibling test drives it against fake `gcloud` and fake
+`fugaro` alone); 600a to 600c are human-terminal procedures and are the steps their sections write.
+It is owner-run — **no agent runs any step of it** — and it is **NOT RUN**.
+
 **That is the end of the register.** The paragraph below is not another
 reservation: it introduces the check that owns 57, whose row is in the table
 below.
@@ -873,6 +897,7 @@ probe account carries predefined grants only).
 | 520 | A text-only coder reads a screenshot, on the vision model ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 520** and task **V8**; **V1**'s `agent.models.vision`, **V2**'s `model_prices.*.image_tokens`, **V7**'s rewrite of the coder role, and **D2016** — which is why the state this measures is the coder priced **without** an image rate and not the plan's "with"): the sandbox repository's coder is priced without an image rate and `agent.models.vision` names a model that can read one, and one run whose task names a console `__screenshots__` PNG (the issue's own case, run `20261107-104613-b2af`) passes `implement` — and `fix`, where the recipe runs one — reaches its own `result.json`, and there every coder-role stage timing names the **vision** model's ID while `cost.model_by` carries that same model, so the split the issue is about is read from the record and not from the configuration; `fugaro diagnose <run> --json` prints the same split through the command an owner reads a run with | See "Check 520" below; `bash scripts/live-checks/check520.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check520_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | ONE sandbox run and what its task costs — the model spend of its coder-role stages, on the sandbox's own budget — plus the pull request that run opens: **billable, and `--yes` is required** before anything is launched. Every other call is a read (doctor, `models ls`, the run record, `diagnose`), and `CHECK520_MAX_MODEL_USD` turns the run's own figure into a criterion when you set it. The run's pull request and branch are left open for you to close. **OWNER-RUN, NOT RUN.** |
 | 521 | The early refusal, and the sentence an owner acts on ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 521** and task **V8**; **V5**'s bootstrap refusal — "the coder can't read an image the task names" — and **D2005**, **D2006** and **D2001**): a repository whose coder is priced without an image rate and with **no** `agent.models.vision`, and a task whose text names a `.png`: the run is refused at **bootstrap**, before its first stage, so no stage's work is paid for and thrown away — the failure the refusal exists to remove; its record's `failure_class` is `config_invalid`, its `reason` names the slot to set and the price member that gives that slot's model an image rate, its stage list is **empty** and its cost is **zero** | See "Check 521" below; `bash scripts/live-checks/check521.sh --sandbox <a sandbox repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check521_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | **NOTHING billable and no model call**: the run is refused at bootstrap, before its first stage, so no stage's work is paid for and the budget is not touched — which is why this check needs no `--yes`. It does start one Cloud Run job execution, and **nothing it launches outlives it**: a run that has not ended within `CHECK521_RUN_TIMEOUT_SECONDS` is cancelled with `fugaro cancel --now`, from the step that gives up on it and from the script's own exit trap. **OWNER-RUN, NOT RUN.** |
 | 292 | A catalog entry whose source names a build `context:` is built with the repository's files in it ([`docs/catalog-build-context/`](catalog-build-context/implementation-plan.md) §6, its **Check 292** and task **CB5**; that folder's **F22**, **F29**, **F30**, **F32** and **F33**, and **D1402**, **D1403**, **D1408** and **D1409**; the amendment it folds into is [`docs/project-image-catalog/context-design.md`](project-image-catalog/context-design.md), its §A5, §A6, §C3, §C4, §C5 and the fold-in at §11): one entry built from a repository's Dockerfile in a **subdirectory**, whose `COPY` reaches a file of the repository — the build the catalog could not run before this work — read back four ways: the built image **contains the copied file**, the record names **one** commit (`source_commit` and `context_commit` the same, and the image's `org.opencontainers.image.revision` that commit), the staged context **fires** the nightly decision with the `catalog-context` reason and the rebuild it submits is pinned to the staged commit, and after that rebuild the same entry decides **without** that reason. **What the plan's own step 4 cannot be run as written is the point of the section below:** the trigger's subject is the digest the operator's own copy **staged**, not the branch, so a pushed commit fires nothing by itself — the check is written against the code and says so | See "Check 292" below; **you** run it, on the **sandbox installation and the sandbox repository only, never `belong`**, from the sandbox repository's checkout, and **no agent runs any step of it** (there is **no script**: the check is the steps below) | One Cloud Build that runs (`fugaro image build <entry>`), one submitted-and-cancelled before its steps run (the staging that leaves the record behind), and the one rebuild the project's catalog check job submits when the entry fires: **all billable, and the rebuild is the point of the step**. Nothing is granted, no run is launched and no model is called, so there is no run spend. Two commits are pushed to the sandbox repository's branch and reverted (a third when step 5 loses its race with the build it cancels), and the entry, its staged objects, its record, its check state and its image are the check's own — the entry and its objects are removed in the Restore, the image is left in the shared registry (`fugaro image rm` never deletes one). **OWNER-RUN, NOT RUN.** |
+| 600 | Named Claude accounts, LC1 to LC4 ([`docs/accounts-add/`](accounts-add/implementation-plan.md), its handoff row and **D870**; [spec.md](accounts-add/spec.md) §9; [design/named-oauth-tokens.md](design/named-oauth-tokens.md) §7's **U2**, whose second half is Check 35 above): **four owner-run parts, each on its own machine.** **600a** — on a machine that has **never** run `claude setup-token`, run it in a plain terminal and record what it prints and asks: whether a browser opens, whether a URL is printed and a code pasted back, what each prompt says, and whether the value it prints stands **alone on its line** or inside a sentence (the one answer an owner needs in order to copy it). **600b** — on a machine that **already holds another account's login**, run it again and record whether it logs out, refuses, silently reuses the login that is there or offers a choice, whether it takes an account or a profile flag (`claude setup-token --help` is the authority) and what it says about the login already there; the two answers decide the **wording** of [project-claude-accounts.md](project-claude-accounts.md) §2 and the warning beside it, and nothing in the code reads either — this is the register's own Check 35, closed. **600c** — `fugaro accounts add <name> --claude` on a **throwaway installation**, at your own terminal: the login runs **in that terminal** and answers you rather than Fugaro, the one paste that follows is asked at the **hidden prompt** and is **not echoed**, Fugaro's own output never holds the value, `~/.bash_history` holds the command and nothing else, nothing under `~/.config/fugaro/` holds a value, and a run with `--token <name>` then starts. **600d** — after 600c, the deploy half, as **one script**: the account's job carries exactly **one** account-token `secret_env` entry beside the profile's own mounts (which include the `github-app-key` secret), the secret it mounts is the account's own derived one, its service account holds `secretAccessor` on that secret and on **no other account's**, and `fugaro doctor` is green | See "Check 600a"–"Check 600d" below; **you** run them, at your own terminal — 600a and 600b on a machine that need hold **no Fugaro build at all**, 600c and 600d on a **throwaway installation** (`fugaro accounts add` refuses a coding agent's session; the script refuses a project or an account naming `belong` by name before a single call, which is its own reading of **never `belong`**), and **no agent runs any step of it** | 600a and 600b are Anthropic's own login and cost nothing; 600c stores one token on an installation that exists to be thrown away and converges it (the `fugaro update` behind its own confirmation, whose cost is the update's); 600d is **reads only** — `gcloud run jobs list` and `describe`, `gcloud secrets list`, `describe` and `get-iam-policy`, and one `fugaro doctor --json` — and its `--dry-run` makes **no gcloud call and no fugaro call at all**, prints the plan and gives no verdict. **No secret value is read on any path or by any row**: every call is a list, a describe or a policy read, and the only credential-shaped thing they touch is a secret's **name**. The script's own Restore records that it created, granted, changed and deleted **nothing**. **Never a value in what is pasted back**: every answer is a **shape**. **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -13787,6 +13812,369 @@ built from, and the one a person can take over the log that actually failed on t
 6. **Restore.** Push the sandbox branch back — the commits this check made go with it — remove the entry (`fugaro image rm <name>`; it refuses while a job still runs the entry, which is why step 2 keeps it off every `needs:`) and publish with `fugaro update`, then `fugaro update --repo <the sandbox repository>` so its jobs are back on the config step 1 recorded. The entry's staged objects, its record and its check state are the check's own and live under `builds/`: `gcloud storage rm "gs://<runs bucket>/builds/catalog/<entry>/*"` and `gcloud storage rm "gs://<runs bucket>/builds/<slug>/catalog/<entry>/*"` remove them — the second is the record and the `check.json` beside it, which is where the check's own back-off lives — so the next nightly run has nothing of this entry to decide and no back-off of the check's to read. **Do not remove `builds/image-lock.json`**: that lock is the project's, shared with every other entry, and it is not this check's to delete. The **image** stays in the installation's shared registry: `fugaro image rm` never deletes one, and deleting it is not this check's to do. **FACT:** `fugaro image ls` reads the catalog as step 1 recorded it, and `fugaro doctor` is quiet.
 
 **Paste back:** every `FACT` line above — the entry's `fugaro image ls` line, the built image's reference and digest, the record's `source_commit`, `context_commit`, `context_sha256` and `template_salt`, the image's `org.opencontainers.image.revision`, the check job's two lines for the entry with their `decision` and `reasons`, and the copied file's bytes as the image holds them — and **never a secret and never a token value**: this check prints none, and the one file it reads out of the image is one it wrote. Until this check runs, the feature is built and **unverified live**: the two things no hermetic test can hold are a real provider's tree read at a real commit (the tree read and the digest it produces) and a real Cloud Build carrying a context through the clone step and `docker build --file` — which is exactly what steps 3 to 5 measure. **Never run any step against `belong`**: this is the sandbox installation and the sandbox repository only, and no agent runs any step of it.
+
+
+## Check 600a: what `claude setup-token` prints and asks (a machine that has never run it, and no Fugaro build needed at all; run by you; NOT RUN)
+
+**NOT RUN.** Written by **the task that implemented Check 600** of the accounts-add work — the
+handoff row of [accounts-add/implementation-plan.md](accounts-add/implementation-plan.md), which
+sends LC1 to LC4 here "under the number free at that merge, as Check 35's own row asks (**D870**)",
+and [accounts-add/reconciliation.md](accounts-add/reconciliation.md)'s D870, which is why the number
+is the writer's to take rather than one reserved in that design — and **run by you**: the subject is
+Anthropic's own `claude setup-token`, and what it prints is not something any run in this repository
+can answer. It settles [spec.md](accounts-add/spec.md) §9's **LC1**, it needs **no Fugaro build at
+all** (no installation, no project, no cloud credential), and **no agent runs any step of it**. There
+is **no script**, and that is deliberate: what this check records is a transcript of prompts, and a
+script that parsed that transcript would be reading the login's own output — the one thing Fugaro's
+code is built never to do (§3.4: the login answers you, and Fugaro reads none of it, which is why a
+sequence of the login's is nobody's to state but the login's). The register's own **Check 35** above
+is this number's U2 half and stays open: 600b is where its second question is answered.
+
+**What it settles.** The operator page's act-one wording — the paragraphs of
+[project-claude-accounts.md](project-claude-accounts.md) §2 that tell an owner to run `claude
+setup-token` and paste what it prints — is written against four facts nobody has yet read off a real
+machine: whether the login opens a browser, whether it prints a URL and takes a code back, what each
+prompt says, and whether the value it prints stands **alone on its line** or sits inside a sentence.
+The last one is the only one an owner needs in order to copy the value at all, which is why the page
+cannot tell them what to copy until this check has run. It is **nothing in the code's** subject
+(§3.4): a login that printed something else tomorrow would change this section and the page's
+wording, and no test and no line of `internal/`.
+
+**Never a value.** Every answer below is a **shape**: what a prompt asks, whether something was
+echoed, whether the value is on its own line. The value `claude setup-token` prints is never pasted
+under this section and never pasted to the coordinator; the check that a value is a usable token is
+600c's `fugaro accounts add <name> --claude`, which stores it and prints it nowhere.
+
+1. **The machine, and the one thing that makes it a clean reading.** Use a machine, a user account or
+   a `HOME` that has **never** run `claude setup-token`. Record `claude --version`'s exact string and
+   the OS, and whether the machine already holds a Claude login for another account (the login's own
+   output says; do not paste a config file). **FACT:** the version, the OS, and whether a login was
+   already there — a machine that already holds one is 600b's subject, and starting 600a on one is
+   how the two get mixed up.
+
+2. **The login, in a plain terminal.** Run `claude setup-token` in a plain terminal — no wrapper, no
+   pipe, no `script`, no coding agent's session — and record from its first line. **FACT:** which of
+   these happens: **(a)** a browser opens by itself and asks you to sign in; **(b)** a URL is printed
+   and a code is pasted back **into the browser**; **(c)** a URL is printed and a code is pasted back
+   **into the terminal**; **(d)** none of the above — say what happened instead. This is the answer
+   that decides whether the page may promise "a browser opens".
+
+3. **Every prompt, in its own words.** **FACT:** each prompt's sentence verbatim, and where a prompt
+   offers choices, the choices' own words. Where a prompt shows part of a value, write
+   `[part of a value]` in its place.
+
+4. **What it prints at the end, and the shape of the line.** **FACT:** the last few lines with
+   anything value-shaped replaced by `[the value]`, and **where the value sits** — alone on its line
+   (so a copy is one line and nothing else) or inside a sentence (so an owner has to pick it out of
+   one). That single answer is what the page's "copy what it prints" wording rests on.
+
+5. **What the terminal did with what you typed.** **FACT:** whether the code you pasted back was
+   echoed as you typed it, and whether the value at the end was echoed again afterwards. This is
+   screen hygiene and it is **not a Fugaro finding**: Fugaro prints nothing at this step and reads
+   none of it.
+
+6. **Whether it is repeatable.** Run it a second time on the same machine. **FACT:** whether the
+   second run asks the same questions and prints another value, refuses, or says something about the
+   login already there. Anything it says about *another* account is the overlap 600b is about, and it
+   is worth recording here as it stands rather than left for that section to find.
+
+7. **Leave the machine as you found it.** If the machine is not yours to keep, sign the login out or
+   remove it, and delete the value you copied. **FACT:** one line saying what you did with both. This
+   check stores nothing, creates nothing and has no Restore: it makes no Fugaro call, no cloud call
+   and no write of any kind.
+
+**Paste back:** the `FACT` lines above — the Claude Code version and the OS, which of the four ways
+the login worked, the prompts' own sentences, the shape of the line the value sits on, and what a
+second run did — under this section, and **never the value**. What moves when it is answered is
+[project-claude-accounts.md](project-claude-accounts.md) §2's wording around the act, and with 600b
+the sentence beside it that says the multi-account behaviour "is not verified by Fugaro, no live
+check having been run".
+
+## Check 600b: `claude setup-token` on a machine that already holds another account's login (the register's Check 35, U2; run by you; NOT RUN)
+
+**NOT RUN.** Written by the task that implemented Check 600 (see 600a for the handoff, the number and
+D870) and **run by you** — Anthropic's own login is the subject and nothing offline can answer it. It
+settles [spec.md](accounts-add/spec.md) §9's **LC2**, which is the second question of the register's
+own **Check 35** above: that row has read **NOT RUN** since it was written, and this section is what
+closes it. **No agent runs any step of it**, there is **no script** for the reason 600a gives, and
+what it decides is **wording**: the operator page's warning for an owner who already holds another
+account's token. Nothing in the code reads any of it — tied to no Fugaro build, no installation and
+no project.
+
+**What it settles.** Whether `claude setup-token` on a machine that already holds another account's
+login **logs out**, **refuses** until you sign out, **silently reuses** the login that is there, or
+lets you **choose** an account or a profile — and whether it takes an account or profile flag at all.
+The silent reuse is the answer that matters most: a login that quietly minted a token for the account
+already signed in would make `fugaro accounts add <name> --claude` store, under `<name>`, a token
+that belongs to a different account — and Fugaro cannot tell, because the value is opaque to it and
+Fugaro reads none of the login's output (§3.4). There is no code change behind this answer; there is a
+warning, and this is the only place it can come from.
+
+1. **The machine, and the login already on it.** Use a machine that **already holds another account's
+   login** (the machine 600a's steps 1 and 2 left, if they left it signed in, is a good one). Record
+   the Claude Code version, and — as a **shape**, never a value — what the login says about the
+   account it holds; an account name or an address the tool prints itself is fine, a token is
+   `[the value]`.
+
+2. **Run it again.** `claude setup-token` on that machine. **FACT:** one of these, with the lines it
+   printed: **it refuses** until you sign out; **it signs the login that is there out** and then
+   proceeds; **it silently reuses** the login that is there — say how you know (for instance that it
+   never asked who to sign in as); **it asks you to choose** an account, a profile or a workspace;
+   or something else, which you describe.
+
+3. **The flag question, where `--help` is the authority.** Run `claude setup-token --help`.
+   **FACT:** the flag names it lists that could choose an account or a profile — the **names** only,
+   never a value — and whether one of them names an account the machine does not hold, which would
+   make a second token a flag away. Spec §9's LC2 asks exactly this, and the page is not allowed to
+   invent one: the help text **of the version you recorded in step 1** is what says whether such a
+   flag exists.
+
+4. **The sign-out, if step 2 needed one.** **FACT:** the exact command or UI step (a logout
+   subcommand of the login's own, an OS keychain or credential-store action), and whether minting the
+   **first** account's token again afterwards needs a sign-in back. Record the command's name; the
+   page is where a sequence may be stated, and only after this answer.
+
+5. **If there is no in-place way to choose, the fallback that works.** Repeat step 2 with a separate
+   `HOME`, or with the config-directory variable the login's own `--help` names — never a variable
+   guessed from a blog post. **FACT:** the exact variable and the shape of the value used
+   (`HOME=<a scratch directory>`, or the login's own flag), and whether the login in that directory
+   minted a token for the second account without touching the first one's.
+
+6. **What the page has to say, read off this run.** **FACT:** the page's sentence as it stands today
+   — [project-claude-accounts.md](project-claude-accounts.md) §2's "is not verified by Fugaro, no
+   live check having been run" — quoted as it is, and the one-line instruction that replaces it:
+   what an owner who already holds another account's token must do before running
+   `fugaro accounts add <name> --claude`. The register's own Check 35 row is updated with the same
+   answer, since it is that row's own "Paste back" line.
+
+7. **Leave the machine as you found it.** Sign out, or remove the login this check made, wherever the
+   machine is not yours to keep, and delete the values you copied. **FACT:** one line saying what you
+   did. This check makes no Fugaro call, no cloud call and no write.
+
+**Paste back:** the `FACT` lines above — which of the four things the second run did, the flag names
+`--help` lists, the sign-out or fallback that works with its exact variable, and the page's sentence
+as it stands — and **never a value**.
+
+**What waits on it.** [project-claude-accounts.md](project-claude-accounts.md) §2's warning, the
+setup skill's "Named Claude accounts" paragraph (`plugin/skills/setup/SKILL.md`) and that skill's
+`reference/decisions.md` topic 2 — the three places Check 35's own "Paste back" line names — and
+Check 35's row above, which stays **NOT RUN** until this section's answers are written into it.
+
+## Check 600c: the two acts and the hidden prompt — one command, at your own terminal (a throwaway installation, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by the task that implemented Check 600 (see 600a for the handoff, the number and
+D870) and **run by you, at your own terminal**: the two acts this check is about are Anthropic's own
+login and one hidden paste, and neither is something an agent's session can be asked to perform —
+indeed the command refuses one. It settles [spec.md](accounts-add/spec.md) §9's **LC3**, the first of
+the two halves that can **falsify the design** rather than the code: the whole of `fugaro accounts
+add <name> --claude` rests on the login taking the owner's own terminal and on one hidden paste being
+enough, and this is where a login that needed more, or a prompt that echoed, would show up. **No
+agent runs any step of it**, and there is **no script**: every fact below is a reading of your own
+terminal, which is the artifact the check exists to look at.
+
+**What it settles.** Seven facts about the one command, which [project-claude-accounts.md](project-claude-accounts.md)
+§2 states as the command's contract: the login runs **in that terminal** and answers you rather than
+Fugaro; the paste that follows is asked at the **hidden prompt**; the prompt **does not echo** the
+value; Fugaro's own output never holds it; `~/.bash_history` holds the command and nothing else;
+nothing under `~/.config/fugaro/` holds a value; and a run with `--token <name>` then starts. The
+first four are the design's core (spec §3.4 and §4.2), the fifth and sixth are the leak paths a
+pasted value would take on this machine, and the seventh is the account reaching a run.
+
+**Before it: the machine and the state the Restore puts back.** The installation is a **throwaway
+one** — an installation and a project you are willing to throw away, and **never `belong`** — created
+for this check (`fugaro setup` in your own terminal, its own confirmation) or one you already intend
+to delete. Record, as the state every step below is read against: the project's name, the region, the
+installation's profile (the one `fugaro doctor --json` names), and the account name `<name>` you are
+about to add, which must not be `default` (a name the command reserves and refuses). **FACT:** those
+four, and `fugaro accounts ls`'s output before this check adds anything. Then confirm the login's own
+decision is yours: **neither credential variable may be exported**, because `--claude` stops before
+running anything when one is, precisely so that a login cannot land on an account you did not mean.
+**FACT:** the line you ran and that it printed nothing.
+
+1. **The command, in your own terminal.** Run, in a plain terminal — not a coding agent's session,
+   which the command refuses by name, and not through a pipe or a wrapper:
+
+   ```sh
+   fugaro accounts add <name> --claude
+   ```
+
+   The command needs a terminal and says so when it has none; its refusal names the same command
+   without the flag, which is the form for an owner who minted the token elsewhere. **FACT:** the
+   refusal a session without a terminal (or a coding agent's session) gets, run once — that refusal
+   is a criterion of this check and not a detour — and then the command's own first lines in the
+   terminal that does have one.
+
+2. **Act one: the login is yours.** The login runs **in that terminal**, holding your own stdin,
+   stdout and stderr; it answers you and not Fugaro, and Fugaro reads none of what it prints. **FACT:**
+   whether you could answer its prompts directly in the shell you typed the command in, and what the
+   login printed (as a shape: its prompts' sentences, and `[the value]` where a value appeared).
+
+3. **Act two: the one paste, at the hidden prompt.** After the login, the command asks for the token
+   at the prompt the store uses everywhere — the echo-free prompt of `fugaro secrets set`, or stdin
+   when there is no terminal. **FACT:** that the prompt was the one that followed the login (its own
+   sentence), and that **it did not echo** the value as you pasted it. A prompt that echoed the value
+   is the finding this check exists to catch, and it is worth recording exactly what was on the
+   screen at that moment.
+
+4. **Fugaro's own output never holds it.** **FACT:** the command's whole output after the paste, and
+   whether any line of it is the value. The progress lines name the account, the secret's name, the
+   stages the converge runs and the repositories the token may be sent to; none of them is the value.
+   Its last line says what is left, which is a `fugaro run` and never an update.
+
+5. **The shell's history.** **FACT:** the history line this command left — `~/.bash_history` (or your
+   shell's own history file) read back — and that it is the command alone: no token, no `--token`, no
+   value on the line or on the line after it. A value in a history file is a leak this check exists
+   to catch, and it is the one a paste at the wrong prompt would leave.
+
+6. **Nothing under the local config holds a value.** **FACT:** `fugaro accounts ls` after the command
+   (the account among the names it prints), and the keys the command wrote in `~/.config/fugaro/` —
+   the account's `claude_accounts.<name>.allow_data_to` and the name in the profile's own
+   `claude_accounts` list — read back as the **names and repositories** they are, with no line of
+   either file being the value. The token lives in Secret Manager as a new version of the account's
+   own secret; the config holds which account it is for, never what it is.
+
+7. **The account reaches a run.** In a checkout whose repository the account's `allow_data_to` names,
+   launch one run as this account — `fugaro run --token <name> "<a task>"` — or record that you
+   declined the spend. **FACT:** the launch's own line (the run's slug and id, and no value), and
+   either the run's record naming the account (`fugaro diagnose <run>` prints an `Account:` line when
+   the account is not `default`) or the refusal a checkout the account does not cover gets. A launch
+   is **billable**, it is yours to make, and this step's fact is the launch line and the account it
+   names — the run's own outcome is not this check's subject.
+
+8. **Restore.** This check writes one thing: the account, its token and the deployment behind it, on
+   an installation that exists to be thrown away. There is no state to put back — the throwaway
+   installation is deleted, not restored (`fugaro` has no uninstall; deleting the installation is
+   deleting its project, and that is yours). **FACT:** one line saying what you did with the
+   installation, the account and the value you pasted (rotated in the Claude account's own console,
+   or left to die with the project).
+
+**Paste back:** the `FACT` lines above — the refusals, the login's prompts as shapes, the hidden
+prompt and that it did not echo, the command's output with no value in it, the history line, the
+config keys as names, and the launch's own line with the account it names — and **never a value,
+never a token and never a line of `~/.config/fugaro/` that holds one**.
+
+**What waits on it.** Nothing in the code, which is the point: LC3 and 600d are the two checks that
+can falsify the **design** ([spec.md](accounts-add/spec.md) §9). A login that would not take the
+owner's terminal, a prompt that echoed, or a value in a history file would send the design back —
+each of those is a finding for the accounts-add work stream and not something an agent adjusts here.
+
+## Check 600d: the deploy half — the account's own job, one token mount, and no other account's secret (a throwaway installation, never `belong`; one script you run; NOT RUN)
+
+**NOT RUN.** Written by the task that implemented Check 600 (see 600a for the handoff, the number and
+D870) and **run by you**. It settles [spec.md](accounts-add/spec.md) §9's **LC4** — the second of the
+two halves that can falsify the design rather than the code — and it is the one part of this number a
+**script** can carry, because every fact in it is a reading of the cloud and none of them is a
+reading of a screen. The check is `scripts/live-checks/check-lc4.sh`; its sibling test
+`scripts/live-checks/check-lc4_test.sh` drives it against fake `gcloud` and a fake `fugaro` only, so
+the script itself is exercised with no cloud, no project and no credential; and **no agent runs any
+step of it**. The register's own **Check 35** above and 600a to 600c are the same number's other
+parts: 600d runs **after 600c**, on the account 600c added, and it reads what the deployment made of
+it — or any installation that lists a named account, which is why the script is tied to no one
+installation beyond the project you type.
+
+**Run it:**
+
+```sh
+bash scripts/live-checks/check-lc4.sh --project <project> --account <name>
+```
+
+`--profile` defaults to `standard` (the profile a workflow that names none runs on) and `--region`
+defaults to the region `fugaro doctor --json` records; `--dry-run` prints every command a real run
+would make and runs none of them. **You** run it, on the **throwaway installation** 600c used and
+**never `belong`**: a project or an account whose name contains `belong` (or the other
+names the guard refuses) stops the run before the first call, and `--project` is held to the project
+`fugaro doctor --json` names, because a reading taken in the wrong project would be another
+installation's account and no row would say so.
+
+**What it asserts**, seven facts about the account's own Cloud Run job:
+
+- **the account's own job, out of the jobs wearing the account's own labels** — `fugaro=managed` with
+  `fugaro_profile` and `fugaro_account` this check's own values. Those labels are worn by **two**
+  jobs once the account is **named**: the account's coding job, and the **review-only
+  variant** the same profile deploys beside it (`infra.ProjectReviewJobs`, the same module instance
+  with an empty secret set — D892(a)'s O1 ruling), which mounts nothing at all: a mounted secret is
+  what tells the two apart. (A profile's *no-account* job has a variant too, and it spells the
+  account `default` where that job spells it `none` — `config.ReviewVariantAccount` — so it is not in
+  this listing at all.) The check reads the one that **mounts a secret**, leaves the mountless one
+  alone and names it in the `job` row; **no** job wearing the labels is the finding this part exists
+  for, and a listing it cannot resolve that way stops the run (exit `2`, below) rather than being read
+  as the account's — the order the listing returns jobs in is not what makes one the account's;
+- that job's environment carries **exactly one** secret-backed entry named `CLAUDE_CODE_OAUTH_TOKEN`;
+- the secret that entry mounts is **the account's own** derived secret: the one whose `fugaro_secret`
+  label is `claude-oauth-token-<name>` (`config.ClaudeAccountSecret`), not the unsuffixed
+  `claude-oauth-token` the `default` account carries and not another account's;
+- **the profile's own mounts are on the same job** — `FUGARO_GITHUB_APP_PRIVATE_KEY`, out of the
+  secret labelled `github-app-key` — because "beside the profile's own mounts" is half of LC4's
+  sentence and a job that had lost them would still pass the two facts above;
+- **no other account's token secret is mounted** on that job;
+- the job's own service account holds `roles/secretmanager.secretAccessor` **on that secret** …
+- … and on **no other account's**: every other secret whose `fugaro_secret` label starts with
+  `claude-oauth-token` is read back and the job's account must appear in none of their policies. That
+  pair is the isolation the design's option B exists for — one account's job reads one account's
+  token; and
+- `fugaro doctor --json` is **green**.
+
+**Why the names are found and never computed.** The job's name and every secret's ID are
+hash-derived (`gcp.ProjectJobName`, `gcp.ProjectSecretID`: a readable part, then hex of a hash of the
+tuple), so the check finds the job by its labels — the one of the jobs wearing them that mounts a
+secret — and each secret by the label on it. That is also
+what makes it read **whatever the installation deployed** rather than what this tree would deploy
+today, and it means an installation whose names are not this tree's are still readable.
+
+**What it does not read, and one thing that is doctor's reading instead.** No secret **value** is
+read, asked for or printed anywhere: every call is a `list`, a `describe` or a `get-iam-policy`, and
+the reader prints secret names and labels alone. And a **project-wide** reader — `roles/owner`, or a
+project-level `secretAccessor` binding — is not a fact about a secret's own IAM policy, so the last
+two rows above do not see one: that is `fugaro doctor`'s secret-reader sweep, which reads the
+project's basic roles beside each container's own grants
+(`internal/cli/doctor_secret_readers.go`), and it is one of the reasons the `doctor` row is part of
+this check rather than an afterthought.
+
+**Reading the `CHECK LC4 RESULT` block.** The same shape as the register's other scripted checks':
+**one** block on stdout, a `FACT <key>: PASS|FAIL|INFO — <detail>` line per fact, ending
+`CHECK LC4 RESULT END (exit N)`. The rows are `xtrace` (the shell was tracing, which would put this
+check's own words into the one block you paste back), `belong` (the guard), then what the run was
+reading — `project`, `region`, `profile`, `account` — then `doctor`, `job`, `token-mount`,
+`token-secret`, `profile-mounts`, `other-mounts`, `sa-accessor` and `sa-other-account`, and last the
+teardown's own `restore`. A key the run never reached reads **`FAIL — not reached`**, which is not
+a finding about the account: `aborted` is added when the run stopped early, and a dry run prints
+`dry-run` instead of the rows it would have read. `PASS` on every criterion and a `PASS`ing `restore`
+is the check's whole answer; `restore` here says the run **created nothing, granted nothing, changed
+nothing and deleted nothing**, because every call it makes is a read.
+
+**Exit `0`** is every criterion holding and the Restore confirming there was nothing of this check's
+to undo; **`1`** is a criterion that did not hold — a job missing, a second token mount, a
+token that is another account's, a lost App-key mount, an accessor that is not there or is on the
+wrong secret, or a doctor that is not green — and it is a finding about that installation and the
+account it names; **`2`** is the check not being able to tell: a tool missing, `fugaro doctor --json`
+not answering or not naming a project, `--project` or `--region` disagreeing with the installation's
+own record, a gcloud call refused, a document the reader cannot parse, a job listing that cannot be
+resolved into the account's one job (below), or a run that ended before its verdict. Three shapes of
+that listing stop a run rather than being read: two jobs wearing the labels that **each** mount a
+secret — neither is the
+mountless variant, and the deployment builds one job per (profile, provider, account), so the second
+is a leftover of an earlier release; two wearing them of which **neither** mounts a secret, which
+nothing tells the account's own job from; and a second **mountless** job beside the account's own,
+where the triple deploys one review-only variant and no more.
+`--dry-run` prints the plan (every command, in the order a real run would make them) and a block
+that says what it was asked to read (`dry-run` among its rows), and it makes **no gcloud call and no `fugaro` call at all**.
+
+**Cost.** **Nothing billable and no model call**: `gcloud run jobs list` and `describe`, `gcloud
+secrets list`, `describe` and `get-iam-policy`, and one `fugaro doctor --json`. The check creates no
+job, grants no role, writes no version and reads no value, so it is safe to run against an
+installation you mean to keep — the `belong` refusal is caution about the owner's own installation,
+not about damage this check could do.
+
+**Paste back:** the whole block under this section, and nothing else — with the account's job name,
+its service account, the secret's name and each row's own sentence. **Never a secret value**: this
+check reads names and labels, prints names and labels, and has no row that could hold a value.
+
+**What waits on it.** Nothing that may be merged on it, which is why it is an owner's check rather
+than a gate: the design's falsifiable half is 600c and this section, and either would send the
+accounts-add design back rather than being adjusted here. Until both have run, the named-account
+deployment is **built and unverified live** — the shape of the job a deployment makes, its one token
+mount and the isolation between two accounts' jobs are exactly what this check measures, and no
+hermetic test can hold a real installation's labels, its IAM or its doctor.
 
 ## Check 230: the author, the committer and the trailers, on GitHub and on Bitbucket (two sandbox repositories carrying `git.author: launcher`, a third with no such key, and their forges; never `belong`; run by you; NOT RUN)
 

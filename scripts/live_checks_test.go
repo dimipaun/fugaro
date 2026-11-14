@@ -72,6 +72,13 @@ import (
 // older than the release, a coder that reads images itself, a slot that is set,
 // a run that never ends, a record that is another run's, and a refusal whose
 // sentence has lost one of the parts an owner needs.
+// Check LC4's fakes are a fake `gcloud` and a fake `fugaro`: the fake `fugaro`
+// answers `doctor --json` from the case's own directory, and the fake `gcloud`
+// serves the job list (applying the label filter, so a check that filtered on
+// the wrong labels is caught), the job, each secret and each secret's policy,
+// keyed by the ID the check asks about -- so a case can say the account's job
+// was found by its labels, that its own token secret was read and that no
+// other account's was mounted or made readable.
 // Check 301's fakes are a fake `fugaro`, a fake launchd and a fake systemd
 // whose boot id and unit files the test writes, so a reboot, a second
 // instance's refusal and T7's re-render are all readings of files the test
@@ -114,6 +121,7 @@ var liveCheckScripts = []struct {
 	{"check511.sh", "check511_test.sh"},
 	{"check520.sh", "check520_test.sh"},
 	{"check521.sh", "check521_test.sh"},
+	{"check-lc4.sh", "check-lc4_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
