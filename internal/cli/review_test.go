@@ -1005,9 +1005,24 @@ const bitbucketReviewClaim = "acme/bb"
 // their own (a project's allow_repos is the gate a per-repository launch — and
 // the implicit review job's own admission — reads, and the profile is not the
 // repository's to be launched on in any case).
+//
+// Its bitbucket_token block is what makes the launch servable at all: the
+// implicit review-only job mounts no token, so the review is brokered or it is
+// refused (implicitReviewJobFor's nodeBrokersBitbucket arm), and a policy that
+// admits the repository without the proxy switch is the state
+// bitbucketReviewPolicyUnbrokered spells for the refusal's own test.
 func bitbucketReviewPolicy() string {
-	return strings.Replace(projectJobAccountsPolicy,
+	widened := strings.Replace(projectJobAccountsPolicy,
 		`"allow_repos":["github/acme/*"]`, `"allow_repos":["github/acme/*","bitbucket/acme/*"]`, 1)
+	return strings.Replace(widened, `{"version":5,`,
+		`{"version":5,"bitbucket_token":{"allow_repos":["bitbucket/acme/*"],"proxy":true},`, 1)
+}
+
+// bitbucketReviewPolicyUnbrokered is bitbucketReviewPolicy with the operator's
+// proxy switch off: the node admits the repository, and the credentials service
+// will not forward the token for it.
+func bitbucketReviewPolicyUnbrokered() string {
+	return strings.Replace(bitbucketReviewPolicy(), `"proxy":true`, `"proxy":false`, 1)
 }
 
 // allowAccountOnRepo adds repo to every claude_accounts and project_secrets
@@ -1199,4 +1214,38 @@ func TestReviewRefusesATokenOnTheImplicitJob(t *testing.T) {
 	wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7", "--token", "acme-personal"},
 		"acme-personal", "serves one account", config.DefaultClaudeAccount,
 		"fugaro run --pr N --recipe "+reviewOnlyRecipe)
+}
+
+// TestReviewRefusesABitbucketRepositoryTheNodeDoesNotBroker is the credential
+// axis of the same resolution, and the one state the implicit job cannot serve
+// at all: the job mounts no Bitbucket token (it is the property that makes it a
+// review job), so the token can only come from the credentials service, and the
+// service forwards it for a repository only where the published node admits it
+// with proxy: true. A repository the node admits without that switch is a
+// review whose container would open the repository with no token and stop at
+// its first git call (the runner's openProvider, on a variable that is not
+// set), which is a failure the operator reads in the run's output rather than
+// the sentence that names what to do instead.
+//
+// Mutation (run, restored): drop the nodeBrokersBitbucket arm of
+// implicitReviewJobFor, and this launch reaches Cloud Run and starts a review
+// that cannot read the pull request it was launched for.
+func TestReviewRefusesABitbucketRepositoryTheNodeDoesNotBroker(t *testing.T) {
+	f := newReviewFixture(t)
+	const bbRepo = bitbucketReviewClaim
+	addRepoToConfig(t, f.cloudFixture, bbRepo, "bitbucket")
+	recordGitHubAppID(t)
+	publishPolicy(t, f.launchBudgetFixture, bitbucketReviewPolicyUnbrokered())
+	implicit := infra.ImplicitReviewJobName("bitbucket")
+	f.run.AddProjectJob(implicit, infra.ImplicitReviewProfile, "bitbucket",
+		config.ReviewVariantAccount("")+config.ReviewVariantSuffix, "2", "4Gi")
+	f.run.SetJobTimeout(implicit, projectJobTimeout+backend.TaskTimeoutSlack)
+	bitbucketReviewCheckout(t, bbRepo, strings.Replace(projectJobRepoYAML, "provider: github", "provider: bitbucket", 1))
+
+	err := wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7"},
+		"mounts no Bitbucket token", "proxy: true",
+		"fugaro run --pr N --recipe "+reviewOnlyRecipe)
+	if !strings.Contains(err.Error(), bbRepo) {
+		t.Errorf("the refusal does not name the repository whose access is not brokered: %q", err.Error())
+	}
 }

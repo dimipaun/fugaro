@@ -13,6 +13,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/recipe"
@@ -263,7 +264,7 @@ func checkReviewJobAdmitted() error {
 // published no profiles runs.
 func (e *cloudEnv) reviewJobFor(ctx context.Context, slug string, coding *launchProjectJob, spec *task.Spec) (*launchProjectJob, error) {
 	if coding == nil {
-		return e.implicitReviewJobFor(slug, spec)
+		return e.implicitReviewJobFor(ctx, slug, spec)
 	}
 	p, found, err := e.policy.read(ctx, e.lc)
 	if err != nil {
@@ -307,7 +308,17 @@ func (e *cloudEnv) reviewJobFor(ctx context.Context, slug string, coding *launch
 // verifies with the account that job was deployed for. So a review that names
 // one is refused here rather than launched onto the default account's job with
 // a task that says otherwise.
-func (e *cloudEnv) implicitReviewJobFor(slug string, spec *task.Spec) (*launchProjectJob, error) {
+//
+// A Bitbucket review is refused unless the published node brokers the
+// repository. The implicit job mounts no credential at all, so the Bitbucket
+// token it works with can only come from the credentials service, and the
+// service forwards that token for a repository only where the node admits it
+// with proxy: true — the same document it reads when the job asks. A repository
+// the node does not admit that way would be opened with no token at all: the
+// run starts, reaches its git access, and dies on a missing variable a
+// container's own output is the only place to read. The refusal is the launch's
+// instead, and it names the job that does hold the token (the repository's own).
+func (e *cloudEnv) implicitReviewJobFor(ctx context.Context, slug string, spec *task.Spec) (*launchProjectJob, error) {
 	provider, ok := runner.ProviderForSlug(slug, spec.Repo)
 	if !ok {
 		return nil, userErr("this review was launched for the slug %s, and that is not the slug of the repository its task names (%s) under any provider kind (%s): the slug and the task must name one repository, and the job a review runs on is the review job of the repository's own provider. Nothing was launched", slug, spec.Repo, strings.Join(runner.ProviderKinds(), ", "))
@@ -315,6 +326,10 @@ func (e *cloudEnv) implicitReviewJobFor(slug string, spec *task.Spec) (*launchPr
 	if account := projectJobAccount(reviewAccount(spec)); account != "" {
 		return nil, userErr("this review names the Claude account %q, and it runs on the installation's implicit review-only job, which serves one account: the default one (%s). That job's account segment is fixed where it is deployed, its container mounts no credential of its own, and the installation's credentials service pairs the caller it verifies with the account the job was deployed for — so a review launched onto it could not be served as the account this launch names. Launch the review without --token, or read it in the run's own job, which carries the account its own workflow selects, with fugaro run --pr N --recipe %s",
 			pluginwire.Printable(account), config.DefaultClaudeAccount, reviewOnlyRecipe)
+	}
+	if provider == gitprov.KindBitbucket && !e.nodeBrokersBitbucket(ctx, slug, spec) {
+		return nil, userErr("a review of the Bitbucket repository %s runs on the installation's implicit review-only job, and that job mounts no Bitbucket token: its git access is brokered by the installation's credentials service, which forwards the token for a repository only where the published policy admits it with proxy: true — the block derived from project_secrets.bitbucket-token, and the same document the service reads when the job asks. This project's node does not admit %s that way, so a review launched onto that job would open the repository with no token at all and stop at its first git call, in the container, where nothing is left to say why. Read the review in the run's own job, which holds the repository's own token, with fugaro run --pr N --recipe %s; or broker this repository's access, by setting proxy: true on its project_secrets.bitbucket-token entry, running fugaro project policy publish, then fugaro update --repo %s",
+			pluginwire.Printable(spec.Repo), pluginwire.Printable(spec.Repo), reviewOnlyRecipe, pluginwire.Printable(spec.Repo))
 	}
 	job, ok, err := e.implicitReviewJob(provider)
 	if err != nil {
