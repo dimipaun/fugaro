@@ -114,6 +114,14 @@ type Options struct {
 	// EndStageWait bounds how long EndStage waits for a stage's calls in
 	// flight; 0 is 30 s. Tests shorten it.
 	EndStageWait time.Duration
+	// StageLimit, when set, is the per-stage governor this run enforces: what
+	// a stage may spend before the gateway stops it, above the run's own cap
+	// (plan T7.2, D331, D332). It is nil in the core — a gateway with none
+	// enforces the run's spend cap, the lease's sub-cap and the stage's pinned
+	// models, exactly as it did before the hook existed — and the limits
+	// behind it are ee/governance's (D527, D530). It is set once, before
+	// Start, and never replaced.
+	StageLimit StageLimit
 	// OnServiceAnswer, when set, is called once for every answer the
 	// credentials service gives (KindService, C1.15): the tier a Messages
 	// call settles by (C1.16's ledger hook), the credential's name a run
@@ -211,6 +219,58 @@ type StageReport struct {
 	// call grows the count, never the report.
 	ServiceTiers ServiceTierSet
 	Waited       int // calls told to retry (429) because in-flight calls held the budget
+}
+
+// StageLimit is the per-stage governor a gateway consults: the stage budget,
+// the token ceiling, the review ratio and the fan-out stop behind it are
+// governance's, and they are ee/governance's (plan T7.2, D331, D332; D527,
+// D530). The gateway knows the hook and nothing of the policy behind it, and
+// Options.StageLimit is nil in the core: an untagged build bounds no stage and
+// enforces exactly what it enforced before the hook existed (D522).
+//
+// Both methods are called with this package's lock held, from the goroutine of
+// the call they are about, so an implementation must not block, take a lock or
+// call back into the gateway. Neither may keep what it is handed: a
+// StageLimitView carries the running stage's live counters.
+type StageLimit interface {
+	// Begin is called for every stage the gateway begins, with the stages it
+	// has already ended: the review ratio is a rule about one stage relative
+	// to another, and the stage it reads — implement — is in Ended.
+	Begin(v StageLimitView)
+	// Stop is the decision before a call that reserves up to Needed. A Reason
+	// stops the stage: the call is refused with 403 and every later call of
+	// that stage is refused with it. The run's own cap is unaffected, and the
+	// next stage the run opens is admitted as any stage is — a governance stop
+	// is scoped to the stage it stopped, because the runner opens one more
+	// stage after it (T7.2's checkpoint call). An empty Reason admits the
+	// call, and the cap decides as it always did.
+	Stop(v StageLimitView) StageStop
+}
+
+// StageLimitView is what a StageLimit is handed: the gateway's own stage and
+// its report so far, the reports of the stages already ended, the run's ledger
+// and the call's worst case.
+type StageLimitView struct {
+	Stage  Stage
+	Report StageReport
+	// Ended are the reports of the stages this gateway has ended, by the name
+	// each ran under. The gateway owns the map: a limit reads it and never
+	// writes it.
+	Ended map[string]StageReport
+	// Ledger is the run's money so far, for a limit whose bound is about the
+	// run rather than the stage (T8.2's expectation threshold).
+	Ledger Ledger
+	// Needed is the worst case of the call about to reserve, and 0 for Begin.
+	Needed pricing.Micros
+}
+
+// StageStop is a limit's refusal of the call it was asked about: the reason
+// the run record's own vocabulary carries (a governance halt reason), and the
+// detail the halt and the run log show. A stop is not a run-wide halt: the
+// stage is what it stops.
+type StageStop struct {
+	Reason string
+	Detail string
 }
 
 // Halt says why the gateway stopped forwarding calls.
@@ -320,10 +380,26 @@ type Server struct {
 	modelTokens map[string]pricing.Usage
 	halt        *Halt
 	haltMsg     string
-	wouldHalted bool           // observe: enforce would have halted by now
-	granted     pricing.Micros // lease: the sum of what the lease granted, less what was released
-	flight      *topUp         // lease: the top-up in flight, if any
-	stage       *stageState
+	// haltDelivered records that the halt was sent on haltCh (which is then
+	// closed): the gateway delivers one halt per server, and a stage limit's
+	// stop is delivered before any run-wide halt can be.
+	haltDelivered bool
+	wouldHalted   bool           // observe: enforce would have halted by now
+	granted       pricing.Micros // lease: the sum of what the lease granted, less what was released
+	flight        *topUp         // lease: the top-up in flight, if any
+	stage         *stageState
+	// ended are the reports of the stages this gateway has ended, by the name
+	// each ran under: what a stage limit reads to compare one stage with
+	// another (the review ratio's implement stage). A gateway with no limit
+	// keeps them all the same, and a run has one report per stage name.
+	ended map[string]StageReport
+	// stoppedStage is the stage a limit stopped, and stageStopMsg the sentence
+	// its later calls are refused with. It is not s.halt: a run-wide halt
+	// refuses every stage, while a governance stop refuses the stage it
+	// stopped and leaves the stage the runner opens after it — the checkpoint
+	// — admissible (T7.2).
+	stoppedStage string
+	stageStopMsg string
 	// wsHeadroom and wsHeadroomSet are the room the workspace's own service
 	// last delivered on an answer (WorkspaceHeadroomHeader), and whether it
 	// ever delivered one. It is ADVISORY: the run's own cap is Options.Cap
@@ -371,6 +447,7 @@ func Start(ctx context.Context, o Options) (*Server, error) {
 		haltCh: make(chan Halt, 1),
 
 		modelTokens: map[string]pricing.Usage{},
+		ended:       map[string]StageReport{},
 		countSlots:  make(chan struct{}, maxCountsInFlight),
 	}
 	if s.log == nil {
@@ -593,6 +670,12 @@ func (s *Server) BeginStage(st Stage) {
 		ByModel: map[string]pricing.Micros{},
 		ByRoute: map[string]pricing.Micros{},
 	}}
+	// The stage is begun before a limit sees it: a limit that keeps per-stage
+	// state of its own is told which stage it is now about, and the reports
+	// of the stages before it are handed over as the gateway holds them.
+	if l := s.o.StageLimit; l != nil {
+		l.Begin(StageLimitView{Stage: st, Ended: s.ended, Ledger: s.ledgerLocked()})
+	}
 }
 
 // EndStage stops allowing calls, waits (at most 30 s) for the stage's
@@ -620,6 +703,9 @@ func (s *Server) EndStage() StageReport {
 		s.log.Warn("budget: stage ended with calls still in flight", "stage", st.st.Name)
 	}
 	rep := s.stageReport(st)
+	s.mu.Lock()
+	s.ended[st.st.Name] = rep
+	s.mu.Unlock()
 	s.reportStage(rep)
 	return rep
 }
@@ -756,7 +842,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if msg, halted := s.haltedMessage(); halted {
+	if msg, halted := s.refusalNow(); halted {
 		writeHalt(w, msg)
 		if !rt.count {
 			s.logCall(callLog{stage: s.stageName(), model: rt.pathModel, status: http.StatusForbidden, pricedAs: pricedTable, settled: settledZero,

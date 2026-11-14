@@ -228,10 +228,25 @@ func (s *Server) haltLocked(h Halt, msg, stage string, deliver bool) {
 	}
 	s.halt, s.haltMsg = &h, msg
 	if deliver {
-		s.haltCh <- h
-		close(s.haltCh)
+		s.deliverLocked(h)
 	}
 	s.log.Warn("budget: halted", "reason", logValue(h.Reason), "scope", h.Scope, "detail", logValue(h.Detail), "stage", stage)
+}
+
+// deliverLocked sends h on Halted() and closes it, once for the life of the
+// server. Every path that halts used to be the first by construction, because
+// each of them set s.halt before delivering; a stage limit's stop is the first
+// that doesn't (it leaves the checkpoint stage admissible, ledger.go), so the
+// guard is what keeps a later halt from sending on the closed channel. The
+// halt the runner hears is the first one, which is the one that stopped the
+// stage it was running. The caller holds s.mu.
+func (s *Server) deliverLocked(h Halt) {
+	if s.haltDelivered {
+		return
+	}
+	s.haltDelivered = true
+	s.haltCh <- h
+	close(s.haltCh)
 }
 
 // HaltExternal halts the run for a cause the gateway can't see (a kill
