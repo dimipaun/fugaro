@@ -569,9 +569,11 @@ func TestAViewerReadsTheStateNotTheKey(t *testing.T) {
 	r := newRig(t)
 	m := newMinted(t)
 	const (
-		noteCanary = "an-admins-only-note-no-viewer-may-read"
-		hashCanary = "the-renewal-secrets-hash-no-viewer-may-read"
+		noteCanary  = "an-admins-only-note-no-viewer-may-read"
+		hashCanary  = "the-renewal-secrets-hash-no-viewer-may-read"
+		keyGraceDay = 30
 	)
+	keyWarnings := []licence.WarningV1{{Roles: []string{"admin"}, From: "grace_start"}}
 	daily := "P1D"
 	key := m.key(t, func(c *licence.Claims) {
 		c.KeyID = "lk_test_viewer"
@@ -579,6 +581,8 @@ func TestAViewerReadsTheStateNotTheKey(t *testing.T) {
 		c.CheckInterval = &daily
 		c.RenewalSecretHash = hashCanary
 		c.Note = noteCanary
+		c.Warnings = keyWarnings
+		c.GraceDays = keyGraceDay
 	})
 	if err := r.store.Install(ctx, []byte(key)); err != nil {
 		t.Fatalf("installing a key: %v", err)
@@ -590,6 +594,9 @@ func TestAViewerReadsTheStateNotTheKey(t *testing.T) {
 	view, err := r.store.View(ctx, at(30), m.ring, testFirebaseProject, nil)
 	if err != nil {
 		t.Fatalf("View: %v", err)
+	}
+	if len(view.Warnings) != len(keyWarnings) || view.Warnings[0].From != keyWarnings[0].From || view.GraceDays != keyGraceDay {
+		t.Errorf("the view carries the %+v policy over a %d-day grace, want the installed key's %+v over %d", view.Warnings, view.GraceDays, keyWarnings, keyGraceDay)
 	}
 	if view.Tier != licence.TierTeam || view.Seats != 7 || !view.PaidThrough.Equal(at(365)) ||
 		view.State != licence.Active || view.Revoked || view.Kind != licence.KindPaid ||
@@ -618,7 +625,11 @@ func TestAViewerReadsTheStateNotTheKey(t *testing.T) {
 	// The shape is the pin: a field added to the view has to be weighed against
 	// "a viewer reads the state, never the key", and this is where that is
 	// decided rather than in a command's rendering.
-	want := []string{"Tier", "Seats", "PaidThrough", "State", "Revoked", "Kind", "RenewalMode", "Source", "Check", "HasCheck"}
+	// Warnings and GraceDays are the key's own warning policy and its grace,
+	// which are what a status's warning is computed from (K3.5): a viewer is
+	// told the policy, and the policy's last window is written to reach every
+	// role.
+	want := []string{"Tier", "Seats", "PaidThrough", "State", "Revoked", "Kind", "Warnings", "GraceDays", "RenewalMode", "Source", "Check", "HasCheck"}
 	if got := fieldNames(reflect.TypeOf(view)); !reflect.DeepEqual(got, want) {
 		t.Errorf("the view's fields are %v, want %v: every one of them is something a status shows, and a key, a note for admins or the renewal secret's hash is none of them", got, want)
 	}
