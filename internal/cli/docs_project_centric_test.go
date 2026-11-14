@@ -645,8 +645,9 @@ func commandLines(section string, verbs ...string) []string {
 // on the plan's own wording, and each is asserted both ways:
 //
 //   - the plan names `fugaro upgrade --cloud`, which does not exist (there is
-//     no --cloud flag; `cloud` is one of upgrade's steps), so the section must
-//     name the real command;
+//     no --cloud flag; `cloud` is one of the converge's four checkout steps),
+//     so the section must name the real command — `fugaro update`, since U7,
+//     the command U4 left in `fugaro upgrade`'s place;
 //   - finding 15: only `fugaro update --repo` writes a job's environment, so the
 //     runner rollout is two steps and not one;
 //   - step 6 cannot point "the sandbox's fugaro.yaml at a repository": no key
@@ -674,7 +675,8 @@ func commandLines(section string, verbs ...string) []string {
 //   - the Restore must put the operator's project config back BEFORE
 //     `fugaro update --repo` reads the job environment out of it, must not run
 //     `fugaro budget set` (no step changes the caps node), and must check the
-//     .claude/settings.json `fugaro upgrade`'s pin step rewrites;
+//     .claude/settings.json (the file the deleted pin step used to rewrite —
+//     D949, U2 — and no step writes any more);
 //   - the step 3 environment read prints NAMES and value LENGTHS, and values
 //     only for the three variables that are not credentials — the review found
 //     the first pass printing FUGARO_FIREBASE_API_KEY's value.
@@ -691,10 +693,11 @@ func commandLines(section string, verbs ...string) []string {
 // run id; `fugaro budget set --global --per-run` put back into the Restore;
 // either `git diff -- .claude/settings.json` dropped; the step 3 `printable`
 // set widened to the API key, or the read reverted to a `--format` that prints
-// the whole env array; the "use fugaro image refresh, not fugaro upgrade"
-// paragraph deleted; the `github/dimipaun/fugaro` entry no longer named; the
-// "no other repository's run started" FACT deleted; and each of the stale
-// citations (doctor.go:748, cloud.go:53, runner.go:797, gcp/run.go:82-98,
+// the whole env array; the "Use `fugaro image refresh` for the image half, not
+// `fugaro update`" paragraph deleted; the `github/dimipaun/fugaro` entry no
+// longer named; the "no other repository's run started" FACT deleted; and each
+// of the stale citations (doctor.go:748, cloud.go:53, runner.go:797,
+// gcp/run.go:82-98,
 // upgrade_cloud.go:162, run.go:441 — the last a number that belongs to no
 // citation at all, since launchPolicyGates is called at run.go:473) put back;
 // and the citations the second review found drifted (run.go:507 for the
@@ -782,20 +785,23 @@ func TestChecklistHasCheck49(t *testing.T) {
 
 	// Finding 15, both ways: the rollout is two owner steps, `fugaro
 	// update --repo` is the only one that writes a job's environment, and the
-	// command the plan named does not exist.
+	// command the plan named does not exist. The section names the converge
+	// and its cloud step (U7: the step is `fugaro update`'s now — the command
+	// the plan spelled it with, `fugaro upgrade`, is gone, U4), and never the
+	// `--cloud` flag that was never one of its flags.
 	chk49MustContain(t, section, "section", []string{
 		"finding 15",
 		"the only path that writes a job's environment is `fugaro update --repo`",
-		"`fugaro upgrade`",
+		"`fugaro update`'s cloud step only **reports** drift in the jobs' environment",
 		"`fugaro image refresh`",
 		"fugaro update --repo . --project fugaro",
 	})
 	for _, dead := range []string{
-		"fugaro upgrade --cloud", // no such flag: `cloud` is one of upgrade's steps
+		"fugaro upgrade --cloud", // no such flag: `cloud` is one of the converge's four steps
 		"fugaro upgrade --project fugaro --cloud",
 	} {
 		if strings.Contains(section, dead) {
-			t.Errorf("the Check 49 section names a command that does not exist (%q): `fugaro upgrade` has no --cloud flag, and `cloud` is one of its steps", dead)
+			t.Errorf("the Check 49 section names a command that does not exist (%q): no command has a --cloud flag, and `cloud` is one of the converge's four checkout steps", dead)
 		}
 	}
 
@@ -1064,22 +1070,26 @@ func TestChecklistHasCheck49(t *testing.T) {
 		t.Errorf("the Check 49 section has %d `fugaro run` lines, want at least 5 (steps 3, 5, 6(a), 7 and 8), so the TASK and --ref rules above are checked over all of them", runs)
 	}
 
-	// `fugaro image refresh` is the image half, not `fugaro upgrade`: upgrade
-	// also installs the plugin in Claude Code at user scope and deploys the
-	// rules and the policy node, and the check must say so rather than sending
-	// the owner through writes it then has to undo. Since the pin merge was
-	// deleted (U2, D949) upgrade writes nothing in the checkout at all, and the
-	// pin below is what keeps the sentence that said otherwise from coming
-	// back.
+	// `fugaro image refresh` is the image half, not the converge: `fugaro
+	// update` runs four checkout steps and its `plugin` one installs the plugin
+	// in Claude Code at user scope while `rules` and `policy` deploy the rules
+	// and the policy node, and the check must say so rather than sending the
+	// owner through writes it then has to undo. It is `fugaro update` the
+	// sentence names since U7 — `fugaro upgrade` is gone (U4). What it must not
+	// claim any more is that the converge writes nothing in the checkout at
+	// all: the pin merge is deleted (U2, D949), but the plugin step still takes
+	// a leftover pin out of `.claude/settings.json` at a person's own terminal
+	// (D943, init_plugin_stage.go's remove), and this check is entirely
+	// owner-run, so the pin below is what keeps that exception in the sentence.
 	chk49MustContain(t, section, "section", []string{
-		"Use `fugaro image refresh` for the image half, not `fugaro upgrade`",
-		"**writes nothing in the checkout**",
-		"`internal/cli/update_check.go` is where that command's four steps live (`checkSteps`): `plugin`, `cloud`, `rules`, `policy`",
-		// Both places the pin step's file is compared: step 8's block and
+		"Use `fugaro image refresh` for the image half, not `fugaro update`",
+		"**So the converge can write this one file in this checkout, and that removal is the only write of its four steps here.**",
+		"`internal/cli/update_check.go` is where those four steps live (`checkSteps`): `plugin`, `cloud`, `rules`, `policy`",
+		// Both places the settings file is compared: step 8's block and
 		// step 8's FACT. One without the other is a restore that checks the
 		// file and a FACT that does not claim it.
 		"git diff -- .claude/settings.json\ncmp -s /tmp/chk49-claude-settings-before.json .claude/settings.json",
-		"`git diff -- .claude/settings.json` is empty with the plugin pin where step 3 found it",
+		"`git diff -- .claude/settings.json` holds nothing but a pin removal if the converge made one",
 	})
 
 	// The step 3 read prints the environment's NAMES and value LENGTHS, and

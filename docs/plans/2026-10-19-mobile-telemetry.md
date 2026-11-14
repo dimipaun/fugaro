@@ -1167,6 +1167,22 @@ it** (§8.3). **No Go test can see the Play console or App Store Connect, so the
 answered by the owner and recorded in the owner's notes, not asserted here.**
 **Reviewer tier.** standard for the website change; **owner** for the two store forms, which
 no agent fills in.
+**Amended 2026-11-13, as built.** The website half of this task is a **holding** and it moved
+no sentence of the page: the paragraph PRs **#689** and **#705** put on
+`website/src/pages/privacy.astro` already carries the four sentences §8.3 names — *no
+advertising identifier*, *no switch inside the app*, *uninstalling the app stops them*, *not
+installing it avoids them* — and `website/test/privacy.mjs` passes on the tree **P7.1–P7.3**
+built, which is what §8.3 asks the commit that ships the SDKs to check: the page and
+`mobile/package.json` agree in both directions, and the page's "earlier builds" sentence is
+what makes it honest about the voice-less first build (**D258**). **The page's own count did
+not move, so the words ceiling did not move** — `website/test/budget.mjs` derives it from that
+page's 1251 words plus 25 % (1564) and `website/README.md` carries the derivation. What P7.4
+did change on the page is the file's own header comment, which still said the two reporters
+"are not in the app yet" and that the gate's second direction "becomes the plan file" when the
+plan lands: the plan is in this repository, the packages are in the app's dependency list, and
+that comment was the one thing about this page P7.1–P7.3 made false. **The two store forms stay
+the owner's step** (§8.1, §8.2), answered in the two consoles and recorded in the owner's
+notes; check **122** is where the owner confirms them against what the app sends.
 
 ### Task P7.5: Checks 120–122, written into the register
 

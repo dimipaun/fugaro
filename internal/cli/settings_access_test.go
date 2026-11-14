@@ -321,6 +321,47 @@ func TestAccessSettingsUnlistedCheckoutIsJudgedFromItsOrigin(t *testing.T) {
 	}
 }
 
+// TestAccessSettingsRewrittenOriginIsJudgedByNobody: the checkout route of a
+// --layer repo write takes the repository, and so the role the write needs,
+// from the checkout's own origin. A checkout can ship its own .git/config, and
+// url.<base>.insteadOf there makes the name git resolves a line the directory's
+// author chose rather than a fact about the repository — so the repository
+// cannot be told, and the write is refused rather than judged against a name
+// that would let a rewritten origin borrow another repository's admin.
+//
+// Mutation (run, restore): change `if ok && !oi.Rewritten` to `if ok` in
+// settingsAccessOriginRepo (settings_access.go) and this fails with the write
+// landing in the checkout.
+func TestAccessSettingsRewrittenOriginIsJudgedByNobody(t *testing.T) {
+	settingsAccessRig(t, userStored(t, settingsAccessRepoUser, accesslib.RoleAdmin, "github/acme/app"))
+	file := settingsWriteCheckout(t, settingsRepoYAML(""))
+	// The raw origin is the gh: shorthand and the rewrite resolves it to the
+	// repository the caller is admin of: with the guard gone the write would be
+	// allowed, so this isolates the guard and not the role.
+	testutil.Git(t, filepath.Dir(file), "remote", "add", "origin", "gh:acme/app.git")
+	testutil.Git(t, filepath.Dir(file), "config", "--local", "--add",
+		"url.https://github.com/acme/app.git.insteadOf", "gh:acme/app.git")
+	if oi, ok := readOrigin(context.Background(), filepath.Dir(file)); !ok || !oi.Rewritten {
+		t.Fatalf("the fixture did not produce a rewritten origin: %+v ok=%v", oi, ok)
+	}
+	before := readFileString(t, file)
+
+	userPairAs(t, settingsAccessRepoUser)
+	_, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--yes")
+	if err == nil {
+		t.Fatal("a repository-level write was judged against an origin the checkout's own git config rewrites")
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want %d (a user error: nothing was attempted)", ExitCode(err), ExitUserError)
+	}
+	if !strings.Contains(err.Error(), "cannot be told from its origin") {
+		t.Errorf("the refusal does not say the repository cannot be told: %v", err)
+	}
+	if readFileString(t, file) != before {
+		t.Error("the refused write changed the checkout's file")
+	}
+}
+
 // TestAccessSettingsDryRunAnswersWithoutARole: the gate is asked for a write,
 // and a --dry-run makes none. A caller the roles refuse gets the document the
 // write would produce — the diff is the change they hand an admin, and the file

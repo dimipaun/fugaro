@@ -1755,7 +1755,7 @@ func TestProviderKeyGetsItsOwnValueOnTheAccountAxis(t *testing.T) {
 	for name, pr := range lc.Profiles {
 		profiles[name] = projectpolicy.Profile{JobProfile: pr}
 	}
-	accounts, err := projectpolicy.DeriveAccounts(profiles, lc.ClaudeAccounts, lc.ProjectSecrets)
+	accounts, err := projectpolicy.DeriveAccounts(profiles, lc.ClaudeAccounts, lc.ProjectSecrets, nil)
 	if err != nil {
 		t.Fatalf("a profile naming the provider key derived no block: %v", err)
 	}

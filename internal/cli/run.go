@@ -1833,6 +1833,12 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if err := checkCloneTriageImage(env.lc, spec, fileCfg, warn); err != nil {
 			return config.Inputs{}, err
 		}
+		// The vision slot, on the same configuration read: a runner
+		// older than visionSince refuses agent.models.vision at
+		// bootstrap, whatever it holds (checkCloneVisionImage).
+		if err := checkCloneVisionImage(env.lc, spec, fileCfg, warn); err != nil {
+			return config.Inputs{}, err
+		}
 	} else {
 		if needsRecipeImage(spec, agentRecipe) {
 			if err := checkRecipeImage(ctx, env, slug, spec, kind, warn); err != nil {
@@ -1980,6 +1986,11 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		// The same gate as the clone branch's above, and for the same
 		// reason: see checkTriageImage.
 		if err := checkTriageImage(ctx, env, slug, spec, kind, fileCfg, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The same gate as the clone branch's above, and for the same
+		// reason: see checkVisionImage.
+		if err := checkVisionImage(ctx, env, slug, spec, kind, fileCfg, warn); err != nil {
 			return config.Inputs{}, err
 		}
 		// The digest drift, last of this branch's image reads, and the
