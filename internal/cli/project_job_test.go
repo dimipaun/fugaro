@@ -1163,6 +1163,16 @@ const projectJobSentinelPolicy = `{"version":5,"allow_repos":["github/acme/*"],`
 	`"allow_repos":["github/acme/app"],"claude_accounts":["` + config.AnthropicKeyAccount + `"]}},` +
 	`"accounts":{"` + config.AnthropicKeyAccount + `":{"allow_repos":["github/acme/app"]}}}`
 
+// projectJobLegacyPolicy is the node a project publishes while it is still on
+// jobs of its own: the allow-list and nothing else, with no profiles block at
+// all. A launch resolves no job profile over it — runner.ProjectJobDefaultProfile
+// answers "" for a provider the policy serves no profile for — so every
+// workflow of such a project keeps the per-repository job it has always had,
+// whatever its checkout says (D2304). It is the state a project is in before
+// `fugaro update` writes its default profile (S5), and the one a launch has to
+// keep invisible.
+const projectJobLegacyPolicy = `{"version":5,"allow_repos":["github/acme/*"]}`
+
 // newProjectJobSentinelFixture is the project that serves the key: the fixture's
 // standard profile rewritten to list the sentinel, that policy published, and
 // the job the installation would have deployed for it registered in the fake —
@@ -1653,6 +1663,12 @@ func TestProjectJobSentinelRefusedWhenTheRunIsNotAnAPIKeyRun(t *testing.T) {
 // would be Cloud Run's 404 for a job this installation was never asked for, so
 // the launch stops before the claim, as the account gate's refusals do.
 //
+// What keeps this repository on a job of its own is that the project has
+// published no profile for its provider (projectJobLegacyPolicy): the checkout
+// mode does not decide the job any more (D2304), so a workflow is on the
+// per-repository path exactly when no profile of the published policy serves
+// the repository's provider.
+//
 // Mutation (run, restore): delete the `job == nil && spec.OAuthToken == ...`
 // refusal in launchRun — the launch takes the claim, mints the budget token and
 // reaches Cloud Run on a name nothing deployed, and the assertions below fail on
@@ -1660,8 +1676,9 @@ func TestProjectJobSentinelRefusedWhenTheRunIsNotAnAPIKeyRun(t *testing.T) {
 func TestProjectJobSentinelRefusedOnAPerRepositoryJob(t *testing.T) {
 	f := newProjectJobSentinelFixture(t)
 	isolateCache(t)
-	// A baked workflow: it stays on the repository's own job however the project
-	// is configured (internal/cli's launchProjectJobFor).
+	// No profile for github is published over the sentinel fixture's node, so
+	// the launch resolves none and keeps the repository's own job.
+	publishPolicy(t, f.launchBudgetFixture, projectJobLegacyPolicy)
 	projectJobCheckoutYAML(t, strings.Replace(projectJobRepoYAML, "    checkout: clone\n", "", 1))
 
 	claimed := false

@@ -30,8 +30,9 @@ import (
 //
 // Every one of them is refused where the job is decided, before the claim,
 // before the budget token and before any Cloud Run call, and the refusal is
-// scoped to shared project jobs: a repository that still has its own job — a
-// baked workflow, or an installation that has published no profiles — launches
+// scoped to shared project jobs: a repository that still has its own job — one
+// of an installation that has published no profile for its provider, which is
+// the only thing that keeps a workflow off a shared job since D2304 — launches
 // an OAuth run exactly as it always has.
 
 // TestOAuthLaunchOntoASharedProjectJobIsRefusedBeforeLaunch is the refusal's
@@ -166,9 +167,11 @@ func TestOAuthAccountRefusalNamesTokenProfileAndFix(t *testing.T) {
 
 // TestOAuthLaunchOnALegacyJobIsUnchanged is the ruling's second test: the
 // refusal is scoped to shared project jobs, so an OAuth run whose workflow
-// keeps a per-repository job — here a baked one, which design §4.4 leaves on
-// the per-repository path — launches exactly as it did, on the job of its own
-// (slug, workflow, account) variant.
+// keeps a per-repository job — here the project has published no profile for
+// its provider, so its workflows keep the jobs of their own however their
+// checkout reads (D2304: the checkout mode decides the image, not the job) —
+// launches exactly as it did, on the job of its own (slug, workflow, account)
+// variant.
 //
 // Mutation (run, restore): refuse every OAuth launch instead of only the ones
 // that target a shared job — this launch stops, and the run's own job, the one
@@ -176,9 +179,11 @@ func TestOAuthAccountRefusalNamesTokenProfileAndFix(t *testing.T) {
 func TestOAuthLaunchOnALegacyJobIsUnchanged(t *testing.T) {
 	f := newProjectJobFixture(t)
 	f.appendConfig(t, "claude_accounts:\n  acme-personal:\n    allow_data_to: [\"acme/app\"]\n")
-	// The fixture's policy is published and defines standard, so a launch that
-	// went to the shared job would be refused: what keeps this one on its own
-	// job is the workflow's being baked, not the absence of a profile.
+	// The fixture's node is replaced by one that defines no profile: a launch
+	// that resolved one would target the shared job and be refused for the
+	// account it serves, so what keeps this one on its own job is the absence
+	// of a profile for its provider, not its workflow's checkout.
+	publishPolicy(t, f.launchBudgetFixture, projectJobLegacyPolicy)
 	projectJobCheckoutYAML(t, strings.Replace(projectJobOAuthRepoYAML, "    checkout: clone\n", "", 1))
 
 	// The variant job of the named account, and the build record that says the
