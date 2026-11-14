@@ -22,7 +22,12 @@
 #             (fugaro-check291 by default); --region is the Cloud Run region the
 #             jobs are deployed in; --yes is the consent below; --dry-run prints
 #             the plan and the guards and makes NO cloud call and NO fugaro call
-#             at all.
+#             at all. Each run it launches is read out of that launch's own
+#             --json document and then WAITED FOR until its row is terminal —
+#             `fugaro run` returns at launch, and a run's transcript is written
+#             as its stages end (CHECK291_RUN_WAIT_SECONDS, 40 minutes by
+#             default, bounds the wait; CHECK291_RUN_POLL_SECONDS is how often
+#             the listing is read).
 # Needs:      bash, mktemp, python3, git, gh, gcloud and fugaro on PATH. Nothing
 #             is installed and nothing is fetched; a missing tool stops the run
 #             with one line naming it.
@@ -85,6 +90,12 @@ MARKER_VALUE=https://example.invalid/repository/maven-public/
 RESERVED_NAME=GOOGLE_APPLICATION_CREDENTIALS
 RESERVED_VALUE=/dev/null
 
+# How long a run this check launched is waited for, and how often the listing is
+# read while it goes: `fugaro run` returns AT LAUNCH, so the transcript of step 4
+# is only there once the run has ended.
+RUN_WAIT_SECONDS=${CHECK291_RUN_WAIT_SECONDS:-2400}
+RUN_POLL_SECONDS=${CHECK291_RUN_POLL_SECONDS:-20}
+
 # What the Restore has to undo, and what it managed: set as the steps go, so a
 # run that stopped early says what it never created instead of claiming it.
 RESTORE_STATE=untouched
@@ -112,7 +123,8 @@ RUN1=""
 RUN2=""
 BRANCH1=""
 BRANCH2=""
-RUN_REF=""
+RUN_FOUND=""
+RUN_STATUS=""
 RESTORE_FAIL=""
 FACTS_CAPTURED=""
 say() { printf '%s: %s\n' "$PROG" "$*" >&2; }
@@ -483,6 +495,35 @@ def cmd_run(path):
     print("run=" + runid)
     print("repo=" + str(doc.get("repo") or ""))
 
+def flat(v):
+    """One vocabulary line's worth of a value: a value carrying a newline would
+    be read as the next line of the vocabulary otherwise."""
+    return re.sub(r"\s+", " ", str(v if v is not None else "")).strip()
+
+def cmd_launch(path):
+    doc = load_json(path)
+    if not isinstance(doc, dict):
+        die("the launch's document is not an object")
+    print("run_id=" + flat(doc.get("run_id")))
+    print("run=" + flat(doc.get("run")))
+    print("branch=" + flat(doc.get("branch")))
+    print("status=" + flat(doc.get("status")))
+
+def cmd_row(path, want):
+    """One run's own line out of `runs ls --json`, and never another run's."""
+    doc = load_json(path)
+    rows = doc.get("runs") if isinstance(doc, dict) else doc
+    found = "no"
+    for row in rows or []:
+        if not isinstance(row, dict) or flat(row.get("run_id")) != want:
+            continue
+        found = "yes"
+        print("status=" + flat(row.get("status")))
+        print("terminal=" + ("yes" if row.get("terminal") else "no"))
+        print("branch=" + flat(row.get("branch")))
+        break
+    print("found=" + found)
+
 def cmd_workflow(path, want):
     lines = rd(path)
     if not any(re.match(r"^workflows:", l) for l in lines):
@@ -625,6 +666,10 @@ def main():
         cmd_installation(sys.argv[2])
     elif what == "run":
         cmd_run(sys.argv[2])
+    elif what == "launch":
+        cmd_launch(sys.argv[2])
+    elif what == "row":
+        cmd_row(sys.argv[2], sys.argv[3])
     elif what == "workflow":
         cmd_workflow(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else "")
     elif what == "imageenv":
@@ -697,7 +742,13 @@ repo_from_origin() {
 commit_and_push() {
   local msg=$1
   shift
-  git -C "$CHECKOUT" add -- "$@"
+  # A failed `git add` stages nothing, and the "nothing to commit" below would
+  # then read as "the checkout already carries it": the caller's own success
+  # would be a claim about a push that never happened.
+  if ! git -C "$CHECKOUT" add -- "$@"; then
+    say "git add refused the paths '$*' in $CHECKOUT (its own words are above): nothing was staged"
+    return 1
+  fi
   if git -C "$CHECKOUT" diff --cached --quiet; then
     say "nothing to commit for '$msg' (the checkout already carries it)"
     return 0
@@ -734,22 +785,61 @@ transcript_of() {
   [ -s "$out" ]
 }
 
-# launch_run WHAT: one trivial task on the workflow, printing `launched <id>` and
-# the branch it cut, out of which the full run id is read. Sets RUN_ID, RUN_REF
-# and RUN_BRANCH.
+# launch_run WHAT: one trivial task on the workflow. The run and the branch it
+# cut are read out of the launch's own --json document: `fugaro run` puts the run
+# it launched in a reporter step for a person (on stderr, with a glyph and the
+# step's own name in front of it), and the document is the one shape it prints
+# that a reader can take a run id from. Sets RUN_ID and RUN_BRANCH.
 launch_run() {
   local what=$1
   RUN_ID=""
-  RUN_REF=""
   RUN_BRANCH=""
   say "launching the $what run"
-  if ! run_loud fugaro run --workflow "$WORKFLOW" "$TASK_TEXT"; then
-    return 1
-  fi
-  RUN_REF=$(last_line 'launched ')
-  RUN_BRANCH=$(sed -n 's/^  branch \(fugaro\/[^ ]*\) cut from .*/\1/p' "$SCRATCH/last.out" | tail -1)
-  RUN_ID=${RUN_BRANCH#fugaro/}
-  [ -n "$RUN_ID" ] && [ -n "$RUN_REF" ]
+  local st=0
+  if ! fugaro run --workflow "$WORKFLOW" --json "$TASK_TEXT" \
+    >"$SCRATCH/launch.json" 2>"$SCRATCH/launch.err"; then st=1; fi
+  # Both halves reach the owner, the step lines first: what the launch printed is
+  # what a refusal is read from, and it is printed whether it exited 0 or not.
+  cat "$SCRATCH/launch.err" >&4 2>/dev/null || true
+  cat "$SCRATCH/launch.json" >&4 2>/dev/null || true
+  [ "$st" = 0 ] || return 1
+  st=$(capture "$SCRATCH/launch.vocab" python3 "$SCRATCH/reader.py" launch "$SCRATCH/launch.json")
+  [ "$st" = 0 ] || return 1
+  RUN_ID=$(field run_id "$SCRATCH/launch.vocab")
+  RUN_BRANCH=$(field branch "$SCRATCH/launch.vocab")
+  [ -n "$RUN_ID" ] && [ -n "$RUN_BRANCH" ]
+}
+
+# await_run RUN: the run has to END before its transcript is read. `fugaro run`
+# returns at launch and a run's transcripts are written as each stage of it ends,
+# so a read taken straight after a launch looks into a run that has not run yet —
+# and a row still in flight is not an answer about the image either. The
+# listing's own `terminal` word is waited for, the same wait every other check
+# that reads a run's own bytes makes. Returns 1 on a deadline, leaving
+# RUN_FOUND/RUN_STATUS for the fact that says why.
+await_run() {
+  local run=$1 waited=0 st
+  RUN_FOUND=""
+  RUN_STATUS=""
+  say "waiting for run $run to end (up to ${RUN_WAIT_SECONDS}s; fugaro runs ls --repo $REPO --json reads its own row)"
+  while :; do
+    st=$(capture "$SCRATCH/rows.json" fugaro runs ls --repo "$REPO" --json)
+    RUN_FOUND=""
+    RUN_STATUS=""
+    if [ "$st" = 0 ]; then
+      st=$(capture "$SCRATCH/rows.vocab" python3 "$SCRATCH/reader.py" row "$SCRATCH/rows.json" "$run")
+      if [ "$st" = 0 ]; then
+        RUN_FOUND=$(field found "$SCRATCH/rows.vocab")
+        RUN_STATUS=$(field status "$SCRATCH/rows.vocab")
+        if [ "$RUN_FOUND" = yes ] && [ "$(field terminal "$SCRATCH/rows.vocab")" = yes ]; then
+          return 0
+        fi
+      fi
+    fi
+    if [ "$waited" -ge "$RUN_WAIT_SECONDS" ]; then return 1; fi
+    sleep "$RUN_POLL_SECONDS"
+    waited=$((waited + RUN_POLL_SECONDS))
+  done
 }
 
 TASK_TEXT='create CHECK291.md at the repository root with the single line "check 291", change no other file, and run `fugaro verify test` in the foreground before you finish'
@@ -1066,25 +1156,29 @@ EOF
     stop "the commit or the push of the commands.test edit did not succeed (git's own words are above): the run reads its configuration off the remote, and a test command that never arrived would print nothing at all"
   fi
   if ! launch_run "first"; then
-    fact run-marker FAIL "fugaro run --workflow $WORKFLOW did not print the run it launched"
-    stop "fugaro run --workflow $WORKFLOW did not print a 'launched <id>' line and the branch it cut (its last lines are above), so this check has no run to read the transcript of"
+    fact run-marker FAIL "fugaro run --workflow $WORKFLOW did not name the run it launched"
+    stop "fugaro run --workflow $WORKFLOW did not print a --json document naming the run it launched and the branch it cut (its own output is above), so this check has no run to read the transcript of"
   fi
   RUN1=$RUN_ID
   BRANCH1=$RUN_BRANCH
   RUNS_LAUNCHED+=("$BRANCH1")
+  if ! await_run "$RUN1"; then
+    fact run-marker FAIL "run $RUN1 had not ended within ${RUN_WAIT_SECONDS}s (its row reads found=${RUN_FOUND:-nothing}, status=${RUN_STATUS:-nothing})"
+    stop "run $RUN1 had not ended after ${RUN_WAIT_SECONDS}s, and the transcript this step reads is written as the run's stages end: a reading taken now would be a reading of a run that has not run yet. Watch it with 'fugaro watch $RUN1' and run this check again when it has ended — the run is a real one and is not cancelled by stopping here. Raise CHECK291_RUN_WAIT_SECONDS if it needs longer"
+  fi
   if ! transcript_of "$RUN1" "$SCRATCH/run1.jsonl"; then
     fact run-marker FAIL "the transcript of run $RUN1 could not be read out of the runs bucket"
-    stop "this check could not read run $RUN1's stored transcript (transcripts/implement-<n>.jsonl under its prefix in gs://${BUCKET:-<bucket>}/runs/...). Read it yourself with 'fugaro logs $RUN_REF' and 'gcloud storage cat', and check the run with 'fugaro runs show --repo $REPO $RUN1'"
+    stop "this check could not read run $RUN1's stored transcript (transcripts/implement-<n>.jsonl under its prefix in gs://${BUCKET:-<bucket>}/runs/...). Read it yourself with 'fugaro logs $RUN1' and 'gcloud storage cat', and check the run with 'fugaro runs show --repo $REPO $RUN1'"
   fi
   grep -q 'marker: present' "$SCRATCH/run1.jsonl" || {
     fact run-marker FAIL "run $RUN1's transcript does not carry 'marker: present'"
-    fail_stop "run $RUN1's transcript carries no 'marker: present', so the catalog entry's own ENV did not reach the environment of a command the run ran through fugaro verify. Read it yourself: 'fugaro logs $RUN_REF'"
+    fail_stop "run $RUN1's transcript carries no 'marker: present', so the catalog entry's own ENV did not reach the environment of a command the run ran through fugaro verify. Read it yourself: 'fugaro logs $RUN1'"
   }
   grep -q 'reserved: absent' "$SCRATCH/run1.jsonl" || {
     fact run-marker FAIL "run $RUN1's transcript does not carry 'reserved: absent'"
-    fail_stop "run $RUN1's transcript carries no 'reserved: absent', although the entry's Dockerfile sets $RESERVED_NAME: it reached the agent's environment, which is the one thing the passthrough exists to prevent. Read it yourself: 'fugaro logs $RUN_REF'"
+    fail_stop "run $RUN1's transcript carries no 'reserved: absent', although the entry's Dockerfile sets $RESERVED_NAME: it reached the agent's environment, which is the one thing the passthrough exists to prevent. Read it yourself: 'fugaro logs $RUN1'"
   }
-  fact run-marker PASS "run $RUN1 ($RUN_REF) of workflow $WORKFLOW read 'marker: present' — the entry's own ENV reached the environment of a command the run ran through fugaro verify — and 'reserved: absent', although the entry's Dockerfile sets $RESERVED_NAME"
+  fact run-marker PASS "run $RUN1 of workflow $WORKFLOW read 'marker: present' — the entry's own ENV reached the environment of a command the run ran through fugaro verify — and 'reserved: absent', although the entry's Dockerfile sets $RESERVED_NAME"
 }
 
 # step_run_value: the image's value appears nowhere in the transcript. Fugaro
@@ -1170,25 +1264,29 @@ EOF
 # of its image's own variables.
 step_refutation_run() {
   if ! launch_run "refutation"; then
-    fact refutation-run FAIL "fugaro run --workflow $WORKFLOW did not print the run it launched"
-    stop "the second fugaro run --workflow $WORKFLOW did not print a 'launched <id>' line and the branch it cut (its last lines are above)"
+    fact refutation-run FAIL "fugaro run --workflow $WORKFLOW did not name the run it launched"
+    stop "the second fugaro run --workflow $WORKFLOW did not print a --json document naming the run it launched and the branch it cut (its own output is above)"
   fi
   RUN2=$RUN_ID
   BRANCH2=$RUN_BRANCH
   RUNS_LAUNCHED+=("$BRANCH2")
+  if ! await_run "$RUN2"; then
+    fact refutation-run FAIL "run $RUN2 had not ended within ${RUN_WAIT_SECONDS}s (its row reads found=${RUN_FOUND:-nothing}, status=${RUN_STATUS:-nothing})"
+    stop "run $RUN2 had not ended after ${RUN_WAIT_SECONDS}s, and the transcript this step reads is written as the run's stages end. Watch it with 'fugaro watch $RUN2' and run this check again when it has ended — the run is a real one and is not cancelled by stopping here. Raise CHECK291_RUN_WAIT_SECONDS if it needs longer"
+  fi
   if ! transcript_of "$RUN2" "$SCRATCH/run2.jsonl"; then
     fact refutation-run FAIL "the transcript of run $RUN2 could not be read out of the runs bucket"
-    stop "this check could not read run $RUN2's stored transcript. Read it yourself: 'fugaro logs $RUN_REF'"
+    stop "this check could not read run $RUN2's stored transcript. Read it yourself: 'fugaro logs $RUN2'"
   fi
   grep -q 'marker: absent' "$SCRATCH/run2.jsonl" || {
     fact refutation-run FAIL "run $RUN2's transcript does not carry 'marker: absent'"
-    fail_stop "run $RUN2's transcript carries no 'marker: absent', although its image is the repository's own and D1370 says such an image passes none of its own variables: read it yourself with 'fugaro logs $RUN_REF'"
+    fail_stop "run $RUN2's transcript carries no 'marker: absent', although its image is the repository's own and D1370 says such an image passes none of its own variables: read it yourself with 'fugaro logs $RUN2'"
   }
   grep -q 'reserved: absent' "$SCRATCH/run2.jsonl" || {
     fact refutation-run FAIL "run $RUN2's transcript does not carry 'reserved: absent'"
-    fail_stop "run $RUN2's transcript carries no 'reserved: absent': read it yourself with 'fugaro logs $RUN_REF'"
+    fail_stop "run $RUN2's transcript carries no 'reserved: absent': read it yourself with 'fugaro logs $RUN2'"
   }
-  fact refutation-run PASS "run $RUN2 ($RUN_REF) of the same workflow on the repository-built image read 'marker: absent' and 'reserved: absent' — the same marker, set the same way in the repository's own Dockerfile, reached no run at all"
+  fact refutation-run PASS "run $RUN2 of the same workflow on the repository-built image read 'marker: absent' and 'reserved: absent' — the same marker, set the same way in the repository's own Dockerfile, reached no run at all"
 }
 
 # --------------------------------------------------------------- the Restore
@@ -1231,10 +1329,16 @@ restore_run() {
     fi
   fi
   if [ "$YAML_CHANGED" = yes ]; then
-    if commit_and_push "check291: restore $WORKFLOW's own configuration" fugaro.yaml ".fugaro/$WORKFLOW.Dockerfile" >/dev/null 2>&1; then
+    # Only the paths this run really created: `.fugaro/<workflow>.Dockerfile` is
+    # step 5's, and `git add` of a path that is not there stages NOTHING and
+    # fails, so a run that ended before step 5 would push no restoration at all
+    # and leave the branch naming the entry this Restore removes in part 3.
+    local paths=(fugaro.yaml)
+    [ "$DOCKERFILE_ADDED" = yes ] && paths+=(".fugaro/$WORKFLOW.Dockerfile")
+    if commit_and_push "check291: restore $WORKFLOW's own configuration" "${paths[@]}" >/dev/null 2>&1; then
       detail="$detail; the check's own edits are committed back out on $BRANCH"
     else
-      RESTORE_FAIL="$RESTORE_FAIL commit and push the restoration of fugaro.yaml and .fugaro/$WORKFLOW.Dockerfile on branch $BRANCH;"
+      RESTORE_FAIL="$RESTORE_FAIL commit and push the restoration of ${paths[*]} on branch $BRANCH;"
     fi
   fi
   # 2. The convergence that redeploys the job from the restored configuration —
@@ -1340,7 +1444,8 @@ print_plan() {
   printf '     fugaro update --repo %s             # converges the hand-set name away again\n' "$REPO" >&$out
   printf '  4. edit %s/fugaro.yaml: %s gets a commands.test printing presence and never a value\n' "$CHECKOUT" "$WORKFLOW" >&$out
   printf '     git commit + git push origin %s\n' "${BRANCH:-<branch>}" >&$out
-  printf '     fugaro run --workflow %s %s\n' "$WORKFLOW" "'<the trivial task: CHECK291.md, then fugaro verify test>'" >&$out
+  printf '     fugaro run --workflow %s --json %s\n' "$WORKFLOW" "'<the trivial task: CHECK291.md, then fugaro verify test>'" >&$out
+  printf '     fugaro runs ls --repo %s --json            # waited for the run to END (terminal), up to %ss\n' "$REPO" "$RUN_WAIT_SECONDS" >&$out
   printf '     fugaro runs show --repo %s <run> --json ; gcloud storage ls/cat the transcript\n' "$REPO" >&$out
   printf '     read: marker: present, reserved: absent, and example.invalid NOWHERE\n' >&$out
   printf '  5. fugaro image render --workflow %s > .fugaro/%s.Dockerfile (+ the two ENV lines)\n' "$WORKFLOW" "$WORKFLOW" >&$out
@@ -1349,7 +1454,9 @@ print_plan() {
   printf '     fugaro image build --workflow %s    # the --workflow is load-bearing (D1144): ONE Cloud Build\n' "$WORKFLOW" >&$out
   printf '     fugaro update --repo %s ; gcloud run jobs describe <job> --region %s\n' "$REPO" "$REGION" >&$out
   printf '     fugaro doctor --all                      # the job must read NOT catalog-stamped\n' >&$out
-  printf '     fugaro run --workflow %s %s\n' "$WORKFLOW" "'<the same trivial task>'" >&$out
+  printf '     fugaro run --workflow %s --json %s\n' "$WORKFLOW" "'<the same trivial task>'" >&$out
+  printf '     fugaro runs ls --repo %s --json            # waited for the run to END (terminal), up to %ss\n' "$REPO" "$RUN_WAIT_SECONDS" >&$out
+  printf '     fugaro runs show --repo %s <run> --json ; gcloud storage ls/cat the transcript\n' "$REPO" >&$out
   printf '     read: marker: absent and reserved: absent\n' >&$out
   printf '  6. Restore (always, from the exit trap):\n' >&$out
   printf '     put %s/fugaro.yaml back byte-for-byte, remove .fugaro/%s.Dockerfile\n' "$CHECKOUT" "$WORKFLOW" >&$out

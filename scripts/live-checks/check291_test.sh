@@ -10,7 +10,14 @@
 # name absent, the refutation on a repository-built image), the guards (belong,
 # a checkout that is not the repository named, a dirty tree, a missing --yes), a
 # --dry-run that calls nothing at all, and a Restore that says what it could not
-# undo. No live step of Check 291 is run by an agent and none is run here.
+# undo. Two shapes the check has to get right are fakes of their own here and not
+# conveniences: the fake `run` prints the run it launched ONLY in the `--json`
+# document (what a person reads is a reporter step on stderr, whose short name is
+# not the run's id), and a run's transcript appears in the bucket only where the
+# listing turns that run's row terminal — so a check that read a run id off the
+# human line, or read a transcript straight after the launch, fails this suite
+# instead of passing it. No live step of Check 291 is run by an agent and none is
+# run here.
 #
 # Usage: bash scripts/live-checks/check291_test.sh [CHECK_TEST_ONLY=test_name]
 #                                              [CHECK_TEST_SHARD=i/n]
@@ -95,6 +102,7 @@ EOF
   : >"$STATE/job-state"
   echo none >"$STATE/job-state"
   : >"$STATE/held"
+  : >"$STATE/launched"
 
   cat >"$CASE/home/.config/fugaro/projects/chk291-sandbox.yaml" <<EOF
 version: 1
@@ -150,6 +158,25 @@ job_line() {
   else
     echo "info image-env-$job: the job's image is catalog entry $entry, and a run drops none of the names the job sets itself — the rest of its environment is Fugaro's own, which configures the run$caveat$suffix"
   fi
+}
+
+# write_transcript RID IDX — the stored transcript of the run IDX-th launched,
+# written when that run's row turns terminal and not before.
+write_transcript() {
+  local d="$state/bucket/runs/chk291-sandbox/$1/transcripts"
+  mkdir -p "$d"
+  case "$2" in
+  1)
+    printf '%s\n' '{"type":"result","text":"marker: present reserved: absent"}' >"$d/implement-1.jsonl"
+    [ -e "$state/knobs/run1_marker_absent" ] && printf '%s\n' '{"text":"marker: absent reserved: absent"}' >"$d/implement-1.jsonl"
+    [ -e "$state/knobs/run1_reserved_present" ] && printf '%s\n' '{"text":"marker: present reserved: present"}' >"$d/implement-1.jsonl"
+    [ -e "$state/knobs/run1_value" ] && printf '%s\n' '{"text":"marker: present reserved: absent env=https://example.invalid/x"}' >"$d/implement-1.jsonl"
+    [ -e "$state/knobs/run1_no_reserved_line" ] && printf '%s\n' '{"text":"marker: present"}' >"$d/implement-1.jsonl"
+    ;;
+  *)
+    printf '%s\n' '{"text":"marker: absent reserved: absent"}' >"$d/implement-1.jsonl"
+    ;;
+  esac
 }
 
 case "$1" in
@@ -219,19 +246,18 @@ run)
   n=$((n + 1))
   echo "$n" >"$state/run-count"
   id="00000000-0000-4000-8000-00000000000$n"
-  echo "launched ${id%%-*}"
-  echo "  branch fugaro/$id cut from main"
-  echo "  logs https://fugaro.invalid/logs/$id"
-  d="$state/bucket/runs/chk291-sandbox/$id/transcripts"
-  mkdir -p "$d"
-  if [ "$n" = 1 ]; then
-    printf '%s\n' '{"type":"result","text":"marker: present reserved: absent"}' >"$d/implement-1.jsonl"
-    [ -e "$state/knobs/run1_marker_absent" ] && printf '%s\n' '{"text":"marker: absent reserved: absent"}' >"$d/implement-1.jsonl"
-    [ -e "$state/knobs/run1_reserved_present" ] && printf '%s\n' '{"text":"marker: present reserved: present"}' >"$d/implement-1.jsonl"
-    [ -e "$state/knobs/run1_value" ] && printf '%s\n' '{"text":"marker: present reserved: absent env=https://example.invalid/x"}' >"$d/implement-1.jsonl"
-    [ -e "$state/knobs/run1_no_reserved_line" ] && printf '%s\n' '{"text":"marker: present"}' >"$d/implement-1.jsonl"
-  else
-    printf '%s\n' '{"text":"marker: absent reserved: absent"}' >"$d/implement-1.jsonl"
+  printf '%s %s\n' "$id" "$n" >>"$state/launched"
+  # What a person reads, on STDERR and behind the reporter's own glyph, exactly
+  # as the real command prints it: `launched <short>` where <short> is NOT the
+  # run's id. Nothing here is a shape a reader can take a run from, which is why
+  # the check reads the --json document on stdout instead — a check that went
+  # back to parsing this line would take the wrong id and find no transcript.
+  echo "✔ launch launched ${id%%-*}" >&2
+  echo "  logs https://fugaro.invalid/logs/$id" >&2
+  json=no
+  for a in "$@"; do [ "$a" = "--json" ] && json=yes; done
+  if [ "$json" = yes ]; then
+    printf '{"project":"chk291-sandbox","run":"chk291-sandbox/%s","repo":"chk291-sandbox","run_id":"%s","branch":"fugaro/%s","ref":"main","status":"launched"}\n' "$id" "$id" "$id"
   fi
   # The branch the run cut, which the Restore's `gh pr close --delete-branch`
   # takes off the remote again.
@@ -239,6 +265,26 @@ run)
   ;;
 runs)
   case "${2:-}" in
+  ls)
+    # Each run is IN FLIGHT on the first poll that names it and terminal from the
+    # second, and its transcript is written only where its row turns terminal: a
+    # run's own bytes are not in the bucket while it is still going, so a check
+    # that read them straight after the launch would read nothing at all.
+    rows=""
+    while read -r rid idx; do
+      [ -n "$rid" ] || continue
+      poll=$(cat "$state/polls-$rid" 2>/dev/null || echo 0)
+      poll=$((poll + 1))
+      echo "$poll" >"$state/polls-$rid"
+      term=false
+      status=running
+      if [ "$poll" -ge 2 ] && ! knob run_never_terminal; then term=true; status=succeeded; fi
+      [ -n "$rows" ] && rows="$rows,"
+      rows="$rows{\"run_id\":\"$rid\",\"run\":\"chk291-sandbox/$rid\",\"repo\":\"chk291-sandbox\",\"status\":\"$status\",\"terminal\":$term,\"branch\":\"fugaro/$rid\"}"
+      [ "$term" = true ] && write_transcript "$rid" "$idx"
+    done <"$state/launched"
+    printf '{"project":"chk291-sandbox","runs":[%s]}\n' "$rows"
+    ;;
   show)
     printf '{"version": 2, "repo": "chk291-sandbox", "run": "chk291-sandbox/%s"}\n' "$5"
     ;;
@@ -361,6 +407,8 @@ run291() {
       TMPDIR="$CASE/tmp" \
       CHK291_STATE="$STATE" \
       CHK291_CHECKOUT="$CHECKOUT" \
+      CHECK291_RUN_WAIT_SECONDS="${WAIT_OVERRIDE:-30}" \
+      CHECK291_RUN_POLL_SECONDS="${POLL_OVERRIDE:-1}" \
       bash "$SCRIPT" "$@"
   ) >"$CASE/out" 2>"$CASE/err"
   echo "$?" >"$CASE/status"
@@ -443,6 +491,16 @@ test_happy_path() {
   expect_contains "$LOG" "fugaro image build fugaro-check291" "the entry is built"
   expect_contains "$LOG" "fugaro image build --workflow test" "the refutation's image is built with --workflow (D1144)"
   expect_contains "$LOG" "fugaro image rm fugaro-check291" "the Restore removes the entry"
+  # The launch is read out of its own --json document and the run waited for: the
+  # fake puts a run's transcript in the bucket only where the listing turns that
+  # run's row terminal, so the two run readings above are themselves the proof
+  # that the check waited — the first poll answers an in-flight row.
+  expect_contains "$CASE/err" "✔ launch launched" "the launch really printed the human step line, which names no run"
+  expect_contains "$LOG" "fugaro run --workflow test" "the runs are launched on the workflow"
+  expect_contains "$LOG" " --json" "the launch is read out of its own --json document"
+  expect_absent "$LOG" "runs show --repo $ORIGIN 00000000 " "the short name a launch prints to a person is never read as the run's id"
+  [ "$(grep -c 'runs ls --repo' "$LOG")" -ge 4 ] ||
+    fail "the check made $(grep -c 'runs ls --repo' "$LOG") listing read(s) for two runs, fewer than the two per run that waiting for a run to end costs"
   expect_contains "$GLOG" "--update-env-vars GOOGLE_APPLICATION_CREDENTIALS=/dev/null" "the reserved name is set on the job by hand"
   expect_contains "$HLOG" "gh pr close fugaro/" "the Restore closes the pull requests"
   [ "$(grep -c 'gh pr close' "$HLOG")" = 2 ] || fail "the Restore closed $(grep -c 'gh pr close' "$HLOG") pull request(s), wanted 2"
@@ -602,6 +660,42 @@ test_doctor_with_no_image_env_line_stops() {
   expect_contains "$CASE/err" "too old for it" "the stop says why"
 }
 
+# A run that never ends is not an answer, and nothing is read off it: `fugaro run`
+# returns at launch, so the transcript this check reads is only in the bucket once
+# the run has ended, and a reading taken at the deadline would be a reading of a
+# run that has not run yet. The ending is also before step 5, which is the shape
+# the Restore has to put the branch back from: `.fugaro/test.Dockerfile` is not
+# there yet, and a `git add` that named it anyway would stage nothing and leave
+# the branch's fugaro.yaml naming the entry the Restore removes from the catalog.
+test_a_run_that_never_ends_stops_and_the_branch_is_put_back() {
+  setup_case neverends
+  : >"$STATE/knobs/run_never_terminal"
+  WAIT_OVERRIDE=2
+  POLL_OVERRIDE=1
+  run291 --repo "$ORIGIN" --region us-east5 --yes
+  WAIT_OVERRIDE=""
+  POLL_OVERRIDE=""
+  expect_status 2 "$(status_of)" "a run that never ends"
+  expect_contains "$CASE/out" "FACT run-marker: FAIL" "the marker row"
+  expect_contains "$CASE/out" "had not ended within 2s" "the row names the deadline it waited"
+  expect_contains "$CASE/err" "CHECK291_RUN_WAIT_SECONDS" "the stop says how to wait longer"
+  expect_contains "$CASE/out" "FACT restore: PASS" "the Restore undid what the run had made"
+  # Nothing was read off the run that never ended: the fake writes a transcript
+  # only where the row turns terminal, so a check that read one here would be
+  # reading a file that is not there.
+  expect_absent "$CASE/out" "marker: present" "no transcript was read off a run that had not ended"
+  # And the branch is back, not just the checkout: origin's own fugaro.yaml must
+  # name no entry, or the Restore's claim would be a claim about a push that
+  # never happened.
+  expect_absent "$CHECKOUT/fugaro.yaml" "image_name: fugaro-check291" "the checkout names no entry again"
+  git -C "$CHECKOUT" show origin/main:fugaro.yaml >"$CASE/origin.yaml" 2>/dev/null ||
+    fail "the branch on origin cannot be read"
+  expect_absent "$CASE/origin.yaml" "image_name: fugaro-check291" "the branch the Restore pushed back names no entry"
+  cmp -s "$STATE/fugaro.yaml.orig" "$CHECKOUT/fugaro.yaml" ||
+    fail "fugaro.yaml is not byte-for-byte what it was: $(diff "$STATE/fugaro.yaml.orig" "$CHECKOUT/fugaro.yaml" | head -5)"
+  [ -z "$(git -C "$CHECKOUT" status --porcelain)" ] || fail "the Restore left the checkout dirty"
+}
+
 test_a_build_that_fails_stops_and_is_restored() {
   setup_case buildfails
   : >"$STATE/knobs/build_fails"
@@ -655,6 +749,7 @@ t test_a_stamp_whose_line_lost_its_caveat_is_an_answer
 t test_a_stamp_whose_line_carries_a_value_is_an_answer
 t test_a_refutation_that_stays_stamped_is_an_answer
 t test_doctor_with_no_image_env_line_stops
+t test_a_run_that_never_ends_stops_and_the_branch_is_put_back
 t test_a_build_that_fails_stops_and_is_restored
 t test_a_restore_that_could_not_close_a_pull_request_says_so
 

@@ -78,7 +78,12 @@ import (
 // reservation read with a name set on the job by hand, and the two runs'
 // transcripts all come out of the case's own state files, so a case bends one
 // reading at a time and says what the check then reads -- and its `--dry-run`
-// case pins that a plan makes no call at all.
+// case pins that a plan makes no call at all. Its fake `run` names the run it
+// launched only in the `--json` document (a person's own line is a reporter step
+// on stderr, and its short name is not the run's id), and its fake `runs ls`
+// keeps a run in flight until its second poll and writes that run's transcript
+// only where the row turns terminal, so a check that read a run id off the human
+// line or read a transcript before its run ended fails these cases.
 // Check 301's fakes are a fake `fugaro`, a fake launchd and a fake systemd
 // whose boot id and unit files the test writes, so a reboot, a second
 // instance's refusal and T7's re-render are all readings of files the test
