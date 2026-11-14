@@ -585,3 +585,37 @@ func CheckProfiles(profiles map[string]Profile, accounts map[string]Account) err
 func CheckBitbucketProfileRepos(profiles map[string]Profile, token *BitbucketToken) error {
 	return validBitbucketProfileRepos(profiles, token)
 }
+
+// CheckSharedJobProfile holds a profile a shared project job is deployed for to
+// the one rule that is about the shared job itself (plan S1): it mounts no
+// Bitbucket credential.
+//
+// It is the opposite of SharedBitbucketProfile, and the two must not be read
+// for each other. That predicate is the per-repository Bitbucket job's — the
+// bitbucket provider AND a mount of the token (D473) — while a profile a shared
+// job serves mounts no token at all (D2302), because the job is shared by every
+// repository the profile admits and the token's reach is a per-repository list
+// such a job cannot honour; a run on one reaches git through the installation's
+// credentials service instead. A caller that asked the predicate would deploy a
+// tokenless shared job for exactly the profiles this function refuses one
+// (docs/shared-jobs-default/contract.md's hazard).
+//
+// at is the profile's path in the document that holds it, "profiles.<name>"
+// when that document is the published policy, so the sentence names the entry
+// the way the node's own refusals do; it is the caller's because only the
+// caller knows which document it is holding a profile of.
+//
+// The provider is deliberately not judged here. Whether a shared job serves a
+// provider at all is SharedJobProvider's answer (internal/infra), and a caller
+// asks this function about a profile that decision has already admitted — so a
+// github profile mounting the token is refused by validBitbucketProfile, which
+// owns the "only a bitbucket profile mounts it" half, and a bitbucket profile
+// mounting it is refused here.
+func CheckSharedJobProfile(at string, pr Profile) error {
+	i := slices.Index(pr.Secrets, config.BitbucketSecret)
+	if i < 0 {
+		return nil
+	}
+	return fmt.Errorf("%s.secrets[%d]: %q is the Bitbucket credential, and a shared project job holds no credential of the provider it serves: the job is shared by every repository the profile admits, and this token reaches a per-repository list it cannot be bounded by. A run on a shared job reaches git through the installation's credentials service instead. Take the entry off the profile, or keep this profile's repositories on per-repository jobs",
+		at, i, config.BitbucketSecret)
+}

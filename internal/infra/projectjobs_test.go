@@ -604,11 +604,12 @@ profiles:
 	}
 }
 
-// Bitbucket stays on the per-repository path in phase 3 (the owner's ruling
-// of 2026-10-15 on probe U1: a Bitbucket credential cannot be scoped to one
-// project's repositories; plan Task 3.0 step 2, D5 amended). So a shared job
-// never serves Bitbucket and never mounts the Bitbucket token, whatever
-// provider the profile names.
+// Bitbucket stays on the per-repository path until I1 admits it to the
+// shared-job list, and this test is that list read from the deployer's side:
+// the Bitbucket path itself is built and tested beside this one
+// (TestProjectJobsDeployABitbucketProfile), and no profile of a provider the
+// list does not hold reaches it. What a shared job never does, whatever
+// provider the profile names, is mount the Bitbucket token.
 //
 // A Bitbucket profile is skipped and not refused, which is the whole of this
 // test: the policy layer admits such a profile (projectpolicy.validProfiles,
@@ -623,7 +624,7 @@ profiles:
 // userErr(...) for !SharedJobProvider) — the first case below stops with an
 // error instead of deploying the GitHub profile. Mutation: drop the
 // SharedJobProvider skip — the first case deploys a job for the Bitbucket
-// profile, which no credential may serve.
+// profile the list does not hold.
 func TestProjectJobsSkipBitbucketProfiles(t *testing.T) {
 	// A project with repositories on both providers defines both profiles
 	// (the plan's own example, standard and standard-bitbucket): the GitHub
@@ -659,8 +660,9 @@ func TestProjectJobsSkipBitbucketProfiles(t *testing.T) {
 	}
 	// The token is the other half of the ruling and is still refused: a shared
 	// job that serves GitHub may not mount a credential that reaches every
-	// repository of a Bitbucket workspace (ProjectJobs' own check, which a
-	// skip does not reach).
+	// repository of a Bitbucket workspace. The sentence is the policy's own
+	// (projectpolicy.validBitbucketProfile), applied to every profile before
+	// any job is built — so a skip is not a way around it.
 	if _, err := ProjectJobs(parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+`project_secrets:
   bitbucket-token: { allow_data_to: [acme/sandbox] }
 profiles:
@@ -668,6 +670,141 @@ profiles:
 `), "fugaro-runs-proj-1234", false); err == nil ||
 		!strings.Contains(err.Error(), `profiles.standard.secrets[0]: "bitbucket-token" is the Bitbucket credential`) {
 		t.Errorf("err = %v, want the Bitbucket token refused on a GitHub profile", err)
+	}
+}
+
+// admitSharedJobProviders makes the shared-job provider list serve the kinds
+// named, for the duration of one test: the deployer's Bitbucket path is gated
+// on that list, and S1 leaves the list itself as it ships (docs/shared-jobs-default
+// S1's acceptance: this slice merges with no effect on a Bitbucket project, and
+// I1 makes the one-line change). A test of that path therefore admits the
+// provider for itself, so that what it exercises is the path and not the list.
+func admitSharedJobProviders(t *testing.T, kinds ...string) {
+	t.Helper()
+	orig := sharedJobProviders
+	sharedJobProviders = kinds
+	t.Cleanup(func() { sharedJobProviders = orig })
+}
+
+// bitbucketProjectLC is the local config of a project whose repositories and
+// profiles are all Bitbucket's: m4LocalConfig's own repository (acme/sandbox on
+// bitbucket), the credentials service switched on — which a shared Bitbucket
+// job's runs reach git through — and one Bitbucket profile that mounts nothing.
+const bitbucketProjectLC = `profiles:
+  standard: { provider: bitbucket, cpu: 4, memory: 16Gi, timeout_class: 12h }
+`
+
+// TestProjectJobsDeployABitbucketProfile is S1 of docs/shared-jobs-default and
+// the deployer half of docs/bitbucket-workspace-token's T2.2 (D2302): a shared
+// project job serves a Bitbucket profile, and it serves it the only way such a
+// job may — with no Bitbucket credential mounted and the credential proxy
+// required instead, because the job is shared by every repository its profile
+// admits and the token's reach is a per-repository list it cannot honour.
+//
+// The provider is admitted by THIS TEST and not by the code under it: S1 leaves
+// sharedJobProviders as the release ships it (github alone), so that this
+// slice's tasks merge inertly and a release cut midway changes nothing for a
+// Bitbucket project; I1 is the one-line change that admits bitbucket. The first
+// half below is that same fact read from the other side, and it is the red
+// step: with the list as it ships, the profile this test deploys a job for gets
+// none.
+func TestProjectJobsDeployABitbucketProfile(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+m5Additions+credentialsServiceLCBlock+bitbucketProjectLC)
+	if jobs := projectJobsFor(t, m4LocalConfig+m5Additions+credentialsServiceLCBlock+bitbucketProjectLC); len(jobs) != 0 {
+		t.Fatalf("jobs = %v, want none: sharedJobProviders is the list the release ships, and only I1 changes it", sortedJobNames(jobs))
+	}
+	admitSharedJobProviders(t, "github", "bitbucket")
+	jobs, err := ProjectJobs(lc, "fugaro-runs-proj-1234", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := gcp.ProjectJobName("standard", "bitbucket", "")
+	if !slices.Equal(sortedJobNames(jobs), []string{name}) {
+		t.Fatalf("jobs = %v, want the profile's one job %s", sortedJobNames(jobs), name)
+	}
+	j := jobs[name]
+	if j.Profile != "standard" || j.Provider != "bitbucket" || j.Account != "" {
+		t.Errorf("job = (%s, %s, account %q), want (standard, bitbucket, \"\")", j.Profile, j.Provider, j.Account)
+	}
+	// It holds no credential of the provider it serves: no bitbucket-token,
+	// which is D2302's whole point, and no github-app-key either, which belongs
+	// to a job that clones GitHub repositories.
+	if len(j.SecretEnv) != 0 {
+		t.Errorf("the Bitbucket job mounts %v, want nothing: a shared Bitbucket job holds no token at all (D2302)", j.SecretEnv)
+	}
+	// It requires the proxy instead. The credentials service's address on the
+	// job is what makes its runs' git traffic proxied — internal/runner reads
+	// exactly this variable to decide that a Bitbucket run is proxied at all —
+	// and a job deployed without it halts before anything is cloned.
+	if got := j.Env[providers.EnvCredentialsServiceURL]; got != lc.CredentialsService.URL {
+		t.Errorf("%s = %q, want %q: a shared Bitbucket job reaches git through the installation's credentials service, and this is how a run learns where it is", providers.EnvCredentialsServiceURL, got, lc.CredentialsService.URL)
+	}
+	if _, ok := j.Env[providers.EnvGitHubAppID]; ok {
+		t.Errorf("the Bitbucket job carries %s: the App's ID is a github job's, resolved from the project's github repositories", providers.EnvGitHubAppID)
+	}
+	if j.CPU != "4" || j.Memory != "16Gi" {
+		t.Errorf("job = %s cpu, %s memory, want the profile's own 4 and 16Gi", j.CPU, j.Memory)
+	}
+	timeout, err := config.ParseDuration("12h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := int((timeout + backend.TaskTimeoutSlack) / time.Second); j.TaskTimeoutS != want {
+		t.Errorf("task timeout = %ds, want %ds", j.TaskTimeoutS, want)
+	}
+	// An installation that records no credentials service cannot give the job
+	// the proxy it needs, and the profile is refused rather than deployed as a
+	// job whose every run stops at its first git command.
+	if _, err := ProjectJobs(parseLC(t, m4LocalConfig+m5Additions+bitbucketProjectLC), "fugaro-runs-proj-1234", false); err == nil {
+		t.Error("a shared Bitbucket job was deployed on an installation with no credentials service")
+	} else if !strings.Contains(err.Error(), providers.EnvCredentialsServiceURL) {
+		t.Errorf("err = %v, want one naming %s", err, providers.EnvCredentialsServiceURL)
+	}
+}
+
+// TestProjectJobsRefuseAProfileThatMountsTheBitbucketToken: D2302 refuses a
+// shared job for a profile that mounts the Bitbucket credential, rather than
+// deploying one without the mount. The two are not the same act: the mount is
+// what an operator wrote, and a job deployed with it silently dropped would
+// hold no credential at all while the document says it holds one.
+//
+// It is the opposite of projectpolicy.SharedBitbucketProfile, which is the
+// PER-REPOSITORY Bitbucket job's test (the bitbucket provider AND the mount),
+// and this test asserts the two rules point apart — the hazard
+// docs/shared-jobs-default/contract.md names, since that predicate is the name
+// a side is likeliest to reach for and reaching for it here would deploy a
+// tokenless shared job for exactly the profiles D2302 refuses one.
+func TestProjectJobsRefuseAProfileThatMountsTheBitbucketToken(t *testing.T) {
+	const mounting = m4LocalConfig + m5Additions + credentialsServiceLCBlock + `project_secrets:
+  bitbucket-token: { allow_data_to: [acme/sandbox] }
+profiles:
+  standard: { provider: bitbucket, cpu: 2, memory: 8Gi, timeout_class: 6h, secrets: [bitbucket-token], allow_repos: [bitbucket/acme/sandbox] }
+`
+	admitSharedJobProviders(t, "github", "bitbucket")
+	jobs, err := ProjectJobs(parseLC(t, mounting), "fugaro-runs-proj-1234", false)
+	if err == nil {
+		t.Fatalf("jobs = %v, want the profile refused: a shared Bitbucket job mounts no token (D2302)", sortedJobNames(jobs))
+	}
+	for _, want := range []string{"profiles.standard.secrets[0]", config.BitbucketSecret, "credentials service"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want one naming %q", err, want)
+		}
+	}
+	// The mount is judged before the proxy is looked for, so the sentence an
+	// operator reads is about the entry they wrote and not about the
+	// installation: the same config with no credentials service at all is
+	// still refused for the mount.
+	withoutService := parseLC(t, strings.Replace(mounting, credentialsServiceLCBlock, "", 1))
+	if _, err := ProjectJobs(withoutService, "fugaro-runs-proj-1234", false); err == nil {
+		t.Error("a profile mounting the Bitbucket credential was admitted")
+	} else if !strings.Contains(err.Error(), config.BitbucketSecret) {
+		t.Errorf("err = %v, want the mount refused here rather than the missing service", err)
+	}
+	// The per-repository predicate is still what it was (D473, pinned by
+	// projectpolicy's own test), and this is the pair: it answers true for the
+	// one profile a shared job must be refused for.
+	if !projectpolicy.SharedBitbucketProfile(parseLC(t, mounting).Profiles["standard"]) {
+		t.Error("SharedBitbucketProfile no longer answers true for a bitbucket profile mounting the token: the per-repository predicate and the shared-job rule are meant to point apart, and a side that reached for the predicate would deploy a tokenless shared job for exactly this profile")
 	}
 }
 
