@@ -604,6 +604,25 @@ test_a_daemon_before_its_first_tick_is_live() {
   expect_status "$status" 0 "a daemon that had not ticked yet"
 }
 
+test_a_non_loopback_address_is_never_handshook() {
+  # The address a registry file names decides where the bearer token in it would
+  # go, so it is judged before any request is made: endpoint.Probe's validate
+  # refuses such a document and makes no call at all. A check that handshook
+  # first would hand the file's token to whatever host the file names.
+  setup_case foreign-addr
+  start_daemon --addr-claim 127.0.0.2:9
+  run313 --id "$ID"
+  expect_fail_row registry-fields "an address that is not the loopback literal"
+  expect_status "$status" 2 "an address that is not the loopback literal"
+  if [ -s "$CASE/log/fugaro.calls" ]; then
+    fail "an address that is not the loopback literal: a scope was read anyway ($(cat "$CASE/log/fugaro.calls"))"
+  fi
+  if [ -s "$CASE/log/curl.calls" ]; then
+    fail "an address that is not the loopback literal: the handshake was made anyway ($(cat "$CASE/log/curl.calls")), so the file's token was sent to an address the file chose"
+  fi
+  expect_contains "$out" "FACT aborted: FAIL — the registry file names '127.0.0.2:9'" "the stop says the file's address, not a dead listener"
+}
+
 test_a_lock_that_is_not_held_fails() {
   setup_case nolock
   start_daemon --no-lock
@@ -924,6 +943,7 @@ t test_a_run_directory_that_is_not_0700_fails
 t test_a_nonce_that_is_the_token_fails
 t test_a_daemon_whose_listener_is_gone_fails
 t test_a_daemon_before_its_first_tick_is_live
+t test_a_non_loopback_address_is_never_handshook
 t test_a_lock_that_is_not_held_fails
 t test_a_handshake_answered_with_another_nonce_fails
 t test_a_handshake_answered_with_another_token_is_refused

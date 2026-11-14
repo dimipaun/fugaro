@@ -520,18 +520,22 @@ judge_registry() {
     fact registry-fields FAIL "$REG_PATH is there and is not the document this release writes (the reader answered '$(field doc)': $(field error)). CG13b refuses such a file rather than half-reading it"
     stop "the registry file is not a document this release reads, so no field of it can be judged"
   fi
-  local problems=()
+  local problems=() bad_addr=no
   [ "$(field id)" = "$ID" ] || problems+=("it names id '$(field id)' and $ID was asked for")
   case "$(field pid)" in
   '' | *[!0-9]*) problems+=("its pid is '$(field pid)', which is not a positive number") ;;
   0) problems+=("its pid is 0") ;;
   esac
-  [ "$(field host)" = 127.0.0.1 ] || problems+=("its address '$(field addr)' is not the loopback literal this endpoint binds")
+  if [ "$(field host)" != 127.0.0.1 ]; then
+    problems+=("its address '$(field addr)' is not the loopback literal this endpoint binds")
+    bad_addr=yes
+  fi
   case "$(field port)" in
-  '' | *[!0-9]*) problems+=("its address '$(field addr)' carries no port") ;;
+  '' | *[!0-9]*) problems+=("its address '$(field addr)' carries no port"); bad_addr=yes ;;
   *)
     if [ "$(field port)" -le 0 ] || [ "$(field port)" -gt 65535 ]; then
       problems+=("its address '$(field addr)' carries a port outside 1-65535")
+      bad_addr=yes
     fi
     ;;
   esac
@@ -546,6 +550,14 @@ judge_registry() {
     local list
     list=$(printf '%s; ' "${problems[@]}"); list=${list%; }
     fact registry-fields FAIL "the document is not the one CG13b writes: $list"
+    # The address decides where the token would go, so it is judged before any
+    # request: the reader this check mirrors refuses such a document in validate
+    # and makes no call at all, and a check that handshook anyway would hand the
+    # file's bearer token to whatever address the file names -- the file is a
+    # document on disk, and nothing in it is this run's to trust.
+    if [ "$bad_addr" = yes ]; then
+      stop "the registry file names '$(field addr)', which is not the loopback address this endpoint binds: endpoint.Probe refuses such a document before making any request, and this check will not send the file's token to an address the file chose"
+    fi
   fi
 }
 
