@@ -1078,6 +1078,14 @@ step_update() {
   for stage in installation firebase images installation-2 secrets plugin; do
     own=$(grep -E "^.{0,20}[[:space:]]$stage([[:space:]]|\$)" "$UPDATE2_LOG" 2>/dev/null | tail -1 || true)
     line=${own:-$(grep -E "(^|[[:space:]])$stage([[:space:]]|\$)" "$UPDATE2_LOG" 2>/dev/null | tail -1 || true)}
+    # `No changes` is what every converged stage of this converge says (the
+    # installation, firebase, installation-2 and images roots share the converge's
+    # own reason, and secrets and plugin carry one of their own), and `  done `
+    # accepts a plan-view row whose status word is the converged one whatever its
+    # detail says. The second alternative is leniency and not a shape a run is
+    # known to print: a stage this step could not read would fail the run, and a
+    # detail that stops saying `No changes` is a change no owner should learn
+    # about from a FAIL.
     case "$line" in
     *"No changes"* | "  done "*) continue ;;
     esac

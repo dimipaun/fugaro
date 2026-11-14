@@ -265,6 +265,19 @@ converged_steps() { # [INSTALLATION-LINE]
   printf '%s %s %s\n' '✔' secrets 'No changes: every secret container is there.'
   printf '%s %s %s\n' '✔' plugin 'No changes: the plugin is at the pinned release.'
 }
+# created_steps: the six stages as a CREATE run prints them. A create run opens a
+# log like any other, so its account is step lines and not the plan view's rows
+# (loop.go's view, report.Step.end). Nothing reads these details — step_create
+# reads the exit status, the question's marker and the suggestion line — so their
+# wording is not pinned; what is modelled is the shape.
+created_steps() {
+  printf '%s %s %s\n' '✔' installation 'created the project, its buckets and its billing link'
+  printf '%s %s %s\n' '✔' firebase 'created the Firestore database'
+  printf '%s %s %s\n' '✔' images "built and pushed the release's images"
+  printf '%s %s %s\n' '✔' installation-2 'wrote the installation into the project'
+  printf '%s %s %s\n' '✔' secrets 'created the secret containers'
+  printf '%s %s %s\n' '✔' plugin 'installed the plugin at the pinned release'
+}
 # converged_rows is that same converged run in the plan view's shape, which is
 # what a converge that could not open a log draws on the screen instead (loop.go's
 # view). A converged stage's status word is `done`; `No changes` is the reason
@@ -306,7 +319,7 @@ version)
 setup)
   if has --plan-only "$@"; then
     if [ -n "${FAKE27_PLAN_NO_STAGES:-}" ]; then
-      printf '  will do  %-16s\n' installation
+      row_line 'will do' installation
     else
       stage_list 'will do' "$(flag --link-billing "$@" || true)"
     fi
@@ -354,7 +367,7 @@ setup)
   fi
   printf '%s\n' "$acct" >"$state/linkbilling"
   installation_of "$answer"
-  stage_list 'done'
+  created_steps
   exit 0
   ;;
 update)
@@ -536,11 +549,14 @@ test_the_create_run_is_given_a_real_terminal() {
   run27_default
   expect_status "$status" 0 "a full run"
   local create neg up
-  create=$(grep 'setup --name' "$dir/state/calls.fugaro" | head -1)
+  # `|| true` on every read of the fake's call log: pipefail plus `set -e` would
+  # otherwise end the suite at the assignment when a call is missing, and the
+  # `expect_contains` below is what has to say so.
+  create=$(grep 'setup --name' "$dir/state/calls.fugaro" | head -1 || true)
   expect_contains "$create" "tty=yes" "the create run is at a real terminal"
-  neg=$(grep -- '--yes' "$dir/state/calls.fugaro" | head -1)
+  neg=$(grep -- '--yes' "$dir/state/calls.fugaro" | head -1 || true)
   expect_contains "$neg" "tty=no" "the negative run has no terminal at all"
-  up=$(grep 'update --project' "$dir/state/calls.fugaro" | head -1)
+  up=$(grep 'update --project' "$dir/state/calls.fugaro" | head -1 || true)
   expect_contains "$up" "tty=no" "the update runs have no terminal"
   # The answer the pty wrote is the id the check's own --project names: that is
   # what makes the create run THIS check's project and not the wizard's default.
@@ -859,6 +875,14 @@ test_an_update_that_applied_a_stage_is_a_fail() {
   expect_contains "$(fact_line update)" "No changes" "the row names step 4's assertion"
 }
 
+# A converge whose log could not be opened draws the plan view on the screen
+# instead of a step line per stage (loop.go's view -> row when Detail is nil),
+# and that is the shape whose stage name sits at byte 17 rather than byte 4: this
+# case is what pins the match's window wide enough to hold a row. Its rows carry
+# the reason beside `done`, so it says nothing about the `"  done "` alternative
+# in check27.sh's rule — no real converge reaches step 4's transcript as a `done`
+# row without its reason, and that alternative is there to keep one from failing
+# a stage that converged.
 test_a_converged_update_in_the_plan_views_shape_is_a_pass() {
   setup_case update-rows
   RUN27_ENV=(FAKE27_UPDATE2_ROWS=1)
@@ -888,8 +912,11 @@ test_the_restore_deletes_the_jobs_the_buckets_and_the_project() {
   # The order that matters: the secrets are read BEFORE the project's delete, so
   # the names are evidence and not a reading of something already gone.
   local sec del
-  sec=$(grep -n "secrets list" "$dir/state/calls.gcloud" | head -1 | cut -d: -f1)
-  del=$(grep -n "projects delete" "$dir/state/calls.gcloud" | head -1 | cut -d: -f1)
+  # `|| true` on both reads: under `set -o pipefail` an unguarded grep that finds
+  # nothing ends this whole suite at the assignment, with no FAIL line and every
+  # later case unrun — which is exactly the state this case exists to report.
+  sec=$(grep -n "secrets list" "$dir/state/calls.gcloud" | head -1 | cut -d: -f1 || true)
+  del=$(grep -n "projects delete" "$dir/state/calls.gcloud" | head -1 | cut -d: -f1 || true)
   if [ -z "$sec" ] || [ -z "$del" ] || [ "$sec" -gt "$del" ]; then
     fail "the secrets were not listed before the project's delete ($sec vs $del)"
   fi
@@ -987,8 +1014,8 @@ test_the_negative_uses_a_config_root_of_its_own() {
   run27_default
   expect_status "$status" 0 "a full run"
   local neg create
-  neg=$(grep -- '--yes' "$dir/state/calls.fugaro" | head -1)
-  create=$(grep 'setup --name' "$dir/state/calls.fugaro" | head -1)
+  neg=$(grep -- '--yes' "$dir/state/calls.fugaro" | head -1 || true)
+  create=$(grep 'setup --name' "$dir/state/calls.fugaro" | head -1 || true)
   expect_contains "$create" "xdg=$dir/root/config" "the create run resolves the check's own root"
   expect_absent "$neg" "xdg=$dir/root/config" "the negative run never reads the check's root"
   expect_contains "$neg" "xdg=$dir/tmp/" "the negative run's root is the scratch's own"
@@ -1032,7 +1059,10 @@ test_an_account_of_the_wrong_shape_is_refused() {
   run27 --project "$PROJECT" --billing-account 'not-an-account' --repo "$REPO"
   expect_status "$status" 2 "an account ID of the wrong shape"
   expect_contains "$out" "account ID such as" "the refusal names the shape it wants"
-  expect_contains "$(fact_line billing-account)" "FAIL" "the account row"
+  # The abort row and not the billing-account one: the guard stops BEFORE it
+  # records anything about the account, so that key can only read the block's
+  # generic 'not reached' — a FAIL assertion on it would hold for any stop.
+  expect_contains "$(fact_line aborted)" "account ID such as" "the block's abort row carries the refusal"
   expect_absent "$out" "not-an-account" "the value is not repeated in the block"
   expect_no_calls "nothing runs with an account that is not one"
 }
