@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -30,6 +31,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
+	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 )
 
 // fakeProbes is the database's conditional write as the probe's lease uses it:
@@ -1388,5 +1390,369 @@ func TestAProbedCallsAnswerCarriesTheTiersItsProbesWereMadeOn(t *testing.T) {
 	next, _ := s.call(t, callBody("real-work-again"))
 	if tiers, ok, err := ProbedTiers(next.Header); err != nil || ok {
 		t.Errorf("a call that made no probe carries %v (%v), want no probe header", tiers, err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// A Bitbucket token's probe (T6, D2356, R14)
+// ---------------------------------------------------------------------------
+
+// The store the Bitbucket tokens' statuses are read and written through,
+// checked here rather than left to the first caller that wires one.
+var _ creds.TokenStatusStore = (*fakeTokenStatuses)(nil)
+
+// fakeTokenStatuses is the Bitbucket tokens' own subtree as the store interface
+// presents it: one node per token, read whole and written under the value it
+// read, exactly as creds.RTDBStore does it against the database — the interface
+// is what the probe is written against, so a fake that behaved differently
+// would be testing a store nobody deploys.
+type fakeTokenStatuses struct {
+	mu     sync.Mutex
+	nodes  map[string]creds.TokenStatus
+	reads  int
+	writes int
+	err    error
+}
+
+func newFakeTokenStatuses() *fakeTokenStatuses {
+	return &fakeTokenStatuses{nodes: map[string]creds.TokenStatus{}}
+}
+
+func (f *fakeTokenStatuses) TokenStatuses(context.Context) (map[string]creds.TokenStatus, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reads++
+	if f.err != nil {
+		return nil, f.err
+	}
+	out := make(map[string]creds.TokenStatus, len(f.nodes))
+	for k, v := range f.nodes {
+		out[k] = v
+	}
+	return out, nil
+}
+
+func (f *fakeTokenStatuses) UpdateTokenStatus(_ context.Context, name string, fn func(creds.TokenStatus, bool) (creds.TokenStatus, error)) (creds.TokenStatus, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.writes++
+	if f.err != nil {
+		return creds.TokenStatus{}, f.err
+	}
+	prev, found := f.nodes[name]
+	next, err := fn(prev, found)
+	if err != nil {
+		return creds.TokenStatus{}, err
+	}
+	f.nodes[name] = next
+	return next, nil
+}
+
+// status reads one token's status, whether it is there at all, and fails the
+// test when the fake could not answer.
+func (f *fakeTokenStatuses) status(t *testing.T, name string) (creds.TokenStatus, bool) {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	s, ok := f.nodes[name]
+	return s, ok
+}
+
+// plant puts a status on a token as an earlier call left it.
+func (f *fakeTokenStatuses) plant(name string, s creds.TokenStatus) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.nodes[name] = s
+}
+
+// fakeBitbucket is the Bitbucket API as a token's probe sees it: a script of
+// answers and the requests that asked for them.
+//
+// It records the method, the URL and the Authorization header, which is the
+// whole of what a test here needs to say about the call — the host it went to
+// (the adapter's constant, never a record's), the path (a repository the token
+// covers, never GET /user) and which token travelled. It answers on the
+// RoundTripper rather than on a loopback listener (Convention 9): no test
+// opens a socket to anything, and the request the service built is inspected
+// with the host it was built for rather than after a rewrite.
+type fakeBitbucket struct {
+	mu      sync.Mutex
+	replies []fakeBitbucketReply
+	asked   []fakeBitbucketAsk
+}
+
+// fakeBitbucketAsk is one request as the fake saw it. The authorization value
+// is held here because a test asserts which token travelled; nothing in this
+// file logs it.
+type fakeBitbucketAsk struct {
+	Method        string
+	URL           string
+	Authorization string
+	Accept        string
+}
+
+// fakeBitbucketReply is one scripted answer: a status and the headers with it.
+type fakeBitbucketReply struct {
+	Status int
+	Header http.Header
+}
+
+func (f *fakeBitbucket) RoundTrip(r *http.Request) (*http.Response, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.asked = append(f.asked, fakeBitbucketAsk{
+		Method:        r.Method,
+		URL:           r.URL.String(),
+		Authorization: r.Header.Get("Authorization"),
+		Accept:        r.Header.Get("Accept"),
+	})
+	if len(f.replies) == 0 {
+		// A request nobody scripted is a test's own bug and never a Bitbucket
+		// answer: it is refused rather than answered, so a probe that made a
+		// second call cannot be read as one that made the call it meant to.
+		return nil, errors.New("the fake Bitbucket saw a request nobody scripted")
+	}
+	reply := f.replies[0]
+	f.replies = f.replies[1:]
+	return &http.Response{
+		StatusCode: reply.Status,
+		Header:     reply.Header,
+		Body:       io.NopCloser(strings.NewReader("")),
+		Request:    r,
+	}, nil
+}
+
+// requests is what the fake was asked, so a test can say both what the probe
+// sent and how many times it sent it.
+func (f *fakeBitbucket) requests() []fakeBitbucketAsk {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]fakeBitbucketAsk(nil), f.asked...)
+}
+
+// bitbucketReply builds one scripted answer with the headers a rate-limited one
+// carries.
+func bitbucketReply(status int, header map[string]string) fakeBitbucketReply {
+	h := http.Header{}
+	for k, v := range header {
+		h.Set(k, v)
+	}
+	return fakeBitbucketReply{Status: status, Header: h}
+}
+
+// bitbucketProbeSvc is the fixture wired for one Bitbucket token's probe: the
+// upstream client is the fake Bitbucket above, so the call the service builds
+// is inspected as it was built — the adapter's constant host and all.
+func bitbucketProbeSvc(t *testing.T, bb *fakeBitbucket) (*svc, *fakeTokenStatuses) {
+	t.Helper()
+	s, _ := probeSvc(t, func(_ *svc, cfg *Config) {
+		cfg.Client = &http.Client{Transport: bb}
+	})
+	return s, newFakeTokenStatuses()
+}
+
+// TestBitbucketTokenProbeIsACoveredRepositoryRead is T6's probe: a backed-off
+// Bitbucket token is asked whether it works with a read of a repository it
+// covers, and nothing that writes — never GET /user, whose 403 is what a
+// repository token answers there (R14) and which is the call every run's own
+// selfUser makes.
+//
+// Each answer is settled against the status it leaves, and against the call
+// that drew it: one GET, to the API root the adapter's constant names, on the
+// repository the caller said the token covers, carrying the token's own value
+// and no body at all.
+func TestBitbucketTokenProbeIsACoveredRepositoryRead(t *testing.T) {
+	const name = "bitbucket-token--ci"
+	const value = "probe-me"
+	const canonical = "acme/repo"
+
+	bb := &fakeBitbucket{replies: []fakeBitbucketReply{
+		bitbucketReply(http.StatusOK, nil),
+		bitbucketReply(http.StatusUnauthorized, nil),
+		bitbucketReply(http.StatusTooManyRequests, map[string]string{"Retry-After": "30"}),
+		bitbucketReply(http.StatusTooManyRequests, nil),
+		bitbucketReply(http.StatusInternalServerError, nil),
+	}}
+	s, st := bitbucketProbeSvc(t, bb)
+
+	// The state a probe is owed for: backed off, its wait passed (D153).
+	backedOff := func() creds.TokenStatus {
+		return creds.TokenStatus{
+			Mark:       creds.Mark{State: creds.StateBackedOff, Since: s.now.Add(-time.Hour), Backoff: creds.DefaultBackoffInitial, Until: s.now.Add(-time.Minute)},
+			VerifiedAt: s.now.Add(-24 * time.Hour),
+			Identity:   "uuid-ci",
+		}
+	}
+	st.plant(name, backedOff())
+
+	// A token that works: the read answers 200 and the wait is cleared, which is
+	// the whole point of asking — the call that was about to be told to wait is
+	// served instead.
+	got, err := s.server.probeBitbucketToken(context.Background(), st, bitbucketProbe{Name: name, Value: value, Repository: canonical}, creds.Settings{})
+	if err != nil {
+		t.Fatalf("probing a Bitbucket token: %v", err)
+	}
+	if !got.Available() {
+		t.Fatalf("a probe that answered 200 left the token at %+v; want the wait cleared", got)
+	}
+	if got.Identity != "uuid-ci" || !got.VerifiedAt.Equal(s.now.Add(-24*time.Hour)) {
+		t.Errorf("the probe moved the token's identity (%q) or its verification date (%s): a probe answers whether the token works, not whether it was checked when it was added", got.Identity, got.VerifiedAt)
+	}
+
+	asked := bb.requests()
+	if len(asked) != 1 {
+		t.Fatalf("the probe made %d requests, want one", len(asked))
+	}
+	call := asked[0]
+	if call.Method != http.MethodGet {
+		t.Errorf("the probe's method is %s; a probe reads and never writes", call.Method)
+	}
+	if want := bitbucket.DefaultBaseURL + "/repositories/" + canonical; call.URL != want {
+		t.Errorf("the probe asked %s; want %s — the adapter's own API root and the repository the token covers", call.URL, want)
+	}
+	if strings.Contains(call.URL, "/user") {
+		t.Errorf("the probe asked %s: a repository token's GET /user answers 403, so it is never the probe (R14)", call.URL)
+	}
+	if strings.Contains(call.URL, "bitbucket.org") && !strings.HasPrefix(call.URL, bitbucket.DefaultBaseURL) {
+		t.Errorf("the probe asked %s, which is not the adapter's API root", call.URL)
+	}
+	if call.Authorization != "Bearer "+value {
+		t.Errorf("the probe carried %q; want the token it is asking about", call.Authorization)
+	}
+	if call.Accept != "application/json" {
+		t.Errorf("the probe's Accept is %q; want application/json", call.Accept)
+	}
+	// The token's value is nowhere in the service's own lines.
+	if strings.Contains(s.logs.String(), value) {
+		t.Error("the service's own log carries the token's value")
+	}
+
+	// A 401 is the token dead: broken, and out until an operator clears it.
+	st.plant(name, backedOff())
+	got, err = s.server.probeBitbucketToken(context.Background(), st, bitbucketProbe{Name: name, Value: value, Repository: canonical}, creds.Settings{})
+	if err != nil {
+		t.Fatalf("probing a refused token: %v", err)
+	}
+	if got.State != creds.StateBroken {
+		t.Errorf("a probe that answered 401 left the token at %+v; want it broken", got)
+	}
+
+	// A 429 with a Retry-After is exhausted until exactly that instant and not a
+	// minute more, and a probe does not run on an exhausted token (its reset is
+	// a time, not a question) — which is what the status below says.
+	st.plant(name, backedOff())
+	got, err = s.server.probeBitbucketToken(context.Background(), st, bitbucketProbe{Name: name, Value: value, Repository: canonical}, creds.Settings{})
+	if err != nil {
+		t.Fatalf("probing a limited token: %v", err)
+	}
+	if got.State != creds.StateExhausted || !got.Until.Equal(s.now.Add(30*time.Second)) {
+		t.Errorf("a 429 naming Retry-After: 30 left %+v; want the token exhausted until %s", got, s.now.Add(30*time.Second))
+	}
+
+	// A 429 that named no reset is the backed-off case, through the same
+	// doubling wait a failed probe leaves: the wait in force, not the initial.
+	st.plant(name, backedOff())
+	got, err = s.server.probeBitbucketToken(context.Background(), st, bitbucketProbe{Name: name, Value: value, Repository: canonical}, creds.Settings{BackoffInitial: 15 * time.Minute, BackoffCap: time.Hour})
+	if err != nil {
+		t.Fatalf("probing a token limited with no reset: %v", err)
+	}
+	if got.State != creds.StateBackedOff || got.Backoff != 30*time.Minute {
+		t.Errorf("a 429 naming no reset left %+v; want the backed-off token whose wait doubled to 30m", got)
+	}
+
+	// A 5xx proves nothing about the token, so the wait doubles rather than
+	// clearing: an unproven token is not put back in service.
+	st.plant(name, backedOff())
+	got, err = s.server.probeBitbucketToken(context.Background(), st, bitbucketProbe{Name: name, Value: value, Repository: canonical}, creds.Settings{BackoffInitial: 15 * time.Minute, BackoffCap: time.Hour})
+	if err != nil {
+		t.Fatalf("probing an unproven token: %v", err)
+	}
+	if got.State != creds.StateBackedOff || got.Backoff != 30*time.Minute {
+		t.Errorf("a probe answered 500 left %+v; want the token still held, with its wait doubled", got)
+	}
+
+	// Five answers were scripted and five were asked for: no path above made a
+	// second call, and none of them wrote anything to Bitbucket.
+	if got := len(bb.requests()); got != 5 {
+		t.Fatalf("the fake Bitbucket saw %d requests, want the five that were scripted", got)
+	}
+	for _, a := range bb.requests() {
+		if a.Method != http.MethodGet {
+			t.Errorf("a probe wrote to Bitbucket: %s %s", a.Method, a.URL)
+		}
+	}
+
+	// A repository name that is not a workspace and a repository makes no call
+	// at all: the path is never built out of a caller's text.
+	before := len(bb.requests())
+	for _, bad := range []string{"", "acme", "acme/repo/extra", "/repo"} {
+		if _, err := s.server.probeBitbucketToken(context.Background(), st, bitbucketProbe{Name: name, Value: value, Repository: bad}, creds.Settings{}); err == nil {
+			t.Errorf("the probe read %q; want it refused rather than built into a path", bad)
+		}
+	}
+	if got := len(bb.requests()); got != before {
+		t.Fatalf("a refused repository still made %d requests", got-before)
+	}
+}
+
+// TestBitbucketRequestCountWindow is the count D2356 keeps for display: how many
+// requests a token has served in its current window, written best-effort so that
+// a slow or failed write never delays or refuses the call that was served.
+//
+// The count is advisory in both directions: the window turns over on the first
+// request after it ended, so the number an operator reads is one window's rather
+// than a lifetime total, and a status store that cannot be written to costs the
+// call nothing at all.
+func TestBitbucketRequestCountWindow(t *testing.T) {
+	const name = "bitbucket-token--ci"
+	s, st := bitbucketProbeSvc(t, &fakeBitbucket{})
+
+	// The count is one window's, and the window is written with it.
+	s.server.recordBitbucketRequest(context.Background(), st, name)
+	s.server.recordBitbucketRequest(context.Background(), st, name)
+	s.server.recordBitbucketRequest(context.Background(), st, name)
+	tok, ok := st.status(t, name)
+	if !ok {
+		t.Fatal("three served requests left no status for the token")
+	}
+	if tok.Count != 3 || !tok.Window.Equal(s.now) {
+		t.Fatalf("three requests left %+v; want a count of 3 in the window that began at %s", tok, s.now)
+	}
+
+	// A request inside the window counts into it rather than opening a new one.
+	s.now = s.now.Add(creds.DefaultTokenCountWindow - time.Minute)
+	s.server.recordBitbucketRequest(context.Background(), st, name)
+	tok, _ = st.status(t, name)
+	if tok.Count != 4 || !tok.Window.Equal(s.now.Add(-(creds.DefaultTokenCountWindow - time.Minute))) {
+		t.Fatalf("a request inside the window left %+v; want a count of 4 in the window it began at", tok)
+	}
+
+	// The first request after the window ended opens a new one, so the count
+	// reads as this window's and not as everything the token has ever served.
+	s.now = s.now.Add(2 * time.Minute)
+	s.server.recordBitbucketRequest(context.Background(), st, name)
+	tok, _ = st.status(t, name)
+	if tok.Count != 1 || !tok.Window.Equal(s.now) {
+		t.Fatalf("the first request after the window left %+v; want a count of 1 in a window beginning at %s", tok, s.now)
+	}
+
+	// A store that refuses every write costs the call nothing: the count is
+	// dropped and logged, and nothing here returns an error for the caller to
+	// refuse a served call with.
+	st.err = errors.New("the database is unreachable")
+	s.now = s.now.Add(creds.DefaultTokenCountWindow)
+	s.server.recordBitbucketRequest(context.Background(), st, name)
+	if !strings.Contains(s.logs.String(), name) {
+		t.Error("a count that could not be written was dropped without a line naming the token")
+	}
+	if strings.Contains(s.logs.String(), "probe-me") {
+		t.Error("the service's own log carries a token's value")
+	}
+
+	// And the window arithmetic itself is creds' own, so a status an operator
+	// reads is the same shape whichever side wrote it.
+	fresh := creds.TokenStatus{}
+	if got := fresh.RecordRequest(s.now); got.Count != 1 || !got.Window.Equal(s.now) {
+		t.Fatalf("a first request on a token with no status left %+v", got)
 	}
 }
