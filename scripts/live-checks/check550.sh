@@ -165,6 +165,19 @@ RUN_ID=""
 LAUNCH_REPO=""
 RUN_REF=""
 SETTLED=no
+# REPOINT_LANDED is set by the one branch of step_repoint that reads the move
+# back off the installation. step_relaunch reads it and nothing else: a launch
+# made after a repoint that did not land would resolve the same target as the
+# first run, so the second half of the claim would be measured against nothing
+# — and it would spend the sandbox's money saying so.
+REPOINT_LANDED=no
+# ALIAS_MOVED is set the moment the repoint's command exits 0, before its result
+# is read back. step_restore reads it and nothing else: the move back is owed
+# for a repoint that was MADE, and a run that never made one — a premise that
+# did not hold, a launch that refused, a command that hung — has nothing to put
+# back. REPOINT_LANDED is the stricter fact (the installation really reads the
+# new target) and the one the second launch is gated on.
+ALIAS_MOVED=no
 LAUNCH_ARGS=()
 RUN2_ID=""
 RUN2_REF=""
@@ -698,6 +711,7 @@ step_repoint() {
     fact repointed FAIL "fugaro accounts alias set ${ALIAS} ${TARGET} exited ${BOUNDED_STATUS}: the repoint is the command this check is about, and a refusal says either that the alias could not be moved or that the installation could not converge. What it printed is in $SCRATCH/repoint.out and $SCRATCH/repoint.err"
     return 0
   fi
+  ALIAS_MOVED=yes
   # The move is read back off the installation rather than taken from the
   # command's own exit status: a repoint that printed a line and wrote nothing
   # would leave every row below a reading of the wrong target.
@@ -712,6 +726,7 @@ step_repoint() {
     fact repointed FAIL "the block still reads ${ALIAS} -> ${moved:-nothing} after 'accounts alias set ${ALIAS} ${TARGET}' exited 0: the command reported a move the installation does not hold, and nothing below would be a reading of it. What fugaro printed is in $SCRATCH/repoint.out"
     return 0
   fi
+  REPOINT_LANDED=yes
   fact repointed PASS "fugaro accounts alias set moved ${ALIAS} from ${CURRENT} to ${TARGET} while ${RUN_ID} was in '${stage}' (read back from fugaro accounts ls --json, not taken from the command's exit status): this is the repoint the claim below is about"
 }
 
@@ -827,6 +842,10 @@ step_relaunch() {
     unmeasured relaunched "this check does not know the two targets the second run is read against: the rows above say why"
     return 0
   fi
+  if [ "$REPOINT_LANDED" != yes ]; then
+    unmeasured relaunched "nothing was launched: the alias was not moved onto ${TARGET} (the row above says why), so a launch now would resolve the same account as the first run and the repoint's own half of this check would be measured against nothing. Settle the row above and run this check again"
+    return 0
+  fi
   say "launching run 2 from ${SANDBOX}, after the repoint (a real sandbox run, with what its task costs)"
   launch_args
   run_bounded "$LAUNCH_TIMEOUT" launch2 "$SANDBOX" \
@@ -912,9 +931,9 @@ step_new_target() {
 # it. It is a step and not a note: a check that left the owner's installation on
 # a target the check chose is a check that changed something of theirs.
 step_restore() {
-  if [ "$PREMISE_OK" != yes ] || [ -z "$CURRENT" ]; then
+  if [ "$ALIAS_MOVED" != yes ] || [ -z "$CURRENT" ]; then
     RESTORE_VERDICT=PASS
-    RESTORE_NOTE="nothing was moved: the premise row above did not establish the alias this check would repoint, so there is nothing to put back. The scratch directory held the commands' output"
+    RESTORE_NOTE="nothing was moved: this run never repointed ${ALIAS:-the alias} (the rows above say why), so there is nothing to put back and the installation is where it was. The scratch directory held the commands' output"
     return 0
   fi
   say "putting the alias back: ${ALIAS} -> ${CURRENT}"
@@ -995,7 +1014,7 @@ plan() {
   say "  [nothing else] no config key is written by this check, and the scratch directory is removed at the end"
   fact bound PASS "planned: TWO sandbox runs and what their tasks cost, plus the two converges. --dry-run runs nothing, and a real run requires --yes"
   for key in release sandbox premise run-launched repointed terminal result-json \
-    kept-account relaunched relaunch-record new-target restore; do
+    kept-account relaunched relaunch-record new-target; do
     fact "$key" INFO "planned: a real run measures this row; --dry-run did not"
   done
   fact dry-run PASS "the plan was printed and nothing was run: no doctor, no accounts read, no run, no repoint and no move back"
