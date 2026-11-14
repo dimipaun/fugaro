@@ -36,8 +36,11 @@ var rolesDecisionRow = regexp.MustCompile(`^\|\s*D[0-9]+\s*\|`)
 var rolesDecisionNumber = regexp.MustCompile(`^\|\s*(D[0-9]+)\s*\|`)
 
 // rolesAnsweredToday is the status every row the owner answered carries: the
-// date of the ruling and the owner's "all as recommended" of 2026-10-30.
-const rolesAnsweredToday = "answered 2026-10-30, as recommended"
+// date of the ruling, which is as far as the record goes (F26 of
+// docs/roles-scopes/reconciliation.md; the plan's RS10 says the same). What the
+// owner took is not stated here: a status that added it would be this document
+// writing an owner's answer nobody recorded.
+const rolesAnsweredToday = "answered 2026-10-30"
 
 // rolesSupersededRows are the two answers the roles-scopes work's D1580
 // reverses (F26): D690(a) said the CLI does not rank its own commands, D691(a)
