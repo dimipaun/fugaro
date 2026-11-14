@@ -424,6 +424,48 @@ func TestSignUpRecordsTermsAcceptance(t *testing.T) {
 	}
 }
 
+// TestTheSignUpBodyIsCappedAtItsOwnBytes: the create route reads a body of its
+// own size and not the mount's default (api_orgs.go's maxOrgBodyBytes). The
+// request is answered by the route itself, so the mount's cap is not what a
+// sign-up meets: a body at the route's cap is a sign-up like any other, and one
+// byte past it is refused 413 body_too_large.
+func TestTheSignUpBodyIsCappedAtItsOwnBytes(t *testing.T) {
+	f := newFixture(t)
+	f.actsAs(danaUID, danaEmail, signInGoogle)
+
+	// Space between JSON tokens is a body a strict decode reads and holds no
+	// field of its own, so the body at the cap is one real sign-up and not a
+	// padded object the shape would refuse for its padding.
+	signUp := `{"name":"Example Ltd"}`
+	at := signUp + strings.Repeat(" ", int(maxOrgBodyBytes)-len(signUp))
+	if len(at) != maxOrgBodyBytes {
+		t.Fatalf("the body at the cap is %d bytes, want this route's own %d", len(at), maxOrgBodyBytes)
+	}
+	rec := f.apiAs(http.MethodPost, apiOrgsPath, at)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("a sign-up whose body is %d bytes was answered %d (%s), want the organisation: this route reads a body of %d", len(at), rec.Code, rec.Body, maxOrgBodyBytes)
+	}
+	if org := readAnswer[WireOrganisation](f, rec); org.Name != "Example Ltd" {
+		t.Errorf("the sign-up at the cap created the organisation %q, want the name its body carried", org.Name)
+	}
+
+	before := len(f.organisations())
+	over := " " + at
+	if len(over) != maxOrgBodyBytes+1 {
+		t.Fatalf("the body over the cap is %d bytes, want one past this route's own %d", len(over), maxOrgBodyBytes)
+	}
+	refused := f.apiAs(http.MethodPost, apiOrgsPath, over)
+	if refused.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("a sign-up whose body is %d bytes was answered %d (%s), want the 413 a body over this route's own cap is refused with", len(over), refused.Code, refused.Body)
+	}
+	if code := refusal(f, refused); code != "body_too_large" {
+		t.Errorf("the refusal carries the code %q, want body_too_large", code)
+	}
+	if len(f.organisations()) != before {
+		t.Error("a sign-up refused for the size of its body created an organisation anyway")
+	}
+}
+
 // TestOrgCreatedHooksRun: the hooks registered for a new organisation run inside
 // the sign-up's own transaction, they are handed the organisation as it is being
 // created, what they write lands with it, and a hook that fails means there is no
@@ -562,19 +604,29 @@ func TestRolesLiveInMemberships(t *testing.T) {
 
 // TestSSORuleFollowsTheActorsMembership: the SSO rule follows the membership a
 // request USES and not the organisation it is about (D2207, F10). An operations
-// member who signed in by email link is refused every request that membership
-// carries — including one about a customer organisation — and the same person
-// signed in with Google reads it; a reseller's member is refused the same way
-// until a directory is pinned; and a customer organisation is not one the rule
-// follows at all.
+// member who signed in by email link is refused the organisation that membership
+// is in and the selection of it, and is admitted the customer organisation their
+// other membership carries — which is the read the rule is applied at and the
+// list is not, because a list that answered the refusal for the whole of itself
+// would leave them unable to reach an organisation this very service admits
+// them. The same person signed in with Google reaches both; a reseller's member
+// is refused the same way until a directory is pinned; and a customer
+// organisation is not one the rule follows at all.
 func TestSSORuleFollowsTheActorsMembership(t *testing.T) {
 	f := newFixture(t)
 	operations := f.seededOrganisation("org_operations", "Operations", orgTypeOperations, opsUID, opsEmail, roleMember)
 	reseller := f.seededOrganisation("org_reseller", "Partner Ltd", orgTypeReseller, sellerUID, sellerMail, roleMember)
 	customer := f.signedUp(danaUID, danaEmail, "Example Ltd")
 
-	// The operations membership, signed in by email link: refused, and refused
-	// for the membership's own organisation and for somebody else's alike.
+	// The operations member belongs to a customer organisation as well, which is
+	// what makes the list the read that tells this rule's two memberships apart:
+	// one the rule follows and one it does not, in the same caller.
+	f.seed(membershipsCollection, membershipID(customer.ID, opsUID), WireMembership{
+		OrganisationID: customer.ID, UID: opsUID, Email: opsEmail, Role: roleMember, CreatedAt: f.now,
+	})
+
+	// The operations membership, signed in by email link: refused on the requests
+	// that use it — the organisation it is in, and the selection of it.
 	f.actsAs(opsUID, opsEmail, signInEmailLink)
 	for _, tc := range []struct {
 		name   string
@@ -582,12 +634,6 @@ func TestSSORuleFollowsTheActorsMembership(t *testing.T) {
 		path   string
 	}{
 		{name: "the operations organisation itself", method: http.MethodGet, path: apiOrgPathOf(operations.ID)},
-		{name: "a customer organisation", method: http.MethodGet, path: apiOrgPathOf(customer.ID)},
-		{name: "a customer organisation's members", method: http.MethodGet, path: apiOrgMembersPathOf(customer.ID)},
-		// The switcher's list is a request the membership carries like any
-		// other: it is made of the organisations those memberships are in, and
-		// the rule of each of them is applied as the list is built.
-		{name: "the switcher's list", method: http.MethodGet, path: apiOrgsPath},
 		// Selecting is the one route that uses a membership of its own subject
 		// — a person selects an organisation they belong to — so the rule it
 		// follows is that membership's: the operations organisation's.
@@ -604,17 +650,49 @@ func TestSSORuleFollowsTheActorsMembership(t *testing.T) {
 		})
 	}
 
-	// The same person, signed in with Google: admitted.
+	// Reading an organisation the operations membership reaches ACROSS is the
+	// request that rule carries in accessTo, and it is refused for the same
+	// reason: D2207 admits the operations team's reads on Google or Microsoft.
+	if rec := f.apiAs(http.MethodGet, apiOrgPathOf(reseller.ID), ""); rec.Code != http.StatusForbidden {
+		t.Errorf("an operations member by email link reading across organisations was answered %d (%s), want the SSO refusal", rec.Code, rec.Body)
+	}
+
+	// The membership the rule does not follow is used, listed and selected: the
+	// rule belongs to the membership a request uses, and the switcher's list
+	// reads the caller's own memberships and nothing across an organisation
+	// boundary. Refusing the list would refuse the customer organisation above
+	// with it, and would empty the switcher of the operations organisation the
+	// spec keeps in it so that selecting one opens the dialog (spec
+	// §Architecture).
+	if rec := f.apiAs(http.MethodGet, apiOrgPathOf(customer.ID), ""); rec.Code != http.StatusOK {
+		t.Errorf("an operations member by email link reading their own customer organisation was answered %d (%s), want it: nothing follows a customer membership", rec.Code, rec.Body)
+	}
+	if rec := f.apiAs(http.MethodPost, apiOrgSelectPathOf(customer.ID), ""); rec.Code != http.StatusNoContent {
+		t.Errorf("an operations member by email link selecting their own customer organisation was answered %d (%s), want the selection", rec.Code, rec.Body)
+	}
+	switcher := f.apiAs(http.MethodGet, apiOrgsPath, "")
+	if switcher.Code != http.StatusOK {
+		t.Fatalf("an operations member by email link read the switcher's list %d (%s), want the organisations they belong to: the list is the memberships' own, and the refusal is the selection's", switcher.Code, switcher.Body)
+	}
+	if listed := readAnswer[WireOrgList](f, switcher).Organisations; !slices.ContainsFunc(listed, func(o WireOrganisation) bool { return o.ID == operations.ID }) ||
+		!slices.ContainsFunc(listed, func(o WireOrganisation) bool { return o.ID == customer.ID }) {
+		t.Errorf("the switcher's list by email link holds %+v, want both organisations the caller belongs to, %q and %q", listed, operations.ID, customer.ID)
+	}
+
+	// The same person, signed in with Google: admitted both.
 	f.actsAs(opsUID, opsEmail, signInGoogle)
-	read := f.apiAs(http.MethodGet, apiOrgPathOf(customer.ID), "")
+	read := f.apiAs(http.MethodGet, apiOrgPathOf(operations.ID), "")
 	if read.Code != http.StatusOK {
 		t.Fatalf("an operations member signed in with Google was answered %d (%s), want the organisation", read.Code, read.Body)
 	}
-	if got := readAnswer[WireOrganisation](f, read); got.ID != customer.ID {
-		t.Errorf("the read answered the organisation %q, want %q", got.ID, customer.ID)
+	if got := readAnswer[WireOrganisation](f, read); got.ID != operations.ID {
+		t.Errorf("the read answered the organisation %q, want %q", got.ID, operations.ID)
 	}
-	if list := f.listOrgs(); len(list) != 1 || list[0].ID != operations.ID {
-		t.Errorf("an operations member signed in with Google listed %+v, want their own organisation %q", list, operations.ID)
+	if across := f.apiAs(http.MethodGet, apiOrgPathOf(reseller.ID), ""); across.Code != http.StatusOK {
+		t.Errorf("the operations read across organisations signed in with Google was answered %d (%s), want the organisation", across.Code, across.Body)
+	}
+	if list := f.listOrgs(); len(list) != 2 {
+		t.Errorf("an operations member signed in with Google listed %+v, want both organisations they belong to", list)
 	}
 
 	// A reseller's member is refused the same way until a directory is pinned
@@ -623,8 +701,15 @@ func TestSSORuleFollowsTheActorsMembership(t *testing.T) {
 	if rec := f.apiAs(http.MethodGet, apiOrgPathOf(reseller.ID), ""); rec.Code != http.StatusForbidden {
 		t.Errorf("a reseller's member by email link was answered %d (%s), want the SSO refusal", rec.Code, rec.Body)
 	}
-	if rec := f.apiAs(http.MethodGet, apiOrgsPath, ""); rec.Code != http.StatusForbidden {
-		t.Errorf("a reseller's member by email link read the switcher's list %d (%s), want the SSO refusal there too: the list is the first screen of the portal", rec.Code, rec.Body)
+	if rec := f.apiAs(http.MethodPost, apiOrgSelectPathOf(reseller.ID), ""); rec.Code != http.StatusForbidden {
+		t.Errorf("a reseller's member by email link selecting it was answered %d (%s), want the SSO refusal", rec.Code, rec.Body)
+	}
+	switcher = f.apiAs(http.MethodGet, apiOrgsPath, "")
+	if switcher.Code != http.StatusOK {
+		t.Fatalf("a reseller's member by email link read the switcher's list %d (%s), want their organisation in it: the refusal is the selection's, and the switcher is where the dialog that explains it is opened from", switcher.Code, switcher.Body)
+	}
+	if listed := readAnswer[WireOrgList](f, switcher).Organisations; len(listed) != 1 || listed[0].ID != reseller.ID {
+		t.Errorf("a reseller's member by email link listed %+v, want their own organisation %q in the switcher", listed, reseller.ID)
 	}
 	f.actsAs(sellerUID, sellerMail, signInGoogle)
 	if rec := f.apiAs(http.MethodGet, apiOrgPathOf(reseller.ID), ""); rec.Code != http.StatusOK {

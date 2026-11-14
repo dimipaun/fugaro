@@ -455,11 +455,16 @@ func (s *Service) accessTo(ctx context.Context, actor Caller, organisationID, ac
 // use, then the id, so that two organisations nobody has worked in still have an
 // order a page and a test can rely on.
 //
-// The rule every one of those memberships carries is applied to the list as it is
-// built, so a sign-in an operations or a reseller membership refuses is refused
-// the list too (D2207, F10). The list is a request that membership carries like
-// any other: a person the rule turns away is told so at their first screen rather
-// than reading a customer's name and meeting the refusal at the door it opens.
+// The rule an operations or a reseller membership carries (D2207, F10) is not
+// applied here, and this is the one read that carries no membership of a subject
+// to apply it to: the list is what the caller's own memberships are in, read
+// across no organisation boundary at all. Applying it would refuse the whole
+// list for a person whose any one membership is one the rule follows — the
+// organisations of their other memberships with it, which the read of one of
+// them admits — where the spec keeps those organisations in the switcher and
+// puts the refusal on the selection that opens the dialog (spec §Architecture).
+// ownMembership, accessTo and selectOrganisation apply it, and each of them is a
+// request that uses one membership.
 func (s *Service) organisationsOf(ctx context.Context, actor Caller) ([]WireOrganisation, error) {
 	held, err := membershipsOf(ctx, s.docs, actor.UID)
 	if err != nil {
@@ -473,9 +478,6 @@ func (s *Service) organisationsOf(ctx context.Context, actor Caller) ([]WireOrga
 		}
 		if !present {
 			continue
-		}
-		if err := s.requireSSO(actor, org); err != nil {
-			return nil, err
 		}
 		reached = append(reached, reachableOrganisation{org: org, lastUsedAt: membership.LastUsedAt})
 	}

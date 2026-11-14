@@ -114,8 +114,9 @@ func (s *Service) apiListOrganisations(w http.ResponseWriter, r *http.Request) {
 	}
 	orgs, err := s.organisationsOf(r.Context(), actor)
 	if err != nil {
-		// The rule a membership carries is applied to the list, so the refusal
-		// here is the same one every other route answers it with.
+		// What can refuse the list is the store and nothing else: the SSO rule
+		// is the membership's and is applied by the requests that use one, and
+		// the list is not one of them (organisationsOf says why).
 		refuseOrgAccess(w, err)
 		return
 	}
