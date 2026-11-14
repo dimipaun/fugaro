@@ -10,6 +10,22 @@ one documentation test beside it (`internal/cli/docs_mobile_push_test.go`, by th
 test is red until this document exists). **No decision number is allocated here**: the
 questions at the end are **Q1, Q2 …** for the owner, and a later pass assigns the numbers.
 
+**Status as of 2026-11-14: the owner approved P5.2, and this document is what its tasks are
+built from.** The owner's order of that date — *"Approve P5.\*"* — approved **Task P5.2**, and
+[the plan](../implementation-plan.md) records it: the task's heading carries the approval, every
+word of the section it carried while the task was unscheduled is kept, and the work is split
+into **tasks P5.2.1–P5.2.10**, each with its files, its dependencies and its verification.
+**Nothing is built by the approval** — this document is still the design and no sender, push
+node, registration field or app code exists — it allocates no decision number, and **Q1–Q10
+remain the owner's to answer**: the plan lists each as a question beside the tasks that wait on
+it. Three sentences below were true when they were written and are not true of the tree the plan
+now reads, so each carries its own dated note: **§3.3 and §5's "No Firebase Analytics SDK is
+linked"** (Phase 7's P7.1–P7.3 put `@react-native-firebase/app`, `analytics` and `crashlytics`
+in `mobile/package.json`), and **§8's "P4.2 is scheduled while P5.2 is not"**. The first of
+those is not a detail: with the telemetry project's native config built into the app (**D259**,
+accepted 2026-10-19), the app's **default** Firebase app is `fugaro-prod`'s, which is the
+project question the plan now puts to the owner beside Q7.
+
 **Why this document exists, and why it is not a reversal.** **D121 was answered by the owner
 on 2026-10-17: "no push in v1."** The answer is the reconciliation's own recommendation, and
 it defers push to "a **separate decision** with its own service, its own device-token store
@@ -354,6 +370,15 @@ provider learns a category and a device address" understates it by four fields a
 series. **No Firebase Analytics SDK is linked** (`mobile/package.json` declares no Firebase or
 analytics package), so Google does not additionally receive app-usage events from this build —
 which is true of the recommended shape and would stop being true if a later task links one.
+*(Amended 2026-11-14: it did stop being true. `mobile/package.json` declares
+`@react-native-firebase/app`, `@react-native-firebase/analytics` and
+`@react-native-firebase/crashlytics` at 27.1.0 — Phase 7's P7.1–P7.3, merged — so a Firebase
+Analytics SDK **is** linked and Google does receive app-usage events from this build, under the
+telemetry plan's own closed allow-list and redaction rule. What that changes for push is not the
+analytics: the native config files the build carries are the **telemetry** project's (**D259**,
+accepted 2026-10-19), so the app's **default** Firebase app is `fugaro-prod`'s, and a
+registration token minted on it belongs to that project rather than to the installation's. The
+plan puts that question to the owner beside **Q7**.)*
 
 **The alternative: Expo's push service.** The app is an Expo app (`mobile/package.json`,
 `mobile/app.json`), and `expo-notifications` obtains an Expo push token and posts to Expo's
@@ -1173,6 +1198,9 @@ fail, need answers or bind a budget (§3.3). The first draft's "a provider learn
 a device address" **understated this by four fields and a timing series**, and is corrected
 here. **No Firebase Analytics SDK is linked** (`mobile/package.json` declares no Firebase or
 analytics package), so this build sends Google no app-usage events beyond the push path itself.
+*(Amended 2026-11-14: the state of 2026-10-19, and not true of `main` — see §3.3. The app links
+`@react-native-firebase/analytics` and `@react-native-firebase/crashlytics` now, so this
+attacker sees those events too, and the app's default Firebase app is the telemetry project's.)*
 *What this design does*: makes the payload carry nothing (§3.1). The design does **not** claim
 end-to-end secrecy — it cannot, FCM and APNs see the payload by construction — and it does not
 pretend the payload is encrypted for the phone, because the phone has no key the push path
@@ -1275,7 +1303,11 @@ the number is unclaimed.
 **Who writes it: the plan says P4.2, and this design says so too rather than claiming it.**
 The plan allocates the *writing* explicitly — "**checks 80 and 83–88 by P4.2**", and Task
 **P4.2: Checks 80–89, written into the register** — and P4.2 is **scheduled** while **P5.2 is
-not**. So the register entry for 88 is written by P4.2, in the register's own block form, under
+not**. *(Amended 2026-11-14: the owner approved **P5.2** on that date, so the contrast is spent
+— and its other half was loose already, because Phase 4 is not approved either. **P4.2 remains
+the register text's writer**, as the plan allocated it, and this design's refusal to move it
+stands; what the plan now does is put the allocation itself to the owner as a question, since
+P5.2 is approved and P4.2 is not.)* So the register entry for 88 is written by P4.2, in the register's own block form, under
 the plan's rule that a check is never run before its text is in the register; the check is
 **run by the owner only if the owner builds push**. This design **names Check 88 and does not write it**,
 and it does not move the writing to a task that may never be scheduled. It is
