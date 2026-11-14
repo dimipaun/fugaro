@@ -392,6 +392,16 @@ type View struct {
 	Revoked bool
 	// Kind is paid, trial or comped.
 	Kind string
+	// Warnings is the key's own warning policy (spec.md section 3.2's
+	// `warnings`) and GraceDays the grace it carries, so that a reader who is
+	// not entitled to the claim set can still say who the key's policy reaches
+	// now and when its grace runs out (K3.5). It is the policy a viewer is told
+	// and not a secret: the last window of the default policy is written to
+	// reach every role, which is the whole point of it. Which window is open,
+	// and to whom, is arithmetic on these two and the state beside them, and it
+	// lives with the rest of the warning rules (ee/register/warn.go).
+	Warnings  []licence.WarningV1
+	GraceDays int
 	// RenewalMode is the key's own claim (auto, manual or none; spec.md section
 	// 3.2's renewal_mode) and not whether this installation has a job that
 	// renews: a key claiming auto on an installation with no Scheduler job --
@@ -435,6 +445,8 @@ func (s *Store) View(ctx context.Context, now time.Time, ring licence.Keyring, f
 		State:       applied.State,
 		Revoked:     applied.Revoked,
 		Kind:        applied.Claims.Kind,
+		Warnings:    applied.Claims.Warnings,
+		GraceDays:   applied.Claims.GraceDays,
 		RenewalMode: applied.Claims.RenewalMode,
 		Source:      applied.Source,
 	}
