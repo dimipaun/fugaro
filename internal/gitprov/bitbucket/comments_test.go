@@ -77,3 +77,53 @@ func TestSelfUserKeepsTheFallbackWhenTheRunsOwnTokenHasNoIdentity(t *testing.T) 
 		t.Fatalf("warnings = %q, want one that the run cannot tell its own comments apart", warnings)
 	}
 }
+
+// TestSelfUserKeepsTheFallbackWhenTheSetMayBeIncomplete: the proxy picks the
+// token per request (D2355), so the account GET /user answers -- a read --
+// need not be the account a comment is posted as, and a throttled or broken
+// narrower token is served by a wider one (R12). A node holding a token
+// whose identity could not be read (a repository access token, R14) knows
+// its set is missing such an account and says so, and then GET /user naming
+// an account of Fugaro's is no longer enough to claim the run can tell its
+// own comments apart: every comment must come back SelfKnown false, so the
+// markers-from-anyone fallback stays open and the run still reads the marker
+// on the comment it wrote through a token the set does not name -- what
+// FugaroRuns, checkStale and reportPosted rest on.
+func TestSelfUserKeepsTheFallbackWhenTheSetMayBeIncomplete(t *testing.T) {
+	// comments_partial.json: GET /user answers the account the set names,
+	// comment 151 is by an account outside it and carries the run's report
+	// marker, 152 is a person's.
+	p := openOwn(t, "comments_partial.json", "{00000000-0000-4000-8000-00000000b07e}")
+	before, err := p.Comments(ctx, 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range before {
+		if !c.SelfKnown {
+			t.Errorf("comment %s: SelfKnown false with the set declared complete", c.ID)
+		}
+	}
+	// And that is the hazard the flag exists for: with the set declared
+	// complete, the run's own comment -- posted through a token the set does
+	// not name -- reads as somebody else's while every comment is claimed to
+	// be known, so the run skips its own marker.
+	if !before[0].SelfKnown || before[0].Self {
+		t.Fatalf("comment %s: Self=%v SelfKnown=%v, want the run's own comment unrecognised", before[0].ID, before[0].Self, before[0].SelfKnown)
+	}
+	p.o.OwnIdentitiesPartial = true
+	got, err := p.Comments(ctx, 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].ID != "151" || got[1].ID != "152" {
+		t.Fatalf("comments = %+v, want 151 then 152", got)
+	}
+	for _, c := range got {
+		if c.Self || c.SelfKnown {
+			t.Errorf("comment %s: Self=%v SelfKnown=%v, want the fallback left open", c.ID, c.Self, c.SelfKnown)
+		}
+	}
+	if !strings.Contains(got[0].Body, "<!-- fugaro:report run=20260927-101500-abcd -->") {
+		t.Fatalf("comment 151: body = %q, want the run's own marker on a comment by an unlisted account", got[0].Body)
+	}
+}

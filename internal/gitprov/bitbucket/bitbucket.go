@@ -68,6 +68,18 @@ type Options struct {
 	// GET /user answers. Empty is a node without the key, and leaves this
 	// provider reading its identity exactly as it did before.
 	OwnIdentities projectpolicy.BitbucketTokenIdentities
+	// OwnIdentitiesPartial says OwnIdentities is missing an account this run
+	// may write as: the node holds a token whose identity it could not read,
+	// such as a repository access token's (R14). The credentials service
+	// picks the token per request (D2355): the read GET /user answers and
+	// the write that posts a comment can be served by different tokens, and
+	// a throttled or broken narrower token falls back to a wider one (R12).
+	// GET /user naming one of Fugaro's accounts then no longer means this run
+	// can tell its own comments apart, so that Comments reports every comment
+	// SelfKnown false and the run keeps honouring markers from every author.
+	// False -- a node naming every token it may serve -- leaves that answer
+	// standing.
+	OwnIdentitiesPartial bool
 }
 
 // Provider is a Bitbucket Cloud repository.

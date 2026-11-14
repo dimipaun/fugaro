@@ -179,17 +179,21 @@ func (p *Provider) Comments(ctx context.Context, number int) ([]gitprov.Comment,
 	if err != nil {
 		return nil, fmt.Errorf("listing the comments of pull request #%d: %w", number, err)
 	}
-	// The set names the project's other identities (T13, F20), so a comment
-	// by any of them is the run's own even where the one token's GET /user
-	// cannot say so. It does NOT make the run able to tell its own comments
-	// apart, which is what SelfKnown answers: the set is partial by design
-	// (a repository token has no identity at all, R14) and the proxy picks
-	// the token per request (D2355), so a comment outside the set may be
-	// the run's own all the same — a repository token's is. SelfKnown
-	// therefore stays GET /user's answer alone, and a run without it keeps
-	// honouring markers from every author: FugaroRuns, checkStale and
-	// reportPosted all rest on that answer being honest.
+	// The set names the project's identities (T13, F20), so a comment by any
+	// member is the run's own even where the one token's GET /user cannot say
+	// so. SelfKnown answers a different question -- can this run tell its own
+	// comments apart? -- and is claimed only where that holds: GET /user must
+	// have named an account, and the set must not be known to be missing one
+	// (OwnIdentitiesPartial). A node holding a repository access token's
+	// record has no identity to name for it (R14), and the proxy picks the
+	// token per request (D2355): the read GET /user answers and the write that
+	// posts a comment can be served by different tokens, with a wider one
+	// standing in when a narrower is throttled or broken (R12). A comment
+	// outside the set may then be the run's own all the same, and marking it
+	// SelfKnown would shut the markers-from-anyone fallback that FugaroRuns,
+	// checkStale and reportPosted rest on.
 	own := p.ownIdentities(selfUUID)
+	selfKnown := known && !p.o.OwnIdentitiesPartial
 	list, err := p.listComments(ctx, number)
 	if err != nil {
 		return nil, err
@@ -209,7 +213,7 @@ func (p *Provider) Comments(ctx context.Context, number int) ([]gitprov.Comment,
 			ID: strconv.Itoa(c.ID), Kind: gitprov.CommentGeneral,
 			Author: c.User.displayName(), AuthorID: c.User.accountID(), Collaborator: true,
 			Self:      own[c.User.uuid()],
-			SelfKnown: known,
+			SelfKnown: selfKnown,
 			Deleted:   c.Deleted,
 			Body:      c.Content.Raw, CreatedAt: c.CreatedOn.UTC(), URL: c.Links.HTML.Href,
 		}
