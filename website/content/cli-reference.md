@@ -5630,7 +5630,7 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for add |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--yes` | bool | `false` | no | Answer the one confirmation without typing the project's name (it never stands in for a refusal) |
+| `--yes` | bool | `false` | no | Answer the enrolment's one confirmation without typing the project's name; it never stands in for a refusal, and --allow-list-only asks nothing for it to answer |
 
 Subcommands:
 
