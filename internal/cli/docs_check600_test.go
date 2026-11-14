@@ -286,9 +286,14 @@ func TestDocsCheck600IsThePlansNumber(t *testing.T) {
 	// register, and this work is what moved it: the row periodic-reviews owns
 	// has to carry the same number the register does, or a reader of that
 	// design's row takes a stale figure for the register's progress.
+	//
+	// The number is 608 since the mobile-auth work's Checks 601 to 608 were
+	// written above 600's four parts: what the assertion is for has not
+	// changed, and Check 600's own paragraph still reads a commit rather than
+	// the tree because its four sections are the highest **below** 601.
 	census := readDoc(t, "docs/periodic-reviews/README.md")
-	if !strings.Contains(census, "The register's highest **written** `## Check` section is **600**") {
-		t.Errorf("docs/periodic-reviews/README.md's Checks 340–349 row does not read the register's highest written `## Check` section as 600: Check %s's four sections are the highest written, and that row is the reading other designs take the register's progress from", check600Number)
+	if !strings.Contains(census, "The register's highest **written** `## Check` section is **608**") {
+		t.Errorf("docs/periodic-reviews/README.md's Checks 340–349 row does not read the register's highest written `## Check` section as 608: the mobile-auth work's Checks 601 to 608 are the highest written, and that row is the reading other designs take the register's progress from")
 	}
 }
 

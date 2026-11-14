@@ -336,8 +336,9 @@ None of them exists, and none is proposed here as work to do:
    in this repository reads them today; a check that reads them back is the precondition, in the
    shape `scripts/live-checks/check361.sh` gives the workspace's pin.
 6. **A live check that a provider session reaches nothing**, on a real project, with a real
-   provider-signed token. The plan already proposes by name the check whose meaning this path
-   reverses — *"`fugaro init` still refuses a provider"* (P6, owner-run,
+   provider-signed token. The plan's check whose meaning this path reverses is now numbered —
+   *"`fugaro init` still refuses a provider"* is the register's **Check 608**, the provider refusal on
+   a real project (P6, owner-run, **NOT RUN**,
    [implementation-plan.md](implementation-plan.md) §9) — and a path that admits providers needs the
    opposite check written beside its replacement: sign in with a real Google account, then attempt,
    from that session, **every family the `USER` macro reaches**, and read each refusal.

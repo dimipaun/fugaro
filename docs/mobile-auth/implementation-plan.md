@@ -351,7 +351,9 @@ the test that says so must be able to fail.
 with the emulator cases run under the package's own build tag (`firebase`, as
 `internal/budget/rules/emulator_pairing_test.go` and its siblings already do); the golden **unchanged
 and read**; `go test ./internal/projectpolicy/...`; and the docs pins of `docs/mobile/` unchanged,
-because the check register's rows quote generation 3 and this part leaves it where it is.
+because the check register's rows quote generation 3 and this part leaves it where it is. The
+register's **Check 602** (the paired phone cannot read its own entry) is this part's owner-run reading
+on a deployed project, and it is **NOT RUN**.
 
 **Depends on.** **D222, D225**, and P1's field names. It does not depend on P1's code: the names can
 be read from P1's entry type, and this plan assumes the recommendation's names.
@@ -401,8 +403,10 @@ the IAM refusal the command already needs, with a message naming the missing rol
 **Verification.** `GOFLAGS=-p=2 go vet ./...`; `gofmt -l .`; `go test ./internal/cli/ -run 'Pair'`
 and the token package's own tests, with `internal/gcpfake/identitytoolkit.go` as the fake; the
 emulator cases P2 added, run against the entries this command writes. **Not verified here:** any
-live project — the pairing code path is Phase 6's own owner-run check, and §9 proposes the two this
-work adds by name.
+live project — the pairing code path is Phase 6's own owner-run check, and §9's owner-run checks for
+this part are the register's **Check 601** (the pairing that refuses an unverified address), **Check
+602** (the paired phone cannot read its own entry, with P2) and **Check 603** (a revoked pairing stops
+on the next request), all **NOT RUN**.
 
 **Depends on.** **Phase 6's P6.6 must exist** (`internal/cli/pair.go`, `internal/budget/token/device.go`,
 the `root.go` line) — this part edits a file that is not in the tree; **P1** (the resolver);
@@ -452,7 +456,9 @@ work extends runs that command for its **`shared/`** tasks and calls the app's a
 beside the boundary test at P3.1; the command itself is the manifest's, not a citation from that
 document.) **This container cannot run it** — no Node is installed (reconciliation §5's U7) — so
 this part's verification is the app's CI job and the owner's reading, and this plan says so rather
-than implying a green run. The Go half of this work touches no `mobile/` file.
+than implying a green run. The Go half of this work touches no `mobile/` file. The register's **Check
+606** (the QR carries no identity) and **Check 607** (the first screen with no account) are this part's
+owner-run readings on the app's own build, and both are **NOT RUN**.
 
 **Depends on.** **Phase 6's P6.8 must exist** (`mobile/src/pairing/`, and the seam in
 `mobile/src/app/first-screen.js`); **D232, D233, D234.**
@@ -485,8 +491,10 @@ role for each person, per D224.
 
 **Files.** `internal/cli/project_cmd.go` (the publish's allowlist half); `internal/localcfg/` (the
 declared block and its validation); `schemas/fugaro.schema.json`; `internal/mobileauth/` (the entry
-type the declaration is parsed into); `docs/gcp-live-checklist.md` **not touched** — the check that
-exercises this is proposed by name in §9, and the phase that ships a check writes it.
+type the declaration is parsed into); `docs/gcp-live-checklist.md` **not touched by this part** — the
+checks that exercise it are the register's **Check 604** (a publish never re-adds a revoked entry) and
+**Check 605** (a declared entry that is not on the node admits nobody), written by the change that
+allocated §9's numbers on 2026-11-14, and both **NOT RUN**.
 
 **Red step.** Four mutations. **A removed entry comes back** — make the publish seed unconditionally
 and the test that a revoked person is not re-added must fail. **A published entry admits without the
@@ -542,7 +550,8 @@ this document describes an alternative and must not read as a ruling.
 
 **Verification.** `go test ./internal/cli/ -run TestDocsMobileAuth` (P0's guard, extended to read
 this document); a reading of the document against the reconciliation's §3 for every item it must
-carry; and no other package, because nothing else is touched.
+carry; and no other package, because nothing else is touched. The register's **Check 608** (the
+provider refusal on a real project) is this part's owner-run reading, and it is **NOT RUN**.
 
 **Depends on.** **D221**, and nothing else — it can be written before any of P1–P5 and is placed
 last only because it cites them.
@@ -627,10 +636,20 @@ not.
    (reconciliation §5's U7), so P4's verification is the app's own CI job; a part that cannot run its
    own tests here says so in its pull request body rather than reporting a run it did not make.
 
-## 9. The owner-run live checks, proposed by name and not numbered
+## 9. The owner-run live checks, proposed by name and now numbered in the register
 
-The register's own rule is that **the phase that ships the check writes it**, so this plan proposes
-its checks **by name** and **takes no number**. The reading, taken against `docs/gcp-live-checklist.md`
+**Amended 2026-11-14: the register carries them, as Checks 601 to 608.**
+`docs/gcp-live-checklist.md`'s own numbering paragraph records the allocation — the highest
+**written** `## Check N` section at that change's merge was **600**, **601–609** were claimed by no
+document and **610–619** are `docs/review-job`'s reserved block, so **601 was the number free at its
+merge** — and each of the eight owner-run checks in the table below has its own `## Check N:` section
+there, in the register's form: owner-run, **NOT RUN**, with the steps, the readings and the pass and
+fail conditions a script is written from. The two rows marked **runner** take no number and are not in
+the register. **Nothing else in this section changed**: the reading below is the one this plan took
+when it was written, and it is kept as the record of why it took no number of its own.
+
+The register's own rule is that **the phase that ships the check writes it**, so this plan proposed
+its checks **by name** and **took no number**. The reading, taken against `docs/gcp-live-checklist.md`
 and the documents that name numbers in it:
 
 - **The highest written `## Check N` section is 111**, the setup wizard's — and the register's own
@@ -660,21 +679,23 @@ and the documents that name numbers in it:
   (the phase that ships a check writes it) applied honestly: this work ships no check in its first
   parts, and the part that does takes whatever number is free at its own merge.
 
-| Proposed check, by name | Part | Kind | What it proves |
+| Check, by name and number | Part | Kind | What it proves |
 | --- | --- | --- | --- |
-| **the pairing that refuses an unverified address** | P3 | owner | the refusal fires on a real account whose address is not verified, and nothing is written |
-| **the paired phone cannot read its own entry** | P2, P3 | owner | the node is `.read: false` on the deployed rules, and `pair ls` is the only way to see an entry |
-| **a revoked pairing stops on the next request** | P3 | owner | D166's property on a real project: `pair revoke`, then a read the phone could make a moment before |
-| **an exact entry overrides its domain's role** | P1, P5 | **runner** | the resolver's rule, on the real declaration the owner wrote |
-| **a publish never re-adds a revoked entry** | P5 | owner | the rule `publishAllowRepos` already holds, applied to people |
-| **a declared entry that is not on the node admits nobody** | P5 | owner | the node is the authority, not the file |
-| **the QR carries no identity** | P4 | owner | a scan of a real QR, read as text: the Firebase configuration and the pairing token, nothing else |
-| **the first screen with no account** | P4 | owner | Play's promise, on a device: the demo is reachable with no sign-in, and "ask your admin" stands beside it |
-| **`fugaro init` still refuses a provider** | P6 | owner | `refusePublicSignUp` fires on a project with a provider enabled, on the real API |
-| **the app's boundary on a real build** | P4 | **runner** | the app's CI job, not a live check |
+| **Check 601** — **the pairing that refuses an unverified address** | P3 | owner | the refusal fires on a real account whose address is not verified, and nothing is written |
+| **Check 602** — **the paired phone cannot read its own entry** | P2, P3 | owner | the node is `.read: false` on the deployed rules, and `pair ls` is the only way to see an entry |
+| **Check 603** — **a revoked pairing stops on the next request** | P3 | owner | D166's property on a real project: `pair revoke`, then a read the phone could make a moment before |
+| **no number (runner)** — **an exact entry overrides its domain's role** | P1, P5 | **runner** | the resolver's rule, on the real declaration the owner wrote |
+| **Check 604** — **a publish never re-adds a revoked entry** | P5 | owner | the rule `publishAllowRepos` already holds, applied to people |
+| **Check 605** — **a declared entry that is not on the node admits nobody** | P5 | owner | the node is the authority, not the file |
+| **Check 606** — **the QR carries no identity** | P4 | owner | a scan of a real QR, read as text: the Firebase configuration and the pairing token, nothing else |
+| **Check 607** — **the first screen with no account** | P4 | owner | Play's promise, on a device: the demo is reachable with no sign-in, and "ask your admin" stands beside it |
+| **Check 608** — **`fugaro init` still refuses a provider** | P6 | owner | `refusePublicSignUp` fires on a project with a provider enabled, on the real API |
+| **no number (runner)** — **the app's boundary on a real build** | P4 | **runner** | the app's CI job, not a live check |
 
 Each check above is **owner-run, on a real project, by the owner** unless it is marked **runner**;
-there is no live action of any kind in this work, and no step of any check is run by an agent.
+there is no live action of any kind in this work, and no step of any check is run by an agent. **In the
+register**, each of the eight owner-run checks is a `## Check N:` section of its own — **NOT RUN**, and
+naming the part that ships it and the script it is written to become.
 
 ## 10. The numbers this plan would hold
 
@@ -684,8 +705,11 @@ there is no live action of any kind in this work, and no step of any check is ru
   **D198–D200** are free but **D200** is recorded by the voice-session work as possibly held by the
   owner's notes. Each decision is written in [reconciliation.md](reconciliation.md) §4,
   **recommendation first**, with the alternative and its cost.
-- **Check numbers: none claimed**, for the reason in §9. The part that ships a check takes the
-  number free at its own merge, which is the register's rule and not this plan's.
+- **Check numbers: none claimed by this plan**, for the reason in §9 — and **601 to 608 allocated by
+  the register's own change on 2026-11-14**, which is the part that took the numbers free at its
+  merge and wrote each check's `## Check N:` section. That allocation is in §9's amendment and in
+  `docs/gcp-live-checklist.md`; this plan still claims none of its own, and the part that ships a
+  check's script takes the number the register gave it.
 - **No Go code exists in this work yet, and no part of P1–P6 has been written.** The only files this
   work has added are the four documents in this folder.
 
