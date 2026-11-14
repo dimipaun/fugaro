@@ -249,19 +249,20 @@ const (
 	// read; no credential value is in it, because none was touched.
 	ErrorRequestRefused = "request_refused"
 	// ErrorNoCandidateCredentials is a call the cascade was asked for and could
-	// hand no credential to: the narrowing the policy applies — the crafts, the
-	// tier-A admission and the repository's recorded auth — left the list the
-	// selector is given empty, so there was nothing to select from, nothing to
-	// wait for and no other tier to reach. The state WAS read: it is what the
-	// service read that admits this repository no credential, and the tried list
-	// beside this type names every credential that was considered and the one
-	// reason each was dropped. It is deliberately not ErrorStateUnavailable,
-	// whose name sends the operator to the database: this is a policy and
-	// bundle question, and the answer says which (a bundle that holds no model
-	// credential, an account the repository's own admission does not cover, a
-	// credential the selector was left with none of). Like every refusal but
-	// ErrorExhaustedUntil it halts the run (D143), and no credential value is
-	// in it, because none was used.
+	// hand no credential to: the narrowing this service applies — the crafts
+	// where the installation publishes them, O4's tier-A admission, the
+	// repository's recorded auth and the slip fence a per-user or project
+	// credential needs — left the list the selector is given empty, so there was
+	// nothing to select from, nothing to wait for and no other tier to reach. The
+	// state WAS read: it is what the service read that empties this call's list,
+	// and the tried list beside this type names every credential that was
+	// considered and the one reason each was dropped. It is deliberately not
+	// ErrorStateUnavailable, whose name sends the operator to the database: this
+	// is a policy and bundle question, and the sentence and the list say which (a
+	// bundle that holds no model credential, an account the repository's own
+	// admission does not cover, a credential the call carries no slip for). Like
+	// every refusal but ErrorExhaustedUntil it halts the run (D143), and no
+	// credential value is in it, because none was used.
 	ErrorNoCandidateCredentials = "no_candidate_credentials"
 )
 

@@ -861,11 +861,17 @@ const selectionUnreadable = "the credential's state could not be read"
 
 // noCandidatesHead is what a call with nothing to select from is refused with,
 // and it says the fact the old class hid: the state was read, and what it says
-// is that this repository is admitted no credential this call could be served
-// by. It names no credential — no value is ever named in a sentence — and it
-// sends the operator to the two documents that decide the admission rather
-// than to the database, which is where `state_unavailable` sent them.
-const noCandidatesHead = "no credential is offered to this call, and the state was read: this repository's admission covers none of the project's model credentials"
+// is that the selection was handed an empty list. It names no credential — no
+// value is ever named in a sentence — and it sends the operator to the list
+// below and to the documents that decide it rather than to the database, which
+// is where `state_unavailable` sent them.
+//
+// It does not say WHICH filter emptied the list, because the reasons on the
+// list say that one credential at a time and a sentence that guessed would be
+// wrong where the list is not: the same class answers a repository its
+// admission leaves nothing, a per-user or project credential a call carries no
+// slip for, and a bundle that holds no model credential at all.
+const noCandidatesHead = "no credential is offered to this call, and the state was read: the list the selection was given was empty"
 
 // noCandidatesMessage is the sentence a call with no candidate is refused with,
 // on the wire and on the operator's own line: the cause, then every credential
@@ -879,13 +885,17 @@ const noCandidatesHead = "no credential is offered to this call, and the state w
 // build is a list the writer will write, and a refusal that fell back to
 // state_unavailable over its own length cannot arise from this path.
 //
-// An empty list is the bundle's own answer and says so: nothing could be
-// considered at all, which is a different failure from every account this
-// repository could use having been dropped, and an operator acts on the two
-// differently.
+// An empty list is answered as its own sentence rather than as a head with
+// nothing after it: nothing could be considered at all, which is a different
+// failure from every credential this call could be served by having been
+// dropped, and an operator acts on the two differently.
 func noCandidatesMessage(tried []Tried) string {
 	if len(tried) == 0 {
-		return noCandidatesHead + " (this installation's bundle holds no model credential at all)"
+		// Nothing was dropped because nothing was there to drop, and the only
+		// way to an empty list without a drop is a bundle whose model
+		// credentials are empty: every other filter reports what it removed
+		// (candidates, the slip fence, narrowToRepoAuth).
+		return noCandidatesHead + ": this installation's bundle holds no model credential at all"
 	}
 	return noCandidatesHead + "; considered and dropped: " + triedLine(tried)
 }
@@ -1130,17 +1140,22 @@ func (s *Server) refuseSelection(ctx context.Context, w http.ResponseWriter, id 
 	}
 	// Nothing to select from is its own refusal, and it is deliberately not
 	// ErrorStateUnavailable: the state WAS read, and what the service read is
-	// that this call is admitted no credential at all. Answering the "could not
-	// be read" class sent the operator to the database (the owner's installation
-	// of 2026-11-14, and check 191 before it) when the answer was in the
-	// project's policy and the installation's bundle — and it left the run's
-	// answer with an empty tried list, so neither the run nor its report could
-	// say which credential was dropped or why.
+	// that the candidate list this call would be served from is empty.
+	// Answering the "could not be read" class sent the operator to the database
+	// (the owner's installation of 2026-11-14, and Check 191 before it) when the
+	// answer was in the project's policy and the installation's bundle — and it
+	// left the run's answer with an empty tried list, so neither the run nor its
+	// report could say which credential was dropped or why.
 	//
-	// The read label is what keeps the two apart: an empty list this service
-	// reached because a read it had to make failed carries that read's label,
-	// and it keeps the state_unavailable class below — a policy refusal and a
-	// store that could not be read are not the same answer to an operator.
+	// The label is what keeps the two apart, and it is the reason the class is
+	// claimed only where `readOf` is empty: creds.Select answers this error bare
+	// (checkCandidates builds it with errors.New, internal/creds/errors.go), and
+	// every list this service can empty on a FAILED read is refused before the
+	// selector is reached — the bundle load and the candidates build each answer
+	// with their own sentence and their own label (server.go's cascade step). A
+	// policy refusal and a store that could not be read are not the same answer
+	// to an operator, so a labelled error that somehow arrived here keeps the
+	// state_unavailable class below.
 	if errors.Is(err, creds.ErrNoCandidates) && readOf(err) == "" {
 		msg := noCandidatesMessage(tried)
 		if aerr := s.auditCall(ctx, id, PurposeForward, "", "", ErrorNoCandidateCredentials); aerr != nil {
