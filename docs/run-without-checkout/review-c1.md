@@ -50,7 +50,7 @@ one repository the caller named — `{"repositories": ["web"], "permissions": �
 `testdata/coordinator_token.json` holds for the coordinator's mint.
 
 The set's own pin is `TestPersonReadPermissionsCoverAFileRead`
-(`internal/gitprov/github/apptoken_test.go:390`), which asserts the map as an equality and then
+(`internal/gitprov/github/apptoken_test.go:391`), which asserts the map as an equality and then
 each level is `read`.
 
 **The two pins A0 must not move:**
@@ -63,7 +63,7 @@ each level is `read`.
   `internal/gitprov/github/testdata/coordinator_token.json`.
 - `TestGitHubReadAsksForNoWrite` (`internal/credsvc/githubread_test.go:145`) reads the mint's
   **real request body** out of the fixture (`:151-155`), holds it to the accessor entry by
-  entry (`:161-167`) and then to containing no `write` anywhere (`:170-174`). A0 changed which
+  entry (`:161-167`) and then to containing no `write` anywhere (`:167-171`). A0 changed which
   accessor it reads and nothing else about it.
 
 **Mutations run (reverted).**
@@ -154,7 +154,7 @@ session` and `fugaro.yaml` (`:2464`), that the fixture counted `mints == 0 && re
 no credentials service means no read to refuse, so the no-service line is the honest one and
 its way out is one an agent can take — is pinned by
 `TestLaunchWithoutCheckoutInAnAgentSessionWithoutAServiceNamesTheCheckout`
-(`run_test.go:2474`, asserting the no-service sentence is present and the agent sentence is
+(`run_test.go:2483`, asserting the no-service sentence is present and the agent sentence is
 not).
 
 **Mutation run (reverted).** Blinding the guard — `os.Getenv` replaced by a function that
@@ -167,9 +167,9 @@ reads a renamed variable, so no marker is ever seen — is **RED**:
 
 The ref is `spec.Ref` and nothing else: `readRepoConfigAtRef(ctx, e, spec.Repo, spec.Ref)`
 (`project_job.go:485`, and the second reader at `:1317`), through `FileAt` (`fileread.go:159`)
-into `Contents(ctx, path, ref)` (`internal/gitprov/github/contents.go:52`). There is no
+into `Contents(ctx, path, ref)` (`internal/gitprov/github/contents.go:51`). There is no
 default-branch path: `Contents` sets the `ref` parameter only when a ref was named
-(`contents.go:59-62`), and the read at the API's default branch is what an **empty** ref means,
+(`contents.go:61-64`), and the read at the API's default branch is what an **empty** ref means,
 so an empty ref can only be a caller's own empty one.
 
 `ErrRefNotFound` is the absent-ref row and `ErrFileNotFound` the absent-file row, told apart by
@@ -178,7 +178,7 @@ is refused rather than read as "no document" — `confirmAbsent` re-asks the rep
 a ref was named, the ref (`fileread.go:112-123`).
 
 **No injection.** The ref travels as a query parameter built with `url.Values`
-(`contents.go:59-62`) and encoded by `q.Encode()` (`contents.go:110`), and every path segment
+(`contents.go:61-64`) and encoded by `q.Encode()` (`contents.go:111`), and every path segment
 is escaped on its own (`contents.go:104-109`).
 
 **Mutations run (reverted).**
@@ -186,7 +186,7 @@ is escaped on its own (`contents.go:104-109`).
 | mutation | observed |
 | --- | --- |
 | `project_job.go:485` `spec.Ref` → `""` | **RED** — `TestLaunchWithoutCheckoutReadsTheRefThroughTheService` (`project_job_test.go:3001`: `2 mint(s) and 2 read(s), want exactly one of each` — the memo key at `project_job.go:660` is `repo+"\x00"+ref`), `TestLaunchWithoutCheckoutJudgesACloneWorkflowByTheCloneGates`, `TestLaunchWithoutCheckoutOnARefWithNoDocumentKeepsThePerRepositoryJob` (`:3083`: the absent file was confirmed against 1 of the two things it takes) and `TestLaunchWithoutCheckoutFoldsTheRepositoryKeyTheConfigRecords` |
-| `contents.go:110` `q.Encode()` → the ref written raw | **RED** — `TestContentsReadsTheFileAtItsRef` (`contents_test.go:131`): `…agent%3Fv=1?ref=release/x, want …agent%3Fv=1?ref=release%2Fx` |
+| `contents.go:111` `q.Encode()` → the ref written raw | **RED** — `TestContentsReadsTheFileAtItsRef` (`contents_test.go:131`): `…agent%3Fv=1?ref=release/x, want …agent%3Fv=1?ref=release%2Fx` |
 
 The fixture files under `testdata/fileread/` pin the ref **value** (`at_ref.json` names
 `?ref=release/1.2`) but not its escaping: `httpfixture` parses the fixture's path and compares
@@ -263,16 +263,25 @@ names — finding 1, with the decision it needs.
   PASS. It asks for `contents: read` (`apptoken.go:198`), the route asks with that set
   (`githubread.go:321`), the read the set has to reach is the one `FileAt` makes
   (`fileread.go:172`), and no level anywhere is a `write` — pinned at the set
-  (`apptoken_test.go:390`), at the mint's real body (`githubread_test.go:145`) and at the
+  (`apptoken_test.go:391`), at the mint's real body (`githubread_test.go:145`) and at the
   coordinator's unchanged set (`apptoken_test.go:293`).
 - **The owner-only paths must not be widened.** PASS. Across all three commits, `git show
   --name-only` finds **no** change to `deploy/terraform`, to `internal/config`, to `schemas/`,
   to `SECURITY.md`, to `internal/cli/creds*.go`, and none to `config.ServiceHeldSecretNames`
-  or `config.ProxiedGitSecretNames`: the only file any of the three touches that the rule
-  gates is `internal/credsvc/githubread.go` itself, which is what A0 is for. A0's changes
-  outside it are comments and documents (`console/src/*`, `ee/coordinator/cli/coordinator*.go`,
-  `website/content/cli-reference.md`, six line re-points in other designs' documents — verified
-  line by line, no code line among them).
+  or `config.ProxiedGitSecretNames`. The rule's `paths:` list gates `internal/creds/**`,
+  `internal/credsvc/**`, `internal/gitproxy/**`, `internal/gateway/gitforward*.go`,
+  `SECURITY.md` and `website/content/security.md`; the two files it gates that any of the three
+  commits touches are both A0's — `internal/credsvc/githubread.go`, which is what A0 is for, and
+  `internal/credsvc/githubread_test.go`, that route's own test — and nothing under
+  `internal/creds/`, `internal/gitproxy/` or `internal/gateway/` moves at all. A0's changes
+  outside those two are A0's subject and its tests — the permission set itself
+  (`internal/gitprov/github/apptoken.go` with `apptoken_test.go`),
+  `internal/cli/docs_run_without_checkout_test.go` and
+  `ee/coordinator/cli/console_contract_test.go` — and the records of them: the prose over the
+  service-held-key client (`internal/gitprov/github/serviceread.go`), the console's and the
+  coordinator's own words (`console/src/*`, `ee/coordinator/cli/coordinator*.go`,
+  `website/content/cli-reference.md`), and line re-points in other designs' documents —
+  verified line by line, no code line in that last group.
 
 ---
 
