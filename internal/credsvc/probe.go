@@ -83,7 +83,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -799,30 +798,40 @@ const bitbucketCountBudget = 5 * time.Second
 // carries a repository NAME and never a host (F22), so no policy, no config and
 // no caller of this service can name where a token is sent.
 //
-// ok is false for a canonical that is not `workspace/repository`: the workspace
-// is one segment and the repository one, and a value with anything else in it
-// is not a repository a probe can read — refusing it is the fail-closed
-// direction, since the alternative is building a path out of a caller's text.
-// A dot segment is refused for that reason and for R14's: PathEscape leaves "."
-// and ".." alone, so `../user` would build .../repositories/../user, which
-// resolves to the GET /2.0/user this probe must never make.
+// The argument is the canonical repository this package pairs and forwards by
+// — "bitbucket/<workspace>/<repo>", splitCanonicalRepo's spelling — and not the
+// coverage pattern a record may hold: a pattern names a family
+// ("bitbucket/acme/*", R1) and nothing lists the repositories in one (F7), so a
+// probe given a pattern has no repository to read. Probing it literally would
+// ask Bitbucket about a repository named "*", and the 404 that answers is an
+// unproven probe — the wait doubled — rather than the confirmation of a 401 the
+// caller asked for. The caller that confirms a 401 holds the canonical
+// repository of the call in hand (T9).
+//
+// ok is false for anything else, and refusing is the fail-closed direction
+// since the alternative is building a path out of a caller's text: a value that
+// is not two literal segments under the bitbucket provider — including a bare
+// "workspace/repository" with no provider, another provider, and a wildcard
+// anywhere in either half. A dot segment is refused for R14's reason as well:
+// escapeSeg leaves "." and ".." as they are, so `bitbucket/../user` would build
+// .../repositories/../user, which resolves to the GET /2.0/user this probe must
+// never make.
 func bitbucketProbeURL(canonical string) (string, bool) {
-	workspace, repo, ok := strings.Cut(canonical, "/")
-	if !ok || !isPathSegment(workspace) || !isPathSegment(repo) {
+	workspace, repo, err := splitCanonicalRepo(canonical)
+	if err != nil || !literalSegment(workspace) || !literalSegment(repo) {
 		return "", false
 	}
-	return bitbucket.DefaultBaseURL + "/repositories/" + url.PathEscape(workspace) + "/" + url.PathEscape(repo), true
+	return bitbucket.DefaultBaseURL + "/repositories/" + escapeSeg(workspace) + "/" + escapeSeg(repo), true
 }
 
-// isPathSegment reports whether one half of a canonical names a single path
-// segment: not empty, nothing that would resolve as a path of its own, and no
-// further separator.
-func isPathSegment(s string) bool {
-	return s != "" && s != "." && s != ".." && !strings.Contains(s, "/")
+// literalSegment reports whether one half of a canonical is one literal path
+// segment: not empty, no wildcard, and not a dot segment.
+func literalSegment(s string) bool {
+	return s != "" && s != "." && s != ".." && !strings.Contains(s, "*")
 }
 
-// bitbucketProbe is one Bitbucket token's probe: which token, its value, and a
-// repository it covers.
+// bitbucketProbe is one Bitbucket token's probe: which token, its value, and
+// the canonical repository it covers that the probe will read.
 //
 // The value is here because the probe is the one call this service makes with
 // it that no run asked for; it is never logged, never audited and never
@@ -861,7 +870,7 @@ type bitbucketProbe struct {
 func (s *Server) probeBitbucketToken(ctx context.Context, st creds.TokenStatusStore, p bitbucketProbe, set creds.Settings) (creds.TokenStatus, error) {
 	target, ok := bitbucketProbeURL(p.Repository)
 	if !ok {
-		return creds.TokenStatus{}, fmt.Errorf("credsvc: %q is not a repository a token's probe can read", p.Repository)
+		return creds.TokenStatus{}, fmt.Errorf("credsvc: %q is not a canonical Bitbucket repository (bitbucket/<workspace>/<repo>), so a token's probe cannot read it", p.Repository)
 	}
 	// The probe is detached from the caller's context and bounded, for the model
 	// probe's reason: the call has been made and charged by the time its answer

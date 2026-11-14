@@ -1559,12 +1559,13 @@ func bitbucketProbeSvc(t *testing.T, bb *fakeBitbucket) (*svc, *fakeTokenStatuse
 //
 // Each answer is settled against the status it leaves, and against the call
 // that drew it: one GET, to the API root the adapter's constant names, on the
-// repository the caller said the token covers, carrying the token's own value
-// and no body at all.
+// canonical repository the caller said the token covers ("bitbucket/acme/repo",
+// the spelling this package pairs and forwards by), carrying the token's own
+// value and no body at all.
 func TestBitbucketTokenProbeIsACoveredRepositoryRead(t *testing.T) {
 	const name = "bitbucket-token--ci"
 	const value = "probe-me"
-	const canonical = "acme/repo"
+	const canonical = "bitbucket/acme/repo"
 
 	bb := &fakeBitbucket{replies: []fakeBitbucketReply{
 		bitbucketReply(http.StatusOK, nil),
@@ -1607,7 +1608,7 @@ func TestBitbucketTokenProbeIsACoveredRepositoryRead(t *testing.T) {
 	if call.Method != http.MethodGet {
 		t.Errorf("the probe's method is %s; a probe reads and never writes", call.Method)
 	}
-	if want := bitbucket.DefaultBaseURL + "/repositories/" + canonical; call.URL != want {
+	if want := bitbucket.DefaultBaseURL + "/repositories/acme/repo"; call.URL != want {
 		t.Errorf("the probe asked %s; want %s — the adapter's own API root and the repository the token covers", call.URL, want)
 	}
 	if strings.Contains(call.URL, "/user") {
@@ -1685,15 +1686,22 @@ func TestBitbucketTokenProbeIsACoveredRepositoryRead(t *testing.T) {
 		}
 	}
 
-	// A repository name that is not a workspace and a repository makes no call
-	// at all: the path is never built out of a caller's text. The dot segments
-	// are here for R14's reason: url.PathEscape leaves "." and ".." as they are,
-	// so "../user" would build .../repositories/../user, which resolves to the
-	// GET /2.0/user this probe must never make — the endpoint a repository token
-	// answers 403 to, and the one whose 200 would report a token working without
-	// reading a repository it covers.
+	// A value that is not the canonical repository this package pairs and
+	// forwards by makes no call at all: the path is never built out of a
+	// caller's text. The patterns are here for R14's reason: a coverage pattern
+	// ("bitbucket/acme/*", R1) names a family, nothing lists the repositories in
+	// one (F7), and probing the literal "*" would ask about a repository that is
+	// not there — a 404, which is an unproven probe rather than the
+	// confirmation of a 401 the caller asked for. The dot segments are here
+	// because escapeSeg leaves "." and ".." as they are, so "bitbucket/../user"
+	// would build .../repositories/../user, which resolves to the GET /2.0/user
+	// this probe must never make.
 	before := len(bb.requests())
-	for _, bad := range []string{"", "acme", "acme/repo/extra", "/repo", "../user", "acme/..", "./repo", "acme/.", "..", "."} {
+	for _, bad := range []string{
+		"", "acme/repo", "bitbucket/acme", "bitbucket/acme/repo/extra", "bitbucket//repo", "bitbucket/acme/",
+		"github/acme/repo", "bitbucket/acme/*", "bitbucket/*/repo", "bitbucket/*/*", "bitbucket/acme/repo*",
+		"bitbucket/../user", "bitbucket/acme/..", "bitbucket/acme/.", "bitbucket/./repo", "..", ".",
+	} {
 		if _, err := s.server.probeBitbucketToken(context.Background(), st, bitbucketProbe{Name: name, Value: value, Repository: bad}, creds.Settings{}); err == nil {
 			t.Errorf("the probe read %q; want it refused rather than built into a path", bad)
 		}
