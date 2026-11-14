@@ -1049,15 +1049,31 @@ step_update() {
   changes=$(grep -c 'No changes' "$UPDATE2_LOG" 2>/dev/null || true)
   # EVERY stage's own line must be a converged one. Step 4 asserts `No changes`
   # for every stage, and a stage the first run did not settle says so instead:
-  # initflow's plan view draws it `changed` for a stage that applied something,
-  # `will do` for one with work left and `left for you` for one that needs you
+  # initflow draws it `changed` for a stage that applied something, `will do`
+  # for one with work left and `left for you` for one that needs you
   # (loop.go's stateLabel) — a transcript where one stage prints `changed` and
   # the rest `No changes` is exactly the non-converging run this step forbids,
-  # and no line saying "work" at all need appear. The LAST line naming a stage
-  # is the stage's own; the lines before it are progress.
-  local stage line bad="" why=""
+  # and a grep for the word "work" would not see it.
+  #
+  # A stage's own line is the one that carries its name as a FIELD, and both
+  # shapes the account has put it in the first 20 bytes: a step line is
+  # `<glyph> <name> <detail>` (report.go's end), so the name starts at byte 4,
+  # and a plan-view row is `  <status padded to 14> <name padded to 16> <detail>`
+  # (loop.go's row), so it starts at byte 17. A LATER line can still name an
+  # earlier stage inside its own sentence — the root stages share the reason
+  # `No changes: the installation root matches the plan.` — and that mention is
+  # not the earlier stage's answer: the earliest one can start is byte 26, past
+  # the window, so the field match takes the stage's own line.
+  #
+  # The loose match is the fallback for a line whose window does not hold it: a
+  # status word wider than its column pushes the name right (loop.go's `waiting
+  # for billing`, 19 characters into a column of 14), and such a line is not
+  # converged either way. It is a fallback and not the rule because its last
+  # match can be a later line's mention.
+  local stage line own bad="" why=""
   for stage in installation firebase images installation-2 secrets plugin; do
-    line=$(grep -E "(^|[[:space:]])$stage([[:space:]]|\$)" "$UPDATE2_LOG" 2>/dev/null | tail -1 || true)
+    own=$(grep -E "^.{0,20}[[:space:]]$stage([[:space:]]|\$)" "$UPDATE2_LOG" 2>/dev/null | tail -1 || true)
+    line=${own:-$(grep -E "(^|[[:space:]])$stage([[:space:]]|\$)" "$UPDATE2_LOG" 2>/dev/null | tail -1 || true)}
     case "$line" in
     *"No changes"* | "  done "*) continue ;;
     esac

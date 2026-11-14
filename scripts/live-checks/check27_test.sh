@@ -211,25 +211,71 @@ has() { # flag
   for a in "$@"; do [ "$a" = "$want" ] && return 0; done
   return 1
 }
-# stage_list LABEL [ACCOUNT], the six stages as the run prints them: one ROW
-# each, in initflow's own shape ('  <status>  <name>  <detail>'), because a
-# `--plan-only` run prints rows and not bare names. The project stage is the row
-# that names the billing account — a real plan draws it as `link billing account
-# <ID> (its own confirmation; may incur charges)` (init_project.go's plan detail)
-# — so the fake prints that text where a case can see it, and a case can fail
-# when the account ID reaches what a run prints rather than never noticing.
+# row_line STATUS NAME [DETAIL], one plan-view row as initflow draws it
+# (loop.go's row): two spaces, the status in a column of 14, the name in one of
+# 16, the detail beside it, and no trailing space — which is where a stage's own
+# name sits, so a reader can tell the stage's row from a later row that mentions
+# it in its detail.
+row_line() {
+  local line
+  line=$(printf '  %-14s %-16s %s' "$1" "$2" "${3:-}")
+  printf '%s\n' "${line%"${line##*[! ]}"}"
+}
+# stage_list LABEL [ACCOUNT], the six stages as a `--plan-only` run prints them:
+# one ROW each, because a plan draws rows and not bare names. The project stage
+# is the row that names the billing account — a real plan draws it as `link
+# billing account <ID> (its own confirmation; may incur charges)`
+# (init_project.go's plan detail) — so the fake prints that text where a case can
+# see it, and a case can fail when the account ID reaches what a run prints
+# rather than never noticing.
 stage_list() {
   local label=$1 acct=${2:-}
   if [ -n "$acct" ]; then
-    printf '  %s  %-16s will create the project, add Firebase (free), link billing account %s (its own confirmation; may incur charges)\n' "$label" installation "$acct"
+    row_line "$label" installation "will create the project, add Firebase (free), link billing account $acct (its own confirmation; may incur charges)"
   else
-    printf '  %s  %-16s\n' "$label" installation
+    row_line "$label" installation
   fi
-  printf '  %s  %-16s\n' "$label" firebase
-  printf '  %s  %-16s\n' "$label" images
-  printf '  %s  %-16s\n' "$label" installation-2
-  printf '  %s  %-16s\n' "$label" secrets
-  printf '  %s  %-16s\n' "$label" plugin
+  row_line "$label" firebase
+  row_line "$label" images
+  row_line "$label" installation-2
+  row_line "$label" secrets
+  row_line "$label" plugin
+}
+# converged_steps, the six stages as a CONVERGED converge run prints them: one
+# step line per stage in the account's own shape, `✔ <name> <detail>` (the glyph
+# is report/style.go's glyphDone and end() builds the line as glyph, space,
+# name, space, detail). This is the shape a run that opened a log prints, and
+# the words `No changes` reach it in the DETAIL and never in a status word:
+# initflow's stateLabel calls a converged stage `done` and carries the reason
+# beside it (loop.go), so a step line is what step 4 really reads. converged_rows
+# is the other shape, and both are exercised.
+#
+# Only the `No changes` prefix is load-bearing for check27.sh's step 4; the rest
+# of each detail is the CLI's own wording, which this fake does not pin.
+#
+# The installation stage's line is the one a case bends: the other five are
+# always converged here, so `converged_steps '✔ installation creates the runs
+# bucket'` is the non-converging run step 4 has to fail — a stage that applied
+# something, saying so in the detail it applied and in no word like `will do`.
+converged_steps() { # [INSTALLATION-LINE]
+  printf '%s\n' "${1:-✔ installation No changes: the project root matches the plan.}"
+  printf '%s %s %s\n' '✔' firebase 'No changes: the firebase root matches the plan.'
+  printf '%s %s %s\n' '✔' images 'No changes: the image is the one the release pins.'
+  printf '%s %s %s\n' '✔' installation-2 'No changes: the installation root matches the plan.'
+  printf '%s %s %s\n' '✔' secrets 'No changes: every secret container is there.'
+  printf '%s %s %s\n' '✔' plugin 'No changes: the plugin is at the pinned release.'
+}
+# converged_rows is that same converged run in the plan view's shape, which is
+# what a converge that could not open a log draws on the screen instead (loop.go's
+# view). A converged stage's status word is `done`; `No changes` is the reason
+# beside it, which is why a reader of this transcript looks at the detail.
+converged_rows() { # [INSTALLATION-ROW]
+  printf '%s\n' "${1:-$(row_line done installation 'No changes: the project root matches the plan.')}"
+  row_line done firebase 'No changes: the firebase root matches the plan.'
+  row_line done images 'No changes: the image is the one the release pins.'
+  row_line done installation-2 'No changes: the installation root matches the plan.'
+  row_line done secrets 'No changes: every secret container is there.'
+  row_line done plugin 'No changes: the plugin is at the pinned release.'
 }
 installation_of() { # id
   printf '%s\n' "$1" >"$state/project"
@@ -329,17 +375,29 @@ update)
     stage_list 'will do'
     exit 0
   fi
-  # A second update that applied something prints initflow's own `changed` word
-  # for that stage and `No changes` for the rest (loop.go's stateLabel): the one
-  # shape a "no work named" grep passes while the stage list is not converged.
+  # A second update that applied a stage prints initflow's own `changed` word for
+  # it in the plan view (loop.go's stateLabel), the one shape a grep for "work"
+  # passes while the stage list is not converged.
   if [ "$n" -ge 2 ] && [ -n "${FAKE27_UPDATE2_CHANGED:-}" ]; then
-    printf '  %s  %-16s %s\n' changed installation 'creates the runs bucket'
-    for s in firebase images installation-2 secrets plugin; do
-      printf '  %s  %-16s\n' 'No changes' "$s"
-    done
+    converged_rows "$(row_line changed installation 'creates the runs bucket')"
     exit 0
   fi
-  stage_list 'No changes'
+  # The same non-convergence through the ACCOUNT's own step lines, which is what
+  # a run with a log prints: a stage that applied something ends its step with
+  # the detail the plan view would have drawn, and no word of that line is
+  # `changed` or `will do` either.
+  if [ "$n" -ge 2 ] && [ -n "${FAKE27_UPDATE2_APPLIED:-}" ]; then
+    converged_steps '✔ installation creates the runs bucket'
+    exit 0
+  fi
+  # The converged run in the OTHER shape a real update can print: no log could be
+  # opened, so the loop draws its plan view on the screen instead of a step line
+  # per stage (loop.go's view). Step 4 reads that transcript too.
+  if [ "$n" -ge 2 ] && [ -n "${FAKE27_UPDATE2_ROWS:-}" ]; then
+    converged_rows
+    exit 0
+  fi
+  converged_steps
   exit 0
   ;;
 doctor)
@@ -791,6 +849,24 @@ test_an_update_that_changed_a_stage_is_a_fail() {
   expect_contains "$(fact_line update)" "No changes" "the row names step 4's assertion"
 }
 
+test_an_update_that_applied_a_stage_is_a_fail() {
+  setup_case update-applied
+  RUN27_ENV=(FAKE27_UPDATE2_APPLIED=1)
+  run27_default
+  expect_status "$status" 2 "a second update whose account shows a stage that applied something"
+  expect_contains "$(fact_line update)" "FAIL" "the update row"
+  expect_contains "$(fact_line update)" "installation" "the row names the stage that is not converged"
+  expect_contains "$(fact_line update)" "No changes" "the row names step 4's assertion"
+}
+
+test_a_converged_update_in_the_plan_views_shape_is_a_pass() {
+  setup_case update-rows
+  RUN27_ENV=(FAKE27_UPDATE2_ROWS=1)
+  run27_default
+  expect_status "$status" 0 "a converged update that drew the plan view instead of step lines"
+  expect_contains "$(fact_line update)" "PASS" "the update row"
+}
+
 test_an_update_that_fails_is_a_fail() {
   setup_case update-fails
   RUN27_ENV=(FAKE27_UPDATE_FAILS=1)
@@ -1019,6 +1095,8 @@ t test_doctor_that_does_not_name_the_project_is_a_fail
 t test_doctor_that_reports_a_finding_is_recorded_and_not_failed
 t test_an_update_that_still_has_work_is_a_fail
 t test_an_update_that_changed_a_stage_is_a_fail
+t test_an_update_that_applied_a_stage_is_a_fail
+t test_a_converged_update_in_the_plan_views_shape_is_a_pass
 t test_an_update_that_fails_is_a_fail
 t test_the_restore_deletes_the_jobs_the_buckets_and_the_project
 t test_a_job_the_restore_cannot_delete_is_a_fail
