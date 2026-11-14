@@ -1052,11 +1052,11 @@ func (s *Service) paid(ctx context.Context, req RequestV1, applicant, source, su
 	// opens RenewalLead before the subscription's end and so on day 335 of a year
 	// (renew.go's `renewable`).
 	//
-	// What naming it costs is that `/renew` reads no subscription either, so a
-	// key whose subscription the merchant has since cancelled renews here too.
-	// That gate is P3.6's and the plan says so — "`/renew` issues only while the
-	// entitlement runs", `TestRenewalStopsWhenTheEntitlementEnds` — and it needs
-	// the record to carry the subscription the key was minted for.
+	// What naming it costs is nothing on this path: the subscription the key was
+	// sold under is written on the record beside this state (`paid`), and `/renew`
+	// reads the record before it mints — a key whose subscription the merchant has
+	// since cancelled, or let end, is answered its own state and handed nothing
+	// (D2148, `renew`) — so neither half is a way past the other.
 	if err := s.store.SaveKeyState(ctx, KeyState{
 		KeyID: answer.Record.KeyID,
 		// The workspace the request bound the key to, which is the one the
