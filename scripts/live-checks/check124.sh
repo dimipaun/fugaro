@@ -310,24 +310,27 @@ guard_belong() {
 # guard_installation: the register's own stop, and the only guard that reads the
 # cloud. It is where "this run is about the sandbox installation" stops being an
 # assumption: doctor resolves the checkout's project, and the line is compared.
+#
+# The exit code is deliberately not read. doctor exits 1 on any check at an
+# error severity, and once the config selects backend: cloud-batch every failing
+# Batch check is exactly that (internal/cli/doctor_batch.go's batchSeverity), so
+# a nonzero exit here is the finding 124a exists to read — not a refusal and not
+# another installation. The register's own guard reads only the line either.
 guard_installation() {
   if [ -n "$DRY_RUN" ]; then
     fact installation INFO "not taken: this is a dry run, so fugaro doctor --all was not run. A real run asserts its 'project:' line names the GCP project fugaro-dev, and stops the whole check if it does not"
     return 0
   fi
   local out
-  out=$(fugaro doctor --project "$INSTALL" --all 2>&1) || {
-    fact installation FAIL "fugaro doctor --project ${INSTALL} --all refused, so this checkout is not the ${INSTALL} installation's: $(printf '%s' "$out" | oneline)"
-    stop "Check 124 stopped: this is not the ${INSTALL} installation (fugaro doctor --all refused the checkout, or --project disagrees with the checkout's own project:, which is refused rather than resolved)"
-  }
+  out=$(fugaro doctor --project "$INSTALL" --all 2>&1) || true
   line=$(printf '%s\n' "$out" | grep -m1 '^project: ' || true)
   case "$line" in
   *"(GCP ${P},"*)
-    fact installation PASS "the installation this run is about is confirmed by its own read-back: '${line}' — doctor resolved the checkout's project to ${P}, which is the sandbox project this check's every gcloud command names"
+    fact installation PASS "the installation this run is about is confirmed by its own read-back: '${line}' — doctor resolved the checkout's project to ${P}, which is the sandbox project this check's every gcloud command names. doctor's exit code is read nowhere: a failing Batch check carries no severity once the backend is selected, so a nonzero exit is what 124a below is about, and this guard would otherwise call this run another installation"
     ;;
   *)
-    fact installation FAIL "fugaro doctor's 'project:' line is '${line}', which does not name the GCP project ${P}: this is not the sandbox installation, and every step of Check 124 would be about another one"
-    stop "Check 124 stopped: this is not the ${P} installation (fugaro doctor's project: line is not ${P}, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)"
+    fact installation FAIL "fugaro doctor's 'project:' line is '${line}', which does not name the GCP project ${P}: this is not the sandbox installation, and every step of Check 124 would be about another one. doctor's whole output: $(printf '%s' "$out" | oneline)"
+    stop "Check 124 stopped: this is not the ${P} installation (fugaro doctor's project: line is not ${P} — a checkout doctor refused prints no such line, and --project disagreeing with the checkout's own project: is refused rather than resolved — which is a different thing from doctor's exit code, and the only thing this guard reads)"
     ;;
   esac
 }
@@ -478,17 +481,26 @@ step_apply() {
 }
 
 step_doctor() {
-  run_capture "$SCRATCH/doctor.out" "$SCRATCH/doctor.err" fugaro doctor --project "$INSTALL"
-  local out lines warnings strict_status
+  # --all is what prints the design's own boundary line: batch-artifact-boundary
+  # is a measurement, and the default view prints no measurement at all
+  # (internal/cli/doctor_render.go, doctorMeasureIDs and printDoctorReport), so
+  # a healthy installation asked without it prints no batch- line and the row
+  # below would read a clean doctor as an installation with no batch: block.
+  run_capture "$SCRATCH/doctor.out" "$SCRATCH/doctor.err" fugaro doctor --all --project "$INSTALL"
+  local out lines failing strict_status
   out=$(cat "$SCRATCH/doctor.out" "$SCRATCH/doctor.err")
   lines=$(printf '%s\n' "$out" | grep -E '^[a-z]+ batch-' || true)
-  warnings=$(printf '%s\n' "$out" | grep -E '^warning batch-' || true)
-  if [ -n "$warnings" ]; then
-    fact doctor FAIL "fugaro doctor reports the Batch setup as NOT ok: $(printf '%s' "$warnings" | oneline). Each line carries the value the project answered that makes it not OK (an API that is not ENABLED, a family that is not there, a name that resolves to nothing, a sink whose destination or filter is not the installation's, a launcher whose conditioned grant is missing or unconditioned), or the read it could not make. Every batch- line, whole: $(printf '%s' "$lines" | oneline)"
+  # A failing Batch check is printed as `error batch-<id>` once the config
+  # selects the backend — batchProblem's severity is "" there, which doctor
+  # words "error" — so matching only `^warning batch-` would call a real error
+  # a pass, which is the one reading this row exists to make impossible.
+  failing=$(printf '%s\n' "$out" | grep -E '^(error|warning) batch-' || true)
+  if [ -n "$failing" ]; then
+    fact doctor FAIL "fugaro doctor reports the Batch setup as NOT ok: $(printf '%s' "$failing" | oneline). Each line carries the value the project answered that makes it not OK (an API that is not ENABLED, a family that is not there, a name that resolves to nothing, a sink whose destination or filter is not the installation's, a launcher whose conditioned grant is missing or unconditioned), or the read it could not make. Every batch- line, whole: $(printf '%s' "$lines" | oneline)"
     return 0
   fi
   if [ -z "$lines" ]; then
-    fact doctor FAIL "fugaro doctor printed no 'batch-' line at all, not even the info one — an installation with no batch: block in its project config is one doctorBatchChecks returns nothing for, and this check is about the Batch backend: this is the first thing to fix, and the rest of 124a-5 says nothing about it. doctor's whole output: $(printf '%s' "$out" | oneline)"
+    fact doctor FAIL "fugaro doctor --all printed no 'batch-' line at all, not even the info one — an installation with no batch: block in its project config is one doctorBatchChecks returns nothing for, and this check is about the Batch backend: this is the first thing to fix, and the rest of 124a-5 says nothing about it. doctor's whole output: $(printf '%s' "$out" | oneline)"
     return 0
   fi
   local summary
@@ -496,11 +508,9 @@ step_doctor() {
   run_capture "$SCRATCH/strict.out" "$SCRATCH/strict.err" fugaro doctor --strict --project "$INSTALL"
   strict_status=$RUN_STATUS
   if [ "$strict_status" = 0 ]; then
-    fact doctor PASS "fugaro doctor's Batch half is a pass, and it is read the way the register says it must be read: the only batch- line is the design's own boundary ('$(printf '%s' "$lines" | oneline)'), the other seven ids print nothing while the read behind each is OK, and --strict exits 0 ('${summary}'), so no warning batch- line is hiding in it. A second, still-flying run of this backend is the one thing that would print one"
-  elif printf '%s\n' "$out" | grep -qE '^warning batch-'; then
-    fact doctor FAIL "fugaro doctor --strict exits ${strict_status} and a 'warning batch-' line is why: $(printf '%s' "$warnings" | oneline)"
+    fact doctor PASS "fugaro doctor --all's Batch half is a pass, and it is read the way the register says it must be read: the only batch- line is the design's own boundary ('$(printf '%s' "$lines" | oneline)'), the other seven ids print nothing while the read behind each is OK, and --strict exits 0 ('${summary}'), so no batch- line is an error or a warning. A second, still-flying run of this backend is the one thing that would print one"
   else
-    fact doctor INFO "fugaro doctor --strict exits ${strict_status} and NO batch- line is a warning: every batch- line is '$(printf '%s' "$lines" | oneline)' and doctor's summary is '${summary}'. A warning in another part of doctor is not this check's finding, but the exit code is the register's 'exit: 0', so record both readings: the batch- half is OK and doctor as a whole is not. Its whole output: $(printf '%s' "$out" | oneline)"
+    fact doctor INFO "fugaro doctor --strict exits ${strict_status} and NO batch- line is an error or a warning: every batch- line is '$(printf '%s' "$lines" | oneline)' and doctor's summary is '${summary}'. A check elsewhere in doctor is not this check's finding, but the exit code is the register's 'exit: 0', so record both readings: the batch- half is OK and doctor as a whole is not. Its whole output: $(printf '%s' "$out" | oneline)"
   fi
 }
 
@@ -543,7 +553,7 @@ print_plan_a() {
   say "  [cloud]  gcloud batch jobs list / compute instances list / compute instance-templates list --project=${P} — the before-state, written to ${W:-<the work directory>}/jobs-before.txt, instances-before.txt and templates-before.txt"
   say "  [cloud]  fugaro setup --plan-only --provision-batch --project ${INSTALL} — the installation root's plan, applying nothing and asking nothing"
   say "  [yours]  fugaro setup --provision-batch --project ${INSTALL} — NOT run by this script: it asks you to type the installation's name, and a coding agent's session is refused that stage"
-  say "  [cloud]  fugaro doctor --project ${INSTALL} and fugaro doctor --strict --project ${INSTALL} — every batch- line whole, and the strict exit code"
+  say "  [cloud]  fugaro doctor --all --project ${INSTALL} and fugaro doctor --strict --project ${INSTALL} — every batch- line whole (--all is what prints the info boundary line), and the strict exit code"
   say "  [local]  fugaro validate — the offline half: <path> is valid, and not the old 'is not enabled yet' refusal"
   say "and its Restore removes the scratch directory ${SCRATCH} and nothing else: the work directory is kept (124d diffs against it) and the installation's own provisioning stays"
 }
@@ -1183,17 +1193,22 @@ step_diff() {
 }
 
 step_whole() {
-  run_capture "$SCRATCH/doctor.out" "$SCRATCH/doctor.err" fugaro doctor --project "$INSTALL"
-  local out warnings lines
+  # --all, for the same reason 124a-5 runs it: the boundary line this row
+  # compares against 124a is a measurement, and the default view prints none.
+  run_capture "$SCRATCH/doctor.out" "$SCRATCH/doctor.err" fugaro doctor --all --project "$INSTALL"
+  local out failing lines
   out=$(cat "$SCRATCH/doctor.out" "$SCRATCH/doctor.err")
-  warnings=$(printf '%s\n' "$out" | grep -E '^warning batch-' || true)
+  # `error` too: a Batch check that fails on an installation which selected the
+  # backend carries no severity, so doctor words it "error", and a row matching
+  # only `^warning batch-` would report a whole installation over one.
+  failing=$(printf '%s\n' "$out" | grep -E '^(error|warning) batch-' || true)
   lines=$(printf '%s\n' "$out" | grep -E '^[a-z]+ batch-' || true)
   run_capture "$SCRATCH/images.txt" "$SCRATCH/images.err" gcloud compute images list --project="${P:?}" --filter='name~^fugaro-preload-' --format='value(name)'
   local images
   images=$(grep . "$SCRATCH/images.txt" || true)
   local bad=""
-  [ -z "$warnings" ] || bad="${bad}a new 'warning batch-' line is there, which is a finding this check made: $(printf '%s' "$warnings" | oneline); "
-  [ -n "$lines" ] || bad="${bad}doctor printed no batch- line at all, where 124a read the design's own info line; "
+  [ -z "$failing" ] || bad="${bad}a batch- line that is an error or a warning is there, which is a finding this check made: $(printf '%s' "$failing" | oneline); "
+  [ -n "$lines" ] || bad="${bad}doctor --all printed no batch- line at all, where 124a read the design's own info line; "
   [ -n "$images" ] || bad="${bad}no image in ${P} matches fugaro-preload-, so the preload half of the installation is not intact; "
   if [ -n "$bad" ]; then
     fact whole FAIL "${bad}the read-back verbatim: batch- lines [$(printf '%s' "$lines" | oneline)], doctor's summary [$(printf '%s\n' "$out" | grep -m1 '^fugaro doctor:' | oneline)], the preload images [$(printf '%s' "$images" | oneline)]"

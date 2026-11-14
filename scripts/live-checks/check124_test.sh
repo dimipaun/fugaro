@@ -42,7 +42,7 @@ trap cleanup_all EXIT
 KNOBS="FAKE124_JOBS FAKE124_JOBJSON FAKE124_JOBLABELS FAKE124_STATE_SEQ
 FAKE124_CODE FAKE124_RETRY FAKE124_MACHINE FAKE124_BOOT FAKE124_NET FAKE124_SUBNET
 FAKE124_SPOT FAKE124_INSTANCES FAKE124_RUNVMS FAKE124_RUNVMS_SEQ FAKE124_TEMPLATES FAKE124_IMAGES
-FAKE124_DELETE FAKE124_DOCTOR_ALL FAKE124_DOCTOR FAKE124_STRICT_EXIT
+FAKE124_DELETE FAKE124_DOCTOR_ALL FAKE124_DOCTOR_ALL_EXIT FAKE124_DOCTOR FAKE124_STRICT_EXIT
 FAKE124_PLANONLY FAKE124_PLANONLY_EXIT FAKE124_VALIDATE FAKE124_VALIDATE_EXIT
 FAKE124_BACKENDS FAKE124_BACKENDS_EXIT FAKE124_RUNS FAKE124_RUNS_FIRST
 FAKE124_RUNS_TEXT FAKE124_RUN FAKE124_RUN_EXIT FAKE124_BUDGET
@@ -322,15 +322,25 @@ case "$*" in
 "doctor --project fugaro --all")
   emit FAKE124_DOCTOR_ALL 'project: fugaro (GCP fugaro-dev, us-east5)
 batch: configured'
+  exit "${FAKE124_DOCTOR_ALL_EXIT:-0}"
   ;;
 "doctor --strict --project fugaro")
   emit FAKE124_DOCTOR 'info batch-artifact-boundary: the run accounts may read the artifact repository and nothing else
 fugaro doctor: 12 checks, 0 warnings'
   exit "${FAKE124_STRICT_EXIT:-0}"
   ;;
-"doctor --project fugaro")
+"doctor --all --project fugaro")
   emit FAKE124_DOCTOR 'info batch-artifact-boundary: the run accounts may read the artifact repository and nothing else
 fugaro doctor: 12 checks, 0 warnings'
+  exit "${FAKE124_STRICT_EXIT:-0}"
+  ;;
+"doctor --project fugaro")
+  # The default view prints no measurement, and batch-artifact-boundary is one
+  # (internal/cli/doctor_render.go's doctorMeasureIDs), so this -- the shape a
+  # healthy installation really answers WITHOUT --all -- carries no batch- line
+  # at all. It is what a check that dropped --all would read, and the happy
+  # cases below fail on it rather than passing over it.
+  printf '%s\n' 'fugaro doctor: 12 checks, 0 warnings'
   exit "${FAKE124_STRICT_EXIT:-0}"
   ;;
 "setup --plan-only --provision-batch --project fugaro")
@@ -615,6 +625,20 @@ fugaro doctor: 12 checks, 1 warning'
   expect_contains "$out" "fugaro-preload-deadbeef is not there" "batch warning: the line is quoted whole"
 }
 
+test_part_a_a_batch_error_is_a_fail() {
+  setup_case a-error
+  # The severity a FAILING Batch check carries once the config selects the
+  # backend is none at all, and doctor words that "error" -- not "warning". A
+  # row matching only `^warning batch-` reads this installation as a pass.
+  export FAKE124_DOCTOR='error batch-log-sink: the sink is gone
+fugaro doctor: 12 checks, 1 error'
+  export FAKE124_STRICT_EXIT=1
+  run124 --part a
+  expect_status "$status" 1 "batch error"
+  expect_fact doctor FAIL "batch error"
+  expect_contains "$out" "error batch-log-sink: the sink is gone" "batch error: the line is quoted whole"
+}
+
 test_part_a_a_strict_exit_without_a_batch_warning_is_a_reading() {
   setup_case a-strict-other
   # doctor as a whole is not OK, and the Batch half is: the row says both rather
@@ -626,7 +650,7 @@ fugaro doctor: 12 checks, 1 warning'
   run124 --part a
   expect_status "$status" 0 "strict exit without a batch warning"
   expect_fact doctor INFO "strict exit without a batch warning"
-  expect_contains "$out" "NO batch- line is a warning" "strict exit without a batch warning: the row says which half is OK"
+  expect_contains "$out" "NO batch- line is an error or a warning" "strict exit without a batch warning: the row says which half is OK"
 }
 
 test_part_a_a_doctor_with_no_batch_line_is_a_fail() {
@@ -1025,6 +1049,23 @@ fugaro doctor: 12 checks, 1 warning'
   expect_fact whole FAIL "a new batch warning"
 }
 
+test_part_d_a_new_batch_error_is_a_fail() {
+  setup_case d-error
+  : >"$dir/work/jobs-before.txt"
+  : >"$dir/work/instances-before.txt"
+  : >"$dir/work/templates-before.txt"
+  # The whole-installation read-back over an `error batch-` line: the row is the
+  # only thing between an installation a Batch check failed on and a PASS.
+  export FAKE124_DOCTOR='error batch-reaper-job: the reaper job is gone
+fugaro doctor: 12 checks, 1 error'
+  run124 --part d
+  expect_status "$status" 1 "a batch error after the check"
+  expect_fact whole FAIL "a batch error after the check"
+  expect_contains "$out" "a batch- line that is an error or a warning is there" \
+    "a batch error after the check: the row says which halves it read"
+  expect_absent "$out" "FACT whole: PASS" "a batch error after the check: no PASS is printed over it"
+}
+
 test_part_d_a_missing_preload_image_is_a_fail() {
   setup_case d-noimage
   : >"$dir/work/jobs-before.txt"
@@ -1093,6 +1134,22 @@ test_the_installation_line_is_the_stop() {
   expect_no_cloud_after_doctor "another installation"
 }
 
+test_the_installation_guard_reads_the_line_and_not_the_exit_code() {
+  setup_case g-install-exit
+  # doctor exits 1 on any check at an error severity, and once the config
+  # selects backend: cloud-batch every failing Batch check is one -- which is
+  # the finding 124a exists to read. A guard that took that exit as a refusal
+  # would stop here and call a run it is about another installation.
+  export FAKE124_DOCTOR_ALL_EXIT=1 FAKE124_JOBS=- FAKE124_INSTANCES=- FAKE124_TEMPLATES=-
+  run124 --part a
+  expect_status "$status" 0 "a doctor that exits 1 with the right project line"
+  expect_fact installation PASS "a doctor that exits 1 with the right project line"
+  expect_contains "$out" "CHECK 124A RESULT: PASS" \
+    "a doctor that exits 1 with the right project line: the part ran rather than stopping"
+  expect_contains "$(cat "$dir/state/fugaro.calls")" "setup --plan-only" \
+    "a doctor that exits 1 with the right project line: the steps after the guard ran"
+}
+
 # expect_no_cloud_after_doctor: the installation guard is the one that reads the
 # cloud before it decides, so the case says instead that nothing AFTER it ran.
 expect_no_cloud_after_doctor() { # what
@@ -1155,6 +1212,7 @@ t test_part_a_reads_the_plan_and_the_two_readbacks
 t test_part_a_a_compute_address_in_the_plan_only_output_is_a_fail
 t test_part_a_a_refused_plan_only_is_a_fail
 t test_part_a_a_batch_warning_is_a_fail
+t test_part_a_a_batch_error_is_a_fail
 t test_part_a_a_strict_exit_without_a_batch_warning_is_a_reading
 t test_part_a_a_doctor_with_no_batch_line_is_a_fail
 t test_part_a_the_old_validate_refusal_is_a_fail
@@ -1189,6 +1247,7 @@ t test_part_d_an_instance_template_that_is_someone_elses_is_a_fail
 t test_part_d_a_vm_read_that_never_answered_is_a_fail
 t test_part_d_a_template_read_that_never_answered_is_a_fail
 t test_part_d_a_new_batch_warning_is_a_fail
+t test_part_d_a_new_batch_error_is_a_fail
 t test_part_d_a_missing_preload_image_is_a_fail
 t test_part_d_dry_run_touches_no_cloud
 t test_the_owner_marker_is_required
@@ -1196,6 +1255,7 @@ t test_another_checkout_is_refused
 t test_a_checkout_with_no_origin_is_refused
 t test_the_belong_project_is_refused
 t test_the_installation_line_is_the_stop
+t test_the_installation_guard_reads_the_line_and_not_the_exit_code
 t test_xtrace_is_refused
 t test_the_usage_is_the_usage
 t test_a_stopped_run_still_prints_the_whole_block
