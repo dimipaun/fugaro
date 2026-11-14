@@ -2,9 +2,9 @@
 
 **Nothing was implemented for this task: its deliverable was already on `main` when this run
 started.** This note is the evidence, and — with the B1 **State** line it moves in
-`docs/forge-authorship-images/implementation-plan.md` and the B1 row and counts it moves in
-`reconciliation-image-setup.md` — the pull request's whole change. No Go file, no test and no golden
-was touched.
+`docs/forge-authorship-images/implementation-plan.md`, the B1 row and counts it moves in
+`reconciliation-image-setup.md`, and the rows, counts and README lines C1 and X1 need for the same
+reason — the pull request's whole change. No Go file, no test and no golden was touched.
 
 ## Where it landed
 
@@ -28,14 +28,16 @@ The census `reconciliation-image-setup.md` — read against `origin/main` at `25
 and given the last word by its own header where it disagrees with the plan or the folder README about
 a task's *state* — reads B1 **Kept** at its line 96 ("no `internal/gitprov/kinds.go`…"), and the
 plan's B1 **State** line repeated that reading. Neither file has been edited since the census landed
-(`6a727d43`, #2258), so **every task merged after it still reads `Kept` in both of them**, and B1 is
-the one this run was handed. Moving the plan's line alone would not have settled it: under the
-folder's own rule the census would still have won, and B1 would still have read open.
+(`6a727d43`, #2258), so **every task merged after it read `Kept` in both of them** — B1, C1 and X1
+among them — and B1 is the one this run was handed. Moving the plan's line alone would not have
+settled it: under the folder's own rule the census would still have won, and B1 would still have read
+open.
 
 `docs/status.md` is the living table and already counts B1 merged — its `forge-authorship-images` row
 says 12/25 — so the tree was of one mind and the two snapshots were not. This run moves both B1 rows,
-and the census counts that row feeds (§1: merged 9 → 10, open 15 → 14, B1 out of the open list), so
-the folder stops reading B1 as open.
+and the census counts that row feeds, together with the rows and counts C1 and X1 need for the same
+reason (§1: merged 9 → 12, open 15 → 12, B1, C1 and X1 out of the open list, and the folder README's
+status line and index row with them), so neither snapshot reads any of the three as open.
 
 ## The task, point by point
 
