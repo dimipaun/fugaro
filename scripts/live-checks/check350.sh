@@ -451,6 +451,13 @@ RUN_BOUND_SECONDS=${CHECK350_CALL_SECONDS:-120}
 run_bounded() { # run_bounded SECONDS KEY DIR CMD...
   local secs=$1 key=$2 dir=$3
   shift 3
+  # The directory is checked rather than trusted: a call site that forgot it
+  # would hand the first word of the command to `cd`, run nothing at all, and
+  # have every read below report "no record" — a broken check reading as an
+  # empty bucket. This is a bug in this script and the run says so.
+  if [ ! -d "$dir" ]; then
+    die "an internal error: run_bounded was told to run from '$dir', which is not a directory. Nothing below was measured"
+  fi
   BOUNDED_TIMED_OUT=no
   (trap - ERR; cd "$dir" || exit 1; exec "$@") >>"$SCRATCH/$key.out" 2>>"$SCRATCH/$key.err" &
   # The poll is a tenth of a second and the bound is counted in tenths: a read
@@ -695,11 +702,22 @@ field() { # field FILE KEY
 }
 
 # row_field COLUMN RUN_ID — one column of one run's row of the listing read into
-# rows.txt (`1` run_id, `2` status, `3` failure_class, `4` created, `5` terminal,
-# `6` run, `7` cost). The run's own id is what picks the row: a list read by
-# position alone could be another run's.
-row_field() { # row_field COLUMN RUN_ID
-  awk -F'\t' -v id="$2" -v col="$1" '$1 == "row" && $2 == id { print $col; exit }' "$SCRATCH/rows.txt" 2>/dev/null
+# rows.txt. The run's own id is what picks the row: a list read by position alone
+# could be another run's. The columns are NAMED and not numbered, because the
+# row's own leading label shifts every index by one and the empty failure_class a
+# record written before the field shipped carries is what most of these reads are
+# about: an index counted by hand here is a comparison of two different columns.
+row_field() { # row_field run_id|status|failure_class|created|run RUN_ID
+  local col
+  case "$1" in
+  run_id) col=2 ;;
+  status) col=3 ;;
+  failure_class) col=4 ;;
+  created) col=5 ;;
+  run) col=7 ;;
+  *) return 1 ;;
+  esac
+  awk -F'\t' -v id="$2" -v c="$col" '$1 == "row" && $2 == id { print $c; exit }' "$SCRATCH/rows.txt" 2>/dev/null
 }
 
 # count_rows — how many rows the listing read into rows.txt carries.
@@ -800,29 +818,29 @@ step_branch() {
   say "cutting the reference $BRANCH at $REPO's HEAD (fugaro.yaml plus an unknown key, without touching your work tree)"
   local head blob tree commit idx="$SCRATCH/index"
   if ! head=$(git -C "$REPO" rev-parse HEAD 2>"$SCRATCH/git.err"); then
-    fact launch FAIL "the checkout's HEAD could not be read ($(first_line "$SCRATCH/git.err")): the reference the run is cut from is a commit of this checkout, so nothing could be launched"
+    fact branch FAIL "the checkout's HEAD could not be read ($(first_line "$SCRATCH/git.err")): the reference the run is cut from is a commit of this checkout, so nothing could be launched"
     return 0
   fi
   if ! git -C "$REPO" show "HEAD:fugaro.yaml" >"$SCRATCH/fugaro.yaml" 2>"$SCRATCH/git.err"; then
-    fact launch FAIL "fugaro.yaml could not be read from $REPO's HEAD ($(first_line "$SCRATCH/git.err")): the throwaway reference is HEAD with ONE file replaced, and a checkout with no tracked fugaro.yaml has nothing to replace"
+    fact branch FAIL "fugaro.yaml could not be read from $REPO's HEAD ($(first_line "$SCRATCH/git.err")): the throwaway reference is HEAD with ONE file replaced, and a checkout with no tracked fugaro.yaml has nothing to replace"
     return 0
   fi
   printf '\n# Check 350: an unknown key, which the repository config decoder refuses.\nchk350_invalid_key: true\n' >>"$SCRATCH/fugaro.yaml"
   if ! blob=$(git -C "$REPO" hash-object -w "$SCRATCH/fugaro.yaml" 2>"$SCRATCH/git.err"); then
-    fact launch FAIL "the replacement fugaro.yaml could not be written into $REPO's object store ($(first_line "$SCRATCH/git.err")): nothing was pushed and no run was launched"
+    fact branch FAIL "the replacement fugaro.yaml could not be written into $REPO's object store ($(first_line "$SCRATCH/git.err")): nothing was pushed and no run was launched"
     return 0
   fi
   rm -f "$idx"
   if ! (cd "$REPO" && env GIT_INDEX_FILE="$idx" git read-tree "$head") 2>"$SCRATCH/git.err"; then
-    fact launch FAIL "the reference's tree could not be read from HEAD ($(first_line "$SCRATCH/git.err")): nothing was pushed and no run was launched"
+    fact branch FAIL "the reference's tree could not be read from HEAD ($(first_line "$SCRATCH/git.err")): nothing was pushed and no run was launched"
     return 0
   fi
   if ! (cd "$REPO" && env GIT_INDEX_FILE="$idx" git update-index --add --cacheinfo "100644,$blob,fugaro.yaml") 2>"$SCRATCH/git.err"; then
-    fact launch FAIL "the replacement fugaro.yaml could not be put into the reference's tree ($(first_line "$SCRATCH/git.err")): nothing was pushed and no run was launched"
+    fact branch FAIL "the replacement fugaro.yaml could not be put into the reference's tree ($(first_line "$SCRATCH/git.err")): nothing was pushed and no run was launched"
     return 0
   fi
   if ! tree=$(cd "$REPO" && env GIT_INDEX_FILE="$idx" git write-tree 2>"$SCRATCH/git.err"); then
-    fact launch FAIL "the reference's tree could not be written ($(first_line "$SCRATCH/git.err")): nothing was pushed and no run was launched"
+    fact branch FAIL "the reference's tree could not be written ($(first_line "$SCRATCH/git.err")): nothing was pushed and no run was launched"
     return 0
   fi
   # An explicit identity: the commit is this check's, and a machine with no
@@ -830,20 +848,21 @@ step_branch() {
   if ! commit=$(cd "$REPO" && env GIT_INDEX_FILE="$idx" git \
     -c user.name="Check 350 (throwaway reference)" -c user.email="check350@example.invalid" \
     commit-tree "$tree" -p "$head" -m "Check 350: a fugaro.yaml with an unknown key (throwaway reference; safe to delete)" 2>"$SCRATCH/git.err"); then
-    fact launch FAIL "the reference's commit could not be made ($(first_line "$SCRATCH/git.err")): nothing was pushed and no run was launched"
+    fact branch FAIL "the reference's commit could not be made ($(first_line "$SCRATCH/git.err")): nothing was pushed and no run was launched"
     return 0
   fi
   BRANCH_COMMIT=$commit
   if ! git -C "$REPO" update-ref "refs/heads/$BRANCH" "$commit" 2>"$SCRATCH/git.err"; then
-    fact launch FAIL "the reference $BRANCH could not be created in $REPO ($(first_line "$SCRATCH/git.err")): the local branch is what the Restore deletes, so it is made before anything is pushed"
+    fact branch FAIL "the reference $BRANCH could not be created in $REPO ($(first_line "$SCRATCH/git.err")): the local branch is what the Restore deletes, so it is made before anything is pushed"
     return 0
   fi
   if ! git -C "$REPO" push --no-verify origin "refs/heads/$BRANCH:refs/heads/$BRANCH" >"$SCRATCH/push.out" 2>"$SCRATCH/push.err"; then
-    fact launch FAIL "the reference $BRANCH could not be pushed to $REPO's origin ($(first_line "$SCRATCH/push.err")): a run is cut from a ref the runner can fetch, so without it there is nothing to launch. Nothing was launched"
+    fact branch FAIL "the reference $BRANCH could not be pushed to $REPO's origin ($(first_line "$SCRATCH/push.err")): a run is cut from a ref the runner can fetch, so without it there is nothing to launch. Nothing was launched"
     return 0
   fi
   BRANCH_PUSHED=yes
   say "pushed $BRANCH ($commit, one file replaced) to $REPO's origin"
+  fact branch PASS "the reference this check cut is $BRANCH ($commit): cut at $REPO's HEAD with ONE file replaced and pushed to its origin, so the run below is cut from a ref the runner can fetch. It is this check's own — your work tree was never switched — and the Restore deletes it again"
 }
 
 # step_launch: ONE run, cut from that reference, refused at bootstrap. The
@@ -905,7 +924,7 @@ step_settle() {
   while [ "$ticks" -lt "$maxticks" ]; do
     ticks=$((ticks + 1))
     status=""
-    run_bounded "$RUN_BOUND_SECONDS" poll gcloud storage cat "gs://$B/$key" --project="$GCP"
+    run_bounded "$RUN_BOUND_SECONDS" poll "$REPO" gcloud storage cat "gs://$B/$key" --project="$GCP"
     if [ "$BOUNDED_STATUS" = 0 ] && read_json record "$SCRATCH/poll.out" "$SCRATCH/poll.txt"; then
       status=$(field "$SCRATCH/poll.txt" status)
       case "$status" in
@@ -971,7 +990,7 @@ step_target() {
     return 0
   fi
   say "listing the records under runs/$SLUG/ to find one written before failure_class shipped (gs://$B, metadata only)"
-  run_bounded "$RUN_BOUND_SECONDS" objects gcloud storage ls -l --recursive "gs://$B/runs/$SLUG/" --project="$GCP"
+  run_bounded "$RUN_BOUND_SECONDS" objects "$REPO" gcloud storage ls -l --recursive "gs://$B/runs/$SLUG/" --project="$GCP"
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
     fact target FAIL "gs://$B/runs/$SLUG/ could not be listed (exit $BOUNDED_STATUS): the old record this step is about is chosen from the bucket, before any fugaro read of the window, so a listing that does not answer leaves nothing to choose from. What gcloud printed is in $SCRATCH/objects.err"
     return 0
@@ -995,7 +1014,7 @@ step_target() {
     [ "$i" -lt "$want" ] || break
     i=$((i + 1))
     local key=${url#gs://$B/} out="$SCRATCH/cand$i"
-    run_bounded "$RUN_BOUND_SECONDS" "cand$i" gcloud storage cat "$url" --project="$GCP"
+    run_bounded "$RUN_BOUND_SECONDS" "cand$i" "$REPO" gcloud storage cat "$url" --project="$GCP"
     if [ "$BOUNDED_STATUS" != 0 ] || ! read_json record "$out.out" "$out.txt"; then
       skipped="$skipped $key"
       continue
@@ -1038,7 +1057,7 @@ step_target() {
   fi
   # The bucket's own line for the object, from a direct listing of it: the second
   # reading the read-only step compares beside the bytes.
-  run_bounded "$RUN_BOUND_SECONDS" target-ls gcloud storage ls -l "gs://$B/$TARGET_KEY" --project="$GCP"
+  run_bounded "$RUN_BOUND_SECONDS" target-ls "$REPO" gcloud storage ls -l "gs://$B/$TARGET_KEY" --project="$GCP"
   if [ "$BOUNDED_STATUS" = 0 ] && read_objects "$SCRATCH/target-ls.txt" "$SCRATCH/target-ls.out" "^gs://[^/]+/runs/$SLUG/[^/]+/result\\.json$"; then
     T0_LINE=$(object_line "$SCRATCH/target-ls.txt")
   fi
@@ -1078,8 +1097,8 @@ step_agree() {
     return 0
   fi
   local row_class row_seen
-  row_class=$(row_field 3 "$RUN_ID")
-  row_seen=$(row_field 1 "$RUN_ID")
+  row_class=$(row_field failure_class "$RUN_ID")
+  row_seen=$(row_field run_id "$RUN_ID")
   if [ -z "$row_seen" ]; then
     fact agree FAIL "fugaro runs ls --json printed no row for $RUN_ID in this window (--since $SINCE_USED): the run this check launched is not in the listing it just read, so the row's class cannot be compared with the diagnosis. The listing's rows are in $SCRATCH/rows.out"
     return 0
@@ -1138,27 +1157,30 @@ step_groups() {
     return 0
   fi
   # The window's failed rows are its rows carrying a class — only a run that
-  # failed has one — which is exactly what the block groups.
-  local failed=0 cls
-  while IFS=$'\t' read -r kind _rid _status cls _created _terminal _run _cost; do
-    [ "$kind" = row ] || continue
-    [ -n "$cls" ] && failed=$((failed + 1))
-  done <"$SCRATCH/rows.txt"
-  local sum=0 mismatch="" groups_n counted
+  # failed has one — which is exactly what the block groups. Every one of these
+  # figures is read with awk and not with bash's `read`: a tab is IFS whitespace,
+  # so `read` DROPS an empty field and would shift a row whose class is empty into
+  # the columns after it — and an empty class is exactly what this step reads.
+  local failed sum mismatch groups_n
+  failed=$(awk -F'\t' '$1 == "row" && $4 != "" { n++ } END { print n + 0 }' "$SCRATCH/rows.txt")
+  sum=$(awk -F'\t' '$1 == "group" { s += $3 } END { print s + 0 }' "$SCRATCH/grouped.txt")
+  # Every row of that class in the window has to be in the group: a group whose
+  # count is not the window's own rows of that class is a figure that does not
+  # follow from the listing beside it.
+  mismatch=$(awk -F'\t' '
+    FNR == NR {
+      if ($1 == "group") { want[$2] = $3; order[++n] = $2 }
+      next
+    }
+    $1 == "row" && $4 != "" { rows[$4]++ }
+    END {
+      for (i = 1; i <= n; i++) {
+        c = order[i]
+        have = rows[c] + 0
+        if (have != want[c] + 0) printf " %s=%s(rows=%s)", c, want[c], have
+      }
+    }' "$SCRATCH/grouped.txt" "$SCRATCH/rows.txt")
   groups_n=$(field "$SCRATCH/grouped.txt" groups)
-  while IFS=$'\t' read -r kind gclass gruns _gshare _gspend; do
-    [ "$kind" = group ] || continue
-    sum=$((sum + gruns))
-    # Every row of that class in the window has to be in the group: a group whose
-    # count is not the window's own rows of that class is a figure that does not
-    # follow from the listing beside it.
-    counted=0
-    while IFS=$'\t' read -r k2 _rid2 _status2 cls2 _c2 _t2 _r2 _cost2; do
-      [ "$k2" = row ] || continue
-      [ "$cls2" = "$gclass" ] && counted=$((counted + 1))
-    done <"$SCRATCH/rows.txt"
-    [ "$gruns" = "$counted" ] || mismatch="$mismatch $gclass=$gruns(rows=$counted)"
-  done <"$SCRATCH/grouped.txt"
   local plain_count window_runs
   plain_count=$(count_rows)
   window_runs=$(field "$SCRATCH/rows.txt" runs)
@@ -1172,14 +1194,15 @@ step_groups() {
 
   # share is a share of the window's RUNS (the decision the block's own comment
   # names): the figure of the row beside it, and never a share of the spend. So
-  # the check recomputes it from the two counts the block itself carries.
+  # the check recomputes it from the two counts the block itself carries, at the
+  # four decimal places the block rounds to.
   local bad_share=""
-  while IFS=$'\t' read -r kind gclass gruns gshare _gspend; do
-    [ "$kind" = group ] || continue
-    local want
-    want=$(python3 -c 'import sys; print(round(float(sys.argv[1]) / float(sys.argv[2]), 4))' "$gruns" "$plain_count")
-    [ "$gshare" = "$want" ] || bad_share="$bad_share $gclass=$gshare(want $want)"
-  done <"$SCRATCH/grouped.txt"
+  bad_share=$(awk -F'\t' -v n="$plain_count" '
+    $1 == "group" {
+      want = ($3 + 0) / n
+      want = int(want * 10000 + 0.5) / 10000
+      if (($4 + 0) != want) printf " %s=%s(want %s)", $2, $4, want
+    }' "$SCRATCH/grouped.txt")
   if [ -n "$groups_n" ] && [ "$groups_n" != 0 ] && [ -z "$bad_share" ]; then
     fact share PASS "every group's share is its runs over the window's runs ($plain_count), to four decimal places: share follows the runs and not the spend, and the spend it does not follow is the column beside it"
   elif [ -z "$bad_share" ]; then
@@ -1227,7 +1250,7 @@ step_target_class() {
     return 0
   fi
   local row_class diag_class
-  row_class=$(row_field 3 "$TARGET_RUN")
+  row_class=$(row_field failure_class "$TARGET_RUN")
   diag_class=$(field "$SCRATCH/old-diagnose.txt" failure_class)
   TARGET_CLASS=$row_class
   if [ -z "$row_class" ]; then
@@ -1303,13 +1326,13 @@ step_readonly() {
   fi
   say "re-reading the old record to compare it with the readings taken before the first read: gcloud storage cat gs://$B/$TARGET_KEY"
   local out="$SCRATCH/target-after.out"
-  run_bounded "$RUN_BOUND_SECONDS" target-after gcloud storage cat "gs://$B/$TARGET_KEY" --project="$GCP"
+  run_bounded "$RUN_BOUND_SECONDS" target-after "$REPO" gcloud storage cat "gs://$B/$TARGET_KEY" --project="$GCP"
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
     fact readonly FAIL "gs://$B/$TARGET_KEY could not be read again after the CLI's three reads (exit $BOUNDED_STATUS): the comparison this step is about was not made, so nothing is concluded about what a read writes. What gcloud printed is in $SCRATCH/target-after.err"
     return 0
   fi
   T1_HASH=$(hash_of "$out")
-  run_bounded "$RUN_BOUND_SECONDS" target-after-ls gcloud storage ls -l "gs://$B/$TARGET_KEY" --project="$GCP"
+  run_bounded "$RUN_BOUND_SECONDS" target-after-ls "$REPO" gcloud storage ls -l "gs://$B/$TARGET_KEY" --project="$GCP"
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
     fact readonly FAIL "the bucket's own line for gs://$B/$TARGET_KEY could not be read again (exit $BOUNDED_STATUS): the bytes were hashed and the object's own line was not, so half of this comparison was not made. What gcloud printed is in $SCRATCH/target-after-ls.err"
     return 0
@@ -1628,7 +1651,6 @@ main() {
     return 0
   fi
   write_reader
-  fact branch INFO "the reference this run makes is $BRANCH${BRANCH_COMMIT:+ ($BRANCH_COMMIT)}, and the run below is cut from it: both are this check's own, and the Restore reads the branch back as gone"
   step_branch
   step_launch
   step_settle
