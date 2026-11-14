@@ -19,7 +19,7 @@ project config** — a sentence it prints and exits on — so the figures below
 are counted from the registry in this tree through the same predicate the write path uses, which is
 what the guard at the end of this section re-runs.
 
-- **F1 — the registry is 436 rows and the generic writer carries 193 of them.** 105 by name
+- **F1 — the registry is 437 rows and the generic writer carries 193 of them.** 105 by name
   (`internal/cli/settings_set.go:106`), made of the thirteen §4.4 names (the four budget scalars,
   `base_branch`, `max_parallel`, `update_check`, `commit_name`, `commit_email`, `layer.default_profile`,
   and D873's three account keys — `default_claude_account`, `claude_account_auto` and the wildcard
@@ -41,7 +41,7 @@ what the guard at the end of this section re-runs.
   `layer.defaults.`, `layer.governance.`, `credentials.`, `clone_urls.`, `escalation.`):
   13 + 7 + 2 + 1 + 37 + 36 + 1 + 4 + 4 = 105, the last four being the ladder's per-mode override rows
   below.
-  **243 rows have no generic writer**, and the audit's whole subject is which of them are a defect and
+  **244 rows have no generic writer**, and the audit's whole subject is which of them are a defect and
   which are the installation's own plumbing (F13, D1182). The count moved from 390 by the image setup
   skill's two rows: the map (D1906) is the `image map` family's and one row, so it is not carried here,
   and the bake switch above is — and it moved again by the stop rule's two rows,

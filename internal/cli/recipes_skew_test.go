@@ -2966,3 +2966,241 @@ func TestPairImageWhy(t *testing.T) {
 		})
 	}
 }
+
+// visionSkewHead is configSkewHead with the vision slot written: the key
+// visionSince's launch gate judges, which V1 gave the two homes every
+// project-layer key has (config.Scopes: InProject | InRepo) and which no
+// release before V3 refused a launch over.
+const visionSkewHead = "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nagent: { auth: api-key, models: { vision: deepseek/deepseek-v4.1-flash } }\n"
+
+// visionSkewLayer is the project layer TestRunRefusesTheLayersVisionOnAnOlderBaseImage
+// publishes: testProjectLayer's own text with the vision slot written under
+// defaults.agent.models, the second home the key has. It is written with
+// nothing under it — a null leaf — because that is the shape that tells the
+// gate's reader from the resolved value: the layer's text writes the key, an
+// older runner's KnownFields decoder refuses it whatever it holds, and
+// ProjectLayer.SetsDefault answers false for a null while the gate has to fire.
+const visionSkewLayer = "version: 1\nproject: aurora\ngcp_project: proj-1234\ndefaults:\n  git: { provider: github }\n  agent: { auth: api-key, models: { vision: } }\nprofiles:\n  svc:\n    commands: { build: sh build.sh, test: sh test.sh }\ndefault_profile: svc\n"
+
+// TestVisionSinceRefusesAnOlderImage is visionSince's launch gate and V3's red
+// step: before it, a task whose job image predates the release launched against
+// a configuration carrying agent.models.vision and died inside the runner, at
+// bootstrap, on a key nobody could do anything about any more. The judge is the
+// workflow's build record, as it is for every other per-workflow image gate
+// (checkImageSince), and the key is what is judged and not the model it names:
+// an older runner's decoder refuses the line whatever it holds.
+func TestVisionSinceRefusesAnOlderImage(t *testing.T) {
+	f := newCloudFixture(t)
+	older := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, visionSince, -1)
+	configSkewCheckout(t, f, visionSkewHead+configSkewWorkflow)
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", older)
+	_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want the launch refused", err)
+	}
+	for _, want := range []string{
+		"fugaro.yaml's agent.models.vision of acme/other",
+		"knows the vision slot (agent.models.vision)",
+		"fugaro " + visionSince + " or later",
+		older + ", release " + shiftRelease(t, visionSince, -1),
+		imageGateRemedy,
+		"; or remove agent.models.vision from fugaro.yaml",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%v lacks %q", err, want)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("%d executions, want none", n)
+	}
+}
+
+// TestVisionSinceAllowsTheReleaseItself: the boundary is the constant's own —
+// one release below is refused, the constant's release and one above launch —
+// and a configuration that writes no vision slot is never held to it, which is
+// the shape every other key's gate has (a file that writes nothing asks the
+// older runner for nothing).
+func TestVisionSinceAllowsTheReleaseItself(t *testing.T) {
+	below, above := shiftRelease(t, visionSince, -1), shiftRelease(t, visionSince, 1)
+	for _, c := range []struct {
+		rel     string
+		refused bool
+	}{
+		{below, true},
+		{visionSince, false},
+		{above, false},
+	} {
+		t.Run(c.rel, func(t *testing.T) {
+			f := newCloudFixture(t)
+			configSkewCheckout(t, f, visionSkewHead+configSkewWorkflow)
+			writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:"+c.rel)
+			_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+			if !c.refused {
+				if err != nil {
+					t.Fatalf("release %s: err = %v, want launched", c.rel, err)
+				}
+				return
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want the launch refused", err)
+			}
+		})
+	}
+	t.Run("a file that writes no vision slot", func(t *testing.T) {
+		f := newCloudFixture(t)
+		configSkewCheckout(t, f, configSkewHead+configSkewWorkflow)
+		writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:"+below)
+		if _, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task"); err != nil {
+			t.Fatalf("err = %v, want launched: the gate is the key's", err)
+		}
+	})
+}
+
+// TestRunRefusesTheLayersVisionOnAnOlderBaseImage: the key's other home is the
+// project layer, and the subject says so — that key is the operator's to remove
+// and it breaks every repository of the project whose job image is older, while
+// the repository's own file says nothing about it. The layer writes the key
+// with nothing under it, so a gate that read the resolved slot or the layer's
+// SetsDefault would launch a run that dies at bootstrap on a line the operator
+// did write.
+func TestRunRefusesTheLayersVisionOnAnOlderBaseImage(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, visionSkewLayer)
+	dir := layerCheckout(t, f, minimalAnchored)
+	registerOtherLocally(t, f)
+	commitRef(t, dir, "main")
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, visionSince, -1))
+	_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want the launch refused", err)
+	}
+	for _, want := range []string{
+		"the project layer's defaults.agent.models.vision (read for acme/other)",
+		"knows the vision slot (the project layer's defaults.agent.models.vision)",
+		imageGateRemedy,
+		"remove defaults.agent.models.vision from the project layer",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%v lacks %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "fugaro.yaml's agent.models.vision") {
+		t.Errorf("the refusal blames the repository's file, which writes no vision slot: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+}
+
+// TestRunRefusesVisionOnACloneWorkflowsOlderBaseImage: a checkout: clone
+// workflow's job has no derived image and so no build record to judge, so the
+// gate judges base_images.base's own release (checkCloneImageSince) and names
+// the fix that image has — fugaro update --base base — rather than an image
+// refresh of a workflow that is never built. The boundary is the constant's
+// own, as it is on the built-image route: one release below is refused, the
+// constant's release launches.
+func TestRunRefusesVisionOnACloneWorkflowsOlderBaseImage(t *testing.T) {
+	for _, c := range []struct {
+		rel     string
+		refused bool
+	}{
+		{shiftRelease(t, visionSince, -1), true},
+		{visionSince, false},
+	} {
+		t.Run(c.rel, func(t *testing.T) {
+			f := newCloudFixture(t)
+			base := "ghcr.io/dimipaun/fugaro-base:" + c.rel
+			f.appendConfig(t, "base_images: {base: "+base+"}\n")
+			configSkewCheckout(t, f, visionSkewHead+
+				"workflows:\n  svc: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n")
+			_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+			if !c.refused {
+				if err != nil {
+					t.Fatalf("release %s: err = %v, want launched", c.rel, err)
+				}
+				return
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want the launch refused", err)
+			}
+			for _, want := range []string{
+				"fugaro.yaml's agent.models.vision of acme/other",
+				"knows the vision slot (agent.models.vision)",
+				"Run fugaro update --base base",
+				base,
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("%v lacks %q", err, want)
+				}
+			}
+			if n := len(f.run.Executions()); n != 0 {
+				t.Fatalf("%d executions, want none", n)
+			}
+		})
+	}
+}
+
+// TestVisionSinceIsTheReleaseTheDocsName holds visionSince to the readers that
+// state its number: docs/release.md's Before-you-tag bullet and the
+// descriptions of the three schemas both new members live in — the vision slot
+// in fugaro.schema.json and project-layer.schema.json, and the two members' rows
+// in settings.schema.json, V1's key and V2's price member. It is the
+// planningSince test's shape, and it is what makes a release verify the number
+// against the tag it cuts: every other reader moves with the constant and stays
+// green at any number.
+func TestVisionSinceIsTheReleaseTheDocsName(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `visionSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no visionSince bullet: the checklist is where a release verifies the constant")
+	}
+	if !strings.Contains(bullet, "currently `\""+visionSince+"\"`") {
+		t.Errorf("docs/release.md's visionSince bullet does not carry the constant's release (%q)", visionSince)
+	}
+	// The two members shipped in tag v0.23.0, so the bullet names that tag and
+	// not a number still to be cut: a later number refuses a 0.23.0 or 0.24.0
+	// image whose readers do know the key.
+	for _, want := range []string{"agent.models.vision", "defaults.agent.models.vision", "image_tokens", "checkVisionImage", "checkCloneVisionImage", "policyImageTokensRefusal", "v0.23.0"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's visionSince bullet does not say %q", want)
+		}
+	}
+	if strings.Contains(bullet, "not tagged yet") {
+		t.Errorf("docs/release.md's visionSince bullet calls the release uncut, and %s is the tag that carries both members: the number is a cut one", visionSince)
+	}
+	// The schemas' own rows: the slot's line in each of the two files an
+	// operator writes it in, and the two registry rows settings.schema.json
+	// carries — a row block rather than a line, since a row's key, default and
+	// description are three lines of the unrolled document.
+	for _, tc := range []struct{ file, anchor, want string }{
+		{"schemas/fugaro.schema.json", `"vision": { "$ref": "#/$defs/modelName"`, "refuses the key"},
+		{"schemas/project-layer.schema.json", `"vision": { "type": "string", "maxLength": 100`, "refuses the key"},
+		{"schemas/settings.schema.json", `"agent.models.vision": {`, "refuses the key"},
+		{"schemas/settings.schema.json", `"layer.defaults.agent.models.vision": {`, "refuses the key"},
+		{"schemas/settings.schema.json", `"model_prices.*.image_tokens": {`, "refuses the member"},
+	} {
+		lines := strings.Split(readDoc(t, tc.file), "\n")
+		at := -1
+		for i, l := range lines {
+			if strings.Contains(l, tc.anchor) {
+				at = i
+				break
+			}
+		}
+		if at < 0 {
+			t.Errorf("%s: no row carries %q", tc.file, tc.anchor)
+			continue
+		}
+		end := min(at+4, len(lines))
+		row := strings.Join(lines[at:end], "\n")
+		if want := "Fugaro before " + visionSince + " " + tc.want; !strings.Contains(row, want) {
+			t.Errorf("%s's %q row does not say %q:\n%s", tc.file, tc.anchor, want, row)
+		}
+	}
+}

@@ -2,8 +2,8 @@ package plugin_test
 
 // Docs tests (plan T7): the README's Getting started is the two steps of the
 // brief, and nothing in the repository still names a retired per-command
-// skill (the plugin has eight: setup, working, routing, parallelism, upgrade,
-// orchestrator, images and landing — the images one project-level, from
+// skill (the plugin has nine: setup, working, routing, parallelism, update,
+// orchestrator, images, spec-to-pr and landing — images project-level, from
 // docs/image-setup-skill, and the landing one the owner's ruling of
 // 2026-11-13).
 
@@ -56,7 +56,7 @@ func TestReadmeGettingStartedIsTwoSteps(t *testing.T) {
 // string names a per-command skill that no longer exists.
 func TestReadmeNamesNoRetiredSkill(t *testing.T) {
 	// The count alone is not in the pattern: "six skills" was retired text when
-	// five shipped, and eight is what the plugin carries now (O10, IS12, the
+	// five shipped, and nine is what the plugin carries now (O10, IS12, the
 	// landing skill of 2026-11-13), so a document that says the true number
 	// would be refused for saying it. What is retired is the set of names,
 	// which the rest of the pattern lists.

@@ -207,11 +207,11 @@ func settingsAccessJudge(ctx context.Context, in accesslib.Input, action accessl
 // nothing remembers is its own origin remote.
 func settingsAccessRepo(ctx context.Context, lc *localcfg.Config, o settingsWriteOptions) (string, error) {
 	if o.repo == "" {
-		repo, err := originRepo(ctx)
-		if err != nil {
-			return "", settingsAccessNoOrigin()
-		}
-		return canonicalRepoArg(lc, repo)
+		// The checkout's own origin, not originRepo's owner/name through
+		// canonicalRepoArg: that takes a bare owner/name's provider from the
+		// config's repos: map and refuses a checkout the config does not list,
+		// which is the write the comment above says must go through.
+		return settingsAccessOriginRepo(ctx)
 	}
 	repo, err := canonicalRepoArg(lc, o.repo)
 	if err != nil {
@@ -227,7 +227,7 @@ func settingsAccessRepo(ctx context.Context, lc *localcfg.Config, o settingsWrit
 // the provider — the pair a checkout is remembered by.
 func settingsAccessOriginRepo(ctx context.Context) (string, error) {
 	oi, ok := readOrigin(ctx, ".")
-	if ok && !oi.Rewritten {
+	if ok {
 		if provider := providerForHost(oi.Host); provider != "" {
 			if canonical, err := projectpolicy.Canonical(provider, oi.Repo); err == nil {
 				return canonical, nil
