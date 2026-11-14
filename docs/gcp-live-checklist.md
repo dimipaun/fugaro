@@ -874,6 +874,7 @@ probe account carries predefined grants only).
 | 521 | The early refusal, and the sentence an owner acts on ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 521** and task **V8**; **V5**'s bootstrap refusal — "the coder can't read an image the task names" — and **D2005**, **D2006** and **D2001**): a repository whose coder is priced without an image rate and with **no** `agent.models.vision`, and a task whose text names a `.png`: the run is refused at **bootstrap**, before its first stage, so no stage's work is paid for and thrown away — the failure the refusal exists to remove; its record's `failure_class` is `config_invalid`, its `reason` names the slot to set and the price member that gives that slot's model an image rate, its stage list is **empty** and its cost is **zero** | See "Check 521" below; `bash scripts/live-checks/check521.sh --sandbox <a sandbox repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check521_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | **NOTHING billable and no model call**: the run is refused at bootstrap, before its first stage, so no stage's work is paid for and the budget is not touched — which is why this check needs no `--yes`. It does start one Cloud Run job execution, and **nothing it launches outlives it**: a run that has not ended within `CHECK521_RUN_TIMEOUT_SECONDS` is cancelled with `fugaro cancel --now`, from the step that gives up on it and from the script's own exit trap. **OWNER-RUN, NOT RUN.** |
 | 292 | A catalog entry whose source names a build `context:` is built with the repository's files in it ([`docs/catalog-build-context/`](catalog-build-context/implementation-plan.md) §6, its **Check 292** and task **CB5**; that folder's **F22**, **F29**, **F30**, **F32** and **F33**, and **D1402**, **D1403**, **D1408** and **D1409**; the amendment it folds into is [`docs/project-image-catalog/context-design.md`](project-image-catalog/context-design.md), its §A5, §A6, §C3, §C4, §C5 and the fold-in at §11): one entry built from a repository's Dockerfile in a **subdirectory**, whose `COPY` reaches a file of the repository — the build the catalog could not run before this work — read back four ways: the built image **contains the copied file**, the record names **one** commit (`source_commit` and `context_commit` the same, and the image's `org.opencontainers.image.revision` that commit), the staged context **fires** the nightly decision with the `catalog-context` reason and the rebuild it submits is pinned to the staged commit, and after that rebuild the same entry decides **without** that reason. **What the plan's own step 4 cannot be run as written is the point of the section below:** the trigger's subject is the digest the operator's own copy **staged**, not the branch, so a pushed commit fires nothing by itself — the check is written against the code and says so | See "Check 292" below; **you** run it, on the **sandbox installation and the sandbox repository only, never `belong`**, from the sandbox repository's checkout, and **no agent runs any step of it** (there is **no script**: the check is the steps below) | One Cloud Build that runs (`fugaro image build <entry>`), one submitted-and-cancelled before its steps run (the staging that leaves the record behind), and the one rebuild the project's catalog check job submits when the entry fires: **all billable, and the rebuild is the point of the step**. Nothing is granted, no run is launched and no model is called, so there is no run spend. Two commits are pushed to the sandbox repository's branch and reverted (a third when step 5 loses its race with the build it cancels), and the entry, its staged objects, its record, its check state and its image are the check's own — the entry and its objects are removed in the Restore, the image is left in the shared registry (`fugaro image rm` never deletes one). **OWNER-RUN, NOT RUN.** |
 
+| 211 | The judge's input is blind, and the rate at which a judge names the model ([`docs/model-ab-testing/`](model-ab-testing/implementation-plan.md), its **Check 211** and task **A5.3**; that work's **U1** and **U2**, read against **A5.1**'s anonymiser and **A5.2**'s stored judge input): on the sandbox, one `fugaro run --recipe ab-judge` over at least five known pairs — the stored judge input, read out of the judge run's own bucket prefix, names **no** run ID, branch, model or commit trailer (**U1**), and the rate at which a judge asked "which model wrote A?" names it is **recorded as a number, never a pass or a fail** (**U2**) | See "Check 211" below; `bash scripts/live-checks/check211.sh --project <project> --bucket <sandbox bucket> --repo <owner/name>` is the whole of it, its sibling test `scripts/live-checks/check211_test.sh` drives it against fake `gcloud`, `fugaro` and `claude` only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project, a bucket or a repository naming that installation is refused before a single call); **no agent runs any step of it** | ONE sandbox judge run and what its task costs — the judge model's calls over the pairs it judges, on the sandbox's own budget — plus, where a `claude` is on the machine, up to `CHECK211_MAX_PROBES` one-word calls on your own credential for U2; every other call is a read. The check deletes the judge run's own `ab/` objects in its Restore (`--keep-objects` leaves them) and creates nothing else, so a second run of it has the same pairs to judge. **OWNER-RUN, NOT RUN.** |
 For check 13, `TestLiveSandboxRun` checks the following:
 
 - `run --total-timeout 15m --json` reports `launched`, run `<slug>/<id>` and
@@ -14109,3 +14110,85 @@ repositories and carries `pull_requests: write` alone.
 **What waits on it.** D4 (the advisory merge order) and the change-set half of the spec's promise
 that a set is ready or not ready as a whole: this run is the only reading of it, and a set that
 flips one pull request and leaves the other draft is a finding for this plan's owner.
+
+## Check 211: the judge's input is blind, and the rate at which a judge names the model (sandbox project and sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **A5.3** of
+[docs/model-ab-testing/implementation-plan.md](model-ab-testing/implementation-plan.md) — its "A5.3 Check 211"
+— and **run by you**: nothing below is a claim that the stored judge input is blind. The check is
+`scripts/live-checks/check211.sh` (its sibling test `scripts/live-checks/check211_test.sh` drives it against a
+fake `gcloud`, a fake `fugaro` and a fake `claude` only, and touches no network, no project and no credential),
+and **no agent runs any step of it**: a project, a bucket or a repository naming `belong` is refused by name
+before a single call.
+
+**What it settles.** **U1** — the judge never sees a run ID, branch name, model ID or commit metadata — and
+**U2** — how often a judge asked "which model wrote A?" names it — over one real `fugaro run --recipe ab-judge`
+on the sandbox. U1 is the plan's own rule and A5.1's anonymiser is the code that keeps it; U2 is a measurement
+of a model, so it is **recorded as a rate and is never a pass or a fail**: no exit code of this check depends
+on it.
+
+- **The premise, read first.** The repository's records under `gs://<bucket>/runs/<slug>/` — the newest
+  `CHECK211_MAX_RECORDS` of them — are read for **complete, unjudged pairs** inside the same 14-day window the
+  judge run's own launcher uses. Fewer than **five** and the check stops rather than launching: a judge run
+  that then stored five inputs is a reading of the harness, and an empty repository is not. The slug itself is
+  read from the bucket's own run prefixes (the readable half is built from `--repo` the way `task.Slug` builds
+  it, and the hash half comes from the prefix that matches); a bucket holding no such prefix, or two whose
+  readable halves agree, is a stop — `--slug` names the one you mean.
+- **The launch.** ONE `fugaro run --recipe ab-judge --repo <owner/name> --json`, launched by the script with
+  your own identity, and the slug and run ID it answers are cross-checked against the bucket and the records
+  above. **Nothing it launches outlives it**: a judge run that has not written its verdicts within
+  `CHECK211_WAIT_SECONDS` is cancelled with `fugaro cancel <slug>/<run> --now` from the step that gives up on
+  it, and the `judge-run` row says so.
+- **The four blindness rows (U1).** The manifest, the verdicts and every stored input the verdicts name are
+  read from the judge run's own prefix, and the **stored judge input** — `passes[].system` and
+  `passes[].prompt`, the two fields the judge was actually shown, which is what A5.2 stores — is scanned for
+  the run IDs and pair IDs this run and its manifest name, the run-ID shape A5.1 refuses, the arms' branches,
+  the arms' and the judge's models, and the three `Fugaro-*` commit trailers. Each of `blind-run-id`,
+  `blind-branch`, `blind-model` and `blind-trailer` is a criterion. The stored input's own record fields
+  (`pair_id`, `judge_model`) sit beside the passes and are never handed to the model, so they are not read:
+  a check that failed on them would fail on every well-formed input.
+- **What is recorded and gates nothing.** A word of the model vocabulary that an ordinary diff can carry
+  (`google`, `meta`, and the like) and commit metadata that is not one of the three trailers (`From <sha>`,
+  `Signed-off-by:`, `Co-Authored-By:`) are read out in the same row's detail and never flip its verdict: a
+  diff a fixture carries can hold one innocently, and a rule that failed on it would fail on good input.
+- **The five-input bar.** At least five stored inputs, one per judged pair. Fewer, or a verdict naming an
+  input that is not under the run's prefix, is a `FAIL` — the reading A5.2's storage is being checked for.
+- **The rate (U2).** Where a `claude` is on the machine, the judge's own stored prompt is handed back to the
+  judge's own model (`claude -p --tools "" --model <the run's judge model>`), from an empty directory, with one
+  extra question appended: which model or vendor wrote change A. Up to `CHECK211_MAX_PROBES` inputs are asked,
+  each with `CHECK211_CALL_SECONDS` to answer, and the `label-guess` row records how many answers name an arm's
+  model and how many name any model or vendor. No `claude`, no judge model in the verdicts, or no answer at
+  all is recorded as `INFO — not measured`, and none of it changes an exit code.
+- **The Restore.** The judge run's **own `ab/` objects** — its manifest, its verdicts and its stored inputs —
+  are deleted and the prefix is read back empty, so the pairs it judged are unjudged again and a second run of
+  this check has the same five pairs. The run itself and its record are left: a run cannot be un-launched, and
+  its record is what the history shows. `--keep-objects` leaves the objects and says so. Nothing else in the
+  bucket is touched — the arm runs' records and their patches are read only.
+
+**What a run costs.** ONE sandbox judge run and what its task costs — the judge model's calls over the pairs
+it judges, on the sandbox's own budget — plus, where a `claude` is on the machine, up to
+`CHECK211_MAX_PROBES` one-word calls on your own Claude Code login for U2. Every other call is a read with
+your own gcloud identity; no token is printed, pasted or traced, and nothing is created, granted or built. On
+disk it is one scratch directory, removed at the end.
+
+**Run it:**
+
+```sh
+bash scripts/live-checks/check211.sh --project <project> --bucket <sandbox bucket> --repo <owner/name> --dry-run
+bash scripts/live-checks/check211.sh --project <project> --bucket <sandbox bucket> --repo <owner/name>
+```
+
+Progress goes to stderr and one `CHECK 211 RESULT` block goes to stdout at the end: paste that whole block
+here and nothing else. **Exit `0`** is every criterion that was measured holding **and** the Restore confirming
+its teardown; **`1`** is a criterion that failed — a stored input that names a run, a branch, a model or a
+trailer, fewer than five stored inputs, or a judge run that wrote none; **`2`** is the check not being able to
+tell (a tool missing, a bucket that is not there or is not this repository's, a launch that was refused, a read
+that did not answer). A key the run never reached reads `FAIL — not reached`. The knobs are
+`CHECK211_DRY_RUN`, `CHECK211_KEEP_OBJECTS`, `CHECK211_WAIT_SECONDS` (900), `CHECK211_POLL_SECONDS` (15),
+`CHECK211_CALL_SECONDS` (180), `CHECK211_MAX_RECORDS` (80) and `CHECK211_MAX_PROBES` (10); none of them can
+point the check at another project, another bucket or another repository.
+
+**What waits on it.** A5.4's score and report show a verdict beside the hard signals, and the plan's own
+dependency list puts A5.3 before **A6.2 (Check 212)**, which is written in this file too: a judge whose input
+is not blind is a judge whose verdicts are drawn from the names of the things it was supposed to be comparing,
+and that is the state this check is the only outside reading of.
