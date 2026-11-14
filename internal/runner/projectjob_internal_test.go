@@ -1399,6 +1399,57 @@ func TestCoderIsRefusedInTheImplicitReviewJob(t *testing.T) {
 	}
 }
 
+// TestPlacedImplicitReviewRunStillMeetsTheProfileAdmission pins the gate the
+// implicit job stops at after this candidate places it, and it is a finding
+// this task reports rather than fixes: the placement is this task's, and the
+// halt below is the NEXT one.
+//
+// admissionCheck (and, one step later, checkProjectJobAccount) holds a run in a
+// project job to the admission of the profile the job's name carries
+// (projectpolicy.AdmissionRefusal over p.Profiles[job.Profile]), and a policy
+// that declares no profile defines none: ProfileFor fails closed with "the
+// policy defines no job profile, so \"standard\" cannot run". So a review run on
+// the implicit job is placed and then halts here — with a sentence about a
+// profile the launcher never claimed for it — which means piece 2's placement
+// alone does not yet make `fugaro review --pr N` run on a project that declares
+// no profile (Check 610).
+//
+// The fix is not this package's set of candidates: it is what the admission of
+// a project job whose profile is the implicit job's IS — the policy's own
+// admissions (the accounts block U2's answer is about, and the project's
+// allow_repos), which is a question about internal/runner/project.go's
+// admissionCheck and internal/projectpolicy, and a product decision a task of
+// its own carries. This test is where whoever takes it starts: it fails, and
+// moves with it, the moment the admission answers for a profile-less policy.
+func TestPlacedImplicitReviewRunStillMeetsTheProfileAdmission(t *testing.T) {
+	slug := identitySlug(t, "github", "acme/app")
+	job := implicitReviewJob()
+	p := &projectpolicy.Policy{Version: projectpolicy.Version}
+	r := identityRun(t, job, slug, nil, p, true)
+	r.spec.Mode = recipe.ModeReview
+	r.review = true
+	if _, _, _, err := r.jobIdentity(context.Background()); err != nil {
+		t.Fatalf("jobIdentity(%s) = %v: the placement is this candidate's, and it is not the gate this test is about", job, err)
+	}
+	for _, tc := range []struct {
+		name string
+		got  func() error
+	}{
+		{"the run's admission", func() error { return r.admissionCheck(context.Background()) }},
+		{"the job's credential", func() error { return r.checkProjectJobAccount(context.Background(), "oauth") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.got()
+			if err == nil {
+				t.Fatalf("the run went on: %s now answers for a profile-less policy, and this test must move with the change that made it", tc.name)
+			}
+			if !strings.Contains(err.Error(), `the policy defines no job profile, so "standard" cannot run`) {
+				t.Fatalf("%s = %v, want the profile admission's own fail-closed sentence: this is the gate the placement hands the run to", tc.name, err)
+			}
+		})
+	}
+}
+
 // clampConfigYAML is a repository that names no timeouts, which is the shape an
 // installation carries when it takes a release's new defaults without editing
 // its config: the engine's defaults apply, and this workflow's total is
