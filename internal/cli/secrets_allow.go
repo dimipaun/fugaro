@@ -89,8 +89,8 @@ A removal that leaves the list empty is allowed and is not a removal of the
 entry: the value is then stored for no repository, and the entry stays for the
 day a pattern is added back.
 
-This whole family is refused in a coding agent's session, --yes included (spec
-§5): what a secret reaches is a decision no plan shows. Nothing here reads or
+This whole family is refused in a coding agent's session (spec §5): what a
+secret reaches is a decision no plan shows. Nothing here reads or
 prints a value.
 
 This is a local file edit. It ends on one line: next: fugaro update — the

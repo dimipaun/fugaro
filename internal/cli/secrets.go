@@ -594,15 +594,14 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 	if o.policyWrite(cmd) {
 		return secretsSetPolicy(cmd, o, name)
 	}
-	if o.dryRun || o.yes {
+	if o.dryRun {
 		// A value is not a setting (D1171): it has no registry row, no diff
-		// shows it and no document carries it, so there is nothing for either
-		// flag to answer here — and a dry run answered with an empty document
-		// would read as "the value is not stored" when the write below stores
-		// it. --json is not among them: the store's own result document is
-		// what it prints, and it has printed it since before the policy write
-		// existed.
-		return userErr("--dry-run and --yes are the policy write's flags: a value is not a setting, so storing one has no diff and no confirmation to answer (D1171); pass --allow-data-to or --proxy to write project_secrets.%s, or run this command without them to store a value", pluginwire.Printable(name))
+		// shows it and no document carries it, so there is nothing for a dry
+		// run to answer here — and one answered with an empty document would
+		// read as "the value is not stored" when the write below stores it.
+		// --json is not among them: the store's own result document is what it
+		// prints, and it has printed it since before the policy write existed.
+		return userErr("--dry-run is the policy write's flag: a value is not a setting, so storing one has no diff to answer (D1171); pass --allow-data-to or --proxy to write project_secrets.%s, or run this command without it to store a value", pluginwire.Printable(name))
 	}
 	// The value path's own account (CL7a): one line per step, and --json's
 	// stdout stays the store's own document (G2) because the reporter puts its

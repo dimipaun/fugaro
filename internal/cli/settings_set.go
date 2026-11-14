@@ -434,15 +434,15 @@ adding a name to a followup.* list or turning one of those keys on, is a
 widening, and a widening is the owner's own step: nothing is asked for it at
 your own terminal, and a coding agent's session is refused it with the command
 to run yourself (D1552). Writing outside a repository is refused in a coding
-agent's session, --yes included: --yes never lifts that fence.
+agent's session, and no flag lifts that fence.
 
 --dry-run says what the edit would do — the key, the layer, the file, the old
 and the new value, and whether it raises a limit — and writes nothing: no
 confirmation, no backup, no change to any file. It is answered with no
 terminal, and with --json it prints the versioned document
 schemas/settings-write.schema.json describes, which is what a caller that draws
-an edit reads. --dry-run takes neither --yes (the two answer different
-questions) nor a bare --json.
+an edit reads. --dry-run takes no bare --json (the two answer different
+questions).
 
 Every write ends with one line: next: fugaro update.`,
 		Args: cobra.ArbitraryArgs,
@@ -492,8 +492,8 @@ writing one does (spec §3.7).
 value it takes away, and whether it raises a limit — and writes nothing: no
 confirmation, no backup, no change to any file. It is answered with no
 terminal, and with --json it prints the versioned document
-schemas/settings-write.schema.json describes. --dry-run takes neither --yes
-(the two answer different questions) nor a bare --json.
+schemas/settings-write.schema.json describes. --dry-run takes no bare --json
+(the two answer different questions).
 
 Every write ends with one line: next: fugaro update.`,
 		Args: cobra.ArbitraryArgs,
@@ -2425,15 +2425,13 @@ func settingsLayerReservedGate(cmd *cobra.Command, target settingsTarget, key st
 }
 
 // settingsDryRunFlags refuses the flag combinations a dry run does not take.
-// --dry-run and --yes answer different questions — one says what the edit would
-// do, the other answers a write that is about to happen — so the pair is
-// refused rather than resolved (D1106); --json is the dry run's own shape, and
-// a caller that asked for a document must not silently get a table instead.
+// --dry-run and --ask answer different questions — one says what the edit would
+// do, the other asks for the confirmations a write that is about to happen gets
+// — so the pair is refused rather than resolved (D1106); --json is the dry run's
+// own shape, and a caller that asked for a document must not silently get a
+// table instead.
 func settingsDryRunFlags(o settingsWriteOptions) error {
 	if o.dryRun {
-		if o.yes {
-			return userErr("--dry-run and --yes answer different questions: a dry run says what the edit would do and writes nothing, --yes answers a write; name one")
-		}
 		if o.ask {
 			return userErr("--dry-run and --ask answer different questions: a dry run confirms nothing and writes nothing, --ask is about the confirmations a write is given; name one")
 		}
