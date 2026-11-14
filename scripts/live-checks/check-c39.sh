@@ -194,9 +194,12 @@ finish() {
     failed=yes
   done <<<"$facts"
   if [ "$failed" = yes ] && [ "$status" = 0 ]; then status=1; fi
-  if [ -n "$UNMEASURED_KEYS" ] && [ "$status" = 0 ]; then
+  if [ -n "$UNMEASURED_KEYS" ]; then
+    # The row that could not be measured is named whatever else the run found,
+    # so the owner knows which reading is missing; the exit is 2 only when no
+    # other row FAILed, because a finding of its own is still a finding.
     say "this run could NOT measure ${UNMEASURED_KEYS// /, }: read the FAIL row(s) above, settle it, and run the check again"
-    status=2
+    if [ "$status" = 0 ]; then status=2; fi
   fi
   print_block "$facts" "$status"
   exit "$status"
@@ -365,26 +368,14 @@ elif what == "answer":
 PY
 }
 
-# read_json WHAT FILE OUT: run the reader and turn its output into `key=value`
-# lines in OUT, one per key (a key the reader printed twice keeps its last
-# value). Returns 1 when the reader could not read the document at all.
+# read_json: run the reader over a document and keep every line it printed in
+# OUT — both the `key=value` lines `field` reads and the tab-separated rows
+# `row` and `check_row` read. Returns 1 when the reader could not read the
+# document at all.
 read_json() { # read_json WHAT FILE OUT [ARGS...]
   local what=$1 file=$2 out=$3
   shift 3
-  python3 "$SCRATCH/read.py" "$what" "$file" "$@" >"$out.tmp" 2>"$out.err" || return 1
-  : >"$out"
-  local line key value
-  while IFS= read -r line; do
-    case "$line" in
-    *=*) ;;
-    *) continue ;;
-    esac
-    key=${line%%=*}
-    value=${line#*=}
-    grep -v "^${key}=" "$out" >"$out.next" 2>/dev/null || true
-    mv "$out.next" "$out"
-    printf '%s=%s\n' "$key" "$value" >>"$out"
-  done <"$out.tmp"
+  python3 "$SCRATCH/read.py" "$what" "$file" "$@" >"$out" 2>"$out.err" || return 1
   return 0
 }
 
@@ -448,7 +439,7 @@ guard_name() { # guard_name NAME
 
 guard_belong() {
   local name
-  for name in "${SANDBOX:-}" "${PROJECT:-}" "${REGION:-}" "${BUCKET:-}" "${CODING_JOB:-}" "${ACCOUNT:-}"; do
+  for name in "${SANDBOX:-}" "${PROJECT:-}" "${REGION:-}" "${BUCKET:-}" "${CODING_JOB:-}"; do
     guard_name "$name"
   done
   fact belong PASS "the checkout (${SANDBOX:-$PWD}), the project, the region, the bucket and the job this check reads name neither belong nor edge-devel-dimi nor edgeappinc: it is the sandbox installation's own review run"
@@ -596,10 +587,12 @@ step_doctor() {
     return 0
   fi
   local ok severity problem fix
-  ok=$(printf '%s' "$service" | cut -f2)
-  severity=$(printf '%s' "$service" | cut -f3)
-  problem=$(printf '%s' "$service" | cut -f4)
-  fix=$(printf '%s' "$service" | cut -f5)
+  # The row reads `check <id> <ok> <severity> <problem> <fix>`: the reader's own
+  # tab-separated shape, one field per thing doctor said.
+  ok=$(printf '%s' "$service" | cut -f3)
+  severity=$(printf '%s' "$service" | cut -f4)
+  problem=$(printf '%s' "$service" | cut -f5)
+  fix=$(printf '%s' "$service" | cut -f6)
   case "$severity" in
   warning | error)
     fact doctor-service FAIL "doctor reports the credentials service as ${severity}: ${problem} — its remedy reads: ${fix}. §8's step 1 is this row, and a ${severity} line is the finding; every row below reads a service that is not serving, so the check stops here"
@@ -616,7 +609,7 @@ step_doctor() {
   fi
   REVIEW_JOBS=$(row "$SCRATCH/doctor.txt" review_job | tr '\n' ' ')
   if [ -z "${REVIEW_JOBS// /}" ]; then
-    fact review-jobs FAIL "doctor's census line names no review job: it reads '$(printf '%s' "$census" | cut -f4)'. The census names each account's job and its review-only variant beside it ('review job <name> mounts no secret'), so an installation whose deployed job set has no variant is the finding §8's step 2 rests on — the variant is the job that holds no credential. Check the installation's profiles and its credential bundle, then run this check again"
+    fact review-jobs FAIL "doctor's census line names no review job: it reads '$(printf '%s' "$census" | cut -f5)'. The census names each account's job and its review-only variant beside it ('review job <name> mounts no secret'), so an installation whose deployed job set has no variant is the finding §8's step 2 rests on — the variant is the job that holds no credential. Check the installation's profiles and its credential bundle, then run this check again"
     return 0
   fi
   fact review-jobs PASS "doctor's census names $(printf '%s' "$REVIEW_JOBS" | wc -w | tr -d ' ') review-only job(s) — $(printf '%s' "$REVIEW_JOBS" | sed 's/ $//') — each of them 'mounts no secret' in doctor's own words, which is CSR6's second fact and the job §8's step 2 describes"
@@ -887,6 +880,17 @@ mint_token() { # mint_token ACCOUNT KEY
 # body to $SCRATCH/KEY.out and sets POST_STATUS. The body names the real run and
 # the real digest of what was signed, so a service that ADMITS the call answers
 # with a verdict about this run rather than about a made-up one.
+# post_call KEY CURL-ARGS...: one POST, with the body in $SCRATCH/KEY.body and
+# curl's own `%{http_code}` in $SCRATCH/KEY.out. The two are separate files on
+# purpose: curl's `-o` and this shell's own append are two writers on one path,
+# and a body a status line was appended to is a document nothing can parse.
+post_call() { # post_call KEY CURL-ARGS...
+  local key=$1
+  shift
+  run_bounded "$TIMEOUT" "$key" curl -sS -o "$SCRATCH/$key.body" -w '%{http_code}' "$@"
+  chmod 600 "$SCRATCH/$key.body" "$SCRATCH/$key.out" 2>/dev/null || true
+}
+
 post_verify() { # post_verify KEY [CONFIG]
   local key=$1 config=${2:-}
   local body="$SCRATCH/post-${key}.json"
@@ -894,34 +898,33 @@ post_verify() { # post_verify KEY [CONFIG]
 {"account":"${VERIFY_ACCOUNT}","digest":"${VERIFY_DIGEST}","signature":"${VERIFY_SIGNATURE}","run":"${RUN}","repository":"${VERIFY_REPO}"}
 JSON
   if [ -n "$config" ]; then
-    run_bounded "$TIMEOUT" "$key" curl --config "$config" -sS -o "$SCRATCH/$key.out" \
-      -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+    post_call "$key" --config "$config" -X POST -H 'Content-Type: application/json' \
       --data @"$body" "${SERVICE_URL}${VERIFY_PATH}"
   else
-    run_bounded "$TIMEOUT" "$key" curl -sS -o "$SCRATCH/$key.out" \
-      -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+    post_call "$key" -X POST -H 'Content-Type: application/json' \
       --data @"$body" "${SERVICE_URL}${VERIFY_PATH}"
   fi
-  chmod 600 "$SCRATCH/$key.out" 2>/dev/null || true
 }
 
-# read_answer KEY DETAIL: read one POST's answer. Sets ANSWER_KIND to `verdict`
-# (the service answered whether the pair is valid) or `refusal` (it refused the
-# call), and ANSWER_TEXT to the sentence it printed.
+# read_answer KEY: read one POST's answer. Sets ANSWER_KIND to `verdict` (the
+# service answered whether the pair is valid), `refusal` (it refused the call)
+# or `unreadable`, ANSWER_TEXT to the sentence it printed and ANSWER_STATUS to
+# the status line curl wrote.
 read_answer() { # read_answer KEY
   local key=$1
   ANSWER_KIND=unreadable
-  ANSWER_TEXT=$(tr -d '\r\n' <"$SCRATCH/$key.out" 2>/dev/null | head -c 400 || true)
-  if [ ! -s "$SCRATCH/$key.out" ]; then
-    ANSWER_TEXT="nothing at all (curl exited ${BOUNDED_STATUS})"
+  ANSWER_STATUS=$(tr -d '\r\n' <"$SCRATCH/$key.out" 2>/dev/null | head -c 20 || true)
+  ANSWER_TEXT=$(tr -d '\r\n' <"$SCRATCH/$key.body" 2>/dev/null | head -c 400 || true)
+  if [ ! -s "$SCRATCH/$key.body" ]; then
+    ANSWER_TEXT="nothing at all (curl exited ${BOUNDED_STATUS}, status ${ANSWER_STATUS:-none})"
     return 0
   fi
-  if ! read_json answer "$SCRATCH/$key.out" "$SCRATCH/$key.txt"; then
+  if ! read_json answer "$SCRATCH/$key.body" "$SCRATCH/$key.txt"; then
     return 0
   fi
   if [ "$(field "$SCRATCH/$key.txt" has_valid)" = true ]; then
     ANSWER_KIND=verdict
-    ANSWER_TEXT="valid=$(field "$SCRATCH/$key.txt" valid)"
+    ANSWER_TEXT="valid=$(field "$SCRATCH/$key.txt" valid) (HTTP ${ANSWER_STATUS:-?})"
   else
     ANSWER_KIND=refusal
     ANSWER_TEXT=$(field "$SCRATCH/$key.txt" error)
@@ -961,7 +964,7 @@ step_verify_class() {
     fact verify-unauthenticated FAIL "the verify route answered ${ANSWER_TEXT} to a call that carried NO token: the class that route admits is the caller's token, and a call without one is refused rather than answered. This is a finding about the route itself, and it is the one row of §8's step 8 that does not wait on Open item 5"
     ;;
   *)
-    unmeasured verify-unauthenticated "the verify route's answer could not be read (curl exit ${BOUNDED_STATUS}): it printed ${ANSWER_TEXT}, which is neither a refusal this check knows nor a verdict. What it printed is in $SCRATCH/no-token.out"
+    unmeasured verify-unauthenticated "the verify route's answer could not be read (curl exit ${BOUNDED_STATUS}): it printed ${ANSWER_TEXT}, which is neither a refusal this check knows nor a verdict. What it printed is in $SCRATCH/no-token.body"
     ;;
   esac
 
@@ -983,10 +986,10 @@ step_verify_class() {
     fact verify-review-refused PASS "the verify route refused ${REVIEW_SA} — the account the review job itself runs as — and its sentence reads: ${ANSWER_TEXT}. A verifier is not a run, so the review class is refused the verify route, which is §8's step 11 read from the route's own answer"
     ;;
   verdict)
-    fact verify-review-refused FAIL "the verify route answered ${ANSWER_TEXT} to a call made as ${REVIEW_SA}, the account the review job runs as: §8's step 11 is that the review class is refused the verify route, and a review account that can verify its own verdict is the widening this row exists to catch. The answer is in $SCRATCH/review.out"
+    fact verify-review-refused FAIL "the verify route answered ${ANSWER_TEXT} to a call made as ${REVIEW_SA}, the account the review job runs as: §8's step 11 is that the review class is refused the verify route, and a review account that can verify its own verdict is the widening this row exists to catch. The answer is in $SCRATCH/review.body"
     ;;
   *)
-    unmeasured verify-review-refused "the verify route's answer could not be read (curl exit ${BOUNDED_STATUS}): it printed ${ANSWER_TEXT}, which is neither a refusal this check knows nor a verdict. What it printed is in $SCRATCH/review.out"
+    unmeasured verify-review-refused "the verify route's answer could not be read (curl exit ${BOUNDED_STATUS}): it printed ${ANSWER_TEXT}, which is neither a refusal this check knows nor a verdict. What it printed is in $SCRATCH/review.body"
     ;;
   esac
 }
@@ -1034,25 +1037,24 @@ step_gate_coding() {
   refusal) refused="verify" ;;
   verdict)
     rm -f "$SCRATCH/token-coding.curl"
-    fact gate-coding FAIL "the verify route answered ${ANSWER_TEXT} to ${coding_sa}, the coding job's own account: §8's step 11 is that a coding shared project job is refused on every route, and a coding account that can verify a verdict is the gate failing where it was written. The answer is in $SCRATCH/coding.out"
+    fact gate-coding FAIL "the verify route answered ${ANSWER_TEXT} to ${coding_sa}, the coding job's own account: §8's step 11 is that a coding shared project job is refused on every route, and a coding account that can verify a verdict is the gate failing where it was written. The answer is in $SCRATCH/coding.body"
     return 0
     ;;
   *)
     rm -f "$SCRATCH/token-coding.curl"
-    unmeasured gate-coding "the verify route's answer to ${coding_sa} could not be read (curl exit ${BOUNDED_STATUS}): it printed ${ANSWER_TEXT}. What it printed is in $SCRATCH/coding.out"
+    unmeasured gate-coding "the verify route's answer to ${coding_sa} could not be read (curl exit ${BOUNDED_STATUS}): it printed ${ANSWER_TEXT}. What it printed is in $SCRATCH/coding.body"
     return 0
     ;;
   esac
   say "asking the sign route as the coding job: POST ${SERVICE_URL}${SIGN_PATH}"
-  run_bounded "$TIMEOUT" coding-sign curl --config "$SCRATCH/token-coding.curl" -sS -o "$SCRATCH/coding-sign.out" \
-    -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+  post_call coding-sign --config "$SCRATCH/token-coding.curl" -X POST -H 'Content-Type: application/json' \
     --data-binary '{"account":"","digest":"","signature":"","run":"","repository":""}' "${SERVICE_URL}${SIGN_PATH}"
   read_answer coding-sign
   rm -f "$SCRATCH/token-coding.curl"
   if [ "$ANSWER_KIND" = refusal ]; then
     fact gate-coding PASS "${coding_sa} — the coding shared project job's own account — is refused the verify route ('${verify_said}') and the sign route ('$(field "$SCRATCH/coding-sign.txt" error)') alike: the gate still holds where it was written, and both refusals' own sentences are what this row carries"
   else
-    fact gate-coding FAIL "the verify route refused ${coding_sa} ('${verify_said}'), and the sign route answered ${ANSWER_TEXT} to it: §8's step 11 is that a coding shared project job is refused on EVERY route, and this one was not. What it printed is in $SCRATCH/coding-sign.out"
+    fact gate-coding FAIL "the verify route refused ${coding_sa} ('${verify_said}'), and the sign route answered ${ANSWER_TEXT} to it: §8's step 11 is that a coding shared project job is refused on EVERY route, and this one was not. What it printed is in $SCRATCH/coding-sign.body"
   fi
 }
 
@@ -1198,11 +1200,6 @@ DRY_RUN=${DRY_RUN:-}
 # installed release, so it must be the one on PATH when the check started rather
 # than one a later step could put there.
 FUGARO_BIN=$(command -v fugaro || true)
-ACCOUNT=$(gcloud config get-value account 2>/dev/null | head -n 1 || true)
-case "$ACCOUNT" in
-"" | *@*) ;;
-*) ACCOUNT="" ;;
-esac
 
 # The constants §8 names: the service, its two review routes, the signing key's
 # own name and the object the signature is written to. They are what the service
@@ -1222,6 +1219,7 @@ VERIFY_SIGNATURE=""
 VERIFY_REPO=""
 ANSWER_KIND=""
 ANSWER_TEXT=""
+ANSWER_STATUS=""
 
 # the_frame_digest: the digest the service signs is the SHA-256 of the artifact's
 # exact bytes (runner/reviewartifact.go), and the framed message carries the
