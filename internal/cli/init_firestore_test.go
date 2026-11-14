@@ -87,6 +87,7 @@ func TestEnsureCreatesOnceAfterConfirmation(t *testing.T) {
 
 func TestEnsureAdoptsExisting(t *testing.T) {
 	r := newFBRig(t)
+	fakeTerminal(t)
 	r.fs.SetDatabase("us-east5")
 	if out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID); err != nil {
 		t.Fatalf("%v\n%s", err, out)
@@ -149,6 +150,7 @@ func TestPlanOnlyShowsEnsure(t *testing.T) {
 
 func TestRulesDenyAll(t *testing.T) {
 	r := newFBRig(t)
+	fakeTerminal(t)
 	if out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -160,6 +162,7 @@ func TestRulesDenyAll(t *testing.T) {
 
 func TestRulesSameApartFromFormattingAdopted(t *testing.T) {
 	r := newFBRig(t)
+	fakeTerminal(t)
 	r.rules.SeedRelease(denyAllReformatted)
 	if out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID); err != nil {
 		t.Fatalf("%v\n%s", err, out)
@@ -187,6 +190,7 @@ func TestRulesMismatchRefused(t *testing.T) {
 
 func TestRulesReadBackFlaky(t *testing.T) {
 	r := newFBRig(t)
+	fakeTerminal(t)
 	r.rules.FlakeAfterWrite(2) // eventually consistent: two reads miss it
 	if out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID); err != nil {
 		t.Fatalf("a slow read-back failed the step: %v\n%s", err, out)
@@ -235,6 +239,7 @@ func TestMarkOfOtherProjectRefused(t *testing.T) {
 
 func TestRerunIsNoOp(t *testing.T) {
 	r := newFBRig(t)
+	fakeTerminal(t)
 	if out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -289,6 +294,7 @@ func TestUnmarkedDatabaseWithOtherCollectionRefused(t *testing.T) {
 
 func TestUnmarkedEmptyDatabaseAdopted(t *testing.T) {
 	r := newFBRig(t)
+	fakeTerminal(t)
 	r.fs.SetDatabase("us-east5")
 	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID)
 	if err != nil {
@@ -309,6 +315,7 @@ func TestUnmarkedEmptyDatabaseAdopted(t *testing.T) {
 // database, and the rerun completes without a second create.
 func TestHalfFailedRerunCompletes(t *testing.T) {
 	r := newFBRig(t)
+	fakeTerminal(t)
 	r.rules.FailWrites(1)
 	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID)
 	if err == nil {
@@ -381,6 +388,7 @@ func TestAdoptNeedsNoLocationConfirmation(t *testing.T) {
 // exists (and is marked); the rerun refuses in Plan until deny-all is deployed.
 func TestDefaultReleaseAppearsAfterCreation(t *testing.T) {
 	r := newFBRig(t)
+	fakeTerminal(t)
 	loose := "rules_version = '2';\nservice cloud.firestore { match /databases/{d}/documents { match /{x=**} { allow read, write: if request.time < timestamp.date(2030, 1, 1); } } }"
 	r.rules.SeedAfterReads(2, loose)
 	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID)
@@ -423,6 +431,7 @@ func TestEnsureRefusesNonNativeDatabase(t *testing.T) {
 
 func TestCreateRaceAdoptsOnlyAcceptable(t *testing.T) {
 	r := newFBRig(t)
+	fakeTerminal(t)
 	r.fs.RaceCreate("us-east5")
 	if out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID); err != nil {
 		t.Fatalf("%v\n%s", err, out)
@@ -446,6 +455,7 @@ func TestCreateRaceAdoptsOnlyAcceptable(t *testing.T) {
 
 func TestUnreadableBeforeAPIEnabled(t *testing.T) {
 	r := newFBRig(t)
+	fakeTerminal(t)
 	r.fs.Refuse(403, "PERMISSION_DENIED", "SERVICE_DISABLED", "Cloud Firestore API has not been used in project")
 	out, _, err := executeStdin(t, "", "setup", "--firebase-project", fpID, "--plan-only")
 	if err != nil || !strings.Contains(out, "cannot be read yet") {
@@ -463,6 +473,7 @@ func TestUnreadableBeforeAPIEnabled(t *testing.T) {
 
 func TestMarkVersionNewerAccepted(t *testing.T) {
 	r := newFBRig(t)
+	fakeTerminal(t)
 	r.fs.SetDatabase("us-east5")
 	m := ownMark()
 	m["version"] = int64(2)
@@ -485,6 +496,7 @@ func TestMarkVersionNewerAccepted(t *testing.T) {
 // propagating) and failed the run. It is retried.
 func TestReadBackAfterCreateRetriesAPIPropagation(t *testing.T) {
 	r := newFBRig(t)
+	fakeTerminal(t)
 	r.fs.RemoveDatabase()
 	r.fs.DisabledReadsAfterCreate(3)
 	if out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID); err != nil {
