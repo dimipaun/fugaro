@@ -14,6 +14,7 @@
         "paths": [
           "internal/bbtokens/bbtokens.go",
           "internal/bbtokens/stub.go",
+          "internal/projectpolicy/tokens_shape.go",
           "docs/bitbucket-token-types/contract.md"
         ]
       },
@@ -50,7 +51,9 @@
           "internal/localcfg/localcfg.go",
           "internal/localcfg/bitbucket_tokens_test.go",
           "internal/config/bitbucket_tokens.go",
-          "internal/config/bitbucket_tokens_test.go"
+          "internal/config/bitbucket_tokens_test.go",
+          "internal/settings/registry.go",
+          "schemas/settings.schema.json"
         ]
       }
     },
@@ -65,7 +68,7 @@
         "paths": [
           "internal/projectpolicy/bitbucket.go",
           "internal/projectpolicy/bitbucket_test.go",
-          "internal/projectpolicy/read.go"
+          "internal/projectpolicy/policy.go"
         ]
       }
     },
@@ -216,6 +219,7 @@
       "footprint": {
         "prediction": true,
         "paths": [
+          "internal/gitprov/bitbucket/bitbucket.go",
           "internal/gitprov/bitbucket/comments.go",
           "internal/gitprov/bitbucket/comments_test.go",
           "internal/followup/select.go",
@@ -314,7 +318,6 @@
         "paths": [
           "internal/runner/project.go",
           "internal/runner/projectpolicy.go",
-          "internal/gitprov/bitbucket/service.go",
           "internal/gitprov/providers/providers.go",
           "internal/runner/bitbucket_identities_test.go"
         ]
@@ -460,12 +463,17 @@
     {
       "task": "T16",
       "needs": "T13",
-      "reason": "it feeds T13's adapter option, in the adapter files they share"
+      "reason": "the adapter Options field T13 adds and T16 fills"
     },
     {
       "task": "I1",
       "needs": "T16",
       "reason": "proves the identity set reaches the adapter"
+    },
+    {
+      "task": "T12",
+      "needs": "T6",
+      "reason": "it reads the identities from the state store T6 builds"
     }
   ],
   "decoupling": [
