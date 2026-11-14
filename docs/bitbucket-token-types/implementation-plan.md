@@ -313,7 +313,7 @@ The graph is in [implementation-plan.graph.json](implementation-plan.graph.json)
 
 **Critical path** (the read): C1 → T13 → T16 → I1 → CK, five tasks (C1 → T8 → T9 → I1 → CK is the same length). It is sequential because the adapter option precedes the runner that feeds it, the proxy's selection step and its reaction share one file, the integration waits for every side, and the live checks run the integrated proxy.
 
-**The gain** (the read): 8 edges broken, 11 kept, 3 nodes added (one contract, one integration, one anticipated change request); the weighted path goes from 11 to 10.5, which the CLI reports as an improvement. It is small because the dominant chain is the proxy file's own two tasks, which a contract cannot split.
+**The gain** (the read): 8 edges broken, 12 kept, 3 nodes added (one contract, one integration, one anticipated change request); the weighted path goes from 11 to 10.5, which the CLI reports as an improvement. It is small because the dominant chain is the proxy file's own two tasks, which a contract cannot split.
 
 **Shared-files table** (no level holds two writers of one file; the contract's own `stub.go` is deleted by its integration task):
 
