@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -53,42 +54,42 @@ func TestUpdateConvergesPastAnInvalidCheckoutFugaroYAML(t *testing.T) {
 		t.Fatalf("the fixture's installed plugin is %q, want %q", got, convergePrev)
 	}
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	// The owner's own terminal, which is what confirms the steps the run asks
+	// about now the flag that stood in for it is gone (T11).
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update")
 	if err == nil {
 		t.Fatalf("the run reported success while the checkout's own fugaro.yaml is invalid:\n%s", out)
 	}
-	var res convergeJSON
-	if uerr := json.Unmarshal([]byte(runJSONObject(t, out)), &res); uerr != nil {
-		t.Fatalf("%v:\n%s\n%s", uerr, out, errOut)
-	}
+	account := reportLines(out + newestLog(t, "update"))
 
 	// The checkout's file is still the user's to fix, and the run leaves them
 	// the command that says how.
-	if got := res.state(initflow.Repository); got != "needs-you" {
-		t.Errorf("the repository stage is %q, want needs-you: the invalid file is the user's to fix\n%s", got, out)
+	if l := stepLineOf(account, initflow.Repository); !strings.HasPrefix(l, markLeft) {
+		t.Errorf("the repository stage's line is %q, want a step left for the user: the invalid file is the user's to fix\n%s", l, out)
 	}
-	leftRepo := false
-	for _, l := range res.Left {
-		if l["stage"] == initflow.Repository && strings.Contains(l["text"], "fugaro validate") {
-			leftRepo = true
-		}
-	}
-	if !leftRepo {
+	if !strings.Contains(out, "fugaro validate") {
 		t.Errorf("the run does not leave the invalid fugaro.yaml for the user:\n%s", out)
 	}
 
-	// The checkout's own steps ran: they read no repository fugaro.yaml, and
-	// they are the ones the user's stuck line is about.
-	if got := res.state(initflow.Checkout); got == "blocked" {
-		t.Errorf("the checkout stage is blocked by the repository stage, whose file its pin and plugin steps never read:\n%s", out)
+	// The checkout's own step ran: what reads the repository of this stage is
+	// its cloud step, and the stage says in its own line that it dropped it
+	// rather than waiting behind the stop (pastStops). The plugin install is
+	// the plugin stage's, ahead of the repository stage, and it is what the
+	// user's stuck line is about.
+	if l := stepLineOf(account, initflow.Checkout); l == "" {
+		t.Errorf("the checkout stage has no line of its own: it is waiting behind the repository stage, whose stop its own step runs past\n%s", out)
 	}
 	// The stages that publish the installation are not reached, and that is
 	// the deliberate other half: a run with a stage left for the user does not
 	// write what admits its runs.
 	for _, name := range []string{initflow.Rules, initflow.Policy, initflow.Layer} {
-		if got := res.state(name); got != "blocked" {
-			t.Errorf("the %s stage is %q, want blocked behind the repository stage: it publishes installation state, and a run that is not converged does not publish what admits its runs\n%s", name, got, out)
+		if l := stepLineOf(account, name); l != "" {
+			t.Errorf("the %s stage acted behind a stage left for the user: it publishes installation state, and a run that is not converged does not publish what admits its runs\n%q\n%s", name, l, out)
 		}
+	}
+	if got := out + newestLog(t, "update"); !strings.Contains(got, "wait for repository") {
+		t.Errorf("the run does not say the stages behind the repository stage wait for it:\n%s", out)
 	}
 
 	// The plugin install ran — the step the HARD RULE is about — and Claude
@@ -119,8 +120,8 @@ func TestUpdateConvergesPastAnInvalidCheckoutFugaroYAML(t *testing.T) {
 // workflow's build command changed, which resolves and names this project.
 //
 // Mutation (run, restore): drop the cloud skip from planFor
-// (init_checkout_upgrade.go) and this test fails — the checkout stage's own
-// line reads "ran cloud for this checkout" and the change that edit asked for
+// (init_checkout_upgrade.go) and this test fails — the checkout stage's own row
+// no longer says the cloud step was skipped, and the change that edit asked for
 // reaches Cloud Build.
 func TestUpdateDoesNotBuildFromACheckoutFileTheRunDidNotOnboard(t *testing.T) {
 	r := newConvergeRigYAML(t, v6Node(), refreshYAML)
@@ -131,22 +132,22 @@ func TestUpdateDoesNotBuildFromACheckoutFileTheRunDidNotOnboard(t *testing.T) {
 	// the default branch's, so the repository stage stops over it.
 	checkoutFile(t, filepath.Join(r.root, "fugaro.yaml"), strings.Replace(refreshYAML, "build: sh build.sh", "build: sh build2.sh", 1))
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, "", "update")
 	if err == nil {
 		t.Fatalf("the run reported success while the checkout's fugaro.yaml is not the default branch's:\n%s", out)
 	}
-	var res convergeJSON
-	if uerr := json.Unmarshal([]byte(runJSONObject(t, out)), &res); uerr != nil {
-		t.Fatalf("%v:\n%s\n%s", uerr, out, errOut)
-	}
-	if got := res.state(initflow.Repository); got != "needs-you" {
-		t.Fatalf("the repository stage is %q, want needs-you: the working tree's fugaro.yaml is not the default branch's\n%s", got, out)
+	rows := stageRows(out + newestLog(t, "update"))
+	if got := rows[initflow.Repository].word; got != "left for you" {
+		t.Fatalf("the repository stage is %q, want left for you: the working tree's fugaro.yaml is not the default branch's\n%s", got, out)
 	}
 
-	// The run's own account of what it ran for the checkout: its two local
-	// steps, and never the cloud one.
-	if d := res.stageDetail(t, initflow.Checkout); strings.Contains(d, "cloud") {
-		t.Errorf("the checkout stage ran its cloud step over a fugaro.yaml the repository stage did not onboard: %q\n%s", d, out)
+	// The run's own account of what it ran for the checkout: its one step, the
+	// cloud build, dropped over a fugaro.yaml the repository stage did not
+	// onboard — its job images are that repository's, and a build from a config
+	// no cloud run of the project reads is the half the tolerance is not for.
+	if row := rows[initflow.Checkout].line; !strings.Contains(row, "skipped here: cloud") {
+		t.Errorf("the checkout stage's line is %q, want the cloud step dropped over a fugaro.yaml the repository stage did not onboard\n%s", row, out)
 	}
 	if n := len(r.builder.specs); n != 0 {
 		t.Errorf("%d job image(s) reached Cloud Build from a fugaro.yaml the repository stage did not onboard: %+v\n%s", n, r.builder.specs, out)
@@ -160,25 +161,33 @@ func TestUpdateDoesNotBuildFromACheckoutFileTheRunDidNotOnboard(t *testing.T) {
 
 // TestUpdateDoesNotBuildPastARepositoryStopThatIsNotAboutTheFile (#1836,
 // review): the checkout's row tolerates a repository stop (pastStops,
-// RunsPastStop) for its two local steps, and the repository stage has needs-you
-// stops that are about no file at all — the GitHub App's ID, an unenrolled or
-// declined repository, an agent's refusal. Those leave the stages that publish
-// the installation (rules, policy, layer) behind them, and the checkout's cloud
-// step builds the job images from what those stages publish: run past a stop
-// like that it would build out of order, from a repository this run never
-// onboarded, and the build it submits fails at the job's own third step —
-// leaving the user a line the HARD RULE forbids: a second command beside the
-// one command the whole upgrade is.
+// RunsPastStop), and the repository stage has stops that are about no file at
+// all — the GitHub App's ID, an unenrolled or declined repository, an agent's
+// refusal. Those stops leave the stages that publish the installation (rules,
+// policy, layer) behind them, and the checkout's cloud step builds the job
+// images from the repository that stage onboards: run past a stop like that it
+// would build out of order, from a repository this run never onboarded, and the
+// build it submits fails at the job's own third step — leaving the user a line
+// the HARD RULE forbids: a second command beside the one command the whole
+// upgrade is. So a stop that is not the user's is not one the checkout runs its
+// one step past, however the stop is about nothing on disk.
 //
 // The fixture is the converge rig with the repository's recorded GitHub App ID
-// removed: the repository stage's own Check is Todo (nothing about the file is
-// wrong) and the stop is the ID, asked for at the apply.
+// removed: nothing about the file is wrong, so the repository stage's own Check
+// is Todo, and the stop is the ID, asked for at the apply.
 //
-// Mutation (run, restore): take the run's own stop back out of the cloud skip
-// — a fresh resolveRepoTarget in planFor's repositoryStopped
-// (init_checkout_upgrade.go), or no PastStops hand-off from the loop
-// (initflow/loop.go) — and this test fails: the checkout runs its cloud step,
-// submits the job image builds and fails on them.
+// The run has the person's own terminal, because a step nothing else confirms
+// now the flag that stood in for the person is gone (T11) — so the repository
+// stage asks for the ID and the empty input ends the ask: the stage fails over
+// it, and a failure is a stop nothing after it runs past. What the test pins is
+// the same fact the needs-you variant would: the checkout's cloud step never
+// runs over a repository this run did not onboard, so no job image reaches
+// Cloud Build.
+//
+// Mutation (run, restore): drop the yours check in the loop's blocker
+// (initflow/loop.go) or answer RunsPastStop yes for a stop that is not the
+// user's, and this test fails: the checkout runs its cloud step behind the
+// failure, submits the job image builds and fails on them.
 func TestUpdateDoesNotBuildPastARepositoryStopThatIsNotAboutTheFile(t *testing.T) {
 	r := newConvergeRig(t, v6Node())
 	currentRelease(t)
@@ -186,39 +195,39 @@ func TestUpdateDoesNotBuildPastARepositoryStopThatIsNotAboutTheFile(t *testing.T
 	t.Cleanup(func() { skillWarned.Store(false) })
 	dropAppID(t, r)
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, "", "update")
 	if err == nil {
 		t.Fatalf("the run reported success while the repository stage needs the GitHub App's ID:\n%s", out)
 	}
-	var res convergeJSON
-	if uerr := json.Unmarshal([]byte(runJSONObject(t, out)), &res); uerr != nil {
-		t.Fatalf("%v:\n%s\n%s", uerr, out, errOut)
-	}
-	if got := res.state(initflow.Repository); got != "needs-you" {
-		t.Fatalf("the repository stage is %q, want needs-you: the run has no terminal to ask for the App ID at\n%s", got, out)
+	account := reportLines(out + newestLog(t, "update"))
+
+	// The stop: the repository stage could not clear the App ID at this terminal
+	// and failed over it, and a failure is not the user's to clear later.
+	if l := stepLineOf(account, initflow.Repository); !strings.HasPrefix(l, markFailed) || !strings.Contains(l, "GitHub App ID") {
+		t.Fatalf("the repository stage's line is %q, want a failure over the missing GitHub App ID\n%s", l, out)
 	}
 
-	// The stop is behind the checkout, and the cloud step is the one step of
-	// its stage that may not be run past it.
-	if got := res.state(initflow.Checkout); got == "failed" {
-		t.Errorf("the checkout stage failed over the repository stage's stop: its pin and its plugin read no repository state, and its cloud step belongs after the repository is onboarded\n%s", out)
+	// The checkout has no line of its own: it waits behind the stop, and the
+	// cloud step it would run is the one the stop is about.
+	if l := stepLineOf(account, initflow.Checkout); l != "" {
+		t.Errorf("the checkout stage acted behind a stop this run did not clear: %q\n%s", l, out)
 	}
-	if d := res.stageDetail(t, initflow.Checkout); strings.Contains(d, "cloud") {
-		t.Errorf("the checkout stage ran its cloud step past a repository stop that is not about the file: %q\n%s", d, out)
+	if got := out + newestLog(t, "update"); !strings.Contains(got, "wait for repository") {
+		t.Errorf("the run does not say the stages behind the repository stage wait for it:\n%s", out)
 	}
 	if n := len(r.builder.specs); n != 0 {
 		t.Errorf("%d job image(s) reached Cloud Build past a repository stop this run did not clear: %+v\n%s", n, r.builder.specs, out)
 	}
-	// The half the tolerance is for still moved: the two local steps are what
-	// the user's stuck plugin line is about, whatever the repository stage
-	// stopped over.
+	// The plugin stage is ahead of the repository stage and is this machine's
+	// own, so the user's stuck plugin line is cleared whatever the repository
+	// stage stopped over.
 	if got := claudeListVersion(t, r); got != convergeRelease {
-		t.Errorf("Claude Code lists the plugin as %q after the run, want %q: the pin and the plugin are what the tolerance is for\n%s", got, convergeRelease, out)
+		t.Errorf("Claude Code lists the plugin as %q after the run, want %q: the plugin stage's own install is ahead of the repository stage\n%s", got, convergeRelease, out)
 	}
 	// And nothing this stage did sends the user to a second command: the fix a
 	// failed cloud step carries names the one door, never a command beside it,
-	// which is what the HARD RULE forbids. The stage's "ran cloud" is its
-	// account of which steps ran, never a command to run.
+	// which is what the HARD RULE forbids.
 	if i := strings.Index(out, "fugaro upgrade"); i >= 0 {
 		t.Errorf("the run sends the user to a second command for the checkout:\n%s", out[i:])
 	}
@@ -226,8 +235,8 @@ func TestUpdateDoesNotBuildPastARepositoryStopThatIsNotAboutTheFile(t *testing.T
 
 // dropAppID removes the checkout's repository's recorded GitHub App ID from the
 // local config this run reads, both copies of it (the rig's own and the project
-// file the CLI reads), so the repository stage asks for it: needs-you, over no
-// file at all.
+// file the CLI reads), so the repository stage has to ask for it at the apply
+// rather than read it: a stop over no file at all.
 func dropAppID(t *testing.T, r *convergeRig) {
 	t.Helper()
 	const recorded = `, github_app_id: "12345"`
@@ -264,7 +273,7 @@ func TestUpdatePluginLineDoesNotReadCurrentWhileTheInstallIsBehind(t *testing.T)
 	t.Cleanup(func() { skillWarned.Store(false) })
 	// A previous run moved the pin; the install it asked for did not happen
 	// (the state pluginFirstRun warns about), which the fake's claude keeps in
-	// the list the checkout's plugin step reads.
+	// the list the plugin stage's step reads.
 	checkoutFile(t, r.settings, wiredAt("v"+convergeRelease))
 
 	// The stage's own check is the line #1836c is about — the run's plan line
@@ -286,19 +295,21 @@ func TestUpdatePluginLineDoesNotReadCurrentWhileTheInstallIsBehind(t *testing.T)
 		t.Errorf("the plugin stage's check reads %s %q, want the copy Claude Code holds (%s) and the one this stage installs (%s) in it", status.State, status.Detail, convergePrev, convergeRelease)
 	}
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update")
 	if err == nil {
 		t.Fatalf("the run reported success while the checkout's own fugaro.yaml is invalid:\n%s", out)
 	}
-	var res convergeJSON
-	if uerr := json.Unmarshal([]byte(runJSONObject(t, out)), &res); uerr != nil {
-		t.Fatalf("%v:\n%s\n%s", uerr, out, errOut)
+	account := reportLines(out + newestLog(t, "update"))
+	if l := stepLineOf(account, initflow.Plugin); !strings.HasPrefix(l, markDone) {
+		t.Fatalf("the plugin stage's step is %q, want the stage that acts: the pin is already this release's and Claude Code's own copy is the release behind\n%s", l, out)
 	}
-	if got := res.state(initflow.Plugin); got != "changed" {
-		t.Fatalf("the plugin stage is %q, want changed: the pin is already this release's and Claude Code's own copy is the release behind, which is the install this stage makes\n%s", got, out)
-	}
-	if d := res.stageDetail(t, initflow.Plugin); !strings.Contains(d, convergeRelease) {
-		t.Errorf("the plugin stage's line does not name what it installed: %q\n%s", d, out)
+	// The line that names what it installed is the stage's own step, which the
+	// run reports beside its rows: --json carried it as the stage's detail, and
+	// a run that reaches the stages is the person's own now (T11), so it is
+	// read off the account the run prints and logs.
+	if detail := out + errOut + newestLog(t, "update"); !strings.Contains(detail, "installed "+convergeRelease) {
+		t.Errorf("the run's account does not name the install of %s that #1836c's line is about:\n%s", convergeRelease, out)
 	}
 
 	// The other half of #1836c: the line and the run agree — the run is the step
@@ -329,6 +340,36 @@ func staleLineWaitsForTheRun(t *testing.T, errOut string) {
 	if i := strings.Index(errOut, line); i < install {
 		t.Errorf("fugaro update printed the staleness line before the run that clears it: %q\n%s", line, errOut)
 	}
+}
+
+// stageRow is one stage's row in the run's plan view: the word its state
+// prints and the row whole, stage name and reason with it.
+type stageRow struct{ word, line string }
+
+// stageRowRE matches one plan-view row: the state's mark, the word the converge
+// gives that state, the stage's name column and the reason after it. It is
+// anchored on the word and reads the name column, not a plain substring: the
+// name is padded by %-16s and a stage's reason names other stages ("project
+// aurora" is one), so a test asking which stages a run reached must not read a
+// reason as a stage. The words are initflow's stateLabel, longest first.
+var stageRowRE = regexp.MustCompile(`^  \S (done|changed|will do|waiting for billing|billing pending|waiting|left for you|skipped|failed) +(\S+)(?: +(.*))?$`)
+
+// stageRows is the run's own account of its stages, keyed by the stage's name:
+// the plan-view rows, which a run that is not --plan-only keeps in its log and
+// a --plan-only run shows on the screen (loop.view). It is where a test reads a
+// stage's state now that no flag confirms a step: --json confirms none (T11,
+// docs/no-prompt-policy), so a run that reaches the stages at all is the
+// person's own, and the account to read beside it is this one.
+func stageRows(all string) map[string]stageRow {
+	rows := map[string]stageRow{}
+	for _, l := range reportLines(all) {
+		m := stageRowRE.FindStringSubmatch(l)
+		if m == nil {
+			continue
+		}
+		rows[m[2]] = stageRow{word: m[1], line: strings.TrimSpace(l)}
+	}
+	return rows
 }
 
 // runJSONObject is the run's own --json object out of a command's stdout. It is

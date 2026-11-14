@@ -381,7 +381,7 @@ func TestInitFirebaseManagedLauncherDropped(t *testing.T) {
 	r.script["plan@installation"] = map[string]any{"exit": 0}
 	r.script["show@installation"] = map[string]any{"stdout": `{"format_version":"1.2","resource_changes":[]}`}
 	r.save(t)
-	out, err := r.runAdoptIn(t, "us-east5\n", "--yes")
+	out, err := r.runAdoptIn(t, "us-east5\n")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), addr) || !strings.Contains(err.Error(), "name the address in --allow-delete") {
 		t.Fatalf("exit %d, err %v\n%s; want the guard's refusal with the --allow-delete hint", ExitCode(err), err, out)
 	}
@@ -391,7 +391,7 @@ func TestInitFirebaseManagedLauncherDropped(t *testing.T) {
 	if !slices.Contains(r.fbRootCalls(t), "plan") || len(r.applies(t)) != 0 {
 		t.Errorf("calls %v, applies %v; want a plan and no apply", r.fbRootCalls(t), r.applies(t))
 	}
-	if out, err := r.runAdoptIn(t, "us-east5\n", "--yes", "--allow-delete", addr); err != nil {
+	if out, err := r.runAdoptIn(t, "us-east5\n", "--allow-delete", addr); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if got := r.applies(t); !slices.Equal(got, []string{"firebase"}) {

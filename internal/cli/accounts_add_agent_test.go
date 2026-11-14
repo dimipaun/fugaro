@@ -29,7 +29,7 @@ func TestAccountsAddRefusesInAnAgentSession(t *testing.T) {
 			before := readFileString(t, path)
 			t.Setenv(marker, "1")
 
-			out, _, err := executeStdin(t, "", "accounts", "add", "team-a", "--repos", "acme/app", "--yes")
+			out, _, err := executeStdin(t, "", "accounts", "add", "team-a", "--repos", "acme/app")
 			if err == nil {
 				t.Fatal("the command wrote in a coding agent's session")
 			}
@@ -116,7 +116,7 @@ func TestAccountsAddRotationRerunRefusesInAnAgentSession(t *testing.T) {
 			before := readFileString(t, r.cfg)
 			t.Setenv(marker, "1")
 
-			out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a", "--yes")
+			out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a")
 			if err == nil {
 				t.Fatalf("a rotation re-run wrote in a coding agent's session:\n%s", out)
 			}
@@ -196,7 +196,7 @@ func TestAccountsAddWideningAllowDataToIsRefusedInASession(t *testing.T) {
 		r := newManagedAddRig(t, addRigLocal, addMarksManaged)
 		t.Setenv(accountsAddAgent, "1")
 
-		out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a", "--yes")
+		out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a")
 		if lc := r.addLocal(t); !slices.Equal(lc.ClaudeAccounts["team-a"].AllowDataTo, []string{"owner/repo-a"}) {
 			t.Errorf("claude_accounts.team-a.allow_data_to = %v, want the bounded list this checkout's origin names: %v\n%s", lc.ClaudeAccounts["team-a"].AllowDataTo, err, out)
 		}
@@ -213,7 +213,7 @@ func TestAccountsAddWideningAllowDataToIsRefusedInASession(t *testing.T) {
 		before := readFileString(t, r.cfg)
 		t.Setenv(accountsAddAgent, "1")
 
-		out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a,acme/other", "--yes")
+		out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a,acme/other")
 		if err == nil {
 			t.Fatalf("a session widened allow_data_to beyond the checkout it runs in:\n%s", out)
 		}

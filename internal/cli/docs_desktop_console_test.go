@@ -1474,7 +1474,7 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// exactly as rule 12 spawns it -- the dry run's phase words first,
 		// then the write's -- with the value last, after the terminator, and
 		// the `unset` form the same words with no value at all.
-		"settings set KEY --layer <L> [--dry-run --json] [--yes] --project <name> [--config <path>] -- <VALUE>",
+		"settings set KEY --layer <L> [--dry-run --json] --project <name> [--config <path>] -- <VALUE>",
 		// The managed state and its audit trail (the managed screens' plan's
 		// CM3, the `managed.status` operation, D1472 to D1477): the two marks'
 		// own answer and the bounded subset of the newest audit record, never
