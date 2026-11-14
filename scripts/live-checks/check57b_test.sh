@@ -139,7 +139,7 @@ if args[:3] == ["iam", "roles", "describe"]:
     print(json.dumps({
         "name": "projects/%s/roles/fugaroReaper" % PROJECT,
         "title": "Fugaro Batch reaper",
-        "permissions": [p for p in perms if p],
+        "includedPermissions": [p for p in perms if p],
     }))
 elif args[:3] == ["run", "jobs", "describe"]:
     if env("FAKE57B_JOB") == "missing":
