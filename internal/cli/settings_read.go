@@ -448,7 +448,7 @@ var settingsOwnerCommands = map[string]string{
 	"config":            "fugaro config publish, which carries the layer file the key is stated in",
 	"config init":       "fugaro config init, which writes the repository's own file",
 	"config local":      "fugaro update, which writes the machine's own config the key is stated in",
-	"project policy":    "fugaro project policy publish, which carries the local config's orchestrator block to the project's node",
+	"project policy":    "fugaro project policy publish, which carries the local config's orchestrator block and its declared allowlist to the project's nodes",
 }
 
 // settingsOwnerDefaultToken is the registry's owner for a key no family and no

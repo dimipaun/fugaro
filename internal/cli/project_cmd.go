@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -394,6 +395,26 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 			for _, line := range append(append([]string{}, narrowed...), admissions...) {
 				fmt.Fprintln(out, line)
 			}
+			// The declared allowlist's own half, after the node's write for the
+			// reason the admissions are widened after it: it admits people, so a
+			// publish that failed between the two leaves an installation tighter
+			// than the config asked and never looser. It is skipped in a coding
+			// agent's session (SD8): the node it writes is what admits a phone to
+			// every run of the project, the managed gate judges the policy node
+			// and not this one (policyUnjudgedRule reads the members of the node
+			// this command publishes), so a session whose every other write is
+			// judged would otherwise seed a widening nothing judged. A person
+			// seeds it; `fugaro pair` and `fugaro pair revoke` are the writes a
+			// project's devices are kept by.
+			if agent != "" {
+				if len(lc.MobileAllow) > 0 {
+					fmt.Fprintf(out, "the declared allowlist seeded nothing: %s is a device node, and a device is a person's write (`fugaro pair`), not a coding agent's\n", rules.PathDevices)
+				}
+			} else if line, err := seedDeclaredDevices(ctx, db, lc, time.Now().UTC().Format(time.RFC3339)); err != nil {
+				return fmt.Errorf("%w; %s was set, but the device node at %s is not as the declared allowlist asks: run this publish again", err, projectpolicy.PathShared(), rules.PathDevices)
+			} else if line != "" {
+				fmt.Fprintln(out, line)
+			}
 			// The diff is printed after the write, not before it (the review
 			// finding on this change): it is a claim about the node as it now
 			// is, and a write that came back refused — the policy changed
@@ -637,6 +658,63 @@ func publishAllowRepos(ctx context.Context, lc *localcfg.Config, old *projectpol
 		return nonNil(old.AllowRepos), nil, nil
 	}
 	return seedAllowRepos(ctx, lc)
+}
+
+// seedDeclaredDevices writes the DECLARED allowlist (lc.MobileAllow, D231) into
+// the device node every phone's token is admitted by, and it is
+// publishAllowRepos' rule applied to people: it seeds a project whose node is
+// not there and writes nothing else, ever.
+//
+// The node's absence is the whole condition, and it has to be, because one
+// revocation is one deleted child (D229: `fugaro pair revoke`) and a deletion
+// leaves nothing behind. An entry a node does not hold cannot be told apart
+// from an entry an operator removed, so seeding per entry would re-add every
+// revoked person at the next publish, from a declaration nobody edited — the
+// exact silent re-grant publishAllowRepos' own rule exists to prevent. What
+// follows from it is the honest half: a person declared after the first seed is
+// admitted by pairing, not by a publish, which is what the line this returns
+// when the node is there says.
+//
+// The write is ETag-guarded (`db.PutIfMatch` on the ETag the read that found
+// the node absent returned), so a node another writer created in between is
+// never overwritten: the race is lost loudly, and the node's writer wins.
+//
+// It returns the line the publish prints, and "" when the file declares
+// nothing (a project with no declared allowlist writes no node at all, and says
+// nothing about one).
+func seedDeclaredDevices(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, at string) (string, error) {
+	if len(lc.MobileAllow) == 0 {
+		return "", nil
+	}
+	var raw json.RawMessage
+	etag, found, err := db.GetETag(ctx, rules.PathDevices, &raw)
+	if err != nil {
+		return "", dbErr(lc, err, false)
+	}
+	if found {
+		return fmt.Sprintf("kept the device node at %s: the declared allowlist seeds a project whose node is not there, and it never re-adds a device an operator removed — `fugaro pair` admits a person, `fugaro pair revoke` removes one", rules.PathDevices), nil
+	}
+	nodes := map[string]pairDeviceNode{}
+	for _, e := range lc.MobileAllow {
+		if e.UID == "" {
+			continue
+		}
+		nodes[e.UID] = pairDeviceNode{Email: e.Address, Role: string(e.Role), At: at}
+	}
+	if len(nodes) == 0 {
+		return fmt.Sprintf("the declared allowlist at mobile_allow: names no uid, so %s was not written: a device node is keyed by the uid a pairing minted", rules.PathDevices), nil
+	}
+	body, err := json.Marshal(nodes)
+	if err != nil {
+		return "", fmt.Errorf("building the device node at %s: %w", rules.PathDevices, err)
+	}
+	if err := db.PutIfMatch(ctx, rules.PathDevices, etag, json.RawMessage(body)); err != nil {
+		if errors.Is(err, rtdb.ErrPrecondition) {
+			return "", userErr("%s was written by someone else while this publish ran, so the declared allowlist seeded nothing: the node stands as its writer left it, and a publish seeds a project whose node is not there (a device is added and removed by `fugaro pair`)", rules.PathDevices)
+		}
+		return "", dbErr(lc, err, true)
+	}
+	return fmt.Sprintf("seeded %d device(s) at %s from the declared allowlist", len(nodes), rules.PathDevices), nil
 }
 
 // seedAllowRepos is the seed P4 names: the operator's own repos: map and the
