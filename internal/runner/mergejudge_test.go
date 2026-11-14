@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -619,9 +620,17 @@ func TestJudgeBlockedNamesFundamental(t *testing.T) {
 // credential of any name, no tool to push with, and the run pushes no branch
 // and opens no pull request.
 //
-// Mutation (drop `&& !r.evaluate` from runner.go's agent-env gate): the stages
+// The stage's posture is the same half of G1 (spec §"Merge judge", D2031): the
+// empty tool list and the empty setting-source list, both non-nil — a nil one
+// is the flag's absence, which hands the stage the CLI's default set of tools
+// and the user's own settings — and a directory of its own rather than the
+// run's, gone when the run ends.
+//
+// Mutation (drop `&& !r.evaluate` from runner.go's agent-env gate): the stage's
 // environment carries the provider's own GH_TOKEN and the git credential
-// helper, and this test fails on the first of them.
+// helper, and this test fails on the first of them. Mutation (set Tools and
+// SettingSources to nil in mergeJudge): the stage is launched with neither
+// `--tools ""` nor `--setting-sources ""`, and the two non-nil checks fail.
 func TestJudgeHasNoPushCredential(t *testing.T) {
 	const key = "0f1e2d3c4b5a6978877665544332211a"
 	g := newGWFiles(t, gwConfig(t, ""), "observe", "", nil)
@@ -644,8 +653,20 @@ func TestJudgeHasNoPushCredential(t *testing.T) {
 	if findings := credentialConfigFindings(req.Env, gitToken); len(findings) > 0 {
 		t.Errorf("the judge's stage carries a git credential: %v", findings)
 	}
-	if len(req.Tools) != 0 {
-		t.Errorf("the judge's stage was handed the tools %v, want none: it reads text and touches nothing", req.Tools)
+	if req.Tools == nil || len(req.Tools) != 0 {
+		t.Errorf("Tools = %#v, want a non-nil empty list: a nil one is the CLI's default set, and this stage reads text and touches nothing", req.Tools)
+	}
+	if req.SettingSources == nil || len(req.SettingSources) != 0 {
+		t.Errorf("SettingSources = %#v, want a non-nil empty list: a nil one is the user's own settings", req.SettingSources)
+	}
+	if !req.StrictMCPConfig {
+		t.Error("the judge's request does not carry --strict-mcp-config")
+	}
+	if req.Dir == "" || req.Dir == g.deps.WorkDir {
+		t.Errorf("Dir = %q, want a directory of its own and not the run's %q: a stage whose cwd were the run's would have the artifact under review in reach", req.Dir, g.deps.WorkDir)
+	}
+	if _, err := os.Stat(req.Dir); !os.IsNotExist(err) {
+		t.Errorf("the judge's directory %q is still there after the run: %v", req.Dir, err)
 	}
 	if n := pushes(); n != 0 {
 		t.Errorf("the run pushed %d time(s)", n)
