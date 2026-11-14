@@ -449,12 +449,16 @@ PY
 CASE_MODE=happy
 CASE_ARGS=()
 CASE_ENV=()
+# The flags bash itself is started with: the guard over a traced shell is only
+# read with -x really passed, which no argument or variable of the check can do.
+CASE_BASH=()
 status=0
 
 setup_case() { # name mode
   CASE_MODE=$2
   CASE_ARGS=()
   CASE_ENV=()
+  CASE_BASH=()
   case_dir="$work/$1"
   rm -rf "$case_dir"
   mkdir -p "$case_dir/home" "$case_dir/tmp" "$case_dir/state/fugaro/logs"
@@ -481,7 +485,8 @@ run310() {
     CHECK310_TEST_CALLS="$case_dir/calls" \
     CHECK310_TEST_INSTALLATION="$INSTALLATION" \
     CHECK310_RUN_TIMEOUT=60 \
-    bash "$script" ${CASE_ARGS[@]+"${CASE_ARGS[@]}"} >"$case_dir/stdout" 2>"$case_dir/stderr"
+    bash ${CASE_BASH[@]+"${CASE_BASH[@]}"} "$script" ${CASE_ARGS[@]+"${CASE_ARGS[@]}"} \
+    >"$case_dir/stdout" 2>"$case_dir/stderr"
   status=$?
   set -e
 }
@@ -889,6 +894,48 @@ case_named_installation() {
   expect_calls "$case_dir/calls" "$THE_CALLS_NAMED"
 }
 
+# The four converges are what the owner pastes back, so a shell that arrived
+# tracing is refused before any of them runs: `bash -x` prints every command as
+# it runs, and the trace would be in the block. The case starts bash with -x
+# really passed — the guard reads the flag the shell was started with, which no
+# argument of the check can set — so it fails if the guard stops noticing one.
+case_xtrace() {
+  setup_case xtrace happy
+  CASE_BASH=(-x)
+  run310
+  local out
+  out=$(block)
+  expect_status "$status" 2 "a shell started with -x"
+  expect_fact "$out" xtrace FAIL "a shell started with -x"
+  expect_contains "$(errout)" "+ " "a shell started with -x: the trace really was on"
+  expect_contains "$(errout)" "tracing" "a shell started with -x: the stop says why"
+  expect_contains "$out" "FACT update-tty: FAIL — not reached" "a shell started with -x: no converge ran"
+  [ -z "$(calls)" ] || fail "a traced shell made a fugaro call: $(calls)"
+}
+
+# What this check writes is four converges' transcripts and 54 seeded logs, so a
+# scratch directory inside a git work tree is refused: a `git add -A` of yours
+# would commit the check's own output. TMPDIR here is a work tree of the test's
+# own, which is the shape the refusal exists for.
+case_work_tree() {
+  setup_case work_tree happy
+  if ! command -v git >/dev/null 2>&1; then
+    echo "check310_test: git is not installed, so the work-tree refusal has no case — that one case was not run" >&2
+    return 0
+  fi
+  (cd "$case_dir/tmp" && git init -q .) || { fail "work tree: git init failed, so the case proves nothing"; return 0; }
+  run310
+  local out
+  out=$(block)
+  expect_status "$status" 2 "a scratch directory inside a work tree"
+  expect_contains "$(errout)" "git work tree" "a scratch directory inside a work tree: the stop says why"
+  expect_contains "$out" "FACT aborted: FAIL — " "a scratch directory inside a work tree: the block says the run was refused"
+  expect_contains "$out" "FACT update-tty: FAIL — not reached" "a scratch directory inside a work tree: no converge ran"
+  [ -z "$(calls)" ] || fail "a scratch directory inside a work tree made a fugaro call: $(calls)"
+  [ -z "$(find "$case_dir/tmp" -mindepth 1 -maxdepth 1 -name 'chk310.*' 2>/dev/null)" ] \
+    || fail "a scratch directory inside a work tree: the scratch directory survived the refusal"
+}
+
 case_agent() {
   setup_case agent happy
   CASE_ENV=(CLAUDECODE=1)
@@ -974,6 +1021,8 @@ tests=(
   gcp_refused
   project_mismatch
   named_installation
+  xtrace
+  work_tree
   agent
   dry_run
   help
