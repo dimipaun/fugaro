@@ -1066,18 +1066,18 @@ func TestUpdatePolicyPublishSkipsTheDatabaseTheRulesStageSkips(t *testing.T) {
 			db.Set(projectpolicy.PathShared(), staleBudgetNode())
 
 			// The person is at their own terminal, which is what confirms the
-			// covered stages now that no flag does (T11); --json is still how
-			// this test reads each stage's own state.
+			// covered stages now that no flag does (T11): --json confirms no
+			// step, so a run that reaches the stages at all is this one, and
+			// the state it reads is the account the run prints.
 			fakeTerminal(t)
-			out, errOut, err := executeStdin(t, "", "update", "--json")
+			out, errOut, err := executeStdin(t, "", "update")
 			if err != nil {
 				t.Fatalf("a database the pair does not prove is ours stopped the whole update: %v\n%s%s", err, out, errOut)
 			}
-			res := convergeJSONOf(t, out)
-			if got := res.state(initflow.Policy); got != "skipped" {
-				t.Errorf("the policy stage is %q, want skipped: the publish wrote the node into a database this installation never adopted\n%s", got, out)
+			if l := stepLineOf(reportLines(out), initflow.Policy); !strings.HasPrefix(l, markSkipped+" "+initflow.Policy) {
+				t.Errorf("the policy stage is %q, want skipped: the publish wrote the node into a database this installation never adopted\n%s", l, out)
 			}
-			detail := res.stageDetail(t, initflow.Policy)
+			detail := out + errOut + newestLog(t, "update")
 			for _, want := range s.wants {
 				if !strings.Contains(detail, want) {
 					t.Errorf("the skip does not name %q: %q", want, detail)
