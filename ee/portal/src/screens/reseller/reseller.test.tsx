@@ -584,9 +584,9 @@ describe('the reseller route', () => {
     // The same person is published again, which is what `watch` answers on a
     // token refresh: the port is built again and the screen's effect reads
     // through it, while the two reads of the port before it are still in
-    // flight. The screen is the instance it was -- the key above is the person,
-    // and the person is the same one -- so what becomes of that older read is
-    // the effect's own guard and nothing else.
+    // flight. The screen is the instance it was -- `route.tsx` keys it on the
+    // person, and the person is the same one -- so what becomes of that older
+    // read is the effect's own guard and nothing else.
     await act(async () => {
       answer(PERSON)
     })
