@@ -274,6 +274,10 @@ SCRATCH=""
 SCRATCH_MARKER=".chk27-mine"
 SCRATCH_REMOVED=no
 PRINTED=""
+# Set by finish before the Restore starts, and read by on_signal: the Restore
+# deletes cloud state, so a second Ctrl-C during it must not end this shell with
+# the deletes half done (check111.sh's own guard, for the same reason).
+CLEANUP_RUNNING=no
 # --help prints the usage and makes nothing: it is not a run, so the exit trap
 # gives it no block and no verdict. Declared here because the trap reads it
 # whether or not the arguments ever got as far as parsing.
@@ -874,7 +878,7 @@ step_create() {
     local first
     first=$(grep -m1 -E 'ERROR|error|refus|CONFIRM' "$CREATE_LOG" 2>/dev/null || true)
     fact wizard FAIL "the create run exited $CREATE_STATUS: $(one_line "${first:-$(tail -n 3 "$CREATE_LOG" 2>/dev/null)}")"
-    stop "the create run exited $CREATE_STATUS (transcript $CREATE_LOG). The project may be half-created: the Restore below deletes what is there"
+    stop "the create run exited $CREATE_STATUS (transcript $CREATE_LOG). The project may be half-created, and the Restore below does NOT delete that one: it reads $P back and, when it is there, records the one command that deletes it — this check deletes a project only once its create run has finished and been read back"
   fi
   CREATED=yes
   local suggested
@@ -1125,7 +1129,7 @@ step_human() {
   owner "  step 22 dogfood: Fugaro's own repository, created by fugaro setup and re-converged by fugaro update"
   owner "  and the Restore's own lines that are not a cloud call: the sandbox repository's App, the PRs the runs opened (decline them), the OAuth token, and rm -rf $DIR"
   owner ""
-  fact human INFO "12 steps stay yours (3, 5-10, 14, 15, 16, 17, 18, 19, 20, 21, 22, and the Restore's non-cloud lines); they are listed above and in docs/gcp-live-checklist.md's Check 27, which is the authority for all of them. Nothing here was run or faked: a step this script did not run is not a step it passed"
+  fact human INFO "16 steps stay yours (3, 5-10, 14-22, and the Restore's non-cloud lines; the lines above group them, and docs/gcp-live-checklist.md's Check 27 is the authority for all of them). Nothing here was run or faked: a step this script did not run is not a step it passed"
 }
 
 step_verdict() {
@@ -1253,7 +1257,7 @@ print_plan() {
   say "  [network, reads] gcloud secrets list --project=$P --format='value(name)' — LISTED as evidence and never counted: they are the installation's own containers and the project's delete takes them"
   say "  [network, deletes] gcloud projects delete $P --quiet, then gcloud projects describe $P --format='value(lifecycleState)' (DELETE_REQUESTED; the record stays for 30 days and the ID is never free again)"
   say "  [local, leaves in place] the config root $C stays on purpose: the section's own block reads C=… back from its vars.env, and a run that ended before its create has nothing else to start from. It is not an installation left behind — the Restore above deletes the project — so the steps printed for you are run on a throwaway project of your own; removing the root is one line this script prints"
-  say "Nothing was created, granted, written or deleted: this dry run made no gcloud call and no fugaro call at all."
+  say "Nothing was created, granted or deleted: this dry run made no gcloud call and no fugaro call at all, and the config root above is the one thing it writes."
 }
 
 # ------------------------------------------------------------- the block
@@ -1294,6 +1298,10 @@ print_block() { # print_block FACTS STATUS — always on the owner's own stdout
 finish() {
   local status=$?
   trap - EXIT ERR
+  # INT, TERM and HUP are NOT reset: the Restore is about to delete cloud state,
+  # and on_signal is what keeps a second Ctrl-C from ending this shell while the
+  # deletes are half done (its CLEANUP_RUNNING guard).
+  CLEANUP_RUNNING=yes
   cleanup
   local facts=$FACTS_CAPTURED
   # --help printed the usage on its own and made nothing: it is not a run, so it
@@ -1337,8 +1345,14 @@ finish() {
 # on_signal: a Ctrl-C still prints the block and still runs the Restore, which
 # is what deletes the throwaway project — except where the interrupt landed on
 # the create run itself, which is the one case the Restore reports instead of
-# undoing (see Cleanup in the header).
+# undoing (see Cleanup in the header). A SECOND Ctrl-C, once the Restore is
+# running, only says so: it would otherwise exit this shell with the project, its
+# jobs and its buckets only half deleted, and a block that read as a clean abort.
 on_signal() {
+  if [ "$CLEANUP_RUNNING" = yes ]; then
+    owner "the Restore is running, do not press Ctrl-C again"
+    return 0
+  fi
   owner "interrupted: printing what was measured, then running the Restore"
   exit 2
 }
