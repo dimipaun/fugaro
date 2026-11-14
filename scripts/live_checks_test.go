@@ -72,6 +72,19 @@ import (
 // older than the release, a coder that reads images itself, a slot that is set,
 // a run that never ends, a record that is another run's, and a refusal whose
 // sentence has lost one of the parts an owner needs.
+// Checks 490 to 492 drive a fake `fugaro` and a fake `gcloud` over the
+// post-review triage work, one per reading an owner takes on a real run: 490
+// launches ONE sandbox run and reads its record's triage block and its
+// deferrals, 491 reads a parent run's deferrals and files one follow-up task per
+// group, and 492 launches TWO sandbox runs (the second with `--security`, so its
+// record carries a level-3 triage round) and grades that each run's finding is
+// placed by the mode's table as `block` with the floor's own sentence as its
+// reason and that no deferral took effect. The fakes answer a launch per leg, a
+// listing whose rows the case bends (a run that never ends, one the listing does
+// not know), a record per run (another run's, one that is not a document, a mode
+// the step does not govern, no triage block, an entry a verdict moved, a
+// deferral naming the floor's own key, a level-3 round that never ran) and a
+// cancel that does not answer.
 // Check 301's fakes are a fake `fugaro`, a fake launchd and a fake systemd
 // whose boot id and unit files the test writes, so a reboot, a second
 // instance's refusal and T7's re-render are all readings of files the test
@@ -114,6 +127,9 @@ var liveCheckScripts = []struct {
 	{"check511.sh", "check511_test.sh"},
 	{"check520.sh", "check520_test.sh"},
 	{"check521.sh", "check521_test.sh"},
+	{"check490.sh", "check490_test.sh"},
+	{"check491.sh", "check491_test.sh"},
+	{"check492.sh", "check492_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
