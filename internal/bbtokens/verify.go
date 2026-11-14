@@ -1,0 +1,597 @@
+package bbtokens
+
+// The add-time check (T7, D2352, D2353, R14): the whole of what `fugaro creds
+// set bitbucket-token--<name>` does before it writes anything. A token that
+// does not work — or that does not reach what its record says it reaches — is
+// refused in front of the operator, with one precise sentence, instead of
+// failing later inside a run's fetch.
+//
+// Four things are the whole of its design.
+//
+//   - It reads and never writes, and it reads only within the coverage the
+//     record itself states: the repositories it names, or the repositories of
+//     the project or the workspace it names. D2352 puts the check in the CLI at
+//     `creds set`, where a refusal writes nothing, and D2353 declines a write
+//     probe because Bitbucket has no dry run for a push or a pull-request write
+//     (F8): nothing is created in the operator's workspace, so D470's write
+//     scopes are reported as NOT verified and the first real use is what tries
+//     them. A check that reached outside the stated coverage would be probing a
+//     wider reach than the operator claimed, which is the one thing this design
+//     must not do (D2354).
+//   - GET /2.0/user is read the way R14 reads it, because it is the endpoint
+//     every run's own selfUser also calls and its answers are not uniform: a
+//     403 means an access token with no identity at that endpoint (the
+//     repository token's live answer, F7) and is an accepted answer with no
+//     identity recorded; a 200 is accepted only when its `kind` is the
+//     access-token kind matching the record's type, so a person's own OAuth or
+//     personal token never enters the identity set. The identity is read LAST,
+//     after the coverage reads passed, so a token that fails the check leaves
+//     no identity behind for an operator to write.
+//   - The identity of a project token is its UUID, not its key: R1 and R2 match
+//     a project by UUID, and a key can be renamed. The key an operator gives is
+//     therefore resolved here, once, and handed back in the Result so that
+//     `creds set` stores the UUID and keeps the key only for display.
+//   - The token is presented to bitbucket.org and nowhere else: every call is
+//     addressed at the adapter's own constant root (F22) and no field of the
+//     record, and no field of the Verifier, can move it. The value appears in
+//     the Authorization header and in no message, no field of the Result and no
+//     log line — the check writes no log line at all.
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/url"
+	"regexp"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
+	"github.com/dimipaun/fugaro/internal/gitprov/httpjson"
+)
+
+// maxAnswerBytes bounds one of the check's reads. Every call it makes is a
+// single repository, a one-page repository listing or the account, so the
+// answers are documents of a few kilobytes; this is the bound that keeps an
+// answer that is not one from being held whole.
+const maxAnswerBytes = 1 << 20
+
+// The read scopes the check can prove, in Bitbucket's own vocabulary, and the
+// header a Bitbucket answer may carry the token's scopes in. U2 has not settled
+// whether that header exists, so what it carries is RECORDED in the Result and
+// proves nothing: a header is not a proof (D2353).
+const (
+	scopeRepositoryRead  = "repository:read"
+	scopePullRequestRead = "pullrequest:read"
+	scopeHeader          = "X-OAuth-Scopes"
+)
+
+// writeScopes is D470's write pair: the two scopes the published docs tell the
+// operator to tick when the token is created, each implying its read, and the
+// pair this check reports as NOT verified. It is a constant rather than
+// something derived from the reads that passed, because a read is no evidence
+// of a write and this check has tried none (F8, D2353).
+var writeScopes = []string{"repository:write", "pullrequest:write"}
+
+// accessTokenKinds is what GET /2.0/user answers as `kind` for an access token,
+// per type of record. The words are Bitbucket's own; a repository token's
+// answer is the one F7's live recording shows.
+var accessTokenKinds = map[Type]string{
+	TypeRepo:      "repository_access_token",
+	TypeProject:   "project_access_token",
+	TypeWorkspace: "workspace_access_token",
+}
+
+// scopeWordRE is the whole shape of a scope word this check will record. A
+// scope word is short and lowercase (repository:read); anything else is text
+// this answer had no business carrying — a credential echoed into the header,
+// say — and is dropped rather than put in front of the operator, which is the
+// no-echo rule the credentials service keeps for every header it reads
+// (credsvc's copyAnswerHeaders, oauth.go's error field).
+var scopeWordRE = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}(:[a-z][a-z0-9_]{0,31})?$`)
+
+// The check's refusals, one precise sentence each (T7, the spec's "precise
+// message"). Each is written here and none is bitbucket.org's own text: what a
+// refused call carries is never repeated to the operator, and the two
+// not-covered forms name the record's own repository, workspace or project —
+// never a token and never a value.
+const (
+	// msgNoToken is a check asked to verify nothing. It is not msgRefused: no
+	// call was made, so nothing about bitbucket.org is known.
+	msgNoToken = "no Bitbucket token was given"
+	// msgExpired is a token whose record's expiry day has arrived. It is refused
+	// without a single call: an expired token cannot work, and the read that
+	// would prove it did work would be a call made with a credential the
+	// operator has already told this program is dead.
+	msgExpired = "the token has expired"
+	// msgRecord is every way a record can be one this check cannot read: a type
+	// R1 does not name, a type that is no token family at all (the legacy untyped
+	// key has no record to check), a coverage that is not one of R1's forms for
+	// that type, or a project record that names no project. The forms are read
+	// here rather than through C1's Validate because the check has to know where
+	// to look in any case, and because Validate refuses a project record that
+	// names a key and no UUID — the record `creds set` holds just before this
+	// check resolves that key, which is the resolution T11 stores.
+	msgRecord = "the record's type and coverage are not ones this check reads"
+	// msgRefused is bitbucket.org refusing the token itself, or answering
+	// something this check cannot read, or not answering at all: the one
+	// fail-closed bucket, and a token refused this way is a token whose working
+	// has not been shown.
+	msgRefused = "Bitbucket refused the token"
+	// msgMissingRepoRead and msgMissingPullRequestRead are the two scopes the
+	// check proves, each missing: Bitbucket answers 403 for a token that may see
+	// what it asked for and may not read it, which is a different answer from
+	// the 404 of something the token does not reach at all.
+	msgMissingRepoRead        = "missing repository read"
+	msgMissingPullRequestRead = "missing pull request read"
+)
+
+// msgNotCovered is the refusal of a call the token does not reach: Bitbucket
+// answers 404 for it, and what the operator is told is the repository, the
+// workspace or the project the record states.
+func msgNotCovered(what string) string { return "the token does not cover " + what }
+
+// msgNotAccessToken is the refusal of an answer whose `kind` is not the access
+// token the record states (R14): a person's own token, which is a working
+// credential that must never be written as a Fugaro token's identity.
+func msgNotAccessToken(t Type) string {
+	return "the token is not the " + string(t) + " access token the record states"
+}
+
+// Result is what the check proved about one token, and the whole of what
+// `creds set` reports. A refusal carries Message and nothing else: an operator
+// reading one line needs the reason, not the fields of a check that did not
+// finish.
+type Result struct {
+	// OK is true only when every read passed and the identity was read.
+	OK bool
+	// Message is the one precise refusal's sentence; empty when OK.
+	Message string
+	// Identity is the account UUID GET /2.0/user answered, which is the value
+	// selfUser compares. It is empty for a repository token (R14) and it is
+	// empty on every refusal.
+	Identity string
+	// ReadScopes are the read scopes the calls actually proved, so a workspace
+	// or project record proves the repository read and nothing more: no
+	// repository of its own was named to read a pull request in.
+	ReadScopes []string
+	// WriteScopes is D470's write pair. It is reported unverified, and
+	// WriteVerified is what says so.
+	WriteScopes []string
+	// WriteVerified is false on every result this build makes: nothing here
+	// writes (D2353). It is a field rather than an assumption so that a later
+	// build which does prove the write scopes has somewhere to say it, and so
+	// that the line `creds set` prints reads this one place.
+	WriteVerified bool
+	// Scopes is what a scope header said, when Bitbucket returned one (U2). It
+	// is recorded and never used: the write scopes stay unverified whatever it
+	// says.
+	Scopes []string
+	// ProjectUUID is the project a project record was matched by, resolved from
+	// the record's key when the record named a key and no UUID. `creds set`
+	// stores it and keeps the key for display.
+	ProjectUUID string
+}
+
+// noteScopes records the scope words of one answer, the first answer to carry
+// any. Both the shape rule and the "first answer" rule keep this a record and
+// never a check: what it holds cannot refuse a token, and it can hold nothing
+// that is not a scope word.
+func (r *Result) noteScopes(h http.Header) {
+	if r.Scopes != nil || h == nil {
+		return
+	}
+	var words []string
+	for _, field := range strings.Fields(strings.ReplaceAll(h.Get(scopeHeader), ",", " ")) {
+		if scopeWordRE.MatchString(field) {
+			words = append(words, field)
+		}
+	}
+	if len(words) > 0 {
+		r.Scopes = words
+	}
+}
+
+// proveRead notes a read scope one of the calls proved, once: a record whose
+// coverage names the same workspace twice has still proved one read of it, and
+// a list that repeated the scope would read as two.
+func (r *Result) proveRead(scope string) {
+	if !slices.Contains(r.ReadScopes, scope) {
+		r.ReadScopes = append(r.ReadScopes, scope)
+	}
+}
+
+// Verifier is the check itself: the client it reads bitbucket.org with.
+//
+// The root is not a field. Every call is addressed at the adapter's constant
+// API root (F22), so no caller can point this check — and the operator's token
+// in its header — at a host the adapter does not name, and the verification of
+// that rule is a test of the constant rather than of a caller's manners.
+type Verifier struct {
+	// Client is the HTTP client; nil means one of the check's own. A test hands
+	// it a transport that serves the constant root from a fixture, which is the
+	// only way the check reaches one without a network. A client that sets no
+	// timeout of its own is given one (see client).
+	Client *http.Client
+}
+
+// Verify checks one token against the record the operator gave for it, and
+// reads bitbucket.org with it and nowhere else.
+//
+// The order is the point of it being one function: the record's own facts first
+// (an expiry that has arrived and a record the check cannot read make no call
+// at all), then the reads the record's type and coverage call for, and the
+// identity last — so a refusal never leaves an identity, a proven read scope or
+// a resolved project UUID in the Result for a caller to write.
+func (v *Verifier) Verify(ctx context.Context, token string, rec Record) Result {
+	if token == "" {
+		return Result{Message: msgNoToken}
+	}
+	if rec.Expires != "" {
+		// R6 makes this the one expiry source for a typed token, in the local
+		// config's 2006-01-02 spelling, and the day it names is the day the
+		// token stops working: a token on that day is refused rather than a day
+		// late, and an expiry this build cannot read is a record it does not
+		// read either.
+		day, err := time.Parse(time.DateOnly, rec.Expires)
+		if err != nil {
+			return Result{Message: msgRecord}
+		}
+		if !day.After(time.Now()) {
+			return Result{Message: msgExpired}
+		}
+	}
+	res := Result{WriteScopes: append([]string(nil), writeScopes...)}
+	if msg, refused := v.readCoverage(ctx, &res, token, rec); refused {
+		return Result{Message: msg}
+	}
+	if msg, refused := v.readIdentity(ctx, &res, token, rec); refused {
+		return Result{Message: msg}
+	}
+	res.OK = true
+	return res
+}
+
+// readCoverage makes the reads the record's type and coverage call for, and
+// answers the refusal's message when one of them did not pass.
+//
+// Each type is checked against the coverage form R1 pairs it with, and the
+// reads stay inside it: a repository token is sent to each repository it names,
+// a workspace token to each workspace it names, and a project token to the
+// repositories of the project its UUID names — which is the fact R2 matches a
+// project token on, so the check proves the same thing the proxy will.
+func (v *Verifier) readCoverage(ctx context.Context, res *Result, token string, rec Record) (string, bool) {
+	switch rec.Type {
+	case TypeRepo:
+		return v.readRepos(ctx, res, token, rec)
+	case TypeWorkspace:
+		return v.readWorkspaces(ctx, res, token, rec)
+	case TypeProject:
+		return v.readProject(ctx, res, token, rec)
+	}
+	return msgRecord, true
+}
+
+// readRepos proves a repository record's coverage: every repository its
+// coverage names is read, and the pull requests inside it, which are the reads
+// a run's own fetch makes and the scopes D470 tells the operator to tick beside
+// them.
+func (v *Verifier) readRepos(ctx context.Context, res *Result, token string, rec Record) (string, bool) {
+	repos, ok := repoCoverage(rec)
+	if !ok {
+		return msgRecord, true
+	}
+	for _, r := range repos {
+		what := "repository " + r.workspace + "/" + r.repo
+		if _, msg, refused := v.prove(ctx, res, token, repoURL(r.workspace, r.repo), what, msgMissingRepoRead); refused {
+			return msg, true
+		}
+		res.proveRead(scopeRepositoryRead)
+		if _, msg, refused := v.prove(ctx, res, token, pullRequestsURL(r.workspace, r.repo), "", msgMissingPullRequestRead); refused {
+			return msg, true
+		}
+		res.proveRead(scopePullRequestRead)
+	}
+	return "", false
+}
+
+// readWorkspaces proves a workspace record's coverage: each workspace's own
+// repository listing, held to one page, which is the widest read the check
+// makes and the only one a workspace token has to prove with.
+func (v *Verifier) readWorkspaces(ctx context.Context, res *Result, token string, rec Record) (string, bool) {
+	workspaces, ok := workspacesCovered(rec)
+	if !ok {
+		return msgRecord, true
+	}
+	for _, workspace := range workspaces {
+		if _, msg, refused := v.prove(ctx, res, token, repositoriesURL(workspace, ""), "workspace "+workspace, msgMissingRepoRead); refused {
+			return msg, true
+		}
+		res.proveRead(scopeRepositoryRead)
+	}
+	return "", false
+}
+
+// readProject proves a project record's coverage: the listing of the project's
+// repositories, filtered by the UUID R2 matches on and checked against the same
+// UUID in the answer.
+//
+// The UUID comes from the record when the operator knew it and from the project
+// read when the record named only the key an operator sees in Bitbucket's UI —
+// the resolution `creds set` stores, so the run side never needs the key. The
+// project read is made with the token being checked and within the one
+// workspace the record names, so the resolution is a read of the operator's own
+// coverage and not a wider one.
+func (v *Verifier) readProject(ctx context.Context, res *Result, token string, rec Record) (string, bool) {
+	workspace, ok := oneWorkspaceCovered(rec)
+	if !ok {
+		return msgRecord, true
+	}
+	uuid := rec.ProjectUUID
+	if uuid == "" {
+		if rec.ProjectKey == "" {
+			return msgRecord, true
+		}
+		what := projectWhat(rec.ProjectKey, "", workspace)
+		body, msg, refused := v.prove(ctx, res, token, projectURL(workspace, rec.ProjectKey), what, msgMissingRepoRead)
+		if refused {
+			return msg, true
+		}
+		var ans struct {
+			UUID string `json:"uuid"`
+		}
+		if json.Unmarshal(body, &ans) != nil || ans.UUID == "" {
+			return msgRefused, true
+		}
+		uuid = ans.UUID
+	}
+	what := projectWhat(rec.ProjectKey, uuid, workspace)
+	body, msg, refused := v.prove(ctx, res, token, repositoriesURL(workspace, uuid), what, msgMissingRepoRead)
+	if refused {
+		return msg, true
+	}
+	if msg := projectCovered(body, uuid, what); msg != "" {
+		return msg, true
+	}
+	res.ProjectUUID = uuid
+	res.proveRead(scopeRepositoryRead)
+	return "", false
+}
+
+// projectCovered reads the answer of the project's repository listing and
+// reports the refusal when the UUID the check asked about is not what came
+// back.
+//
+// The listing is filtered by `project.uuid` on the wire, and the answer is
+// checked against the same UUID anyway: a filter is bitbucket.org's own
+// behaviour and an empty or unfiltered answer would otherwise be evidence that
+// the token covers a project it may not. An answer with no repository at all is
+// a refusal too — a token that reaches nothing whatever its record says has not
+// been shown to work, and this check has no other call to show it with.
+func projectCovered(body []byte, uuid, what string) string {
+	var ans struct {
+		Values []struct {
+			Project struct {
+				UUID string `json:"uuid"`
+			} `json:"project"`
+		} `json:"values"`
+	}
+	if json.Unmarshal(body, &ans) != nil {
+		return msgRefused
+	}
+	if len(ans.Values) == 0 {
+		return msgNotCovered(what)
+	}
+	for _, item := range ans.Values {
+		if item.Project.UUID != uuid {
+			return msgNotCovered(what)
+		}
+	}
+	return ""
+}
+
+// readIdentity reads GET /2.0/user, the endpoint every run's selfUser calls
+// too, and reads it the way R14 does (see the file's own comment): a 403 is an
+// access token with no identity here, a 200 must be the access token the record
+// states, and anything else is a refusal.
+func (v *Verifier) readIdentity(ctx context.Context, res *Result, token string, rec Record) (string, bool) {
+	status, body, header, err := v.get(ctx, bitbucket.DefaultBaseURL+"/user", token)
+	res.noteScopes(header)
+	switch {
+	case err != nil, status == http.StatusUnauthorized:
+		return msgRefused, true
+	case status == http.StatusForbidden:
+		return "", false
+	case status != http.StatusOK:
+		return msgRefused, true
+	}
+	var me struct {
+		UUID string `json:"uuid"`
+		Kind string `json:"kind"`
+	}
+	if json.Unmarshal(body, &me) != nil || me.Kind != accessTokenKinds[rec.Type] {
+		return msgNotAccessToken(rec.Type), true
+	}
+	res.Identity = me.UUID
+	return "", false
+}
+
+// prove makes one read of the check and reports whether the token passed it,
+// with the answer's body when it did.
+//
+// uncovered is the thing a 404 is about, or "" when the call proves a read of
+// something the token is already known to cover (the pull requests inside a
+// repository): there a 404 is the read itself missing rather than a reach the
+// record over-claims, and both are the same refusal to the operator. Every
+// other answer — a 401, a redirect, a 5xx, no answer at all — is the
+// fail-closed bucket, because none of them has shown the token works.
+func (v *Verifier) prove(ctx context.Context, res *Result, token, target, uncovered, missing string) ([]byte, string, bool) {
+	status, body, header, err := v.get(ctx, target, token)
+	res.noteScopes(header)
+	switch {
+	case err != nil, status == http.StatusUnauthorized:
+		return nil, msgRefused, true
+	case status == http.StatusOK:
+		return body, "", false
+	case status == http.StatusForbidden:
+		return nil, missing, true
+	case status == http.StatusNotFound:
+		if uncovered == "" {
+			return nil, missing, true
+		}
+		return nil, msgNotCovered(uncovered), true
+	}
+	return nil, msgRefused, true
+}
+
+// coveredRepo is one repository a repository record's coverage names.
+type coveredRepo struct {
+	workspace string
+	repo      string
+}
+
+// repoCoverage answers the repositories a repository record's coverage names,
+// each of them one of R1's `ws/repo` forms. A wildcard is refused here even
+// though the policy's allow_repos may carry one (D464): a pattern that names
+// several repositories is not a reach a single read can be held to, and the
+// check would otherwise report a coverage it never proved.
+func repoCoverage(rec Record) ([]coveredRepo, bool) {
+	var repos []coveredRepo
+	for _, entry := range rec.Coverage {
+		workspace, repo, found := strings.Cut(entry, "/")
+		if !found || workspace == "" || workspace == "*" || repo == "" || strings.ContainsAny(repo, "/*") {
+			return nil, false
+		}
+		repos = append(repos, coveredRepo{workspace: workspace, repo: repo})
+	}
+	if len(repos) == 0 {
+		return nil, false
+	}
+	return repos, true
+}
+
+// workspacesCovered answers the workspaces a workspace record's coverage names,
+// each of them R1's `ws/*` form, in the record's own order and without a
+// repeat.
+func workspacesCovered(rec Record) ([]string, bool) {
+	var workspaces []string
+	for _, entry := range rec.Coverage {
+		workspace, ok := wholeWorkspace(entry)
+		if !ok {
+			return nil, false
+		}
+		if !slices.Contains(workspaces, workspace) {
+			workspaces = append(workspaces, workspace)
+		}
+	}
+	if len(workspaces) == 0 {
+		return nil, false
+	}
+	return workspaces, true
+}
+
+// oneWorkspaceCovered answers the single workspace a project record's coverage
+// names. A project is in one workspace and its UUID is its identity, so a
+// record naming two is one whose coverage this check cannot read as the one
+// reach it would be reading about.
+func oneWorkspaceCovered(rec Record) (string, bool) {
+	workspaces, ok := workspacesCovered(rec)
+	if !ok || len(workspaces) != 1 {
+		return "", false
+	}
+	return workspaces[0], true
+}
+
+// wholeWorkspace reads one coverage entry of R1's `ws/*` form: a literal owner
+// and a bare `*` segment.
+func wholeWorkspace(entry string) (string, bool) {
+	owner, rest, found := strings.Cut(entry, "/")
+	if !found || owner == "" || owner == "*" || rest != "*" {
+		return "", false
+	}
+	return owner, true
+}
+
+// projectWhat names the project a refusal is about: the key the operator knows
+// it by when the record has one, and the UUID otherwise. Both are the record's
+// own text and neither is a credential.
+func projectWhat(key, uuid, workspace string) string {
+	name := key
+	if name == "" {
+		name = uuid
+	}
+	return "project " + name + " in workspace " + workspace
+}
+
+// The four URLs the check can build, each from escaped segments of the record's
+// own text so that a workspace or repository name can never add a path segment
+// of its own, and each on the adapter's constant API root (F22). They are the
+// adapter's own paths (bitbucketproxy's upstreamURL builds the same three for
+// the calls it forwards).
+func repoURL(workspace, repo string) string {
+	return bitbucket.DefaultBaseURL + "/repositories/" + url.PathEscape(workspace) + "/" + url.PathEscape(repo)
+}
+
+func pullRequestsURL(workspace, repo string) string {
+	return repoURL(workspace, repo) + "/pullrequests?pagelen=1"
+}
+
+// repositoriesURL is a workspace's repository listing, held to one page, and to
+// one project when uuid is not empty — the filter R2 matches a project token on
+// and nothing else.
+func repositoriesURL(workspace, uuid string) string {
+	q := url.Values{"pagelen": {"1"}}
+	if uuid != "" {
+		q.Set("q", `project.uuid="`+uuid+`"`)
+	}
+	return bitbucket.DefaultBaseURL + "/repositories/" + url.PathEscape(workspace) + "?" + q.Encode()
+}
+
+func projectURL(workspace, key string) string {
+	return bitbucket.DefaultBaseURL + "/workspaces/" + url.PathEscape(workspace) + "/projects/" + url.PathEscape(key)
+}
+
+// client is the client the check reads with. A client that sets no timeout of
+// its own is given the bound every other Bitbucket call in this program carries
+// (httpjson.DefaultTimeout): `creds set` passes no deadline and has none to
+// pass, so a connection accepted and never answered would otherwise hold the
+// operator at a prompt that never returns, with nothing to tell them the token
+// is fine. A caller's own client is copied rather than changed, and a timeout
+// it set itself is kept: the check is a handful of small reads, so what bounds
+// them is the caller's business when the caller says.
+func (v *Verifier) client() *http.Client {
+	c := http.Client{}
+	if v.Client != nil {
+		c = *v.Client
+	}
+	if c.Timeout == 0 {
+		c.Timeout = httpjson.DefaultTimeout
+	}
+	return &c
+}
+
+// get is the check's one call: a read, addressed by a URL this file built from
+// the record's own escaped segments and from no other text. The answer's body
+// is read bounded. The token rides in the Authorization header and is named
+// nowhere else — not in the returned error, which is the transport's own text
+// and which prove answers msgRefused for rather than showing to the operator.
+func (v *Verifier) get(ctx context.Context, target, token string) (int, []byte, http.Header, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/json")
+	resp, err := v.client().Do(req)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxAnswerBytes))
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	return resp.StatusCode, body, resp.Header, nil
+}
