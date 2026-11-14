@@ -69,6 +69,20 @@ BLOCK_KEYS=(project billing-account belong identity config-root
   created billing firestore installation images doctor update
   secrets human restore)
 
+# SECRETS_SKIP: the detail the secrets stage really carries in this check's own
+# converge. It is a SKIP and not a converged stage, because the check runs the
+# wizard in a directory that is deliberately not a checkout: secretsStage.resolve
+# leaves the stage with `not in a checkout of a repository: run fugaro update
+# there to take its secrets` (initsecrets.go, and `fugaro update` is
+# doorProgram()'s name for this door). The converged runs below print it where a
+# real one does, so the shape a case exercises is one a real run can produce.
+#
+# It is defined once, here, and handed to the fake through run27's environment:
+# the fake is a separate process, so a variable of this file does not reach it,
+# and the sentence the fake prints and the sentence a case asserts on are then
+# the same string rather than two copies that can drift apart.
+SECRETS_SKIP='not in a checkout of a repository: run fugaro update there to take its secrets'
+
 # --------------------------------------------------------------------- fakes
 write_fakes() { # dir
   mkdir -p "$1/bin" "$1/state"
@@ -251,18 +265,24 @@ stage_list() {
 # is the other shape, and both are exercised.
 #
 # Only the `No changes` prefix is load-bearing for check27.sh's step 4; the rest
-# of each detail is the CLI's own wording, which this fake does not pin.
+# of each detail is the CLI's own wording, which this fake does not pin — except
+# the secrets line, which is the stage's SKIP (SECRETS_SKIP above) and is the one
+# stage of this converge that answers with neither prefix.
 #
-# The installation stage's line is the one a case bends: the other five are
+# The installation stage's line is the one a case bends: the other four are
 # always converged here, so `converged_steps '✔ installation creates the runs
 # bucket'` is the non-converging run step 4 has to fail — a stage that applied
 # something, saying so in the detail it applied and in no word like `will do`.
-converged_steps() { # [INSTALLATION-LINE]
+converged_steps() { # [INSTALLATION-LINE] [SECRETS-LINE]
   printf '%s\n' "${1:-✔ installation No changes: the project root matches the plan.}"
   printf '%s %s %s\n' '✔' firebase 'No changes: the firebase root matches the plan.'
   printf '%s %s %s\n' '✔' images 'No changes: the image is the one the release pins.'
   printf '%s %s %s\n' '✔' installation-2 'No changes: the installation root matches the plan.'
-  printf '%s %s %s\n' '✔' secrets 'No changes: every secret container is there.'
+  # The stage's own SKIP line: a step line is `<glyph> <name> <detail>` with the
+  # skipped glyph (report/style.go's glyphSkipped, `–`) in place of the tick. A case
+  # can bend it — the acceptance in check27.sh is this stage and this reason alone,
+  # so a secrets line that answers any other way has to fail the step.
+  printf '%s\n' "${2:-– secrets $SECRETS_SKIP}"
   printf '%s %s %s\n' '✔' plugin 'No changes: the plugin is at the pinned release.'
 }
 # created_steps: the six stages as a CREATE run prints them. A create run opens a
@@ -281,13 +301,15 @@ created_steps() {
 # converged_rows is that same converged run in the plan view's shape, which is
 # what a converge that could not open a log draws on the screen instead (loop.go's
 # view). A converged stage's status word is `done`; `No changes` is the reason
-# beside it, which is why a reader of this transcript looks at the detail.
+# beside it, which is why a reader of this transcript looks at the detail — and
+# the secrets stage's row is its own status word, `skipped` (initflow's
+# stateLabel), with the same detail the step line carries.
 converged_rows() { # [INSTALLATION-ROW]
   printf '%s\n' "${1:-$(row_line done installation 'No changes: the project root matches the plan.')}"
   row_line done firebase 'No changes: the firebase root matches the plan.'
   row_line done images 'No changes: the image is the one the release pins.'
   row_line done installation-2 'No changes: the installation root matches the plan.'
-  row_line done secrets 'No changes: every secret container is there.'
+  row_line skipped secrets "$SECRETS_SKIP"
   row_line done plugin 'No changes: the plugin is at the pinned release.'
 }
 installation_of() { # id
@@ -384,6 +406,23 @@ update)
   esac
   printf '%s\n' "$*" >>"$state/updates"
   n=$(wc -l <"$state/updates" | tr -d ' ')
+  # A FIRST update with something left to do — which is what step 4 expects of it,
+  # `No changes` or a small number of changes — meets the CLI's own confirmation
+  # rule: a step of the converge is confirmed by the person being there and by
+  # nothing else (init.go's confirmNow, docs/no-prompt-policy), so with no terminal
+  # the step is LEFT FOR THE OWNER, printed as one, and the run exits 1 (loop.go's
+  # Result.ExitCode). A check that runs this update with no pty therefore fails it,
+  # which is what this knob is for: it is the read that step_update's pty is really
+  # there and not just a flag the script passes.
+  if [ "$n" -lt 2 ] && [ -n "${FAKE27_UPDATE1_CHANGED:-}" ]; then
+    if [ "$tty" != yes ]; then
+      printf '%s %s\n' '!' "installation: left for you — a step of this converge needs your own terminal"
+      printf 'ERROR: (fugaro) not confirmed (needs a real terminal, or pass --yes once you have read what it does); installation: nothing was applied\n' >&2
+      exit 1
+    fi
+    converged_steps '✔ installation creates the runs bucket'
+    exit 0
+  fi
   if [ "$n" -ge 2 ] && [ -n "${FAKE27_UPDATE2_WORK:-}" ]; then
     stage_list 'will do'
     exit 0
@@ -408,6 +447,13 @@ update)
   # per stage (loop.go's view). Step 4 reads that transcript too.
   if [ "$n" -ge 2 ] && [ -n "${FAKE27_UPDATE2_ROWS:-}" ]; then
     converged_rows
+    exit 0
+  fi
+  # The secrets stage answering with something that is NOT this converge's skip: a
+  # stage left for the owner, which is what a `fugaro update` really prints there
+  # when it runs inside a checkout of the project.
+  if [ "$n" -ge 2 ] && [ -n "${FAKE27_UPDATE2_SECRETS_NEEDS_YOU:-}" ]; then
+    converged_steps '' '! secrets: left for you — store its secrets from a checkout of this project'
     exit 0
   fi
   converged_steps
@@ -463,7 +509,7 @@ run27() { # [args...]
   out=$(env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_REMOTE \
     -u CURSOR_AGENT -u AI_AGENT -u CLAUDE_CODE_SSE_PORT -u XDG_CONFIG_HOME \
     TMPDIR="$dir/tmp" FAKE27_DIR="$dir" FAKE27_PROJECT="$PROJECT" \
-    CHECK27_DIR="$dir/root" \
+    CHECK27_DIR="$dir/root" SECRETS_SKIP="$SECRETS_SKIP" \
     CHECK27_PLAN_SECONDS="${PLAN_SECONDS:-30}" \
     CHECK27_CREATE_SECONDS="${CREATE_SECONDS:-30}" \
     CHECK27_CONVERGE_SECONDS="${CONVERGE_SECONDS:-30}" \
@@ -548,7 +594,7 @@ test_the_create_run_is_given_a_real_terminal() {
   setup_case tty
   run27_default
   expect_status "$status" 0 "a full run"
-  local create neg up
+  local create neg up up2
   # `|| true` on every read of the fake's call log: pipefail plus `set -e` would
   # otherwise end the suite at the assignment when a call is missing, and the
   # `expect_contains` below is what has to say so.
@@ -556,8 +602,14 @@ test_the_create_run_is_given_a_real_terminal() {
   expect_contains "$create" "tty=yes" "the create run is at a real terminal"
   neg=$(grep -- '--yes' "$dir/state/calls.fugaro" | head -1 || true)
   expect_contains "$neg" "tty=no" "the negative run has no terminal at all"
+  # The two updates are told apart on purpose: the FIRST is the owner's own run
+  # and needs the terminal a step of the converge is confirmed by (confirmNow), the
+  # second is the assertion and must hold with none at all — a stage with work left
+  # is *left for you* there and the run exits 1 (loop.go's Result.ExitCode).
   up=$(grep 'update --project' "$dir/state/calls.fugaro" | head -1 || true)
-  expect_contains "$up" "tty=no" "the update runs have no terminal"
+  expect_contains "$up" "tty=yes" "the first update is at the owner's own terminal"
+  up2=$(grep 'update --project' "$dir/state/calls.fugaro" | tail -1 || true)
+  expect_contains "$up2" "tty=no" "the second update has no terminal at all"
   # The answer the pty wrote is the id the check's own --project names: that is
   # what makes the create run THIS check's project and not the wizard's default.
   expect_contains "$(cat "$dir/state/id-typed")" "$PROJECT" "the id typed at the question"
@@ -891,6 +943,69 @@ test_a_converged_update_in_the_plan_views_shape_is_a_pass() {
   expect_contains "$(fact_line update)" "PASS" "the update row"
 }
 
+# The secrets stage of this converge is SKIPPED and not converged, and a skipped
+# line carries neither `No changes` nor a converged status word: the check converges
+# in a directory that is deliberately not a checkout, so secretsStage.resolve leaves
+# the stage with SECRETS_SKIP (initsecrets.go) and every real run of the check reads
+# that line out of the second update. A rule that did not accept it would end every
+# run FAIL on a stage that has nothing to do here. The case below is the other half:
+# that this line is the one the fake really draws there.
+test_a_converged_update_accepts_the_secrets_skip_line() {
+  setup_case update-secrets-skip
+  run27_default
+  expect_status "$status" 0 "a converged update whose secrets stage was skipped"
+  expect_contains "$(fact_line update)" "PASS" "the update row"
+  expect_contains "$(fact_line update)" "secrets" "the row says which stage was skipped"
+}
+
+# And the acceptance above only means something if the transcript the fake draws is
+# the one a real converge draws. It was not: the fake answered this stage with
+# `✔ secrets No changes: …`, which the CLI never prints for a converge outside a
+# checkout — so step 4 passed in the suite and failed for the owner. The check's
+# scratch, and with it the real second-update transcript, is gone before the check
+# exits (check27.sh's cleanup removes it), so what is pinned here is the fake's own
+# second update, run on its own with no terminal.
+test_the_fakes_converged_update_carries_the_real_secrets_skip_line() {
+  setup_case fake-converge-shape
+  printf 'update --project fugaro\n' >"$dir/state/updates"
+  local transcript
+  transcript=$(env FAKE27_DIR="$dir" FAKE27_PROJECT="$PROJECT" SECRETS_SKIP="$SECRETS_SKIP" \
+    "$dir/bin/fugaro" update --project fugaro 2>&1 || true)
+  expect_contains "$transcript" "– secrets $SECRETS_SKIP" "the skip line a converge outside a checkout prints"
+  expect_absent "$transcript" "secrets No changes" "the line the CLI never prints for this stage"
+}
+
+# And the acceptance is narrow: the secrets stage and the skip's own reason, nothing
+# else. A converge that runs inside a checkout of the project prints that stage as a
+# step the owner owes instead, and that is a stage with work on it — the reading step
+# 4's assertion is about — so it must still fail.
+test_an_update_whose_secrets_stage_needs_you_is_a_fail() {
+  setup_case update-secrets-needs-you
+  RUN27_ENV=(FAKE27_UPDATE2_SECRETS_NEEDS_YOU=1)
+  run27_default
+  expect_status "$status" 2 "a second update whose secrets stage is not this converge's skip"
+  expect_contains "$(fact_line update)" "FAIL" "the update row"
+  expect_contains "$(fact_line update)" "secrets" "the row names the stage that is not converged"
+}
+
+# Step 4's own words for the first update are `No changes`, "or a small number of
+# changes", and a change is applied only where the step can be confirmed — by the
+# person at their own terminal and by nothing else (init.go's confirmNow). So the
+# first update is the owner's own run: the fake refuses it with no terminal exactly
+# as the CLI does, leaving the step for the owner and exiting 1, and this case is
+# what proves step_update really gives it a pty rather than a flag that only looks
+# like one.
+test_the_first_update_that_has_work_runs_at_the_owners_terminal() {
+  setup_case update-1-changed
+  RUN27_ENV=(FAKE27_UPDATE1_CHANGED=1)
+  run27_default
+  expect_status "$status" 0 "a first update with something left to do"
+  expect_contains "$(fact_line update)" "PASS" "the update row"
+  local up
+  up=$(grep 'update --project' "$dir/state/calls.fugaro" | head -1 || true)
+  expect_contains "$up" "tty=yes" "the first update is at a real terminal"
+}
+
 test_an_update_that_fails_is_a_fail() {
   setup_case update-fails
   RUN27_ENV=(FAKE27_UPDATE_FAILS=1)
@@ -1127,6 +1242,10 @@ t test_an_update_that_still_has_work_is_a_fail
 t test_an_update_that_changed_a_stage_is_a_fail
 t test_an_update_that_applied_a_stage_is_a_fail
 t test_a_converged_update_in_the_plan_views_shape_is_a_pass
+t test_a_converged_update_accepts_the_secrets_skip_line
+t test_the_fakes_converged_update_carries_the_real_secrets_skip_line
+t test_an_update_whose_secrets_stage_needs_you_is_a_fail
+t test_the_first_update_that_has_work_runs_at_the_owners_terminal
 t test_an_update_that_fails_is_a_fail
 t test_the_restore_deletes_the_jobs_the_buckets_and_the_project
 t test_a_job_the_restore_cannot_delete_is_a_fail

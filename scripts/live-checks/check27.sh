@@ -1020,14 +1020,20 @@ step_images() {
 }
 
 # step_update: Check 27's step 4 — `fugaro update --project fugaro`, twice. The
-# first converges whatever is left; the SECOND is the assertion: every stage
-# `No changes` and exit 0. Both run with no terminal at all, which is also the
-# read that nothing is left to ask (a secret is the one thing a converge may
+# first converges whatever is left, at a REAL terminal, which is how the section
+# runs it and the only way a step of the converge can be confirmed: nothing is
+# typed at a confirmation any more, so the person being there is the whole of the
+# answer (init.go's confirmNow, docs/no-prompt-policy), and a run with no terminal
+# leaves such a step for the owner, prints it as one and exits 1 — a FAIL about
+# this script's own plumbing rather than about the check. The SECOND is the
+# assertion, and it runs with NO terminal at all: a stage with work to do is left
+# for the owner there instead of being applied, so `No changes` and exit 0 are the
+# reading of a converge with nothing left (a secret is the one thing a converge may
 # leave for you, and this run has no checkout, so the section's step 16 is not
 # reached here).
 step_update() {
   LOG_FOR_MODE=$UPDATE_LOG
-  run_plain update-1 "$CONVERGE_SECONDS" "$WIZARD_DIR" "$UPDATE_LOG" -- \
+  run_pty update-1 "$CONVERGE_SECONDS" "$WIZARD_DIR" -- \
     fugaro update --project "$N"
   UPDATE_STATUS=$LAST_STATUS
   LOG_FOR_MODE=$UPDATE2_LOG
@@ -1038,7 +1044,7 @@ step_update() {
   for t in "$UPDATE_STATUS" "$UPDATE2_STATUS"; do
     if [ "$t" -eq 124 ]; then
       fact update FAIL "a fugaro update run did not finish in ${CONVERGE_SECONDS}s and was killed"
-      stop "a fugaro update run blocked and was killed (transcripts $UPDATE_LOG and $UPDATE2_LOG): with no terminal it must refuse or converge, never wait"
+      stop "a fugaro update run blocked and was killed (transcripts $UPDATE_LOG and $UPDATE2_LOG): nothing is typed at a confirmation, so a converge must converge, refuse or leave the step for you, never wait"
     fi
   done
   if [ "$UPDATE_STATUS" -ne 0 ]; then
@@ -1089,6 +1095,20 @@ step_update() {
     case "$line" in
     *"No changes"* | "  done "*) continue ;;
     esac
+    # The secrets stage is SKIPPED in this run rather than converged, and skipped
+    # is not a change: the check converges in a directory that is deliberately not
+    # a checkout, and secretsStage.resolve leaves the stage with the reason `not in
+    # a checkout of a repository: run fugaro update there to take its secrets`
+    # (initsecrets.go). That line carries neither `No changes` nor a converged
+    # status word, so without this arm every real run of this check would end FAIL
+    # on a stage that has nothing to do here. It is accepted for THIS stage and
+    # THIS reason alone: any other stage skipping, or the secrets stage answered
+    # any other way, still fails the step.
+    if [ "$stage" = secrets ]; then
+      case "$line" in
+      *"not in a checkout of a repository"*) continue ;;
+      esac
+    fi
     bad="$bad $stage"
     why="$why; $stage: $(one_line "${line:-(no line names this stage)}")"
   done
@@ -1096,7 +1116,7 @@ step_update() {
     fact update FAIL "the second fugaro update does not read No changes for every stage — step 4's own assertion — and these are not converged:$why ($UPDATE2_LOG)"
     stop "the second fugaro update still has work on:$bad ($UPDATE2_LOG): step 4's 'No changes for every stage' did not hold"
   fi
-  fact update PASS "the first run exits 0 and converges what was left; the second exits 0 with every stage's own line reading No changes (${changes:-0} line(s) naming it in $UPDATE2_LOG)"
+  fact update PASS "the first run at your own terminal exits 0 and converges what was left; the second exits 0 with every stage's own line reading No changes (${changes:-0} line(s) naming it in $UPDATE2_LOG), except secrets, which is skipped — this run is not in a checkout"
 }
 
 # step_secrets: the installation's secret containers, LISTED and never counted —
@@ -1255,7 +1275,7 @@ print_plan() {
   say "  [network, reads] gcloud storage buckets list --project=$P (must name fugaro-runs-$P), gcloud run jobs list --project=$P --region=$REGION (must name fugarohist)"
   say "  [network, reads] gcloud artifacts docker images list $REGION-docker.pkg.dev/$P/fugaro-base --include-tags (must name the history image)"
   say "  [network+local, reads] fugaro doctor --project $N --all, with no terminal: exit 0, and its project line must name (GCP $P,"
-  say "  [network+local, reads] fugaro update --project $N twice, with no terminal (the second must print No changes for every stage and exit 0)"
+  say "  [network+local, reads] fugaro update --project $N twice: the FIRST at a real terminal (a step of the converge is confirmed by the person being there, and nothing is typed), the second with no terminal (it must print No changes for every stage and exit 0)"
   say "  [local, writes] before any of that: fugaro setup --create-project --gcp-project $P --name $N --region $REGION --firebase-project $P --budget-mode observe --link-billing <account> --bake-repos --plan-only at a pty (the stage list prints, nothing is created, exit 0)"
   say "  [network, reads] gcloud projects describe $P again after the plan-only run (it must still not exist)"
   say "  [network+local, reads] fugaro setup --gcp-project $OTHER --name $N --yes with stdin at /dev/null, over a config root of its own: it must be REFUSED (project creation is typed, and --yes never covers it), and gcloud projects describe $OTHER must still answer not-found"
