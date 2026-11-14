@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -69,6 +70,7 @@ func settingsFixture(t *testing.T, extraLocal string) (home string) {
 	// isolateProjects clears FUGARO_CONFIG, so the project is selected by
 	// its own file: name the one writeProject just wrote.
 	t.Setenv("FUGARO_CONFIG", path)
+	settingsBucketAt(t)
 	if extraLocal != "" {
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -79,6 +81,26 @@ func settingsFixture(t *testing.T, extraLocal string) (home string) {
 		}
 	}
 	return home
+}
+
+// settingsBucketAt points the read's bucket at an empty directory of the test's
+// own. writeProject names the gs:// bucket a real installation has, and the read
+// opens that bucket for the project layer's published object (S4), which
+// TestMain refuses for a test. The directory holds nothing, so the layer side
+// answers "this project has published no layer" — what every test that says
+// nothing about the layer assumed. A test that means to publish one builds its
+// project config on newBudgetFixture, whose bucket is already a directory.
+func settingsBucketAt(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	old := layerBucketOpener
+	t.Cleanup(func() { layerBucketOpener = old })
+	layerBucketOpener = func(ctx context.Context, url string) (*blobx.Bucket, error) {
+		if strings.HasPrefix(url, "gs://") {
+			url = "file://" + dir
+		}
+		return blobx.Open(ctx, url)
+	}
 }
 
 // settingsCheckout remembers a checkout of repo under dir, carrying the
