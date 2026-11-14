@@ -94,10 +94,9 @@ jobs:
         run: go test -count=1 -timeout 25m ./ee/keyservice/...
       # The deploy script's own test, with node, npm, gcloud, firebase, git and
       # go stubbed on PATH: it builds nothing, deploys nothing and reaches no
-      # network. It runs beside the key service's suite because the two are the
-      # two halves of the same deployment, and this job is the only thing in
-      # the tree that runs it: P9.2 names the script's test as `bash
-      # scripts/deploy-portal_test.sh` and no Go test drives it.
+      # network. `go test ./scripts/` runs it too, through
+      # scripts/deploy-portal_test.go; here it runs beside the key service's
+      # suite because the two are the two halves of the same deployment.
       - name: the portal deploy script's test
         run: bash scripts/deploy-portal_test.sh
 
