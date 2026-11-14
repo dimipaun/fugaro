@@ -1979,6 +1979,91 @@ describe('the spawn table and the argv it builds', () => {
     )
   })
 
+  // **The move (GV3.2) is the one row whose argv carries words no `row.words`
+  // holds**: its positional and its `--to` are the document's own -- the source
+  // checks the two keys the payload sent and spells the words itself -- and its
+  // `--expect` is emitted from the main process's copy of the record, so
+  // `assertArgvFlags`, which reads `row.words`, can see none of the three. The
+  // four cases below are the whole of what keeps those words one row's and keeps
+  // the flag on `SPAWN_FLAGS`, and each is a mutation of the real table (or of a
+  // real call) that only its own guard refuses -- so a guard dropped in a later
+  // edit fails here instead of at a spawn. The flag one is the `--cd` hazard the
+  // wrapper's case pins, one column over: an emitted `--expect` word that is not
+  // on `SPAWN_FLAGS` would reach a child with nothing left to refuse it.
+  const rowFor = (operation: string): SpawnCommand => {
+    const row = SPAWN_COMMANDS.find((candidate) => candidate.operation === operation)
+    if (row === undefined) throw new Error(`${operation} has no row in the spawn table`)
+    return row
+  }
+  const replacingRow = (operation: string, change: Partial<SpawnCommand>): SpawnCommand[] =>
+    SPAWN_COMMANDS.map((row) => (row.operation === operation ? { ...row, ...change } : row))
+
+  it('fails a table that lends the move’s two kinds to another row, or takes them from the record’s (GV3.2)', () => {
+    // The record's own row may not lose them: it would still carry its
+    // compare-and-set, so nothing after this guard notices the kinds went.
+    expect(() =>
+      assertSpawnSurface(
+        replacingRow('roadmap.move', {
+          args: rowFor('roadmap.move').args.filter(
+            (spec) => spec.kind !== 'roadmapTask' && spec.kind !== 'roadmapRelease',
+          ),
+        }),
+      ),
+    ).toThrow(/declares no move argument/)
+    // ...and a row that is not the record's may not spell one. The payload check
+    // behind this one refuses the same table with a sentence of its own
+    // (`graph.read declares toRelease, which the operation does not accept`), so
+    // which of the two a reader meets is what this case pins.
+    expect(() =>
+      assertSpawnSurface(
+        replacingRow('graph.read', {
+          args: [...rowFor('graph.read').args, { key: 'toRelease', flag: '--to', kind: 'roadmapRelease' }],
+        }),
+      ),
+    ).toThrow(/spells a word of a move/)
+    expect(() => assertSpawnSurface(SPAWN_COMMANDS)).not.toThrow()
+  })
+
+  it('fails a table that lends the move’s compare-and-set to another row, or drops it from the record’s (GV3.2)', () => {
+    expect(() => assertSpawnSurface(replacingRow('graph.read', { expectFlag: '--expect' }))).toThrow(
+      /carries a compare-and-set/,
+    )
+    // The column is the only thing that makes `argvFor` emit the word at all, so
+    // dropping it is a move with no compare-and-set rather than a shorter argv --
+    // and no other guard reads the column.
+    expect(() => assertSpawnSurface(replacingRow('roadmap.move', { expectFlag: undefined }))).toThrow(
+      /has no compare-and-set/,
+    )
+    expect(() => assertSpawnSurface(SPAWN_COMMANDS)).not.toThrow()
+  })
+
+  it('fails a table whose move emits a flag this module may not spawn (GV3.2)', () => {
+    // `--cd` is `wsl.exe`'s own flag and is on no `SPAWN_FLAGS` row: a move that
+    // emitted it would put a flag of the wrapper's into the CLI's command line,
+    // and -- because the word never appears in `row.words` -- `assertArgvFlags`
+    // would have nothing to refuse.
+    expect(() => assertSpawnSurface(replacingRow('roadmap.move', { expectFlag: '--cd' }))).toThrow(
+      /--cd, which is not a flag this console may spawn/,
+    )
+    expect(SPAWN_FLAGS).not.toContain('--cd')
+    expect(() => assertSpawnSurface(SPAWN_COMMANDS)).not.toThrow()
+  })
+
+  it('refuses the move’s context on a row that is not the record’s (GV3.2)', () => {
+    // The runtime half of the same rule, and the one a table mutation cannot
+    // reach: the three words travel in the plan context rather than in the
+    // payload, so a row that carries no compare-and-set has to refuse a context
+    // that has one -- otherwise a read's argv would be built with the record's
+    // own release on it. (`argvFor` refuses the reverse case -- the record's row
+    // with a context that has no move -- one argument earlier, at "has no move to
+    // spell", which its own case pins.)
+    expect(() => argvFor('graph.read', {}, contextFor('roadmap.move'))).toThrow(/takes no move/)
+    expect(() => argvFor('graph.read', {}, safeContext())).not.toThrow()
+    expect(() =>
+      argvFor('roadmap.move', { node: 'coordinator:gv/T1', toRelease: '' }, contextFor('roadmap.move')),
+    ).not.toThrow()
+  })
+
   it('builds argv as an array and hands the spawner `shell: false`', async () => {
     const spawner = recordingSpawner()
     const plan = planFor('budget.show', { repo: 'acme/widgets' }, safeContext({ binaryPath: '/opt/homebrew/bin/fugaro' }))
