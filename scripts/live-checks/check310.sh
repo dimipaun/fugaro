@@ -379,9 +379,12 @@ resolve_state_dir() {
 # machine has.
 SCRIPT_FLAVOUR=none
 detect_script() {
-  if "$SCRIPT_BIN" -q -e -c true /dev/null >/dev/null 2>&1; then
+  # Both probes take their input from /dev/null: `script` copies its own stdin
+  # into the pty it hands the child, so a probe left on the terminal would eat
+  # the answer to the question below before the question is asked.
+  if "$SCRIPT_BIN" -q -e -c true /dev/null </dev/null >/dev/null 2>&1; then
     SCRIPT_FLAVOUR=util
-  elif "$SCRIPT_BIN" -q /dev/null /bin/sh -c true >/dev/null 2>&1; then
+  elif "$SCRIPT_BIN" -q /dev/null /bin/sh -c true </dev/null >/dev/null 2>&1; then
     SCRIPT_FLAVOUR=bsd
   else
     SCRIPT_FLAVOUR=none
@@ -390,15 +393,22 @@ detect_script() {
 
 # pty_run CAPTURE CMD-STRING: CMD-STRING with a pty on its stdout, its output
 # captured in CAPTURE and, through tee, still on your terminal -- the spinner is
-# only judgeable if you watched it. The command string carries its own
+# only judgeable if you watched it. tee writes to this script's own STDERR, so
+# the run is watched while stdout stays the RESULT block and nothing else: an
+# owner who pipes this check's stdout somewhere gets the block, not a second
+# copy of five converge runs. The command string carries its own
 # `< /dev/null`, so the child's INPUT is not a terminal: a stage that would ask
-# a question refuses instead of waiting for a line nobody is going to type.
+# a question refuses instead of waiting for a line nobody is going to type. The
+# same redirection is on `script` itself, so it never reads this run's own input
+# (the answer to the question below is read by this script and by nobody else).
+# The pipeline's status is `script`'s own (pipefail), and `script -e` passes the
+# child's exit code through, so PTY_STATUS is the converge's.
 PTY_STATUS=0
 pty_run() {
   PTY_STATUS=0
   case "$SCRIPT_FLAVOUR" in
-  util) "$SCRIPT_BIN" -q -e -c "$2" /dev/null | "$TEE_BIN" "$1" || PTY_STATUS=$? ;;
-  bsd) "$SCRIPT_BIN" -q /dev/null /bin/sh -c "$2" | "$TEE_BIN" "$1" || PTY_STATUS=$? ;;
+  util) "$SCRIPT_BIN" -q -e -c "$2" /dev/null </dev/null | "$TEE_BIN" "$1" >&2 || PTY_STATUS=$? ;;
+  bsd) "$SCRIPT_BIN" -q /dev/null /bin/sh -c "$2" </dev/null | "$TEE_BIN" "$1" >&2 || PTY_STATUS=$? ;;
   *) return 3 ;;
   esac
 }
@@ -455,9 +465,12 @@ PY
 # summary_from FILE: the last line that is the run's closing line, or nothing.
 # It is read as the last one that matches and not as the file's last line,
 # because a failed run prints its error line after it and a nag about a newer
-# release may follow that.
+# release may follow that. The carriage return a pty puts before every newline
+# is taken off first: without that the `$` anchor never matches a terminal run's
+# own closing line, and the reading would be of this check's capture rather than
+# of the run.
 summary_from() {
-  grep -E '^(Done|Failed|Left for you) in [0-9]+\.[0-9]s, ([0-9]+ steps|1 step)$' "$1" 2>/dev/null | tail -1 || true
+  sed 's/\r$//' "$1" 2>/dev/null | grep -E '^(Done|Failed|Left for you) in [0-9]+\.[0-9]s, ([0-9]+ steps|1 step)$' | tail -1 || true
 }
 
 # last_line FILE: the file's last non-empty line, with the carriage returns a
@@ -842,8 +855,13 @@ phase_logs() {
   run_fugaro "$SCRATCH/logs-1.out" "$SCRATCH/logs-1.err" update
   EXTRA_PATH=""
   newest_after=$(newest_log update)
-  if [ "$newest_after" = "$newest_before" ]; then
-    stop "the converge filed no log of its own (the newest update log is still $newest_after), so there is no retention to read"
+  # The converge has to have filed a log of its OWN: a newest log that is still
+  # the one before it, or the twenty-day-old one this check planted (which is
+  # the newest of its name only when nothing else was written), is a converge
+  # that kept no log, and the retention below would then be read on this check's
+  # own files.
+  if [ "$newest_after" = "$newest_before" ] || [ "$newest_after" = "$aged" ]; then
+    stop "the converge filed no log of its own (the newest update log is still '${newest_after:-none}'), so there is no retention to read"
   fi
   if [ -e "$LOG_DIR/$aged" ]; then
     fact log-old-pruned FAIL "the log stamped twenty days ago is still there after a converge ($LOG_DIR/$aged): CL3 keeps a log for 14 days, so the run that opened a new one had to remove it"
