@@ -7,7 +7,9 @@ package credsvc
 // Two classes were enough while every job of an installation was either a
 // per-repository job (its service account is derived from the repository's
 // slug and the workflow, so the account names the repository its runs are of)
-// or a shared project job (refused whole, Global Constraint 6). The
+// or a shared project job — one job for several repositories, whose account
+// names no repository at all, admitted for the repositories the profile it
+// serves is bound to (pairShared, C3.9's coding half). The
 // review-only variant (docs/cloud-senior-review/ CSR7) is a third: one job per
 // (profile, account) of the published policy, whose account names no
 // repository at all — so the comparison every other caller's call is bound by
@@ -51,11 +53,17 @@ const (
 	// with the run's own permission set, and the operator's stop flag.
 	ClassRepository JobClass = "repository"
 	// ClassShared is a *coding* shared project job (gcp.ProjectServiceAccountID
-	// over the published policy's profiles). Global Constraint 6 refuses a
-	// caller of this class whole, and verifyJob answers the class beside that
-	// refusal — the class is a fact about the account even where the decision
-	// about it is a refusal, and the phase-3 shared-job rules are what lift
-	// it.
+	// over the published policy's profiles): admitted to the model path and to
+	// the mint for the identity's own repository, when that repository is one
+	// its profile is bound to (G21), and refused everywhere else. It is the
+	// same shape the review half already pairs with, and for the reason F40
+	// gives: a shared account names no single repository the way a
+	// per-repository job's does, so the binding is the identity's own
+	// repository plus the two gates that admit it, the row's list and the
+	// project's own answer for the profile (pairShared). It is bound to the
+	// account Verify answered with, exactly as the review class is: the
+	// identity's profile comes from the verifier's own row and never from
+	// anything the caller sent.
 	ClassShared JobClass = "shared"
 	// ClassReview is the review-only variant of a project job, per
 	// (profile, account): admitted to the mint, the sign and the model path
@@ -287,8 +295,15 @@ func ReviewOf(id Identity) error {
 // D1065: the class and the claim rule choose it, and no shape gets a third
 // answer.
 //
-// A repository caller keeps the run's own set untouched (F5), and a review
-// caller is served CSR1's read-only set — github.ReviewTokenPermissions, the
+// A repository caller keeps the run's own set untouched (F5), and so does a
+// shared coding caller: a shared job serves a coding run of one of its
+// profile's repositories, and what such a run does with that repository is what
+// any coding run does with its own (C3.9's coding half, B5.1). What the shared
+// class buys at this endpoint is the pairing, not a narrower set — the class is one job serving
+// several repositories, and the reach of the token stays the one repository the
+// pairing resolved.
+//
+// A review caller is served CSR1's read-only set — github.ReviewTokenPermissions, the
 // spelling internal/gitprov/github exports for it and not a second one written
 // here. What a run's token carries is the WRITE set of the repository the
 // review is about (the push and the pull request it opens), while a review job
@@ -305,7 +320,11 @@ func ReviewOf(id Identity) error {
 // with it, rather than served the run's set by falling through.
 func mintPermissions(id Identity) (map[string]string, error) {
 	switch id.JobClass {
-	case ClassRepository:
+	case ClassRepository, ClassShared:
+		// A shared coding caller is served the run's own set for the one
+		// repository the pairing resolved (pairShared), which is the pairing's
+		// answer and not this function's: what reaches here is already scoped
+		// to the identity's repository and is one the profile is bound to.
 		return github.RunTokenPermissions(), nil
 	case ClassReview:
 		if err := ReviewOf(id); err != nil {
@@ -336,6 +355,20 @@ func (s *Server) reviewAccount(email string) (ReviewJobAccount, bool) {
 	}
 	ra, ok := s.review[folded]
 	return ra, ok
+}
+
+// sharedAccount is the shared class's row of the calling account, looked up by
+// the FOLDED account for the reason reviewAccount gives: the table is keyed by
+// the folded email and the account Verify answers with is the verifier's own
+// spelling, so folding on the way in is what pairs a deployment whose two lists
+// disagree on case.
+func (s *Server) sharedAccount(email string) (SharedJobAccount, bool) {
+	folded, ok := foldEmail(email)
+	if !ok {
+		return SharedJobAccount{}, false
+	}
+	sa, ok := s.shared[folded]
+	return sa, ok
 }
 
 // pairReview is the review class's pairing (spec §3.2 steps 1-3), and the
@@ -379,12 +412,77 @@ func (s *Server) pairReview(ctx context.Context, id Identity) (string, error) {
 	if !ok || canonical == "" {
 		return "", fmt.Errorf("%w: the run identity's repository is not one this installation's jobs serve", ErrUnverified)
 	}
-	admitted, err := s.admittedAccounts(ctx, id.Slug, canonical)
+	admitted, err := s.admittedAccounts(ctx, id, canonical)
 	if err != nil {
 		return "", fmt.Errorf("%w: the repository's admissions could not be read", ErrUnavailable)
 	}
 	if !admitted[ra.Account] {
 		return "", fmt.Errorf("%w: the calling account is not admitted to the run identity's repository", ErrUnverified)
+	}
+	return canonical, nil
+}
+
+// pairShared is the shared class's pairing, and the answer is the canonical
+// repository every check after it is made against (G21, F40): the repository is
+// the run identity's own slug, the slug is resolved through the installation's
+// table, and it must be one the calling job's profile admits.
+//
+// Two gates, and BOTH are needed. The row's own list is the deployment's
+// statement of what this job was deployed for, and it is the published
+// profile's allow_repos (SharedJobAccountFor). That list is not the verdict on
+// its own — projectpolicy.ProfileAllowRepos says so in its own words: a
+// profile's list may be wider than the project's spell for spell, and reading
+// it alone "would admit every repository the project denies while the profile's
+// own list is the wider of the two". The verdict is projectpolicy.Admits, the
+// provider and the project's allow_repos and the profile's list together, and
+// it is read live from the node the service already serves calls from: a
+// repository the project never enrolled is refused here, where every route —
+// the model path, tier B and the mint alike — is held to it, and not only where
+// a tier-A credential would have been chosen.
+//
+// An unreadable node, and a profile the node does not define, are refusals and
+// never a fallback to the row alone (D143): the row is the deployment's, and
+// the project's own answer is the one that says a repository may be served.
+//
+// A repository neither list admits is refused: an empty list is a deny-all
+// (projectpolicy.AdmitRepo), so a profile that names no repository serves no
+// shared caller at all — fail-closed, and the same answer an unbound account
+// gets.
+func (s *Server) pairShared(ctx context.Context, id Identity) (string, error) {
+	sa, ok := s.sharedAccount(id.JobAccount)
+	if !ok {
+		// The verifier answered a class this service's own table does not
+		// hold: the two lists are configured together, so this is a deployment
+		// that disagrees with itself, and the safe answer is the refusal
+		// rather than a profile guessed from the email.
+		return "", fmt.Errorf("%w: the calling account is not one of this service's shared project job accounts", ErrUnverified)
+	}
+	canonical, ok := s.cfg.Repos[id.Slug]
+	if !ok || canonical == "" {
+		return "", fmt.Errorf("%w: the run identity's repository is not one this installation's jobs serve", ErrUnverified)
+	}
+	if !projectpolicy.AdmitRepo(sa.Repos, canonical) {
+		return "", fmt.Errorf("%w: the run identity's repository is not one the calling job's profile is bound to", ErrUnverified)
+	}
+	p, found, err := s.cfg.Policy.Shared(ctx)
+	if err != nil || !found {
+		return "", fmt.Errorf("%w: the project's policy could not be read, so the repository's admission could not be checked", ErrUnavailable)
+	}
+	admits, err := p.Admits(sa.Profile, canonical)
+	if err != nil {
+		// The row names a profile the published node does not define: the
+		// deployment and the project's document disagree, and a repository is
+		// never admitted by a profile nobody defines.
+		return "", fmt.Errorf("%w: the calling job's profile is not one the project's policy defines", ErrUnavailable)
+	}
+	if !admits {
+		// Which gate closed is not this sentence's business, and deliberately
+		// not: the project's enrollment, the profile's own list and the
+		// profile's provider are one verdict (projectpolicy.Admits), and a
+		// caller that is not of that profile is told the same thing whichever
+		// of the three answered no — an operator has AdmissionRefusal's own
+		// sentence for the reason, where the fix is.
+		return "", fmt.Errorf("%w: the run identity's repository is not one the project admits on the calling job's profile", ErrUnverified)
 	}
 	return canonical, nil
 }

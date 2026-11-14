@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
@@ -115,7 +116,7 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 	admitted := map[string]bool{}
 	if hasA {
 		var err error
-		admitted, err = s.admittedAccounts(ctx, id.Slug, canonical)
+		admitted, err = s.admittedAccounts(ctx, id, canonical)
 		if err != nil {
 			return nil, creds.StrategyFailover, nil, err
 		}
@@ -246,8 +247,23 @@ func offeredToReview(c creds.Credential, account string) bool {
 // turned one into an empty set would hand tier A to nobody, which is the same
 // answer by luck and the wrong one by construction (fail closed is a refusal,
 // not a silent nothing).
-func (s *Server) admittedAccounts(ctx context.Context, slug, canonical string) (map[string]bool, error) {
-	child, found, err := s.cfg.Policy.Admissions(ctx, slug)
+//
+// A shared caller is narrowed once more, and that narrowing is the class's
+// whole difference on the model path (B5.1): the account it may be served by is
+// one of the PROFILE's, read live from the published node the row names
+// (projectpolicy.ProjectJobAccounts over the profile's job profile, spelled the
+// way the accounts block spells the default). A shared job exists so that one
+// job serves a profile's repositories, and what it may be served is what that
+// profile is for — the account axis and nothing wider. The other two classes
+// are unchanged: a repository caller's list is the bundle narrowed by the
+// repository's own admission, and a review caller's is decided before this
+// function is ever reached (reviewCandidates).
+//
+// The profile is the identity's own — id.Profile, which only a shared caller
+// carries and which the verifier read from this service's own row — and never
+// anything the caller sent (G21, spec §2.1).
+func (s *Server) admittedAccounts(ctx context.Context, id Identity, canonical string) (map[string]bool, error) {
+	child, found, err := s.cfg.Policy.Admissions(ctx, id.Slug)
 	if err != nil {
 		return nil, err
 	}
@@ -278,7 +294,45 @@ func (s *Server) admittedAccounts(ctx context.Context, slug, canonical string) (
 			out[name] = true
 		}
 	}
+	if id.JobClass != ClassShared {
+		return out, nil
+	}
+	profile, err := shared.ProfileFor(id.Profile)
+	if err != nil {
+		// The row names a profile the published node does not define: the
+		// service's configuration and the project's own document disagree, and
+		// the account axis cannot be answered from a profile nobody defines —
+		// so it is a refusal (fail closed), not an empty set.
+		return nil, fmt.Errorf("%w: the calling job's profile is not one the project's policy defines", err)
+	}
+	for name := range out {
+		if !slices.Contains(profileAccounts(profile), name) {
+			delete(out, name)
+		}
+	}
 	return out, nil
+}
+
+// profileAccounts is the account axis of one published profile, spelled the way
+// the policy's accounts block spells an account: config.ProjectJobAccounts
+// answers the job-name axis, where the no-account job is the empty string, and
+// the accounts block spells that same account as the default one
+// (config.ReviewVariantAccount is the one spelling of the pair, and it is
+// config's rather than a second copy here).
+//
+// The two sentinels travel with it: a profile that lists the Anthropic key or
+// the provider key names a job that holds that credential instead of an OAuth
+// token, and admitting those names for such a profile is what lets the
+// credential its own job holds be selected (ProjectJobTokenAccount's rule,
+// read in the other direction). A profile that lists neither never admits
+// them, because the list is the profile's own.
+func profileAccounts(profile projectpolicy.Profile) []string {
+	names := config.ProjectJobAccounts(profile.JobProfile)
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		out = append(out, config.ReviewVariantAccount(name))
+	}
+	return out
 }
 
 // settingsOf is the published policy as creds.Select enforces it. Every

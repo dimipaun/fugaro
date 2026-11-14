@@ -56,9 +56,9 @@ const (
 	// run's record, and decides nothing from it: a run that names no job of
 	// this installation cannot be placed, and which job actually called is
 	// decided from the caller's verified service-account email (auth.go's
-	// verifyJob). Global Constraint 6's refusal of a run in a shared project
-	// job until C3.9 is decided there too, from the account and never from this
-	// header.
+	// verifyJob). Which class the account's job is of — a per-repository job, a
+	// shared project job or a review job (C3.9) — is decided there too, from the
+	// account and never from this header.
 	HeaderRunJob = "X-Fugaro-Run-Job"
 	// HeaderSlip names the slip a run's call is bound to: the id the grant
 	// answered (DS1.3), which the launcher passes to the job and the runner

@@ -1329,6 +1329,44 @@ func proxyReviewPolicyDoc(t *testing.T) string {
 	}`
 }
 
+// proxySharedCodingPolicyDoc is the review fixture's own document with the one
+// thing a SHARED caller's pairing needs and a review caller's does not: the
+// profiles block, defining the profile the class's row names, serving this
+// fixture's provider (bitbucket) and admitting the fixture's repository. The
+// project's enrollment and the token's block are the review document's, so
+// everything else about the fixture's policy is unchanged.
+//
+// It is written here rather than in proxyReviewPolicyDoc because a review
+// caller's pairing never reads a profile: adding one to every review test's
+// document would be a change to fixtures that have nothing to say about it.
+func proxySharedCodingPolicyDoc(t *testing.T) string {
+	t.Helper()
+	repo := testCanonical(t, testBitbucketRepo)
+	both := `["` + repo + `", "` + testCanonical(t, proxySiblingRepo) + `"]`
+	body := `{"provider": "bitbucket", "cpu": 2, "memory": "8Gi", "timeout_class": "6h",
+			"allow_repos": ["` + repo + `"]}`
+	// The default profile is defined because every policy must define it, and
+	// it is given the same body: the service reads the profile the class's row
+	// names, and a fixture whose two profiles differed would answer a
+	// deployment reading the wrong one with a repository it does not admit.
+	profiles := `"` + projectpolicy.DefaultProfileName + `": ` + body
+	if sharedCodingProfile != projectpolicy.DefaultProfileName {
+		profiles += `, "` + sharedCodingProfile + `": ` + body
+	}
+	return `{
+		"version": 5,
+		"budget": ` + testBudgetDoc + `,
+		"allow_repos": ` + both + `,
+		"accounts": {
+			"default": {"allow_repos": ` + both + `},
+			"` + testReviewAccount + `": {"allow_repos": ` + both + `}
+		},
+		"profiles": {` + profiles + `},
+		"credentials": {"fallback": "auto"},
+		"bitbucket_token": {"allow_repos": ` + both + `, "proxy": true}
+	}`
+}
+
 // proxyReviewSvc is the installation under test for the REVIEW-only job
 // (C3.9a): the caller is that job's own service account, its run identity names
 // the pull requests it reviews and no branch (reviewRunToken), and the
@@ -1683,27 +1721,58 @@ func TestReviewCallerWithoutAPairedIdentityIsRefused(t *testing.T) {
 	}
 }
 
-// TestSharedCodingCallerRefusedOnTheBitbucketRoute: the gate is narrowed for the
-// review class and NOT lifted for a shared coding project job, which stays
-// refused whole (Global Constraint 6; B5.3 is the task that lifts it). Its
-// account is refused before this route is reached, with the sentence it is
-// refused with today, and the refusal is the caller's verified email and never
-// the job name it reports.
+// TestSharedCodingCallerRefusedOnTheBitbucketRoute: the class is refused at
+// this route until B5.3, and it is refused AT the route. The identity is whole
+// by then — the account is the shared class's, and its run identity is one of
+// the repositories the profile it serves is bound to — so the refusal is the
+// route's own binding question (G21's other half: what this route forwards is a
+// workspace token, and a shared caller's binding for it is the published
+// block's admission of the repository as a proxied one) and not the class's.
+//
+// It is a verified caller refused at a route, so it is recorded exactly once,
+// and — like every refusal taken above the route's own classification — it
+// names neither a purpose nor a credential.
 func TestSharedCodingCallerRefusedOnTheBitbucketRoute(t *testing.T) {
-	s, up, _ := proxyReviewSvc(t)
+	slug := bitbucketSlug(t, testBitbucketRepo)
+	s, up, _ := proxyReviewSvc(t, func(s *svc, cfg *Config) {
+		// The class's table, so the refusal below is the route's and not the
+		// pairing's: the same row the verifier admits the caller by, which is
+		// what a deployment hands both (SharedJobAccountsFor).
+		cfg.SharedAccounts = []SharedJobAccount{{Email: testSharedSA, Profile: sharedCodingProfile, Repos: []string{testCanonical(t, testBitbucketRepo)}}}
+		// And the profile the pairing's verdict reads, which the review
+		// fixture's own document does not define: a shared caller is bound to
+		// its profile's repositories by the project's own answer
+		// (projectpolicy.Admits), so a fixture whose node defines no profile
+		// would refuse the caller at the pairing and never reach this route.
+		pol := &fakePolicy{shared: decodeTestPolicy(t, proxySharedCodingPolicyDoc(t)), sharedFound: true}
+		cfg.Policy, s.policy = pol, pol
+		s.policy.admissions = map[string]*projectpolicy.RepoPolicy{
+			slug: decodeTestChild(t, testChildDoc(testReviewAccount)),
+		}
+		if cfg.Repos[slug] != testCanonical(t, testBitbucketRepo) {
+			t.Errorf("the fixture's repository table does not hold the caller's repository: %v", cfg.Repos)
+		}
+	})
 
 	resp, ans := s.proxyCallAs(t, http.MethodGet, proxyPath(proxyGitPath("info/refs")+"?service=git-upload-pack"), nil,
 		s.reviewRunToken(), s.jobToken(func(c map[string]any) { c["email"] = testSharedSA }), s.job)
 	if resp.StatusCode != StatusUnverified {
 		t.Fatalf("the shared caller's fetch answered %d, want %d (%s)", resp.StatusCode, StatusUnverified, ans)
 	}
-	if got := refusal(t, resp.StatusCode, ans); got.Error != ErrorUnverifiedJobIdentity {
-		t.Errorf("the refusal is %q, want %q: %s", got.Error, ErrorUnverifiedJobIdentity, got.Message)
+	if got := refusal(t, resp.StatusCode, ans); got.Error != ErrorUnverifiedRunIdentity {
+		t.Errorf("the refusal is %q, want %q: %s", got.Error, ErrorUnverifiedRunIdentity, got.Message)
 	}
 	if n := up.count(); n != 0 {
 		t.Fatalf("a shared coding caller made %d upstream calls, want none", n)
 	}
-	if lines := s.auditLines(t); len(lines) != 0 {
-		t.Errorf("a shared coding caller wrote %d audit lines, want none: the refusal is taken before the identity is verified", len(lines))
+	line := s.onlyAuditLine(t)
+	if line["status"] != ErrorUnverifiedRunIdentity {
+		t.Errorf("the audit line = %v, want the refusal's own wire type", line)
+	}
+	if auditField(line, "purpose") != "" || auditField(line, "credential") != "" {
+		t.Errorf("the audit line = %v, and a refusal taken above the classification names neither", line)
+	}
+	if got := auditField(line, "caller"); got != testSharedSA {
+		t.Errorf("the audit line names the caller %v, want the shared job's own account %q", got, testSharedSA)
 	}
 }

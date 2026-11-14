@@ -14,10 +14,11 @@
 //     identity that Cloud Run IAM let in: its ID token's signature is checked
 //     against Google's own certificates, and its email claim against the
 //     installation's job service accounts (the owner's answer of 2026-10-19),
-//     and an account that belongs to a *shared* project job is refused whole
-//     until the phase-3 shared-job rules are on main (C3.9, Global Constraint
-//     6). That last check is decided from the verified email and never from
-//     the caller's own X-Fugaro-Run-Job header: one service account is
+//     which the *shared* project jobs' own table answers too (C3.9's coding
+//     half): one of those is a job of several repositories, so its account is
+//     admitted for the repositories the profile it serves is bound to and for
+//     no other. That last check is decided from the verified email and never
+//     from the caller's own X-Fugaro-Run-Job header: one service account is
 //     dedicated to one Cloud Run job, so the email is what says which job
 //     called, while the header is text the caller chose. The same email
 //     answers the account's class — per-repository, shared or review
@@ -189,6 +190,16 @@ type Identity struct {
 	Job        string
 	JobAccount string
 	JobClass   JobClass
+	// Profile is the published job profile the calling job belongs to, and it
+	// is a fact about the shared class alone (C3.9's coding half, G21): a
+	// shared project job is deployed per (profile, provider, account), so the
+	// call it makes is bound to the repositories that profile serves and may
+	// be served by the accounts the profile names — the profile is the join
+	// between the two, and it is what verifyJob answers beside the class. It
+	// is empty for every other class: a per-repository job's account names a
+	// repository and no profile, and a review job's row carries the value of
+	// the account axis its call is served by instead.
+	Profile string
 }
 
 // KeySource returns the RSA public key a token's kid names. A kid that is not
@@ -307,21 +318,24 @@ type AuthConfig struct {
 	JobKeys KeySource
 	// Outcomes reads the write-once outcomes.
 	Outcomes OutcomeReader
-	// SharedJobAccounts are the service accounts of the installation's shared
-	// project jobs (internal/backend/gcp's ProjectServiceAccountID over the
-	// published policy's profiles). Until the phase-3 shared-job rules are on
-	// main the service admits runs in per-repository jobs only (C3.9, Global
-	// Constraint 6), so a caller that is one of these is refused whole.
+	// SharedJobAccounts are the installation's shared project jobs
+	// (internal/backend/gcp's ProjectServiceAccountID over the published
+	// policy's profiles), each bound to the profile it serves (C3.9's coding
+	// half, D2078, G21). A caller whose verified email is one of them is of
+	// the shared class: admitted on the model path for the identity's
+	// repository when it is one of the row's, admitted to the GitHub mint
+	// under the run's own permission set, and refused everywhere else.
 	//
 	// It is asked about the *verified* email claim, never about the
 	// X-Fugaro-Run-Job header: the header is the caller's own text, and a gate
 	// a caller can satisfy — or escape — by writing a header is not a gate.
 	// One account is dedicated to one Cloud Run job, so the email is the
 	// signal a caller cannot forge. An installation with no shared project
-	// jobs has an empty set, which is the ordinary configuration under Global
-	// Constraint 6; a caller whose account is in both this set and
-	// JobAccounts is refused, because the refusal is the safe answer.
-	SharedJobAccounts []string
+	// jobs has an empty set, which is the fail-closed state every installation
+	// is in until its deployment renders the rows; a caller whose account is
+	// in both this set and JobAccounts is refused, because the two classes do
+	// not have the same routes.
+	SharedJobAccounts []SharedJobAccount
 	// ReviewJobAccounts are the installation's review-only jobs
 	// (ReviewJobAccountsFor over the published policy's profiles). A caller
 	// whose verified email is one of them is of the review class (review.go):
@@ -494,8 +508,11 @@ type Authenticator struct {
 	// jobAccounts maps a presented email, folded to ASCII lower case, to the
 	// configured spelling of that account: the fold is how a claim is matched
 	// and the spelling is what the identity carries.
-	jobAccounts    map[string]string
-	sharedAccounts map[string]bool
+	jobAccounts map[string]string
+	// sharedAccounts maps a presented email, folded the same way, to the
+	// shared job's row: the class is read from this map, and so is the profile
+	// the identity then carries.
+	sharedAccounts map[string]SharedJobAccount
 	// reviewAccounts maps a presented email, folded the same way, to the
 	// review job's row: the class is read from this map and the account name
 	// the pairing uses comes from the same row.
@@ -572,17 +589,33 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 		}
 		accounts[folded] = email
 	}
-	// An empty SharedJobAccounts is not a missing gate: under Global
-	// Constraint 6 an installation with no shared project jobs has none, and
-	// the set is what the policy's profiles say, so there is nothing to
-	// require of it here.
-	shared := make(map[string]bool, len(cfg.SharedJobAccounts))
-	for _, email := range cfg.SharedJobAccounts {
-		folded, ok := foldEmail(email)
+	// An empty SharedJobAccounts is not a missing gate: an installation with
+	// no shared project job has none, and the class is then one no caller
+	// belongs to — the state of every installation whose deployment does not
+	// name these rows yet. A row is held to the two things its own class needs
+	// and to nothing else: the address is the one a presented claim is matched
+	// by (the same rule every list here is held to), and the profile is the
+	// join the pairing and the cascade both read, so a row that named none
+	// would be a shared caller bound to no profile at all. Its Repos are NOT
+	// required to be non-empty: a profile that admits no repository is a
+	// profile whose callers are refused, which is the fail-closed answer and
+	// not a deployment that cannot start.
+	shared := make(map[string]SharedJobAccount, len(cfg.SharedJobAccounts))
+	for _, sa := range cfg.SharedJobAccounts {
+		folded, ok := foldEmail(sa.Email)
 		if !ok {
 			return nil, errors.New("credsvc: a shared job service account is not a printable ASCII email address")
 		}
-		shared[folded] = true
+		if sa.Profile == "" {
+			return nil, errors.New("credsvc: a shared job account names no profile, so the repositories it serves and the accounts its calls may be served by could not be read")
+		}
+		if prev, dup := shared[folded]; dup {
+			if prev.Profile != sa.Profile {
+				return nil, errors.New("credsvc: the same shared job account is bound to two profiles")
+			}
+			continue
+		}
+		shared[folded] = sa
 	}
 	// The review set is read the same way, and it is held to one rule more:
 	// the value of the account axis a review call is served by is never empty,
@@ -666,7 +699,7 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 		if _, isJob := accounts[folded]; isJob {
 			return nil, errors.New("credsvc: a person account is also one of the job service accounts, so one caller would be two classes")
 		}
-		if shared[folded] {
+		if _, isShared := shared[folded]; isShared {
 			return nil, errors.New("credsvc: a person account is also a shared job service account, so one caller would be two classes")
 		}
 		if _, isReview := review[folded]; isReview {
@@ -750,8 +783,8 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 		if _, isJob := accounts[folded]; isJob {
 			return nil, errors.New("credsvc: an orchestrator account is also one of the installation's job service accounts, and the daemon class is not a run")
 		}
-		if shared[folded] {
-			return nil, errors.New("credsvc: an orchestrator account is also a shared project job's service account, which Global Constraint 6 refuses whole")
+		if _, isShared := shared[folded]; isShared {
+			return nil, errors.New("credsvc: an orchestrator account is also a shared project job's service account, so one caller would be two classes")
 		}
 		if _, isReview := review[folded]; isReview {
 			return nil, errors.New("credsvc: an orchestrator account is also one of the review job accounts, and the daemon class is not a review")
@@ -776,16 +809,15 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 	}, nil
 }
 
-// Verify admits a call, or refuses it with ErrUnverifiedJob (the caller is
-// not one of the installation's job service accounts, or is a shared project
-// job's, which Global Constraint 6 refuses whole until C3.9), ErrUnverified
-// (the run identity is not this installation's, is past its fx, names a run
-// that has ended, or — for a review caller — is not a review identity) or
+// Verify admits a call, or refuses it with ErrUnverifiedJob (the caller is not
+// one of the installation's job service accounts), ErrUnverified (the run
+// identity is not this installation's, is past its fx, names a run that has
+// ended, or — for a review caller — is not a review identity) or
 // ErrUnavailable (the service could not read the outcome). It never returns a
 // partially verified identity.
 func (a *Authenticator) Verify(ctx context.Context, req Request) (Identity, error) {
 	now := a.now()
-	account, class, err := a.verifyJob(ctx, req.JobIDToken, now)
+	account, profile, class, err := a.verifyJob(ctx, req.JobIDToken, now)
 	if err != nil {
 		return Identity{}, err
 	}
@@ -796,9 +828,8 @@ func (a *Authenticator) Verify(ctx context.Context, req Request) (Identity, erro
 	// run is in — the platform sets it, but a launcher may override any
 	// environment variable (internal/runner's jobName) — so it is kept for the
 	// run's record and held to the job-name rule (ValidJobName), and it decides
-	// nothing. Which job actually called is decided in verifyJob, from the
-	// verified account, and that is where Global Constraint 6's shared-job gate
-	// is (C3.9).
+	// nothing. Which job actually called, and which class that job is of, is
+	// decided in verifyJob, from the verified account (C3.9).
 	//
 	// The rule is the job-name rule and not the general header rule (review
 	// finding m3): every job name this installation can have is
@@ -814,7 +845,7 @@ func (a *Authenticator) Verify(ctx context.Context, req Request) (Identity, erro
 	if err != nil {
 		return Identity{}, err
 	}
-	id.Job, id.JobAccount, id.JobClass = req.Job, account, class
+	id.Job, id.JobAccount, id.JobClass, id.Profile = req.Job, account, class, profile
 	// The review claim rule (spec §3.3) is NOT asked here. It is the pairing's
 	// first step (pairReview), and that is where it is answered — because a
 	// refusal from this function returns Identity{} and is answered by
@@ -841,21 +872,21 @@ func (a *Authenticator) Verify(ctx context.Context, req Request) (Identity, erro
 //     authorised identity did. The email claim must be one of the
 //     installation's job service accounts (the owner's answer of 2026-10-19),
 //     verified, for this service's own audience, unexpired, and issued by
-//     Google. An account that belongs to a *shared* project job is refused
+//     Google. An account that belongs to a *shared* project job is answered
 //     here too, before that membership check, because the account is the only
-//     part of "which job is this run in" that the caller cannot write (Global
-//     Constraint 6, C3.9).
+//     part of "which job is this run in" that the caller cannot write (C3.9).
 //
 // The class is answered beside the account, because the class is the same fact
 // read further: the email says which job called, and which kind of job that is
 // decides which pairing the call is bound by (server.go) and which credential
-// it may be served (cascade.go). The one class that is answered with no
-// account is the shared one: its caller is refused whole, and the class is
-// what says the refusal is about the class and not about the account.
-func (a *Authenticator) verifyJob(ctx context.Context, tok string, now time.Time) (string, JobClass, error) {
+// it may be served (cascade.go). The shared class is answered with the profile
+// its job serves beside the account, because that profile is what its pairing
+// and its admission are read through and neither can be derived from the
+// account's name.
+func (a *Authenticator) verifyJob(ctx context.Context, tok string, now time.Time) (string, string, JobClass, error) {
 	claims, folded, err := a.callerClaims(ctx, tok)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	// A job's ID token is minted for this service's own URL and for nothing
 	// else — both classes that reach here, the per-repository job's and the
@@ -865,22 +896,36 @@ func (a *Authenticator) verifyJob(ctx context.Context, tok string, now time.Time
 	// class restriction: a job presenting a token gcloud minted for a user
 	// would be a caller of another class's shape reaching the model path.
 	if err := checkCallerAudience(claims, a.cfg.Audience); err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
-	// The shared-job gate of Global Constraint 6 (C3.9) comes first, and it is
-	// decided from this verified email and never from the caller's own
+	// The shared class (C3.9's coding half) is read first, and it is decided
+	// from this verified email and never from the caller's own
 	// X-Fugaro-Run-Job header. One service account is dedicated to one Cloud
 	// Run job (internal/backend/gcp's ServiceAccountID and
 	// ProjectServiceAccountID), so the account is the job; the header is text
 	// the caller writes, and a launcher may override any environment variable,
 	// so a gate read off it would be one a caller could satisfy by writing a
-	// header. An account that is in both sets is refused rather than admitted:
-	// the refusal is the safe answer.
-	if a.sharedAccounts[folded] {
-		// The reason is named and the account is not repeated: it is the
-		// caller's own claim set, and the package doc's no-echo rule is that no
-		// refusal repeats what a caller presented.
-		return "", ClassShared, fmt.Errorf("%w: the caller is a shared project job's service account, and this service admits runs in per-repository jobs only until the phase-3 shared-job rules are on main (C3.9)", ErrUnverifiedJob)
+	// header.
+	//
+	// It is read before the per-repository table for the reason the review
+	// class is, and an account a deployment's input puts in two of the three is
+	// refused rather than admitted: the classes do not have the same routes —
+	// the shared one mints under the run's own write set, the review one under
+	// the read-only set and for one account alone, and the per-repository one
+	// is bound to the one repository its account names — so a deployment that
+	// named one address twice is one this service cannot answer, and the
+	// refusal is the safe answer.
+	if sa, shared := a.sharedAccounts[folded]; shared {
+		if _, alsoJob := a.jobAccounts[folded]; alsoJob {
+			return "", "", "", fmt.Errorf("%w: the caller's account is both a shared project job's and a per-repository job's, and the two classes do not have the same routes", ErrUnverifiedJob)
+		}
+		if _, alsoReview := a.reviewAccounts[folded]; alsoReview {
+			return "", "", "", fmt.Errorf("%w: the caller's account is both a shared project job's and a review job's, and the two classes do not have the same routes", ErrUnverifiedJob)
+		}
+		if err := checkCallerToken(claims, now); err != nil {
+			return "", "", "", err
+		}
+		return sa.Email, sa.Profile, ClassShared, nil
 	}
 	// The review class is read before the per-repository table, and an account
 	// a deployment's input puts in both is refused rather than admitted: the
@@ -890,25 +935,25 @@ func (a *Authenticator) verifyJob(ctx context.Context, tok string, now time.Time
 	// asked first.
 	if ra, review := a.reviewAccounts[folded]; review {
 		if _, alsoJob := a.jobAccounts[folded]; alsoJob {
-			return "", "", fmt.Errorf("%w: the caller's account is both a review job's and a per-repository job's, and the two classes do not have the same routes", ErrUnverifiedJob)
+			return "", "", "", fmt.Errorf("%w: the caller's account is both a review job's and a per-repository job's, and the two classes do not have the same routes", ErrUnverifiedJob)
 		}
 		if err := checkCallerToken(claims, now); err != nil {
-			return "", "", err
+			return "", "", "", err
 		}
-		return ra.Email, ClassReview, nil
+		return ra.Email, "", ClassReview, nil
 	}
 	account, ok := a.jobAccounts[folded]
 	if !ok {
-		return "", "", fmt.Errorf("%w: the caller is not one of the installation's job service accounts", ErrUnverifiedJob)
+		return "", "", "", fmt.Errorf("%w: the caller is not one of the installation's job service accounts", ErrUnverifiedJob)
 	}
 	if err := checkCallerToken(claims, now); err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	// The account this returns is the configured spelling, not the claim's:
 	// the two are the same address in whatever case the token carries, and the
 	// one this service writes to its audit line (C1.13) is the one an operator
 	// configured and can search for (review nit).
-	return account, ClassRepository, nil
+	return account, "", ClassRepository, nil
 }
 
 // callerClaims verifies the caller's Google ID token as far as its identity and

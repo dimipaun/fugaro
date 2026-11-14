@@ -453,7 +453,7 @@ func TestMergeMintRefusesARunAccountAsItsDaemon(t *testing.T) {
 			FirebaseProject:      testFirebase,
 			Audience:             testAudience,
 			JobAccounts:          []string{testJobSA},
-			SharedJobAccounts:    []string{testSharedSA},
+			SharedJobAccounts:    []SharedJobAccount{sharedRow()},
 			ReviewJobAccounts:    []ReviewJobAccount{{Email: testReviewSA, Account: testReviewAccount}},
 			VerifierAccounts:     []string{testVerifierSA},
 			PersonAccounts:       []string{testPersonAccount},
