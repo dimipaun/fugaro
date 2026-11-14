@@ -225,6 +225,7 @@ ls:issues/occurrences/)
   ;;
 ls:issues/records/)
   knob deny-records && deny storage.objects.list
+  knob error-records && did_not_answer "listing $rest"
   ;;
 cat:issues/records/*)
   knob deny-record-read && deny storage.objects.get
@@ -462,6 +463,66 @@ test_a_row_numbered_zero_falls_through_to_the_listing() {
   expect_contains "$(fact_line record-read)" "gs://$BUCKET/issues/records/1001" "a row numbered zero: the number comes from the listing"
   expect_absent "$(calls)" "gs://$BUCKET/issues/records/0" "a row numbered zero: no object named after number 0 is asked for"
   expect_absent "$out" "FACT aborted:" "a row numbered zero: no abort"
+}
+
+test_a_refused_records_listing_is_the_reading() {
+  # The fallback listing is only reached when no row carried a usable number
+  # (number-base -1 makes the one row a local row, numbered 0), and a denial
+  # there is a reading about U1's read half: it must be a FAILed criterion, not
+  # an INFO row and an exit 0 over a store whose records were never read.
+  setup_case records_listing_refused
+  printf '1\n' >"$dir/state/rows"
+  printf '%s\n' '-1' >"$dir/state/number-base"
+  : >"$dir/state/deny-records"
+  run470_default --mode 470
+  expect_status "$status" 1 "a refused records listing"
+  expect_contains "$(fact_line record-read)" "FACT record-read: FAIL" "a refused records listing: the row fails"
+  expect_contains "$(fact_line record-read)" "may NOT list gs://$BUCKET/issues/records/" "a refused records listing: and says which call was refused"
+  expect_contains "$(calls)" "gcloud storage ls --project=$PROJECT gs://$BUCKET/issues/records/" "a refused records listing: the call was made"
+  expect_absent "$out" "holds no record" "a refused records listing: it is not recorded as a store that holds no record"
+}
+
+test_a_records_listing_that_did_not_answer_stops_the_run() {
+  # A 5xx, an expired session: a call that did not answer says nothing about the
+  # permission, so it stops the run rather than becoming a fact about the store.
+  setup_case records_listing_did_not_answer
+  printf '1\n' >"$dir/state/rows"
+  printf '%s\n' '-1' >"$dir/state/number-base"
+  : >"$dir/state/error-records"
+  run470_default --mode 470
+  expect_status "$status" 2 "a records listing that did not answer"
+  expect_contains "$(fact_line aborted)" "FACT aborted: FAIL" "a records listing that did not answer: an abort row"
+  expect_contains "$(fact_line aborted)" "did not answer" "a records listing that did not answer: and why"
+  expect_contains "$(fact_line record-read)" "FAIL — not reached" "a records listing that did not answer: the row is not recorded as a store that holds no record"
+  expect_absent "$out" "holds no record" "a records listing that did not answer: no fact about the store is invented"
+  expect_contains "$out" "FACT restore: PASS" "a records listing that did not answer: the cache is still put back"
+}
+
+test_a_checkout_whose_fugaro_yaml_names_the_installation_is_refused() {
+  # The CLI is run with no --project at all: the checkout's own fugaro.yaml is
+  # what selects the store `mine` reads and uploads to, so guarding only the
+  # typed --project and --bucket would run this check green against the owner's
+  # real installation.
+  setup_case yaml_names_the_project
+  printf 'project: %s\ngcp_project: %s\n' "belong" "prj-sandbox-a" >"$dir/checkout/fugaro.yaml"
+  run470_default --mode 470
+  expect_status "$status" 2 "a checkout whose fugaro.yaml names belong"
+  expect_contains "$(fact_line checkout)" "FACT checkout: FAIL" "a checkout whose fugaro.yaml names belong: the row fails"
+  expect_contains "$(fact_line checkout)" "names the installation 'belong' in its project key" "a checkout whose fugaro.yaml names belong: and says which key"
+  expect_no_calls "a checkout whose fugaro.yaml names belong"
+
+  setup_case yaml_names_the_gcp_project
+  printf 'project: %s\ngcp_project: %s\n' "prj-sandbox-a" "edge-devel-dimi" >"$dir/checkout/fugaro.yaml"
+  run470_default --mode 470
+  expect_status "$status" 2 "a checkout whose fugaro.yaml names edge-devel-dimi"
+  expect_contains "$(fact_line checkout)" "FACT checkout: FAIL" "a checkout whose fugaro.yaml names edge-devel-dimi: the row fails"
+  expect_contains "$(fact_line checkout)" "names the installation 'edge-devel-dimi' in its gcp_project key" "a checkout whose fugaro.yaml names edge-devel-dimi: and says which key"
+  expect_no_calls "a checkout whose fugaro.yaml names edge-devel-dimi"
+
+  setup_case yaml_names_nothing
+  run470_default --mode 470
+  expect_status "$status" 0 "a checkout whose fugaro.yaml names the sandbox"
+  expect_contains "$(fact_line checkout)" "FACT checkout: PASS" "a checkout whose fugaro.yaml names the sandbox: the guard holds"
 }
 
 test_the_human_half_is_printed_and_never_faked() {
@@ -779,6 +840,9 @@ t test_a_listing_that_did_not_answer_stops_the_run
 t test_a_store_whose_prefix_holds_nothing_is_not_a_refusal
 t test_a_row_number_below_a_thousand_reads_the_padded_key
 t test_a_row_numbered_zero_falls_through_to_the_listing
+t test_a_refused_records_listing_is_the_reading
+t test_a_records_listing_that_did_not_answer_stops_the_run
+t test_a_checkout_whose_fugaro_yaml_names_the_installation_is_refused
 t test_the_human_half_is_printed_and_never_faked
 t test_the_three_refused_names_are_refused_in_both_places
 t test_a_checkout_without_a_fugaro_yaml_is_refused

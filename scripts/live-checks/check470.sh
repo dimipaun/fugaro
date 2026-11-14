@@ -73,9 +73,12 @@
 #             script stops with one line naming it.
 # Where:      a SANDBOX installation only, and NEVER an installation named
 #             `belong`, `edge-devel-dimi` or `edgeappinc`: those three names are
-#             refused in the project and in the bucket before anything is run
-#             (the same three check96.sh refuses), and the refusal is what the
-#             script's own test pins. This check writes nothing to the project's
+#             refused before anything is run (the same three check96.sh
+#             refuses) — in the typed --project and --bucket, and in the
+#             checkout's own fugaro.yaml, whose `project` and `gcp_project` are
+#             the values that actually select the store `fugaro issue mine` reads
+#             and uploads to — and the refusals are what the script's own test
+#             pins. This check writes nothing to the project's
 #             store of its own and creates nothing in the cloud: what it writes
 #             is the two local caches the command writes, and the Restore puts
 #             them back.
@@ -343,21 +346,36 @@ restore_run() {
 }
 
 # ------------------------------------------------------------------ the guards
-# guard_names: the three installations this check must never touch are refused by
-# NAME, in the project and in the bucket, before a single call. It is a substring
-# test on purpose — a project or bucket that merely contains one of the names is
-# refused too, and the message says which one matched — and the three are the
-# ones check96.sh refuses: `belong` is the owner's own installation, and
-# `edge-devel-dimi` and `edgeappinc` are the projects it runs in.
+# protected_name: whether a name is one of the three installations this check
+# must never touch. It is a substring test on purpose — a name that merely
+# contains one of them is refused too — and the three are the ones check96.sh
+# refuses: `belong` is the owner's own installation, and `edge-devel-dimi` and
+# `edgeappinc` are the projects it runs in.
+protected_name() {
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+  *belong* | *edge-devel-dimi* | *edgeappinc*) return 0 ;;
+  esac
+  return 1
+}
+
+# yaml_scalar FILE KEY — the value of a top-level `key:` line, with its quotes and
+# trailing space stripped. The check reads the two keys that name an installation
+# and nothing else out of the file, and a key it cannot find is the empty string,
+# which reads the same as the key being absent.
+yaml_scalar() { # FILE KEY
+  sed -n "s/^$2:[[:space:]]*//p" "$1" 2>/dev/null | head -n 1 |
+    sed -e 's/[[:space:]]*$//' -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/"
+}
+
+# guard_names: the three installations are refused by NAME in the project and in
+# the bucket, before a single call.
 guard_names() {
   local name
   for name in "$P" "$B"; do
-    case "$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')" in
-    *belong* | *edge-devel-dimi* | *edgeappinc*)
+    if protected_name "$name"; then
       fact guard FAIL "'$name' names an installation this check never touches (never belong, edge-devel-dimi or edgeappinc): this check reads a project's issue store with your own identity and runs the CLI's own command against it, so it is a SANDBOX check"
       stop "the name '$name' matches an installation this check must never touch (belong, edge-devel-dimi or edgeappinc)"
-      ;;
-    esac
+    fi
   done
   fact guard PASS "neither the project ($P) nor the bucket ($B) names an installation this check must never touch (nothing typed contains 'belong', 'edge-devel-dimi' or 'edgeappinc')"
 }
@@ -367,6 +385,15 @@ guard_names() {
 # says which project the command reads — a directory without one makes `mine`
 # answer "no project with a runs bucket is selected" and this check would then be
 # measuring a machine with no config rather than a store.
+#
+# And the file's own two names are refused here, which is the half of the guard
+# that actually protects the owner: `mine` is run with no --project at all, so
+# `fugaro.yaml` is the value that selects the store this check reads and uploads
+# to, and a guard that read only the typed --project and --bucket would pass a
+# `belong` checkout and then run the whole check green against the owner's real
+# installation. `project` is the Fugaro project the checkout belongs to and
+# `gcp_project` the GCP project it runs in, and the three refused names are one
+# of each kind, so both keys are read.
 guard_checkout() {
   if [ ! -d "$CO" ]; then
     fact checkout FAIL "'$CO' is not a directory: --checkout has to be the sandbox repository's checkout, because that is the directory \`fugaro issue mine\` is run in"
@@ -376,6 +403,15 @@ guard_checkout() {
     fact checkout FAIL "'$CO' carries no fugaro.yaml, so it is not the checkout of a repository: \`fugaro issue mine\` reads the project out of that file, and a run from here would answer 'no project with a runs bucket is selected' rather than reading a store"
     stop "'$CO' carries no fugaro.yaml, so it is not a repository checkout"
   fi
+  local key value
+  for key in project gcp_project; do
+    value=$(yaml_scalar "$CO/fugaro.yaml" "$key")
+    [ -n "$value" ] || continue
+    if protected_name "$value"; then
+      fact checkout FAIL "$CO/fugaro.yaml names the installation '$value' in its $key key: that file is what selects the store \`fugaro issue mine\` reads and uploads to (the command is run with no --project at all), so this checkout would run the whole check against an installation it must never touch (never belong, edge-devel-dimi or edgeappinc)"
+      stop "the checkout's fugaro.yaml names the installation '$value' in its $key key (never belong, edge-devel-dimi or edgeappinc)"
+    fi
+  done
   fact checkout PASS "$CO is a directory carrying a fugaro.yaml, so \`fugaro issue mine\` is run there and reads the project that file names"
 }
 
@@ -522,7 +558,7 @@ empty_listing() {
 # all there is nothing to read and the row says so instead of failing a project
 # that simply has no issues yet.
 record_read() { # KEY
-  local key=$1 number object out st=0 names
+  local key=$1 number object out st=0 names lst=0
   number=$(first_number "$SCRATCH/mine.json")
   # The object's name is not the row's number as a decimal string: the store
   # prints it as a file name, `fmt.Sprintf("%04d")` (internal/issues/shared.go's
@@ -543,11 +579,27 @@ record_read() { # KEY
     if [ -n "$number" ] && [ "$number" -eq 0 ]; then number=""; fi
   fi
   if [ -z "$number" ]; then
-    names=$(gcloud storage ls --project="$P" "gs://$B/issues/records/" 2>&1) || names=""
+    # The fallback listing is a call like any other, so it is read the way
+    # store_probe reads one: a denial is the reading, a call that did not answer
+    # stops the run, and only an answer that really was an empty list may be
+    # recorded as a store that holds no record. Collapsing all three into the
+    # empty string is what would report exit 0 on an unmeasured half of U1, with
+    # a statement about the store that no call established.
+    names=$(gcloud storage ls --project="$P" "gs://$B/issues/records/" 2>&1) || lst=$?
+    if [ "$lst" -ne 0 ] && denial_is_permission "$names"; then
+      fact "$key" FAIL "the signed-in login may NOT list gs://$B/issues/records/: gcloud refused it (gcloud's own words: $(bounded "$names" 400)). No row of the document carried a number this check could name a record with — a store whose rows are all this machine's own has none — so that listing was the only way to pick a record, and nothing under issues/records/ was read at all: U1's read half is a login that cannot reach the store's records"
+      return 0
+    fi
+    if [ "$lst" -ne 0 ] && ! empty_listing "$names"; then
+      stop "the listing of gs://$B/issues/records/ — the fallback for a document that carries no usable number — did not answer, so nothing was read about the permission: $(bounded "$names" 300)"
+    fi
     number=$(printf '%s' "$names" | sed -n 's|.*/records/0*\([0-9][0-9]*\)$|\1|p' | head -n 1)
+    if [ -z "$number" ] && [ -n "$names" ] && ! empty_listing "$names"; then
+      stop "the listing of gs://$B/issues/records/ answered, and no name in it could be read as a record number, so this check found nothing to read: $(bounded "$names" 300)"
+    fi
   fi
   if [ -z "$number" ]; then
-    fact "$key" INFO "the store holds no record under issues/records/, so U1's read half was not measured: this project has no issue yet. Save one on a machine (\`fugaro issue sync\` uploads it) and run this mode again"
+    fact "$key" INFO "the store holds no record under issues/records/ — the listing answered and held no name, which is not a refusal — so U1's read half was not measured: this project has no issue yet. Save one on a machine (\`fugaro issue sync\` uploads it) and run this mode again"
     return 0
   fi
   object=$(printf '%04d' "$number")
@@ -689,7 +741,7 @@ step_verdict() {
 # names the shape of each command and never evaluates one.
 print_plan() {
   say "dry run: NOTHING below was run. A real run of mode $MODE would run, in this order:"
-  say "  [local, reads] the guards: the three refused names in --project and --bucket, and --checkout being a directory that carries a fugaro.yaml"
+  say "  [local, reads] the guards: the three refused names in --project, in --bucket, and in the checkout's own fugaro.yaml (its project: and gcp_project:, the values that select the store the CLI reads), and --checkout being a directory that carries that file"
   say "  [local, reads+writes] the user's cache directory ($CACHE): identity.json and mine/ are copied into \$SCRATCH before the first fugaro call, so the Restore restores bytes rather than a shape it hopes for"
   case "$MODE" in
   470)
