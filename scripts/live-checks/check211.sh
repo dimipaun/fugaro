@@ -171,12 +171,14 @@ REF=""
 RUN_ID=""
 JUDGE_MODEL=""
 LAUNCHED=0
-# PREMISE_OK is set by the two rows that establish the state a launch is a
-# reading of — the judge recipe this build carries and the published layer's
-# judge model. The launch reads it and nothing else: a judge run launched after
-# either failed would spend the sandbox's money on a reading nobody could
-# grade, and the FAIL row above is already the finding.
-PREMISE_OK=no
+# PREMISE_RECIPE_OK and PREMISE_LAYER_OK are set by the two rows that establish
+# the state a launch is a reading of — the judge recipe this build carries and
+# the published layer's judge model. They are TWO flags rather than one: each
+# row is a reading of a different thing, and a launch after either failed would
+# spend the sandbox's money on a reading nobody could grade, with the FAIL row
+# above already the finding.
+PREMISE_RECIPE_OK=no
+PREMISE_LAYER_OK=no
 # PAIRS_OK is the same for the two rows read off the manifest: without a
 # manifest with pairs in it there is no key to read a stored input at.
 PAIRS_OK=no
@@ -403,13 +405,21 @@ def needles_for(manifest, pair_id):
 
 
 def scan(text, needles):
-    """Every hit in one piece of text, as (kind, needle, line) triples."""
+    """Every hit in one piece of text, as (kind, needle, line) triples. One word
+    is one hit whatever named it: two models of the same family share the words
+    their names are built from, and a reader that counted 'claude' twice would
+    report one occurrence as two."""
     if not text:
         return
     low = text.lower()
+    seen = set()
     for kind, value in needles:
         words = model_words(value) if kind == "model" else [value]
         for word in words:
+            key = (kind, word.lower())
+            if key in seen:
+                continue
+            seen.add(key)
             if word.lower() not in low:
                 continue
             line = ""
@@ -432,9 +442,10 @@ def scan(text, needles):
 what = sys.argv[1]
 if what == "doctor":
     doc = load(sys.argv[2])
-    print("gcp_project=%s" % flat(doc.get("gcp_project")))
-    print("fugaro_version=%s" % flat(doc.get("version")))
-    print("repo=%s" % flat(doc.get("repo")))
+    # `fugaro doctor --json` carries the installation under `project`
+    # (doctorOutput.Project, doctorProject.GCPProject): a top-level read here
+    # would find no project on every run and report the premise unmeasured.
+    print("gcp_project=%s" % flat((doc.get("project") or {}).get("gcp_project")))
 elif what == "layer":
     doc = load(sys.argv[2])
     print("where=%s" % flat(doc.get("where")))
@@ -794,7 +805,7 @@ step_recipe() {
     fact recipe FAIL "fugaro recipes ls --json carries ab-judge from ${source:-an unknown source} but it is not the judge this check launches: launchable=${launchable:-false} and its steps are '${steps:-none}' where the judge recipe is one registered ab_judge step (A5.2, ee/ab/recipe/ab-judge.yaml). A recipe of that name from the repository or the project shadows the catalog's, and a shadow that is not the judge measures something else"
     return 0
   fi
-  PREMISE_OK=yes
+  PREMISE_RECIPE_OK=yes
   fact recipe PASS "this build's catalog carries ab-judge from ${source:-the catalog}, launchable, with the one registered ab_judge step: 'fugaro run --recipe ab-judge' below resolves to the judge this check measures (A5.2)"
 }
 
@@ -829,7 +840,7 @@ step_layer() {
     fact layer FAIL "the published project layer (${where:-unknown}) has an ab: block whose keys are ${keys:-none} and it names no judge_model: a judge run has nothing to call, and the launcher refuses the launch rather than starting one to fail (D553, ReasonNoJudgeModel). Name the model the judge run calls in the layer's ab: block and publish the layer again"
     return 0
   fi
-  PREMISE_OK=yes
+  PREMISE_LAYER_OK=yes
   fact layer PASS "the published project layer (${where:-unknown}, generation $(field "$SCRATCH/layer.txt" generation), sha256 $(field "$SCRATCH/layer.txt" sha256)) names ab.judge_model: ${judge}, so the judge run below has a model to call. This is a text read of the layer's own ab: block — no command in this release resolves the block to a value"
 }
 
@@ -838,7 +849,7 @@ step_layer() {
 # below is read from `fugaro runs ls` rather than built here, because the
 # objects the rows read are at the key that row carries.
 step_launch() {
-  if [ "$PREMISE_OK" != yes ]; then
+  if [ "$PREMISE_RECIPE_OK" != yes ] || [ "$PREMISE_LAYER_OK" != yes ]; then
     unmeasured launch "nothing was launched: a premise row above did not establish the state this launch is a reading of (this build's judge recipe, or the layer's judge model), and a judge run launched without it would spend the sandbox's money on a reading nobody could grade. Settle that row and run this check again"
     return 0
   fi
