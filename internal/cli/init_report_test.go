@@ -52,6 +52,9 @@ const convergeNoise = "TERRAFORM-PROGRESS-NOISE"
 // run has both a step that applies and a stream that says so.
 func applyingRig(t *testing.T) *initRig {
 	t.Helper()
+	// The run this rig is for is the one a person is at: their being there is
+	// what confirms the stages it applies, now that no flag does (T11).
+	fakeTerminal(t)
 	r := updateRig(t)
 	r.setPlan(t, change("module.installation.google_storage_bucket.runs", "create"))
 	r.script["plan"] = map[string]any{"exit": 2, "stdout": convergeNoise + "\n"}

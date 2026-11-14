@@ -96,7 +96,11 @@ func TestProjectPolicyPublishKeepsDeleteAndSeedRepos(t *testing.T) {
 		f := newProjectFixture(t, "")
 		f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
 
-		out, _, err := execute(t, "project", "policy", "publish", "--delete")
+		// The deletion names what it takes away and asks for the project's name
+		// before it does: with --yes gone from the door, the typed name at a
+		// real terminal is the only thing that confirms it (T11).
+		fakeTerminal(t)
+		out, _, err := executeStdin(t, "aurora\n", "project", "policy", "publish", "--delete")
 		if err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}

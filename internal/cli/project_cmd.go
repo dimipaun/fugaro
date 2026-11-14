@@ -2805,8 +2805,10 @@ func confirmRemovalStrict(cmd *cobra.Command, lc *localcfg.Config, what string) 
 	return confirmTypedStrict(cmd, lc, "typing the project's name is the only thing that confirms this one while a run is in flight; wait for it (fugaro runs ls), then confirm it at your own terminal", what)
 }
 
-// confirmRemoval is confirmRemovalStrict where --yes may stand in for the
-// typed name: the caller has checked that nothing is in flight.
+// confirmRemoval is confirmRemovalStrict where the run's own answer may stand
+// in for the typed name: the caller has checked that nothing is in flight. The
+// flag that once carried that answer is gone from the door (T11), so what
+// reaches here is the field the run itself holds.
 func confirmRemoval(cmd *cobra.Command, lc *localcfg.Config, yes bool, what string) error {
 	return confirmTyped(cmd, bufio.NewReader(cmd.InOrStdin()), lc, yes, what)
 }

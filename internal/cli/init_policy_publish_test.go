@@ -1065,6 +1065,10 @@ func TestUpdatePolicyPublishSkipsTheDatabaseTheRulesStageSkips(t *testing.T) {
 			_, db, _ := unadoptedRig(t, s)
 			db.Set(projectpolicy.PathShared(), staleBudgetNode())
 
+			// The person is at their own terminal, which is what confirms the
+			// covered stages now that no flag does (T11); --json is still how
+			// this test reads each stage's own state.
+			fakeTerminal(t)
 			out, errOut, err := executeStdin(t, "", "update", "--json")
 			if err != nil {
 				t.Fatalf("a database the pair does not prove is ours stopped the whole update: %v\n%s%s", err, out, errOut)
