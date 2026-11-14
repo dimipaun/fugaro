@@ -34,6 +34,8 @@
 //
 //   - creds/marks/<name> — one credential's Mark (available, exhausted until T,
 //     backed off, broken);
+//   - creds/tokens/<name> — one Bitbucket token's TokenStatus, in a subtree of
+//     its own so that a reader of the marks never reads a token as an account;
 //   - creds/current/<slug>/<run> — the credential a run is on, which is D154's
 //     stickiness: a run keeps its prompt cache by keeping its credential;
 //   - creds/leases/<slug>/<run> — a run's expiring hold on the credential it is
@@ -82,6 +84,7 @@ const (
 	// root one placement is patched under (SetPlacement).
 	pathRoot       = "creds"
 	pathMarks      = "creds/marks"
+	pathTokens     = "creds/tokens"
 	pathLeases     = "creds/leases"
 	pathCurrent    = "creds/current"
 	pathRoundRobin = "creds/roundrobin"
@@ -89,6 +92,15 @@ const (
 
 // PathMark is one credential's mark node.
 func PathMark(name string) string { return pathMarks + "/" + seg("credential name", name) }
+
+// PathTokenStatus is one Bitbucket token's status node.
+//
+// It is a sibling of the marks and not a corner of them: the marks' readers
+// present what they read there as the cascade's model credentials, so a token
+// named `ci` among them would be read as the model account `ci` (TokenStatus).
+func PathTokenStatus(name string) string {
+	return pathTokens + "/" + seg("token name", name)
+}
 
 // PathCurrent is the credential one run is on.
 func PathCurrent(run Run) string {
@@ -389,6 +401,29 @@ type Store interface {
 	RoundRobin(ctx context.Context) (int64, error)
 }
 
+// TokenStatusStore is a Bitbucket token's shared state as the proxy, the
+// add-time check and the operator's listing read and write it: the store the
+// contract's StatusStore names, over the subtree that keeps a token's status
+// apart from the cascade's marks (TokenStatus).
+//
+// It is an interface of its own and not two methods on Store, deliberately.
+// Store is a selection's state — the marks, the leases, a run's placement and
+// the tie-breaker — and a store handed to a selection must not be able to write
+// a Bitbucket token's status, nor a proxy that only ever touches tokens be able
+// to write a model mark.
+type TokenStatusStore interface {
+	// TokenStatuses reads every Bitbucket token's status in one call, for the
+	// reason Marks reads whole: `creds ls` and `doctor` present them together,
+	// and a reader that asked one token at a time would be one round trip per
+	// token on every listing. A token with no status is absent from the map.
+	TokenStatuses(ctx context.Context) (map[string]TokenStatus, error)
+	// UpdateTokenStatus reads one token's status and writes what f answers,
+	// conditionally on the value read; a lost race re-reads the node and calls f
+	// again, so f must be a function of its arguments only and may be called
+	// more than once. The status written is returned.
+	UpdateTokenStatus(ctx context.Context, name string, f func(prev TokenStatus, found bool) (TokenStatus, error)) (TokenStatus, error)
+}
+
 // RTDBStore is the Store the service uses: the shared state read and written as
 // the service's own account.
 type RTDBStore struct {
@@ -404,8 +439,9 @@ type RTDBStore struct {
 // than an empty set: a selection that cannot read the marks must fail closed,
 // never read "no marks" as "everything is available".
 //
-// The read goes through a raw message and decodeStrict rather than straight
-// into the map (as the previous shape did), and the difference is not
+// The read goes through readNameTree, which reads a raw message and decodeStrict
+// rather than straight into the map (as the previous shape did), and the
+// difference is not
 // cosmetic: encoding/json ignores a key it does not know, so a mark node a
 // newer release wrote differently — {"status":"broken"} where this release
 // reads {"state":...} — would decode to the ZERO Mark, which is an available
@@ -424,42 +460,60 @@ type RTDBStore struct {
 // refuses the collision with it: Key is injective onto its own output, so two
 // distinct names cannot produce one key.
 func (s *RTDBStore) Marks(ctx context.Context) (map[string]Mark, error) {
+	return readNameTree[Mark](ctx, s.db(), pathMarks, "the marks", "mark node")
+}
+
+// readNameTree reads one name-keyed subtree under creds/ whole: every node
+// decoded strictly, under the canonical key of the name it unescapes to.
+//
+// The marks and the Bitbucket tokens' statuses are both such a subtree, and the
+// rules are one rule rather than two copies, because the two halves that must
+// not drift are exactly the two a copy would get wrong. One is the strict
+// decode: encoding/json ignores a member it does not know, so a node a newer
+// release wrote differently decodes to the ZERO value — and for a Mark the zero
+// value is an available and usable credential. The other is the canonical-key
+// test: Unkey reads either case of an escape, so two spellings of one name
+// assign one map key in whatever order Go's map iteration took, and a hold
+// reads as absent on a random subset of reads.
+//
+// subject is what the subtree is called in an error a reader sees, and node is
+// one entry of it; the marks' own two strings are what they always were.
+func readNameTree[T any](ctx context.Context, db DB, path, subject, node string) (map[string]T, error) {
 	raw := json.RawMessage{}
-	if _, _, err := s.db().GetETag(ctx, pathMarks, &raw); err != nil {
-		return nil, fmt.Errorf("creds: reading the marks: %w", err)
+	if _, _, err := db.GetETag(ctx, path, &raw); err != nil {
+		return nil, fmt.Errorf("creds: reading %s: %w", subject, err)
 	}
 	if len(raw) == 0 {
-		return map[string]Mark{}, nil
+		return map[string]T{}, nil
 	}
-	read, err := decodeStrict[map[string]Mark](raw)
+	read, err := decodeStrict[map[string]T](raw)
 	if err != nil {
-		return nil, fmt.Errorf("creds: reading the marks: %w", err)
+		return nil, fmt.Errorf("creds: reading %s: %w", subject, err)
 	}
-	out := make(map[string]Mark, len(read))
-	for k, m := range read {
+	out := make(map[string]T, len(read))
+	for k, v := range read {
 		name, err := budget.Unkey(k)
 		if err != nil {
-			return nil, fmt.Errorf("creds: a mark node is keyed %q, which is not an escaped name: %w", k, err)
+			return nil, fmt.Errorf("creds: a %s is keyed %q, which is not an escaped name: %w", node, k, err)
 		}
 		if name == "" {
 			// An empty key unescapes to an empty name, and an empty name is not a
-			// credential: this package's paths panic on one (seg), so a node keyed
-			// "" must stop the read rather than travel onward as a name.
-			return nil, fmt.Errorf("creds: a mark node is keyed %q, which unescapes to no name at all", k)
+			// credential or a token: this package's paths panic on one (seg), so a
+			// node keyed "" must stop the read rather than travel onward as a name.
+			return nil, fmt.Errorf("creds: a %s is keyed %q, which unescapes to no name at all", node, k)
 		}
 		if budget.Key(name) != k {
 			// A key that unescapes to a name but is not that name's key: "a%2fb"
 			// for a/b, which Key spells "a%2Fb". It is refused rather than read
 			// because a subtree carrying both spellings — a hand-edit, or a
 			// second writer that escapes differently — otherwise has its two
-			// marks assigned to one map key in whatever order the range over
-			// `read` happens to take, and a broken mark reads as an available
-			// one on a random subset of selections. The canonical-key test
-			// closes the lone odd key and the collision together, because Key is
-			// injective.
-			return nil, fmt.Errorf("creds: a mark node is keyed %q, which is not how this release escapes %q (want %q)", k, name, budget.Key(name))
+			// entries assigned to one map key in whatever order the range over
+			// `read` happens to take, and a hold reads as absent on a random
+			// subset of reads. The canonical-key test closes the lone odd key and
+			// the collision together, because Key is injective.
+			return nil, fmt.Errorf("creds: a %s is keyed %q, which is not how this release escapes %q (want %q)", node, k, name, budget.Key(name))
 		}
-		out[name] = m
+		out[name] = v
 	}
 	return out, nil
 }
@@ -471,6 +525,23 @@ func (s *RTDBStore) UpdateMark(ctx context.Context, name string, f func(prev Mar
 		return Mark{}, fmt.Errorf("creds: writing the mark of %q: %w", name, err)
 	}
 	return m, nil
+}
+
+// TokenStatuses implements TokenStatusStore, with the marks' read's discipline
+// and for its reason: a status this release cannot read is not an absent one,
+// and reading it as absent would hand the proxy a token whose hold it could not
+// see (readNameTree).
+func (s *RTDBStore) TokenStatuses(ctx context.Context) (map[string]TokenStatus, error) {
+	return readNameTree[TokenStatus](ctx, s.db(), pathTokens, "the Bitbucket tokens' statuses", "token status node")
+}
+
+// UpdateTokenStatus implements TokenStatusStore.
+func (s *RTDBStore) UpdateTokenStatus(ctx context.Context, name string, f func(prev TokenStatus, found bool) (TokenStatus, error)) (TokenStatus, error) {
+	st, err := cas(ctx, s.db(), PathTokenStatus(name), s.attempts(), f)
+	if err != nil {
+		return TokenStatus{}, fmt.Errorf("creds: writing the status of %q: %w", name, err)
+	}
+	return st, nil
 }
 
 // Leases implements Store. The lease nodes are keyed by slug and run id, and

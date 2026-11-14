@@ -430,3 +430,127 @@ func Cleared() Mark { return Mark{State: StateAvailable} }
 // is a no-op on one (ProbeSucceeded), so nothing a busy token reports — and
 // nothing a probe answers — can put a refused one back in rotation.
 func Break(now time.Time) Mark { return Mark{State: StateBroken, Since: now} }
+
+// DefaultTokenCountWindow is the window a Bitbucket token's request count is
+// kept for (D2356, R7). The number `fugaro creds ls` shows is "requests in the
+// current window", because a count with no window is a count since the token
+// was added, which says nothing about a token that has been serving for months.
+//
+// An hour is short enough that the number is a level rather than a total — the
+// plan's count is for display and enters no decision (the proactive queue is
+// declined) — and long enough that a token serving several repositories does
+// not have its window turn over between two calls of one run.
+const DefaultTokenCountWindow = time.Hour
+
+// TokenStatus is one Bitbucket token's shared state: the hold on it (Mark, by
+// the same algebra the model credentials use), the identity the add-time check
+// proved for it, and the advisory count of the requests it has served in its
+// current window.
+//
+// It is a type of its own, under a subtree of its own (PathTokenStatus), and
+// that separation is what it is for. The readers of creds/marks present what
+// they read there as the cascade's model credentials, so a Bitbucket token
+// named `ci` written among them would be read as the model account `ci` — a
+// broken repository token shown as a broken account, and a throttled one as an
+// exhausted one.
+//
+// The hold is Mark and not a second algebra spelled for tokens, deliberately: a
+// 401 is StateBroken (out until an operator clears it) and a 429 is
+// StateExhausted until its reset, or StateBackedOff when it named none — the
+// four states Usable, Ready and NeedsProbe already answer, so a token is held,
+// waited for, skipped and probed by the code that was reviewed for the model
+// credentials rather than by a copy of it that can go stale.
+//
+// A reader of a token's hold reads State and Until — the plain fields the
+// contract names — and not Mark.Usable or Mark.Ready, which take the project's
+// model settings: D142's window has no subject on a Bitbucket token, and a
+// reader that handed it the settings the model credentials are held by would
+// hold a token for a subscription window it is not part of.
+//
+// Identity is the account UUID `GET /2.0/user` answered, and an empty one is a
+// repository token's, whose own GET /user is a 403 (R14): a name with no
+// identity is a token that has none, never an unknown one. VerifiedAt is when
+// the add-time check last proved the token; a probe does not move it, because a
+// probe asks whether the token works now and not whether it was checked when it
+// was added.
+type TokenStatus struct {
+	Mark
+	VerifiedAt time.Time `json:"verified_at,omitempty"`
+	Identity   string    `json:"identity,omitempty"`
+	// Count is how many requests the token has served in the window that began
+	// at Window. Both are advisory (D2356): they are written best-effort off the
+	// request path, they are read for display, and no selection consults them.
+	Count  int       `json:"count,omitempty"`
+	Window time.Time `json:"window,omitempty"`
+}
+
+// TokenBroken is the status a 401 leaves a Bitbucket token in: D139's mark, the
+// same one a model credential gets, because the answer means the same thing —
+// the token is dead, and only an operator replaces it and clears the mark. The
+// identity, the verification time and the count are facts about the token and
+// are kept.
+func TokenBroken(prev TokenStatus, now time.Time) TokenStatus {
+	prev.Mark = Break(now)
+	return prev
+}
+
+// TokenThrottled is the status a 429 leaves a Bitbucket token in: exhausted
+// until the reset the answer named, and backed off — through the same doubling
+// wait a failed probe leaves (D153) — when it named none.
+//
+// D142's subscription window is deliberately NOT applied, and this is the one
+// place a Bitbucket token's throttle departs from a shared model token's
+// exhaustion. That window is the owner's headroom over DONATED model quota, so
+// holding a donated token for the rest of it costs the donor nothing beyond
+// what the exhaustion already cost them; a Bitbucket rate limit is the
+// upstream's own account-wide limit and its Retry-After is the whole of the
+// answer, so reading one as a five-hour hold would take a repository token out
+// of service for an afternoon over a one-minute limit. Everything else is
+// Exhaust's: a 429 arriving while a hold is in force may only extend it, and a
+// token that answered 401 is never put back in rotation by a rate limit.
+func TokenThrottled(prev TokenStatus, now, reset time.Time, set Settings) TokenStatus {
+	set.StopAfterExhaustionPerWindow = ptrTo(false)
+	prev.Mark = Exhaust(prev.Mark, now, reset, set)
+	return prev
+}
+
+// TokenSucceeded is the status a successful probe leaves: ProbeSucceeded's own
+// transition, with the window left out for TokenThrottled's reason. It is a
+// no-op on anything but a backed-off token, so a probe's "yes" cannot clear a
+// 401 (C1.21) or cut an exhausted token's reset short.
+func TokenSucceeded(prev TokenStatus, now time.Time, set Settings) TokenStatus {
+	set.StopAfterExhaustionPerWindow = ptrTo(false)
+	prev.Mark = ProbeSucceeded(prev.Mark, now, set)
+	return prev
+}
+
+// TokenVerified records the identity an add-time check proved and when it did.
+//
+// The hold is not touched: `creds set` can verify a token that is throttled at
+// the moment it is added — the two facts are independent — and clearing a rate
+// limit is the upstream's business rather than the operator's. identity is the
+// account UUID, and an empty one is written rather than refused: a repository
+// token has none (R14), so "no identity" is a value this store carries.
+func TokenVerified(prev TokenStatus, at time.Time, identity string) TokenStatus {
+	prev.VerifiedAt, prev.Identity = at, identity
+	return prev
+}
+
+// RecordRequest counts one served request against the token's current window,
+// opening a new one when the last has ended.
+//
+// Nothing is refused because of this count and nothing is queued on it (D2356):
+// the plan declines a proactive queue until the upstream's limits are measured,
+// and the first build reacts to a 429 instead. Window is written with the count
+// so the number an operator reads is one window's rather than a lifetime total,
+// and it moves only when a request arrives after the window ended — an idle
+// token keeps the window it has, and its count is not silently zeroed by the
+// passage of time alone.
+func (s TokenStatus) RecordRequest(now time.Time) TokenStatus {
+	if s.Window.IsZero() || !now.Before(s.Window.Add(DefaultTokenCountWindow)) {
+		s.Window = now
+		s.Count = 0
+	}
+	s.Count++
+	return s
+}
