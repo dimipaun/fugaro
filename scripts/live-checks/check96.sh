@@ -10,7 +10,7 @@
 # run identity for repository X cannot mint for Y. The three claims of the
 # plan's row 79, read on a real installation.
 #
-# Usage:      bash scripts/live-checks/check96.sh [--dry-run] [<owner/name>]
+# Usage:      bash scripts/live-checks/check96.sh [--dry-run] [--workflow <name>] [<owner/name>]
 #             The repository is the SANDBOX one. It is the one to name, and it
 #             may be left out only where the installation's own state is
 #             unambiguous: with exactly one repository holding state that one is
@@ -18,6 +18,20 @@
 #             than one the check stops (exit 2) and lists them rather than
 #             picking — what it mints below is a real GitHub installation token
 #             for whichever repository it names.
+#             --workflow names the workflow whose job this check reads, by the
+#             value the job wears as its `fugaro_workflow` label (a repository
+#             with one workflow has one job of its own and needs no flag). A
+#             repository whose fugaro.yaml has several workflows has one job per
+#             workflow, and which of them a run lands on is what `fugaro run
+#             --workflow` answers (internal/cli/run.go's resolveWorkflow): with
+#             several and no flag this check is not told and stops (exit 2) on
+#             one line, naming the workflows it found and the flag that fixes it,
+#             rather than read one of them and report its account, its
+#             environment and its mint as the repository's; a name no job of the
+#             repository carries is refused the same way. A workflow of the
+#             owner's own `belong` account is refused by NAME before any call,
+#             and so is a job whose own service account is one: this check is a
+#             sandbox check on the fugaro installation and never runs belong.
 #             --dry-run runs the guards and every read, prints the plan of the
 #             only things that write — the calls to the mint endpoint and the
 #             two Firebase Auth user deletions — and runs none of them.
@@ -34,11 +48,15 @@
 #             `fugaro budget show --all --json` (the second one always, the
 #             sandbox one only where that state names a single repository, which
 #             the fact says it did); and the repository's job out of
-#             `gcloud run jobs list` by its `fugaro_repo` label. The key and the
-#             signer are read from the config file and never printed.
+#             `gcloud run jobs list` by its `fugaro_repo` label, narrowed to one
+#             workflow's job by the same list's `fugaro_workflow` label where
+#             `--workflow` names one. The key and the signer are read from the
+#             config file and never printed.
 # Where:      installation fugaro on GCP project fugaro-dev ONLY, and never
-#             `belong`: both the project the config in force describes and the
-#             repository's name are refused when they are anything else. It
+#             `belong`: the project the config in force describes, the
+#             repository's name, a `--workflow` whose name carries belong and a
+#             job whose own account is one are each refused when they are
+#             anything else. It
 #             mints two Firebase Auth users (deleted again in the same run, and
 #             the project's own user list read back — every page of it, on a
 #             200 — holding none of their uids), two run identities and ONE real
@@ -170,6 +188,15 @@ PRINTED=""
 # BY the exchange, so a lost answer is a user that exists and that no uid
 # recorded after the answer would ever name.
 UIDS_CREATED=()
+# The service accounts this run bound the operator to as token creator, so the
+# exit trap removes exactly those and no binding the operator already held. A
+# removal that failed is kept with its command, because a standing grant on a job
+# account is the one thing this check must not leave behind.
+GRANTS_ADDED=()
+GRANTS_HELD=()
+GRANTS_LEFT=()
+OPERATOR_MEMBER=""
+GRANT_ROLE=roles/iam.serviceAccountTokenCreator
 # The read-back's count, set only by a read-back that happened: empty says the
 # user list was never read, which is not the same fact as a list read and found
 # to hold none of them, and the `restore` line says which of the two it is.
@@ -194,7 +221,82 @@ scratch_up() {
 # answer away with the subshell.
 cleanup() {
   FACTS_CAPTURED=$(cat "$FACTS_FILE" 2>/dev/null || true)
+  revoke_impersonation
   remove_scratch
+}
+
+# operator_member: the principal gcloud acts as, written the way an IAM binding
+# names it.
+operator_member() {
+  local acct
+  acct=$(gcloud config get-value account 2>/dev/null) || acct=""
+  [ -n "$acct" ] || return 1
+  case "$acct" in
+  *.gserviceaccount.com) printf 'serviceAccount:%s' "$acct" ;;
+  *) printf 'user:%s' "$acct" ;;
+  esac
+}
+
+# grant_impersonation SA...: the installation gives operators actAs on a job
+# account and never getOpenIdToken, so this check binds the operator to token
+# creator on each account it must speak as and the exit trap removes it again.
+# A binding the operator already holds is left alone, in both directions.
+grant_impersonation() {
+  local sa member policy
+  member=$(operator_member) || stop "gcloud names no active account, so there is no operator to bind as token creator on the accounts this check speaks as"
+  OPERATOR_MEMBER=$member
+  for sa in "$@"; do
+    policy=$(gcloud iam service-accounts get-iam-policy "$sa" --project "$P" --format=json 2>"$SCRATCH/policy.err") ||
+      stop "the policy of $sa could not be read, so the grant this check needs on it cannot be made ($(sed -n '1,2p' "$SCRATCH/policy.err" | tr '\n' ' '))"
+    if printf '%s' "$policy" | python3 -c '
+import json, sys
+member, role = sys.argv[1], sys.argv[2]
+doc = json.load(sys.stdin)
+sys.exit(0 if any(b.get("role") == role and member in (b.get("members") or []) and not b.get("condition") for b in doc.get("bindings") or []) else 1)
+' "$member" "$GRANT_ROLE"; then
+      GRANTS_HELD+=("$sa")
+      say "$member already holds $GRANT_ROLE on $sa: left as it is"
+      continue
+    fi
+    # Recorded before the call: an interrupt between the call and the record
+    # would leave a binding nobody removes, and a removal of one never added only
+    # answers that it is not there.
+    GRANTS_ADDED+=("$sa")
+    gcloud iam service-accounts add-iam-policy-binding "$sa" --project "$P" \
+      --member="$member" --role="$GRANT_ROLE" >/dev/null 2>"$SCRATCH/grant.err" ||
+      stop "the binding of $member as $GRANT_ROLE on $sa was refused, so this check cannot speak as it ($(sed -n '1,2p' "$SCRATCH/grant.err" | tr '\n' ' '))"
+    say "bound $member as $GRANT_ROLE on $sa for this run; removed at the end"
+  done
+}
+
+revoke_impersonation() {
+  local sa
+  [ "${#GRANTS_ADDED[@]}" -gt 0 ] || return 0
+  for sa in "${GRANTS_ADDED[@]}"; do
+    if gcloud iam service-accounts remove-iam-policy-binding "$sa" --project "$P" \
+      --member="$OPERATOR_MEMBER" --role="$GRANT_ROLE" >/dev/null 2>&1; then
+      say "removed $OPERATOR_MEMBER as $GRANT_ROLE on $sa"
+    else
+      GRANTS_LEFT+=("$sa")
+    fi
+  done
+  GRANTS_ADDED=()
+}
+
+# impersonated_token SA ERRFILE: the grant took about a minute to reach the
+# token endpoint, and a refusal in that window reads like a missing permission.
+impersonated_token() {
+  local sa=$1 err=$2 n=0 tries=${CHECK96_GRANT_TRIES:-48} tok
+  while :; do
+    if tok=$(gcloud auth print-identity-token --impersonate-service-account="$sa" \
+      --audiences="$SVCURL" --include-email 2>"$err") && [ -n "$tok" ]; then
+      printf '%s' "$tok"
+      return 0
+    fi
+    n=$((n + 1))
+    [ "$n" -lt "$tries" ] || return 1
+    sleep "${CHECK96_GRANT_POLL:-5}"
+  done
 }
 
 remove_scratch() {
@@ -248,7 +350,15 @@ restore_detail() {
     left=${UIDS_CREATED[*]}
     users="the project's own user list was read back and still holds $SURVIVORS_READ of the uids this check may have created ($left): this is the call that deletes each of them — $delete_call"
   fi
-  printf '%s; %s; the one thing it cannot take back is the installation token the mint answered: GitHub expires it inside the hour, this check never wrote it anywhere, and a second run mints a second one' "$dir" "$users"
+  local grants
+  if [ "${#GRANTS_LEFT[@]}" -gt 0 ]; then
+    grants="the token creator binding of $OPERATOR_MEMBER is STILL ON ${GRANTS_LEFT[*]} — remove it yourself: gcloud iam service-accounts remove-iam-policy-binding <account> --project=$P --member=$OPERATOR_MEMBER --role=$GRANT_ROLE"
+  elif [ "${#GRANTS_HELD[@]}" -gt 0 ]; then
+    grants="the token creator binding this check added is gone (the one on ${GRANTS_HELD[*]} was already yours and is untouched)"
+  else
+    grants="the token creator binding this check added is gone, or none was needed"
+  fi
+  printf '%s; %s; %s; the one thing it cannot take back is the installation token the mint answered: GitHub expires it inside the hour, this check never wrote it anywhere, and a second run mints a second one' "$dir" "$users" "$grants"
 }
 
 finish() {
@@ -272,6 +382,7 @@ finish() {
   fi
   local restore=PASS
   if [ "$SCRATCH_REMOVED" != yes ] && [ -n "$SCRATCH" ]; then restore=FAIL; fi
+  if [ "${#GRANTS_LEFT[@]}" -gt 0 ]; then restore=FAIL; fi
   facts="${facts}"$'\n'"restore|$restore|$(restore_detail)"
   # The verdict is taken from the facts, not from the exit path: a scratch
   # directory this check could not remove is a FAIL, and a block that printed
@@ -300,6 +411,27 @@ guard_xtrace() {
     stop "this shell is tracing (bash -x). Run it without -x: bash scripts/live-checks/check96.sh — the check prints its own RESULT block, so a trace is not needed to report a failure"
   fi
   fact xtrace PASS "this shell is not tracing, so no trace of this run carries a token it read"
+}
+
+# guard_workflow: a workflow whose name carries the owner's own `belong` account
+# is refused before a single call is made. The label a repository's jobs wear is
+# the workflow's key (`fugaro_workflow`, internal/backend/gcp/names.go), and for
+# a named OAuth account it is that account's token joined to the workflow
+# (`gcp.WorkflowVariant`: `go_belong` is the workflow `go` on the account
+# `belong`), so the belong half of it is readable in the name alone. This is the
+# name half; the half that needs the job read — a job whose own service account
+# is a belong one — is refused in step_job, and the two are the same rule: the
+# register's row says this check runs on installation fugaro on fugaro-dev,
+# sandbox only, never belong. Like guard_repository this runs before the scratch
+# directory exists, so it writes no fact of its own and `stop` records the
+# aborted row the block needs.
+guard_workflow() {
+  case "${WORKFLOW_ARG:-}" in
+  "") return 0 ;;
+  *belong*)
+    stop "--workflow $WORKFLOW_ARG names the owner's own 'belong' account: a repository's jobs carry the workflow's key as their fugaro_workflow label, and a named OAuth account's key is the workflow joined to the account (gcp.WorkflowVariant: $WORKFLOW_ARG is a workflow on the account 'belong'). Check 96 is a sandbox check that mints a real GitHub installation token as the job's own account and creates Firebase users, so it never runs a belong workflow and never judges a belong job's account, its environment or its mint. Name the workflow of the sandbox repository's fugaro.yaml that is not belong's"
+    ;;
+  esac
 }
 
 # guard_repository: the sandbox repository is named by you or read from the
@@ -504,16 +636,32 @@ step_service() {
 # is the installation's to choose, and the label is what fugaro's own Terraform
 # writes on it. A repository's jobs carry `fugaro_repo` and `fugaro_workflow`
 # (one per workflow in its fugaro.yaml); the installation's support jobs carry
-# `fugaro_role` instead, so they are not the job a run lands on.
+# `fugaro_role` instead, so they are not the job a run lands on. Where the
+# repository has several of its own, the one read is the job the workflow named
+# with `--workflow` wears as its `fugaro_workflow` label; with several and no
+# flag this check is not told which workflow a run uses and stops rather than
+# read one of them (see the `*)` branch below).
 step_job() {
   LABEL=$(reader label "$SLUG") || stop "the repository's own label could not be derived from its slug"
   if ! run_capture "$SCRATCH/jobs.json" gcloud run jobs list --project "$P" --region "$REGION" \
     --filter="metadata.labels.fugaro_repo=$LABEL" --format=json; then
     stop "gcloud run jobs list did not answer for $P/$REGION: the check needs an account that may read Cloud Run there"
   fi
-  local answer found
-  answer=$(reader jobs <"$SCRATCH/jobs.json") || stop "the project's job list is not the document this check reads (gcloud run jobs list --format=json)"
+  local answer found wfs
+  if [ -n "${WORKFLOW_ARG:-}" ]; then
+    # Told which workflow, the reader picks the one job that wears its label and
+    # refuses a name no job of the repository carries — in one line, naming the
+    # labels it did find, because that list is the fix. Its refusal is read here
+    # rather than through the "not the document this check reads" sentence
+    # below: a name the repository does not have is an answer about the name,
+    # not a read this check could not make.
+    answer=$(reader jobs "$WORKFLOW_ARG" <"$SCRATCH/jobs.json" 2>"$SCRATCH/jobs.err") \
+      || stop "--workflow $WORKFLOW_ARG does not name a workflow of $REPO: $(sed -n '1,3p' "$SCRATCH/jobs.err" | sed 's/^error=//' | tr '\n' ' ')"
+  else
+    answer=$(reader jobs <"$SCRATCH/jobs.json") || stop "the project's job list is not the document this check reads (gcloud run jobs list --format=json)"
+  fi
   found=$(field_of found "$answer")
+  wfs=$(field_of workflows "$answer")
   case "$found" in
   "" | *[!0-9]*) stop "the project's job list did not say how many jobs the sandbox repository has, so this check cannot tell whether $REPO has a job of its own" ;;
   0)
@@ -540,12 +688,17 @@ step_job() {
     # read one job and report its account, its environment and its mint as the
     # repository's. Reading the shared project job here instead is what this
     # branch used to do, and it judged a repository with two jobs as a repository
-    # with none.
-    stop "the sandbox repository $REPO has $found jobs of its own in $P/$REGION, one per workflow of its fugaro.yaml ($(printf '%s\n' "$answer" | sed -n 's/^own=//p' | tr '\n' ' ')), and this check reads the job a run lands on: a run on a repository with several workflows is told which one with --workflow (internal/cli/run.go's resolveWorkflow) and this check is not told, so it stops rather than read one of them and report its account, its environment and its mint as the repository's. Name a sandbox repository whose fugaro.yaml has one workflow"
+    # with none. A workflow named with --workflow is the one thing that lifts
+    # this: the reader then picked the job that wears its label, and it stopped
+    # the run itself if no job of the repository wears it.
+    [ -n "${WORKFLOW_ARG:-}" ] || stop "the sandbox repository $REPO has $found jobs of its own in $P/$REGION, one per workflow of its fugaro.yaml ($(printf '%s\n' "$answer" | sed -n 's/^own=//p' | tr '\n' ' ')), and this check reads the job a run lands on: a run on a repository with several workflows is told which one with --workflow (internal/cli/run.go's resolveWorkflow) and this check is not told, so it stops rather than read one of them and report its account, its environment and its mint as the repository's. Re-run with --workflow <one of: $wfs>"
     ;;
   esac
   JOB=$(field_of job "$answer")
   JOB_KIND=$(field_of kind "$answer")
+  # The label the job was picked by, out of the listing: the job's own document
+  # does not carry it, and the `job` row below says which workflow's job it is.
+  JOB_WORKFLOW=$(field_of workflow "$answer")
   [ -n "$JOB" ] || stop "the sandbox repository's job could not be named from the project's job list"
   if ! run_capture "$SCRATCH/job.json" gcloud run jobs describe "$JOB" --project "$P" --region "$REGION" --format=json; then
     stop "gcloud run jobs describe did not answer for $JOB"
@@ -554,12 +707,30 @@ step_job() {
   JOBSA=$(field_of sa "$answer")
   APPID=$(field_of appid "$answer")
   [ -n "$JOBSA" ] || stop "the job $JOB names no service account, so there is no job account to impersonate"
+  # The other half of guard_workflow's rule, and the half that needs this read:
+  # a job whose OWN account is a belong one is the owner's own installation's,
+  # whatever workflow label the job wears. Check 96 impersonates this account for
+  # the mint and reads the GitHub installation token as it, so a belong job is
+  # never judged here — and it is refused before the first call, like the name
+  # half, rather than after a mint that already went out as that account.
+  case "$JOBSA" in
+  *belong*)
+    stop "the job $JOB$([ -n "$JOB_WORKFLOW" ] && printf ' (the workflow %s)' "$JOB_WORKFLOW") runs as $JOBSA, an account of the owner's own 'belong' installation: Check 96 is a sandbox check that impersonates this account to mint a real GitHub installation token and creates Firebase users, so it never judges a belong job's account, its environment or its mint. $REPO's own job of the sandbox installation runs as an account that is not belong's"
+    ;;
+  esac
   [ -n "$APPID" ] || stop "the job $JOB carries no FUGARO_GITHUB_APP_ID, so this check cannot make a mint call the service would admit (the request carries the App's ID and the ID alone)"
   local kindsaid="a repository job of $P/$REGION"
   local namesaid="the sandbox repository $REPO's own job is $JOB"
   if [ "$JOB_KIND" = project ]; then
     kindsaid="the shared project job of $P/$REGION (fugaro_profile)"
     namesaid="the sandbox repository $REPO has NO job of its own: the job this check then judges is $JOB, the installation's shared project job"
+  elif [ -n "$JOB_WORKFLOW" ]; then
+    # The workflow label is part of which job this is: with several of them the
+    # one read is the one `--workflow` named, and a row that did not say which
+    # would read as a judgement of the repository rather than of that job.
+    local wfsaid="the repository's only one"
+    if [ -n "${WORKFLOW_ARG:-}" ]; then wfsaid="the one you named"; fi
+    namesaid="$namesaid, the job of the workflow $JOB_WORKFLOW (its fugaro_workflow label, $wfsaid)"
   fi
   fact job PASS "$namesaid, $kindsaid: it runs as $JOBSA and carries FUGARO_GITHUB_APP_ID=$APPID"
 }
@@ -837,9 +1008,9 @@ mint() { # mint CALLER RUNTOK — sets ANSWER and MINT_STATUS in THIS shell
 # grants deliberately do not give operators), the run identity is the sandbox
 # repository's own, and the answer has to be the service's.
 step_mint() {
-  JOBTOK=$(gcloud auth print-identity-token --impersonate-service-account="$JOBSA" \
-    --audiences="$SVCURL" --include-email 2>"$SCRATCH/impersonate.err") || {
-    stop "no Google ID token for the job's own account $JOBSA — this step needs iam.serviceAccounts.getOpenIdToken on it (the installation's own grants give operators actAs only, and hold no such permission: modules/workflow/sa.tf). $(sed -n '1,3p' "$SCRATCH/impersonate.err" | tr '\n' ' ')"
+  grant_impersonation "$JOBSA" "$SIGNER"
+  JOBTOK=$(impersonated_token "$JOBSA" "$SCRATCH/impersonate.err") || {
+    stop "no Google ID token for the job's own account $JOBSA even with $GRANT_ROLE bound to $OPERATOR_MEMBER on it ($(sed -n '1,3p' "$SCRATCH/impersonate.err" | tr '\n' ' '))"
   }
   [ -n "$JOBTOK" ] || stop "the impersonation of $JOBSA answered no token"
   RUN="$(date -u +%Y%m%d-%H%M%S)-c96a"
@@ -984,9 +1155,8 @@ step_pairing() {
 # the container runs — the same fact the front-end row read — while one that has
 # been granted an invoker reaches the container and is refused there.
 step_outsider() {
-  NONJOBTOK=$(gcloud auth print-identity-token --impersonate-service-account="$SIGNER" \
-    --audiences="$SVCURL" --include-email 2>"$SCRATCH/nonjob.err") || {
-    stop "no Google ID token for $SIGNER — this step needs iam.serviceAccounts.getOpenIdToken on an account that is no job account of this installation (the installation's own grants give operators actAs only, and hold no such permission: modules/workflow/sa.tf). $(sed -n '1,3p' "$SCRATCH/nonjob.err" | tr '\n' ' ')"
+  NONJOBTOK=$(impersonated_token "$SIGNER" "$SCRATCH/nonjob.err") || {
+    stop "no Google ID token for $SIGNER, an account that is no job account of this installation, even with $GRANT_ROLE bound to $OPERATOR_MEMBER on it ($(sed -n '1,3p' "$SCRATCH/nonjob.err" | tr '\n' ' '))"
   }
   [ -n "$NONJOBTOK" ] || stop "the impersonation of $SIGNER answered no token"
   local status ans
@@ -1228,13 +1398,20 @@ print_block() { # print_block FACTS STATUS — always on the owner's own stdout
 }
 
 # ----------------------------------------------------------------------- main
-USAGE="check96.sh [--dry-run] [<owner/name>]"
+USAGE="check96.sh [--dry-run] [--workflow <name>] [<owner/name>]"
 
 parse_args() {
   REPO_ARG=""
+  WORKFLOW_ARG=""
   while [ $# -gt 0 ]; do
     case "$1" in
     --dry-run) DRY_RUN=1 ;;
+    --workflow)
+      [ $# -ge 2 ] || die "--workflow needs the workflow's name. usage: $USAGE"
+      [ -z "$WORKFLOW_ARG" ] || die "only one --workflow may be named. usage: $USAGE"
+      WORKFLOW_ARG=$2
+      shift
+      ;;
     -h | --help)
       HELP_SHOWN=yes
       printf 'usage: %s\n' "$USAGE"
@@ -1253,6 +1430,7 @@ parse_args() {
 print_plan() {
   say "dry run: NOTHING below was run. A real run would, in this order:"
   say "  [network] a POST to $SVCURL$MINT with no identity at all, expecting the front end's 403 (step 2 of the register's check: the outer fence), and two reads of the service's own log around it"
+  say "  [network, WRITES IAM] binds the account gcloud acts as to roles/iam.serviceAccountTokenCreator on $JOBSA and $SIGNER (the installation gives operators actAs only), unless it already holds it"
   say "  [network] gcloud auth print-identity-token --impersonate-service-account=$JOBSA --audiences=$SVCURL --include-email (the caller's ID token)"
   say "  [network] gcloud iam service-accounts sign-jwt as $SIGNER, and the custom token traded at accounts:signInWithCustomToken with $FB's restricted web API key (the run identity)"
   say "  [network, WRITES] the mint: POST $SVCURL$MINT with both identities, which MINTS a real GitHub installation token for $REPO and creates a Firebase Auth user (uid r~$SLUG~<run>)"
@@ -1260,6 +1438,7 @@ print_plan() {
   say "  [network] two more run identities and two more calls: the pairing refusal ($OTHER_SLUG's run identity with $JOB's own account) and a caller that is no job account ($SIGNER)"
   say "  [network] the service's own log, read for the two runs' audit lines and re-read while a line is still being ingested (up to ${CHECK96_LOG_TRIES:-18} reads ${CHECK96_LOG_POLL:-5}s apart per row: a just-written line is often not readable at once, and an empty read is what the audit and pairing rows report as a call left unrecorded)"
   say "and its Cleanup (from the exit trap, and the last step) would run:"
+  say "  [network, DELETES] the token creator bindings this run added, from the exit trap, so a stop or an interrupt removes them too"
   say "  [network, DELETES] the two Firebase Auth users this run created, at Identity Toolkit's accounts:delete, then the project's user list read back"
   say "  [local] rm -rf of the scratch directory $SCRATCH, which holds the log dumps and the one credential that touches the disk (the custom token gcloud signs, 0600 and removed the moment it is read)"
   say "The one thing it cannot take back: the installation token the mint answers with is real at GitHub, this check never writes it anywhere, and GitHub expires it inside the hour."
@@ -1270,6 +1449,7 @@ main() {
   need_tools
   parse_args "$@"
   guard_repository
+  guard_workflow
   scratch_up
   write_files
   guard_xtrace
@@ -1311,7 +1491,8 @@ write_files() {
 
 It prints a fixed vocabulary and never a document -- `name=`, `project=`,
 `region=`, `repo=`, `slug=`, `service=`, `url=`, `job=`, `sa=`, `appid=`,
-`present`, `absent`, `yes`, `no`, `lines=3`, `next=<page token>` -- so what
+`workflow=`, `workflows=`, `present`, `absent`, `yes`, `no`, `lines=3`,
+`next=<page token>` -- so what
 reaches the block is the check's own words about what it read. Two
 subcommands are exceptions, both of them deliberate and both of them never
 printed by the script:
@@ -1508,7 +1689,7 @@ def cmd_svc():
     print("sa=%s" % (spec.get("serviceAccountName") or ""))
 
 
-def cmd_jobs():
+def cmd_jobs(want=""):
     """The repository's OWN jobs: those carrying its fugaro_repo label and no
     fugaro_role. A support job (a repository's image check) wears the role
     instead of the workflow label, so it is not a job a run lands on.
@@ -1519,8 +1700,16 @@ def cmd_jobs():
     a question this check will not answer by picking one, and a reader that
     failed for both left the caller unable to tell them apart -- it read two jobs
     as no job and judged a faultless installation against the shared project job.
-    Every job found is named with its workflow label, so the caller can print
-    what it refused to choose between."""
+    Every job found is named with its workflow label, and the labels are printed
+    again as one list, so the caller can print what it refused to choose between
+    and the flag that names one of them.
+
+    WANT is the workflow the owner named with --workflow: the job whose
+    fugaro_workflow label is that name, and only it, is then the one this reports.
+    A name no job of the repository wears is a refusal and not a read that could
+    not be made -- the labels it did find are listed, because that list is the
+    fix -- and a name more than one job wears is refused too: which of two jobs
+    a mint is read against is not a question to guess at."""
     found = []
     for job in load():
         labels = (job.get("metadata") or {}).get("labels") or {}
@@ -1531,9 +1720,28 @@ def cmd_jobs():
         labels = (job.get("metadata") or {}).get("labels") or {}
         print("own=%s workflow=%s" % ((job.get("metadata") or {}).get("name") or "",
                                       labels.get("fugaro_workflow") or ""))
-    if len(found) == 1:
-        labels = (found[0].get("metadata") or {}).get("labels") or {}
-        print("job=%s" % ((found[0].get("metadata") or {}).get("name") or ""))
+    workflows = sorted({(j.get("metadata") or {}).get("labels", {}).get("fugaro_workflow") or ""
+                        for j in found} - {""})
+    print("workflows=%s" % ", ".join(workflows))
+
+    def workflow_of(job):
+        return (job.get("metadata") or {}).get("labels", {}).get("fugaro_workflow") or ""
+
+    chosen = None
+    if want:
+        mine = [j for j in found if workflow_of(j) == want]
+        if not mine:
+            fail("%s is not a workflow of this repository: the jobs it has of its own carry the fugaro_workflow label(s) %s"
+                 % (want, ", ".join(workflows) or "(none)"))
+        if len(mine) > 1:
+            fail("%s is the fugaro_workflow label of %d of this repository's jobs, so this check cannot tell which one a run of it lands on"
+                 % (want, len(mine)))
+        chosen = mine[0]
+    elif len(found) == 1:
+        chosen = found[0]
+    if chosen is not None:
+        labels = (chosen.get("metadata") or {}).get("labels") or {}
+        print("job=%s" % ((chosen.get("metadata") or {}).get("name") or ""))
         print("kind=%s" % ("project" if labels.get("fugaro_profile") else "repository"))
         print("workflow=%s" % (labels.get("fugaro_workflow") or ""))
 
@@ -1561,6 +1769,8 @@ def cmd_projectjob():
 def cmd_job():
     job = load()
     spec = ((job.get("spec") or {}).get("template") or {}).get("spec") or {}
+    # A Cloud Run job nests its execution template one level below a service's, so the container and the account sit under spec.template.spec.template.spec.
+    spec = (spec.get("template") or {}).get("spec") or {}
     containers = spec.get("containers") or [{}]
     container = containers[0]
     env = env_of(container)
@@ -1769,7 +1979,7 @@ def main(argv):
     elif cmd == "svc":
         cmd_svc()
     elif cmd == "jobs":
-        cmd_jobs()
+        cmd_jobs(rest[0] if rest else "")
     elif cmd == "projectjob":
         cmd_projectjob()
     elif cmd == "job":

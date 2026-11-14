@@ -336,6 +336,17 @@ func TestConsoleAllowListedReadsWriteNothing(t *testing.T) {
 		// which is the write this test exists to catch, and the reason its
 		// row on §5.1 is a row on consoleReadPaths too.
 		{"craft", "ls", "--json"},
+		// The Members view's read (the roles-and-scopes plan's RS7): the
+		// installation's roster, and the role each person holds in one
+		// repository. It resolves this checkout on the way to the
+		// installation it lists -- which is the write this test exists to
+		// catch -- and only then refuses: this fixture's installation has no
+		// budget backend, so it has no grants node and `--repo` is answered
+		// with the refusal an operator would read. The checkout is resolved
+		// before that refusal, so this is not a command that returned early:
+		// with consoleReadPaths' entry dropped -- the mutation this row is
+		// for -- this test fails here, with the state file written.
+		{"user", "ls", "--json", "--repo", "acme/app"},
 	} {
 		out, _, err := execute(t, args...)
 		if err != nil {
