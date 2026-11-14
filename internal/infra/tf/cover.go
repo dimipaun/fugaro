@@ -129,16 +129,6 @@ var allowedTypes = map[string]bool{
 // the state group's by its role and the project it is in
 // (mcpauthStateReadGrant, TestMCPAccountIsItsOwnPrincipalKind).
 //
-// Reports is the project's reports job account (slice P, ruling E4), its own
-// kind for the catalog check job's reason: as one of FugaroAccounts every
-// toAccounts row would have accepted it, and this account's reach is not a job
-// account's — it reads every repository's run records under runs/ and it is
-// the ONE writer of reports/ (ruling 3), a write no launcher and no job holds.
-// Exactly two rows carry the bit, the bucket's objectViewer and objectUser,
-// and each is narrowed further by the condition the grant must carry
-// (reportsReadGrant, reportsWriteGrant): the account, one of its two prefixes
-// of a run bucket, and the title built from the account.
-//
 // Intake is the secrets intake's own account (D1931, DS2.2), its own kind for
 // the catalog check job's reason: as one of FugaroAccounts every toAccounts row
 // would have accepted it, and this is the one account that may CREATE, add a
@@ -160,9 +150,10 @@ const (
 	toCatalogCheck
 	toMCP
 	toIntake
-	// Appended rather than inserted: the bits above are the ones a test's
-	// mask and every row in grantRules are written with, and a shift would
-	// rewrite all of them for no reason.
+	// The reports job's own kind (slice P, ruling E4), appended rather than
+	// inserted: the bits above are the ones a test's mask and every row in
+	// grantRules are written with, and a shift would rewrite all of them.
+	// ReportsAccountID says why the account is its own kind.
 	toReports
 )
 
