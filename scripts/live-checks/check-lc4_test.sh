@@ -58,6 +58,11 @@ account=work
 # so the case's own names are what says the check read the label and not a name.
 job=fugaro-standard-github-work-1a2b3c4d5e6f
 sa=fugaro-standard-github-work@$project.iam.gserviceaccount.com
+# The triple's other job: the review-only variant `fugaro update` deploys beside
+# the coding one, wearing the same four labels and mounting no secret at all
+# (internal/infra's reviewVariant), with a service account of its own.
+variant_job=fugaro-standard-github-work-review-9b8a7c6d5e4f
+variant_sa=fugaro-standard-github-work-review@$project.iam.gserviceaccount.com
 token_secret=claude-oauth-token-work-4f2b9a1c
 other_secret=claude-oauth-token-other-8e3d5f70
 appkey_secret=github-app-key-7c1a2b3d
@@ -179,21 +184,32 @@ FUGARO_EOF
 # write_default_case DIR [ACCOUNT] — one installation's own documents: a doctor
 # that is green for $project in us-central1, the account's job wearing its
 # labels and mounting its own token beside the profile's App key, the account's
-# secret and another account's, and the two policies. The job documents below
-# are the v1 Job shape `gcloud run jobs describe --format=json` answers with,
-# where the container and the job's account sit at spec.template.spec.template.spec
-# — one level below a service's (check191_test.sh's own fixtures): a fake that
-# nested them the way a service does would agree with a check that read the
-# wrong path and would pass while a real run stopped on an empty account.
+# secret and another account's, and the two policies. The job list holds the
+# account's coding job AND the review-only variant deployed beside it, which is
+# what an installation that deploys the triple actually has: the two wear the
+# same labels and only a secret tells them apart, so a list without the variant
+# would let a check that cannot tell them apart pass. The job documents below
+# are the v1 Job shape `gcloud run jobs list` and `describe --format=json` answer
+# with, where the container and the job's account sit at
+# spec.template.spec.template.spec — one level below a service's
+# (check191_test.sh's own fixtures): a fake that nested them the way a service
+# does would agree with a check that read the wrong path and would pass while a
+# real run stopped on an empty account.
 write_default_case() { # dir [account]
-  local dir=$1 acct=${2:-work} label secret
+  local dir=$1 acct=${2:-work} label secret variant_label
   case "$acct" in "" | default)
     label=none
     secret=claude-oauth-token
+    # The variant of the no-account job is built over the policy's spelling of
+    # the default account (config.ReviewVariantAccount), so it wears a label the
+    # no-account coding job does not: it is the account's own job the labels
+    # name here, and the check finds one job rather than two.
+    variant_label=default
     ;;
   *)
     label=$acct
     secret=claude-oauth-token-$acct
+    variant_label=$acct
     ;;
   esac
   mkdir -p "$dir/json"
@@ -203,7 +219,20 @@ write_default_case() { # dir [account]
 JSON
   cat >"$dir/json/jobs.json" <<JSON
 [{"metadata":{"name":"$job","labels":{"fugaro":"managed","fugaro_profile":"standard",
-  "fugaro_provider":"github","fugaro_account":"$label"}}}]
+  "fugaro_provider":"github","fugaro_account":"$label"}},
+  "spec":{"template":{"spec":{"template":{"spec":{
+    "serviceAccountName":"$sa",
+    "containers":[{"env":[
+      {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueSource":{"secretKeyRef":{"secret":"$token_secret"}}},
+      {"name":"FUGARO_GITHUB_APP_PRIVATE_KEY","valueSource":{"secretKeyRef":{"secret":"$appkey_secret"}}}
+    ]}]}}}}}},
+ {"metadata":{"name":"$variant_job","labels":{"fugaro":"managed","fugaro_profile":"standard",
+  "fugaro_provider":"github","fugaro_account":"$variant_label"}},
+  "spec":{"template":{"spec":{"template":{"spec":{
+    "serviceAccountName":"$variant_sa",
+    "containers":[{"env":[
+      {"name":"FUGARO_CREDENTIALS_SERVICE_URL","value":"https://credentials.example.invalid"}
+    ]}]}}}}}}]
 JSON
   cat >"$dir/json/job.json" <<JSON
 {"metadata":{"name":"$job"},
@@ -401,6 +430,7 @@ test_happy_path() {
   done
   expect_absent "$out" "not reached" "no row was left unread"
   expect_contains "$out" "FACT job: PASS — $job" "the job is named as it was found"
+  expect_contains "$out" "read beside $variant_job" "the row names the review-only variant the triple deploys beside the account's job"
   expect_contains "$out" "runs as $sa" "the job's own account is named"
   expect_contains "$out" "exactly one secret as CLAUDE_CODE_OAUTH_TOKEN: $token_secret" "the mount is the account's own secret"
   expect_contains "$out" "fugaro_secret=claude-oauth-token-work" "the secret's label is the account's derived name"
@@ -411,6 +441,7 @@ test_happy_path() {
   expect_contains "$calls" "run jobs list" "the job list is read"
   expect_contains "$calls" "--filter=metadata.labels.fugaro=managed AND metadata.labels.fugaro_profile=standard AND metadata.labels.fugaro_account=work" "the filter is the account axis"
   expect_contains "$calls" "run jobs describe $job" "the job is described"
+  expect_absent "$calls" "run jobs describe $variant_job" "the variant is never described: this check reads the job that mounts the token"
   expect_contains "$calls" "secrets get-iam-policy $token_secret" "the account's own secret policy is read"
   expect_contains "$calls" "secrets get-iam-policy $other_secret" "the other account's secret policy is read"
   expect_absent "$calls" "secrets get-iam-policy $appkey_secret" "the App key's policy is not read: this check is about token readers"
@@ -511,15 +542,82 @@ test_two_jobs_for_one_account_stop() {
   local dir
   dir=$(mktemp -d "$work/twojobs.XXXX")
   prepare "$dir"
+  # Two jobs of the same triple that each mount a secret: neither is the
+  # review-only variant, which mounts none, so this is a real leftover of an
+  # earlier release rather than the pair the deployment builds.
   cat >"$dir/json/jobs.json" <<JSON
-[{"metadata":{"name":"$job","labels":{"fugaro":"managed","fugaro_profile":"standard","fugaro_account":"work"}}},
- {"metadata":{"name":"fugaro-standard-github-work-999999999999","labels":{"fugaro":"managed","fugaro_profile":"standard","fugaro_account":"work"}}}]
+[{"metadata":{"name":"$job","labels":{"fugaro":"managed","fugaro_profile":"standard","fugaro_account":"work"}},
+  "spec":{"template":{"spec":{"template":{"spec":{"containers":[{"env":[
+    {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueSource":{"secretKeyRef":{"secret":"$token_secret"}}}]}]}}}}}},
+ {"metadata":{"name":"fugaro-standard-github-work-999999999999","labels":{"fugaro":"managed","fugaro_profile":"standard","fugaro_account":"work"}},
+  "spec":{"template":{"spec":{"template":{"spec":{"containers":[{"env":[
+    {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueSource":{"secretKeyRef":{"secret":"$token_secret"}}}]}]}}}}}}]
 JSON
   run_default "$dir"
   expect_status "$status" 2 "two jobs wearing one account's labels"
   expect_contains "$err" "has 2 jobs" "the stop says how many"
+  expect_contains "$err" "that each mount a secret" "the stop says why neither of them is the variant"
   expect_contains "$err" "fugaro-standard-github-work-999999999999" "the stop names them"
   expect_absent "$calls" "run jobs describe" "no job is described when there are two"
+}
+
+test_the_review_variant_beside_the_job_is_not_a_second_job() {
+  local dir
+  dir=$(mktemp -d "$work/variant.XXXX")
+  prepare "$dir"
+  run_default "$dir"
+  # The default case's list holds both: the check reads the one that mounts the
+  # account's token and leaves the mountless variant alone. Without this the
+  # check stops on every installation that deploys the pair, which is every
+  # installation past the release that added them.
+  expect_status "$status" 0 "the coding job beside its review-only variant"
+  expect_contains "$out" "FACT job: PASS — $job" "the job read is the one wearing the account's labels AND mounting a secret"
+  expect_absent "$calls" "run jobs describe $variant_job" "the variant is left unread"
+  expect_contains "$calls" "run jobs describe $job" "the coding job is the one described"
+}
+
+test_two_mountless_jobs_beside_the_job_stop() {
+  local dir
+  dir=$(mktemp -d "$work/twovariants.XXXX")
+  prepare "$dir"
+  # The triple deploys one variant, not two: a second mountless job wearing the
+  # same labels is a leftover, and this check will not guess which one the plan
+  # is.
+  cat >"$dir/json/jobs.json" <<JSON
+[{"metadata":{"name":"$job","labels":{"fugaro":"managed","fugaro_profile":"standard","fugaro_account":"work"}},
+  "spec":{"template":{"spec":{"template":{"spec":{"containers":[{"env":[
+    {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueSource":{"secretKeyRef":{"secret":"$token_secret"}}}]}]}}}}}},
+ {"metadata":{"name":"$variant_job","labels":{"fugaro":"managed","fugaro_profile":"standard","fugaro_account":"work"}},
+  "spec":{"template":{"spec":{"template":{"spec":{"containers":[{"env":[]}]}}}}}},
+ {"metadata":{"name":"fugaro-standard-github-work-review-111111111111","labels":{"fugaro":"managed","fugaro_profile":"standard","fugaro_account":"work"}},
+  "spec":{"template":{"spec":{"template":{"spec":{"containers":[{"env":[]}]}}}}}}]
+JSON
+  run_default "$dir"
+  expect_status "$status" 2 "two mountless jobs beside the account's own"
+  expect_contains "$err" "2 of which mount no secret at all" "the stop says how many are mountless"
+  expect_contains "$err" "fugaro-standard-github-work-review-111111111111" "the stop names the leftover"
+  expect_absent "$calls" "run jobs describe" "no job is described when the listing cannot be resolved"
+}
+
+test_a_lone_job_that_mounts_nothing_is_still_read() {
+  local dir
+  dir=$(mktemp -d "$work/mountless.XXXX")
+  prepare "$dir"
+  # One job wearing the labels, mounting nothing: there is nothing to tell it
+  # apart from, so it is the account's and the rows below report what it lost.
+  cat >"$dir/json/jobs.json" <<JSON
+[{"metadata":{"name":"$job","labels":{"fugaro":"managed","fugaro_profile":"standard","fugaro_account":"work"}},
+  "spec":{"template":{"spec":{"template":{"spec":{"containers":[{"env":[]}]}}}}}}]
+JSON
+  cat >"$dir/json/job.json" <<JSON
+{"spec":{"template":{"spec":{"template":{"spec":{
+  "serviceAccountName":"$sa",
+  "containers":[{"env":[]}]}}}}}}
+JSON
+  run_default "$dir"
+  expect_status "$status" 1 "a lone job that mounts nothing"
+  expect_contains "$out" "FACT job: PASS — $job" "the lone job is read as the account's"
+  expect_contains "$out" "FACT token-mount: FAIL" "and the mount it lost is the finding"
 }
 
 test_a_job_list_that_is_denied_stops() {
@@ -767,6 +865,9 @@ t test_a_doctor_that_answers_nothing_stops
 t test_a_doctor_that_is_not_json_stops
 t test_a_job_that_is_not_there_is_a_finding
 t test_two_jobs_for_one_account_stop
+t test_the_review_variant_beside_the_job_is_not_a_second_job
+t test_two_mountless_jobs_beside_the_job_stop
+t test_a_lone_job_that_mounts_nothing_is_still_read
 t test_a_job_list_that_is_denied_stops
 t test_no_token_mount_is_a_finding
 t test_two_token_mounts_are_a_finding

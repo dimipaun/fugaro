@@ -349,8 +349,20 @@ step_doctor() {
 # hash-derived (gcp.ProjectJobName), so the labels are the only way to find it —
 # and that is also why the labels are what makes it the account's job: the
 # account axis is what the deployer writes them from (config.ProjectJobAccounts).
+#
+# The labels alone are two jobs on any installation that deploys the triple's
+# review-only variant: the variant is a module instance of the same project
+# module (roots/installation's module.project_review), so it wears the same
+# fugaro, fugaro_profile, fugaro_provider and fugaro_account labels as the coding
+# job it is the twin of. What tells them apart is the one thing the deployer
+# gives one and withholds from the other: a secret. The coding job mounts the
+# account's token and the profile's own secrets; the variant's module is handed
+# an empty secret set, so a variant offered no container can be granted one
+# (internal/infra's reviewVariant, D892(a), the owner's ruling O1). The job this
+# check reads is therefore the one that mounts a secret, and the row says which
+# mountless jobs beside it were left alone.
 step_job() {
-  local answer found
+  local answer found carriers job variants
   if ! run_capture "$SCRATCH/jobs.json" gcloud run jobs list --project="$P" --region="$R" \
     --filter="metadata.labels.fugaro=managed AND metadata.labels.fugaro_profile=$PROFILE AND metadata.labels.fugaro_account=$ACCOUNT_LABEL" \
     --format=json; then
@@ -359,6 +371,7 @@ step_job() {
   answer=$(reader joblist <"$SCRATCH/jobs.json" 2>"$SCRATCH/reader.err") \
     || stop "the project's job list is not the document this check reads (gcloud run jobs list --format=json): $(sed -n '1,3p' "$SCRATCH/reader.err" | tr '\n' ' ')"
   found=$(field_of count "$answer")
+  carriers=$(field_of carriers "$answer")
   case "$found" in
   "" | *[!0-9]*) stop "the job list did not say how many jobs the account $ACCOUNT has, so this check cannot tell whether one is there" ;;
   0)
@@ -372,10 +385,34 @@ step_job() {
     return 0
     ;;
   esac
-  if [ "$found" != 1 ]; then
-    stop "the account $ACCOUNT has $found jobs in $P/$R wearing fugaro_profile=$PROFILE and fugaro_account=$ACCOUNT_LABEL ($(printf '%s\n' "$answer" | sed -n 's/^job=//p' | tr '\n' ' ')): exactly one job per (profile, provider, account) is deployed (infra.ProjectJobs), so more than one is a leftover of an earlier release and this check will not read one of them and call it the account's. Delete the one that is not in the installation's plan and run again"
-  fi
-  JOB=$(field_of job "$answer")
+  case "$carriers" in
+  "" | *[!0-9]*) stop "the job list did not say how many of the account $ACCOUNT's $found jobs mount a secret, so this check cannot tell which of them is the account's own" ;;
+  esac
+  job=""
+  variants=""
+  case "$carriers" in
+  1)
+    if [ "$((found - carriers))" -gt 1 ]; then
+      stop "the account $ACCOUNT has $found jobs in $P/$R wearing fugaro_profile=$PROFILE and fugaro_account=$ACCOUNT_LABEL ($(listed_job_names "$answer" | tr '\n' ' ')), $((found - carriers)) of which mount no secret at all and one of which does: the triple deploys one coding job and one review-only variant, so a second mountless job is a leftover of an earlier release. Delete the one that is not in the installation's plan and run again"
+    fi
+    job=$(printf '%s\n' "$answer" | sed -n 's/^job=\([^ ]*\) secrets=[1-9][0-9]*$/\1/p')
+    variants=$(printf '%s\n' "$answer" | sed -n 's/^job=\([^ ]*\) secrets=0$/\1/p' | tr '\n' ' ')
+    ;;
+  0)
+    # Nothing wearing the labels mounts a secret. One such job is still the
+    # account's -- a coding job that lost every mount is the finding the rows
+    # below report -- but two of them cannot be told apart, and neither is a
+    # variant: a variant is the mountless one.
+    if [ "$found" != 1 ]; then
+      stop "the account $ACCOUNT has $found jobs in $P/$R wearing fugaro_profile=$PROFILE and fugaro_account=$ACCOUNT_LABEL ($(listed_job_names "$answer" | tr '\n' ' ')) and not one of them mounts a secret: the account's own coding job mounts its token and the profile's own secrets, and its review-only variant mounts nothing at all, so this check cannot tell which of these is which. Converge the installation (fugaro update) and run again"
+    fi
+    job=$(listed_job_names "$answer" | head -n 1)
+    ;;
+  *)
+    stop "the account $ACCOUNT has $carriers jobs in $P/$R wearing fugaro_profile=$PROFILE and fugaro_account=$ACCOUNT_LABEL that each mount a secret ($(listed_job_names "$answer" | tr '\n' ' ')): the review-only variant of the triple mounts none and is not among them, so the deployment holds more than one job of the same (profile, provider, account), which it builds exactly one of (infra.ProjectJobs) — a leftover of an earlier release. This check will not read one of them and call it the account's: delete the one that is not in the installation's plan and run again"
+    ;;
+  esac
+  JOB=$job
   [ -n "$JOB" ] || stop "the account's job could not be named from the project's job list"
   if ! run_capture "$SCRATCH/job.json" gcloud run jobs describe "$JOB" --project="$P" --region="$R" --format=json; then
     stop "gcloud run jobs describe did not answer for $JOB in $P/$R"
@@ -385,8 +422,17 @@ step_job() {
   JOB_MOUNTS="$answer"
   JOBSA=$(field_of sa "$answer")
   [ -n "$JOBSA" ] || stop "the job $JOB names no service account, so there is no job account to hold to the account's secret"
-  fact job PASS "$JOB, the one job in $P/$R wearing fugaro_profile=$PROFILE and fugaro_account=$ACCOUNT_LABEL, runs as $JOBSA"
+  if [ -n "$variants" ]; then
+    fact job PASS "$JOB, the one job in $P/$R wearing fugaro_profile=$PROFILE and fugaro_account=$ACCOUNT_LABEL that mounts a secret — read beside ${variants% }, the review-only variant the same triple deploys, which mounts no secret of the installation's at all — runs as $JOBSA"
+  else
+    fact job PASS "$JOB, the only job in $P/$R wearing fugaro_profile=$PROFILE and fugaro_account=$ACCOUNT_LABEL, runs as $JOBSA"
+  fi
 }
+
+# listed_job_names ANSWER — the job names a joblist answer carried, one per
+# line: a stop sentence names the listing this check will not read, and where
+# exactly one job is left the caller reads its name from here.
+listed_job_names() { printf '%s\n' "$1" | sed -n 's/^job=\([^ ]*\) secrets=[0-9][0-9]*$/\1/p'; }
 
 # mount_lines ENVVAR — the secret IDs the job mounts as that environment
 # variable, one per line (a name twice is a job the deployer would not build, and
@@ -613,24 +659,55 @@ def cmd_doctor():
     print("bad=%s" % ", ".join(bad))
 
 
+def job_spec(doc):
+    """The container spec of a job document, from `list` or `describe` alike:
+    gcloud forces the v1 API, and a v1 Job nests its execution template one
+    level below a service's, so the container and the job's account sit at
+    spec.template.spec.template.spec (internal/backend/gcp's LabelProfile over
+    a job a launcher may override nothing of)."""
+    spec = ((doc.get("spec") or {}).get("template") or {}).get("spec") or {}
+    return (spec.get("template") or {}).get("spec") or {}
+
+
+def secret_mounts(doc):
+    """How many secret-backed environment entries a job document mounts. It is
+    what tells the account's coding job from the review-only variant deployed
+    for the same (profile, provider, account): the variant wears the same four
+    labels and mounts nothing at all -- the deployer hands its module an empty
+    secret set, so a variant offered no container cannot be granted one
+    (internal/infra's reviewVariant, D892(a))."""
+    mounted = 0
+    for container in job_spec(doc).get("containers") or []:
+        for entry in container.get("env") or []:
+            ref = (entry.get("valueSource") or {}).get("secretKeyRef") or {}
+            if ref.get("secret"):
+                mounted += 1
+    return mounted
+
+
 def cmd_joblist():
     """`gcloud run jobs list --format=json`: the managed jobs it answered, by
-    name. The label is checked here as well as in the filter, so a fake or a
-    future gcloud that ignored the filter cannot make a job of somebody else's
-    look like this installation's."""
+    name and secret-mount count. The label is checked here as well as in the
+    filter, so a fake or a future gcloud that ignored the filter cannot make a
+    job of somebody else's look like this installation's. The count is what the
+    caller picks the account's own job by, and `carriers` is how many of the
+    jobs it answered mount a secret at all."""
     doc = load()
     if not isinstance(doc, list):
         fail("not a list of jobs")
-    names = []
+    jobs = []
     for j in doc:
         md = j.get("metadata") or {}
         if (md.get("labels") or {}).get("fugaro") != "managed":
             continue
-        names.append(md.get("name") or "")
-    names = [n for n in names if n]
-    print("count=%d" % len(names))
-    for n in sorted(names):
-        print("job=%s" % n)
+        name = md.get("name") or ""
+        if name:
+            jobs.append((name, secret_mounts(j)))
+    jobs.sort()
+    print("count=%d" % len(jobs))
+    print("carriers=%d" % len([1 for _, mounted in jobs if mounted]))
+    for name, mounted in jobs:
+        print("job=%s secrets=%d" % (name, mounted))
 
 
 def cmd_job():
@@ -638,13 +715,9 @@ def cmd_job():
     and its container environment, one line per entry. A secret-backed entry is
     `mount=<ENVVAR> <secret id>` and a plain one is `plain=<ENVVAR>`: the split
     is what tells the account's token mount from a variable like FUGARO_PROJECT,
-    and a mount prints the secret's ID and never its value. gcloud's `run jobs
-    describe` forces the v1 API, whose Job nests its execution template one level
-    below a service's, so the container and the job's account sit at
-    spec.template.spec.template.spec."""
+    and a mount prints the secret's ID and never its value."""
     doc = load()
-    spec = ((doc.get("spec") or {}).get("template") or {}).get("spec") or {}
-    spec = (spec.get("template") or {}).get("spec") or {}
+    spec = job_spec(doc)
     print("sa=%s" % (spec.get("serviceAccountName") or ""))
     for container in spec.get("containers") or []:
         for entry in container.get("env") or []:

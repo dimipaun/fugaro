@@ -14088,10 +14088,17 @@ installation's account and no row would say so.
 
 **What it asserts**, seven facts about the account's own Cloud Run job:
 
-- **exactly one job** of the installation wears the account's own labels — `fugaro=managed` with
-  `fugaro_profile` and `fugaro_account` this check's own values — so no job at all is the finding
-  this part exists for, and a **second** one stops the run rather than being read as the account's
-  own — the order the listing returns jobs in is not what makes one the account's (exit `2`, below);
+- **the account's own job, out of the jobs wearing the account's own labels** — `fugaro=managed` with
+  `fugaro_profile` and `fugaro_account` this check's own values. Those labels are worn by **two**
+  jobs once the account is **named**: the account's coding job, and the **review-only
+  variant** the same profile deploys beside it (`infra.ProjectReviewJobs`, the same module instance
+  with an empty secret set — D892(a)'s O1 ruling), which mounts nothing at all: a mounted secret is
+  what tells the two apart. (A profile's *no-account* job has a variant too, and it spells the
+  account `default` where that job spells it `none` — `config.ReviewVariantAccount` — so it is not in
+  this listing at all.) The check reads the one that **mounts a secret**, leaves the mountless one
+  alone and names it in the `job` row; **no** job wearing the labels is the finding this part exists
+  for, and a listing it cannot resolve that way stops the run (exit `2`, below) rather than being read
+  as the account's — the order the listing returns jobs in is not what makes one the account's;
 - that job's environment carries **exactly one** secret-backed entry named `CLAUDE_CODE_OAUTH_TOKEN`;
 - the secret that entry mounts is **the account's own** derived secret: the one whose `fugaro_secret`
   label is `claude-oauth-token-<name>` (`config.ClaudeAccountSecret`), not the unsuffixed
@@ -14109,7 +14116,8 @@ installation's account and no row would say so.
 
 **Why the names are found and never computed.** The job's name and every secret's ID are
 hash-derived (`gcp.ProjectJobName`, `gcp.ProjectSecretID`: a readable part, then hex of a hash of the
-tuple), so the check finds the job by its labels and each secret by the label on it. That is also
+tuple), so the check finds the job by its labels — the one of the jobs wearing them that mounts a
+secret — and each secret by the label on it. That is also
 what makes it read **whatever the installation deployed** rather than what this tree would deploy
 today, and it means an installation whose names are not this tree's are still readable.
 
@@ -14140,9 +14148,14 @@ token that is another account's, a lost App-key mount, an accessor that is not t
 wrong secret, or a doctor that is not green — and it is a finding about that installation and the
 account it names; **`2`** is the check not being able to tell: a tool missing, `fugaro doctor --json`
 not answering or not naming a project, `--project` or `--region` disagreeing with the installation's
-own record, a gcloud call refused, a document the reader cannot parse, two jobs wearing
-`fugaro_profile=<profile>` and `fugaro_account=<name>` — a leftover of an earlier release, which the
-check will not pick between rather than read the wrong one — or a run that ended before its verdict.
+own record, a gcloud call refused, a document the reader cannot parse, a job listing that cannot be
+resolved into the account's one job (below), or a run that ended before its verdict. Three shapes of
+that listing stop a run rather than being read: two jobs wearing the labels that **each** mount a
+secret — neither is the
+mountless variant, and the deployment builds one job per (profile, provider, account), so the second
+is a leftover of an earlier release; two wearing them of which **neither** mounts a secret, which
+nothing tells the account's own job from; and a second **mountless** job beside the account's own,
+where the triple deploys one review-only variant and no more.
 `--dry-run` prints the plan (every command, in the order a real run would make them) and a block
 that says what it was asked to read (`dry-run` among its rows), and it makes **no gcloud call and no `fugaro` call at all**.
 
