@@ -19,9 +19,11 @@ package register
 //     act on tonight: a server that cannot be reached is a check recorded as
 //     unreachable and a line on the job's log, and a key that is revoked is a
 //     line and a record rather than a refusal. The installation's state is the
-//     object, and `fugaro licence status` reads it there. The one failure is a
-//     store or a container that cannot be written at all, which is a broken
-//     installation and not a licence server's answer.
+//     object, and `fugaro licence status` reads it there. What it does fail on
+//     is what no later run would fix by itself: a store or a container it cannot
+//     write — a broken installation — and an answer that is not the pair this
+//     installation renews with, which is a licence server contradicting itself
+//     and a state a person has to be told about.
 //   - it runs on every installation with a coordinator (K4.2's condition), and
 //     an installation with no key is the ordinary state of one that never
 //     bought a licence: the command no-ops and says so.
