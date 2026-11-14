@@ -2,13 +2,15 @@
 
 Read-only. Nothing in this document changes a dependency, a licence or a build, and no test enforces
 the classifications below except the two hermetic rules `internal/eeboundary/licence_test.go` states
-(a copyleft identifier in either lockfile, and a dependency declaring no licence at all). What is
-here is what somebody would otherwise have to derive by hand: what the console and the mobile app
-depend on, what each dependency is licensed under, which declarations oblige something, and what is
-left for counsel.
+(a copyleft identifier in any of the three lockfiles it reads, and a dependency declaring no licence
+at all). What is here is what somebody would otherwise have to derive by hand: what the console, the
+mobile app and the portal depend on, what each dependency is licensed under, which declarations
+oblige something, and what is left for counsel.
 
 Written 2026-10-27, against `console/package-lock.json` and `mobile/package-lock.json` as they stand
-at that date. Both are `lockfileVersion` 3.
+at that date. Both are `lockfileVersion` 3. **The rule reads a third lockfile since 2026-11-13** —
+the portal's, `ee/portal/package-lock.json` (portal plan P1.4) — and this document has not weighed
+it: see the portal's section below for what is known about it and what is owed.
 
 **The console's half was revised 2026-10-31**, for the crash reporter's dependency (desktop-console
 plan Task 2.1b, D733): `@sentry/electron` 8.2.0 and its tree, and with it the console's second
@@ -21,13 +23,18 @@ revision looked at `mobile/`.
 
 ## Method
 
-Every number below was read out of the two lockfiles on disk. Nothing was installed, no registry was
+Every number below was read out of the lockfiles on disk. Nothing was installed, no registry was
 contacted, and no `node_modules` was read: a v3 lockfile carries each package's `license` field, and
 that field is the declaration this audit classifies. The tables below are a tally of that field, read
-off the two files and recorded as of 2026-10-27; no command prints them, and this section does not
-claim one does. What the rule enforces, it enforces over the same two files read the same way:
+off the files and recorded as of 2026-10-27; no command prints them, and this section does not claim
+one does. What the rule enforces, it enforces over the same files read the same way:
 `go test ./internal/eeboundary/ -run Licen -count=1 -v` prints, for each lockfile, every copyleft
 identifier it found there and allowed by name.
+
+The rule reads three lockfiles and this document weighs two of them. `ee/portal/package-lock.json`
+is read by the rule from the day the portal landed, so a copyleft identifier arriving there fails the
+suite; the classification this document exists for — what each of its licences obliges — has not
+been written yet, and the portal's section below carries that gap rather than hiding it.
 
 The two things this method cannot see, stated rather than left implied:
 
@@ -195,7 +202,7 @@ Direct dependencies, all MIT: `@react-native-async-storage/async-storage` 2.2.0,
 | Package | Version | Declared | Required by | Notes |
 | --- | --- | --- | --- | --- |
 | `lightningcss` and its 11 platform binaries | 1.33.0 | MPL-2.0 | `@expo/metro-config` | A build-time CSS transformer in the Metro pipeline |
-| `node-forge` | 1.4.0 | `BSD-3-Clause OR GPL-2.0` | `@expo/cli`, `@expo/code-signing-certificates` | A choice of two licences; the audit reads the app as taking BSD-3-Clause, so no GPL obliges anything. `copyleftAllowed` in `internal/eeboundary/licence_test.go` names it with this reason, so the identifier is visible in the diff rather than hidden by a smarter parser |
+| `node-forge` | 1.4.0 | `BSD-3-Clause OR GPL-2.0` | `@expo/cli`, `@expo/code-signing-certificates` | A choice of two licences; the audit reads the app as taking BSD-3-Clause, so no GPL obliges anything. `copyleftAllowed` in `internal/eeboundary/licence_test.go` names it with this reason, under this app's lockfile and no other, so the identifier is visible in the diff rather than hidden by a smarter parser |
 | `caniuse-lite` | 1.0.30001816 | CC-BY-4.0 | `browserslist` | Browser-support data, not code. CC-BY-4.0 asks for attribution, so if its data reached the artifact it would want a notice — as a `browserslist` input it does not |
 | `react-native`, `expo`, `react` and their transitive MIT/ISC/Apache-2.0 tree | — | permissive | the app | All MIT/ISC/Apache-2.0/BSD-family; nothing here obliges anything beyond keeping the notices |
 
@@ -207,6 +214,38 @@ a lockfile can answer**, and this audit does not claim to: it would take a Metro
 its module map. That is a gap, not a finding.
 
 **No package in the mobile lockfile declares no licence.**
+
+## The portal, `ee/portal/`
+
+The portal is a business-licensed feature: it lives under `ee/`, so `ee/LICENSE` covers it rather than
+a `LICENSE.md` of its own, and `internal/eeboundary`'s notice rule applies to its every file. Its
+dependency side arrived with the app (portal plan P1.4, 2026-11-13) and is **not weighed here yet** —
+this section carries what the rule can say about it today and what is still owed.
+
+- **The rule reads its lockfile.** `ee/portal/package-lock.json` is the third one
+  `internal/eeboundary/licence_test.go` audits: 290 packages besides the app's own entry, 136 of them
+  marked `dev`, and it is `lockfileVersion` 3 like the other two. The lockfile is the one the rule may
+  read nothing from, and only while `ee/` itself is gone: the core build and its tests delete that
+  directory, and `TestLicenceBoundarySkipsOnlyWhereTheBoundaryIsAbsent` holds the escape to that state
+  rather than to the lockfile's absence, so a checkout that has `ee/` and has lost the lockfile fails
+  the rule instead of quietly auditing two of the three apps.
+- **Neither rule finds anything there today.** No declaration in the portal's lockfile matches the
+  copyleft pattern — the run prints the allowed copyleft names per lockfile and the portal's carries
+  none — and no package in it declares no licence.
+- **What is owed: the classification this document is for.** What a portal dependency's licence
+  obliges, which declarations are stale, and whether anything in its tree reaches the artifact the
+  build ships is exactly the reading the console's and the mobile app's sections above do, and it has
+  not been done for the portal. The rule's own failure message sends a reader here to weigh a
+  dependency before naming it as an exception, so an entry the portal's tree turns up is a task rather
+  than a line in `copyleftAllowed`.
+- **An exception here excuses one app.** `copyleftAllowed` is keyed by the lockfile the package was
+  found in and then by its name, so the mobile app's `node-forge` entry is not one the portal or the
+  console can inherit: a package the list already names, arriving in a lockfile this document has not
+  weighed, is refused there, and `TestCopyleftExceptionBelongsToTheLockfileItWasReadFor` holds the
+  exception to the app it was read for.
+- **What ships is not its lockfile either.** The portal's build is Vite's, and the bundle is what a
+  browser downloads: the same caveat the console's and the mobile app's sections state applies, and for
+  the portal nothing has been read out of a built bundle at all.
 
 ## `console/THIRD_PARTY_NOTICES.md`, and where it is stale
 
@@ -329,12 +368,13 @@ Collected, so nothing here is buried in the prose above:
 
 ## What a machine enforces from all of this
 
-`internal/eeboundary/licence_test.go`, hermetic (two files, no network, no install):
+`internal/eeboundary/licence_test.go`, hermetic (three lockfiles, no network, no install; the portal's
+is read wherever `ee/` is in the tree, and skipped only when that directory is deleted):
 
 | Rule | What fails |
 | --- | --- |
-| `no GPL, AGPL or SSPL dependency` | a package in either lockfile whose declared licence carries a GPL, LGPL, AGPL or SSPL identifier, unless its name is in `copyleftAllowed` with a reason |
-| `every dependency declares a licence` | a package in either lockfile with no `license` field |
+| `no GPL, AGPL or SSPL dependency` | a package in any of the three lockfiles whose declared licence carries a GPL, LGPL, AGPL or SSPL identifier, unless its name is in `copyleftAllowed` with a reason |
+| `every dependency declares a licence` | a package in any of the three lockfiles with no `license` field |
 
 `console/test/unit/lockfile.test.ts` and the console's `pinning.test.ts` enforce different, already
 existing things about `console/package-lock.json` (pinned versions, the lockfile's own shape); they
