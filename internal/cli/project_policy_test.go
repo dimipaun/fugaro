@@ -1846,7 +1846,10 @@ func TestProjectReposAddRefusesAProviderKindNothingCanMatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, arg := range []string{"githubb/acme/app", "gitlab/acme/app", "gce/acme/app"} {
-		_, _, err := execute(t, "project", "repos", "add", arg)
+		// --allow-list-only: this test is about the allow-list entry and the
+		// kinds a canonical name may carry, which is the narrow path RE1's
+		// converge leaves behind that flag.
+		_, _, err := execute(t, "project", "repos", "add", arg, "--allow-list-only")
 		if err == nil {
 			t.Errorf("%q was accepted; no repository's git.provider can be that kind", arg)
 			continue
@@ -1861,7 +1864,7 @@ func TestProjectReposAddRefusesAProviderKindNothingCanMatch(t *testing.T) {
 		t.Fatalf("allow_repos = %v: a refused argument was written", got)
 	}
 	for _, arg := range []string{"github/acme/app", "bitbucket/acme/app", "*/acme/*"} {
-		if _, _, err := execute(t, "project", "repos", "add", arg); err != nil {
+		if _, _, err := execute(t, "project", "repos", "add", arg, "--allow-list-only"); err != nil {
 			t.Errorf("%q is a provider kind and was refused: %v", arg, err)
 		}
 	}

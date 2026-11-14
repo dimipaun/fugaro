@@ -223,7 +223,7 @@ func reposEnrolmentRead(ctx context.Context, o *projectReposOptions, lc *localcf
 	}
 	plan.allow = nonNil(p.AllowRepos)
 	plan.allowWhy = allowStepWhy(p.AllowRepos, canonical)
-	if plan.imageEntry, plan.imageWhy, err = reposEnrolmentImage(plan, cfg, p.ImageMap); err != nil {
+	if plan.imageEntry, plan.imageWhy, err = reposEnrolmentImage(&plan, cfg, p.ImageMap); err != nil {
 		return plan, err
 	}
 	return plan, nil
@@ -503,14 +503,14 @@ func enrolListLine(ss []string) string {
 // node's and take every other repository's mapping away with it. That is the
 // trap `fugaro image map set` warns about in its own note; here the published
 // map is read and this entry is added to it instead.
-func reposEnrolmentImage(plan reposEnrolment, cfg *config.Config, published projectpolicy.ImageMap) (string, string, error) {
+func reposEnrolmentImage(plan *reposEnrolment, cfg *config.Config, published projectpolicy.ImageMap) (string, string, error) {
 	plan.imageNow = plan.local.ImageMap
 	if plan.imageNow == nil && len(published) > 0 {
 		plan.imageNow = maps.Clone(published)
 		plan.imageSeeded = true
 	}
 	if e, ok := plan.imageNow[plan.canonical]; ok {
-		plan.imageMap = imageMapWith(plan.local, plan.canonical, e).ImageMap
+		plan.imageMap = plan.imageNow
 		return e, "already image_map[" + plan.canonical + "] = " + e, nil
 	}
 	if cfg == nil || plan.local.ImageCatalog == nil || len(plan.local.ImageCatalog.Entries) == 0 {
@@ -534,9 +534,20 @@ func reposEnrolmentImage(plan reposEnrolment, cfg *config.Config, published proj
 		plan.imageMap = plan.imageNow
 		return "", "left out: " + oneLine(err.Error()) + " — " + imageMapCommand("<repo>", "<entry>") + " writes the mapping", nil
 	}
-	next := imageMapWith(plan.local, plan.canonical, choice.Entry.Name)
-	plan.imageMap = next.ImageMap
+	plan.imageMap = enrolImageMap(plan.imageNow, plan.canonical, choice.Entry.Name)
 	return choice.Entry.Name, "", nil
+}
+
+// enrolImageMap is the map the file will hold: this machine's map — or the
+// published one it was seeded from, never an empty map — with this one
+// repository's entry set. It is imageMapWith's rule (copy, then set one key)
+// over the map the step is actually merging into, which is the whole of why
+// the step reads the node before it writes the file.
+func enrolImageMap(now map[string]string, repo, entry string) map[string]string {
+	m := make(map[string]string, len(now)+1)
+	maps.Copy(m, now)
+	m[repo] = entry
+	return m
 }
 
 // imageWhyMissing is which read was missing, in the words the person reading
