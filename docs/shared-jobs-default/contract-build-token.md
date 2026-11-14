@@ -106,7 +106,7 @@ identity can already ask for any of the project's entries by name, and the servi
 over. What keeps the credential out of an entry's own hands is the fence F19 builds around the clone (rules 3 to
 7).
 
-Closing the gap is a decision, and there are three ways to take it:
+Closing the gap is a decision, and there are four ways to take it:
 
 1. **The proxy serves an identity only while exactly one pairing is live for it**, refusing otherwise. Fail
    closed: the second concurrent build's clone fails. That is a behaviour B1 has to choose and implement.
