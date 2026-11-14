@@ -838,6 +838,19 @@ read_calls() { # read_calls EXEC TAG PREFIX
     printf -v "${prefix}_CALLS_PROBLEM" '%s' "gcloud logging read of execution $name answered something this check cannot read as a log: $SCRATCH/$tag-calls.out"
     return 0
   fi
+  # A read that answered an empty log is one of those reasons and not a reading
+  # of the run's calls: the filter is bounded to the last 30 days and scoped to
+  # the project's own default bucket unless the installation names its view, so
+  # an execution older than that window, or one whose entries live in a view this
+  # check was not pointed at, answers nothing for a run that really made calls.
+  # The rows that read this log are unmeasured then, and the sentence has to name
+  # both, or the owner is sent after a run that did nothing wrong.
+  local answered
+  answered=$(field "$SCRATCH/$tag-calls.txt" count)
+  if [ "${answered:-0}" = 0 ]; then
+    printf -v "${prefix}_CALLS_PROBLEM" '%s' "gcloud logging read of execution $name answered no 'model call' line at all: the read covers the last 30 days (--freshness=30d) and the project's own default log bucket, so an execution older than that window, or one whose entries live in the installation's own view, answers an empty log for a run that really made calls — nothing about the api-key review was read here, and --log-view (the installation's own view) is the scope to read it again with"
+    return 0
+  fi
   return 0
 }
 

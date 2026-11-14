@@ -927,6 +927,19 @@ test_a_review_run_on_a_route_is_a_fail() {
   expect_scratch_gone "a review run on a route"
 }
 
+# The same empty log on slice B's execution is the same row nobody could take:
+# the read is bounded the same way, so a review-only run outside the window reads
+# as an empty log and not as a review whose calls never reached the gateway.
+test_a_review_log_that_holds_no_calls_is_unmeasured() {
+  prepare "$work/slice-b-log-empty" FIX_REVIEW_LOG_EMPTY=1
+  run330_both
+  expect_status "$status" 2 "a review log that holds no calls"
+  expect_contains "$(fact_line review-log)" "FAIL" "a review log that holds no calls: the row is never a pass"
+  expect_contains "$(fact_line review-log)" "--log-view" "a review log that holds no calls: the row names the flag that widens the scope"
+  expect_contains "$(fact_line unmeasured)" "review-log" "a review log that holds no calls: the unmeasured row names it"
+  expect_scratch_gone "a review log that holds no calls"
+}
+
 # A job that cannot be described is a row nobody could read, and it is never a
 # pass: a job nobody described could hold anything.
 test_an_undescribable_review_job_is_unmeasured() {
@@ -1055,16 +1068,22 @@ test_a_failed_log_read_is_unmeasured() {
   expect_scratch_gone "a failed log read"
 }
 
-# A log read that answers an empty list is a reading all the same: the run's
-# calls are not in the log, and that is a FAIL about the run rather than a row
-# nobody could take.
-test_a_log_that_holds_no_calls_is_a_fail() {
+# A log read that answers an empty list is a row nobody could take rather than a
+# FAIL about the run: the read covers the last 30 days and the project's default
+# bucket unless --log-view points it at the installation's own view, so an
+# execution outside either answers nothing for a run that really made calls. The
+# two rows that read this log are unmeasured, and their sentence names the window
+# and the flag, or the owner is sent after a run that did nothing wrong.
+test_a_log_that_holds_no_calls_is_unmeasured() {
   prepare "$work/log-empty" FIX_LOG_EMPTY=1
   run330_default
-  expect_status "$status" 1 "a log that holds no calls"
-  expect_contains "$(fact_line log-coder)" "FAIL" "a log that holds no calls: the row fails"
-  expect_contains "$(fact_line log-review)" "FAIL" "a log that holds no calls: and so does the review's"
-  expect_absent "$out" "FACT unmeasured:" "a log that holds no calls: nothing is unread"
+  expect_status "$status" 2 "a log that holds no calls"
+  expect_contains "$(fact_line log-coder)" "FAIL" "a log that holds no calls: the row is never a pass"
+  expect_contains "$(fact_line log-coder)" "30d" "a log that holds no calls: the row names the freshness window"
+  expect_contains "$(fact_line log-coder)" "--log-view" "a log that holds no calls: and the flag that widens the scope"
+  expect_contains "$(fact_line log-review)" "FAIL" "a log that holds no calls: and so is the review's"
+  expect_contains "$(fact_line unmeasured)" "log-coder" "a log that holds no calls: the unmeasured row names the coder's"
+  expect_contains "$(fact_line unmeasured)" "log-review" "a log that holds no calls: and the review's"
   expect_scratch_gone "a log that holds no calls"
 }
 
@@ -1371,6 +1390,7 @@ t test_a_review_on_the_implicit_review_job_is_a_fail
 t test_a_review_job_carrying_a_secret_is_a_fail
 t test_a_review_job_carrying_a_secret_volume_is_a_fail
 t test_a_review_run_on_a_route_is_a_fail
+t test_a_review_log_that_holds_no_calls_is_unmeasured
 t test_an_undescribable_review_job_is_unmeasured
 t test_a_review_run_that_does_not_resolve_is_unmeasured
 t test_an_unreadable_record_is_unmeasured
@@ -1380,7 +1400,7 @@ t test_a_reference_that_resolves_to_no_run_is_unmeasured
 t test_a_run_without_an_execution_has_no_log_to_read
 t test_a_run_without_a_review_stage_is_unmeasured
 t test_a_failed_log_read_is_unmeasured
-t test_a_log_that_holds_no_calls_is_a_fail
+t test_a_log_that_holds_no_calls_is_unmeasured
 t test_the_log_view_scopes_the_read
 t test_without_a_log_view_the_read_is_scoped_to_the_project
 t test_a_read_that_does_not_come_back_is_bounded
