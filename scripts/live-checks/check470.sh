@@ -78,7 +78,13 @@
 #             checkout's own fugaro.yaml, whose `project` and `gcp_project` are
 #             the values that actually select the store `fugaro issue mine` reads
 #             and uploads to — and the refusals are what the script's own test
-#             pins. This check writes nothing to the project's
+#             pins. The checkout itself is held to the way the CLI finds one: it
+#             has to BE the git toplevel (a subdirectory's checkout is its
+#             toplevel's, a directory in no repository has none), FUGARO_PROJECT
+#             and FUGARO_CONFIG have to be unset, and the bucket the resolved
+#             project's own config names has to be exactly the typed --bucket —
+#             each of those is a way the CLI would otherwise read and upload to a
+#             project this run never looked at. This check writes nothing to the project's
 #             store of its own and creates nothing in the cloud: what it writes
 #             is the two local caches the command writes, and the Restore puts
 #             them back.
@@ -168,6 +174,7 @@ need_tools() {
   need grep
   need cmp "the Restore reads the identity cache back against the copy it saved"
   need diff "the Restore reads the snapshot directory back against the copy it saved"
+  need git "the checkout is resolved the way the CLI resolves it: its git toplevel, whose fugaro.yaml names the project"
   need fugaro "every reading this check takes is of the CLI's own command: fugaro issue mine, run in the checkout"
   if [ "$MODE" = 470 ]; then
     need gcloud "mode 470 reads the project's issue store with YOUR own identity: the two listings and the one record read of U1"
@@ -359,12 +366,53 @@ protected_name() {
 }
 
 # yaml_scalar FILE KEY — the value of a top-level `key:` line, with its quotes and
-# trailing space stripped. The check reads the two keys that name an installation
-# and nothing else out of the file, and a key it cannot find is the empty string,
-# which reads the same as the key being absent.
+# trailing space stripped. The check reads four keys and nothing else out of the
+# two files it reads — the names an installation goes by and the bucket a project
+# runs in — and a key it cannot find is the empty string, which reads the same as
+# the key being absent.
 yaml_scalar() { # FILE KEY
   sed -n "s/^$2:[[:space:]]*//p" "$1" 2>/dev/null | head -n 1 |
     sed -e 's/[[:space:]]*$//' -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/"
+}
+
+# project_config_path NAME — this machine's own config file for a project, looked
+# up where the CLI looks for it (localcfg's ProjectsDir: $XDG_CONFIG_HOME/fugaro,
+# else ~/.config/fugaro), and nothing at all when there is none.
+project_config_path() { # NAME
+  local p
+  if [ -n "${XDG_CONFIG_HOME:-}" ]; then
+    p=$XDG_CONFIG_HOME/fugaro/projects/$1.yaml
+    if [ -r "$p" ]; then
+      printf '%s' "$p"
+      return 0
+    fi
+  fi
+  if [ -n "${HOME:-}" ]; then
+    p=$HOME/.config/fugaro/projects/$1.yaml
+    if [ -r "$p" ]; then
+      printf '%s' "$p"
+      return 0
+    fi
+  fi
+  return 0
+}
+
+# config_store_bucket FILE — the store the config's project runs in, in the URL
+# form the CLI itself uses (localcfg's BucketURL: bucket_url when the file sets
+# it, else `gs://` + runs_bucket). It is the bucket `fugaro issue mine` uploads
+# this machine's own pending issues to and reads the project's store from, so it
+# is what the typed --bucket has to equal for this check's gcloud probes to
+# address the store the CLI used.
+config_store_bucket() { # FILE
+  local url name
+  url=$(yaml_scalar "$1" bucket_url || true)
+  if [ -n "$url" ]; then
+    printf '%s' "$url"
+    return 0
+  fi
+  name=$(yaml_scalar "$1" runs_bucket || true)
+  [ -n "$name" ] || return 0
+  printf 'gs://%s' "$name"
 }
 
 # guard_names: the three installations are refused by NAME in the project and in
@@ -399,20 +447,71 @@ guard_checkout() {
     fact checkout FAIL "'$CO' is not a directory: --checkout has to be the sandbox repository's checkout, because that is the directory \`fugaro issue mine\` is run in"
     stop "'$CO' is not a directory"
   fi
+  # The environment comes before the checkout in the CLI's own order (a project
+  # named here wins over the one the checkout's fugaro.yaml names,
+  # internal/localcfg's selection), so a shell that carries one of these is
+  # measuring another project than the one --checkout points at.
+  local var val
+  for var in FUGARO_PROJECT FUGARO_CONFIG; do
+    val=${!var:-}
+    [ -n "$val" ] || continue
+    fact checkout FAIL "\$$var is set in this shell (to '$val'), and \`fugaro issue mine\` resolves the project from it before it looks at $CO/fugaro.yaml, so this run would read and upload to the store of the project that variable names — an installation this check may never touch, if that is what it names. Unset it and run this mode again"
+    stop "\$$var is set (to '$val'), so the project this check would measure is not the one --checkout names"
+  done
+  # The CLI resolves the checkout from the git toplevel — `git rev-parse
+  # --show-toplevel`, internal/cli's resolveCheckout — and reads the fugaro.yaml
+  # it finds there. A directory in no repository has no checkout at all, and a
+  # subdirectory's is its toplevel's: both fall through to this machine's own
+  # configuration, which is the way a run lands on the owner's installation.
+  local top here
+  top=$(git -C "$CO" rev-parse --show-toplevel 2>/dev/null || true)
+  here=$(cd "$CO" && pwd -P)
+  if [ -z "$top" ]; then
+    fact checkout FAIL "'$CO' is in no git checkout: \`fugaro issue mine\` finds the checkout by the git toplevel (\`git rev-parse --show-toplevel\`), so from a directory outside every repository it reads no fugaro.yaml at all and falls back to this machine's own configuration. Name the sandbox repository's checkout, which is a git checkout whose toplevel carries the fugaro.yaml"
+    stop "'$CO' is in no git checkout, so \`fugaro issue mine\` would not read a project out of a fugaro.yaml at all"
+  fi
+  if [ "$top" != "$here" ]; then
+    fact checkout FAIL "'$CO' is inside the checkout at $top rather than being it, and \`fugaro issue mine\` reads the fugaro.yaml of the toplevel (\`git rev-parse --show-toplevel\` answers $top): name the checkout itself, or the project this run measures is the toplevel's"
+    stop "'$CO' is a subdirectory of the checkout at $top, whose fugaro.yaml is the one \`fugaro issue mine\` reads"
+  fi
   if [ ! -f "$CO/fugaro.yaml" ]; then
     fact checkout FAIL "'$CO' carries no fugaro.yaml, so it is not the checkout of a repository: \`fugaro issue mine\` reads the project out of that file, and a run from here would answer 'no project with a runs bucket is selected' rather than reading a store"
     stop "'$CO' carries no fugaro.yaml, so it is not a repository checkout"
   fi
-  local key value
+  local key value pname=""
   for key in project gcp_project; do
-    value=$(yaml_scalar "$CO/fugaro.yaml" "$key")
+    value=$(yaml_scalar "$CO/fugaro.yaml" "$key" || true)
     [ -n "$value" ] || continue
+    if [ "$key" = project ]; then pname=$value; fi
     if protected_name "$value"; then
       fact checkout FAIL "$CO/fugaro.yaml names the installation '$value' in its $key key: that file is what selects the store \`fugaro issue mine\` reads and uploads to (the command is run with no --project at all), so this checkout would run the whole check against an installation it must never touch (never belong, edge-devel-dimi or edgeappinc)"
       stop "the checkout's fugaro.yaml names the installation '$value' in its $key key (never belong, edge-devel-dimi or edgeappinc)"
     fi
   done
-  fact checkout PASS "$CO is a directory carrying a fugaro.yaml, so \`fugaro issue mine\` is run there and reads the project that file names"
+  if [ -z "$pname" ]; then
+    fact checkout FAIL "$CO/fugaro.yaml names no project, and that key is what says which project's store \`fugaro issue mine\` reads: without it the CLI answers 'no project with a runs bucket is selected' and this check would measure nothing"
+    stop "$CO/fugaro.yaml carries no project: key"
+  fi
+  # And then the store that project runs in, which is the value the CLI's own
+  # store comes from and the one the typed --bucket has to agree with: the
+  # probes of mode 470 address gs://$B directly, so a bucket this run was not
+  # pointed at is a check reading one store and calling it the CLI's.
+  local cfg store
+  cfg=$(project_config_path "$pname")
+  if [ -z "$cfg" ]; then
+    fact checkout FAIL "this machine holds no config for the project '$pname', which is the project the checkout names (the check looked where the CLI looks: \$XDG_CONFIG_HOME/fugaro/projects/$pname.yaml and \$HOME/.config/fugaro/projects/$pname.yaml). \`fugaro issue mine\` would answer 'no project with a runs bucket is selected' and read no store at all"
+    stop "no config for the project '$pname' on this machine, so \`fugaro issue mine\` finds no runs bucket"
+  fi
+  store=$(config_store_bucket "$cfg")
+  if [ -z "$store" ]; then
+    fact checkout FAIL "'$cfg' names no runs_bucket and no bucket_url, so nothing selects a store for the project '$pname' and \`fugaro issue mine\` would read none"
+    stop "'$cfg' names no runs bucket"
+  fi
+  if [ "$store" != "gs://$B" ]; then
+    fact checkout FAIL "the checkout's project '$pname' runs its store in $store ('$cfg'), and --bucket is $B: \`fugaro issue mine\` reads and uploads to the store of $store, so this check would probe gs://$B with its own gcloud calls and report on a store the CLI never touched. Type --bucket $store, or name the sandbox repository of the installation whose bucket $B is"
+    stop "--bucket is $B and the checkout's own project ('$pname') runs its store in $store: the CLI and this check's gcloud probes would address two different stores"
+  fi
+  fact checkout PASS "$CO is a git checkout carrying a fugaro.yaml, and the project it names ('$pname', this machine's config $cfg) runs its store in gs://$B — the bucket typed — so \`fugaro issue mine\` reads and uploads to the store this mode probes, and the CLI's own resolution is the one the check's readings are about"
 }
 
 # ------------------------------------------------------------------- the reader
@@ -741,7 +840,7 @@ step_verdict() {
 # names the shape of each command and never evaluates one.
 print_plan() {
   say "dry run: NOTHING below was run. A real run of mode $MODE would run, in this order:"
-  say "  [local, reads] the guards: the three refused names in --project, in --bucket, and in the checkout's own fugaro.yaml (its project: and gcp_project:, the values that select the store the CLI reads), and --checkout being a directory that carries that file"
+  say "  [local, reads] the guards: the three refused names in --project, in --bucket, and in the checkout's own fugaro.yaml (its project: and gcp_project:, the values that select the store the CLI reads); the checkout being the git toplevel itself, with FUGARO_PROJECT and FUGARO_CONFIG unset; and the project's own config under the config home naming exactly gs://$B as its runs bucket, so the CLI and this mode's gcloud probes address one store"
   say "  [local, reads+writes] the user's cache directory ($CACHE): identity.json and mine/ are copied into \$SCRATCH before the first fugaro call, so the Restore restores bytes rather than a shape it hopes for"
   case "$MODE" in
   470)

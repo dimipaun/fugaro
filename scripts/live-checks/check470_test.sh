@@ -257,11 +257,21 @@ GCLOUD_EOF
 # the check's Restore is about.
 setup_case() {
   dir=$work/$1
-  mkdir -p "$dir/bin" "$dir/state" "$dir/tmp" "$dir/home" "$dir/cache" "$dir/checkout"
+  mkdir -p "$dir/bin" "$dir/state" "$dir/tmp" "$dir/home" "$dir/cache" "$dir/checkout" \
+    "$dir/config/fugaro/projects"
   write_fakes "$dir"
   : >"$dir/state/calls"
   : >"$dir/state/network-after-first"
+  # A real git checkout, not a plain directory: the CLI resolves the checkout
+  # from the git toplevel, so a fixture that is not a repository would test a
+  # path the real command never takes.
+  git -C "$dir/checkout" init -q
   printf 'project: %s\n' "$PROJECT" >"$dir/checkout/fugaro.yaml"
+  # The project's own config, where the CLI looks for it, naming the bucket the
+  # check is pointed at: `fugaro issue mine` reads and uploads to the store of
+  # that bucket, and the guard refuses a run where the two disagree.
+  printf 'name: %s\ngcp_project: %s\nregion: us-east5\nruns_bucket: %s\n' \
+    "$PROJECT" "$PROJECT" "$BUCKET" >"$dir/config/fugaro/projects/$PROJECT.yaml"
   cat >"$dir/state/objects" <<'OBJECTS'
 issues/reporters/aaaa/0001
 issues/reporters/aaaa/0002
@@ -283,7 +293,7 @@ OBJECTS
 run470() {
   local stdin=${RUN470_STDIN:-/dev/null}
   status=0
-  out=$(env TMPDIR="$dir/tmp" HOME="$dir/home" XDG_CACHE_HOME="$dir/cache" \
+  out=$(env TMPDIR="$dir/tmp" HOME="$dir/home" XDG_CACHE_HOME="$dir/cache" XDG_CONFIG_HOME="$dir/config" \
     FAKE470_DIR="$dir/state" FAKE470_CACHE="$dir/cache/fugaro" \
     PATH="$dir/bin:$PATH" \
     ${RUN470_ENV[@]+"${RUN470_ENV[@]}"} \
@@ -568,6 +578,78 @@ test_a_checkout_without_a_fugaro_yaml_is_refused() {
   expect_no_calls "a checkout without a fugaro.yaml"
 }
 
+test_a_checkout_in_no_git_repository_is_refused() {
+  # `fugaro issue mine` finds the checkout by the git toplevel: from a directory
+  # in no repository it reads no fugaro.yaml at all and falls back to this
+  # machine's own configuration, which may be another installation's.
+  setup_case checkout_without_git
+  rm -rf "$dir/checkout/.git"
+  run470_default --mode 470
+  expect_status "$status" 2 "a checkout in no repository"
+  expect_contains "$(fact_line checkout)" "FACT checkout: FAIL" "a checkout in no repository: the row fails"
+  expect_contains "$(fact_line checkout)" "is in no git checkout" "a checkout in no repository: and says why"
+  expect_no_calls "a checkout in no repository"
+}
+
+test_a_subdirectory_of_a_checkout_is_refused() {
+  # A subdirectory's checkout is its toplevel's: the CLI reads the toplevel's
+  # fugaro.yaml, so the project measured would be that one's. The subdirectory
+  # carries a manifest of its own here, to show it is not the one that counts.
+  setup_case checkout_subdirectory
+  mkdir -p "$dir/checkout/sub"
+  printf 'project: %s\n' "not-a-sandbox-project" >"$dir/checkout/sub/fugaro.yaml"
+  run470 --checkout "$dir/checkout/sub" --project "$PROJECT" --bucket "$BUCKET" --mode 470
+  expect_status "$status" 2 "a subdirectory of a checkout"
+  expect_contains "$(fact_line checkout)" "FACT checkout: FAIL" "a subdirectory of a checkout: the row fails"
+  expect_contains "$(fact_line checkout)" "is inside the checkout at $dir/checkout" "a subdirectory of a checkout: and names the toplevel the CLI would read"
+  expect_no_calls "a subdirectory of a checkout"
+}
+
+test_an_environment_that_names_the_project_is_refused() {
+  # FUGARO_PROJECT and FUGARO_CONFIG come before the checkout in the CLI's own
+  # order, so a shell that carries one is measuring a project --checkout does not
+  # name.
+  local var
+  for var in FUGARO_PROJECT FUGARO_CONFIG; do
+    setup_case "env_$(printf '%s' "$var" | tr '[:upper:]' '[:lower:]')"
+    RUN470_ENV=("$var=/tmp/another-installation")
+    run470_default --mode 470
+    expect_status "$status" 2 "$var set"
+    expect_contains "$(fact_line checkout)" "FACT checkout: FAIL" "$var set: the row fails"
+    expect_contains "$(fact_line checkout)" "\$$var is set" "$var set: and names the variable"
+    expect_contains "$(fact_line checkout)" "Unset it and run this mode again" "$var set: and says what to do"
+    expect_no_calls "$var set"
+  done
+}
+
+test_a_bucket_the_checkout_does_not_run_in_is_refused() {
+  # The store the CLI reads and uploads to is the bucket of the project's own
+  # config, and mode 470's gcloud probes address --bucket directly: when the two
+  # disagree the check reports on a store the CLI never touched.
+  setup_case bucket_disagreement
+  printf 'name: %s\ngcp_project: %s\nregion: us-east5\nruns_bucket: %s\n' \
+    "$PROJECT" "$PROJECT" "bkt-other-a" >"$dir/config/fugaro/projects/$PROJECT.yaml"
+  run470_default --mode 470
+  expect_status "$status" 2 "a bucket the checkout does not run in"
+  expect_contains "$(fact_line checkout)" "FACT checkout: FAIL" "a bucket the checkout does not run in: the row fails"
+  expect_contains "$(fact_line checkout)" "runs its store in gs://bkt-other-a" "a bucket the checkout does not run in: and names the store the CLI would use"
+  expect_contains "$(fact_line checkout)" "report on a store the CLI never touched" "a bucket the checkout does not run in: said as the reason"
+  expect_no_calls "a bucket the checkout does not run in"
+}
+
+test_a_project_with_no_local_config_is_refused() {
+  # Nothing selects a runs bucket for a project this machine holds no config
+  # for, so `fugaro issue mine` would answer "no project with a runs bucket is
+  # selected" and the run would measure nothing.
+  setup_case project_without_config
+  rm -f "$dir/config/fugaro/projects/$PROJECT.yaml"
+  run470_default --mode 470
+  expect_status "$status" 2 "a project with no local config"
+  expect_contains "$(fact_line checkout)" "FACT checkout: FAIL" "a project with no local config: the row fails"
+  expect_contains "$(fact_line checkout)" "holds no config for the project '$PROJECT'" "a project with no local config: and says which project"
+  expect_no_calls "a project with no local config"
+}
+
 test_a_checkout_that_is_not_a_directory_is_refused() {
   setup_case no_checkout
   run470 --checkout "$dir/nowhere" --project "$PROJECT" --bucket "$BUCKET" --mode 470
@@ -843,6 +925,11 @@ t test_a_row_numbered_zero_falls_through_to_the_listing
 t test_a_refused_records_listing_is_the_reading
 t test_a_records_listing_that_did_not_answer_stops_the_run
 t test_a_checkout_whose_fugaro_yaml_names_the_installation_is_refused
+t test_a_checkout_in_no_git_repository_is_refused
+t test_a_subdirectory_of_a_checkout_is_refused
+t test_an_environment_that_names_the_project_is_refused
+t test_a_bucket_the_checkout_does_not_run_in_is_refused
+t test_a_project_with_no_local_config_is_refused
 t test_the_human_half_is_printed_and_never_faked
 t test_the_three_refused_names_are_refused_in_both_places
 t test_a_checkout_without_a_fugaro_yaml_is_refused
