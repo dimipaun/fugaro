@@ -2,7 +2,7 @@ package plugin_test
 
 // Docs tests (plan T7): the README's Getting started is the two steps of the
 // brief, and nothing in the repository still names a retired per-command
-// skill (the plugin has eight: setup, working, routing, parallelism, upgrade,
+// skill (the plugin has eight: setup, working, routing, parallelism, update,
 // orchestrator, images and spec-to-pr — images project-level, from
 // docs/image-setup-skill).
 

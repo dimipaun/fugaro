@@ -10,6 +10,16 @@ description: "Work with Fugaro, the fleeting cloud workers that run coding-agent
 
 Fugaro runs one coding task in a fleeting cloud worker: it checks out the repository, does the task with a coding agent, runs the repository's build and tests, has the result reviewed and opens a pull request. It always ends with a pull request, a draft one when it is not sure. You launch, watch and follow up runs with the `fugaro` CLI; the user's own credentials do the work, so you stay within what this skill says.
 
+## At the start of a session
+
+Run `fugaro doctor --offline --json` once. If its `ok` is false, or a check is `ok: false` with a `severity` other than `info`, tell the user in one sentence what it is — in plain words, not the check's own text — and offer the fix that check prints, for the user to run in their own terminal window, not through the agent: where that `fix` is `fugaro update`'s, the command below; otherwise that `fix` itself, as printed — a pin newer than this binary names `brew upgrade`.
+
+```bash user-runs
+fugaro update
+```
+
+A check `--offline` did not run comes back `skipped: true` with severity `info`, and is not one of these. A coding agent's session cannot apply cloud changes, by design: never look for a flag or another command that would let this session apply those writes, and never unset the marker that says this session is one. If everything `--offline` could check is ok, say nothing and carry on: a session that opens with a status report nobody asked for is the failure this sentence exists to avoid.
+
 ## Decide first
 
 1. **Does the task belong in the cloud?** Ask the `routing` skill. A task that needs the user's machine, local data or credentials, or live cloud resources stays local.
