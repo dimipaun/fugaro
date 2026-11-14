@@ -14,13 +14,16 @@
         "paths": [
           "internal/bbtokens/bbtokens.go",
           "internal/bbtokens/stub.go",
+          "internal/bbtokens/bbtokens_test.go",
+          "internal/bbtokens/stub_test.go",
           "internal/projectpolicy/tokens_shape.go",
           "docs/bitbucket-token-types/contract.md"
         ]
       },
       "kind": "contract",
       "stubs": [
-        "internal/bbtokens/stub.go"
+        "internal/bbtokens/stub.go",
+        "internal/bbtokens/stub_test.go"
       ]
     },
     {
@@ -68,7 +71,8 @@
         "paths": [
           "internal/projectpolicy/bitbucket.go",
           "internal/projectpolicy/bitbucket_test.go",
-          "internal/projectpolicy/policy.go"
+          "internal/projectpolicy/policy.go",
+          "internal/cli/project_cmd_test.go"
         ]
       }
     },
@@ -239,6 +243,7 @@
         "paths": [
           "docs/git-providers.md",
           "SECURITY.md",
+          "website/content/security.md",
           "docs/credentials-service/runbook.md"
         ]
       }
@@ -268,6 +273,7 @@
         "prediction": true,
         "paths": [
           "internal/bbtokens/stub.go",
+          "internal/bbtokens/stub_test.go",
           "internal/credsvc/server.go",
           "internal/credsvc/tokens_wire.go",
           "internal/credsvc/bitbucketproxy_tokens_e2e_test.go"

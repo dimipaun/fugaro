@@ -35,7 +35,7 @@ credentials, gets the strictest rigor and an independent review before any side 
 | A token is chosen only after `Decide` admitted the repository: the selector never widens what a run may reach | T8, I1 |
 | The selection is the narrowest covering token (repository, then project, then workspace); a request no token covers is refused naming the repository, not a token | T4, T8 |
 | A coverage entry that over-claims fails closed: Bitbucket answers 403, the call is refused and audited, and no other token is tried in its place | T9, I1 |
-| The project UUID is looked up per repository with a token that covers it by a narrower rule, cached per instance, and a 403 or 404 evicts the entry | T5, T9 |
+| The project UUID is looked up per repository with the candidate project token itself, cached per instance, and a 403 or 404 evicts the entry | T5, T9 |
 | A 401 marks one token broken, a 429 marks it throttled until `Retry-After`, a 403 or 404 marks nothing; other tokens keep serving | T6, T9 |
 | The audit line names the token used (name only), and a refusal class names no token | T8 |
 | `creds set` refuses a token that does not work with one precise message and writes nothing; a write scope it cannot prove is reported "not verified" | T7, T11 |
@@ -47,7 +47,7 @@ credentials, gets the strictest rigor and an independent review before any side 
 | The own-identity set reaches the adapter and a comment by any of Fugaro's tokens is the run's own | T13, I1 |
 | The bundle's size bound still holds with many tokens, and a bundle holding `claude-oauth-token-bitbucket-token-ci` still loads | T1 |
 | A token the deployed service is too old to read is refused at `creds set`, never written (an older loader refuses the whole bundle) | T11 |
-| A run cannot mark a token broken with an ordinary 401: the proxy confirms with `GET /2.0/user` first | T9 |
+| A run cannot mark a token broken with an ordinary 401, or by calling `GET /user`: the proxy confirms with a read of a repository the token covers | T9 |
 | The identity set is written only by `creds set` into the state store, never by hand-edited config | T7, T11 |
 | Selection, `Decide` and the forward use one read of the policy and the bundle | C1, T8 |
 | An empty project UUID never matches a record | T4, T5 |
@@ -58,7 +58,7 @@ Inert until the proxy reads it (I1). A bundle with the new keys is refused by an
 
 ### C1: the token-store contract
 - Acceptance: one package, `internal/bbtokens`, states, and `docs/bitbucket-token-types/contract.md` explains, what every side may rely on: `Record{Name (the document key), Type, Coverage []string, ProjectUUID, ProjectKey, Expires}` and `Status{State, Until, VerifiedAt, Identity (account UUID), Count}` in plain fields, so `internal/bbtokens` imports nothing from `internal/creds` and the run side stays clear of `TestCredsIsNotReachableFromARun`; `Type` (`repo`, `project`, `workspace`, or untyped for the legacy key) and the coverage forms R1 pairs with them; the **snapshot** `Snapshot{Policy, Bundle}` that `Decide`, selection and the forward all use (one read per request); `Selector.Select(ctx, snap, canonical string, write bool) (Choice, error)` and `Choice{Name}`, where `canonical` is the pairing's repository (also for `GET /user`, whose request carries none); `BundleTokens` (the names the bundle holds and each entry's value accessor); `ProjectResolver.ProjectOf(ctx, canonical string, tok Name) (uuid string, err error)` and `ProjectResolver.Evict(canonical string)`; `StatusStore` (read and write a `Status`, increment a count); the refusal classes (`token_not_covered`, `token_broken`, `token_throttled`, `write_scope_missing`, `no_bitbucket_token`); the node key's JSON shape (R5) and the identity-set shape the adapter reads (compared by UUID), both declared in `internal/projectpolicy` so the runner and the adapter import no token-handling code; a bundle key with no node record, or a node record with no key, is skipped. An empty project UUID never matches. A stub (`stub.go`) implements `Selector`, `ProjectResolver` and `StatusStore`, returns the shape and does nothing else.
-- Files: `internal/bbtokens/bbtokens.go` (new), `internal/bbtokens/stub.go` (new), `internal/projectpolicy/tokens_shape.go` (new), `docs/bitbucket-token-types/contract.md` (new).
+- Files: `internal/bbtokens/bbtokens.go` (new), `internal/bbtokens/stub.go` (new), `internal/bbtokens/bbtokens_test.go` (new), `internal/bbtokens/stub_test.go` (new), `internal/projectpolicy/tokens_shape.go` (new), `docs/bitbucket-token-types/contract.md` (new).
 - Interfaces: consumes none; produces everything above. These files belong to C1 and its change requests alone.
 - Tests: `TestContractRecordForms` (type and coverage forms agree and disagree), `TestContractEmptyProjectUUIDNeverMatches`, `TestStubImplementsContract`, and `TestCredsIsNotReachableFromARun` (`internal/creds/boundary_test.go`, which must stay green).
 - Command: `go test ./internal/bbtokens/ -run 'Contract|Stub' -count=1 && go test ./internal/creds/ -run CredsIsNotReachableFromARun -count=1`
@@ -91,10 +91,10 @@ Inert until the proxy reads it (I1). A bundle with the new keys is refused by an
 
 ### T3: the node carries each token's coverage
 - Acceptance: `projectpolicy` derives a new top-level node key `bitbucket_tokens` (R5), holding each record's name, type and coverage patterns (provider-qualified like `allow_repos`) and, from the state store, its identity UUID; never a value; `bitbucket_token` (`allow_repos`, `proxy`) is untouched and `Version` does not move; a node without the key reads as today; the runner's decode tolerates the key (P8) and the CLI's strict readers refuse it only on a release that does not know it, both pinned by the pair of tests `image_catalog` has (the old reader lists the key; the older CLI refuses it), and the commit body and the release notes carry the one-line skew (R5); the key is derived from records only, so a config with none publishes none.
-- Files: `internal/projectpolicy/bitbucket.go`, `internal/projectpolicy/bitbucket_test.go`, `internal/projectpolicy/policy.go`.
+- Files: `internal/projectpolicy/bitbucket.go`, `internal/projectpolicy/bitbucket_test.go`, `internal/projectpolicy/policy.go`, `internal/cli/project_cmd_test.go` (the older-CLI refusal test calls the unexported `refuseUnknownPolicyKeys`).
 - Interfaces: consumes C1's node-key shape and record types; produces the key the proxy and the runner read.
 - Tests: `TestDeriveBitbucketTokensKey`, `TestNodeWithoutTokensKeyReadsAsBefore`, `TestNodeTokensKeyCarriesNoValue`, `TestOldRunnerReaderToleratesTheTokensKey`, `TestOlderCLIRefusesANodeCarryingTheTokensKey`.
-- Command: `go test ./internal/projectpolicy/ -run 'DeriveBitbucketTokens|NodeWithoutTokens|NodeTokensKey|OldRunnerReaderToleratesTheTokens|OlderCLIRefusesANodeCarryingTheTokens' -count=1`
+- Command: `go test ./internal/projectpolicy/ -run 'DeriveBitbucketTokens|NodeWithoutTokens|NodeTokensKey|OldRunnerReaderToleratesTheTokens|OldRunnerReaderToleratesTheTokens' -count=1 && go test ./internal/cli/ -run 'OlderCLIRefusesANodeCarryingTheTokensKey' -count=1`
 - Red step: a derivation with two records publishes no `bitbucket_tokens` key.
 - Depends on: C1 (the shape; broken edge to T2).
 - Commit: `projectpolicy: the node states each Bitbucket token's coverage (T3, R5)`
@@ -127,10 +127,10 @@ Four tasks that run side by side against C1.
 - Reviewer tier: opus, independent review.
 
 ### T6: a Bitbucket token's shared status marks
-- Acceptance: a Bitbucket token's `Status` (mark, `VerifiedAt`, identity UUID, count) is stored under **its own subtree** of the creds state store, so the readers of model marks (`accounts.go`, `doctor.go`, `review.go` through `Marks()`) never see it; a 401, after the proxy's `GET /user` confirmation, writes `broken`, a 429 writes `exhausted` until `Retry-After` (a backoff when it names none); the probe for a backed-off Bitbucket token is `GET /2.0/user` and nothing that writes; a request count per window is kept per token for display, is advisory (no queue, D2356) and is written best-effort off the request path, so a failed or slow write never delays or refuses a proxied call; the existing model credentials' marks and probe are unchanged.
+- Acceptance: a Bitbucket token's `Status` (mark, `VerifiedAt`, identity UUID, count) is stored under **its own subtree** of the creds state store, so the readers of model marks (`accounts.go`, `doctor.go`, `review.go` through `Marks()`) never see it; a 401, after the proxy's covered-repository read confirms it (R14), writes `broken`, a 429 writes `exhausted` until `Retry-After` (a backoff when it names none); the probe for a backed-off Bitbucket token is a read of a repository the token covers (`GET /user` answers 403 for a repository token, R14) and nothing that writes; a request count per window is kept per token for display, is advisory (no queue, D2356) and is written best-effort off the request path, so a failed or slow write never delays or refuses a proxied call; the existing model credentials' marks and probe are unchanged.
 - Files: `internal/creds/state.go`, `internal/creds/marks.go`, `internal/creds/marks_test.go`, `internal/credsvc/probe.go`, `internal/credsvc/probe_test.go`.
 - Interfaces: produces the `StatusStore`; consumes none.
-- Tests: `TestBitbucketTokenStatusSubtree`, `TestModelMarkReadersNeverSeeABitbucketToken`, `TestBitbucketTokenProbeIsAReadOnlyCall`, `TestModelCredentialMarksUnchanged`, `TestBitbucketRequestCountWindow`.
+- Tests: `TestBitbucketTokenStatusSubtree`, `TestModelMarkReadersNeverSeeABitbucketToken`, `TestBitbucketTokenProbeIsACoveredRepositoryRead`, `TestModelCredentialMarksUnchanged`, `TestBitbucketRequestCountWindow`.
 - Command: `go test ./internal/creds/ ./internal/credsvc/ -run 'BitbucketToken|ModelCredentialMarks|BitbucketRequestCount' -count=1`
 - Red step: marking `ci` broken also reads as the model account `ci` broken.
 - Depends on: none (launch gate: merges after C1).
@@ -138,10 +138,10 @@ Four tasks that run side by side against C1.
 - Reviewer tier: opus, independent review; a mutation check (the marks gate every credential's selection).
 
 ### T7: the add-time verifier
-- Acceptance: `Verify(ctx, token, record)` returns a `Result` with `OK`, the read scopes proven, the write scopes `not verified`, the account UUID `GET /2.0/user` answers (the identity, compared as `selfUser` compares `user.UUID`), and one precise message per refusal (`the token does not cover workspace X`, `missing repository read`, `the token has expired`, `Bitbucket refused the token`); it makes read calls only, within the stated coverage (the repository, the project or the workspace); it refuses a token whose `GET /2.0/user` `kind` is not the access-token kind matching the record's type, or reports none (R14), so a person's OAuth or personal token never enters the identity set; it never prints or returns the token; it records what a scope header says when Bitbucket returns one (U2).
+- Acceptance: `Verify(ctx, token, record)` returns a `Result` with `OK`, the read scopes proven, the write scopes `not verified`, the account UUID `GET /2.0/user` answers (the identity, compared as `selfUser` compares `user.UUID`), and one precise message per refusal (`the token does not cover workspace X`, `missing repository read`, `the token has expired`, `Bitbucket refused the token`); it makes read calls only, within the stated coverage (the repository, the project or the workspace); it reads `GET /2.0/user` as R14 says: a 403 "not accessible by this authentication mechanism" is an access token with no identity (a repository token), a 200 is accepted only when its `kind` is the access-token kind matching the record's type, and anything else is refused, so a person's OAuth or personal token never enters the identity set; it never prints or returns the token; it records what a scope header says when Bitbucket returns one (U2).
 - Files: `internal/bbtokens/verify.go` (new), `internal/bbtokens/verify_test.go` (new).
 - Interfaces: consumes none; produces the verifier `creds set` calls (T11).
-- Tests: `TestVerifyRepoWorkspaceAndProjectCoverage`, `TestVerifyNamesWhatIsMissing`, `TestVerifyMakesOnlyReadCalls`, `TestVerifyReportsWriteNotVerified`, `TestVerifyNeverReturnsTheToken`, `TestVerifyRefusesANonAccessTokenKind`.
+- Tests: `TestVerifyRepoWorkspaceAndProjectCoverage`, `TestVerifyNamesWhatIsMissing`, `TestVerifyMakesOnlyReadCalls`, `TestVerifyReportsWriteNotVerified`, `TestVerifyNeverReturnsTheToken`, `TestVerifyRefusesANonAccessTokenKind`, `TestVerifyAccepts403FromUserAsARepositoryToken`.
 - Command: `go test ./internal/bbtokens/ -run 'Verify' -count=1`
 - Red step: a token the fake answers 403 on the repository read is reported OK (there is no verifier yet, so the test fails to build against the missing symbol).
 - Depends on: none.
@@ -151,7 +151,7 @@ Four tasks that run side by side against C1.
 ## Slice 3: the proxy
 
 ### T8: the proxy chooses a token per request and names it
-- Acceptance: after `Decide` admits a call, `bitbucketProxy` takes one snapshot of the policy and the bundle (the one `Decide` and the forward use) and asks `Selector.Select` for the pairing's canonical repository (also for `GET /user`, whose request names none) and the `write` flag, forwards with the chosen entry, writes the token's **name** on the audit line (`credential`), and refuses with the contract's class when none is chosen; the pull-request read behind `CheckPRWrite` (`prFacts`) uses the same chosen token; with only the legacy `bitbucket-token` and no node `tokens` member the behaviour is today's exactly; the upstream URL is still rebuilt from the classified parts (no byte of the caller's path is copied) and no record can name an upstream host.
+- Acceptance: after `Decide` admits a call, `bitbucketProxy` takes one snapshot of the policy and the bundle (the one `Decide` and the forward use) and asks `Selector.Select` for the pairing's canonical repository (also for `GET /user`, whose request names none) and the `write` flag, forwards with the chosen entry, writes the token's **name** on the audit line (`credential`), and refuses with the contract's class when none is chosen; the pull-request read behind `CheckPRWrite` (`prFacts`) uses the same chosen token; with only the legacy `bitbucket-token` and no node `bitbucket_tokens` key the behaviour is today's exactly; the upstream URL is still rebuilt from the classified parts (no byte of the caller's path is copied) and no record can name an upstream host.
 - Files: `internal/credsvc/bitbucketproxy.go`, `internal/credsvc/bitbucketproxy_test.go`, `internal/credsvc/server.go` (the `Config` field).
 - Interfaces: consumes C1's `Selector` and refusal classes (against the stub); produces the proxy's selection step.
 - Tests: `TestProxyChoosesTokenAfterDecide`, `TestProxyAuditNamesTheToken`, `TestProxyRefusesUncoveredRepository`, `TestProxyLegacySingleTokenUnchanged`, `TestProxyNeverForwardsToARecordedHost`.
@@ -173,8 +173,8 @@ Four tasks that run side by side against C1.
 - Reviewer tier: opus, independent review; a mutation check.
 
 ### I1: wire the proxy to the real store and prove it
-- Acceptance: the stub is deleted; the server builds the real selector (T4) over the bundle's tokens (T1), the node's `tokens` member (T3) built from the config records (T2), the resolver (T5) and the marks (T6); an end-to-end test with `gcpfake` and a fake Bitbucket proves, for a project holding a repository token, a project token and a workspace token: each repository is served by its narrowest covering token; a repository none covers is refused naming it; a 429 on the workspace token throttles it while the repository token keeps serving; an installation with only the legacy key behaves as before; the node's identity set reaches the adapter through the runner (T16, T13) and a comment by any listed identity is the run's own, proved in `internal/runner` as well as here.
-- Files: `internal/bbtokens/stub.go` (deleted), `internal/credsvc/server.go`, `internal/credsvc/tokens_wire.go` (new), `internal/credsvc/bitbucketproxy_tokens_e2e_test.go` (new).
+- Acceptance: the stub is deleted; the server builds the real selector (T4) over the bundle's tokens (T1), the node's `bitbucket_tokens` key (T3) built from the config records (T2), the resolver (T5) and the marks (T6); an end-to-end test with `gcpfake` and a fake Bitbucket proves, for a project holding a repository token, a project token and a workspace token: each repository is served by its narrowest covering token; a repository none covers is refused naming it; a 429 on the workspace token throttles it while the repository token keeps serving; an installation with only the legacy key behaves as before; the node's identity set reaches the adapter through the runner (T16, T13) and a comment by any listed identity is the run's own, proved in `internal/runner` as well as here.
+- Files: `internal/bbtokens/stub.go` (deleted), `internal/bbtokens/stub_test.go` (deleted), `internal/credsvc/server.go`, `internal/credsvc/tokens_wire.go` (new), `internal/credsvc/bitbucketproxy_tokens_e2e_test.go` (new).
 - Interfaces: consumes T1, T2, T3, T4, T5, T6, T8, T9, T13, T16; produces the working store.
 - Tests: `TestProxyMixedTokensEndToEnd`, `TestProxyOnlyLegacyTokenEndToEnd`, `TestProxyThrottleDoesNotStopOtherTokens`, `TestAdapterOwnIdentitySetEndToEnd` (with its runner half in T16).
 - Command: `go test ./internal/credsvc/ -run 'ProxyMixedTokens|ProxyOnlyLegacy|ProxyThrottleDoesNot|AdapterOwnIdentity' -count=1`
@@ -190,7 +190,7 @@ Four tasks that run side by side against C1.
 - Files: `internal/cli/creds.go`, `internal/cli/doctor_brokering.go`, `internal/cli/doctor_brokering_test.go`, `internal/cli/creds_test.go`, `website/content/cli-reference.md`.
 - Interfaces: consumes T6's real status and T11's additions to `creds.go`.
 - Tests: `TestCredsLsJSONBitbucketTokens`, `TestDoctorNamesUncoveredAllowedRepository`, `TestDoctorWarnsTokenNearExpiry`, `TestDoctorChecksEveryStoredBitbucketToken`, `TestCredsLsAddsFieldsOnly`, and the CLI-reference pins `TestCliReferenceIsCurrent` (`ee/clidoc`), `TestCliReferenceNamesEveryCommandAndFlag` and `TestCliReferenceInventsNothing` (`internal/cli`).
-- Command: `go test ./internal/cli/ -run 'CredsLsJSONBitbucket|DoctorNamesUncovered|DoctorWarnsTokenNear|DoctorChecksEveryStored|CliReferenceNamesEveryCommandAndFlag|CliReferenceInventsNothing' -count=1 && go test ./ee/clidoc/ -run CliReferenceIsCurrent -count=1`
+- Command: `go test ./internal/cli/ -run 'CredsLsJSONBitbucket|DoctorNamesUncovered|DoctorWarnsTokenNear|DoctorChecksEveryStored|CredsLsAddsFields|CliReferenceNamesEveryCommandAndFlag|CliReferenceInventsNothing' -count=1 && go test ./ee/clidoc/ -run CliReferenceIsCurrent -count=1`
 - Red step: an allowed repository with no covering token produces no doctor line.
 - Depends on: T6 (the real status); T11 (the same file, `creds.go`).
 - Commit: `cli: show each Bitbucket token and its status (T10, R7)`
@@ -208,7 +208,7 @@ Four tasks that run side by side against C1.
 - Reviewer tier: opus, independent review.
 
 ### T12: `update` publishes the tokens key and converges an old installation (R3, R5)
-- Acceptance: the callers of the policy derivation (`init_policy_migrate.go`, `project_cmd.go`, `project_profile.go`) pass the records and the state store's identities so `fugaro update` and `project policy publish` publish `bitbucket_tokens`; an installation at the previous version, holding only the legacy `bitbucket-token`, converges with no step and no prompt (no record is written: R3); a second run changes nothing; a run in flight is unaffected (the node is read once at bootstrap) and the in-flight document's table gains the row for this step.
+- Acceptance: the callers of the policy derivation (`init_policy_migrate.go`, `project_cmd.go`, `project_profile.go`) pass the records and the state store's identities so `fugaro update` and `project policy publish` publish `bitbucket_tokens`; an installation at the previous version, holding only the legacy `bitbucket-token`, converges with no step and no prompt (no record is written: R3); a second run changes nothing; a run in flight **can** see the step, because the proxy re-reads the policy on every request, so the first call after a publish may be served by a different token; the row this task adds to `docs/design/update-in-flight.md` and `update`'s one-line note name that, and no run is asked to finish first.
 - Files: `internal/cli/init_policy_migrate.go`, `internal/cli/project_cmd.go`, `internal/cli/project_profile.go`, `internal/cli/update_bitbucket_tokens_test.go` (new), `docs/design/update-in-flight.md`.
 - Interfaces: consumes T3's derivation and T2's records.
 - Tests: `TestUpdatePublishesTheTokensKey`, `TestUpdateWithOnlyTheLegacyTokenPublishesNoKey`, `TestInstallationAtPreviousVersionConvergesBitbucketTokens`, `TestUpdateTokensStepIsIdempotent`; the existing `TestUpdateLeavesARunInFlightRunning` (in `internal/cli/update_in_flight_test.go`) is run, not copied.
@@ -221,7 +221,7 @@ Four tasks that run side by side against C1.
 ### T13: own-identity over the set of token identities (F20)
 - Acceptance: `selfUser` treats a comment whose author is in the identity set (account UUIDs, as `selfUser` compares `user.UUID`) as the run's own; with no set it is today's behaviour; `MarkersFromAnyone` is read only when the set is empty and the account is unknown; the trust rules are unchanged and pinned by the four tests `docs/bitbucket-credentials` T3.3 names (`TestAgentCommentAsPersonNeverSteers`, `TestPRAuthorIDPathCovered`, `TestNoAccountScopeMarkersPinned` here, and `TestReviewModeSameRepoPRByConsumerOwner` in `internal/runner/reviewmode_test.go`), written against the set.
 - Files: `internal/gitprov/bitbucket/bitbucket.go` (the adapter `Options` gains the identity-set option), `internal/gitprov/bitbucket/comments.go`, `internal/gitprov/bitbucket/comments_test.go` (new), `internal/followup/select.go`, `internal/followup/select_test.go`, `internal/runner/reviewmode_test.go`.
-- Interfaces: consumes C1's identity-set shape; T16 hands the set to it.
+- Interfaces: consumes C1's identity-set shape; T16 hands the set to it. The set can be partial (a repository token has no identity, R14), and a run whose own identity is unknown keeps today's `MarkersFromAnyone` behaviour.
 - Tests: the four named above plus `TestSelfUserAcceptsAnyTokenIdentity`.
 - Command: `go test ./internal/gitprov/bitbucket/ ./internal/followup/ -run 'Self|Steer|PRAuthor|NoAccountScope' -count=1 && go test -timeout 40m ./internal/runner -run ReviewModeSameRepo -count=1`
 - Red step: with two identities in the set, the second token's comment is not the run's own.
@@ -243,11 +243,11 @@ Four tasks that run side by side against C1.
 ## Slice 5: documents and checks
 
 ### T14: the documents say it
-- Acceptance: `docs/git-providers.md`, `SECURITY.md` and the credentials runbook state: the proxy accepts any mix of the three types; the scopes are D470's and the token name is D472's, cited and not restated; coverage never widens `allow_data_to`; the proxy picks the narrowest covering token and several bot identities can appear in one run; a failing token is marked and shown; the reach of each type; that a run can read which repositories each token reaches (F21) and the skew line for the node key (R5); a rolled-back service refuses a bundle holding the new key family whole (T1); and the Premium and 25-token facts only as far as they are verified (U8). Pinned sentences change in their tests in the same commit.
-- Files: `docs/git-providers.md`, `SECURITY.md`, `docs/credentials-service/runbook.md`.
+- Acceptance: `docs/git-providers.md`, `SECURITY.md` and the credentials runbook state: the proxy accepts any mix of the three types; the scopes are D470's and the token name is D472's, cited and not restated; coverage never widens `allow_data_to`; the proxy picks the narrowest covering token and several bot identities can appear in one run; a failing token is marked and shown; the reach of each type; that a run can read which repositories each token reaches and that the node's identity set is trusted at the level of the node's writer (F21, R12) and the skew line for the node key (R5); a rolled-back service refuses a bundle holding the new key family whole (T1); and the Premium and 25-token facts only as far as they are verified (U8). Pinned sentences change in their tests in the same commit.
+- Files: `docs/git-providers.md`, `SECURITY.md`, `website/content/security.md` (regenerated with `go run ./internal/clidoc`, byte for byte below its header, per `.claude/rules/credentials-service.md`), `docs/credentials-service/runbook.md`.
 - Interfaces: consumes the behaviour of I1 and T11.
 - Tests: the existing Docs pins, moved with the wording.
-- Command: `go test ./internal/cli/ -run Docs -count=1`
+- Command: `go run ./internal/clidoc && go test ./internal/cli/ -run 'Docs|WebsiteSecurityPageIsByteIdentical' -count=1`
 - Red step: a Docs pin on the old "one token" sentence fails until both places change.
 - Depends on: I1, T11 (it documents what they build).
 - Commit: `docs: the Bitbucket proxy accepts repository, project and workspace tokens (T14)`
@@ -332,12 +332,13 @@ The graph is in [implementation-plan.graph.json](implementation-plan.graph.json)
 | `internal/projectpolicy/tokens_shape.go` | C1 (L0) |
 | `internal/runner/reviewmode_test.go` | T13 (L1) |
 | `internal/cli/init_policy_migrate.go`, `project_cmd.go`, `project_profile.go`, `docs/design/update-in-flight.md` | T12 (L2) |
+| `internal/cli/project_cmd_test.go` | T3 (L1) |
 | `internal/localcfg/localcfg.go` | T2 (L0) |
 | `internal/credsvc/bundle.go`, `schemas/creds-bundle.schema.json`, `internal/config/config.go` | T1 (L0) |
 | `internal/projectpolicy/bitbucket.go`, `policy.go` | T3 (L1) |
 | `internal/gitprov/bitbucket/comments.go`, `internal/followup/select.go` | T13 (L1) |
 | `internal/cli/doctor_brokering.go` | T10 (L2) |
-| `docs/git-providers.md`, `SECURITY.md`, `docs/credentials-service/runbook.md` | T14 (L4) |
+| `docs/git-providers.md`, `SECURITY.md`, `website/content/security.md`, `docs/credentials-service/runbook.md` | T14 (L4) |
 
 CR1 shares files with C1 and is launched only when raised, never at level 0.
 
