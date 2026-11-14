@@ -446,13 +446,19 @@ func rewriteConfigLine(t *testing.T, from, to string) {
 // moves a field of it rewrites.
 const appRepoEntry = "  acme/app: { provider: github, base_branch: main, workflows: [web] }\n"
 
-// withGitHubAppID records the one GitHub App ID the local config names for
-// acme/app (recordedGitHubAppID): the fact internal/infra's
-// implicitReviewVariant gates the implicit default review-only job on, because
-// a github shared job's provider refuses to start without it.
+// githubAppIDRecordedOn returns a repos entry of the local config with the App
+// ID the implicit review-only job's github provider needs to start recorded on
+// it: that record is what internal/infra's implicitReviewVariant gates the job's
+// deployment on (recordedGitHubAppID).
+func githubAppIDRecordedOn(entry string) string {
+	return strings.Replace(entry, "provider: github", `provider: github, github_app_id: "123456789"`, 1)
+}
+
+// withGitHubAppID records that ID on acme/app, the repository the fixture's
+// installation is about.
 func withGitHubAppID(t *testing.T) {
 	t.Helper()
-	rewriteConfigLine(t, appRepoEntry, strings.Replace(appRepoEntry, "provider: github", `provider: github, github_app_id: "123456789"`, 1))
+	rewriteConfigLine(t, appRepoEntry, githubAppIDRecordedOn(appRepoEntry))
 }
 
 // bakedOAuthRepoYAML is projectJobOAuthRepoYAML without its checkout: line —
@@ -562,6 +568,19 @@ func TestReviewResolvesTheImplicitJobForAProjectWithNoProfiles(t *testing.T) {
 	}
 }
 
+// reviewSlug is the slug a review of repo on provider is stored and launched
+// under, as reviewSpec derives it before the resolution is asked (repoSlug):
+// the pair names the provider back (runner.ProviderForSlug), which is how the
+// resolution reads the kind a review is on.
+func reviewSlug(t *testing.T, provider, repo string) string {
+	t.Helper()
+	slug, err := task.Slug(provider, repo)
+	if err != nil {
+		t.Fatalf("task.Slug(%s, %s): %v", provider, repo, err)
+	}
+	return slug
+}
+
 // TestReviewRefusesAnImplicitJobTheInstallationDoesNotDeploy is the deployment
 // half of the same resolution, and the half the mutation check of piece 3 turns
 // on: the implicit job is deployed only on an installation that publishes the
@@ -572,14 +591,18 @@ func TestReviewResolvesTheImplicitJobForAProjectWithNoProfiles(t *testing.T) {
 //
 // The credentials-service half is asked of the resolution itself, and not only
 // of the command: checkReviewService refuses an installation without the service
-// before the job is ever resolved, so the command's own refusal cannot tell a
-// resolution that reads the gate from one that ignores it. The command half is
-// asserted beside it, because it is the sentence an operator sees.
+// before the job is ever resolved, so the command's own refusal cannot show that
+// the resolution refuses too. Both stand here — the direct call for the
+// resolution, the command for the sentence an operator sees.
 //
-// Mutation (run, restore): make the resolution unconditional — drop the
-// credentials-service gate in implicitReviewJob (or resolve the name without
-// asking whether the job is deployed) — and the direct call below resolves a job
-// this installation does not have.
+// Mutation (run, restore): resolve the implicit job by its name rather than out
+// of the deployment's own set — implicitReviewJob answering with the name, the
+// profile, the account and the clock internal/infra derives, whatever its own
+// computation says — and the direct call below resolves a job this installation
+// does not have. Nothing narrower is observable here: internal/infra derives no
+// such job without the credentials service or an App ID either, so it answers
+// with an error or leaves the name out of the set, and a resolution that read no
+// gate of its own would refuse all the same.
 func TestReviewRefusesAnImplicitJobTheInstallationDoesNotDeploy(t *testing.T) {
 	t.Run("the credentials service is not published", func(t *testing.T) {
 		f := newProjectJobServingFixture(t)
@@ -593,7 +616,7 @@ func TestReviewRefusesAnImplicitJobTheInstallationDoesNotDeploy(t *testing.T) {
 		// The same installation, with the command's own check out of the way:
 		// the resolution deploys no implicit job here, so it resolves none.
 		spec := &task.Spec{Repo: "acme/app"}
-		job, err := memEnv(t, f.cloudFixture).reviewJobFor(context.Background(), nil, spec)
+		job, err := memEnv(t, f.cloudFixture).reviewJobFor(context.Background(), nil, spec, reviewSlug(t, "github", spec.Repo))
 		if err == nil {
 			t.Fatalf("the resolution returned the job %+v for an installation with no credentials service, want a refusal: the review container mounts no credential, so nothing would serve it one", job)
 		}
@@ -623,7 +646,7 @@ func TestReviewRefusesAnImplicitJobForAnotherAccount(t *testing.T) {
 	f := newImplicitReviewFixture(t)
 	env := memEnv(t, f.cloudFixture)
 
-	job, err := env.reviewJobFor(context.Background(), nil, &task.Spec{Repo: "acme/app", OAuthToken: "acme-personal"})
+	job, err := env.reviewJobFor(context.Background(), nil, &task.Spec{Repo: "acme/app", OAuthToken: "acme-personal"}, reviewSlug(t, "github", "acme/app"))
 	if err == nil {
 		t.Fatalf("the resolution returned the job %+v for a review on acme-personal, want a refusal: the implicit job's row names the default account", job)
 	}
@@ -645,19 +668,65 @@ func TestReviewRefusesAnImplicitJobForAnotherAccount(t *testing.T) {
 // installation is the admitted one in every other respect: the credentials
 // service is published and the review class is admitted, so the provider is the
 // only thing this refusal is about.
+//
+// The second case is the reading the refusal must take its provider from: the
+// local config's repo entry names the provider in its key, and that key is
+// optional — a repository whose entry names none is on the kind its checkout's
+// fugaro.yaml gives it (repoSlug) — so a Bitbucket repository whose entry leaves
+// the key out is still refused, rather than placed on the github job the
+// installation does have. The installation there records its App ID on another
+// repository's github entry, which is what deploys the implicit job at all
+// (recordedGitHubAppID): the review is refused for the provider, not because
+// there is no job to be refused onto.
 func TestReviewRefusesAnImplicitJobForBitbucket(t *testing.T) {
-	f := newReviewFixture(t)
-	rewriteConfigLine(t, appRepoEntry, strings.Replace(appRepoEntry, "provider: github", "provider: bitbucket", 1))
-	// The project admits the repository on the provider it is now on: what this
-	// launch is refused for is the job, not an admission.
-	publishPolicy(t, f.launchBudgetFixture, strings.Replace(projectJobAccountsPolicy, `["github/acme/*"]`, `["github/acme/*","bitbucket/acme/*"]`, 1))
-	projectJobCheckoutYAML(t, strings.Replace(projectJobOAuthRepoYAML, "provider: github", "provider: bitbucket", 1))
+	// The project admits the repository on the provider it is now on: what a
+	// review is refused for is the job, not an admission.
+	admitting := strings.Replace(projectJobAccountsPolicy, `["github/acme/*"]`, `["github/acme/*","bitbucket/acme/*"]`, 1)
+	checkout := strings.Replace(projectJobOAuthRepoYAML, "provider: github", "provider: bitbucket", 1)
 
-	wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7"},
-		"no shared job serves bitbucket",
-		"every Bitbucket repository keeps its own job",
-		reviewOnlyRecipe)
+	t.Run("the local config's entry names the provider", func(t *testing.T) {
+		f := newReviewFixture(t)
+		rewriteConfigLine(t, appRepoEntry, strings.Replace(appRepoEntry, "provider: github", "provider: bitbucket", 1))
+		publishPolicy(t, f.launchBudgetFixture, admitting)
+		projectJobCheckoutYAML(t, checkout)
+
+		wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7"},
+			"no shared job serves bitbucket",
+			"every Bitbucket repository keeps its own job",
+			reviewOnlyRecipe)
+	})
+
+	t.Run("the local config's entry names no provider", func(t *testing.T) {
+		f := newReviewFixture(t)
+		rewriteConfigLine(t, appRepoEntry, "  acme/app: { base_branch: main, workflows: [web] }\n")
+		// The App ID the implicit job is deployed for is recorded on the fixture's
+		// other repository, which stays on github (recordedGitHubAppID): the review
+		// below is refused for its provider, not for want of a job to be refused
+		// onto.
+		rewriteConfigLine(t, otherRepoEntry, githubAppIDRecordedOn(otherRepoEntry))
+		publishPolicy(t, f.launchBudgetFixture, admitting)
+		projectJobCheckoutYAML(t, checkout)
+
+		spec := &task.Spec{Repo: "acme/app"}
+		job, err := memEnv(t, f.cloudFixture).reviewJobFor(context.Background(), nil, spec, reviewSlug(t, "bitbucket", spec.Repo))
+		if err == nil {
+			t.Fatalf("the resolution returned the job %+v for a Bitbucket review whose local entry names no provider, want a refusal: the slug still names bitbucket, and the job the repository would be placed on is github's", job)
+		}
+		if ExitCode(err) != ExitUserError {
+			t.Errorf("exit %d, want a refusal (exit 1): %v", ExitCode(err), err)
+		}
+		for _, want := range []string{"no shared job serves bitbucket", "every Bitbucket repository keeps its own job", reviewOnlyRecipe} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not say %q: %v", want, err)
+			}
+		}
+	})
 }
+
+// otherRepoEntry is the fixture's line for its second repository (addRepoToConfig,
+// newProjectJobFixture): the github entry the App ID the implicit review-only job
+// is deployed for is recorded on where a test's own repository names no provider.
+const otherRepoEntry = "  acme/other: { provider: github, base_branch: main, workflows: [web] }\n"
 
 // TestReviewReadsNoAdmissionSwitch is CSR12's expiry date kept: the switch
 // FUGARO_REVIEW_SKIP_ADMISSION_CHECK existed for the owner's own C3.9 live

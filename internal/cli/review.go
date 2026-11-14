@@ -86,8 +86,11 @@ func newReviewCmd() *cobra.Command {
 		Short: "Review a pull request in a job of its own, on a named account",
 		Long: "Launch an independent review of pull request N, in a container the coding\n" +
 			"run never ran in and with the account you name.\n\n" +
-			"The review runs on the review-only variant of the repository's job: no App\n" +
-			"key, no Claude token and no signing key are mounted in it, and its git\n" +
+			"The review runs in a job of its own and never in the repository's coding job:\n" +
+			"the review-only variant of the repository's shared project job, or, where the\n" +
+			"repository's workflow resolves no shared project job, the installation's\n" +
+			"implicit default review-only job. No App key, no Claude token and no signing\n" +
+			"key are mounted in it, and its git\n" +
 			"credential is a read-only one it fetches from the installation's credentials\n" +
 			"service. It reads a fresh clone of the pull request's head, writes its verdict\n" +
 			"as an artifact (fugaro review show RUN prints it) and posts no comment and no\n" +
@@ -261,9 +264,9 @@ func checkReviewJobAdmitted() error {
 // instead (implicitReviewJobFor, the owner's requirement of 2026-11-13, option
 // C), and starting the repository's own coding job in its place is the one
 // thing this command exists not to do.
-func (e *cloudEnv) reviewJobFor(ctx context.Context, coding *launchProjectJob, spec *task.Spec) (*launchProjectJob, error) {
+func (e *cloudEnv) reviewJobFor(ctx context.Context, coding *launchProjectJob, spec *task.Spec, slug string) (*launchProjectJob, error) {
 	if coding == nil {
-		return e.implicitReviewJobFor(spec)
+		return e.implicitReviewJobFor(spec, slug)
 	}
 	p, found, err := e.policy.read(ctx, e.lc)
 	if err != nil {
@@ -296,7 +299,13 @@ func (e *cloudEnv) reviewJobFor(ctx context.Context, coding *launchProjectJob, s
 //   - The provider. The implicit job is on the github provider, which is the
 //     one kind a shared project job serves (infra.SharedJobProvider): every
 //     Bitbucket repository keeps its own job, and no variant is deployed beside
-//     it, so a review of one is refused here with its own sentence.
+//     it, so a review of one is refused here with its own sentence. The kind
+//     the review is on is the run's own derivation — the pair the slug names
+//     back (runner.ProviderForSlug), the reading the launcher's other gates
+//     take — and not the local config's repo entry alone: its provider key is
+//     optional, and a repository whose entry names none is on the kind its
+//     checkout's fugaro.yaml gives it (repoSlug), so reading the entry alone
+//     would place a Bitbucket review on the github job.
 //   - The account. The implicit job serves the default account alone
 //     (infra.ImplicitReviewJobName), and a review's job is the job the
 //     credentials service pairs it by: the review container mounts no
@@ -311,8 +320,8 @@ func (e *cloudEnv) reviewJobFor(ctx context.Context, coding *launchProjectJob, s
 //     GitHub App ID its provider needs to start. An installation that has
 //     neither deploys no such job, and this refuses as it did before the job
 //     existed.
-func (e *cloudEnv) implicitReviewJobFor(spec *task.Spec) (*launchProjectJob, error) {
-	if provider := e.localRepoProvider(spec.Repo); provider != "" && !infra.SharedJobProvider(provider) {
+func (e *cloudEnv) implicitReviewJobFor(spec *task.Spec, slug string) (*launchProjectJob, error) {
+	if provider, ok := runner.ProviderForSlug(slug, spec.Repo); ok && !infra.SharedJobProvider(provider) {
 		return nil, userErr("a review runs on the review-only variant of a shared project job, and no shared job serves %s: a Bitbucket credential cannot be scoped to one project's repositories, so every Bitbucket repository keeps its own job and no variant is deployed beside it — and the installation's implicit default review-only job, the one a review of a repository with no shared job of its own runs on, is on the github provider alone. Read the review in the run's own job instead, with fugaro run --pr N --recipe "+reviewOnlyRecipe,
 			pluginwire.Printable(provider))
 	}
