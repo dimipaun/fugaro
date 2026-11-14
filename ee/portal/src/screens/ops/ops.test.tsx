@@ -503,6 +503,32 @@ describe('the operations screens', () => {
     })
   })
 
+  it('attaches a parked event only once the term to attach it to is named', async () => {
+    const shown = show(person(0), routes({ 'POST /api/ops/events/resolutions': { body: EVENT } }))
+    await screen.findByRole('heading', { name: 'The queue' })
+    await screen.findByText(/evt_1/)
+
+    // The field the attach reads is empty, and empty is not the null a
+    // dismissal sends: it would name a term nobody has, so the button that
+    // would send it is not offered.
+    fireEvent.click(screen.getByRole('button', { name: 'Attach' }))
+    expect(screen.getByRole('button', { name: 'Attach' }).hasAttribute('disabled')).toBe(true)
+
+    fireEvent.change(screen.getByLabelText('Entitlement to attach to'), {
+      target: { value: 'ent_1' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Attach' }))
+
+    await waitFor(() => {
+      expect(shown.sent('POST', '/api/ops/events/resolutions')).toHaveLength(1)
+    })
+    expect(shown.sent('POST', '/api/ops/events/resolutions')[0]?.body).toEqual({
+      id: 'evt_1',
+      decision: 'attach',
+      entitlement_id: 'ent_1',
+    })
+  })
+
   it('loads the month again when Show is pressed after a refusal', async () => {
     const replies = routes({
       'GET /api/ops/ledger': refusal(503, 'unavailable', 'The ledger is not answering right now.'),

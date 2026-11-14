@@ -19,6 +19,14 @@
 // it is attached to; a screen that printed the body would be reading a
 // customer's records out to whoever is at the desk.
 //
+// **An attach waits for the term it acts on.** The field is empty until a person
+// names one, and an empty field is not the `null` the shape means: a null is a
+// dismissal, which attaches nothing (`wire_ops.go`), while the empty string is a
+// term id nobody has, sent as though it were one. So the button that would send
+// it is not offered until the field is filled, which is the same courtesy the
+// change form keeps (a refusal the form in front of the operator already shows
+// is a sentence about nothing).
+//
 // **A decision is by the id and never by the body.** Attaching one creates the
 // entitlement the event sold if it sold one (P4.2), so the id is what makes a
 // redelivery of the same event change nothing.
@@ -68,6 +76,8 @@ export function QueueSection({ api, actions }: { api: OpsApi; actions: OpsAction
     })
   }
 
+  const attachable = entitlement.trim() !== ''
+
   return (
     <section aria-labelledby="ops-queue">
       <h2 id="ops-queue">The queue</h2>
@@ -95,7 +105,7 @@ export function QueueSection({ api, actions }: { api: OpsApi; actions: OpsAction
                 <div>
                   <button
                     type="button"
-                    disabled={busy}
+                    disabled={busy || !attachable}
                     onClick={() => {
                       decide(event.id, 'attach')
                     }}
