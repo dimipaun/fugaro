@@ -254,9 +254,9 @@ the stage runs (Constraint 1). Commits are now born stamped.
 
 #### A5. Check 230 (OWNER-RUN)
 
-- **State:** Kept — the code it measures is merged (A3), the check has not run, and its entry is
-  unwritten: `docs/gcp-live-checklist.md` has no Check 230 section and X1, its only writer, is not
-  merged.
+- **State:** Kept — the code it measures is merged (A3) and its entry is written now that X1 has
+  landed (`90cfd931`, #2331), so what is left is the owner's run: `docs/gcp-live-checklist.md`'s
+  Check 230 section reads NOT RUN.
 
 - **Measures:** on a sandbox GitHub repository and a sandbox Bitbucket repository, with
   `git.author: launcher` committed: the run's boundary commits show the launcher as author and the
@@ -273,8 +273,11 @@ the stage runs (Constraint 1). Commits are now born stamped.
 
 #### B1. One list of forge kinds
 
-- **State:** Kept — there is no `internal/gitprov/kinds.go`: `internal/gitprov/gitprov.go` still
-  declares the two kinds and `internal/gitprov/providers/providers.go` reads them ad hoc. Nothing in
+- **State:** Merged — `internal/gitprov/kinds.go` (the two constants and `Kinds`), pinned by
+  `internal/gitprov/kinds_test.go` (`TestKindsListedOnce`, `TestEveryKindSwitchIsInventoried`). It
+  landed after the census was read, in `9af1fd50` (#2332), whose subject is `gitprov: one list of
+  forge kinds (B1)` and whose body's first bullet is the **Commit** line below;
+  [b1-already-landed.md](../forge-authorship-images-b1-already-landed.md) is the evidence. Nothing in
   the image setup plan creates or moves a forge kind.
 
 - **Decisions:** D610, D611.
@@ -331,8 +334,11 @@ from it. **Not sized here** beyond: L, security-sensitive throughout.
 
 #### C1. `fugaro project sync` for Bitbucket, with `--check`
 
-- **State:** Kept — `internal/gitprov/bitbucket/` has no `list.go`, and `newProjectSyncCmd`
-  (`internal/cli/project_enroll.go`) offers the GitHub App's installed repositories only.
+- **State:** Merged — `internal/gitprov/bitbucket/list.go` lists a workspace's or project's
+  repositories, `newProjectSyncCmd` (`internal/cli/project_enroll.go`) offers them behind
+  `--bitbucket` (narrowed by `--bitbucket-project`), and `--check` reports without writing; pinned by
+  `internal/cli/project_sync_bitbucket_test.go` and `internal/gitprov/bitbucket/list_test.go`. It
+  landed after the census was read, in `d37c8af6` (#2428, 2026-11-12).
 
 - **Decisions:** D623, D625.
 - **Files:** `internal/cli/project_enroll.go`, `internal/gitprov/bitbucket/list.go` (new),
@@ -728,10 +734,11 @@ from E0.
 
 ### X1. The live-check entries
 
-- **State:** Kept — `docs/gcp-live-checklist.md` has no Check 230, 231, 232, 234 or 235 section, and
-  `internal/cli/docs_forge_checks_test.go` does not exist. The image setup plan reserves Checks
-  500–509 and secrets-brokering's dynamic-delivery holds Checks 510–519; 230–249 stays this
-  folder's.
+- **State:** Merged — `docs/gcp-live-checklist.md` carries a Check 230, 231, 232, 234 and 235
+  section, each NOT RUN, pinned by `internal/cli/docs_forge_checks_test.go`
+  (`TestDocsForgeChecksWritten`, `TestDocsForgeChecksNotRun`). It landed after the census was read,
+  in `90cfd931` (#2331, 2026-11-11). The image setup plan reserves Checks 500–509 and
+  secrets-brokering's dynamic-delivery holds Checks 510–519; 230–249 stays this folder's.
 
 - **Files:** `docs/gcp-live-checklist.md` (Checks 230, 231, 232, 234, 235, each NOT RUN, with its
   prerequisites, the exact commands and the task that makes it runnable),

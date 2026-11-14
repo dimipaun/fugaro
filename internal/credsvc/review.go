@@ -177,9 +177,15 @@ type ReviewJobAccount struct {
 // implicitReviewVariant, the owner's requirement of 2026-11-13), whose triple no
 // published profile states — so the deployment admits a caller of that job and
 // this derivation, which reads profiles, cannot name it. What the row buys the
-// caller is one gate further in: the pairing still requires the account to be
-// admitted to the run identity's repository by the policy's own admissions
-// (pairReview), which is the half C1's piece 2 carries.
+// caller is one gate further in, and that gate is the whole of what the row is
+// worth: the pairing still requires the account to be admitted to the run
+// identity's repository by the policy's own admissions (pairReview), which the
+// runner places that job against and piece 2 of C1 carried
+// (TestPairReviewAdmitsTheDefaultAccountWithNoProfiles, and the runner's
+// implicitReviewCandidate for the placement). A profile-less project admits the
+// default account through the accounts block its own publish derives from the
+// repository's claude_accounts, so no row of this table ever admits a caller on
+// its own.
 func ReviewJobAccountsFor(p *projectpolicy.Policy, gcpProject string) []ReviewJobAccount {
 	if p == nil {
 		return nil
