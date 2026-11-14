@@ -19,7 +19,7 @@ As of 2026-11-14, read from `main`, the open pull requests and each plan's task 
 | --- | --- | --- |
 | bitbucket-credentials | 11/12 | owner Checks 149 and 145, and 148's read half (S2, D1961); T3.3's trust paths (S3 is otherwise superseded by the secrets-brokering proxy chain, 2026-11-10) |
 | credentials-service | about 32/36 | owner checks; Check 96 holds C2.3 |
-| cli-output-console-graph | 30/32 | owner CL12 and CG12 |
+| cli-output-console-graph | 30/32 | owner CL12 (Checks 310 and 311) and CG12 (Checks 313 and 314; Check 312 passed 2026-11-13) |
 | vision-model | 8/9 | V8 not started; owner Checks 520 and 521 not run |
 | licensing | 21/23 | owner-run only: L0.2's allow-list and status, the Terms publication's L4.3, L5.1 T3(c) |
 | settings-commands | about 10/12 | S10, S11 (held, #2280) |
