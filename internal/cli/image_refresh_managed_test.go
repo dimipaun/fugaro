@@ -403,11 +403,11 @@ func TestImageRefreshManagedReadsTheFlagsFromTheRunsOwnOptions(t *testing.T) {
 }
 
 // A run the gate has nothing to answer pays nothing for it (M6's review of
-// 2026-11-03, 2): --yes answers every build itself, and a run with no terminal
-// is refused before any step runs, so neither has a question the marks could
-// answer — and neither pays for the read, which is what keeps a transient
-// storage or Resource Manager failure out of a run that has no reason to make
-// either call.
+// 2026-11-03, 2): a run whose own options answer every step itself, and a run
+// with no terminal, which is refused before any step runs, so neither has a
+// question the marks could answer — and neither pays for the read, which is
+// what keeps a transient storage or Resource Manager failure out of a run that
+// has no reason to make either call.
 func TestImageRefreshManagedNoQuestionReadsNothing(t *testing.T) {
 	useVersion(t, "0.5.1")
 	r := newManagedRefreshRig(t, managedRefreshMarker(1))
@@ -416,7 +416,7 @@ func TestImageRefreshManagedNoQuestionReadsNothing(t *testing.T) {
 	// A read that would fail the gate: a run that asks nothing must not make it.
 	r.gcs.FailObjectGetsAfter(initRunsBucket, managed.MarkerObject, 0)
 	if m := openRefreshManaged(t.Context(), gateCmd(), refreshOptions{}, &initOptions{yes: true}); m != nil {
-		t.Fatal("a run with --yes took the gate's path, and --yes answers every build itself")
+		t.Fatal("a run that answers every step from its own options took the gate's path")
 	}
 	if m := openRefreshManaged(t.Context(), gateCmd(), refreshOptions{}, &initOptions{}); m != nil {
 		t.Fatal("a run with no terminal took the gate's path, and it is refused before any step runs")
@@ -432,9 +432,10 @@ func TestImageRefreshManagedNoQuestionReadsNothing(t *testing.T) {
 	// directory that is not a checkout.
 	ran := fakeSteps(t, "", nil)
 	t.Chdir(t.TempDir())
+	fakeTerminal(t)
 	_, _, err := executeStdin(t, "", "image", "refresh")
 	if err == nil || !strings.Contains(err.Error(), "is not in one") {
-		t.Fatalf("a run with --yes was stopped by something other than the checkout it is in: %v", err)
+		t.Fatalf("a run at the terminal was stopped by something other than the checkout it is in: %v", err)
 	}
 	if len(*ran) != 0 {
 		t.Errorf("steps ran for a directory that is not a checkout: %q", *ran)
