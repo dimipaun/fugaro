@@ -72,6 +72,18 @@ import (
 // older than the release, a coder that reads images itself, a slot that is set,
 // a run that never ends, a record that is another run's, and a refusal whose
 // sentence has lost one of the parts an owner needs.
+// Check 291's fakes are a fake `fugaro`, a fake `gcloud` and a fake `gh`, with
+// real git against a bare repository inside each case's own directory: the
+// catalog entry's line, the job's stamp and the names a run drops, the
+// reservation read with a name set on the job by hand, and the two runs'
+// transcripts all come out of the case's own state files, so a case bends one
+// reading at a time and says what the check then reads -- and its `--dry-run`
+// case pins that a plan makes no call at all. Its fake `run` names the run it
+// launched only in the `--json` document (a person's own line is a reporter step
+// on stderr, and its short name is not the run's id), and its fake `runs ls`
+// keeps a run in flight until its second poll and writes that run's transcript
+// only where the row turns terminal, so a check that read a run id off the human
+// line or read a transcript before its run ended fails these cases.
 // Check 301's fakes are a fake `fugaro`, a fake launchd and a fake systemd
 // whose boot id and unit files the test writes, so a reboot, a second
 // instance's refusal and T7's re-render are all readings of files the test
@@ -95,6 +107,7 @@ var liveCheckScripts = []struct {
 	{"check190.sh", "check190_test.sh"},
 	{"check191.sh", "check191_test.sh"},
 	{"check195.sh", "check195_test.sh"},
+	{"check291.sh", "check291_test.sh"},
 	{"check300.sh", "check300_test.sh"},
 	{"check301.sh", "check301_test.sh"},
 	{"check302.sh", "check302_test.sh"},
