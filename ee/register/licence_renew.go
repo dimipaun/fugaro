@@ -326,16 +326,16 @@ func licenceRenew(cmd *cobra.Command, o *licenceRenewOptions) error {
 			safetext.Field(next.KeyID), next.PaidThrough.UTC().Format(time.RFC3339))
 		return nil
 	}
-	if applied, err := store.WouldApply(ctx, now, licenceRing, licenceFirebaseProject(lc), []byte(answer.Key)); err == nil {
+	if would, err := store.WouldApply(ctx, now, licenceRing, licenceFirebaseProject(lc), []byte(answer.Key)); err == nil {
 		// The project keeps the later term (T26), so an answer that would not
 		// be the key the installation applies would be written beside the key
 		// it does not replace — and the renewal secret written with it would
 		// leave the applied key unable to renew. The store is the judge and not
 		// this command's arithmetic: `set` refuses the same shape.
-		if applied.Claims.KeyID != next.KeyID || next.PaidThrough.Before(applied.Claims.PaidThrough) {
+		if would.Claims.KeyID != next.KeyID || next.PaidThrough.Before(would.Claims.PaidThrough) {
 			return fcli.RemoteErr(fmt.Errorf("the licence server answered key %s (paid through %s) and this installation applies key %s (paid through %s): nothing was written, because the project keeps the later term and the answer would not be the key this installation runs on",
 				safetext.Field(next.KeyID), next.PaidThrough.UTC().Format(time.RFC3339),
-				safetext.Field(applied.Claims.KeyID), applied.Claims.PaidThrough.UTC().Format(time.RFC3339)))
+				safetext.Field(would.Claims.KeyID), would.Claims.PaidThrough.UTC().Format(time.RFC3339)))
 		}
 	}
 	added := answer.RenewalSecret != "" && !bytes.Equal([]byte(answer.RenewalSecret), newest)
@@ -360,7 +360,7 @@ func licenceRenew(cmd *cobra.Command, o *licenceRenewOptions) error {
 		safetext.Field(next.KeyID), safetext.Field(lc.Name), project.Object)
 	licenceWriteClaims(out, next, state)
 	if answer.RenewalSecret == "" {
-		fmt.Fprintln(errOut, "note: the licence server answered the key without a new renewal secret, so this installation keeps the one it holds, which the key names the digest of (D2200)")
+		fmt.Fprintln(errOut, "note: the licence server answered the key without a new renewal secret, so this installation keeps the one it holds, and the key names that secret's digest (D2200)")
 	}
 	return nil
 }
