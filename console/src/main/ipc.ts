@@ -619,7 +619,7 @@ export const LAUNCH_PAYLOAD_WIDTH =
   LAUNCH_TASK_RAW_LIMIT + LAUNCH_TITLE_RAW_LIMIT + LAUNCH_PLAN_TASK_RAW_LIMIT + 4096
 
 /**
- * CONSOLE_OPERATIONS is the whole surface. Thirty-eight operations, and the table
+ * CONSOLE_OPERATIONS is the whole surface. Thirty-nine operations, and the table
  * is the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
  *
@@ -670,8 +670,10 @@ export const LAUNCH_PAYLOAD_WIDTH =
  *
  * **`models ls --json` is this surface's twentieth argv** (console 0.119.0's
  * read-only models panel; the CLI half is M1, #1553, and
- * `console/docs/json-contract.md` §6.18 describes its document). It is the one
- * argv here whose **group** the console may otherwise not touch: `fugaro models`
+ * `console/docs/json-contract.md` §6.18 describes its document). It is one of
+ * the two argvs here whose **group** the console may otherwise not touch -- the
+ * other is `user ls --json` below (the roles-and-scopes plan's RS7), whose
+ * group's five words are on the never table the same way: `fugaro models`
  * has four other words -- `search`, `add`, `rm` and `use` -- and each is on the
  * never table below, the three writers as commands and all four as words of
  * `models`, so this row is the group's whole reachable argv. It takes no
@@ -1867,6 +1869,53 @@ export const CONSOLE_OPERATIONS = [
     summary: 'the advisory estimate of who launches jobs on this installation, and the identities the estimate cannot count',
     args: [],
   },
+  // The Members view's read (the roles-and-scopes plan's RS7, roles.md D691(b):
+  // a read-only Members view over the installation's grants node). It is the
+  // console's **fortieth** operation, and the read behind it is RS5's
+  // `fugaro user ls` (`internal/cli/user_ls.go`).
+  //
+  // **The `user` group's one reachable argv, and the group is why it is worth
+  // saying.** `fugaro user` has six words; the other five change who may do
+  // what -- `grant` and `revoke` write the installation's grants node, `add`
+  // and `rm` rewrite this machine's own copy of the two IAM lists (F42), and
+  // `offboard` drops every roster grant naming the member and has the intake
+  // delete the secrets they stored -- so each of the five is on the never table
+  // below, as a command and as a word of `user`, and `user ls --json` is the
+  // whole of this group's reach. A role is the one thing this surface reads and
+  // never moves.
+  //
+  // **It reads, and it is the console's strongest kind of read**: the command
+  // reads this machine's own config and the installation's grants node with the
+  // caller's own credential, prints one document and writes nothing -- no
+  // cloud object, no cache, no remembered checkout (`consoleReadPaths`,
+  // `internal/cli/project.go`). **No role logic lives in the renderer**: the
+  // document's own words are what a screen draws, and the resolver that decides
+  // what a role means is the CLI's.
+  //
+  // **Its one argument is the repository a role is asked about, and it is
+  // optional.** Without it the document's `effective` list is empty, which is
+  // the absence of a named repository rather than an empty roster -- the CLI's
+  // own distinction, and the reason this argument is not required. The value is
+  // the canonical `owner/name` the other repository arguments here are
+  // (`task.CanonicalRepo`), because one repository has one name on this
+  // surface; it is never a pattern. The scope of a grant **is** a pattern, and
+  // no pattern is expressible here: a caller names a repository and the CLI
+  // answers which roles cover it.
+  {
+    name: 'members.list',
+    method: 'listMembers',
+    command: 'user ls',
+    flags: ['--json'],
+    summary: 'the installation’s roster: every stored role and scope pair, the repositories a pattern matches here, and the role each person holds in one repository',
+    args: [
+      {
+        key: 'repo',
+        kind: 'repository',
+        required: false,
+        why: '`newUserLsCmd` has this flag, and it is what the view turns on: the role each person holds in one repository -- the highest role whose scope covers it, with the published policy’s `allow_repos` taken into account -- rather than the whole roster. It is optional because the command has a state of its own without it (the stored pairs, and the repositories of this machine a pattern matches), so a caller that names no repository is answered rather than refused. The grammar is this surface’s own `repository` kind, the canonical `owner/name` every other repository argument here is: a **pattern** is what a grant’s scope holds, never what this argument may hold, so the one word a caller fills here cannot widen what the read is about.',
+      },
+    ],
+  },
 ] as const satisfies readonly ConsoleOperation[]
 
 /** OperationName is the closed union of the surface's operation names. */
@@ -2193,6 +2242,90 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
     value: 'recipes publish',
     why: 'a write: it publishes a recipe',
     where: 'internal/cli/recipes.go:327',
+  },
+  // **The `user` group's writers, in the two shapes the models rows below are
+  // drawn in.** `fugaro user ls --json` is the group's one reachable word
+  // (`members.list` above, the roles-and-scopes plan's RS7); the five commands
+  // here are the words beside it, and no one of them is a read: `grant` and
+  // `revoke` write the installation's grants node -- one person, one role, one
+  // scope, judged against the grantor's own scope and written conditionally on
+  // an ETag (RS5) -- `add` and `rm` rewrite this machine's own copy of the
+  // installation's two IAM lists (F42), and `offboard` takes the member off the
+  // installation outright: the roster drops every grant naming them and the
+  // intake deletes the secrets stored under their prefix (DS2.4, D1935). Each
+  // changes who may do what, which is the one thing this surface reads and
+  // never moves.
+  //
+  // The `argv` rows under them refuse the five **words** wherever an operation
+  // under `user` spells them, on the models rows' own reasoning: a command row
+  // alone would not cover a future operation whose command is `user grant
+  // <member>` rather than the command `user grant`. Each `command` row stays
+  // above the `argv` row carrying its word, so `isNeverReachable` answers with
+  // the narrower one and `console/test/unit/ipc.test.ts` can assert it per row.
+  {
+    shape: 'command',
+    value: 'user grant',
+    why: 'a write: it writes one role and scope pair for one person into the installation’s grants node, which is the installation’s record of who may do what and what its next `fugaro update` derives the IAM lists from',
+    where: 'internal/cli/user_grant.go:101 (newUserPairCmd(true))',
+  },
+  {
+    shape: 'command',
+    value: 'user revoke',
+    why: 'a write: it takes one role and scope pair away from one person in that same node, which can leave an installation with one fewer admin than it had',
+    where: 'internal/cli/user_grant.go:101 (newUserPairCmd(false))',
+  },
+  {
+    shape: 'command',
+    value: 'user add',
+    why: 'a write: it rewrites this machine’s own copy of the installation’s operator or admin IAM list, and that copy is what the machine’s next `fugaro update` applies',
+    where: 'internal/cli/user.go:129',
+  },
+  {
+    shape: 'command',
+    value: 'user rm',
+    why: 'a write: it takes a member out of this machine’s own copy of one of those two IAM lists, and that copy is what the machine’s next `fugaro update` applies',
+    where: 'internal/cli/user.go:134',
+  },
+  {
+    shape: 'command',
+    value: 'user offboard',
+    why: 'a write: it drops every grant of the installation’s roster that names the member and has the intake delete the secrets stored under their prefix, which is the group’s most destructive word',
+    where: 'internal/cli/offboard.go:106',
+  },
+  {
+    shape: 'argv',
+    command: 'user',
+    value: 'grant',
+    why: 'the write above, refused as a word of this command as well: a `user` argv that spells `grant` is refused before `spawn` is called, whether it spells it in the command path or in the flags it fixes',
+    where: 'internal/cli/user_grant.go:101 (newUserPairCmd(true))',
+  },
+  {
+    shape: 'argv',
+    command: 'user',
+    value: 'revoke',
+    why: 'the write above, refused as a word of this command as well',
+    where: 'internal/cli/user_grant.go:101 (newUserPairCmd(false))',
+  },
+  {
+    shape: 'argv',
+    command: 'user',
+    value: 'add',
+    why: 'the write above, refused as a word of this command as well',
+    where: 'internal/cli/user.go:129',
+  },
+  {
+    shape: 'argv',
+    command: 'user',
+    value: 'rm',
+    why: 'the write above, refused as a word of this command as well',
+    where: 'internal/cli/user.go:134',
+  },
+  {
+    shape: 'argv',
+    command: 'user',
+    value: 'offboard',
+    why: 'the write above, refused as a word of this command as well',
+    where: 'internal/cli/offboard.go:106',
   },
   // **The models group's writers, and the two shapes its fence is drawn in.**
   // `fugaro models ls --json` is the group's one reachable word

@@ -175,7 +175,10 @@ const WINDOWS_PATH = 'C:\\Windows\\System32;C:\\Windows'
  * config and its bucket, so it takes the project flag like every other read of
  * a project -- and the dependency-graph plan's GV3.2, `roadmap.move`, the
  * twenty-sixth: the record's move writes one project's roadmap, so it resolves
- * the same installation every other write here does. The
+ * the same installation every other write here does -- and the roles-and-scopes
+ * plan's RS7's members read, `members.list`, the twenty-seventh: `fugaro user
+ * ls` resolves the checkout on its way to the installation whose grants it
+ * lists, so it takes the flag the way every cloud read here does. The
  * complement -- the commands
  * that take no
  * flag at all -- is the *module's* `COMMANDS_WITHOUT_PROJECT`, keyed by the
@@ -210,6 +213,7 @@ const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
   'policy.show',
   'run.launch',
   'seats.read',
+  'members.list',
 ]
 /** freshDirectory is a temporary directory this test owns, one per call. */
 function freshDirectory(prefix = 'fugaro-console-test-'): string {
@@ -566,12 +570,15 @@ describe('the spawn table and the argv it builds', () => {
     // count of who launches jobs, whose whole argv is its own two words and the
     // installation's: the 90 days it is measured over are the command's own and
     // no flag moves them, so a caller can name nothing. The dependency-graph
-    // plan's GV3.2 added the twenty-eighth and the last: the record's move,
+    // plan's GV3.2 added the twenty-eighth: the record's move,
     // `coordinator roadmap move --json`, the console's third write. Its
     // positional word and its `--to` are the two arguments a renderer names as
     // ids and the main process spells, and its `--expect` is no argument at all
     // -- it is the release the document recorded for the node, which the row's
-    // own `expectFlag` emits. The Go
+    // own `expectFlag` emits -- and the roles-and-scopes plan's RS7 added the
+    // members read, `user ls --json`, the Members view's own argv: the `user`
+    // group's one reachable word, whose one argument is the repository a role is
+    // asked about and which the caller may leave out. The Go
     // side pins
     // the document's list (`internal/cli/docs_desktop_console_test.go`,
     // TestDocsDesktopConsoleDesignAllowListIsExactArgv) and this case pins the
@@ -622,12 +629,19 @@ describe('the spawn table and the argv it builds', () => {
       // read, whose argv is the command, its one fixed flag and the
       // installation's two words -- there is no argument for a caller to fill.
       'seats --json',
+      // The Members view's read (the roles-and-scopes plan's RS7): the `user`
+      // group's one reachable word, so the row's whole argv is the group, the
+      // subcommand and the one fixed flag. Its `--repo R` is the operation's one
+      // argument (optional, and taken out of this list like every other
+      // argument), and its two project flags are the installation's.
+      'user ls --json',
       'run --task-file - --json',
     ])
     // The commands that take the flag (addCloudFlags, internal/cli/cloud.go:51)
-    // are twenty-two rows plus one: `logs` has two rows, `--json` and `--url`,
-    // and neither of them may be the one that forgets --project -- and
-    // `settings` has two as well, the read and the edit.
+    // are twenty-seven rows over twenty-four commands: `logs` has two rows,
+    // `--json` and `--url`, and neither of them may be the one that forgets
+    // --project, and `settings` (a read and a write) and `graph` (a read and its
+    // feed) have two each as well.
     // A word is a flag or a separator if it begins with `-`, which is what
     // keeps the launch's literal `-` -- the argv word that means "read the task
     // from stdin" -- out of the command path it is compared as.
@@ -657,11 +671,12 @@ describe('the spawn table and the argv it builds', () => {
         'managed status',
         'project policy show',
         'seats',
+        'user ls',
         'coordinator roadmap move',
         'run',
       ]),
     )
-    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(26)
+    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(27)
     // ...and the table's own flags agree with the list the tests above use.
     for (const row of SPAWN_COMMANDS) {
       expect(row.takesProject, row.operation).toBe(COMMANDS_TAKING_PROJECT.includes(row.operation))

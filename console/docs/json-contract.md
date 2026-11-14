@@ -3676,7 +3676,7 @@ table against the live constructors.
    `link.openPullRequest` took it to twenty-five and writes nothing, and C4c's
    `coordinator.intents` took it to twenty-six and writes nothing — **the
    counts in this parenthesis are the history up to that commit, and rule 5's
-   thirty-nine is today's**), and no other argv that writes is reachable
+   forty is today's**), and no other argv that writes is reachable
    from a renderer. Two further commands this file
    describes are writes, and **neither is in the console's set**: `fugaro cancel
    RUN --json` (§6.3), which is on the design's "never" table and which no v1

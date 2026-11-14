@@ -1508,6 +1508,17 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// argument an operation's schema fills -- the window is the command's
 		// own and no word of it reaches a renderer.
 		"seats --json --project <name> [--config <path>]",
+		// The Members view's read (the roles-and-scopes plan's RS7, the
+		// `members.list` operation, roles.md D691(b)): the installation's
+		// grants as `fugaro user ls --json` prints them, and — with `--repo R`
+		// — the role each person holds in one repository. Read-only in the
+		// strongest sense this table can state: every other word of the group
+		// that changes a roster, `user grant`, `user revoke`, `user add`,
+		// `user rm` and `user offboard`, is on the never table below.
+		// `--repo` is the operation's one argument and it is optional, so the
+		// row spells the command's own argv with the argument the schema fills
+		// and the two project flags every cloud read carries (rule 3).
+		"user ls --json --repo R --project <name> [--config <path>]",
 		// The launch (console v2 plan V2.5.1a, the `run.launch` operation):
 		// the console's first write and the one thing this table is a fence
 		// against, spelled as rule 11's exact argv and nothing else.
@@ -1778,7 +1789,7 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	// Twenty-seven commands: the thirteen dashboard reads (logs has two argvs), the
+	// Twenty-eight commands: the thirteen dashboard reads (logs has two argvs), the
 	// rail's `config list --json` (D13's amendment of 2026-10-20), the graph
 	// screen's `plan status --json` (GV2.1), the dependency graph read
 	// `graph --json` (the graph plan's CG9a), the project view's
@@ -1795,11 +1806,15 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	// screens' CM3: the marks with their trail, and the policy node), the
 	// effective-craft read `craft ls --json` (the model-crafts plan's MC8), the
 	// seat estimate `seats --json` (the subscriptions plan's S4.2, D439), the
-	// launch `fugaro run` (V2.5.1a) and the record's move
+	// launch `fugaro run` (V2.5.1a), the record's move
 	// `coordinator roadmap move` (the dependency-graph plan's GV3.2, rule 14,
-	// and the third row that is not a read at all).
-	if len(allowed) != 27 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 27 (logs has two argvs)", path, argvs, len(allowed))
+	// and the third row that is not a read at all) and the members read
+	// `user ls --json --repo R` (the roles-and-scopes plan's RS7, roles.md
+	// D691(b)), whose one argument is optional and whose five writing relatives
+	// -- `user grant`, `user revoke`, `user add`, `user rm` and `user offboard`
+	// -- the never table below keeps off this list.
+	if len(allowed) != 28 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 28 (logs has two argvs)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the read the design names for the console and §5.1 has not grown
@@ -1971,7 +1986,10 @@ func consoleSpelledNumber(t *testing.T, spelled string) int {
 //     2026-11-11, and the dependency-graph plan's GV3.2 -- the record's move,
 //     `roadmap.move`, the surface's third write and the only operation whose
 //     every argv word is main-process state read out of a document -- to the
-//     thirty-nine rule 5 carries today.
+//     thirty-nine, and the roles-and-scopes plan's RS7 -- the Members view's
+//     read of the installation's grants, `members.list`, the second row whose
+//     command is a word of a group the console otherwise may not touch
+//     (`models.list` was the first) -- to the forty rule 5 carries today.
 //   - **every row of spawn.ts's `SPAWN_COMMANDS` is admitted by rule 6's table**:
 //     the row's own words lead some row of the design's table **and what that row
 //     carries after them is flags, nothing else**. The second half is the whole

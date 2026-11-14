@@ -1,0 +1,834 @@
+{
+  "schema_version": 3,
+  "plan": "docs/shared-jobs-default/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "C1",
+      "title": "the shared-job contract",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/sharedjob/sharedjob.go",
+          "internal/sharedjob/stub.go",
+          "docs/shared-jobs-default/contract.md"
+        ]
+      },
+      "kind": "contract",
+      "stubs": [
+        "internal/sharedjob/stub.go"
+      ]
+    },
+    {
+      "id": "S1",
+      "title": "the deployer admits Bitbucket profiles",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/infra/projectjobs.go",
+          "internal/infra/projectjobs_test.go",
+          "internal/projectpolicy/profiles.go",
+          "internal/projectpolicy/profiles_test.go"
+        ]
+      }
+    },
+    {
+      "id": "S2",
+      "title": "the proxy pairs a shared Bitbucket job",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/bitbucketproxy.go",
+          "internal/credsvc/server.go",
+          "internal/credsvc/auth.go",
+          "internal/credsvc/bitbucketproxy_test.go",
+          "internal/credsvc/sharedjobs_test.go"
+        ]
+      }
+    },
+    {
+      "id": "S3",
+      "title": "the runner on a shared Bitbucket job",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/runner.go",
+          "internal/runner/project.go",
+          "internal/runner/gitproxy_test.go",
+          "internal/runner/shared_bitbucket_test.go"
+        ]
+      }
+    },
+    {
+      "id": "S4",
+      "title": "the launcher serves Bitbucket and baked workflows",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/project_job.go",
+          "internal/cli/launch_budget.go",
+          "internal/runner/projectjob.go",
+          "internal/cli/project_job_test.go",
+          "internal/runner/projectjob_test.go"
+        ]
+      }
+    },
+    {
+      "id": "S5",
+      "title": "update writes the default profile and image",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/init_policy_migrate.go",
+          "internal/cli/init_stages.go",
+          "internal/cli/project_cmd.go",
+          "internal/cli/init_policy_migrate_test.go",
+          "internal/cli/update_default_profile_test.go"
+        ]
+      }
+    },
+    {
+      "id": "S6",
+      "title": "update turns the proxy on",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/update_proxy_switch.go",
+          "internal/cli/init_stages.go",
+          "internal/cli/update_in_flight.go",
+          "docs/design/update-in-flight.md",
+          "internal/cli/update_in_flight_test.go"
+        ]
+      }
+    },
+    {
+      "id": "I1",
+      "title": "wire the sides and prove it end to end",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/sharedjob/stub.go",
+          "internal/infra/projectjobs.go",
+          "internal/infra/projectjobs_test.go",
+          "internal/cli/shared_job_e2e_test.go"
+        ]
+      },
+      "kind": "integration"
+    },
+    {
+      "id": "S7",
+      "title": "documents and the untested wording",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/git-providers.md",
+          "docs/checkout.md",
+          "docs/design/project-centric.md",
+          "internal/cli/docs_project_wide_git_test.go"
+        ]
+      }
+    },
+    {
+      "id": "S8",
+      "title": "the Bitbucket shared-job live check script",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check-580.sh",
+          "scripts/live-checks/check-580_test.sh",
+          "docs/gcp-live-checklist.md"
+        ]
+      }
+    },
+    {
+      "id": "C2",
+      "title": "the build-token contract",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/buildtoken/buildtoken.go",
+          "internal/buildtoken/stub.go",
+          "docs/shared-jobs-default/contract-build-token.md"
+        ]
+      },
+      "kind": "contract",
+      "stubs": [
+        "internal/buildtoken/stub.go"
+      ]
+    },
+    {
+      "id": "B1",
+      "title": "the credential-service build route",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/buildtoken.go",
+          "internal/credsvc/server.go",
+          "internal/credsvc/bitbucketproxy.go",
+          "internal/credsvc/buildtoken_test.go",
+          "internal/credsvc/audit.go"
+        ]
+      }
+    },
+    {
+      "id": "B2",
+      "title": "the catalog build bakes several repositories",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/gitcred.go",
+          "internal/imagebake/imagebake.go",
+          "internal/imagebake/bake_test.go",
+          "internal/cli/image_build_catalog.go",
+          "internal/cli/image_build_catalog_test.go"
+        ]
+      }
+    },
+    {
+      "id": "I2",
+      "title": "wire the build to the route",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/buildtoken/stub.go",
+          "internal/cli/catalog_bake_e2e_test.go"
+        ]
+      },
+      "kind": "integration"
+    },
+    {
+      "id": "B3",
+      "title": "the leak scan in the catalog build",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "images/scan.sh",
+          "images/scan_test.go",
+          "images/trivy-secret.yaml",
+          "internal/backend/gcp/catalog.go",
+          "internal/backend/gcp/catalog_test.go"
+        ]
+      }
+    },
+    {
+      "id": "B4",
+      "title": "the image-build live check script",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check-581.sh",
+          "scripts/live-checks/check-581_test.sh",
+          "docs/gcp-live-checklist.md"
+        ]
+      }
+    },
+    {
+      "id": "N1",
+      "title": "the proxy carries LFS and submodules",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/gitproxy/rules.go",
+          "internal/gitproxy/rules_test.go",
+          "internal/credsvc/bitbucketproxy.go",
+          "internal/credsvc/bitbucketproxy_nested_test.go"
+        ]
+      }
+    },
+    {
+      "id": "N2",
+      "title": "the runner points nested fetches at the forwarder",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/runner.go",
+          "internal/gitops/gitops.go",
+          "internal/gitops/submodule_test.go",
+          "internal/runner/gitproxy_test.go"
+        ]
+      }
+    },
+    {
+      "id": "N3",
+      "title": "nested fetch end to end",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/nested_e2e_test.go"
+        ]
+      }
+    },
+    {
+      "id": "M1",
+      "title": "repository-level secrets are accepted, ignored and warned about",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/config/secrets_disabled.go",
+          "internal/config/secrets_disabled_test.go",
+          "internal/cli/secrets.go",
+          "internal/cli/secrets_rm.go",
+          "internal/cli/update_workflowsecrets.go"
+        ]
+      }
+    },
+    {
+      "id": "M2",
+      "title": "update retires the per-repository jobs",
+      "run": null,
+      "version": null,
+      "size": 4,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/init_retire.go",
+          "internal/infra/retire.go",
+          "internal/cli/update_in_flight.go",
+          "docs/design/update-in-flight.md",
+          "internal/cli/init_retire_test.go"
+        ]
+      }
+    },
+    {
+      "id": "M3",
+      "title": "the deprecation warning",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/updatewarn.go",
+          "internal/cli/doctor_jobs.go",
+          "internal/cli/updatewarn_test.go"
+        ]
+      }
+    },
+    {
+      "id": "M4",
+      "title": "release notes and the website summary",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/releases/**",
+          "website/data/release-summaries.yaml"
+        ]
+      }
+    },
+    {
+      "id": "M5",
+      "title": "the migration live check script",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check-582.sh",
+          "scripts/live-checks/check-582_test.sh",
+          "docs/gcp-live-checklist.md"
+        ]
+      }
+    },
+    {
+      "id": "S9",
+      "title": "a baked checkout on a project job is sanitised and verified",
+      "run": null,
+      "version": null,
+      "size": 2.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/projectjob.go",
+          "internal/runner/projectjob_test.go",
+          "internal/gitops/gitops.go",
+          "internal/gitops/reset_test.go"
+        ]
+      }
+    },
+    {
+      "id": "M6",
+      "title": "the repo spec marks a shared repository",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/infra/spec.go",
+          "internal/infra/spec_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CR1",
+      "title": "the shared-job contract, amended",
+      "kind": "contract_change",
+      "run": null,
+      "version": null,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/sharedjob/sharedjob.go"
+        ]
+      }
+    },
+    {
+      "id": "CR2",
+      "title": "the build-token contract, amended",
+      "kind": "contract_change",
+      "run": null,
+      "version": null,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/buildtoken/buildtoken.go"
+        ]
+      }
+    },
+    {
+      "id": "B5",
+      "title": "the build identity",
+      "run": null,
+      "version": null,
+      "size": 2.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "deploy/terraform/gcp/modules/installation/build_identity.tf",
+          "internal/infra/build_identity.go",
+          "internal/infra/build_identity_test.go",
+          "internal/credsvc/auth.go",
+          "internal/credsvc/auth_test.go"
+        ]
+      }
+    },
+    {
+      "id": "B8",
+      "title": "the generated clone step",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/backend/gcp/catalog.go",
+          "internal/backend/gcp/catalog_clone.go",
+          "internal/backend/gcp/catalog_test.go",
+          "internal/backend/gcp/catalog_clone_test.go"
+        ]
+      }
+    },
+    {
+      "id": "B6",
+      "title": "catalog builds and the check run as the build identity",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/backend/gcp/catalog.go",
+          "internal/backend/gcp/catalog_test.go",
+          "deploy/terraform/gcp/modules/installation/build_identity.tf",
+          "deploy/terraform/gcp/modules/installation/catalogcheck.tf"
+        ]
+      }
+    },
+    {
+      "id": "B9",
+      "title": "the catalog refuses an entry that mounts a secret",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/catalog/fetch.go",
+          "internal/catalog/fetch_test.go",
+          "internal/cli/doctor_catalog.go",
+          "internal/cli/doctor_catalog_test.go",
+          "internal/cli/updatewarn.go"
+        ]
+      }
+    },
+    {
+      "id": "M7",
+      "title": "onboarding a repository applies nothing",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/init_repo_stage.go",
+          "internal/cli/init.go",
+          "internal/cli/init_repo_stage_test.go",
+          "internal/cli/init_images.go",
+          "internal/cli/init_images_test.go"
+        ]
+      }
+    },
+    {
+      "id": "S10",
+      "title": "shared jobs run the catalog default image",
+      "run": null,
+      "version": null,
+      "size": 2.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/infra/projectjobs.go",
+          "internal/infra/projectjobs_test.go",
+          "internal/cli/init_policy_migrate.go",
+          "internal/cli/update_default_entry_test.go"
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "task": "S3",
+      "needs": "C1",
+      "reason": "the runner is built against the contract's refusal shape"
+    },
+    {
+      "task": "S4",
+      "needs": "C1",
+      "reason": "the launcher is built against the contract's JobChoice"
+    },
+    {
+      "task": "I1",
+      "needs": "S1",
+      "reason": "the integration runs both sides"
+    },
+    {
+      "task": "I1",
+      "needs": "S2",
+      "reason": "the integration runs both sides"
+    },
+    {
+      "task": "I1",
+      "needs": "S3",
+      "reason": "the integration runs both sides"
+    },
+    {
+      "task": "I1",
+      "needs": "S4",
+      "reason": "the integration runs both sides"
+    },
+    {
+      "task": "S7",
+      "needs": "I1",
+      "reason": "the documents describe the behaviour I1 wires"
+    },
+    {
+      "task": "S8",
+      "needs": "I1",
+      "reason": "the live check exercises what I1 wires"
+    },
+    {
+      "task": "B1",
+      "needs": "S2",
+      "reason": "behaviour: one file, credsvc/server.go, and the same pairing code; a contract would not split one file"
+    },
+    {
+      "task": "B2",
+      "needs": "C2",
+      "reason": "the build is built against the contract's client"
+    },
+    {
+      "task": "I2",
+      "needs": "B1",
+      "reason": "the integration runs both sides"
+    },
+    {
+      "task": "I2",
+      "needs": "B2",
+      "reason": "the integration runs both sides"
+    },
+    {
+      "task": "B3",
+      "needs": "I2",
+      "reason": "behaviour: the same file, backend/gcp/catalog.go, one writer per level"
+    },
+    {
+      "task": "B4",
+      "needs": "B3",
+      "reason": "the live check exercises the scan"
+    },
+    {
+      "task": "N1",
+      "needs": "I1",
+      "reason": "behaviour: the same file, credsvc/bitbucketproxy.go, as S2"
+    },
+    {
+      "task": "N2",
+      "needs": "I1",
+      "reason": "behaviour: the same file, runner/runner.go, as S3"
+    },
+    {
+      "task": "N3",
+      "needs": "N1",
+      "reason": "the end-to-end test needs the proxy's behaviour"
+    },
+    {
+      "task": "N3",
+      "needs": "N2",
+      "reason": "the end-to-end test needs the runner's behaviour"
+    },
+    {
+      "task": "M2",
+      "needs": "M1",
+      "reason": "behaviour: it retires what M1 stopped emitting"
+    },
+    {
+      "task": "M2",
+      "needs": "S5",
+      "reason": "behaviour: the precondition reads the default profile"
+    },
+    {
+      "task": "M2",
+      "needs": "S6",
+      "reason": "behaviour: the precondition reads the proxy, and the same update_in_flight.go"
+    },
+    {
+      "task": "M3",
+      "needs": "S4",
+      "reason": "behaviour: the warning reads the launcher's decision"
+    },
+    {
+      "task": "M4",
+      "needs": "M2",
+      "reason": "the notes describe what update does"
+    },
+    {
+      "task": "M4",
+      "needs": "S7",
+      "reason": "the notes link the documents"
+    },
+    {
+      "task": "M5",
+      "needs": "M2",
+      "reason": "behaviour: it asserts the retirement"
+    },
+    {
+      "task": "M5",
+      "needs": "B4",
+      "reason": "behaviour: the same file, docs/gcp-live-checklist.md, one writer per level"
+    },
+    {
+      "task": "S9",
+      "needs": "S4",
+      "reason": "behaviour: the same file, runner/projectjob.go"
+    },
+    {
+      "task": "S9",
+      "needs": "S3",
+      "reason": "behaviour: it resets the checkout the proxied fetch then updates"
+    },
+    {
+      "task": "I1",
+      "needs": "S9",
+      "reason": "the integration runs the baked checkout on a shared job"
+    },
+    {
+      "task": "M6",
+      "needs": "I1",
+      "reason": "behaviour: marking a repository shared is safe only once shared jobs work"
+    },
+    {
+      "task": "M6",
+      "needs": "S5",
+      "reason": "behaviour: the default profile must exist before the jobs stop being emitted"
+    },
+    {
+      "task": "B4",
+      "needs": "S8",
+      "reason": "behaviour: the same file, docs/gcp-live-checklist.md, one writer per level"
+    },
+    {
+      "task": "B5",
+      "needs": "B1",
+      "reason": "behaviour: the build class it is rendered into"
+    },
+    {
+      "task": "I2",
+      "needs": "B8",
+      "reason": "the integration runs the clone step"
+    },
+    {
+      "task": "B3",
+      "needs": "B8",
+      "reason": "behaviour: the same file, backend/gcp/catalog.go"
+    },
+    {
+      "task": "B6",
+      "needs": "B5",
+      "reason": "behaviour: the account it runs as"
+    },
+    {
+      "task": "B6",
+      "needs": "B3",
+      "reason": "behaviour: the same file, backend/gcp/catalog.go"
+    },
+    {
+      "task": "S6",
+      "needs": "S5",
+      "reason": "behaviour: S5 registers a stage in init_stages.go and owns init_policy_migrate.go"
+    },
+    {
+      "task": "B9",
+      "needs": "B8",
+      "reason": "behaviour: the generated clone step replaces the mount the catalog refuses"
+    },
+    {
+      "task": "M7",
+      "needs": "M6",
+      "reason": "behaviour: it reads the shared mark"
+    },
+    {
+      "task": "M7",
+      "needs": "M1",
+      "reason": "behaviour: the secrets are adopted before the repository root is skipped"
+    },
+    {
+      "task": "M2",
+      "needs": "M7",
+      "reason": "behaviour: the old root is retired once none is applied"
+    },
+    {
+      "task": "M2",
+      "needs": "B6",
+      "reason": "behaviour: the build and the check act as the project identity before the per-repository account is destroyed"
+    },
+    {
+      "task": "S10",
+      "needs": "I1",
+      "reason": "behaviour: the same file, infra/projectjobs.go, and shared jobs working"
+    },
+    {
+      "task": "S10",
+      "needs": "M6",
+      "reason": "behaviour: it reads the shared mark"
+    },
+    {
+      "task": "M2",
+      "needs": "S10",
+      "reason": "behaviour: the project image is deployed on the shared jobs before a root is retired"
+    }
+  ],
+  "decoupling": [
+    {
+      "contract": "C1",
+      "was": {
+        "task": "S3",
+        "needs": "S2"
+      },
+      "integration": "I1",
+      "reason": "S3 needed S2's refusal shape only, not its behaviour"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "S4",
+        "needs": "S1"
+      },
+      "integration": "I1",
+      "reason": "S4 needed S1's provider list and profile shape only, not its deployment"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "B2",
+        "needs": "B1"
+      },
+      "integration": "I2",
+      "reason": "B2 needed B1's request and response shape only, not the minting"
+    }
+  ],
+  "contract_changes": [
+    {
+      "change": "CR1",
+      "contract": "C1",
+      "raised_by": "S2",
+      "reason": "the pairing may need the workflow name",
+      "affects": [
+        "S3",
+        "S4"
+      ]
+    },
+    {
+      "change": "CR2",
+      "contract": "C2",
+      "raised_by": "B1",
+      "reason": "a time-to-live cap may belong in the request",
+      "affects": [
+        "B2"
+      ]
+    }
+  ]
+}

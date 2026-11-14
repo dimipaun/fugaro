@@ -683,6 +683,24 @@ const CLI_COMMANDS: readonly CliCommand[] = [
   // `mutating` row would name a command this surface's never list does not
   // refuse.
   { command: 'settings', kind: 'allowed', where: 'internal/cli/settings.go:64' },
+  // **The roles group, classified by what each of its six words does** (RS5
+  // and RS7, the roles-and-scopes plan). `user ls` is the one the surface
+  // drives: the installation's grants as `fugaro user ls --json` prints them,
+  // which is the Members view. The other five each change who may do what --
+  // `grant` and `revoke` write the installation's grants node, `add` and `rm`
+  // rewrite this machine's own copy of the two IAM lists (F42), and `offboard`
+  // drops every roster grant naming the member and has the intake delete the
+  // secrets they stored (DS2.4, D1935) -- so all five are `mutating` and all
+  // five are on `NEVER_REACHABLE` below, both as a command and as a word of
+  // `user`. The group is deliberate and not incidental: a command path that
+  // reads its own subcommand from the renderer is the shape section 3.4 rule 2
+  // refuses.
+  { command: 'user ls', kind: 'allowed', where: 'internal/cli/user_ls.go:135' },
+  { command: 'user grant', kind: 'mutating', where: 'internal/cli/user_grant.go:101' },
+  { command: 'user revoke', kind: 'mutating', where: 'internal/cli/user_grant.go:101' },
+  { command: 'user add', kind: 'mutating', where: 'internal/cli/user.go:129' },
+  { command: 'user rm', kind: 'mutating', where: 'internal/cli/user.go:134' },
+  { command: 'user offboard', kind: 'mutating', where: 'internal/cli/offboard.go:106' },
   // **The console's one write** (design §5.1 rule 11, D22). `run` was the
   // first writer in this list and the one no argv could drive; since V2.5.1a it
   // is a command the allow-list admits, in exactly one argv, so it is `allowed`
@@ -764,7 +782,7 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * is still `runs ls --json` and rule 6's row carries the two words in its
  * parenthetical.
  *
- * **It is twenty-eight argvs, and this surface is the same twenty-eight.** (The
+ * **It is twenty-nine argvs, and this surface is the same twenty-nine.** (The
  * enumeration below numbers twenty-two of them: CG9a's `graph --json` landed
  * after it was written and sits between `plan status --json` and
  * `coordinator status --from-store --all --json`, and this plan's
@@ -774,7 +792,10 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * and the subscriptions plan's S4.2 is the twenty-seventh: the
  * Project tab's seat estimate, `seats --json`, whose one fixed flag is the
  * `--json` of every other read here and whose row declares no argument at all --
- * the 90 days it is measured over are the command's own.
+ * the 90 days it is measured over are the command's own. The roles-and-scopes
+ * plan's RS7 is the twenty-ninth and the last: the Members view's read,
+ * `user ls --json`, whose one argument is optional and is taken out here by the
+ * convention above (`--repo R` is the word the schema's `repo` key becomes).
  * The thirteenth is
  * `config list --json`, the rail's own read (owner's design ruling of
  * 2026-10-25): until that ruling there were twelve here and it was pinned where
@@ -808,7 +829,7 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * twenty-seventh, and it follows this convention too: the
  * installation's own `--project` and `[--config]` are main-process state, so the
  * row here is the command and its one fixed flag. **GV3.2's
- * `coordinator roadmap move --json` is the twenty-eighth and the last**: the
+ * `coordinator roadmap move --json` is the twenty-eighth**: the
  * console's third write, and the first whose two arguments are keys of a
  * document the console read rather than words a caller spells. (`licence.read`
  * never appears
@@ -910,6 +931,16 @@ const DESIGN_ARGV: readonly string[] = [
   // project flags are main-process state, exactly as they are for every other
   // read of this tab.
   'seats --json',
+  // The Members view's read (the roles-and-scopes plan's RS7). The row's one
+  // argument is the repository a role is asked about, and this file's convention
+  // takes what an argument fills out -- `--repo R` is the word the schema's
+  // `repo` key becomes -- so the row is the command's own two words and its one
+  // fixed flag. The argument is optional, which is the one thing this row has
+  // that no other repository-bearing row here has: the command answers about the
+  // stored pairs and this machine's own pattern matches when no repository is
+  // named. The design's own row states the whole argv,
+  // `user ls --json --repo R --project <name> [--config <path>]` and all.
+  'user ls --json',
   // The settings read (the settings-edit plan's C1). The row fixes the command
   // and `--json`; the two project flags are main-process state rather than
   // arguments, which is this file's convention for taking them out, and the row
@@ -1097,7 +1128,15 @@ describe("the allow-list's read-only invariant", () => {
       expect(row.why.length, row.value).toBeGreaterThan(20)
       expect(row.where.length, row.value).toBeGreaterThan(5)
     }
-    const values = NEVER_REACHABLE.map((row) => `${row.shape}:${row.value}`)
+    // A row's identity is its shape, the command it is about and its value: an
+    // `argv` row refuses **one word of one command**, so `models`'s `add` and
+    // `user`'s `add` are two rows and not one written twice (the roles-and-scopes
+    // plan's RS7 is what made the distinction load-bearing -- until then no two
+    // argv rows shared a word). Leaving the command out of the key would have
+    // reported those two as a duplicate; including it still catches the
+    // duplicate this check exists for, which is the same word refused twice under
+    // the same command.
+    const values = NEVER_REACHABLE.map((row) => `${row.shape}:${row.command ?? ''}:${row.value}`)
     expect(new Set(values).size).toBe(values.length)
   })
 
@@ -1213,6 +1252,66 @@ describe("the allow-list's read-only invariant", () => {
         },
       ]),
     ).toThrow(/models\.add drives add/)
+  })
+
+  it('reaches no `user` word but `ls`, and refuses each of the five writes in both shapes', () => {
+    // **The user group's fence** (the roles-and-scopes plan's RS7). `fugaro
+    // user ls --json` is the one word of this group the console may drive --
+    // the Members view's read -- and the group's other five words each change
+    // who may do what, so the table draws them in the two shapes the models
+    // group's fence is drawn in: a `command` row per write and an `argv` row
+    // per word. Both are read back here in an argv that could actually be
+    // spawned, because the checks above read a row's `command` and never its
+    // `value`: a typo there (`grant` for `grnat`), or a dropped row, would
+    // leave the half of the fence a command row cannot see unguarded while
+    // every test above stayed green.
+    const refusedBy = (command: string, flags: readonly string[]): string | null =>
+      isNeverReachable({ command, flags })?.value ?? null
+
+    expect(CONSOLE_OPERATIONS.filter((operation) => operation.name === 'members.list').map(argvOf)).toEqual([
+      'user ls --json',
+    ])
+    expect(refusedBy('user ls', ['--json'])).toBeNull()
+    expect(refusedBy('user ls', ['--json', '--project', 'chosen'])).toBeNull()
+    // The read's one argument is a repository *value*, and the table refuses
+    // words: the CLI is what validates the repository, and a pattern in the
+    // flag is its own refusal.
+    expect(refusedBy('user ls', ['--json', '--repo', 'example-owner/example-repo'])).toBeNull()
+
+    for (const word of ['grant', 'revoke', 'add', 'rm', 'offboard'] as const) {
+      expect(
+        NEVER_REACHABLE.filter((row) => row.shape === 'command' && row.value === `user ${word}`),
+        word,
+      ).toHaveLength(1)
+      expect(
+        NEVER_REACHABLE.filter(
+          (row) => row.shape === 'argv' && row.command === 'user' && row.value === word,
+        ),
+        word,
+      ).toHaveLength(1)
+      // The command path the design's never list names...
+      expect(refusedBy(`user ${word}`, ['--json']), word).toBe(`user ${word}`)
+      // ...the same word spelled into a longer command path...
+      expect(refusedBy(`user ls ${word}`, ['--json']), word).toBe(word)
+      // ...and into the flags, which is the half a command row cannot see.
+      expect(refusedBy('user ls', ['--json', word]), word).toBe(word)
+    }
+
+    // The whole-table control: an operation driving a `user` write cannot be
+    // added to the surface at all, and the refusal names it.
+    expect(() =>
+      assertReachableSurface([
+        ...CONSOLE_OPERATIONS,
+        {
+          name: 'user.grant',
+          method: 'grantRole',
+          command: 'user grant',
+          flags: ['--json'],
+          summary: 'a write this console must not have',
+          args: [],
+        },
+      ]),
+    ).toThrow(/user\.grant drives user grant/)
   })
 
   it('drives no command whose argv carries a never-table flag', () => {
@@ -1658,6 +1757,12 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   // and the two tables it prints are its own words -- there is no window, no
   // project and no day here, which the pin below reads back key by key.
   'seats.read': {},
+  // The one optional key: the repository a role is asked about (the
+  // roles-and-scopes plan's RS7). Absent is the state the view starts in -- the
+  // stored pairs and a pattern's matches on this machine -- so the empty payload
+  // is well formed, and the value is a canonical `owner/name` rather than the
+  // pattern a grant's scope may hold.
+  'members.list': { repo: 'acme/app' },
 }
 
 const RUN_ID = '20261016-121029-4a1b'
@@ -2163,6 +2268,48 @@ describe('the argument schemas', () => {
       const decision = validateArguments('seats.read', { [key]: 'x' })
       expect(decision.ok, `seats.read accepted ${key}`).toBe(false)
       expect(decision.ok ? '' : decision.reason).toBe(`seats.read takes no ${key}`)
+    }
+  })
+
+  it('pins `members.list`’s one key, and that it is optional and a repository', () => {
+    // **RS7's read is the group's one reachable argv** (the roles-and-scopes
+    // plan, roles.md D691(b)): `fugaro user ls --json`, and nothing else under
+    // `fugaro user` -- its other five words (`grant`, `revoke`, `add`, `rm`,
+    // `offboard`) each change who may do what and each is on the never table.
+    // So the claim below is narrower than a schema's and it is the important
+    // one: what a renderer may say to this read is **one repository, or
+    // nothing**.
+    //
+    // The two halves of that, both security claims rather than tidiness ones:
+    // the **repository** is the canonical `owner/name` this surface's other
+    // repository arguments are, so a *pattern* -- which is what a grant's scope
+    // holds, and the one shape that would let a caller widen what the read is
+    // about -- is refused by `REPOSITORY_RE` before a child exists; and it is
+    // **optional**, because the command has a state of its own without it (the
+    // stored pairs, and the repositories of this machine a pattern matches), so
+    // an absent key is a real state and not an unfilled one. The project flags
+    // come from the screened context and never from a payload, which the loop
+    // below reads back.
+    const operation = operationFor('members.list')
+    expect(operation.command).toBe('user ls')
+    expect(operation.flags).toEqual(['--json'])
+    expect(operation.args.map((spec) => `${spec.key}:${spec.kind}:${String(spec.required)}`)).toEqual([
+      'repo:repository:false',
+    ])
+    // Named and absent are both accepted -- the two states the view has.
+    expect(validateArguments('members.list', {}).ok).toBe(true)
+    expect(validateArguments('members.list', WELL_FORMED['members.list']).ok).toBe(true)
+    for (const key of ['project', 'config', 'member', 'role', 'scope', 'pattern', 'json']) {
+      const decision = validateArguments('members.list', { [key]: 'x' })
+      expect(decision.ok, `members.list accepted ${key}`).toBe(false)
+      expect(decision.ok ? '' : decision.reason).toBe(`members.list takes no ${key}`)
+    }
+    // A pattern is not a repository: the scope grammar a grant uses
+    // (`github/acme/*`) is refused by this kind's own rule.
+    for (const value of ['acme/*', 'github/acme/*', 'acme', '*']) {
+      const decision = validateArguments('members.list', { repo: value })
+      expect(decision.ok, `members.list accepted the pattern ${value}`).toBe(false)
+      expect(decision.ok ? '' : decision.reason).toBe('repo must be a repository as owner/name')
     }
   })
 
@@ -2958,7 +3105,7 @@ describe('the spend read’s arguments', () => {
  * table's order -- and it is the frozen list the plan asks for: it is spelled
  * here rather than read back from `EXPOSED_OPERATIONS`, because a test that
  * compared the table with itself would hold for a table that had just gained a
- * channel. The claim is "these thirty-nine, and no others".
+ * channel. The claim is "these forty, and no others".
  *
  * Task 2.4 asserted the twelve and said the spend controls widened nothing;
  * Task 3.3 added the thirteenth (`startup.compatibility` / `getCompatibility`,
@@ -3115,6 +3262,37 @@ describe('the spend read’s arguments', () => {
  * the line that preview answered. **And its answer is a document rather than a
  * sentence** (`--json`, contract §6.24/§6.25): the request's id and what the
  * record did with it, `applied`, `refused`, `failed` or `pending`.
+ *
+ * **The roles-and-scopes plan's RS7 added the fortieth** (`members.list` /
+ * `listMembers`: the Members view's read of the installation's grants, `fugaro
+ * user ls --json`) and left the other thirty-nine exactly where they were. It
+ * is appended here for the reason every row above was: what the task added must
+ * be visible as a diff. It is next to `licence.read` and `seats.read`, the
+ * surface's two other reads of a section rather than of a run, and three things
+ * about it are its own:
+ *
+ *   - **It is the second row here that reaches a command *group* whose other
+ *     words are refused** -- `models.list` reached the `models` group first, in
+ *     console 0.119.0. `fugaro user` has six subcommands and the console drives
+ *     one: `grant`, `revoke`, `add`, `rm` and `offboard` each change who may do
+ *     what, and each is on this file's never table as a command and as a word
+ *     of `user` -- so `user ls --json` is the group's whole reach, and a second
+ *     row under `user` would have to be argued against those five.
+ *   - **Its one argument is optional, and the read has a state of its own
+ *     without it.** `--repo R` does not filter one answer here, it narrows the
+ *     question: without it the document is the installation's stored pairs,
+ *     with the repositories of this machine each pattern matches, and with it
+ *     the role each person holds in one repository. Optional arguments are not
+ *     new -- `plan.status`'s `all` and `graph.read`'s `source` are two, and
+ *     `live.watch`, `budget.show`, `runs.list` and `accounts.inventory` each
+ *     carry an optional `--repo` too -- but every one of those narrows a list
+ *     or a feed this surface already draws, and none of them changes what the
+ *     read is about.
+ *   - **The word a renderer fills is a repository and never a pattern.** A
+ *     grant's *scope* is a pattern, and a pattern is exactly the value that
+ *     would widen what the read is about; the `repository` kind refuses one
+ *     before a child exists, and the patterns that are stored arrive in the
+ *     document.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['live.watch', 'subscribeLive'],
@@ -3175,6 +3353,12 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   // running thing -- a count of people -- and it is not withheld in a reduced
   // mode, because its document carries no dollar of any kind.
   ['seats.read', 'readSeats'],
+  // The Members view's read (the roles-and-scopes plan's RS7), appended for the
+  // reason every row above was. It is one of the two rows here whose command is
+  // a word of a group this console otherwise may not touch at all -- the other
+  // is `models.list` -- and its one argument, the repository a role is asked
+  // about, is optional.
+  ['members.list', 'listMembers'],
 ]
 
 /**
@@ -3205,7 +3389,7 @@ export function surfaceOffences(proposed: readonly (readonly [string, string])[]
 }
 
 describe('the frozen list of operations the preload exposes', () => {
-  it('is exactly these thirty-nine, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
+  it('is exactly these forty, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
     expect(EXPOSED_OPERATIONS).toEqual(SHIPPED_SURFACE)
     expect(surfaceOffences(EXPOSED_OPERATIONS)).toEqual([])
     expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
@@ -3222,11 +3406,11 @@ describe('the frozen list of operations the preload exposes', () => {
     // unmutated surface is asserted clean first.
     expect(surfaceOffences(SHIPPED_SURFACE)).toEqual([])
 
-    // A fortieth channel: what each task added must stay one row, and the
+    // A forty-first channel: what each task added must stay one row, and the
     // next task that adds a read cannot do it quietly.
-    const thirtyNinth = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
-    expect(thirtyNinth).toContain('fleet.report: a channel this console does not ship')
-    expect(thirtyNinth).toContain('40 rows, and this console ships 39')
+    const fortyFirst = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
+    expect(fortyFirst).toContain('fleet.report: a channel this console does not ship')
+    expect(fortyFirst).toContain('41 rows, and this console ships 40')
 
     // A write verb, which the allow-list forbids outright: it is refused here
     // for the same reason, one step earlier than `assertReachableSurface`.
@@ -3240,7 +3424,7 @@ describe('the frozen list of operations the preload exposes', () => {
       SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
     )
     expect(withoutTheNewRow).toContain('startup.compatibility: not on the surface at all')
-    expect(withoutTheNewRow).toContain('38 rows, and this console ships 39')
+    expect(withoutTheNewRow).toContain('39 rows, and this console ships 40')
     expect(
       surfaceOffences([
         ...SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
@@ -3255,8 +3439,8 @@ describe('the frozen list of operations the preload exposes', () => {
     )
   })
 
-  it('is frozen, and hands the window a bridge with the thirty-nine methods and nothing else', () => {
-    // The bridge the window is handed: the thirty-nine methods and the names,
+  it('is frozen, and hands the window a bridge with the forty methods and nothing else', () => {
+    // The bridge the window is handed: the forty methods and the names,
     // with no `invoke`, no channel and no method of its own.
     const bridge = createConsoleBridge(fakeRenderer())
     expect(Object.keys(bridge).sort()).toEqual(
@@ -4430,7 +4614,7 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
 
   it('lets every other operation through, so a reduced console is still a console', async () => {
     const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
-    // The non-vacuity half: thirty-two of the surface's thirty-nine operations,
+    // The non-vacuity half: thirty-three of the surface's forty operations,
     // all of them reachable in a reduced mode (the handshake is the one the loop
     // skips and its own test covers; `installation.current`, Task 3.4b, is among
     // the nineteen, because a reduced console's header still names its
@@ -4496,7 +4680,14 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     // **preview**, which spawns nothing at all. Its document carries no dollar
     // and no cap either: a release box is repository state, exactly as
     // `managed.status`'s two marks are.
-    expect(THE_OPEN_OPERATIONS.length).toBe(32)
+    //
+    // **`members.list` (the roles-and-scopes plan's RS7) is the thirty-third**,
+    // and it is not even a near miss: the document is a roster -- people, roles
+    // and scopes -- and no field of it is money, so there is nothing for the mode
+    // to withhold, and a reduced console is precisely the one whose operator may
+    // need to see who still holds a role on the installation they are trying to
+    // bring back.
+    expect(THE_OPEN_OPERATIONS.length).toBe(33)
     expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {
       const reply = await asCallable(

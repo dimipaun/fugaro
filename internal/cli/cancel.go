@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/report"
@@ -157,6 +158,16 @@ func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string,
 		return err
 	}
 	ref := slug + "/" + id
+	// The role check (plan task RS6a, D1587) is before the reporter and before
+	// any write of this command's: a cancel this credential may not make keeps
+	// no log and marks nothing. D1587 gives cancel to an operator within scope
+	// — an ordinary viewer does not cancel at all, and the run's own launcher is
+	// not asked: the cloud bundles cancel on every run, so the scope is the
+	// check. The scope is the run's own repository, which its stored task names
+	// (requireRunAccess reads it there, as `runs show` does).
+	if err := requireRunAccess(ctx, env, accesslib.ActionCancel, runstore.Open(env.bucket.Bucket, slug, id), "nothing was cancelled"); err != nil {
+		return err
+	}
 	if newRep != nil {
 		// The reporter opens where the cancel's own work does, once the run is
 		// located: a ref this command does not resolve is refused before there

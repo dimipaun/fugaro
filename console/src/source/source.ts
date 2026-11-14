@@ -533,6 +533,30 @@ export interface FugaroSource {
    */
   readSeats(args: ValidatedArguments): Promise<Snapshot>
   /**
+   * listMembers is the Members view's read (`user ls --json`, the
+   * roles-and-scopes plan's RS7, roles.md D691(b)): the installation's grants as
+   * the CLI prints them -- each stored person with the role and the canonical
+   * scope they hold at, the repositories a pattern matches among those this
+   * machine knows, the group:, domain: and serviceAccount: members this
+   * machine's own config still carries as legacy, and, when a repository is
+   * named, the role each person holds in it.
+   *
+   * Its **one argument is the repository, and it is optional**: the command has
+   * a state of its own without it (the stored pairs and a pattern's matches
+   * here), so an implementation that is given none adds no word to the argv,
+   * which is the spawn row's own three words plus the installation's
+   * `--project`. The value is a repository and never a pattern; a pattern is
+   * what a grant's scope holds, and it arrives in the document.
+   *
+   * **It is read-only in the strongest sense this interface can state**, and the
+   * group it belongs to is why that is worth a sentence: `fugaro user`'s other
+   * five words -- `grant`, `revoke`, `add`, `rm` and `offboard` -- each change
+   * who may do what, and none of them is reachable from this surface. What comes back is
+   * somebody else's text carried as data: no word of it is a credential and no
+   * screen interprets it, because the role model itself is the CLI's.
+   */
+  listMembers(args: ValidatedArguments): Promise<Snapshot>
+  /**
    * readSettings is the Project tab's settings section (`settings --json`, the
    * settings-edit plan's C1; `console/docs/json-contract.md` §6.19): the
    * project's settings, each with the value a run gets, the layer that decided
@@ -890,6 +914,7 @@ export function handlersFor(
     'accounts.inventory': (args) => source.listAccounts(args),
     'models.list': (args) => source.listModels(args),
     'seats.read': (args) => source.readSeats(args),
+    'members.list': (args) => source.listMembers(args),
     'settings.read': (args) => source.readSettings(args),
     'environment.report': (args) => source.environmentReport(args),
     'link.openExternal': async (args) => {
