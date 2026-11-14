@@ -198,12 +198,23 @@ func catalogEntryNames(entries []catalogStaleEntry) []string {
 // Nothing of the command's own account is captured: what bounds the build is
 // the banner it prints, the lease it takes and the gate's verdict, and its
 // progress and its closing line go where any nested run's do — the nested
-// reporter reads the same command's flags, so under --json they land on stderr
-// with the rest of this run's account rather than in the document on stdout,
-// and the stage's own lines below are what the reading of this run needs.
+// reporter reads the flags off the command itself (reporterFor), so under
+// --json they land on stderr with the rest of this run's account rather than in
+// the document on stdout, and the stage's own lines below are what the reading
+// of this run needs.
+//
+// --json is therefore NOT handed on, and that is the one flag this call must
+// not carry: it becomes the nested build's own Conditions.JSON, which takes the
+// session out of judgedHere (PersonAtTheTerminal), and openBuildManaged then
+// returns nil — the build would be submitted with no kill-switch read, no
+// project build rules and no admission record, under its lease alone, which is
+// the opposite of the bound above. `fugaro image build` never gets there
+// because runImageBuild refuses --json for a Cloud Build; a caller inside
+// another command bypasses that refusal, so it must not create the state the
+// refusal exists to prevent.
 func (s *imagesStage) rebuildCatalogEntry(se catalogStaleEntry) error {
 	r := s.e.r
-	o := imageBuildOptions{cloud: r.o.cloud, asJSON: r.o.asJSON}
+	o := imageBuildOptions{cloud: r.o.cloud}
 	return catalogRebuild(r.cmd, se.entry.Name, o)
 }
 

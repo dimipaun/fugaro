@@ -46,8 +46,9 @@ const catalogStaleYAML = `image_catalog:
 //
 // The rebuilds are recorded rather than submitted — a hermetic test has no
 // Cloud Build account, and the decision is what this file is about — and the
-// returned slice is the entries the run rebuilt, in order.
-func catalogStaleRig(t *testing.T, serverBase, workerBase string) (*convergeRig, *[]string) {
+// returned value is the entries the run rebuilt, in order, with the options
+// each rebuild was handed.
+func catalogStaleRig(t *testing.T, serverBase, workerBase string) (*convergeRig, *[]string, *[]imageBuildOptions) {
 	t.Helper()
 	useSelf(t)
 	r := newConvergeRig(t, v7Node())
@@ -60,13 +61,15 @@ func catalogStaleRig(t *testing.T, serverBase, workerBase string) (*convergeRig,
 	putCatalogRecord(t, mustSlug("github", "acme/app"), "server", serverBase)
 	putCatalogRecord(t, mustSlug("bitbucket", "acme/sandbox"), "worker", workerBase)
 	var built []string
+	var opts []imageBuildOptions
 	prev := catalogRebuild
-	catalogRebuild = func(_ *cobra.Command, entry string, _ imageBuildOptions) error {
+	catalogRebuild = func(_ *cobra.Command, entry string, o imageBuildOptions) error {
 		built = append(built, entry)
+		opts = append(opts, o)
 		return nil
 	}
 	t.Cleanup(func() { catalogRebuild = prev })
-	return r, &built
+	return r, &built, &opts
 }
 
 // putCatalogRecord stores one entry's build record, built FROM base, in the
@@ -98,7 +101,7 @@ func putCatalogRecord(t *testing.T, slug, entry, base string) {
 // launcher refuses, because the entry's build is a nightly job's and nothing
 // in this run built one.
 func TestUpdateRebuildsTheStaleCatalogImageOfThisCheckout(t *testing.T) {
-	_, built := catalogStaleRig(t, pinnedRef(config.BaseKind, convergePrev), pinnedRef(config.BaseKind, convergeRelease))
+	_, built, _ := catalogStaleRig(t, pinnedRef(config.BaseKind, convergePrev), pinnedRef(config.BaseKind, convergeRelease))
 
 	out, errOut, err := executeStdin(t, "", "update", "--yes")
 	if err != nil {
@@ -123,7 +126,7 @@ func TestUpdateRebuildsTheStaleCatalogImageOfThisCheckout(t *testing.T) {
 // done: it prints the entry, the checkout and the exact command, and it ends
 // not finished (exit 1).
 func TestUpdateNamesTheStaleCatalogImageOfAnotherCheckout(t *testing.T) {
-	_, built := catalogStaleRig(t, pinnedRef(config.BaseKind, convergeRelease), pinnedRef(config.BaseKind, convergePrev))
+	_, built, _ := catalogStaleRig(t, pinnedRef(config.BaseKind, convergeRelease), pinnedRef(config.BaseKind, convergePrev))
 
 	out, errOut, err := executeStdin(t, "", "update", "--yes")
 	if err == nil {
@@ -164,7 +167,7 @@ func TestUpdateNamesTheStaleCatalogImageOfAnotherCheckout(t *testing.T) {
 // would be one rebuilding images that are current, which is a billable build
 // the user did not ask for.
 func TestUpdateSaysNothingAboutACatalogOnThisReleaseBase(t *testing.T) {
-	_, built := catalogStaleRig(t, pinnedRef(config.BaseKind, convergeRelease), pinnedRef(config.BaseKind, convergeRelease))
+	_, built, _ := catalogStaleRig(t, pinnedRef(config.BaseKind, convergeRelease), pinnedRef(config.BaseKind, convergeRelease))
 
 	out, errOut, err := executeStdin(t, "", "update", "--yes")
 	if err != nil {
@@ -178,5 +181,29 @@ func TestUpdateSaysNothingAboutACatalogOnThisReleaseBase(t *testing.T) {
 		if strings.Contains(all, unwanted) {
 			t.Errorf("the run says %q about a catalog that is current:\n%s", unwanted, all)
 		}
+	}
+}
+
+// TestUpdateJSONDoesNotReachTheCatalogRebuild: --json is the update's own flag,
+// the document this run prints, and it is NOT the nested build's session. Handed
+// on it becomes the build's own Conditions.JSON, which takes the session out of
+// judgedHere (PersonAtTheTerminal) — and openBuildManaged then returns nil, so
+// the build is submitted with no kill-switch read, no project build rules and no
+// admission record, under its lease alone. That is the bound the stage's own
+// comment claims, gone in exactly the session where nobody is watching it
+// (`fugaro image build` never gets there: runImageBuild refuses --json for a
+// Cloud Build before this machinery is reached).
+func TestUpdateJSONDoesNotReachTheCatalogRebuild(t *testing.T) {
+	_, built, opts := catalogStaleRig(t, pinnedRef(config.BaseKind, convergePrev), pinnedRef(config.BaseKind, convergeRelease))
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	if err != nil {
+		t.Fatalf("a catalog entry on the previous release's base image does not reach this release with `fugaro update --json` (exit %d):\n%s\n%s", ExitCode(err), out, errOut)
+	}
+	if len(*built) != 1 {
+		t.Fatalf("the run rebuilt %q, want the stale entry of this checkout alone:\n%s\n%s", *built, out, errOut)
+	}
+	if (*opts)[0].asJSON {
+		t.Errorf("the rebuild was handed --json, which the nested build reads as its own session: the managed gate is not read for that one, so the build would be submitted with no kill-switch read, no project build rules and no admission record")
 	}
 }
