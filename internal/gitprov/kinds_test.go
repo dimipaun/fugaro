@@ -75,6 +75,7 @@ var forgeKindGoSites = map[string]string{
 	"internal/pluginwire/status.go":            "the plugin wire's GitHub-only status form",
 	"internal/projectpolicy/bitbucket.go":      "the published policy's Bitbucket block and its canonical slug",
 	"internal/projectpolicy/profiles.go":       "the profiles' Bitbucket-only validation",
+	"internal/projectpolicy/tokens_shape.go":   "the reach one Bitbucket token's coverage may name: the provider segment itself (ValidBitbucketTokenCoverage), which a second forge's tokens would spell the same way",
 	"internal/repourl/cloneurl.go":             "the host a clone URL is built on per kind",
 	"internal/runner/prflow.go":                "the PR flow's Bitbucket form",
 	"internal/runner/project.go":               "the runner's kind for a slug, and the list the refusal names",
