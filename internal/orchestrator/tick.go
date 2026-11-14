@@ -97,9 +97,10 @@ type Report struct {
 	// log already carries.
 	Triaged int
 	// Escalated is how many moves the cycle's ladder made: a rung a run was
-	// started for, a rung recorded for the hook the rungs past rung 2 attach
-	// through, and the resume rung 1 is. An item the ladder asked a person
-	// about instead is not a move.
+	// started for, and a rung recorded for the hook the rungs past rung 2
+	// attach through. The floor, rung 1, is not a move — the item's own loop
+	// is what resumes it — and neither is an item the ladder asked a person
+	// about.
 	Escalated int
 	// NotifyErr is a notification a sink would not take. It never fails the
 	// cycle: what a cycle must not lose is the write behind the notification.

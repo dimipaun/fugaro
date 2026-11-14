@@ -12,7 +12,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
-// The ladder's executor, rungs 0 to 2 (E10a).
+// The ladder's executor (E10a): the rungs it walks, rung 0's rebase and rung
+// 2's one stronger pass, and the floor it leaves where it is.
 //
 // What is pinned here is the walking and never the deciding: the decision is
 // E1's and is tested there, and the readings, the launcher, the comment and the
@@ -38,6 +39,10 @@ type ladderStub struct {
 	launched   []orchestrator.LadderRequest
 	comments   []string
 	lines      []orchestrator.Entry
+	// onLaunch runs while the stub is being asked for a run, which is what lets
+	// a test read the node at that moment: the write a launch depends on either
+	// landed before the launcher was asked or it did not.
+	onLaunch func(orchestrator.LadderRequest)
 }
 
 func (l *ladderStub) seams(th escalation.Thresholds) orchestrator.LadderSeams {
@@ -68,6 +73,9 @@ func (l *ladderStub) LaunchLadder(_ context.Context, req orchestrator.LadderRequ
 		return l.launchErr
 	}
 	l.launched = append(l.launched, req)
+	if l.onLaunch != nil {
+		l.onLaunch(req)
+	}
 	return nil
 }
 
@@ -364,35 +372,39 @@ func TestTickUnsetGradeRefuses(t *testing.T) {
 
 // TestTickDependsOnCycleDoesNotLoop is G7's fail-closed half: DependsOn is a
 // graph a session writes and a cycle in it is a graph somebody wrote, so the
-// critical-path flag is read off the node in one pass — and two items that wait
-// on each other are both on a critical path, and the cycle ends.
+// critical-path flag is read off the node in one pass and never by walking the
+// graph — and an item two items of a cycle wait on is on a critical path, while
+// neither of the two, each held by the other, is started.
 //
 // Mutation: walk each item's dependencies recursively and this test never
 // returns.
 func TestTickDependsOnCycleDoesNotLoop(t *testing.T) {
 	now := o6Now()
-	one, its := spentOn(t, "wi-1", now, rebased(now, headA, 1), "wi-2")
-	two, it2 := spentOn(t, "wi-2", now, rebased(now, headA, 1), "wi-1")
-	h, l := ladderTick(t, stack(t, now, []orchestrator.WorkItem{one, two}, append(its, it2...)), now,
-		"20261107-120000-c0de", "20261107-130000-c0de")
-	l.reads["wi-1"] = reading(rigor.Pro, 5*time.Hour, headA)
-	l.reads["wi-2"] = reading(rigor.Pro, 5*time.Hour, headA)
-
-	h.step()
-
-	if len(l.launched) != 2 {
-		t.Fatalf("the ladder launched %+v, and both items of a cycle are on a critical path", l.launched)
+	one, its := spentOn(t, "wi-1", now, rebased(now, headA, 1))
+	two, it2 := spentOn(t, "wi-2", now, rebased(now, headA, 1), "wi-1", "wi-3")
+	three, it3 := spentOn(t, "wi-3", now, rebased(now, headA, 1), "wi-1", "wi-2")
+	h, l := ladderTick(t, stack(t, now, []orchestrator.WorkItem{one, two, three}, append(append(its, it2...), it3...)), now,
+		"20261107-120000-c0de")
+	for _, id := range []string{"wi-1", "wi-2", "wi-3"} {
+		l.reads[id] = reading(rigor.Pro, 5*time.Hour, headA)
 	}
-	for _, req := range l.launched {
-		if req.Rung != escalation.R2 || req.Grade != escalation.Strongest {
-			t.Fatalf("the launch is %+v, and a critical-path rung 2 runs at the strongest grade", req)
+
+	rep := h.step()
+
+	if len(l.launched) != 1 || l.launched[0].Item.ID != "wi-1" {
+		t.Fatalf("the ladder launched %+v, and only the item the cycle waits on is started", l.launched)
+	}
+	if req := l.launched[0]; req.Rung != escalation.R2 || req.Grade != escalation.Strongest {
+		t.Fatalf("the launch is %+v, and an item a cycle waits on is on a critical path", req)
+	}
+	if rep.Escalated != 1 {
+		t.Fatalf("the cycle reports %d escalations, and one item moved", rep.Escalated)
+	}
+	for _, id := range []string{"wi-2", "wi-3"} {
+		e := itemAt(t, h.state(), id).Escalation
+		if e.Rung != escalation.R0 || len(rungs(e)) != 1 {
+			t.Fatalf("the ledger of %s reads %+v, and an item held by the other starts nothing", id, e)
 		}
-	}
-	if e := itemAt(t, h.state(), "wi-1").Escalation; e.Rung != escalation.R2 {
-		t.Fatalf("the ledger of wi-1 reads %+v", e)
-	}
-	if e := itemAt(t, h.state(), "wi-2").Escalation; e.Rung != escalation.R2 {
-		t.Fatalf("the ledger of wi-2 reads %+v", e)
 	}
 }
 
@@ -597,6 +609,154 @@ func TestTickR0AtMostTwicePerItem(t *testing.T) {
 	}
 	if e.OuterAttempts != 2 {
 		t.Fatalf("the ledger counts %d outer runs, and two rebases are two", e.OuterAttempts)
+	}
+}
+
+// TestTickR0DoesNotWalkBackFromR1 is the ledger's order at its most dangerous:
+// an item that has reached rung 1 with no head rebased yet is one the decision
+// still answers rung 0 for — the head is a fact the transitions hold and the
+// rung does not — and a rebase written over it is the move the state refuses as
+// a rung passed, so a cycle that launched one would start a run nobody recorded
+// and then fail on the write, every tick, for as long as the head stayed new.
+//
+// Mutation: keep rung 0 out of the "a rung passed is a rung spent" rule and the
+// cycle below launches a rebase and fails on the ledger write.
+func TestTickR0DoesNotWalkBackFromR1(t *testing.T) {
+	now := o6Now()
+	resumed := ledger(escalation.R1, 1,
+		step("", escalation.R1, escalation.ReasonAttempts, now.Add(-time.Hour), ""))
+	w, its := spentOn(t, "wi-1", now, &resumed)
+	h, l := ladderTick(t, stack(t, now, []orchestrator.WorkItem{w}, its), now, "20261107-120000-c0de")
+	l.reads["wi-1"] = reading(rigor.Pro, time.Hour, headA)
+	before := h.rev()
+
+	rep := h.step()
+
+	if len(l.launched) != 0 {
+		t.Fatalf("the ladder launched %+v over a rung the item has already reached", l.launched)
+	}
+	if h.mint.calls != 0 {
+		t.Fatalf("the cycle minted %d run ids, and no rung is walked back to", h.mint.calls)
+	}
+	if rep.Escalated != 0 {
+		t.Fatalf("the cycle reports %d escalations, and nothing moved", rep.Escalated)
+	}
+	e := itemAt(t, h.state(), "wi-1").Escalation
+	if got := rungs(e); len(got) != 1 || got[0] != string(escalation.R1) {
+		t.Fatalf("the ledger reads %v, and nothing is written over the rung the item is at", got)
+	}
+	if got := h.rev(); got != before {
+		t.Fatalf("the node moved from revision %d to %d, and a rung past is not walked", before, got)
+	}
+}
+
+// TestTickRungOneIsTodaysResume: rung 1 is the floor of the ladder and the
+// item's own loop is what resumes it, so the executor starts nothing, records
+// nothing and says nothing. An item sitting at the floor is not a move: a cycle
+// that treated it as one would post a comment on every idle pull request and
+// report progress it never made.
+//
+// Mutation: give the floor a move of its own and the cycle below fails on a
+// transition with no reason, which is the one thing the ledger will not take.
+func TestTickRungOneIsTodaysResume(t *testing.T) {
+	now := o6Now()
+	w, its := spentOn(t, "wi-1", now, rebased(now, headA, 1))
+	h, l := ladderTick(t, stack(t, now, []orchestrator.WorkItem{w}, its), now)
+	l.reads["wi-1"] = reading(rigor.Pro, time.Hour, headA)
+	before := h.rev()
+
+	rep := h.step()
+
+	if len(l.launched) != 0 || h.mint.calls != 0 {
+		t.Fatalf("the ladder launched %+v at the floor, and rung 1 is the loop's own resume", l.launched)
+	}
+	if len(l.comments) != 0 || len(l.lines) != 0 {
+		t.Fatalf("the ladder said %+v about a rung no run carries", l.comments)
+	}
+	if rep.Escalated != 0 {
+		t.Fatalf("the cycle reports %d escalations, and the floor is not one", rep.Escalated)
+	}
+	if got := rungs(itemAt(t, h.state(), "wi-1").Escalation); len(got) != 1 {
+		t.Fatalf("the ledger reads %v, and no transition records the floor", got)
+	}
+	if got := h.rev(); got != before {
+		t.Fatalf("the node moved from revision %d to %d, and the floor writes nothing", before, got)
+	}
+}
+
+// TestTickDoesNotStartBesideTheLoop is the loop's own two conditions, which a
+// ladder run obeys like any other: an item a run is moving through is not one to
+// start beside it, and an item still waiting on work that is not done is not one
+// to rebase — the rebase moves the head the item waiting on it is pinned to.
+//
+// Mutation: gate the ladder on the item's approval alone and both items below
+// are escalated while the loop still holds them.
+func TestTickDoesNotStartBesideTheLoop(t *testing.T) {
+	now := o6Now()
+
+	t.Run("an item another unfinished item waits on starts nothing", func(t *testing.T) {
+		running := spentItem(t, "wi-1", now, now.Add(-2*time.Hour))
+		waiting, its := spentOn(t, "wi-2", now, rebased(now, headA, 1), "wi-1")
+		h, l := ladderTick(t, stack(t, now, []orchestrator.WorkItem{running, waiting}, its), now,
+			"20261107-120000-c0de")
+		l.reads["wi-1"] = reading(rigor.Pro, time.Hour, headA)
+		l.reads["wi-2"] = reading(rigor.Pro, 10*time.Hour, headA)
+
+		h.step()
+
+		if len(l.launched) != 0 {
+			t.Fatalf("the ladder launched %+v beside the loop", l.launched)
+		}
+		if e := itemAt(t, h.state(), "wi-1").Escalation; e != nil {
+			t.Fatalf("the ledger of the item a run is moving through reads %+v", e)
+		}
+		if e := itemAt(t, h.state(), "wi-2").Escalation; e.Rung != escalation.R0 || len(rungs(e)) != 1 {
+			t.Fatalf("the ledger of the item that waits reads %+v, and nothing escalated it", e)
+		}
+	})
+
+	t.Run("an item a run is moving through starts nothing", func(t *testing.T) {
+		running := spentItem(t, "wi-1", now, now.Add(-2*time.Hour))
+		h, l := ladderTick(t, stack(t, now, []orchestrator.WorkItem{running}, nil), now)
+		l.reads["wi-1"] = reading(rigor.Pro, time.Hour, headA)
+
+		h.step()
+
+		if len(l.launched) != 0 || h.mint.calls != 0 {
+			t.Fatalf("the ladder launched %+v for an item a run is moving through", l.launched)
+		}
+		if e := itemAt(t, h.state(), "wi-1").Escalation; e != nil {
+			t.Fatalf("the ledger reads %+v, and the item's own loop is where its rung is", e)
+		}
+	})
+}
+
+// TestTickRecordsTheRungBeforeTheRun: the ledger is written before the run is
+// asked for, so a state that refuses the write — a rung the item has already
+// passed is the one this can still be — refuses it while there is nothing to
+// orphan, rather than leaving a run nobody recorded under way.
+//
+// Mutation: start the run first and the ledger read at the launcher is the one
+// the cycle has not written yet.
+func TestTickRecordsTheRungBeforeTheRun(t *testing.T) {
+	now := o6Now()
+	w, its := spentOn(t, "wi-1", now, nil)
+	h, l := ladderTick(t, stack(t, now, []orchestrator.WorkItem{w}, its), now, "20261107-120000-c0de")
+	l.reads["wi-1"] = reading(rigor.Pro, time.Hour, headA)
+	var atLaunch *orchestrator.Escalation
+	l.onLaunch = func(req orchestrator.LadderRequest) {
+		if e := itemAt(t, h.state(), req.Item.ID).Escalation; e != nil {
+			atLaunch = e
+		}
+	}
+
+	h.step()
+
+	if len(l.launched) != 1 {
+		t.Fatalf("the ladder launched %+v for an item its approval covers", l.launched)
+	}
+	if atLaunch == nil || atLaunch.Rung != escalation.R0 || len(atLaunch.Transitions) != 1 {
+		t.Fatalf("the ledger read while the launcher was asked is %+v, and the rung is written first", atLaunch)
 	}
 }
 

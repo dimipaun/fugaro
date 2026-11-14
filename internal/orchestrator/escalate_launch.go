@@ -1,11 +1,17 @@
-// The ladder's executor: what one cycle walks an item up, rungs 0 to 2 (E10a).
+// The ladder's executor: what one cycle walks an item up (E10a).
+//
+// Two rungs are walked here, and they are the two that start a run of another
+// recipe: rung 0's rebase and rung 2's one stronger single pass. Rung 1 is the
+// floor of the ladder and today's behaviour — the item goes back to its own
+// recipe loop — so the executor starts nothing beside the loop and records
+// nothing either, which is what walking it is. Rung 3 and rung 4 are E10b's,
+// and what this file leaves for them is the LadderBeyond hook.
 //
 // The decision is E1's and is pure. Everything a decision cannot be is here:
 // the facts gathered out of the daemon's own readings, the launch each rung
 // asks for, and the records a move leaves — the item's ledger, which is what
 // makes a rung spent, and the audit line and the pull-request comment that say
-// so. A rung past rung 2 is not walked here: the move out of it is E10b's, and
-// what this file leaves for it is the LadderBeyond hook.
+// so.
 //
 // Nothing here reads a clock, a file or a host of its own. A cycle's stamps are
 // the database server's (D1230) and everything else is a seam (LadderSeams),
@@ -103,12 +109,10 @@ type LadderReader interface {
 // has already minted for it, the recipe and the grade the run is built from,
 // and the head the rung was decided at.
 //
-// Rung 1 is the one rung whose request carries an Action: the run it starts is
-// a run of the item's own recipe, which is what E11's gate plans and what the
-// state records as an attempt under the item's approval. Every other rung
-// starts a run of another recipe, which is the ledger's and not an attempt's,
-// and the grade is never part of the spec — a launch that changed the spec
-// would be a launch of work nobody approved.
+// Every request here is a run of another recipe — a rebase, the one stronger
+// pass — which is the ledger's and not an attempt under the item's approval,
+// and the grade is never part of the spec: a launch that changed the spec would
+// be a launch of work nobody approved.
 type LadderRequest struct {
 	Item    WorkItem
 	RunID   string
@@ -116,13 +120,13 @@ type LadderRequest struct {
 	Rung    escalation.Rung
 	Grade   escalation.Grade
 	HeadSHA string
-	Action  Action
 }
 
 // LadderLauncher starts one ladder run: the intent-first launch D1231 states,
-// under the run id the request carries and no other. An error is a run that did
-// not start, which leaves the item where it was for the next cycle to decide
-// again.
+// under the run id the request carries and no other. An error ends the cycle,
+// and the rung the item moved to before the launcher was asked stays spent: a
+// run that did not start is a rung the item holds without a run, which is the
+// direction that spends less (D4) and not a second launch of the same rung.
 type LadderLauncher interface {
 	LaunchLadder(ctx context.Context, req LadderRequest) error
 }
@@ -219,14 +223,31 @@ func (c *cycle) ladderItem(ctx context.Context, view RunView, id string, blocked
 	if step.Refuse {
 		return c.askLadder(ctx, w, ladderRefusedQuestion(w))
 	}
-	if step.Rung != escalation.R0 && step.Rung.Rank() <= ladderReached(w).Rank() {
-		// A rung the item is at or past is a rung it has spent (G4). Rung 0 is
-		// the exception the decision already keeps: it answers R0 only for a
-		// head whose rebase is still the item's to take, which is a fact held
-		// in the ledger's own transitions and not in its rung.
+	if !ladderEnterable(step.Rung, ladderReached(w)) {
+		// A rung the item is at or past is a rung it has spent (G4), and the
+		// rung it is at is the one a move is written over.
 		return nil
 	}
 	return c.ladderAct(ctx, view, w, step, reason, read)
+}
+
+// ladderEnterable reports whether an item at rung at may enter the rung the
+// decision named. The rungs move forward and never back: a move to a rung the
+// item is at or past is refused by the state (patch.go's appendEscalation), so a
+// cycle that asked for it would fail on the write every tick and start a run
+// nobody recorded on the way.
+//
+// Rung 0 is the one rung that is a step rather than a place: escalation.Decide
+// answers it for a head no rebase has seen, which the ledger's transitions hold
+// and its rung does not, so it is enterable while the item is still at rung 0 —
+// including while it is at no rung at all — and never once the item has moved
+// on: the rebase is the cheap step at the bottom of the ladder, and an item at
+// rung 1 or past it is one the rungs above it answer for.
+func ladderEnterable(rung, at escalation.Rung) bool {
+	if rung == escalation.R0 {
+		return at.Rank() <= escalation.R0.Rank()
+	}
+	return rung.Rank() > at.Rank()
 }
 
 // ladderAct carries out the one step the decision named, and false where a rung
@@ -242,30 +263,55 @@ func (c *cycle) ladderAct(ctx context.Context, view RunView, w WorkItem, step es
 			// nobody approved is the standing approval D2042 refuses.
 			return nil
 		}
-		runID, err := c.ladderStart(ctx, req)
-		if err != nil {
-			return err
-		}
 		head := ""
 		if step.Rung == escalation.R0 {
 			head = read.HeadSHA
 		}
+		// The rung is written before the run is asked for. A state that refuses
+		// the write — a rung already reached is the one this can still be —
+		// refuses it while there is nothing to orphan, and a launch that then
+		// fails leaves a rung spent with no run, which is the direction that
+		// spends less (D4).
 		if err := c.ladderRecord(ctx, w, step, reason, head, true); err != nil {
+			return err
+		}
+		runID, err := c.ladderStart(ctx, req)
+		if err != nil {
 			return err
 		}
 		return c.ladderSay(ctx, w, step, reason, runID)
 	case escalation.R1:
-		return c.ladderResume(ctx, view, w, step, read)
+		// Rung 1 is the floor of the ladder and today's behaviour: the item
+		// goes back to its own recipe loop, which is the loop's work and not a
+		// run beside it, so there is nothing to start and nothing to record —
+		// escalation.Decide answers the floor with no reason, and a transition
+		// is why an item entered a rung.
+		//
+		// The resume an item past its approval's attempts would take is E11's
+		// LadderLaunch, and nothing can carry it out yet: an intent is declared
+		// under a standing approval and nothing else (patch.go's commitIntent),
+		// and the item a resume starts from is one whose approval a retry has
+		// spent. That write side is E7's file, so this release leaves the item
+		// to its loop rather than planning a launch nothing can start.
+		return nil
 	default:
 		return c.ladderBeyond(ctx, w, step, reason, read)
 	}
 }
 
 // ladderOuter is the launch rungs 0 and 2 ask for, and false where the ladder
-// may not start one: a run of another recipe is covered by the item's own
-// approval (D2042, G15) — the standing one, or the one a retry spent — and
-// bounded by the ladder's own count and by the cost ceiling a person set.
+// may not start one: the loop's own two questions (the item is one an attempt
+// may be declared from, and nothing it depends on is still open), the item's
+// own approval (D2042, G15) — the standing one, or the one a retry spent — and
+// the bounds, which are the ladder's own count and the cost ceiling a person
+// set.
 func (c *cycle) ladderOuter(view RunView, w WorkItem, step escalation.Step, read LadderReading) (LadderRequest, bool) {
+	if !startable(w.Phase) || !dependenciesDone(c.state, w) {
+		// A ladder run is a run: an item a run is moving through is not one to
+		// start beside it, and neither is one still waiting on work that is not
+		// done — the rebase would move a head under the item waiting on it.
+		return LadderRequest{}, false
+	}
 	at, ok := ladderCoveredAt(w)
 	if !ok {
 		return LadderRequest{}, false
@@ -287,31 +333,10 @@ func (c *cycle) ladderOuter(view RunView, w WorkItem, step escalation.Step, read
 	return LadderRequest{Item: w, Recipe: recipe, Rung: step.Rung, Grade: step.Grade, HeadSHA: read.HeadSHA}, true
 }
 
-// ladderResume is rung 1: today's behaviour, which is a run of the item's own
-// recipe past the attempts its approval covers. What may start one is E11's
-// gate — the approval that covers it, the loop that has nothing left to do with
-// it, the ladder's count and the cost ceiling — and the item's rung is not
-// moved here: escalation.Decide answers the floor with no reason, and a
-// transition records why an item entered a rung.
-//
-// The run is recorded as an attempt under the approval like any other, which
-// is what makes a resume the loop's own answer and not a second ladder beside
-// it, and that write is the daemon's: what this asks for is the launch.
-func (c *cycle) ladderResume(ctx context.Context, view RunView, w WorkItem, step escalation.Step, read LadderReading) error {
-	action, ok := LadderLaunch(c.state, w, view, c.tick.Caps)
-	if !ok {
-		return nil
-	}
-	runID, err := c.ladderStart(ctx, LadderRequest{Item: w, Recipe: w.Recipe, Rung: step.Rung, HeadSHA: read.HeadSHA, Action: action})
-	if err != nil {
-		return err
-	}
-	return c.ladderSay(ctx, w, step, "", runID)
-}
-
-// ladderBeyond hands a rung past rung 1's to the hook the rungs past this task
-// attach through, and records the move itself where there is no hook: an item
-// that has entered rung 3 or rung 4 is left where it is, which is the stop
+// ladderBeyond hands a rung past the two this file walks — rung 3's judge and
+// the merge or the split past it — to the hook they attach through (E10b), and
+// records the move itself where no hook is wired: an item that has entered rung
+// 3 or rung 4 is left where it is, which is the stop
 // D2030 and D2037 state — the ladder never walks back off either, whatever a
 // fact recomputed each cycle says.
 func (c *cycle) ladderBeyond(ctx context.Context, w WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) error {
