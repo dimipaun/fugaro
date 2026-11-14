@@ -120,6 +120,8 @@ var liveCheckScripts = []struct {
 	{"check511.sh", "check511_test.sh"},
 	{"check520.sh", "check520_test.sh"},
 	{"check521.sh", "check521_test.sh"},
+	{"check57b.sh", "check57b_test.sh"},
+	{"check124.sh", "check124_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
