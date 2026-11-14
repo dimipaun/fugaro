@@ -1,13 +1,13 @@
 # Roles on the existing lists
 
-**Status: design. No code. Every decision in this document is open and belongs to the owner, except
-the three the owner ruled on 2026-10-30, recorded in §9's *Settled* list.**
+**Status: the owner answered every decision in this document on 2026-10-30, all as recommended; D690
+and D691 are superseded by the owner's 2026-11-07 D1580 answer, which narrows D446 (§11). No code.**
 
 This is subscriptions **S5.1** and forge **E0**: the viewer, operator and admin roles of
 `docs/mobile-auth/spec.md` §"Allowlist and roles", laid over the lists an installation already has,
 with the enforcement point of every action named. It decides nothing the owner has not ruled. Each
 product choice is a row of §9's table, with its options, a recommendation and the cost of each, and
-its status is `open`; the build is written from the answers.
+its status is the owner's answer; the build is written from them.
 
 The rulings that bind it are in §9's *Settled* list. Where a sentence below reads as settled it is
 because one of those rulings settles it, and the ruling is cited beside it; where nothing settles a
@@ -432,26 +432,29 @@ Restated, with its source, so that nothing below is read as open that is not.
 - **2026-10-30, enforcement** — no cloud role enforcement in 0.14.0; it is 0.15.0 (R1, R4, R5).
 - **D433** — free read-only viewers once the viewer role exists (D446). Out of scope here (§10), but
   it is what a viewer *is for*.
+- **2026-10-30, every decision below** — the owner answered D681–D695, each as its recommendation.
+  D690 and D691 were answered *no* there and are **superseded** by the owner's 2026-11-07 answer of
+  D1580 (§11), which also narrows D446.
 
-### Open
+### Answered (2026-10-30)
 
 | # | Question | Options | Recommendation | Cost of each | Status |
 | --- | --- | --- | --- | --- | --- |
-| D681 | Which existing list becomes which role? | (a) `launchers`→operator, `operators`→admin, new list→viewer; (b) a fresh launcher/operator/viewer triple and today's `operators` becomes an onboarding list only | (a) | (a) matches what each list already grants (§3); (b) renames a list whose grants do not move, so the name and the grant disagree until the grants move too | open |
-| D682 | Where does the viewer list live? | (a) a new IAM list, core MIT; (b) derive viewers from the device nodes' `role` child; (c) no viewer list, the console/app only | (a) | (a) one more list and its grants; (b) the device node is per-phone, `session`-scoped and written by `fugaro pair`, so a viewer without a phone cannot exist and IAM would have to read RTDB to answer; (c) fails D446's "the cloud included" | open |
-| D683 | How much of the runs bucket does a viewer read? | (a) `objectViewer` on the whole bucket; (b) a conditioned read on `runs/` and `fugaro/`; (c) none, reads come through the CLI | (a) | (a) also hands a viewer `cache/`, `locks/` and the history; (b) no `storage.objects.list`, so a viewer cannot list the bucket; (c) a viewer cannot read logs or artifacts at all | open |
-| D684 | Does a viewer read run logs? | (a) `logging.viewAccessor` like launchers and operators; (b) no log view | (a) | (a) a viewer sees the run's own output, which may quote the repository's code; (b) the role reads status but not what the run said, which is most of what a run is | open |
-| D685 | Is a viewer held by IAM alone, or by D628's minter? | (a) IAM alone; (b) the minter only; (c) both | (a) first, (c) later | (a) no sign-in, no claim, no new service — but no console or app enforcement and IAM-latency revocation; (b) a new service before a viewer can read anything; (c) both costs, and the honest end state | open |
-| D686 | Where does the minter live? | (a) a new Cloud Run service with its own account; (b) the existing signer with the minter role narrowed to one account the ranked people are not; (c) none now | (b) | (a) a whole new deployed component and a new trust boundary; (b) the smallest diff, and it takes the minter away from `fugaro pair` and the run's budget token, both of which use it today; (c) the console and the app stay unranked | open |
-| D687 | How does a granted role travel? | (a) a claim minted by the minter; (b) read from the lists at each check; (c) a claim for the console/app and the lists for the cloud | (c) | (a) a demotion waits for the token to expire (D225's cost, `docs/mobile-auth/reconciliation.md:550`); (b) every check becomes an IAM read, and neither the console nor the app has an identity to make it with; (c) two sources of truth to keep in step | open |
-| D688 | Does an RTDB rule read the device `role`? | (a) never (D225's v1 answer); (b) a rule reads it, as D225's later half allows | (b), when R5 is built | (a) a device's `role` stays recorded authority, so a `viewer` device reaches what any device reaches; (b) a rules generation bump, an owner redeploy, and a demotion that lands on the next request | open |
-| D689 | Are the project's owners/editors, and `budget_admins`, automatically the role *admin*? | (a) yes, both; (b) owners/editors only; (c) neither — admin is a list of its own | (a) | (a) `roles/owner` is a wider grant than any role, and the mapping is a statement about Google's project rather than about the role model; (b) `budget_admins` can already write `/config` and would be an operator on paper; (c) the role *admin* would hold less than an editor holds anyway | open |
-| D690 | Does the CLI rank its own commands? | (a) no (`internal/cli/roles.go:22` — nothing there authorises); (b) a convenience check for viewer-level commands | (a) | (a) a viewer running `fugaro run` gets GCP's refusal rather than Fugaro's sentence; (b) a check in the person's own binary, which they can replace — a courtesy, and it must never be reported as a boundary | open |
-| D691 | How does the console know a role, with no sign-in (F6)? | (a) it does not, until the minter exists; (b) it reads the installation's own lists through the CLI; (c) a local configuration by the operator | (a), with (b) for a read-only Members view | (a) the console stays unranked, which is today; (b) a list read is not an identity — it says what the local config says, not who is at the keyboard; (c) a local file decides who may do what, in the app that can launch | open |
-| D692 | Does `fugaro user` gain `--role viewer` (E1 today names launcher and operator only)? | (a) yes, in R2; (b) no, a separate command | (a) | (a) one flag on a command that already writes IAM lists, and it makes the viewer list writable at all; (b) a second command doing the same thing to a different list | open |
-| D693 | What does a suspended person keep and lose, per surface? | (a) everything except launch and cancel; (b) nothing — a full revocation; (c) read-only, cancel kept | (c) | (a) a suspended person still reads every run and every log; (b) suspension and the 30-day rule then interact badly with a return to service, and it is more than D629's answer needs; (c) matches the lapse state T12 already rules for the console and the app (`docs/subscriptions/implementation-plan.md:57`) | open |
-| D694 | Through which seam does `ee/` register the role model? | (a) a new `Set*` seam beside the governance ones, core default = nobody ranked; (b) the command constructor pattern `NewReportCmd` uses; (c) a build tag | (a) | (a) one more package-level value and the `ee/register` panic rule to obey; (b) the matrix is not a command, so it has no constructor to hang on; (c) `cmd/fugaro/ee_on.go` is the only route and a second one is what `internal/eeboundary` exists to refuse | open |
-| D695 | Which of Checks 250–259 runs first, and what does each prove? | the assignment in §8, or another | §8's | each check is an owner-run step on a real installation, so a check that is not run is the failure mode — the same rule as the live checklist | open |
+| D681 | Which existing list becomes which role? | (a) `launchers`→operator, `operators`→admin, new list→viewer; (b) a fresh launcher/operator/viewer triple and today's `operators` becomes an onboarding list only | (a) | (a) matches what each list already grants (§3); (b) renames a list whose grants do not move, so the name and the grant disagree until the grants move too | answered 2026-10-30, as recommended |
+| D682 | Where does the viewer list live? | (a) a new IAM list, core MIT; (b) derive viewers from the device nodes' `role` child; (c) no viewer list, the console/app only | (a) | (a) one more list and its grants; (b) the device node is per-phone, `session`-scoped and written by `fugaro pair`, so a viewer without a phone cannot exist and IAM would have to read RTDB to answer; (c) fails D446's "the cloud included" | answered 2026-10-30, as recommended |
+| D683 | How much of the runs bucket does a viewer read? | (a) `objectViewer` on the whole bucket; (b) a conditioned read on `runs/` and `fugaro/`; (c) none, reads come through the CLI | (a) | (a) also hands a viewer `cache/`, `locks/` and the history; (b) no `storage.objects.list`, so a viewer cannot list the bucket; (c) a viewer cannot read logs or artifacts at all | answered 2026-10-30, as recommended |
+| D684 | Does a viewer read run logs? | (a) `logging.viewAccessor` like launchers and operators; (b) no log view | (a) | (a) a viewer sees the run's own output, which may quote the repository's code; (b) the role reads status but not what the run said, which is most of what a run is | answered 2026-10-30, as recommended |
+| D685 | Is a viewer held by IAM alone, or by D628's minter? | (a) IAM alone; (b) the minter only; (c) both | (a) first, (c) later | (a) no sign-in, no claim, no new service — but no console or app enforcement and IAM-latency revocation; (b) a new service before a viewer can read anything; (c) both costs, and the honest end state | answered 2026-10-30, as recommended |
+| D686 | Where does the minter live? | (a) a new Cloud Run service with its own account; (b) the existing signer with the minter role narrowed to one account the ranked people are not; (c) none now | (b) | (a) a whole new deployed component and a new trust boundary; (b) the smallest diff, and it takes the minter away from `fugaro pair` and the run's budget token, both of which use it today; (c) the console and the app stay unranked | answered 2026-10-30, as recommended |
+| D687 | How does a granted role travel? | (a) a claim minted by the minter; (b) read from the lists at each check; (c) a claim for the console/app and the lists for the cloud | (c) | (a) a demotion waits for the token to expire (D225's cost, `docs/mobile-auth/reconciliation.md:550`); (b) every check becomes an IAM read, and neither the console nor the app has an identity to make it with; (c) two sources of truth to keep in step | answered 2026-10-30, as recommended |
+| D688 | Does an RTDB rule read the device `role`? | (a) never (D225's v1 answer); (b) a rule reads it, as D225's later half allows | (b), when R5 is built | (a) a device's `role` stays recorded authority, so a `viewer` device reaches what any device reaches; (b) a rules generation bump, an owner redeploy, and a demotion that lands on the next request | answered 2026-10-30, as recommended |
+| D689 | Are the project's owners/editors, and `budget_admins`, automatically the role *admin*? | (a) yes, both; (b) owners/editors only; (c) neither — admin is a list of its own | (a) | (a) `roles/owner` is a wider grant than any role, and the mapping is a statement about Google's project rather than about the role model; (b) `budget_admins` can already write `/config` and would be an operator on paper; (c) the role *admin* would hold less than an editor holds anyway | answered 2026-10-30, as recommended |
+| D690 | Does the CLI rank its own commands? | (a) no (`internal/cli/roles.go:22` — nothing there authorises); (b) a convenience check for viewer-level commands | (a) | (a) a viewer running `fugaro run` gets GCP's refusal rather than Fugaro's sentence; (b) a check in the person's own binary, which they can replace — a courtesy, and it must never be reported as a boundary | **superseded by D1580 (2026-11-07)**: the CLI does rank its own commands (answered (b), `docs/roles-scopes/reconciliation.md`) |
+| D691 | How does the console know a role, with no sign-in (F6)? | (a) it does not, until the minter exists; (b) it reads the installation's own lists through the CLI; (c) a local configuration by the operator | (a), with (b) for a read-only Members view | (a) the console stays unranked, which is today; (b) a list read is not an identity — it says what the local config says, not who is at the keyboard; (c) a local file decides who may do what, in the app that can launch | **superseded by D1580 (2026-11-07)**: the console knows a role, through the same commands' `--json` output (answered (b) for the Members view, `docs/roles-scopes/reconciliation.md`) |
+| D692 | Does `fugaro user` gain `--role viewer` (E1 today names launcher and operator only)? | (a) yes, in R2; (b) no, a separate command | (a) | (a) one flag on a command that already writes IAM lists, and it makes the viewer list writable at all; (b) a second command doing the same thing to a different list | answered 2026-10-30, as recommended |
+| D693 | What does a suspended person keep and lose, per surface? | (a) everything except launch and cancel; (b) nothing — a full revocation; (c) read-only, cancel kept | (c) | (a) a suspended person still reads every run and every log; (b) suspension and the 30-day rule then interact badly with a return to service, and it is more than D629's answer needs; (c) matches the lapse state T12 already rules for the console and the app (`docs/subscriptions/implementation-plan.md:57`) | answered 2026-10-30, as recommended |
+| D694 | Through which seam does `ee/` register the role model? | (a) a new `Set*` seam beside the governance ones, core default = nobody ranked; (b) the command constructor pattern `NewReportCmd` uses; (c) a build tag | (a) | (a) one more package-level value and the `ee/register` panic rule to obey; (b) the matrix is not a command, so it has no constructor to hang on; (c) `cmd/fugaro/ee_on.go` is the only route and a second one is what `internal/eeboundary` exists to refuse | answered 2026-10-30, as recommended |
+| D695 | Which of Checks 250–259 runs first, and what does each prove? | the assignment in §8, or another | §8's | each check is an owner-run step on a real installation, so a check that is not run is the failure mode — the same rule as the live checklist | answered 2026-10-30, as recommended |
 
 ## 10. Out of scope
 
@@ -467,3 +470,33 @@ Restated, with its source, so that nothing below is read as open that is not.
 - **Central orchestrators and the hosted launch path** (D435, F31): a launch path that starts jobs on
   someone else's behalf is the central orchestrator's scale, ruled out of the interim by D627.
 - **Pricing**, of any kind.
+
+## 11. The build: roles and scopes
+
+`docs/roles-scopes` is the build of §8's slices, and the owner's answer of its D1580 (2026-11-07)
+amends this document in the places below. They are here rather than in §9 because they are what the
+build decided, and this is where a reader of the roles meets them.
+
+- **A scope was added.** The roles above are held at the project. The build gives each one a scope —
+  the project, all repos, or a list of repository patterns — resolved by "the highest role wins"
+  (`docs/roles-scopes/spec.md`).
+- **A scoped role is a policy check, not a cloud barrier.** D1580 answers that the CLI and the
+  console check a scope first and the cloud keeps its project-wide IAM: a role held at `all-repos` or
+  at repository patterns is judged by the commands a person runs, and the cloud holds no
+  per-repository grant until the later slice that adds one (D1580, `docs/roles-scopes/reconciliation.md`).
+- **D690 and D691 are superseded, and D446 is narrowed with them.** D690(a) — the CLI does not rank
+  its own commands — and D691(a) — the console does not know a role — were the answers this document
+  carried on 2026-10-30; D1580's answer of 2026-11-07 replaces both, so the management commands the
+  plan's Slice D gates ask the resolver and the console reads the same commands' `--json` output. That
+  slice is not the whole of the tree: the writers of the same files that it does not name still ask no
+  role, and the stated limits name them (`docs/roles-scopes/spec.md`, the release notes). D446's
+  "enforced system-wide, the cloud included" holds for the project-wide lists, and a scoped role is
+  the check above.
+- **An agent session is a courtesy.** A grant or a revoke in a coding-agent session is refused
+  (D1590), and agent sessions are detected by environment variables an agent can unset: a courtesy,
+  not a barrier (`internal/agentenv`).
+- **The write is the admin.** The grants live in a node under `config/admin/` that the rules give no
+  client write, so it is written over IAM by the holders of `roles/firebasedatabase.admin` — the
+  project's owners and editors, and `budget_admins`. That grant writes every `config/` node, this one
+  included, so anyone given the write the access node needs is effectively a project admin (F22,
+  `docs/roles-scopes/reconciliation.md`).
