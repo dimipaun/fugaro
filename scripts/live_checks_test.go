@@ -27,7 +27,10 @@ import (
 // evaluates the conditions of Check 340's own IAM bindings for Check 340, and
 // fake `gcloud`, `fugaro` and a fake credentials service, GitHub and Identity
 // Toolkit behind a fake `curl` for Check 96 -- or, for Checks 145 and 180,
-// against a fake Bitbucket Cloud on a loopback port, so no
+// against a fake Bitbucket Cloud on a loopback port; and Check 149's is a fake
+// `fugaro` alone, answering the one read the check makes out of the case's own
+// files and logging every call, so a case can say what the check read and what
+// it did not -- so no
 // network, no cloud project and no credential is touched here, and no live
 // step of any of them is run by an agent. Check 130's fake is a fake `curl`
 // alone, answering the three anonymous GETs the check makes about a
@@ -72,6 +75,7 @@ var liveCheckScripts = []struct {
 	{"check145.sh", "check145_test.sh"},
 	{"check146.sh", "check146_test.sh"},
 	{"check148.sh", "check148_test.sh"},
+	{"check149.sh", "check149_test.sh"},
 	{"check180.sh", "check180_test.sh"},
 	{"check190.sh", "check190_test.sh"},
 	{"check191.sh", "check191_test.sh"},
