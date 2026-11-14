@@ -254,6 +254,10 @@ type Service struct {
 	// own until the store is a service — which is the store that reserves a
 	// source (mint's own comment, §5.2).
 	pageMu sync.Mutex
+	// signIn is the portal's verifier of the licence project's own sign-ins
+	// (api.go's seam, P1.3): the trial route reads it to learn the account that
+	// asks, which is half of what §14 counts (trial.go).
+	signIn SignInVerifier
 }
 
 // New builds the intake. Everything it refuses here is a deployment that would
@@ -380,6 +384,7 @@ func New(cfg Config, deps Deps) (*Service, error) {
 		auditor:    deps.Auditor,
 		now:        now,
 		limiter:    limiter,
+		signIn:     deps.SignIn,
 	}, nil
 }
 
