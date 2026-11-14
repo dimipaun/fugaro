@@ -223,7 +223,7 @@ Two exceptions: a workflow that sets `dockerfile:` drops its profile's `image:` 
 
 ## 5. Where each key may be set
 
-`fugaro settings` is the table below as a command: it prints one row per key with the layers it may be set in, the value a run gets, the layer that decided it and the built-in default, and `fugaro settings set KEY --layer project` writes one into the project layer's own file rather than by hand. A key may be set only in the layers listed; the project layer refuses the rest, naming the key:
+`fugaro settings` is the table below as a command: it prints one row per key with the value a run gets, the layer that decided it, the built-in default and the state of the read, and `fugaro settings set KEY --layer project` writes one into the project layer's own file rather than by hand. A key may be set only in the layers listed; the project layer refuses the rest, naming the key:
 
 <!-- scope-table:start -->
 | Key | May be set in | Why |
