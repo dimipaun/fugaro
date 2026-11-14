@@ -27,14 +27,25 @@ import (
 // evaluates the conditions of Check 340's own IAM bindings for Check 340, and
 // fake `gcloud`, `fugaro` and a fake credentials service, GitHub and Identity
 // Toolkit behind a fake `curl` for Check 96 -- or, for Checks 145 and 180,
-// against a fake Bitbucket Cloud on a loopback port, so no
+// against a fake Bitbucket Cloud on a loopback port; and Check 149's is a fake
+// `fugaro` alone, answering the one read the check makes out of the case's own
+// files and logging every call, so a case can say what the check read and what
+// it did not -- so no
 // network, no cloud project and no credential is touched here, and no live
 // step of any of them is run by an agent. Check 130's fake is a fake `curl`
 // alone, answering the three anonymous GETs the check makes about a
 // repository; its fake `gcloud` and `fugaro` log any call and fail, so the
 // test can say the check never reaches a cloud tool. Check 300's fakes are a
 // fake `gcloud`, a fake `fugaro` and a fake RTDB behind a fake `curl`, and
-// Check 361's are a fake `gcloud` that mints a token sentinel and a fake
+// Checks 303 and 304's fake is a fake `fugaro` alone -- 303's answers `doctor`,
+// `version`, the daemon's `run`, the node's `state` and `events` and the
+// installation's config, and 304's never performs a handoff, so a case can say
+// the check stopped at the build's own verb help -- and Check 305's are a fake
+// `fugaro`, a fake `gcloud` and a fake front door on a loopback port that mints
+// the check's tokens and serves the state group's own documents, with a fake
+// browser that opens the authorization URL the check prints and follows it to
+// the check's own loopback, so both sign-ins run with no network. Check 361's
+// are a fake `gcloud` that mints a token sentinel and a fake
 // `curl` that answers the check's one read from files the test writes and
 // records the request -- the URL, the headers, and the Authorization header
 // of the `--config` file the check handed over -- so a case can say the token
@@ -72,11 +83,15 @@ var liveCheckScripts = []struct {
 	{"check145.sh", "check145_test.sh"},
 	{"check146.sh", "check146_test.sh"},
 	{"check148.sh", "check148_test.sh"},
+	{"check149.sh", "check149_test.sh"},
 	{"check180.sh", "check180_test.sh"},
 	{"check190.sh", "check190_test.sh"},
 	{"check191.sh", "check191_test.sh"},
 	{"check195.sh", "check195_test.sh"},
 	{"check300.sh", "check300_test.sh"},
+	{"check303.sh", "check303_test.sh"},
+	{"check304.sh", "check304_test.sh"},
+	{"check305.sh", "check305_test.sh"},
 	{"check340.sh", "check340_test.sh"},
 	{"check96.sh", "check96_test.sh"},
 	{"check361.sh", "check361_test.sh"},

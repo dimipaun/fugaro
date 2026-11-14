@@ -1,30 +1,60 @@
-# `fugaro upgrade` and `/fugaro:upgrade`
+# `fugaro update` and `/fugaro:update`
 
-Status: design approved by the owner (2026-10-08). The details below were settled by reading the code, and each one is a decision the owner can veto in the plan ([plans/2026-10-08-upgrade.md](../plans/2026-10-08-upgrade.md)). Delivery: release **0.5.2**, together with `fugaro image refresh --yes` (PR #190). This work starts only after that PR has merged.
+Status: design approved by the owner (2026-10-08), **rewritten as the one-command design on 2026-11-13**
+(U7 of [plugin-user-scope/implementation-plan.md](../plugin-user-scope/implementation-plan.md)).
+`fugaro upgrade` no longer exists — D950's answer of 2026-11-04 was "nothing, not even a tombstone" — and
+every step it had lives in `fugaro update`, the converge this repository already had
+(`internal/cli/update.go`, `internal/cli/update_check.go`). The design's own delivery was release **0.5.2**,
+which shipped under the retired name; what this document describes now is the tree the plugin-user-scope
+work leaves, and its release is the one that carries U0–U8. That is why the skill this document is about is
+`/fugaro:update`: the file in the tree today is `plugin/skills/upgrade/` with `name: upgrade`, and U6
+renames it (D953) — the two are one release's, the one that carries U0–U8, so a reader of this branch alone
+still finds `/fugaro:upgrade` on disk.
 
 ## Problem
 
-After `brew upgrade dimipaun/tap/fugaro`, every checkout needs four separate actions, in two different tools:
+After `brew upgrade dimipaun/tap/fugaro`, a checkout needed four separate actions, in two different tools:
 - `fugaro image refresh --yes`, in the user's own terminal;
 - `fugaro update-skills`;
 - in Claude Code, `/plugin marketplace add dimipaun/fugaro`;
 - in Claude Code, `/plugin install fugaro@fugaro` (or `/plugin marketplace update fugaro` when it is already installed).
 
-Each of these sequences is repeated in the README, `docs/gcp-setup.md`, `docs/release.md`, the `/new-release` operator list, `fugaro doctor`'s fixes, the staleness warning, and the text of init's plugin stage. The owner wants one command, and a skill that knows how to do all of it.
+Each of these sequences was repeated in the README, `docs/gcp-setup.md`, `docs/release.md`, the
+`/new-release` operator list, `fugaro doctor`'s fixes, the staleness warning, and the text of init's plugin
+stage. **`fugaro update` is the one command that does all of it**, and the skill `/fugaro:update` is what
+knows how to read its verdict and hand the user the parts only they can run. `fugaro upgrade` — the second
+front door built for the same job in 0.5.2 — is gone: it was one command's worth of steps folding into
+another, a user typing it wants exactly what `fugaro update` does, and a tombstone whose only job is to turn
+a converging run into exit 1 for that user was refused by name (D950,
+[spec.md](../plugin-user-scope/spec.md) §5).
 
 ## Behaviour
 
 ```
-fugaro upgrade [PATH...] [--check | --local | --yes]
-               [--repo R] [--workflow W]... [--image-source S] [--expect-digest KIND=sha256:H]...
-               [--config F] [--project P] [--gcp-project G] [--region R]
+fugaro update [--check [PATH]] [--yes]
+              [--repo [PATH]] [--image-source S] [--expect-digest KIND=sha256:H]...
+              [--config F] [--project P] [--gcp-project G] [--region R]
 ```
 
-The first line names the binary (`fugaro upgrade with fugaro 0.5.2`) and says the command never upgrades `fugaro` itself. **The upgrade sequence is `brew upgrade dimipaun/tap/fugaro && fugaro upgrade`.**
+`PATH` is a checkout and only these two modes read one: `--check` reads the checkout's own files and writes nothing, and `--repo` onboards that checkout's repository instead of converging the installation. **`--repo` takes no value and there is no `--workflow`** — both spellings were the retired command's, whose usage line this block used to be; `fugaro update --help` is the list this door has.
 
-Each PATH (the default is `.`) is a checkout, and each is processed on its own. Two paths in the same checkout count once. Each checkout runs four steps in order and stops at the first step that fails. The **pin** step this command used to run first is gone: nothing merges the plugin's marketplace and enablement into `.claude/settings.json` any more (D949, answered 2026-11-04; U2 of [plugin-user-scope/implementation-plan.md](../plugin-user-scope/implementation-plan.md)), so `update-skills` and this command's plugin step install the plugin on the machine instead and leave that file as it is.
+`fugaro update` re-converges an installation and the checkout it stands in: it is the same engine and the
+same stages as `fugaro setup`, and what differs is what the two doors may create. It creates nothing — the
+flags that do are refused by name — and one with nothing to do prints `No changes` and exits 0. The first
+line says the command never upgrades `fugaro` itself. **The upgrade sequence is `brew upgrade
+dimipaun/tap/fugaro && fugaro update`**, and it is what `fugaro update --check`'s own header prints.
 
-1. **plugin**: the plugin is installed or updated in Claude Code through the `claude` CLI on `PATH`:
+The checkout's own work is four steps, in the order below, and they are the stages `fugaro update` already
+had for them (`init_stages.go`). Each checkout runs four steps in order and stops at the first step that
+fails. The **pin** step the retired command used to run first is gone: nothing merges the plugin's marketplace and enablement into `.claude/settings.json` any more (D949, answered 2026-11-04; U2 of
+[plugin-user-scope/implementation-plan.md](../plugin-user-scope/implementation-plan.md)), so
+`update-skills` and this command's plugin step install the plugin on the machine instead and leave that file
+as it is. A checkout still carrying a pin is offered its removal, as the migration below says.
+
+1. **plugin**: the **plugin stage** (`internal/cli/init_plugin_stage.go`), which installs or updates the
+   plugin in Claude Code through the `claude` CLI on `PATH`. Nothing it writes is in the checkout — every
+   write of its own is on this machine — so the stage is `LocalUnderAgent` (U1): a coding agent's session
+   moves the plugin instead of stopping at `left for you` for it.
    - It reads `claude plugin marketplace list --json` and `claude plugin list --json`.
    - It adds the marketplace if it is missing; when it is there at another ref that is not newer, it declares the name again at this release's tag (`dimipaun/fugaro#vX.Y.Z`, which is Claude Code's own syntax for a source, so what the marketplace serves is this binary's plugin and not whatever the repository's default branch carries — on a patch release cut from `release/X.Y` that is the version `main` was last bumped to, the 0.21.1 failure of 2026-11-09). Claude Code refuses an add of a name it has already declared from a different source, and the ref is part of the source — every fugaro marketplace a release before this one declared, with no ref, is one — so the step clears the user-scope declaration first (`claude plugin marketplace remove fugaro --scope user`, the route claude's own refusal names) and never touches the scopes a checkout commits. Claude Code's removal takes every install of that marketplace with it, at every scope (its own warning says add the marketplace back and reinstall the plugin) — but only when the removal leaves the name undeclared, which a checkout whose own committed settings declare the marketplace (every wired one) does not. Which machine this is cannot be read before the clear, so that path installs the plugin at user scope *and* updates each stale install at its own scope: the install is what puts the plugin back on a machine the clear emptied (an install of one that is already there does not move it: claude answers "already installed" and names update as the call that re-records the version), and the update of one the clear did take finds nothing to update, which is printed rather than failing the step (see Safety). That clear may itself be refused, for a name claude has not declared there: there is nothing to clear then, so the failure is printed and the step goes on to the add, which is what decides. If claude refuses the add for a source declared for the name in settings fugaro does not own (an organization's, say) — claude's own message is what says so, and it is the only add failure the step reads that way — the plugin cannot be had on that machine: the step says exactly that, with the slash commands that do it by hand, and the checkout's other steps are not stopped for it. Any other failure of the add fails the step, and the declaration the clear removed is declared again first (see Safety).
    - It updates the marketplace whenever the name is on the machine — at this release's tag, at a newer one, or at the tag it has just been declared at. A ref a newer `fugaro` wrote is never lowered (U10), and the newer plugin that comes back from it is a note, not a failure.
@@ -32,35 +62,35 @@ Each PATH (the default is `.`) is a checkout, and each is processed on its own. 
    - When everything is current, it makes no change call.
 
    It then lists the installs again and compares the result with this binary. The output says that running Claude Code sessions must be restarted to apply it. Without `claude` on `PATH`, the step prints the slash commands to type in Claude Code instead.
-2. **cloud**: `fugaro image refresh` for the checkout's repository. The refresh runs in the same process, through `runImageRefresh`; it is not a shell-out. `--yes` passes through, and without it the refresh is interactive as today.
+   - The **install half needs neither the checkout's repository nor `authState`** (D955, U8): a machine's own plugin concerns no repository, and the gate that asks whether the checkout's repository is in this machine's config belongs to the pin's write, not to this one.
+   - A pin the stage **cannot** move — a fork's marketplace, a foreign marketplace, a file that is not valid JSON — is not a failure: the file is left exactly as it is, with the refusal text, the outcome is `left for you`, and the run continues to the next stage (F25, U8). §8's migration below is the shape.
+2. **cloud**: the **checkout stage**'s cloud step (`internal/cli/init_checkout_upgrade.go`): `fugaro image refresh` for the checkout's repository. The refresh runs in the same process, through `runImageRefresh`; it is not a shell-out. `--yes` passes through, and without it the refresh is interactive as today.
 
    The step is **skipped**, with the reason shown, when:
    - there is no `fugaro.yaml`;
    - there is no local project config (a teammate's machine);
    - the repository is not onboarded;
    - the binary is a development build.
-3. **rules**: the security rules generation a project policy is read under (update-converge UC3c). The generation this binary carries is deployed into the project's Firebase database by the same read, classification, plan and apply `fugaro update`'s rules stage uses — one owner of the question, so the two doors cannot converge into different states. The plan is printed and the project's name is typed (or `--yes`), as the policy step asks. It runs **before** the policy step because the policy write is gated on the deployed generation (`requirePolicyRules`): a rules step after it would deploy too late for the migration the same run had already refused, which is the state this step exists for, and the rule of 2026-10-30 that one `fugaro update` is the whole upgrade. It is skipped where there is no local project config, where the repository is not onboarded, where the config names no shared budget backend, where the database is one this installation may not write (`budgetDBUnadopted`, the one ownership question every writer into it asks), where the deployed marker is newer than this binary or hand edited, where the rules or their marker could not be read, in a coding agent's session, and under `--check` (see below).
-4. **policy**: the project's published policy node, when an earlier `fugaro` wrote it in a version this binary does not read (update-converge UC2, `docs/policy-migration.md`). The node is migrated **in place** with `projectpolicy.Migrate`, with the members a publish derives from the local config (`bitbucket_token`, `bitbucket_api_roots`) patched in first, and written back under the ETag it was read at. One diff is printed, then the project's name is typed (or `--yes`), exactly as `fugaro project policy publish --delete` asks for a removal. It is after the rules step, which deploys the generation its write is gated on, and it is last: the cloud step's own verdicts — a real local-file error stops the checkout in every mode, `--check` included, and a checkout with nothing to refresh is skipped — are read first. It is skipped where there is no local project config, where the repository is not onboarded, where the config names no budget backend (there is no node to read), in a coding agent's session, and under `--check` (see below).
+3. **rules**: the **rules stage** (`internal/cli/init_rules_stage.go`): the security rules generation a project policy is read under (update-converge UC3c). The generation this binary carries is deployed into the project's Firebase database by the same read, classification, plan and apply. The plan is printed and the project's name is typed (or `--yes`), as the policy step asks. It runs **before** the policy step because the policy write is gated on the deployed generation (`requirePolicyRules`): a rules step after it would deploy too late for the migration the same run had already refused, which is the state this step exists for, and the rule of 2026-10-30 that one `fugaro update` is the whole upgrade. It is skipped where there is no local project config, where the repository is not onboarded, where the config names no shared budget backend, where the database is one this installation may not write (`budgetDBUnadopted`, the one ownership question every writer into it asks), where the deployed marker is newer than this binary or hand edited, where the rules or their marker could not be read, in a coding agent's session, and under `--check` (see below).
+4. **policy**: the **policy stage** (`internal/cli/init_policy_migrate.go`): the project's published policy node, when an earlier `fugaro` wrote it in a version this binary does not read (update-converge UC2, `docs/policy-migration.md`). The node is migrated **in place** with `projectpolicy.Migrate`, with the members a publish derives from the local config (`bitbucket_token`, `bitbucket_api_roots`) patched in first, and written back under the ETag it was read at. One diff is printed, then the project's name is typed (or `--yes`), exactly as `fugaro project policy publish --delete` asks for a removal. It is after the rules stage, which deploys the generation its write is gated on, and it is last: the cloud step's own verdicts — a real local-file error stops the checkout in every mode, `--check` included, and a checkout with nothing to refresh is skipped — are read first. It is skipped where there is no local project config, where the repository is not onboarded, where the config names no budget backend (there is no node to read), in a coding agent's session, and under `--check` (see below).
 
-   It is also **skipped**, with `fugaro update` named, where the installation's tfvars record a credentials service whose image this binary's release did not pin. The node's version and that service's process move together: the service reads the published node on every cascade and Bitbucket-proxied call and refuses a node its own binary does not understand, and this door replaces no service — its cloud step is `fugaro image refresh`, job images only, and the service's image lives in the installation root's tfvars, which only `fugaro update`'s stages write (`init_stages.go`'s `credentialsRaiseHeld`; the update door's own half of the rule is `credentialsMoveHeld` and `credentialsResolveBeforeRaise`). `fugaro update` migrates the node and replaces the service in one run, and an installation whose recorded image is already this release's is not held.
+   It is also **skipped**, with `fugaro update` named, where the installation's tfvars record a credentials service whose image this binary's release did not pin. The node's version and that service's process move together: the service reads the published node on every cascade and Bitbucket-proxied call and refuses a node its own binary does not understand, and this stage replaces no service — the service's image lives in the installation root's tfvars, which the credentials stage writes (`init_stages.go`'s `credentialsRaiseHeld`, `credentialsMoveHeld` and `credentialsResolveBeforeRaise`). `fugaro update` migrates the node and replaces the service in one run, and an installation whose recorded image is already this release's is not held.
 
 At the end, a summary gives one line per checkout, with each step's state (`current`, `done`, `stale`, `skipped`, `failed`, `not run`) and, for a checkout that stopped, the exact line to rerun. The exit code is the worst over all checkouts: 0 when everything finished or was current, 1 for a refusal, a failed local step or (with `--check`) anything stale, and 2 for a cloud failure. When a rerun finds everything current, it prints `nothing to do` and changes nothing.
 
-**`--local`** runs the plugin step only. **`--check`** writes nothing, runs no `claude` command and makes no cloud call. It reads three things:
+**`--check`** is the update door's read-only mode (D948): it writes nothing, runs no `claude` command and makes no cloud call, prints what each of the four steps would do, and exits 1 if anything is stale, so CI can run it without credentials. It reads three things:
 - the settings file;
 - Claude Code's `installed_plugins.json`;
 - the local config's `base_images`.
 
-It prints what each step would do and exits 1 if anything is stale, so CI can run it without credentials. It cannot see a build that failed after the base moved, because build records live in the cloud; the output says so, and the rules and policy steps say the same about the deployed rules generation and the published node: reading either needs credentials, so `--check` skips both and says it cannot tell what they are. Without `--yes`, `--local` or `--check`, the command needs a real terminal and refuses before any step runs.
+It cannot see a build that failed after the base moved, because build records live in the cloud; the output says so, and the rules and policy steps say the same about the deployed rules generation and the published node: reading either needs credentials, so `--check` skips both and says it cannot tell what they are. **`--local` is gone** (D948): the `LocalUnderAgent` marker absorbs it, because the plugin and checkout stages are local under an agent marker and plain `fugaro update` therefore does the local half and parks the cloud half — and `fugaro update-skills` is the command for the plugin alone. Without `--yes`, `--check` or a session marker, the command needs a real terminal and refuses before any step runs.
 
-**Inside a coding agent's session** (`CLAUDECODE` and the like), only the local steps run. The cloud, rules and policy steps are skipped and each prints the exact command to run in the user's own terminal, with and without `--yes`. The exit code is 0 when the local steps succeeded: the command did everything it may do there, and the skipped steps are named. `--check` reports the cloud state the same way everywhere, so CI and the skill still see `stale`. `fugaro upgrade` never even reads the cloud in that session, and the refusal inside `image refresh` stays as a backstop.
+**Inside a coding agent's session** (`CLAUDECODE` and the like), the local steps run and the cloud ones do not. The plugin stage **is** one of them since U1: it applies, and no longer returns `left for you` (a stale plugin pin is **not** moved there, and the stage no longer reads one). The cloud, rules and policy steps are skipped and each prints the exact command to run in the user's own terminal, with and without `--yes`. The run exits **1** with a `left_for_you` entry for the checkout, naming the command to run in the user's own terminal, `fugaro update --yes`: that exit is expected and not a failure — the run did everything a session may do, and one command in the operator's own terminal finishes it. A machine-local stage that has something to do **runs even after a cloud stage stopped** (D954, U8), and says so in its own line (`machine-local: ran although images waits for you`): a teammate whose cloud stages are refused by IAM still gets their machine's plugin. The refusal inside `image refresh` stays as a backstop.
 
-**`fugaro update` in that session is the other front door, and it stops sooner** (UC3c-1b, PR #1453). Its plugin stage runs before the checkout and is not local under the marker, so it returns **needs-you** with `fugaro update-skills` left for the user: a stale plugin pin is **not** moved there, and neither is anything the checkout stage would have done — the stage behind it waits. The run exits **1** with a `left_for_you` entry for the checkout on **every** run in a session, naming the two commands to run in the user's own terminal, `fugaro upgrade --yes <root>` and `fugaro upgrade <root>`. That exit is expected and not a failure: the run did everything a session may do, and one command in the operator's own terminal finishes it.
-
-**The skill `/fugaro:upgrade`** works through the upgrade in this order:
-1. It runs `fugaro version` and `fugaro upgrade --check`, then explains in plain words what is stale and why.
-2. It runs `fugaro upgrade --local`, shows the diff to commit, and says a restart is needed.
-3. It checks again with `fugaro upgrade --check`.
+**The skill `/fugaro:update`** works through the upgrade in this order:
+1. It runs `fugaro version` and `fugaro update --check`, then explains in plain words what is stale and why.
+2. It shows the diff of the checkout's own change it may make — under D943 that is the removal of a leftover pin, and in a session it prints the diff and writes nothing — and says a restart of Claude Code is needed once the plugin moved.
+3. It checks again with `fugaro update --check`.
 4. It hands the user one command for their own terminal, in a `user-runs` block: `fugaro update` — the whole upgrade, so the installation and the checkout it runs in both reach this release in one run. It says why: a coding agent's session cannot apply cloud changes, by design, and it never looks for a way around that refusal.
 
 It never runs the cloud step or any `claude plugin` command itself, never edits settings by hand, and never asks for or handles a secret.
@@ -69,7 +99,7 @@ It never runs the cloud step or any `claude plugin` command itself, never edits 
 
 `fugaro update` is the whole upgrade, and it works without a second command: the one exception is an installation whose `budget.firebase_project` names a project other than its own GCP project. `--firebase-project` takes **only the installation's own GCP project** (`checkFirebaseProject`, the owner's ruling of 2026-10-23: the budget backend goes in the project `fugaro setup` created for the installation and nowhere else), so a config recording another project is one no door adopts — and the config's `budget.firebase_project` alone never proves anything happened: a name in a config is a name someone typed, and a typo that agrees with itself (`budget.firebase_project: other` beside `other-default-rtdb`) leaves a pair that looks right.
 
-So the run asks the **database**, not the config. Every stage that writes into the budget database — the security rules generation, and the policy migration after it, which reads the published node, takes the ETag its write is conditional on and writes the node back — asks **one** predicate (`budgetDBUnadopted`) before it reads or writes anything, in two halves and in this order. The first half is the config's own facts, which no read of the database can settle: no `budget.firebase_project` recorded at all, or a `budget.rtdb_url` that is not that Firebase project's own database (`rulesNoBudget`, `rulesForeignDatabase`). It is answered without opening the database, so a URL that is not the project's own is never contacted. The second half is the mark itself, `infra.DB.Check`, asked of **every** shape and not only of a config naming a separate project: an empty database passes that check whatever project its URL belongs to (which is how a config with a self-consistent typo would otherwise have marked and deployed into a database nobody adopted), a database another installation marked is not this one's, and one that holds data and no mark is not ours either. So a database cannot come out safe for the rules stage and unsafe for the policy migration: the rules stage being skipped is not a reason for the next writer to go on — `fugaro upgrade`'s rules step asks the same predicate (through the same `rulesState`) and the policy step behind it asks it again, so one door cannot come out writable where the other was refused. `fugaro update --firebase-project` refuses a config whose recorded project differs from its own (`checkFirebaseProject`) before any of this, which is what the way out below is for.
+So the run asks the **database**, not the config. Every stage that writes into the budget database — the security rules generation, and the policy migration after it, which reads the published node, takes the ETag its write is conditional on and writes the node back — asks **one** predicate (`budgetDBUnadopted`) before it reads or writes anything, in two halves and in this order. The first half is the config's own facts, which no read of the database can settle: no `budget.firebase_project` recorded at all, or a `budget.rtdb_url` that is not that Firebase project's own database (`rulesNoBudget`, `rulesForeignDatabase`). It is answered without opening the database, so a URL that is not the project's own is never contacted. The second half is the mark itself, `infra.DB.Check`, asked of **every** shape and not only of a config naming a separate project: an empty database passes that check whatever project its URL belongs to (which is how a config with a self-consistent typo would otherwise have marked and deployed into a database nobody adopted), a database another installation marked is not this one's, and one that holds data and no mark is not ours either. So a database cannot come out safe for the rules stage and unsafe for the policy migration: the rules stage being skipped is not a reason for the next writer to go on — each stage asks the predicate rather than trusting the one before it, which is what the retired `fugaro upgrade`'s two steps were cited for and what its deletion leaves standing.
 
 It is a **skip, not a refusal**: the installation's other stages (the images, the plugin) have nothing to do with that database, so `fugaro update` still does everything else, and the skip names the way out — drop the config's `budget.firebase_project` (and the `budget.rtdb_url` beside it, which is that project's database), then run:
 
@@ -81,9 +111,8 @@ That door adopts the installation's own Firebase project, writes its mark into t
 
 **Every writer into that database, and the gate it holds.** `fugaro update` is not the only command that writes there — the history job and the project commands do too — so the audit is the list, not the story of one of them. It was taken against the code at the commit that carries this text, and updated in place where slice 1 of the ruling below landed:
 
-- the **`fugaro update` rules stage** (`init_rules_stage.go`, which applies the plan): `budgetDBUnadopted` — the config's own facts, then the mark of every shape. The `fugaro upgrade` rules step asks the same read through `rulesState`, so there is one classification and one gate.
+- the **`fugaro update` rules stage** (`init_rules_stage.go`, which applies the plan): `budgetDBUnadopted` — the config's own facts, then the mark of every shape.
 - the **`fugaro update` policy stage** (`init_policy_migrate.go`, the node's `PutIfMatch`): `budgetDBUnadopted`, the same call. This is the gate F1's finding was about; before it, this stage held a weaker one than the rules stage.
-- **`fugaro upgrade`'s rules step and policy step**: `rulesState` and the same `policyMigrationFor`, so both calls are the update door's own — and each asks the predicate rather than trusting the step before it: `fugaro upgrade`'s own rules step is skipped by the same answer, and the policy step behind it re-asks instead of reading that skip as a licence.
 - the **history job**, both modes: `fugaro budget history --rollover` moves finished days out and then **deletes** their nodes, and the sweep moves them; both call `budgetDBUnadopted` (`history_rollover.go`, `history.go`), the rollover refusing with `nothing was moved` and the sweep with `nothing was swept`. They refuse rather than skip, unlike the `fugaro update` stages: each is the whole of what that job does. Each reads its environment's two names (Terraform sets `FUGARO_FIREBASE_PROJECT` and `FUGARO_GCP_PROJECT`, `history.tf`) and asks the mark whatever they are — not only where they differ, which is what the rollover used to do. The sweep's own read of `/fugaro/project` before the mark — a name-only check, and a project name is a string two installations can both carry — stays for now: folding it into the one predicate is **slice 2**.
 - **`fugaro update --firebase-project`** (`init_firebase.go`, which writes the mark and the project's name): the flag's own check (`checkFirebaseProject`). It is not a gate on a database that may be someone else's: this is the door whose subject is the adoption itself.
 - **`project policy publish`, `project policy delete`** and the editors of the same node — **`project repos add`**, **`project repos rm`** and **`project sync`** (`project_cmd.go`, `project_enroll.go`): the shared check, then `checkDBProject` — the name at `/fugaro/project` — and the deployed rules-generation marker (`requirePolicyRules`). (`user add` is not one of them, whatever earlier text here said: it edits this machine's config's two member lists and writes nothing into the database.)
@@ -104,6 +133,20 @@ The paths whose gate was `checkDBProject` rather than the mark are **PRE-EXISTIN
 
 **What is left of slice 2**, and each is marked above: the coordinator's **sweep**, its own name-only read of `/fugaro/project`, and the **credentials service**. They are not this slice's to change: the sweep reads a name before it opens anything, and the credentials service is another service. This audit said the coordinator held the name check on the way in, which was wrong — the two writers held none — and that part of the correction is in the code now, with the two writers' tests.
 
+## Migration: a checkout that still carries an old pin (D943)
+
+A repository wired by an earlier Fugaro carries a `fugaro@fugaro` pin in a committed
+`.claude/settings.json`. Under D949 nothing in the tree writes one any more, so that file is a leftover, and
+this is the only thing `fugaro update` does with it: the plugin stage prints the two entries it would take
+out (the `fugaro` marketplace and `enabledPlugins["fugaro@fugaro"]`) as a diff, says in one sentence what the
+repository loses, and removes them. It **never commits** — the change is the working tree's, and the user
+reviews it with `git diff`. `--yes` confirms it; a terminal asks. **In a coding agent's session the diff is printed and nothing is written**, `--yes` included, and the stage says the exact line to run in the user's own
+terminal; `fugaro` never unsets the marker that says the session is one, and no flag, environment variable or
+"non-interactive" mode gets around the refusal. A pin that is not removable — a file that is not valid JSON, a
+fork's marketplace, a ref that is not a release tag — is left exactly as it is, with the existing refusal
+text, and the run continues to the next stage. Nothing is removed twice: the offer fires while the entries are
+there and stops when they are gone.
+
 ## Safety
 
 - **The `claude` calls.** Every argv is one of eight fixed lists, or the marketplace add, whose one variable word is the marketplace source: `dimipaun/fugaro#vX.Y.Z`, this release's own repository at its own tag, whatever the checkout holds (D949, U2). The repository is checked against a GitHub `owner/name` pattern that cannot start with `-`, and the ref against the strict release tag this binary's own version makes, so neither a branch name nor a word of the user's choosing reaches the command line.
@@ -111,16 +154,16 @@ The paths whose gate was `checkDBProject` rather than the mark are **PRE-EXISTIN
   An allowlist (`claudeplugin.Allowed`) rejects anything else before anything is executed. There is no shell, and stdin is the null device, so a prompt reads end of file and refuses. The command never passes `-y`, `--accept-command` or `--dangerously-skip-permissions`. Each call has a timeout: 30 s for a list, 3 min for a change.
 - **Finding `claude`.** It is found with `exec.LookPath`, and a relative result (for example from a `.` entry in `PATH`) is refused. The resolved absolute path is printed before the first change.
 - **Output.** At most 40 lines of `claude`'s output are printed, each one passed through `pluginwire.Printable`.
-- **The marketplace already on the machine.** A `fugaro` marketplace on this machine that names another repository (or is not a GitHub one) is never replaced. The checkout stops and the output names `/plugin marketplace remove fugaro`. A marketplace from **our** repository at another ref is the one thing the step does declare again, and the clear that takes is the one the bullet below puts back.
+- **The marketplace already on the machine.** A `fugaro` marketplace on this machine that names another repository (or is not a GitHub one) is never replaced: it is left as it is, printed, and `left for you`, and the run goes on (F25, U8). A marketplace from **our** repository at another ref is the one thing the step does declare again, and the clear that takes is the one the bullet below puts back.
 - **What a stopped step leaves behind.** The declaration the add is refused by is cleared first, and claude's removal takes every install of the marketplace with it, so nothing after that clear may cost the user their marketplace or their plugin: before the step reports a failure — the add's, any later call's, or the check after the calls' — it declares the old source again and installs the plugin from it (the pair, in that order — an install with no marketplace to come from would fail), and the install is at user scope, which is where fugaro installs the plugin and never a scope the checkout commits. Both are best effort, and the output says so when one fails: once this release's tag is declared, claude refuses the name at the source it had, and the install from the declaration that stands is what puts the plugin back. Only claude's own refusal of the declaration — its message says the name is declared for it from a different source, and the clear fugaro ran did not change that — is reported and carried on from. Every other failure of the add (a clone that failed, a network that is down) fails the step.
-- **Writes by Claude Code itself.** If a `claude` call changes `.claude/settings.json`, the step says so and asks the user to review it with `git diff`.
-- **Credentials.** `--check` and `--local` need no credentials and make no cloud call. The tests pin this with a credentials path that does not exist, and with a build-record reader that fails the test if anything calls it.
+- **Writes by Claude Code itself.** Every `claude` call runs at user scope in a fresh empty directory, so no call can touch a checkout's `.claude/settings.json`. The checkout's own file is written by the migration alone, and only at a terminal, under D943.
+- **Credentials.** `--check` needs no credentials and makes no cloud call. The tests pin this with a credentials path that does not exist, and with a build-record reader that fails the test if anything calls it.
 
 ## Non-goals
 
 - Upgrading the binary.
 - `--json` (refresh has none either).
-- Teammates' cloud steps.
+- Teammates' cloud stages.
 - Changing `update-skills` or the `fugaro image refresh` hints that name a single workflow.
 - A `fugaro.yaml` migration.
 
@@ -130,18 +173,21 @@ The plan lists U1 to U18. The ones that shape the behaviour:
 - install at user scope, and update every install at its own scope (U2);
 - the marketplace is declared at this release's tag, so what it serves is this binary's plugin, and a plugin newer than the binary after the update is a note, not a failure (U3);
 - `--check` reads local files only (U6);
-- in an agent's session the command exits 0 (U7);
+- in an agent's session the local stages run and the run exits 1 with the checkout left for the user (U7, as U1 and U8 reshaped it);
 - a terminal is refused up front without `--yes` (U8);
 - a teammate's checkout skips the cloud step (U9);
 - the pin is never lowered (U10);
-- the skill uses no `allowed-tools` frontmatter, because the lint allows only `name` and `description`, and `allowed-tools` pre-approves tools rather than restricting them; the lint gains one exception, `--yes` on `fugaro upgrade` inside a `user-runs` block (U14);
-- every hint names `fugaro upgrade --local` (U15).
+- the skill uses no `allowed-tools` frontmatter, because the lint allows only `name` and `description`, and `allowed-tools` pre-approves tools rather than restricting them; the lint gains one exception, `--yes` on `fugaro update` inside a `user-runs` block (U14);
+- every hint names `fugaro update` (U15).
 
 ## Delivery
 
-Release **0.5.2**, with `refresh --yes`. One PR holds Tasks 1 to 11 of the plan. Task 12 writes `docs/releases/v0.5.2.md` and cuts the release through `/new-release 0.5.2`. The new skill ships automatically: `scripts/release.sh` sets every skill header and `plugin.json` to 0.5.2 (`scripts/bump-plugin-version.sh`), and the plugin lint covers `plugin/skills/upgrade/` because it walks every skill.
-
-The first upgrade *into* 0.5.2 needs the CLI command, because the 0.5.1 plugin has no `upgrade` skill. From then on, `/fugaro:upgrade` covers the local half.
+The retired command's own delivery was release **0.5.2**, with `refresh --yes`, and one PR holding Tasks 1 to
+11 of the plan. **The deletion is U4 of
+[plugin-user-scope/implementation-plan.md](../plugin-user-scope/implementation-plan.md)**, which folds the
+four steps into `fugaro update`'s own files (`update_check.go` keeps the step vocabulary and the read-only
+mode, D948) and leaves `fugaro upgrade` as cobra's unknown command; the skill `/fugaro:update` and its
+`plugin/` coverage are U6's, and U7 is this document and the rest of the living text that named the old name.
 
 What has not been verified live:
 - the change calls of `claude plugin` end to end (only `marketplace list --json` was run inside a session, on 2026-10-08; on 2026-11-09 the 2.1.283 binary was run against a stub `git` and a fresh config directory, which is where the refusal of an add of a name declared at another source, the clear that answers it, and the `ref` the add writes into the settings and the marketplace registry were read from — a clone from the real repository has still not run);

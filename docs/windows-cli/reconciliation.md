@@ -725,7 +725,7 @@ sees.** Class: **Gap**.
 | `docker` | `image build --local`, `image selftest` | `internal/preflight/preflight.go`'s `Docker`, only when a local build is asked for |
 | `gcloud` | `gcloud auth application-default login`, the Fix commands the CLI prints | **not detected as a binary**; only ADC's *file* is read (F28) |
 | `cosign` | verifying a base pin's signature | `internal/cli/doctor.go`'s cosign check and `internal/basepin/cosign.go`'s `CosignPath` |
-| `claude` | the plugin's skills, `fugaro upgrade --plugin` | `internal/cli/upgrade_plugin.go`'s `claudeLookPath` |
+| `claude` | the plugin's skills, `fugaro update`'s plugin step and `fugaro update-skills` | `internal/cli/init_plugin_stage.go`'s `claudeLookPath` |
 
 Cost: `fugaro doctor` is the command that exists to answer "is this machine
 ready", and on Windows it would answer for **two** of the six tools —

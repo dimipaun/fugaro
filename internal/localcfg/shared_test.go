@@ -509,6 +509,80 @@ func TestMergeSharedNeverCarriesClaudeAccounts(t *testing.T) {
 	}
 }
 
+// TestMergeSharedNeverCarriesARepositorysAccounts: the repository-level half of
+// the same allow-list — a repos entry's own claude_accounts is what admits a
+// repository whose runs are not on a profile job (docs/project-claude-accounts.md
+// §3) — is never published either. It travels in the same map as the entry's
+// provider and workflows, so the block that clears the top-level key has to
+// clear this one field by field: a shared file that carried it would let whoever
+// writes the runs bucket add a repository to an account's admission, and the
+// machine that published the policy next would derive the admission they wrote.
+// The entry itself stays, which is the control: everything else about it is
+// published, and a copy that dropped the whole entry would be a different bug
+// wearing this one's test.
+func TestMergeSharedNeverCarriesARepositorysAccounts(t *testing.T) {
+	const entry = "repos:\n  acme/web: { provider: github, workflows: [web], claude_accounts: [acme-personal] }\n"
+	local := sharedBase(t, entry)
+	published := sharedBase(t, strings.ReplaceAll(entry, "acme-personal", "other-account"))
+	if len(local.Repos["acme/web"].ClaudeAccounts) != 1 || len(published.Repos["acme/web"].ClaudeAccounts) != 1 {
+		t.Fatalf("fixtures: %+v %+v", local.Repos, published.Repos)
+	}
+	for name, got := range map[string]*Config{"shared": local.Shared(), "merged": MergeShared(published, local), "nil published": MergeShared(nil, local)} {
+		repo := got.Repos["acme/web"]
+		if len(repo.ClaudeAccounts) != 0 {
+			t.Errorf("%s: repos.acme/web.claude_accounts = %v", name, repo.ClaudeAccounts)
+		}
+		if repo.Provider != "github" || len(repo.Workflows) != 1 {
+			t.Errorf("%s: repos.acme/web = %+v, want the entry's own fields kept", name, repo)
+		}
+		out, _ := got.Marshal()
+		if strings.Contains(string(out), "claude_accounts") {
+			t.Errorf("%s: output carries a claude_accounts key:\n%s", name, out)
+		}
+	}
+	if len(local.Repos["acme/web"].ClaudeAccounts) != 1 {
+		t.Error("the merge cleared the local entry's own list")
+	}
+}
+
+// TestParseRefusesARepositorysAccountsWithoutAProvider: the account an entry
+// names is published provider-qualified, and a `repos` key states owner/name
+// and no provider of its own — the entry's provider field is the only place a
+// per-repository job's provider is stated — so an entry that names accounts and
+// none is a name the publish could not canonicalise. It is refused where the
+// file is read rather than at publish, which is the door the owner's own
+// command edits.
+func TestParseRefusesARepositorysAccountsWithoutAProvider(t *testing.T) {
+	_, err := Parse([]byte(`version: 1
+name: aurora
+gcp_project: my-project
+region: us-central1
+runs_bucket: my-runs
+repos:
+  acme/web: { workflows: [web], claude_accounts: [acme-personal] }
+`))
+	if err == nil {
+		t.Fatal("a repos entry that names accounts and no provider parsed")
+	}
+	for _, want := range []string{"repos.acme/web.claude_accounts", "provider"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	// The entry with the provider is the control: the rule is the missing
+	// provider and not the key.
+	if _, err := Parse([]byte(`version: 1
+name: aurora
+gcp_project: my-project
+region: us-central1
+runs_bucket: my-runs
+repos:
+  acme/web: { provider: github, workflows: [web], claude_accounts: [acme-personal] }
+`)); err != nil {
+		t.Fatalf("a repos entry that names its provider was refused: %v", err)
+	}
+}
+
 // TestMergeSharedNeverCarriesRouting: the routing switch is the provider
 // decision from the switch's side (which Claude IDs may leave for a third
 // party), and it resolves through providers, which are local-only. Neither the

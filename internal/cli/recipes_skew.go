@@ -3341,6 +3341,131 @@ func checkCloneTaskGradeImage(lc *localcfg.Config, spec *task.Spec, warn io.Writ
 	return checkCloneImageSince(lc, spec, taskGradeSince, subject, knows, "", warn)
 }
 
+// visionSince is the first fugaro release whose configuration reader knows
+// agent.models.vision — the slot a stage runs instead when its own model cannot
+// read an image (V1, D2003) — and whose policy reader knows
+// model_prices.*.image_tokens, the per-image token ceiling that is the whole of
+// what makes a model able to take one (V2, D2001). The two members are one
+// release because the slot is unusable without the ceiling: a model whose price
+// row carries no image rate is refused the call (internal/gateway's
+// imagePriceFix), so the release that lets an operator write the slot is the
+// release that lets them price it.
+//
+// Both files are decoded strictly — fugaro.yaml and the project layer with
+// KnownFields, the published policy node member by member — so a runner built
+// from an older image refuses the key at bootstrap, before the agent starts and
+// after the launch was paid for, and refuses a node carrying the price member
+// whole. It is the key that is refused whatever it says: a file writing
+// agent.models.vision with nothing under it, and a vision: "" that asks for the
+// default, are the same line to that decoder as a model ID, which is why the
+// gate reads the text (Config.RepoVisionSet, ProjectLayer.SetsVision) and not
+// the resolved Agent.VisionModel.
+//
+// Like noneModelSince, it carries no shipped flag: refusing every image that
+// predates the release is exactly the direction this gate wants, and an image
+// with no release tag (a dev build, a hand-pushed one) only warns, the same as
+// for every other *Since constant here. It names 0.23.0 ("Tapir"), the release
+// the two members shipped in: tag v0.23.0 is the tag that contains V1 (#2305)
+// and V2 (#2336), and it is that release's config reader and policy reader that
+// know the key and the member, so this is a cut number and not one the work was
+// slotted for. A later number fails in the other direction — it refuses a
+// 0.23.0 or a 0.24.0 image whose readers do know the key, and the publish half
+// would refuse a node for an installation whose own base image can already read
+// it, so fugaro update would move that image to a release that still refuses the
+// node: a refusal with no way out.
+const visionSince = "0.23.0"
+
+// visionLaunchSources reports, for the launch's visionSince gate, whether the
+// configuration the run will read writes the key: the repository's fugaro.yaml
+// (fromRepo, RepoVisionSet) or the project layer it resolves over (fromLayer,
+// SetsVision), the two homes config.Scopes gives the key, read the way
+// stopFractionSources reads agent.review_stop_fraction's. Both are the key
+// being written and not the model it names: an older runner's decoder refuses
+// the key whatever it says — a null leaf, a blank string and a model ID are one
+// line to it.
+//
+// The layer's half is SetsVision and not SetsDefault, which answers false for a
+// key written as null: an older runner's KnownFields decoder refuses the key
+// whatever it holds, so a layer writing `models: { vision: }` is a layer every
+// repository of the project dies at bootstrap on, and a gate reading the
+// resolved value would launch those runs.
+func visionLaunchSources(cfg *config.Config) (fromRepo, fromLayer bool) {
+	if cfg == nil {
+		return false, false
+	}
+	return cfg.RepoVisionSet, cfg.Layer.SetsVision()
+}
+
+// visionSubject names, for the gates' messages, which file wrote the key, and
+// the way out that file's author has: the slot is a choice of which model a
+// stage runs, not a behaviour the run depends on — a runner that does not read
+// it runs every stage on the model it already had, which is what every release
+// before this one does — so removing the key is a way out with no image to
+// move, at the cost of the fallback the operator asked for. The distinction
+// between the two files is stopFractionSubject's: the layer's key reaches every
+// repository of the project and only its operator can remove it.
+func visionSubject(repo string, fromRepo, fromLayer bool) (subject, alt string) {
+	const (
+		repoAlt  = "remove agent.models.vision from fugaro.yaml: a runner that does not read it runs a stage whose own model cannot read an image on that model, which is what every release before this one does"
+		layerAlt = "remove defaults.agent.models.vision from the project layer and publish it again: until then every repository of the project whose job image predates it fails the same way, and a runner that does not read the key runs a stage whose own model cannot read an image on that model"
+	)
+	switch {
+	case fromRepo && fromLayer:
+		return "fugaro.yaml's agent.models.vision and the project layer's defaults.agent.models.vision of " + repo,
+			"remove the key from fugaro.yaml and " + layerAlt
+	case fromLayer:
+		return "the project layer's defaults.agent.models.vision (read for " + repo + ")", layerAlt
+	}
+	return "fugaro.yaml's agent.models.vision of " + repo, repoAlt
+}
+
+// visionKnows names, for the image gates' messages, the key the job image's
+// runner has to know: the message reads "needs a job image whose runner knows
+// <this>", so it has to name whichever of the two files wrote it.
+func visionKnows(fromRepo, fromLayer bool) string {
+	switch {
+	case fromRepo && fromLayer:
+		return "the vision slot (agent.models.vision and the project layer's defaults.agent.models.vision)"
+	case fromLayer:
+		return "the vision slot (the project layer's defaults.agent.models.vision)"
+	}
+	return "the vision slot (agent.models.vision)"
+}
+
+// checkVisionImage and checkCloneVisionImage are the launch's own visionSince
+// gate, for a workflow whose job image is a derived one and for a checkout:
+// clone workflow respectively: the pair every other per-workflow image gate has
+// (checkImageSince and checkCloneImageSince), judged on the key the
+// configuration the run will read writes (visionLaunchSources). The refusal
+// names the fix that kind of image has — fugaro update in its checkout for a
+// built image, fugaro update --base base for the installation's own — and the
+// way out the file's author has, from visionSubject.
+//
+// It is a launch gate and not an update --repo one: the slot is read by the
+// runner of the job the run launches, so the image that has to know the key is
+// the workflow's own, and the run is refused where that image is known. The
+// node's price member, which the same release carries, is the other half of the
+// guard (policyImageTokensRefusal, internal/cli's publish door).
+func checkVisionImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, cfg *config.Config, warn io.Writer) error {
+	fromRepo, fromLayer := visionLaunchSources(cfg)
+	if !fromRepo && !fromLayer {
+		return nil
+	}
+	subject, alt := visionSubject(spec.Repo, fromRepo, fromLayer)
+	return checkImageSince(ctx, env, slug, spec, kind, visionSince, subject, visionKnows(fromRepo, fromLayer), "; or "+alt, warn)
+}
+
+// checkCloneVisionImage is checkVisionImage for a checkout: clone workflow: see
+// checkCloneImageSince.
+func checkCloneVisionImage(lc *localcfg.Config, spec *task.Spec, cfg *config.Config, warn io.Writer) error {
+	fromRepo, fromLayer := visionLaunchSources(cfg)
+	if !fromRepo && !fromLayer {
+		return nil
+	}
+	subject, alt := visionSubject(spec.Repo, fromRepo, fromLayer)
+	return checkCloneImageSince(lc, spec, visionSince, subject, visionKnows(fromRepo, fromLayer), "; or "+alt, warn)
+}
+
 // modelGradesImageWarnings warns, once, that a configuration which writes the
 // key — the repository's file (RepoModelGradesSet) or the project layer it
 // resolved over (SetsModelGrades) — needs every job image on modelGradesSince.

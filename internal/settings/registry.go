@@ -503,6 +503,9 @@ const (
 	// of the stage's own would take the row over.
 	docTriage    = "docs/post-review-triage/implementation-plan.md"
 	docCloneURLs = "docs/project-claude-accounts.md"
+	// docAccounts is the account document, which states the repository-level
+	// source beside the block and the profiles' lists it unions with.
+	docAccounts = "docs/project-claude-accounts.md"
 )
 
 // layerRow is a row of the project layer's file. The layer is its only store,
@@ -1149,6 +1152,18 @@ var localRows = []Row{
 	// are NOT in that allowlist: they are not a person's settings at all — a
 	// run records what it read and applied (this file's row comments) — so the
 	// generic path's refusal is the right answer for them.
+	// The repository's own account list, beside the keys of the entry it sits
+	// in but not of their kind: it is the half of an account's admission that
+	// keeps a repository whose runs are not on a profile job served
+	// (docs/project-claude-accounts.md §3), so it is local-only, and it is
+	// stripped from the published copy of this map besides
+	// (localcfg.withoutRepoLocalKeys, internal/cli/sharedcfg.go's refusal on
+	// the key). The owner is the accounts family, whose `accounts rm` is what
+	// edits the list: it clears a name with the declaration it names, and this
+	// release gives no command a write that ADDS one — the list is written by
+	// hand, and `repos.*.claude_accounts` is not a `settings set` path, which
+	// is what the read's owner column may say rather than a bare command.
+	locLocal("repos.*.claude_accounts", "nobody: the repository's runs are served by the accounts the profiles of its jobs name", "accounts", docAccounts),
 	loc("repos.*.provider", "none", "settings set", docSetup),
 	loc("repos.*.base_branch", "the project's base_branch", "settings set", docSetup),
 	loc("repos.*.workflows", "every workflow the repository defines", "settings set", docSetup),

@@ -5522,9 +5522,25 @@ func (r *initRun) writeRepoConfig(ctx context.Context, lc *localcfg.Config, spec
 	// process, a bundle read that failed — must not turn another machine's
 	// record into a false one from here. recordCredentialsServiceReady leaves
 	// exactly those runs' entries alone, and this write owes the same.
+	//
+	// The repository's own account list is carried over for the same reason,
+	// and it is the one other field of the entry this write is not the author
+	// of: repos.<owner/name>.claude_accounts is the operator's statement about
+	// this repository's runs (localcfg.Repo.ClaudeAccounts), written by no
+	// command of this binary and read by no spec — infra.RepoSpec is built
+	// from the checkout's fugaro.yaml and the installation's outputs, and the
+	// entry below is rebuilt from the spec — so an update that did not carry
+	// it would drop it, erasing in silence the only admission a
+	// per-repository job can state (a Bitbucket repository, or any repository
+	// no workflow sends to a shared job, has no profile to name one in). The
+	// runs would then be answered 503 state_unavailable by the credentials
+	// service while the node this publish writes still carries the admission,
+	// which is the state this key exists to end.
 	var ready *bool
+	var accounts []string
 	if entry, ok := lc.Repos[key]; ok {
 		ready = entry.CredentialsServiceReady
+		accounts = entry.ClaudeAccounts
 	}
 	next.Repos[key] = localcfg.Repo{
 		Provider:                spec.Provider,
@@ -5533,6 +5549,7 @@ func (r *initRun) writeRepoConfig(ctx context.Context, lc *localcfg.Config, spec
 		GitHubAppID:             spec.GitHubAppID,
 		Vertex:                  spec.UsesVertex(),
 		CredentialsServiceReady: ready,
+		ClaudeAccounts:          accounts,
 	}
 	if spec.UsesVertex() && !lc.UsesVertex() {
 		// The installation enables the API from the recorded repositories,

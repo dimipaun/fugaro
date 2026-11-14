@@ -38,6 +38,7 @@ approved and unbuilt. [Reconciliation.md](reconciliation.md) works through the d
 | [spec.md](spec.md) | **The owner's spec, verbatim** — the text as it was written, alone, with nothing of ours in it. It is not edited, not annotated and not reconciled in place; the document that disagrees with it says so. |
 | [reconciliation.md](reconciliation.md) | What the repository has, what the spec asks for, and where they differ: findings **F1–F29** classified *Wrong / Exists / Gap / Rule / Open*, the provider path written out in full, the decisions **D221–D236** (recommendation first, alternative and cost after — D235, which scopes v1 rather than choosing between two things, states none — each carrying the owner's answer of 2026-10-22 under it), what could not be verified, a glossary — and an "Open for the owner" section of things that are **not** decisions. **Where it disagrees with spec.md, it wins.** |
 | [implementation-plan.md](implementation-plan.md) | The parts **P0–P6**: each independently mergeable, each with its scope, files, **red step**, verification, dependencies, reviewer tier and commit. It carries what an **independent opus review** must cover for each security-sensitive part, and the owner-run live checks **proposed by name and not numbered**. |
+| [provider-sign-in.md](provider-sign-in.md) | **The path not taken, written out and refused (P6).** D221's alternative discharged as documentation and **not built**: the configuration delta per project, the narrower refusal `refusePublicSignUp` would have to become, the attack surface, the per-provider verified-email question, the loss of immediate revocation, and the checks that would have to pass before a line of it is written. It is the folder's one document that describes a path the tree does not take, and it says of itself what it is: **refused, and not a plan, a design or an approval**. Its purpose is the one [../pending-workflows/](../pending-workflows/) has — the next person who wants this should read a document, not re-derive a decision. |
 | [README.md](README.md) | This index. |
 
 ## Typos fixed in spec.md
@@ -84,24 +85,39 @@ of its own; the folders with pins —
 `docs_mobile_checks_review_test.go`, `docs_mobile_push_test.go` and `docs_mobile_mailbox_plan_test.go`,
 beside four sibling pins that quote it), the coordinator, the voice-session work — are held by
 `internal/cli`'s `docs_*_test.go` family, which is where this folder's own pin belongs. What it
-holds is the spec verbatim against the owner's text, the four documents, the decisions
+holds is the spec verbatim against the owner's text, the five documents, the decisions
 **D221–D236** contiguous and recommendation-first and each carrying the owner's answer of
 2026-10-22, the parts **P0–P6** in order, the cited paths resolving on disk under a rule that says
 what counts as one (a backticked token whose first segment is a directory of this repository — so
 **Realtime Database node paths** like `config/admin/devices` and the **IAM role**
 `roles/firebasedatabase.admin` are not mistaken for files), and a scan that no line of these
 documents carries a credential-shaped literal — because a folder about Firebase configuration is
-exactly the folder where somebody eventually pastes a real key. **The guard states what it does not
-hold**, as the neighbouring ones do: a symbol named beside a citation without the possessive form,
-and any claim about the folders this one reconciles, which their own pins hold. It also carries the
-**excuse list** — the paths these documents cite that are not in the tree yet: `docs/mobile-auth/provider-sign-in.md` (P6), and the four the mobile Phase 6 tasks own
-(`internal/cli/pair.go` and `internal/budget/token/device.go` — Task **P6.6**; `mobile/src/pairing/`
-and `mobile/src/overview/` — Task **P6.8**) — each excused **only while it does not exist**, with
+exactly the folder where somebody eventually pastes a real key. **P6's own document is held to two
+things the others are not**, because it is the one document here that describes a path the tree does
+not take: the code it names is paired with the file each name lives in — the pairings checked
+against their files, and the names the document must keep checked against the document, the two
+lists read in the two directions they can be and **not** required to be each other's image — and the
+document must say of itself what it is: refused, and **not a plan, a design or an approval** — while
+carrying **none** of this folder's ruling vocabulary ("the owner has decided", "as recommended"),
+because the plan's own red step for it is that *"this document describes an alternative and must not
+read as a ruling"*. **The guard states what it does not hold**, as the neighbouring ones do: a
+symbol named beside a citation without the possessive form, and any claim about the folders this one
+reconciles, which their own pins hold — with the two exceptions P6's census names on purpose, one
+sentence of [../workspaces/spec.md](../workspaces/spec.md) that §2.5 of the provider document rests
+on and three symbols of `scripts/live-checks/check361.sh`, which is that sentence's live reading:
+those two this guard **does** hold, so an edit there can fail it. (The reconciliation and the plan are held to their paths and
+their numbering instead of to a symbol census.) It also carries the **excuse list** — the paths these documents cite that
+are not in the tree yet, each excused **only while it does not exist**, with
 the guard failing on an entry that has become stale, so the list cleans itself as the work lands.
 **`internal/cli/docs_mobile_auth_test.go` was the third path this work creates and it left that
 list in the change that landed it**, which is the same rule read the other way: P0's own pull
 request was the one that owed its deletion. (Amended 2026-10-29: `internal/mobileauth/`, P1's
-path, left the list the same way when P1 landed in #918.)
+path, left the list the same way when P1 landed in #918.) **The list is empty now.** Its entries
+left one at a time, each in the pull request that landed the path it excused — the mobile Phase 6
+tasks' among them — and **P6's own `docs/mobile-auth/provider-sign-in.md` was the last, leaving it
+in the change that wrote this document**; what the list is kept for is the direction that still
+matters, an implementer who finds a path these documents cite and the tree does not have adding it
+there visibly rather than loosening the path rule.
 
 ## Related
 

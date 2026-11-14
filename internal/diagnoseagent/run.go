@@ -510,8 +510,17 @@ func childSettingsJSON(parent []string) (string, error) {
 // to need it. The proxy and CA variables are here because a machine behind one
 // cannot reach a provider without them; a proxy URL may carry the person's own
 // proxy login, which is theirs and is what the child must present.
+//
+// CLAUDE_CONFIG_DIR is the client's own store, and it is here because a child
+// running on the machine's own login (LocalHandle) has to read that login where
+// this machine keeps it: the store's directory is what the variable decides,
+// and a child without it looks in the default under the home directory and
+// finds no login at all — a diagnosis asked for precisely because the person is
+// logged in here, ending offline instead. It names a directory and carries no
+// value of its own, and the deny payload already names whatever store it points
+// at (childStoresByVar), so the model's own reads are no wider for it.
 var childEnvAllowList = []string{
-	"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TERM", "TZ",
+	"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TERM", "TZ", "CLAUDE_CONFIG_DIR",
 	"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
 	"NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO",
 }
@@ -548,7 +557,9 @@ type Request struct {
 	// Handle is the credential the child is handed, and the only one it has
 	// (F7, T-DG5). A zero Handle is refused: it is a caller that resolved no
 	// credential, and a child started without one would reach its provider on
-	// whatever else the machine holds.
+	// whatever else the machine holds. LocalHandle is the one handle that hands
+	// the child no value: it runs on the login the machine's claude already
+	// holds, which the child reads from the home directory it inherits.
 	Handle Handle
 	// Prompt is the whole prompt, from Prompt(e). It goes to the child on
 	// stdin, and everything in it that is Fugaro's own text is Fugaro's: the
@@ -798,7 +809,7 @@ func Run(ctx context.Context, req Request) (Diagnosis, error) {
 // confinement or less of a credential than the command promises.
 func (r Request) validate() error {
 	switch {
-	case r.Handle.Secret() == "":
+	case !r.Handle.carries():
 		return fmt.Errorf("a diagnosis is run on one credential and this request carries none: the Handle is the only thing that says which account the child reaches its model on, and a child started without one would fall back on whatever else this machine's environment holds")
 	case r.Prompt == "":
 		return fmt.Errorf("a diagnosis needs the prompt to give the child, and this request carries none")

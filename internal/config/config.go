@@ -185,6 +185,14 @@ type Config struct {
 	// whatever it says (internal/cli). Like the fields above it is never part
 	// of the file or of SHA256.
 	RepoModelGradesSet bool `yaml:"-" json:"-"`
+	// RepoVisionSet is whether the repository's own file wrote the
+	// agent.models.vision key at all, at any value: the question RepoRigorSet
+	// answers for rigor:, and Agent.VisionModel cannot answer it — the key
+	// written blank (`vision: ""`, which asks for no slot) decodes to the same
+	// empty string as the key being absent, and a runner older than
+	// visionSince refuses the key itself, whatever it says (internal/cli).
+	// Like the fields above it is never part of the file or of SHA256.
+	RepoVisionSet bool `yaml:"-" json:"-"`
 }
 
 // Planning is fugaro.yaml's planning: block and the project layer's

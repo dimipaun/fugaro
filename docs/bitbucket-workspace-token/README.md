@@ -11,6 +11,15 @@ matter**: T1.1's remainder and T1.3 both merged afterwards, in `3bcbd1dd` (#1880
 task against the secrets-brokering proxy chain, and [status.md](../status.md) carries the current
 table.
 
+**Amended 2026-11-13 (the token-types plan, T15): D461 is extended to any mix of the three types, several held at once.**
+[docs/bitbucket-token-types](../bitbucket-token-types/README.md) rules — its D2350 answered 2026-11-13 as recommended —
+that the credentials bundle holds a family of Bitbucket tokens, one key per token spelled `bitbucket-token--<name>`
+beside the legacy `bitbucket-token`, and that the proxy serves each request with the narrowest token covering it
+(D2355). D461's "whichever is narrowest" is therefore not reversed but generalised: an operator may hold a repository, a
+project and a workspace access token together, and the pick is enforced per request rather than once for the
+installation. What does not move: one Bitbucket workspace per project (D2314, that plan's A5), the allow-list as the
+operator's authorization (D2354), and D462's accepted reach.
+
 **Amended 2026-11-10: the plan is read against the secrets-brokering proxy chain, task by task.**
 [reconciliation-secrets-brokering.md](reconciliation-secrets-brokering.md) takes that reading on
 `origin/main` and answers the question [status.md](../status.md) leaves open — "the proxy chain

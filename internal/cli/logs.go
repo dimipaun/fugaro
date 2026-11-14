@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -71,8 +72,16 @@ func runLogs(cmd *cobra.Command, o *logsOptions, ref string) error {
 		return err
 	}
 	defer env.Close()
-	_, l, _, err := locateLaunched(ctx, env, ref, resolveRunOpts(cmd, o.asJSON))
+	s, l, _, err := locateLaunched(ctx, env, ref, resolveRunOpts(cmd, o.asJSON))
 	if err != nil {
+		return err
+	}
+	// The role check (plan task RS6a) is after the run is located — the run's own
+	// task names the repository the roles are held in, and only the located run
+	// has it — and before a line of the run's output is printed: D1586's read
+	// half, which leaves a reader to the runs and logs of its own repositories.
+	// --url is refused with it: the console link is a read of the same run.
+	if err := requireRunAccess(ctx, env, accesslib.ActionViewRepo, s, "nothing was read"); err != nil {
 		return err
 	}
 	if o.url {

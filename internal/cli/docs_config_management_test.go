@@ -197,8 +197,15 @@ const (
 // converges the node and the job set on a repoint -- is a task later than the
 // block, and a row may not name a family command that does not take it (D1178);
 // the row and the reconcile paragraph move together when that command lands.
+//
+// The repository-level account list is the last mover, by one row and not the
+// allowlist's: repos.*.claude_accounts is what admits a repository whose runs
+// are not on a profile job (docs/project-claude-accounts.md §3), so it is
+// local-only and stripped from the shared copy of the map, and its owner is the
+// accounts family, whose `accounts rm` clears a name with the declaration it
+// names -- the generic path writes neither half.
 const (
-	cfmRegistryRows   = 442
+	cfmRegistryRows   = 443
 	cfmAllowlistNamed = 105
 )
 
