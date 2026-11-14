@@ -159,6 +159,9 @@ func (s layerSide) sourceWords() (status, note string) {
 func (r *settingsRead) readLayerSide(ctx context.Context) {
 	t := settingsNow()
 	s := layerSide{ran: true}
+	// The path cannot fail to resolve here: the read that selected this project
+	// already resolved a config directory and a project name, and localcfg
+	// validates the name it is given.
 	s.file, _ = localcfg.LayerFile(getenvOS, r.project)
 	pub, gen, unread, where := r.readPublishedLayer(ctx)
 	s.published, s.unread, s.where = pub, unread, where
@@ -176,10 +179,10 @@ func (r *settingsRead) readLayerSide(ctx context.Context) {
 			}
 		}
 	}
-	// A file that is there but did not parse states no value this read can
-	// print, so the rows read the published object instead — and the keys it
-	// sets are still not what a run gets, which is what the comparison above
-	// found.
+	// A file that is there and did not parse states no value this read can
+	// print, so the rows read the published object instead — and no key is
+	// claimed `unpublished` for it either: that word is decided between two
+	// parsed layers, and the parse's own sentence is what its owner needs.
 	s.values = layerDriftKeys(s.local, pub, s.unread == "" && pub == nil)
 	r.layerSide = s
 	r.layerMS = readMS(settingsNow().Sub(t))
@@ -195,8 +198,8 @@ func (r *settingsRead) readLayerSide(ctx context.Context) {
 // layer cache, which a read command may not. It also keys the bucket by the
 // repository's gcp_project and refuses a bucket_url that is not the default
 // name, while this read is the installation's own and asks its own bucket —
-// the one its publish writes. And projectpolicy/projectRecipes' readers are
-// other documents' readers, not this object's.
+// the one its publish writes. And the policy node's and the project recipes'
+// readers read other documents, not this object.
 func (r *settingsRead) readPublishedLayer(ctx context.Context) (l *config.ProjectLayer, gen int64, unread, where string) {
 	url := r.local.BucketURL()
 	where = url + "/" + config.LayerKey
