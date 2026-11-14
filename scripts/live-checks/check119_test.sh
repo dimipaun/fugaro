@@ -102,10 +102,10 @@ test_a_text_file_is_refused() {
 }
 
 test_a_dos_stub_is_refused() {
-  { printf 'MZ'; zeros 254; } >"$work/stub.exe"
-  run119 --installer "$work/stub.exe"
+  { printf 'MZ'; zeros 254; } >"$work/dos-only.bin"
+  run119 --installer "$work/dos-only.bin"
   expect_status "$status" 2 "a DOS stub with no PE header is not the pack's artifact"
-  expect_contains "$err" "PE" "the refusal names the missing signature"
+  expect_contains "$err" "no PE signature at byte" "the refusal names the missing signature"
 }
 
 test_a_truncated_download_is_refused() {
@@ -117,10 +117,10 @@ test_a_truncated_download_is_refused() {
     zeros 58
     printf '\200\000\000\000'
     zeros 10
-  } >"$work/truncated.exe"
-  run119 --installer "$work/truncated.exe"
+  } >"$work/short-download.bin"
+  run119 --installer "$work/short-download.bin"
   expect_status "$status" 2 "a file that stops before its own PE header is not an installer"
-  expect_contains "$err" "truncated" "the refusal says the download is short"
+  expect_contains "$err" "there is no header to read" "the refusal says the download stopped before the header it names"
 }
 
 test_a_32_bit_image_is_refused() {
@@ -132,10 +132,19 @@ test_a_32_bit_image_is_refused() {
 }
 
 test_an_empty_upload_is_refused() {
-  : >"$work/empty.exe"
-  run119 --installer "$work/empty.exe"
+  : >"$work/zero-length.bin"
+  run119 --installer "$work/zero-length.bin"
   expect_status "$status" 2 "an empty artifact is an upload that carried nothing"
-  expect_contains "$err" "empty" "the refusal says the file is empty"
+  expect_contains "$err" "carries no bytes" "the refusal says the file is empty"
+}
+
+test_a_file_too_short_to_hold_a_dos_header_is_refused() {
+  # Long enough to carry the MZ magic and nothing else: the size is the only
+  # thing that can say this is not an executable.
+  { printf 'MZ'; zeros 8; } >"$work/tiny.bin"
+  run119 --installer "$work/tiny.bin"
+  expect_status "$status" 2 "a file smaller than a DOS header is not a Windows executable"
+  expect_contains "$err" "smaller than a DOS header" "the refusal says the file is too short to carry the header it would be read for"
 }
 
 test_a_missing_file_is_refused() {
@@ -200,6 +209,7 @@ t test_a_dos_stub_is_refused
 t test_a_truncated_download_is_refused
 t test_a_32_bit_image_is_refused
 t test_an_empty_upload_is_refused
+t test_a_file_too_short_to_hold_a_dos_header_is_refused
 t test_a_missing_file_is_refused
 t test_a_directory_is_refused
 t test_no_installer_is_refused

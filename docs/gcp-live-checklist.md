@@ -565,9 +565,10 @@ ones above and is taken the same way: the highest **written** `## Check N` secti
 read at **`c4d04bd6`** — the commit this change is based on — was **113**; **119** is taken by the
 rigor-modes work, whose plan says so in its own words ("So the next free number is **119**, and
 this plan takes it", `docs/rigor-modes/implementation-plan.md` §3), and proposed besides by the
-console-windows work for its owner's manual checklist, which claims nothing by that work's own
-**D12(a)** (`docs/console-windows/implementation-plan.md` §4, "proposed, not claimed"), so 119 is
-not this work's whichever way that collision falls;
+console-windows work for its owner's manual checklist — which claimed nothing when this paragraph
+was written (`docs/console-windows/implementation-plan.md` §4, then headed "proposed, not claimed")
+and which **the owner claimed on 2026-11-14**, so 119 is the console-windows work's and not this
+work's whichever way that collision falls;
 **123** is claimed by the console dependency-graph work
 (`docs/console-dependency-graph/README.md`, "Numbers this work holds"); **124** is the Cloud
 Batch backend's, written above by #1022, which merged after this work's base; and **130** was free either way, so the section is **written below**. Its subject is the
@@ -9391,9 +9392,11 @@ is the machine those specs cannot reach.
    → **Run workflow** on `main` — and not from a release. The job runs at release time only (the
    owner's answer to that plan's D7: the tag, or a dispatch, and **never on a pull request**), so a
    dispatch is the only way to have an installer before a release, and the artifact is kept for
-   **90 days** so that it is still there for the release it was dispatched for. It is one `.exe` —
-   `Fugaro.Console-0.0.0-win-x64.exe`, the name the pack's own `artifactName` and `arch: ['x64']`
-   give it — and step 1's first act is to check it is that:
+   **90 days** so that it is still there for the release it was dispatched for. It is one `.exe`,
+   named `Fugaro.Console-<version>-win-x64.exe` — the pack's own `artifactName`
+   (`Fugaro.Console-${version}-win-${arch}.${ext}`) with `arch: ['x64']` and the `version` of
+   `console/package.json`, which the job packs from and which no step of it stamps over — and step
+   1's first act is to check it is that:
    `bash scripts/live-checks/check119.sh --installer <the downloaded .exe>`. It prints the file's
    name, size, SHA-256 and `installer-arch=x64`, and refuses anything that is not a 64-bit PE image.
 3. **One distribution with a Linux `fugaro` in it**, installed by
