@@ -14,8 +14,15 @@
 // **The seat field is the whole quantity, not an increment.** That is the wire's
 // shape (`SubscriptionSeats`), and it is what makes a request whose reply was
 // lost safe to send again: a customer who types the number they believe they are
-// buying cannot buy it twice by reloading. It is also why nothing here disables
-// the button while a request is out.
+// buying cannot buy it twice by reloading.
+//
+// **Only the newest seat request is believed.** A whole quantity being safe to
+// repeat does not make two of them safe to interleave: 5 and then 7, answered in
+// the other order, would leave the screen saying five while Paddle took seven,
+// and the field beside it -- a whole quantity again -- invites the click that
+// buys back down. So each request is numbered and a reply that is not the newest
+// is dropped, which is what the button being left enabled rests on: the second
+// click is a request of its own, not a race with the first.
 //
 // **Paddle's customer portal is asked for when it is wanted, and only followed
 // when it is https.** A portal session is minted per request and goes stale, so
@@ -39,7 +46,7 @@
 // else -- a dropped connection, a Paddle outage -- becomes one sentence this
 // screen owns rather than a transport error a reader cannot act on.
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { useParams } from 'react-router-dom'
 import { ApiError, createApiClient } from '../../api/client'
@@ -52,9 +59,13 @@ import { useSession } from '../../auth/session'
  * will add (`ee/keyservice/billing.go` and `api_billing.go`, per the plan) --
  * this screen and its test state the contract that task has to serve.
  *
- * A workspace id is encoded rather than pasted: an id carrying a slash would
- * otherwise widen the path, and the client refuses a path that leaves the
- * origin only after this has joined it.
+ * A workspace id is encoded rather than pasted, so an id carrying a slash
+ * cannot widen the path -- the client refuses a path that leaves the origin,
+ * but it joins this one first. Encoding is not the whole guard: `.` and `..`
+ * survive it unchanged, and a dot segment in the joined path is normalised away
+ * before the request goes out (`/api/workspaces/../subscription` is
+ * `/api/subscription`, another route, with this person's token on it), so those
+ * two never reach here (`workspaceIdIn`).
  */
 const ROUTES = {
   subscription: (workspaceId: string) => `/workspaces/${encodeURIComponent(workspaceId)}/subscription`,
@@ -110,8 +121,19 @@ function httpsUrl(url: string): string | null {
   }
 }
 
+/**
+ * The workspace the path names, or undefined for a path this screen will not
+ * ask the API about. `.` and `..` are not ids but dot segments: joined into a
+ * route they are normalised away before the request goes out, so a workspace of
+ * `..` would ask the API about a different route entirely, with this person's
+ * token on it. They are refused exactly as a missing workspace is.
+ */
+function workspaceIdIn(path: string | undefined): string | undefined {
+  return path === '.' || path === '..' ? undefined : path
+}
+
 export function BillingScreen() {
-  const workspaceId = useParams<{ workspaceId: string }>().workspaceId
+  const workspaceId = workspaceIdIn(useParams<{ workspaceId: string }>().workspaceId)
   const { state } = useSession()
   const person = state.status === 'signed-in' ? state.user.uid : ''
   // The workspace and the session are both part of which screen this is:
@@ -140,6 +162,7 @@ function WorkspaceBilling({ workspaceId }: { workspaceId: string | undefined }) 
   const [seats, setSeats] = useState('')
   const [portal, setPortal] = useState<string | null>(null)
   const [waiting, setWaiting] = useState(workspaceId !== undefined)
+  const latest = useRef(0)
 
   useEffect(() => {
     if (workspaceId === undefined || !signedIn) {
@@ -187,9 +210,13 @@ function WorkspaceBilling({ workspaceId }: { workspaceId: string | undefined }) 
     setFailure(null)
     setNotice(null)
     const body: SubscriptionSeats = { seats: quantity }
+    const mine = ++latest.current
     void api
       .request<Subscription>(ROUTES.seats(workspaceId), { method: 'POST', body })
       .then((answer: Subscription | undefined) => {
+        if (mine !== latest.current) {
+          return
+        }
         if (answer === undefined) {
           setFailure(NO_ANSWER)
           return
@@ -199,7 +226,9 @@ function WorkspaceBilling({ workspaceId }: { workspaceId: string | undefined }) 
         setNotice(`The subscription now has ${answer.seats} seats.`)
       })
       .catch((error: unknown) => {
-        setFailure(sentence(error))
+        if (mine === latest.current) {
+          setFailure(sentence(error))
+        }
       })
   }
 

@@ -277,6 +277,44 @@ describe('the billing screen', () => {
     expect(calls).toHaveLength(1)
   })
 
+  it('believes the newest seat request when the replies come back in the other order', async () => {
+    let answerFive: ((response: Response) => void) | null = null
+    const calls = stubFetch([
+      () => answer(200, SUBSCRIPTION),
+      () => new Promise<Response>((resolve) => {
+        answerFive = resolve
+      }),
+      () => answer(200, { ...SUBSCRIPTION, seats: 7 } satisfies Subscription),
+    ])
+    show()
+
+    const field = (await screen.findByLabelText(SEATS)) as HTMLInputElement
+    fireEvent.change(field, { target: { value: '5' } })
+    fireEvent.submit(field.closest('form')!)
+    fireEvent.change(field, { target: { value: '7' } })
+    fireEvent.submit(field.closest('form')!)
+
+    // Seven is what the person last asked for and what Paddle was told last, and
+    // it is answered first; five is answered afterwards, out of order.
+    await waitFor(() => {
+      expect(fact('Seats')).toBe('7')
+    })
+    act(() => {
+      answerFive?.(answer(200, { ...SUBSCRIPTION, seats: 5 }))
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    // The older answer applied last would leave the screen saying five while
+    // Paddle took seven, and the field beside it -- a whole quantity -- invites
+    // the click that buys back down.
+    expect(fact('Seats')).toBe('7')
+    expect(field.value).toBe('7')
+    expect(screen.getByRole('status').textContent).toBe('The subscription now has 7 seats.')
+    expect(calls).toHaveLength(3)
+  })
+
   it('asks the API for Paddle’s customer portal link when it is wanted', async () => {
     const calls = stubFetch([
       () => answer(200, SUBSCRIPTION),
@@ -529,5 +567,22 @@ describe('the billing screen', () => {
     expect(screen.getByRole('alert').textContent).toBe(
       'The portal opened billing without a workspace.',
     )
+  })
+
+  it.each(['.', '..'])('refuses a workspace of %s, rather than asking the API', async (segment) => {
+    const calls = stubFetch([() => answer(200, SUBSCRIPTION)])
+    show(`/billing/${segment}`, '/billing/:workspaceId')
+
+    // A dot segment is not an id: joined into the API's path it is normalised
+    // away before the request goes out -- `/api/workspaces/../subscription` is
+    // `/api/subscription` -- so a workspace of `..` would ask the API about
+    // something else entirely, with this person's token on the request.
+    expect(screen.getByRole('alert').textContent).toBe(
+      'The portal opened billing without a workspace.',
+    )
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(calls).toHaveLength(0)
   })
 })
