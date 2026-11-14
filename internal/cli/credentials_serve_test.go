@@ -796,6 +796,55 @@ func TestCredentialsServiceConfigRefusesAMalformedVariable(t *testing.T) {
 			set:   map[string]string{envReviewJobAccounts: `[{"profile":"standard","provider":"GitHub","account":"team-a"}]`},
 			names: []string{envReviewJobAccounts},
 		},
+		{
+			name:  "the shared job accounts are not JSON",
+			set:   map[string]string{envSharedJobAccounts: "standard github team-a"},
+			names: []string{envSharedJobAccounts},
+		},
+		{
+			name:  "the shared job accounts are an object",
+			set:   map[string]string{envSharedJobAccounts: `{"profile":"standard","provider":"github","account":"team-a","repos":["github/acme/webapp"]}`},
+			names: []string{envSharedJobAccounts},
+		},
+		{
+			// A shared row carries the repositories its profile is bound to, so
+			// a row written with a single repository under the per-repository
+			// job table's key is an owner expecting a binding this table does
+			// not make: refused rather than ignored (the review table's rule).
+			name:  "a shared row carries a field nothing reads",
+			set:   map[string]string{envSharedJobAccounts: `[{"profile":"standard","provider":"github","account":"team-a","repos":["github/acme/webapp"],"repo":"acme/webapp"}]`},
+			names: []string{envSharedJobAccounts},
+		},
+		{
+			name:  "a shared row has no profile",
+			set:   map[string]string{envSharedJobAccounts: `[{"provider":"github","account":"team-a","repos":["github/acme/webapp"]}]`},
+			names: []string{envSharedJobAccounts},
+		},
+		{
+			name:  "a shared row has no provider",
+			set:   map[string]string{envSharedJobAccounts: `[{"profile":"standard","account":"team-a","repos":["github/acme/webapp"]}]`},
+			names: []string{envSharedJobAccounts},
+		},
+		{
+			name:  "a shared row's provider is not a provider kind",
+			set:   map[string]string{envSharedJobAccounts: `[{"profile":"standard","provider":"GitHub","account":"team-a","repos":["github/acme/webapp"]}]`},
+			names: []string{envSharedJobAccounts},
+		},
+		{
+			// The member is REQUIRED and an empty array is not the same thing:
+			// an empty array is a profile bound to no repository, the deny-all
+			// statement, while a row that omits it is a document nobody could
+			// have written on purpose — read as deny-all it would be a job
+			// every call of which this service refuses, silently.
+			name:  "a shared row names no repositories at all",
+			set:   map[string]string{envSharedJobAccounts: `[{"profile":"standard","provider":"github","account":"team-a"}]`},
+			names: []string{envSharedJobAccounts},
+		},
+		{
+			name:  "a shared row has an empty entry in repos",
+			set:   map[string]string{envSharedJobAccounts: `[{"profile":"standard","provider":"github","account":"team-a","repos":["github/acme/webapp",""]}]`},
+			names: []string{envSharedJobAccounts},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, n := range credentialsServiceEnvNames {
@@ -901,12 +950,11 @@ func TestCredentialsServiceRefusalsNeverCarryAValue(t *testing.T) {
 //
 // All six are rendered conditionally — the module sets each of them only on an
 // installation where it applies — and the reason they belong here rather than
-// in credentialsServiceEnvNames is pinned by the tests around this one. Two of
-// them are rendered by no module yet and are read from
-// CredentialsServiceEnvAwaitingTheModule below: FUGARO_LAUNCHER_ACCOUNTS
-// (D1938), and FUGARO_SHARED_JOB_ACCOUNTS (B5.1), whose reader arrived ahead of
-// the module that will render it — the same cover-first order
-// FUGARO_REVIEW_JOB_ACCOUNTS followed.
+// in credentialsServiceEnvNames is pinned by the tests around this one. One of
+// them is rendered by no module yet and is read from
+// CredentialsServiceEnvAwaitingTheModule below: FUGARO_SHARED_JOB_ACCOUNTS
+// (B5.1), whose reader arrived ahead of the module that will render it — the
+// same cover-first order FUGARO_REVIEW_JOB_ACCOUNTS followed.
 //
 // internal/infra/tf's credentialsServiceEnv is the third side of this, and it
 // is held to the module by that package's own test (the cover's allow-list
