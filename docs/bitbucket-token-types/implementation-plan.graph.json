@@ -34,7 +34,7 @@
           "internal/credsvc/bundle.go",
           "internal/credsvc/bundle_test.go",
           "schemas/creds-bundle.schema.json",
-          "internal/config/project_secrets.go"
+          "internal/config/config.go"
         ]
       }
     },
@@ -56,7 +56,7 @@
     },
     {
       "id": "T3",
-      "title": "the node carries each token's coverage and identity",
+      "title": "the node carries each token's coverage",
       "run": null,
       "version": null,
       "size": 2,
@@ -65,7 +65,7 @@
         "paths": [
           "internal/projectpolicy/bitbucket.go",
           "internal/projectpolicy/bitbucket_test.go",
-          "internal/projectpolicy/version.go"
+          "internal/projectpolicy/read.go"
         ]
       }
     },
@@ -106,6 +106,7 @@
       "footprint": {
         "prediction": true,
         "paths": [
+          "internal/creds/state.go",
           "internal/creds/marks.go",
           "internal/creds/marks_test.go",
           "internal/credsvc/probe.go",
@@ -168,7 +169,8 @@
           "internal/cli/creds.go",
           "internal/cli/doctor_brokering.go",
           "internal/cli/doctor_brokering_test.go",
-          "internal/cli/creds_test.go"
+          "internal/cli/creds_test.go",
+          "website/content/cli-reference.md"
         ]
       }
     },
@@ -183,22 +185,24 @@
         "paths": [
           "internal/cli/creds.go",
           "internal/cli/creds_bitbucket.go",
-          "internal/cli/creds_bitbucket_test.go"
+          "internal/cli/creds_bitbucket_test.go",
+          "website/content/cli-reference.md"
         ]
       }
     },
     {
       "id": "T12",
-      "title": "update turns the legacy token into the first record",
+      "title": "update publishes the tokens key and converges an old installation",
       "run": null,
       "version": null,
-      "size": 3,
+      "size": 2,
       "footprint": {
         "prediction": true,
         "paths": [
-          "internal/cli/update_bitbucket_tokens.go",
+          "internal/cli/init_policy_migrate.go",
+          "internal/cli/project_cmd.go",
+          "internal/cli/project_profile.go",
           "internal/cli/update_bitbucket_tokens_test.go",
-          "internal/cli/update.go",
           "docs/design/update-in-flight.md"
         ]
       }
@@ -215,7 +219,8 @@
           "internal/gitprov/bitbucket/comments.go",
           "internal/gitprov/bitbucket/comments_test.go",
           "internal/followup/select.go",
-          "internal/followup/select_test.go"
+          "internal/followup/select_test.go",
+          "internal/runner/reviewmode_test.go"
         ]
       }
     },
@@ -297,6 +302,23 @@
           "docs/gcp-live-checklist.md"
         ]
       }
+    },
+    {
+      "id": "T16",
+      "title": "the runner hands the identity set to the adapter",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/project.go",
+          "internal/runner/projectpolicy.go",
+          "internal/gitprov/bitbucket/service.go",
+          "internal/gitprov/providers/providers.go",
+          "internal/runner/bitbucket_identities_test.go"
+        ]
+      }
     }
   ],
   "edges": [
@@ -324,11 +346,6 @@
       "task": "T9",
       "needs": "T8",
       "reason": "the same file, internal/credsvc/bitbucketproxy.go"
-    },
-    {
-      "task": "T12",
-      "needs": "T2",
-      "reason": "it writes the record T2 validates, in T2's localcfg member"
     },
     {
       "task": "T13",
@@ -419,6 +436,36 @@
       "task": "CK",
       "needs": "T11",
       "reason": "the check runs the real add path"
+    },
+    {
+      "task": "T12",
+      "needs": "T2",
+      "reason": "it passes T2's records to the derivation"
+    },
+    {
+      "task": "T12",
+      "needs": "T3",
+      "reason": "it calls T3's derivation"
+    },
+    {
+      "task": "T11",
+      "needs": "T6",
+      "reason": "it writes the status store T6 builds"
+    },
+    {
+      "task": "T16",
+      "needs": "C1",
+      "reason": "the runner reads the contract's node key shape"
+    },
+    {
+      "task": "T16",
+      "needs": "T13",
+      "reason": "it feeds T13's adapter option, in the adapter files they share"
+    },
+    {
+      "task": "I1",
+      "needs": "T16",
+      "reason": "proves the identity set reaches the adapter"
     }
   ],
   "decoupling": [
@@ -484,6 +531,15 @@
       },
       "integration": "I1",
       "reason": "T13 needed the identity set's shape, not the node's derivation"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "T16",
+        "needs": "T3"
+      },
+      "integration": "I1",
+      "reason": "T16 needed the node key's shape, not its derivation"
     }
   ],
   "contract_changes": [
@@ -491,10 +547,11 @@
       "change": "CR1",
       "contract": "C1",
       "raised_by": "T8",
-      "reason": "the selector may need the request's HTTP method, to prefer a token by read or write",
+      "reason": "the snapshot or the selector's signature may need another input, such as the request's method",
       "affects": [
         "T9",
-        "T13"
+        "T13",
+        "T16"
       ]
     }
   ]
