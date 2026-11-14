@@ -36,12 +36,16 @@ import (
 // names, or the default profile of the repository's own provider when it names
 // none (D2310, R8), for a provider a shared job serves at all (S1). The
 // checkout mode does not decide the job model (D2304): a `checkout: baked`
-// workflow runs on a shared job like any other, and the mode decides the
-// image that job holds instead — a baked workflow the repository's own derived
-// image, a clone workflow the installation's base image. Every launch of a
-// project that has published no profiles keeps the per-repository job it has
-// always had: that is what keeps this change invisible to an installation that
-// has not migrated, down to the request body.
+// workflow runs on a shared job like any other. The mode still decides the
+// image of the repository's own job — a baked workflow that job's own derived
+// image, a clone workflow the installation's base image — while a shared job
+// holds the image the deployer gave its profile whatever its repositories'
+// workflows say (internal/infra's ProjectJobs; D2305 for what that image
+// becomes), so the mode no longer tells a reader which image a run lands in.
+// Every launch of a project that has published no profiles keeps the
+// per-repository job it has always had: that is what keeps this change
+// invisible to an installation that has not migrated, down to the request
+// body.
 //
 // The job's name is computed from the *published policy* — the document the
 // runner matches CLOUD_RUN_JOB against (internal/runner's projectJobCandidates)
@@ -342,11 +346,10 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, slug string, spec *t
 	if profile == "" {
 		profile = runner.ProjectJobDefaultProfile(p, provider)
 	}
-	choice := sharedjob.JobChoice{Repo: spec.Repo, Workflow: spec.Workflow, Profile: profile}
-	if choice.Profile == "" {
+	if profile == "" {
 		return nil, nil
 	}
-	pr, err := p.ProfileFor(choice.Profile)
+	pr, err := p.ProfileFor(profile)
 	if err != nil {
 		// A profile the policy does not define is not this launcher's to
 		// refuse, and falling back to the per-repository job is not falling
@@ -414,6 +417,17 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, slug string, spec *t
 	// as it is in internal/infra's ProjectJobs, the function that deployed the
 	// job with this same number.
 	timeout, _ := config.ParseDuration(pr.TimeoutClass)
+	// The choice this launch is, spelled as the contract spells it: the
+	// repository as the project's own canonical name (never the slug, which
+	// names no provider), the workflow as fugaro.yaml writes it, and the
+	// profile the launch resolved. It is built where the launch has decided and
+	// not where it read the workflow, because a choice is the profile a launch
+	// landed on.
+	canonical, err := launchCanonical(provider, spec.Repo)
+	if err != nil {
+		return nil, err
+	}
+	choice := sharedjob.JobChoice{Repo: canonical, Workflow: spec.Workflow, Profile: profile}
 	// The name is computed from the choice, which is the profile the launch
 	// decided on: the provider and the account are its own two axes, so a name
 	// built from any other profile would be the name of a job nobody deployed
