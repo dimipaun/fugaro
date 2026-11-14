@@ -1040,10 +1040,10 @@ func TestAccountsRmNamesItselfOnTheOwnersPath(t *testing.T) {
 	// door's own name is pinned. The log is the second surface because it is
 	// filed under the name the run opened it with (CL7a, D1352): a converge
 	// that borrowed add's name would file add's log and leave this one empty.
-	if !strings.Contains(errOut, "fugaro accounts rm: project ") {
-		t.Errorf("the run does not name itself where it prints its review screen:\nstderr:\n%s", errOut)
+	_, log := onlyLog(t, "accounts-rm")
+	if !strings.Contains(errOut+log, "fugaro accounts rm: project ") {
+		t.Errorf("the run does not name itself where it prints its review screen:\nstderr:\n%s\nlog:\n%s", errOut, log)
 	}
-	onlyLog(t, "accounts-rm")
 	if strings.Contains(errOut, "accounts add") || strings.Contains(out, "accounts add") {
 		t.Errorf("the removal run names the inverse command:\nstderr:\n%s\nstdout:\n%s", errOut, out)
 	}

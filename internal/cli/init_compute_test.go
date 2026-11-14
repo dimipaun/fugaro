@@ -557,8 +557,10 @@ func TestComputeStageNoChanges(t *testing.T) {
 	if calls := subcommands(computeCalls(t, r)); slices.Contains(calls, "apply") {
 		t.Fatalf("an empty plan was applied: %q", calls)
 	}
-	if !strings.Contains(out, "No changes: the compute backend's provisioning matches the plan.") {
-		t.Errorf("the empty plan was not reported:\n%s", out)
+	// The stage's own word for nothing to do is the run's account, so it is the
+	// log's and the screen is the step's line (§9.2).
+	if all := out + newestLog(t, "setup"); !strings.Contains(all, "No changes: the compute backend's provisioning matches the plan.") {
+		t.Errorf("the empty plan was not reported:\n%s", all)
 	}
 }
 

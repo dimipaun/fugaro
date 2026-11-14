@@ -207,7 +207,7 @@ func TestUpdatePreviewNamesTheCatalogArmsSecondApply(t *testing.T) {
 			if !strings.Contains(out, "Review: project "+initProjectName) {
 				t.Fatalf("the run showed no review screen to read:\n%s", out)
 			}
-			if row := planRowOf(out, "installation-2"); !strings.Contains(row, "will do") {
+			if row := planRowOf(out+newestLog(t, "update"), "installation-2"); !strings.Contains(row, "will do") {
 				t.Errorf("the preview does not report installation-2 as work this run will do (its row is %q), so the second apply that deploys the catalog check job is not the one the user's confirmation covers:\n%s", row, out)
 			}
 			if !strings.Contains(out, "  installation-2: Terraform apply of the installation root again") {
@@ -249,7 +249,7 @@ func TestUpdateDeploysTheCatalogCheckJobFromAFlaggedBase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a catalog project whose base image the run names itself does not converge with `fugaro update` alone (exit %d):\n%s\n%s", ExitCode(err), out, errOut)
 	}
-	if row := planRowOf(out, "installation-2"); !strings.Contains(row, "will do") {
+	if row := planRowOf(out+newestLog(t, "update"), "installation-2"); !strings.Contains(row, "will do") {
 		t.Errorf("the preview reports installation-2 as skipped (its row is %q), though the run records the flag's base image after the first apply and applies the root again with it:\n%s", row, out)
 	}
 	if !strings.Contains(out, "  installation-2: Terraform apply of the installation root again") {

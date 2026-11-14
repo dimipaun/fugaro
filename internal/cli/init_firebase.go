@@ -171,7 +171,7 @@ func (r *initRun) applyRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd 
 			return nil, remote(err)
 		}
 		if !changed {
-			fmt.Fprintf(r.w, "No changes: the %s root matches the plan.\n", root)
+			fmt.Fprintf(r.stageDetail(), "No changes: the %s root matches the plan.\n", root)
 			stop = r.o.planOnly
 			return nil, nil
 		}

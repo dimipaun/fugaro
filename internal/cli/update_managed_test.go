@@ -1393,8 +1393,13 @@ func TestUpdateManagedTerminalAsksNothing(t *testing.T) {
 	if !strings.Contains(got, initflow.GateProceeded()) {
 		t.Errorf("the run does not say what decided the step:\n%s", got)
 	}
-	if !strings.Contains(got, "Review: project ") {
-		t.Errorf("the run took no confirmation and printed no review of what it would do:\n%s", got)
+	// The review is the run's own account of what it would do, and the gate
+	// stands in for the confirmation it used to precede: the screen is the
+	// steps (§9.2), so it is read from the log the run keeps, and -v brings it
+	// back to the terminal.
+	whole := got + newestLog(t, "update")
+	if !strings.Contains(whole, "Review: project ") {
+		t.Errorf("the run took no confirmation and printed no review of what it would do:\n%s", whole)
 	}
 	recs := audits(t, r)
 	if len(recs) == 0 {
@@ -1411,6 +1416,58 @@ func TestUpdateManagedTerminalAsksNothing(t *testing.T) {
 	}
 	if admitted == 0 {
 		t.Errorf("the day holds no admission for a step that applied: %+v", recs)
+	}
+}
+
+// TestUpdateManagedDefaultViewShowsTheStepsOnly: the owner's third word on the
+// subject (2026-11-13) is what §9.2 promised all along — one line per step and
+// the closing line. In a managed project nothing else of the run's own account
+// reaches the screen: not the review it would print for a confirmation, not the
+// goal sentence, not the shared config's publish, not the plugin stage's claude
+// subprocess. Every one of them is in the log the run keeps, which is what makes
+// the screen's silence the routing's doing and not a run that printed none of
+// it, and -v is what brings them back (initRun.stageDetail).
+//
+// The rig is a checkout with a plugin to install and the owner's own terminal:
+// the session the review is printed for, and the one where the gate stands in
+// for the confirmation the review used to precede.
+func TestUpdateManagedDefaultViewShowsTheStepsOnly(t *testing.T) {
+	const additive = "module.installation.google_service_account.scheduler"
+	r := updateRig(t)
+	r.managedRuns(t, initProjectName, initProject)
+	isolateGateCredentials(t)
+	fakeTerminal(t)
+	updating(t, r)
+	r.setPlan(t, change(additive, "create"))
+	dir := repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", initProjectName, ""))
+	t.Chdir(dir)
+	checkoutFile(t, filepath.Join(dir, ".claude", "settings.json"), wiredAt("v0.5.0"))
+	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
+	useFakeClaude(t, f)
+
+	out, errOut, _ := executeStdin(t, "", "update")
+	got := out + errOut
+	log := newestLog(t, "update")
+	for _, prose := range []string{"Review: project ", "Who gets access", "will do (project ", "published the shared config", "running: "} {
+		if strings.Contains(got, prose) {
+			t.Errorf("the default view of a managed update printed %q:\n%s", prose, got)
+		}
+		if !strings.Contains(log, prose) {
+			t.Errorf("the run printed no %q at all: the screen's silence about it is not the routing's doing, so this arm proves nothing\n%s", prose, log)
+		}
+	}
+	// The other half of the promise: the steps and the closing line are what is
+	// left on the screen.
+	lines := reportLines(out)
+	if l := stepLineOf(lines, "installation"); !strings.HasPrefix(l, markDone+" installation ") {
+		t.Errorf("the applied step is not on the screen: %q\n%s", l, got)
+	}
+	if l := stepLineOf(lines, "preflight"); !strings.HasPrefix(l, markDone+" preflight") {
+		t.Errorf("the run's first step is not on the screen: %q\n%s", l, got)
+	}
+	if last := lines[len(lines)-1]; !strings.HasPrefix(last, "Done in ") && !strings.HasPrefix(last, "Failed in ") {
+		t.Errorf("the closing line is %q, want the reporter's summary\n%s", last, got)
 	}
 }
 

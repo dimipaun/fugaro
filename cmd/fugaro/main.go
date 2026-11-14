@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -35,9 +34,7 @@ func main() {
 	// still running past the bound is abandoned instead (that day's check
 	// is lost, not "the command slowed down").
 	cli.WaitForUpdateCheck()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "fugaro:", cli.ErrorText(err))
-	}
+	cli.PrintFailure(os.Stderr, err)
 	// Not from a PersistentPostRun: cobra skips it when RunE errors, which
 	// most command failures do, so the nag is printed here instead,
 	// unconditionally, after the command's own output (including the error

@@ -378,7 +378,10 @@ func TestUpdatePublishesALayerFileAWriterJustWrote(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the second fugaro update: %v\n%s%s", err, out, errOut)
 	}
-	all := out + errOut
+	// The row is the run's own account of the step — the screen keeps the steps
+	// and the log the table (§9.2) — so it is read in the log beside them, and a
+	// run whose log could not be opened prints the table itself (G5).
+	all := out + errOut + newestLog(t, "update")
 	if row := planRowOf(all, "layer"); !strings.HasPrefix(row, markDone+" done") {
 		t.Errorf("the run after the publish does not find the file and the object equal: %q\n%s", row, all)
 	}
@@ -402,7 +405,7 @@ func TestUpdateLayerStageIsANoOpWhenNothingChanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fugaro update: %v\n%s%s", err, out, errOut)
 	}
-	all := out + errOut
+	all := out + errOut + newestLog(t, "update")
 	if row := planRowOf(all, "layer"); !strings.HasPrefix(row, markDone+" done") {
 		t.Errorf("the layer stage is not the no-op it is: %q\n%s", row, all)
 	}
@@ -438,7 +441,7 @@ func TestUpdateLayerStageSkipsWhenNoLayerFile(t *testing.T) {
 		if err != nil {
 			t.Fatalf("fugaro update: %v\n%s%s", err, out, errOut)
 		}
-		all := out + errOut
+		all := out + errOut + newestLog(t, "update")
 		if row := planRowOf(all, "layer"); !strings.HasPrefix(row, markSkipped+" skipped") {
 			t.Errorf("the layer stage is not skipped: %q\n%s", row, all)
 		}
@@ -483,7 +486,7 @@ func TestUpdateLayerStageSkipsWithNoLocalFileAndNoPublishedLayer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fugaro update: %v\n%s%s", err, out, errOut)
 	}
-	all := out + errOut
+	all := out + errOut + newestLog(t, "update")
 	if row := planRowOf(all, "layer"); !strings.HasPrefix(row, markSkipped+" skipped") {
 		t.Errorf("the layer stage is not skipped: %q\n%s", row, all)
 	}
@@ -726,7 +729,7 @@ func TestUpdateLayerStageSkipsAGSBucketOnFakeEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fugaro update: %v\n%s%s", err, out, errOut)
 	}
-	all := out + errOut
+	all := out + errOut + newestLog(t, "update")
 	if row := planRowOf(all, "layer"); !strings.HasPrefix(row, markSkipped+" skipped") {
 		t.Errorf("the layer stage did not skip the fake-endpoint bucket: %q\n%s", row, all)
 	}

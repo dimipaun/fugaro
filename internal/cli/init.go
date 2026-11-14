@@ -621,6 +621,11 @@ type initRun struct {
 	// they always have. repLog is the log it keeps, closed when the run ends.
 	rep    *report.Reporter
 	repLog report.Sink
+	// detail is where a run driven by another keeps its own account of itself,
+	// and it is set only there: the refresh the converge's checkout stage runs
+	// (refreshOptions.detail) writes its lines where that converge keeps its
+	// own, instead of onto a screen that run has already accounted for (§9.2).
+	detail io.Writer
 	// questions counts the questions in flight (initRun.asking): while one is
 	// open the run's own writer does not put the step's line back between the
 	// lines of the block it prints, so a CONFIRM block and a prompt are shown
@@ -1040,7 +1045,7 @@ func runInit(r *initRun) error {
 			}
 			return userErr("nothing was published: %s", reason)
 		}
-		fmt.Fprintf(r.w, "published the shared config to %s/%s\n", lc.BucketURL(), infra.SharedConfigObject)
+		fmt.Fprintf(r.stageDetail(), "published the shared config to %s/%s\n", lc.BucketURL(), infra.SharedConfigObject)
 		return r.printResult()
 	}
 	spec, err := installOptions(o, lc)
@@ -1537,7 +1542,43 @@ func (r *initRun) progress() io.Writer {
 // run's writer, where they have always gone. A refresh a caller drives prints
 // through the caller's run, and a run whose log could not be opened prints
 // what it always printed rather than swallowing it (streamOut, G5).
-func (r *initRun) stageDetail() io.Writer { return streamOut(r.rep, r.repLog, r.w) }
+func (r *initRun) stageDetail() io.Writer {
+	if r.detail != nil {
+		// A refresh a caller drives is one step of that run, and its own lines
+		// are that run's account: they go where the caller keeps it
+		// (refreshOptions.detail), whose own writer is the fallback for a run
+		// with no log (G5).
+		return r.detail
+	}
+	return streamOut(r.rep, r.repLog, r.w)
+}
+
+// failureShown marks a failed stage's error as one the screen has already read:
+// the step line and the account under it are the whole of that error on the
+// terminal, so main's top-level line would be the same failure a second time
+// (the owner's feedback of 2026-11-13). It keeps the log's own copy: what the
+// step printed is the reason cut to a clause, and the log holds it whole. It
+// answers for the error the account carries and no other: a run that failed and
+// then stopped for something else returns that something else untouched, and so
+// does a run that only planned, whose account is rows and never a step (outcome,
+// init_stages.go) — nothing printed either one of them.
+func (r *initRun) failureShown(err error) error {
+	if err == nil || r.rep == nil || !r.rep.KeepsLog() {
+		return err
+	}
+	return &shownError{err: err}
+}
+
+// accountWriter is stageDetail for the loop's own plan view, and nil where
+// there is no log to keep it in: a run whose log could not be opened has
+// nowhere to hide the table (G5), so the loop keeps it on screen there
+// (initflow hides it in Detail alone).
+func (r *initRun) accountWriter() io.Writer {
+	if r.repLog == nil {
+		return nil
+	}
+	return r.stageDetail()
+}
 
 // planBlock prints a plan for the person who has to confirm it, and keeps the
 // whole of it for the run's own record: the counts and the changes they must
@@ -2171,7 +2212,16 @@ func (r *initRun) confirm(what, undone string) error {
 // no confirmation is taken, two lines under a banner that announced one (the
 // owner's feedback of 2026-11-10).
 func (r *initRun) willDo(what string) {
-	fmt.Fprintf(r.w, "will do (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
+	// The note is the run's own account of a step nobody is asked about, so
+	// under the gate it goes where that account goes (§9.2); where the gate does
+	// not stand in it is what the person at the terminal reads beside the
+	// confirmation it sits behind, and it stays there — as the review screen and
+	// the local config's diff do.
+	w := r.w
+	if r.gateStandsIn() {
+		w = r.stageDetail()
+	}
+	fmt.Fprintf(w, "will do (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
 }
 
 // confirmNow is the confirmation a step of this run asks now, and it asks
@@ -2299,7 +2349,7 @@ func (r *initRun) askBanner(what string) (bool, error) {
 	}
 	if r.refresh.asksNothing(r.conditions()) {
 		r.willDo(what)
-		fmt.Fprintf(r.w, "  %s\n", initflow.GateOrdinary())
+		fmt.Fprintf(r.stageDetail(), "  %s\n", initflow.GateOrdinary())
 		return true, nil
 	}
 	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
@@ -2314,9 +2364,9 @@ func (r *initRun) askBanner(what string) (bool, error) {
 	case r.o.ask:
 		// askConfirm printed the question and the answer's own line.
 	case r.o.yes && !r.o.planOnly:
-		fmt.Fprintln(r.w, "  confirmed by --yes")
+		fmt.Fprintln(r.stageDetail(), "  confirmed by --yes")
 	case r.gateStandsIn():
-		fmt.Fprintf(r.w, "  %s\n", initflow.OwnerProceeded())
+		fmt.Fprintf(r.stageDetail(), "  %s\n", initflow.OwnerProceeded())
 	}
 	return true, nil
 }
@@ -3004,7 +3054,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		}
 		if !changed {
 			r.res.Changes = &infra.PlanCounts{}
-			fmt.Fprintln(r.w, "No changes: the installation matches the plan.")
+			fmt.Fprintln(r.stageDetail(), "No changes: the installation matches the plan.")
 			if r.o.planOnly {
 				stop = true
 				return nil, nil
@@ -3539,7 +3589,7 @@ func (r *initRun) publishSharedConfig(ctx context.Context, lc *localcfg.Config) 
 		return
 	}
 	if written {
-		fmt.Fprintf(r.w, "published the shared config to %s/%s\n", lc.BucketURL(), infra.SharedConfigObject)
+		fmt.Fprintf(r.stageDetail(), "published the shared config to %s/%s\n", lc.BucketURL(), infra.SharedConfigObject)
 	}
 }
 
@@ -3601,17 +3651,25 @@ func (r *initRun) writeLocalConfig(next *localcfg.Config, path string, old []byt
 	}
 	r.res.Config = path
 	if old != nil && bytes.Equal(old, data) {
-		fmt.Fprintf(r.w, "The local config %s is up to date.\n", path)
+		fmt.Fprintf(r.stageDetail(), "The local config %s is up to date.\n", path)
 		// The keys the migration cannot convert are named here too: the file is
 		// current and still holds them, so they are a state of the file and not
 		// a change this run would make. A converged config has no note at all
 		// (migrateCraftKeys), so this says nothing about one.
 		for _, note := range migrationNotes {
-			fmt.Fprintf(r.w, "note: %s\n", note)
+			fmt.Fprintf(r.stageDetail(), "note: %s\n", note)
 		}
 		return nil
 	}
-	fmt.Fprintf(r.w, "The local config %s changes:\n%s", path, lineDiff(string(old), string(data)))
+	// The diff is what the confirmation below is about: it stays on screen where
+	// that question is really asked (a project whose gate does not stand in),
+	// and under the gate — where nothing is asked of anybody — it is the run's
+	// own account of the file (stageDetail).
+	diff := r.w
+	if r.gateStandsIn() {
+		diff = r.stageDetail()
+	}
+	fmt.Fprintf(diff, "The local config %s changes:\n%s", path, lineDiff(string(old), string(data)))
 	if !confirmed {
 		if err := r.confirmOrdinary("writes the local config "+path+" as shown", "the local config was not changed", ""); err != nil {
 			return err
@@ -3626,14 +3684,14 @@ func (r *initRun) writeLocalConfig(next *localcfg.Config, path string, old []byt
 			return userErr("backing up the local config: %v", err)
 		}
 		r.res.Backup = backup
-		fmt.Fprintf(r.w, "backed up the old local config to %s\n", backup)
+		fmt.Fprintf(r.stageDetail(), "backed up the old local config to %s\n", backup)
 	}
 	if err := writeFileAtomic(path, data); err != nil {
 		return userErr("writing the local config: %v", err)
 	}
-	fmt.Fprintf(r.w, "wrote %s\n", path)
+	fmt.Fprintf(r.stageDetail(), "wrote %s\n", path)
 	for _, note := range migrationNotes {
-		fmt.Fprintf(r.w, "note: %s\n", note)
+		fmt.Fprintf(r.stageDetail(), "note: %s\n", note)
 	}
 	if old == nil {
 		r.noteSecondProject()
@@ -3958,7 +4016,7 @@ func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *in
 			}
 		}
 	} else {
-		fmt.Fprintln(r.w, "No changes: log isolation and registry cleanup are already off.")
+		fmt.Fprintln(r.stageDetail(), "No changes: log isolation and registry cleanup are already off.")
 	}
 	if err := r.confirm("rollback step 2 of 2: removes every address from Terraform's state (terraform state rm module.installation); it destroys nothing",
 		"the state still holds the installation"); err != nil {
@@ -4281,9 +4339,15 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		return err
 	}
 	if !o.forget {
-		w := r.w
+		// The ceiling and the keys the layer would clamp are the run's own
+		// account of what it is about to apply, not the step's line: with a
+		// reporter they take its stream (stageDetail), and a run with no log
+		// still prints them where it always did (G5). --print-vars is the
+		// exception the flag makes: stderr stays the account's, stdout is the
+		// tfvars alone.
+		w := r.stageDetail()
 		if o.printVars {
-			w = cmd.ErrOrStderr() // stdout stays the tfvars alone
+			w = cmd.ErrOrStderr()
 		}
 		printCeiling(w, lc, cfg)
 	}
@@ -5192,7 +5256,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 		}
 		if !changed {
 			r.res.Changes = &infra.PlanCounts{}
-			fmt.Fprintf(r.w, "No changes: %s matches the plan.\n", spec.Name)
+			fmt.Fprintf(r.stageDetail(), "No changes: %s matches the plan.\n", spec.Name)
 			// Nothing was applied, so nothing was retired: only a set the read
 			// proved empty is settled by a plan that changed nothing, because a
 			// non-empty one is settled by the apply below, which is what deletes

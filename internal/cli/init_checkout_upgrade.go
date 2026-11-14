@@ -499,8 +499,12 @@ func (e *initEngine) stepCtx(env initflow.Env, loc pluginwire.Location) *stepCtx
 			// answer is in (G1). The reader is the same value the stage's own
 			// steps read through, so a typed-ahead answer is not lost between
 			// two readers over one stdin.
-			in: e.r.in, out: e.r.w}},
+			in: e.r.in, out: e.r.w, detail: e.r.stageDetail()}},
 		loc:   loc,
 		agent: e.options().Agent,
+		// What the step says about itself — the claude binary it runs, the
+		// subprocess lines under it — is the converge's own account, not the
+		// step's line: it goes where the rest of that account does (§9.2).
+		detail: e.r.stageDetail(),
 	}
 }

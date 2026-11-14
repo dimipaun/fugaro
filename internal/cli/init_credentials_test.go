@@ -1925,7 +1925,10 @@ func TestUpdateInAnAgentSessionPinsNoCredentialsImage(t *testing.T) {
 	t.Setenv("CLAUDECODE", "1")
 
 	out, errOut, err := executeStdin(t, "", "update", "--yes")
-	s := out + errOut
+	// The log is read beside the screen: what a step says about itself is the
+	// run's own account (stageDetail), and the skip this test is about is one
+	// of them.
+	s := out + errOut + newestLog(t, "update")
 	if err != nil && !strings.Contains(s, "left for you") {
 		t.Fatalf("an ordinary update in a coding agent's session failed with something other than the steps it leaves for the user: %v\n%s", err, s)
 	}

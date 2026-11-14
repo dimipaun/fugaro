@@ -126,6 +126,52 @@ func logDir(t *testing.T) string {
 	return filepath.Join(base, "fugaro", "logs")
 }
 
+// logNames is the logs of cmdName the state directory holds now, for a test that
+// wants to read what its own runs add to it and not what earlier tests left
+// (logsAdded). Every test in this package writes into one state directory.
+func logNames(t *testing.T, cmdName string) map[string]bool {
+	t.Helper()
+	entries, err := os.ReadDir(logDir(t))
+	if err != nil {
+		return nil
+	}
+	re := regexp.MustCompile("^" + regexp.QuoteMeta(cmdName) + `-\d{14}-\d+\.log$`)
+	names := make(map[string]bool)
+	for _, e := range entries {
+		if re.MatchString(e.Name()) {
+			names[e.Name()] = true
+		}
+	}
+	return names
+}
+
+// logsAdded is the account of the runs a test made itself: the logs of cmdName
+// that were not there when before was taken, joined, and empty when there are
+// none. A test that reads a run's account beside the screen cannot assume the
+// run kept a log — two runs of one command in the same second in one process are
+// one file name (report.logName is the command, the second and the pid), the
+// second of them is refused the name it would share, keeps no log and falls back
+// to the screen (G5) — and which of the two a test lands in is the clock's
+// business rather than the test's. Reading every log in the directory instead
+// would answer with an earlier test's run, which is not this test's to report:
+// an assertion that read them would pass with this run printing nothing.
+func logsAdded(t *testing.T, before map[string]bool, cmdName string) string {
+	t.Helper()
+	var all strings.Builder
+	dir := logDir(t)
+	for name := range logNames(t, cmdName) {
+		if before[name] {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		all.Write(b)
+	}
+	return all.String()
+}
+
 // onlyLog reads back the one log a run of cmdName left. One run, one log: a
 // second file under this command's name is a bug, and a run that left none
 // kept nothing for the failure it may print a path to.

@@ -92,8 +92,11 @@ func TestRerunPlansNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(r.ran(t, "apply")) != 0 || !strings.Contains(out, markDone+" done") || !strings.Contains(out, "No changes") {
-		t.Errorf("calls %q\n%s", r.calls(t), out)
+	// The stage line's reason and the "No changes" note are the run's own
+	// account of a stage nobody is asked about, so they are in its log (§9.2).
+	whole := out + newestLog(t, "setup")
+	if len(r.ran(t, "apply")) != 0 || !strings.Contains(whole, markDone+" done") || !strings.Contains(whole, "No changes") {
+		t.Errorf("calls %q\n%s", r.calls(t), whole)
 	}
 }
 

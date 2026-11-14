@@ -424,8 +424,8 @@ func pluginStep(ctx context.Context, u *stepCtx) stepResult {
 		return fail(err)
 	}
 	repo := pluginwire.Repo
-	fmt.Fprintf(u.w, "  using claude at %s\n", pluginwire.Printable(bin))
-	run := &claudeplugin.Runner{Bin: bin, Dir: u.loc.Root, Out: u.w}
+	fmt.Fprintf(u.detailOut(), "  using claude at %s\n", pluginwire.Printable(bin))
+	run := &claudeplugin.Runner{Bin: bin, Dir: u.loc.Root, Out: u.detailOut()}
 	markets, err := run.Markets(ctx)
 	if err != nil {
 		return fail(err)
@@ -465,7 +465,7 @@ func pluginStep(ctx context.Context, u *stepCtx) stepResult {
 		}
 		for _, args := range plan.Restore {
 			if rerr := run.Change(ctx, args...); rerr != nil {
-				fmt.Fprintf(u.w, "  putting back what the clear removed failed: %v\n", rerr)
+				fmt.Fprintf(u.detailOut(), "  putting back what the clear removed failed: %v\n", rerr)
 			}
 		}
 	}
@@ -482,7 +482,7 @@ func pluginStep(ctx context.Context, u *stepCtx) stepResult {
 			// The declaration Claude Code refuses an add by: clearing one it
 			// does not have fails the same way, and the add below is what
 			// decides whether the marketplace ends up at this release's tag.
-			fmt.Fprintf(u.w, "  continuing without clearing: %v\n", err)
+			fmt.Fprintf(u.detailOut(), "  continuing without clearing: %v\n", err)
 		case claudeplugin.Declare:
 			// The one add failure fugaro cannot fix: a source is declared for
 			// the name in settings fugaro does not own and must not rewrite, and
@@ -506,7 +506,7 @@ func pluginStep(ctx context.Context, u *stepCtx) stepResult {
 			// Neither failure is the step's to report, because the check after
 			// the calls sees what came out of them, and anything that leaves the
 			// version where it was is a failed step there.
-			fmt.Fprintf(u.w, "  continuing without that call: %v\n", err)
+			fmt.Fprintf(u.detailOut(), "  continuing without that call: %v\n", err)
 		default:
 			// The update's own work, after a clear: a failure here is the
 			// step's, and the machine is not left without what the clear took.

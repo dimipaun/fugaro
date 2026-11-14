@@ -62,6 +62,14 @@ type Options struct {
 	// Out receives the human-readable account (the plan view and the
 	// closing lines); with --json the CLI points it at stderr.
 	Out io.Writer
+	// Detail, when the caller has one, is where an applying run's plan view
+	// goes instead of Out: the run's reporter stream, which is the log always
+	// and the terminal under -v (D1352, D1354). The table is the run's own
+	// account of what it is about to do, and the run's steps are the default
+	// view; a plan-only run keeps the table on screen, because there it IS the
+	// output and changes nothing (the loop asks PlanOnly below), and so does a
+	// caller with no reporter at all, which has nowhere else to put it.
+	Detail io.Writer
 	// Report, when the caller has one, is the reporter the run's account is
 	// printed through: one step per stage, with the marker its state earns,
 	// and the closing line. The plan view is not a run and keeps its own
@@ -954,6 +962,18 @@ const statusWidth = 14
 // all prints the plain text it printed before — and there the reason is never
 // cut, because that run has no log to keep the rest of it.
 func (l *loop) view(rs []StageResult) {
+	if l.o.Detail != nil && !l.o.PlanOnly {
+		// The row written here is the log's, whole reason and plain status,
+		// which is exactly what logRow puts there: routing the table to the
+		// stream takes that write's place rather than adding to it.
+		if l.o.Project != "" {
+			fmt.Fprintf(l.o.Detail, "%s: project %s (GCP %s, %s)\n", l.program(), l.o.Project, l.o.GCPProject, l.o.Region)
+		}
+		for _, r := range rs {
+			fmt.Fprintln(l.o.Detail, l.row(r, r.Detail, true))
+		}
+		return
+	}
 	if l.o.Project != "" {
 		fmt.Fprintf(l.o.Out, "%s: project %s (GCP %s, %s)\n", l.program(), l.o.Project, l.o.GCPProject, l.o.Region)
 	}
