@@ -806,8 +806,11 @@ in_window() { # in_window STAMP
 # time), out of a listing this check has already read. It is the second reading
 # of the read-only step beside the bytes: a record rewritten with the same bytes
 # — a reserialisation, a copy — moves this line even when the hash does not.
+# The reader's third column is that line and its second is only the object's url,
+# which is the same string on both readings and would compare equal however the
+# object was rewritten: the size and the time are the whole of what this reads.
 object_line() { # object_line FILE
-  awk -F'\t' '$1 == "object" { print $2; exit }' "$1" 2>/dev/null
+  awk -F'\t' '$1 == "object" { print $3; exit }' "$1" 2>/dev/null
 }
 
 # ------------------------------------------------------------------ the launch
@@ -1035,15 +1038,15 @@ step_target() {
     finished=$(field "$out.txt" finished_at)
     present=$(field "$out.txt" field_present)
     if ! in_window "$finished"; then
-      [ -n "$why" ] || why="$key finished outside the week (finished_at=${finished:-none})"
+      why="${why:+$why; }$key finished outside the week (finished_at=${finished:-none})"
       continue
     fi
     if [ "$status" = succeeded ] || [ -z "$status" ]; then
-      [ -n "$why" ] || why="$key finished inside the week and did not fail (status=${status:-none})"
+      why="${why:+$why; }$key finished inside the week and did not fail (status=${status:-none})"
       continue
     fi
     if [ "$present" = true ]; then
-      [ -n "$why" ] || why="$key failed inside the week and its own record already carries failure_class '$(field "$out.txt" failure_class)'"
+      why="${why:+$why; }$key failed inside the week and its own record already carries failure_class '$(field "$out.txt" failure_class)'"
       continue
     fi
     # The record step 3 wants: it failed, it finished inside the week, and its

@@ -836,3 +836,380 @@ test_a_record_that_never_appears() {
   assert_cancelled "$dir" "a run that never bootstrapped"
   assert_branch_gone "$dir" "a run that never bootstrapped"
 }
+
+test_a_class_that_is_not_config_invalid() {
+  local dir=$work/wrongclass
+  prepare "$dir"
+  # The record the check launched, ended for another reason: a task that failed
+  # its tests is a different ending from a configuration the decoder refuses.
+  sed 's/"failure_class":"config_invalid"/"failure_class":"tests_failed"/' \
+    "$dir/json/rec-$our_run.json" >"$dir/json/rec-$our_run.json.new"
+  mv "$dir/json/rec-$our_run.json.new" "$dir/json/rec-$our_run.json"
+  run_check "$dir"
+  expect_status "$status" 1 "a class that is not config_invalid"
+  expect_contains "$out" "FACT class: FAIL" "a class that is not config_invalid: the row"
+  expect_contains "$out" "rather than config_invalid" "a class that is not config_invalid: what it read"
+  expect_contains "$out" "The record is in" "a class that is not config_invalid: where to look"
+  assert_branch_gone "$dir" "a class that is not config_invalid"
+}
+
+test_the_listing_and_the_diagnosis_disagree() {
+  local dir=$work/disagree
+  prepare "$dir"
+  sed 's/"failure_class":"config_invalid"/"failure_class":"tests_failed"/g' \
+    "$dir/json/diagnose-run.json" >"$dir/json/diagnose-run.json.new"
+  mv "$dir/json/diagnose-run.json.new" "$dir/json/diagnose-run.json"
+  run_check "$dir"
+  expect_status "$status" 1 "a row and a diagnosis that disagree"
+  expect_contains "$out" "FACT class: PASS" "a row and a diagnosis that disagree: the record itself still says config_invalid"
+  expect_contains "$out" "FACT agree: FAIL" "a row and a diagnosis that disagree: the row"
+  expect_contains "$out" "the two commands read one record" "a row and a diagnosis that disagree: why it matters"
+}
+
+test_the_diagnosis_contradicts_its_own_row() {
+  local dir=$work/selfcontradiction
+  prepare "$dir"
+  printf '{"project":"%s","failure_class":"config_invalid","row":{"run":"%s/%s","run_id":"%s","status":"infra_error","failure_class":"tests_failed"}}\n' \
+    "$project" "$slug" "$our_run" "$our_run" >"$dir/json/diagnose-run.json"
+  run_check "$dir"
+  expect_status "$status" 1 "a diagnosis that contradicts its own row"
+  expect_contains "$out" "FACT agree: FAIL" "a diagnosis that contradicts its own row: the row"
+  expect_contains "$out" "at the top and" "a diagnosis that contradicts its own row: the two places it names"
+}
+
+test_two_readings_of_a_wrong_class() {
+  local dir=$work/twowrong
+  prepare "$dir"
+  # The row and the diagnosis agree, and both are wrong: two readings of one
+  # wrong class are still a wrong class.
+  sed 's/"failure_class":"config_invalid"/"failure_class":"tests_failed"/g' \
+    "$dir/json/diagnose-run.json" >"$dir/json/diagnose-run.json.new"
+  mv "$dir/json/diagnose-run.json.new" "$dir/json/diagnose-run.json"
+  sed 's/"failure_class":"config_invalid"/"failure_class":"tests_failed"/' \
+    "$dir/json/rows.json" >"$dir/json/rows.json.new"
+  mv "$dir/json/rows.json.new" "$dir/json/rows.json"
+  run_check "$dir"
+  expect_status "$status" 1 "two readings of a wrong class"
+  expect_contains "$out" "FACT agree: FAIL" "two readings of a wrong class: the row"
+  expect_contains "$out" "two readings of one wrong class are still a wrong class" "two readings of a wrong class: why"
+}
+
+test_the_run_is_not_in_the_window() {
+  local dir=$work/notinwindow
+  prepare "$dir"
+  # The listing is of a window that does not hold the run this check launched:
+  # the row it reads the class out of is picked by the run's own id, and there is
+  # none.
+  python3 - "$dir/json/rows.json" "$our_run" <<'PY'
+import json, sys
+path, rid = sys.argv[1], sys.argv[2]
+doc = json.load(open(path))
+doc["runs"] = [r for r in doc["runs"] if r.get("run_id") != rid]
+doc["totals"]["runs"] = len(doc["runs"])
+json.dump(doc, open(path, "w"))
+PY
+  run_check "$dir"
+  expect_status "$status" 1 "a window that does not hold the run"
+  expect_contains "$out" "FACT agree: FAIL" "a window that does not hold the run: the row"
+  expect_contains "$out" "printed no row for $our_run" "a window that does not hold the run: what it read"
+}
+
+test_groups_that_do_not_add_up() {
+  local dir=$work/badgroups
+  prepare "$dir"
+  sed 's/"class":"config_invalid","runs":2/"class":"config_invalid","runs":1/' \
+    "$dir/json/grouped.json" >"$dir/json/grouped.json.new"
+  mv "$dir/json/grouped.json.new" "$dir/json/grouped.json"
+  run_check "$dir"
+  expect_status "$status" 1 "groups that do not add up"
+  expect_contains "$out" "FACT groups: FAIL" "groups that do not add up: the row"
+  expect_contains "$out" "do not follow the window's own listing" "groups that do not add up: what it read"
+  expect_contains "$out" "config_invalid=1(rows=2)" "groups that do not add up: the group that does not follow"
+}
+
+test_a_group_that_holds_too_many_runs() {
+  local dir=$work/widedroup
+  prepare "$dir"
+  sed 's/"class":"tests_failed","runs":1/"class":"tests_failed","runs":2/' \
+    "$dir/json/grouped.json" >"$dir/json/grouped.json.new"
+  mv "$dir/json/grouped.json.new" "$dir/json/grouped.json"
+  run_check "$dir"
+  expect_status "$status" 1 "a group that holds too many runs"
+  expect_contains "$out" "FACT groups: FAIL" "a group that holds too many runs: the row"
+  expect_contains "$out" "tests_failed=2(rows=1)" "a group that holds too many runs: the group that does not follow"
+}
+
+test_a_share_that_follows_the_spend() {
+  local dir=$work/spendshare
+  prepare "$dir"
+  # 0.11 is the class's share of the SPEND, not of the runs: the block's own
+  # decision is that share follows the runs, with the spend beside it.
+  sed 's/"class":"config_invalid","runs":2,"share":0.5/"class":"config_invalid","runs":2,"share":0.11/' \
+    "$dir/json/grouped.json" >"$dir/json/grouped.json.new"
+  mv "$dir/json/grouped.json.new" "$dir/json/grouped.json"
+  run_check "$dir"
+  expect_status "$status" 1 "a share that follows the spend"
+  expect_contains "$out" "FACT share: FAIL" "a share that follows the spend: the row"
+  expect_contains "$out" "config_invalid=0.11(want 0.5)" "a share that follows the spend: the share it should be"
+  expect_contains "$out" "a share of the spend under a runs column" "a share that follows the spend: why it matters"
+}
+
+test_totals_that_move() {
+  local dir=$work/movedtotals
+  prepare "$dir"
+  sed 's/"total_usd":0.91/"total_usd":0.9/' \
+    "$dir/json/grouped.json" >"$dir/json/grouped.json.new"
+  mv "$dir/json/grouped.json.new" "$dir/json/grouped.json"
+  run_check "$dir"
+  expect_status "$status" 1 "totals that move between the two listings"
+  expect_contains "$out" "FACT totals: FAIL" "totals that move: the row"
+  expect_contains "$out" "total_usd(plain=0.91, grouped=0.9)" "totals that move: the figure that moved"
+}
+
+test_a_window_with_no_old_record() {
+  local dir=$work/nooldrecord
+  prepare "$dir"
+  # The candidates are readable and every one of them is ineligible: the nearest
+  # finished outside the week, and the one inside it carries the field already.
+  sed 's/"stage":"bootstrap","reason"/"stage":"bootstrap","failure_class":"config_invalid","reason"/' \
+    "$dir/json/rec-$target_run.json" >"$dir/json/rec-$target_run.json.new"
+  mv "$dir/json/rec-$target_run.json.new" "$dir/json/rec-$target_run.json"
+  run_check "$dir"
+  expect_status "$status" 2 "a window with no old record in it"
+  expect_contains "$out" "FACT target: FAIL" "a window with no old record in it: the row"
+  expect_contains "$out" "already carries failure_class" "a window with no old record in it: the reason it was skipped"
+  expect_contains "$out" "finished outside the week" "a window with no old record in it: both reasons are named"
+  expect_contains "$out" "FACT aborted: FAIL" "a window with no old record in it: nothing is concluded about the classes"
+  assert_branch_gone "$dir" "a window with no old record in it"
+}
+
+test_a_bucket_with_no_record_in_the_window() {
+  local dir=$work/emptywindow
+  prepare "$dir"
+  # Only the run this check launched is in the bucket: nothing was minted before
+  # the week's last day, so there is no candidate at all.
+  printf '1234 %s gs://%s/runs/%s/%s/result.json\n' "$now_stamp" "$bucket" "$slug" "$our_run" >"$dir/json/listing.txt"
+  run_check "$dir"
+  expect_status "$status" 2 "a bucket with no record in the window"
+  expect_contains "$out" "FACT target: FAIL" "a bucket with no record in the window: the row"
+  expect_contains "$out" "holds 1 run record(s) and none of them was minted inside the window" \
+    "a bucket with no record in the window: what it read"
+  expect_contains "$out" "widen the window with --since 60d" "a bucket with no record in the window: what the owner can do"
+}
+
+test_the_old_records_bytes_change() {
+  local dir=$work/byteschange
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=bytes-change
+  expect_status "$status" 1 "a record a read wrote back"
+  expect_contains "$out" "FACT target: PASS" "a record a read wrote back: the old record was found"
+  expect_contains "$out" "FACT readonly: FAIL" "a record a read wrote back: the row"
+  expect_contains "$out" "CHANGED between the reading taken before" "a record a read wrote back: the two hashes"
+  expect_contains "$out" "This is the finding, not a flake" "a record a read wrote back: what it means"
+}
+
+test_the_old_records_line_moves() {
+  local dir=$work/linechanges
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=line-changes
+  expect_status "$status" 1 "an object rewritten with the same bytes"
+  expect_contains "$out" "FACT readonly: FAIL" "an object rewritten with the same bytes: the row"
+  expect_contains "$out" "the bucket's own line for the object is not" "an object rewritten with the same bytes: what moved"
+  expect_contains "$out" "before '1234 " "an object rewritten with the same bytes: the line before"
+  expect_contains "$out" "after '2048 " "an object rewritten with the same bytes: the line after"
+}
+
+test_a_week_with_no_failures_table() {
+  local dir=$work/notable
+  prepare "$dir"
+  printf '# Runs digest — %s — %s\n\n## Successes\n\n| class | runs |\n| --- | --- |\n' \
+    "$repo_name" "$week_key" >"$dir/json/digest.md"
+  run_check "$dir"
+  expect_status "$status" 1 "a report with no Failures table"
+  expect_contains "$out" "FACT digest: FAIL" "a report with no Failures table: the row"
+  expect_contains "$out" "carries no '## Failures' table" "a report with no Failures table: what it read"
+}
+
+test_a_report_of_another_week() {
+  local dir=$work/otherweek
+  prepare "$dir"
+  sed 's/"start":"[^"]*","end":"[^"]*"/"start":"1999-01-04","end":"1999-01-10"/' \
+    "$dir/json/digest.json" >"$dir/json/digest.json.new"
+  mv "$dir/json/digest.json.new" "$dir/json/digest.json"
+  run_check "$dir"
+  expect_status "$status" 1 "a report of another week"
+  expect_contains "$out" "FACT digest: FAIL" "a report of another week: the row"
+  expect_contains "$out" "is not the week this check read the bucket for" "a report of another week: what it read"
+}
+
+test_a_week_that_counts_no_class() {
+  local dir=$work/noclass
+  prepare "$dir"
+  sed 's/"failures":{"config_invalid":2,"tests_failed":1}/"failures":{"tests_failed":3}/' \
+    "$dir/json/digest.json" >"$dir/json/digest.json.new"
+  mv "$dir/json/digest.json.new" "$dir/json/digest.json"
+  run_check "$dir"
+  expect_status "$status" 1 "a week that does not count the old record's class"
+  expect_contains "$out" "FACT digest: FAIL" "a week that counts no class: the row"
+  expect_contains "$out" "does not count the class the old record is read as" "a week that counts no class: what it read"
+}
+
+test_the_old_records_row_carries_no_class() {
+  local dir=$work/oldrowempty
+  prepare "$dir"
+  # The record written before the field shipped, whose row the READER could not
+  # class: the week is then still split into before and after, which is the whole
+  # of what step 3 exists to falsify.
+  python3 - "$dir/json/rows.json" "$target_run" <<'PY'
+import json, sys
+path, rid = sys.argv[1], sys.argv[2]
+doc = json.load(open(path))
+for row in doc["runs"]:
+    if row.get("run_id") == rid:
+        row["failure_class"] = ""
+json.dump(doc, open(path, "w"))
+PY
+  run_check "$dir"
+  expect_status "$status" 1 "an old record no reader classed"
+  expect_contains "$out" "FACT old-record: FAIL" "an old record no reader classed: the row"
+  expect_contains "$out" "the week IS split into before and after" "an old record no reader classed: why it matters"
+  expect_contains "$out" "FACT digest: FAIL" "an old record no reader classed: the week's report cannot count it either"
+  expect_contains "$out" "FACT readonly: PASS" "an old record no reader classed: the record itself was still not written back"
+}
+
+test_step5_reads_the_refutation() {
+  local dir=$work/step5
+  prepare "$dir"
+  run_check "$dir" FAKE_STEP5_RUN="$step5_run" -- --step5-run "$step5_run"
+  expect_status "$status" 0 "the refutation run"
+  expect_contains "$out" "FACT step5: PASS" "the refutation run: the row"
+  expect_contains "$out" "carries failure_class stage_error_unexplained" "the refutation run: the class the plan expects"
+  expect_contains "$out" "which is O6 unanswered" "the refutation run: what that class means"
+  expect_contains "$(cat "$dir/logs/fugaro.calls")" "diagnose $step5_run --json" "the refutation run: it is read, never made"
+  # The check launches a run of its own, so what says the refutation was READ is
+  # that its id is never named to anything but a diagnose: it is a run the owner
+  # made by hand, and this check neither starts nor stops one.
+  local others
+  others=$(grep "$step5_run" "$dir/logs/fugaro.calls" | grep -v '^fugaro diagnose ' || true)
+  [ -z "$others" ] || fail "the refutation run: its id is named to something other than a diagnose: $others"
+}
+
+test_step5_under_another_class_is_a_finding() {
+  local dir=$work/step5other
+  prepare "$dir"
+  sed 's/stage_error_unexplained/config_invalid/g' \
+    "$dir/json/diagnose-step5.json" >"$dir/json/diagnose-step5.json.new"
+  mv "$dir/json/diagnose-step5.json.new" "$dir/json/diagnose-step5.json"
+  run_check "$dir" FAKE_STEP5_RUN="$step5_run" -- --step5-run "$step5_run"
+  expect_status "$status" 1 "the refutation run under another class"
+  expect_contains "$out" "FACT step5: FAIL" "the refutation run under another class: the row"
+  expect_contains "$out" "rather than stage_error_unexplained" "the refutation run under another class: what it read"
+  expect_contains "$out" "a finding about the classifier" "the refutation run under another class: what it means"
+}
+
+test_a_restore_that_cannot_delete_is_a_finding() {
+  local dir=$work/norestore
+  prepare "$dir"
+  # An origin whose hook refuses the DELETE and accepts the push: the reference
+  # is created and cannot be removed again, which is the state the Restore row
+  # exists to read rather than to assume away.
+  cat >"$dir/origin.git/hooks/pre-receive" <<'HOOK'
+#!/usr/bin/env bash
+while read -r old _new _ref; do
+  case "$old" in
+  0000000000000000000000000000000000000000) ;;
+  *)
+    echo "this origin refuses deletions" >&2
+    exit 1
+    ;;
+  esac
+done
+exit 0
+HOOK
+  chmod +x "$dir/origin.git/hooks/pre-receive"
+  run_check "$dir"
+  expect_status "$status" 1 "a Restore that cannot delete"
+  expect_contains "$out" "FACT readonly: PASS" "a Restore that cannot delete: the steps themselves still held"
+  expect_contains "$out" "FACT restore: FAIL" "a Restore that cannot delete: the row"
+  expect_contains "$out" "the origin still lists it" "a Restore that cannot delete: what it read back"
+  expect_contains "$out" "Delete it by hand" "a Restore that cannot delete: what the owner has to do"
+  expect_contains "$(git -C "$dir/repo" ls-remote --heads "$dir/origin.git" 2>/dev/null)" "chk350-" \
+    "a Restore that cannot delete: the branch really is still on the origin"
+}
+
+test_a_comparison_that_never_runs_does_not_pass() {
+  local dir=$work/regressed
+  prepare "$dir"
+  local copy=$dir/check350-regressed.sh
+  # The same script with step 4's second reading removed: it takes the hash from
+  # before the reads instead of reading the record again. A record a read wrote
+  # back is then indistinguishable from one nobody touched — so the FAIL the
+  # previous case reads is the comparison's, and not a coincidence of the fixture.
+  sed -e 's|^  T1_HASH=$(hash_of "$out")$|  T1_HASH=$T0_HASH|' \
+      -e 's|^  T1_LINE=$(object_line "$SCRATCH/target-after-ls.txt")$|  T1_LINE=$T0_LINE|' \
+      "$script" >"$copy"
+  [ "$(grep -c 'T1_HASH=\$T0_HASH' "$copy")" = 1 ] || fail "the regressed copy was not made"
+  run_copy "$dir" "$copy" FAKE_MODE=bytes-change
+  expect_status "$status" 0 "a check whose comparison never runs"
+  expect_contains "$out" "FACT readonly: PASS" "a check whose comparison never runs: it cannot tell, and it does not"
+}
+
+# Sharding, so the package's Go test can run the tests of this file side by
+# side: CHECK_TEST_SHARD="i/n" runs every n-th test starting at i, and
+# CHECK_TEST_ONLY=name runs that one test alone. Neither set: all run.
+test_index=0
+t() {
+  local i=$test_index
+  test_index=$((test_index + 1))
+  if [ -n "${CHECK_TEST_ONLY:-}" ]; then
+    [ "$1" = "$CHECK_TEST_ONLY" ] || return 0
+  elif [ -n "${CHECK_TEST_SHARD:-}" ]; then
+    [ $((i % ${CHECK_TEST_SHARD#*/})) -eq "${CHECK_TEST_SHARD%/*}" ] || return 0
+  fi
+  "$1"
+}
+
+t test_help
+t test_dry_run
+t test_happy_path
+t test_belong_in_the_project
+t test_belong_in_the_gcp_project
+t test_belong_in_the_bucket
+t test_belong_in_the_checkouts_own_config
+t test_an_agent_session_is_refused
+t test_an_xtrace_shell_is_refused
+t test_missing_arguments
+t test_a_path_that_is_not_a_checkout
+t test_a_checkout_with_no_origin
+t test_a_launch_that_fails
+t test_a_launch_that_names_no_run
+t test_a_run_that_never_ends
+t test_a_cancel_that_does_not_answer
+t test_a_record_that_never_appears
+t test_a_class_that_is_not_config_invalid
+t test_the_listing_and_the_diagnosis_disagree
+t test_the_diagnosis_contradicts_its_own_row
+t test_two_readings_of_a_wrong_class
+t test_the_run_is_not_in_the_window
+t test_groups_that_do_not_add_up
+t test_a_group_that_holds_too_many_runs
+t test_a_share_that_follows_the_spend
+t test_totals_that_move
+t test_a_window_with_no_old_record
+t test_a_bucket_with_no_record_in_the_window
+t test_the_old_records_bytes_change
+t test_the_old_records_line_moves
+t test_a_week_with_no_failures_table
+t test_a_report_of_another_week
+t test_a_week_that_counts_no_class
+t test_the_old_records_row_carries_no_class
+t test_step5_reads_the_refutation
+t test_step5_under_another_class_is_a_finding
+t test_a_restore_that_cannot_delete_is_a_finding
+t test_a_comparison_that_never_runs_does_not_pass
+
+if [ "$failures" -ne 0 ]; then
+  echo "check350_test.sh: $failures failure(s)" >&2
+  exit 1
+fi
+echo "check350_test.sh: ok"
