@@ -25,8 +25,6 @@ As of 2026-11-14, read from `main`, the open pull requests and each plan's task 
 | settings-commands | about 10/12 | S10, S11 (held, #2280) |
 | console-dependency-graph | 15/17 | GV3.2 (live, follow-up run on draft #2501) |
 | task-governance | 25/31 | 6 left: T3.4 (docs), and the rest in `ee/governance` |
-| post-review-triage | 13/14 | owner TR13 |
-| plugin-user-scope | 9/10 | E1 |
 | mobile | about 43/45 | P5.x, P7.5; owner P2.3 and P4.4 |
 | stateless-orchestrator | 18/20 | O13, O19 (approved, blocked: a run the workspace refused is not distinguishable in the run record, so it waits on a W-side record change; U12 resolved NO 2026-11-13); owner Checks 301 to 304 and 305 (O16b) |
 | issues-resolved-on-update | 7/8 | T-RU7 (live, draft #2604) |
@@ -108,3 +106,5 @@ As of 2026-11-14, read from `main`, the open pull requests and each plan's task 
 | website-changelog | WC4 lands with the next release |
 | central-orchestrator | superseded by stateless-orchestrator |
 | windows-cli | superseded by console-windows |
+| post-review-triage | owner TR13 (Checks 490 to 492; the scripts are in a run) |
+| plugin-user-scope | E1, the release itself (rides the next CLI release; no operator step) |
