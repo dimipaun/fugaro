@@ -78,6 +78,13 @@ import (
 // older than the release, a coder that reads images itself, a slot that is set,
 // a run that never ends, a record that is another run's, and a refusal whose
 // sentence has lost one of the parts an owner needs.
+// Check 119's script is the one whose subject is a file rather than a cloud or
+// an installation: it reads the installer a manual dispatch of
+// `console-windows.yml` uploaded -- its name, its size, its SHA-256 and whether
+// its PE header really says x64 -- so it needs no fake at all, and its test
+// builds those bytes in a temporary directory and bends them one at a time (a
+// text file, a DOS stub, a truncated download, a 32-bit image, an empty
+// upload), asserting what the script printed and what it refused.
 // Check 210's fakes are a fake `fugaro`, a fake `gcloud`, a fake `git` and a
 // fake `gh`: the fake launcher is a counter, so the run IDs are the case's own,
 // and the fake `git` and `gh` really delete a branch and really move a pull
@@ -127,6 +134,7 @@ var liveCheckScripts = []struct {
 	{"check511.sh", "check511_test.sh"},
 	{"check520.sh", "check520_test.sh"},
 	{"check521.sh", "check521_test.sh"},
+	{"check119.sh", "check119_test.sh"},
 	{"check57b.sh", "check57b_test.sh"},
 	{"check124.sh", "check124_test.sh"},
 }
