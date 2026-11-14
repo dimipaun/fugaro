@@ -12,6 +12,13 @@
 // screen opens on this month in UTC and sends the same spelling back: a browser
 // in another zone that named its own month would ask for a month the API does
 // not have.
+//
+// **A refused read is an answer, and the section stops at it.** The load has
+// finished, so nothing is still loading under the API's own sentence, and the
+// form above is how the month is asked for again -- pressing Show re-runs the
+// load, which is what the attempt counter is for. A section left saying
+// "Loading…" beside the refusal would be telling an operator to wait for
+// something that is never coming.
 
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
@@ -78,9 +85,8 @@ export function LedgerSection({ api }: { api: OpsApi }) {
       </form>
 
       {failure === null ? null : <p role="alert">{failure}</p>}
-      {entries === null ? (
-        <p role="status">Loading…</p>
-      ) : entries.length === 0 ? (
+      {failure === null && entries === null ? <p role="status">Loading…</p> : null}
+      {entries === null ? null : entries.length === 0 ? (
         <p>Nothing settled in that month.</p>
       ) : (
         <ul>

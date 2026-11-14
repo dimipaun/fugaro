@@ -30,6 +30,13 @@
 // **A decision is by the id and never by the body.** Attaching one creates the
 // entitlement the event sold if it sold one (P4.2), so the id is what makes a
 // redelivery of the same event change nothing.
+//
+// **A refused read is an answer, and it carries its own way to ask again.** The
+// park is read once when the section mounts, and a section that drew the
+// refusal and stopped there would leave a queue nobody can decide until they
+// reloaded the page: the sentence is drawn with a button that reads it again,
+// and it is drawn instead of "Loading…", because a read that came back refused
+// has finished.
 
 import { useEffect, useState } from 'react'
 import type { LedgerEvent } from '../../api/types/ledger'
@@ -41,11 +48,15 @@ import { sentence, useSubmission } from './state'
 export function QueueSection({ api, actions }: { api: OpsApi; actions: OpsActions }) {
   const [events, setEvents] = useState<LedgerEvent[] | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
   const [entitlement, setEntitlement] = useState('')
   const { busy, failure: refused, submit } = useSubmission(actions)
 
   useEffect(() => {
     let live = true
+    // A load that starts clears the last refusal, so the retry is drawn as a
+    // load and not under the sentence it is answering.
+    setFailure(null)
     api.parkedEvents().then(
       (parked) => {
         if (live) {
@@ -61,7 +72,7 @@ export function QueueSection({ api, actions }: { api: OpsApi; actions: OpsAction
     return () => {
       live = false
     }
-  }, [api])
+  }, [api, attempt])
 
   function decide(id: string, decision: OpsEventResolution['decision']): void {
     void submit(async () => {
@@ -86,12 +97,23 @@ export function QueueSection({ api, actions }: { api: OpsApi; actions: OpsAction
         not drawn: decide from the event's own facts.
       </p>
 
-      {failure === null ? null : <p role="alert">{failure}</p>}
+      {failure === null ? null : (
+        <div role="alert">
+          <p>{failure}</p>
+          <button
+            type="button"
+            onClick={() => {
+              setAttempt((tried) => tried + 1)
+            }}
+          >
+            Try again
+          </button>
+        </div>
+      )}
       {refused === null ? null : <p role="alert">{refused}</p>}
 
-      {events === null ? (
-        <p role="status">Loading…</p>
-      ) : events.length === 0 ? (
+      {failure === null && events === null ? <p role="status">Loading…</p> : null}
+      {events === null ? null : events.length === 0 ? (
         <p>Nothing is waiting.</p>
       ) : (
         <ul>

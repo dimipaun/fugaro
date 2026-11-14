@@ -564,6 +564,11 @@ describe('the operations screens', () => {
     show(person(0), replies)
     await screen.findByText('The ledger is not answering right now.')
 
+    // The refusal is the load's end, not a pause in it: a section that said
+    // "Loading…" beside the sentence would be telling the operator to wait for
+    // a month that is never coming.
+    expect(within(screen.getByRole('region', { name: 'The ledger' })).queryByText('Loading…')).toBeNull()
+
     // The month the form holds is the month that was just refused, so a Show
     // that did nothing but clear the sentence would leave the section loading
     // for ever: the load has to run again.
@@ -586,6 +591,43 @@ describe('the operations screens', () => {
 
     expect(await screen.findByText(/24.00 direct/)).toBeDefined()
     expect(screen.queryByText('The reports are not answering right now.')).toBeNull()
+  })
+
+  it('asks for the parked events again when the queue is refused', async () => {
+    const replies = routes({
+      'GET /api/ops/events': refusal(503, 'unavailable', 'The queue is not answering right now.'),
+    })
+    const shown = show(person(0), replies)
+    await screen.findByText('The queue is not answering right now.')
+    expect(within(screen.getByRole('region', { name: 'The queue' })).queryByText('Loading…')).toBeNull()
+
+    // The queue is read once, so the sentence is the only thing left to press:
+    // without it a refused read is a queue nobody decides until a reload, and a
+    // reload is what loses the form the operator was in the middle of.
+    replies['GET /api/ops/events'] = { body: [EVENT] }
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+
+    expect(await screen.findByText(/evt_1/)).toBeDefined()
+    expect(screen.queryByText('The queue is not answering right now.')).toBeNull()
+    expect(shown.sent('GET', '/api/ops/events')).toHaveLength(2)
+  })
+
+  it('reads the audit log again when it is refused', async () => {
+    const replies = routes({
+      'GET /api/ops/audit': refusal(503, 'unavailable', 'The audit log is not answering right now.'),
+    })
+    const shown = show(person(0), replies)
+    await screen.findByText('The audit log is not answering right now.')
+    expect(
+      within(screen.getByRole('region', { name: 'The audit log' })).queryByText('Loading…'),
+    ).toBeNull()
+
+    replies['GET /api/ops/audit'] = { body: [AUDIT] }
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+
+    expect(await screen.findByText(/entitlement.revoke/)).toBeDefined()
+    expect(screen.queryByText('The audit log is not answering right now.')).toBeNull()
+    expect(shown.sent('GET', '/api/ops/audit')).toHaveLength(2)
   })
 
   it('reads a customer’s records, and every id an action would name', async () => {

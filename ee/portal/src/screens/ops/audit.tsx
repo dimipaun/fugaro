@@ -17,6 +17,13 @@
 // (`api.audit`), and there is no cursor on this shape: a log with more in it
 // than the API answers would be silently truncated, which is worse than a
 // screen that names what it is showing.
+//
+// **A refused read is an answer, and this one is a read of the record.** The
+// log is read once when the section mounts, so the refusal is drawn with a way
+// to read it again: an operator asking who did something cannot reload the page
+// with half a form filled in on it, and the audit log is the only account of
+// what operations did (D456). A read that came back refused has finished, so it
+// is never drawn as "Loading…".
 
 import { useEffect, useState } from 'react'
 import type { AuditEntry } from '../../api/types/audit'
@@ -26,9 +33,13 @@ import { sentence } from './state'
 export function AuditSection({ api }: { api: OpsApi }) {
   const [entries, setEntries] = useState<AuditEntry[] | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
     let live = true
+    // A load that starts clears the last refusal, so the retry is drawn as a
+    // load and not under the sentence it is answering.
+    setFailure(null)
     api.audit().then(
       (log) => {
         if (live) {
@@ -44,7 +55,7 @@ export function AuditSection({ api }: { api: OpsApi }) {
     return () => {
       live = false
     }
-  }, [api])
+  }, [api, attempt])
 
   return (
     <section aria-labelledby="ops-audit">
@@ -55,10 +66,21 @@ export function AuditSection({ api }: { api: OpsApi }) {
         shape carries no cursor, so an entry that has fallen off the page cannot be asked for.
       </p>
 
-      {failure === null ? null : <p role="alert">{failure}</p>}
-      {entries === null ? (
-        <p role="status">Loading…</p>
-      ) : entries.length === 0 ? (
+      {failure === null ? null : (
+        <div role="alert">
+          <p>{failure}</p>
+          <button
+            type="button"
+            onClick={() => {
+              setAttempt((tried) => tried + 1)
+            }}
+          >
+            Try again
+          </button>
+        </div>
+      )}
+      {failure === null && entries === null ? <p role="status">Loading…</p> : null}
+      {entries === null ? null : entries.length === 0 ? (
         <p>Nothing has been recorded yet.</p>
       ) : (
         <ul>
