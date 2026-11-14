@@ -118,6 +118,9 @@ export function OpsScreen({ api }: OpsScreenProps = {}) {
 
   const mayAct =
     gate.status === 'known' && (gate.membership.role === 'owner' || gate.membership.role === 'admin')
+  // The lists are the one change an admin may not make: they configure the
+  // operations team's own door, which is the owner's (D2187, F40).
+  const maySetLists = gate.status === 'known' && gate.membership.role === 'owner'
 
   const run = useCallback(
     async (change: () => Promise<unknown>): Promise<boolean> => {
@@ -132,7 +135,10 @@ export function OpsScreen({ api }: OpsScreenProps = {}) {
     [user],
   )
 
-  const actions = useMemo<OpsActions>(() => ({ mayAct, run }), [mayAct, run])
+  const actions = useMemo<OpsActions>(
+    () => ({ mayAct, maySetLists, run }),
+    [mayAct, maySetLists, run],
+  )
 
   async function signInAgain(): Promise<void> {
     try {

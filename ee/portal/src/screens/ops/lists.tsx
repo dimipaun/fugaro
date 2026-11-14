@@ -11,6 +11,13 @@
 // is an action on the operations team's own door, so a member is shown them and
 // offered no way to save them.
 //
+// **And they are the owner's alone, where every other change here is an
+// admin's too** (D2187 keeps D455's owner-only rule for the door itself, D2207,
+// F40; P5.1's `TestDomainAndTenantListsAreOwnerSet`). An admin is offered the
+// term actions, the queue and the transfer and no Save here: the API refuses an
+// admin's write to these lists, and a button that earned that refusal would be
+// the one thing this screen is for.
+//
 // **An empty list is a real answer and not a missing one.** Either list empty
 // refuses every sign-in it would have admitted (the schema says so), so saving
 // nothing is not the same as never having set anything: the screen draws both
@@ -122,7 +129,7 @@ export function ListsSection({ api, actions }: { api: OpsApi; actions: OpsAction
           <textarea
             id="ops-lists-domains"
             value={domains}
-            readOnly={!actions.mayAct}
+            readOnly={!actions.maySetLists}
             onChange={(event) => {
               setDomains(event.target.value)
             }}
@@ -132,13 +139,13 @@ export function ListsSection({ api, actions }: { api: OpsApi; actions: OpsAction
           <textarea
             id="ops-lists-directories"
             value={directories}
-            readOnly={!actions.mayAct}
+            readOnly={!actions.maySetLists}
             onChange={(event) => {
               setDirectories(event.target.value)
             }}
           />
 
-          {actions.mayAct ? (
+          {actions.maySetLists ? (
             <button type="button" disabled={busy} onClick={save}>
               Save the lists
             </button>

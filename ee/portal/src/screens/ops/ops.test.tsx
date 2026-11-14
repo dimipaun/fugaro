@@ -369,6 +369,28 @@ describe('the operations screens', () => {
     }
   })
 
+  it('offers an admin every change here but the lists, which are the owner’s', async () => {
+    show(person(0), routes({ 'GET /api/ops/membership': { body: member('admin') } }))
+
+    await screen.findByRole('heading', { name: 'Terms and keys' })
+    // An admin makes every other change here, so what is missing below is about
+    // the lists and not about the role.
+    expect(screen.queryByText(/members read/)).toBeNull()
+    for (const name of ['Mint', 'Comp', 'Attach', 'Dismiss', 'Transfer the project id']) {
+      expect(await screen.findByRole('button', { name })).toBeDefined()
+    }
+
+    // The two lists are the owner's alone (D2187, F40): the API refuses an
+    // admin's write to them, and the button is what would earn that refusal.
+    expect(screen.queryByRole('button', { name: 'Save the lists' })).toBeNull()
+    // Drawn all the same, read-only: they are what the operations team's own
+    // door is configured with, and an admin reads them.
+    expect((await screen.findByLabelText('Email domains')).getAttribute('readonly')).not.toBeNull()
+    expect(
+      screen.getByLabelText('Microsoft directories').getAttribute('readonly'),
+    ).not.toBeNull()
+  })
+
   it('reads the membership once for a person, however often their token moves', async () => {
     const shown = show(person(0), routes())
     await screen.findByRole('heading', { name: 'Terms and keys' })

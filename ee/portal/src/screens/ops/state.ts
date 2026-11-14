@@ -30,10 +30,20 @@ export function sentence(error: unknown): string {
 
 export interface OpsActions {
   /**
-   * True when the person may change anything: an owner or an admin of the
-   * operations organisation, and never a member (D2187, F9).
+   * True when the person may change anything but the lists: an owner or an
+   * admin of the operations organisation, and never a member (D2187, F9).
    */
   mayAct: boolean
+  /**
+   * True when the person may set the two lists. They are the operations
+   * owner's alone (D2187 leaves D455's owner-only rule standing for the door
+   * itself, D2207, F40; P5.1's `TestDomainAndTenantListsAreOwnerSet`): an admin
+   * changes terms, decides the queue and moves a project id, and does not
+   * choose which addresses operations may invite or which Microsoft
+   * directories a reseller signs in from. The API refuses an admin here, and
+   * this flag is what keeps them from meeting that refusal.
+   */
+  maySetLists: boolean
   /**
    * Runs a change, or asks for a fresh sign-in instead of sending it, and
    * answers whether the change was sent at all. Refusing locally resolves like
