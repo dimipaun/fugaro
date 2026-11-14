@@ -250,8 +250,8 @@ setup_case() {
   : >"$dir/src/go.mod"
   : >"$dir/src/cmd/fugaro/main.go"
   mkdir -p "$dir/sandbox"
-  git init --quiet --bare "$dir/origin.git"
-  git init --quiet -b main "$dir/sandbox"
+  git init -q --bare "$dir/origin.git"
+  git init -q -b main "$dir/sandbox"
   git -C "$dir/sandbox" config user.email check200@example.invalid
   git -C "$dir/sandbox" config user.name "Check 200 test"
   git -C "$dir/sandbox" config commit.gpgsign false
@@ -527,7 +527,7 @@ test_a_dirty_fugaro_yaml_stops_before_writing() {
 test_belong_in_the_checkout_path_is_refused() {
   setup_case belong-path
   mkdir -p "$work/belong-path/belong-sandbox"
-  git init --quiet -b main "$work/belong-path/belong-sandbox"
+  git init -q -b main "$work/belong-path/belong-sandbox"
   : >"$work/belong-path/belong-sandbox/fugaro.yaml"
   run200 --sandbox "$work/belong-path/belong-sandbox" --source "$dir/src" --yes
   expect_status "$status" 1 "belong in the checkout path"
