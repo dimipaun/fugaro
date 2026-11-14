@@ -18,8 +18,11 @@ into **tasks P5.2.1–P5.2.10**, each with its files, its dependencies and its v
 **Nothing is built by the approval** — this document is still the design and no sender, push
 node, registration field or app code exists — it allocates no decision number, and **Q1–Q10
 remain the owner's to answer**: the plan lists each as a question beside the tasks that wait on
-it. Four sentences below were true when they were written and are not true of the tree the plan
-now reads, so each carries its own dated note: **§2's "`RulesVersion` is 3"** (the constant is
+it. Six sentences below were true when they were written and are not true of the tree the plan
+now reads, so each carries its own dated note: **§2's and §11's "`fugaro pair` is P6.6 …
+not built"** (P6.6 is **built** — `internal/cli/pair.go`, `internal/budget/token/device.go`
+and the sweep's `m~`/`p~` prefixes are on `main`, so `fugaro pair` writes the device node and
+`fugaro pair revoke` deletes it), **§2's "`RulesVersion` is 3"** (the constant is
 **4** — the coordinator's generation, merged as #1021 on 2026-10-24 — and generation 3 is P6.4's,
 the generation that bullet is about), **§3.3 and §5's "No Firebase Analytics SDK is
 linked"** (Phase 7's P7.1–P7.3 put `@react-native-firebase/app`, `analytics` and `crashlytics`
@@ -189,7 +192,13 @@ answered.
   the sibling node's ground, rest on.)* **What is still missing is anything that
   *writes* a device node**: `fugaro pair` is **P6.6**, approved 2026-10-18 and **not built**,
   so until it lands the only way to write one is by hand over IAM (the same sentence
-  `version.go` carries). There is therefore nowhere a **push** token is stored, and no grant
+  `version.go` carries). *(Amended 2026-11-14: **P6.6 has landed** — `internal/cli/pair.go`
+  (`newPairCmd`, `newPairLsCmd`, `newPairRevokeCmd`) and `internal/budget/token/device.go` are
+  on `main` — so `fugaro pair` writes the device node and `fugaro pair revoke` deletes it, and
+  "by hand over IAM" is the state of 2026-10-19. What the bullet is really about is unchanged:
+  nothing writes a **push** node, since `fugaro pair revoke` does not delete the sibling
+  `config/admin/push/$uid` (the plan's task P5.2.5) and no path carries a registration token.)*
+  There is therefore nowhere a **push** token is stored, and no grant
   that would admit one — an allowlist keyed by uid is not a token store, and this design keeps
   its own data in a **sibling** node precisely so that stays true (§3.4). **There is also no
   path that could carry one yet**: the pairing session's one client write admits only the
@@ -1463,7 +1472,12 @@ bent are §4's rules (content-free, never-a-confirmation) and §3.6's choice of 
 - Never ship before the device node it hangs off is **deployed and writable**: P6.4's
   generation 3 is approved (2026-10-18) and **merged** (#601), so the rules are in the tree,
   but `fugaro pair` is **P6.6** — approved, not built — and until it lands nothing writes a
-  device node, so no phone can be paired and no registration can exist (§2, §3.4).
+  device node, so no phone can be paired and no registration can exist (§2, §3.4). *(Amended
+  2026-11-14: **P6.6 has landed** — `internal/cli/pair.go` and
+  `internal/budget/token/device.go` are on `main` — so the node is deployed and writable now,
+  and what the rule still forbids shipping before is the **registration**: no path carries a
+  token until the consumer that would (P6.7, not built) and P5.2.1's `registration` kind are
+  in the tree.)*
 
 ## 12. Open for the owner
 
