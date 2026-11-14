@@ -42,6 +42,7 @@ func jsonKeys(t *testing.T, v any) []string {
 func TestBuildTokenStubShape(t *testing.T) {
 	req := Request{
 		Entry:        "app",
+		BuildID:      "8f3c1a2b-0000-4000-8000-000000000001",
 		Provider:     gitprov.KindGitHub,
 		Repositories: []string{"acme/app", "acme/lib"},
 		TTLSeconds:   900,
@@ -62,6 +63,7 @@ func TestBuildTokenStubShape(t *testing.T) {
 	grant := Response{Proxy: &ProxyGrant{
 		URL:          "https://creds.example/git/",
 		Repositories: []string{"acme/app", "acme/lib"},
+		ExpiresAt:    time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC),
 	}}
 	got, err = Stub{Answer: grant}.Mint(context.Background(), req)
 	if err != nil {
@@ -74,13 +76,13 @@ func TestBuildTokenStubShape(t *testing.T) {
 	if _, err := client.Mint(context.Background(), Request{}); err != nil {
 		t.Errorf("a zero stub refused: %v", err)
 	}
-	if want := []string{"entry", "provider", "repositories", "ttl_seconds"}; !reflect.DeepEqual(jsonKeys(t, req), want) {
+	if want := []string{"build_id", "entry", "provider", "repositories", "ttl_seconds"}; !reflect.DeepEqual(jsonKeys(t, req), want) {
 		t.Errorf("the request encodes as %v, want %v", jsonKeys(t, req), want)
 	}
 	if want := []string{"expires_at", "host", "token", "user"}; !reflect.DeepEqual(jsonKeys(t, token.Token), want) {
 		t.Errorf("a token encodes as %v, want %v", jsonKeys(t, token.Token), want)
 	}
-	if want := []string{"repositories", "url"}; !reflect.DeepEqual(jsonKeys(t, grant.Proxy), want) {
+	if want := []string{"expires_at", "repositories", "url"}; !reflect.DeepEqual(jsonKeys(t, grant.Proxy), want) {
 		t.Errorf("a proxy grant encodes as %v, want %v", jsonKeys(t, grant.Proxy), want)
 	}
 	if want := []string{"token"}; !reflect.DeepEqual(jsonKeys(t, token), want) {

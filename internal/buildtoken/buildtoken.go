@@ -25,17 +25,26 @@ import (
 	"time"
 )
 
-// Request is what a build asks for: the entry it is building, the provider its
-// credential is minted at, the repositories that credential must cover, and how
-// long the build needs it. The service is the one that narrows: a field here
-// widens nothing, and every repository named here is one the entry's own map
-// has to put on the entry already (B1).
+// Request is what a build asks for: the entry it is building, the build itself,
+// the provider its credential is minted at, the repositories that credential
+// must cover, and how long the build needs it. The service is the one that
+// narrows: a field here widens nothing, and every repository named here is one
+// the entry's own map has to put on the entry already (B1).
 type Request struct {
 	// Entry is the catalog entry this build runs for. The service reads the
 	// repositories a build may be given from the published image map for this
 	// entry, so the repositories below are answered against the entry's and a
 	// repository the map does not put on it is refused by name.
 	Entry string `json:"entry"`
+	// BuildID is the build this request is made for: the id the build runs under
+	// (BUILD_ID in a Cloud Build step), not the entry's and not the project's. A
+	// project has one build identity (B5, rule 8), so the identity alone cannot
+	// tell two of its builds apart: a Bitbucket pairing keyed on the identity
+	// would be replaced by the second build (and the first's clone refused
+	// partway) or added to (and either build reach the other entry's
+	// repositories). The pairing is therefore keyed on the identity and this, and
+	// every request names its build (F19, rule 2).
+	BuildID string `json:"build_id"`
 	// Provider is the git provider the credential is minted at
 	// (gitprov.KindGitHub or gitprov.KindBitbucket), and it decides the answer's
 	// shape (R6): a GitHub build is answered a token, a Bitbucket build a proxy
@@ -83,19 +92,27 @@ type Token struct {
 
 // ProxyGrant is the answer a Bitbucket build is given (R6): the build holds no
 // token either, and its git traffic reaches the credentials service's proxy at
-// URL, which has paired the build's identity to Repositories.
+// URL, which has paired this build's identity to Repositories.
 //
-// It carries no expiry because it is not a secret: what every call presents is
-// the build identity's own ID token, which the generated clone step fetches for
-// itself and which reaches that step alone — never the entry's build (B8).
+// The grant is not a secret — what every call presents is the build identity's
+// own ID token, which the generated clone step fetches for itself and which
+// reaches that step alone, never the entry's build (B8) — but the pairing it
+// describes is not nothing: it is what stands between the build's git and the
+// entry's repositories, so it is bounded by the build rather than left standing.
 type ProxyGrant struct {
 	// URL is the proxy endpoint a baked repository's clone, fetch, push and LFS
 	// URLs are rewritten to, as a job's forwarder rewrites its own (insteadOf).
 	URL string `json:"url"`
-	// Repositories are the repositories the proxy has paired to the build's
+	// Repositories are the repositories the proxy has paired to this build's
 	// identity, by canonical name. A request for a repository outside them is
 	// refused by the proxy naming the repository, exactly as a run's is (S2).
 	Repositories []string `json:"repositories"`
+	// ExpiresAt is when the pairing ends at the latest. It is the service's own
+	// instant, as Token.ExpiresAt is, and the request's TTLSeconds is the need it
+	// is computed from and capped against. A pairing that outlived its build
+	// would be a standing grant to the entry's repositories for whoever runs as
+	// the project's build identity next.
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 // Response is what the build route answers a request with: exactly one of the
