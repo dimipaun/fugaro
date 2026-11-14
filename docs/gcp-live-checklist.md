@@ -873,6 +873,7 @@ probe account carries predefined grants only).
 | 520 | A text-only coder reads a screenshot, on the vision model ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 520** and task **V8**; **V1**'s `agent.models.vision`, **V2**'s `model_prices.*.image_tokens`, **V7**'s rewrite of the coder role, and **D2016** — which is why the state this measures is the coder priced **without** an image rate and not the plan's "with"): the sandbox repository's coder is priced without an image rate and `agent.models.vision` names a model that can read one, and one run whose task names a console `__screenshots__` PNG (the issue's own case, run `20261107-104613-b2af`) passes `implement` — and `fix`, where the recipe runs one — reaches its own `result.json`, and there every coder-role stage timing names the **vision** model's ID while `cost.model_by` carries that same model, so the split the issue is about is read from the record and not from the configuration; `fugaro diagnose <run> --json` prints the same split through the command an owner reads a run with | See "Check 520" below; `bash scripts/live-checks/check520.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check520_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | ONE sandbox run and what its task costs — the model spend of its coder-role stages, on the sandbox's own budget — plus the pull request that run opens: **billable, and `--yes` is required** before anything is launched. Every other call is a read (doctor, `models ls`, the run record, `diagnose`), and `CHECK520_MAX_MODEL_USD` turns the run's own figure into a criterion when you set it. The run's pull request and branch are left open for you to close. **OWNER-RUN, NOT RUN.** |
 | 521 | The early refusal, and the sentence an owner acts on ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 521** and task **V8**; **V5**'s bootstrap refusal — "the coder can't read an image the task names" — and **D2005**, **D2006** and **D2001**): a repository whose coder is priced without an image rate and with **no** `agent.models.vision`, and a task whose text names a `.png`: the run is refused at **bootstrap**, before its first stage, so no stage's work is paid for and thrown away — the failure the refusal exists to remove; its record's `failure_class` is `config_invalid`, its `reason` names the slot to set and the price member that gives that slot's model an image rate, its stage list is **empty** and its cost is **zero** | See "Check 521" below; `bash scripts/live-checks/check521.sh --sandbox <a sandbox repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check521_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | **NOTHING billable and no model call**: the run is refused at bootstrap, before its first stage, so no stage's work is paid for and the budget is not touched — which is why this check needs no `--yes`. It does start one Cloud Run job execution, and **nothing it launches outlives it**: a run that has not ended within `CHECK521_RUN_TIMEOUT_SECONDS` is cancelled with `fugaro cancel --now`, from the step that gives up on it and from the script's own exit trap. **OWNER-RUN, NOT RUN.** |
 | 292 | A catalog entry whose source names a build `context:` is built with the repository's files in it ([`docs/catalog-build-context/`](catalog-build-context/implementation-plan.md) §6, its **Check 292** and task **CB5**; that folder's **F22**, **F29**, **F30**, **F32** and **F33**, and **D1402**, **D1403**, **D1408** and **D1409**; the amendment it folds into is [`docs/project-image-catalog/context-design.md`](project-image-catalog/context-design.md), its §A5, §A6, §C3, §C4, §C5 and the fold-in at §11): one entry built from a repository's Dockerfile in a **subdirectory**, whose `COPY` reaches a file of the repository — the build the catalog could not run before this work — read back four ways: the built image **contains the copied file**, the record names **one** commit (`source_commit` and `context_commit` the same, and the image's `org.opencontainers.image.revision` that commit), the staged context **fires** the nightly decision with the `catalog-context` reason and the rebuild it submits is pinned to the staged commit, and after that rebuild the same entry decides **without** that reason. **What the plan's own step 4 cannot be run as written is the point of the section below:** the trigger's subject is the digest the operator's own copy **staged**, not the branch, so a pushed commit fires nothing by itself — the check is written against the code and says so | See "Check 292" below; **you** run it, on the **sandbox installation and the sandbox repository only, never `belong`**, from the sandbox repository's checkout, and **no agent runs any step of it** (there is **no script**: the check is the steps below) | One Cloud Build that runs (`fugaro image build <entry>`), one submitted-and-cancelled before its steps run (the staging that leaves the record behind), and the one rebuild the project's catalog check job submits when the entry fires: **all billable, and the rebuild is the point of the step**. Nothing is granted, no run is launched and no model is called, so there is no run spend. Two commits are pushed to the sandbox repository's branch and reverted (a third when step 5 loses its race with the build it cancels), and the entry, its staged objects, its record, its check state and its image are the check's own — the entry and its objects are removed in the Restore, the image is left in the shared registry (`fugaro image rm` never deletes one). **OWNER-RUN, NOT RUN.** |
+| 350 | The failure classes an owner can see — the class a run carries, the window's grouping, the week's digest, and the record nothing writes back ([`docs/failure-classes/`](failure-classes/implementation-plan.md) §6, its **Check 350**; [`docs/design/failure-classes.md`](design/failure-classes.md) §3's vocabulary, §4.1's one writer and §5's read-only reader; **FC1–FC8**): ONE run of the **sandbox** repository, cut from a throwaway reference whose `fugaro.yaml` carries an unknown key and refused at **bootstrap** as **`config_invalid`** (no model call, nothing billed), read back as a row of `fugaro runs ls --json` and as a `fugaro diagnose` — **the same class from both, and the class the cause deserves** rather than `unclassified`; then `fugaro runs ls --group-by failure_class`, whose groups add up to the window's failed rows and to no other run, whose `share` follows the runs and not the spend, and whose totals are the plain listing's own; then `fugaro runs digest --period week`, whose Failures table counts the week's classes **including an old record whose own bytes carry no `failure_class` at all** — classed from its `reason` at read time, which is the half that says the week is not split into before and after; and **the read-only step**: that old record is read twice through `runs ls --json` and once through `diagnose`, and its object in the bucket is hashed — and its own listing line, the size and the object's own time, taken — **before the first** of those reads and again after the last, and both are **unchanged**, which is what falsifies §5's claim that reading a record never writes one back | See "Check 350" below; `bash scripts/live-checks/check350.sh --repo <a sandbox repository checkout> --project <the installation's project> --bucket <its runs bucket>` is the whole of it, its sibling test `scripts/live-checks/check350_test.sh` drives it against a fake `gcloud` and a fake `fugaro` (and a real local checkout and its bare origin — nothing leaves the machine), and **you** run it, on the **sandbox installation and sandbox repository only**, **never `belong`** (a project, GCP project, bucket or checkout naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | **NOTHING billable and no model call**: the run is refused at bootstrap, before its first stage, so no stage's work is paid for and the budget is not touched — which is why this check needs no `--yes`. It does start one Cloud Run job execution, and **nothing it launches outlives it**: a run still going after `CHECK350_RUN_TIMEOUT_SECONDS` is cancelled with `fugaro cancel --now`, from the step that gives up on it and from the script's own exit trap. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -12987,6 +12988,123 @@ minted, because a trace would print that line, and the scratch directory is remo
 exchange is only as good as the claim it verifies, and the pinned set is what turns "the workspace's Firebase said
 so" into a statement a member can hold. It is also named in the release note's `### For operators` section
 (**W9**), which is where the enablement step itself is written down.
+
+## Check 350: the failure classes an owner can see — one script you run (the sandbox installation and the sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by the task that implemented Check 350 of
+[failure-classes/implementation-plan.md](failure-classes/implementation-plan.md) §6, and
+**no step of it has been run, and nothing here is a claim that it works.** It settles the claim the
+redesign exists to make true and that no hermetic test of **FC1–FC8** can hold: that the **owner** can
+see why the runs failed — the class a run carries, the window's grouping, the week's digest — and that
+the reader which classes a record written before the field shipped **writes nothing back into it**.
+[design/failure-classes.md](design/failure-classes.md) §3 carries the closed vocabulary, §4.1 the one
+call that writes a record's ending, §5 the claim that a read never writes one back, and §6 the report
+the digest commits; what the design cannot settle from a test fixture is what a person sees on their
+own sandbox, and that is this check.
+
+**The plan's §6 is six steps, and the script runs the first four and step 5's read.** It, and not this
+section, is where the reasoning is; what follows is what each step reads and which of them the script
+measures:
+
+1. **One run that fails for a cause the classifier can name on purpose**, and the two commands a person
+   reads it with. The script cuts a **throwaway reference** on the sandbox repository — by plumbing, so
+   your work tree is never switched and your branch is never moved — whose `fugaro.yaml` is your HEAD's
+   with **one unknown key** added, which the strict decoder refuses: the runner ends the run at
+   **bootstrap**, before its first stage, with `failure_class` **`config_invalid`** and no model call.
+   It then reads `fugaro runs ls --json` and `fugaro diagnose <run>` and compares: **the row and the
+   diagnosis carry the same class, and the class is the one the cause deserves** — not `unclassified`,
+   which is the reading where the classifier answers nothing.
+2. **`fugaro runs ls --group-by failure_class`**, over a window the owner recognises (the listing's
+   window reaches back past the week the digest reports and has room for a run minted before that week
+   and finished inside it; `--since <Nd>` moves it): the groups' runs **add up to the window's failed
+   rows** and to no other run, `share` **follows the runs and not the spend**, and the totals line's two
+   figures are the ones the plain listing prints.
+3. **`fugaro runs digest --period week`**: the week's Failures table is there, the summary block carries
+   `failures`, and — the half that matters — **an old record of the same week lands in the class its
+   `reason` maps to**. The script looks that record up in the **bucket**, before any `fugaro` read of the
+   window, and it must be one whose own bytes carry **no** `failure_class` at all: a record written
+   before the field shipped. A class counted for it in the week beside the runs written after it is what
+   says the week is **not** split into before and after.
+4. **The read-only step, and it is the one a code review cannot settle.** That same old record is read
+   **twice** through `runs ls --json` and **once** through `diagnose`, and against those reads: its
+   object in the bucket is hashed **before the first** of them and again after the last, and its own
+   listing line — the size and the object's own time, not its url — is taken at both ends too. **The
+   bytes and the line are unchanged.** §5's claim is that nothing is written back, and a class that
+   arrived in the record between the two readings is what falsifies it. A record rewritten with the
+   **same** bytes (a reserialisation, a copy) is what the listing line catches, which is why the script
+   compares both.
+5. **The refutation step, which is YOURS to make and the check's to read.** A job image whose agent call
+   the account's own limit refuses must carry `stage_error_unexplained` and **no class of its own** —
+   which is **O6** unanswered, and reading it is what tells the owner what the report looks like
+   meanwhile. **The script never fakes this run**: without `--step5-run <run id>` its row is the prompt
+   it is, an **INFO** that decides nothing, and with that argument the class your run carries **is** a
+   criterion and a class other than `stage_error_unexplained` fails the check as a finding about the
+   classifier.
+6. **The HARD RULE, on a real installation at the previous version: `brew upgrade`, and then `fugaro
+   update` ALONE.** No second command, no prompt beyond the ones `update` already asks, and `fugaro
+   doctor` clean afterwards. **The script prints this prompt and measures nothing of it** — a step a
+   release needs here that the plan did not name is a defect in the release, not in this check (F29).
+
+**Run it:**
+
+```bash
+bash scripts/live-checks/check350.sh --repo <a sandbox repository checkout> \
+  --project <the installation's project> --bucket <its runs bucket>
+```
+
+`--repo` is a checkout of the **sandbox** repository — every `fugaro` command runs in it, and the
+throwaway reference is cut in it — and it is required; a directory that is not a git work tree, or one
+whose `origin` does not answer, is refused before anything is created. `--project` is the installation's
+Fugaro project and `--bucket` its runs bucket, where the records of steps 1, 3 and 4 are read; both are
+required, and the check reads neither out of a config that may name another. `--gcp-project` is the GCP
+project the bucket lives in (default: the same value as `--project`), `--since <Nd>` moves the window the listing
+reads and the bucket scan steps 3 and 4 choose the old record from, `--step5-run <run id>` is the run **you** made for step 5, and `--dry-run` prints the guards and
+every command a real run would make — **and makes no call at all**: no gcloud call, no `fugaro` call, no
+object read, and no verdict.
+
+**You** run it, and **no agent runs any step of it**. A project, GCP project, bucket or checkout that
+names the owner's own installation (`belong`) is refused **before a single call**, and so is a coding
+agent's session and a shell started tracing (`-x`), which would print every command this check makes and
+the run's own output with it. It is read-only against everything that is yours: it **writes no secret
+and mints no token**, every read is made with your own identity, and the only text it prints is what the
+tools printed.
+
+**Reading the `CHECK 350 RESULT` block.** The same shape as the other scripted checks': ONE block on
+stdout, a `FACT <key>: PASS|FAIL|INFO — <detail>` line per fact, ending `CHECK 350 RESULT END (exit N)`.
+The keys are printed in the same order whatever happened, so one block can be diffed against another,
+and a row that was never reached reads `FAIL — not reached`. What the run was reading is `project`,
+`gcp-project`, `bucket`, `repo`, `belong`, `agent-session` and `xtrace`; the run of step 1 is `branch`,
+`run`, `settled` and `class` (with `cancelled` when a run that would not end had to be stopped); the
+window is `window`, the diagnosis is `agree`, and the old record and the read-only step are `target`,
+`old-record` and `readonly`; the grouping is `groups`, `share` and `totals`; the week is `digest`; and
+`step5` and `step6` are the owner's own two steps. The last line of the block is the verdict, and its
+exit status is what decides: **`0`** when every criterion of steps 1 to 4 held — and step 5's read too, when you passed `--step5-run` — **`1`** when one
+of them FAILED, or when they all held and the **Restore** could not confirm that the reference it made is
+gone (the `restore` row names it, and that is the one case where a block of PASSing criteria still exits
+non-zero), and **`2`** when the run could not tell — a guard stopped it, a tool is missing, the launch
+named no run, the run never ended, a read did not answer, or the window holds no record old enough for
+steps 3 and 4. **`2` is not an answer about the classes**, and the block's `aborted` row says so.
+
+**What it creates, and the Restore.** ONE throwaway branch on the sandbox repository's origin
+(`chk350-<hex>`, cut at your checkout's HEAD with `fugaro.yaml` plus an unknown key) and ONE run of that
+repository cut from it, plus that run's own objects under the repository's slug. **The branch is deleted
+from the origin and from the checkout by the Restore, which runs from the exit trap too** — an
+interrupted run still cleans up after itself — and the `restore` row reads the deletion back from both
+places rather than assuming it. **The run's own record is LEFT in the bucket on purpose**: it is the
+evidence step 1 read, it costs nothing, and the bucket's lifecycle ages it out.
+
+**Cost.** Nothing billable and no model call: the run is refused at bootstrap, before its first stage, so
+no stage's work is paid for and the budget is not touched. It does start **one Cloud Run job execution**,
+and nothing it launches outlives it — a run still going after `CHECK350_RUN_TIMEOUT_SECONDS` is cancelled
+with `fugaro cancel --now`, from the step that gives up on it and from the script's own exit trap.
+
+**What waits on it.** The owner's own reading of the redesign:
+[failure-classes/README.md](failure-classes/README.md) holds this check as that work's owner-run live
+check, the plan's §6 is where its six steps are argued, and the design's §1 is the state the redesign
+exists to leave behind — a record whose *why* is free text, nothing that groups failures, and a person
+who has to open one run at a time to find out what went wrong. It is **NOT RUN**: until it is,
+this register carries no reading about a class, a grouping or a digest on a real installation, and **no
+`PASS` is recorded anywhere here for any of them**.
 
 ## Check 370: the security escalation — a matching diff runs level 3, and the record names the row (sandbox installation and sandbox repository only, never `belong`; run by you; NOT RUN)
 
