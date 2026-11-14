@@ -248,10 +248,10 @@ P3.5 ──► P6.12           (shared directory: mobile/src/voice/)
 P6.7 ──► P6.13           (shared file: internal/cli/mailbox.go)
 
 Phase 5 — P5.2 APPROVED 2026-11-14 (P5.1, P5.3 and P5.4 stay unscheduled):
-P0.2 ──► P5.2.1 ──┬─► P5.2.2 ──► P5.2.3
-                  └─► P5.2.4 ──┬─► P5.2.6 ──► P5.2.7
-                               │            └─► P5.2.10
-                               └─► P5.2.8 ──► P5.2.9 ──► P5.2.10
+P0.2 ──► P5.2.1 ──► P5.2.2 ──┬─► P5.2.3
+                             └─► P5.2.4 ──┬─► P5.2.6 ──► P5.2.7
+                                           │            └─► P5.2.10
+                                           └─► P5.2.8 ──► P5.2.9 ──► P5.2.10
 P6.6 ──► P5.2.5
 P6.7 ──► P5.2.4          (the node's writer, and the file P5.2.4 extends)
 P6.13 ──► P5.2.4         (shared file: internal/cli/mailbox.go)
@@ -327,7 +327,7 @@ P3.6 ──► P5.2.8          (shared directory: mobile/src/mailbox/)
 | **8** | **P5.2.7** the sender's cloud identity · **P5.2.9** the app's receipt | **P5.2 approved 2026-11-14** | **P5.2.7 SECURITY-SENSITIVE (mandatory)** · **P5.2.9 SECURITY-SENSITIVE** | the Terraform modules · `mobile/src/push/`, `mobile/src/app/root.js` |
 | **9** | **P5.2.10** the disclosure | **P5.2 approved 2026-11-14** | standard | `SECURITY.md`, the privacy page's software part |
 
-**Phase 5 does add levels, and saying so is part of what this split is for.** The plan's own table stops at 5 and Phase 6 adds none; P5.2's chain is **P0.1 → P0.2 → P5.2.1 → P5.2.2 → P5.2.4 → P5.2.6 → P5.2.7**, seven tasks deep, and the disclosure sits at level 9. **Its first task needs nothing but the merged schema and the owner's answer to Q3**, so push can start now; its **sender** (level 7) is where the work really sits, and the owner's Q1, Q4, Q5 and Q10 are what decide that task's shape. **One prerequisite `main` does not hold is on the chain: P6.7**, which P5.2.4 waits on — everything else the split names is merged or is a decision.
+**Phase 5 does add levels, and saying so is part of what this split is for.** The plan's own table stops at 5 and Phase 6 adds none; P5.2's chain is **P0.1 → P0.2 → P5.2.1 → P5.2.2 → P5.2.4 → P5.2.6 → P5.2.7**, seven of this split's tasks deep, and the disclosure sits at level 9. **Its first task needs nothing but the merged schema and the owner's answer to Q3**, so push can start now; its **sender** (level 7) is where the work really sits, and the owner's Q1, Q4, Q5 and Q10 are what decide that task's shape. **Three prerequisites `main` does not hold sit on the chain, and they are why P5.2.4 lands at level 6 rather than beside P5.2.3: P4.1** (the consumer, whose file `internal/cli/mailbox.go` does not exist), **P6.7** (the consumer's enforcement, which depends on P4.1 and extends that file) **and P6.13** (the real sweeper's prompt rule, which writes the same file after P6.7) — the chain through them is **P4.1 → P6.7 → P6.13 → P5.2.4**, four tasks deep, none of them in this split. Everything else the split names is merged or is a decision.
 
 **Six levels, and up to nine tasks in one level.** Level 1 is by far the widest — the shared package's modules are parallel with each other and with the app's own work — and the width is real rather than a scheduling wish: level 1's nine tasks write **nine different paths** and no two of them touch one file. The owner-run P2.3 and P4.4 sit at level 3 because each runs a check P4.2a must write first.
 
@@ -686,7 +686,7 @@ It holds a model credential in the cloud (which D40/D42/D54b deliberately kept o
 ### Task P5.2.4: The registration reaches `config/admin/push/$uid` — SECURITY-SENSITIVE
 
 **Files.** `internal/cli/mailbox.go` (P6.7's file: the consumer applies a `registration` message by writing the sibling node — `token`, `platform`, `updated_at` and the `prefs` child §3.8 asks for) and its test.
-**Depends on.** **P6.7**, which is **not built** (`internal/cli/mailbox.go` does not exist); P5.2.1, P5.2.2; **Q3** (the consumer writes `config/admin/**` only where the operator holds `roles/firebasedatabase.admin`; where they do not, registration is an admin act like pairing, and the design says so rather than discounting it for the app's convenience).
+**Depends on.** **P6.7**, which is **not built** (`internal/cli/mailbox.go` does not exist), and **P6.13**, also not built, which writes the same file and comes first — the edge the shared-files table relies on, so that no level holds two writers of `internal/cli/mailbox.go`; P5.2.1, P5.2.2; **Q3** (the consumer writes `config/admin/**` only where the operator holds `roles/firebasedatabase.admin`; where they do not, registration is an admin act like pairing, and the design says so rather than discounting it for the app's convenience).
 **Verification.** `go test ./internal/cli -run 'Mailbox|Registration' -count=1`: a registration message writes the node once; a re-registration overwrites `token` and `updated_at` and leaves the ledger alone; a message whose MAC does not verify is refused and writes nothing; a registration arriving after the device node was deleted writes nothing (revocation stays final); and **no write of this path touches `config/admin/devices/**`** — the design's rule is that only `fugaro pair` and `fugaro pair revoke` ever write there, which is what makes "no device node, no send" safe.
 **Reviewer tier.** SECURITY-SENSITIVE.
 
@@ -1087,7 +1087,7 @@ decides whether one is wanted when the first task lands.
 | P5.2.1 *(approved 2026-11-14)* | P0.2, P6.3 (both merged) | **Q3** (the mailbox is the registration path); D169, D171 (the MAC on every inbox message) |
 | P5.2.2 *(approved 2026-11-14)* | P5.2.1; P2.1, P6.4 (both merged) | D166 (the node as the allowlist), D169 |
 | P5.2.3 *(approved 2026-11-14)* | P5.2.2 | D113, D166 |
-| P5.2.4 *(approved 2026-11-14)* | **P6.7** (not built), P5.2.1, P5.2.2 | **Q3** (the operator must hold `roles/firebasedatabase.admin`); D165, D166 |
+| P5.2.4 *(approved 2026-11-14)* | **P6.7** (not built), **P6.13** (not built; the same file, and it writes it first), P5.2.1, P5.2.2 | **Q3** (the operator must hold `roles/firebasedatabase.admin`); D165, D166 |
 | P5.2.5 *(approved 2026-11-14)* | P6.6 (built) | D166 (existence is the allowlist, so one act revokes) |
 | P5.2.6 *(approved 2026-11-14)* | P5.2.4 | **Q1, Q4, Q5, Q10**; D160 (the category set), D121 |
 | P5.2.7 *(approved 2026-11-14)* | P5.2.6 | **Q1** (the grant's holder) |
