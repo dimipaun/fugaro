@@ -83,9 +83,18 @@ export function OpsScreen({ api }: OpsScreenProps = {}) {
   const [stepUp, setStepUp] = useState(false)
   const [failure, setFailure] = useState<string | null>(null)
   const user = state.status === 'signed-in' ? state.user : null
+  // **The membership read follows the person and not the session object.** The
+  // port answers a fresh `SignedInUser` whenever the token moves, and Firebase
+  // refreshes the token silently about hourly: same uid, same claims, a new
+  // object. Keyed on the object, every refresh would read the membership again
+  // -- one more audited read of a customer record (D456) -- and a refresh that
+  // landed on a dropped connection would refuse the caller and unmount every
+  // section, taking a half-filled mint or transfer with it and leaving the
+  // operator on the error until they reloaded.
+  const signedInAs = user?.uid ?? null
 
   useEffect(() => {
-    if (user === null) {
+    if (signedInAs === null) {
       setGate({ status: 'loading' })
       return
     }
@@ -105,7 +114,7 @@ export function OpsScreen({ api }: OpsScreenProps = {}) {
     return () => {
       live = false
     }
-  }, [ops, user])
+  }, [ops, signedInAs])
 
   const mayAct =
     gate.status === 'known' && (gate.membership.role === 'owner' || gate.membership.role === 'admin')

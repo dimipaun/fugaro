@@ -21,7 +21,7 @@
 // Nothing here reaches the network or an account: the auth port is a fake, and
 // the fetch is one that answers the routes a case names.
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApiClient } from '../../api/client'
 import type { ApiClient } from '../../api/client'
@@ -264,6 +264,8 @@ function serve(replies: Record<string, Reply>): Server {
 
 interface Shown extends Server {
   signIn: ReturnType<typeof vi.fn>
+  /** The SDK's silent token refresh: the same person, a new session object. */
+  refresh: () => void
   client: ApiClient
 }
 
@@ -281,6 +283,13 @@ function show(user: SignedInUser | null, replies: Record<string, Reply>): Shown 
   const signIn = vi.fn(async () => {
     listener?.(person(0))
   })
+  // A refresh is the other thing the token listener really does: Firebase
+  // renews the token silently about hourly and hands the session the same
+  // person again -- the same uid and the claims the token already carried --
+  // so this pushes what the SDK pushes rather than a user invented here.
+  const refresh = (): void => {
+    listener?.(user === null ? null : { ...user })
+  }
   const port: AuthPort = {
     watch: (onUser) => {
       listener = onUser
@@ -303,6 +312,7 @@ function show(user: SignedInUser | null, replies: Record<string, Reply>): Shown 
   return {
     ...server,
     signIn,
+    refresh,
     client,
   }
 }
@@ -357,6 +367,23 @@ describe('the operations screens', () => {
     for (const name of ACTIONS) {
       expect(screen.queryByRole('button', { name })).toBeNull()
     }
+  })
+
+  it('reads the membership once for a person, however often their token moves', async () => {
+    const shown = show(person(0), routes())
+    await screen.findByRole('heading', { name: 'Terms and keys' })
+    expect(shown.sent('GET', '/api/ops/membership')).toHaveLength(1)
+
+    await act(async () => {
+      shown.refresh()
+    })
+
+    // The read is keyed on who is signed in, so a refresh under the same person
+    // asks nothing again: one more read would be one more audited read of a
+    // customer's record (D456), and one that failed would unmount every section
+    // and take a half-filled form with it.
+    expect(shown.sent('GET', '/api/ops/membership')).toHaveLength(1)
+    expect(screen.getByRole('heading', { name: 'Terms and keys' })).toBeDefined()
   })
 
   it('asks for a fresh sign-in instead of sending a mint', async () => {
