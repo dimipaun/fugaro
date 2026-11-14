@@ -674,6 +674,41 @@ on that secret and on no other account's. 600d is the one part a **script** can 
 `fugaro` alone); 600a to 600c are human-terminal procedures and are the steps their sections write.
 It is owner-run — **no agent runs any step of it** — and it is **NOT RUN**.
 
+**Checks 601 to 608 are the mobile-auth work's, and they are the first numbers free above every claim
+this register records** ([`docs/mobile-auth/implementation-plan.md`](mobile-auth/implementation-plan.md)
+**§9**, whose table proposes that work's owner-run checks **by name and takes no number** on the
+register's own rule that the phase that ships a check writes it, and its parts **P1–P6**, whose
+decisions **D221–D236** are [reconciliation.md](mobile-auth/reconciliation.md) §4's, recommendation
+first; **P0 and P1** are the two the owner approved, and **P3, P4 and P5 cannot merge before the mobile
+plan's Phase 6 tasks P6.6 and P6.8**). The highest **written** `## Check N` section in this file, **read
+at `21f4c33a` — the commit this change is based on**, was **600**, the accounts-add work's four parts
+600a to 600d; above it, **601–609** are claimed by no document this register records, and **610–619**
+are `docs/review-job`'s reserved block — its
+[implementation-plan.md](review-job/implementation-plan.md):181, *"Check 610 (RJ9, owner-run) and Check
+611 (RJ10, owner-run), from the reserved block 610 to 619"* — so **601 was the number free at this
+change's merge**, which is the register's rule for a work that reserved none, and this paragraph is the
+record of the eight taken: **601** the pairing that refuses an unverified address (**P3**), **602** the
+paired phone cannot read its own entry (**P2** and **P3**), **603** a revoked pairing stops on the next
+request (**P3**), **604** a publish never re-adds a revoked entry (**P5**), **605** a declared entry
+that is not on the node admits nobody (**P5**), **606** the QR carries no identity (**P4**), **607** the
+first screen with no account (**P4**), and **608** the provider refusal on a real project (**P6**). Like
+every claim above the highest written section they are **claimed, not reserved**: a claim is settled at
+its merge, and whichever of two claims merges second renumbers itself. **§9's reason for proposing its
+checks by name is answered here and not overridden**: that section's table carries **ten** rows, and the
+two that are **not** here are the two it marks **runner** — *an exact entry overrides its domain's role*,
+which is `internal/mobileauth/`'s resolver and is proved by that package's own tests rather than by a
+live reading, and *the app's boundary on a real build*, which §9 itself calls the app's CI job and not a
+live check — so **eight** sections are written, each naming the part that ships it and the script it is
+written to become. Each of the eight is **owner-run** — **no agent runs any step of it** — it reads and
+writes in a sandbox installation and a sandbox project only, **never `belong`**, and it is **NOT RUN**.
+**Three of them read ground the mobile functional spec's checks already cover, and each says so in its
+own section rather than standing as a second live check for one property**: **Check 100** (the QR
+pairing, end to end) and **Check 101** (revocation, and the timing of what the old token still does) are
+that spec's **P6.11**, and 601 to 603 read the same three properties from the other side — 100 and 101
+record the fence and the revocation **as one path passes through them**, where 601 to 603 **provoke**
+each one on its own, with one account, one unverified address and one revoked pairing, and read what the
+database did with it.
+
 **That is the end of the register.** The paragraph below is not another
 reservation: it introduces the check that owns 57, whose row is in the table
 below.
@@ -928,6 +963,14 @@ probe account carries predefined grants only).
 | 313 | CG13's endpoint on a real machine ([`docs/cli-output-console-graph/`](cli-output-console-graph/implementation-plan-graph.md), its **CG12** row 313, its task **CG13b** and the decision **D1359**, all of 2026-11-06): the registry file the daemon writes under the state directory (`<UserDir state>/fugaro/run/<id>.json`) is mode **0600** in a mode **0700** directory and carries a **nonce** minted per start; nothing about it is judged by a **pid** — liveness is a **handshake** with the file's own token (the answer must read back the id and the nonce, which a port or a pid another process took over cannot) plus the **lock** the daemon holds for its life (an `flock` the kernel drops when the process dies); `fugaro graph --source local:<id>` answers and goes through `endpoint.Probe`; a `kill -9` of the daemon leaves a file the reader must judge dead, **remove**, and never let it touch a **live process that has taken the pid**; and a **reboot** mints a different nonce. The three things CG13b's tests can only fake are real here: a SIGKILL that leaves a file behind, an `flock` the kernel drops, and a loopback listener that answers. A daemon a login unit supervises (launchd's `KeepAlive`, systemd's `Restart=always`) restarts itself within 5 to 10 seconds, so the crash half wants one started **by hand**: where the daemon came back the check reports that half as **NOT MEASURED** (exit 2) with the one line that fixes it, rather than misjudging it | See "Check 313" below; `bash scripts/live-checks/check313.sh [--id <the orchestrator's id>]` is the whole check **before** the reboot, and `bash scripts/live-checks/check313.sh --phase reboot --previous-nonce <the value the first block printed>` is what you run **after rebooting and starting a daemon again** — it repeats every reading and adds the nonce comparison. **You** run it, on your own machine, against a daemon you can lose, with an id that is **not `belong`** (refused before anything is read), and **no agent runs any step of it** | One loopback handshake, one local read and two `fugaro` commands: no model call, no run, no cloud call, nothing billable. **USER-RUN, NOT RUN.** |
 | 314 | The person's viewer role over `orchestrator/` ([`docs/cli-output-console-graph/`](cli-output-console-graph/implementation-plan-graph.md), its **CG12** row 314, the round-3 ruling **T2** of 2026-11-06 and its scheduling row **B4**; CG4 and CG6 merged on 2026-11-10): **T2 is UNVERIFIED until you run it** — no rules test can read a project's IAM, so whether `roles/firebasedatabase.viewer` on a **person's** credential covers the `orchestrator/` subtree is this reading and no other. `fugaro orchestrator ls --json` (CG4's shallow read of that subtree plus one lease read per id) **is** the read T2 is, made by your installation's own application-default credential; the check reads that credential's **type** first (a service account's, an impersonation's or a workload-identity federation's answers a different question and stops the run), reads the installation's own config file for the project its database belongs to (`budget.firebase_project`, else `gcp_project`) and reads the policy **on that project**, reads the roles the policy binds to `user:<the account>` or to its domain, and then reads the listing. A role that covers the whole project (`roles/owner`, `roles/editor`, `roles/firebasedatabase.admin`) bound beside viewer, or an `orchestrator/` holding no node, makes T2 **NOT MEASURED** (exit 2) rather than passed; a refused read is quoted and read as T2 answered **NO**. H7 — that no run or token identity reads or writes it — is CG6's pin, not this check's | See "Check 314" below; `bash scripts/live-checks/check314.sh [--project <name>] [--account <address>]` is the whole check. **You** run it, on a sandbox installation, **never `belong`** (refused in what you type and in what `doctor` answers), and **no agent runs any step of it** | One credential-file read, one `fugaro doctor --json`, one `gcloud projects get-iam-policy` and one `fugaro orchestrator ls --json`: no model call, no run, nothing billable, nothing written. **USER-RUN, NOT RUN.** |
 | 210 | A sampled run's shadow publishes nothing ([`docs/model-ab-testing/`](model-ab-testing/implementation-plan.md), its **Check 210** and task **A2.2**; **D550**–**D557**'s sampler — `ab.rate` and its ceiling, the daily cap, the champion's own hash of the run ID — **D554**'s publish mode `none`, and **A2.1**'s tests for the boundary this plan's Global constraints table states, "a challenger never pushes, never opens, updates or comments on a PR"): on the sandbox installation whose published project layer sets `ab.rate: 0.10` with one challenger named and whose repository carries no `ab.rate: 0` opt-out, small sandbox tasks launched until `fugaro runs ls` shows a pair (about ten launches expected at 0.10, the owner stopping at thirty, and **no flag forces a sample**) — and then, of that pair's two arms, exactly one `fugaro/<run-id>` branch on the remote and one pull request, both the champion's: the challenger's own record carries `ab.arm: challenger`, `ab.publish: none`, `ab.challenger` (the model the owner named) with `challenger_source: owner` and `outcome: none`, and **no** branch and **no** pull request, while **both** arms' patch objects are in the bucket — each fact read where it is written rather than from the row that claims it | See "Check 210" below; `bash scripts/live-checks/check210.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check210_test.sh` drives it against fake `fugaro`, `gcloud`, `git` and `gh` only and launches nothing, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project, account or region naming that installation is refused by name, and so is a coding agent's session); **no agent runs any step of it** | Up to **THIRTY sandbox runs** and what their tasks cost — each champion's implement stage and its review rounds, on the sandbox's own budget — plus the branches and pull requests those champions leave: **billable, and `--yes` is required** before anything is launched. Everything else is a read (the layer, `doctor`, both records out of the runs bucket, the remote's branch list, both patch objects, `fugaro ab --json`), and the launches stop at the **first** pair, so a sandbox already sampling at 0.10 costs a fraction of the bound. The teardown is part of the check: a launch that has not ended is stopped with `fugaro cancel --now` and read back, then every pull request this check's champions opened is closed and every branch they pushed is deleted, each read back. **OWNER-RUN, NOT RUN.** |
+| 601 | The pairing that refuses an unverified address ([`docs/mobile-auth/`](mobile-auth/implementation-plan.md), its **§9** and part **P3**; **D226** — the email is checked at pairing, in the shape `internal/cli/init_members.go`'s `userEmail` already uses — and **D222**, the node is the allowlist): on a sandbox project, an account whose address is **unverified** is paired with, and the pairing **stops** naming that address and nothing else — no entry under `config/admin/devices`, and no `pairing/<uid>/request` left behind — while the same attempt against a verified address pairs and writes the node | See "Check 601" below; **you** run it, on a sandbox installation and a sandbox project, **never `belong`**, and **no agent runs any step of it** | Nothing is created: the refusal is the reading, and the account that is refused is one you made for this. The pairing that succeeds is the one **Check 100** reads end to end, and its entry is the only thing this check leaves behind (one `fugaro pair revoke` removes it). **OWNER-RUN, NOT RUN.** |
+| 602 | The paired phone cannot read its own entry ([`docs/mobile-auth/`](mobile-auth/implementation-plan.md), its **§9** and parts **P2** and **P3**; **D225** — the role is on the node and no rule reads it in v1 — and **D222**): the deployed rules document declares `config/admin/devices/$uid` as `{ ".read": false, ".write": false }` with no `validate` and no child named, the **generation the CLI's marker names is unchanged** by the fields P2 adds, a client holding the paired account's own token is **refused** a read of its own entry and a write of it — including one that would promote itself — and `fugaro pair ls` is the only way the owner sees an entry | See "Check 602" below; **you** run it, on a sandbox installation and a sandbox project, **never `belong`**, and **no agent runs any step of it** | Nothing is created and nothing is changed: every reading is a REST call with the paired account's own ID token and one `fugaro pair ls`, and the entry the pairing wrote is the one **Check 601** leaves or this check's own pairing makes. **OWNER-RUN, NOT RUN.** |
+| 603 | A revoked pairing stops on the next request ([`docs/mobile-auth/`](mobile-auth/implementation-plan.md), its **§9** and part **P3**; **D222** and **D166**'s property, which the mobile plan's **P6.4** wrote into `internal/budget/rules/rules.go`'s `PathDevices`): `fugaro pair revoke` deletes the node, and the **very next** request the revoked phone makes with the **same** ID token still in its hand is denied — the fence reads the node on every request, so revocation does not wait for a token's expiry — and `fugaro pair ls` no longer carries the entry | See "Check 603" below; **you** run it, on a sandbox installation and a sandbox project, **never `belong`**, and **no agent runs any step of it** | One deletion, by the command whose whole subject is that deletion, on an entry this check's own pairing made. The Auth user is **not** deleted: this check reads the node's fence, and the Auth user's own timing is **Check 101**'s, which is where it is recorded. **OWNER-RUN, NOT RUN.** |
+| 604 | A publish never re-adds a revoked entry ([`docs/mobile-auth/`](mobile-auth/implementation-plan.md), its **§9** and part **P5**; **D231** — the declared list is a seed, the node is the authority — and the rule `internal/cli/project_cmd.go`'s `publishAllowRepos` already holds for repositories, *"a later publish never re-adds a name an operator removed"*, applied to people): a person named in the checkout's `fugaro.yaml` declared block, paired and then **revoked**, is **not** re-added by `fugaro project policy publish` — the publish is **additive** and seeds only what is not there — while a person in the same block who was never paired **is** seeded, with the **resolved** role (D224) | See "Check 604" below; **you** run it, on a sandbox installation and a sandbox checkout whose `fugaro.yaml` you may write, **never `belong`**, and **no agent runs any step of it** | One publish (an ETag-guarded write of the devices node, gated on the deployed rules marker by `requirePolicyRules`) and the entries it seeds. The revoked entry's absence is the reading; the seeded entries are removed with `fugaro pair revoke`, one per person. **OWNER-RUN, NOT RUN.** |
+| 605 | A declared entry that is not on the node admits nobody ([`docs/mobile-auth/`](mobile-auth/implementation-plan.md), its **§9** and part **P5**; **D231** — *"a person in the file who is not on the node is not admitted"* — and **D222**): an account named in the declared block and **not** written to `config/admin/devices` signs in and is admitted **nowhere** — every project node the rules reach is denied to it, and the same account after `fugaro pair` reaches exactly what its role allows — which is the node's authority over the file, read on a real database rather than asserted | See "Check 605" below; **you** run it, on a sandbox installation and a sandbox project, **never `belong`**, and **no agent runs any step of it** | Nothing is created but the one entry the pairing writes, and that is what the check is about: the same account read before and after `fugaro pair`, with the file unchanged in between. The entry is removed by `fugaro pair revoke`. **OWNER-RUN, NOT RUN.** |
+| 606 | The QR carries no identity ([`docs/mobile-auth/`](mobile-auth/implementation-plan.md), its **§9** and part **P4**; **D233** — the QR is the Firebase configuration plus a one-shot pairing token — **D234** — no per-project Firebase app instance — and **D232**, `SECRET_ITEMS` stays `['idToken','macKey']`): a real pairing QR is scanned and its payload read **as text**: it carries the project's Firebase configuration and a short-lived one-shot `p~` custom token (P6.6's bound: `exp` ≤ five minutes) and **no** email, identity, key or credential of any kind — and the app's validator **refuses** a payload carrying one, which is the test's half and this check's reading of the real payload | See "Check 606" below; **you** run it, on a sandbox installation and the app's own build on a device or simulator, **never `belong`**, and **no agent runs any step of it** | Nothing is created: the payload is read off a screen or out of the pairing flow's own output, and the reading is a text comparison against what D233 permits. What the payload carries is the same material **Check 100** records the phone receiving; this check is about what is **printed**, not about what the phone does with it. **OWNER-RUN, NOT RUN.** |
+| 607 | The first screen with no account ([`docs/mobile-auth/`](mobile-auth/implementation-plan.md), its **§9** and part **P4**; **D232** and **D234**, and `docs/mobile/play-review-access.md`'s promise to Play's reviewers that the app *"needs no account, sign-in or network"*): on a device with no account and no network, the **demo** is reachable from the first screen with nothing asked first, and the **"ask your admin"** state stands **beside** the demo entry and never in front of it, reached from the pairing flow's refusal path | See "Check 607" below; **you** run it, on the app's own build on a device or simulator, **never `belong`**, and **no agent runs any step of it** | Nothing is created and no cloud is touched — the screen is the whole subject, and the check is run with the network off on purpose. It reads what the app's own `mobile/src/demo/safety.test.js` holds in the runner; what no test can read is what a person sees on a device, which is why it is here. **OWNER-RUN, NOT RUN.** |
+| 608 | The provider refusal on a real project ([`docs/mobile-auth/`](mobile-auth/implementation-plan.md), its **§9** and part **P6**, and [provider-sign-in.md](mobile-auth/provider-sign-in.md): the path that document prices and refuses, **D221** — no provider session reaches the database): on a sandbox project whose Identity Platform configuration has **one provider enabled** (an email/Google/Apple entry in `defaultSupportedIdpConfigs` or `oauthIdpConfigs`), the setup path's own refusal fires against the **real** `identitytoolkit.googleapis.com/admin/v2/projects/<project>/config` read — naming what is enabled and what the project still refuses — and the project is left as it was found, with the provider disabled again | See "Check 608" below; **you** run it, on a sandbox project you may reconfigure, **never `belong`**, and **no agent runs any step of it** | One configuration change on a sandbox project and its reversal: the check enables a provider, reads the refusal, and disables it again, and the Restore reads the two lists back. The live reading of the **workspace's** own pin is Check 361 above (`scripts/live-checks/check361.sh`); this is the refusal's own reading, on a project whose provider is on. **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -15496,3 +15539,819 @@ repositories and carries `pull_requests: write` alone.
 that a set is ready or not ready as a whole: this run is the only reading of it, and a set that
 flips one pull request and leaves the other draft is a finding for this plan's owner.
 
+## Check 601: the pairing that refuses an unverified address (the sandbox installation and the sandbox project only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by the change that allocated the mobile-auth work's owner-run checks their numbers
+— **601** to **608**, the eight [mobile-auth/implementation-plan.md](mobile-auth/implementation-plan.md)
+**§9** proposes **by name and takes no number for** — and **no agent has run it, and nothing below is a
+claim that it works.** It is the owner-run half of that plan's part **P3** (`fugaro pair` writes the
+entry), it settles **D226**, and it is written so that a script can be made of it: `scripts/live-checks/check601.sh`,
+with a sibling test driving it against a fake `gcloud`, a fake Identity Toolkit and a fake `fugaro`, is
+written by the task that ships **P3** and not by this change. **You** run it, on the sandbox
+installation and the sandbox project, **never `belong`**. **No agent performs any step of it**:
+every command is yours and every reading is yours.
+
+**What it settles.** **D226**, and the reading [reconciliation.md](mobile-auth/reconciliation.md) §F23
+leaves open: that the refusal `internal/cli/init_members.go`'s `userEmail` performs for a member of the
+workspace's own domain is the refusal the pairing path performs too — **on a real Identity Platform
+project**, where `email_verified` comes from the API's own `accounts:lookup` and not from a fake — and
+that a refused pairing writes **nothing**. The pairing plan's refusal list
+([plans/2026-10-22-mobile-pairing-cli.md](plans/2026-10-22-mobile-pairing-cli.md) §4.1) already carries
+*"an unverified or absent email (D226)"* as a refusal the operator can fix; this section is the reading
+of that sentence on a project, and nothing offline can make it — `internal/gcpfake`'s Identity Toolkit
+answers what the test tells it to.
+
+**The overlap, stated rather than left to a reader.** **Check 100** above is the mobile functional
+spec's pairing, end to end (Task **P6.11**), and an unverified address is one of the states that path
+passes through there. This check is the one that **provokes** it — one account, one unverified address,
+one attempt, and the three read-backs below — and it does not replace 100 or read as a second live check
+for the pairing as a whole.
+
+**What has to exist before it can run.** A sandbox installation whose CLI carries **P3** and Phase 6's
+T1a surface (`fugaro pair`, `fugaro pair ls`, `fugaro pair revoke`), a sandbox project whose deployed
+rules document is the generation the CLI's marker names, the project's **web API key** (public by
+design: the Firebase console's project settings carry it, and so does the app's own configuration), and
+one address the project has **verified** — your own is the cheapest.
+
+**The steps.**
+
+1. **The guard, from a fresh shell, before anything is created.**
+
+   ```bash
+   : "${CHK601_OWNER_RUN:?export CHK601_OWNER_RUN=yes first: this check is yours to run}"
+   P=fugaro-dev; L=<the sandbox checkout>; U=$(gcloud config get-value account 2>/dev/null)
+   [ -n "$L" ] && [ -n "$U" ] || { echo "Check 601 stopped: re-run the whole setup block"; exit 2; }
+   fugaro doctor --project fugaro --all | grep -q '^project: .*(GCP fugaro-dev,' \
+     || { echo "Check 601 stopped: this is not the fugaro-dev installation"; exit 2; }
+   ```
+
+   **FACT:** the doctor names the sandbox installation and `fugaro-dev`, and its rules marker is the
+   generation the build's `RulesVersion` names. A marker behind it is **not** a failure of this check —
+   `fugaro update` first, then start again — and a project that is not `fugaro-dev` stops the check.
+
+2. **The account that arrives unverified, made by the check itself.** With the project's web API key,
+   `accounts:signUp` creates an account whose address is unverified; the API's own answer is the
+   reading, not an assumption about the address.
+
+   ```bash
+   KEY=<the project's web API key>
+   UNV=$(curl -sS -X POST "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=$KEY" \
+     -H 'Content-Type: application/json' \
+     -d '{"email":"chk601-unverified@<a domain you control>","password":"<a throwaway password>","returnSecureToken":true}')
+   ```
+
+   **FACT:** `accounts:lookup` for that account's `localId` answers `"emailVerified": false`. The ID
+   token in `$UNV` is held only for the read-backs and is **never printed and never pasted** — it is a
+   credential, and this check's whole subject is a refusal that must not echo one.
+
+3. **The pairing that must refuse.** `fugaro pair --email chk601-unverified@<domain> --name
+   chk601-unverified --project fugaro`, then read the refusal. **FACT:** the command exits **non-zero**,
+   and its message **names the address** and says it is not verified — D226's shape is `userEmail`'s,
+   the address as it is and nothing else echoed. A message that names no address, or that prints any
+   part of the token or the password, is a FAIL of this check and a finding against P3.
+
+4. **The read-backs, which are what "writes nothing" means.** With your own credential — `AT=$(gcloud
+   auth print-access-token)`, never printed and never pasted — read the three places the pairing writes.
+
+   ```bash
+   curl -sS -H "Authorization: Bearer $AT" \
+     "https://fugaro-dev-default-rtdb.firebaseio.com/config/admin/devices/<the uid>.json"
+   curl -sS -H "Authorization: Bearer $AT" \
+     "https://fugaro-dev-default-rtdb.firebaseio.com/pairing/<the uid>.json"
+   fugaro pair ls --project fugaro --json
+   ```
+
+   **FACT:** the devices node is **absent** (`null`), the whole `pairing/<uid>` subtree is **absent**,
+   and `pair ls` carries no row for the address. A node a refused pairing wrote is the one reading that
+   would make D226's refusal cosmetic, and it is what this step exists for.
+
+5. **The positive control, without which the refusal above proves nothing.** Pair an address the project
+   has **verified** — your own — and read the same three places. **FACT:** the pairing succeeds, the
+   node `config/admin/devices/<uid>` carries `email` and `role`, the role is the one **P1's resolver**
+   produced rather than the string on the command line (D224), and `pair ls` prints the address and the
+   role and **no token, key or secret material**. This step is what tells "the refusal is about
+   verification" apart from "the pairing refuses everything".
+
+6. **The Restore, read back rather than assumed.** `fugaro pair revoke --name chk601-verified --project
+   fugaro`, then `accounts:delete` for the unverified account with its own ID token — the account this
+   check made is disposable, and leaving it behind leaves an unverified address in the project's user
+   list for the next reader to wonder about. **FACT:** `pair ls` no longer carries the entry, the devices
+   node is `null` again, and `accounts:lookup` for the unverified account answers `USER_NOT_FOUND`.
+
+**Passes when:** step 3's refusal names the unverified address and exits non-zero; step 4's nodes are
+absent; step 5's node carries `email` and the **resolved** role, and `pair ls` printed nothing
+value-shaped.
+
+**Fails when:** a pairing of an unverified address succeeds; the refusal names no address or echoes a
+value; a node exists after step 3; step 5's node carries the unresolved role, or its `email` is not the
+address the command was given; or `pair ls` prints anything value-shaped. Each of those is a finding
+against **P3**, and the entry goes back to that part rather than to this one.
+
+**Paste back:** the doctor's project line, the two `emailVerified` readings, the refusal's own sentence
+(with the address, which is not a secret), the three absences of step 4, and step 5's node as JSON with
+the address kept and nothing else changed — under this section, and never a token, a password or a key.
+
+**Restore.** One `fugaro pair revoke` for the entry step 5 wrote and one `accounts:delete` for the
+account step 2 made, both read back as step 6 says. Nothing else is created: no job, no image, no
+secret, no schedule.
+
+**Cost.** Nothing billable and no model call: three Identity Toolkit calls, three Realtime Database
+reads and one pairing on the sandbox project, all on your own credential.
+
+**What waits on it.** **D226** and the pairing plan's §4.1 refusal row stay **UNVERIFIED** until this
+runs, and **P3** is not done on the strength of its own tests: those run against `internal/gcpfake` and
+prove that the code asks, not that the project answers. The path as a whole is **Check 100**'s.
+
+**Run it, once the script exists** — written by the task that ships P3, not by this change:
+
+```bash
+bash scripts/live-checks/check601.sh --project fugaro --gcp-project fugaro-dev \
+  --checkout <the sandbox checkout> --key <the project's web API key> --verified <a verified address>
+```
+
+`--dry-run` prints the guard and every call a real run would make, and **makes none of them**: no
+Identity Toolkit call, no database read, no pairing and no verdict. The script refuses a project,
+account or checkout that names the owner's own installation (`belong`) before its first call, and it
+never prints the ID token, the password or the key.
+
+## Check 602: the paired phone cannot read its own entry (the sandbox installation and the sandbox project only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by the change that allocated the mobile-auth work's owner-run checks their numbers
+(see Check 601 for the allocation, the eight numbers and the reading it rests on), and **no agent has
+run it**. It is the owner-run half of that plan's parts **P2** (the node's fields, and the rules
+document that does not move) and **P3**, it settles **D225** and **D222**, and the script it is written
+to become is `scripts/live-checks/check602.sh`, written by the task that ships **P2**. **You** run it,
+on the sandbox installation and the sandbox project, **never `belong`**. **No agent performs any step of it.**
+
+**What it settles.** Three claims P2 makes that quietly stop being true if nobody reads them on a
+deployed project: that a client **still cannot read** the node `config/admin/devices/$uid` and **still
+cannot write** it — including a write that would promote its own holder — and that a node **without**
+the new fields still admits its holder, which is why the fields did not need a generation. The rules
+tests in `internal/budget/rules/` prove all three **in the emulator** against a scratch copy of the
+template; what they cannot prove is that the document the project actually runs is the template's, and
+that is this reading.
+
+**The overlap, stated rather than left to a reader.** **Check 100** above records, as one end-to-end
+pass, that the freshly paired account "reads and writes exactly what check 81's fence" allows — the
+client's denial is a state that path passes through there. This check reads the **document's own text**
+and then the client's two denials one at a time, which is the reading P2's central claim rests on.
+
+**What has to exist before it can run.** A sandbox installation whose CLI carries **P2** and Phase 6's
+pairing, one paired account whose entry exists (Check 601's step 5 leaves one, or pair one here), the
+**paired phone** — the app's build on a device or simulator, holding the account's own token — and your
+own credential, which holds `roles/firebasedatabase.admin` on the sandbox project and can therefore
+read the node the client cannot.
+
+**The steps.**
+
+1. **The guard, from a fresh shell** — the block Check 601's step 1 prints, with `CHK602_OWNER_RUN` and
+   `Check 602` in its messages. **FACT:** the sandbox installation, `fugaro-dev`, and the rules marker
+   the build's `RulesVersion` names.
+
+2. **The deployed document, read as text.** Read the project's live rules with your own credential and
+   look at the node the pairing writes.
+
+   ```bash
+   AT=$(gcloud auth print-access-token)   # never printed, never pasted
+   curl -sS -H "Authorization: Bearer $AT" \
+     "https://fugaro-dev-default-rtdb.firebaseio.com/.settings/rules.json" > rules.deployed.json
+   ```
+
+   **FACT:** under `config/admin/devices` the `$uid` entry is `{ ".read": false, ".write": false }`,
+   with **no `validate`** and **no `$other`** beneath it, and nothing in the document names a child of
+   that node — the fields `email` and `role` are on the node and no rule reads them (D225). The check
+   hashes this document and keeps the hash: step 5 compares against it.
+
+3. **The node, read with admin and only with admin.** `curl -sS -H "Authorization: Bearer $AT"
+   "https://fugaro-dev-default-rtdb.firebaseio.com/config/admin/devices/<uid>.json"`. **FACT:** the node
+   carries `email` and `role` and nothing else, and it is exactly the entry `fugaro pair ls --project
+   fugaro --json` prints — the listing and the node are one statement, and `pair ls` is the only way an
+   operator sees it.
+
+4. **The client's read, which must be refused — and it is the phone's to make.** With the app's build
+   holding the paired account's own token, the app reads its own entry (the pairing flow's own read-back,
+   or the first screen's, whichever the build has). **FACT:** the read is **denied** (`PERMISSION_DENIED`
+   in the app's own log or refusal state), and the app shows no entry. **This step is yours and the
+   script measures nothing of it**: a script cannot hold the phone's token without becoming the thing
+   D232 forbids, so the script prints this prompt and takes the reading only when you hand it over
+   (`--phone-read <file>`, the shape Check 350's step 5 uses).
+
+5. **The client's write, which must be refused too, and the node after it.** The same build attempts a
+   write of its own node — the app's own promotion attempt if it has one, and otherwise the owner's own
+   `curl` with the phone's token, which you paste into the device's own tooling and never into this
+   shell. **FACT:** the write is **denied**, and the node read back with `$AT` is **byte-for-byte the one
+   step 3 read** — nothing about it changed. Then read `/.settings/rules.json` again and compare its
+   hash with step 2's: **the document did not move**, which is the second half of P2's claim and the one
+   a pairing that quietly rewrote the rules would falsify.
+
+6. **The node without the fields, which is what says the fields are not load-bearing.** This is the step
+   that costs a write, and it is the one P2's third claim rests on: write a bare node — `{"<uid>":
+   {"email":"<the address>"}}` with **no** `role` — with your own admin credential, have the phone read
+   what it could read before (its mailbox), then write the `role` child back. **FACT:** the phone reaches
+   the same nodes it reached with the role present: `USER` turns on the node's **existence** alone, and a
+   node written before the fields existed still admits its holder. The check records the two reads side
+   by side.
+
+**Passes when:** the deployed document's `$uid` entry is `.read: false` / `.write: false` with no
+`validate` and no `$other`; the client's read and write are both denied; the node is unchanged by the
+write attempt and the document's hash is unchanged between steps 2 and 5; and the bare node of step 6
+still admits its holder.
+
+**Fails when:** the deployed document differs from the template at that node (a `.validate`, a `$other`,
+a `true` predicate) — which is a finding against **P2** and a reason to replan the generation question
+rather than to edit this section; the client's read or write **succeeds**; the document's hash moves
+between steps 2 and 5, which would mean a pairing rewrote the rules; or the bare node of step 6 stops
+admitting its holder, which would mean the fields became load-bearing by accident.
+
+**Paste back:** the node's own JSON as step 3 read it, the two denial lines the phone reported (with
+whatever the app prints, and no token), the document's two hashes, and step 6's two readings — under
+this section.
+
+**Restore.** Step 6 writes the `role` child back, so the node ends as it began; the hash comparison in
+step 5 is what proves the document was never written at all. Nothing is created, and nothing is
+deleted: the entry is the one the pairing made and stays until you revoke it, which is **Check 603**'s
+subject.
+
+**Cost.** Nothing billable and no model call: a handful of Realtime Database reads and one node write,
+on the sandbox project.
+
+**What waits on it.** **D225**'s later half — the first rule that *reads* one of these fields, and the
+generation it would owe — is decided on this reading: a node whose fields are invisible to every rule is
+what makes generation 4 unnecessary, and a section that skipped step 2 would leave that decision resting
+on the emulator alone.
+
+**Run it, once the script exists** — written by the task that ships P2:
+
+```bash
+bash scripts/live-checks/check602.sh --project fugaro --gcp-project fugaro-dev \
+  --checkout <the sandbox checkout> --uid <the paired uid> --phone-read <the file your reading is in>
+```
+
+`--dry-run` prints the guard and every read it would make and makes none of them; without `--phone-read`
+steps 4, 5's first half and 6's phone half are the prompts they are, and the block says so instead of
+inventing a reading.
+
+## Check 603: a revoked pairing stops on the next request (the sandbox installation and the sandbox project only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by the change that allocated the mobile-auth work's owner-run checks their numbers
+(see Check 601 for the allocation and the reading it rests on), and **no agent has run it**. It is the
+owner-run half of that plan's part **P3**, it settles **D222** and the property **D166** gave
+`internal/budget/rules/rules.go`'s `PathDevices` — *"the rules read it in `USER` … a minted token is
+narrowed to an account that is paired to a phone that has not been revoked"* — and the script it is
+written to become is `scripts/live-checks/check603.sh`, written by the task that ships **P3**. **You**
+run it, on the sandbox installation and the sandbox project, **never `belong`**. **No agent performs any step of it.**
+
+**What it settles.** That revocation is **immediate**: `fugaro pair revoke` deletes the node, and the
+**very next** request the revoked phone makes — with the **same** ID token still in its hand, unexpired
+— is denied, because the fence reads the node on every request rather than once at sign-in. It is the
+half of **D166** that no emulator can settle on its own: the emulator can be told the node is gone, and
+what this reads is that the deletion the **command** makes is the deletion the **fence** sees.
+
+**The overlap, stated rather than left to a reader.** **Check 101** above is the mobile functional
+spec's revocation check (Task **P6.11**), and it carries the **timing of what the old token still
+does** as an identity, and the Auth user's own order and expiry. This check reads the fence alone: the
+node is deleted, the next request is denied, and `pair ls` no longer carries the entry — and it
+**deletes no Auth user**, because the Auth user's timing is 101's subject and not this one's.
+
+**What has to exist before it can run.** A paired account whose entry exists, the **paired phone**
+holding that account's own unexpired ID token, and your own credential on the sandbox project. The
+check's own pairing (Check 601's step 5, or one made here) is what it revokes, so nothing of yours is
+touched.
+
+**The steps.**
+
+1. **The guard, from a fresh shell** — Check 601's block with `CHK603_OWNER_RUN` and `Check 603` in its
+   messages. **FACT:** the sandbox installation, `fugaro-dev`, and the rules marker the build's
+   `RulesVersion` names.
+
+2. **The phone reads what its role allows, immediately before.** With the paired account's token, the
+   phone makes one read it is entitled to — its mailbox is the one every paired phone reaches. **FACT:**
+   the read **succeeds**, and the app reports the value. This reading is the control: without it, the
+   denial in step 4 proves nothing about revocation.
+
+3. **The revocation, which is one deletion.** `fugaro pair revoke --name chk603 --project fugaro`, then
+   read the node back with your own credential. **FACT:** the command exits **zero**, the node
+   `config/admin/devices/<uid>` is **absent**, and `fugaro pair ls --project fugaro --json` carries no
+   row for it. The check reads the node and not the command's word for it.
+
+4. **The next request, with the same token — this is the check.** The phone makes the **same** read
+   again, immediately, holding the token it had a moment before and with no re-sign-in. **FACT:** the
+   read is **denied**, and the app's own state says so. **This step is yours and the script measures
+   nothing of it** (see Check 602's step 4 for why): the script prints the prompt and takes the reading
+   only through `--phone-read <file>`. A denial that arrives only after the token expired is not this
+   reading, so the check records the token's own `exp` beside it — `accounts:lookup` on the account
+   gives the ID token's issued time and the check reads the elapsed seconds — and a denial that came
+   after the expiry is an **INFO** that decides nothing.
+
+5. **The Auth user is left alone, which is 101's half.** `accounts:lookup` for the account. **FACT:** the
+   account **still exists** and its ID token is still valid as an **identity** until its own `exp` — the
+   revocation is the node and not the account, and this reading is what keeps 603 and 101 from reading
+   as one another. If you then delete the Auth user, say so in the paste-back and note that the phone's
+   own reads were denied before it, not because of it.
+
+**Passes when:** step 2's read succeeded; the node is absent after step 3; step 4's read was denied with
+the same unexpired token; and step 5's account still exists.
+
+**Fails when:** the phone's next read **succeeds** after the node is gone — which is a finding against
+**P3** or against the deployed document, and the first thing to read is step 2 of Check 602, because a
+document that reads something else for `USER` would produce exactly this; the node survives the revoke;
+or the command reports success while the node is still there.
+
+**Paste back:** the two phone readings with the seconds between them and the token's `exp`, the node's
+absence, the `pair ls` output, and the `accounts:lookup` line — under this section, and never the token.
+
+**Restore.** Nothing: the check revokes the entry it made, and the account it left is the one 101's
+reading is about. If you delete the Auth user at the end, the check's own pairing has to be made again
+before 603 can be re-run, and the paste-back says so.
+
+**Cost.** Nothing billable and no model call: one pairing, one revoke, and a handful of Realtime Database
+and Identity Toolkit reads.
+
+**What waits on it.** **D166**'s "immediate revocation" stays a claim about the rules' shape until this
+runs; the mobile plan's **P6.4** shipped the fence, and this is the reading that says the fence is what
+the project runs.
+
+**Run it, once the script exists** — written by the task that ships P3:
+
+```bash
+bash scripts/live-checks/check603.sh --project fugaro --gcp-project fugaro-dev \
+  --checkout <the sandbox checkout> --uid <the paired uid> --phone-read <the file your reading is in>
+```
+
+`--dry-run` prints the guard and every call it would make and makes none of them.
+
+## Check 604: a publish never re-adds a revoked entry (the sandbox installation and a sandbox checkout you may write, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by the change that allocated the mobile-auth work's owner-run checks their numbers
+(see Check 601 for the allocation and the reading it rests on), and **no agent has run it**. It is the
+owner-run half of that plan's part **P5** (the declared allowlist, and the publish that seeds the node),
+it settles **D231**, and the script it is written to become is `scripts/live-checks/check604.sh`,
+written by the task that ships **P5**. **You** run it, on the sandbox installation and a sandbox
+checkout whose `fugaro.yaml` you may write, **never `belong`**. **No agent performs any step of it.**
+
+**What it settles.** The rule `internal/cli/project_cmd.go`'s `publishAllowRepos` already holds for
+repositories — *"a later publish never re-adds a name an operator removed"* — applied to **people**: a
+person named in the checkout's declared block, paired and then **revoked**, is **not** re-added by the
+next `fugaro project policy publish`, and a person in the same block who was never paired **is** seeded,
+with the **resolved** role (D224) rather than the string the declaration carries. The package tests
+prove the rule against a fake database; what they cannot prove is that the publish the project runs is
+ETag-guarded against the **real** node, and that is this reading.
+
+**What has to exist before it can run.** A sandbox installation whose CLI carries **P5** and the pairing
+of **P3**, a sandbox checkout you may write with `fugaro.yaml`'s declared block in it, the deployed rules
+marker `requirePolicyRules` gates on, and two accounts you control: one to pair and revoke, one to leave
+unpaired.
+
+**The steps.**
+
+1. **The guard, from a fresh shell** — Check 601's block with `CHK604_OWNER_RUN`, `Check 604` and the
+   checkout named. **FACT:** the sandbox installation, `fugaro-dev`, the rules marker, and a checkout
+   whose `origin` is the sandbox repository.
+
+2. **The declared block, written by you and read by the CLI.** Add both accounts to `fugaro.yaml`'s
+   declared block — the exact entries and a domain entry, so that the resolved role is a reading and not
+   a copy — and read the file back through the CLI: `fugaro validate --project fugaro` (or the
+   command's own read of the declaration). **FACT:** the file decodes strictly and both entries are
+   accepted; a malformed entry is **refused** rather than defaulted to a role, which is P5's own claim
+   about the schema.
+
+3. **The publish that seeds, and the node it writes.** `fugaro project policy publish --project fugaro`,
+   then read the devices node with your own credential. **FACT:** the unpaired account's entry **is**
+   written, carrying the **resolved** role; the paired-and-revoked account is not there yet (the next
+   step makes it); and the publish's own output names what it added rather than what it found.
+
+4. **The pairing, the revocation, and the publish that must not bring it back.** Pair the second account
+   (`fugaro pair`), revoke it (`fugaro pair revoke`), then publish **again**. **FACT:** the second
+   publish exits **zero**, the revoked account's entry is **still absent** from the node and from
+   `fugaro pair ls --project fugaro --json`, and the entry the first publish seeded is unchanged. The
+   publish is **additive**: it seeds what is not there and deletes nothing, because deletion is
+   `pair revoke` and one write of one node is what makes revocation immediate.
+
+5. **The race the ETag guards, read rather than assumed.** Read the node's own ETag (or the write's
+   precondition response) before the third publish and after it, and — the half a test cannot make —
+   publish while a second writer has already moved the node: with a second `fugaro` (or a REST write of
+   an unrelated child) between your read and your write. **FACT:** the publish **refuses** rather than
+   overwriting, names the conflict, and a re-run after re-reading succeeds. A publish that overwrites
+   the node it did not read is the finding this step exists for.
+
+6. **The Restore.** Remove the entries the check seeded — `fugaro pair revoke` for each, which is the
+   only way an entry leaves the node — and take the two accounts out of `fugaro.yaml`'s declared block.
+   **FACT:** the node is `null` again for those uids and the file is as you found it. A declared block
+   left behind would seed them again on the next publish.
+
+**Passes when:** the publish seeded the unpaired account with its resolved role; the revoked account was
+not re-added by the second publish; the concurrent publish refused rather than overwrote; and the file
+and the node are back as they were.
+
+**Fails when:** a revoked entry comes back — which is a finding against **P5** and the exact rule
+`publishAllowRepos` exists to hold; a publish without the rules marker writes anyway; a declared entry
+admits someone the node does not carry (that is **Check 605**'s subject and the two read together); or
+the publish overwrites a node another writer moved.
+
+**Paste back:** the declared block as you wrote it (addresses and roles, no secrets), the two publishes'
+own output, the node before and after each, the ETag readings of step 5, and the restore's two
+read-backs — under this section.
+
+**Restore.** `fugaro pair revoke` for every entry the check wrote, and the declared block edited back.
+The publish writes no secret and creates no cloud resource: the whole cost of a missed Restore is a node
+that re-seeds a name on the next publish, which is why the block is put back in the same run.
+
+**Cost.** Nothing billable and no model call: two or three policy publishes, two pairings and a handful
+of Realtime Database reads on the sandbox project.
+
+**What waits on it.** **D231**'s "the declaration is a seed and the node is the authority" stays
+half-read until this runs beside **Check 605**: this check reads that a publish never re-adds, and 605
+reads that a declared name the node does not carry admits nobody.
+
+**Run it, once the script exists** — written by the task that ships P5:
+
+```bash
+bash scripts/live-checks/check604.sh --project fugaro --gcp-project fugaro-dev \
+  --checkout <the sandbox checkout> --paired <an address you will revoke> --unpaired <an address left alone>
+```
+
+`--dry-run` prints the guard and every call it would make and makes none of them, and the script refuses
+a checkout whose `origin` is not the sandbox before it writes a line of `fugaro.yaml`.
+
+## Check 605: a declared entry that is not on the node admits nobody (the sandbox installation and the sandbox project only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by the change that allocated the mobile-auth work's owner-run checks their numbers
+(see Check 601 for the allocation and the reading it rests on), and **no agent has run it**. It is the
+owner-run half of that plan's part **P5**, it settles **D231** and **D222**, and the script it is
+written to become is `scripts/live-checks/check605.sh`, written by the task that ships **P5**. **You**
+run it, on the sandbox installation and the sandbox project, **never `belong`**. **No agent performs any step of it**: the
+account, the file and the reads are yours.
+
+**What it settles.** D231's sentence, read on a real database instead of asserted: *"a person in the
+file who is not on the node is not admitted — the node is what the rules read."* The package test can
+make the resolver read the node; what it cannot read is the **project**, where the fence is the
+deployed document and the account is a real Identity Platform user. It is the other half of **Check
+604**: 604 reads that a publish never re-adds what was revoked, and this one reads that a name the node
+does not carry admits nobody however loudly the file names it.
+
+**What has to exist before it can run.** A sandbox installation whose CLI carries **P5** and the pairing
+of **P3**, a sandbox checkout you may write, one account you can sign in with (so that the reads below
+are made **as that account** and not as you), and the app or a `curl` holding that account's own ID
+token — the same token the phone would carry.
+
+**The steps.**
+
+1. **The guard, from a fresh shell** — Check 601's block with `CHK605_OWNER_RUN`, `Check 605` and the
+   checkout named. **FACT:** the sandbox installation, `fugaro-dev`, the rules marker, and a checkout
+   whose `origin` is the sandbox repository.
+
+2. **The name in the file, and nothing on the node.** Add one account to `fugaro.yaml`'s declared block,
+   publish it (`fugaro project policy publish --project fugaro`), and then **remove the entry the
+   publish wrote** — `fugaro pair revoke --name chk605 --project fugaro`, which is the only way an entry
+   leaves the node. The file still names the account; the node no longer carries it. **FACT:** the node
+   `config/admin/devices/<uid>` is **absent** with your own credential, and the file still names the
+   address.
+
+3. **The account that signs in and is admitted nowhere.** With that account's own ID token, sign-in
+   **succeeds** — the identity is real and the provider knows it — and every project node the rules
+   reach is **denied**. Read two of them: the mailbox the paired phone reaches, and the device node
+   itself.
+
+   ```bash
+   curl -sS "https://fugaro-dev-default-rtdb.firebaseio.com/mailbox/<uid>.json?auth=<the account's own ID token>"
+   ```
+
+   **FACT:** the sign-in succeeds and both reads answer `Permission denied`. A read that **succeeds** is
+   the finding this check exists for: it would mean the declared file admits, and D231's sentence would
+   be wrong on the project even where its test passes.
+
+4. **The same account, after `fugaro pair`, admitted exactly as far as its role goes.** Pair it and read
+   the same two places. **FACT:** the mailbox read now **succeeds** — the node exists, so `USER` turns
+   on — and the device node is **still denied**, because its predicates are `false` for every client
+   (Check 602). The two readings side by side are what says the change was the node's existence and
+   nothing else.
+
+5. **The file that changed and the account that did not.** With the pairing in place, take the account
+   **out** of the declared block and publish again. **FACT:** the account is still admitted — the node
+   is what the rules read, and the file is a seed (D231) — and the entry is unchanged. This is the
+   reading that makes the pair of checks whole: the file cannot take away what the node grants, and it
+   cannot grant what the node does not carry.
+
+**Passes when:** step 3's sign-in succeeds and both reads are denied; step 4's mailbox read succeeds and
+its device-node read is denied; step 5's entry survives the file's edit.
+
+**Fails when:** a declared name the node does not carry reads anything; the node's entry disappears when
+the file stops naming it; or the pairing's entry admits the account to a node its role does not reach —
+the last one is a finding against **P1**'s resolver as much as against P5.
+
+**Paste back:** the declared block as you wrote it, the node's absence in step 2, the four reads of
+steps 3 and 4 with their own status words, and step 5's before-and-after — under this section, and
+never the ID token.
+
+**Restore.** `fugaro pair revoke` for the entry the check made, the account out of the declared block,
+and the node read back absent. Nothing else is created.
+
+**Cost.** Nothing billable and no model call: two publishes, one pairing, one revoke and a handful of
+Realtime Database reads on the sandbox project.
+
+**What waits on it.** **D231** and **D222** stay half-read until this runs beside **Check 604**, and the
+mobile plan's **P6.4** fence is only as good as these two readings of what it fences.
+
+**Run it, once the script exists** — written by the task that ships P5:
+
+```bash
+bash scripts/live-checks/check605.sh --project fugaro --gcp-project fugaro-dev \
+  --checkout <the sandbox checkout> --declared <an address to declare> --token-file <the file your reading is in>
+```
+
+`--dry-run` prints the guard and every call it would make and makes none of them, and the token is read
+from a file the owner points at rather than from a command line, so it never reaches a shell's history
+or a process listing.
+
+## Check 606: the QR carries no identity (the sandbox installation, the sandbox project and the app's own build; run by you; NOT RUN)
+
+**NOT RUN.** Written by the change that allocated the mobile-auth work's owner-run checks their numbers
+(see Check 601 for the allocation and the reading it rests on), and **no agent has run it**. It is the
+owner-run half of that plan's part **P4** (the app holds no provider session, and no third item), it
+settles **D233** and **D234**, and the script it is written to become is
+`scripts/live-checks/check606.sh`, written by the task that ships **P4**. **You** run it, on the sandbox
+installation, the sandbox project and the app's own build on a device or simulator, **never `belong`**.
+**No agent performs any step of it**: the QR is shown to you, and the reading of a screen is yours.
+
+**What it settles.** **D233**'s sentence read as text rather than trusted: the QR a real pairing prints
+carries the project's Firebase configuration and a short-lived one-shot `p~` custom token, and
+**nothing else** — no address, no name, no role, no key, no credential. **D234** is the same reading's
+other half: there is no per-project Firebase app instance behind it, so the configuration in the payload
+is the project's own. And the app's own validator (P4) refuses a payload that carries an identity, which
+is the half the test can prove and this check reads against the payload a real pairing produced.
+
+**Overlap, stated rather than left to a reader.** **Check 100** above records the phone receiving
+exactly this material and what it does with it; this check is about what the QR **prints**, read as
+text by a person, and it is the only reading of the payload that does not go through the app.
+
+**What has to exist before it can run.** A sandbox installation whose CLI carries Phase 6's pairing, a
+sandbox project, the app's build on a device or simulator (P6.8's pairing screen), and one account to
+pair with.
+
+**The steps.**
+
+1. **The guard, from a fresh shell** — Check 601's block with `CHK606_OWNER_RUN` and `Check 606` in its
+   messages. **FACT:** the sandbox installation, `fugaro-dev`, and the rules marker the build's
+   `RulesVersion` names.
+
+2. **The payload, captured as text.** Start a pairing — `fugaro pair --name chk606 --project fugaro
+   --json` — and read the QR it prints with the app's own scanner (or with `zbarimg` on the image the
+   command can write). The payload is text; this check reads it as text and never as an image.
+   **FACT:** the payload's keys are the Firebase configuration's (`projectId`, `databaseURL`, `apiKey`
+   and the rest of the block `fugaro doctor` prints) and the pairing token's — and **no** key carries an
+   address, a name, a role, a key or a credential. **The `apiKey` is the web API key, which is public by
+   design** (the reconciliation says so, and so does the provider document): its presence is expected
+   and is not a finding.
+
+3. **The token's own claims, read and not assumed.** Decode the `p~` token's payload (it is a JWT; the
+   signature is not verified here, and the reading is the claims): **FACT:** `exp` is at most **five
+   minutes** after `iat` (P6.6's bound), `aud` is the sandbox project's own Firebase project, and the
+   token carries **no** claim the app could use as an identity beyond the account it is being minted
+   for — no address, no role, no name. A token whose `exp` is above the bound is a finding against
+   Phase 6's P6.6, and the register's **Check 100** row carries the same bound.
+
+4. **The one-shot half, which is the request node's rule.** Look at the phone's request node while the
+   pairing waits: `curl -sS -H "Authorization: Bearer $AT"
+   "https://fugaro-dev-default-rtdb.firebaseio.com/pairing/<uid>/request.json"`. **FACT:** the node
+   carries `key` and `at` and nothing else — the write-once rule (`!data.exists()`) and the `$other`
+   fence are what make a second write impossible, and the payload the QR carries never holds the key.
+   A second pairing attempt with the same token is **refused** by that node's own rule, and the
+   refusal is the reading.
+
+5. **The app's refusal of a payload that carries an identity — yours to make, and the check reads it.**
+   Hand the app a payload with one extra key (`"email": "<an address>"`) and one with a credential-shaped
+   key, the way P4's own test does. **FACT:** the app **refuses** both, names what it refused, and pairs
+   with neither. **This step is yours and the script measures nothing of it** (the app is not on this
+   machine): the script prints the prompt and takes the reading only through `--phone-read <file>`.
+
+**Passes when:** the payload's keys are the configuration's and the token's and nothing else; the
+token's `exp` is within the bound; the request node carries `key` and `at` alone; and the app refuses
+the two doctored payloads.
+
+**Fails when:** the payload carries an address, a name, a role or a credential; the token's `exp` is
+above five minutes; the request node carries a third key; or the app pairs with a payload carrying an
+identity. Each is a finding against **P4** or Phase 6's P6.6, and the entry goes back to that part.
+
+**Paste back:** the payload with the token replaced by `[the token]` and the `apiKey` left as it is (it
+is public), the decoded token's `exp`, `iat` and `aud` alone, the request node's two keys, and the app's
+two refusals in its own words — under this section.
+
+**Restore.** Nothing: the pairing session is left to expire (it cannot outlive its token's five
+minutes) or is abandoned by closing the command, and no node is written that a `fugaro pair revoke`
+does not already cover if a pairing completed.
+
+**Cost.** Nothing billable and no model call: one pairing session on the sandbox project, one database
+read, and a scanner.
+
+**What waits on it.** **D233** and **D234** stay readings of a document until this runs, and the
+provider document's own price of a QR "that is a door" is priced against what this payload turns out to
+carry.
+
+**Run it, once the script exists** — written by the task that ships P4:
+
+```bash
+bash scripts/live-checks/check606.sh --project fugaro --gcp-project fugaro-dev \
+  --checkout <the sandbox checkout> --payload <the payload as text> --phone-read <the file your reading is in>
+```
+
+`--dry-run` prints the guard and every call it would make and makes none of them. The script reads the
+payload from a **text file you captured** — it never decodes an image, and it never asks a model to read
+one.
+
+## Check 607: the first screen with no account (the app's own build on a device or simulator, with the network off; run by you; NOT RUN)
+
+**NOT RUN.** Written by the change that allocated the mobile-auth work's owner-run checks their numbers
+(see Check 601 for the allocation and the reading it rests on), and **no agent has run it**. It is the
+owner-run half of that plan's part **P4**, it settles **D232** and **D234**'s promise to Play's
+reviewers, and the script it is written to become is `scripts/live-checks/check607.sh`, written by the
+task that ships **P4**. **You** run it, on the app's own build on a device or simulator, **never
+`belong`**. **No agent performs any step of it**: the screen is yours to look at, and no step of this
+check touches a cloud.
+
+**What it settles.** The sentence [play-review-access.md](mobile/play-review-access.md) promises Play's
+reviewers — the app *"needs no account, sign-in or network"* — read on a **device** rather than in the
+runner: the demo is reachable from the first screen with nothing asked first, and the **"ask your
+admin"** state P4 adds stands **beside** the demo entry and never in front of it. `mobile/src/demo/safety.test.js`
+and the app's own boundary tests hold the requirement in the runner; what no test can read is what a
+person sees, which is why this is a live check and not a test.
+
+**What has to exist before it can run.** The app's build with **P4** (and Phase 6's P6.8 seam) on a
+device or simulator, with **no account signed in** and the network **off** — airplane mode is the
+point, not a convenience.
+
+**The steps.**
+
+1. **The guard, from a fresh shell** — Check 601's block with `CHK607_OWNER_RUN` and `Check 607` in its
+   messages, **minus the project reads**: this check makes no cloud call at all, and a script that made
+   one would be measuring the wrong thing. **FACT:** the build's version and the device or simulator it
+   is installed on, recorded in one line.
+
+2. **The device, with nothing signed in and no network.** Install the build on a device that has never
+   signed in, turn the network off, and open the app. **FACT:** the first screen appears and asks for
+   **no** account, no sign-in and no pairing before the demo entry is reachable — and the demo opens and
+   works with the network off. **This step is yours and the script measures nothing of it**: the script
+   prints the prompt and takes the reading only through `--device-read <file>`.
+
+3. **The "ask your admin" state, and where it stands.** Reach the pairing flow's refusal path (the
+   seam P6.8 writes: a pairing that cannot complete, on a device with no account) and read the screen.
+   **FACT:** the state appears **beside** the demo entry and **never in front of it** — the demo is
+   still reachable, in one step, from the screen as it stands — and its sentence says what a person
+   should do (ask their admin) rather than offering a sign-in the app does not have. A control that
+   gated the demo would fail this reading and the app's own test together.
+
+4. **The boundary, read on the build rather than in the repository.** With the build in hand, confirm
+   the three things P4 asserts are true of **this** build: `mobile/package.json` gained no Firebase,
+   Google, Apple or Microsoft auth dependency; `SECRET_ITEMS` is still exactly `['idToken','macKey']`;
+   and no reverse-DNS identity appears in a committed file. **FACT:** the three readings, from the
+   checkout the build was made from, named with the build's own version — a build whose package list
+   differs from the checkout's is a build nobody can read, and the check says so instead of guessing.
+
+5. **The offline refusal, which is the other half of Play's promise.** With the network still off, try
+   the one path that would need it — the pairing flow's start. **FACT:** the app **refuses** with a
+   sentence a person can act on, and it does not hang, retry forever or show a spinner that never ends.
+   This is the reading a reviewer at Play makes, and it is why the check is run with the network off.
+
+**Passes when:** the first screen reaches the demo with nothing asked first; the "ask your admin" state
+stands beside it and not in front of it; the three boundary readings hold of the build; and the offline
+path refuses with an actionable sentence.
+
+**Fails when:** the demo is gated behind a sign-in or a pairing control; the state is the first thing a
+person sees; a provider dependency is in the build's package list; or the offline path hangs or shows a
+silent failure. Each is a finding against **P4**.
+
+**Paste back:** the build's version, the device, the three screen readings in your own words (what the
+first screen shows, where the state stands, what the offline refusal says), and the three boundary
+readings — under this section.
+
+**Restore.** Nothing: this check creates nothing, signs in nowhere and touches no cloud. Uninstall the
+build if the device is not yours to keep.
+
+**Cost.** Nothing: no cloud call, no model call, no billable anything.
+
+**What waits on it.** The sentence Play's reviewers are given stays a promise read in the runner until
+this runs on a device, and P4's own test is the half that says the requirement cannot quietly go away.
+
+**Run it, once the script exists** — written by the task that ships P4:
+
+```bash
+bash scripts/live-checks/check607.sh --checkout <the sandbox checkout> --device-read <the file your reading is in>
+```
+
+There is no `--project` and no cloud call: the script reads the checkout's package list, `SECRET_ITEMS`
+and the identity scan itself, prints the device prompts, and measures nothing of them without
+`--device-read`.
+
+## Check 608: the provider refusal on a real project (the sandbox project, which you may reconfigure, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by the change that allocated the mobile-auth work's owner-run checks their numbers
+(see Check 601 for the allocation and the reading it rests on), and **no agent has run it**. It is the
+owner-run half of that plan's part **P6**, it settles **D221**, and the script it is written to become
+is `scripts/live-checks/check608.sh`, written by the task that ships **P6**. **You** run it, on the
+sandbox project, **never `belong`**. **No agent performs any step of it**: the confirmation the setup
+path asks for is typed by you, and a coding agent's session cannot type it.
+
+**What it settles.** **D221** — no provider session reaches the database — read where it is actually
+enforced: `refusePublicSignUp` (`internal/cli/init_firebase.go`) against the **real**
+`identitytoolkit.googleapis.com/admin/v2/projects/<project>/config`, on a project that **has** a
+provider enabled. Every test of that function runs against `internal/gcpfake`'s Identity Toolkit, which
+answers what the test tells it to; what the test cannot read is the shape the **real** API returns, and
+that is what decides whether the refusal fires at all. [provider-sign-in.md](mobile-auth/provider-sign-in.md)
+is the document that prices the alternative this refusal keeps shut, and this check is the reading its
+first paragraph rests on.
+
+**What has to exist before it can run.** A sandbox installation whose CLI carries the Firebase stage
+(`fugaro update --firebase-project <gcp-project-id>`), your own credential on the sandbox project with
+the rights to change its Identity Platform configuration, and a project whose configuration you may
+**reconfigure and put back** — which is why it is the sandbox and not the owner's own installation.
+
+**The steps.**
+
+1. **The guard, from a fresh shell, and the state of the configuration as you found it.**
+
+   ```bash
+   : "${CHK608_OWNER_RUN:?export CHK608_OWNER_RUN=yes first: this check is yours to run}"
+   P=fugaro-dev; L=<the sandbox checkout>; U=$(gcloud config get-value account 2>/dev/null)
+   [ -n "$L" ] && [ -n "$U" ] || { echo "Check 608 stopped: re-run the whole setup block"; exit 2; }
+   fugaro doctor --project fugaro --all | grep -q '^project: .*(GCP fugaro-dev,' \
+     || { echo "Check 608 stopped: this is not the fugaro-dev installation"; exit 2; }
+   AT=$(gcloud auth print-access-token)   # never printed, never pasted
+   curl -sS -H "Authorization: Bearer $AT" \
+     "https://identitytoolkit.googleapis.com/admin/v2/projects/fugaro-dev/config" > config.before.json
+   ```
+
+   **FACT:** the installation is the sandbox one on `fugaro-dev`, and the configuration read here carries
+   **no** enabled sign-in path — no `signIn` entry enabled, no `defaultSupportedIdpConfigs`, no
+   `oauthIdpConfigs` — which is the state every reading below is compared against.
+
+2. **The provider you turn on, by hand and on purpose.** Enable **one** path: the cheapest is email and
+   password — a `PATCH` of the same configuration with `signIn.email.enabled: true` and
+   `signIn.email.passwordRequired: true` — and a `defaultSupportedIdpConfigs` entry (Google, say) is the
+   other shape and reads the same. **FACT:** the configuration read back carries the enabled path and
+   nothing else changed. This is the state D221 says the setup path must refuse.
+
+3. **The refusal, at your own terminal — this is the check.** `fugaro update --project fugaro
+   --firebase-project fugaro-dev`, with the confirmation **you** type. **FACT:** the run **stops** on the
+   Identity Platform step **before anything is applied**, exits **non-zero**, and its message names the
+   enabled path and says what a project may not enable — a refusal that names nothing, or one that
+   arrives **after** the rules deploy, is a FAIL of this check and a finding against the Firebase
+   stage's order. The refusal is `refusePublicSignUp`'s own sentence, and this is the only place it is
+   read against the API it is written for.
+
+4. **The two lists the refusal holds the configuration against.** Read the configuration again and
+   compare it with `config.before.json`: **FACT:** the enabled path is **still** there and nothing else
+   moved — the refusal changes nothing, which is what makes it a refusal rather than a repair — and the
+   pins the function holds (`signIn.email.enabled`, `signIn.anonymous.enabled`,
+   `signIn.phoneNumber.enabled`, `disabledUserSignup` and the two idp lists) are the ones the real
+   configuration carries, with no field the function does not know about deciding the outcome.
+
+5. **The carve-out, which is the one case that must pass.** If the sandbox has a **workspace of its own**,
+   enable on **that** project a path the workspace's pin carries (`workspaceSignInPath`), and run the
+   same command against it. **FACT:** the run **accepts** it — a workspace's own project is the one whose
+   sign-in paths the owner enables, and the pinned entries pass while an off-pin one is refused. A
+   sandbox with no workspace of its own records this step as **INFO** and decides nothing; **Check 361**
+   above is the workspace's own live reading, and this step does not replace it.
+
+6. **The Restore, read back rather than assumed.** `PATCH` the configuration back to `config.before.json`
+   — the enabled path **off** again — and read it back. **FACT:** the configuration is byte-identical to
+   the one step 1 read (compare the two JSON documents, formatting ignored), and `fugaro update --project
+   fugaro --firebase-project fugaro-dev` run once more reaches its ordinary stages. A project left with
+   a provider enabled is the one outcome this check must not produce: it would make every later run of
+   every check on this sandbox refuse.
+
+**Passes when:** the configuration carried no enabled path before the check and carries one during it;
+the setup path refuses it, naming the path, before applying anything; the refusal changes nothing; and
+the configuration is back as it was.
+
+**Fails when:** the run **accepts** a configuration with a provider enabled — the finding this check
+exists for, and it goes to `refusePublicSignUp` and its caller with the real response attached; the
+refusal arrives after the rules deploy; the refusal names nothing; or the Restore cannot put the
+configuration back, which is reported as a **failure of the check's own run** and fixed by hand before
+anything else on this sandbox runs.
+
+**Paste back:** the two configurations with anything value-shaped removed (the API key and the OAuth
+client secrets are the ones to strip), the refusal's own sentence, and the before-and-after comparison
+— under this section, and never a token.
+
+**Restore.** The configuration `PATCH`ed back and read back as step 6 says. The check creates no
+resource: it changes one field of one project's Identity Platform configuration, twice, and reads it
+three times.
+
+**Cost.** Nothing billable and no model call: a handful of Identity Toolkit configuration calls and one
+setup run that stops before it applies anything.
+
+**What waits on it.** **D221**'s refusal stays a claim about a fake until this runs, and
+[provider-sign-in.md](mobile-auth/provider-sign-in.md)'s first paragraph — the one that says the path is
+kept shut by a refusal that fires — is priced against this reading. The workspace's own half is **Check
+361**'s (`scripts/live-checks/check361.sh`), which is where the pin itself is read live.
+
+**Run it, once the script exists** — written by the task that ships P6:
+
+```bash
+bash scripts/live-checks/check608.sh --project fugaro --gcp-project fugaro-dev \
+  --checkout <the sandbox checkout> --enable email
+```
+
+`--dry-run` prints the guard and every call it would make — including the two configuration reads and the
+`PATCH` it would make and undo — and **makes none of them**, so a dry run cannot leave a provider
+enabled on a project. The script refuses a project that is not the sandbox one before its first call,
+and it prints the configuration with the API key and every client secret replaced by `[redacted]`.
