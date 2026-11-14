@@ -35,9 +35,11 @@ lost, and the list is the same shape.
 
 An update that fixes nothing of the project's prints nothing about issues at
 all — not a heading, not a count, not a "none". A machine that is offline, a
-project nobody has filed an issue with, a run that applied nothing and a
-coding agent's session all print exactly the bytes they printed before this
-feature existed. There is nothing to act on, so there is nothing to say.
+project nobody has filed an issue with and a run that applied nothing all print
+exactly the bytes they printed before this feature existed. There is nothing to
+act on, so there is nothing to say. A coding agent's session is not one of these
+cases: the findings are printed there as anywhere else, and it is the writing
+the session declines (the last section below).
 
 With `--json` the same list is an additive field on the result document,
 `resolved_issues`, an array of `{number, summary, release, url, hit_by}`. It is
@@ -60,7 +62,7 @@ what makes the answer useful to a reader: an issue fixed in 0.22.0 and
 installed at 0.24.0 records `0.22.0`, so somebody still on 0.23.0 is told the
 truth about their own machine rather than about the newest one.
 
-Anything else is no verdict, and the issue stays `submitted`:
+Anything else is no verdict on a fix, and the issue stays `submitted`:
 
 - **closed with no milestone**, or with one that is not a version (a title, a
   date, `next`): nothing is known about which release carries the fix, so
@@ -69,11 +71,12 @@ Anything else is no verdict, and the issue stays `submitted`:
   in this build. It is left exactly as it is and a later update picks it up.
 - **still open**, and **a pull request** (the API answers about pull requests
   on the same route): not a fixed issue.
-- **closed as not planned, or as duplicate**: counted as nothing fixed, and set
-  aside quietly. The record moves to `dismissed` with `closed_as` naming which
-  of the two it was where the API says so; an update prints nothing about it,
-  because a closure that fixes nothing is not something an operator has to
-  read.
+
+A closure that fixes nothing — **closed as not planned, or as duplicate** — is
+not left as `submitted` either: the record moves to `dismissed` with `closed_as`
+naming which of the two it was where the API says so, and an update prints
+nothing about it, because a closure that fixes nothing is not something an
+operator has to read.
 
 A milestone **later** than the release that really ships the fix says "fixed"
 late, which is safe — it names a release that does contain the fix — while one

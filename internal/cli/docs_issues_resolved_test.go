@@ -52,6 +52,7 @@ func TestDocsIssuesResolvedNamesTheObjectAndTheRule(t *testing.T) {
 		{"never run", "the one thing nothing does with the command the record holds (spec step 6)"},
 		{"Resolved since the last update:", "the daily report's own list of the same fixes (report.go's resolvedHead)"},
 		{"writes nothing", "F16d: a coding agent's session prints the findings and writes none of them"},
+		{"The findings are printed", "the half of F16d a reader gets wrong: a session is not one of the cases that print nothing, it prints the list and declines the write"},
 		{"20 seconds", "the pass's own bound, which is why an update stays quick even with GitHub slow (F7, F8)"},
 	} {
 		if !strings.Contains(page, want.text) {
