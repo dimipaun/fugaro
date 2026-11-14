@@ -213,8 +213,14 @@ func TestDecideBakesNothingWhenTheReadersCannotBeKnown(t *testing.T) {
 	if !p.Notable {
 		t.Error("the plan is quiet, so a build would not say why the project's bake did not happen")
 	}
-	if !strings.Contains(p.Reason, "image map set") {
-		t.Errorf("the reason %q does not name the command that makes the readers knowable", p.Reason)
+	if !strings.Contains(p.Fix, "fugaro image map set acme/app") {
+		t.Errorf("the fix %q does not name the command that makes the readers knowable", p.Fix)
+	}
+	if !p.Asked {
+		t.Error("the plan does not record that bake_repos was written true")
+	}
+	if line := p.Reason + ". " + p.Fix; len(line) >= 200 {
+		t.Errorf("the note is %d characters, want under 200: %q", len(line), line)
 	}
 	// The map is what makes them knowable: recorded there, and alone on the
 	// entry, the bake lands — the same repository, the same pin.
@@ -296,6 +302,9 @@ func TestDecideBakeSwitchOff(t *testing.T) {
 	p := Decide(req)
 	if p.Baked != nil {
 		t.Fatal("Decide baked a checkout with bake_repos off")
+	}
+	if p.Asked {
+		t.Error("a switch written false was recorded as an ask for a bake")
 	}
 	if !strings.Contains(p.Reason, "bake_repos") {
 		t.Errorf("the reason %q does not name the switch that turned the bake off, so an operator cannot tell it from a map that does not name the repository", p.Reason)
