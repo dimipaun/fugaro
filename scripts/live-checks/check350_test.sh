@@ -173,22 +173,34 @@ done
 run_of() { basename "$(dirname "$1")"; }
 case "$action" in
 cat)
-  [ "$mode" = record-missing ] && { echo "ERROR: (gcloud.storage.cat) NotFound: No such object" >&2; exit 1; }
+  case "$mode" in *record-missing*) echo "ERROR: (gcloud.storage.cat) NotFound: No such object" >&2; exit 1 ;; esac
   rid=$(run_of "$url")
-  if [ "$mode" = candidates-missing ] && [ "$rid" != "$FAKE_RUN_ID" ]; then
-    echo "ERROR: (gcloud.storage.cat) NotFound: No such object" >&2
-    exit 1
-  fi
-  if [ "$mode" = run-running ] && [ "$rid" = "$FAKE_RUN_ID" ]; then
-    cat "$FAKE_JSON_DIR/rec-running.json"
-    exit 0
-  fi
-  if [ "$mode" = bytes-change ] && [ "$rid" = "$FAKE_TARGET_RUN" ]; then
+  case "$mode" in
+  *candidates-missing*)
+    if [ "$rid" != "$FAKE_RUN_ID" ]; then
+      echo "ERROR: (gcloud.storage.cat) NotFound: No such object" >&2
+      exit 1
+    fi
+    ;;
+  esac
+  case "$mode" in
+  *run-running*)
+    if [ "$rid" = "$FAKE_RUN_ID" ]; then
+      cat "$FAKE_JSON_DIR/rec-running.json"
+      exit 0
+    fi
+    ;;
+  esac
+  case "$mode" in
+  *bytes-change*)
+    if [ "$rid" = "$FAKE_TARGET_RUN" ]; then
     # The second read of that one record is a DIFFERENT record: the bytes a
     # reader wrote back, which is the finding step 4 exists to catch.
-    n=$(grep -c "storage cat $url" "$FAKE_LOG_DIR/gcloud.calls" || true)
-    if [ "$n" -gt 1 ]; then cat "$FAKE_JSON_DIR/rec-target-after.json"; exit 0; fi
-  fi
+      n=$(grep -c "storage cat $url" "$FAKE_LOG_DIR/gcloud.calls" || true)
+      if [ "$n" -gt 1 ]; then cat "$FAKE_JSON_DIR/rec-target-after.json"; exit 0; fi
+    fi
+    ;;
+  esac
   f="$FAKE_JSON_DIR/rec-$rid.json"
   [ -f "$f" ] || { echo "gcloud: no such object $url" >&2; exit 1; }
   cat "$f"
@@ -199,13 +211,15 @@ ls)
     printf 'TOTAL: %s objects\n' "$(grep -c . "$FAKE_JSON_DIR/listing.txt" || true)"
     exit 0
   fi
-  [ "$mode" = line-missing ] && { echo "ERROR: (gcloud.storage.ls) NotFound: No such object" >&2; exit 1; }
-  if [ "$mode" = line-changes ]; then
+  case "$mode" in *line-missing*) echo "ERROR: (gcloud.storage.ls) NotFound: No such object" >&2; exit 1 ;; esac
+  case "$mode" in
+  *line-changes*)
     # The bytes are the same and the object's own line is not: a record rewritten
     # with the same bytes is still an object a read wrote.
     n=$(grep -c "storage ls -l $url" "$FAKE_LOG_DIR/gcloud.calls" || true)
     if [ "$n" -gt 1 ]; then cat "$FAKE_JSON_DIR/one-after.txt"; printf 'TOTAL: 1 objects\n'; exit 0; fi
-  fi
+    ;;
+  esac
   cat "$FAKE_JSON_DIR/one.txt"
   printf 'TOTAL: 1 objects\n'
   ;;
@@ -233,10 +247,12 @@ printf 'fugaro %s (in %s)\n' "$*" "$PWD" >>"$FAKE_LOG_DIR/fugaro.calls"
 mode=${FAKE_MODE:-default}
 case "${1:-}" in
 run)
-  if [ "$mode" = launch-fails ]; then
+  case "$mode" in
+  *launch-fails*)
     printf 'fugaro: the launch was refused\n' >&2
     exit 1
-  fi
+    ;;
+  esac
   cat "$FAKE_JSON_DIR/launch.json"
   ;;
 runs)
@@ -276,10 +292,12 @@ diagnose)
   ;;
 cancel)
   printf 'cancel %s\n' "$*" >>"$FAKE_LOG_DIR/cancel.calls"
-  if [ "$mode" = cancel-fails ]; then
+  case "$mode" in
+  *cancel-fails*)
     printf 'fugaro: the run could not be cancelled\n' >&2
     exit 1
-  fi
+    ;;
+  esac
   cat "$FAKE_JSON_DIR/cancel.json"
   ;;
 *)
@@ -632,4 +650,189 @@ test_happy_path() {
   assert_no_cancel "$dir" "happy path"
   assert_branch_gone "$dir" "happy path"
   assert_scratch_removed "happy path"
+}
+
+test_belong_in_the_project() {
+  local dir=$work/belongproject
+  prepare "$dir"
+  run_check "$dir" -- --project belong-sandbox
+  expect_status "$status" 2 "the project named belong"
+  expect_contains "$out" "FACT belong: FAIL" "the project named belong: the row"
+  expect_contains "$err" "matches the installation 'belong'" "the project named belong: the refusal"
+  assert_no_run "$dir" "the project named belong"
+  assert_no_push "$dir" "the project named belong"
+  assert_scratch_removed "the project named belong"
+}
+
+test_belong_in_the_gcp_project() {
+  local dir=$work/belonggcp
+  prepare "$dir"
+  run_check "$dir" -- --gcp-project belong-gcp
+  expect_status "$status" 2 "the GCP project named belong"
+  expect_contains "$out" "FACT belong: FAIL" "the GCP project named belong: the row"
+  expect_contains "$err" "'belong-gcp' matches" "the GCP project named belong: which name matched"
+  assert_no_push "$dir" "the GCP project named belong"
+}
+
+test_belong_in_the_bucket() {
+  local dir=$work/belongbucket
+  prepare "$dir"
+  run_check "$dir" -- --bucket gs://belong-runs/
+  expect_status "$status" 2 "the bucket named belong"
+  expect_contains "$out" "FACT belong: FAIL" "the bucket named belong: the row"
+  assert_no_push "$dir" "the bucket named belong"
+}
+
+test_belong_in_the_checkouts_own_config() {
+  local dir=$work/belongconfig
+  prepare "$dir"
+  # The checkout is a sandbox one and the file it CARRIES names the owner's own
+  # installation: the run launched from here would land there.
+  printf 'project: belong\n' >"$dir/repo/fugaro.yaml"
+  run_check "$dir"
+  expect_status "$status" 2 "a checkout that names belong"
+  expect_contains "$out" "FACT belong: FAIL" "a checkout that names belong: the row"
+  expect_contains "$out" "names the project 'belong'" "a checkout that names belong: which reading matched"
+  assert_no_push "$dir" "a checkout that names belong"
+}
+
+test_an_agent_session_is_refused() {
+  local dir=$work/agent
+  prepare "$dir"
+  run_check "$dir" CLAUDECODE=1
+  expect_status "$status" 2 "a coding agent's session"
+  expect_contains "$out" "FACT agent-session: FAIL" "a coding agent's session: the row"
+  expect_contains "$err" "CLAUDECODE is set" "a coding agent's session: the marker that stopped it"
+  assert_no_run "$dir" "a coding agent's session"
+  assert_no_push "$dir" "a coding agent's session"
+}
+
+test_an_xtrace_shell_is_refused() {
+  local dir=$work/xtrace
+  prepare "$dir"
+  # `-x` is bash's own flag and has to come before the script: appended after it,
+  # it would be an argument the check refuses as unknown, which is a different
+  # refusal entirely.
+  run_one "$dir" "$script" -- -x --repo "$dir/repo" --project "$project" --bucket "$bucket"
+  expect_status "$status" 2 "a shell started with -x"
+  expect_contains "$out" "FACT xtrace: FAIL" "a shell started with -x: the row"
+  expect_contains "$err" "Run it without -x" "a shell started with -x: the refusal"
+  assert_no_run "$dir" "a shell started with -x"
+}
+
+test_missing_arguments() {
+  local dir=$work/args
+  prepare "$dir"
+  run_one "$dir" "$script" -- --project "$project" --bucket "$bucket"
+  expect_status "$status" 2 "no --repo"
+  expect_contains "$err" "--repo is required" "no --repo: the refusal"
+  run_one "$dir" "$script" -- --repo "$dir/repo" --bucket "$bucket"
+  expect_status "$status" 2 "no --project"
+  expect_contains "$err" "--project is required" "no --project: the refusal"
+  run_one "$dir" "$script" -- --repo "$dir/repo" --project "$project"
+  expect_status "$status" 2 "no --bucket"
+  expect_contains "$err" "--bucket is required" "no --bucket: the refusal"
+  run_check "$dir" -- --since nonsense
+  expect_status "$status" 2 "a window that is not one"
+  expect_contains "$err" "--since 'nonsense' is not a window" "a window that is not one: the refusal"
+  run_check "$dir" -- --step5-run
+  expect_status "$status" 2 "--step5-run with no value"
+  expect_contains "$err" "--step5-run needs a run id" "--step5-run with no value: the refusal"
+  run_check "$dir" -- --nonsense
+  expect_status "$status" 2 "an argument it does not know"
+  expect_contains "$err" "unknown argument '--nonsense'" "an argument it does not know: the refusal"
+  assert_no_run "$dir" "the argument refusals"
+  assert_no_push "$dir" "the argument refusals"
+}
+
+test_a_path_that_is_not_a_checkout() {
+  local dir=$work/notacheckout
+  prepare "$dir"
+  mkdir -p "$dir/empty"
+  run_check "$dir" -- --repo "$dir/empty"
+  expect_status "$status" 2 "a directory that is not a checkout"
+  expect_contains "$out" "FACT repo: FAIL" "a directory that is not a checkout: the row"
+  expect_contains "$err" "carries no fugaro.yaml" "a directory that is not a checkout: the refusal"
+  assert_no_run "$dir" "a directory that is not a checkout"
+}
+
+test_a_checkout_with_no_origin() {
+  local dir=$work/noorigin
+  prepare "$dir"
+  # A checkout of a repository with no origin: the reference could be cut and
+  # could be pushed nowhere, so the run could never be started from it.
+  mkdir -p "$dir/plain"
+  printf 'project: %s\n' "$project" >"$dir/plain/fugaro.yaml"
+  git -c init.defaultBranch=main init -q "$dir/plain"
+  run_check "$dir" -- --repo "$dir/plain"
+  expect_status "$status" 2 "a checkout with no origin"
+  expect_contains "$out" "FACT repo: FAIL" "a checkout with no origin: the row"
+  expect_contains "$err" "has no 'origin' remote" "a checkout with no origin: the refusal"
+  assert_no_run "$dir" "a checkout with no origin"
+}
+
+test_a_launch_that_fails() {
+  local dir=$work/launchfails
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=launch-fails
+  expect_status "$status" 1 "a launcher that refuses"
+  expect_contains "$out" "FACT branch: PASS" "a launcher that refuses: the reference was still cut and pushed"
+  expect_contains "$out" "FACT run: FAIL" "a launcher that refuses: the row"
+  expect_contains "$out" "fugaro run exited 1" "a launcher that refuses: what it read"
+  expect_contains "$out" "FACT settled: FAIL" "a launcher that refuses: nothing to follow"
+  expect_contains "$out" "there is no run to follow" "a launcher that refuses: why nothing was followed"
+  expect_contains "$out" "FACT readonly: FAIL" "a launcher that refuses: step 4 measured nothing"
+  expect_contains "$out" "FACT restore: PASS" "a launcher that refuses: the Restore still ran"
+  assert_no_cancel "$dir" "a launcher that refuses"
+  assert_branch_gone "$dir" "a launcher that refuses"
+  assert_scratch_removed "a launcher that refuses"
+}
+
+test_a_launch_that_names_no_run() {
+  local dir=$work/norunname
+  prepare "$dir"
+  printf '{"project":"%s","status":"launched"}\n' "$project" >"$dir/json/launch.json"
+  run_check "$dir"
+  expect_status "$status" 1 "a launch that names no run"
+  expect_contains "$out" "FACT run: FAIL" "a launch that names no run: the row"
+  expect_contains "$out" "named no run this check could take a bucket key from" "a launch that names no run: what it read"
+  assert_no_cancel "$dir" "a launch that names no run"
+  assert_branch_gone "$dir" "a launch that names no run"
+}
+
+test_a_run_that_never_ends() {
+  local dir=$work/neverends
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=run-running
+  expect_status "$status" 2 "a run that never ends"
+  expect_contains "$out" "FACT settled: FAIL" "a run that never ends: the row"
+  expect_contains "$out" "was still running after" "a run that never ends: what it read"
+  expect_contains "$out" "FACT cancelled: PASS" "a run that never ends: it is cancelled rather than left going"
+  expect_contains "$out" "FACT aborted: FAIL" "a run that never ends: nothing is concluded about the classes"
+  assert_cancelled "$dir" "a run that never ends"
+  assert_branch_gone "$dir" "a run that never ends"
+  assert_scratch_removed "a run that never ends"
+}
+
+test_a_cancel_that_does_not_answer() {
+  local dir=$work/cancelfails
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=run-running+cancel-fails
+  expect_status "$status" 2 "a cancel that does not answer"
+  expect_contains "$out" "FACT cancelled: FAIL" "a cancel that does not answer: the row"
+  expect_contains "$out" "the run may still be going" "a cancel that does not answer: what it tells the owner"
+  expect_contains "$out" "fugaro runs show $our_run" "a cancel that does not answer: how to read it by hand"
+  assert_cancelled "$dir" "a cancel that does not answer"
+}
+
+test_a_record_that_never_appears() {
+  local dir=$work/norecord
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=record-missing
+  expect_status "$status" 2 "a run that never bootstrapped"
+  expect_contains "$out" "FACT settled: FAIL" "a run that never bootstrapped: the row"
+  expect_contains "$out" "never bootstrapped" "a run that never bootstrapped: what it read"
+  expect_contains "$out" "FACT cancelled: PASS" "a run that never bootstrapped: the run is still cancelled"
+  assert_cancelled "$dir" "a run that never bootstrapped"
+  assert_branch_gone "$dir" "a run that never bootstrapped"
 }

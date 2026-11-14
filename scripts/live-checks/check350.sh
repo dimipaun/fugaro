@@ -226,6 +226,10 @@ T0_HASH=""
 T0_LINE=""
 T1_HASH=""
 T1_LINE=""
+# Whether the poll of step 1 ever read the run's own record at all: a run that is
+# still going and a run whose record never appeared leave the same empty slot
+# behind, and they are two different readings of the sandbox.
+POLL_READ=no
 # The window the listing was read with, and the week the digest reports: both are
 # printed, because a reader who cannot see the window cannot tell an empty
 # reading from a narrow one.
@@ -919,6 +923,7 @@ step_settle() {
   fi
   local key="runs/$SLUG/$RUN_ID/result.json"
   local ticks=0 maxticks=$(((RUN_TIMEOUT + POLL_SECONDS - 1) / POLL_SECONDS)) status=""
+  POLL_READ=no
   [ "$maxticks" -lt 1 ] && maxticks=1
   say "waiting up to $((maxticks * POLL_SECONDS))s for $RUN_ID to end: gcloud storage cat gs://$B/$key every ${POLL_SECONDS}s"
   while [ "$ticks" -lt "$maxticks" ]; do
@@ -926,6 +931,11 @@ step_settle() {
     status=""
     run_bounded "$RUN_BOUND_SECONDS" poll "$REPO" gcloud storage cat "gs://$B/$key" --project="$GCP"
     if [ "$BOUNDED_STATUS" = 0 ] && read_json record "$SCRATCH/poll.out" "$SCRATCH/poll.txt"; then
+      # The record WAS read. A run that is still going and a run whose record
+      # never appeared leave the same empty `record.txt` behind, and they are two
+      # different readings of the sandbox: one says the run is slow, the other
+      # that the bucket never saw it at all.
+      POLL_READ=yes
       status=$(field "$SCRATCH/poll.txt" status)
       case "$status" in
       "" | running) ;;
@@ -949,7 +959,7 @@ step_settle() {
   # A record that never appeared at all is a different reading from one that is
   # still running, and the row says which: the first says the run never
   # bootstrapped, the second that it is still going.
-  if [ ! -s "$SCRATCH/record.txt" ]; then
+  if [ "$POLL_READ" != yes ]; then
     fact settled FAIL "$RUN_ID left no record under runs/$SLUG/$RUN_ID/ within $((maxticks * POLL_SECONDS))s, so it never bootstrapped: there is no ending to read, and the class rows below cannot be measured. What gcloud printed is in $SCRATCH/poll.err"
   else
     fact settled FAIL "$RUN_ID was still running after $((maxticks * POLL_SECONDS))s (status=$status): a bootstrap refusal ends in seconds, so a run still going is one this check could not measure"
