@@ -202,6 +202,12 @@ func PutRepoAuth(ctx context.Context, db DB, slug string, rec RepoAuth) error {
 	return nil
 }
 
+// RepoAuth reads one repository's record as the service's own account, which
+// is the Store method a call's admission is narrowed through.
+func (s *RTDBStore) RepoAuth(ctx context.Context, slug string) (RepoAuth, bool, error) {
+	return ReadRepoAuth(ctx, s.db(), slug)
+}
+
 // NamesAccount is whether the record names that Claude account, which is the
 // whole of what a non-cascade oauth repository's call may be served by. It is a
 // method rather than a set the caller builds so that the comparison is spelled

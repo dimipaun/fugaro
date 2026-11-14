@@ -330,15 +330,43 @@ type fakeStore struct {
 	current    map[string]string
 	leases     map[string]creds.Lease
 	rr         int64
+	repoAuth   map[string]creds.RepoAuth
 	err        error
 	updateErr  error
 	marksErr   error
 	leasesErr  error
 	currentErr error
+	// repoAuthErr fails the repository auth record's read alone. It is its own
+	// error for the reason the three per-read ones are: a refusal taken on a
+	// record that could not be read is a different incident from one taken on
+	// the marks, and only this field can say which a test meant.
+	repoAuthErr error
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{marks: map[string]creds.Mark{}, current: map[string]string{}, leases: map[string]creds.Lease{}}
+	return &fakeStore{marks: map[string]creds.Mark{}, current: map[string]string{}, leases: map[string]creds.Lease{}, repoAuth: map[string]creds.RepoAuth{}}
+}
+
+// setRepoAuth records what `fugaro update` would have written for a repository,
+// which is the only way a test states what a repository's own configuration
+// says: the service reads the record and never the caller.
+func (s *fakeStore) setRepoAuth(slug string, rec creds.RepoAuth) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.repoAuth[slug] = rec
+}
+
+func (s *fakeStore) RepoAuth(_ context.Context, slug string) (creds.RepoAuth, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.err != nil {
+		return creds.RepoAuth{}, false, s.err
+	}
+	if s.repoAuthErr != nil {
+		return creds.RepoAuth{}, false, s.repoAuthErr
+	}
+	rec, ok := s.repoAuth[slug]
+	return rec, ok, nil
 }
 
 func runKey(run creds.Run) string { return run.Slug + "/" + run.ID }

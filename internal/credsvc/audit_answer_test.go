@@ -697,7 +697,15 @@ func TestEveryRefusalBeforeACredentialAnswersIsAudited(t *testing.T) {
 		{
 			name: "the cascade's state could not be read",
 			setup: func(_ *testing.T, s *svc) {
-				s.state.err = errors.New("the marks node could not be read")
+				// The marks alone, and not s.state.err, which fails every read
+				// the store makes: the repository's auth record is read before
+				// the selection and ahead of the marks (B2.1), so a store that
+				// cannot answer anything at all is refused on the record and
+				// answered with that refusal's sentence rather than this one.
+				// What this case is about is a read that fails INSIDE the
+				// selection, which is the one whose label the sentence carries
+				// (refusallog.go).
+				s.state.marksErr = errors.New("the marks node could not be read")
 			},
 			status: StatusUnavailable, errorType: ErrorStateUnavailable,
 			messageHas: "the marks node could not be read",
