@@ -579,6 +579,7 @@ describe('the committed synthetic fixture', () => {
       'degraded.ndjson.license',
       'plan-status.json.license',
       'coordinator-status.json.license',
+      'members.json.license',
       ...FIXTURE_CASES.map((name) => `${name}.ndjson.license`),
       // `screenshots` is the owner-run screenshot tool's data
       // (`test/fixtures/screenshots/`, ruling of 2026-10-20): a directory of
@@ -657,6 +658,22 @@ describe('the committed synthetic fixture', () => {
       'watch-parity.json.license',
       'shortid_cases.json',
       'shortid_cases.json.license',
+      // `members.json` is the sixth invented document (the roles-and-scopes
+      // plan's RS7): one `user ls --json` document, written from the structs
+      // (`internal/cli/user_ls.go`) so the Members view's read has a document to
+      // run over without a CLI. It is the fixture of the plan's own file list,
+      // and it is the **only one here whose document is a roster**: every value
+      // a screen draws -- a person as `access.Member` writes one, a role, a
+      // canonical scope and the repositories a pattern matched on this machine --
+      // is spelled the way the CLI spells it, and each array is seeded empty
+      // rather than null, as `user_ls.go` seeds them. Its own pins in
+      // `test/unit/schema.test.ts` hold every key of it, and of each object in
+      // it, to the four structs of the read, both directions, and hold every
+      // value to the grammar those writers implement. It is JSON and not `.ndjson`, so
+      // the loader sweep above never reads it, and no arm of the e2e stub
+      // answers with it yet: the view it is for is not built.
+      'members.json',
+      'members.json.license',
       ...FIXTURE_CASES.map((name) => `${name}.ndjson`),
     ])
     const present = readdirSync(FIXTURE_DIRECTORY)
