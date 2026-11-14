@@ -54,7 +54,8 @@ func TestDocsIssuesResolvedNamesTheObjectAndTheRule(t *testing.T) {
 		{"Resolved since the last update:", "the daily report's own list of the same fixes (report.go's resolvedHead)"},
 		{"writes nothing", "F16d: a coding agent's session prints the findings and writes none of them"},
 		{"The findings are printed", "the half of F16d a reader gets wrong: a session is not one of the cases that print nothing, it prints the list and declines the write"},
-		{"the update prints the sweep", "F17: with no record there is no window, so the whole back catalogue already at or below this build is listed rather than only this pass's own findings"},
+		{"the update prints the sweep", "F17: with no record there is no window, so the whole back catalogue already at or below this build is listed under the `This update fixes N` line rather than only this pass's own findings, and the `Also fixed since the last pass:` block stays empty"},
+		{"under the line `This update fixes N of your project's issues:`", "F17 again, one line lower in printResolvedList: the sweep a recordless update prints goes in `news`, so it lands under this line and not under `Also fixed since the last pass:` — a reader sent to the wrong block looks for the back catalogue in the one place it is never printed"},
 		{"20 seconds", "the pass's own bound, which is why an update stays quick even with GitHub slow (F7, F8)"},
 	} {
 		if !strings.Contains(page, want.text) {
