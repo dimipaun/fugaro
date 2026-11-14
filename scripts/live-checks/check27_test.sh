@@ -12,8 +12,10 @@
 # reading of state the case put there, and every delete it makes is visible
 # afterwards. The fake fugaro is the CLI: it REFUSES the create path when it has
 # no terminal (which is how a case proves the script gave the wizard a pty),
-# asks for the project ID and reads the line the pty wrote, prints the stage
-# list a `--plan-only` run prints, converges, and answers `update` and `doctor`.
+# asks for the project ID and reads the line the pty wrote, prints the plan a
+# `--plan-only` run prints — one row per stage, the project's own row carrying
+# the billing account the CLI puts there — converges, and answers `update` and
+# `doctor`.
 # Both log every call before anything else, so "no call was made at all" is
 # provable rather than argued.
 #
@@ -209,13 +211,25 @@ has() { # flag
   for a in "$@"; do [ "$a" = "$want" ] && return 0; done
   return 1
 }
+# stage_list LABEL [ACCOUNT], the six stages as the run prints them: one ROW
+# each, in initflow's own shape ('  <status>  <name>  <detail>'), because a
+# `--plan-only` run prints rows and not bare names. The project stage is the row
+# that names the billing account — a real plan draws it as `link billing account
+# <ID> (its own confirmation; may incur charges)` (init_project.go's plan detail)
+# — so the fake prints that text where a case can see it, and a case can fail
+# when the account ID reaches what a run prints rather than never noticing.
 stage_list() {
-  printf 'installation: %s\n' "$1"
-  printf 'firebase: %s\n' "$1"
-  printf 'images: %s\n' "$1"
-  printf 'installation-2: %s\n' "$1"
-  printf 'secrets: %s\n' "$1"
-  printf 'plugin: %s\n' "$1"
+  local label=$1 acct=${2:-}
+  if [ -n "$acct" ]; then
+    printf '  %s  %-16s will create the project, add Firebase (free), link billing account %s (its own confirmation; may incur charges)\n' "$label" installation "$acct"
+  else
+    printf '  %s  %-16s\n' "$label" installation
+  fi
+  printf '  %s  %-16s\n' "$label" firebase
+  printf '  %s  %-16s\n' "$label" images
+  printf '  %s  %-16s\n' "$label" installation-2
+  printf '  %s  %-16s\n' "$label" secrets
+  printf '  %s  %-16s\n' "$label" plugin
 }
 installation_of() { # id
   printf '%s\n' "$1" >"$state/project"
@@ -230,7 +244,11 @@ installation_of() { # id
   if [ -z "${FAKE27_NO_IMAGE:-}" ]; then
     printf 'history\tlatest\n' >"$state/images"
   fi
-  printf 'billingAccounts/%s\tTrue\n' "${FAKE27_ACCOUNT:-0A1B2C-3D4E5F-607182}" >"$state/billing"
+  if [ -n "${FAKE27_BILLING_DISABLED:-}" ]; then
+    printf 'billingAccounts/%s\tFalse\n' "${FAKE27_ACCOUNT:-0A1B2C-3D4E5F-607182}" >"$state/billing"
+  else
+    printf 'billingAccounts/%s\tTrue\n' "${FAKE27_ACCOUNT:-0A1B2C-3D4E5F-607182}" >"$state/billing"
+  fi
   printf '%s\n' "${FAKE27_FIRESTORE:-us-east5}" >"$state/firestore"
 }
 
@@ -242,9 +260,9 @@ version)
 setup)
   if has --plan-only "$@"; then
     if [ -n "${FAKE27_PLAN_NO_STAGES:-}" ]; then
-      printf 'installation: will do\n'
+      printf '  will do  %-16s\n' installation
     else
-      stage_list 'will do'
+      stage_list 'will do' "$(flag --link-billing "$@" || true)"
     fi
     if [ -n "${FAKE27_PLAN_BLOCKS:-}" ]; then
       sleep 600
@@ -261,13 +279,6 @@ setup)
     fi
     exit "${FAKE27_NEG_EXIT:-1}"
   fi
-  if [ -n "${FAKE27_CREATE_FAILS:-}" ]; then
-    if [ -n "${FAKE27_CREATE_FAILS_HALF:-}" ]; then
-      installation_of "${FAKE27_FAIL_ID:-not-a-project}"
-    fi
-    printf 'ERROR: (fugaro) creating the project: HTTPError 403: the caller does not have permission\n' >&2
-    exit 1
-  fi
   answer=""
   printf 'fugaro setup: this is the first run here; each answer has a suggestion, press Enter to accept it.\n'
   if [ -z "${FAKE27_ASK_NOTHING:-}" ]; then
@@ -280,7 +291,22 @@ setup)
     printf '%s\n' "$answer" >"$state/id-typed"
     printf 'CONFIRM: creating %s, and adding Firebase to it\n' "$answer"
   fi
-  printf '%s\n' "$(flag --link-billing "$@" || true)" >"$state/linkbilling"
+  # The wizard's own billing banner, with the account in it: a real create run
+  # with `--link-billing` prints that confirmation (step 12), after its question
+  # and before it creates anything. It is the account ID's own way into a
+  # transcript, so a create that then fails is what a case reads it through.
+  acct=$(flag --link-billing "$@" || true)
+  if [ -n "$acct" ]; then
+    printf 'CONFIRM: linking billing account %s (its own confirmation; may incur charges)\n' "$acct"
+  fi
+  if [ -n "${FAKE27_CREATE_FAILS:-}" ]; then
+    if [ -n "${FAKE27_CREATE_FAILS_HALF:-}" ]; then
+      installation_of "${FAKE27_FAIL_ID:-not-a-project}"
+    fi
+    printf 'ERROR: (fugaro) creating the project: HTTPError 403: the caller does not have permission\n' >&2
+    exit 1
+  fi
+  printf '%s\n' "$acct" >"$state/linkbilling"
   installation_of "$answer"
   stage_list 'done'
   exit 0
@@ -454,12 +480,20 @@ test_the_create_run_is_given_a_real_terminal() {
   expect_contains "$(cat "$dir/state/linkbilling")" "$ACCOUNT" "the flag path linked the account"
 }
 
-test_the_account_id_is_never_printed() {
+# The billing account's ID reaches what a run prints through the WIZARD, and
+# through nothing else here: a real `--plan-only` draws the project stage's row
+# as `link billing account <ID> (its own confirmation; may incur charges)`
+# (init_project.go's plan detail), the transcript keeps it and the runner echoes
+# it to the owner live. What this check owns is its own lines and its RESULT
+# block, and neither carries it. Both halves are asserted, so the case fails
+# whichever way the script starts lying — by leaking it, or by claiming a
+# redaction it does not have.
+test_the_account_id_is_the_wizards_own_line_and_not_the_scripts() {
   setup_case redact
   run27_default
   expect_status "$status" 0 "a full run"
-  expect_absent "$out$(cat "$dir/err")" "$ACCOUNT" "the billing account's ID"
-  expect_absent "$out" "$ACCOUNT" "the block"
+  expect_contains "$(cat "$dir/err")" "link billing account $ACCOUNT (its own confirmation; may incur charges)" "the plan row the wizard prints, echoed to the owner as it is"
+  expect_absent "$out" "$ACCOUNT" "the script's own stdout: its printed command lines and its block"
   expect_contains "$(fact_line billing-account)" "PASS" "the shape guard"
 }
 
@@ -627,6 +661,10 @@ test_a_create_that_fails_stops_and_nothing_was_created() {
   run27_default
   expect_status "$status" 2 "a create run that failed"
   expect_contains "$(fact_line wizard)" "FAIL" "the wizard row"
+  # The row quotes the transcript, and the transcript holds the wizard's own
+  # billing banner, which names the account: whatever line the row quotes, the
+  # block stays safe to paste back.
+  expect_absent "$out" "$ACCOUNT" "the block"
   expect_contains "$(fact_line restore)" "PASS" "the Restore with nothing to delete"
   expect_contains "$(fact_line restore)" "nothing of this check's was created" "nothing was created to delete"
   expect_absent "$(calls_gcloud)" "projects delete" "the Restore never deletes a project that is not there"
@@ -649,6 +687,21 @@ test_a_billing_link_to_another_account_is_a_fail() {
   expect_contains "$(fact_line billing)" "FAIL" "the billing row"
   expect_contains "$(fact_line billing)" "did not link" "why it is a failure"
   expect_contains "$out" "FACT aborted" "the run stopped at the billing read"
+}
+
+# The billing row is the one row that QUOTES the account's own name, straight
+# out of the read-back gcloud answered with: the block is what you paste back, so
+# it goes in as the section's placeholder and the terminal's own lines with it.
+# Without redact() this row is the leak, and this case is what catches it.
+test_a_billing_readback_is_redacted_in_the_block() {
+  setup_case billing-disabled
+  RUN27_ENV=(FAKE27_BILLING_DISABLED=1)
+  run27_default
+  expect_status "$status" 2 "a project whose billing is not enabled"
+  expect_contains "$(fact_line billing)" "FAIL" "the billing row"
+  expect_contains "$(fact_line billing)" "<ACCOUNT_ID>" "the read-back is quoted as the placeholder"
+  expect_absent "$out" "$ACCOUNT" "the block"
+  expect_absent "$(cat "$dir/err")" "billingAccounts/$ACCOUNT" "the lines this script writes to your terminal"
 }
 
 test_a_firestore_location_that_is_not_the_region_is_a_fail() {
@@ -900,7 +953,7 @@ t() {
 
 t test_a_full_run_passes
 t test_the_create_run_is_given_a_real_terminal
-t test_the_account_id_is_never_printed
+t test_the_account_id_is_the_wizards_own_line_and_not_the_scripts
 t test_belong_is_refused
 t test_belong_is_refused_before_any_call
 t test_the_name_must_be_fugaro
@@ -919,6 +972,7 @@ t test_a_create_that_blocks_is_killed_and_fails
 t test_a_create_that_fails_stops_and_nothing_was_created
 t test_a_create_that_half_created_is_reported_by_the_restore
 t test_a_billing_link_to_another_account_is_a_fail
+t test_a_billing_readback_is_redacted_in_the_block
 t test_a_firestore_location_that_is_not_the_region_is_a_fail
 t test_a_missing_bucket_stops_the_installation_row
 t test_a_missing_job_stops_the_installation_row

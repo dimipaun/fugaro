@@ -115,13 +115,19 @@
 # Runs:       by YOU, at your own terminal, in your own shell. NO AGENT RUNS ANY
 #             STEP OF IT, and a coding agent's session is refused before
 #             anything happens.
-# Cleanup:    always, including on Ctrl-C and on a failed assertion: the
-#             Restore deletes every run job in the project, the two buckets the
+# Cleanup:    the Restore runs whenever the run ends, Ctrl-C and a failed
+#             assertion included, and it deletes what THIS check's create run
+#             made: every run job in the project, the two buckets the
 #             installation made, and the project itself (`gcloud projects
 #             delete --quiet`, which leaves it DELETE_REQUESTED for 30 days: a
 #             project ID is never free again, so draw a new one for the next
 #             run). It reads the jobs and the buckets back first and only an
-#             empty answer counts. The secret containers are listed and never
+#             empty answer counts. One case it cannot undo for you: a run
+#             interrupted WHILE the create was running, before the create run
+#             returned — the project may exist and nothing recorded creating it,
+#             so the Restore reads it back and records FAIL with the one command
+#             that deletes it (`gcloud projects delete <P> --quiet`), and running
+#             that line is yours. The secret containers are listed and never
 #             counted — they are the installation's own by design and die with
 #             the project (the section's 3a) — and the scratch directory the
 #             run's transcripts live in is removed with the run.
@@ -143,8 +149,19 @@ set -E
 exec 3>&1 4>&2
 
 PROG=${0##*/}
-say() { printf '%s: %s\n' "$PROG" "$*" >&2; }
-owner() { printf '%s: %s\n' "$PROG" "$*" >&4; }
+# redact TEXT: TEXT with the billing account's ID written as <ACCOUNT_ID>, the
+# way the section writes the argument. This script quotes tool output — a
+# `--plan-only` row, a billing read-back, a refusal — into its own lines and into
+# the block, so ONE filter under each of those three printers is what makes "the
+# ID is in the wizard's output and in nothing this script writes" true by
+# construction rather than by hoping. The account is shape-checked before
+# anything runs, so what reaches sed holds no metacharacter.
+redact() {
+  if [ -z "${A:-}" ]; then printf '%s' "$1"; return 0; fi
+  printf '%s' "$1" | sed "s/$A/<ACCOUNT_ID>/g"
+}
+say() { printf '%s: %s\n' "$PROG" "$(redact "$*")" >&2; }
+owner() { printf '%s: %s\n' "$PROG" "$(redact "$*")" >&4; }
 ABORT_REASON=""
 # Set to yes by step_verdict once every step has run, so the exit trap can tell a
 # finished run from one that ended on an error of its own.
@@ -163,7 +180,7 @@ stop() {
 FACTS_FILE=""
 fact() { # fact KEY PASS|FAIL|INFO "detail"
   [ -n "$FACTS_FILE" ] || return 0
-  printf '%s|%s|%s\n' "$1" "$2" "$(one_line "$3")" >>"$FACTS_FILE"
+  printf '%s|%s|%s\n' "$1" "$2" "$(one_line "$(redact "$3")")" >>"$FACTS_FILE"
 }
 
 # one_line: a fact's detail is one line of the block, so whatever a command
@@ -173,7 +190,12 @@ one_line() { printf '%s' "$1" | tr '\n\r\t' '   ' | tr -s ' ' | sed 's/^ *//; s/
 
 # shown ARGS...: a command line as this script prints it. The billing account's
 # ID stays out of it — the section's own text writes the same argument as
-# <ACCOUNT_ID> — so nothing a run prints carries it.
+# <ACCOUNT_ID> — and redact() above is what keeps it out of every other line this
+# script writes, its terminal lines and its block included. What the WIZARD
+# prints is the wizard's own and is not redacted: a real `--plan-only` run draws
+# the project stage's row as `link billing account <ID> (its own confirmation;
+# may incur charges)` (init_project.go's plan detail), and the transcript keeps
+# it and the runner echoes it to you exactly as a person at the terminal sees it.
 shown() {
   local a prev="" out=""
   for a in "$@"; do
@@ -1235,7 +1257,7 @@ finish() {
   # gets no block and no verdict.
   if [ "$HELPED" = yes ]; then exit 0; fi
   if [ -n "$ABORT_REASON" ] && ! printf '%s' "$facts" | grep -q '^aborted|'; then
-    facts="${facts}"$'\n'"aborted|FAIL|$ABORT_REASON"
+    facts="${facts}"$'\n'"aborted|FAIL|$(redact "$ABORT_REASON")"
   fi
   # A run that never reached its verdict ends honestly, whatever stopped it: bash
   # exits by itself for an error the ERR trap does not see (an unbound variable, a
@@ -1269,10 +1291,12 @@ finish() {
   exit "$status"
 }
 
-# on_signal: a Ctrl-C still prints the block and still runs the Restore — the
-# Restore is what deletes the throwaway project, and a half-run leaves one.
+# on_signal: a Ctrl-C still prints the block and still runs the Restore, which
+# is what deletes the throwaway project — except where the interrupt landed on
+# the create run itself, which is the one case the Restore reports instead of
+# undoing (see Cleanup in the header).
 on_signal() {
-  owner "interrupted: printing what was measured, then deleting the throwaway project"
+  owner "interrupted: printing what was measured, then running the Restore"
   exit 2
 }
 
