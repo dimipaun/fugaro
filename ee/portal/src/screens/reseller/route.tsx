@@ -57,7 +57,10 @@ function SignedInResellerScreen() {
     [state, auth],
   )
 
-  if (api === null) {
+  // The state is named as well as the port, because the person's uid is what
+  // the screen below is keyed on: nothing here may read a user out of a state
+  // that has not got one.
+  if (state.status !== 'signed-in' || api === null) {
     // "Not answered yet" is not "signed out": a screen that treated the two
     // alike would send somebody who is already signed in back to sign in
     // (`src/auth/session.tsx` says the same about the state it publishes).
@@ -70,7 +73,15 @@ function SignedInResellerScreen() {
     )
   }
 
-  return <ResellerScreen api={api} />
+  // The key is the person, and it is what makes a switch between two accounts a
+  // switch of screens. `src/auth/session.tsx` publishes the second `signed-in`
+  // with no `signed-out` between them, so a new port alone would leave the
+  // screen the instance it was: its effect would read again, but the `ready`
+  // state it drew the first account's figures from would be on screen until
+  // those reads answered -- or for ever, if they never did. Keyed this way the
+  // old instance goes in the same commit that publishes the new session, so the
+  // status is what is drawn, not the person who has already gone.
+  return <ResellerScreen key={state.user.uid} api={api} />
 }
 
 export const route: ScreenRoute = {

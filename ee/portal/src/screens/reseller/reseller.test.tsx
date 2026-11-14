@@ -367,6 +367,72 @@ function transport(sent: Sent[]): void {
   })
 }
 
+/** The account that signs in second, whose uid is what makes it another one. */
+const OTHER_PERSON: SignedInUser = {
+  uid: 'uid-2',
+  email: 'second@example.com',
+  provider: 'google.com',
+  authTime: 1_700_000_000_000,
+}
+
+/**
+ * The sentence the API refuses with -- `error.schema.json`'s one shape -- for a
+ * read answered after the port it was made through has been replaced. Nothing
+ * the screen draws may quote it: it belongs to a session that is gone.
+ */
+const STALE_REFUSAL = 'That read belonged to a port the screen has left behind.'
+
+/**
+ * A `fetch` that records every request and answers none of them until the case
+ * says so, from the table it was handed at that moment: what a read still in
+ * flight looks like, and what a session that changes hands looks like while the
+ * next one is being read. The route builds its own client, so the transport it
+ * will use is the runner's global, and this is what stands there.
+ */
+function holdingTransport(answers: Record<string, unknown>): {
+  sent: Sent[]
+  /** Answers the request held at `index` with the body this screen expects. */
+  answer(index: number): void
+  /** Refuses it, as the API refuses one. */
+  refuse(index: number): void
+} {
+  const sent: Sent[] = []
+  const waiting = new Map<number, (response: Response) => void>()
+  vi.stubGlobal('fetch', (url: string, init: { headers: Record<string, string> }) => {
+    sent.push({ url, headers: init.headers })
+    return new Promise<Response>((resolve) => {
+      waiting.set(sent.length - 1, resolve)
+    })
+  })
+
+  function held(index: number): (response: Response) => void {
+    const resolve = waiting.get(index)
+    if (resolve === undefined) {
+      throw new Error(`no request is held at ${index}`)
+    }
+    waiting.delete(index)
+    return resolve
+  }
+
+  return {
+    sent,
+    answer: (index) => {
+      held(index)({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(answers[sent[index]!.url] ?? null),
+      } as unknown as Response)
+    },
+    refuse: (index) => {
+      held(index)({
+        ok: false,
+        status: 503,
+        json: () => Promise.resolve({ error: { code: 'unavailable', message: STALE_REFUSAL } }),
+      } as unknown as Response)
+    },
+  }
+}
+
 /**
  * The route as the app mounts it: collected by the glob, rendered at its own
  * path inside a router. The sign-in path is a stand-in route rather than the
@@ -452,10 +518,99 @@ describe('the reseller route', () => {
       answer(null)
     })
 
-    expect(screen.queryByText('Acme Ltd')).toBeNull()
+    expect(screen.queryAllByText('Acme Ltd')).toEqual([])
     expect(screen.queryByText('$30.00')).toBeNull()
     expect(screen.queryByRole('region', { name: 'Customers' })).toBeNull()
     expect(screen.getByText('the sign-in screen answers this path')).toBeDefined()
   })
 
+  it('draws nothing of the account that was on screen when another one signs in', async () => {
+    const answers: Record<string, unknown> = { ...ANSWERS }
+    const { sent, answer: land } = holdingTransport(answers)
+    const { auth, answer } = session()
+
+    render(shell(auth))
+    await act(async () => {
+      answer(PERSON)
+    })
+    // The keys are asked for once the customers have answered, which is the
+    // screen's read from end to end: the first account is on the page.
+    await act(async () => {
+      land(0)
+      land(1)
+    })
+    await act(async () => {
+      land(2)
+      land(3)
+    })
+    expect(screen.getAllByText('Acme Ltd').length).toBeGreaterThan(0)
+
+    // The session goes straight from one account to the other -- `answer` is
+    // what `src/auth/session.tsx` publishes the second `signed-in` with, and no
+    // `signed-out` comes between -- and what the second account holds is set
+    // here to nothing at all, so any figure left on the page could only be the
+    // first person's.
+    answers['/api/resellers/customers'] = []
+    answers['/api/statements'] = []
+    await act(async () => {
+      answer(OTHER_PERSON)
+    })
+
+    // The second account's own reads are still in flight, and the figures the
+    // first one drew are already gone: the screen that drew them went with the
+    // session that read them.
+    expect(sent).toHaveLength(6)
+    expect(screen.queryAllByText('Acme Ltd')).toEqual([])
+    expect(screen.getByRole('status').textContent).toBe('Loading…')
+
+    await act(async () => {
+      land(4)
+      land(5)
+    })
+    expect(await screen.findByText('No customers yet.')).toBeDefined()
+    expect(screen.queryAllByText('Acme Ltd')).toEqual([])
+  })
+
+  it('drops a read that lands after the port it was made through has gone', async () => {
+    const { sent, answer: land, refuse } = holdingTransport({ ...ANSWERS })
+    const { auth, answer } = session()
+
+    render(shell(auth))
+    await act(async () => {
+      answer(PERSON)
+    })
+    expect(sent).toHaveLength(2)
+
+    // The same person is published again, which is what `watch` answers on a
+    // token refresh: the port is built again and the screen's effect reads
+    // through it, while the two reads of the port before it are still in
+    // flight. The screen is the instance it was -- the key above is the person,
+    // and the person is the same one -- so what becomes of that older read is
+    // the effect's own guard and nothing else.
+    await act(async () => {
+      answer(PERSON)
+    })
+    expect(sent).toHaveLength(4)
+
+    await act(async () => {
+      refuse(0)
+    })
+
+    // The old port's refusal is not the screen's failure: a person reading the
+    // second port's answer must not be told what the first one said.
+    expect(screen.getByRole('status').textContent).toBe('Loading…')
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryAllByText(STALE_REFUSAL)).toEqual([])
+
+    // And the screen is the current port's, so its answer is the one drawn.
+    await act(async () => {
+      land(2)
+      land(3)
+    })
+    await act(async () => {
+      land(4)
+      land(5)
+    })
+    expect(await screen.findByRole('region', { name: 'Customers' })).toBeDefined()
+  })
 })
