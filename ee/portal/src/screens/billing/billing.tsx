@@ -47,7 +47,11 @@ import type { Subscription, SubscriptionSeats } from '../../api/types/billing'
 import { useSession } from '../../auth/session'
 
 /**
- * The API's routes for this area (P4.3 serves them, `ee/keyservice/api_billing.go`).
+ * The API's routes for this area. Nothing answers them today: the key service
+ * registers the webhook route and nothing else, and these are the three P4.3
+ * will add (`ee/keyservice/billing.go` and `api_billing.go`, per the plan) --
+ * this screen and its test state the contract that task has to serve.
+ *
  * A workspace id is encoded rather than pasted: an id carrying a slash would
  * otherwise widen the path, and the client refuses a path that leaves the
  * origin only after this has joined it.
@@ -69,6 +73,11 @@ const PORTAL_FAILURE = 'The portal could not open Paddle’s customer portal. Tr
 const BAD_QUANTITY = 'Enter a whole number of seats, one or more.'
 const NO_WORKSPACE = 'The portal opened billing without a workspace.'
 const SIGN_IN_NEEDED = 'Sign in to see this workspace’s billing.'
+// A 2xx with no body (a 204) is a success the screen cannot draw from: the
+// client resolves it to nothing (`src/api/client.ts`), so the subscription
+// this screen keeps in state would be nothing too, and the next thing to read
+// it would be the render. It is answered as a refusal instead.
+const NO_ANSWER = 'The portal did not say what the subscription is. Try again.'
 
 // The renewal day is UTC because Paddle's instant is: a customer in Auckland
 // reading a day this browser had shifted would be shown a renewal on a date
@@ -102,8 +111,18 @@ function httpsUrl(url: string): string | null {
 }
 
 export function BillingScreen() {
-  const { state, auth } = useSession()
   const workspaceId = useParams<{ workspaceId: string }>().workspaceId
+  // The workspace is part of which screen this is: everything below belongs to
+  // one, so the key throws the whole of it away when the path names another,
+  // rather than leaving a refusal raised for the last workspace, or its seat
+  // count in the field, to be read -- and sent -- beside the next one's name.
+  // A reset would have to name every piece of state and would still draw the
+  // old one for the render before the request goes out.
+  return <WorkspaceBilling key={workspaceId} workspaceId={workspaceId} />
+}
+
+function WorkspaceBilling({ workspaceId }: { workspaceId: string | undefined }) {
+  const { state, auth } = useSession()
   const api = useMemo(() => createApiClient({ token: () => auth.idToken() }), [auth])
   const signedIn = state.status === 'signed-in'
 
@@ -121,8 +140,12 @@ export function BillingScreen() {
     let live = true
     void api
       .request<Subscription>(ROUTES.subscription(workspaceId))
-      .then((answer) => {
+      .then((answer: Subscription | undefined) => {
         if (!live) {
+          return
+        }
+        if (answer === undefined) {
+          setFailure(NO_ANSWER)
           return
         }
         setSubscription(answer)
@@ -158,7 +181,11 @@ export function BillingScreen() {
     const body: SubscriptionSeats = { seats: quantity }
     void api
       .request<Subscription>(ROUTES.seats(workspaceId), { method: 'POST', body })
-      .then((answer) => {
+      .then((answer: Subscription | undefined) => {
+        if (answer === undefined) {
+          setFailure(NO_ANSWER)
+          return
+        }
         setSubscription(answer)
         setSeats(String(answer.seats))
         setNotice(`The subscription now has ${answer.seats} seats.`)

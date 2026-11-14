@@ -19,7 +19,7 @@
 // screen happened to do.
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { Link, MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Subscription } from '../../api/types/billing'
 import type { AuthPort, SignedInUser } from '../../auth/session'
@@ -52,7 +52,7 @@ function answer(status: number, body?: unknown): Response {
  * The requests the screen makes, answered from the list given. A request with
  * no answer left is a test that did not expect it, and the throw says which.
  */
-function stubFetch(answers: (() => Response)[]): Call[] {
+function stubFetch(answers: (() => Response | Promise<Response>)[]): Call[] {
   const calls: Call[] = []
   vi.stubGlobal('fetch', ((url: string, init: RequestInit) => {
     calls.push({ url, init })
@@ -138,6 +138,25 @@ function show(
   )
 }
 
+/**
+ * The screen on a router whose workspace can be changed, with a link standing
+ * in for whatever a person follows to go from one workspace's billing to
+ * another's -- one screen, two workspaces, which is the case a route parameter
+ * changing under a mounted screen makes.
+ */
+function showTwoWorkspaces(): void {
+  render(
+    <SessionProvider port={port()}>
+      <MemoryRouter initialEntries={['/billing/ws_a']}>
+        <Link to="/billing/ws_b">Go to B</Link>
+        <Routes>
+          <Route path="/billing/:workspaceId" element={<BillingScreen />} />
+        </Routes>
+      </MemoryRouter>
+    </SessionProvider>,
+  )
+}
+
 /** The value of one row of the facts list, read from the term a person reads. */
 function fact(term: string): string {
   const value = screen.getByText(term).nextElementSibling
@@ -166,6 +185,7 @@ const PORTAL_BUTTON = 'Invoices and payment methods'
 const GENERIC = 'The portal could not read your billing. Try again.'
 const PORTAL_FAILURE = 'The portal could not open Paddle’s customer portal. Try again.'
 const SIGN_IN = 'Sign in to see this workspace’s billing.'
+const NO_ANSWER = 'The portal did not say what the subscription is. Try again.'
 
 describe('the billing screen', () => {
   it('shows the seats, the state and the renewal date Paddle reported', async () => {
@@ -340,11 +360,17 @@ describe('the billing screen', () => {
     expect(header(calls[0]!, 'Authorization')).toBe('Bearer token-one')
   })
 
-  it('tells somebody signed out to sign in, rather than asking without a token', () => {
-    const calls = stubFetch([])
+  it('tells somebody signed out to sign in, rather than asking without a token', async () => {
+    const calls = stubFetch([() => answer(200, SUBSCRIPTION)])
     show('/billing/ws_example', '/billing/:workspaceId', port(null))
 
     expect(screen.getByText(SIGN_IN).textContent).toBe(SIGN_IN)
+    // A request this screen should not make is one microtask away -- the client
+    // asks for the token first -- so the assertions wait that microtask out: a
+    // guard checked only against the render they follow would be no guard.
+    await act(async () => {
+      await Promise.resolve()
+    })
     expect(calls).toHaveLength(0)
     expect(screen.queryByRole('alert')).toBeNull()
   })
@@ -363,6 +389,65 @@ describe('the billing screen', () => {
 
     await screen.findByText('Seats')
     expect(calls[0]!.url).toBe('/api/workspaces/ws_example/subscription')
+  })
+
+  it('starts clean when the path names another workspace', async () => {
+    stubFetch([
+      () => answer(404, { error: { code: 'no_subscription', message: 'A said no.' } }),
+      () => answer(200, { ...SUBSCRIPTION, workspace_id: 'ws_b', seats: 5 } satisfies Subscription),
+    ])
+    showTwoWorkspaces()
+
+    expect((await screen.findByRole('alert')).textContent).toBe('A said no.')
+    fireEvent.click(screen.getByRole('link', { name: 'Go to B' }))
+
+    // A refusal raised about one workspace is not a fact about the next one,
+    // and neither is the seat count that came with it: the field carries a
+    // whole quantity, so one click would move B's subscription to it.
+    await waitFor(() => {
+      expect(screen.queryByRole('alert')).toBeNull()
+    })
+    expect(fact('Seats')).toBe('5')
+    expect((screen.getByLabelText(SEATS) as HTMLInputElement).value).toBe('5')
+  })
+
+  it('draws nothing of the workspace it left while the next one is on its way', async () => {
+    stubFetch([() => answer(200, SUBSCRIPTION), () => new Promise<Response>(() => {})])
+    showTwoWorkspaces()
+
+    await screen.findByText('Seats')
+    fireEvent.click(screen.getByRole('link', { name: 'Go to B' }))
+
+    expect(screen.queryByText('Seats')).toBeNull()
+    expect(screen.queryByLabelText(SEATS)).toBeNull()
+    expect(screen.getByRole('status').textContent).toBe('Loading…')
+  })
+
+  it('refuses a 2xx with no body rather than keeping nothing as a subscription', async () => {
+    // A 204 is a success the client resolves to `undefined`, which is not a
+    // subscription: kept, the next render would read its fields and take the
+    // screen down with no boundary above it.
+    stubFetch([() => answer(204)])
+    show()
+
+    expect((await screen.findByRole('alert')).textContent).toBe(NO_ANSWER)
+    expect(screen.getByRole('heading', { name: 'Billing' }).textContent).toBe('Billing')
+    expect(screen.queryByText('Seats')).toBeNull()
+  })
+
+  it('refuses a seat change confirmed without the subscription that came of it', async () => {
+    const calls = stubFetch([() => answer(200, SUBSCRIPTION), () => answer(204)])
+    show()
+
+    const field = (await screen.findByLabelText(SEATS)) as HTMLInputElement
+    fireEvent.change(field, { target: { value: '5' } })
+    fireEvent.submit(field.closest('form')!)
+
+    expect((await screen.findByRole('alert')).textContent).toBe(NO_ANSWER)
+    // What was last reported stands, and is not contradicted: the change may
+    // well have landed, and the screen says only what it was told.
+    expect(fact('Seats')).toBe('3')
+    expect(calls).toHaveLength(2)
   })
 
   it('says so when it is mounted with no workspace in the path', () => {
