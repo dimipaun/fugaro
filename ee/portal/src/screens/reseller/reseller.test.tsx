@@ -38,21 +38,35 @@ import { route } from './route'
 // when the next case asks for a heading.
 afterEach(cleanup)
 
-const CUSTOMER: ResellerCustomer = {
-  organisation_id: 'org_acme',
-  name: 'Acme Ltd',
-  reseller_organisation_id: 'org_reseller',
-  linked_at: '2026-02-10T11:00:00Z',
-}
+// Two customers and two lines, and no two figures the same: the month's
+// accrual is the sum of its lines, so a screen that drew the statement's total
+// where a line's amount belongs is caught rather than passing on a coincidence.
+const CUSTOMERS: ResellerCustomer[] = [
+  {
+    organisation_id: 'org_acme',
+    name: 'Acme Ltd',
+    reseller_organisation_id: 'org_reseller',
+    linked_at: '2026-02-10T11:00:00Z',
+  },
+  {
+    organisation_id: 'org_borealis',
+    name: 'Borealis Inc',
+    reseller_organisation_id: 'org_reseller',
+    linked_at: '2026-02-12T09:00:00Z',
+  },
+]
 
 const STATEMENT: Statement = {
   id: 'stm_1',
   reseller_organisation_id: 'org_reseller',
   month: '2026-02',
-  accrued_micros: 24_000_000,
+  accrued_micros: 30_000_000,
   paid_micros: 0,
   state: 'open',
-  lines: [{ organisation_id: 'org_acme', amount_micros: 24_000_000 }],
+  lines: [
+    { organisation_id: 'org_acme', amount_micros: 24_000_000 },
+    { organisation_id: 'org_borealis', amount_micros: 6_000_000 },
+  ],
   issued_at: '2026-03-01T00:05:00Z',
   paid_at: null,
 }
@@ -63,7 +77,7 @@ const GENERIC_FAILURE = 'The portal could not read your reseller account. Try ag
 /** A port that answers with the two samples above, unless a case says otherwise. */
 function api(overrides: Partial<ResellerApi> = {}): ResellerApi {
   return {
-    customers: () => Promise.resolve([CUSTOMER]),
+    customers: () => Promise.resolve(CUSTOMERS),
     statements: () => Promise.resolve([STATEMENT]),
     ...overrides,
   }
@@ -90,11 +104,12 @@ describe('the reseller screen', () => {
     const statements = within(await screen.findByRole('region', { name: 'Monthly statements' }))
     expect(statements.getByRole('heading', { name: '2026-02' })).toBeDefined()
     expect(statements.getByText('Open')).toBeDefined()
-    expect(statements.getByText('$24.00')).toBeDefined()
+    expect(statements.getByText('$30.00')).toBeDefined()
     expect(statements.getByText('$0.00')).toBeDefined()
-    // The line carries the customer's own name, which is what a reseller
+    // A line carries the customer's own name, which is what a reseller
     // recognises: the id it was given is there to act on, not to read.
-    expect(statements.getByRole('row', { name: /Acme Ltd/ })).toBeDefined()
+    expect(statements.getByRole('row', { name: /Acme Ltd/ }).textContent).toContain('$24.00')
+    expect(statements.getByRole('row', { name: /Borealis Inc/ }).textContent).toContain('$6.00')
   })
 
   it('offers no reveal, and shows nothing a customer’s key would be', async () => {
