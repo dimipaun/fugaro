@@ -188,7 +188,7 @@ func (c *cycle) run(ctx context.Context) error {
 	if err := c.carry(ctx, view); err != nil {
 		return err
 	}
-	if err := c.escalate(ctx, view); err != nil {
+	if err := c.escalate(ctx); err != nil {
 		return err
 	}
 	if err := c.triage(ctx); err != nil {

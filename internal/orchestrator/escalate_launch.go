@@ -22,6 +22,8 @@ package orchestrator
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"strconv"
 	"strings"
@@ -166,8 +168,10 @@ type LadderBeyond func(ctx context.Context, item WorkItem, step escalation.Step,
 // holds is not a state to file questions from, and the three questions Plan
 // asks before it launches anything are asked here too — a ladder run is a run,
 // so a cycle that spends nothing while the budget switch holds starts nothing
-// while it holds either.
-func (c *cycle) escalate(ctx context.Context, view RunView) error {
+// while it holds either. The guard is also what keeps a held cycle off the
+// ladder's ledger: the rung is written before the run is asked for, and a
+// transition nothing launched is a rung spent with no run under it.
+func (c *cycle) escalate(ctx context.Context) error {
 	if !c.tick.Ladder.Set() || !c.fresh {
 		return nil
 	}
@@ -176,7 +180,7 @@ func (c *cycle) escalate(ctx context.Context, view RunView) error {
 	}
 	blocked := blocksOthers(c.state)
 	for _, w := range c.state.WorkItems {
-		if err := c.ladderItem(ctx, view, w.ID, blocked); err != nil {
+		if err := c.ladderItem(ctx, w.ID, blocked); err != nil {
 			return err
 		}
 	}
@@ -186,7 +190,7 @@ func (c *cycle) escalate(ctx context.Context, view RunView) error {
 // ladderItem walks one item one step. The item is looked up again rather than
 // carried in from the caller, because every move this cycle makes is a write
 // and a write replaces the node the item came from.
-func (c *cycle) ladderItem(ctx context.Context, view RunView, id string, blocked map[string]bool) error {
+func (c *cycle) ladderItem(ctx context.Context, id string, blocked map[string]bool) error {
 	w, ok := c.state.Item(id)
 	if !ok || w.Phase.Done() {
 		return nil
@@ -228,7 +232,7 @@ func (c *cycle) ladderItem(ctx context.Context, view RunView, id string, blocked
 		// rung it is at is the one a move is written over.
 		return nil
 	}
-	return c.ladderAct(ctx, view, w, step, reason, read)
+	return c.ladderAct(ctx, w, step, reason, read)
 }
 
 // ladderEnterable reports whether an item at rung at may enter the rung the
@@ -252,10 +256,10 @@ func ladderEnterable(rung, at escalation.Rung) bool {
 
 // ladderAct carries out the one step the decision named, and false where a rung
 // starts nothing here.
-func (c *cycle) ladderAct(ctx context.Context, view RunView, w WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) error {
+func (c *cycle) ladderAct(ctx context.Context, w WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) error {
 	switch step.Rung {
 	case escalation.R0, escalation.R2:
-		req, ok := c.ladderOuter(view, w, step, read)
+		req, ok := c.ladderOuter(w, step, read)
 		if !ok {
 			// A run of another recipe is the item's approval's to cover, and
 			// the ladder has no approval of its own (G6, G15). An item no
@@ -303,9 +307,14 @@ func (c *cycle) ladderAct(ctx context.Context, view RunView, w WorkItem, step es
 // may not start one: the loop's own two questions (the item is one an attempt
 // may be declared from, and nothing it depends on is still open), the item's
 // own approval (D2042, G15) — the standing one, or the one a retry spent — and
-// the bounds, which are the ladder's own count and the cost ceiling a person
-// set.
-func (c *cycle) ladderOuter(view RunView, w WorkItem, step escalation.Step, read LadderReading) (LadderRequest, bool) {
+// the ladder's count of the runs it has already spent.
+//
+// The cost ceiling is not read here. It is the decision's (D2038): the reading
+// carries the spend, escalation.Decide answers rung 3 for an item past the
+// ceiling whatever rung it is at, and rung 3 starts nothing here — the hook
+// past rung 2 is where that stop is carried out. The per-item ceiling a rung 1
+// resume is held by is RunView.Spend's (ladder.go).
+func (c *cycle) ladderOuter(w WorkItem, step escalation.Step, read LadderReading) (LadderRequest, bool) {
 	if !startable(w.Phase) || !dependenciesDone(c.state, w) {
 		// A ladder run is a run: an item a run is moving through is not one to
 		// start beside it, and neither is one still waiting on work that is not
@@ -323,7 +332,7 @@ func (c *cycle) ladderOuter(view RunView, w WorkItem, step escalation.Step, read
 		// read, or nothing at all.
 		return LadderRequest{}, false
 	}
-	if LadderRuns(c.state, w) >= MaxOuterAttempts || view.Spend[w.ID].AtCeiling() {
+	if LadderRuns(c.state, w) >= MaxOuterAttempts {
 		return LadderRequest{}, false
 	}
 	recipe := RecipeRebase
@@ -412,11 +421,11 @@ func (c *cycle) ladderSay(ctx context.Context, w WorkItem, step escalation.Step,
 }
 
 // askLadder raises the one question a ladder that cannot decide something owes
-// a person, under the item's own id, and says so once: a decision whose id the
-// node already carries is the question already asked, and a cycle that re-runs
-// after its write landed asks nothing more.
+// a person, under the name ladderQuestionID derives from the item, and says so
+// once: a decision whose id the node already carries is the question already
+// asked, and a cycle that re-runs after its write landed asks nothing more.
 func (c *cycle) askLadder(ctx context.Context, w WorkItem, question string) error {
-	id := w.ID + "-escalation"
+	id := ladderQuestionID(w.ID)
 	if _, ok := c.state.Decision(id); ok {
 		return nil
 	}
@@ -431,6 +440,32 @@ func (c *cycle) askLadder(ctx context.Context, w WorkItem, question string) erro
 	c.say(ctx, Notification{Kind: NotifyDecisionNeeded, Subject: id, Text: question})
 	return nil
 }
+
+// ladderQuestionID is the name the ladder's question about one item is written
+// under. It is the item's own id with the ladder's suffix while the two fit the
+// 64 characters a name may be — a work item id may be 64 itself (idRE,
+// validate.go) — and otherwise the item's id cut to fit with a digest of the
+// whole of it behind, which is what keeps a name the state accepts and keeps
+// two long ids that share a prefix apart.
+func ladderQuestionID(itemID string) string {
+	const suffix = "-escalation"
+	if len(itemID)+len(suffix) <= maxNameRunes {
+		return itemID + suffix
+	}
+	sum := sha256.Sum256([]byte(itemID))
+	tail := "-" + hex.EncodeToString(sum[:])[:questionHashHex]
+	return itemID[:maxNameRunes-len(tail)] + tail
+}
+
+const (
+	// maxNameRunes is the longest name idRE accepts (validate.go). A derived
+	// name over it is refused by the state, and a question the node will not
+	// take is a cycle that fails on every tick.
+	maxNameRunes = 64
+	// questionHashHex is how much of the digest of a long item id is kept: the
+	// cut-down id carries the item, and the digest carries what the cut dropped.
+	questionHashHex = 8
+)
 
 // ladderFacts is the decision's input, built from the reading and the node. The
 // two counts D2042 keeps apart are the whole of it: the attempts are the item's

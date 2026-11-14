@@ -2,6 +2,7 @@ package orchestrator_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -758,6 +759,181 @@ func TestTickRecordsTheRungBeforeTheRun(t *testing.T) {
 	if atLaunch == nil || atLaunch.Rung != escalation.R0 || len(atLaunch.Transitions) != 1 {
 		t.Fatalf("the ledger read while the launcher was asked is %+v, and the rung is written first", atLaunch)
 	}
+}
+
+// TestTickSpendsNothingWhileTheNodesGuardsHold is the ladder's own copy of the
+// three questions Plan asks before it launches anything: a cycle that spent
+// while the kill switch holds spends what a person stopped, one on a node past
+// its size cap acts on a record that may no longer be the whole one, and one
+// while the breaker's question stands lifts a pause a restart may not lift. The
+// ladder asks its launcher directly rather than through a plan (E10a), so this
+// guard is the executor's and nothing else's, and the rung is written before the
+// run is asked for: a cycle that got past it would spend the ledger of an item
+// it must not start at all.
+//
+// Mutation: drop the guard, or any one of its three terms, and each of the three
+// cases below launches a run the fourth says this node otherwise spends.
+func TestTickSpendsNothingWhileTheNodesGuardsHold(t *testing.T) {
+	now := o6Now()
+	w, its := spentOn(t, "wi-1", now, rebased(now, headA, 1))
+	ready := stack(t, now, []orchestrator.WorkItem{w}, its)
+	read := reading(rigor.POC, 4*time.Hour, headA)
+	young := reading(rigor.Pro, time.Minute, headA)
+
+	bloated := overCap(t, now, w, its)
+
+	var trip orchestrator.Breaker
+	for range orchestrator.BreakerThreshold {
+		trip.Observe(orchestrator.CycleEmpty)
+	}
+	question, ok := trip.Decision(ready, now)
+	if !ok {
+		t.Fatal("the tripped breaker had no question to raise")
+	}
+	paused := o6Apply(t, ready, question, orchestrator.Actor{Class: orchestrator.Daemon, Now: now})
+	if !orchestrator.BreakerOpen(paused) {
+		t.Fatal("the node carries the trip's question and does not read as open")
+	}
+
+	cases := []struct {
+		name  string
+		state orchestrator.State
+		caps  orchestrator.Caps
+		want  int
+	}{
+		{"the kill switch", ready, withCaps(func(c *orchestrator.Caps) { c.KillSwitch = true }), 0},
+		{"a node past its size cap", bloated, o6Caps(), 0},
+		{"the breaker's question", paused, o6Caps(), 0},
+		{"nothing holding the item", ready, o6Caps(), 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tick, l := ladderHeldTick(t, tc.state, now, tc.caps)
+			l.reads["wi-1"] = read
+			// The node over its cap carries two live items of its own. The two
+			// readings are what makes a cycle that got past the guard fail on
+			// the launch below rather than on a reading this test never gave:
+			// what the ladder decides for them is not this case's.
+			l.reads["wi-live"], l.reads["wi-approved"] = young, young
+
+			rep, err := tick.Step(context.Background())
+			if err != nil {
+				t.Fatalf("the cycle ended as %v", err)
+			}
+			if len(l.launched) != tc.want {
+				t.Fatalf("the ladder launched %+v for an item this node spends %d runs on", l.launched, tc.want)
+			}
+			if rep.Escalated != tc.want {
+				t.Fatalf("the cycle reports %d moves, and this node has %d", rep.Escalated, tc.want)
+			}
+		})
+	}
+}
+
+// TestTickAsksAboutAnItemWithALongID is the name the ladder's question is
+// written under. A work item id may be 64 characters, which is the longest name
+// the state takes (idRE), so the item's own id with a suffix appended is a name
+// Apply refuses: the question a person is owed never lands, every tick fails
+// trying to write it, and the breaker counts those failures as cycles that did
+// nothing.
+//
+// Mutation: derive the id by appending alone and the cycle below ends with the
+// state's own words — the decision id is not a name — instead of asking.
+func TestTickAsksAboutAnItemWithALongID(t *testing.T) {
+	now := o6Now()
+	long := "wi-" + strings.Repeat("x", 61)
+	w, its := spentOn(t, long, now, rebased(now, headA, 1))
+	h, l := ladderTick(t, stack(t, now, []orchestrator.WorkItem{w}, its), now)
+	l.reads[long] = orchestrator.LadderReading{}
+
+	rep := h.step()
+
+	if rep.Escalated != 0 {
+		t.Fatalf("the cycle reports %d moves, and an item it could not read is a question", rep.Escalated)
+	}
+	s := h.state()
+	if len(s.Decisions) != 1 {
+		t.Fatalf("the node carries %d decisions, and a reading that was not made is one question", len(s.Decisions))
+	}
+	d := s.Decisions[0]
+	if d.WaitingOn != orchestrator.OnPerson || !strings.Contains(d.Question, long) {
+		t.Fatalf("the decision is %+v, and it is the item that could not be read that a person is asked about", d)
+	}
+	if len(d.ID) > 64 || !strings.HasPrefix(d.ID, "wi-") {
+		t.Fatalf("the decision id %q is not a name the item's own id could be written under", d.ID)
+	}
+}
+
+// overCap is a node past the size cap the state refuses: the item under test
+// with the attempts that put it where it is, and the tail of finished work a
+// node grows past 16 KiB with. It is valid in every other respect — EncodeState
+// and Apply would each take it but for the size — so the one thing a cycle
+// meets on it is the cap.
+func overCap(t *testing.T, now time.Time, w orchestrator.WorkItem, its []orchestrator.Intent) orchestrator.State {
+	t.Helper()
+	s := stack(t, now, []orchestrator.WorkItem{w}, its)
+	for i := range 12 {
+		done := workItemOf("wi-old-" + twoDigits(i))
+		done.Phase = orchestrator.PhaseDone
+		done.Brief = strings.Repeat("filler ", 250)
+		s.WorkItems = append(s.WorkItems, done)
+	}
+	if !orchestrator.OverCap(s) {
+		t.Fatalf("the node under test is %d bytes and the cap is %d", stateBytes(t, s), orchestrator.MaxStateBytes)
+	}
+	return s
+}
+
+// ladderHeldTick is a ladder tick over a node held in memory rather than in the
+// store. Two of the three states the guards are about are ones no store carries:
+// an over-cap node is what EncodeState refuses, and a node a person's question
+// has stopped is one the store would take but no test may write through it
+// without the question being the node's — so the cycle is handed the state the
+// guard is read against, and every write it does not make is the assertion.
+func ladderHeldTick(t *testing.T, s orchestrator.State, now time.Time, caps orchestrator.Caps) (*orchestrator.Tick, *ladderStub) {
+	t.Helper()
+	l := &ladderStub{t: t, reads: map[string]orchestrator.LadderReading{}}
+	tick := &orchestrator.Tick{
+		Store:    &ladderHeldNode{s: s},
+		Runs:     ladderNoRuns{},
+		Launcher: ladderNoLaunch{},
+		Mint:     func(time.Time) (string, error) { return "20261107-120000-c0de", nil },
+		Caps:     caps,
+		Now:      clockAt(now),
+		Ladder:   l.seams(escalation.DefaultThresholds()),
+	}
+	return tick, l
+}
+
+// ladderHeldNode is one of those nodes: a state as the test built it, read back
+// as it stands.
+type ladderHeldNode struct {
+	s    orchestrator.State
+	etag orchestrator.ETag
+}
+
+func (n *ladderHeldNode) Load(context.Context) (orchestrator.State, orchestrator.ETag, error) {
+	return n.s, n.etag, nil
+}
+
+func (n *ladderHeldNode) Save(_ context.Context, s orchestrator.State, _ orchestrator.ETag) error {
+	n.s, n.etag = s, "etag-2"
+	return nil
+}
+
+// ladderNoRuns answers no run at all, which is a cycle with nothing to fold.
+type ladderNoRuns struct{}
+
+func (ladderNoRuns) Runs(context.Context, []string) ([]orchestrator.RunReport, error) {
+	return nil, nil
+}
+
+// ladderNoLaunch refuses to start anything, so a cycle that got past the plan it
+// is not being tested for fails loudly rather than passing.
+type ladderNoLaunch struct{}
+
+func (ladderNoLaunch) Launch(context.Context, orchestrator.Spec, string) (string, error) {
+	return "", errors.New("this cycle must not launch anything")
 }
 
 // itemAt is one work item of a state a test read back.
