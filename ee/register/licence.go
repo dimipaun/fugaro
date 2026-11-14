@@ -1060,7 +1060,16 @@ func licenceRefresh(cmd *cobra.Command, o *licenceRefreshOptions) error {
 		return fcli.UserErr("the licence server answered that key %s is revoked: this installation is Free from now on, nothing has been deleted, and a new key restores everything (`fugaro licence set`)", safetext.Field(claims.KeyID))
 	case keyservice.StatusOK:
 	default:
-		return fcli.RemoteErr(fmt.Errorf("the licence server answered a status this Fugaro does not read (%s)", safetext.Field(fcli.ClipRunes(answer.Status, 40))))
+		// A status is a field of a body, and the body is the one place a key
+		// this process never held can come back from (licenceRenewRequest): a
+		// server answering a key where a status belongs is a server whose
+		// records hold one — the successor of a renewal it already answered for
+		// this very key. No value list can name that key, because nothing here
+		// read it, so the shape rule is the whole of what keeps it out: the clip
+		// this answer is printed under bounds it and removes nothing from it,
+		// because the front of a key is the key.
+		return fcli.RemoteErr(fmt.Errorf("the licence server answered a status this Fugaro does not read (%s)",
+			licenceRedact(fcli.ClipRunes(answer.Status, 40))))
 	}
 	if answer.Key == "" {
 		fmt.Fprintf(cmd.OutOrStdout(), "nothing to renew yet: the key is paid through %s, and its own renewal window opens %d days before that\n",

@@ -961,6 +961,34 @@ func TestLicenceRefusalsCarryNoKeyMaterial(t *testing.T) {
 		}
 	})
 
+	t.Run("the licence server answering a key where a status belongs", func(t *testing.T) {
+		f := newLicenceFixture(t)
+		key, secret, _ := f.bundle(t)
+		f.seedSecretContainer([]byte(secret))
+		f.secrets.AllowAccess()
+		install(t, f, key)
+		// A 200 is not a refusal, so the status is the whole of what decides
+		// what the command does with the answer, and it is a field of a body
+		// this build did not write: a server whose records hold a key it
+		// already answered for — the successor of a renewal, for one — can have
+		// written one there, and nothing here has read it, so no value list can
+		// name it. The status is printed through a 40-rune clip as well, and
+		// that is the rest of why it needs the shape rule rather than a value
+		// pass: the front of a key is the key.
+		other := f.issuer.mint(t, f.claims(func(c *licence.Claims) { c.KeyID = "lk_test_k32_0003" }))
+		f.serveLicenceServer(t, func(keyservice.RenewalCall) (int, string) {
+			return http.StatusOK, `{"status":"` + other + `"}`
+		})
+
+		out, errOut, err := f.exec(t, "", "licence", "refresh")
+		if err == nil {
+			t.Fatal("a server answering a status this Fugaro does not read renewed the key")
+		}
+		for _, text := range []string{out, errOut, err.Error()} {
+			assertNoKeyMaterial(t, "the refusal for a status field carrying a key", text, other, secret)
+		}
+	})
+
 	t.Run("a Secret Manager error echoing the payload", func(t *testing.T) {
 		f := newLicenceFixture(t)
 		key, secret, _ := f.bundle(t)
@@ -982,8 +1010,12 @@ func TestLicenceRefusalsCarryNoKeyMaterial(t *testing.T) {
 
 // licenceHeadRunes is how much of a spelling assertNoKeyMaterial reads for:
 // long enough that the front of a key or a secret is unmistakable in a message,
-// short enough that the message's own bound cannot be what hides it.
-const licenceHeadRunes = 48
+// short enough that the message's own bound cannot be what hides it. The
+// shortest bound any message here is written to is the 40-rune clip on the
+// licence server's status (licence refresh refuses one it does not read), so a
+// front longer than that would be blind to exactly the message that bound
+// leaves — and the front of a key is the key.
+const licenceHeadRunes = 40
 
 // assertNoKeyMaterial fails when text carries any spelling of the key or the
 // secret — the bytes as they are, and the base64 a payload is wrapped in — and
