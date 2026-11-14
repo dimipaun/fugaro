@@ -114,12 +114,12 @@ Resolutions (one defensible answer, so not asked):
 
 No open tension. Three amendments of earlier rulings are recorded rather than asked, because each is the owner's own earlier answer extended and not contradicted: D461 (any mix of the three types, several at once), D506 (a key family in the bundle instead of one key) and F11's reading of "one token" in `docs/shared-jobs-default` R7 and D2314 (the one-workspace limit stays). Follow-through owed to the older plans: a dated pointer in each of `docs/bitbucket-credentials` and `docs/bitbucket-workspace-token` READMEs, and T3.3's identity half (F20).
 
-- **O1.** The project cache TTL. Proposal: 10 minutes.
-- **O2.** The re-check cadence for stored tokens. Proposal: `doctor --check-bitbucket-token` on demand, plus the service's own re-verification on a refused call; no scheduled job in the first build.
-- **O3.** The expiry warning lead time. Proposal: the lead the doctor already uses for `secret_expires`.
+- **O1.** The project cache TTL. Proposal: 10 minutes. **Confirmed 2026-11-13 by the owner (the proposal).**
+- **O2.** The re-check cadence for stored tokens. Proposal: `doctor --check-bitbucket-token` on demand, plus the service's own re-verification on a refused call; no scheduled job in the first build. **Confirmed 2026-11-13 by the owner (the proposal).**
+- **O3.** The expiry warning lead time. Proposal: the lead the doctor already uses for `secret_expires`. **Confirmed 2026-11-13 by the owner (the proposal).**
 - **O6.** The legacy untyped token ranks after every typed record, so for an installation whose legacy key is really a repository token the "narrowest first" order is not strictly true; the plan states it. Confirm or ask for the legacy record to be typed by hand.
-- **O7.** Confirm R14's reading of `GET /2.0/user` for a repository token (a 403 is accepted as an access token with no identity), the second amendment this review forced.
-- **O5.** Confirm the doubled-dash spelling of the key family (R13), the one amendment of an answered decision this review made.
+- **O7.** Confirm R14's reading of `GET /2.0/user` for a repository token (a 403 is accepted as an access token with no identity), the second amendment this review forced. **Confirmed 2026-11-13 by the owner.**
+- **O5.** Confirm the doubled-dash spelling of the key family (R13), the one amendment of an answered decision this review made. **Confirmed 2026-11-13 by the owner.**
 - **O4.** How the own-identity set reaches the adapter (F13, F20). Proposal: the add-time check records each token's `GET /2.0/user` account UUID in the creds state store (R12), the node's `bitbucket_tokens` key carries the set, and `selfUser` treats any member as the run's own. If U3 shows the proxy refuses `GET /2.0/user`, this is the only source.
 
 The owner may answer these at any time; the plan builds with the proposals and states them as constants.

@@ -27,3 +27,5 @@ Decisions **D2350–D2379** (D2350–D2356 used), checks **590–599** (590 and 
 - The mounted Secret Manager copy of a Bitbucket token is on its way out (owner, 2026-11-13) and is not designed for here (F18).
 - This work does not unblock Bitbucket shared jobs by itself: they still wait on B5.1 (#2545), B5.3 and `docs/shared-jobs-default` (F19).
 - The decisions D2350–D2356 were all answered as recommended; O1–O7 are proposals the plan builds with unless the owner changes them.
+
+**Update 2026-11-13:** the owner confirmed O1 to O3 (the proposals), O5 (the doubled-dash key spelling) and O7 (a 403 from `GET /2.0/user` is an access token with no identity). No task is approved; the owner asked for none to launch yet.
