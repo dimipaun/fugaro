@@ -348,29 +348,39 @@ func testHandoverWindow(t *testing.T, open func(t *testing.T) Store) {
 func testTrialOnce(t *testing.T, open func(t *testing.T) Store) {
 	ctx := context.Background()
 	store := open(t)
-	claimed := Trial{Installation: "acme-widget", Account: applicantAddress, KeyID: "fgk_1", At: issuedAt}
+	claimed := Trial{Organisation: "acme.example", Installation: "acme-widget", Account: applicantAddress, KeyID: "fgk_1", At: issuedAt}
 	if err := store.ClaimTrial(ctx, claimed); err != nil {
 		t.Fatalf("ClaimTrial = %v, want the trial handed out", err)
 	}
-	if err := store.ClaimTrial(ctx, Trial{Installation: "acme-widget", Account: "other@acme.example", KeyID: "fgk_2", At: issuedAt}); !errors.Is(err, ErrTrialAlreadyClaimed) {
+	if err := store.ClaimTrial(ctx, Trial{Organisation: "acme.example", Installation: "acme-widget", Account: "other@acme.example", KeyID: "fgk_2", At: issuedAt}); !errors.Is(err, ErrTrialAlreadyClaimed) {
 		t.Errorf("a second trial for the same installation = %v, want ErrTrialAlreadyClaimed", err)
 	}
-	if err := store.ClaimTrial(ctx, Trial{Installation: "acme-gadget", Account: applicantAddress, KeyID: "fgk_3", At: issuedAt}); !errors.Is(err, ErrTrialAlreadyClaimed) {
+	if err := store.ClaimTrial(ctx, Trial{Organisation: "acme.example", Installation: "acme-gadget", Account: applicantAddress, KeyID: "fgk_3", At: issuedAt}); !errors.Is(err, ErrTrialAlreadyClaimed) {
 		t.Errorf("a second trial for the same account at another installation = %v, want ErrTrialAlreadyClaimed: §14's rule is one trial per installation *or* account", err)
 	}
-	if err := store.ClaimTrial(ctx, Trial{Installation: "acme-gadget", KeyID: "fgk_4", At: issuedAt}); !errors.Is(err, ErrTrialUnnamed) {
+	// Another organisation naming the same project id is another trial: the id
+	// is a caller's own string and proves nothing, so a rule that counted it
+	// alone would let an account at any domain take this organisation's trial
+	// by naming a project id it read somewhere (D2201, F37).
+	if err := store.ClaimTrial(ctx, Trial{Organisation: "other.example", Installation: "acme-widget", Account: "second@acme.example", KeyID: "fgk_4", At: issuedAt}); err != nil {
+		t.Errorf("ClaimTrial for another organisation naming the same project id = %v, want the trial handed out", err)
+	}
+	if err := store.ClaimTrial(ctx, Trial{Organisation: "acme.example", Installation: "acme-gadget", KeyID: "fgk_5", At: issuedAt}); !errors.Is(err, ErrTrialUnnamed) {
 		t.Errorf("a trial with no account = %v, want ErrTrialUnnamed", err)
+	}
+	if err := store.ClaimTrial(ctx, Trial{Installation: "acme-gadget", Account: "third@acme.example", KeyID: "fgk_6", At: issuedAt}); !errors.Is(err, ErrTrialUnnamed) {
+		t.Errorf("a trial with no organisation = %v, want ErrTrialUnnamed: it would key the installation's trial on the project id alone, which is the rule D2201 replaces", err)
 	}
 	held, err := store.Trials(ctx)
 	if err != nil {
 		t.Fatalf("Trials = %v", err)
 	}
-	if len(held) != 1 || held[0].KeyID != claimed.KeyID {
-		t.Errorf("the store holds %+v, want the one trial that was claimed: a refused claim is not a trial", held)
+	if len(held) != 2 || held[0].KeyID != claimed.KeyID {
+		t.Errorf("the store holds %+v, want the two trials that were claimed and no refused one", held)
 	}
 	// The account a refused claim named is not spent by the refusal: a person
 	// whose installation already had a trial may still have one elsewhere.
-	if err := store.ClaimTrial(ctx, Trial{Installation: "acme-sprocket", Account: "other@acme.example", KeyID: "fgk_5", At: issuedAt}); err != nil {
+	if err := store.ClaimTrial(ctx, Trial{Organisation: "acme.example", Installation: "acme-sprocket", Account: "other@acme.example", KeyID: "fgk_7", At: issuedAt}); err != nil {
 		t.Errorf("ClaimTrial for an account that was only named by a refused claim = %v, want the trial handed out", err)
 	}
 }
@@ -585,7 +595,7 @@ func TestTheDocstoreChecksAndWritesInOneTransaction(t *testing.T) {
 			return store.Revoke(ctx, Revocation{KeyID: "fgk_1", Reason: "refund", At: issuedAt})
 		}},
 		{"a trial, which reads two documents", func(store Store) error {
-			return store.ClaimTrial(ctx, Trial{Installation: "acme-widget", Account: applicantAddress, KeyID: "fgk_1", At: issuedAt})
+			return store.ClaimTrial(ctx, Trial{Organisation: "acme.example", Installation: "acme-widget", Account: applicantAddress, KeyID: "fgk_1", At: issuedAt})
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

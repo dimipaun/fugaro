@@ -249,9 +249,10 @@ These are stated as limits rather than defended against; the Terms are the enfor
 - **Nothing compares the organisation with the installation**, so a key can be shared beyond its
   organisation (F47). Seats are compared and shown, never enforced until enforcement ships (D439,
   D2132, TN1).
-- **One trial per installation is a speed bump.** Uniqueness is keyed by the workspace's Firebase
-  project id, which is harder to mint than a caller-supplied name, and the trial path is throttled per
-  domain (K2.7); a customer with another Firebase project can still ask again.
+- **One trial per installation is a speed bump.** Uniqueness is keyed by the organisation and the
+  workspace's Firebase project id (D2201), because a project id is a caller's own string and proves
+  nothing (F37), and the trial path is throttled per domain (K2.7); another account, or another
+  Firebase project, can still ask again.
 - **The hand-off reaches one child only where the build has the check.** The removal the storage
   section states is the registration point's, so an **untagged build** — no store, no key check and
   therefore no removal — passes `FUGARO_LICENCE_KEY` on to every child it starts, the same four the

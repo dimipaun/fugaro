@@ -190,9 +190,9 @@ func TestTrialIsTeamTierFourteenDays(t *testing.T) {
 	if len(trials) != 1 {
 		t.Fatalf("the store holds %d trial(s), want one: %+v", len(trials), trials)
 	}
-	if trials[0].Installation != workspaceID || trials[0].Account != trialAccount {
-		t.Errorf("the trial is held for installation %q and account %q, want %q and %q (D2201)",
-			trials[0].Installation, trials[0].Account, workspaceID, trialAccount)
+	if trials[0].Organisation != "acme.example" || trials[0].Installation != workspaceID || trials[0].Account != trialAccount {
+		t.Errorf("the trial is held for organisation %q, installation %q and account %q, want %q, %q and %q (D2201)",
+			trials[0].Organisation, trials[0].Installation, trials[0].Account, "acme.example", workspaceID, trialAccount)
 	}
 	if trials[0].KeyID == "" {
 		t.Error("the trial names no key, so an operator reading the list cannot find what it minted")
@@ -258,21 +258,80 @@ func TestSecondTrialIsRefused(t *testing.T) {
 	}
 }
 
+// TestTrialIsHeldPerOrganisationAndInstallation: §14's installation half is the
+// organisation **and** the project id (D2201). Counting the id alone would let
+// any signed-in account at any domain name a project id it read somewhere, take
+// the trial the organisation that owns the project was about to ask for, and bar
+// it for good — a project id is a caller's own string and nothing proves the
+// caller controls it (F37, TN3). So an account at another domain asking for the
+// same project id is served, and the pair is still one trial for those who ask
+// twice within it.
+func TestTrialIsHeldPerOrganisationAndInstallation(t *testing.T) {
+	f := trialAs(t)
+	if rec := f.ask(trialBody(workspaceID, trialSeats)); rec.Code != http.StatusOK {
+		t.Fatalf("the owning organisation's ask answered %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+
+	f.signsInAs("uid-other", "founder@widgets.example")
+	naming := f.askFrom("198.51.100.30:4040", trialBody(workspaceID, trialSeats))
+	if naming.Code != http.StatusOK {
+		t.Errorf("another organisation asking for the same project id answered %d (%s), want 200: the id is a caller's own string, so the trial it names is that organisation's and not the one it named (D2201)",
+			naming.Code, naming.Body.String())
+	}
+	if minted := f.mintedKeys(); len(minted) != 2 {
+		t.Errorf("the asks minted %d key(s), want the two that were served", len(minted))
+	}
+	trials, err := f.store.Trials(t.Context())
+	if err != nil {
+		t.Fatalf("reading the trials: %v", err)
+	}
+	if len(trials) != 2 {
+		t.Fatalf("the store holds %d trial(s), want one per organisation: %+v", len(trials), trials)
+	}
+	for _, held := range trials {
+		if held.Installation != workspaceID {
+			t.Errorf("the trial %+v does not name the project id both asks were for (%s)", held, workspaceID)
+		}
+	}
+	// Within the pair the rule is what it was: the same organisation asking
+	// again for the same installation has had its trial.
+	again := f.askFrom("198.51.100.31:4040", trialBody(workspaceID, trialSeats))
+	if again.Code != http.StatusConflict {
+		t.Errorf("the same organisation asking again for the same installation answered %d (%s), want 409", again.Code, again.Body.String())
+	}
+}
+
 // TestTrialIsRefusedWithoutAVerifiedSignIn: the account is what the rule counts
 // and the sign-in is the only thing that names it (K2.4's verifier, P1.3), so a
-// request without one, and one whose token the verifier refuses, are both
-// answered the same way and mint nothing.
+// request without one, one whose token the verifier refuses, and one whose
+// sign-in proved no address are all answered the same way and mint nothing. The
+// third is the case the route's own guard is for: an accepted sign-in with no
+// address is an account §14 cannot count, and without the guard the ask falls
+// through to the mint, which refuses a key with no organisation (minter.go) and
+// is answered a failure of the service's own making instead of the refusal the
+// caller can act on.
 func TestTrialIsRefusedWithoutAVerifiedSignIn(t *testing.T) {
 	f := trialAs(t)
 	for _, tc := range []struct {
 		name  string
 		token string
+		// caller is what the verifier answers, for the case of a sign-in it
+		// accepts and the account half of §14 that answer still does not have.
+		caller *Caller
 	}{
-		{"no token at all", ""},
-		{"a token the verifier refuses", "another-token-0123456789"},
+		{name: "no token at all"},
+		{name: "a token the verifier refuses", token: "another-token-0123456789"},
+		{name: "a sign-in that proved no address", token: trialTicket,
+			caller: &Caller{UID: "uid-trial", Provider: "google.com"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f.deps.SignIn = &signInSpy{err: errors.New("this token was minted for another project")}
+			spy := &signInSpy{err: errors.New("this token was minted for another project")}
+			if tc.caller != nil {
+				spy = &signInSpy{caller: Caller{
+					UID: tc.caller.UID, Email: tc.caller.Email, Provider: tc.caller.Provider, AuthTime: f.now,
+				}}
+			}
+			f.deps.SignIn = spy
 			f.start()
 			req := httptest.NewRequest(http.MethodPost, intakeOrigin+RouteTrial, strings.NewReader(trialBody(workspaceID, trialSeats)))
 			req.Header.Set("Content-Type", "application/json")
@@ -448,6 +507,46 @@ func TestTrialIsNotWithdrawnWhenTheStoreCannotSay(t *testing.T) {
 	}
 	if trials, err := f.store.Trials(t.Context()); err != nil || len(trials) != 0 {
 		t.Errorf("the store holds %+v (err=%v), want no trial: this claim did not land", trials, err)
+	}
+}
+
+// TestTrialIsNotSpentByAnAccountThatAlreadyHadOne: the domain's allowance is
+// spent by the asks that mint and not by the ones §14 refuses. A domain is
+// shared — a free mail domain is the case D453's own list exists for — so an
+// account that already had its trial and keeps asking would otherwise hold the
+// allowance at nothing and lock every other account at that domain out of a
+// trial it never took. Here the fixture's rate is two asks, the account's own
+// trial spends one, three refused repeats spend none, and the colleague who has
+// had no trial is served with the one that is left.
+func TestTrialIsNotSpentByAnAccountThatAlreadyHadOne(t *testing.T) {
+	f := newFixtureWith(t, Production, func(f *fixture) {
+		f.cfg.Throttle = Limits{Requests: 2, Window: time.Hour}
+		f.signIn.caller = Caller{UID: "uid-trial", Email: trialAccount, Provider: "google.com", AuthTime: f.now}
+	})
+	if rec := f.askFrom(applicantIP, trialBody(workspaceID, trialSeats)); rec.Code != http.StatusOK {
+		t.Fatalf("the account's own ask answered %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	// The same account again, three times, each from its own address: every one
+	// is refused by §14's rule, and none of them is an ask the domain pays for.
+	for _, repeat := range []struct{ ip, installation string }{
+		{"198.51.100.20:4040", "acme-repeat-one"},
+		{"198.51.100.21:4040", "acme-repeat-two"},
+		{"198.51.100.22:4040", "acme-repeat-three"},
+	} {
+		rec := f.askFrom(repeat.ip, trialBody(repeat.installation, trialSeats))
+		if rec.Code != http.StatusConflict {
+			t.Errorf("a repeat ask for %s answered %d (%s), want 409: the account has had its trial, and a refusal mints nothing and must not spend the domain's allowance",
+				repeat.installation, rec.Code, rec.Body.String())
+		}
+	}
+	f.signsInAs("uid-two", "colleague@acme.example")
+	colleague := f.askFrom("198.51.100.23:4040", trialBody("acme-colleague", trialSeats))
+	if colleague.Code != http.StatusOK {
+		t.Errorf("a colleague at the same domain answered %d (%s), want 200: the allowance the repeats would have spent is still there",
+			colleague.Code, colleague.Body.String())
+	}
+	if minted := f.mintedKeys(); len(minted) != 2 {
+		t.Errorf("the asks minted %d key(s), want the two that were served", len(minted))
 	}
 }
 

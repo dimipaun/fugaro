@@ -18,6 +18,7 @@ package keyservice
 import (
 	"context"
 	"errors"
+	"net/url"
 	"sync"
 	"time"
 )
@@ -220,21 +221,44 @@ type Handover struct {
 	Until         time.Time `json:"until"`
 }
 
-// Trial is one 14-day Team trial handed out under §14: the installation it was
-// issued to, the account that asked, the key it minted and when.
+// Trial is one 14-day Team trial handed out under §14: the organisation and the
+// installation it was issued to, the account that asked, the key it minted and
+// when.
 //
-// Installation is the installation's **Firebase project id** (K2.7) and not a
-// name the request carries: a project id is something a caller has to control a
-// Firebase project to have, and the whole of §14's "one trial per workspace or
-// account" rests on the two fields here being hard to mint twice. Account is
-// the identity the site's sign-in proved (K2.4) — the account that asked, not
-// one the request names. Both are required; a trial with either missing is
-// ErrTrialUnnamed.
+// Organisation and Installation are the pair §14's one-trial rule counts, and
+// they are a pair because a project id proves nothing: it is a caller's own
+// string, often public, and the portal binds an entitlement to one without any
+// proof that the caller controls the project (F37, and TN3's rule that the
+// installation's own token is not trusted). A rule keyed on the id alone would
+// let any signed-in account at any domain name somebody else's project id, take
+// the trial that organisation was about to ask for and bar it for good; keyed
+// on both, the naming account spends its own organisation's trial and nothing
+// else (D2201). Installation is the workspace's **Firebase project id** (K2.7)
+// and Organisation is the organisation the entitlement belongs to, which a
+// route reads off the sign-in it proved rather than out of the request.
+//
+// Account is the identity the site's sign-in proved (K2.4) — the account that
+// asked, not one the request names. All three are required; a trial with any of
+// them missing is ErrTrialUnnamed.
 type Trial struct {
+	Organisation string    `json:"organisation"`
 	Installation string    `json:"installation"`
 	Account      string    `json:"account"`
 	KeyID        string    `json:"key_id"`
 	At           time.Time `json:"at"`
+}
+
+// trialPair joins the two names §14 counts — the organisation and the
+// installation's project id (D2201) — into one string, with each name escaped so
+// that no pair of values can spell another pair's string: a project id is a
+// caller's own text, so a plain concatenation would make "acme" with "x|y" and
+// "acme|x" with "y" one record, and the second organisation's trial would be
+// refused as one already recorded. The separator is a character the escape
+// always writes escaped, and escaping also keeps the name one the document store
+// can file a document under (firestore_store.go's `ClaimTrial`: a slash there
+// addresses a subcollection and a dot a path traversal).
+func trialPair(organisation, installation string) string {
+	return url.PathEscape(organisation) + "|" + url.PathEscape(installation)
 }
 
 // Store is the service's memory. Save is an upsert by the record's own id
@@ -298,10 +322,12 @@ var ErrAlreadyRecorded = errors.New("keyservice: an issuance for that source is 
 // the same either way.
 var ErrTrialAlreadyClaimed = errors.New("keyservice: that installation or account has already had a trial")
 
-// ErrTrialUnnamed is a trial asked for with no installation or no account.
-// Both are required, and neither has a default: the store cannot count what the
-// caller did not say.
-var ErrTrialUnnamed = errors.New("keyservice: a trial names the installation and the account it is for")
+// ErrTrialUnnamed is a trial asked for with no organisation, no installation or
+// no account. All three are required, and none has a default: the store cannot
+// count what the caller did not say, and an unnamed organisation would key the
+// installation's trial on the project id alone, which is the rule D2201 exists
+// to replace.
+var ErrTrialUnnamed = errors.New("keyservice: a trial names the organisation, the installation and the account it is for")
 
 // ErrRevocationUnnamed is a revocation with no key_id. The list is looked up by
 // the key it withdraws, so an entry under the empty string would be the one
@@ -542,23 +568,25 @@ func (m *Memory) sweepHandovers(now time.Time) {
 	}
 }
 
-// ClaimTrial is §14's one trial per installation and per account, and it is the
-// store that decides it: the two fields are checked and the new trial is
-// appended under the same lock, so two asks arriving together cannot both find
-// the store empty.
+// ClaimTrial is §14's one trial per installation — the organisation's project
+// id (D2201) — and per account, and it is the store that decides it: the fields
+// are checked and the new trial is appended under the same lock, so two asks
+// arriving together cannot both find the store empty.
 //
 // An unnamed trial is refused before any of that. A claim with an empty
 // installation matches nothing the store already holds, so it would be the one
 // ask that always succeeds, and §14's rule would be given away by a zero value
-// in a caller's request.
+// in a caller's request; an empty organisation would make the installation half
+// of the rule the project id's own, which is what D2201 refuses.
 func (m *Memory) ClaimTrial(_ context.Context, t Trial) error {
-	if t.Installation == "" || t.Account == "" {
+	if t.Organisation == "" || t.Installation == "" || t.Account == "" {
 		return ErrTrialUnnamed
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, held := range m.trials {
-		if held.Installation == t.Installation || held.Account == t.Account {
+		if held.Account == t.Account ||
+			(held.Organisation == t.Organisation && held.Installation == t.Installation) {
 			return ErrTrialAlreadyClaimed
 		}
 	}

@@ -147,42 +147,50 @@ func TestRevocationWithNoKeyIsRefused(t *testing.T) {
 }
 
 // TestOneTrialPerInstallation: §14's one trial per installation, keyed by the
-// Firebase project id of the installation (K2.7). A second ask from the same
-// installation is refused even when it comes from another account, and the
-// refusal writes nothing: the store's list is still one trial and the key the
-// refused ask would have minted is not in it.
+// organisation and the Firebase project id of the installation (K2.7, D2201). A
+// second ask from the same installation is refused even when it comes from
+// another account, and the refusal writes nothing: the store's list is still one
+// trial and the key the refused ask would have minted is not in it.
 func TestOneTrialPerInstallation(t *testing.T) {
 	ctx := context.Background()
 	store := &Memory{}
 	at := time.Date(2026, 11, 12, 9, 0, 0, 0, time.UTC)
-	first := Trial{Installation: "fugaro-acme-dev", Account: "first@acme.example", KeyID: "lk_test_trial", At: at}
+	first := Trial{Organisation: "acme.example", Installation: "fugaro-acme-dev", Account: "first@acme.example", KeyID: "lk_test_trial", At: at}
 	if err := store.ClaimTrial(ctx, first); err != nil {
 		t.Fatalf("the installation's first trial: %v", err)
 	}
 
-	second := Trial{Installation: "fugaro-acme-dev", Account: "second@acme.example", KeyID: "lk_test_trial_two", At: at.Add(time.Hour)}
+	second := Trial{Organisation: "acme.example", Installation: "fugaro-acme-dev", Account: "second@acme.example", KeyID: "lk_test_trial_two", At: at.Add(time.Hour)}
 	if err := store.ClaimTrial(ctx, second); !errors.Is(err, ErrTrialAlreadyClaimed) {
 		t.Errorf("a second trial for one installation answered %v, want %v", err, ErrTrialAlreadyClaimed)
 	}
 	// An installation nobody named matches no trial the store holds, so it
 	// would be a trial per ask if it were not refused before that.
-	unnamed := Trial{Account: "fourth@acme.example", KeyID: "lk_test_trial_four", At: at}
+	unnamed := Trial{Organisation: "acme.example", Account: "fourth@acme.example", KeyID: "lk_test_trial_four", At: at}
 	if err := store.ClaimTrial(ctx, unnamed); !errors.Is(err, ErrTrialUnnamed) {
 		t.Errorf("a trial naming no installation answered %v, want %v", err, ErrTrialUnnamed)
 	}
 	// Another installation is another trial: nothing else in the record is what
 	// §14 counts.
-	third := Trial{Installation: "fugaro-other-dev", Account: "third@other.example", KeyID: "lk_test_trial_three", At: at}
+	third := Trial{Organisation: "other.example", Installation: "fugaro-other-dev", Account: "third@other.example", KeyID: "lk_test_trial_three", At: at}
 	if err := store.ClaimTrial(ctx, third); err != nil {
 		t.Errorf("another installation's first trial: %v", err)
+	}
+	// Another organisation naming the same project id is another trial too: a
+	// project id is a caller's own string that proves nothing (F37), so counting
+	// it alone would let any signed-in account at any domain take the trial this
+	// organisation was going to ask for and bar it for good (D2201).
+	naming := Trial{Organisation: "elsewhere.example", Installation: "fugaro-acme-dev", Account: "fourth@elsewhere.example", KeyID: "lk_test_trial_five", At: at}
+	if err := store.ClaimTrial(ctx, naming); err != nil {
+		t.Errorf("another organisation naming the same project id: %v, want its own trial handed out", err)
 	}
 
 	trials, err := store.Trials(ctx)
 	if err != nil {
 		t.Fatalf("reading the trials: %v", err)
 	}
-	if len(trials) != 2 {
-		t.Fatalf("the store holds %d trial(s), want two: %+v", len(trials), trials)
+	if len(trials) != 3 {
+		t.Fatalf("the store holds %d trial(s), want three: %+v", len(trials), trials)
 	}
 	for _, held := range trials {
 		if held.KeyID == second.KeyID {
@@ -202,15 +210,15 @@ func TestOneTrialPerAccount(t *testing.T) {
 	store := &Memory{}
 	at := time.Date(2026, 11, 12, 9, 0, 0, 0, time.UTC)
 	account := "holder@acme.example"
-	if err := store.ClaimTrial(ctx, Trial{Installation: "fugaro-acme-dev", Account: account, KeyID: "lk_test_trial", At: at}); err != nil {
+	if err := store.ClaimTrial(ctx, Trial{Organisation: "acme.example", Installation: "fugaro-acme-dev", Account: account, KeyID: "lk_test_trial", At: at}); err != nil {
 		t.Fatalf("the account's first trial: %v", err)
 	}
 
-	elsewhere := Trial{Installation: "fugaro-acme-staging", Account: account, KeyID: "lk_test_trial_two", At: at}
+	elsewhere := Trial{Organisation: "acme.example", Installation: "fugaro-acme-staging", Account: account, KeyID: "lk_test_trial_two", At: at}
 	if err := store.ClaimTrial(ctx, elsewhere); !errors.Is(err, ErrTrialAlreadyClaimed) {
 		t.Errorf("a second trial for one account answered %v, want %v", err, ErrTrialAlreadyClaimed)
 	}
-	nameless := Trial{Installation: "fugaro-acme-staging", KeyID: "lk_test_trial_three", At: at}
+	nameless := Trial{Organisation: "acme.example", Installation: "fugaro-acme-staging", KeyID: "lk_test_trial_three", At: at}
 	if err := store.ClaimTrial(ctx, nameless); !errors.Is(err, ErrTrialUnnamed) {
 		t.Errorf("a trial naming no account answered %v, want %v", err, ErrTrialUnnamed)
 	}

@@ -4,7 +4,7 @@
 package keyservice
 
 // §14's Team trial (K2.7, D2136, D2201): the door a signed-in account asks at,
-// and the rule that one installation and one account get one.
+// and the rule that one organisation's installation and one account get one.
 //
 // The trial is a normal Team key issued without payment, and nothing else about
 // it is special: it is minted from the `trial` row of the policy table, so its
@@ -14,12 +14,17 @@ package keyservice
 // its claims back as it reads any other key's.
 //
 // What the file owns is §14's own rule. The installation is the workspace's
-// **Firebase project id**, which a caller has to control a project to have, and
-// the account is the one the sign-in proved (K2.4, P1.3) — never one the request
-// names (D2201, and store.go's Trial says why). One of each is what the store
-// counts, and the count is the store's atomic check-and-write rather than a read
-// this route makes before minting: two asks arriving together are one trial,
-// because only one of them can claim it (K2.2, store.go's `ClaimTrial`).
+// **Firebase project id** and the account is the one the sign-in proved (K2.4,
+// P1.3) — never one the request names — and the id is counted **with the
+// organisation** rather than alone (D2201, and store.go's Trial says why): a
+// project id is a caller's own string that proves nothing (F37, TN3), so a rule
+// keyed on it alone would let any signed-in account at any domain name another
+// organisation's project id, take the trial that organisation was about to ask
+// for and bar it for good. Keyed on the pair, that ask spends the asking
+// organisation's trial and nothing else. The count is the store's atomic
+// check-and-write rather than a read this route makes before minting: two asks
+// arriving together are one trial, because only one of them can claim it (K2.2,
+// store.go's `ClaimTrial`).
 //
 // The key leaves by mail, the way every issue path's does: the bundle is the key
 // line and the renewal secret line, shown once and never stored (D2135, §7.3),
@@ -81,9 +86,10 @@ type TrialCall struct {
 // (`trialSource`).
 const trialPrefix = "trial:"
 
-// trialSource names the record one trial writes.
-func trialSource(installation string) string {
-	return trialPrefix + installation
+// trialSource names the record one trial writes, under the pair the rule counts
+// (`trialPair`).
+func trialSource(organisation, installation string) string {
+	return trialPrefix + trialPair(organisation, installation)
 }
 
 // The refusals this route answers with. Each is a code a client branches on and
@@ -144,6 +150,15 @@ func (s *Service) trial(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// The organisation is read off the sign-in once and is the one value §14's
+	// rule, the throttle and the key all use: what the store counts a trial
+	// against, what the allowance is spent on and what the key says the trial
+	// belongs to are one thing, and a second reading of it would be a second
+	// rule (D2201).
+	organisation := domainOf(caller.Email)
+	if !s.trialFree(w, r, call, caller.Email, organisation) {
+		return
+	}
 	// The account's own **domain's** allowance is spent here, and it is the
 	// throttle §14's trial is documented with: "the trial path is throttled per
 	// domain" (docs/licensing/licence-key.md, "Limits, accepted"), because the
@@ -151,12 +166,15 @@ func (s *Service) trial(w http.ResponseWriter, r *http.Request) {
 	// organisation behind it is not. It is spent after the sign-in and not with
 	// the address, for the reason a renewal's key allowance is (renew.go's
 	// `charged`): only a request that proved who asks is counted against that
-	// domain, so no caller can spend another domain's allowance.
-	if !s.limiter.allow("domain:" + domainOf(caller.Email)) {
+	// domain, so no caller can spend another domain's allowance. And it is spent
+	// after §14's rule rather than before it, because an ask the rule is going to
+	// refuse mints nothing and must not spend the domain's allowance either: a
+	// domain is shared — a free mail domain is the case D453's list exists for —
+	// so an account that already had its trial and keeps asking would otherwise
+	// hold that domain's allowance at nothing and lock every other account on it
+	// out of a trial it never took.
+	if !s.limiter.allow("domain:" + organisation) {
 		refuseAPI(w, http.StatusTooManyRequests, "rate_limited", trialRateRefusal)
-		return
-	}
-	if !s.trialFree(w, r, call, caller) {
 		return
 	}
 	// The v1 route and not the older format's, for the reason the paid path
@@ -177,8 +195,11 @@ func (s *Service) trial(w http.ResponseWriter, r *http.Request) {
 		// (service.go's `domainOf`, §4.2). A trial's organisation is otherwise
 		// the portal's model of one (P3.3), which does not exist yet: until it
 		// does, the address the sign-in proved is the only organisation this
-		// route can name, and the key has to name one to verify at all.
-		Organisation: domainOf(caller.Email),
+		// route can name, and the key has to name one to verify at all. It is
+		// the same value the claim below is keyed on, and not a second reading
+		// of it: what the key says its organisation is and what the rule counted
+		// are one thing (D2201).
+		Organisation: organisation,
 		Seats:        call.Seats,
 		// No term and no end: the row runs for its own fourteen days and the
 		// minter refuses a term on a row nothing renews (D2136, minter.go).
@@ -188,6 +209,7 @@ func (s *Service) trial(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.store.ClaimTrial(r.Context(), Trial{
+		Organisation: organisation,
 		Installation: call.WorkspaceID,
 		Account:      caller.Email,
 		KeyID:        answer.Record.KeyID,
@@ -236,7 +258,7 @@ func (s *Service) trial(w http.ResponseWriter, r *http.Request) {
 		// ask's, the account never received its key, and serving it below is the
 		// whole of what is left to do.
 	}
-	answer.Record.Source = trialSource(call.WorkspaceID)
+	answer.Record.Source = trialSource(organisation, call.WorkspaceID)
 	answer.Record.Email = caller.Email
 	if err := s.mail.Send(r.Context(), paidKeyMail(caller.Email, answer.Key, answer.RenewalSecret)); err != nil {
 		s.trialFailed(w, err)
@@ -352,19 +374,27 @@ func (s *Service) trialCaller(w http.ResponseWriter, r *http.Request) (Caller, b
 	return caller, true
 }
 
-// trialFree answers whether the store holds no trial for this installation or
-// this account, which is the cheap half of §14's rule: it reads the list and
-// refuses an ask that is certainly spent before a key is minted for it. It is
-// not the rule itself — two asks arriving together both pass it — and the store's
-// `ClaimTrial` is what decides between them.
-func (s *Service) trialFree(w http.ResponseWriter, r *http.Request, call TrialCall, caller Caller) bool {
+// trialFree answers whether the store holds no trial for this organisation's
+// installation or for this account, which is the cheap half of §14's rule: it
+// reads the list and refuses an ask that is certainly spent before a key is
+// minted for it. It is not the rule itself — two asks arriving together both
+// pass it — and the store's `ClaimTrial` is what decides between them.
+//
+// The installation half is the pair and not the project id, which is the whole
+// of D2201: the id is a caller's own string and proves nothing (F37, TN3), so a
+// rule that counted it alone would hand any signed-in account at any domain the
+// power to take another organisation's trial by naming a project id it read
+// somewhere, and to bar that organisation for good. Counted as a pair, the same
+// ask spends only the naming organisation's trial.
+func (s *Service) trialFree(w http.ResponseWriter, r *http.Request, call TrialCall, account, organisation string) bool {
 	trials, err := s.store.Trials(r.Context())
 	if err != nil {
 		s.trialFailed(w, err)
 		return false
 	}
 	for _, held := range trials {
-		if held.Installation == call.WorkspaceID || held.Account == caller.Email {
+		claimed := held.Organisation == organisation && held.Installation == call.WorkspaceID
+		if claimed || held.Account == account {
 			refuseAPI(w, http.StatusConflict, "trial_already_claimed", trialClaimedRefusal)
 			return false
 		}

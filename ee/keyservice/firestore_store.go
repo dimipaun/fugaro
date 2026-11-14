@@ -279,17 +279,17 @@ func (s *DocStore) sweptHandovers(ctx context.Context, now time.Time) error {
 	return nil
 }
 
-// ClaimTrial writes §14's one trial per installation and per account. Both
-// halves are read and both documents are written inside one transaction, so two
-// asks arriving together cannot both find the store empty — which is the pair
-// store.go names as the one check that cannot be split.
+// ClaimTrial writes §14's one trial per organisation and installation and per
+// account. Both halves are read and both documents are written inside one
+// transaction, so two asks arriving together cannot both find the store empty —
+// which is the pair store.go names as the one check that cannot be split.
 func (s *DocStore) ClaimTrial(ctx context.Context, t Trial) error {
-	if t.Installation == "" || t.Account == "" {
+	if t.Organisation == "" || t.Installation == "" || t.Account == "" {
 		return ErrTrialUnnamed
 	}
 	return s.db.RunTransaction(ctx, func(ctx context.Context, tx docstore.Transaction) error {
 		for _, claim := range []struct{ collection, id string }{
-			{trialCollection, t.Installation},
+			{trialCollection, trialPair(t.Organisation, t.Installation)},
 			{trialAccountCollection, t.Account},
 		} {
 			held, err := tx.Get(ctx, claim.collection, claim.id, nil)
@@ -300,14 +300,19 @@ func (s *DocStore) ClaimTrial(ctx context.Context, t Trial) error {
 				return ErrTrialAlreadyClaimed
 			}
 		}
-		if err := tx.Put(ctx, trialCollection, t.Installation, t); err != nil {
+		if err := tx.Put(ctx, trialCollection, trialPair(t.Organisation, t.Installation), t); err != nil {
 			return err
 		}
-		// The account's document names the installation it claimed, which is
-		// what the owner reads when an ask arrives for an account whose trial is
-		// already out. It is an object like every other document here: what the
-		// store holds is documents.
-		return tx.Put(ctx, trialAccountCollection, t.Account, map[string]string{"installation": t.Installation})
+		// The account's document names the installation it claimed and the
+		// organisation that asked for it, which is what the owner reads when an
+		// ask arrives for an account whose trial is already out: the installation
+		// alone does not say which of two organisations' trials it is. It is an
+		// object like every other document here: what the store holds is
+		// documents.
+		return tx.Put(ctx, trialAccountCollection, t.Account, map[string]string{
+			"organisation": t.Organisation,
+			"installation": t.Installation,
+		})
 	})
 }
 
