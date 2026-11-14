@@ -276,7 +276,7 @@ func confirmPersonPatch(cmd *cobra.Command, o *orchestratorPatchOptions, lc *loc
 	switch {
 	case marker != "":
 		return userErr("nothing was written: %s", initflow.AgentRefusal(marker))
-	case !initflow.CanConfirm(initflow.Typed, initflow.Conditions{Terminal: terminal, JSON: o.json, Agent: marker}):
+	case !initflow.CanConfirmRun(initflow.Conditions{Terminal: terminal, JSON: o.json, Agent: marker}):
 		return userErr("%s: %s; nothing was written", initflow.NeedsTerminal("the typed confirmation of this step"), what)
 	}
 	return confirmTypedStrict(cmd, lc, "a patch that approves a work item, sets the goal or closes a person's decision is the person's own word, and no flag stands in for it: everything this document carries lands with it", what)

@@ -277,11 +277,11 @@ func (m *buildManaged) admitEntry(ctx context.Context, cmd *cobra.Command, c ini
 		return err
 	}
 	rules, refused := buildRules(m.lc, cat, e, p, killRule)
-	conv := managedmode.ConvergeAdmitted(doc, initflow.YesOrTyped, rules)
+	conv := managedmode.ConvergeAdmitted(doc, rules)
 	if len(refused) > 0 {
-		conv = managedmode.ConvergeRefused(doc, initflow.YesOrTyped, refused)
+		conv = managedmode.ConvergeRefused(doc, refused)
 	}
-	adm, err := m.gate.admit(ctx, initflow.YesOrTyped, conv)
+	adm, err := m.gate.admit(ctx, conv)
 	if err != nil {
 		return err
 	}
@@ -303,10 +303,10 @@ func (m *buildManaged) admitEntry(ctx context.Context, cmd *cobra.Command, c ini
 	// unadmitted plan, and a session that has no admission to proceed on
 	// proceeds on nothing. refreshBuilds' announceBuild gives its own
 	// per-build admission the same two answers.
-	if initflow.ConfirmsByGate(initflow.YesOrTyped, c, adm) {
+	if initflow.GateStandsIn(c, adm) {
 		fmt.Fprintf(cmd.ErrOrStderr(), "  %s\n", initflow.GateProceeded())
 	} else if c.Agent != "" {
-		if !initflow.CanConfirmManaged(initflow.YesOrTyped, c, adm) {
+		if !adm.Removes() {
 			return &initflow.AgentError{Marker: c.Agent}
 		}
 		fmt.Fprintf(cmd.ErrOrStderr(), "  %s\n", initflow.AgentProceeded(c.Agent))

@@ -155,8 +155,8 @@ func openRefreshManaged(ctx context.Context, cmd *cobra.Command, o refreshOption
 // What is NOT here is any verdict about a document: the class rule is
 // untouched (these are the ordinary YesOrTyped steps of their own command),
 // and no admission is invented for a step the gate never judged.
-func (m *refreshManaged) asksNothing(c initflow.Conditions) bool {
-	return m != nil && c.Agent == "" && c.Terminal && !c.Yes && !c.NonInteractive && !c.JSON && !c.Ask
+func (m *refreshManaged) asksNothing(r *initRun) bool {
+	return m != nil && r.stepConfirmation(false) == stepTyped && !r.o.ask
 }
 
 // refreshGateFacts is this command's own facts about itself, as M6's helper
@@ -247,11 +247,11 @@ func (m *refreshManaged) admitBuild(ctx context.Context, p *refreshPlan, t *refr
 		return initflow.Managed{}, err
 	}
 	rules, refused := refreshBuildRules(t, p, build, kind, host, killRule)
-	conv := managedmode.ConvergeAdmitted(doc, initflow.YesOrTyped, rules)
+	conv := managedmode.ConvergeAdmitted(doc, rules)
 	if len(refused) > 0 {
-		conv = managedmode.ConvergeRefused(doc, initflow.YesOrTyped, refused)
+		conv = managedmode.ConvergeRefused(doc, refused)
 	}
-	return m.gate.admit(ctx, initflow.YesOrTyped, conv)
+	return m.gate.admit(ctx, conv)
 }
 
 // refreshBuildRules is the plan's M4 entry as rules over this one build: each

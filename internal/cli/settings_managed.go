@@ -312,7 +312,7 @@ func settingsManagedStep(ctx context.Context, lc *localcfg.Config, selPath strin
 		return initflow.Managed{}, managedGate{}, nil
 	}
 	conv := settingsManagedVerdict(ctx, &gate, marker, target, key, typed, why, old, newData)
-	m, err := gate.admit(ctx, initflow.YesOrTyped, conv)
+	m, err := gate.admit(ctx, conv)
 	if err == nil {
 		return m, gate, nil
 	}
@@ -385,9 +385,9 @@ func settingsManagedVerdict(ctx context.Context, g *managedGate, marker string, 
 	}
 	judge(settingsUnjudgedRule, settingsUnjudgedRefusal(old, newData, target.keyPath))
 	if len(refused) > 0 {
-		return managedmode.ConvergeRefused(newData, initflow.YesOrTyped, refused)
+		return managedmode.ConvergeRefused(newData, refused)
 	}
-	return managedmode.ConvergeAdmitted(newData, initflow.YesOrTyped, applied)
+	return managedmode.ConvergeAdmitted(newData, applied)
 }
 
 // The rules, in the words the refusal and the audit record carry. Each is a

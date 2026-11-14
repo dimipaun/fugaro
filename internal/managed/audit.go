@@ -107,8 +107,8 @@ const auditMaxBytes = 64 << 10
 type AuditVerdict string
 
 const (
-	// AuditAdmitted is the gate's verdict for a document every rule passed and
-	// whose step's class is one a plan gate judges.
+	// AuditAdmitted is the gate's verdict for a document every rule passed, on
+	// a step a plan gate judges.
 	AuditAdmitted AuditVerdict = "admitted"
 	// AuditWarned is the verdict for a step the gate RECORDED content findings
 	// about and applied anyway (D1545, Converge.Warned): not admitted — the

@@ -219,7 +219,7 @@ func runAccountsRm(cmd *cobra.Command, name string, o accountsRmOptions) error {
 	// The refusal a session with no admission keeps, in this command's own
 	// words. It comes before the diff rather than after it, and --yes does not
 	// answer it.
-	if marker != "" && !initflow.CanConfirmManaged(initflow.YesOrTyped, initflow.Conditions{Agent: marker}, m) {
+	if marker != "" && !m.Removes() {
 		return accountsRmSession(marker, plan, command)
 	}
 
@@ -861,14 +861,14 @@ func accountsRmGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config
 		return initflow.Managed{}, managedGate{}, nil
 	}
 	applied, refused := accountsRmRules(plan, read)
-	conv := managedmode.ConvergeAdmitted(doc, initflow.YesOrTyped, applied)
+	conv := managedmode.ConvergeAdmitted(doc, applied)
 	if len(refused) > 0 {
-		conv = managedmode.ConvergeRefused(doc, initflow.YesOrTyped, refused)
+		conv = managedmode.ConvergeRefused(doc, refused)
 	}
 	// YesOrTyped is the class this step is: the ordinary edit the diff
 	// describes, and not a Typed step — the value D846 reserves for a loosened
 	// ceiling is what the declaration's own rules already refuse here.
-	m, err := gate.admit(ctx, initflow.YesOrTyped, conv)
+	m, err := gate.admit(ctx, conv)
 	if err == nil {
 		return m, gate, nil
 	}

@@ -12,7 +12,6 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -254,7 +253,7 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	// run or written: the line it prints, or the refusal that stops this
 	// command where nobody could answer the question it restores
 	// (managed_ask.go). A gate refusal above is still the gate's own sentence.
-	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask}, m.Managed, askConditions(cmd, false, false)); err != nil {
+	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask}, m.Managed, askConditions(cmd, false)); err != nil {
 		return err
 	}
 
@@ -311,7 +310,7 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	// the same answer and for the same class, so a session the gate admitted to
 	// the declaration is not refused the step it declared.
 	if !changed {
-		if marker := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); marker != "" && !initflow.CanConfirmManaged(initflow.YesOrTyped, initflow.Conditions{Agent: marker}, m) {
+		if marker := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); marker != "" && !m.Removes() {
 			return userErr("refusing to write %s in a coding agent's session (%s is set): %s; run this yourself at your own terminal: %s; nothing was written",
 				sel.Path, marker, what, command)
 		}

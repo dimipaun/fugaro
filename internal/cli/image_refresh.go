@@ -608,7 +608,7 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 	// proceed, and that refusal has to be this flag's sentence rather than the
 	// one a run without it would have read (managed_ask.go). Nothing is
 	// applied by either.
-	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask}, o.managed != nil, askConditions(cmd, false, false)); err != nil {
+	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask}, o.managed != nil, askConditions(cmd, false)); err != nil {
 		return err
 	}
 	if err := refuseRefreshHere(cmd, o.yes, o.managed); err != nil {

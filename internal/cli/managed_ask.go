@@ -107,8 +107,8 @@ func askConfirm(cmd *cobra.Command, question string) (bool, error) {
 // sentence is read by is initflow's in both cases — a prompt nobody can answer
 // is a refusal and never a silent proceed — and the read stays here either way.
 func askAtTerminal(cmd *cobra.Command, question string, refusal func(initflow.Conditions) string) (bool, error) {
-	c := askConditions(cmd, boolFlag(cmd, "json"), boolFlag(cmd, "non-interactive"))
-	if c.Agent != "" || c.NonInteractive || c.JSON || !c.Terminal {
+	c := askConditions(cmd, boolFlag(cmd, "json"))
+	if c.Agent != "" || c.JSON || !c.Terminal {
 		return false, userErr("%s", refusal(c))
 	}
 	out := cmd.OutOrStdout()
@@ -126,16 +126,14 @@ func askAtTerminal(cmd *cobra.Command, question string, refusal func(initflow.Co
 }
 
 // askConditions is the session a command's --ask is decided under, for a
-// command that does not hold an initRun: its own stdin, its own --json and
-// --non-interactive, and the marker of the session it runs in. It is the same
-// set of facts initflow.Conditions holds for the converge
-// (initRun.conditions), read from the command the caller already has so the two
-// cannot disagree.
-func askConditions(cmd *cobra.Command, json, nonInteractive bool) initflow.Conditions {
+// command that does not hold an initRun: its own stdin, its own --json, and the
+// marker of the session it runs in. It is the same set of facts
+// initflow.Conditions holds for the converge (initRun.conditions), read from
+// the command the caller already has so the two cannot disagree.
+func askConditions(cmd *cobra.Command, json bool) initflow.Conditions {
 	return initflow.Conditions{
-		Terminal:       stdinIsTerminal(cmd.InOrStdin()),
-		JSON:           json,
-		NonInteractive: nonInteractive,
-		Agent:          agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())),
+		Terminal: stdinIsTerminal(cmd.InOrStdin()),
+		JSON:     json,
+		Agent:    agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())),
 	}
 }

@@ -16,7 +16,6 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -148,7 +147,7 @@ func configPublishConverge(ctx context.Context, env *cloudEnv, data []byte, loca
 		rules = append(rules, "the layer is not a document this program can publish ("+
 			pluginwire.Printable(layerProblemsText(ps))+
 			"), so the project's owner publishes one it can: fugaro config publish, at their own terminal")
-		return managedmode.ConvergeRefused(data, initflow.YesOrTyped, rules), nil
+		return managedmode.ConvergeRefused(data, rules), nil
 	}
 	old, gen, rerr := env.bucket.ReadMaxStrict(ctx, config.LayerKey, config.LayerMaxBytes)
 	var prev *config.ProjectLayer
@@ -170,7 +169,7 @@ func configPublishConverge(ctx context.Context, env *cloudEnv, data []byte, loca
 			prev = op
 		} else {
 			rules = append(rules, fmt.Sprintf("the published project layer is not a layer this program can read (%d problem(s)), so the caps, claims and rigor floors this write replaces cannot be judged against it, and the project's owner publishes from their own terminal", len(invalid)))
-			return managedmode.ConvergeRefused(data, initflow.YesOrTyped, rules), at
+			return managedmode.ConvergeRefused(data, rules), at
 		}
 	case errors.Is(rerr, blobx.ErrNotExist):
 		// nothing is published yet: the diff is the whole document
@@ -178,7 +177,7 @@ func configPublishConverge(ctx context.Context, env *cloudEnv, data []byte, loca
 	default:
 		rules = append(rules, "the published project layer could not be read ("+oneLineCLI(rerr.Error())+
 			"), so what this write replaces cannot be judged, and the project's owner publishes from their own terminal")
-		return managedmode.ConvergeRefused(data, initflow.YesOrTyped, rules), nil
+		return managedmode.ConvergeRefused(data, rules), nil
 	}
 	if changes, cerr := executableChanges(prev, l); cerr != nil {
 		rules = append(rules, "this fugaro cannot compare the layer's executable keys ("+cerr.Error()+
@@ -200,9 +199,9 @@ func configPublishConverge(ctx context.Context, env *cloudEnv, data []byte, loca
 		}
 	}
 	if len(rules) > 0 {
-		return managedmode.ConvergeRefused(data, initflow.YesOrTyped, rules), at
+		return managedmode.ConvergeRefused(data, rules), at
 	}
-	return managedmode.ConvergeAdmitted(data, initflow.YesOrTyped, layerAdmittedRules(local, marker)), at
+	return managedmode.ConvergeAdmitted(data, layerAdmittedRules(local, marker)), at
 }
 
 // layerAdmittedRules is what a record of an admission says was applied and

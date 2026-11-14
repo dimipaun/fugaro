@@ -545,7 +545,6 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 		// about the plan could not be read.
 		return true, &initflow.GatedError{Reason: gateUnreadable, Err: err, Refusal: initflow.GateRefusedUnread}
 	}
-	class := gateClass()
 	// A plan that would retire a project job is refused whatever the verdict
 	// said, and this is the one rule of it that D1545's split does not reach:
 	// the module protects that job from deletion and nothing lifts it, so an
@@ -583,13 +582,13 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 	var conv managedmode.Converge
 	switch {
 	case !verdict.OK:
-		conv = managedmode.ConvergeRefusedWithWarnings(doc, class, managedmode.RuleLines(verdict.Refusals), warnings)
+		conv = managedmode.ConvergeRefusedWithWarnings(doc, managedmode.RuleLines(verdict.Refusals), warnings)
 	case len(warnings) == 0:
-		conv = managedmode.ConvergeAdmitted(doc, class, admittedRules(upgrade, false))
+		conv = managedmode.ConvergeAdmitted(doc, admittedRules(upgrade, false))
 	default:
-		conv = managedmode.ConvergeWarned(doc, class, admittedRules(upgrade, true), warnings)
+		conv = managedmode.ConvergeWarned(doc, admittedRules(upgrade, true), warnings)
 	}
-	m, err := g.g.admit(ctx, class, conv)
+	m, err := g.g.admit(ctx, conv)
 	if err != nil {
 		return true, r.gateRefused(err, doc, verdict, cover, imports)
 	}
@@ -609,7 +608,7 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 	// reach this code — and the verdict M6's helper just built: a gate that
 	// admitted this document replaces the confirmation for this step, and
 	// anything else keeps it.
-	if !initflow.GateConfirms(class, r.conditions(), m) {
+	if !initflow.GateStandsIn(r.conditions(), m) {
 		return false, nil
 	}
 	fmt.Fprintf(r.w, "  %s\n", r.gateProceeded())
@@ -645,12 +644,11 @@ func (s *rulesStage) gateStep(ctx context.Context) (bool, error) {
 	if err != nil {
 		return true, &initflow.GatedError{Reason: gateUnreadable, Err: err, Refusal: initflow.GateRefusedUnread}
 	}
-	class := gateClass()
-	m, err := r.gate.g.admit(ctx, class, managedmode.ConvergeAdmitted(doc, class, rulesAdmittedRules))
+	m, err := r.gate.g.admit(ctx, managedmode.ConvergeAdmitted(doc, rulesAdmittedRules))
 	if err != nil {
 		return true, &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: gateRefusalOf(err)}
 	}
-	if !initflow.GateConfirms(class, r.conditions(), m) {
+	if !initflow.GateStandsIn(r.conditions(), m) {
 		return false, nil
 	}
 	fmt.Fprintf(r.w, "  %s\n", r.gateProceeded())
@@ -701,10 +699,6 @@ func (s *policyMigrateStage) gateStep(ctx context.Context, m *policyMigration) (
 	if !r.gateUnderway() || !m.writesNode() {
 		return false, nil
 	}
-	class := gateClass()
-	if len(m.loosening()) > 0 {
-		class = initflow.Typed
-	}
 	doc := m.payload()
 	if len(doc) == 0 {
 		// A node write with no bytes to write is the stage's own contract
@@ -712,13 +706,21 @@ func (s *policyMigrateStage) gateStep(ctx context.Context, m *policyMigration) (
 		// the one thing this gate must never hand to a write.
 		return true, &initflow.GatedError{Reason: gateUnreadable, Err: errors.New("the policy node this step would publish is empty"), Refusal: initflow.GateRefusedUnread}
 	}
-	conv := managedmode.ConvergeAdmitted(doc, class, policyAdmittedRules)
-	mg, err := r.gate.g.admit(ctx, class, conv)
+	conv := managedmode.ConvergeAdmitted(doc, policyAdmittedRules)
+	if len(m.loosening()) > 0 {
+		// A publish that loosens a ceiling, sets an account-choice key or
+		// writes the project's first node is a step no plan gate judges,
+		// whatever the document looks like (D1026): the record decides who is
+		// admitted to the project, so nothing here stands in for the owner's
+		// own word and nothing is recorded for it.
+		conv = managedmode.ConvergeUnjudged(doc, policyAdmittedRules)
+	}
+	mg, err := r.gate.g.admit(ctx, conv)
 	if err != nil {
 		return true, &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: gateRefusalOf(err)}
 	}
 	marker := agentMarker(os.Getenv, s.e.r.stdinTerminal())
-	if !initflow.GateConfirms(class, r.conditions(), mg) {
+	if !initflow.GateStandsIn(r.conditions(), mg) {
 		// The publish that widens the node is the owner's own step, and the
 		// fence on it is the session's rather than its class's (D1552): a
 		// loosening is what refuses here — m.loosening() is the node's
@@ -746,7 +748,7 @@ func (s *policyMigrateStage) gateStep(ctx context.Context, m *policyMigration) (
 		// inventory is not a verdict about this document either.
 		if len(m.loosening()) > 0 && marker != "" {
 			refused := conv.Refuse()
-			return true, &initflow.GatedError{Reason: refused.Error(), Err: refused, Refusal: initflow.GateRefusedClass}
+			return true, &initflow.GatedError{Reason: refused.Error(), Err: refused, Refusal: initflow.GateRefusedUnjudged}
 		}
 		return false, nil
 	}
@@ -800,10 +802,6 @@ func (s *workspaceStage) gateStep(ctx context.Context, p *workspacePublication) 
 	if !r.gateUnderway() {
 		return false, nil
 	}
-	class := gateClass()
-	if len(p.widens) > 0 {
-		class = initflow.Typed
-	}
 	doc := p.body
 	if len(doc) == 0 {
 		// A node write with no bytes to write is the stage's own contract
@@ -811,13 +809,21 @@ func (s *workspaceStage) gateStep(ctx context.Context, p *workspacePublication) 
 		// the one thing this gate must never hand to a write.
 		return true, &initflow.GatedError{Reason: gateUnreadable, Err: errors.New("the workspace node this step would publish is empty"), Refusal: initflow.GateRefusedUnread}
 	}
-	conv := managedmode.ConvergeAdmitted(doc, class, workspaceAdmittedRules)
-	mg, err := r.gate.g.admit(ctx, class, conv)
+	conv := managedmode.ConvergeAdmitted(doc, workspaceAdmittedRules)
+	if len(p.widens) > 0 {
+		// The record decides who is in the group, so a publish that admits a
+		// member — the whole membership on a workspace that has no published
+		// record yet included — is a step no plan gate judges, whatever the
+		// document looks like (D1026): nothing stands in for the owner's own
+		// word and nothing is recorded for it.
+		conv = managedmode.ConvergeUnjudged(doc, workspaceAdmittedRules)
+	}
+	mg, err := r.gate.g.admit(ctx, conv)
 	if err != nil {
 		return true, &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: gateRefusalOf(err)}
 	}
 	marker := agentMarker(os.Getenv, s.e.r.stdinTerminal())
-	if !initflow.GateConfirms(class, r.conditions(), mg) {
+	if !initflow.GateStandsIn(r.conditions(), mg) {
 		// The publish that admits something to the group is the owner's own
 		// step, and the fence on it is the session's rather than its class's
 		// (D1555, the same fence as D1552's): a widening is what refuses here —
@@ -845,7 +851,7 @@ func (s *workspaceStage) gateStep(ctx context.Context, p *workspacePublication) 
 		// inventory is not a verdict about this document either.
 		if len(p.widens) > 0 && marker != "" {
 			refused := conv.Refuse()
-			return true, &initflow.GatedError{Reason: refused.Error(), Err: refused, Refusal: initflow.GateRefusedClass}
+			return true, &initflow.GatedError{Reason: refused.Error(), Err: refused, Refusal: initflow.GateRefusedUnjudged}
 		}
 		return false, nil
 	}
@@ -1138,16 +1144,6 @@ func (r *initRun) gateDeleteLeft(reason string, doc []byte, verdict managedmode.
 		Commands: []string{selfCommand() + " " + r.o.doorName() + " " + strings.Join(args, " ")},
 	}, true
 }
-
-// gateClass is the confirmation class of a step the gate judges: these are the
-// ordinary applies of their stages, asked with confirmOrdinary, and an
-// ordinary step is initflow.YesOrTyped in both doors (D12's answer of
-// 2026-10-20). It is a function rather than a literal at each call site so
-// there is one place to read what class the gate was asked about, and it is
-// deliberately not r.stepClass(): that one answers for the Firestore
-// database's location, which is Typed in one door and not a step this gate
-// ever sees.
-func gateClass() initflow.ConfirmClass { return initflow.YesOrTyped }
 
 // admittedRules is what the record says admitted the plan: the rules Gate ran,
 // in the order it ran them (internal/managed/plan.go), each one true of the

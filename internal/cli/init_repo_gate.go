@@ -93,16 +93,17 @@ func (e *initEngine) authState(o originInfo) (repoAuth, error) {
 }
 
 // onboardCovered reports whether the run's own confirmation covers onboarding
-// this repository now: YesOrTyped's rule, the class D12 gives the step in both
-// front doors — and in both of their modes, the converge and the standalone
-// --repo engine, which is what W3.4's row recorded as "Typed, covered after
-// W5.1" and what W5.1's commit inverts — and the run's own confirmation
-// actually given. --yes is the way to give it (r.conditions().Yes, which
-// --plan-only turns off); a run that cannot give it leaves the repository for
-// the user, and at a terminal the gate's own note is the step's confirmation,
-// shown where it always was (confirmRepo, which reads nothing: T7,
-// docs/no-prompt-policy). A coding agent's session, --json, a pipe and
-// --non-interactive give nothing (canConfirmTyped).
+// this repository now: the step is one D12's answer of 2026-10-20 covers in
+// both front doors — and in both of their modes, the converge and the
+// standalone --repo engine, which is what W3.4's row recorded as "Typed,
+// covered after W5.1" and what W5.1's commit inverts — and the run's own
+// confirmation is actually given. r.o.yes is the way to give it, and no flag
+// sets it any more (T11): a run that still has one is a command's own internal
+// converge, opened on an answer the person already gave, and --plan-only turns
+// it off. A run that cannot give it leaves the repository for the user, and at
+// a terminal the gate's own note is the step's confirmation, shown where it
+// always was (confirmRepo, which reads nothing: T7, docs/no-prompt-policy). A
+// coding agent's session, --json, a pipe and --non-interactive give nothing.
 //
 // It reads the run's conditions and never r.review: the review's own answer
 // (init_review.go) covers the installation's ordinary steps, and the repository
@@ -125,9 +126,7 @@ func (e *initEngine) onboardCovered(o originInfo) bool {
 		// gate's own question rather than a step of the converge's.
 		return false
 	}
-	yes := r.conditions()
-	yes.Terminal, yes.NonInteractive, yes.JSON = false, false, false
-	return canConfirmTyped(initflow.YesOrTyped, yes)
+	return r.o.yes && !r.o.planOnly
 }
 
 // checkoutNote is printed once, immediately before the gate's note, when

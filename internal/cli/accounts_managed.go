@@ -278,11 +278,11 @@ func accountsAddGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Confi
 	// verdict is what decides it. A refused document is returned in this
 	// command's own two lines rather than in the gate's, and the record of the
 	// refusal was written by admit before it returned (D1014).
-	conv := managedmode.ConvergeAdmitted(doc, initflow.YesOrTyped, applied)
+	conv := managedmode.ConvergeAdmitted(doc, applied)
 	if len(refused) > 0 {
-		conv = managedmode.ConvergeRefused(doc, initflow.YesOrTyped, refused)
+		conv = managedmode.ConvergeRefused(doc, refused)
 	}
-	m, err := gate.admit(ctx, initflow.YesOrTyped, conv)
+	m, err := gate.admit(ctx, conv)
 	if err == nil {
 		return m, gate, nil
 	}

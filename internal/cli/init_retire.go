@@ -505,7 +505,7 @@ func (r *initRun) retireManaged(ctx context.Context, c *infra.Clients, t *tf.TF,
 	// session can be given it in. It is asked BEFORE the state removal, so a
 	// session that cannot have it is refused with a state that is still whole
 	// -- the same refusal it reads today, and no residue to clean up.
-	if !initflow.ConfirmsByGate(initflow.YesOrTyped, r.conditions(), initflow.Managed{Managed: true, Admitted: true}) {
+	if !initflow.GateStandsIn(r.conditions(), initflow.Managed{Managed: true, Admitted: true}) {
 		return false, nil
 	}
 	r.retireAuto = true
@@ -573,8 +573,8 @@ func (r *initRun) retireAdmit(ctx context.Context, t *tf.TF, rets []infra.Retire
 		// is the shape gateStep reads as gateUnreadable: nothing is applied.
 		return &initflow.GatedError{Reason: gateUnreadable, Err: err, Refusal: initflow.GateRefusedUnread}
 	}
-	conv := managedmode.ConvergeAdmitted(doc, gateClass(), retireAdmittedRules)
-	m, err := g.g.admit(ctx, gateClass(), conv)
+	conv := managedmode.ConvergeAdmitted(doc, retireAdmittedRules)
+	m, err := g.g.admit(ctx, conv)
 	if err != nil {
 		return err
 	}
@@ -582,7 +582,7 @@ func (r *initRun) retireAdmit(ctx context.Context, t *tf.TF, rets []infra.Retire
 	// managed between the two reads keeps the confirmation it has always had,
 	// and here that is the typed one -- the session this run is in is one that
 	// can be asked (retireManaged said so before the state removal).
-	if !initflow.GateConfirms(gateClass(), r.conditions(), m) {
+	if !initflow.GateStandsIn(r.conditions(), m) {
 		return r.retireConfirm(rets, spec, undone)
 	}
 	fmt.Fprintf(r.w, "  %s\n", r.gateProceeded())
