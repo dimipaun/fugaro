@@ -178,7 +178,7 @@ func runAccountsAliasSet(cmd *cobra.Command, alias, account string, o accountsAl
 	}); err != nil {
 		return err
 	}
-	return accountsAliasConverge(cmd.Context(), cmd, after, next, sel.Path, alias, account)
+	return accountsAliasConverge(cmd.Context(), cmd, after, next, sel.Path, alias, account, false)
 }
 
 func runAccountsAliasRm(cmd *cobra.Command, alias string, o accountsAliasSetOptions) error {
@@ -211,7 +211,7 @@ func runAccountsAliasRm(cmd *cobra.Command, alias string, o accountsAliasSetOpti
 	}); err != nil {
 		return err
 	}
-	return accountsAliasConverge(cmd.Context(), cmd, after, next, sel.Path, alias, "")
+	return accountsAliasConverge(cmd.Context(), cmd, after, next, sel.Path, alias, "", true)
 }
 
 // accountsAliasResolve is the edit, or the refusal: the block this file would
@@ -373,12 +373,22 @@ func accountsAliasRmCommand(alias string) string {
 	return "fugaro accounts alias rm " + quoteWord(alias)
 }
 
+// accountsAliasLogName is the name the two alias writes file their runs under:
+// one converge serves both, so the name a person typed is built here rather
+// than written at the constructor (report_exempt.go's builtLogNames).
+func accountsAliasLogName(removing bool) string {
+	if removing {
+		return "accounts-alias-rm"
+	}
+	return "accounts-alias-set"
+}
+
 // accountsAliasConverge is the publish and the deploy, through `accounts add`'s
 // own runner over the registered stages (accountsAddRunStages): the node has to
 // carry the account the keys now resolve to, and the job set has to mount that
 // account's token, whichever command moved them.
-func accountsAliasConverge(ctx context.Context, cmd *cobra.Command, after *localcfg.Config, wrote []byte, path, alias, account string) error {
-	run := stepRunFor(cmd, "accounts-alias", cmd.ErrOrStderr())
+func accountsAliasConverge(ctx context.Context, cmd *cobra.Command, after *localcfg.Config, wrote []byte, path, alias, account string, removing bool) error {
+	run := stepRunFor(cmd, accountsAliasLogName(removing), cmd.ErrOrStderr())
 	defer run.close()
 	stages, err := accountsAddRunStages(ctx, cmd, run, after, path, wrote, "accounts alias")
 	if err != nil {
