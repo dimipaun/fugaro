@@ -21,6 +21,14 @@
 // **The organisation is the URL's, and a person with none is sent to choose
 // one.** `?org=` is what the switcher put there (P2.3's `switcher.tsx`), so a
 // screen that found none is one nobody selected an organisation for.
+//
+// **Nothing here takes the URL at its word.** Its value is text a person can
+// edit (`?org=../..`) and it is a segment of every path this screen builds, so
+// it is read through the switcher's own reader (`organisationIdIn`), which is
+// the inverse of the encoder that wrote it, and it is encoded where a path is
+// built. The client's `apiPath` is what refuses a path that leaves the origin
+// and is not what refuses this: a `..` segment is inside `/api` and is resolved
+// by the browser before the request is sent.
 
 import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
@@ -30,6 +38,7 @@ import type { Invite, InviteCreate, InviteState } from '../../api/types/invites'
 import type { Membership, Role } from '../../api/types/orgs'
 import { useSession } from '../../auth/session'
 import { SIGN_IN_PATH } from '../../routes'
+import { organisationIdIn } from '../orgs/switcher'
 
 const ROLE_LABELS: Record<Role, string> = {
   owner: 'Owner',
@@ -60,7 +69,7 @@ export function MembersScreen() {
   const { state: session, auth } = useSession()
   const api = useMemo(() => createApiClient({ token: () => auth.idToken() }), [auth])
   const [params] = useSearchParams()
-  const organisationId = params.get('org')
+  const organisationId = organisationIdIn(params.get('org'))
   const [load, setLoad] = useState<Load>({ status: 'loading' })
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<Role>('member')
@@ -75,8 +84,8 @@ export function MembersScreen() {
     void (async () => {
       try {
         const [members, invites] = await Promise.all([
-          api.request<Membership[]>(`/orgs/${organisationId}/members`),
-          api.request<Invite[]>(`/orgs/${organisationId}/invites`),
+          api.request<Membership[]>(`/orgs/${encodeURIComponent(organisationId)}/members`),
+          api.request<Invite[]>(`/orgs/${encodeURIComponent(organisationId)}/invites`),
         ])
         if (live) {
           setLoad({ status: 'ready', members, invites })
@@ -98,7 +107,10 @@ export function MembersScreen() {
     setFailure(null)
     const body: InviteCreate = { email: email.trim(), role }
     try {
-      const created = await api.request<Invite>(`/orgs/${id}/invites`, { method: 'POST', body })
+      const created = await api.request<Invite>(`/orgs/${encodeURIComponent(id)}/invites`, {
+        method: 'POST',
+        body,
+      })
       setLoad((current) =>
         current.status === 'ready'
           ? { ...current, invites: [created, ...current.invites] }
@@ -116,8 +128,10 @@ export function MembersScreen() {
     setBusy(true)
     setFailure(null)
     try {
-      await api.request<void>(`/orgs/${id}/invites/${inviteId}`, { method: 'DELETE' })
-      const invites = await api.request<Invite[]>(`/orgs/${id}/invites`)
+      await api.request<void>(`/orgs/${encodeURIComponent(id)}/invites/${inviteId}`, {
+        method: 'DELETE',
+      })
+      const invites = await api.request<Invite[]>(`/orgs/${encodeURIComponent(id)}/invites`)
       setLoad((current) => (current.status === 'ready' ? { ...current, invites } : current))
     } catch (error) {
       setFailure(sentence(error))

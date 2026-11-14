@@ -25,7 +25,10 @@
 // person is not in is answered rather than drawn empty.** Both are states a
 // person reaches by editing an address or following a stale link, and a page
 // that drew nothing would look like a portal with an organisation that has no
-// settings.
+// settings. The value is text a person can edit, so it is read through the
+// switcher's reader (`organisationIdIn`) and encoded where the rename builds
+// its path: the client refuses a path that leaves the origin (`apiPath`) but
+// not a `..` segment inside one.
 
 import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
@@ -35,6 +38,7 @@ import type { Membership, Organisation, OrganisationType } from '../../api/types
 import { useSession } from '../../auth/session'
 import { SIGN_IN_PATH } from '../../routes'
 import type { Tenancy } from '../orgs/orgs'
+import { organisationIdIn } from '../orgs/switcher'
 
 const TYPE_LABELS: Record<OrganisationType, string> = {
   operations: 'Operations',
@@ -66,7 +70,7 @@ export function SettingsScreen() {
   const { state: session, auth } = useSession()
   const api = useMemo(() => createApiClient({ token: () => auth.idToken() }), [auth])
   const [params] = useSearchParams()
-  const organisationId = params.get('org')
+  const organisationId = organisationIdIn(params.get('org'))
   const [load, setLoad] = useState<Load>({ status: 'loading' })
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
@@ -103,7 +107,7 @@ export function SettingsScreen() {
     setBusy(true)
     setFailure(null)
     try {
-      const saved = await api.request<Organisation>(`/orgs/${id}`, {
+      const saved = await api.request<Organisation>(`/orgs/${encodeURIComponent(id)}`, {
         method: 'PATCH',
         body: { name: name.trim() },
       })

@@ -165,6 +165,14 @@ describe('the organisation settings screen', () => {
     expect(await screen.findByText('/orgs')).toBeDefined()
   })
 
+  it('asks for an organisation, and fetches nothing, when the URL names no id', async () => {
+    const fetch = transport([])
+    mount('/settings?org=..')
+
+    expect(await screen.findByText('/orgs')).toBeDefined()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   it('says so when the URL names an organisation the person is not in', async () => {
     transport([json(200, tenancy(RENAMED_MEMBERSHIP))])
     mount('/settings?org=org_somebody_else')

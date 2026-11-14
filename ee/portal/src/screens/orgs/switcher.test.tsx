@@ -27,7 +27,7 @@ import type { Membership, Organisation } from '../../api/types/orgs'
 import type { AuthPort, SignedInUser } from '../../auth/session'
 import { SessionProvider } from '../../auth/session'
 import { OrgsScreen } from './orgs'
-import { OrganisationSwitcher } from './switcher'
+import { OrganisationSwitcher, organisationIdIn } from './switcher'
 
 // The suite runs without the runner's globals, so React Testing Library cannot
 // register its own cleanup.
@@ -55,8 +55,11 @@ const OPERATIONS: Organisation = {
   created_at: '2026-01-01T00:00:00Z',
 }
 
+// The organisation the person last worked in is deliberately NOT the first the
+// API lists: with the two in the same order, "the last used one" and "the first
+// one listed" are the same id and a screen could answer either and pass.
 const TENANCY: { organisations: Organisation[]; memberships: Membership[] } = {
-  organisations: [EXAMPLE, OPERATIONS],
+  organisations: [OPERATIONS, EXAMPLE],
   memberships: [
     {
       organisation_id: EXAMPLE.id,
@@ -220,6 +223,21 @@ describe('the organisations screen', () => {
     )
   })
 
+  it('falls back to the first organisation the API listed when none was ever used', async () => {
+    const unused = {
+      organisations: TENANCY.organisations,
+      memberships: TENANCY.memberships.map((one) => ({ ...one, last_used_at: null })),
+    }
+    transport([json(200, unused)])
+    mount('/orgs')
+
+    const first = await screen.findByRole('link', { name: OPERATIONS.name })
+    expect(first.getAttribute('aria-current')).toBe('true')
+    expect(
+      screen.getByRole('link', { name: EXAMPLE.name }).getAttribute('aria-current'),
+    ).toBeNull()
+  })
+
   it('goes to the members of the organisation the person chooses', async () => {
     transport([json(200, TENANCY)])
     mount('/orgs')
@@ -241,5 +259,21 @@ describe('the organisations screen', () => {
       '/api/orgs',
       expect.objectContaining({ method: 'POST', body: JSON.stringify({ name: 'Northwind' }) }),
     )
+  })
+})
+
+describe('the organisation a screen’s URL names', () => {
+  it('reads back the id the switcher’s own links carry, and refuses what cannot be one', () => {
+    expect(organisationIdIn(EXAMPLE.id)).toBe(EXAMPLE.id)
+    expect(organisationIdIn('a b')).toBe('a b')
+
+    // `.` and `..` are the segments a browser resolves before the request is
+    // sent, so `/api/orgs/../members` would be fetched as `/api/members`, with
+    // the ID token on it; they are also what encoding cannot make inert. An
+    // empty query names nobody.
+    expect(organisationIdIn('..')).toBeNull()
+    expect(organisationIdIn('.')).toBeNull()
+    expect(organisationIdIn('')).toBeNull()
+    expect(organisationIdIn(null)).toBeNull()
   })
 })

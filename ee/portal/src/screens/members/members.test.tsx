@@ -214,6 +214,22 @@ describe('the members screen', () => {
     expect(await screen.findByText('/orgs')).toBeDefined()
   })
 
+  it('asks for an organisation, and fetches nothing, when the URL names no id', async () => {
+    const fetch = transport([])
+    mount('/members?org=..')
+
+    expect(await screen.findByText('/orgs')).toBeDefined()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('keeps a URL’s own value in one path segment', async () => {
+    const fetch = transport([json(200, [OWNER]), json(200, [])])
+    mount('/members?org=../..%2Fx')
+
+    expect(await screen.findByText(OWNER.email)).toBeDefined()
+    expect(fetch).toHaveBeenCalledWith('/api/orgs/..%2F..%2Fx/members', expect.anything())
+  })
+
   it('sends a person nobody is signed in as to the sign-in screen', async () => {
     transport([])
     mount(`/members?org=${ORGANISATION_ID}`, port(null))

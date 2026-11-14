@@ -50,6 +50,24 @@ export function settingsPath(organisationId: string): string {
 }
 
 /**
+ * The organisation a screen's URL names, or null when the value cannot be one.
+ *
+ * `?org=` is text a person can edit, and a screen turns it into a segment of an
+ * API path (`/orgs/<id>/members`). The client refuses a path that leaves the
+ * origin but not a `..` segment inside one (`apiPath`), so `/orgs/../../x/members`
+ * would be fetched as `/x/members`, with the ID token on it. `.` and `..` are
+ * refused here -- they are the one value encoding does not make inert -- and a
+ * screen encodes every other value where it builds the path. A query that names
+ * nobody is not an organisation either.
+ */
+export function organisationIdIn(param: string | null): string | null {
+  if (param === null || param === '' || param === '.' || param === '..') {
+    return null
+  }
+  return param
+}
+
+/**
  * True when this organisation's own rule turns this identity away, as far as a
  * screen without operations' pinned directory list can tell (D2207): operations
  * is Google only, and a reseller is Google or a Microsoft directory operations
