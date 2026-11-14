@@ -9,18 +9,19 @@ import (
 	"testing"
 )
 
-// The docs/mobile-auth/ folder, pinned. The folder holds four documents and no
+// The docs/mobile-auth/ folder, pinned. The folder holds five documents and no
 // code: the owner's spec (spec.md, verbatim), the reconciliation of that spec
-// against this tree (reconciliation.md), the index (README.md) and the plan
-// that turns the owner's answers into ordered parts (implementation-plan.md).
-// No Go, no TypeScript, no rules change, no Firebase configuration and no live
+// against this tree (reconciliation.md), the index (README.md), the plan that
+// turns the owner's answers into ordered parts (implementation-plan.md), and
+// the path D221 refused, written out and not built (provider-sign-in.md). No
+// Go, no TypeScript, no rules change, no Firebase configuration and no live
 // action follows from any of them.
 //
 // This pin is P0 of that plan, and the plan says what it holds. Each of the
-// seven tests below is one claim, and every one of them is a sentence a later
+// nine tests below is one claim, and every one of them is a sentence a later
 // edit can quietly falsify:
 //
-//   - TestDocsMobileAuthDocumentsExist -- the four documents are in the tree,
+//   - TestDocsMobileAuthDocumentsExist -- the five documents are in the tree,
 //     the index carries the folder's current status line, and it keeps the
 //     status as first written beside it, labelled as the record it is.
 //   - TestDocsMobileAuthSpecIsTheOwnersText -- spec.md is the owner's text:
@@ -37,9 +38,9 @@ import (
 //   - TestDocsMobileAuthPartsAreInOrder -- P0-P6, contiguous and in order: the
 //     plan's parts are an order, not a list.
 //   - TestDocsMobileAuthCitationsResolve -- every repository path the
-//     reconciliation and the plan cite resolves on disk, under the filter and
-//     the excuse list below.
-//   - TestDocsMobileAuthCarriesNoSecretShape -- no line of the four documents
+//     reconciliation, the plan and the provider document cite resolves on disk,
+//     under the filter and the excuse list below.
+//   - TestDocsMobileAuthCarriesNoSecretShape -- no line of the five documents
 //     carries a Firebase API key shape, a PEM header or a reverse-DNS identity
 //     literal. This folder is *about* Firebase configuration, so the next
 //     person to edit it is the one most likely to paste a real one in.
@@ -48,22 +49,55 @@ import (
 //     recorded in the three places the folder states its own state, and the
 //     parts that still wait are named beside them, so the answers are not read
 //     as an approval of the whole plan.
+//   - TestDocsMobileAuthProviderSymbolsResolve -- the symbols
+//     provider-sign-in.md cites are in the files it names them in, and the
+//     document still names them. P6 added this census because that document's
+//     whole value is that a reader can check it: it prices a path nobody took,
+//     and a path that resolved to nothing when the day came would be the price
+//     of a decision re-derived from a citation that had rotted.
+//   - TestDocsMobileAuthProviderIsRefusedNotPlanned -- provider-sign-in.md
+//     carries its own statement of what it is (refused: a path nobody has
+//     taken, not a plan, a design or an approval), states that D221's answer is
+//     not reopened by it, and carries none
+//     of the folder's ruling vocabulary. The plan says why this one is a check
+//     and not a hope: the document *"describes an alternative and must not read
+//     as a ruling"*, and "the owner has decided" is a sentence a later edit can
+//     add by accident -- in a folder whose other documents write decisions as
+//     `### D<n> — …` with an answer under each.
 //
 // **What this guard does not hold, said rather than left to be found.** It
-// checks paths, not symbols: a symbol named beside a citation without the
-// possessive form ("minted through `MintDeviceToken`" after a path) is outside
-// it, for the reason `docs/coordinator/implementation-plan.md` gives of its own
-// pair of checks in its P0 -- pairing an identifier with a citation needs a
-// notion of scope the prose does not carry. It reads **this folder
-// only**: it makes no claim about docs/mobile/, docs/central-orchestrator/,
-// docs/coordinator/ or the check register, each of which its own pin holds --
-// and it holds a citation into another folder's document to that path
-// resolving, and to nothing about what the sentence there says.
+// checks paths, and symbols only where a document pairs each one with the path
+// it lives in (mobileAuthProviderSymbols): a symbol named loosely in prose
+// ("minted through `MintDeviceToken`" after a path) is outside it, for the
+// reason `docs/coordinator/implementation-plan.md` gives of its own pair of
+// checks in its P0 -- pairing an identifier with a citation needs a notion of
+// scope the prose does not carry. The reconciliation and the plan cite symbols
+// in that loose shape throughout, and the two documents are held to their paths
+// and their numbering instead. It reads **this folder's
+// documents, and the files those documents cite**: it makes no claim about
+// docs/mobile/, docs/central-orchestrator/, docs/coordinator/ or the check
+// register, each of which its own pin holds. A citation into another folder's
+// *document* is held to that path resolving and to nothing about what the
+// sentence there says -- with **two exceptions the census below names on
+// purpose**, because both are text another folder's maintainer can edit: one
+// full sentence of `docs/workspaces/spec.md` (the workspace's own pin, which
+// the provider document's section 2.5 rests on) and three symbols of
+// `scripts/live-checks/check361.sh` (that pin's live reading). Those two are
+// the only places this guard reads another folder's prose, and an edit to
+// either of them fails TestDocsMobileAuthProviderSymbolsResolve: the census is
+// the exception, not the rule, and a maintainer of those files should know it
+// before they reword a sentence that looks like nobody else's business.
 const (
 	mobileAuthReadme = "docs/mobile-auth/README.md"
 	mobileAuthSpec   = "docs/mobile-auth/spec.md"
 	mobileAuthRecon  = "docs/mobile-auth/reconciliation.md"
 	mobileAuthPlan   = "docs/mobile-auth/implementation-plan.md"
+
+	// mobileAuthProvider is P6's document: D221's alternative, written out in
+	// full and not built. It is the one document in this folder that describes
+	// a path the tree does not take, and that is why it is held to three things
+	// the others are not: the symbols it cites, and the two checks below.
+	mobileAuthProvider = "docs/mobile-auth/provider-sign-in.md"
 
 	// mobileAuthPin is this file, by path: P0's own commit adds it, and the
 	// excuse list below is where that fact has to be recorded -- see the
@@ -97,14 +131,17 @@ const (
 	mobileAuthNeverCarried = "mobile/node_modules"
 )
 
-// mobileAuthDocuments is the folder's four documents, in the order the index
-// lists them.
-var mobileAuthDocuments = []string{mobileAuthReadme, mobileAuthSpec, mobileAuthRecon, mobileAuthPlan}
+// mobileAuthDocuments is the folder's five documents: what
+// TestDocsMobileAuthDocumentsExist holds to the tree and what the secret-shape
+// scan reads. The index lists them in its own order (README.md is its own last
+// row); this is the list the two checks below walk, and a document added to the
+// folder and not to it is a document nothing pins.
+var mobileAuthDocuments = []string{mobileAuthReadme, mobileAuthSpec, mobileAuthRecon, mobileAuthPlan, mobileAuthProvider}
 
-// TestDocsMobileAuthDocumentsExist: the folder is four documents, and the index
+// TestDocsMobileAuthDocumentsExist: the folder is five documents, and the index
 // still describes them as what they are. The status line is the index's own
 // claim about the folder (its state, and the pointer to docs/status.md), and
-// the index is an index: it names the other three documents, so a reader who
+// the index is an index: it names the other four documents, so a reader who
 // opens this folder first is sent to all of it.
 //
 // Mutation (verified, run and restored): delete a document and this test fails
@@ -123,7 +160,7 @@ func TestDocsMobileAuthDocumentsExist(t *testing.T) {
 	if !strings.Contains(readme, mobileAuthKeptStatus) {
 		t.Errorf("%s no longer keeps the status as first written, %q: the index is where a reader learns what this folder was, and a record deleted rather than kept leaves the folder looking as though it had always been where the tree is now", mobileAuthReadme, mobileAuthKeptStatus)
 	}
-	for _, name := range []string{"spec.md", "reconciliation.md", "implementation-plan.md"} {
+	for _, name := range []string{"spec.md", "reconciliation.md", "implementation-plan.md", "provider-sign-in.md"} {
 		if !strings.Contains(readme, name) {
 			t.Errorf("%s no longer names %s: the index is the one place a reader is sent from, and a document it drops is a document nobody opens", mobileAuthReadme, name)
 		}
@@ -407,32 +444,45 @@ func mobileAuthCitedPaths(doc string, dirs map[string]bool) []string {
 // that makes `fugaro pair` a whole act has not. mobile/node_modules is excused
 // differently and permanently, which is why it is not an entry here either: see
 // mobileAuthNeverCarried.
-var mobileAuthWillCreate = map[string]string{
-	"docs/mobile-auth/provider-sign-in.md": "P6's provider path, written out and refused",
-}
+//
+// **The list is empty now, and P6 is the part that emptied it.** Its last entry
+// was `docs/mobile-auth/provider-sign-in.md`, and the pull request that landed
+// that document -- P6's own -- is the one that deleted the entry, which is the
+// same rule read for the last time. What the map is kept for is the other
+// direction of it: an implementer who finds a path these documents cite and the
+// tree does not have adds it **here**, visibly and with the part that owes its
+// deletion, rather than loosening the path rule above.
+var mobileAuthWillCreate = map[string]string{}
 
-// TestDocsMobileAuthCitationsResolve: every repository path the reconciliation
-// and the plan cite resolves on disk, and every entry on the excuse list is
-// still excused for a reason. A citation is how these documents carry their
-// whole value -- the reconciliation is a reading of the tree, and the plan is a
-// set of parts against it -- so a path that stops resolving is a claim nobody
-// can check, and an excuse that has gone stale is a path that resolved while
-// the guard still looked past it.
+// TestDocsMobileAuthCitationsResolve: every repository path the three documents
+// that cite the tree -- the reconciliation, the plan and the provider document
+// -- resolve on disk, and every entry on the excuse list is still excused for a
+// reason. A citation is how these documents carry their whole value -- the
+// reconciliation is a reading of the tree, the plan is a set of parts against
+// it, and the provider document is a path priced against it -- so a path that
+// stops resolving is a claim nobody can check, and an excuse that has gone
+// stale is a path that resolved while the guard still looked past it.
 //
 // Mutation (verified, run and restored): rename a cited path in a scratch tree
 // and this test fails naming it; append a line number to a citation
-// (`rules.go:433`) and it fails on the same token; create
-// `internal/budget/token/device.go` and it fails naming the entry and the pull
-// request that owes its deletion.
+// (`rules.go:433`) and it fails on the same token; name a path the tree does not
+// have in the provider document (`internal/cli/no-such-file.go`) and it fails
+// naming it, which is the red step P6's own part writes; put a path back on
+// mobileAuthWillCreate and it fails on the entry's staleness.
 func TestDocsMobileAuthCitationsResolve(t *testing.T) {
 	dirs := mobileAuthTopLevelDirs(t)
 	named := map[string]bool{}
-	for _, doc := range []string{mobileAuthRecon, mobileAuthPlan} {
-		paths := mobileAuthCitedPaths(readDoc(t, doc), dirs)
-		// A filter that stopped matching would make every assertion below
-		// vacuous: the reconciliation and the plan cite far more than this.
-		if len(paths) < 40 {
-			t.Fatalf("%s: mobileAuthCitedPaths found %d paths, and these two documents cite far more: the filter, not the documents, is what broke", doc, len(paths))
+	// The floor is per document, and it is what keeps a filter that stopped
+	// matching from making every assertion below vacuous. The provider document
+	// cites fewer paths than the other two -- it is one path written out, not a
+	// reading of the whole tree -- so its floor is its own.
+	for _, doc := range []struct {
+		path string
+		min  int
+	}{{mobileAuthRecon, 40}, {mobileAuthPlan, 40}, {mobileAuthProvider, 20}} {
+		paths := mobileAuthCitedPaths(readDoc(t, doc.path), dirs)
+		if len(paths) < doc.min {
+			t.Fatalf("%s: mobileAuthCitedPaths found %d paths, and this document cites at least %d: the filter, not the document, is what broke", doc.path, len(paths), doc.min)
 		}
 		for _, p := range paths {
 			named[p] = true
@@ -442,14 +492,14 @@ func TestDocsMobileAuthCitationsResolve(t *testing.T) {
 				// directory the repository never carries, whose citation is the
 				// app's manifest.
 				if _, err := os.Stat("../../mobile/package.json"); err != nil {
-					t.Errorf("%s cites %s as the dependency directory this repository never carries, and the manifest that is the citation instead is not in the tree: %v", doc, p, err)
+					t.Errorf("%s cites %s as the dependency directory this repository never carries, and the manifest that is the citation instead is not in the tree: %v", doc.path, p, err)
 				}
 			case mobileAuthWillCreate[p] != "":
 				// Absence is asserted below, with the reason and the deletion
 				// the entry owes.
 			default:
 				if _, err := os.Stat("../../" + p); err != nil {
-					t.Errorf("%s cites %s, which is not in the tree: a path a reader cannot open is a dead end, and a path these documents expect to exist must not be excused", doc, p)
+					t.Errorf("%s cites %s, which is not in the tree: a path a reader cannot open is a dead end, and a path these documents expect to exist must not be excused", doc.path, p)
 				}
 			}
 		}
@@ -468,10 +518,328 @@ func TestDocsMobileAuthCitationsResolve(t *testing.T) {
 
 	for p, why := range mobileAuthWillCreate {
 		if !named[p] {
-			t.Errorf("mobileAuthWillCreate excuses %s (%s), which neither the reconciliation nor the plan cites any more: the list must only excuse a path the documents actually name", p, why)
+			t.Errorf("mobileAuthWillCreate excuses %s (%s), which none of these documents cites any more: the list must only excuse a path the documents actually name", p, why)
 		}
 		if _, err := os.Stat("../../" + p); err == nil {
 			t.Errorf("%s is in the tree now, and mobileAuthWillCreate still excuses it (%s): the entry is stale and must be deleted by the pull request that lands it, because a path is excused only while it is missing", p, why)
+		}
+	}
+}
+
+// mobileAuthProviderSymbols is the provider document's citations of code: each
+// symbol with the file it lives in. P6's red step is a citation -- "move a cited
+// symbol and the folder's guard must fail, naming it" -- and this is the census
+// that makes it true. It is a list rather than a derivation, and deliberately:
+// the folder's other two documents name symbols loosely in prose ("`USER` is a
+// minted `mu` claim and the device node"), where pairing an identifier with a
+// citation needs a notion of scope the prose does not carry
+// (`docs/coordinator/implementation-plan.md`'s P0 says the same of its own pair
+// of checks). The provider document is short and its whole subject is code a
+// reader can walk, so the symbols it is held to are paired with their file here
+// -- the code it names, and the file each name lives in -- and the reverse list
+// below is the other half, which is what keeps the pairing from being
+// decorative. The two lists are read in the two directions they can be checked
+// in, and they are **not** required to be each other's image: a name the
+// document must keep can be a node path, a wire field or a file below a
+// directory, which is nothing this map could pair with a source file, and a
+// symbol paired above is checked against its file rather than against the
+// document, because the document names it as the code writes it and not as the
+// guard spells it (`Mint`, where the file has `func Mint(`). What is *not* true
+// of them, and is worth saying here because the symmetry reads as though it
+// were: the two are not each other's image, so a name on only one side is not a
+// gap -- and an entry on one side that no reader would look for on the other is
+// a pairing a reader cannot follow, which is the pairing to delete.
+var mobileAuthProviderSymbols = map[string][]string{
+	"internal/cli/init_firebase.go": {
+		"func refusePublicSignUp(", "func workspaceSignInPath(",
+		"func (r *initRun) identityPlatform(", "func (s *idpStep) initialize(",
+		"FirebaseAPIKey",
+	},
+	"internal/infra/identityplatform.go": {
+		"func PublicSignUp(", "func (p *IdentityPlatform) Initialize(", "func (p *IdentityPlatform) Config(",
+		"defaultSupportedIdpConfigs", "oauthIdpConfigs", "signIn.email.enabled",
+		"client.permissions.disabledUserSignup is false",
+	},
+	// The macros the document names as what a provider session would reach --
+	// all five, `RUN` included -- and the device node it would keep reading
+	// (D221's recommendation).
+	"internal/budget/rules/rules.go": {"PathDevices", "\"USER\":", "\"TOKEN\":", "\"RUN\":", "\"PAIRING\":", "\"MAILBOX\":"},
+	// The one verified-email check the tree has, and the userinfo read it is
+	// over -- a precedent for the shape, not an implementation of it.
+	"internal/cli/init_members.go": {"func userEmail(", "var authenticatedUser = func(", "is not verified"},
+	// The custom-token path, which is what the public API key buys today.
+	"internal/budget/token/mint.go":     {"func Mint("},
+	"internal/budget/token/exchange.go": {"func Exchange(", "accounts:signInWithCustomToken"},
+	// The generation a first rule reading a provider claim would have to bump,
+	// and the two things the fields would move.
+	"internal/projectpolicy/version.go": {"const RulesVersion = 4"},
+	// The proof vehicles of section 6: the denial table, the synthetic token
+	// builder it drives, and the node's own gate.
+	"internal/budget/rules/emulator_test.go":         {"func TestDenialTable("},
+	"internal/budget/rules/harness_test.go":          {"func unsignedToken("},
+	"internal/budget/rules/emulator_pairing_test.go": {"func TestDeviceNodeGatesEverythingUserReaches("},
+	// What a client meets on the device node, either way.
+	"internal/budget/rules/rules.json.tmpl": {"\"$uid\": { \".read\": false, \".write\": false }"},
+	// The app's half of D221: two items, an identity the repository does not
+	// commit, and the config resolver the identity is built in.
+	"mobile/src/accounts/secret.js": {"export const SECRET_ITEMS = Object.freeze(['idToken', 'macKey']);"},
+	"mobile/src/app-config.test.js": {"no reverse-DNS identity is committed here"},
+	"mobile/app.config.js":          {"export function resolveConfig(", "export const ID_VARIABLES = Object.freeze({"},
+	// The Firebase packages the app carries today -- which is why the fence is
+	// "no provider and no Auth package" rather than "no Firebase".
+	"mobile/package.json": {
+		"\"@react-native-firebase/app\"", "\"@react-native-firebase/analytics\"",
+		"\"@react-native-firebase/crashlytics\"",
+	},
+	// Identity Platform is not a resource, and the workspace's own project is the
+	// one where the pin lives rather than the refusal.
+	"deploy/terraform/gcp/modules/firebase/firebase.tf": {"Identity Platform is deliberately not a resource here"},
+	"docs/workspaces/spec.md":                           {"A member's Firebase refuses public sign-up, and the workspace's is the one that does not"},
+	// The live reading of the workspace's pin, which is the shape a per-project
+	// check for the provider path would have to copy. It names no symbol of this
+	// repository's own -- it reads the API -- so what it is held to is the
+	// refusal and the two lists it holds the pin against.
+	"scripts/live-checks/check361.sh": {"refusePublicSignUp", "defaultSupportedIdpConfigs", "oauthIdpConfigs"},
+}
+
+// mobileAuthProviderNames is the reverse direction: the symbols the document
+// must still name. A symbol renamed in the tree and left in the document is the
+// same dead end as one that left the tree, and a document that quietly dropped
+// one is a claim a reader can no longer follow -- which is the failure this half
+// is written for.
+var mobileAuthProviderNames = []string{
+	"refusePublicSignUp", "workspaceSignInPath", "identityPlatform", "idpStep.initialize",
+	"PublicSignUp", "Initialize", "Config",
+	"defaultSupportedIdpConfigs", "oauthIdpConfigs", "signIn.email.enabled",
+	"signIn.anonymous.enabled", "signIn.phoneNumber.enabled", "disabledUserSignup",
+	"PathDevices", "USER", "TOKEN", "RUN", "PAIRING", "MAILBOX",
+	"userEmail", "authenticatedUser", "Mint", "Exchange", "accounts:signInWithCustomToken",
+	"RulesVersion", "unsignedToken", "TestDenialTable", "TestDeviceNodeGatesEverythingUserReaches",
+	"SECRET_ITEMS", "resolveConfig", "ID_VARIABLES", "@react-native-firebase",
+	"@react-native-firebase/auth", "email", "email_verified", "auth.uid",
+	"assetlinks.json", "apple-app-site-association", "google-services.json",
+	"GoogleService-Info.plist", "@privaterelay.appleid.com", "signInWithCredential",
+	"config/admin/devices/$uid", "mobile/.gitignore", "firebase.json",
+	"scripts/live-checks/check361.sh", "docs/design/project-centric.md",
+	"docs/workspaces/spec.md", "docs/pending-workflows/",
+}
+
+// TestDocsMobileAuthProviderSymbolsResolve: the symbols provider-sign-in.md
+// cites are still in the files it names them in, and the document still names
+// them. This is the census P6's own part writes, and it exists because the
+// document's whole value is that a reader can check it: it prices a path nobody
+// took, and a price that no longer resolves is a decision re-derived from a
+// citation that had rotted.
+//
+// Mutation (verified, run and restored): rename a cited symbol in a scratch tree
+// (`refusePublicSignUp` to `refuseProviderSignIn`) and this test fails naming the
+// symbol and its file; delete a symbol from the document and the reverse half
+// fails naming it.
+func TestDocsMobileAuthProviderSymbolsResolve(t *testing.T) {
+	doc := readDoc(t, mobileAuthProvider)
+	for path, symbols := range mobileAuthProviderSymbols {
+		data, err := os.ReadFile("../../" + path)
+		if err != nil {
+			t.Errorf("reading %s: %v", path, err)
+			continue
+		}
+		for _, symbol := range symbols {
+			if !strings.Contains(string(data), symbol) {
+				t.Errorf("%s cites %s's %s, which is no longer there: the document prices a path of the tree as it is, and a citation that has moved is a price nobody can check", mobileAuthProvider, path, symbol)
+			}
+		}
+	}
+	for _, name := range mobileAuthProviderNames {
+		if !strings.Contains(doc, name) {
+			t.Errorf("%s no longer names %s: a citation the document drops is a reader who cannot find what it points at", mobileAuthProvider, name)
+		}
+	}
+}
+
+const (
+	// mobileAuthProviderStatus is the document's own statement of what it is.
+	// The two things a reader must not take it for are a plan and an approval:
+	// D221's alternative is refused, `docs/pending-workflows/` is the model, and
+	// a document that lost this line would look like work waiting to be done.
+	// It is deliberately not written as "not a part": the plan's P6 **is** a
+	// part, and this document is what that part delivers, so the sentence that
+	// says the document is refused must not also say the plan has no such part.
+	mobileAuthProviderStatus = "**Status: refused. Nothing below is built, planned or approved: this document describes a path nobody has taken, every line of it is refused, and it is not a plan, a design or an approval.**"
+
+	// mobileAuthProviderPurpose is the sentence the plan writes for this
+	// document's purpose, and it is the reason the folder carries a document
+	// instead of a paragraph.
+	mobileAuthProviderPurpose = "the next person who wants this should read a document, not re-derive a decision"
+
+	// mobileAuthProviderNoRuling is the document saying out loud what the checks
+	// below hold it to: it is a description of an alternative to a decision that
+	// is answered, and it does not reopen it.
+	mobileAuthProviderNoRuling = "No decision is taken here, and D221's answer is not reopened by it."
+)
+
+// mobileAuthProviderRulings is the folder's ruling vocabulary, and the
+// provider document may carry none of it. The answer shape is
+// reconciliation.md §4's -- *"Answered 2026-10-22: as recommended"* -- and "as
+// recommended" alone is enough of it to catch an answer recorded in the
+// folder's own words; "the owner has decided" is the sentence the plan's P6
+// names in its own red step -- *"write a decision as if it were answered ...
+// and the guard's verbatim/decision checks must fail, because this document
+// describes an alternative and must not read as a ruling"*; and the two "we
+// will" phrases are what turns a description into a commitment. A reader who
+// meets any of them here has met a document claiming a decision nobody took.
+//
+// Each entry is written the way mobileAuthRulingShape reads a document -- lower
+// case, no emphasis marks -- because the spelling is not what this holds: the
+// scan has to catch the claim in whatever shape the sentence around it takes.
+var mobileAuthProviderRulings = []string{
+	"the owner has decided",
+	"the owner decided",
+	"has been decided",
+	"answered 2026-10-22: as recommended",
+	"as recommended",
+	"we will build",
+	"we will implement",
+	"this document plans",
+}
+
+// mobileAuthRulingShape is how the scan below reads a document: lower case, with
+// the emphasis marks a sentence is written in stripped and its whitespace
+// flattened. A literal match is the one thing it must not be. The claim P6's red
+// step plants is *"the owner has decided"* -- *"write a decision as if it were
+// answered ... and the guard's ... checks must fail"* -- and a document writes it
+// as often at the head of a sentence as anywhere else (`The owner has decided`,
+// `**The owner has decided**`), with the answer shape in bold after the
+// reconciliation's own habit (`**Answered 2026-10-22: as recommended**`), and
+// wrapped across a line break by the width the folder writes to. A scan that
+// matched only the spelling the reconciliation happens to use would pass every
+// one of those mutations, which is exactly the failure it exists to catch.
+func mobileAuthRulingShape(s string) string {
+	s = strings.ToLower(s)
+	s = strings.NewReplacer("*", "", "`", "", "_", "").Replace(s)
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// mobileAuthRulingPhrase is the scan: the phrase this folder rules with that the
+// text carries, or "" when it carries none. It reads the text through
+// mobileAuthRulingShape, so it is a check on the claim rather than on the
+// spelling, and it is walked with planted claims before the document is read, so
+// a green run means the walk can fail.
+func mobileAuthRulingPhrase(s string) string {
+	flat := mobileAuthRulingShape(s)
+	for _, phrase := range mobileAuthProviderRulings {
+		if strings.Contains(flat, phrase) {
+			return phrase
+		}
+	}
+	return ""
+}
+
+// TestDocsMobileAuthProviderIsRefusedNotPlanned: the provider document says what
+// it is, and says what it is not. Three sentences are pinned -- its status line,
+// its purpose, and the line that refuses to be a ruling -- because each is a
+// sentence a later edit can drop while leaving the rest of the document reading
+// like a plan. And its own claim about the app's half of D221 is checked against
+// the tree rather than taken on its word: `mobile/package.json` carries the
+// three `@react-native-firebase` packages and **no auth package**, which is
+// exactly the fence the document says the path would cross.
+//
+// Mutation (verified, run and restored): write "**The owner has decided** that
+// providers are enabled in every project." into the document -- the claim at the
+// head of a sentence and in bold, which is how a document writes one -- and this
+// test fails naming the phrase, because the scan reads the claim and not the
+// spelling; add `@react-native-firebase/auth` to `mobile/package.json` and it
+// fails naming the dependency, because the document would then be describing a
+// tree that no longer matches it.
+func TestDocsMobileAuthProviderIsRefusedNotPlanned(t *testing.T) {
+	// Sentences here are prose and wrap, so both sides are compared with their
+	// whitespace flattened, the way the neighbouring pins read a paragraph: a
+	// sentence moved across a line break is the same sentence, and a check that
+	// failed on the wrapping would be fixed by rewrapping it rather than by
+	// restoring what it says. The ruling scan below flattens the same way, inside
+	// mobileAuthRulingShape, so a phrase broken across a line is a phrase the
+	// document carries -- and it is read without the emphasis marks, for the
+	// reason that function gives.
+	doc := normSpace(readDoc(t, mobileAuthProvider))
+	for _, want := range []struct{ sentence, why string }{
+		{mobileAuthProviderStatus, "the document states what it is, and the two things a reader must not take it for are a plan and an approval"},
+		{mobileAuthProviderPurpose, "the plan writes this document's purpose, and it is why a reader is sent here rather than to a decision that was re-derived"},
+		{mobileAuthProviderNoRuling, "the document describes an alternative to an answered decision, and saying so is what keeps it from reading as a reopening"},
+	} {
+		if !strings.Contains(doc, normSpace(want.sentence)) {
+			t.Errorf("%s no longer carries %q: %s", mobileAuthProvider, want.sentence, want.why)
+		}
+	}
+	// The walk is planted first, so a green run below means the scan can fail --
+	// and planted in the shapes a document really writes a claim in: at the head
+	// of a sentence, in bold, in italics, and broken across a line break, which
+	// the flattening has to close back up.
+	for _, planted := range []struct{ line, phrase string }{
+		{"**Answered 2026-10-22: as recommended** — no provider session reaches a project's database.", "answered 2026-10-22: as recommended"},
+		{"The owner has decided that a provider session reaches the project's database.", "the owner has decided"},
+		{"**The owner decided** it: every project enables google.com.", "the owner decided"},
+		{"The question _has been decided_ by the owner on 2026-11-13.", "has been decided"},
+		{"This document is written to the recommendation the owner gave, and it is\n\nas recommended.", "as recommended"},
+		{"We **will** build the provider path in P6.", "we will build"},
+		{"This\n\nplans nothing, and it does not say this document plans anything.", "this document plans"},
+	} {
+		if got := mobileAuthRulingPhrase(planted.line); got != planted.phrase {
+			t.Fatalf("%q is reported as %q, and it is %q: the scan is what broke, not the document", planted.line, got, planted.phrase)
+		}
+	}
+	// ... and with the document's own sentences, which say the same things
+	// without ruling on them. A scan that flagged these would be turned off
+	// rather than fixed: this document is *about* an answered decision, so it
+	// has to be able to say so.
+	for _, clean := range []string{
+		"**The owner answered D221 on 2026-10-22, taking the recommendation**, and **D228** refused the email link in v1 by name.",
+		"whose recommendation is **no** and whose alternative is the owner's own spec of 2026-10-20, taken as written",
+		"No decision is taken here, and D221's answer is not reopened by it.",
+	} {
+		if got := mobileAuthRulingPhrase(clean); got != "" {
+			t.Errorf("%q is reported as %q: the scan must tell a document describing an answered decision from one claiming a decision of its own", clean, got)
+		}
+	}
+	if phrase := mobileAuthRulingPhrase(readDoc(t, mobileAuthProvider)); phrase != "" {
+		t.Errorf("%s carries %q, which is this folder's ruling vocabulary: the provider path was refused, nothing here is a decision, and a document that read as one would send a reader to build what D221 answered against", mobileAuthProvider, phrase)
+	}
+	// The scan above is only meaningful if the vocabulary exists somewhere: the
+	// reconciliation writes an answer under every one of the sixteen decisions,
+	// and this is that control -- read through the same matcher, so a matcher
+	// that stopped matching fails here rather than passing the document.
+	if !strings.Contains(readDoc(t, mobileAuthRecon), mobileAuthAnswered) {
+		t.Fatalf("%s no longer carries %q, so the scan above proves nothing: the control, not the provider document, is what broke", mobileAuthRecon, mobileAuthAnswered)
+	}
+	if got := mobileAuthRulingPhrase(readDoc(t, mobileAuthRecon)); got == "" {
+		t.Fatalf("%s read through the ruling scan carries none of its vocabulary, and it records the owner's answer under each of D221-D236: the scan, not the provider document, is what broke", mobileAuthRecon)
+	}
+
+	// The document's own claim about the app, held to the tree: the three
+	// packages are the control (the file is really read), and the auth package
+	// is the claim.
+	pkg := readDoc(t, "mobile/package.json")
+	if !strings.Contains(pkg, "@react-native-firebase/app") {
+		t.Errorf("mobile/package.json no longer carries @react-native-firebase/app, which %s names as what the app does carry: the check below would pass on a file that was not read", mobileAuthProvider)
+	}
+	if strings.Contains(pkg, "firebase/auth") {
+		t.Errorf("mobile/package.json carries a Firebase Auth package, and %s states that it lists none: that is the app's half of D221 -- no provider session and no Auth package -- and a path that took D221's alternative changes this document in the same change", mobileAuthProvider)
+	}
+
+	// ... and the configuration half of the same claim: an `auth` block in
+	// either manifest is where Identity Platform's providers are enabled from a
+	// project's own repository, which is the first line of the path. The key
+	// beside each file is the control, so a check that read nothing fails here
+	// rather than passing quietly.
+	for _, f := range []struct{ path, control string }{
+		{"firebase.json", "\"hosting\""},
+		{"mobile/firebase.json", "\"react-native\""},
+	} {
+		text := readDoc(t, f.path)
+		if !strings.Contains(text, f.control) {
+			t.Errorf("%s no longer carries %s, so the check beside it proves nothing: the control, not the document, is what broke", f.path, f.control)
+			continue
+		}
+		if strings.Contains(text, "\"auth\"") {
+			t.Errorf("%s carries an `auth` block, and %s states that neither manifest does: an `auth` block is where Identity Platform's providers are configured from a project's own repository, and a file that has grown one has started the path this document describes", f.path, mobileAuthProvider)
 		}
 	}
 }
@@ -501,7 +869,7 @@ func mobileAuthSecretShape(line string) string {
 	return ""
 }
 
-// TestDocsMobileAuthCarriesNoSecretShape: no line of the four documents carries
+// TestDocsMobileAuthCarriesNoSecretShape: no line of the five documents carries
 // a credential-shaped literal. The plan says why this one is unusual: the
 // folder is *about* Firebase configuration, so the next person to edit it is
 // the one most likely to paste a real key in -- and a document is where a key

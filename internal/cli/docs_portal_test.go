@@ -3,8 +3,9 @@ package cli
 // The portal docs folder, pinned.
 //
 // docs/portal/ is a design folder: spec.md (the owner's spec, verbatim),
-// reconciliation.md (findings F1–F42 against `origin/main`, the decisions the
-// owner answered on 2026-11-12, the open items and the UNVERIFIED list),
+// reconciliation.md (findings F1–F43 against `origin/main`, the decisions the
+// owner answered on 2026-11-12 with D2207 amended on 2026-11-13, the open items
+// and the UNVERIFIED list),
 // implementation-plan.md (slices P0–P9, the parallel levels, the critical path,
 // the shared-files table and the checks the plan takes) and README.md, the
 // index. It writes no command and no flag, so nothing here pins one: what it

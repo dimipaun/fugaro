@@ -1,0 +1,19 @@
+{
+  "month": "2026-02",
+  "direct_micros": 24000000,
+  "reseller_micros": 12000000,
+  "customers": [
+    {
+      "organisation_id": "org_example",
+      "name": "Example Ltd",
+      "channel": "direct",
+      "amount_micros": 24000000
+    },
+    {
+      "organisation_id": "org_sold_by_reseller",
+      "name": "Sold By Reseller Ltd",
+      "channel": "reseller",
+      "amount_micros": 12000000
+    }
+  ]
+}

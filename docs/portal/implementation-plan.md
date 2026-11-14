@@ -22,7 +22,8 @@ The owner's answers that shape this plan (2026-11-12):
   unique across organisations, operations transfers it (D2204, TN-P1). One active entitlement per
   workspace (D2204). Connected keys run at most 30 days and renew (D2202). A purchase ends the free seat
   (D2203). A binding needs an existing installation (D2205). Air-gapped keys are issued once (D2206).
-- **Sign-in.** Operations is Google only; resellers Google or a pinned Microsoft tenant (D2207).
+- **Sign-in.** Operations is Google only; resellers Google or Microsoft pinned to a directory the verified
+  token's `tid` names (D2207 as the owner amended it on 2026-11-13: "Pin the real directory id").
 - **Seats.** Admins, then operators in grant order, hold the seats (D2186, held with K3.4).
 - **Operations.** Owners and admins mint after a fresh sign-in (D2187).
 - **Data path.** The SPA reaches data through the API only (D2188).
@@ -66,7 +67,7 @@ The owner's answers that shape this plan (2026-11-12):
 | Constraint | Pinned by |
 | --- | --- |
 | A person who belongs to an operations or reseller organisation is refused, for any request using that membership, unless signed in with `google.com` or `microsoft.com` | P1.3 `TestEmailLinkIsRefusedForOperations`, P2.1 `TestSSORuleFollowsTheActorsMembership` |
-| Operations accepts Google only; a reseller's Microsoft sign-in needs a pinned tenant (D2207) | P1.3 `TestOperationsAcceptsGoogleOnly`, `TestResellerMicrosoftNeedsAPinnedTenant` |
+| Operations accepts Google only; a reseller's Microsoft sign-in needs a pinned Microsoft (Entra ID) directory — the verified token's `tid`, never the Identity Platform tenant a client names (D2207) | P1.3 `TestOperationsAcceptsGoogleOnly`, `TestMicrosoftDirectoryIsPinned`, `TestAClientNamedTenantNeverAdmitsMicrosoft`, `TestResellerMicrosoftNeedsAPinnedDirectory` |
 | A binding needs an existing Fugaro installation (D2205) | P3.1 `TestBindingNeedsAFugaroInstallation` |
 | An air-gapped key is issued once (D2206) | P3.1, P3.2 |
 | An invitation is accepted only by its own verified address | P2.2 `TestInvitationIsBoundToItsAddress` |
@@ -83,7 +84,7 @@ The owner's answers that shape this plan (2026-11-12):
 | Two concurrent reseller mints cannot pass the credit limit together | P6.2 (memory, and the emulator suite) |
 | Firestore rules deny every client access | P1.5 `TestFirestoreRulesDenyClients` |
 | No analytics before consent; Sentry sends no personal data | P1.4, P1.6 |
-| A staging key never verifies in production | `TestStagingKeyIDIsRefusedV1`; Check 574 |
+| A staging key never verifies in production | `TestStagingKeyIDIsRefused`; Check 574 |
 
 ## Limits this plan accepts
 
@@ -169,25 +170,34 @@ not exist yet.
   - Command: `go test ./ee/keyservice/... -run 'TestDocstore|TestTransaction|TestStoreOnDocstore' -count=1`.
   - Depends on: #2457, #2458. Commit: `ee: a document store on Firestore`.
 - **P1.3 Sign-in for the API. SECURITY.**
-  - Files: `ee/coordinator/mcpauth/firebase.go` (`Identity` gains `Provider`, `AuthTime` and `TenantID`;
-    the D923 comment names the portal as a second caller), `ee/keyservice/portalauth.go`,
+  - Files: `ee/coordinator/mcpauth/firebase.go` (`Identity` gains `Provider`, `AuthTime`, `TenantID` and
+    `DirectoryID`; the D923 comment names the portal as a second caller), `ee/keyservice/portalauth.go`,
     `portalauth_test.go` (new).
   - The verifier pins audience, issuer and `email_verified`. It compares addresses through `access.Member`
-    on both sides and offers `RequireSSO`, `FreshWithin(5*time.Minute)` and the tenant check. It also
+    on both sides and offers `RequireSSO`, `FreshWithin(5*time.Minute)` and the directory check. It also
     verifies Cloud Scheduler OIDC tokens, account **and** audience. It settles, against Firebase's
     documentation and a recorded token shape, whether Microsoft addresses arrive verified, before P2.2.
   - Tests: `TestEmailLinkIsRefusedForOperations` (both `password` and `emailLink`),
     `TestTokenFromAnotherProjectIsRefused`, `TestUnverifiedEmailIsRefused`, `TestStaleSignInIsRefusedForMint`,
-    `TestMicrosoftTenantIsPinned`, `TestEmptyTenantListRefusesMicrosoft`, `TestOperationsAcceptsGoogleOnly`,
-    `TestResellerMicrosoftNeedsAPinnedTenant`,
+    `TestMicrosoftDirectoryIsPinned`, `TestAClientNamedTenantNeverAdmitsMicrosoft`,
+    `TestEmptyDirectoryListRefusesMicrosoft`, `TestOperationsAcceptsGoogleOnly`,
+    `TestResellerMicrosoftNeedsAPinnedDirectory`,
     `TestSchedulerTokenNeedsItsAccountAndAudience`, plus the existing
     `go test ./ee/coordinator/mcpauth/ -count=1`.
-  - Command: `go test ./ee/keyservice/ ./ee/coordinator/mcpauth/ -run 'TestEmailLink|TestTokenFrom|TestUnverified|TestStale|TestMicrosoftTenant|TestSchedulerToken' -count=1`.
-  - D2207: the operations organisation accepts `google.com` only. A reseller organisation accepts Google,
-    or Microsoft only when the token carries a usable Microsoft tenant id that is on its list; if P1.3
-    finds none, resellers are Google-only too. The mcpauth suite runs whole:
-    `go test ./ee/coordinator/mcpauth/ -count=1`.
-  - Depends on: none. Commit: `ee: the portal API verifies sign-in, provider and tenant`.
+  - Command: `go test ./ee/keyservice/ ./ee/coordinator/mcpauth/ -run 'TestEmailLink|TestTokenFrom|TestUnverified|TestStale|TestMicrosoftDirectory|TestEmptyDirectory|TestAClientNamed|TestResellerMicrosoft|TestSchedulerToken' -count=1`.
+  - D2207 as the owner's ruling of 2026-11-13 ("Pin the real directory id") amends it: the operations
+    organisation accepts `google.com` only. A reseller organisation accepts Google, or Microsoft only when
+    the VERIFIED token's Microsoft (Entra ID) directory id — the `tid` the provider wrote into
+    `firebase.sign_in_attributes`, which is the only place mcpauth reads one, because the token's own
+    claim set is the custom-claims namespace and a `tid` there is a claim a project-side writer can mint
+    (F43's second half) — is on its list. The Identity Platform tenant a client names at sign-in
+    (`firebase.tenant`) never admits, and a token carrying no `tid` is refused: a reseller whose provider
+    forwards no directory is Google-only, which is D2207's fallback. `TestMicrosoftDirectoryIsPinned` is
+    also the mutation check — the admitted fixture's client-named tenant is off the list, so an
+    implementation reading the tenant refuses it and the test fails — and
+    `mcpauth.TestATopLevelTidIsNotADirectory` is the second one, failing for a reader that takes the
+    token's own `tid`. The mcpauth suite runs whole: `go test ./ee/coordinator/mcpauth/ -count=1`.
+  - Depends on: none. Commit: `ee: the portal API verifies sign-in, provider and directory`.
 - **P1.4 The SPA skeleton. SECURITY** (sign-in code, and it edits the boundary guard's licence test).
   - Files (new, under `ee/portal/`): `package.json`, `package-lock.json`, `tsconfig.json` (each with
     `.license`); `vite.config.ts`, `index.html`; `src/main.tsx`, `src/app.tsx`; `src/routes.ts`, which

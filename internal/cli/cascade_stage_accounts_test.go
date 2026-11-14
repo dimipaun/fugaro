@@ -181,7 +181,7 @@ func TestClaudeAccountForSkipsTheProjectStageAccountsOfACascadeRun(t *testing.T)
 		t.Fatal("checkoutConfig found no checkout")
 	}
 	for _, stage := range []string{"", "review", "adversarial", "implement", "triage"} {
-		got, err := claudeAccountFor(context.Background(), env, "acme/other", "", stage, "", co)
+		got, err := claudeAccountFor(context.Background(), env, "acme/other", "", stage, "", co, nameWritten)
 		if err != nil {
 			t.Fatalf("stage %q: a cascade launch was refused for the project's stage accounts: %v", stage, err)
 		}
@@ -248,7 +248,7 @@ func TestClaudeAccountForKeepsTheApiKeyMixOfTheSameProject(t *testing.T) {
 	if co == nil {
 		t.Fatal("checkoutConfig found no checkout")
 	}
-	if got, err := claudeAccountFor(context.Background(), env, "acme/other", "", "review", "", co); err != nil || got != "acme-overflow" {
+	if got, err := claudeAccountFor(context.Background(), env, "acme/other", "", "review", "", co, nameWritten); err != nil || got != "acme-overflow" {
 		t.Errorf("review: account = %q, err = %v, want acme-overflow (the stage's own key)", got, err)
 	}
 	if warned.Len() != 0 {

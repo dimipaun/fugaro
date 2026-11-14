@@ -36,6 +36,13 @@ var prVocabularyWords = []string{"live", "ready", "stalled", "orphan"}
 // run it would leave a genuinely ready pull request in none of the four words,
 // which is why every copy names the review job's outcome and says it changes
 // nothing.
+//
+// Two of the copies also name **land**, the action on those states and not a
+// fifth one (the owner's ruling of 2026-11-13). One of them defined it for a
+// stalled pull request alone while the other landed a ready one too, and
+// nothing failed: the four words were pinned and the sentence beside them was
+// not. So the definition is pinned here too, at the two copies that carry it,
+// with the clause that makes it an action rather than a state.
 var prVocabularyCopies = []struct {
 	path string
 	// wants are the phrases a copy must carry. The four bold words are checked
@@ -53,6 +60,14 @@ var prVocabularyCopies = []struct {
 		"a pull request on a host with no drafts, an ordinary one it marks `[DRAFT]` in its title that can look ready",
 		"or a ready one a person turned back into a draft",
 		"**orphan** (no run ever produced or follows it: a person's pull request, or one whose run records are gone)",
+		// Land is the action on those states and not a fifth one (the
+		// owner's ruling of 2026-11-13), so the two copies of the
+		// vocabulary that name it carry the same definition of it: what a
+		// land is, and that it leaves the four words as they were.
+		"**Land** is an action, not a fifth state",
+		"to land a pull request is to merge it as-is, with the findings it still carries recorded as follow-up tasks",
+		"never for failing tests on the final commit",
+		"never on a security path without the person's explicit word (the `landing` skill)",
 	}},
 	{"plugin/skills/working/SKILL.md", []string{
 		"**The state of a pull request.**",
@@ -80,6 +95,8 @@ var prVocabularyCopies = []struct {
 		"**ready** (no run is going, it is not a draft, and the last run that opened or followed it ended with the outcome `ready`, a review job's own outcome `reviewed` changing nothing)",
 		"**stalled** (it had a run, no run is going and it is not ready — the outcome `draft`, a `[DRAFT]`-titled ordinary pull request on a host with no drafts included, or a ready one a person turned back into a draft)",
 		"**orphan** (no run ever produced or follows it)",
+		"Landing is an action, not a fifth state",
+		"to **land** a pull request is to merge it as-is, with the findings it still carries recorded as follow-up tasks, rather than running another fix round (the `landing` skill)",
 	}},
 }
 

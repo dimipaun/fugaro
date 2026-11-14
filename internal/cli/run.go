@@ -645,7 +645,7 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 			// from the previous run): the account is resolved from the flag
 			// and the checkout's own value, and reviewSpec resolves it again
 			// from the ref it names once one is.
-			if _, err := claudeAccountFor(ctx, env, repo, o.token, "", o.ref, checkoutOf(ctx, repo)()); err != nil {
+			if _, err := claudeAccountFor(ctx, env, repo, o.token, "", o.ref, checkoutOf(ctx, repo)(), nameWritten); err != nil {
 				return err
 			}
 			rr, rerr := resolveRecipe(ctx, env, checkoutRoot(ctx, repo), o.recipe, time.Now(), false)
@@ -1085,6 +1085,22 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	// gone: the read is a report about a launch that has already happened, so
 	// no run waits on it and a launch that cannot read it is still a launch.
 	res.ChainLimits = launchChainLimits(ctx, env, o, slug, spec)
+	// The account this launch resolved and the alias it read it through, which
+	// its own line names (spec §7, D2099): the spec builders above record the
+	// pair where they resolve it, and every launch shape reaches its line
+	// through this one reply.
+	//
+	// A reused task is the one shape the pair must not come from: reuseStored
+	// substituted the stored task *after* the builder above resolved a name out
+	// of this machine's file, so what starts is the account the stored task
+	// mounts — a repeat after a repoint would otherwise print the pair this call
+	// read while the job mounts the account the task written before it names
+	// (the run's log line shows that job's own variant). The stored task carries
+	// its account and no alias at all (F4), so a reused launch names no pair,
+	// exactly as a launch that read no alias does.
+	if !reused {
+		res.account = o.account
+	}
 	return res, nil
 }
 
@@ -1833,6 +1849,12 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if err := checkCloneTriageImage(env.lc, spec, fileCfg, warn); err != nil {
 			return config.Inputs{}, err
 		}
+		// The vision slot, on the same configuration read: a runner
+		// older than visionSince refuses agent.models.vision at
+		// bootstrap, whatever it holds (checkCloneVisionImage).
+		if err := checkCloneVisionImage(env.lc, spec, fileCfg, warn); err != nil {
+			return config.Inputs{}, err
+		}
 	} else {
 		if needsRecipeImage(spec, agentRecipe) {
 			if err := checkRecipeImage(ctx, env, slug, spec, kind, warn); err != nil {
@@ -1980,6 +2002,11 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		// The same gate as the clone branch's above, and for the same
 		// reason: see checkTriageImage.
 		if err := checkTriageImage(ctx, env, slug, spec, kind, fileCfg, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The same gate as the clone branch's above, and for the same
+		// reason: see checkVisionImage.
+		if err := checkVisionImage(ctx, env, slug, spec, kind, fileCfg, warn); err != nil {
 			return config.Inputs{}, err
 		}
 		// The digest drift, last of this branch's image reads, and the
@@ -2573,10 +2600,16 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 	// network call a disallowed --token should never trigger — the account
 	// is checked against config.AllowedClaudeAccounts first, using only the
 	// local config and the checkout already in hand, no network of its own.
-	account, err := claudeAccountFor(ctx, env, repo, o.token, "", ref, checkout())
+	account, alias, err := claudeAccountChoice(ctx, env, repo, o.token, "", ref, checkout(), nameWritten)
 	if err != nil {
 		return nil, err
 	}
+	// The pair the launch's own line names (spec §7, D2099), recorded where the
+	// account is resolved: this is the one place a first run's account is read,
+	// and the alias is the launcher's display fact — it enters no task, and the
+	// reply is built from it in finishLaunch. Every attempt of a batch carries
+	// the plan's own pair, which is one account for all of them.
+	o.account = launchAccount{Name: account, Alias: alias}
 	root := checkoutRoot(ctx, repo)
 	rcp, mode, err := chooseRecipe(ctx, env, o.recipe, checkout, root, warn, forAttempts)
 	if err != nil {
@@ -2889,10 +2922,14 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 			return "", nil, err
 		}
 	}
-	account, err := claudeAccountFor(ctx, env, repo, o.token, "", ref, checkout())
+	account, alias, err := claudeAccountChoice(ctx, env, repo, o.token, "", ref, checkout(), nameWritten)
 	if err != nil {
 		return "", nil, err
 	}
+	// This launch's own pair, as resolveAttemptPlan records a first run's: a
+	// review-mode launch resolves its account from the flag like any fresh
+	// launch, and its line names what it read (spec §7, D2099).
+	o.account = launchAccount{Name: account, Alias: alias}
 	printRecipeNote(warn, rr, true)
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: ref, BaseBranch: base, Workflow: workflow, Task: text, Title: o.title, PlanTask: o.planTask,
 		RequestedBy: me, Batch: o.batch, Recipe: rr.taskRecipe(), ReviewPRs: append([]int(nil), o.pr...),
@@ -2924,15 +2961,17 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 // is available here, so --repo X --token N outside any checkout is held to the
 // same rule a checkout's own resolution would be.
 //
-// Every name this function reads out of the local config — the flag, the
-// stage key of rung 2 and the project default of rung 4 — resolves through the
-// file's aliases first (localcfg.Config.ResolveAccount, D2091, D2092), and
-// before any rule is asked of it: the account the run is given is the account
-// the alias stands for, the allow-list is asked about that account and never
-// the alias (F6), and the task carries the account rather than the name the key
-// holds (F4). A repo's own committed fugaro.yaml names an account and never an
-// alias — an alias lives in the owner's local config alone (D2090) — so rung 3
-// has nothing to resolve.
+// Every name this function reads out of the local config, and that a person
+// wrote there — a --token given to this invocation (nameOrigin's nameWritten,
+// and only that one: a name a record carries is the account's own and stands as
+// written), the stage key of rung 2 and the project default of rung 4 —
+// resolves through the file's aliases first (localcfg.Config.ResolveAccount,
+// D2091, D2092), and before any rule is asked of it: the account the run is
+// given is the account the alias stands for, the allow-list is asked about that
+// account and never the alias (F6), and the task carries the account rather
+// than the name the key holds (F4). A repo's own committed fugaro.yaml names an
+// account and never an alias — an alias lives in the owner's local config alone
+// (D2090) — so rung 3 has nothing to resolve.
 //
 // The mix rule is judged first, for every call and whatever stage was asked
 // for (config.CheckStageAccountMix): an api-key run may name one Claude
@@ -2996,22 +3035,55 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 // itself resolves the ref's fugaro.yaml after cloning it, and a launch onto a
 // shared project job whose own credential cannot be resolved is refused
 // outright (projectJobAgentAuth) rather than judged on a guess.
-func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref string, co *config.Config) (string, error) {
-	account, _, err := claudeAccountChoice(ctx, env, repo, flag, stage, ref, co)
+func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref string, co *config.Config, origin nameOrigin) (string, error) {
+	account, _, err := claudeAccountChoice(ctx, env, repo, flag, stage, ref, co, origin)
 	return account, err
 }
+
+// nameOrigin is where the name a launch hands the account walk came from, and
+// it decides one thing: whether the owner's alias block may answer it.
+//
+// The two are not the same kind of name. --token is written in this invocation,
+// a choice key of the local config like the stage keys and the project default
+// the walk reads beside it, so an alias resolves to the account it stands for
+// exactly as it does for those (D2091, D2092). A name a *record* carries — a
+// stored task's OAuthToken, the account a follow-up inherits from the run it
+// continues — is the account's own name: a launch resolved it before it was
+// written down, the format holds no alias at all (F4), and a name the alias
+// block answers to is a name this file has no account for any more (D2103).
+//
+// Reading such a name through the block again is wrong in both shapes that
+// carry one, and neither is a missing check: a task launched as it stands — a
+// repeat, a --retry — is placed in the job of its own variant
+// (JobName(slug, WorkflowVariant(workflow, spec.OAuthToken))), so the checks
+// would be asked about the alias' target while the credential mounted is the
+// recorded name's, and a follow-up would be moved onto that target, off the
+// account its previous run resolved, which is exactly what a follow-up may not
+// do on its own (D2098).
+type nameOrigin int
+
+const (
+	// nameWritten is a name a person wrote in this invocation (--token), which
+	// may name an alias as any other key of the local config may.
+	nameWritten nameOrigin = iota
+	// nameRecorded is a name a task or a chain record holds, which stands as
+	// written: the alias block may not answer it, and a name it answers to is
+	// refused at the walk below rather than resolved.
+	nameRecorded
+)
 
 // claudeAccountChoice is claudeAccountFor with the alias the account was read
 // through: "" when the name was the account's own, a committed
 // agent.oauth_token (D2090 — no alias lives outside the owner's local config)
-// or the unsuffixed default, and the alias itself when the flag, a stage key or
-// the project default named one. It is the resolution's own answer, carried out
-// of the walk rather than read again from the keys: the launch's line prints
-// the pair the account was really read through (docs/account-aliases/spec.md
-// §7, D2099), and a second reading of the same keys could name an alias the
-// walk never consulted. Callers that only need the account keep calling
-// claudeAccountFor.
-func claudeAccountChoice(ctx context.Context, env *cloudEnv, repo, flag, stage, ref string, co *config.Config) (string, string, error) {
+// or the unsuffixed default, and the alias itself when a written --token, a
+// stage key or the project default named one — never for a recorded name, which
+// resolves to nothing but itself (nameOrigin). It is the resolution's own
+// answer, carried out of the walk rather than read again from the keys: the
+// launch's line prints the pair the account was really read through
+// (docs/account-aliases/spec.md §7, D2099), and a second reading of the same
+// keys could name an alias the walk never consulted. Callers that only need the
+// account keep calling claudeAccountFor.
+func claudeAccountChoice(ctx context.Context, env *cloudEnv, repo, flag, stage, ref string, co *config.Config, origin nameOrigin) (string, string, error) {
 	a, refAuth, refAgent := agentAtRef(ctx, env, repo, ref)
 	// The auth a name is judged against, as the run resolves it: the document
 	// at the ref over the project layer when that could be read, and the
@@ -3124,14 +3196,27 @@ func claudeAccountChoice(ctx context.Context, env *cloudEnv, repo, flag, stage, 
 			return "", "", userErr("%s: %s", ps[0].Path, ps[0].Message)
 		}
 	}
-	// The flag is a name a person wrote (--token, or the account a follow-up
-	// inherits from its previous run), so it may name an alias exactly as a key
-	// does: it resolves before every check below, which is the same step and the
-	// same order the keys take above. alias is the alias the walk answers with,
-	// and it is set exactly where a name of the owner's local config decides the
-	// account — the flag here, a stage key or the project default below — so no
-	// other rung can leave one standing (rung 3 is a committed file's name, D2090).
-	name, alias := env.lc.ResolveAccount(flag)
+	// The flag is the name the walk starts from, and its origin decides whether
+	// the alias block may answer it (nameOrigin): --token is a name a person
+	// wrote, so it resolves before every check below, which is the same step and
+	// the same order the keys take above. A name a record carries is the account
+	// itself and stands as written (D2103), and a name the alias block answers
+	// to is then not an account of this file at all: the launch is refused here,
+	// where the record's own name is still the one being judged, rather than
+	// resolved into an account the record does not name.
+	//
+	// alias is the alias the walk answers with, and it is set exactly where a
+	// name of the owner's local config decides the account — a written --token
+	// here, a stage key or the project default below — so no other rung can
+	// leave one standing (rung 3 is a committed file's name, and a recorded name
+	// is no name of that config at all, D2090).
+	name, alias := flag, ""
+	if origin == nameWritten {
+		name, alias = env.lc.ResolveAccount(flag)
+	} else if target, viaAlias := env.lc.ResolveAccount(flag); viaAlias != "" {
+		return "", "", userErr("the Claude account %s this launch carries is an alias of this machine's config now, and a name a record carries is the account itself and never an alias: resolving it again would hold this launch to %s while the record still names %s — a task launched as it stands keeps the job that mounts the recorded account's token, and a follow-up would be moved off the account its previous run resolved, which is what a follow-up must not do on its own (D2098). Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called. Launch a new run, or name the account with --token, which may name an alias and resolves it to the account it stands for",
+			pluginwire.Printable(flag), pluginwire.Printable(target), pluginwire.Printable(flag))
+	}
 	if name == "" && stage != "" {
 		if account := stageAccountOf(env.lc, auth, stage); account != "" {
 			return account, stageAliasOf(env.lc, stage), nil
@@ -4466,7 +4551,7 @@ func retrySpec(ctx context.Context, env *cloudEnv, ref string) (string, *task.Sp
 	// what the runner places itself in the job by (matchJobName), so a task
 	// carrying no account is a run of the plain job the resolver's answer
 	// must not silently disagree with.
-	if _, err := claudeAccountFor(ctx, env, spec.Repo, spec.OAuthToken, "", spec.Ref, checkout()); err != nil {
+	if _, err := claudeAccountFor(ctx, env, spec.Repo, spec.OAuthToken, "", spec.Ref, checkout(), nameRecorded); err != nil {
 		return "", nil, err
 	}
 	// A report run is refused, the way a follow-up carrying one is
@@ -5597,15 +5682,15 @@ func credentialsServiceLaunchEnv(lc *localcfg.Config, job, repo, auth string, de
 	return []string{envCredentialsServiceURL + "=" + lc.CredentialsService.URL}
 }
 
-// envSlip is the variable a run reads its slip's id from. It is the launcher's
-// half of the name the runner claims the slip by (DS1.5, which reads its own
-// environment), and it is spelled here because passing the id to the job is
-// this task's (DS1.4). It is plain environment and never SecretEnv: the
-// backend that matters refuses SecretEnv outright
-// (backend.LaunchSpec.SecretEnv), and the slip's protection is its binding to
-// the run and to a claim secret rather than its secrecy — the run's own agent
-// can read the runner's environment anyway (F22, reconciliation).
-const envSlip = "FUGARO_SLIP"
+// envSlip is the variable a run reads its slip's id from, and this is an alias
+// of the name the runner claims the slip by (runner.SlipEnv, DS1.5): the
+// launcher writes it and the runner reads it, so it is one name and neither
+// side owns it. It is plain environment and never SecretEnv: the backend that
+// matters refuses SecretEnv outright (backend.LaunchSpec.SecretEnv), and the
+// slip's protection is its binding to the run and to a claim secret rather
+// than its secrecy — the run's own agent can read the runner's environment
+// anyway (F22, reconciliation).
+const envSlip = runner.SlipEnv
 
 // The grant call's own bounds. slipGrantTimeout bounds the whole of it — the
 // launcher's own mint and the call — so a service that hangs cannot eat the

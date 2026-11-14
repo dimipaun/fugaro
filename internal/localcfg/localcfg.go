@@ -33,6 +33,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -283,6 +284,24 @@ type Config struct {
 	// is what makes the value mountable, and a launcher who could publish one
 	// would be widening the grant.
 	WorkflowSecrets map[string]config.ProjectSecret `yaml:"workflow_secrets,omitempty"`
+	// BitbucketTokens are the typed Bitbucket access tokens the credentials
+	// service's proxy may serve, one record per token (spec §"Token record",
+	// D2350, D2351, R1): the name, type, coverage and expiry the operator
+	// states, with each token's value in the service's bundle and nowhere
+	// else. Only the owner sets them, here, never in fugaro.yaml: coverage is
+	// what decides which requests a token may carry, so a block a reviewed
+	// repository could write would be a reach the operator never gave.
+	// ValidateBitbucketTokens holds type and coverage to R1's agreement, which
+	// is asked at load and therefore by `fugaro validate`, before anything
+	// derives a node or writes a bundle entry from the records.
+	//
+	// Identity and verified_at are deliberately not members (R12): they are
+	// written by `fugaro creds set` into the creds state store, so a
+	// hand-edited config cannot state an identity a run would trust, and
+	// `expires` is the one expiry source a typed token has (R6) — the legacy
+	// bitbucket-token keeps its secret_expires entry, and no secret_expires
+	// entry is read for a record here.
+	BitbucketTokens []config.BitbucketToken `yaml:"bitbucket_tokens,omitempty"`
 	// BitbucketAPIRoots are the Bitbucket API roots the owner allow-lists
 	// (D474), for an installation that sends its Bitbucket token to a root of
 	// its own rather than to Bitbucket's: a cloud run refuses any
@@ -1549,6 +1568,30 @@ type Repo struct {
 	// where the spec is built, and the repository's agent.auth is read there
 	// too, live from the fugaro.yaml the runs read.
 	CredentialsServiceReady *bool `yaml:"credentials_service_ready,omitempty"`
+	// ClaudeAccounts are the accounts this repository's OWN runs may be served
+	// by, and they are the repository's own statement because a profile is not
+	// the only kind of job its runs land on: a per-repository job — every
+	// Bitbucket repository, and every repository no workflow sends to a shared
+	// one — has no profile to name its accounts in, and while the published
+	// accounts block was derived from the profiles alone such a repository
+	// could be admitted to no account at all (the credentials service's
+	// intersection came out empty and its runs were answered 503
+	// state_unavailable).
+	//
+	// An entry here adds this repository's canonical name to each account it
+	// names (projectpolicy.DeriveAccounts), which is the same admission a
+	// profile naming the account gives the repositories of ITS allow_repos:
+	// the account's own list is the bound, and this entry is refused at publish
+	// when it does not cover the repository. A profile and this key may both
+	// name one account; the union applies, and nothing already admitted is
+	// narrowed.
+	//
+	// It is operator-only local config, like claude_accounts and
+	// project_secrets themselves: never fugaro.yaml, never the project layer,
+	// never published as written. Provider must be set on an entry that names
+	// accounts, because the published entry is provider-qualified and this
+	// entry is the only place a per-repository job's provider is stated.
+	ClaudeAccounts []string `yaml:"claude_accounts,omitempty"`
 }
 
 // CredentialsServiceOn is the record as every reader of the switch judges it:
@@ -1566,6 +1609,31 @@ func (r Repo) CredentialsServiceOn() bool {
 // to its own copy of on, so two entries never share one record — the field is a
 // pointer only so that "no record at all" is a document a config can hold.
 func RecordSwitch(on bool) *bool { return &on }
+
+// PolicyRepoAccounts is the repositories whose own entries name Claude
+// accounts, as the published accounts block's derivation reads them
+// (projectpolicy.DeriveAccounts): keyed by the repository as this file spells
+// it (owner/name), each with the provider that qualifies it and the accounts it
+// names, in file order.
+//
+// The entry's provider is the one the repository was onboarded with, and it is
+// what turns owner/name into the canonical provider/owner/name an allow_repos
+// entry is written in. A repository entry naming accounts without one is
+// refused by validate (and again by the derivation), so the empty provider here
+// reaches no publish.
+func (c *Config) PolicyRepoAccounts() map[string]projectpolicy.RepoAccount {
+	if len(c.Repos) == 0 {
+		return nil
+	}
+	out := map[string]projectpolicy.RepoAccount{}
+	for repo, r := range c.Repos {
+		if len(r.ClaudeAccounts) == 0 {
+			continue
+		}
+		out[repo] = projectpolicy.RepoAccount{Provider: r.Provider, Accounts: r.ClaudeAccounts}
+	}
+	return out
+}
 
 // UsesVertex reports whether any repository the config records uses
 // Vertex AI.
@@ -2419,6 +2487,23 @@ func (c *Config) validate() error {
 	for _, p := range config.ValidateProjectSecrets(c.ProjectSecrets) {
 		bad("%s: %s", p.Path, p.Message)
 	}
+	// bitbucket_tokens' form rules are config.ValidateBitbucketTokens'
+	// (R1's agreement of type and coverage); the date is checked here, beside
+	// secret_expires', because the layout an operator writes is this file's
+	// (SecretExpiryLayout) and config cannot reach it. Both are asked at load
+	// rather than at the first proxied call: a record whose halves disagree
+	// would otherwise be probed as one type and selected as another.
+	for _, p := range config.ValidateBitbucketTokens(c.BitbucketTokens) {
+		bad("%s: %s", p.Path, p.Message)
+	}
+	for i := range c.BitbucketTokens {
+		if c.BitbucketTokens[i].Expires == "" {
+			continue
+		}
+		if _, err := time.Parse(SecretExpiryLayout, c.BitbucketTokens[i].Expires); err != nil {
+			bad("%s.expires %q is not a date (YYYY-MM-DD)", config.BitbucketTokenPath(c.BitbucketTokens, i), c.BitbucketTokens[i].Expires)
+		}
+	}
 	// workflow_secrets' name-only rules are config.ValidateWorkflowSecrets';
 	// the two that read the operator's providers can only be asked here, where
 	// lc.Providers is in hand (D1261). They are CheckWorkflowProviderSecrets'
@@ -2620,6 +2705,14 @@ func (c *Config) validate() error {
 			if !config.WorkflowNameRE.MatchString(w) {
 				bad("repos.%s: workflow %q is not a workflow name", repo, w)
 			}
+		}
+		for _, name := range r.ClaudeAccounts {
+			if msg := config.ValidClaudeAccountRef(name); msg != "" {
+				bad("repos.%s.claude_accounts: %s", repo, msg)
+			}
+		}
+		if len(r.ClaudeAccounts) > 0 && r.Provider == "" {
+			bad("repos.%s.claude_accounts: this repository names accounts and no provider, and a published account entry is provider-qualified (owner/name is published as provider/owner/name): write the repository's provider here, which is the only place a per-repository job's provider is stated", repo)
 		}
 	}
 	validateWorkspace(c, bad)

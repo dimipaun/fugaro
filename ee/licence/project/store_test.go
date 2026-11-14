@@ -85,9 +85,9 @@ func newMinted(t *testing.T) minted {
 
 // key mints one key text for the claim set a project key starts from, with
 // mutate applied where a test moves one claim.
-func (m minted) key(t *testing.T, mutate func(*licence.ClaimsV1)) string {
+func (m minted) key(t *testing.T, mutate func(*licence.Claims)) string {
 	t.Helper()
-	claims := licence.ClaimsV1{
+	claims := licence.Claims{
 		V:            1,
 		KID:          testKeyID,
 		KeyID:        "lk_test_0001",
@@ -163,9 +163,9 @@ func TestProjectStoreKeepsTwoKeys(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	m := newMinted(t)
-	long := m.key(t, func(c *licence.ClaimsV1) { c.KeyID = "lk_test_long"; c.PaidThrough = at(300) })
-	short := m.key(t, func(c *licence.ClaimsV1) { c.KeyID = "lk_test_short"; c.PaidThrough = at(30) })
-	third := m.key(t, func(c *licence.ClaimsV1) { c.KeyID = "lk_test_third"; c.PaidThrough = at(90) })
+	long := m.key(t, func(c *licence.Claims) { c.KeyID = "lk_test_long"; c.PaidThrough = at(300) })
+	short := m.key(t, func(c *licence.Claims) { c.KeyID = "lk_test_short"; c.PaidThrough = at(30) })
+	third := m.key(t, func(c *licence.Claims) { c.KeyID = "lk_test_third"; c.PaidThrough = at(90) })
 
 	if keys, err := r.store.Keys(ctx); err != nil || len(keys) != 0 {
 		t.Fatalf("a project with no key answers %d keys and %v, want none and no error: the no-key state is the store being empty (D2143)", len(keys), err)
@@ -265,6 +265,64 @@ func TestProjectStoreKeepsTwoKeys(t *testing.T) {
 	}
 }
 
+// TestTheLaterWriteWinsTwoKeysOfTheSameTerm is the other half of T26's "latest
+// valid one". Two keys paid through the same day are both the latest, and the
+// object holds them in the order they were written -- Install appends, oldest
+// first -- so the write that came last is the one that applies. A reissue can
+// carry exactly the term of the key it replaces: a seat change reissues with
+// the term's own end (design/key-signing-service.md section 5.3), and the key
+// that states the seats the customer bought is the reissue. Decided the other
+// way, a seat change is a silent no-op -- the object holds the new key, the
+// installation runs on the old one, and the renewal sends the new key's secret
+// beside the old key's id, which the server refuses.
+func TestTheLaterWriteWinsTwoKeysOfTheSameTerm(t *testing.T) {
+	ctx := context.Background()
+	m := newMinted(t)
+	five := m.key(t, func(c *licence.Claims) { c.KeyID, c.Seats = "lk_test_five_seats", 5 })
+	eight := m.key(t, func(c *licence.Claims) { c.KeyID, c.Seats = "lk_test_eight_seats", 8 })
+	for _, tc := range []struct{ first, second, want string }{
+		{five, eight, "lk_test_eight_seats"},
+		{eight, five, "lk_test_five_seats"},
+	} {
+		r := newRig(t)
+		for _, key := range []string{tc.first, tc.second} {
+			if err := r.store.Install(ctx, []byte(key)); err != nil {
+				t.Fatalf("installing a key: %v", err)
+			}
+		}
+		if keys, err := r.store.Keys(ctx); err != nil || len(keys) != 2 {
+			t.Fatalf("the overlap holds %d keys (%v), want both: nothing an install does deletes a key", len(keys), err)
+		}
+		applied, err := r.store.Active(ctx, testNow, m.ring, testFirebaseProject, nil)
+		if err != nil {
+			t.Fatalf("Active over two keys of the same term: %v", err)
+		}
+		if applied.Claims.KeyID != tc.want {
+			t.Errorf("with the key written last being %s, Active answers %q, want it: of two keys paid through the same day the later write is the one the installation runs on (T26)", tc.want, applied.Claims.KeyID)
+		}
+	}
+
+	// The revocation keeps its teeth one term either way: it is weighed against
+	// the key that applies, whichever write that was, and the key beside it does
+	// not stand in (a revocation names one key_id and is not undone here).
+	r := newRig(t)
+	for _, key := range []string{five, eight} {
+		if err := r.store.Install(ctx, []byte(key)); err != nil {
+			t.Fatalf("installing a key: %v", err)
+		}
+	}
+	if err := r.store.RecordCheck(ctx, at(1), CheckRevoked, "lk_test_eight_seats"); err != nil {
+		t.Fatalf("recording a revocation: %v", err)
+	}
+	applied, err := r.store.Active(ctx, at(2), m.ring, testFirebaseProject, nil)
+	if err != nil {
+		t.Fatalf("Active after the revocation: %v", err)
+	}
+	if applied.Claims.KeyID != "lk_test_eight_seats" || !applied.Revoked {
+		t.Errorf("with the applied key of two of the same term revoked, Active answers %q (revoked %t), want that key and Free", applied.Claims.KeyID, applied.Revoked)
+	}
+}
+
 // TestTheStoreRefusesWhatItCannotRead pins the guard an install stands on: an
 // object of another version, or one that is not this store's shape, is refused
 // rather than read as far as it parses and then replaced -- the object is the
@@ -348,8 +406,8 @@ func TestTheStoreNeverDropsAConcurrentWrite(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	m := newMinted(t)
-	renewed := m.key(t, func(c *licence.ClaimsV1) { c.KeyID = "lk_test_renewed"; c.PaidThrough = at(300) })
-	mine := m.key(t, func(c *licence.ClaimsV1) { c.KeyID = "lk_test_mine"; c.PaidThrough = at(30) })
+	renewed := m.key(t, func(c *licence.Claims) { c.KeyID = "lk_test_renewed"; c.PaidThrough = at(300) })
+	mine := m.key(t, func(c *licence.Claims) { c.KeyID = "lk_test_mine"; c.PaidThrough = at(30) })
 
 	// The renewal lands between this writer's read and its write, which is what
 	// mutate has to notice: the closure runs after the read and before commit.
@@ -414,7 +472,7 @@ func TestTheStoreNeverLogsAKey(t *testing.T) {
 	r := newRig(t)
 	m := newMinted(t)
 	const noteCanary = "a-note-no-store-output-may-name"
-	key := m.key(t, func(c *licence.ClaimsV1) { c.Note = noteCanary })
+	key := m.key(t, func(c *licence.Claims) { c.Note = noteCanary })
 
 	if err := r.store.Install(ctx, []byte(key)); err != nil {
 		t.Fatalf("installing a key: %v", err)
@@ -474,7 +532,7 @@ func TestTheStoreNeverLogsAKey(t *testing.T) {
 	// not written again -- a key already held is not installed twice -- so this
 	// is a second, different text.
 	r.gcs.DenyWrites(testBucket, Object)
-	fresh := m.key(t, func(c *licence.ClaimsV1) { c.KeyID = "lk_test_denied" })
+	fresh := m.key(t, func(c *licence.Claims) { c.KeyID = "lk_test_denied" })
 	if err := r.store.Install(ctx, []byte(fresh)); !errors.Is(err, ErrObject) {
 		t.Fatalf("a write the bucket refused = %v, want ErrObject", err)
 	} else if piece, found := carries(err.Error(), fresh, key); found {
@@ -515,7 +573,7 @@ func TestAViewerReadsTheStateNotTheKey(t *testing.T) {
 		hashCanary = "the-renewal-secrets-hash-no-viewer-may-read"
 	)
 	daily := "P1D"
-	key := m.key(t, func(c *licence.ClaimsV1) {
+	key := m.key(t, func(c *licence.Claims) {
 		c.KeyID = "lk_test_viewer"
 		c.Seats = 7
 		c.CheckInterval = &daily
@@ -568,7 +626,7 @@ func TestAViewerReadsTheStateNotTheKey(t *testing.T) {
 	t.Run("the project's key wins over the machine's", func(t *testing.T) {
 		// The machine holds a key that would apply longer: the project's still
 		// answers, and the view says which store did (D2137).
-		machine := m.key(t, func(c *licence.ClaimsV1) { c.Seats = 99; c.PaidThrough = at(390) })
+		machine := m.key(t, func(c *licence.Claims) { c.Seats = 99; c.PaidThrough = at(390) })
 		view, err := r.store.View(ctx, at(30), m.ring, testFirebaseProject, [][]byte{[]byte(machine)})
 		if err != nil {
 			t.Fatalf("View with a differing machine key: %v", err)
@@ -611,7 +669,7 @@ func TestAViewerReadsTheStateNotTheKey(t *testing.T) {
 		if err := refused.store.Install(ctx, []byte(stranger.key(t, nil))); err != nil {
 			t.Fatalf("installing a key signed by another keypair: %v", err)
 		}
-		machine := m.key(t, func(c *licence.ClaimsV1) { c.Seats = 99 })
+		machine := m.key(t, func(c *licence.Claims) { c.Seats = 99 })
 
 		applied, err := refused.store.Active(ctx, at(30), m.ring, testFirebaseProject, [][]byte{[]byte(machine)})
 		if err == nil {
@@ -681,7 +739,7 @@ func TestAViewerReadsTheStateNotTheKey(t *testing.T) {
 		// What it does not carry is the revocation: that is about the key_id the
 		// check named, so a reissue after a leak is free of the leaked key's
 		// answer.
-		fresh := m.key(t, func(c *licence.ClaimsV1) {
+		fresh := m.key(t, func(c *licence.Claims) {
 			c.KeyID = "lk_test_installed_after_a_check"
 			c.PaidThrough = at(390)
 		})
@@ -715,8 +773,8 @@ func TestAViewerReadsTheStateNotTheKey(t *testing.T) {
 		// one that applies: the other one has not been checked and cannot stand
 		// in -- what answers is the key the last check was about.
 		revoked := newRig(t)
-		first := m.key(t, func(c *licence.ClaimsV1) { c.KeyID = "lk_test_first"; c.PaidThrough = at(30) })
-		second := m.key(t, func(c *licence.ClaimsV1) { c.KeyID = "lk_test_second"; c.PaidThrough = at(300) })
+		first := m.key(t, func(c *licence.Claims) { c.KeyID = "lk_test_first"; c.PaidThrough = at(30) })
+		second := m.key(t, func(c *licence.Claims) { c.KeyID = "lk_test_second"; c.PaidThrough = at(300) })
 		for _, key := range []string{first, second} {
 			if err := revoked.store.Install(ctx, []byte(key)); err != nil {
 				t.Fatalf("installing a key: %v", err)

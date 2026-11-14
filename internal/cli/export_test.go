@@ -22,11 +22,17 @@ func resetExtend() {
 }
 
 // setPaidNames replaces the paid-command list and returns the restore. A test
-// needs it to install a stub for a name no core command holds.
+// needs it to install a stub for a name no core command holds. Every name it
+// installs gets a stub: the list is the test's own, and a name a test names is
+// one it means the build to answer for (noStub is the released list's fact
+// about `licence`, which a test's own names are not).
 func setPaidNames(names []string) func() {
-	prev := paidCommandNames
-	paidCommandNames = names
-	return func() { paidCommandNames = prev }
+	prev := paidCommands
+	paidCommands = nil
+	for _, name := range names {
+		paidCommands = append(paidCommands, paidCommand{name: name})
+	}
+	return func() { paidCommands = prev }
 }
 
 // coreRootPaths is the released tree's command paths with nothing registered

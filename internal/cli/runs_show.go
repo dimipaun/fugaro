@@ -24,6 +24,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -179,6 +180,18 @@ func runRunsShow(cmd *cobra.Command, o *runsShowOptions, ref string) error {
 	}
 	repo, err := showRunRepo(ctx, env, s, rec)
 	if err != nil {
+		return err
+	}
+	// The role check (plan task RS6a) reads the run's own repository, which the
+	// record or the stored task names (showRunRepo) and the slug's derived
+	// provider turns canonical, and it runs before anything is printed. A run
+	// whose repository this machine cannot name is judged at project scope
+	// rather than let through (requireProjectAccess).
+	if canonical, ok := accessRunRepo(s.Slug(), repo); ok {
+		if err := requireAccess(ctx, env, accesslib.ActionViewRepo, canonical, "nothing was read"); err != nil {
+			return err
+		}
+	} else if err := requireProjectAccess(ctx, env, accesslib.ActionViewRepo, s.Slug(), "nothing was read"); err != nil {
 		return err
 	}
 	lim, err := chainLimitsOf(ctx, env, s.Slug(), s.RunID(), cmd.ErrOrStderr())

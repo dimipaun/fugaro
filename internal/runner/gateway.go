@@ -537,15 +537,20 @@ func (r *run) serviceUpstream() (gateway.Upstream, error) {
 		// should stop where the reason is known rather than there.
 		return gateway.Upstream{}, errors.New("starting the gateway: a cascade run has no Cloud Run job name to report")
 	}
-	return gateway.Upstream{
-		Kind:    gateway.KindService,
-		BaseURL: url,
-		Service: &gateway.Service{
-			Job:        job,
-			RunIDToken: sess.IDToken(),
-			IDToken:    func(ctx context.Context) (string, error) { return metadataIDToken(ctx, r.d.Env, url) },
-		},
-	}, nil
+	svc := &gateway.Service{
+		Job:        job,
+		RunIDToken: sess.IDToken(),
+		IDToken:    func(ctx context.Context) (string, error) { return metadataIDToken(ctx, r.d.Env, url) },
+	}
+	// The slip this run claimed at its start (DS1.5): the gateway presents it
+	// on every call it proxies, which is how a cascade run is served a
+	// per-user, pool-owned or shared credential at all (D1933, R9). A run
+	// that holds none — an installation whose service has no slip routes, a
+	// claim that did not land — sends none, and the service decides.
+	if hold := r.slipHold(); hold != nil {
+		svc.SlipID, svc.SlipClaim = hold.id, hold.secret
+	}
+	return gateway.Upstream{Kind: gateway.KindService, BaseURL: url, Service: svc}, nil
 }
 
 // execName is what a local invocation is called, for the sentences that have

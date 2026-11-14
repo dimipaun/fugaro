@@ -117,6 +117,18 @@ func (c *Config) Shared() *Config {
 	// who could write this key into the runs bucket's shared file would be
 	// choosing where a run sends the Bitbucket token.
 	s.BitbucketAPIRoots = nil
+	// BitbucketTokens is operator-only for project_secrets' reason, and the
+	// drop carries one of its own that is sharper: the block is what a request
+	// is matched against — a record's coverage decides which token carries
+	// which call (R1, D2351) — so a launcher who could write it into the runs
+	// bucket's shared file would be stating its own token's reach, the one
+	// fact the operator's local config is the only writer of. It travels to a
+	// run through the policy node instead, and it is dropped here besides so
+	// that an older CLI's strict ParseShared never meets the key at all: a
+	// shared file carrying it stops an un-upgraded teammate with "field
+	// bitbucket_tokens not found in type localcfg.Config", a lockout over a
+	// block none of their runs reads.
+	s.BitbucketTokens = nil
 	// CloneURLs is the owner's policy too, and travels the same way: `fugaro
 	// project policy publish` copies it into the policy node, which the runner
 	// reads and fails closed on. A launcher who could write this key into the
@@ -259,18 +271,32 @@ func (c *Config) Shared() *Config {
 	s.WorkspacePin = WorkspacePin{}
 	s.WorkspaceMembers = nil
 	s.WorkspaceCap = nil
-	s.Repos = withoutBaseBranches(c.Repos)
+	s.Repos = withoutRepoLocalKeys(c.Repos)
 	return &s
 }
 
-// withoutBaseBranches is a copy of repos with every base_branch cleared.
-func withoutBaseBranches(repos map[string]Repo) map[string]Repo {
+// withoutRepoLocalKeys is a copy of repos with the two keys of an entry that
+// are never published cleared: base_branch, which comes from the checkout's
+// reviewed fugaro.yaml, and claude_accounts, which is the operator's own
+// admission statement — the repository-level half of the trust anchor T1 keeps
+// in the operator-only local config (see Shared's own note on claude_accounts,
+// and named-oauth-tokens.md §3).
+//
+// claude_accounts is stripped for the reason the top-level block is: the file
+// is written into the runs bucket, which any launcher of the project can write,
+// so an entry published here would let one add a repository to an account's
+// admission by editing that file — and the machine that then published the
+// policy would derive an admission the owner never made. ParseShared refuses
+// the key besides, because a shared config carrying one was not written by the
+// converge.
+func withoutRepoLocalKeys(repos map[string]Repo) map[string]Repo {
 	if repos == nil {
 		return nil
 	}
 	out := make(map[string]Repo, len(repos))
 	for k, r := range repos {
 		r.BaseBranch = ""
+		r.ClaudeAccounts = nil
 		out[k] = r
 	}
 	return out
@@ -300,7 +326,7 @@ func MergeShared(published, local *Config) *Config {
 	if !SameInstallation(published, local) {
 		return out
 	}
-	out.Repos = withoutBaseBranches(mergeRepoRecords(published.Repos, out.Repos))
+	out.Repos = withoutRepoLocalKeys(mergeRepoRecords(published.Repos, out.Repos))
 	out.BaseImages = unionMaps(published.BaseImages, local.BaseImages)
 	out.ModelPrices = unionMaps(published.ModelPrices, local.ModelPrices)
 	out.ComputePrices = unionMaps(published.ComputePrices, local.ComputePrices)

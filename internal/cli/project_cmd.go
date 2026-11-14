@@ -122,11 +122,18 @@ func newProjectPolicyPublishCmd() *cobra.Command {
 			"config/policy/repos children are removed too, shared node or not: a delete\n" +
 			"that failed on the shared node leaves them behind, and this is what clears\n" +
 			"them.\n\n" +
-			"Each repository an account a profile names admits also gets a child under\n" +
+			"Each repository an account admits also gets a child under\n" +
 			"config/policy/repos/$slug, holding the NAMES of its admitted accounts and\n" +
-			"nothing else: the accounts published are the ones some profile names,\n" +
-			"qualified by that profile's provider, so an account this config defines but\n" +
-			"no profile names admits nothing a run could read. The children are narrowed before the shared node and widened\n" +
+			"nothing else. An account is admitted by the profiles that name it, each\n" +
+			"qualified by its profile's provider, and by a repository's own\n" +
+			"repos.<owner/name>.claude_accounts, qualified by that entry's provider:\n" +
+			"an account this config defines but neither names admits nothing a run\n" +
+			"could read — a repository whose runs are not on a profile job (a\n" +
+			"per-repository job, which is every Bitbucket repository) names its\n" +
+			"accounts there, because a profile is not the only kind of job its runs\n" +
+			"land on. The two are a union, so nothing a profile admits is narrowed by\n" +
+			"a repository's entry.\n" +
+			"The children are narrowed before the shared node and widened\n" +
 			"after it, so a publish that stops between the two writes leaves the installation tighter than the config asked, never looser.\n" +
 			"When the node this publish writes carries a member an older Fugaro refuses\n" +
 			"whole — a credentials\n" +
@@ -208,6 +215,14 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 	agent := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))
 	lc, db, configPath, err := openProjectBudget(ctx, o.cloud, "nothing was published")
 	if err != nil {
+		return err
+	}
+	// The node is what every run of the project is admitted by, so publishing
+	// it — and deleting it, which the same command does — is a project-level
+	// write: admin at project scope (F19). It is asked before the rules and
+	// before every read of the node, so a caller whose roles do not hold it
+	// reads the sentence naming the role rather than anything about the node.
+	if err := settingsAccessGate(ctx, lc, "fugaro project policy publish"); err != nil {
 		return err
 	}
 	if err := requirePolicyRules(ctx, db, lc); err != nil {
@@ -871,7 +886,7 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	// a profile admitting a repository one of its accounts does not cover is
 	// refused before anything is written.
 	profiles := policyProfiles(lc)
-	accounts, err := projectpolicy.DeriveAccounts(profiles, lc.ClaudeAccounts, lc.ProjectSecrets)
+	accounts, err := projectpolicy.DeriveAccounts(profiles, lc.ClaudeAccounts, lc.ProjectSecrets, lc.PolicyRepoAccounts())
 	if err != nil {
 		return nil, false, userErr("%v", err)
 	}
@@ -2581,10 +2596,15 @@ func profilesText(p *projectpolicy.Policy) string {
 }
 
 // accountsText is the policy's account names as one line, for the diff's
-// summary row (the per-account lines carry the repositories).
+// summary row (the per-account lines carry the repositories). The empty row
+// names BOTH sources of the block, because either one alone may fill it: the
+// profiles that name an account, and the repositories whose own
+// repos.<owner/name>.claude_accounts does (DeriveAccounts). A row that named
+// the profiles only would tell an operator whose per-repository job is the
+// whole point of the entry that there is nothing to look for.
 func accountsText(p *projectpolicy.Policy) string {
 	if len(p.Accounts) == 0 {
-		return "none (no profile serves a Claude account)"
+		return "none (no profile and no repository entry serves a Claude account)"
 	}
 	return strings.Join(p.AccountNames(), ", ")
 }

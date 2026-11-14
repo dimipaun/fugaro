@@ -1114,7 +1114,7 @@ func TestUnknownAndExpiredDeviceCodesAnswerAlike(t *testing.T) {
 // somebody controls that project, so it is refused before any claim in it is
 // read, and the refusal repeats neither the token nor the audience that failed
 // it.
-func TestTokenFromAnotherProjectIsRefused(t *testing.T) {
+func TestSignInFlowTokenFromAnotherProjectIsRefused(t *testing.T) {
 	f, spy := subscribed(t)
 	verifier := freshVerifier(t)
 	token := signIDToken(t, signInKey(), licenceKeyID, "RS256", f.licenceClaims(anotherProject))

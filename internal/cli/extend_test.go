@@ -47,13 +47,16 @@ func commandPaths(root *cobra.Command) []string {
 
 // builtTreePaths is the tree the CLI builds with nothing registered: the
 // released tree plus a stub for every paid name the core no longer holds the
-// code for. `coordinator` is that name today -- its library and command moved
-// to ee/ in E2.1b -- and a registration is what replaces the stub, so a test
-// that compares a built tree against a baseline asks this rather than spelling
-// the stub out, which is how the baseline went stale when the move landed.
+// code for and a core build may name -- stubCommandNames, which is every paid
+// name but `licence`, whose absence from an untagged build is D524's whole
+// point (F6) and whose stub would be the licence notice D523 forbids.
+// `coordinator` is a stub name today -- its library and command moved to ee/
+// in E2.1b -- and a registration is what replaces the stub, so a test that
+// compares a built tree against a baseline asks this rather than spelling the
+// stub out, which is how the baseline went stale when the move landed.
 func builtTreePaths() []string {
 	paths := coreRootPaths()
-	for _, name := range paidCommandNames {
+	for _, name := range stubCommandNames() {
 		if !coreSurface().rootCommands[name] {
 			paths = append(paths, "fugaro "+name)
 		}

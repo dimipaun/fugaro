@@ -264,10 +264,32 @@ func newLsCmd() *cobra.Command {
 			"next page. The id is the run_id --json carries; one the listing does not\n" +
 			"hold is refused rather than answered with an empty page, which reads as no\n" +
 			"more runs. Neither flag goes with --watch, which redraws the whole listing.\n\n" +
-			"--state STATE lists only runs in that state, matched against the status --json\n" +
-			"carries: the `halted (run_cap)` cell is --state halted, and --help lists the\n" +
-			"states the flag takes. A run's state is in its result.json, so this filter\n" +
-			"reads every run it filters -- it narrows the listing, never the reads.\n\n" +
+			"--state STATE lists only the runs in that state, one of two vocabularies.\n" +
+			"The first is the run's own state, matched against the status --json carries:\n" +
+			"the `halted (run_cap)` cell is --state halted. The second is the state of\n" +
+			"the pull request the run went to: live (a run is going on it), ready (no\n" +
+			"run is going and it waits only on a merge) or stalled (it had a run, no run\n" +
+			"is going, and it is not ready). That state is the pull request's and not a\n" +
+			"row's: the listing groups the runs it read by the pull request they carry,\n" +
+			"takes the newest one of each that says what the pull request is -- the run\n" +
+			"whose outcome is ready or draft, so a rebase or a review that left it as\n" +
+			"it found it does not decide -- and keeps the rows of the pull requests in\n" +
+			"the state asked for; --json carries it as `pr_state` on every row that has\n" +
+			"a pull request, and leaves it out of the rows that have none. It is the\n" +
+			"last state a run recorded of the pull request and not the pull request's\n" +
+			"state now: nothing here calls the forge, so a pull request merged or\n" +
+			"closed after the run that left it ready still reads ready, and one\n" +
+			"closed after a draft still reads stalled. A review run's pull request is\n" +
+			"the one its task reviews, which its record names only when the review\n" +
+			"ends: while it is going, its row reads that pull request's state though\n" +
+			"its pr is still empty. A run's own state is in its result.json, so this\n" +
+			"filter reads every run it filters -- it narrows the listing, never the\n" +
+			"reads.\n\n" +
+			"The fourth state of a pull request, orphan (no run ever produced or follows\n" +
+			"it), is one no listing of runs can name: such a pull request has no run and\n" +
+			"so no row here, and telling one from every other would take a call to the\n" +
+			"forge, which a listing of runs does not make -- --state orphan is refused\n" +
+			"for that reason rather than answered with an empty listing.\n\n" +
 			"--debt lists only the runs filed from a triage deferral: a task whose own spec\n" +
 			"is marked debt, which is work a run's review left behind rather than work\n" +
 			"somebody asked for. Like --state it reads the runs it filters, since the\n" +
@@ -292,7 +314,7 @@ func newLsCmd() *cobra.Command {
 	f.BoolVar(&o.mine, "mine", false, "only runs you requested")
 	f.StringVar(&o.since, "since", lsDefaultSince, "only runs started within this long ("+lsDefaultSince+", 36h, 90m; 0 for all)")
 	f.StringVar(&o.batch, "batch", "", "only runs of this batch")
-	f.StringVar(&o.state, "state", "", "only runs in this state ("+strings.Join(lsStates, ", ")+")")
+	f.StringVar(&o.state, "state", "", "only runs in this state, a run's or its pull request's ("+strings.Join(lsStateWords(), ", ")+")")
 	f.StringVar(&o.groupBy, "group-by", "", "group the listing by one field ("+strings.Join(lsGroupings, ", ")+")")
 	f.BoolVar(&o.debt, "debt", false, "only runs filed from a triage deferral (a task marked debt)")
 	f.IntVar(&o.limit, "limit", 0, "print only the newest N rows (0, the default, is every row of the window; the totals stay the window's)")
@@ -343,8 +365,11 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 	if o.watch && (cmd.Flags().Changed("limit") || cmd.Flags().Changed("after")) {
 		return userErr("--watch redraws the whole listing until every run has settled: --limit and --after don't go with it")
 	}
-	if o.state != "" && !slices.Contains(lsStates, o.state) {
-		return userErr("--state %q: use one of %s", o.state, strings.Join(lsStates, ", "))
+	if o.state == prStateOrphan {
+		return userErr("--state orphan: no run produced or follows such a pull request, so no listing of runs holds a row of it -- only a forge can name one")
+	}
+	if o.state != "" && !slices.Contains(lsStateWords(), o.state) {
+		return userErr("--state %q: use one of %s", o.state, strings.Join(lsStateWords(), ", "))
 	}
 	if o.groupBy != "" && !slices.Contains(lsGroupings, o.groupBy) {
 		return userErr("--group-by %q: use one of %s", o.groupBy, strings.Join(lsGroupings, ", "))
@@ -379,6 +404,10 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 			return userErr("--mine: %v", err)
 		}
 	}
+	gate, err := accessRowsGate(ctx, env)
+	if err != nil {
+		return err
+	}
 	out := cmd.OutOrStdout()
 	clear := o.watch && !o.asJSON && isTTY(out)
 	// The image warnings are read once: they change about daily, and
@@ -392,6 +421,14 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 		rows, err := loadRows(ctx, env, f, now)
 		if err != nil {
 			return err
+		}
+		// The roles are read once, before the loop (gate), and each redraw
+		// filters the rows it just read: the history a reader sees is the
+		// history of the repositories it holds a role in (D1586's read half),
+		// and what that leaves out is said rather than dropped in silence.
+		var dropped int
+		if rows, dropped = gate.listed(rows); dropped > 0 {
+			fmt.Fprintf(f.warn, "note: %d of the runs read are of repositories this credential holds no role in, and are not listed here: the roles come from the credential (finding F21), and '%s user ls --repo <repo>' prints what it holds there\n", dropped, selfCommand())
 		}
 		page, err := pageRows(rows, o.after, o.limit)
 		if err != nil {
@@ -463,9 +500,13 @@ func lsSlugs(ctx context.Context, env *cloudEnv, o *lsOptions, warn io.Writer) (
 // error row with a warning. Any other failed read but absence fails the whole
 // listing: ls never shows a status guessed from a partial read.
 //
-// It reads every run's objects first, keeps the runs f.pr selects, and
-// only then asks the backend about executions, so a PR's listing costs
-// no backend call for the runs off it.
+// It reads every run's objects first, keeps the runs f.pr selects -- and the
+// review run going on that pull request, which the fold needs and the listing
+// does not print -- and only then asks the backend about executions, so a PR's
+// listing costs no backend call for the runs off it. What --pr and --debt leave
+// out is dropped after the fold and never before it: a state is the pull
+// request's, read from every run of it the listing read, so the rows they print
+// carry the state their pull request has and not the state of the selection.
 func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]runview.Row, error) {
 	warn := f.warn
 	if warn == nil {
@@ -512,15 +553,27 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 		}
 	}
 	if f.pr != 0 {
-		runs = slices.DeleteFunc(runs, func(r runObjects) bool { return !onPR(r.in, f.pr) })
-	}
-	// The debt filter reads the task and nothing else, and it is applied here
-	// rather than beside --mine, --batch and --state because those read the
-	// row: the mark is task.Spec.Debt, which no row carries, and a run whose
-	// task.json is unreadable has no task to say it is one -- it is left out
-	// rather than guessed into a listing of the work nobody asked for.
-	if f.debt {
-		runs = slices.DeleteFunc(runs, func(r runObjects) bool { return r.in.Task == nil || !r.in.Task.Debt })
+		// The pull request's own runs, and the review run going on it: while a
+		// review is going its task is the only thing that places it on a pull
+		// request (its record names one only at the artifact stage, see the
+		// fold below), and the state of a pull request is read from every run
+		// of it, so a review going is what makes it live. The review row is
+		// kept for the fold alone and dropped before the listing prints: --pr
+		// lists the pull request's own runs, and a review of it is not one of
+		// them (stateOnly). Keeping it here rather than joining the whole
+		// window is what leaves --pr costing no backend call for the runs off
+		// the pull request.
+		kept := runs[:0]
+		for _, r := range runs {
+			switch {
+			case onPR(r.in, f.pr):
+				kept = append(kept, r)
+			case reviewPR(r.in.Task) == f.pr:
+				r.stateOnly = true
+				kept = append(kept, r)
+			}
+		}
+		runs = kept
 	}
 	if len(runs) == 0 {
 		return []runview.Row{}, nil
@@ -568,9 +621,55 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 		return nil, remote(err)
 	}
 
+	// The pull request each review run of the window is on, by run id: a
+	// review run's record carries no pull request until the artifact stage
+	// writes one, which is what ends the review
+	// (internal/runner/reviewartifact.go), so while the review is going its
+	// task is the only thing that says which pull request it is on, and its
+	// artifact is one verdict about one head (reviewPR).
+	reviewing := map[string]int{}
+	for i := range rows {
+		if pr := reviewPR(runs[i].in.Task); pr != 0 {
+			reviewing[rows[i].RunID] = pr
+		}
+	}
+	// The state of each pull request the window holds, set before the filters
+	// below pick the page: a state is the pull request's, read from every run
+	// of it the listing read, so it is the same on every row of a page as on
+	// the rows the filters below dropped.
+	markPRStates(rows, reviewing)
+	// A review run --pr kept for the fold alone is not a row it prints: the
+	// state every row of the pull request carries is read from it, and the
+	// review itself is not one of the pull request's own runs. rows is runs
+	// joined one for one, so the mark travels by index.
+	if f.pr != 0 {
+		kept := rows[:0]
+		for i, r := range rows {
+			if !runs[i].stateOnly {
+				kept = append(kept, r)
+			}
+		}
+		rows = kept
+	}
+	// The debt filter reads the task and nothing else, and it is applied after
+	// the fold rather than beside the reads because the mark is
+	// task.Spec.Debt, which no row carries: the runs it leaves out are still
+	// runs of the pull requests its rows carry, so their state is read from
+	// them too. A run whose task.json is unreadable has no task to say it is
+	// one -- it is left out rather than guessed into a listing of the work
+	// nobody asked for.
+	if f.debt {
+		kept := rows[:0]
+		for i, r := range rows {
+			if runs[i].in.Task != nil && runs[i].in.Task.Debt {
+				kept = append(kept, r)
+			}
+		}
+		rows = kept
+	}
 	rows = slices.DeleteFunc(rows, func(r runview.Row) bool {
 		return (f.mine != "" && r.RequestedBy != f.mine) || (f.batch != "" && r.Batch != f.batch) ||
-			(f.state != "" && string(r.Status) != f.state)
+			(f.state != "" && !rowInState(r, f.state))
 	})
 	// The listing's order, which --after's cursor is defined by: created
 	// descending, then the run reference descending. Two runs minted in the
@@ -632,6 +731,17 @@ func onPR(in runview.Input, pr int) bool {
 	return (in.Task != nil && in.Task.PR == pr) || (in.Record != nil && in.Record.PR != nil && in.Record.PR.Number == pr)
 }
 
+// reviewPR is the pull request a review run reviews: a review names it in
+// Spec.ReviewPRs, and only a review of exactly one is on a single pull request
+// -- a review of several is on none of them (continuesPRChain reads a review
+// launch the same way, chain_continues.go). 0 for any other run.
+func reviewPR(t *task.Spec) int {
+	if t == nil || len(t.ReviewPRs) != 1 {
+		return 0
+	}
+	return t.ReviewPRs[0]
+}
+
 // mayBeOnPR reports whether a run onPR leaves out could still be on a
 // pull request: its launch.json or result.json is unreadable, so its
 // record wasn't read, and no task says it follows another PR.
@@ -649,6 +759,9 @@ type runObjects struct {
 	// unreadRecord means a corrupt object stopped the reads before the
 	// record could say which pull request the run is on.
 	unreadRecord bool
+	// stateOnly means --pr kept the run for the fold alone: a review run in
+	// flight on the pull request is a run of it, and not a row --pr lists.
+	stateOnly bool
 }
 
 // readRun reads what the bucket knows about one run; it makes no backend

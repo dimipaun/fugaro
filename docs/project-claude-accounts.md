@@ -152,7 +152,10 @@ prompt, never from an argument, a flag or the environment.
 - **Removing an account.** `fugaro accounts rm <name>` is the inverse and converges the same way: it
   refuses while a profile still lists the account — `fugaro accounts rm <name> --profile PROFILE`
   takes the name out of one profile's list alone — and once no profile lists it, the declaration,
-  the secret and the job go together. A committed `fugaro.yaml` that still names the account in
+  the secret and the job go together. A `repos.<owner/name>.claude_accounts` that names the account
+  is cleared with the declaration (§2, §3): the entry is what admits that repository's own runs, and
+  left behind it would name an account the file no longer defines, which the next
+  `fugaro project policy publish` refuses. A committed `fugaro.yaml` that still names the account in
   `agent.oauth_token` is warned about rather than edited — that file belongs to the repository, not
   to this installation.
 
@@ -213,9 +216,48 @@ profile mounts a token. The profile's `allow_repos` is the repositories that pro
 both `default` and `acme-team` carry both repositories, and a profile that admits a repository one
 of its accounts does not carry is refused at publish rather than deployed.
 
+**The repository's own entry**, which is how a repository whose runs are *not* on a profile job is
+admitted to an account:
+
+```yaml
+# per installation: the project's local config
+repos:
+  acme/tools:
+    provider: bitbucket
+    workflows:
+      - implement
+    claude_accounts:
+      - acme-team
+```
+
+`repos.<owner/name>.claude_accounts` is a list of account names inside the repository's own entry —
+the entry `fugaro update --repo .` already writes for an onboarded repository. It exists because a
+profile is not the only kind of job a repository's runs land on: a **per-repository job** — every
+Bitbucket repository, which never reaches a shared job, and every repository no workflow sends to
+one — has no profile to name its accounts in. Before this key the published `accounts` block was
+derived from the profiles alone, so such a repository had no way to be admitted to an account at
+all: the block carried no entry for its account, the credentials service's intersection with its
+admission (`config/policy/repos/$slug.credentials.accounts`) came out empty, the cascade offered no
+candidate and every model call of its runs was answered `503 state_unavailable` ("creds: no
+candidate credentials were offered").
+
+The entry adds **the repository's own canonical name** — `bitbucket/acme/tools` above — to each
+account it names, and the `provider` on the entry is what qualifies it (the same provider a profile
+carries for its `allow_repos`); an entry that names accounts and no provider is refused rather than
+guessed at. A profile and a repository entry may both name one account: the published
+`accounts.<name>.allow_repos` is the **union** of what the profiles name and what the repository
+entries add, so nothing already admitted is narrowed. Each account a repository entry names must
+**cover that repository** (§4, the same subset rule a profile meets), and the same `publish` writes
+the repository's child admission under `config/policy/repos/$slug` from the account list it
+published. The list lives in this entry alone — it is in no `fugaro.yaml` and in no Terraform input
+— so the `fugaro update --repo .` that rebuilds the entry from those two **carries it over**:
+writing the key once and updating the repository afterwards keeps the admission, and only `fugaro
+accounts rm` (§2) or an edit of the file takes it away.
+
 ## 4. The rules `publish` and `fugaro setup` enforce
 
-Neither the `accounts` block nor the profile field is written by hand into the policy: both are
+Neither the `accounts` block nor the profile field nor a repository's own entry is written by hand
+into the policy: all three are
 derived and checked by `fugaro project policy publish` (per installation) and by `fugaro setup`
 (per installation, and `fugaro update --repo .` per repository checkout), which validate the profiles
 they are about to deploy against the same block. The rules, and what a refusal says:
@@ -230,6 +272,13 @@ they are about to deploy against the same block. The rules, and what a refusal s
   credential, and a repository the account does not cover is one whose run the token must never
   reach. An absent list means "the project's", which no account is required to cover, so it cannot
   be decided and is refused.
+- **A repository's own entry obeys the subset rule too.** `repos.<owner/name>.claude_accounts`
+  naming an account that does not carry the repository — a named account whose `allow_data_to`, or
+  the `default` account's `project_secrets` entry, does not list it — is refused at publish
+  (`projectpolicy`'s `repoAccountCovers`), with the same repair: add the repository to the account's
+  own list and publish again, or take the account off the repository's entry. The provider is
+  required on such an entry, because the repository's canonical name is what the account's
+  `allow_repos` gains, and this entry is the only place a per-repository job's provider is stated.
 - **No Anthropic API key beside the accounts (D4).** A profile that lists `claude_accounts` may not
   also mount `anthropic-api-key` (in either spelling): an account job holds its account's token, and
   a key beside it is a credential no OAuth run of that job can use — and which credential the job
@@ -270,6 +319,12 @@ publish (`projectpolicy`'s `validProfileAccounts`), with a refusal naming both l
 repository in one and not the other: the repair is the account's `allow_data_to` (add the
 repository there and publish again) or the profile's `allow_repos`, and the operator meets that
 decision where they make it rather than at a run.
+
+**A repository entry and a profile are one answer about one credential, and their published lists
+are unioned**: a repository admitted by a profile keeps that admission and gains the repository
+entry's, and neither narrows the other. What the entry may never do is widen the *account*: the
+account's own list is still the bound, and the entry is refused when the account does not cover the
+repository (§3, and the subset-rule bullet above).
 
 ## 5. What `fugaro setup` deploys, and the version-3 rollout
 
@@ -353,9 +408,11 @@ Read it back per installation:
 fugaro project policy show
 ```
 
-It prints the profiles and, for each account some profile names, the repositories its token may be
-used by. Only accounts a profile names are published: an account nothing lists is one no job
-mounts, and a block entry for it would publish a list on a node every run of the project can read.
+It prints the profiles and, for each account the config names, the repositories its token may be
+used by. Both sources fill that block (§3): the profiles that list the account, and a repository's
+own `repos.<owner/name>.claude_accounts`. An account neither source names is not published: it is
+one no job mounts, and a block entry for it would publish a list on a node every run of the project
+can read.
 
 ## 6. Launch a run as a named account
 

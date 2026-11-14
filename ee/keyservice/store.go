@@ -29,6 +29,17 @@ import (
 // Source is what minted the key — a merchant event id, a spent verification, a
 // renewal's term — and it is the record's identity: §5.2's idempotency is
 // "has this source been minted for?" and nothing else.
+//
+// Subscription is the merchant's own subscription the key was sold for, and it
+// is empty for a key the merchant did not sell: the free seat's, the
+// open-source programme's, the admin page's and the trial carry none (D2141,
+// §5.5). It is what §7's renewal reads to know whether the licence it is about
+// to mint the term after is still being paid for — nothing else in the record
+// or in the key says so, because a subscription is keyed by an id no claim
+// carries — and it is why a rotation has to inherit it: a successor whose
+// record names no subscription could never renew again (§7). It is a field
+// of its own and not a parse of Source, which is the merchant's event id for a
+// purchase and a rotation's own name for a successor.
 type Record struct {
 	Source       string    `json:"source"`
 	KeyID        string    `json:"key_id"`
@@ -38,8 +49,24 @@ type Record struct {
 	Seats        int       `json:"seats"`
 	Organisation string    `json:"organisation"`
 	Email        string    `json:"email"`
+	Subscription string    `json:"subscription"`
 	Issued       time.Time `json:"issued"`
 	Expires      time.Time `json:"expires"`
+	// TermDays is the term in whole days this issuance stands for: the term a
+	// purchase bought, the whole days a renewal covers, the row's own term where
+	// the request named none (a free seat, a trial), or what an end the caller
+	// named leaves of it (F30), and every one of those is rounded up to the next
+	// whole day, because an instant is not something a count of days states
+	// exactly. It is the **entitlement's** own length and not the key's — D2202
+	// caps a connected row's key at thirty days while the term the customer paid
+	// for runs its own length — and it is what the subscription's end is rebuilt
+	// from when the record is the only thing left of an issuance whose
+	// subscription write did not land (S3.5, §5.1). A rebuild therefore lands on
+	// the entitlement's own end or up to a day past it, and never before it: the
+	// round is what keeps a subscription from lapsing inside the term it states,
+	// while the instant itself is what the key's own `Expires` states whenever
+	// the end a caller named is inside the row.
+	TermDays int `json:"term_days"`
 }
 
 // Application is one request a person has to decide (§4.5): the ones the

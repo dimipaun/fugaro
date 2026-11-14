@@ -1,13 +1,16 @@
 # Licence key v2: implementation plan
 
-Builds [spec.md](spec.md) **as amended by [reconciliation.md](reconciliation.md)** (decisions D2130–D2146,
-findings F1–F18). **Nothing is implemented and no task is approved**: each task needs the owner's own
+Builds [spec.md](spec.md) **as amended by [reconciliation.md](reconciliation.md)** (decisions D2130–D2148,
+findings F1–F20). **Nothing is implemented and no task is approved**: each task needs the owner's own
 go, and answering a decision is not a go. Owner answers that shape the plan: one `fgk_` v1 format replaces the
 built one (D2130); revocation through a visible job (D2131); seats enforced on `ee` surfaces only
 (D2132, held by TN1); per-key `grace_days`, default 30 (D2133); a required `workspace_id` (the workspace's Firebase project id, TN2) beside
 `organisation` (D2134, not the recommendation); a per-key renewal secret (D2135); the 14-day trial beside
 D440's plans (D2136); the key in the runs bucket (D2137); Firebase Auth in the owner's licence project
-(D2144, not the recommendation).
+(D2144, not the recommendation); a refund or a chargeback withdrawing the whole licence rather than the
+key its event names (D2147), and `/renew` renewing only a key whose record names the subscription the
+checkout sold it for, refusing a key that names none (D2148 — TN6 is what §12.1's Enterprise column needs
+before K2.6, K2.7 and K4.1 can assume otherwise).
 
 It **supersedes** licensing task L3.1 and subscriptions S2.1/S2.3 (the format) and amends S2.4, S2.5,
 S2.7–S2.10, S3.1–S3.4 and S6.1 where they name the old claims; K7.2 writes those notes.
@@ -52,7 +55,7 @@ plan's D2130–D2146.
 | --- | --- |
 | A key is verified over its raw bytes before any claim is read; no claim from an unverified payload reaches a refusal or a log | K1.1 `TestNoClaimIsReadBeforeTheSignatureVerifies` |
 | A higher `v` is refused with the upgrade message and never falls back to Free | K1.1 `TestHigherPolicyVersionIsRefusedNotFree` |
-| Unknown fields are ignored for signed keys only (D2146) | K1.1 `TestUnknownFieldsInASignedKeyAreIgnored`, `TestUnsignedFormatsStayStrict` |
+| Unknown fields are ignored for signed keys only (D2146) | K1.1 `TestUnknownFieldsInASignedKeyAreIgnored`, `TestUnknownFieldsNeedAVerifiedSignature` |
 | `fugaro licence set` never takes a key in argv (F5) | K3.2 `TestLicenceSetRefusesAKeyInArgv` |
 | The core never imports a licence package and an untagged build has no `licence` command | K3.2 `TestUntaggedBuildHasNoLicenceCommand`, `internal/eeboundary` |
 | An outage or an unreachable server never revokes (D2140) | K4.1 `TestAnUnreachableServerNeverRevokes` |
@@ -86,7 +89,7 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
 
 ### Slice K1: the key and its verifiers (inert until a key exists)
 
-- **K1.1 The v1 verifier. SECURITY.** Files: `ee/licence/keyv1.go` (new), `ee/licence/keyv1_test.go` (new), `ee/licence/testdata/vectors_v1.json` (new). **Additive: the old `key.go`, `store.go` and their tests stay untouched so `-tags ee` keeps compiling on `main` until K7.3 removes them.** Interfaces: produces `ClaimsV1`
+- **K1.1 The v1 verifier. SECURITY.** Files: `ee/licence/keyv1.go` (new; K7.3 renames it to `key.go`), `ee/licence/keyv1_test.go` (new; `key_test.go` after K7.3), `ee/licence/testdata/vectors_v1.json` (new). **Additive: the old `key.go`, `store.go` and their tests stay untouched so `-tags ee` keeps compiling on `main` until K7.3 removes them.** Interfaces: produces `ClaimsV1`
   (`v`, `kid`, `key_id`, `workspace_id` (required: the workspace's Firebase project id), `organisation`, `tier` (`community|team|enterprise`),
   `seats`, `issued_at`, `paid_through`, `grace_days`, `renewal_mode`, `renew_before_days`,
   `check_interval`, `renewal_secret_hash`, `warnings`, `kind`, `note`), the text `fgk_<payload>.<sig>`,
@@ -94,7 +97,7 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
   (F16), and the tier's maximum lifetime kept as `paid_through - issued_at`. Consumed by every later task.
   Schema change: the key format (a new name, `v: 1`). Tests: `TestVerifyFgkKey`,
   `TestNoClaimIsReadBeforeTheSignatureVerifies`, `TestHigherPolicyVersionIsRefusedNotFree`,
-  `TestUnknownFieldsInASignedKeyAreIgnored`, `TestUnsignedFormatsStayStrict`,
+  `TestUnknownFieldsInASignedKeyAreIgnored`, `TestUnknownFieldsNeedAVerifiedSignature`,
   `TestStagingKeyIDIsRefused`, `TestKeyBeyondTheTierLifetimeIsRefused`, `TestGraceUsesTheKeysOwnDays`,
   `TestKeyWithoutWorkspaceIDIsRefused`, `TestWorkspaceIDMustMatchTheFirebaseProject` (the verifier takes a `FirebaseProjectID` the caller passes in, read by K3.1 and the console from the project's own config in the same read as the key). Command: `go test ./ee/licence/... -tags ee -run 'Test(VerifyFgk|NoClaim|Higher|Unknown|Unsigned|Staging|KeyBeyond|Grace|KeyWithout|Workspace)' -count=1`.
   Depends on: none. Commit: `ee: the v1 licence key (fgk_) and its verifier (D2130)`. Red step:
@@ -128,7 +131,11 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
   `/status` through the portal's P1.0 `/api/` registry), `renew_test.go` (new). The caller sends `key_id` and the renewal secret over TLS and the server compares the secret's hash with the one it holds
   (no HMAC: the hash is in the key, which every reader of the runs bucket holds, so it must not be a signing key); response
   `{status: ok|revoked, newer_key: bool}` and the renewal's new key; uniform answers; throttled; never
-  returns a key to a revoked or unknown `key_id`; a replayed request is idempotent; a renewal returns the next key **and its new renewal secret** (reissue under a new `key_id` rotates it). **Secret handling:** 256 bits from the system CSPRNG; shown once together with the key as a two-line bundle (key line, secret line) by every issue path (the purchase email, the account page's download, the authorize code exchange and the device poll, the admin page and the mint tool), so each of those tasks returns the bundle and a re-download **rotates** the secret; after a rotation the old secret still fetches the new one for 24 hours only, then is refused. Tests:
+  returns a key to a revoked or unknown `key_id`; **it renews only a key whose record names the
+  subscription the checkout sold it for, refusing one that names none with the same uniform answer
+  (D2148, failing closed), and it mints only into a term that subscription's own end already reaches —
+  the merchant's renewal is what moves that end and this route never writes it (D2148)**; a replayed
+  request is idempotent; a renewal returns the next key **and its new renewal secret** (reissue under a new `key_id` rotates it). **Secret handling:** 256 bits from the system CSPRNG; shown once together with the key as a two-line bundle (key line, secret line) by every issue path (the purchase email, the account page's download, the authorize code exchange and the device poll, the admin page and the mint tool), so each of those tasks returns the bundle and a re-download **rotates** the secret; after a rotation the old secret still fetches the new one for 24 hours only, then is refused. Tests:
   `TestRenewalAnswersAreUniform`, `TestTheKeyAloneCannotRenew`, `TestRenewalRefusesAWrongSecret`, `TestRevokedKeyIsNeverRenewed`,
   `TestStatusCarriesNoKey`, `TestReplayedRenewalIsIdempotent`. Command: `go test ./ee/keyservice/ -tags ee -run 'TestRenewal|TestTheKeyAlone|TestRevoked|TestStatus|TestReplayed' -count=1`.
   Depends on: K2.1, K2.2. Commit: `ee: the renewal and status endpoints`.
@@ -153,7 +160,9 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
   (`ee/portal/src/screens/cli/*`, P3.5), not the website's.
 - **K2.5 Paddle events to v1. SECURITY.** Files: `ee/keyservice/merchant.go`, `merchant_test.go`. Maps a
   completed transaction (renewal included) to a v1 key (Team monthly and annual), a refund or
-  chargeback to a revocation (D2131), a seat change to a reissue; Enterprise is not sold here (D2141).
+  chargeback to a revocation (D2131) **of every key the licence holds — the purchase, a seat change's
+  reissue, the merchant's own renewal and the rotations of each (D2147)** — a seat change to a reissue;
+  Enterprise is not sold here (D2141).
   Tests: `TestRefundRevokesTheKey`, `TestSeatChangeReissuesUnderANewKeyID`, `TestEnterpriseIsNotACheckoutPlan`.
   Depends on: K2.1, K2.2. Command: `go test ./ee/keyservice/ -tags ee -run 'TestRefund|TestSeatChange|TestEnterprise' -count=1`.
   Commit: `ee: Paddle events mint, reissue and revoke v1 keys`.
@@ -278,7 +287,7 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
   `docs/design/key-signing-service.md` (a dated "superseded by licence-key-v2" note where S2.1, S2.3, S2.4,
   S3.1–S3.4 name the old claims). Depends on: none. Commit: `docs: licence key v2 supersedes the old key's claims`.
 
-- **K7.3 Remove the old key format.** Files: `ee/licence/key.go`, `store.go`, `key_test.go`, `testdata/vectors.json` (the old format, deleted; `keyv1.go` renamed to the package's `Claims`/`Verify`). Tests: `go test ./ee/... -tags ee -count=1` compiles and passes with no reference to the old format. Depends on: K1.3, K2.1, K2.5, K3.1. Commit: `ee: the old licence key format is removed`. SECURITY.
+- **K7.3 Remove the old key format.** Files: `ee/licence/key.go`, `store.go`, `key_test.go`, `testdata/vectors.json` (the old format: the verifier and its Go readers go, but **the fixture stays** -- the console's verifier of that format and the app's read it at module top level, so it leaves with those two readers and not with the Go verifier; `keyv1.go` renamed to the package's `Claims`/`Verify`). Tests: `go test ./ee/... -tags ee -count=1` compiles and passes with no reference to the old format. Depends on: K1.3, K2.1, K2.5, K3.1. Commit: `ee: the old licence key format is removed`. SECURITY.
 
 ## Parallel execution
 
@@ -304,8 +313,8 @@ runtime is what the Terraform runs.
 
 | File | Writers (level) |
 | --- | --- |
-| `ee/licence/keyv1.go`, `testdata/vectors_v1.json` | K1.1 (0) |
-| `ee/licence/key.go`, `store.go`, `key_test.go`, `testdata/vectors.json` (old format) | K7.3 (3) |
+| `ee/licence/keyv1.go` (K7.3 renames it to `key.go`), `testdata/vectors_v1.json` | K1.1 (0) |
+| `ee/licence/key.go`, `store.go`, `key_test.go`, `testdata/vectors.json` (the old format: K7.3 drops the verifier and keeps the fixture) | K7.3 (3) |
 | `ee/licence/mint/*` | K1.3 (1) |
 | `console/src/main/licence.ts`, `licence-store.ts`, `licence-state.ts` | K1.4 (1), K3.6 (5; only `licence-state.ts`) |
 | `docs/licensing/licence-key.md` | K1.5 (0) |

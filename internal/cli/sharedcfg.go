@@ -196,6 +196,16 @@ type SharedAnchor struct {
 // may send the project's Bitbucket token to (D474), so a writer of the runs
 // bucket publishing one would be choosing where a credential goes.
 //
+// bitbucket_tokens is the same case one step nearer the token, and
+// localcfg.Config.Shared nils it: each record's coverage is what a request is
+// matched against (R1, D2351), so a writer of the runs bucket publishing one
+// would be stating which of this project's calls its own token carries. It is
+// refused here by key and again by value like the keys above it — on a machine
+// with no local config for the project, the fetched shared config is the one
+// the commands read — and the drop is what keeps an older CLI, whose
+// localcfg.Config has no such field, from refusing the whole shared file over
+// the key and locking a teammate who has not upgraded yet out of every run.
+//
 // secret_rotation_days and secret_expires are operator-only for update_check's
 // reason (plan B1.9): they are one person's record of when the credentials only
 // they can rotate are meant to be rotated and when they expire, and a writer of
@@ -303,7 +313,7 @@ type SharedAnchor struct {
 // member table are dropped with it, because a shared file that could name a
 // workspace would be one that could join this project to a group nobody here
 // chose. localcfg.Config.Shared nils all four.
-var sharedForbidden = []string{"terraform", "backend", "user", "commit_name", "commit_email", "endpoints", "bucket_url", "registry", "providers", "routing", "claude_accounts", "project_secrets", "workflow_secrets", "bitbucket_api_roots", "clone_urls", "update_check", "issues", "escalation", "secret_rotation_days", "secret_expires", "review_floor", "verifier_accounts", "image_catalog", "image_map", "bake_repos", "triage", "orchestrator", "default_claude_account", "stages", "claude_account_auto", "claude_account_aliases", "credentials", "pools", "subscription_spread", "crafts", "workspace", "workspace_pin", "workspace_members", "workspace_cap"}
+var sharedForbidden = []string{"terraform", "backend", "user", "commit_name", "commit_email", "endpoints", "bucket_url", "registry", "providers", "routing", "claude_accounts", "project_secrets", "workflow_secrets", "bitbucket_api_roots", "bitbucket_tokens", "clone_urls", "update_check", "issues", "escalation", "secret_rotation_days", "secret_expires", "review_floor", "verifier_accounts", "image_catalog", "image_map", "bake_repos", "triage", "orchestrator", "default_claude_account", "stages", "claude_account_auto", "claude_account_aliases", "credentials", "pools", "subscription_spread", "crafts", "workspace", "workspace_pin", "workspace_members", "workspace_cap"}
 
 // ParseShared validates a published shared config against its anchor and
 // returns it (docs/design/shared-config.md §5). Anyone holding objectAdmin
@@ -420,6 +430,16 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 	for _, name := range slices.Sorted(maps.Keys(c.Repos)) {
 		if c.Repos[name].BaseBranch != "" {
 			return bad("repos."+name+".base_branch", "%q is set; it is never published: the base branch comes from the checkout's reviewed fugaro.yaml", c.Repos[name].BaseBranch)
+		}
+		// claude_accounts is refused here for claude_accounts' own reason, one
+		// level down (localcfg.Config.Shared clears it, and the top-level key
+		// is in sharedForbidden): it is what admits the repository to an
+		// account, so a launcher who could publish one would be adding a
+		// repository to an account's admission by editing the runs bucket's
+		// file — and the machine whose next publish derives the block would be
+		// deriving the admission they wrote.
+		if len(c.Repos[name].ClaudeAccounts) > 0 {
+			return bad("repos."+name+".claude_accounts", "%v is set; it is never published: the accounts a repository's own runs may be served by are the operator's statement in the local config, and the policy node is where they are published", c.Repos[name].ClaudeAccounts)
 		}
 	}
 	// Every value of the published batch block that names a cloud resource is
@@ -556,7 +576,7 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 // arrived some other way (a merge, a decoder that mapped a key onto a field of
 // its own), and the check a test can hold each field of without a file.
 func sharedNeverPublished(c *localcfg.Config) bool {
-	return c.BackendName != "" || c.User != "" || c.CommitName != "" || c.CommitEmail != "" || c.Bucket != "" || c.Registry != "" || c.Endpoints != (localcfg.Endpoints{}) || !reflect.ValueOf(c.Terraform).IsZero() || c.Providers != nil || c.Routing != nil || c.ClaudeAccounts != nil || c.ProjectSecrets != nil || c.WorkflowSecrets != nil || c.BitbucketAPIRoots != nil || c.CloneURLs != nil || c.UpdateCheck != nil || c.Issues != nil || c.SecretRotationDays != 0 || c.SecretExpires != nil || c.ReviewFloor != nil || c.ImageCatalog != nil || c.ImageMap != nil || c.BakeRepos != nil || c.Triage != nil || c.DefaultClaudeAccount != "" || c.ClaudeAccountStages != nil || c.ClaudeAccountAuto || c.ClaudeAccountAliases != nil || c.Credentials != nil || c.Pools != nil || c.SubscriptionSpread != nil || !reflect.ValueOf(c.Crafts).IsZero() || c.Workspace != "" || !reflect.ValueOf(c.WorkspacePin).IsZero() || c.WorkspaceMembers != nil || c.WorkspaceCap != nil
+	return c.BackendName != "" || c.User != "" || c.CommitName != "" || c.CommitEmail != "" || c.Bucket != "" || c.Registry != "" || c.Endpoints != (localcfg.Endpoints{}) || !reflect.ValueOf(c.Terraform).IsZero() || c.Providers != nil || c.Routing != nil || c.ClaudeAccounts != nil || c.ProjectSecrets != nil || c.WorkflowSecrets != nil || c.BitbucketAPIRoots != nil || c.BitbucketTokens != nil || c.CloneURLs != nil || c.UpdateCheck != nil || c.Issues != nil || c.SecretRotationDays != 0 || c.SecretExpires != nil || c.ReviewFloor != nil || c.ImageCatalog != nil || c.ImageMap != nil || c.BakeRepos != nil || c.Triage != nil || c.DefaultClaudeAccount != "" || c.ClaudeAccountStages != nil || c.ClaudeAccountAuto || c.ClaudeAccountAliases != nil || c.Credentials != nil || c.Pools != nil || c.SubscriptionSpread != nil || !reflect.ValueOf(c.Crafts).IsZero() || c.Workspace != "" || !reflect.ValueOf(c.WorkspacePin).IsZero() || c.WorkspaceMembers != nil || c.WorkspaceCap != nil
 }
 
 // dropLegacyBaseImages removes a base_images entry of exactly a kind

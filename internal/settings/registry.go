@@ -503,6 +503,9 @@ const (
 	// of the stage's own would take the row over.
 	docTriage    = "docs/post-review-triage/implementation-plan.md"
 	docCloneURLs = "docs/project-claude-accounts.md"
+	// docAccounts is the account document, which states the repository-level
+	// source beside the block and the profiles' lists it unions with.
+	docAccounts = "docs/project-claude-accounts.md"
 )
 
 // layerRow is a row of the project layer's file. The layer is its only store,
@@ -808,6 +811,20 @@ var localRows = []Row{
 	loc("secret_rotation_days", "0: no rotation period is recorded", "secrets", docSetup),
 	loc("secret_expires", "none: no expiry date is recorded", "secrets", docSetup),
 	loc("bitbucket_api_roots", "the provider's public API", "secrets", docSetup),
+	// The Bitbucket tokens block (T2, R1): what each stored access token
+	// reaches, as the operator's own local config states it. A record's name is
+	// what the bundle key bitbucket-token--<name> is spelled from and what
+	// every audit line carries; the value itself is in the service's bundle
+	// and the identity and verified_at are in the creds state store, so no row
+	// here holds either (R12) — and the owner column is `secrets`, the token
+	// family's, because the block is stated in the machine's own config like
+	// bitbucket_api_roots above it.
+	loc("bitbucket_tokens.*.coverage", "required: the repository, workspace or workspace slug this token reaches", "secrets", docSetup),
+	loc("bitbucket_tokens.*.expires", "none: no expiry date is recorded", "secrets", docSetup),
+	loc("bitbucket_tokens.*.name", "required: the name the bundle key and every audit line are spelled from", "secrets", docSetup),
+	loc("bitbucket_tokens.*.project_key", "none: kept for display, and never matched", "secrets", docSetup),
+	loc("bitbucket_tokens.*.project_uuid", "none: a project token names its project by UUID or key", "secrets", docSetup),
+	loc("bitbucket_tokens.*.type", "required: repo, project or workspace, and coverage is read as the same fact", "secrets", docSetup),
 
 	loc("batch.image", "Fugaro's own batch image", "setup", "docs/backends.md"),
 	loc("batch.machine_type", "the batch design's own machine", "setup", "docs/backends.md"),
@@ -1135,6 +1152,18 @@ var localRows = []Row{
 	// are NOT in that allowlist: they are not a person's settings at all — a
 	// run records what it read and applied (this file's row comments) — so the
 	// generic path's refusal is the right answer for them.
+	// The repository's own account list, beside the keys of the entry it sits
+	// in but not of their kind: it is the half of an account's admission that
+	// keeps a repository whose runs are not on a profile job served
+	// (docs/project-claude-accounts.md §3), so it is local-only, and it is
+	// stripped from the published copy of this map besides
+	// (localcfg.withoutRepoLocalKeys, internal/cli/sharedcfg.go's refusal on
+	// the key). The owner is the accounts family, whose `accounts rm` is what
+	// edits the list: it clears a name with the declaration it names, and this
+	// release gives no command a write that ADDS one — the list is written by
+	// hand, and `repos.*.claude_accounts` is not a `settings set` path, which
+	// is what the read's owner column may say rather than a bare command.
+	locLocal("repos.*.claude_accounts", "nobody: the repository's runs are served by the accounts the profiles of its jobs name", "accounts", docAccounts),
 	loc("repos.*.provider", "none", "settings set", docSetup),
 	loc("repos.*.base_branch", "the project's base_branch", "settings set", docSetup),
 	loc("repos.*.workflows", "every workflow the repository defines", "settings set", docSetup),

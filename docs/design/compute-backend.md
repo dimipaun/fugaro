@@ -21,7 +21,7 @@ the fallback" ([generic-tool.md](generic-tool.md) §1,
 Task 28). Cloud Run gen-2 cannot run Docker — the owner measured it — so
 gen-2 failed its own first tier and **the VM backend is the route**. The gen-2
 Docker probe (Task 26 — the plan numbered it Check 31, a number
-`docs/gcp-live-checklist.md` had already given to `fugaro upgrade`) and Task 27
+`docs/gcp-live-checklist.md` had already given to its plugin check) and Task 27
 (Docker on gen-2) are dropped; Task 28 is restored and is no longer conditional
 on the probe. Nothing here is
 built: this document decides the substrate, the execution model and the
@@ -2235,7 +2235,7 @@ One user-run live check settles the substrate's two risky claims — that a
 Fugaro run gets a working Docker daemon, and that the cold start is bearable —
 before any production code depends on them. It is the successor of the dropped
 gen-2 Docker probe (generic-tool Task 26; the plan numbered it Check 31, but
-that number belongs to `fugaro upgrade` in the live checklist), in the format
+that number belongs to the plugin check in the live checklist), in the format
 of Checks 30 and 32.
 
 ### 7.1 The number
@@ -2270,7 +2270,7 @@ paragraph are additive. If those reservations turn out not to exist, the number
 is still valid — the ruling is "never reuse or renumber", not "always use the
 lowest". The narrow escape is
 not repeated either: the plan this check comes from numbered the dropped probe
-Check 31, which the registry had already given to `fugaro upgrade`, so this one
+Check 31, which the registry had already given to its plugin check, so this one
 reads the registry first (§9).
 
 ### 7.2 The check
@@ -4626,7 +4626,7 @@ Docker and its 3812 MB size (`images/base/Dockerfile`;
 `docs/design/base-image.md` §3 for the CLI-only contents and §13 for the
 measurement, which is the design file, not `docs/base-image.md`). The live
 checklist's own numbering is verified the same way: check 31 there is
-`fugaro upgrade` with the real `claude` CLI (`docs/gcp-live-checklist.md`), not
+the plugin against the real `claude` CLI (`docs/gcp-live-checklist.md`), not
 the dropped gen-2 Docker probe the generic-tool plan numbered 31 — the reason
 §7.1 reads the registry before claiming a number.
 

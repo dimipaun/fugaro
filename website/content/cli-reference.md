@@ -47,6 +47,7 @@ Subcommands:
 - `fugaro help` -- Help about any command
 - `fugaro image` -- Build and inspect a workflow's derived container image
 - `fugaro issue` -- Read the issues saved on this machine, the ones you reported, and file one on GitHub
+- `fugaro licence` -- Install, read and renew the installation's licence key (Subscription Edition)
 - `fugaro logs` -- Print a run's logs from Cloud Logging
 - `fugaro managed` -- Act on a managed project (a project created by fugaro with the coding agent's refusal removed)
 - `fugaro models` -- Show the models this project can run, and where each is served
@@ -1073,12 +1074,93 @@ Flags:
 
 Subcommands:
 
+- `fugaro budget chain` -- Raise the limit of a chain that has spent it
 - `fugaro budget kill` -- Halt every run of the project, of one repository or of one workspace (budget admins)
 - `fugaro budget preview` -- Estimate a batch's worst-case model spend against today's caps
 - `fugaro budget prices` -- Show the effective model price table, offline
 - `fugaro budget resume` -- Clear a kill switch (budget admins)
 - `fugaro budget set` -- Set a cap, the lease limit or the mode (budget admins)
 - `fugaro budget show` -- Show caps, today's counters, kill switches, headroom and the runs in flight
+
+## `fugaro budget chain`
+
+Raise the limit of a chain that has spent it
+
+Work on one chain's own limit: the figure the launch that began the chain
+set, which bounds that run and every run that continues it (D1041, D1045).
+
+A chain's limit lives in the stored task of the run that began it and in no
+database node, so what this family does is rewrite that stored task with the
+reason recorded; nothing of the project's budget moves for it.
+
+Usage: `fugaro budget chain`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for chain |
+
+Subcommands:
+
+- `fugaro budget chain raise` -- Raise a chain that has spent its limit, recording who, when, why and the figures
+
+## `fugaro budget chain raise`
+
+Raise a chain that has spent its limit, recording who, when, why and the figures
+
+Raise the limit of the chain RUN (a run ID, <repo-slug>/<run-id>, or the last
+four or more characters of a run ID) belongs to, by rewriting the stored task
+of the run that began the chain, which is the one place a chain's limit lives
+(D1041, D1046).
+
+A chain has no database node and no cap of its own, so a chain that has spent
+its figure is not stopped by anything: the launch that would continue it is
+refused for having nothing left to spend, and this is the command that answers
+that refusal. Each --max-* flag names a dimension the chain already limits and
+a figure above the one in force — a raise moves a limit up, and nothing here
+lowers one, since asking for less is what a launch's own --max-* is for. The
+reason is required and is recorded beside the figures, in the record of the
+run that began the chain: a chain limit is a convention this installation
+states rather than a bound the platform enforces, so who raised it, when and
+why is the whole of what tells a raise from a rewritten limit.
+
+The project's own budget is untouched: the per-run cap and the daily and
+project caps are the database's rules, and a raise moves none of them.
+
+A raise is the owner's own step, as every raise form is (D1542): a coding
+agent's session is refused and handed the command to run itself at its own
+terminal, so a session cannot raise a chain's limit.
+
+The run that began the chain has to have finished. A run writes its own
+result.json while it is going, so an entry recorded in one still in flight
+would be lost under the run's next write; a raise is refused while that run
+has not ended, and nothing is written for it.
+
+Only the runs bucket is written, through the access a launcher already has:
+no budget database, no cap and no kill switch is read or written.
+
+Usage: `fugaro budget chain raise RUN (--max-usd N | --max-tokens N | --max-time D | --max-review-rounds N) --reason TEXT`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for raise |
+| `--max-review-rounds` | string | "" | no | the chain's review-round limit, above the one in force, such as 6 |
+| `--max-time` | string | "" | no | the chain's wall-time limit, above the one in force, as a duration such as 90m or 3h |
+| `--max-tokens` | string | "" | no | the chain's token limit, above the one in force, such as 1200000 |
+| `--max-usd` | string | "" | no | the chain's dollar limit, above the one in force, such as 6 or 12.5 |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--reason` | string | "" | no | why the chain is being raised (required; recorded with who, when and the figures) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | the repository RUN belongs to (owner/name, or a path inside its checkout; needed only for a bare run ID) |
+
+Subcommands:
+
+This command has no subcommands.
 
 ## `fugaro budget kill`
 
@@ -3533,7 +3615,10 @@ aside there (F23). A store that cannot be reached is then the refusal
 rather than a line, there being nothing here to set aside instead.
 
 An issue that has already been filed is refused: it is open on GitHub,
-and setting it aside here would not close it.
+and setting it aside here would not close it. So is one a release has
+fixed: the fix is in that release and the record says which, and a bug
+that came back is a new upload rather than a dismissal of the fix that
+did not hold.
 
 A coding agent's session may not dismiss an issue: a steered diagnosis
 could otherwise bury a real bug, so a person sets one aside (D1730).
@@ -3561,10 +3646,13 @@ the whole team's: the ones this machine saved and has not uploaded yet,
 named by their local ID, and every issue of the project's store, named
 by its number. A row names the issue the way `show`, `dismiss` and
 `submit` take it, with the class the diagnosis gave it, where it stands,
-and its one-line summary. Where the project's copy and this machine's
-file disagree, the project's is printed: the store is the truth once an
-issue is uploaded (F13), and a number is what `show` and `dismiss` read
-from the store when this machine has no file of the issue.
+and its one-line summary. An issue a release fixed, and one that closed
+without a fix, carry one more column: the release that fixed it with the
+GitHub issue it was filed as, or the reason it closed (F27, D1752).
+Where the project's copy and this machine's file disagree, the project's
+is printed: the store is the truth once an issue is uploaded (F13), and a
+number is what `show` and `dismiss` read from the store when this machine
+has no file of the issue.
 
 A record this machine's folder holds for another project is not a row:
 the folder is one for the whole machine, and another project's issue is
@@ -3700,7 +3788,7 @@ issue that is still waiting.
 REF is the issue's number — `7`, or the `#0007` a listing prints — or
 its local ID `local-<run stem>`, the same argument `show` takes. With
 no reference every `pending` issue is visited, and the ones already
-filed or set aside are skipped.
+filed, set aside or fixed by a release are skipped.
 
 The post is built once and printed as it is: the title, the body, and
 the sha256 of the exact bytes. A run without --ask files nothing and
@@ -3762,6 +3850,173 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for sync |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro licence`
+
+Install, read and renew the installation's licence key (Subscription Edition)
+
+Install, read and renew the installation's licence key.
+
+The key belongs to the installation and not to one machine: it is written to the
+project's own store (the runs bucket), every member reads it there, and the
+per-machine key file is what a console hands a child it spawns. The commands
+without a coordinator renew by hand.
+
+  fugaro licence set       install a key you were given
+  fugaro licence status    show the tier, the seats, the expiry and the last check
+  fugaro licence refresh   ask the licence server for the next key now
+
+`fugaro update` is the whole upgrade: the installation's secret container and the
+job that renews a self-renewing key are Terraform's, and this command writes no
+part of them.
+
+Usage: `fugaro licence`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for licence |
+
+Subcommands:
+
+- `fugaro licence refresh` -- Ask the licence server for the next key now (Subscription Edition)
+- `fugaro licence set` -- Install the installation's licence key (Subscription Edition)
+- `fugaro licence status` -- Show the installation's licence: tier, seats, expiry, state and last check
+
+## `fugaro licence refresh`
+
+Ask the licence server for the next key now (Subscription Edition)
+
+Ask the licence server for the next key for this installation's key, and
+install it.
+
+This is what an installation renews by hand with: a `renewal_mode: auto` key is
+renewed by the installation's own scheduled job, and this command does the same
+one thing that job does. It sends the key's id, the workspace the key is bound
+to and the renewal secret to the licence server once, and a key that has no
+secret — an offline key — never contacts the server at all.
+
+The answer is one of three: the next key, which is verified before it is
+written (the new secret first, then the key); "nothing to renew yet", where the
+key is still further from its end than its own `renew_before_days`; and a
+revocation, in which case this key is Free from then on and the refusal names
+it. Nothing here deletes anything, and a server that cannot be reached changes
+nothing at all.
+
+The project's own key is the one renewed: a per-machine `licence.key` is never
+renewed here.
+
+It is refused inside a coding agent's session, before anything is read, as every
+cloud write is. No line of its output carries the key or the renewal secret.
+
+Usage: `fugaro licence refresh`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for refresh |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro licence set`
+
+Install the installation's licence key (Subscription Edition)
+
+Install the licence key for this installation, and the renewal secret that
+came with it.
+
+The key is read from standard input or --file: the key is read from standard input or --file, never from an argument: a key in argv is a key every local process reads.
+Line 1 is the key, and line 2 is the renewal secret — an offline key has none,
+and the key itself says which it is (`renewal_mode`). One trailing newline, a
+blank line and a CRLF line ending are all handled; more than two non-empty
+lines are refused, and no refusal repeats a line.
+
+The key is verified before anything is written, so a key this Fugaro does not
+accept — an unknown signing key, a term longer than the tier allows, a key
+bound to another workspace — is refused instead of installed, and the
+installation keeps whatever it had. The key's workspace_id must be the
+installation's Firebase project id.
+
+The key is then written to the project's own store, so every member is
+upgraded at once, and the renewal secret (when there is one) to the
+installation's Secret Manager container. Both need the container `fugaro update`
+creates: before it is there this command refuses and names that command, and it
+never creates one.
+
+The installation's renewal job is Terraform's (F10): this command writes the
+key and its secret and nothing else, and the next `fugaro update` applies the job
+that renews a `renewal_mode: auto` key. With no coordinator opted in, nothing
+renews a key but `fugaro licence refresh`.
+
+It is refused inside a coding agent's session, before anything is read, as every
+cloud write is. No line of its output carries the key.
+
+Usage: `fugaro licence set`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--file` | string | "" | no | read the key (line 1) and its renewal secret (line 2) from this file instead of standard input |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro licence status`
+
+Show the installation's licence: tier, seats, expiry, state and last check
+
+Show what this installation's licence is: the tier, the seats, the end of the
+paid period, the state the clock and the last revocation check put the key in,
+and that check.
+
+The key the answer comes from is the project's own, so every member of the
+installation sees the same figures. Where the project holds no key and this
+machine's own `licence.key` does, that key answers and the source says so.
+An installation with neither has no key at all, which is the Free state and not
+a failure: `fugaro licence set` installs one.
+
+The state is one of `active` (inside the paid period), `grace` (inside the key's own
+grace days after it), `expired` and `free` (no key at all). A key the licence
+server has revoked reads `expired` with `revoked: true` and is Free in
+behaviour: nothing is deleted and a new key restores everything.
+
+--json prints {project, state, tier, seats, paid_through, kind, renewal_mode,
+source, revoked, last_check}, with paid_through null where no key is installed
+and last_check the last revocation check's own record.
+
+This is a read: it is not refused inside a coding agent's session.
+
+Usage: `fugaro licence status`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for status |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
@@ -4666,7 +4921,7 @@ Flags:
 | `--name` | string | "" | no | the device's name, for pair ls and the device node's own field |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--role` | string | "" | no | the device's role: viewer, operator or admin (default: your own role, inherited; --role may only lower it) |
+| `--role` | string | "" | no | the device's role: viewer, operator or admin (default: the role the allowlist resolves for your address, or your own when it names none; --role may only lower it, and never below the entry an address that already has one resolves to) |
 | `--timeout` | duration | `2m0s` | no | how long to wait for the phone's key and the typed code (refused above 4m30s) |
 
 Subcommands:
@@ -5056,11 +5311,18 @@ config/policy/repos children are removed too, shared node or not: a delete
 that failed on the shared node leaves them behind, and this is what clears
 them.
 
-Each repository an account a profile names admits also gets a child under
+Each repository an account admits also gets a child under
 config/policy/repos/$slug, holding the NAMES of its admitted accounts and
-nothing else: the accounts published are the ones some profile names,
-qualified by that profile's provider, so an account this config defines but
-no profile names admits nothing a run could read. The children are narrowed before the shared node and widened
+nothing else. An account is admitted by the profiles that name it, each
+qualified by its profile's provider, and by a repository's own
+repos.<owner/name>.claude_accounts, qualified by that entry's provider:
+an account this config defines but neither names admits nothing a run
+could read — a repository whose runs are not on a profile job (a
+per-repository job, which is every Bitbucket repository) names its
+accounts there, because a profile is not the only kind of job its runs
+land on. The two are a union, so nothing a profile admits is narrowed by
+a repository's entry.
+The children are narrowed before the shared node and widened
 after it, so a publish that stops between the two writes leaves the installation tighter than the config asked, never looser.
 When the node this publish writes carries a member an older Fugaro refuses
 whole — a credentials
@@ -6507,10 +6769,33 @@ next page. The id is the run_id --json carries; one the listing does not
 hold is refused rather than answered with an empty page, which reads as no
 more runs. Neither flag goes with --watch, which redraws the whole listing.
 
---state STATE lists only runs in that state, matched against the status --json
-carries: the `halted (run_cap)` cell is --state halted, and --help lists the
-states the flag takes. A run's state is in its result.json, so this filter
-reads every run it filters -- it narrows the listing, never the reads.
+--state STATE lists only the runs in that state, one of two vocabularies.
+The first is the run's own state, matched against the status --json carries:
+the `halted (run_cap)` cell is --state halted. The second is the state of
+the pull request the run went to: live (a run is going on it), ready (no
+run is going and it waits only on a merge) or stalled (it had a run, no run
+is going, and it is not ready). That state is the pull request's and not a
+row's: the listing groups the runs it read by the pull request they carry,
+takes the newest one of each that says what the pull request is -- the run
+whose outcome is ready or draft, so a rebase or a review that left it as
+it found it does not decide -- and keeps the rows of the pull requests in
+the state asked for; --json carries it as `pr_state` on every row that has
+a pull request, and leaves it out of the rows that have none. It is the
+last state a run recorded of the pull request and not the pull request's
+state now: nothing here calls the forge, so a pull request merged or
+closed after the run that left it ready still reads ready, and one
+closed after a draft still reads stalled. A review run's pull request is
+the one its task reviews, which its record names only when the review
+ends: while it is going, its row reads that pull request's state though
+its pr is still empty. A run's own state is in its result.json, so this
+filter reads every run it filters -- it narrows the listing, never the
+reads.
+
+The fourth state of a pull request, orphan (no run ever produced or follows
+it), is one no listing of runs can name: such a pull request has no run and
+so no row here, and telling one from every other would take a call to the
+forge, which a listing of runs does not make -- --state orphan is refused
+for that reason rather than answered with an empty listing.
 
 --debt lists only the runs filed from a triage deferral: a task whose own spec
 is marked debt, which is work a run's review left behind rather than work
@@ -6552,7 +6837,7 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | only this repository (owner/name, or a path inside its checkout) |
 | `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
-| `--state` | string | "" | no | only runs in this state (cancelled, error, failed, halted, infra_error, launching, pending, running, succeeded, unlaunched, unreviewed) |
+| `--state` | string | "" | no | only runs in this state, a run's or its pull request's (cancelled, error, failed, halted, infra_error, launching, pending, running, succeeded, unlaunched, unreviewed, live, ready, stalled) |
 | `--watch` | bool | `false` | no | redraw until every run has settled |
 
 Subcommands:
@@ -8211,10 +8496,17 @@ and file names, so a command the answer prints is checked against this CLI's
 own command tree before it is shown as runnable, and anything else is marked
 as unchecked.
 
+It runs on your own Claude credential and reads no secret: CLAUDE_CODE_OAUTH_TOKEN
+or ANTHROPIC_API_KEY if either is set in this environment, and otherwise the
+logged-in claude on this machine, which is run as it is and needs no gcloud. It
+never reads the project's account out of Secret Manager.
+
 The command reads no stdin. Typing it is the consent: one line says which
 provider and what class of data the redacted evidence goes to, and then the
-diagnosis runs. With no credential, or with the source at this version out of
-reach, it prints the evidence where it is and exits non-zero instead.
+diagnosis runs. With no credential at all, or with the source at this version
+out of reach, it prints the evidence where it is and exits non-zero instead: a
+machine with no credential is told to log in with the claude CLI, or to set one
+of the two variables, and to run the command again.
 
 Usage: `fugaro troubleshoot [RUN ID]`
 

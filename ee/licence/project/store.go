@@ -309,7 +309,7 @@ func (s *Store) RecordCheck(ctx context.Context, at time.Time, status, keyID str
 // prints an Applied prints a key's admin fields, and a caller that shows a
 // person a licence asks View.
 type Applied struct {
-	Claims licence.ClaimsV1
+	Claims licence.Claims
 	State  licence.State
 	Source Source
 	// Revoked is the applied key being the one the last check answered revoked
@@ -344,6 +344,29 @@ func (s *Store) Active(ctx context.Context, now time.Time, ring licence.Keyring,
 		return Applied{}, err
 	}
 	return apply(now, ring, firebaseProjectID, snap.rec.keys(), machine, snap.rec.Revoked)
+}
+
+// WouldApply answers what the installation applies once one more key is written
+// beside the keys the project holds: the store's own rule (firstKey over the
+// keys as they would be, weighed against the revocations), so that a writer
+// knows what it is about to change instead of keeping a second copy of the
+// rule.
+//
+// `fugaro licence set` is what needs it. It reports the key it installed and
+// writes the secret that renews it, so a key the store would not apply is a
+// no-op reported as a change, on top of a renewal secret written for a key the
+// installation does not run on -- which takes the renewal away from the key it
+// does.
+func (s *Store) WouldApply(ctx context.Context, now time.Time, ring licence.Keyring, firebaseProjectID string, raw []byte) (Applied, error) {
+	snap, err := s.read(ctx)
+	if err != nil {
+		return Applied{}, err
+	}
+	held := snap.rec.keys()
+	keys := make([][]byte, 0, len(held)+1)
+	keys = append(keys, held...)
+	keys = append(keys, []byte(strings.TrimSpace(string(raw))))
+	return apply(now, ring, firebaseProjectID, keys, nil, snap.rec.Revoked)
 }
 
 // View is a project's licence as a reader who is not an admin sees it: the
@@ -535,11 +558,10 @@ func marshal(rec record) ([]byte, error) {
 
 // apply is the rule the two stores are ordered by: the project's keys decide
 // wherever the project holds any, and the machine's answers only where it holds
-// none. Both readings are the licence package's own (its `active`): among the
-// keys that verify, the one with the later paid_through, and a set whose every
-// key is refused answers the first refusal, because that is the one a person
-// has to act on. The project's revocations are then weighed against the key that
-// won.
+// none. Both readings are the licence package's own (its `active`): the latest
+// valid one among the keys that verify (T26), and a set whose every key is
+// refused answers the first refusal, because that is the one a person has to
+// act on. The project's revocations are then weighed against the key that won.
 func apply(now time.Time, ring licence.Keyring, firebaseProjectID string, projectKeys, machineKeys [][]byte, revokedIDs []string) (Applied, error) {
 	claims, state, err := firstKey(now, ring, firebaseProjectID, projectKeys)
 	switch {
@@ -576,30 +598,40 @@ func markRevoked(a Applied, revokedIDs []string) Applied {
 
 // firstKey places one set of keys: the one that applies among those that verify
 // against now, and the state it is in.
-func firstKey(now time.Time, ring licence.Keyring, firebaseProjectID string, keys [][]byte) (licence.ClaimsV1, licence.State, error) {
+//
+// The latest valid one (T26): the later paid_through, and where two keys were
+// paid through the same day the later write. The object holds the keys in the
+// order they were written, oldest first, and a reissue can carry exactly the
+// term of the key it replaces -- a seat change reissues with the term's own end
+// (design/key-signing-service.md section 5.3, which also keeps the key_id
+// rotating) -- so the write that came last is the one a person means. A tie
+// decided the other way leaves the key just set installed and never used: what
+// applies is the older key, whose id the renewal then sends beside the newer
+// key's secret, and the change the person watched succeed did nothing.
+func firstKey(now time.Time, ring licence.Keyring, firebaseProjectID string, keys [][]byte) (licence.Claims, licence.State, error) {
 	if len(keys) == 0 {
-		return licence.ClaimsV1{}, "", licence.ErrNoKey
+		return licence.Claims{}, "", licence.ErrNoKey
 	}
 	var (
-		applied licence.ClaimsV1
+		applied licence.Claims
 		state   licence.State
 		found   bool
 		refusal error
 	)
 	for _, raw := range keys {
-		claims, st, err := licence.VerifyV1(raw, now, ring, firebaseProjectID)
+		claims, st, err := licence.Verify(raw, now, ring, firebaseProjectID)
 		if err != nil {
 			if refusal == nil {
 				refusal = err
 			}
 			continue
 		}
-		if !found || claims.PaidThrough.After(applied.PaidThrough) {
+		if !found || !claims.PaidThrough.Before(applied.PaidThrough) {
 			applied, state, found = claims, st, true
 		}
 	}
 	if !found {
-		return licence.ClaimsV1{}, "", refusal
+		return licence.Claims{}, "", refusal
 	}
 	return applied, state, nil
 }

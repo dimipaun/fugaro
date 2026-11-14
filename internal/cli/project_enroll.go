@@ -456,6 +456,13 @@ func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string
 	if err != nil {
 		return err
 	}
+	// The allow-list is what admits a repository to the project, and F19 puts
+	// it among the project-level actions: an admin of every enrolled
+	// repository still cannot widen what it is admitted by. Refused here,
+	// before the deployed rules are read and before the node is.
+	if err := accessGateProject(ctx, lc, db, declined, "editing the published allow-list"); err != nil {
+		return err
+	}
 	// The same read `policy publish` makes first, and for the same reason: the
 	// marker says the deployed rules are new enough to read what is written.
 	if err := requirePolicyRules(ctx, db, lc); err != nil {
@@ -900,6 +907,14 @@ func runProjectSync(cmd *cobra.Command, o *projectSyncOptions) error {
 	lc, db, configPath, err := openProjectBudget(ctx, o.cloud, declined)
 	if err != nil {
 		return err
+	}
+	// The write is the same allow-list write `repos add` makes and needs the
+	// same project-scope admin (F19); --check writes nothing and reads the
+	// list, so it is not this gate's.
+	if !o.check {
+		if err := accessGateProject(ctx, lc, db, declined, "adding to the published allow-list"); err != nil {
+			return err
+		}
 	}
 	if err := requirePolicyRules(ctx, db, lc); err != nil {
 		return err

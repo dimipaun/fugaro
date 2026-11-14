@@ -195,7 +195,7 @@ A run's coder can be a non-Anthropic model served by OpenRouter — one key for 
 ## Roadmap
 
 - [x] Runner, git providers (GitHub, Bitbucket Cloud), the base image (one, multi-architecture, with mise), the Cloud Run backend and CLI
-- [x] `fugaro setup` and `/fugaro:setup`, the seven plugin skills, teammates with no setup
+- [x] `fugaro setup` and `/fugaro:setup`, the nine plugin skills, teammates with no setup
 - [x] Follow-up runs, early draft PRs, the shared budget, `fugaro watch` and `fugaro report`, other models through OpenRouter (experimental)
 - [x] Releases with GoReleaser, the Homebrew tap and cosign-signed checksums
 - [ ] Signed base images, verified and pinned by `fugaro setup` (nothing is copied)

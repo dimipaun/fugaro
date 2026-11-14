@@ -138,6 +138,12 @@ func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 	if err != nil {
 		return err
 	}
+	// What this removes is the project's own entry and the container behind it
+	// — there is no --repo on this command — so it is the project admin's, for
+	// the reason the store's own project copy is.
+	if err := accessGateProject(cmd.Context(), lc, nil, "nothing was removed", "removing a secret"); err != nil {
+		return err
+	}
 	// The entry this command removes is the block's the name is in (D1260): a
 	// name this config holds in workflow_secrets has that block's entry, and a
 	// reserved name has project_secrets'. The container is the same derived ID

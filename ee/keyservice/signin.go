@@ -965,6 +965,7 @@ func (s *Service) signInMint(ctx context.Context, subscriptionID, account string
 	}
 	record := minted.Record
 	record.Source = signInSource(sub.ID, record.KeyID)
+	record.Subscription = sub.ID
 	record.Email = account
 	if err := s.store.SaveIssuance(ctx, record); err != nil {
 		return MintedV1{}, err

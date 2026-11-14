@@ -475,7 +475,7 @@ func accountsAddDeployLine(lc *localcfg.Config, profile, name string, st initflo
 // is projectpolicy.DeriveAccounts, which is the one the Policy stage writes
 // through, so this is a read of the same derivation and never a second one.
 func projectPublishMembers(lc *localcfg.Config) (map[string]projectpolicy.Account, error) {
-	return projectpolicy.DeriveAccounts(policyProfiles(lc), lc.ClaudeAccounts, lc.ProjectSecrets)
+	return projectpolicy.DeriveAccounts(policyProfiles(lc), lc.ClaudeAccounts, lc.ProjectSecrets, lc.PolicyRepoAccounts())
 }
 
 // accountsAddProfileOf is the profile that now serves name: what the block

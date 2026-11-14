@@ -610,6 +610,7 @@ reads:
 | `terminal`, `settled` | bool | no | |
 | `branch`, `outcome` | string | **yes** | |
 | `task_pr`, `record_pr`, `pr` | int | **yes** | **`pr` is the run's PR number on this shape** (design gap 6's second spelling) |
+| `pr_state` | string | **yes** | the state of the pull request the row carries, in the owner's four words of 2026-11-12 (**CLI 0.24.0**): `live` (a run is going on it), `ready` (no run is going and it waits only on a merge) or `stalled` (it had a run, no run is going and it is not ready). It is read from the run records alone, with no call to the forge: a listing groups the rows it read by the pull request they carry, takes the newest run of each that says what the pull request is and reads the state from it — a run going makes the pull request `live` whatever the runs that ended left behind, and otherwise the newest run whose `outcome` is `ready` or `draft` decides (`ready` is `ready`, `draft` is `stalled`; a run that said neither, a rebase or a review among them, does not decide, and a pull request whose runs in the window all said neither is `stalled`). It is the last state a run recorded of the pull request and not the pull request's state now: nothing in the read calls the forge, so a pull request merged or closed after the run that left it `ready` keeps `ready`, and one closed after a draft keeps `stalled`. **A review run is on the pull request its task reviews**, which its record names only at the artifact stage that ends the review, so such a row carries `pr_state` while its `pr` is still absent. **Absent for a row that carries no pull request** — a run that opened none, an artifact run — and on a document whose read is not a window: `diagnose --json`'s `row` holds the one run it diagnoses, which cannot say what that pull request is doing, and drops the state rather than guess. The fourth word, `orphan` (a pull request no run ever produced or follows), is one no listing of runs can write, because such a pull request has no row. It is an enum the CLI writes from its own table and never text a job wrote, and `fugaro runs ls --state live\|ready\|stalled` is the same three words |
 | `pushed` bool, `pushed_head`° | | | |
 | `started_at` | `*time.Time` | **yes** | null = not started |
 | `base_branch`, `previous_run` | string | **yes** | |
@@ -3667,7 +3668,7 @@ table against the live constructors.
    `link.openPullRequest` took it to twenty-five and writes nothing, and C4c's
    `coordinator.intents` took it to twenty-six and writes nothing — **the
    counts in this parenthesis are the history up to that commit, and rule 5's
-   thirty-eight is today's**), and no other argv that writes is reachable
+   thirty-nine is today's**), and no other argv that writes is reachable
    from a renderer. Two further commands this file
    describes are writes, and **neither is in the console's set**: `fugaro cancel
    RUN --json` (§6.3), which is on the design's "never" table and which no v1

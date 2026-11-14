@@ -308,13 +308,20 @@ func stageKey(stage string) string { return "stages." + stage + ".claude_account
 // reads them: a stage's own key where it has one, the project's default where it
 // has none. "" is the unsuffixed secret, which is what a stage with no key runs
 // on in an installation that sets no default either.
+//
+// A key that names an alias is read as the account the alias stands for: the
+// craft key derived from these names is an access, an access names an account
+// and never an alias (D2092), and an unresolved alias would leave the crafts of
+// such an installation without a key at all (D2102). One step, never a chain
+// (D2093), which is what config.ResolveAccountAlias answers.
 func installationAccounts(c *localcfg.Config, stages []string) []string {
 	out := make([]string, 0, len(stages))
 	for _, name := range stages {
 		if name == "" {
 			name = c.DefaultClaudeAccount
 		}
-		out = append(out, name)
+		account, _ := c.ResolveAccount(name)
+		out = append(out, account)
 	}
 	return out
 }

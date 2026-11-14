@@ -197,8 +197,15 @@ const (
 // converges the node and the job set on a repoint -- is a task later than the
 // block, and a row may not name a family command that does not take it (D1178);
 // the row and the reconcile paragraph move together when that command lands.
+//
+// The repository-level account list is the last mover, by one row and not the
+// allowlist's: repos.*.claude_accounts is what admits a repository whose runs
+// are not on a profile job (docs/project-claude-accounts.md §3), so it is
+// local-only and stripped from the shared copy of the map, and its owner is the
+// accounts family, whose `accounts rm` clears a name with the declaration it
+// names -- the generic path writes neither half.
 const (
-	cfmRegistryRows   = 436
+	cfmRegistryRows   = 443
 	cfmAllowlistNamed = 105
 )
 
@@ -461,6 +468,11 @@ func TestDocsConfigManagementRelativeCitationsResolve(t *testing.T) {
 // list carries, and the eight scalars beside them (the four a mode reads, the
 // cost ceiling, the critical-path factor, the judge's grade and the readiness
 // switch) are reached by the block's own prefix.
+//
+// T2 of docs/bitbucket-token-types/ is the last mover, by six rows and by none:
+// the local config's own `bitbucket_tokens.*` block is the machine's file, one
+// row per member of a typed Bitbucket token's record, and no name or prefix in
+// the allowlist reaches it.
 //
 // It counts through the same predicate the write path uses, so the test and the
 // command cannot disagree about what "the allowlist carries" means: the three

@@ -167,7 +167,8 @@ type Config struct {
 	SealerKeyName string
 	// TenantsCollection is the document collection the organisations' lists are
 	// kept in: the invitation domains the operations organisation allows and the
-	// Microsoft tenants a reseller pins (D2207, plan P5.1). It is configuration
+	// Microsoft (Entra ID) directories a reseller pins (D2207, plan P5.1). It is
+	// configuration
 	// because the deploy names its own collections, and the lists themselves are
 	// data an operations owner sets.
 	TenantsCollection string
@@ -220,7 +221,7 @@ type Deps struct {
 	// a mounted route declares it (api.go), and the sign-in flows refuse every
 	// caller of theirs, at the request, with the sign-in's own uniform sentence
 	// rather than a key nothing checked.
-	SignIn    SignIn
+	SignIn    SignInVerifier
 	Paddle    Paddle
 	Scheduler Scheduler
 	Sealer    Sealer
@@ -253,7 +254,7 @@ type Service struct {
 	// sign-in and its exchange, and a device code between the CLI's start and
 	// its poll. Both are this process's and both belong to signin.go, which
 	// states what that costs a deployment of more than one instance.
-	signIn SignIn
+	signIn SignInVerifier
 	codes  *signInCodes
 	// renewMu is one renewal at a time in this process. A renewal reads the key's
 	// state, mints and then writes what records the rotation, and two of them in

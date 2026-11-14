@@ -782,6 +782,60 @@ func TestSharedConfigRefusesCloneURLs(t *testing.T) {
 	}
 }
 
+// TestSharedConfigRefusesARepositoryAccountList: a repos entry's own
+// claude_accounts is the repository-level half of the trust anchor T1 keeps in
+// the operator-only local config — it is what admits a repository whose runs
+// are not on a profile job to an account (docs/project-claude-accounts.md §3) —
+// so it is refused in the shared file exactly as the top-level block is, and
+// localcfg.Config.Shared clears it for the same reason. A launcher with
+// objectAdmin on the runs bucket who could publish one would be adding a
+// repository to an account's admission, and the machine whose next publish
+// derives the admission would be deriving what that launcher wrote. The key is
+// nested, so it is refused on the decoded value rather than by key before the
+// parse; the refusal names the entry, the key and the block to edit.
+func TestSharedConfigRefusesARepositoryAccountList(t *testing.T) {
+	data := strings.Replace(validShared(),
+		"        workflows:\n            - web\n",
+		"        workflows:\n            - web\n        claude_accounts:\n            - team-a\n", 1)
+	if data == validShared() {
+		t.Fatal("the fixture did not gain the entry: the check below would pass on a file carrying no claude_accounts")
+	}
+	_, err := ParseShared([]byte(data), sharedAnchor)
+	if err == nil {
+		t.Fatal("a published shared config carrying repos.<r>.claude_accounts: was accepted")
+	}
+	for _, want := range []string{"repos.belong/edgeweb.claude_accounts", "never published", "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	// The publish half: the converge's own copy of the repos map carries
+	// neither local key, so a config that has one is never the file that
+	// reaches the bucket. The control beside it is the same config without the
+	// key, so the check is the entry's own keys and not the entry.
+	c, err := localcfg.Parse([]byte(data))
+	if err != nil {
+		t.Fatalf("the fixture does not read back: %v", err)
+	}
+	if got := c.Shared().Repos["belong/edgeweb"]; len(got.ClaudeAccounts) > 0 || got.BaseBranch != "" {
+		t.Errorf("the published copy of belong/edgeweb carries %v/%q, so a repository's own account list would travel to the runs bucket", got.ClaudeAccounts, got.BaseBranch)
+	}
+	if got := validSharedPublished(t); len(got.Repos["belong/edgeweb"].ClaudeAccounts) > 0 {
+		t.Error("the control entry carries an account list, so the check above proves nothing")
+	}
+}
+
+// validSharedPublished is the shared copy of the valid fixture, for the tests
+// that need the config the converge publishes beside the config it reads.
+func validSharedPublished(t *testing.T) *localcfg.Config {
+	t.Helper()
+	c, err := localcfg.Parse([]byte(validShared()))
+	if err != nil {
+		t.Fatalf("the fixture does not read back: %v", err)
+	}
+	return c.Shared()
+}
+
 // TestSharedConfigRefusesEveryForbiddenSection: the list is the fence, and a
 // name dropped from it is a section the commands would read from a file any
 // launcher with objectAdmin on the runs bucket can write. Each name is put in
@@ -846,6 +900,7 @@ func TestSharedNeverPublishedCatchesTheDecodedSections(t *testing.T) {
 		{"triage", "triage: false\n"},
 		{"backend", "backend: cloud-batch\n"},
 		{"clone_urls", "clone_urls:\n    github/acme/app: https://github.com/acme/app\n"},
+		{"bitbucket_tokens", "bitbucket_tokens:\n    - {name: ci, type: repo, coverage: [belong/edgeweb]}\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, err := localcfg.Parse([]byte(validShared() + tc.yaml))
