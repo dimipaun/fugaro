@@ -84,12 +84,14 @@ repos:
 // TestAccountsAliasSetWritesAndConverges is the command end to end: one edit of
 // the local config, and the three stages `fugaro update` runs, in-process.
 //
-// The published node is seeded with the post-repoint members before the run,
-// because the repoint IS a widening of the account a stage goes out on: a node
-// that names the account the keys now resolve to is the state the publish has
-// nothing to widen, and a fixture that left the node naming the old account
-// would be answered by the typed confirmation a headless run cannot give — which
-// is the typed form's own test, not this one (policyAccountWidening).
+// The published node is seeded with the members the repoint REPLACES — the
+// account the keys resolved to before the command ran — because that is the
+// state the command exists for: a node naming another account is a publish that
+// changes the project's account choice, and the command has to carry that change
+// through without a typed confirmation (D2097, F10) and with nothing left for
+// the operator to run afterwards (D2096). A fixture that seeded the
+// post-repoint members would be a node the publish has nothing to move, and the
+// one state this test is about would be the one it never reached.
 //
 // What the assertions are about is F4: the alias never reaches the node. The
 // command writes the local config, and every reader of the node — the launch,
@@ -97,8 +99,8 @@ repos:
 func TestAccountsAliasSetWritesAndConverges(t *testing.T) {
 	r := newAddRigWith(t, aliasRigLocal)
 	node := addPolicyNode()
-	node["default_claude_account"] = "team-b"
-	node["claude_account_stages"] = map[string]any{"review": "team-b"}
+	node["default_claude_account"] = "team-a"
+	node["claude_account_stages"] = map[string]any{"review": "team-a"}
 	r.db.Set(projectpolicy.PathShared(), node)
 
 	out, _, err := execute(t, "accounts", "alias", "set", "reviewer", "team-b", "--yes")
