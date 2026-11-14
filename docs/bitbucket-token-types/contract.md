@@ -90,6 +90,16 @@ that node's `bitbucket_token.allow_repos` list (R3).
 `BundleTokens` is the bundle's tokens as the snapshot holds them: `Names()` in a stable order, and `Value(name)` for the
 one path about to attach a token to a call. Nothing else hands a value out and nothing renders one.
 
+**A token has to be in both documents to serve anything.** A bundle key with no node record, and a node record with no
+bundle key, are **skipped**, not selected (C1's acceptance, R14, R5). Neither is an error and neither is a refusal class of
+its own: a half-published token is not a candidate, so a publish that lands the two sides of a token in either order reads
+the same way, and no caller serves a call with a token it cannot forward or selects a name whose value it would then not
+find. The same holds for a record a reader refuses (`Validate`) and for a record named `bitbucket-token` inside the
+`bitbucket_tokens` key — the legacy key is the implicit record's own name and never an entry of the key — so a
+half-published or hand-broken token serves nothing at all (R14, fail closed). Every one of these is a skip and not a
+refusal: what the selector does with the candidates that are left is T4's, and no skip is ever reported as a token that
+was tried.
+
 ## Selection
 
 `Selector.Select(ctx, snap, canonical, write) (Choice, error)`. `canonical` is the canonical repository of the **pairing**,

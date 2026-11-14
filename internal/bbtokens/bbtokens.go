@@ -259,6 +259,14 @@ type BundleTokens interface {
 // the forward are handed the same one, so a request cannot be admitted against
 // one policy and served under another, and a policy published between two reads
 // of a request is never half-applied.
+//
+// The two documents are read together and a token has to be in both to serve
+// anything: a bundle key with no node record, and a node record with no bundle
+// key, are skipped rather than selected (R14, R5). Neither is an error and
+// neither is a refusal class of its own — a half-published token is not a
+// candidate, so neither side is read as the token being gone, and no caller
+// serves a call with a token it cannot forward or selects a name it would then
+// find no value for.
 type Snapshot struct {
 	// Policy is the shared policy node the request was admitted by. It is the
 	// whole node rather than its bitbucket_token block alone, because the block

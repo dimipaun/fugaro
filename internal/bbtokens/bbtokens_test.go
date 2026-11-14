@@ -141,6 +141,14 @@ func TestContractRecordForms(t *testing.T) {
 			rec: Record{Name: "bitbucket-token--stars", Type: TypeRepo, Coverage: []string{"bitbucket/acme/****"}},
 		},
 		{
+			why: "more than two wildcards is a typo rather than an intent, in the type that checks the least",
+			rec: Record{Name: LegacyName, Type: TypeUntyped, Coverage: []string{"bitbucket/acme/a*b*c*"}},
+		},
+		{
+			why: "a workspace token covers one workspace, not a path inside one",
+			rec: Record{Name: "bitbucket-token--nested", Type: TypeWorkspace, Coverage: []string{"bitbucket/acme/group/*"}},
+		},
+		{
 			why: "a segment carries only the lower-case characters a repository name is made of",
 			rec: Record{Name: "bitbucket-token--space", Type: TypeRepo, Coverage: []string{"bitbucket/acme/we b"}},
 		},
