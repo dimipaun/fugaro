@@ -3,8 +3,11 @@
 **Status (2026-11-07, later): the plan is built — every task in it has landed.** Each task needed the
 owner's go by name and got it, and the tree followed: the prerequisite CLI tasks **P1–P4** and all
 six console tasks **C1–C6** are on `main` — the settings write, the pencil, the window, the widening
-answered by `--yes` — so the commands, flags, fields and argv proposed below are what the CLI and
-the console now do, and the console shipped it in **0.120.0 "Quince"**.
+answered by the window's own confirmation — so the commands, flags, fields and argv proposed below
+are what the CLI and the console now do, and the console shipped it in **0.120.0 "Quince"**. (The
+`--yes` those tasks first passed to `fugaro settings set` is gone from every command since **T11 of
+[docs/no-prompt-policy](../no-prompt-policy/implementation-plan.md)**; the console passes no flag and
+its window is the confirmation.)
 [reconciliation.md](reconciliation.md) §1 records the commit its citations were re-read on. What
 landed were the tasks, in their own pull requests — **this folder ships no code itself**, and the
 paragraph kept below is the folder's own statement of what it is. **This line records what the tree

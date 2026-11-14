@@ -538,7 +538,9 @@ implied.
 the repository", and the page's own §1 — and a launcher that may start a run on an account job can have
 that run print the token (design D2). Widening `allow_data_to` therefore widens who may
 reach that token's account, and the confirmation's own text names it, with what it means (D868,
-answered: `--yes` covers everything, so the warning is carried by the sentence rather than by a typed
+answered: the one confirmation covers everything — the flag that answered it is gone from the CLI
+since **T11 of [docs/no-prompt-policy](../no-prompt-policy/implementation-plan.md)**, so the warning
+is carried by the sentence and the owner answers it at their own real terminal rather than by a typed
 gate; §2.6). The account job also mounts the profile's GitHub App key (`internal/infra/projectjobs.go`), so a hostile run on it reaches the forge as well as the Claude account (see the cloud-senior-review
 design's **F3**, [docs/cloud-senior-review/](../cloud-senior-review/reconciliation.md)).
 
@@ -756,8 +758,10 @@ walk begins where the explicit chain's floor already was.
 nothing chooses for the owner. Turning it on is the owner's own act, and it is the act D875 waits for —
 **the owner himself** confirming that the subscription terms allow one project to spread across several
 accounts. That is why the switch is also a sensitive direction (§11.1): the confirmation is a typed
-project name, not a flag a script sets. **D1107 (owner, 2026-11-01)** lets `settings set --yes` answer it outside a
-coding agent's session; in an agent's session it is still refused, `--yes` or not.
+project name, not a flag a script sets. **D1107 (owner, 2026-11-01)** answered it outside a coding
+agent's session; the flag that answer named is gone from the CLI since **T11 of
+[docs/no-prompt-policy](../no-prompt-policy/implementation-plan.md)**, so the owner's own terminal is
+what answers it, and an agent's session is refused whatever is passed.
 
 The switch exists so that the answer, when it comes, is one setting rather than another design: `auto`
 is written down here, built by A7 behind the switch, and off.
