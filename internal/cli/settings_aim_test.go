@@ -22,6 +22,7 @@ func settingsAimHome(t *testing.T) (first, second string) {
 		t.Setenv(k, "")
 	}
 	isolateProjects(t, t.TempDir())
+	settingsBucketAt(t)
 	first = settingsAimParallel(t, writeProject(t, "aurora", "aurora-gcp"), 3)
 	second = settingsAimParallel(t, writeProject(t, "basalt", "basalt-gcp"), 7)
 	return first, second
