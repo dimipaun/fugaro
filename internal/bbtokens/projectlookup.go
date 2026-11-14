@@ -43,16 +43,6 @@ package bbtokens
 // own two guards would answer "covered" for a token whose record the node
 // carries and whose value the bundle does not — the half-published token R14
 // fails closed on.
-//
-// What this file expects from C1: it names Record (Name, Type, ProjectUUID),
-// Name, TypeProject, BundleTokens (its value accessor called here as
-// Value(Name) (string, bool)) and ProjectResolver, and declares none of them.
-// They are C1's, in internal/bbtokens/bbtokens.go, which this file is written
-// beside and merges after (the plan's launch gate). Until C1 is on the branch
-// the package does not compile, and that is the launch gate rather than a
-// defect: a copy of those declarations here would collide with C1's own the
-// moment the two meet, and a branch that stopped main from building is worse
-// than one that builds only after C1.
 
 import (
 	"context"
