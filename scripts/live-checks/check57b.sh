@@ -55,8 +55,12 @@
 #             names an accelerator-optimized machine type whose GPU the
 #             project's quota was never granted, so Batch's own quota check
 #             delays it there and no VM is ever created for it -- it holds no VM
-#             and therefore bills nothing. No model call, no build, no run of
-#             the backend.
+#             and therefore bills nothing. That is a read, not an assumption:
+#             the region's own resource says the project holds no GPU quota
+#             there and that a zone of it offers the type, and the job's own
+#             state is read back as `QUEUED`, and the check strands nothing
+#             unless all three say so. No model call, no build, no run of the
+#             backend.
 # Runs:       by YOU. No agent runs any step of it. The `fugaro setup` an
 #             unprovisioned installation needs is PRINTED, never run: its
 #             confirmation is typed and a coding agent's session is refused it.
@@ -156,6 +160,11 @@ PRINTED=""
 MANUAL_LINE=""
 STRANDED_NAME=""
 STRANDED_CREATED=""
+# The state the job this run submitted was created in. The restore row says the
+# job it leaves behind "holds no VM and bills nothing", which is only true of a
+# job that never left QUEUED, so that claim is made against this reading rather
+# than against the fact that a job was submitted.
+STRANDED_STATE=""
 
 scratch_up() {
   SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/chk57b.XXXXXXXX") || die "Check 57b cannot make a scratch directory"
@@ -213,7 +222,14 @@ finish() {
     [ "$SCRATCH_REMOVED" = yes ] || restore=FAIL
     note="the scratch directory $([ "$SCRATCH_REMOVED" = yes ] && echo "is gone" || echo "is STILL THERE, at $SCRATCH — remove it yourself"), and nothing was enabled, disabled, granted or revoked anywhere"
     if [ -n "$STRANDED_NAME" ]; then
-      note="${note}. The stranded job ${STRANDED_NAME} is LEFT IN PLACE on purpose: it is the subject of the sweep this check measures (the reaper is what removes it, once its queue deadline passes), it holds no VM and bills nothing, and ${STRANDED_CREATED} of it — remove it by hand with: gcloud batch jobs delete ${STRANDED_NAME} --project=${P:-fugaro-dev} --location=${L:-us-east5} (that ends this check's sweep measurement)"
+      case "$STRANDED_STATE" in
+      ""|QUEUED)
+        note="${note}. The stranded job ${STRANDED_NAME} is LEFT IN PLACE on purpose: it is the subject of the sweep this check measures (the reaper is what removes it, once its queue deadline passes), it holds no VM and bills nothing, and ${STRANDED_CREATED} of it — remove it by hand with: gcloud batch jobs delete ${STRANDED_NAME} --project=${P:-fugaro-dev} --location=${L:-us-east5} (that ends this check's sweep measurement)"
+        ;;
+      *)
+        note="${note}. The job ${STRANDED_NAME} is in state ${STRANDED_STATE}, and this check strands only a job that never left QUEUED (that is the job the queue deadline deletes, and the row above says what the state means): it is NOT the stranded job the sweep is measured on, it is not covered by the 'holds no VM and bills nothing' above, and nothing needs it — remove it now with: gcloud batch jobs delete ${STRANDED_NAME} --project=${P:-fugaro-dev} --location=${L:-us-east5}"
+        ;;
+      esac
     fi
   fi
   facts="${facts}"$'\n'"restore|$restore|${note}"
@@ -240,6 +256,11 @@ REAPER_JOB=fugaroreap
 REAPER_SCHED=fugaro-reaper-sweep
 CHK_LABEL=fugaro_chk
 CHK_VALUE=57b
+# The machine type the stranded job names: an accelerator-optimized one, whose
+# GPU is attached with the VM. It is one constant because the request, the two
+# reads that decide whether stranding it is safe and the rows that report them
+# all name it, and a type named in two places is a type that can drift.
+STRANDED_TYPE=g4-standard-48
 
 guard_xtrace() {
   if [ "$XTRACE_AT_START" = yes ]; then
@@ -601,6 +622,12 @@ step_local_pass() {
 # refuses such a share at submit** (`machine_type "e2-standard-4" cannot satisfy
 # compute_resource …`, the owner's run of 2026-11-14), so a stranded job is
 # built out of a resource the project's quota cannot grant instead.
+#
+# Only a job the reaper could have swept is judged here. A job of this check's
+# that is in any state but QUEUED is reported for what it is — the guards that
+# keep this check's own stranded job queued are above — and never read as a pass
+# that failed to sweep it: the queue deadline deletes a job that never left
+# QUEUED, and a job Batch ran is not one a sweep was owed for.
 step_stranded() {
   batch_jobs_json >"$SCRATCH/jobs.json"
   python3 - "$SCRATCH/jobs.json" >"$SCRATCH/stranded.fields" <<'PY'
@@ -641,12 +668,23 @@ PY
 
   if [ "$existing" = 0 ]; then
     strand_one || return 0
-    fact stranded INFO "no stranded job of this check's was there, so this run created one: ${STRANDED_NAME}, QUEUED and never scheduling (it names the accelerator-optimized machine type g4-standard-48 -- one whose GPU comes with the VM, and which this project has no GPU quota for -- with a 2000m/4096MiB share that fits it, so the API accepts the job and Batch's quota check delays it; no VM is created for it, so it bills nothing). The pass that judges it decides by a queue deadline of ${QUEUE_DEADLINE:-<not read>}, so the deletion this step measures is due at ${STRANDED_NAME}'s creation plus that deadline: run this script again after then and the line above this one will carry the reaper's own 'deleted job …' instead. Nothing is concluded today, and nothing was deleted"
+    fact stranded INFO "no stranded job of this check's was there, so this run created one: ${STRANDED_NAME}, QUEUED and never scheduling (it names the accelerator-optimized machine type g4-standard-48 -- one whose GPU comes with the VM, which no zone of ${L} was lacking and no GPU quota of this project is above zero for, both read out of the region's own resource before anything was submitted -- with a 2000m/4096MiB share that fits it, so the API accepts the job and Batch's quota check delays it; the job's own state was read back QUEUED, no VM is created for it, so it bills nothing). The pass that judges it decides by a queue deadline of ${QUEUE_DEADLINE:-<not read>}, so the deletion this step measures is due at ${STRANDED_NAME}'s creation plus that deadline: run this script again after then and the line above this one will carry the reaper's own 'deleted job …' instead. Nothing is concluded today, and nothing was deleted"
   else
     # A job that is here after its own deadline is the finding: the pass has run
     # (this run fired it) and left it. Anything younger is simply not due yet.
     STRANDED_NAME=$(grep '^job|' "$SCRATCH/stranded.fields" | head -n 1 | cut -d'|' -f2)
     STRANDED_CREATED=$(grep '^job|' "$SCRATCH/stranded.fields" | head -n 1 | cut -d'|' -f4)
+    # The reaper deletes a job that never left QUEUED, and only that: a job of
+    # this check's that is in any other state is not the job this step stands
+    # on, and judging it by the queue deadline would report the reaper as having
+    # missed a sweep it was never supposed to make.
+    local jstate
+    jstate=$(grep '^job|' "$SCRATCH/stranded.fields" | head -n 1 | cut -d'|' -f3)
+    STRANDED_STATE=$jstate
+    if [ "$jstate" != QUEUED ]; then
+      fact stranded FAIL "this check's own job ${STRANDED_NAME} (created ${STRANDED_CREATED}) is in state ${jstate}, not QUEUED, so it is not the stranded job this step stands on: the queue deadline deletes a job that never left QUEUED and this one left it, so nothing here measures the sweep, and nothing here says a pass failed to make it. These are the two ways it ends up here — the job was stranded by an earlier build of this check, before the guards this one runs (the region's own resource read, no GPU quota in ${L}, and ${STRANDED_TYPE} offered by one of its zones), or Batch was handed the VM and ran it, which RUNNING or SCHEDULED would mean and which bills. Record the state, and remove the job with gcloud batch jobs delete ${STRANDED_NAME} --project=${P} --location=${L} so the next run measures a job of its own"
+      return 0
+    fi
     local verdict due
     read -r verdict due <<<"$(python3 - "$SCRATCH/stranded.fields" "${QUEUE_DEADLINE:-0s}" <<'PY'
 import datetime, json, re, sys
@@ -707,12 +745,75 @@ PY
 # QUEUED whose scheduling the quota check delays). If the API refuses the
 # request anyway, the check stops rather than inventing a third shape -- the
 # request itself is the thing to record.
-strand_one() {
-  STRANDED_NAME="fugaro-chk57b-$(date -u +%Y%m%dt%H%M)"
-  local label="chk57b-$(date -u +%Y%m%dt%H%M)"
-  python3 - "$SCRATCH/stranded.json" "$STRANDED_NAME" "$label" <<'PY'
+#
+# That shape is stranded only while three things hold, and this check reads each
+# of them rather than assuming it: the project holds no GPU quota in the region
+# (with quota, Batch's own check could hand the job the VM it names, and a row
+# that says "bills nothing" would have paid for a 48-vCPU GPU machine), one of
+# the region's zones offers the type (where none does the job is not stranded
+# but broken, and a later run would read its failure as the reaper's), and the
+# job's own state right after it is created is QUEUED. A guard that cannot be
+# READ is a FAIL and not a pass: the check strands a job only where it can show
+# the job cannot run.
+#
+# region_fields: the two facts about ${L} those guards decide by -- the GPU
+# quota this project holds there and the zones the region has -- out of the
+# region's own resource, in the API's own words. Both come out of the one read:
+# they are two questions about one object, and a run that took one of them from
+# somewhere else would be judging a different region.
+region_fields() {
+  gcloud compute regions describe "${L:?}" --project="${P:?}" --format=json \
+    >"$SCRATCH/region.json" 2>"$SCRATCH/region.err" \
+    || {
+      printf 'unread|%s\n' "$(oneline <"$SCRATCH/region.err")"
+      return 1
+    }
+  python3 - "$SCRATCH/region.json" <<'PY'
 import json, sys
-name, label = sys.argv[2], sys.argv[3]
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception as e:
+    print("unread|the region's own answer could not be read (%s)" % e)
+    sys.exit(1)
+granted = ["%s limit %s" % (q.get("metric"), q.get("limit"))
+           for q in (d.get("quotas") or [])
+           if "GPU" in (q.get("metric") or "").upper() and float(q.get("limit") or 0) > 0]
+print("quota|" + (", ".join(granted) if granted else "none"))
+print("zones|" + ",".join(z.rsplit("/", 1)[-1] for z in (d.get("zones") or []) if z))
+PY
+}
+
+strand_one() {
+  # The name is picked after the guards, not before: every guard below ends the
+  # run without a job, and a name picked first would leave the restore row
+  # naming a job that was never created.
+  local label state fields quota zones offered
+  fields=$(region_fields) || true
+  quota=$(sed -n 's/^quota|//p' <<<"$fields")
+  zones=$(sed -n 's/^zones|//p' <<<"$fields")
+  if [ -z "$quota" ]; then
+    fact stranded FAIL "the region ${L}'s own resource could not be read ($(sed -n 's/^unread|//p' <<<"$fields")), and this check strands a job only where it can show the project cannot be granted the VM that job names: a job whose GPU quota is not read is a job that may be scheduled and run, and a row that says 'bills nothing' would then have paid for a 48-vCPU GPU machine. Nothing was submitted, and the sweep this step measures is not measured by this run"
+    return 1
+  fi
+  if [ "$quota" != none ]; then
+    fact stranded FAIL "this project holds GPU quota in ${L} (${quota}), so the deliberately stranded job may be handed the ${STRANDED_TYPE} VM it names and run rather than stay in QUEUED: the resource this shape is stranded on is one the project CAN be granted, and a job that runs holds a 48-vCPU GPU machine that bills. Nothing was submitted. A project with GPU quota needs a different stranded shape -- the design's step 9, a task share no machine type can hold, is one the API refuses at submit ('machine_type \"e2-standard-4\" cannot satisfy compute_resource …', the owner's run of 2026-11-14)"
+    return 1
+  fi
+  if [ -z "$zones" ]; then
+    fact stranded FAIL "the region ${L} listed no zone, so whether any of them offers ${STRANDED_TYPE} cannot be read, and a job naming a machine type no zone of the region has does not strand: it fails, and a later run past the deadline would read that failure as the reaper's. Nothing was submitted"
+    return 1
+  fi
+  offered=$(gcloud compute machine-types list --project="${P:?}" --zones="$zones" \
+    --filter="name=${STRANDED_TYPE}" --format='value(zone)' 2>"$SCRATCH/mtypes.err" | oneline || true)
+  if [ -z "$offered" ]; then
+    fact stranded FAIL "no zone of ${L} (${zones}) lists the machine type ${STRANDED_TYPE}, so a job naming it is not stranded but broken: Batch would fail that job rather than leave it in QUEUED, and the sweep this step measures would be read out of a job that ended for a reason of its own. What the read answered: $(oneline <"$SCRATCH/mtypes.err" || true). Nothing was submitted"
+    return 1
+  fi
+  STRANDED_NAME="fugaro-chk57b-$(date -u +%Y%m%dt%H%M)"
+  label="chk57b-$(date -u +%Y%m%dt%H%M)"
+  python3 - "$SCRATCH/stranded.json" "$STRANDED_NAME" "$label" "$STRANDED_TYPE" <<'PY'
+import json, sys
+name, label, machine = sys.argv[2], sys.argv[3], sys.argv[4]
 labels = {"fugaro": "managed", "fugaro_chk": "57b", "fugaro_run": label}
 job = {
     "taskGroups": [{
@@ -724,7 +825,7 @@ job = {
         },
     }],
     "allocationPolicy": {
-        "instances": [{"policy": {"machineType": "g4-standard-48"}}],
+        "instances": [{"policy": {"machineType": machine}}],
         "labels": labels,
     },
     "labels": labels,
@@ -738,6 +839,12 @@ PY
       return 1
     }
   STRANDED_CREATED=$(gcloud batch jobs describe "$STRANDED_NAME" --project="${P:?}" --location="${L:?}" --format='value(createTime)' 2>/dev/null || true)
+  state=$(gcloud batch jobs describe "$STRANDED_NAME" --project="${P:?}" --location="${L:?}" --format='value(status.state)' 2>/dev/null || true)
+  STRANDED_STATE=$state
+  if [ "$state" != QUEUED ]; then
+    fact stranded FAIL "the job ${STRANDED_NAME} this run submitted is in state ${state:-<not read>} and not QUEUED, so it is not the stranded job this step stands on and this run measures neither the sweep nor the reaper: a job that left QUEUED was given a VM (or ended on its own), and the queue deadline — which deletes a job that never left QUEUED — does not apply to it. RUNNING or SCHEDULED means a 48-vCPU GPU machine is billing now, so read the job's own status and delete it with gcloud batch jobs delete ${STRANDED_NAME} --project=${P} --location=${L}, then record that status beside the guards above — the region's own resource read, no GPU quota in ${L}, and ${STRANDED_TYPE} offered by one of its zones — which are what should have kept this job in QUEUED"
+    return 1
+  fi
   return 0
 }
 
@@ -782,7 +889,10 @@ print_plan() {
   say "  [cloud]  gcloud logging read (resource.type=cloud_run_job AND resource.labels.job_name=${REAPER_JOB}) — the pass's own report and its three deadlines"
   say "  [local]  fugaro reaper --dry-run --project ${INSTALL} --gcp-project ${P} — the same sweep from this checkout, deciding by the same deadlines (deletes nothing)"
   say "  [cloud]  gcloud batch jobs list --filter=labels.${CHK_LABEL}=${CHK_VALUE} — this check's own stranded job, if an earlier run made one"
-  say "  [cloud]  gcloud batch jobs submit <name> (if there is none) — ONE job naming the accelerator-optimized machine type g4-standard-48 (whose GPU the project has no quota for) with a 2000m/4096MiB share that fits it, which never leaves QUEUED, carries fugaro=managed and a well-formed fugaro_run beside this check's fugaro_chk=57b, and holds no VM"
+  say "  [cloud]  gcloud compute regions describe ${L} — the GPU quota this project holds there and the zones the region has, which decide whether stranding a job on ${STRANDED_TYPE} is free; a run that cannot read them, or reads GPU quota above zero, strands nothing"
+  say "  [cloud]  gcloud compute machine-types list --zones=<the region's zones> --filter=name=${STRANDED_TYPE} — whether any of those zones offers the type: a job naming one that is not offered would fail rather than stay queued"
+  say "  [cloud]  gcloud batch jobs submit <name> (if there is none) — ONE job naming the accelerator-optimized machine type ${STRANDED_TYPE} (whose GPU comes with the VM, which no zone of ${L} lacks and no GPU quota of the project is above zero for) with a 2000m/4096MiB share that fits it, carries fugaro=managed and a well-formed fugaro_run beside this check's fugaro_chk=57b, and holds no VM"
+  say "  [cloud]  gcloud batch jobs describe <name> — the state that job was created in, which must read QUEUED: one that reads anything else is a job that left QUEUED, so it is not stranded, the sweep is not measured, and the row names the deletion"
   say "  [cloud]  gcloud logging read (--freshness ${CHK57B_SWEEP_AGE:-30d}) — the reaper's own 'deleted job <a job of this check's> (queued for N minutes …)' line, which is the sweep 57b-10 asks for; it is only printable after the queue deadline, so a first run reads it as INFO and a later run reads it as PASS"
   say "  [yours]  an unprovisioned installation is NOT provisioned by this script: the plan, the typed confirmation and the apply are yours — fugaro setup --provision-batch --project ${INSTALL}"
   say "and its Restore (also from the exit trap) would remove: the scratch directory ${SCRATCH} and nothing else. The stranded job is left in place on purpose; it holds no VM and bills nothing, and the row names the one command that removes it"
