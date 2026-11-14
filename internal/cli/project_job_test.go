@@ -446,9 +446,9 @@ workflows:
 
 // projectJobCheckout puts a checkout of acme/app in the working directory, so
 // a launch of it reads the repository's own fugaro.yaml — which is what says
-// whether its workflow is a checkout: clone one, and so whether it runs on a
-// shared job at all (design §4.4: a baked workflow stays on the
-// per-repository path).
+// which profile the workflow the launch names selects, and so which job the
+// launch lands on (D2304: the checkout mode decides the image, and no longer
+// the job).
 func projectJobCheckout(t *testing.T) string {
 	t.Helper()
 	return projectJobCheckoutYAML(t, projectJobRepoYAML)
@@ -2292,6 +2292,243 @@ func TestLaunchProjectJobServesBakedWorkflows(t *testing.T) {
 	}
 }
 
+// admitSharedJobProvider admits provider to the launcher's own question about
+// which providers a shared project job serves, for the length of the test.
+//
+// The plan's S1 leaves internal/infra's list as it is — so that the deployer
+// and the launcher merge with no effect on a Bitbucket project, and a release
+// cut midway breaks nothing — and I1 admits Bitbucket in one line. A
+// launcher-side test of the Bitbucket half therefore admits it here, exactly
+// as S1's own test admits it for the deployer: what the test admits is what
+// production deploys, because both ask the one predicate (sharedJobProvider).
+//
+// No test in this package runs in parallel, so replacing the variable is a
+// test-local act.
+func admitSharedJobProvider(t *testing.T, provider string) {
+	t.Helper()
+	prev := sharedJobProvider
+	sharedJobProvider = func(kind string) bool { return kind == provider || prev(kind) }
+	t.Cleanup(func() { sharedJobProvider = prev })
+}
+
+// The two profiles a project whose repositories are on both providers
+// publishes (D2310, R8): the project's own default, serving the first
+// provider, and the second provider's own default, named by the provider.
+const (
+	bitbucketProfile  = "standard-bitbucket"
+	githubFirstPolicy = `{"version":5,"allow_repos":["github/acme/*","bitbucket/acme/*"],` +
+		`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"},` +
+		`"standard-bitbucket":{"provider":"bitbucket","cpu":2,"memory":"4Gi","timeout_class":"6h"}}}`
+	bitbucketFirstPolicy = `{"version":5,"allow_repos":["github/acme/*","bitbucket/acme/*"],` +
+		`"profiles":{"standard":{"provider":"bitbucket","cpu":2,"memory":"4Gi","timeout_class":"6h"},` +
+		`"standard-github":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"}}}`
+)
+
+// bitbucketCheckout puts a checkout of a Bitbucket repository of the fixture's
+// owner in the working directory: projectJobRepoYAML with the provider moved,
+// committed on main and published as origin/main — the ref the launch reads
+// agent.auth from (projectJobAgentAuth), which projectJobCheckoutYAMLAt does
+// for the fixture's GitHub repository — with workflowKeys added under the web:
+// workflow when the caller names any.
+func bitbucketCheckout(t *testing.T, repo, workflowKeys string) {
+	t.Helper()
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@bitbucket.org:"+repo+".git")
+	yaml := strings.Replace(projectJobRepoYAML, "provider: github", "provider: bitbucket", 1)
+	if workflowKeys != "" {
+		yaml = strings.Replace(yaml, "  web:\n", "  web:\n"+workflowKeys, 1)
+		if !strings.Contains(yaml, workflowKeys) {
+			t.Fatal("the fixture has no web: workflow to put a key under")
+		}
+	}
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": yaml})
+	testutil.Git(t, dir, "add", "fugaro.yaml")
+	testutil.Git(t, dir, "commit", "-q", "-m", "the repository's fugaro.yaml")
+	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/main", "HEAD")
+	t.Chdir(dir)
+}
+
+// TestLaunchProjectJobServesBitbucket is the launcher's half of T2.2 (the
+// deployer's is S1's, and the two numbers this names are the plan's S4 and
+// docs/bitbucket-workspace-token's T2.2): a Bitbucket repository whose
+// workflow selects a Bitbucket profile runs on the shared job of that profile,
+// once the installation deploys one.
+//
+// What the launch does not do is decide this by the provider alone. Three
+// questions are asked in order and the launch answers each one from its own
+// document: the profile the workflow selects (or the default of the
+// repository's provider when it names none, D2310, R8), the profile's own
+// provider against the repository's, and whether the installation deploys a
+// shared job for that provider at all (sharedJobProvider — internal/infra's
+// list, which admits Bitbucket in the test because S1 leaves it as it is until
+// I1). The Bitbucket job holds no token at all (D2302), so a launch that got
+// here on a profile whose provider was not the repository's would run the
+// repository's work on a job that reaches no repository of its own.
+//
+// Mutation (run, restore): keep launchProjectJobFor's provider question at the
+// repository's provider alone (drop the sharedJobProvider(pr.Provider) half,
+// as TestLaunchKeepsABitbucketProfileOnThePerRepositoryJob's own mutation
+// does) — the launch is made on a job no installation has, and this test's
+// fixture has to deploy one for the assertion to be about the launcher at all.
+func TestLaunchProjectJobServesBitbucket(t *testing.T) {
+	f := newProjectJobFixture(t)
+	admitSharedJobProvider(t, "bitbucket")
+	const bbRepo = "acme/bb"
+	addRepoToConfig(t, f.cloudFixture, bbRepo, "bitbucket")
+	publishPolicy(t, f.launchBudgetFixture, githubFirstPolicy)
+	job := gcp.ProjectJobName(bitbucketProfile, "bitbucket", "")
+	f.run.AddProjectJob(job, bitbucketProfile, "bitbucket", "", "2", "4Gi")
+	f.run.SetJobTimeout(job, projectJobTimeout+backend.TaskTimeoutSlack)
+	bitbucketCheckout(t, bbRepo, "    job_profile: "+bitbucketProfile+"\n")
+
+	if _, _, err := execute(t, "run", "--repo", bbRepo, "--run-id", "20261114-130002-cccc", "Add a feature"); err != nil {
+		t.Fatalf("a launch of a Bitbucket repository on a project that deploys one job for it: %v", err)
+	}
+	calls := f.run.RunRequests()
+	if len(calls) != 1 || calls[0].Job != job {
+		t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the Bitbucket shared job %s: a deployed profile that admits the repository serves it (D2302)", len(calls), calls, job)
+	}
+}
+
+// TestUnnamedWorkflowResolvesTheProfileOfItsProvider is D2310 and R8's rule in
+// the launcher: a workflow that names no job profile runs on the default
+// profile of its repository's provider — `standard` for the project's first
+// provider, and `standard-<provider>` for another — and never on a profile of
+// a provider the repository is not on. Four rows pin the rule where it can
+// differ from main's single default: a project whose first provider is the
+// repository's, a project whose first provider is the other one (both
+// directions of `standard`), and the silence of a workflow that writes no
+// job_profile key at all.
+//
+// The rule is the runner's too (internal/runner's ProjectJobDefaultProfile,
+// which this launcher calls and TestRunnerCandidatesMatchTheLauncher holds to
+// the candidate set), so a launcher and a runner cannot resolve one
+// repository's workflow onto two profiles: the job's name is built from the
+// profile this resolves, and the runner places CLOUD_RUN_JOB against the
+// profiles the policy defines.
+//
+// Mutation (run, restore): resolve an unnamed workflow with
+// wf.JobProfileOrDefault() — main's rule, one default for every repository —
+// and the Bitbucket and `standard-github` rows resolve to `standard`, a
+// profile of the other provider, which the provider comparison then keeps on
+// the per-repository job: no jobs.run call is made on the shared job.
+func TestUnnamedWorkflowResolvesTheProfileOfItsProvider(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		policy string
+		repo   string
+		want   string
+	}{
+		{"the project's default serves the repository's provider", projectJobPolicy, "acme/app", "standard"},
+		{"another provider resolves to standard-<provider>", githubFirstPolicy, "acme/bb", bitbucketProfile},
+		{"the first provider's repository keeps the project's default", bitbucketFirstPolicy, "acme/bb", "standard"},
+		{"the second provider's repository does not", bitbucketFirstPolicy, "acme/app", "standard-github"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newProjectJobFixture(t)
+			provider := "github"
+			if tc.repo != "acme/app" {
+				provider = "bitbucket"
+				admitSharedJobProvider(t, "bitbucket")
+				addRepoToConfig(t, f.cloudFixture, tc.repo, "bitbucket")
+				bitbucketCheckout(t, tc.repo, "")
+			} else {
+				projectJobCheckout(t)
+			}
+			publishPolicy(t, f.launchBudgetFixture, tc.policy)
+			job := gcp.ProjectJobName(tc.want, provider, "")
+			f.run.AddProjectJob(job, tc.want, provider, "", "2", "4Gi")
+			f.run.SetJobTimeout(job, projectJobTimeout+backend.TaskTimeoutSlack)
+
+			if _, _, err := execute(t, "run", "--repo", tc.repo, "--run-id", "20261114-130003-dddd", "Add a feature"); err != nil {
+				t.Fatalf("a launch of a repository whose workflow names no profile: %v", err)
+			}
+			calls := f.run.RunRequests()
+			if len(calls) != 1 || calls[0].Job != job {
+				t.Fatalf("the launch made %d jobs.run calls (%+v), want one on %s: a workflow that names no profile runs on the default of its repository's provider (D2310, R8)", len(calls), calls, job)
+			}
+		})
+	}
+}
+
+// TestRunnerCandidatesMatchTheLauncher is C1's agreement on the launcher's own
+// side of it (contract.md: the launcher and the runner's candidate logic
+// "answer JobChoice over the same two facts and must agree name for name"):
+// the name this launcher computes is a name the runner's own computation
+// places, on the same (profile, provider, account) triple.
+//
+// The two are computed from different documents in different packages — the
+// launcher from the repository's own fugaro.yaml over the published policy,
+// the runner from the policy over the job's own environment — and the failure
+// this pins is the expensive one: a launch onto a job the runner then refuses
+// to place halts the run at its first decision, after an execution exists and
+// an attempt has been spent, with a message about a job whose name nobody
+// wrote down. Both of the rules this task changes are asked here, because they
+// are the two that decide a name: the provider-default rule (a Bitbucket
+// repository whose workflow names no profile) and the checkout mode that no
+// longer decides the job model (a baked workflow of the GitHub repository).
+//
+// Mutation (run, restore): make ProjectJobDefaultProfile answer the project's
+// default profile whatever the provider is — the Bitbucket launch is made on
+// gcp.ProjectJobName("standard", "bitbucket", ""), which no profile of the
+// published policy computes, and the runner's own answer is false for it.
+func TestRunnerCandidatesMatchTheLauncher(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		policy      string
+		repo        string
+		runID       string
+		wantProfile string
+	}{
+		{"bitbucket, no profile named", githubFirstPolicy, "acme/bb", "20261114-130004-eeee", bitbucketProfile},
+		{"github, a baked workflow", projectJobPolicy, "acme/app", "20261114-130005-ffff", "standard"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newProjectJobFixture(t)
+			provider := "bitbucket"
+			if tc.repo == "acme/app" {
+				provider = "github"
+			}
+			if provider == "bitbucket" {
+				admitSharedJobProvider(t, provider)
+				addRepoToConfig(t, f.cloudFixture, tc.repo, provider)
+				bitbucketCheckout(t, tc.repo, "")
+			} else {
+				baked := strings.Replace(projectJobRepoYAML, "checkout: clone", "checkout: baked", 1)
+				projectJobCheckoutYAML(t, baked)
+			}
+			publishPolicy(t, f.launchBudgetFixture, tc.policy)
+			job := gcp.ProjectJobName(tc.wantProfile, provider, "")
+			f.run.AddProjectJob(job, tc.wantProfile, provider, "", "2", "4Gi")
+			f.run.SetJobTimeout(job, projectJobTimeout+backend.TaskTimeoutSlack)
+
+			if _, _, err := execute(t, "run", "--repo", tc.repo, "--run-id", tc.runID, "Add a feature"); err != nil {
+				t.Fatalf("launch: %v", err)
+			}
+			calls := f.run.RunRequests()
+			if len(calls) != 1 {
+				t.Fatalf("the launch made %d jobs.run calls (%+v), want one", len(calls), calls)
+			}
+			p, found, err := projectpolicy.Decode([]byte(tc.policy))
+			if err != nil || !found {
+				t.Fatalf("the fixture's published policy does not decode: %v", err)
+			}
+			profile, from, account, ok := runner.ProjectJobOfPolicy(p, calls[0].Job)
+			if !ok {
+				t.Fatalf("the runner's candidate logic does not place the job the launch made (%s): a run in it would halt at its first decision, after an execution exists", calls[0].Job)
+			}
+			if profile != tc.wantProfile || from != provider {
+				t.Fatalf("the runner places %s as the job of %s/%s, and the launch meant %s/%s", calls[0].Job, profile, from, tc.wantProfile, provider)
+			}
+			if account != "" {
+				t.Fatalf("the runner places %s on the account %q, and the fixture's profile lists none", calls[0].Job, account)
+			}
+		})
+	}
+}
+
 // With no profiles published the per-repository job is not a guess — it is
 // the only job there is — so a launch from outside the checkout still takes
 // it. Both shapes of "no profiles" are pinned: an installation that has
@@ -3039,11 +3276,12 @@ func TestLaunchWithoutCheckoutReadsTheRefThroughTheService(t *testing.T) {
 // job decision's alone: the image gates a launch passes are judged by the
 // workflow's own kind and checkout mode, and a checkout: clone workflow runs
 // the installation's base image — it is never built per repository, so it has
-// no build record for a derived image's gates to find (image_refresh.go), and
-// the shared job exists only for clone workflows (launchProjectJobFor). A
-// launch from outside the checkout whose ref selects one is therefore judged
-// by the clone gates, which it reaches only through the same read the job
-// decision makes.
+// no build record for a derived image's gates to find (image_refresh.go). The
+// job decision reads that same document for a question of its own (which
+// profile the workflow's selection names, and so which job the launch runs
+// on), so a launch from outside the checkout whose ref selects a clone
+// workflow is judged by the clone gates, which it reaches only through the one
+// read the two readers share.
 //
 // The fixture's build record is removed for exactly this: with it there, the
 // derived-image gates pass a clone workflow on a record the fixture wrote and
