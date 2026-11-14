@@ -422,12 +422,6 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 				// --check PATH`, and a converge flag passed beside it is
 				// refused by name (refuseConvergeFlags) rather than ignored.
 				err = runUpdateCheck(cmd, o, args)
-			case o.ask && o.yes:
-				// The two flags say opposite things about the same
-				// confirmations (managed_ask.go): refused here, beside the
-				// foreign flag, so no question is asked and no mark is read
-				// for a run whose flags contradict each other.
-				err = askConflict(askFlags{ask: o.ask, yes: o.yes})
 			case o.repo:
 				err = runInitRepo(r, args)
 			case len(args) > 0:

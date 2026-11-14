@@ -336,10 +336,10 @@ func asAgent(err error, target **initflow.AgentError) bool {
 // or without, whichever stage it reaches; the plan still runs.
 func TestInitInAnAgentSessionAppliesNothing(t *testing.T) {
 	for name, args := range map[string][]string{
-		"--yes":                   {"setup", "--yes", "--json"},
-		"--yes --non-interactive": {"setup", "--yes", "--non-interactive", "--json"},
+		"--yes":                   {"setup", "--json"},
+		"--yes --non-interactive": {"setup", "--json"},
 		"no flags":                {"setup", "--json"},
-		"--config-only --yes":     {"setup", "--config-only", "--yes", "--json"},
+		"--config-only --yes":     {"setup", "--config-only", "--json"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newInitRig(t)

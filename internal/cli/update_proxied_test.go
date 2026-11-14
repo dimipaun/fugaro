@@ -196,7 +196,7 @@ func TestUpdateConvergesAProxiedV4NodeInOneRun(t *testing.T) {
 	}
 	dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", checkoutYAML("bitbucket", "oauth", "aurora", ""))
 	t.Chdir(dir)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("one fugaro update --yes did not converge a version-%d node that proxies this repository: %v\nstdout:\n%s\nstderr:\n%s", projectpolicy.Version-1, err, out, errOut)
 	}

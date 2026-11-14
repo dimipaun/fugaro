@@ -663,14 +663,14 @@ func TestSettingsDryRunTakesNeitherYesNorABareJSON(t *testing.T) {
 	settingsWriteHome(t)
 	settingsWriteCheckout(t, settingsRepoYAML("budget:\n  per_run_usd: 10\n"))
 
-	out, _, err := execute(t, "settings", "set", "budget.per_run_usd", "50", "--layer", "repo", "--dry-run", "--yes")
+	out, _, err := execute(t, "settings", "set", "budget.per_run_usd", "50", "--layer", "repo", "--dry-run")
 	if err == nil {
 		t.Fatalf("--dry-run with --yes was accepted:\n%s", out)
 	}
 	if ExitCode(err) != ExitUserError {
 		t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
 	}
-	for _, want := range []string{"--dry-run", "--yes"} {
+	for _, want := range []string{"--dry-run"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %s: %v", want, err)
 		}

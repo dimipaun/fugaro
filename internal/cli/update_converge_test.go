@@ -468,7 +468,7 @@ func TestUpdateFailsTheCredentialsResolveBeforeItMigratesTheNode(t *testing.T) {
 	r.save(t)
 	recorded := credentialsServiceEntry(t, r.imagesRig)["image"]
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	s := out + errOut
 	if err == nil {
 		t.Fatalf("an update whose credentials image this release does not publish succeeded, want the resolve's failure:\n%s", s)
@@ -510,7 +510,7 @@ func TestUpdateInAnAgentSessionHoldsTheNodeAtItsVersion(t *testing.T) {
 	t.Setenv("CLAUDECODE", "1")
 	recorded := credentialsServiceEntry(t, r.imagesRig)["image"]
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	// What the policy stage says it did with the node is the run's own
 	// account, so the log is read beside the screen (stageDetail).
 	s := out + errOut + newestLog(t, "update")
@@ -602,7 +602,7 @@ func convergeOn(t *testing.T, r *convergeRig, stale []string) string {
 		}
 	}
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("fugaro update stopped at %s (exit %d), so this installation needs a second command:\n%s\n%s",
 			stoppedStage(out), ExitCode(err), out, errOut)
@@ -1032,7 +1032,7 @@ func TestUpdateRefusesToRewindTheOrchestratorMarker(t *testing.T) {
 	r.db.Set(rules.PathOrchestratorRulesMarker(), ahead)
 	puts := r.db.RulePuts()
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err == nil {
 		t.Fatalf("fugaro update deployed this binary's rules over a newer orchestrator generation:\n%s", out)
 	}
@@ -1135,7 +1135,7 @@ func TestUpdateEndsTheSpinnerLineBeforeTheProjectHeader(t *testing.T) {
 	isolateState(t)
 	_ = r
 
-	out, err := executeConsole(t, "update", "--yes")
+	out, err := executeConsole(t, "update")
 	if err != nil {
 		t.Fatalf("fugaro update failed (exit %d): %v\n%s", ExitCode(err), err, out)
 	}
@@ -1196,7 +1196,7 @@ func TestUpdateNeverSendsThePersonToUpdateFromInsideIt(t *testing.T) {
 				noClaudeOnPath(t)
 			}
 
-			out, errOut, err := executeStdin(t, "", "update", "--yes")
+			out, errOut, err := executeStdin(t, "", "update")
 			if err != nil {
 				t.Fatalf("fugaro update failed (exit %d): %v\n%s\n%s", ExitCode(err), err, out, errOut)
 			}

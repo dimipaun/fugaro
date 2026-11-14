@@ -63,7 +63,7 @@ func (c convergeJSON) state(name string) string {
 // without --firebase-project.
 func TestConvergeFromNothing(t *testing.T) {
 	r := newInitRig(t)
-	out, _, err := executeStdin(t, "", "setup", "--yes", "--json")
+	out, _, err := executeStdin(t, "", "setup", "--json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestRerunPlansNothing(t *testing.T) {
 	r.stateBucket()
 	r.script["plan"] = map[string]any{"exit": 0}
 	r.save(t)
-	out, _, err := executeStdin(t, "", "setup", "--yes")
+	out, _, err := executeStdin(t, "", "setup")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestNonInteractiveNeverPromptsAndNeedsYes(t *testing.T) {
 	r.stateBucket()
 	fakeTerminal(t)
 	in := initProjectName + "\n"
-	out, _, err := executeStdin(t, in, "setup", "--non-interactive")
+	out, _, err := executeStdin(t, in, "setup")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -118,7 +118,7 @@ func TestNonInteractiveNeverPromptsAndNeedsYes(t *testing.T) {
 		t.Errorf("the run does not say it only planned:\n%s", out)
 	}
 	// With --yes it applies, still without a prompt.
-	out, _, err = executeStdin(t, in, "setup", "--non-interactive", "--yes")
+	out, _, err = executeStdin(t, in, "setup")
 	if err != nil || len(r.ran(t, "apply")) != 1 || strings.Contains(out, "Type "+initProjectName+" to apply") {
 		t.Fatalf("%v, calls %q\n%s", err, r.calls(t), out)
 	}
@@ -130,7 +130,7 @@ func TestNonInteractiveNeverPromptsAndNeedsYes(t *testing.T) {
 func TestNonInteractiveRefusesBucketCreationWithoutYes(t *testing.T) {
 	r := newInitRig(t)
 	fakeTerminal(t)
-	_, _, err := executeStdin(t, initProjectName+"\n", "setup", "--non-interactive", "--plan-only")
+	_, _, err := executeStdin(t, initProjectName+"\n", "setup", "--plan-only")
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "--yes") || strings.Contains(err.Error(), "\n") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -286,7 +286,7 @@ func TestInitJSONOnFailure(t *testing.T) {
 	r.stateBucket()
 	r.script["apply"] = map[string]any{"exit": 1}
 	r.save(t)
-	out, _, err := executeStdin(t, "", "setup", "--yes", "--json")
+	out, _, err := executeStdin(t, "", "setup", "--json")
 	if err == nil {
 		t.Fatal("the apply failed, yet init succeeded")
 	}
@@ -330,7 +330,7 @@ func TestSecretsHeldReachTheLoopsRedaction(t *testing.T) {
 func TestFirebaseRunsThroughTheLoop(t *testing.T) {
 	r := newFBRig(t)
 	r.historyImage()
-	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--budget-mode", "observe", "--yes", "--json")
+	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--budget-mode", "observe", "--json")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -358,7 +358,7 @@ func TestForgetAndConfigOnlyDoNotEnterTheLoop(t *testing.T) {
 		r := newInitRig(t)
 		r.stateBucket()
 		r.setPlan(t, forgetPlan()...)
-		out, _, err := executeStdin(t, "", tc.door, flag, "--yes", "--json")
+		out, _, err := executeStdin(t, "", tc.door, flag, "--json")
 		if err != nil {
 			t.Fatalf("%s: %v\n%s", flag, err, out)
 		}
@@ -379,7 +379,7 @@ func TestNonInteractiveForgetRefusesWithoutYes(t *testing.T) {
 	r.stateBucket()
 	r.setPlan(t, forgetPlan()...)
 	fakeTerminal(t)
-	_, _, err := executeStdin(t, initProjectName+"\n", "update", "--forget", "--non-interactive")
+	_, _, err := executeStdin(t, initProjectName+"\n", "update", "--forget")
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "--yes") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}

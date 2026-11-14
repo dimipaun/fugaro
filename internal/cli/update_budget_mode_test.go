@@ -96,7 +96,7 @@ func budgetModeUpdateRigUnmanaged(t *testing.T, mode string) (*initRig, *gcpfake
 // owner never asked this command to touch.
 func TestAnUnmanagedProjectKeepsItsSeededObserve(t *testing.T) {
 	_, db := budgetModeUpdateRigUnmanaged(t, budget.ModeObserve)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	said := out + errOut
 	if err != nil {
 		t.Fatalf("fugaro update: %v\n%s", err, said)
@@ -129,7 +129,7 @@ func budgetModeCaps(db *gcpfake.RTDB) {
 func TestUpdateRaisesASeededObserveToEnforce(t *testing.T) {
 	_, db := budgetModeUpdateRig(t, budget.ModeObserve, "")
 	budgetModeCaps(db)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("fugaro update: %v\n%s\n%s", err, out, errOut)
 	}
@@ -159,7 +159,7 @@ func TestUpdateRaisesASeededObserveToEnforce(t *testing.T) {
 func TestAnOwnerChosenObserveIsNeverRaised(t *testing.T) {
 	_, db := budgetModeUpdateRig(t, budget.ModeObserve, budget.ChosenByOwner)
 	budgetModeCaps(db)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("fugaro update: %v\n%s\n%s", err, out, errOut)
 	}
@@ -183,7 +183,7 @@ func TestAnOwnerChosenObserveIsNeverRaised(t *testing.T) {
 func TestPreviousModeConvergesOnUpdate(t *testing.T) {
 	_, db := budgetModeUpdateRig(t, budget.ModeObserve, "")
 	budgetModeCaps(db)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("fugaro update: %v\n%s\n%s", err, out, errOut)
 	}
@@ -205,7 +205,7 @@ func TestUpdateIsANoOpAfterTheRaise(t *testing.T) {
 	budgetModeCaps(db)
 	db.Deny(budget.PathMode)
 	db.Deny(budget.PathModeSet)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("fugaro update: %v\n%s\n%s", err, out, errOut)
 	}
@@ -226,7 +226,7 @@ func TestUpdateIsANoOpAfterTheRaise(t *testing.T) {
 func TestUpdateLeavesASeededObserveWhenTheCapsAreMissing(t *testing.T) {
 	_, db := budgetModeUpdateRig(t, budget.ModeObserve, "")
 	db.Set(budget.PathCapsGlobal, map[string]any{"dailyMicros": 150 * usd1})
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("fugaro update: %v\n%s\n%s", err, out, errOut)
 	}
@@ -258,7 +258,7 @@ func TestUpdateLeavesASeededObserveWhenTheRepositoryDailyCapIsMissing(t *testing
 	_, db := budgetModeUpdateRig(t, budget.ModeObserve, "")
 	db.Set(budget.PathCapsGlobal, map[string]any{"dailyMicros": 150 * usd1, "perRunMicros": 20 * usd1})
 	db.Set(budget.PathCapsDefaults, map[string]any{"repoPerRunMicros": 20 * usd1})
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	said := out + errOut
 	if err != nil {
 		t.Fatalf("fugaro update: %v\n%s", err, said)
@@ -300,7 +300,7 @@ func TestUpdateRaisesTheModeInTheRunThatNamesTheBackend(t *testing.T) {
 	fakeTerminal(t)
 	// No --budget-mode: the door seeds config/mode = observe and, per the
 	// record's whole point, writes no config/modeSet with it.
-	out, errOut, err := executeStdin(t, initProjectName+"\n", "update", "--firebase-project", fpID, "--yes")
+	out, errOut, err := executeStdin(t, initProjectName+"\n", "update", "--firebase-project", fpID)
 	said := out + errOut
 	if err != nil {
 		t.Fatalf("update --firebase-project failed: %v\n%s", err, said)

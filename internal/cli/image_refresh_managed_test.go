@@ -275,7 +275,7 @@ func TestImageRefreshManagedUnknownMarkerVersionRefuses(t *testing.T) {
 		t.Fatal("a creation fact this program does not write opened the gate")
 	}
 	ran := fakeSteps(t, "", nil)
-	_, _, err := executeStdin(t, "", "image", "refresh", "--yes")
+	_, _, err := executeStdin(t, "", "image", "refresh")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro image refresh applies cloud changes: ") {
 		t.Fatalf("exit %d, err %v: want the refusal this command has always printed for a coding agent's session", ExitCode(err), err)
 	}
@@ -432,7 +432,7 @@ func TestImageRefreshManagedNoQuestionReadsNothing(t *testing.T) {
 	// directory that is not a checkout.
 	ran := fakeSteps(t, "", nil)
 	t.Chdir(t.TempDir())
-	_, _, err := executeStdin(t, "", "image", "refresh", "--yes")
+	_, _, err := executeStdin(t, "", "image", "refresh")
 	if err == nil || !strings.Contains(err.Error(), "is not in one") {
 		t.Fatalf("a run with --yes was stopped by something other than the checkout it is in: %v", err)
 	}
@@ -466,7 +466,7 @@ func TestImageRefreshReadsTheGateBeforeAnyWrite(t *testing.T) {
 				r.gcs.FailObjectGetsAfter(initRunsBucket, managed.MarkerObject, 0)
 			}
 			ran := fakeSteps(t, "", nil)
-			_, _, err := executeStdin(t, "", "image", "refresh", "--yes")
+			_, _, err := executeStdin(t, "", "image", "refresh")
 			if tc.want == nil {
 				if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro image refresh applies cloud changes: ") {
 					t.Fatalf("exit %d, err %v: want the refusal a coding agent's session has always had", ExitCode(err), err)

@@ -530,7 +530,7 @@ func agentUpdateCheckout(t *testing.T) (string, *testutil.ClaudePluginFake, *[]s
 func TestUpdateAgentSessionRunsThePluginBeforeTheCheckout(t *testing.T) {
 	settings, f, ran := agentUpdateCheckout(t)
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	out, errOut, err := executeStdin(t, "", "update", "--json")
 	var res convergeJSON
 	if uerr := json.Unmarshal([]byte(runJSONObject(t, out)), &res); uerr != nil {
 		t.Fatalf("%v:\n%s\n%s", uerr, out, errOut)

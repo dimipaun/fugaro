@@ -17,10 +17,10 @@ import (
 // table that rule is read against and the runs that show it in the product.
 //
 // The table is the one the rule has to answer for: three states of the marks
-// (managed, not managed, a mark that could not be read) × three flag states
-// (neither, --yes, --ask) × every session a run can be in (a real terminal, a
-// coding agent's session with and without one, a pipe, --json,
-// --non-interactive), with both confirmation classes walked beside them. Every
+// (managed, not managed, a mark that could not be read) × two flag states
+// (neither, --ask) × every session a run can be in (a real terminal, a coding
+// agent's session with and without one, a pipe, --json, a run that never
+// prompts), with both confirmation classes walked beside them. Every
 // expectation is written by hand, and the two mutations the flag's safety rests
 // on are run against it: a read predicate that answered "managed" for
 // everything must fail the not-managed rows, and a decision that dropped the
@@ -47,18 +47,18 @@ type askSession struct {
 func askSessions() []askSession {
 	return []askSession{
 		{"a real terminal", initflow.Conditions{Terminal: true}},
-		{"a real terminal with --yes", initflow.Conditions{Terminal: true, Yes: true}},
+		{"a real terminal, a run that carries its own answer", initflow.Conditions{Terminal: true, Yes: true}},
 		{"a coding agent's session at a terminal", initflow.Conditions{Terminal: true, Agent: "CLAUDECODE"}},
 		{"a coding agent's session with no terminal", initflow.Conditions{Agent: "CLAUDECODE"}},
 		{"a pipe", initflow.Conditions{}},
 		{"--json at a terminal", initflow.Conditions{Terminal: true, JSON: true}},
-		{"--non-interactive at a terminal", initflow.Conditions{Terminal: true, NonInteractive: true}},
+		{"a run that never prompts at a terminal", initflow.Conditions{Terminal: true, NonInteractive: true}},
 	}
 }
 
-// askFlagStates is the three flag states, in the spelling the rule's own
-// comments use.
-var askFlagStates = []string{"neither", "--yes", "--ask"}
+// askFlagStates is the two flag states, in the spelling the rule's own comments
+// use: --yes was the other one, and T11 removed it (docs/no-prompt-policy).
+var askFlagStates = []string{"neither", "--ask"}
 
 // askOracle is the flag's whole rule, written by hand and never derived from
 // initflow.AskDecision:
@@ -130,8 +130,7 @@ func askViolations(decide askDecider, mode func(bool, string, error) bool, reads
 				n++
 				c := s.c
 				c.Ask = flag == "--ask"
-				c.Yes = c.Yes || flag == "--yes"
-				f := askFlags{ask: flag == "--ask", yes: flag == "--yes"}
+				f := askFlags{ask: flag == "--ask"}
 				wantLine, wantRefusal := askOracle(rd.managed, flag, c)
 				line, refusal := decide(f, isManaged, c)
 				where := rd.state + ", " + flag + ", " + s.name
@@ -616,7 +615,7 @@ func TestUpdateAskAndYesAreRefused(t *testing.T) {
 	fakeTerminal(t)
 	noAgentSession(t)
 
-	got, err := updateRun(t, r, "update", "--ask", "--yes")
+	got, err := updateRun(t, r, "update", "--ask")
 	if err == nil {
 		t.Fatalf("the run honoured two contradictory flags:\n%s", got)
 	}

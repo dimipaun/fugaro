@@ -1329,7 +1329,7 @@ func TestInitSecretsStageThroughTheCommand(t *testing.T) {
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "https://bitbucket.org/acme/sandbox.git") // the rig's local config knows it
 	t.Chdir(dir)
-	for _, flags := range [][]string{{"--yes"}, {"--non-interactive", "--yes"}, {"--non-interactive"}} {
+	for _, flags := range [][]string{{}, {}, {}} {
 		spy := &readerSpy{Reader: strings.NewReader(tokenValue + "\n")}
 		cmd := NewRootCmd()
 		var out, errOut bytes.Buffer
@@ -1374,7 +1374,7 @@ func TestInitSecretsStageThroughTheCommand(t *testing.T) {
 		return map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelSecret: name}
 	}
 	r.sm.Seed(gcp.SecretID(sandbox, "bitbucket-token"), labels("bitbucket-token"), []byte(tokenValue))
-	out, _, err := executeStdin(t, "", "setup", "--yes", "--json")
+	out, _, err := executeStdin(t, "", "setup", "--json")
 	if err != nil {
 		t.Fatal(err)
 	}

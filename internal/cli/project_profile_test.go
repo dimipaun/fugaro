@@ -216,7 +216,7 @@ func TestProjectProfileRefusesInAnAgentSession(t *testing.T) {
 			before := readFileString(t, path)
 			t.Setenv(marker, "1")
 
-			out, _, err := execute(t, "project", "profile", "set", "svc", "cpu", "8", "--yes")
+			out, _, err := execute(t, "project", "profile", "set", "svc", "cpu", "8")
 			if err == nil {
 				t.Fatal("the command wrote in a coding agent's session")
 			}
@@ -334,7 +334,7 @@ func TestProjectProfileRefusesAConfigThePublisherWouldRefuse(t *testing.T) {
 // line, and it is `next: fugaro update` — never a list of steps (spec §1).
 func TestProjectProfilePrintsOnlyFugaroUpdateNext(t *testing.T) {
 	_, _ = modelsWriteHomeWith(t, projectProfileExtra)
-	out, _, err := execute(t, "project", "profile", "set", "svc", "cpu", "8", "--yes")
+	out, _, err := execute(t, "project", "profile", "set", "svc", "cpu", "8")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}

@@ -125,9 +125,6 @@ step no plan admits.`,
 // does, and the subset rule is applied to the bytes this would write, before
 // the file is read for the write at all.
 func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error {
-	if err := askConflict(askFlags{ask: o.ask, yes: o.yes}); err != nil {
-		return err
-	}
 	// The name is a DEFINITION and not a reference: the definition's rule is
 	// ValidateClaudeAccounts', whose sentences are the ones the loader prints
 	// for the same name in the file, so the two cannot part company. It is the
@@ -257,7 +254,7 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	// run or written: the line it prints, or the refusal that stops this
 	// command where nobody could answer the question it restores
 	// (managed_ask.go). A gate refusal above is still the gate's own sentence.
-	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask, yes: o.yes}, m.Managed, askConditions(cmd, false, false)); err != nil {
+	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask}, m.Managed, askConditions(cmd, false, false)); err != nil {
 		return err
 	}
 

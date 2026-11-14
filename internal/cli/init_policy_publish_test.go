@@ -1065,7 +1065,7 @@ func TestUpdatePolicyPublishSkipsTheDatabaseTheRulesStageSkips(t *testing.T) {
 			_, db, _ := unadoptedRig(t, s)
 			db.Set(projectpolicy.PathShared(), staleBudgetNode())
 
-			out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+			out, errOut, err := executeStdin(t, "", "update", "--json")
 			if err != nil {
 				t.Fatalf("a database the pair does not prove is ours stopped the whole update: %v\n%s%s", err, out, errOut)
 			}

@@ -23,7 +23,7 @@ func grantChange(name, member, role string, actions ...string) planChange {
 // grant, or a member on neither list, is still refused.
 func TestInitHardeningAllowsOnlyTheLauncherGrantDeletes(t *testing.T) {
 	const a, o = "user:a@example.com", "user:o@example.com"
-	args := []string{"setup", "--yes", "--operator", a, "--operator", o, "--admin", o}
+	args := []string{"setup", "--operator", a, "--operator", o, "--admin", o}
 
 	r := newInitRig(t)
 	r.stateBucket()
@@ -86,7 +86,7 @@ func TestInitHardeningRefusesAMixedPlan(t *testing.T) {
 		grantChange("runs_reader", a, "roles/storage.objectViewer", "create"),
 		grantChange("runs_launcher", a, "roles/storage.objectUser", "create"),
 		grantChange("state", a, "roles/storage.objectAdmin", "delete"))
-	out, _, err := executeStdin(t, "", "setup", "--yes", "--operator", a)
+	out, _, err := executeStdin(t, "", "setup", "--operator", a)
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), `state["`+a+`"]`) {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -120,7 +120,7 @@ func launcherReplaceChange(bucket, member, beforeTitle, beforeExpr string) planC
 func TestInitAdmitsTheLauncherGrantUpgrade(t *testing.T) {
 	const a, o = "user:a@example.com", "user:o@example.com"
 	bucket := "fugaro-runs-" + initProject
-	args := []string{"setup", "--yes", "--operator", a, "--operator", o, "--admin", o}
+	args := []string{"setup", "--operator", a, "--operator", o, "--admin", o}
 
 	r := newInitRig(t)
 	r.stateBucket()
@@ -177,7 +177,7 @@ func TestInstallationAtThePreviousVersionConvergesIssuesGrant(t *testing.T) {
 			r.script["plan@installation"] = map[string]any{"exit": 2}
 			r.script["show@installation"] = map[string]any{"stdout": planJSON(t, launcherReplaceChange(bucket, a, tc.title, tc.expr))}
 			r.save(t)
-			out, errOut, err := executeStdin(t, "", "update", "--yes")
+			out, errOut, err := executeStdin(t, "", "update")
 			if err != nil {
 				t.Fatalf("fugaro update left an installation at the previous version behind: %v\n%s%s", err, out, errOut)
 			}

@@ -2004,9 +2004,6 @@ func settingsWriteCommand(op, key, value string, o settingsWriteOptions, layer s
 // runSettingsSet is `settings set`: find the row, find the layer, check the
 // value, then the shared write path (spec §4.2).
 func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) error {
-	if err := askConflict(askFlags{ask: o.ask, yes: o.yes}); err != nil {
-		return err
-	}
 	if err := settingsDryRunFlags(o); err != nil {
 		return err
 	}
@@ -2273,7 +2270,7 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 	// --ask, once the marks are read: the sentence it prints, or the refusal
 	// that stops the run before a byte is written (managed_ask.go). It is
 	// after the gate's own admit and never instead of it.
-	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask, yes: o.yes}, managed.Managed, settingsEditConditions(cmd, edit)); err != nil {
+	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask}, managed.Managed, settingsEditConditions(cmd, edit)); err != nil {
 		return err
 	}
 	edit.Managed = managed
@@ -2296,9 +2293,6 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 // runSettingsUnset is `settings unset`: remove the key from one layer so the
 // layer below decides again, never writing a default in its place (spec §4.3).
 func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions) error {
-	if err := askConflict(askFlags{ask: o.ask, yes: o.yes}); err != nil {
-		return err
-	}
 	if err := settingsDryRunFlags(o); err != nil {
 		return err
 	}
@@ -2385,7 +2379,7 @@ func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions)
 	if err := settingsLayerGate(cmd, target, o, key, old, newData); err != nil {
 		return err
 	}
-	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask, yes: o.yes}, managed.Managed, settingsEditConditions(cmd, edit)); err != nil {
+	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask}, managed.Managed, settingsEditConditions(cmd, edit)); err != nil {
 		return err
 	}
 	edit.Managed = managed

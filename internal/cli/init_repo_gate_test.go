@@ -64,14 +64,14 @@ func TestInitRepoAloneIsBehindTheHostileGate(t *testing.T) {
 		// the gate admits: the person at their own terminal.
 		wants []string
 	}{
-		"--yes":                 {args: []string{"--yes"}, wants: []string{"needs your own opt-in", "host evil.example is not a provider's own", "--yes does not give it for an origin whose identity is not the one it claims"}},
-		"--yes at a terminal":   {args: []string{"--yes"}, stdin: "acme/hostile\n", tty: true, wants: []string{"needs your own opt-in", "host evil.example is not a provider's own"}},
+		"--yes":                 {args: []string{}, wants: []string{"needs your own opt-in", "host evil.example is not a provider's own", "--yes does not give it for an origin whose identity is not the one it claims"}},
+		"--yes at a terminal":   {args: []string{}, stdin: "acme/hostile\n", tty: true, wants: []string{"needs your own opt-in", "host evil.example is not a provider's own"}},
 		"--json":                {args: []string{"--json"}, wants: []string{"needs your own opt-in", "host evil.example is not a provider's own"}},
-		"--non-interactive":     {args: []string{"--non-interactive", "--yes"}, wants: []string{"needs your own opt-in", "host evil.example is not a provider's own"}},
-		"a coding agent, --yes": {args: []string{"--yes"}, env: "CLAUDECODE", tty: true, wants: []string{"needs your own opt-in"}},
+		"--non-interactive":     {args: []string{}, wants: []string{"needs your own opt-in", "host evil.example is not a provider's own"}},
+		"a coding agent, --yes": {args: []string{}, env: "CLAUDECODE", tty: true, wants: []string{"needs your own opt-in"}},
 		"a person at the terminal, nothing typed": {stdin: "yes\n", tty: true},
-		"--onboard-repo, an agent":                {args: []string{"--yes", "--onboard-repo", "acme/hostile"}, env: "CLAUDECODE", tty: true, wants: []string{"--onboard-repo opts a repository in to cloud changes and is not accepted in a coding agent's session"}},
-		"--onboard-repo, wrong repo":              {args: []string{"--yes", "--onboard-repo", "acme/else"}, wants: []string{"--onboard-repo acme/else does not name this checkout's origin repository (acme/hostile)"}},
+		"--onboard-repo, an agent":                {args: []string{"--onboard-repo", "acme/hostile"}, env: "CLAUDECODE", tty: true, wants: []string{"--onboard-repo opts a repository in to cloud changes and is not accepted in a coding agent's session"}},
+		"--onboard-repo, wrong repo":              {args: []string{"--onboard-repo", "acme/else"}, wants: []string{"--onboard-repo acme/else does not name this checkout's origin repository (acme/hostile)"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r, dir := hostileRepoRig(t, hostileOrigin)
@@ -219,7 +219,7 @@ func TestTheHostileGatesTypedRouteNamesTheReadersDoor(t *testing.T) {
 		t.Run(door, func(t *testing.T) {
 			_, dir := hostileRepoRig(t, "https://github.com/acme/hostile.git")
 			t.Setenv("CLAUDECODE", "1")
-			out, errOut, err := executeStdin(t, "", door, "--repo", "--github-app-id", "42", "--yes", dir)
+			out, errOut, err := executeStdin(t, "", door, "--repo", "--github-app-id", "42", dir)
 			all := out + errOut + ErrorText(err)
 			if !strings.Contains(all, " "+door+" --repo, where the gate confirms") {
 				t.Errorf("the typed route does not name fugaro %s --repo, the door this run is:\n%s", door, all)
@@ -264,7 +264,7 @@ func TestInitRepoAloneOptIns(t *testing.T) {
 	}
 	pastGate(t, err)
 	_, dir = hostileRepoRig(t, "https://github.com/acme/hostile.git")
-	_, _, err = executeStdin(t, "", "setup", "--repo", "--yes", "--github-app-id", "42", "--onboard-repo", "acme/hostile", dir)
+	_, _, err = executeStdin(t, "", "setup", "--repo", "--github-app-id", "42", "--onboard-repo", "acme/hostile", dir)
 	if err != nil && strings.Contains(err.Error(), gate) {
 		t.Errorf("--onboard-repo did not pass the gate: %v", err)
 	}
@@ -274,7 +274,7 @@ func TestInitRepoAloneOptIns(t *testing.T) {
 	r.stateBucket()
 	dir = repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", strings.Replace(checkoutYAML("bitbucket", "api-key", "aurora", ""), "app:", "web:", 1))
 	t.Chdir(t.TempDir())
-	_, _, err = executeStdin(t, "", "setup", "--repo", "--yes", dir)
+	_, _, err = executeStdin(t, "", "setup", "--repo", dir)
 	if err != nil && strings.Contains(err.Error(), gate) {
 		t.Errorf("a listed repository was gated: %v", err)
 	}
@@ -292,8 +292,8 @@ func TestInitRepoAloneOptIns(t *testing.T) {
 // prints it.
 func TestOnboardRepoRefusedInAnAgentSession(t *testing.T) {
 	for _, args := range [][]string{
-		{"setup", "--onboard-repo", "acme/app", "--yes"},
-		{"setup", "--repo", "--onboard-repo", "acme/app", "--yes"},
+		{"setup", "--onboard-repo", "acme/app"},
+		{"setup", "--repo", "--onboard-repo", "acme/app"},
 	} {
 		t.Setenv("CLAUDECODE", "1")
 		_, _, err := execute(t, args...)
@@ -394,7 +394,7 @@ func TestInitRepoRefusesCatalogSwitches(t *testing.T) {
 		dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", strings.Replace(checkoutYAML("bitbucket", "api-key", "aurora", ""), "app:", "web:", 1))
 		r.appendConfig(t, validateProviderBlock+extra)
 		t.Chdir(t.TempDir())
-		out, errOut, err := executeStdin(t, "", "setup", "--repo", "--yes", dir)
+		out, errOut, err := executeStdin(t, "", "setup", "--repo", dir)
 		return r, err, out, errOut
 	}
 	r, err, out, errOut := init(t, "    require_zdr: false\n")
@@ -622,7 +622,7 @@ func TestSetupOutsideACheckoutSaysHowToEnrol(t *testing.T) {
 // origin whose identity is not the one it claims, which the next test pins.
 func TestSetupRepoOnboardsAnUnlistedRepositoryUnderYes(t *testing.T) {
 	r, dir := hostileRepoRig(t, "https://github.com/acme/hostile.git")
-	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--github-app-id", "42", "--yes", dir)
+	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--github-app-id", "42", dir)
 	all := out + errOut
 	if strings.Contains(all, "is not one of project") {
 		t.Errorf("--yes was refused at the gate:\n%s", all)

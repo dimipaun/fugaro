@@ -485,7 +485,7 @@ func TestUpdateWithACapAndNoMemberRunsOn(t *testing.T) {
 	r, db := updateBudgetRig(t)
 	r.appendConfig(t, wsOwnerCap)
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	out, errOut, err := executeStdin(t, "", "update", "--json")
 	var res convergeJSON
 	if uerr := json.Unmarshal([]byte(out), &res); uerr != nil {
 		t.Fatalf("%v:\n%s\n%s", uerr, out, errOut)
@@ -1283,7 +1283,7 @@ func TestUpdateSkipsAWorkspaceDatabaseThisInstallationDoesNotOwn(t *testing.T) {
 	db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": "workspace-a", "gcp_project": "proj-9999", "version": 1})
 	r.appendConfig(t, wsOwnerTable+wsOwnerCap)
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	out, errOut, err := executeStdin(t, "", "update", "--json")
 	if err != nil {
 		t.Fatalf("another installation's database stopped the whole update: %v\n%s%s", err, out, errOut)
 	}
@@ -1334,7 +1334,7 @@ func TestUpdatePublishesTheWorkspaceRecordInTheRunThatNamesTheBackend(t *testing
 	// published in the owner's own session, at this terminal, and --yes is
 	// passed only because the other stages of this run take it. The empty stdin
 	// is what says so: a step that asked would read nothing here.
-	out, errOut, err := executeStdin(t, "", "update", "--firebase-project", fpID, "--budget-mode", "observe", "--yes")
+	out, errOut, err := executeStdin(t, "", "update", "--firebase-project", fpID, "--budget-mode", "observe")
 	s := out + errOut
 	if err != nil {
 		t.Fatalf("update --firebase-project failed: %v\n%s", err, s)
@@ -1376,7 +1376,7 @@ func TestUpdatePublishesIntoTheDatabaseTheRunHasJustPointedAt(t *testing.T) {
 	r.appendConfig(t, wsOwnerTable+wsOwnerCap)
 	r.save(t)
 	fakeTerminal(t)
-	out, errOut, err := executeStdin(t, "", "update", "--firebase-project", fpID, "--budget-mode", "observe", "--yes")
+	out, errOut, err := executeStdin(t, "", "update", "--firebase-project", fpID, "--budget-mode", "observe")
 	s := out + errOut
 	if err != nil {
 		t.Fatalf("update --firebase-project failed: %v\n%s", err, s)

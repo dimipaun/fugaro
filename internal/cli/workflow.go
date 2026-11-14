@@ -147,9 +147,6 @@ func workflowFlags(cmd *cobra.Command, o *workflowOptions) {
 
 // runWorkflowAdd is `workflow add`: create the block with the keys --set names.
 func runWorkflowAdd(cmd *cobra.Command, name string, o workflowOptions) error {
-	if err := askConflict(askFlags{ask: o.ask, yes: o.yes}); err != nil {
-		return err
-	}
 	if err := workflowNameProblem(name); err != nil {
 		return err
 	}
@@ -194,9 +191,6 @@ func runWorkflowAdd(cmd *cobra.Command, name string, o workflowOptions) error {
 // runWorkflowRm is `workflow rm`: remove the block, every key of it, and nothing
 // else.
 func runWorkflowRm(cmd *cobra.Command, name string, o workflowOptions) error {
-	if err := askConflict(askFlags{ask: o.ask, yes: o.yes}); err != nil {
-		return err
-	}
 	if err := workflowNameProblem(name); err != nil {
 		return err
 	}
@@ -362,7 +356,7 @@ func workflowApply(cmd *cobra.Command, w workflowWrite) error {
 	if err != nil {
 		return err
 	}
-	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: w.o.ask, yes: w.o.yes}, managed.Managed, settingsEditConditions(cmd, edit)); err != nil {
+	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: w.o.ask}, managed.Managed, settingsEditConditions(cmd, edit)); err != nil {
 		return err
 	}
 	edit.Managed = managed

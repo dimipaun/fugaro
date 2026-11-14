@@ -531,16 +531,16 @@ func TestWorkspaceProjectStageConvergesACapWithoutAMember(t *testing.T) {
 	}
 }
 
-// TestWorkspaceProjectStageNeverConfirmsByYes: what the stage applies is an IAM
-// GRANT, and no run's one --yes covers a grant (spec §6). A coding agent's
-// session is refused for the same reason: the confirmation cannot be given
-// there at all.
-func TestWorkspaceProjectStageNeverConfirmsByYes(t *testing.T) {
+// TestWorkspaceProjectStageNeverConfirmsByTheRunsOwnAnswer: what the stage
+// applies is an IAM GRANT, and the run's own answer covers no grant (spec §6) —
+// the typed word is the owner's. A coding agent's session is refused for the
+// same reason: the confirmation cannot be given there at all.
+func TestWorkspaceProjectStageNeverConfirmsByTheRunsOwnAnswer(t *testing.T) {
 	for _, c := range []struct {
 		name  string
 		agent string
 	}{
-		{"--yes", ""},
+		{"the run's own answer", ""},
 		{"a coding agent", agentMarkers[0]},
 	} {
 		t.Run(c.name, func(t *testing.T) {

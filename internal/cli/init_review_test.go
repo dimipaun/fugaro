@@ -505,7 +505,7 @@ func TestMarkedProjectConfirmationIsNotATypedName(t *testing.T) {
 // An agent's environment takes no confirmation and applies nothing, marked or
 // not, with a name waiting on stdin.
 func TestMarkedProjectInAnAgentSession(t *testing.T) {
-	for _, args := range [][]string{{"setup"}, {"setup", "--yes"}} {
+	for _, args := range [][]string{{"setup"}, {"setup"}} {
 		r := newInitRig(t)
 		r.markedRuns(t, initProjectName, initProject)
 		fakeTerminal(t)
@@ -526,7 +526,7 @@ func TestMarkedProjectYesAsBefore(t *testing.T) {
 	r := newInitRig(t)
 	r.markedRuns(t, initProjectName, initProject)
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--yes")
+	out, _, err := executeStdin(t, initProjectName+"\n", "setup")
 	if err != nil || strings.Contains(out, "Review:") || strings.Contains(out, "covered by the run confirmation") || len(r.ran(t, "apply")) != 1 {
 		t.Fatalf("%v, calls %q\n%s", err, r.calls(t), out)
 	}
@@ -543,7 +543,7 @@ func TestMarkedProjectPlanOnlyShowsTheReview(t *testing.T) {
 	r := newInitRig(t)
 	r.markedRuns(t, initProjectName, initProject)
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--plan-only", "--yes")
+	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--plan-only")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}

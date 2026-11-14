@@ -87,7 +87,7 @@ func clearRig(t *testing.T) *budgetFixture {
 func TestAccountsClearDefaultIsShort(t *testing.T) {
 	isolateState(t)
 	clearRig(t)
-	out, errOut, err := execute(t, "accounts", "clear", "acme-personal", "--yes")
+	out, errOut, err := execute(t, "accounts", "clear", "acme-personal")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
@@ -105,7 +105,7 @@ func TestAccountsClearDefaultIsShort(t *testing.T) {
 func TestAccountsClearWritesALog(t *testing.T) {
 	isolateState(t)
 	clearRig(t)
-	if _, _, err := execute(t, "accounts", "clear", "acme-personal", "--yes"); err != nil {
+	if _, _, err := execute(t, "accounts", "clear", "acme-personal"); err != nil {
 		t.Fatal(err)
 	}
 	familyLog(t, "accounts-clear")
@@ -144,7 +144,7 @@ func TestSecretsSetWritesALog(t *testing.T) {
 func TestSecretsRmDefaultIsShort(t *testing.T) {
 	isolateState(t)
 	sm, id, _ := secretsRmFixture(t)
-	out, errOut, err := execute(t, "secrets", "rm", "bitbucket-token", "--yes")
+	out, errOut, err := execute(t, "secrets", "rm", "bitbucket-token")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
@@ -172,7 +172,7 @@ func TestSecretsRmDefaultIsShort(t *testing.T) {
 func TestSecretsRmWritesALog(t *testing.T) {
 	isolateState(t)
 	secretsRmFixture(t)
-	if _, _, err := execute(t, "secrets", "rm", "bitbucket-token", "--yes"); err != nil {
+	if _, _, err := execute(t, "secrets", "rm", "bitbucket-token"); err != nil {
 		t.Fatal(err)
 	}
 	familyLog(t, "secrets-rm")
@@ -189,7 +189,7 @@ func TestSecretsRmFailureIsACrossAndALog(t *testing.T) {
 	before := readFileString(t, path)
 	sm.FailDeleteWith = http.StatusForbidden
 
-	out, _, err := execute(t, "secrets", "rm", "bitbucket-token", "--yes")
+	out, _, err := execute(t, "secrets", "rm", "bitbucket-token")
 	if err == nil {
 		t.Fatalf("the delete failed, yet the removal succeeded:\n%s", out)
 	}
@@ -280,7 +280,7 @@ func TestARefusedFamilyCommandKeepsNoLogAndNoStep(t *testing.T) {
 			secretsRmFugaro(t)
 			secretsFixture(t)
 			projectSecretFixture(t, "project_secrets: {}\n")
-			return execute(t, "secrets", "rm", "bitbucket-token", "--yes")
+			return execute(t, "secrets", "rm", "bitbucket-token")
 		}},
 		{"a write over a bundle the service will not serve", func(t *testing.T) (string, string, error) {
 			f := credsFixtureFor(t)
@@ -455,7 +455,7 @@ func TestAccountsAddClosesOnItsOwnStepsAndNotTheLoops(t *testing.T) {
 	cmd.SetIn(strings.NewReader(addToken() + "\n"))
 	cmd.SetOut(&both)
 	cmd.SetErr(&both)
-	cmd.SetArgs(NormalizeArgs([]string{"accounts", "add", "team-a", "--yes", "--repos", "owner/repo-a"}))
+	cmd.SetArgs(NormalizeArgs([]string{"accounts", "add", "team-a", "--repos", "owner/repo-a"}))
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("accounts add team-a: %v\n%s", err, both.String())
 	}
@@ -523,7 +523,7 @@ func TestAccountsRmDefaultIsShort(t *testing.T) {
 	isolateState(t)
 	r := newAddRig(t)
 	r.add(t, "team-a", "--repos", "owner/repo-a")
-	out, errOut, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	out, errOut, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
 	if err != nil {
 		t.Fatalf("%v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
 	}
@@ -547,7 +547,7 @@ func TestAccountsRmWritesALog(t *testing.T) {
 	r := newAddRig(t)
 	r.add(t, "team-a", "--repos", "owner/repo-a")
 	noisyTerraform(t, r.initRig)
-	if _, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard"); err != nil {
 		t.Fatal(err)
 	}
 	if log := familyLog(t, "accounts-rm"); !strings.Contains(log, convergeNoise) {
@@ -581,7 +581,7 @@ func TestTheFamilyPrintsNoAnsiOffATerminal(t *testing.T) {
 	}{
 		{"accounts clear", func(t *testing.T) (string, string) {
 			clearRig(t)
-			out, errOut, err := execute(t, "accounts", "clear", "acme-personal", "--yes")
+			out, errOut, err := execute(t, "accounts", "clear", "acme-personal")
 			if err != nil {
 				t.Fatal(err)
 			}

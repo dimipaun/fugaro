@@ -85,15 +85,14 @@ func newConfigInitCmd() *cobra.Command {
 	var (
 		o                   cloudOptions
 		profile, baseBranch string
-		yes                 bool
 	)
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Write the minimal fugaro.yaml of a repository whose project publishes a project layer",
 		Long: "Write the minimal fugaro.yaml (version, project, gcp_project) into this checkout, for a project that\n" +
-			"publishes a project layer. Non-interactive: without --yes it prints the file and exits 1 (a dry run),\n" +
-			"writing nothing. It never overwrites a fugaro.yaml, and writes nothing that does not resolve against\n" +
-			"the project layer. Unlike fugaro config publish, it never refuses in a coding-agent session: it writes\n" +
+			"publishes a project layer. It asks nothing and takes no flag for the write: the file it writes is a\n" +
+			"repository file, reviewed and committed like any other. It never overwrites a fugaro.yaml, and writes\n" +
+			"nothing that does not resolve against the project layer. Unlike fugaro config publish, it never refuses in a coding-agent session: it writes\n" +
 			"a repository file, which still goes through a reviewed pull request, not a published, trusted object.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -154,10 +153,6 @@ func newConfigInitCmd() *cobra.Command {
 				return userErr("internal error: the minimal fugaro.yaml resolved to base branch %q, not %q", pluginwire.Printable(rf.Cfg.Git.BaseBranch), wantBranch)
 			case profile != "" && rf.Cfg.Workflows[config.ImplicitWorkflow].Profile != profile:
 				return userErr("internal error: the minimal fugaro.yaml resolved to profile %q, not %q", pluginwire.Printable(rf.Cfg.Workflows[config.ImplicitWorkflow].Profile), profile)
-			}
-			if !yes {
-				fmt.Fprint(cmd.OutOrStdout(), text)
-				return userErr("nothing written: pass --yes to write %s", path)
 			}
 			switch err := writeMinimalFugaroYAML(path, text); {
 			case err == nil:

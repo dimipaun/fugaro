@@ -49,7 +49,7 @@ func TestUpdateRefusesCreateProjectAndLinkBilling(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := updateRig(t)
-			out, errOut, err := executeStdin(t, "", "update", tc.arg, "--yes")
+			out, errOut, err := executeStdin(t, "", "update", tc.arg)
 			if err == nil {
 				t.Fatalf("fugaro update %s exited 0:\n%s", tc.flag, out)
 			}
@@ -83,7 +83,7 @@ func TestUpdateWithoutAnInstallationNamesSetup(t *testing.T) {
 	releaseBuild(t, "0.2.0")
 	r := newInitRig(t) // no state bucket: nothing was ever installed here
 	t.Chdir(t.TempDir())
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err == nil {
 		t.Fatalf("fugaro update without an installation exited 0:\n%s", out)
 	}
@@ -221,7 +221,7 @@ func stageDetailOf(res *initflow.Result, name string) string {
 // exits 0. The project stage is not in it, and neither is the Batch backend's.
 func TestUpdateUnderYesCoversEveryStageItOwns(t *testing.T) {
 	r := updateRig(t)
-	out, _, err := executeStdin(t, "", "update", "--yes", "--json")
+	out, _, err := executeStdin(t, "", "update", "--json")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -463,7 +463,7 @@ func TestUpdateAppliesTheFourStepsItOwns(t *testing.T) {
 // --yes.
 func TestUpdateNonInteractiveWithoutYesPlansOnly(t *testing.T) {
 	r := updateRig(t)
-	out, _, err := executeStdin(t, "", "update", "--non-interactive", "--json")
+	out, _, err := executeStdin(t, "", "update", "--json")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -489,7 +489,7 @@ func TestUpdateNonInteractiveWithoutYesPlansOnly(t *testing.T) {
 func TestUpdateConvergesTwiceAndSaysNoChanges(t *testing.T) {
 	r := updateRig(t)
 	for i := 1; i <= 2; i++ {
-		out, _, err := executeStdin(t, "", "update", "--yes")
+		out, _, err := executeStdin(t, "", "update")
 		if err != nil {
 			t.Fatalf("run %d: %v\n%s", i, err, out)
 		}
@@ -515,7 +515,7 @@ func TestUpdateConvergesTwiceAndSaysNoChanges(t *testing.T) {
 func TestUpdateNeverCreatesAnything(t *testing.T) {
 	r := updateRig(t)
 	before := len(r.crm.Requests())
-	if out, _, err := executeStdin(t, "", "update", "--yes"); err != nil {
+	if out, _, err := executeStdin(t, "", "update"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	for _, rq := range r.crm.Requests()[before:] {
@@ -547,7 +547,7 @@ func TestUpdateNeverCreatesAnything(t *testing.T) {
 func TestUpdateConvergesAnInstallationAtThePreviousRelease(t *testing.T) {
 	r, _ := updateBudgetRig(t)
 	vars := filepath.Join(r.root(), infra.VarsFile)
-	out, _, err := executeStdin(t, "", "update", "--yes")
+	out, _, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("one fugaro update did not converge an installation at the previous release: %v\n%s", err, out)
 	}

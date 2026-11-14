@@ -329,7 +329,7 @@ func TestGatherInputsNonInteractiveNamesEveryFlag(t *testing.T) {
 	fakeTerminal(t) // a terminal does not make it ask
 	// Every flag but the ID's: the ID's own default is what a run may not take
 	// for a person, so it is the one still missing.
-	_, _, err := executeStdin(t, "aurora\n", "setup", "--non-interactive", "--name", "aurora", "--region", defaultRegion)
+	_, _, err := executeStdin(t, "aurora\n", "setup", "--name", "aurora", "--region", defaultRegion)
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -346,7 +346,7 @@ func TestGatherInputsNonInteractiveNamesEveryFlag(t *testing.T) {
 	}
 
 	// Nothing given: every question with a flag is named, in one error.
-	_, _, err = executeStdin(t, "", "setup", "--non-interactive")
+	_, _, err = executeStdin(t, "", "setup")
 	if err == nil {
 		t.Fatal("a first run with no terminal and no flags exited 0")
 	}
@@ -517,7 +517,7 @@ func TestPromptChoiceEndedInputIsNoAnswer(t *testing.T) {
 func TestNonInteractiveNamesFlags(t *testing.T) {
 	firstRunEnv(t)
 	fakeTerminal(t) // a terminal does not make it ask
-	_, _, err := executeStdin(t, "aurora\n", "setup", "--non-interactive")
+	_, _, err := executeStdin(t, "aurora\n", "setup")
 	if ExitCode(err) != ExitUserError || err == nil || strings.Contains(err.Error(), "\n") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -530,13 +530,13 @@ func TestNonInteractiveNamesFlags(t *testing.T) {
 		t.Errorf("no checkout, no App ID: %v", err)
 	}
 	// What was given is not named again.
-	_, _, err = executeStdin(t, "", "setup", "--non-interactive", "--name", "aurora", "--region", "us-east5")
+	_, _, err = executeStdin(t, "", "setup", "--name", "aurora", "--region", "us-east5")
 	if err == nil || !strings.Contains(err.Error(), "--gcp-project") || strings.Contains(err.Error(), "--name") || strings.Contains(err.Error(), "--region") {
 		t.Errorf("only --gcp-project is missing: %v", err)
 	}
 	// --yes does not supply inputs either, and without --non-interactive and
 	// without a terminal the same flags are named.
-	_, _, err = executeStdin(t, "aurora\n", "setup", "--yes")
+	_, _, err = executeStdin(t, "aurora\n", "setup")
 	if err == nil || !strings.Contains(err.Error(), "--name") || !strings.Contains(err.Error(), "--gcp-project") {
 		t.Errorf("--yes: %v", err)
 	}
@@ -549,17 +549,17 @@ func TestNonInteractiveNamesAppIDToo(t *testing.T) {
 	root := repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", ""))
 	t.Chdir(root)
 	// A checkout's own fugaro.yaml does not name a new installation by itself.
-	_, _, err := executeStdin(t, "", "setup", "--non-interactive", "--region", "us-east5")
+	_, _, err := executeStdin(t, "", "setup", "--region", "us-east5")
 	if err == nil || !strings.Contains(err.Error(), "--name <name>") || !strings.Contains(err.Error(), "fugaro.yaml says aurora") || !strings.Contains(err.Error(), "--gcp-project") {
 		t.Errorf("%v", err)
 	}
 	// Named, and the repository opted in: the App ID is one more.
-	_, _, err = executeStdin(t, "", "setup", "--non-interactive", "--region", "us-east5", "--name", "aurora", "--onboard-repo", "acme/app")
+	_, _, err = executeStdin(t, "", "setup", "--region", "us-east5", "--name", "aurora", "--onboard-repo", "acme/app")
 	if err == nil || !strings.Contains(err.Error(), "--gcp-project") || !strings.Contains(err.Error(), "--github-app-id") || strings.Contains(err.Error(), "--name") {
 		t.Errorf("%v", err)
 	}
 	// A repository that is not opted in is never asked about here.
-	_, _, err = executeStdin(t, "", "setup", "--non-interactive", "--region", "us-east5", "--name", "aurora")
+	_, _, err = executeStdin(t, "", "setup", "--region", "us-east5", "--name", "aurora")
 	if err == nil || strings.Contains(err.Error(), "--github-app-id") {
 		t.Errorf("%v", err)
 	}

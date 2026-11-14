@@ -641,7 +641,7 @@ func TestPickerOutputHasNoAccountUnderJSON(t *testing.T) {
 	firstRunEnv(t)
 	run := func(f *gcpfake.Billing) (string, string, error) {
 		pickerSources(t, f)
-		return executeStdin(t, "", "setup", "--json", "--non-interactive")
+		return executeStdin(t, "", "setup", "--json")
 	}
 	withAcct, withErrOut, withErr := run(full)
 	without, withoutErrOut, withoutErr := run(gcpfake.NewBilling(t))
@@ -1221,14 +1221,14 @@ func TestRefusalWhenTheProjectsNumberCannotBeRead(t *testing.T) {
 	}
 }
 
-// TestEnablingIsTheRunsOwnConfirmationAndNeverUnderYes: the offer is one of the
-// run's own confirmations, like the project stage's banners — a person at the
-// terminal reads the note naming the project and the API and the enable runs,
-// with nothing typed for it (T7, docs/no-prompt-policy) — and --yes never
-// covers it: a --yes run is a run that asked for no question, so it is not
-// offered the enable at all (asksBilling), and nothing about a project changes
-// there.
-func TestEnablingIsTheRunsOwnConfirmationAndNeverUnderYes(t *testing.T) {
+// TestEnablingIsTheRunsOwnConfirmationAndNothingStandsInForIt: the offer is one
+// of the run's own confirmations, like the project stage's banners — a person
+// at the terminal reads the note naming the project and the API and the enable
+// runs, with nothing typed for it (T7, docs/no-prompt-policy) — and no flag
+// carries it: a run that carries its own answer asked for no question, so it is
+// not offered the enable at all (asksBilling), and nothing about a project
+// changes there.
+func TestEnablingIsTheRunsOwnConfirmationAndNothingStandsInForIt(t *testing.T) {
 	t.Run("a person at the terminal", func(t *testing.T) {
 		// The line on stdin is what a person might type out of habit: nothing
 		// of it reaches the offer, which enables the API whatever it says.
@@ -1249,7 +1249,7 @@ func TestEnablingIsTheRunsOwnConfirmationAndNeverUnderYes(t *testing.T) {
 		}
 	})
 
-	t.Run("--yes", func(t *testing.T) {
+	t.Run("a run that carries its own answer", func(t *testing.T) {
 		f := gcpfake.NewBilling(t)
 		pickerDisabledOnThisProject(t, f)
 		o := &initOptions{yes: true, createProject: true, name: "aurora",
@@ -1260,10 +1260,10 @@ func TestEnablingIsTheRunsOwnConfirmationAndNeverUnderYes(t *testing.T) {
 			t.Fatalf("%v\n%s", err, out)
 		}
 		if out.Len() != 0 {
-			t.Errorf("--yes wants no question answered, and the wizard asked one:\n%s", out)
+			t.Errorf("a run that carries its own answer wants no question asked, and the wizard asked one:\n%s", out)
 		}
 		if len(pickerEnables(ran)) != 0 {
-			t.Errorf("--yes enabled the API: %v", pickerEnables(ran))
+			t.Errorf("a run that carries its own answer enabled the API: %v", pickerEnables(ran))
 		}
 	})
 }

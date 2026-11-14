@@ -61,7 +61,7 @@ func TestUpdatePinsTheCatalogBaseAndDeploysTheCheckJob(t *testing.T) {
 	r.script["show@installation"] = map[string]any{"stdout": planJSON(t, change("module.installation.google_cloud_run_v2_job.catalog_check", "create"))}
 	r.save(t)
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("a project with an image catalog and no base image does not reach this release with `fugaro update` alone (exit %d):\n%s\n%s", ExitCode(err), out, errOut)
 	}
@@ -135,7 +135,7 @@ func TestUpdatePinsTheCatalogBaseAndDeploysTheCheckJob(t *testing.T) {
 // catalog's.
 func TestUpdatePinsTheCatalogBaseForAPlainRunWithNoCheckout(t *testing.T) {
 	r := catalogUpdateRig(t)
-	if _, _, err := executeStdin(t, "", "update", "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "", "update"); err != nil {
 		t.Fatalf("fugaro update refused a catalog whose base image it is about to pin: %v", err)
 	}
 	if got, want := r.localConfig(t).BaseImage(config.BaseKind), r.pinnedBase(config.BaseKind, convergeRelease); got != want {
@@ -152,7 +152,7 @@ func TestUpdateLeavesAnInstallationWithACurrentCatalogBaseAlone(t *testing.T) {
 	r := catalogUpdateRig(t)
 	r.appendConfig(t, "image_source: ghcr.io/dimipaun\nbase_images: {base: "+r.pinnedBase(config.BaseKind, convergeRelease)+"}\n")
 	r.save(t)
-	if _, _, err := executeStdin(t, "", "update", "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "", "update"); err != nil {
 		t.Fatalf("fugaro update refused an installation whose catalog base image is current: %v", err)
 	}
 	// One plan pass and no more: a second one is the run re-applying an
@@ -275,7 +275,7 @@ func TestUpdateDeploysTheCatalogCheckJobFromAFlaggedBase(t *testing.T) {
 // about the base image would be an update that exits 0 in the issue's state.
 func TestUpdateSaysWhenItCannotPinTheCatalogBase(t *testing.T) {
 	r := catalogUpdateRigAt(t, "dev")
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("a development build's run: %v\n%s\n%s", err, out, errOut)
 	}

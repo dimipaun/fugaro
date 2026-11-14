@@ -183,7 +183,7 @@ func TestUpdateManagedOutOfTableGrantAppliesAndIsRecorded(t *testing.T) {
 			updating(t, r)
 			r.setPlan(t, tc.plan)
 
-			got, err := updateRun(t, r, "update", "--yes")
+			got, err := updateRun(t, r, "update")
 			if err != nil {
 				t.Fatalf("a plan whose rules are the cover tables' was refused, and D1545 records and warns them instead: %v\n%s", err, got)
 			}
@@ -259,7 +259,7 @@ func TestUpdateManagedRemovalLeavesTheIdentityThePlanCarries(t *testing.T) {
 	updating(t, r)
 	r.setPlan(t, ch)
 
-	got, err := updateRun(t, r, "update", "--yes")
+	got, err := updateRun(t, r, "update")
 	if err == nil {
 		t.Fatalf("the run applied a plan that removes a bucket:\n%s", got)
 	}
@@ -296,7 +296,7 @@ func TestUpdateManagedRemovalNoFlagAdmitsLeavesNoCommand(t *testing.T) {
 	updating(t, r)
 	r.setPlan(t, ch)
 
-	got, err := updateRun(t, r, "update", "--yes")
+	got, err := updateRun(t, r, "update")
 	if err == nil {
 		t.Fatalf("the run applied a plan that removes a moved object:\n%s", got)
 	}
@@ -383,7 +383,7 @@ func TestUpdateManagedMixedRefusalsLeaveTheRemovalNoCommand(t *testing.T) {
 			updating(t, r)
 			r.setPlan(t, tc.plan...)
 
-			got, err := updateRun(t, r, "update", "--yes")
+			got, err := updateRun(t, r, "update")
 			if err == nil {
 				t.Fatalf("the run applied a plan a managed project refuses:\n%s", got)
 			}
@@ -429,7 +429,7 @@ func TestUpdateManagedJobReplaceAppliesWithAWarning(t *testing.T) {
 	updating(t, r)
 	r.setPlan(t, ch)
 
-	got, err := updateRun(t, r, "update", "--yes")
+	got, err := updateRun(t, r, "update")
 	if err != nil {
 		t.Fatalf("a replace D1551 does not protect was refused, and D1545 applies it with a warning: %v\n%s", err, got)
 	}
@@ -488,7 +488,7 @@ func TestUpdateManagedProjectJobRemovalLeavesNoCommand(t *testing.T) {
 	updating(t, r)
 	r.setPlan(t, jobAndGrant()...)
 
-	got, err := updateRun(t, r, "update", "--yes")
+	got, err := updateRun(t, r, "update")
 	if err == nil {
 		t.Fatalf("the run applied a plan that replaces a project job:\n%s", got)
 	}
@@ -515,7 +515,7 @@ func TestUpdateManagedProjectJobRemovalLeavesNoCommand(t *testing.T) {
 	r2 := updateManagedRig(t)
 	updating(t, r2)
 	r2.setPlan(t, jobAndGrant()...)
-	got2, err2 := updateRun(t, r2, "update", "--yes", "--allow-delete", grant, "--allow-delete", job)
+	got2, err2 := updateRun(t, r2, "update", "--allow-delete", grant, "--allow-delete", job)
 	if err2 == nil || !strings.Contains(got2, "retiring a project job is not supported yet") {
 		t.Errorf("the owner's own run with the flags the refusal would have offered did not refuse the project job (err %v):\n%s", err2, got2)
 	}
@@ -681,7 +681,7 @@ func TestUpdateManagedStageRefusesAPlanTheCoverDoesNotCover(t *testing.T) {
 	updating(t, r)
 	r.setPlan(t, change(binding, "create"))
 
-	got, err := updateRun(t, r, "update", "--yes")
+	got, err := updateRun(t, r, "update")
 	if err == nil {
 		t.Fatalf("the run applied a plan the cover of its own review refuses:\n%s", got)
 	}
@@ -721,7 +721,7 @@ func TestUpdateManagedStageAdmitsAnAdditivePlan(t *testing.T) {
 	updating(t, r)
 	r.setPlan(t, change(additive, "create"))
 
-	got, err := updateRun(t, r, "update", "--yes")
+	got, err := updateRun(t, r, "update")
 	if !strings.Contains(got, initflow.AgentProceeded("CLAUDECODE")) {
 		t.Fatalf("the admitted step does not say it proceeded:\n%s", got)
 	}
@@ -781,7 +781,7 @@ func TestUpdateManagedConvergesTheLauncherGrantUpgrade(t *testing.T) {
 		r := updateManagedRig(t)
 		launcherGrant(t, r, gcp.LegacyLauncherBucketConditionTitle, gcp.LegacyLauncherBucketCondition(bucket))
 
-		got, err := updateRun(t, r, "update", "--yes")
+		got, err := updateRun(t, r, "update")
 		if err != nil {
 			t.Fatalf("a managed project's fugaro update left an installation at the previous version behind: %v\n%s", err, got)
 		}
@@ -834,7 +834,7 @@ func TestUpdateManagedConvergesTheLauncherGrantUpgrade(t *testing.T) {
 		r := updateManagedRig(t)
 		launcherGrant(t, r, "someone-else", `resource.name.startsWith("projects/_/buckets/`+bucket+`/objects/")`)
 
-		got, err := updateRun(t, r, "update", "--yes")
+		got, err := updateRun(t, r, "update")
 		if err != nil {
 			t.Fatalf("a replace D1551 does not protect was refused, and D1545 applies it with a warning: %v\n%s", err, got)
 		}
@@ -906,7 +906,7 @@ func TestUpdateReadsTheGateBeforeAnyWrite(t *testing.T) {
 		updating(t, r)
 		r.setPlan(t, change(additive, "create"))
 
-		got, err := updateRun(t, r, "update", "--yes")
+		got, err := updateRun(t, r, "update")
 		if !strings.Contains(got, initflow.AgentProceeded("CLAUDECODE")) {
 			t.Fatalf("the step the gate admitted did not say so (err %v):\n%s", err, got)
 		}
@@ -945,7 +945,7 @@ func TestUpdateReadsTheGateBeforeAnyWrite(t *testing.T) {
 			updating(t, r)
 			r.setPlan(t, change(additive, "create"))
 
-			got, err := updateRun(t, r, "update", "--yes")
+			got, err := updateRun(t, r, "update")
 			if n := len(r.ran(t, "apply")); n != 0 {
 				t.Errorf("%d terraform apply(s) ran in a session whose gate was never opened:\n%s", n, got)
 			}
@@ -980,7 +980,7 @@ func TestUpdateReadsTheGateBeforeAnyWrite(t *testing.T) {
 		updating(t, r)
 		r.setPlan(t, change(additive, "create"))
 
-		got, err := updateRun(t, r, "update", "--yes")
+		got, err := updateRun(t, r, "update")
 		if err == nil {
 			t.Fatalf("a mark that could not be read was read as an answer:\n%s", got)
 		}
@@ -1340,7 +1340,7 @@ func TestUpdateManagedLeavesAnOwnersRunAlone(t *testing.T) {
 	updating(t, r)
 	r.setPlan(t, change(additive, "create"))
 
-	got, err := updateRun(t, r, "update", "--yes")
+	got, err := updateRun(t, r, "update")
 	if err != nil {
 		t.Fatalf("an owner's run on an unmanaged project failed: %v\n%s", err, got)
 	}
@@ -1659,7 +1659,7 @@ func TestUpdateManagedLeavesComputeOwnerRun(t *testing.T) {
 	// setup's, and the refusal says so before anything runs.
 	r2 := updateManagedRig(t)
 	updating(t, r2)
-	got, err := updateRun(t, r2, "update", "--yes", "--provision-batch")
+	got, err := updateRun(t, r2, "update", "--provision-batch")
 	if err == nil || !strings.Contains(got, "fugaro update does not take --provision-batch") {
 		t.Errorf("this door took --provision-batch (err %v):\n%s", err, got)
 	}
@@ -1766,7 +1766,7 @@ func credentialsStageRun(t *testing.T) (string, int) {
 	isolateGateCredentials(t)
 	currentRelease(t)
 	fakeTerminal(t)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		out += ErrorText(err)
 	}
@@ -1831,7 +1831,7 @@ func TestUpdateManagedRefusesASessionWideningFlag(t *testing.T) {
 			updating(t, r)
 			r.setPlan(t, grantChange("state", outsider, "roles/storage.objectViewer", "create"))
 
-			got, err := updateRun(t, r, append([]string{"update", "--yes"}, tc.args...)...)
+			got, err := updateRun(t, r, append([]string{"update"}, tc.args...)...)
 			if err == nil {
 				t.Fatalf("a session that shaped the installation ran to the end:\n%s", got)
 			}
@@ -1876,7 +1876,7 @@ func TestUpdateManagedRulesStageUnderTheGate(t *testing.T) {
 	updating(t, r)
 	r.setPlan(t, change("module.installation.google_service_account.scheduler", "create"))
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	got := out + errOut
 	if err != nil {
 		t.Fatalf("a managed project's agent session did not deploy the rules generation (%v):\n%s", err, got)
@@ -1976,7 +1976,7 @@ func TestUpdateManagedPolicyStageUnderTheGate(t *testing.T) {
 	// states: the migration is the one write, and it loosens nothing.
 	db.Set(projectpolicy.PathShared(), v3Node(nil))
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	got := out + errOut
 	if err != nil {
 		t.Fatalf("a managed project's agent session did not publish the policy node (%v):\n%s", err, got)
@@ -2037,7 +2037,7 @@ func TestUpdateManagedPolicyStageRefusesTheTypedLoosening(t *testing.T) {
 	// publish would raise what every run of the project is admitted by.
 	db.Set(projectpolicy.PathShared(), staleBudgetNodeAt(3))
 
-	got, err := updateRun(t, r, "update", "--yes")
+	got, err := updateRun(t, r, "update")
 	if err == nil {
 		t.Fatalf("a managed project's agent session published a looser node:\n%s", got)
 	}
@@ -2110,7 +2110,7 @@ func TestUpdateManagedPolicyStageRefusesTheAccountChoiceKeys(t *testing.T) {
 	r.setPlan(t, change("module.installation.google_service_account.scheduler", "create"))
 	db.Set(projectpolicy.PathShared(), staleBudgetNode())
 
-	got, err := updateRun(t, r, "update", "--yes")
+	got, err := updateRun(t, r, "update")
 	if err == nil {
 		t.Fatalf("a managed project's agent session set the accounts the review credential goes out on:\n%s", got)
 	}
@@ -2160,7 +2160,7 @@ func TestUpdateManagedRefusesTheFirstPolicyPublish(t *testing.T) {
 	// the catalog check job needs this installation's base image to run from.
 	r.appendConfig(t, catalogConfigYAML+"base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc}\n")
 
-	got, err := updateRun(t, r, "update", "--yes")
+	got, err := updateRun(t, r, "update")
 	if err == nil {
 		t.Fatalf("a managed project's agent session wrote the first policy node:\n%s", got)
 	}
@@ -2254,7 +2254,7 @@ func TestUpdateManagedWorkspaceStageUnderTheGate(t *testing.T) {
 		"cap": map[string]any{"monthly_micros": 25_000_000},
 	})
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	got := out + errOut
 	if err != nil {
 		t.Fatalf("a managed project's agent session did not publish the workspace node (%v):\n%s", err, got)
@@ -2363,7 +2363,7 @@ func TestUpdateManagedWorkspaceStageRefusesTheTypedWidening(t *testing.T) {
 		"cap":     map[string]any{"monthly_micros": 25_000_000},
 	})
 
-	got, err := updateRun(t, r, "update", "--yes")
+	got, err := updateRun(t, r, "update")
 	if err == nil {
 		t.Fatalf("a managed project's agent session admitted a member to the workspace:\n%s", got)
 	}
@@ -2422,7 +2422,7 @@ func TestUpdateManagedRefusesTheFirstWorkspacePublish(t *testing.T) {
 	db.Set(projectpolicy.PathShared(), v3Node(nil))
 	r.appendConfig(t, wsOwnerTable+wsOwnerCap)
 
-	got, err := updateRun(t, r, "update", "--yes")
+	got, err := updateRun(t, r, "update")
 	if err == nil {
 		t.Fatalf("a managed project's agent session wrote the workspace's first record:\n%s", got)
 	}
@@ -2506,7 +2506,7 @@ func TestUpdateFirebaseProjectKeepsItsOwnConfirmationOnAManagedProject(t *testin
 	r.setPlan(t, change("module.installation.google_service_account.scheduler", "create"))
 	r.setPlanAt(t, "firebase", change("module.firebase.google_project_iam_member.workspace_read[0]", "create"))
 
-	got, err := updateRun(t, r.initRig, "update", "--firebase-project", initProject, "--yes")
+	got, err := updateRun(t, r.initRig, "update", "--firebase-project", initProject)
 	if err == nil {
 		t.Fatalf("a coding agent's session ran the Firebase step that binds the workspace's account:\n%s", got)
 	}

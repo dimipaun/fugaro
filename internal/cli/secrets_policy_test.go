@@ -49,7 +49,7 @@ func TestSecretsSetProxyIsATypedWidening(t *testing.T) {
 	// The coding agent's session is the fence this widening has instead of a
 	// question, and --yes does not lift it.
 	t.Setenv(accountsAddAgent, "1")
-	if _, _, err := execute(t, "secrets", "set", "bitbucket-token", "--proxy", "--yes"); err == nil {
+	if _, _, err := execute(t, "secrets", "set", "bitbucket-token", "--proxy"); err == nil {
 		t.Fatal("a coding agent's session turned the proxy switch on")
 	} else if !strings.Contains(err.Error(), accountsAddAgent) {
 		t.Fatalf("err = %v, want the refusal to name the marker it saw", err)
@@ -76,7 +76,7 @@ func TestSecretsSetProxyIsATypedWidening(t *testing.T) {
 		t.Errorf("the diff does not name the key it wrote:\n%s%s", out, errOut)
 	}
 
-	out, errOut, err = execute(t, "secrets", "set", "bitbucket-token", "--proxy=false", "--yes")
+	out, errOut, err = execute(t, "secrets", "set", "bitbucket-token", "--proxy=false")
 	if err != nil {
 		t.Fatalf("secrets set --proxy=false --yes: %v\nstdout %s\nstderr %s", err, out, errOut)
 	}
@@ -105,7 +105,7 @@ func TestSecretsSetAllowDataToIsATypedWidening(t *testing.T) {
 	before := readFileString(t, path)
 
 	t.Setenv(accountsAddAgent, "1")
-	if _, _, err := execute(t, "secrets", "set", "bitbucket-token", "--allow-data-to", "acme/web", "--yes"); err == nil {
+	if _, _, err := execute(t, "secrets", "set", "bitbucket-token", "--allow-data-to", "acme/web"); err == nil {
 		t.Fatal("a coding agent's session widened allow_data_to")
 	} else if !strings.Contains(err.Error(), accountsAddAgent) {
 		t.Fatalf("err = %v, want the refusal to name the marker it saw", err)
@@ -148,7 +148,7 @@ func TestSecretsSetAllowDataToReachesAFlowStyleEntry(t *testing.T) {
 		t.Fatalf("the fixture is not the flow shape this test is about:\n%s", before)
 	}
 
-	out, errOut, err := execute(t, "secrets", "set", "bitbucket-token", "--allow-data-to", "acme/web", "--yes")
+	out, errOut, err := execute(t, "secrets", "set", "bitbucket-token", "--allow-data-to", "acme/web")
 	if err != nil {
 		t.Fatalf("secrets set --allow-data-to --yes: %v\nstdout %s\nstderr %s", err, out, errOut)
 	}
@@ -176,10 +176,10 @@ func TestSecretsSetPolicyRefusesAnAgentSession(t *testing.T) {
 	t.Setenv(accountsAddAgent, "1") // a coding agent's session
 
 	for _, args := range [][]string{
-		{"secrets", "set", "bitbucket-token", "--proxy", "--yes"},
+		{"secrets", "set", "bitbucket-token", "--proxy"},
 		// The same write the file already holds: a no-op for applySettingsEdit,
 		// and still the family's refusal here.
-		{"secrets", "set", "bitbucket-token", "--allow-data-to", "acme/app", "--yes"},
+		{"secrets", "set", "bitbucket-token", "--allow-data-to", "acme/app"},
 	} {
 		_, _, err := execute(t, args...)
 		if err == nil {
@@ -212,17 +212,17 @@ func TestSecretsSetPolicyRefusesWhatItCannotWrite(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"a name project_secrets cannot hold", []string{"secrets", "set", "web-token", "--proxy", "--yes"}, "project_secrets holds the secrets Fugaro stores project-wide"},
+		{"a name project_secrets cannot hold", []string{"secrets", "set", "web-token", "--proxy"}, "project_secrets holds the secrets Fugaro stores project-wide"},
 		// The other block's names land here too, and the sentence has to say
 		// which block they belong to: workflow_secrets holds exactly the names
 		// project_secrets cannot, so a person who wrote one there would read a
 		// bare "not one of the reserved names" as a typo of their own.
-		{"a workflow secret's name", []string{"secrets", "set", "deploy-token", "--allow-data-to", "acme/web", "--yes"}, "workflow_secrets"},
-		{"a repository that is not owner/name", []string{"secrets", "set", "bitbucket-token", "--allow-data-to", "acme", "--yes"}, "must be a repository as owner/name"},
-		{"an owner wildcard", []string{"secrets", "set", "bitbucket-token", "--allow-data-to", "*/app", "--yes"}, "the owner segment must be literal"},
-		{"proxy on a name that is not the Bitbucket token", []string{"secrets", "set", "claude-oauth-token", "--proxy", "--yes"}, "the Bitbucket token's switch"},
-		{"--repo", []string{"secrets", "set", "bitbucket-token", "--proxy", "--yes", "--repo", "acme/app"}, "--repo and the policy flags name different things"},
-		{"both edits at once", []string{"secrets", "set", "bitbucket-token", "--proxy", "--allow-data-to", "acme/web", "--yes"}, "two different edits"},
+		{"a workflow secret's name", []string{"secrets", "set", "deploy-token", "--allow-data-to", "acme/web"}, "workflow_secrets"},
+		{"a repository that is not owner/name", []string{"secrets", "set", "bitbucket-token", "--allow-data-to", "acme"}, "must be a repository as owner/name"},
+		{"an owner wildcard", []string{"secrets", "set", "bitbucket-token", "--allow-data-to", "*/app"}, "the owner segment must be literal"},
+		{"proxy on a name that is not the Bitbucket token", []string{"secrets", "set", "claude-oauth-token", "--proxy"}, "the Bitbucket token's switch"},
+		{"--repo", []string{"secrets", "set", "bitbucket-token", "--proxy", "--repo", "acme/app"}, "--repo and the policy flags name different things"},
+		{"both edits at once", []string{"secrets", "set", "bitbucket-token", "--proxy", "--allow-data-to", "acme/web"}, "two different edits"},
 	}
 	for _, tc := range cases {
 		_, _, err := execute(t, tc.args...)
@@ -294,7 +294,7 @@ func TestSecretsSetValueWriteRefusesThePolicyFlags(t *testing.T) {
 	sm := secretsFixture(t)
 	secret := gcp.SecretID(appSlug, "claude-oauth-token")
 
-	for _, flag := range []string{"--dry-run", "--yes"} {
+	for _, flag := range []string{"--dry-run"} {
 		out, errOut, err := executeStdin(t, tokenValue+"\n", "secrets", "set", "claude-oauth-token", "--repo", "acme/app", flag)
 		if err == nil {
 			t.Fatalf("%s was accepted on a value write:\nstdout %s\nstderr %s", flag, out, errOut)

@@ -165,7 +165,7 @@ func TestRefreshYesStillRefusesCustomBase(t *testing.T) {
 	r := newAnchorModeRig(t, refreshYAML, true)
 	r.appendConfig(t, "base_images: {base: "+refreshHost+"/fugaro-base/fugaro-base:dev-abc}\n")
 	noRecordReads(t)
-	out, _, err := executeStdin(t, "", "image", "refresh", "--workflow", "api", "--yes")
+	out, _, err := executeStdin(t, "", "image", "refresh", "--workflow", "api")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "base_images.base is "+refreshHost+"/fugaro-base/fugaro-base:dev-abc") ||
 		!strings.Contains(err.Error(), "then rerun fugaro image refresh --workflow api --yes") {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
@@ -460,7 +460,6 @@ func TestRefreshRefusedInAgentSession(t *testing.T) {
 				fakeTerminal(t)
 				args := []string{"image", "refresh", "--repo", "acme/app"}
 				if yes {
-					args = append(args, "--yes")
 				}
 				_, _, err := executeStdin(t, "", args...)
 				if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro image refresh applies cloud changes: "+initflow.AgentRefusal(marker)) {
@@ -622,7 +621,7 @@ func TestRefreshStopsSayWhatFinished(t *testing.T) {
 // 2026-10-08 decision: under --yes, a failed build still stops the ones
 // after it, names what finished, and the rerun line to type back now
 // includes --yes too (again() carries it); none of this needs a terminal.
-// Mutation (run, restore): drop `if o.yes { args = append(args, "--yes") }`
+// Mutation (run, restore): drop `if o.yes { args = append(args) }`
 // from refreshOptions.again, and this test fails (the rerun line omits
 // --yes, so a copy-pasted rerun would ask for a terminal again).
 func TestRefreshYesFailureStopsAndRerunLineKeepsYes(t *testing.T) {
@@ -630,7 +629,7 @@ func TestRefreshYesFailureStopsAndRerunLineKeepsYes(t *testing.T) {
 	useSelf(t)
 	newAnchorModeRig(t, refreshYAML, true)
 	ran := fakeSteps(t, "builds", remote(errors.New("503 from the cloud")))
-	out, _, err := executeStdin(t, "", "image", "refresh", "--workflow", "app", "--yes")
+	out, _, err := executeStdin(t, "", "image", "refresh", "--workflow", "app")
 	if ExitCode(err) != ExitRemoteError {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -968,7 +967,7 @@ func TestRefreshYesRunsEndToEndNoTerminal(t *testing.T) {
 		}
 	}
 	t.Cleanup(func() { newRefreshSteps = old })
-	out, _, err := executeStdin(t, "", "image", "refresh", "--yes")
+	out, _, err := executeStdin(t, "", "image", "refresh")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}

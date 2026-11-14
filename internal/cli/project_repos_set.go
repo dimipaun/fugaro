@@ -141,9 +141,6 @@ type projectReposMember struct {
 // runProjectReposSet is `project repos set`: the shape is the flags', and each
 // shape's own function writes it.
 func runProjectReposSet(cmd *cobra.Command, args []string, o projectReposSetOptions) error {
-	if err := askConflict(askFlags{ask: o.ask, yes: o.yes}); err != nil {
-		return err
-	}
 	sel, lc, err := settingsAimedSelection(settingsWriteOptions{project: o.project, config: o.config})
 	if err != nil {
 		return err
@@ -481,7 +478,7 @@ func projectReposSetApply(cmd *cobra.Command, w projectReposSetWrite) error {
 	if err != nil {
 		return err
 	}
-	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: w.o.ask, yes: w.o.yes}, managed.Managed, settingsEditConditions(cmd, edit)); err != nil {
+	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: w.o.ask}, managed.Managed, settingsEditConditions(cmd, edit)); err != nil {
 		return err
 	}
 	edit.Managed = managed

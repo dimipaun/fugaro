@@ -176,7 +176,7 @@ func TestPropagationRetryRerunsTheInstallationStep(t *testing.T) {
 	}
 	r.save(t)
 
-	out, err := updateRun(t, r, "update", "--yes")
+	out, err := updateRun(t, r, "update")
 	if err != nil {
 		t.Fatalf("the retried installation step failed: %v\n%s", err, out)
 	}
@@ -220,7 +220,7 @@ func TestPropagationRetryKeepsRetryingAfterItsOwnApplyCreated(t *testing.T) {
 	}
 	r.save(t)
 
-	out, err := updateRun(t, r, "update", "--yes")
+	out, err := updateRun(t, r, "update")
 	if err != nil {
 		t.Fatalf("the retried installation step failed: %v\n%s", err, out)
 	}
@@ -260,7 +260,7 @@ func TestPropagationRetryHoldsTheNewPlanToTheGuard(t *testing.T) {
 	}
 	r.save(t)
 
-	out, err := updateRun(t, r, "update", "--yes")
+	out, err := updateRun(t, r, "update")
 	if err == nil {
 		t.Fatalf("a retried plan holding an unallowed delete was applied:\n%s", out)
 	}
@@ -431,7 +431,7 @@ func TestPropagationRetryJudgesTheNewPlanThroughTheGate(t *testing.T) {
 	}
 	r.save(t)
 
-	got, err := updateRun(t, r, "update", "--yes")
+	got, err := updateRun(t, r, "update")
 	if err != nil {
 		t.Fatalf("the retried installation step failed: %v\n%s", err, got)
 	}
@@ -497,7 +497,7 @@ func TestPropagationRetryAppliesNothingUnderTheFailedAttemptsAdmission(t *testin
 	}
 	r.save(t)
 
-	got, err := updateRun(t, r, "update", "--yes")
+	got, err := updateRun(t, r, "update")
 	if err == nil {
 		t.Fatalf("a plan the gate refused was applied:\n%s", got)
 	}
@@ -564,7 +564,7 @@ func TestPropagationRetryStopsOnAnythingElse(t *testing.T) {
 			r.script["apply@installation"] = map[string]any{"exit": 1, "stderr": tc.stderr}
 			r.save(t)
 
-			out, err := updateRun(t, r, "update", "--yes")
+			out, err := updateRun(t, r, "update")
 			if err == nil {
 				t.Fatalf("a failed apply succeeded:\n%s", out)
 			}
@@ -591,7 +591,7 @@ func TestPropagationRetryStopsAfterTheLastWait(t *testing.T) {
 	r.script["apply@installation"] = map[string]any{"exit": 1, "stderr": theReported404s}
 	r.save(t)
 
-	out, err := updateRun(t, r, "update", "--yes")
+	out, err := updateRun(t, r, "update")
 	if err == nil {
 		t.Fatalf("a gap that never closes succeeded:\n%s", out)
 	}

@@ -597,9 +597,6 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
 		return err
 	}
-	if err := askConflict(askFlags{ask: o.ask, yes: o.yes}); err != nil {
-		return err
-	}
 	// yes carries --yes to r.confirm/r.ask (steps 2 and 3). Step 4 consumes
 	// it no longer: the billable builds ask nothing in any session (T4), and a
 	// build is bounded by the lease it takes, not by an answer. The steps
@@ -614,7 +611,7 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 	// proceed, and that refusal has to be this flag's sentence rather than the
 	// one a run without it would have read (managed_ask.go). Nothing is
 	// applied by either.
-	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask, yes: o.yes}, o.managed != nil, askConditions(cmd, false, false)); err != nil {
+	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask}, o.managed != nil, askConditions(cmd, false, false)); err != nil {
 		return err
 	}
 	if err := refuseRefreshHere(cmd, o.yes, o.managed); err != nil {

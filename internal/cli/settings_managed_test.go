@@ -181,7 +181,7 @@ func TestSettingsSetManagedAdmitsARegistryKeyInAnAgentSession(t *testing.T) {
 	path := settingsManagedLayerFile(t, minimalAnchored)
 	agentSession(t)
 
-	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project", "--yes")
+	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project")
 	if err != nil {
 		t.Fatalf("a registry key was refused in a managed project's coding agent session: %v\nstdout:\n%s", err, out)
 	}
@@ -233,7 +233,7 @@ func TestSettingsUnsetManagedRefusesARemovedFloorKey(t *testing.T) {
 	before := readFileString(t, path)
 	agentSession(t)
 
-	out, _, err := execute(t, "settings", "unset", settingsManagedLayerKey, "--layer", "project", "--yes")
+	out, _, err := execute(t, "settings", "unset", settingsManagedLayerKey, "--layer", "project")
 	if err == nil {
 		t.Fatalf("a floor key was removed in a managed project's coding agent session:\n%s", out)
 	}
@@ -269,7 +269,7 @@ func TestSettingsUnsetManagedRefusesAReservedKeyByTheGate(t *testing.T) {
 	before := readFileString(t, path)
 	agentSession(t)
 
-	out, _, err := execute(t, "settings", "unset", "layer.governance.max_subagents", "--layer", "project", "--yes")
+	out, _, err := execute(t, "settings", "unset", "layer.governance.max_subagents", "--layer", "project")
 	if err == nil {
 		t.Fatalf("a reserved key was removed in a coding agent's session:\n%s", out)
 	}
@@ -298,7 +298,7 @@ func TestSettingsSetManagedRefusesAReservedKeyByTheGate(t *testing.T) {
 	before := readFileString(t, path)
 	agentSession(t)
 
-	out, _, err := execute(t, "settings", "set", "layer.governance.max_subagents", "4", "--layer", "project", "--yes")
+	out, _, err := execute(t, "settings", "set", "layer.governance.max_subagents", "4", "--layer", "project")
 	if err == nil {
 		t.Fatalf("a reserved key was written in a coding agent's session:\n%s", out)
 	}
@@ -336,7 +336,7 @@ func TestSettingsSetManagedRefusesATypedWideningByTheGate(t *testing.T) {
 	before := readFileString(t, path)
 	agentSession(t)
 
-	out, _, err := execute(t, "settings", "set", "agent.max_budget_usd", "500", "--layer", "repo", "--yes")
+	out, _, err := execute(t, "settings", "set", "agent.max_budget_usd", "500", "--layer", "repo")
 	if err == nil {
 		t.Fatalf("a widening was written in a coding agent's session:\n%s", out)
 	}
@@ -365,7 +365,7 @@ func TestSettingsSetManagedRefusesASecretsEntryByTheGate(t *testing.T) {
 	before := readFileString(t, path)
 	agentSession(t)
 
-	out, _, err := execute(t, "settings", "set", "workflows.web.secrets", "--add-entry", "name=ci-token", "--add-entry", "env=CI_TOKEN", "--layer", "repo", "--yes")
+	out, _, err := execute(t, "settings", "set", "workflows.web.secrets", "--add-entry", "name=ci-token", "--add-entry", "env=CI_TOKEN", "--layer", "repo")
 	if err == nil {
 		t.Fatalf("a secrets entry was written in a coding agent's session:\n%s", out)
 	}
@@ -395,7 +395,7 @@ func TestSettingsSetManagedRefusesAStaleLayerByTheGate(t *testing.T) {
 	before := readFileString(t, path)
 	agentSession(t)
 
-	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project", "--yes")
+	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project")
 	if err == nil {
 		t.Fatalf("a stale layer file was written in a coding agent's session:\n%s", out)
 	}
@@ -425,7 +425,7 @@ func TestSettingsSetManagedAdmitsALayerWrittenFromThePublishedGeneration(t *test
 	setConfigScalar(t, "layer_generation", `"0"`)
 	agentSession(t)
 
-	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project", "--yes")
+	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project")
 	if err != nil {
 		t.Fatalf("this machine's own layer file was refused: %v\n%s", err, out)
 	}
@@ -561,7 +561,7 @@ func TestSettingsSetManagedRecordsNothingWhenThereIsNoWrite(t *testing.T) {
 	before := readFileString(t, path)
 	agentSession(t)
 
-	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project", "--yes")
+	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project")
 	if err != nil {
 		t.Fatalf("a no-op re-run failed: %v\n%s", err, out)
 	}
@@ -586,7 +586,7 @@ func TestSettingsSetUnmanagedKeepsTheRefusalInAnAgentSession(t *testing.T) {
 	before := readFileString(t, path)
 	agentSession(t)
 
-	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project", "--yes")
+	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project")
 	if err == nil {
 		t.Fatalf("the command wrote in a coding agent's session:\n%s", out)
 	}
@@ -626,7 +626,7 @@ func TestSettingsSetManagedUnreadMarksKeepTheRefusal(t *testing.T) {
 			before := readFileString(t, path)
 			agentSession(t)
 
-			out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project", "--yes")
+			out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project")
 			if err == nil {
 				t.Fatalf("a project this program cannot prove is managed was admitted:\n%s", out)
 			}
@@ -764,7 +764,7 @@ func TestSettingsSetYesReadsNoMark(t *testing.T) {
 	// on a run that writes. The calls counted here are the command's own — the
 	// reads above are this test's — so the count is taken from where they are.
 	read := len(r.gcs.Requests())
-	out, _, err := executeStdin(t, "", "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project", "--yes")
+	out, _, err := executeStdin(t, "", "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -879,7 +879,7 @@ func TestSettingsSetManagedOwnerTerminalWidensACeiling(t *testing.T) {
 		says string
 	}{
 		{"set, without --yes", []string{"set", "layer.defaults.agent.max_budget_usd", "500"}, "max_budget_usd: 500", "this raises a limit"},
-		{"set, with --yes", []string{"set", "layer.defaults.agent.max_budget_usd", "500", "--yes"}, "max_budget_usd: 500", "this raises a limit"},
+		{"set, with --yes", []string{"set", "layer.defaults.agent.max_budget_usd", "500"}, "max_budget_usd: 500", "this raises a limit"},
 		{"unset", []string{"unset", "layer.defaults.agent.max_budget_usd"}, "", "removing a ceiling hands the decision back to a looser layer"},
 	} {
 		t.Run(tc.what, func(t *testing.T) {
@@ -985,7 +985,7 @@ func TestSettingsSetRepoWriteInAManagedProjectReadsNoMark(t *testing.T) {
 	path := settingsWriteCheckout(t, settingsRepoYAML(""))
 	agentSession(t)
 
-	out, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--yes")
+	out, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo")
 	if err != nil {
 		t.Fatalf("a repository-scoped write was refused: %v\n%s", err, out)
 	}
@@ -1013,7 +1013,7 @@ func TestSettingsSetManagedRefusesAProfileKeyByTheGate(t *testing.T) {
 	before := readFileString(t, path)
 	agentSession(t)
 
-	out, _, err := execute(t, "settings", "set", "layer.profiles.web.commands.build", "make all", "--layer", "project", "--yes")
+	out, _, err := execute(t, "settings", "set", "layer.profiles.web.commands.build", "make all", "--layer", "project")
 	if err == nil {
 		t.Fatalf("a profile's build command was written in a coding agent's session:\n%s", out)
 	}
@@ -1052,7 +1052,7 @@ func TestSettingsSetManagedRefusesARaisedMaxParallel(t *testing.T) {
 	before := readFileString(t, configPath)
 	agentSession(t)
 
-	out, _, err := execute(t, "settings", "set", "max_parallel", "50", "--layer", "local", "--yes")
+	out, _, err := execute(t, "settings", "set", "max_parallel", "50", "--layer", "local")
 	if err == nil {
 		t.Fatalf("a raise of max_parallel was written in a coding agent's session:\n%s", out)
 	}
@@ -1083,7 +1083,7 @@ func TestSettingsSetManagedRefusesATurnedOffReviewLevel(t *testing.T) {
 	before := readFileString(t, path)
 	agentSession(t)
 
-	out, _, err := execute(t, "settings", "set", "layer.defaults.agent.levels.l2.none", "true", "--layer", "project", "--yes")
+	out, _, err := execute(t, "settings", "set", "layer.defaults.agent.levels.l2.none", "true", "--layer", "project")
 	if err == nil {
 		t.Fatalf("a review level was turned off in a coding agent's session:\n%s", out)
 	}
@@ -1113,7 +1113,7 @@ func TestSettingsSetManagedRefusesALoweredReviewRounds(t *testing.T) {
 	before := readFileString(t, path)
 	agentSession(t)
 
-	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, "2", "--layer", "project", "--yes")
+	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, "2", "--layer", "project")
 	if err == nil {
 		t.Fatalf("the review rounds were lowered in a coding agent's session:\n%s", out)
 	}
@@ -1147,7 +1147,7 @@ func TestSettingsSetManagedRefusesALoweredAdversarialRounds(t *testing.T) {
 	before := readFileString(t, path)
 	agentSession(t)
 
-	out, _, err := execute(t, "settings", "set", "layer.defaults.agent.adversarial_rounds", "1", "--layer", "project", "--yes")
+	out, _, err := execute(t, "settings", "set", "layer.defaults.agent.adversarial_rounds", "1", "--layer", "project")
 	if err == nil {
 		t.Fatalf("the adversarial rounds were lowered in a coding agent's session:\n%s", out)
 	}
@@ -1178,7 +1178,7 @@ func TestSettingsSetManagedRefusesAKeyTheAllowlistDoesNotAdmit(t *testing.T) {
 	before := readFileString(t, path)
 	agentSession(t)
 
-	out, _, err := execute(t, "settings", "set", "layer.defaults.git.pr.early_draft", "false", "--layer", "project", "--yes")
+	out, _, err := execute(t, "settings", "set", "layer.defaults.git.pr.early_draft", "false", "--layer", "project")
 	if err == nil {
 		t.Fatalf("a key nobody decided about was written in a coding agent's session:\n%s", out)
 	}
@@ -1214,7 +1214,7 @@ func TestSettingsSetManagedRefusesAConfigAimedOutsideTheProject(t *testing.T) {
 	}
 	agentSession(t)
 
-	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project", "--config", elsewhere, "--yes")
+	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project", "--config", elsewhere)
 	if err == nil {
 		t.Fatalf("a session-chosen config was treated as the installation's own:\n%s", out)
 	}
@@ -1245,7 +1245,7 @@ func TestSettingsSetManagedAdmitsAConfigSpelledTheProjectsWay(t *testing.T) {
 	spelled := filepath.Dir(cfg) + "/./" + filepath.Base(cfg)
 	agentSession(t)
 
-	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project", "--config", spelled, "--yes")
+	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project", "--config", spelled)
 	if err != nil {
 		t.Fatalf("the project's own config, spelled with a redundant segment, was refused: %v\n%s", err, out)
 	}
@@ -1269,7 +1269,7 @@ func TestSettingsSetManagedRefusesALoweringUnderAZeroedLayer(t *testing.T) {
 	before := readFileString(t, path)
 	agentSession(t)
 
-	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, "1", "--layer", "project", "--yes")
+	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, "1", "--layer", "project")
 	if err == nil {
 		t.Fatalf("a run's rounds were lowered from the mode's own row in a coding agent's session:\n%s", out)
 	}
@@ -1301,7 +1301,7 @@ func TestSettingsSetManagedRefusesALoweringIntoAnEmptyLayer(t *testing.T) {
 			before := readFileString(t, path)
 			agentSession(t)
 
-			out, _, err := execute(t, "settings", "set", key, "3", "--layer", "project", "--yes")
+			out, _, err := execute(t, "settings", "set", key, "3", "--layer", "project")
 			if err == nil {
 				t.Fatalf("a session wrote a round count below the strictest mode's row into an empty layer:\n%s", out)
 			}

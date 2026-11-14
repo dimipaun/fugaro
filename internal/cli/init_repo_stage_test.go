@@ -805,7 +805,7 @@ func TestNonInteractiveNamesAppIDFromTheStage(t *testing.T) {
 	r.stateBucket()
 	root := repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", ""))
 	t.Chdir(root)
-	_, _, err := executeStdin(t, "", "setup", "--non-interactive", "--yes", "--onboard-repo", "acme/app")
+	_, _, err := executeStdin(t, "", "setup", "--onboard-repo", "acme/app")
 	if err == nil || !strings.Contains(err.Error(), "--non-interactive: missing") || !strings.Contains(err.Error(), "--github-app-id") {
 		t.Fatalf("%v", err)
 	}

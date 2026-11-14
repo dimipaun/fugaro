@@ -357,14 +357,14 @@ func TestSetShowsOldAndNew(t *testing.T) {
 
 func TestSetRepoAndDefaultsUseTheirOwnKeys(t *testing.T) {
 	f := newBudgetFixture(t, "")
-	if _, _, err := execute(t, "budget", "set", "--defaults", "--daily", "40", "--per-run", "10", "--yes"); err != nil {
+	if _, _, err := execute(t, "budget", "set", "--defaults", "--daily", "40", "--per-run", "10"); err != nil {
 		t.Fatal(err)
 	}
 	d := f.db.Value(budget.PathCapsDefaults).(map[string]any)
 	if d["repoDailyMicros"].(json.Number).String() != "40000000" || d["repoPerRunMicros"].(json.Number).String() != "10000000" {
 		t.Fatalf("defaults = %v", d)
 	}
-	if _, _, err := execute(t, "budget", "set", "--repo", "acme/app", "--daily", "5", "--yes"); err != nil {
+	if _, _, err := execute(t, "budget", "set", "--repo", "acme/app", "--daily", "5"); err != nil {
 		t.Fatal(err)
 	}
 	r := f.db.Value(budget.PathCapsRepo(appSlug)).(map[string]any)
@@ -414,7 +414,7 @@ func TestBudgetRaiseNeedsNoPromptAtATerminal(t *testing.T) {
 	if v := daily(); v != "190000000" {
 		t.Fatalf("daily = %s", v)
 	}
-	if _, _, err := executeStdin(t, "y\n", "budget", "set", "--global", "--daily", "200", "--ask", "--yes"); err == nil || !strings.Contains(err.Error(), initflow.AskAndYes()) {
+	if _, _, err := executeStdin(t, "y\n", "budget", "set", "--global", "--daily", "200", "--ask"); err == nil || !strings.Contains(err.Error(), initflow.AskAndYes()) {
 		t.Fatalf("--ask and --yes together: err = %v", err)
 	}
 	if v := daily(); v != "190000000" {
@@ -445,11 +445,11 @@ func TestBudgetRaiseRefusesInAnAgentSession(t *testing.T) {
 		command string
 	}{
 		{[]string{"budget", "set", "--global", "--daily", "150"}, "fugaro budget set --daily=150 --global --project=aurora"},
-		{[]string{"budget", "set", "--global", "--daily", "150", "--yes"}, "fugaro budget set --daily=150 --global --yes --project=aurora"},
+		{[]string{"budget", "set", "--global", "--daily", "150"}, "fugaro budget set --daily=150 --global --yes --project=aurora"},
 		{[]string{"budget", "set", "--global", "--per-run", "30"}, "fugaro budget set --global --per-run=30 --project=aurora"},
-		{[]string{"budget", "set", "--global", "--per-run", "30", "--yes"}, "fugaro budget set --global --per-run=30 --yes --project=aurora"},
+		{[]string{"budget", "set", "--global", "--per-run", "30"}, "fugaro budget set --global --per-run=30 --yes --project=aurora"},
 		{[]string{"budget", "set", "--defaults", "--daily", "500"}, "fugaro budget set --daily=500 --defaults --project=aurora"},
-		{[]string{"budget", "set", "--defaults", "--daily", "500", "--yes"}, "fugaro budget set --daily=500 --defaults --yes --project=aurora"},
+		{[]string{"budget", "set", "--defaults", "--daily", "500"}, "fugaro budget set --daily=500 --defaults --yes --project=aurora"},
 		// Every command handed back names the project this run acted on and, for
 		// the repository scope, the repository it resolved: a project the owner's
 		// own defaults answer, an empty --repo or a path would each land on
@@ -563,7 +563,7 @@ func TestSetLowerNoConfirmation(t *testing.T) {
 func TestSetModeRecordsTheOwner(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	seedCaps(f, 100, 20)
-	if _, _, err := execute(t, "budget", "set", "--global", "--mode", "observe", "--yes"); err != nil {
+	if _, _, err := execute(t, "budget", "set", "--global", "--mode", "observe"); err != nil {
 		t.Fatal(err)
 	}
 	if got := f.db.Value(budget.PathMode); got != budget.ModeObserve {
@@ -572,7 +572,7 @@ func TestSetModeRecordsTheOwner(t *testing.T) {
 	if got := f.db.Value(budget.PathModeSet); got != budget.ChosenByOwner {
 		t.Errorf("%s = %v, want %q: the mode this command set is the owner's own, and `fugaro update` may never raise it", budget.PathModeSet, got, budget.ChosenByOwner)
 	}
-	if _, _, err := execute(t, "budget", "set", "--global", "--mode", "enforce", "--yes"); err != nil {
+	if _, _, err := execute(t, "budget", "set", "--global", "--mode", "enforce"); err != nil {
 		t.Fatal(err)
 	}
 	if got := f.db.Value(budget.PathModeSet); got != budget.ChosenByOwner {
@@ -630,7 +630,7 @@ func TestSetValidatesRanges(t *testing.T) {
 		"repo and --all":   {"--global", "--repo", "acme/app", "--daily", "5"},
 		"max reserve neg.": {"--global", "--max-reserve", "-0.5"},
 	} {
-		_, _, err := execute(t, append([]string{"budget", "set", "--yes"}, args...)...)
+		_, _, err := execute(t, append([]string{"budget", "set"}, args...)...)
 		if err == nil || ExitCode(err) != ExitUserError {
 			t.Errorf("%s: err = %v", name, err)
 		}
@@ -639,7 +639,7 @@ func TestSetValidatesRanges(t *testing.T) {
 		t.Errorf("%d requests went out for refused arguments", n)
 	}
 	// The stored per-run cap bounds a new daily cap too.
-	if _, _, err := execute(t, "budget", "set", "--global", "--daily", "10", "--yes"); err == nil || !strings.Contains(err.Error(), "per-run") {
+	if _, _, err := execute(t, "budget", "set", "--global", "--daily", "10"); err == nil || !strings.Contains(err.Error(), "per-run") {
 		t.Errorf("a daily cap under the stored per-run cap was accepted: %v", err)
 	}
 }
@@ -779,7 +779,7 @@ func TestBudgetResumeRefusesInAnAgentSession(t *testing.T) {
 		command string
 	}{
 		{[]string{"budget", "resume", "--all"}, "fugaro budget resume --all --project=aurora"},
-		{[]string{"budget", "resume", "--all", "--yes"}, "fugaro budget resume --all --yes --project=aurora"},
+		{[]string{"budget", "resume", "--all"}, "fugaro budget resume --all --yes --project=aurora"},
 		// acme/app is killed above, so this resume is a real one, and the
 		// command handed back names the project and the repository this run
 		// resolved: the bare --repo it was typed with would point at the owner's
@@ -961,7 +961,7 @@ func jsonOf(t *testing.T, v any) string {
 
 func TestBudgetRefusesWithoutFirebaseConfig(t *testing.T) {
 	newBudgetFixture(t, "budget: { mode: observe, per_run_usd: 5 }\n")
-	for _, args := range [][]string{{"show"}, {"set", "--global", "--daily", "1", "--yes"}, {"kill", "--all", "--yes"}, {"resume", "--all", "--yes"}} {
+	for _, args := range [][]string{{"show"}, {"set", "--global", "--daily", "1"}, {"kill", "--all"}, {"resume", "--all"}} {
 		_, _, err := execute(t, append([]string{"budget"}, args...)...)
 		if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "update --firebase-project") {
 			t.Errorf("%v: err = %v", args, err)
@@ -1077,7 +1077,7 @@ func TestResumeRepoWarnsWhileGlobalKillOn(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	f.db.Set(budget.PathKillGlobal, map[string]any{"on": true, "by": "boss@example.com", "at": int64(1)})
 	f.db.Set(budget.PathKillRepo(appSlug), map[string]any{"on": true, "by": "x", "at": int64(1)})
-	out, _, err := execute(t, "budget", "resume", "--repo", "acme/app", "--yes")
+	out, _, err := execute(t, "budget", "resume", "--repo", "acme/app")
 	if err != nil || !strings.Contains(out, "project-wide kill switch is still on") {
 		t.Fatalf("err = %v, out = %q", err, out)
 	}
@@ -1089,7 +1089,7 @@ func TestSetPartialFailureNamesWhatWasWritten(t *testing.T) {
 	seedCaps(f, 100, 20)
 	f.db.Deny("config/mode")
 	// Tightening (the daily cap) goes first; the mode loosening then fails.
-	_, _, err := execute(t, "budget", "set", "--global", "--daily", "50", "--mode", "observe", "--yes")
+	_, _, err := execute(t, "budget", "set", "--global", "--daily", "50", "--mode", "observe")
 	if err == nil || !strings.Contains(err.Error(), "partly applied") || !strings.Contains(err.Error(), nodeCG) || !strings.Contains(err.Error(), "config/mode") {
 		t.Fatalf("err = %v", err)
 	}
@@ -1098,7 +1098,7 @@ func TestSetPartialFailureNamesWhatWasWritten(t *testing.T) {
 func TestSetEnforceNeedsGlobalCaps(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	f.db.Set("config/mode", "observe")
-	_, _, err := execute(t, "budget", "set", "--global", "--mode", "enforce", "--yes")
+	_, _, err := execute(t, "budget", "set", "--global", "--mode", "enforce")
 	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "global caps") {
 		t.Fatalf("err = %v, want a refusal naming the caps", err)
 	}
@@ -1108,10 +1108,10 @@ func TestSetEnforceNeedsGlobalCaps(t *testing.T) {
 	// Only a daily cap in the database: still refused; giving the per-run
 	// cap in the same command is enough.
 	f.db.Set(nodeCG, map[string]any{"dailyMicros": 100 * usd1})
-	if _, _, err := execute(t, "budget", "set", "--global", "--mode", "enforce", "--yes"); err == nil {
+	if _, _, err := execute(t, "budget", "set", "--global", "--mode", "enforce"); err == nil {
 		t.Fatal("enforce was accepted with no per-run cap")
 	}
-	if _, _, err := execute(t, "budget", "set", "--global", "--per-run", "20", "--mode", "enforce", "--yes"); err != nil {
+	if _, _, err := execute(t, "budget", "set", "--global", "--per-run", "20", "--mode", "enforce"); err != nil {
 		t.Fatal(err)
 	}
 	if f.db.Value("config/mode") != "enforce" {
@@ -1153,7 +1153,7 @@ func TestTUIAndCLIShareSetKill(t *testing.T) {
 		t.Fatalf("CLI wrote %v, TUI wrote %v", viaCLI, viaTUI)
 	}
 	// Resume, both ways, ends in the same node too.
-	if _, _, err := execute(t, "budget", "resume", "--repo", "acme/app", "--yes", "--reason", "ok"); err != nil {
+	if _, _, err := execute(t, "budget", "resume", "--repo", "acme/app", "--reason", "ok"); err != nil {
 		t.Fatal(err)
 	}
 	viaCLI = shape(budget.PathKillRepo(appSlug))

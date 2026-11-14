@@ -101,7 +101,7 @@ func TestUpdateMigratesListsToAccessNode(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, db := accessRig(t, tc.local, admins, operators, admins)
-			out, errOut, err := executeStdin(t, "", "update", "--yes")
+			out, errOut, err := executeStdin(t, "", "update")
 			all := accessOut(out, errOut, err)
 			if err != nil {
 				t.Fatalf("one fugaro update did not converge an installation at the previous shape: %v\n%s", err, all)
@@ -169,7 +169,7 @@ func TestUpdateMigratesListsToAccessNode(t *testing.T) {
 func TestUpdateKeepsTheInstallationSpellingOfAMixedCaseDomain(t *testing.T) {
 	spelled := "user:A@Example.com"
 	r, db := accessRig(t, []string{spelled}, nil, []string{spelled}, nil)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	all := accessOut(out, errOut, err)
 	if err != nil {
 		t.Fatalf("one fugaro update did not converge an installation whose member is spelled with a mixed-case domain: %v\n%s", err, all)
@@ -215,7 +215,7 @@ func TestAnAgentSessionWritesNoGrantsNode(t *testing.T) {
 	admins := []string{"user:root@example.com"}
 	r, db := accessRig(t, operators, admins, operators, admins)
 	t.Setenv(agentMarkers[0], "1")
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	all := accessOut(out, errOut, err)
 	if got := db.Value(accesslib.PathNode); got != nil {
 		t.Errorf("a coding agent's session migrated the roles into the grants node: %v\n%s", got, all)
@@ -261,7 +261,7 @@ func TestAManagedSessionMigratesTheNode(t *testing.T) {
 	updating(t, r)
 	r.setPlan(t, change("module.installation.google_service_account.scheduler", "create"))
 	t.Setenv(agentMarkers[0], "1")
-	got, _ := updateRun(t, r, "update", "--yes")
+	got, _ := updateRun(t, r, "update")
 	want := []string{"user:ops@example.com (operator)", "user:root@example.com (admin)"}
 	if have := grantLines(accessGrants(t, db)); !slices.Equal(have, want) {
 		t.Errorf("a managed session's migration did not land: the grants node holds %v, want %v:\n%s", have, want, got)
@@ -323,7 +323,7 @@ func TestLegacyMemberFormsKeepTheirGrants(t *testing.T) {
 	operators := []string{"user:ops@example.com", "group:eng@example.com", "domain:example.com"}
 	admins := []string{"user:root@example.com", "serviceAccount:auto@proj-1234.iam.gserviceaccount.com"}
 	r, db := accessRig(t, operators, admins, operators, admins)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	all := accessOut(out, errOut, err)
 	if err != nil {
 		t.Fatalf("fugaro update refused an installation whose lists hold a group, a domain and a service account: %v\n%s", err, all)
@@ -387,7 +387,7 @@ func TestAMigrationWithNoUserMemberWritesNoNode(t *testing.T) {
 	noAgentSession(t)
 	legacy := []string{"group:eng@example.com", "domain:example.com", "serviceAccount:auto@proj-1234.iam.gserviceaccount.com"}
 	_, db := accessRig(t, legacy, legacy, legacy, legacy)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	all := accessOut(out, errOut, err)
 	if err != nil {
 		t.Fatalf("fugaro update refused an installation whose lists hold no user member: %v\n%s", err, all)
@@ -431,7 +431,7 @@ func TestAMigrationThatCannotRecordItselfIsNotAFailure(t *testing.T) {
 	legacy := []string{"group:eng@example.com", "domain:example.com", "serviceAccount:auto@proj-1234.iam.gserviceaccount.com"}
 	_, db := accessRig(t, legacy, legacy, legacy, legacy)
 	db.Deny(accesslib.PathMigrated)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	all := accessOut(out, errOut, err)
 	if err != nil {
 		t.Fatalf("a caller whose IAM refuses the marker's write made fugaro update fail: %v\n%s", err, all)
@@ -467,7 +467,7 @@ func TestUpdateDoesNotRebuildARevokedRoster(t *testing.T) {
 	admins := []string{"user:root@example.com"}
 	_, db := accessRig(t, operators, admins, operators, admins)
 	db.Set(accesslib.PathMigrated, true)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	all := accessOut(out, errOut, err)
 	if err != nil {
 		t.Fatalf("converging an installation whose last grant was revoked failed: %v\n%s", err, all)
@@ -521,7 +521,7 @@ func TestPlanIsEmptyForAPureRename(t *testing.T) {
 	operators := []string{"user:ops@example.com", "user:second@example.com"}
 	admins := []string{"user:root@example.com"}
 	r, db := accessRig(t, operators, admins, operators, admins)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	all := accessOut(out, errOut, err)
 	if err != nil {
 		t.Fatalf("fugaro update did not converge the rename: %v\n%s", err, all)
@@ -590,7 +590,7 @@ func TestAMigrationTheCallerCannotWriteIsNotAFailure(t *testing.T) {
 	admins := []string{"user:root@example.com"}
 	r, db := accessRig(t, operators, admins, operators, admins)
 	db.Deny(accesslib.PathNode)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	all := accessOut(out, errOut, err)
 	if err != nil {
 		t.Fatalf("a caller whose IAM refuses the grants node's write made fugaro update fail: %v\n%s", err, all)
@@ -648,7 +648,7 @@ func TestPlanOnlyWritesNoNodeAndLandsNoList(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		out, errOut, err := executeStdin(t, "", "update", "--yes", "--plan-only")
+		out, errOut, err := executeStdin(t, "", "update", "--plan-only")
 		all := accessOut(out, errOut, err)
 		if err != nil {
 			t.Fatalf("a plan of an installation at the previous shape failed: %v\n%s", err, all)
@@ -663,7 +663,7 @@ func TestPlanOnlyWritesNoNodeAndLandsNoList(t *testing.T) {
 	t.Run("a run naming its own list", func(t *testing.T) {
 		r, db := accessRig(t, operators, nil, operators, nil)
 		db.Set(accesslib.PathNode, accessNodeDoc(projectGrant("user:ops@example.com", accesslib.RoleOperator)))
-		out, errOut, err := executeStdin(t, "", "update", "--yes", "--plan-only", "--operator", "user:new@example.com")
+		out, errOut, err := executeStdin(t, "", "update", "--plan-only", "--operator", "user:new@example.com")
 		all := accessOut(out, errOut, err)
 		if err != nil {
 			t.Fatalf("a plan of a run naming its own --operator list failed: %v\n%s", err, all)
@@ -730,7 +730,7 @@ func TestAFlagListThatCannotBeLandedStopsTheRun(t *testing.T) {
 	_, db := accessRig(t, operators, nil, operators, nil)
 	db.Set(accesslib.PathNode, accessNodeDoc(projectGrant("user:ops@example.com", accesslib.RoleOperator)))
 	db.Deny(accesslib.PathNode)
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--operator", "user:new@example.com")
+	out, errOut, err := executeStdin(t, "", "update", "--operator", "user:new@example.com")
 	all := accessOut(out, errOut, err)
 	if err == nil || exitCode(t, err) != ExitUserError {
 		t.Fatalf("a run whose --operator list could not be written did not stop: %v\n%s", err, all)
@@ -759,7 +759,7 @@ func TestAFlagListThatIsNotAMemberIsRefused(t *testing.T) {
 	operators := []string{"user:ops@example.com"}
 	_, db := accessRig(t, operators, nil, operators, nil)
 	db.Set(accesslib.PathNode, accessNodeDoc(projectGrant("user:ops@example.com", accesslib.RoleOperator)))
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--operator", "user:not-one-address")
+	out, errOut, err := executeStdin(t, "", "update", "--operator", "user:not-one-address")
 	all := accessOut(out, errOut, err)
 	if err == nil || exitCode(t, err) != ExitUserError {
 		t.Fatalf("a --operator list holding an entry no grant can hold was not refused: %v\n%s", err, all)
@@ -810,7 +810,7 @@ func TestARunGivesUpWhenEveryWriteLosesTheRace(t *testing.T) {
 	var err error
 	go func() {
 		defer close(done)
-		out, errOut, err = executeStdin(t, "", "update", "--yes", "--operator", "user:new@example.com")
+		out, errOut, err = executeStdin(t, "", "update", "--operator", "user:new@example.com")
 	}()
 	// step waits for the request at i, or gives up on the run and releases
 	// everything so it cannot outlive the test.
@@ -885,7 +885,7 @@ func TestRevokeIsNotUndoneByAStaleDerive(t *testing.T) {
 	var err error
 	go func() {
 		defer close(done)
-		out, errOut, err = executeStdin(t, "", "update", "--yes")
+		out, errOut, err = executeStdin(t, "", "update")
 	}()
 	<-stampedStep
 	releaseStep()
@@ -951,7 +951,7 @@ func TestAGrantTheInstallationNeverHeldNamesItself(t *testing.T) {
 		updating(t, r)
 		r.setPlanAt(t, "installation", grantChange("runs_launcher", extra, "roles/storage.objectUser", "create"))
 		fakeTerminal(t)
-		out, errOut, err := executeStdin(t, "", "update", "--yes")
+		out, errOut, err := executeStdin(t, "", "update")
 		all := accessOut(out, errOut, err)
 		if err != nil {
 			t.Fatalf("a plan granting a member the review did not announce failed under --yes: %v\n%s", err, all)
@@ -989,7 +989,7 @@ func TestAGrantTheInstallationNeverHeldNamesItself(t *testing.T) {
 		updating(t, r)
 		r.setPlanAt(t, "installation", grantChange("runs_launcher", extra, "roles/storage.objectUser", "create"))
 		fakeTerminal(t)
-		out, errOut, err := executeStdin(t, "", "update", "--yes")
+		out, errOut, err := executeStdin(t, "", "update")
 		all := accessOut(out, errOut, err)
 		if err != nil {
 			t.Fatalf("a plan granting a member the installation's own outputs hold failed: %v\n%s", err, all)
@@ -1029,7 +1029,7 @@ func TestAPromotionInTheNodeNamesItself(t *testing.T) {
 		updating(t, r)
 		r.setPlanAt(t, "installation", grantChange("runs_object_admin", ops, "roles/storage.objectAdmin", "create"))
 		fakeTerminal(t)
-		out, errOut, err := executeStdin(t, "", "update", "--yes")
+		out, errOut, err := executeStdin(t, "", "update")
 		all := accessOut(out, errOut, err)
 		if err != nil {
 			t.Fatalf("a plan granting the role the node raised a member to failed under --yes: %v\n%s", err, all)
@@ -1069,7 +1069,7 @@ func TestAPromotionInTheNodeNamesItself(t *testing.T) {
 		updating(t, r)
 		r.setPlanAt(t, "installation", grantChange("runs_object_admin", ops, "roles/storage.objectAdmin", "create"))
 		t.Setenv(agentMarkers[0], "1")
-		got, err := updateRun(t, r, "update", "--yes")
+		got, err := updateRun(t, r, "update")
 		if err != nil {
 			t.Fatalf("a managed project's gate refused a content rule D1545 makes a tripwire: %v\n%s", err, got)
 		}
@@ -1090,7 +1090,7 @@ func TestAPromotionInTheNodeNamesItself(t *testing.T) {
 		updating(t, r)
 		r.setPlanAt(t, "installation", grantChange("runs_object_admin", ops, "roles/storage.objectAdmin", "create"))
 		fakeTerminal(t)
-		out, errOut, err := executeStdin(t, "", "update", "--yes")
+		out, errOut, err := executeStdin(t, "", "update")
 		all := accessOut(out, errOut, err)
 		if err != nil {
 			t.Fatalf("a plan granting the role the installation's own outputs hold failed: %v\n%s", err, all)
@@ -1132,7 +1132,7 @@ func TestAPromotionLandedAfterTheRolesStepNamesItself(t *testing.T) {
 	var err error
 	go func() {
 		defer close(done)
-		out, errOut, err = executeStdin(t, "", "update", "--yes")
+		out, errOut, err = executeStdin(t, "", "update")
 	}()
 	<-stampedStep
 	releaseStep()

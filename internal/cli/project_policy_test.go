@@ -370,7 +370,7 @@ func TestProjectPolicyPublishRefusesAVersionItCannotWrite(t *testing.T) {
 func TestProjectPolicyPublishDeleteRefusesANewerNode(t *testing.T) {
 	f := newProjectFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), map[string]any{"version": projectpolicy.Version + 1, "allow_repos": []string{"github/acme/app"}})
-	_, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
+	_, _, err := execute(t, "project", "policy", "publish", "--delete")
 	if err == nil {
 		t.Fatal("deleting a policy written by a newer Fugaro was allowed")
 	}
@@ -1035,7 +1035,7 @@ func TestProjectPolicyDeleteDeletesUnderTheETagItValidated(t *testing.T) {
 	budgetTransport = &policyChangedDuringDelete{rt: http.DefaultTransport, db: f.db, val: other}
 	t.Cleanup(func() { budgetTransport = nil })
 
-	out, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
+	out, _, err := execute(t, "project", "policy", "publish", "--delete")
 	if err == nil {
 		t.Fatalf("a publish that landed while the deletion was being confirmed was deleted unconfirmed:\n%s", out)
 	}
@@ -1057,7 +1057,7 @@ func TestProjectPolicyDeleteRefusesWithoutTheRulesMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.db.Set(projectpolicy.PathRulesMarker(), nil)
-	_, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
+	_, _, err := execute(t, "project", "policy", "publish", "--delete")
 	if err == nil {
 		t.Fatal("--delete without the rules marker was allowed")
 	}
@@ -1094,7 +1094,7 @@ func TestProjectPolicyDeleteRemovesChildrenThenTheSharedNode(t *testing.T) {
 	child := projectpolicy.PathRepo(slug)
 	f.db.Set(child, map[string]any{"allow_repos": []string{"github/acme/app"}})
 
-	out, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
+	out, _, err := execute(t, "project", "policy", "publish", "--delete")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1132,7 +1132,7 @@ func TestProjectPolicyDeleteRemovesChildrenBeforeTheSharedNode(t *testing.T) {
 	f.db.Set(child, map[string]any{"allow_repos": []string{"github/acme/app"}})
 	f.db.Deny(projectpolicy.PathShared())
 
-	out, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
+	out, _, err := execute(t, "project", "policy", "publish", "--delete")
 	if err == nil {
 		t.Fatalf("a refused delete of the shared node was reported as a success:\n%s", out)
 	}
@@ -1170,7 +1170,7 @@ func TestProjectPolicyDeleteRefusesWithoutYesWhileARunIsInFlight(t *testing.T) {
 	if f.db.Value(projectpolicy.PathShared()) == nil {
 		t.Fatal("the policy was removed anyway")
 	}
-	if _, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes"); err != nil {
+	if _, _, err := execute(t, "project", "policy", "publish", "--delete"); err != nil {
 		t.Fatalf("--yes must delete while a run is in flight: %v", err)
 	}
 	if f.db.Value(projectpolicy.PathShared()) != nil {
@@ -1209,7 +1209,7 @@ func TestProjectPolicyDeleteRefusesTheTypedNameWhileARunIsInFlight(t *testing.T)
 	if f.db.Value(projectpolicy.PathShared()) == nil {
 		t.Fatal("the policy was removed anyway")
 	}
-	if _, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes"); err != nil {
+	if _, _, err := execute(t, "project", "policy", "publish", "--delete"); err != nil {
 		t.Fatalf("--yes must delete while a run is in flight: %v", err)
 	}
 	if f.db.Value(projectpolicy.PathShared()) != nil {
@@ -1223,7 +1223,7 @@ func TestProjectPolicyDeleteRefusesTheTypedNameWhileARunIsInFlight(t *testing.T)
 func TestProjectPolicyDeleteRefusesANewerPolicy(t *testing.T) {
 	f := newProjectFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), map[string]any{"version": projectpolicy.Version + 1, "allow_repos": []string{"github/acme/app"}})
-	_, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
+	_, _, err := execute(t, "project", "policy", "publish", "--delete")
 	if err == nil {
 		t.Fatal("deleting a newer policy was allowed")
 	}
@@ -1331,7 +1331,7 @@ func TestProjectShowDoesNotCallAPatternEntryIdleWhileItsRepositoriesRun(t *testi
 	if _, _, err := execute(t, "project", "repos", "add", "github/acme/*"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := execute(t, "project", "repos", "rm", "github/acme/app", "--yes"); err != nil {
+	if _, _, err := execute(t, "project", "repos", "rm", "github/acme/app"); err != nil {
 		t.Fatal(err)
 	}
 	// The pattern admits github/acme/app, and a run of it is in flight.
@@ -1420,7 +1420,7 @@ func TestProjectShowEnrolledIsTheAllowListNotTheSeed(t *testing.T) {
 	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := execute(t, "project", "repos", "rm", "bitbucket/acme/other", "--yes"); err != nil {
+	if _, _, err := execute(t, "project", "repos", "rm", "bitbucket/acme/other"); err != nil {
 		t.Fatal(err)
 	}
 	js, _, err := execute(t, "project", "show", "--json")
@@ -1728,7 +1728,7 @@ func TestProjectReposEditOnlyTheAllowList(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.db.Set(budget.PathAgent(slug, "20261015-120000-aaaa"), map[string]any{"run_id": "20261015-120000-aaaa"})
-	_, _, err = execute(t, "project", "repos", "rm", "github/acme/new", "--yes")
+	_, _, err = execute(t, "project", "repos", "rm", "github/acme/new")
 	if err == nil {
 		t.Fatal("--yes removed an allowed repository while a run of it is in flight")
 	}
@@ -2985,7 +2985,7 @@ func TestProjectPolicyPublishRefusesAnOlderNodeWithAWorkingRemedy(t *testing.T) 
 				t.Fatal("the node was removed by a refused publish")
 			}
 			// And the remedy it names works.
-			if _, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes"); err != nil {
+			if _, _, err := execute(t, "project", "policy", "publish", "--delete"); err != nil {
 				t.Fatalf("the remedy the refusal names does not work: %v", err)
 			}
 			if f.db.Value(projectpolicy.PathShared()) != nil {
@@ -3464,7 +3464,7 @@ func TestPolicyRefusalsEscapeTheNodesKeyNames(t *testing.T) {
 		wantIn string
 	}{
 		{"policy show, which refuses the node it cannot read whole", []string{"project", "policy", "show"}, "never takes effect"},
-		{"the publish, which refuses to drop the keys it does not know", []string{"project", "policy", "publish", "--yes"}, "publishing would drop them"},
+		{"the publish, which refuses to drop the keys it does not know", []string{"project", "policy", "publish"}, "publishing would drop them"},
 	} {
 		t.Run(tc.what, func(t *testing.T) {
 			_, _, err := execute(t, tc.args...)

@@ -196,7 +196,7 @@ func TestProjectCloneURLRefusesInAnAgentSessionEvenWithYes(t *testing.T) {
 	_, localPath := settingsWriteHome(t)
 	before := readFileString(t, localPath)
 	t.Setenv("CLAUDECODE", "1")
-	_, _, err := execute(t, "project", "clone-url", "set", "github/acme/app", "https://github.com/acme/app", "--yes")
+	_, _, err := execute(t, "project", "clone-url", "set", "github/acme/app", "https://github.com/acme/app")
 	if err == nil {
 		t.Fatal("project clone-url set wrote in a coding agent's session")
 	}

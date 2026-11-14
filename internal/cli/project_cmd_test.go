@@ -35,7 +35,7 @@ func TestProjectPolicyPublishIsRefusedInAnAgentSession(t *testing.T) {
 	}{
 		{"publish", []string{"project", "policy", "publish"}},
 		{"--seed-repos", []string{"project", "policy", "publish", "--seed-repos"}},
-		{"--delete", []string{"project", "policy", "publish", "--delete", "--yes"}},
+		{"--delete", []string{"project", "policy", "publish", "--delete"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newProjectFixture(t, "")
@@ -96,7 +96,7 @@ func TestProjectPolicyPublishKeepsDeleteAndSeedRepos(t *testing.T) {
 		f := newProjectFixture(t, "")
 		f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
 
-		out, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
+		out, _, err := execute(t, "project", "policy", "publish", "--delete")
 		if err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}

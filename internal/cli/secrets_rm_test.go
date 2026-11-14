@@ -45,7 +45,7 @@ func secretsRmFixture(t *testing.T) (*gcpfake.Secrets, string, string) {
 func TestSecretsRmRemovesTheVersionAndTheEntry(t *testing.T) {
 	sm, id, path := secretsRmFixture(t)
 
-	out, errOut, err := execute(t, "secrets", "rm", "bitbucket-token", "--yes")
+	out, errOut, err := execute(t, "secrets", "rm", "bitbucket-token")
 	if err != nil {
 		t.Fatalf("secrets rm: %v\nstdout %s\nstderr %s", err, out, errOut)
 	}
@@ -101,7 +101,7 @@ func TestSecretsRmPutsTheEntryBackWhenTheDeleteFails(t *testing.T) {
 	before := readFileString(t, path)
 	sm.FailDeleteWith = http.StatusForbidden
 
-	out, errOut, err := execute(t, "secrets", "rm", "bitbucket-token", "--yes")
+	out, errOut, err := execute(t, "secrets", "rm", "bitbucket-token")
 	if err == nil {
 		t.Fatalf("a failed delete was reported as a removal:\nstdout %s\nstderr %s", out, errOut)
 	}
@@ -144,7 +144,7 @@ func TestSecretsRmLeavesAChangedFileAloneWhenTheDeleteFails(t *testing.T) {
 		}
 	}
 
-	_, _, err := execute(t, "secrets", "rm", "bitbucket-token", "--yes")
+	_, _, err := execute(t, "secrets", "rm", "bitbucket-token")
 	if err == nil {
 		t.Fatal("a failed delete was reported as a removal")
 	}
@@ -199,7 +199,7 @@ func TestSecretsRmRefusesAnAgentSession(t *testing.T) {
 			path := os.Getenv("FUGARO_CONFIG")
 			before := readFileString(t, path)
 
-			out, errOut, err := execute(t, "secrets", "rm", "bitbucket-token", "--yes")
+			out, errOut, err := execute(t, "secrets", "rm", "bitbucket-token")
 			if err == nil {
 				t.Fatalf("a coding agent's session removed a secret:\nstdout %s\nstderr %s", out, errOut)
 			}
@@ -290,7 +290,7 @@ func TestSecretsRmRefusesDryRunWithYes(t *testing.T) {
 	sm, id, path := secretsRmFixture(t)
 	before := readFileString(t, path)
 
-	_, _, err := execute(t, "secrets", "rm", "bitbucket-token", "--dry-run", "--yes")
+	_, _, err := execute(t, "secrets", "rm", "bitbucket-token", "--dry-run")
 	if err == nil || !strings.Contains(err.Error(), "--dry-run and --yes") {
 		t.Fatalf("err = %v, want the dry-run/--yes refusal", err)
 	}
@@ -357,7 +357,7 @@ func TestSecretsRmRemovesTheWorkflowBlockEntry(t *testing.T) {
 		t.Fatalf("a dry run wrote the config:\n%s", after)
 	}
 
-	out, errOut, err = execute(t, "secrets", "rm", "deploy-token", "--yes")
+	out, errOut, err = execute(t, "secrets", "rm", "deploy-token")
 	if err != nil {
 		t.Fatalf("secrets rm: %v\nstdout %s\nstderr %s", err, out, errOut)
 	}
@@ -389,7 +389,7 @@ func TestSecretsRmReportsNothingToRemove(t *testing.T) {
 	// not take it, and its presence must not turn the run into a success.
 	sm.Seed(foreign, map[string]string{"owner": "someone-else"}, []byte(tokenValue))
 
-	_, _, err := execute(t, "secrets", "rm", "bitbucket-token", "--yes")
+	_, _, err := execute(t, "secrets", "rm", "bitbucket-token")
 	if err == nil || !strings.Contains(err.Error(), "nothing to remove") {
 		t.Fatalf("err = %v, want the nothing-to-remove sentence", err)
 	}
@@ -410,7 +410,7 @@ func TestSecretsRmRefusesAValueInTheNamesPlace(t *testing.T) {
 	projectSecretFixture(t, "project_secrets: {}\n")
 	const typed = "not-a-secret-name-because-of-the-!-and-the-length"
 
-	_, _, err := execute(t, "secrets", "rm", typed, "--yes")
+	_, _, err := execute(t, "secrets", "rm", typed)
 	if err == nil {
 		t.Fatal("secrets rm accepted a name that is not one")
 	}
@@ -436,7 +436,7 @@ func TestSecretsRmRefusesANameAnotherBlockOwns(t *testing.T) {
 			gcp.LabelProject: "aurora",
 			gcp.LabelSecret:  name,
 		}, []byte(tokenValue))
-		_, _, err := execute(t, "secrets", "rm", name, "--yes")
+		_, _, err := execute(t, "secrets", "rm", name)
 		if err == nil {
 			t.Fatalf("secrets rm %s deleted a container another block owns", name)
 		}

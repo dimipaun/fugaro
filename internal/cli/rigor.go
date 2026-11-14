@@ -183,9 +183,6 @@ const (
 // D834's refusal, the target, the old document, the edit, the loader's read of
 // it, the rank rule, and then the one write path with the gate beside it.
 func runRigorSet(cmd *cobra.Command, name string, o rigorOptions) error {
-	if err := askConflict(askFlags{ask: o.ask, yes: o.yes}); err != nil {
-		return err
-	}
 	mode := rigor.Mode(name)
 	// §3 step 1: the vocabulary. The design asks for the list in the message "as
 	// `fugaro run --mode` refuses it" — that refusal and not its words: run's
@@ -368,7 +365,7 @@ func runRigorSet(cmd *cobra.Command, name string, o rigorOptions) error {
 	if err := settingsLayerGate(cmd, target, settingsWriteOptions{layer: settingsLayerProject}, key, old, next); err != nil {
 		return err
 	}
-	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask, yes: o.yes}, managed.Managed, settingsEditConditions(cmd, edit)); err != nil {
+	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask}, managed.Managed, settingsEditConditions(cmd, edit)); err != nil {
 		return err
 	}
 	edit.Managed = managed

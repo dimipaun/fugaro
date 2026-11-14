@@ -223,7 +223,7 @@ func TestUpdatePrintsRetryForResolvedIssue(t *testing.T) {
 	store := retryStore(t)
 	retryFile(t, store, up.Number, "fugaro update --repo [REDACTED]")
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("fugaro update stopped at %s:\n%s\n%s", stoppedStage(out), out, errOut)
 	}

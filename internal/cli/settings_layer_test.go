@@ -242,7 +242,7 @@ func TestSettingsSetLayerRigorEntryRemovalIsAFloorRemoval(t *testing.T) {
 	// same removal is refused whatever --yes says, and the file keeps its floor.
 	agentSession(t)
 	out, _, err := execute(t, "settings", "set", "layer.defaults.rigor",
-		"--remove-entry", "default", "--layer", "project", "--yes")
+		"--remove-entry", "default", "--layer", "project")
 	if err == nil {
 		t.Fatalf("a session removed the layer's rigor floor:\n%s", out)
 	}
@@ -293,7 +293,7 @@ func TestSettingsSetLayerRigorEntryRemovingTheAreasIsAFloorRemoval(t *testing.T)
 	// same removal is refused whatever --yes says, and the file keeps its rules.
 	agentSession(t)
 	out, _, err := execute(t, "settings", "set", "layer.defaults.rigor",
-		"--remove-entry", "areas", "--layer", "project", "--yes")
+		"--remove-entry", "areas", "--layer", "project")
 	if err == nil {
 		t.Fatalf("a session removed the layer's rigor rules:\n%s", out)
 	}
@@ -318,7 +318,7 @@ func TestSettingsSetLayerRefusesAReservedKey(t *testing.T) {
 	before := readFileString(t, path)
 	agentSession(t)
 
-	out, _, err := execute(t, "settings", "set", "layer.governance.review_ratio", "0.9", "--layer", "project", "--yes")
+	out, _, err := execute(t, "settings", "set", "layer.governance.review_ratio", "0.9", "--layer", "project")
 	if err == nil {
 		t.Fatalf("a session wrote a reserved key into the layer file:\n%s", out)
 	}
@@ -435,7 +435,7 @@ func TestSettingsUnsetLayerRefusesAReservedKeyInASession(t *testing.T) {
 	before := readFileString(t, path)
 	agentSession(t)
 
-	out, _, err := execute(t, "settings", "unset", "layer.governance.review_ratio", "--layer", "project", "--yes")
+	out, _, err := execute(t, "settings", "unset", "layer.governance.review_ratio", "--layer", "project")
 	if err == nil {
 		t.Fatalf("a session removed a reserved key from the layer file:\n%s", out)
 	}
@@ -462,7 +462,7 @@ func TestSettingsSetLayerEntryInAManagedSessionIsRefusedByTheGate(t *testing.T) 
 	before := readFileString(t, path)
 	agentSession(t)
 
-	out, _, err := execute(t, "settings", "set", "layer.ab", "--add-entry", "rate=0.05", "--layer", "project", "--yes")
+	out, _, err := execute(t, "settings", "set", "layer.ab", "--add-entry", "rate=0.05", "--layer", "project")
 	if err == nil {
 		t.Fatalf("a session wrote the layer's ab block:\n%s", out)
 	}

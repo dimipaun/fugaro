@@ -67,7 +67,7 @@ func TestInitEnablesResourceManager(t *testing.T) {
 func TestInitResourceManagerEnabledAsksNothing(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
-	out, _, err := executeStdin(t, "", "setup", "--plan-only", "--yes")
+	out, _, err := executeStdin(t, "", "setup", "--plan-only")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,10 +153,10 @@ func TestInitDisabledLoggingPlansCreate(t *testing.T) {
 // the Terraform backend: exit 2, never a create offer or "no state".
 func TestInitStorageDisabledIsRemote(t *testing.T) {
 	for _, args := range [][]string{
-		{"setup", "--yes"},
-		{"setup", "--plan-only", "--yes"},
-		{"update", "--forget", "--yes"},
-		{"setup", "--config-only", "--yes"},
+		{"setup"},
+		{"setup", "--plan-only"},
+		{"update", "--forget"},
+		{"setup", "--config-only"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			r := newInitRig(t)
@@ -190,7 +190,7 @@ func TestPlanOnlyYesChangesNothing(t *testing.T) {
 		r := newInitRig(t)
 		r.stateBucket()
 		r.su.Disable(infra.ServiceResourceManager, r.crm.Server)
-		_, _, err := executeStdin(t, initProjectName+"\n", "setup", "--plan-only", "--yes")
+		_, _, err := executeStdin(t, initProjectName+"\n", "setup", "--plan-only")
 		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), enableCommand) || strings.Contains(err.Error(), "or pass --yes") {
 			t.Fatalf("exit %d, err %v", ExitCode(err), err)
 		}
@@ -200,7 +200,7 @@ func TestPlanOnlyYesChangesNothing(t *testing.T) {
 	})
 	t.Run("no state bucket", func(t *testing.T) {
 		r := newInitRig(t) // no r.stateBucket()
-		_, _, err := executeStdin(t, initProjectName+"\n", "setup", "--plan-only", "--yes")
+		_, _, err := executeStdin(t, initProjectName+"\n", "setup", "--plan-only")
 		if ExitCode(err) != ExitUserError || strings.Contains(err.Error(), "or pass --yes") {
 			t.Fatalf("exit %d, err %v", ExitCode(err), err)
 		}
@@ -218,12 +218,12 @@ func TestPlanOnlyYesChangesNothing(t *testing.T) {
 func TestPlanOnlyYesNeverConfirmsInAnyMode(t *testing.T) {
 	noEnableWait(t, 1)
 	for name, args := range map[string][]string{
-		"converge":                 {"setup", "--plan-only", "--yes"},
-		"--json":                   {"setup", "--plan-only", "--yes", "--json"},
-		"--non-interactive":        {"setup", "--plan-only", "--yes", "--non-interactive"},
-		"--firebase-project":       {"setup", "--plan-only", "--yes", "--firebase-project", initProject},
-		"--repo":                   {"setup", "--repo", "--plan-only", "--yes"},
-		"--repo --non-interactive": {"setup", "--repo", "--plan-only", "--yes", "--non-interactive", "--json"},
+		"converge":                 {"setup", "--plan-only"},
+		"--json":                   {"setup", "--plan-only", "--json"},
+		"--non-interactive":        {"setup", "--plan-only"},
+		"--firebase-project":       {"setup", "--plan-only", "--firebase-project", initProject},
+		"--repo":                   {"setup", "--repo", "--plan-only"},
+		"--repo --non-interactive": {"setup", "--repo", "--plan-only", "--json"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newInitRig(t)

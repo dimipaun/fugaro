@@ -61,7 +61,7 @@ func TestHostileCloneNeedsOwnConfirmation(t *testing.T) {
 		name string
 		o    *initOptions
 	}{
-		{"--non-interactive", &initOptions{nonInteractive: true, githubAppID: "12345"}},
+		{"a run that never prompts", &initOptions{nonInteractive: true, githubAppID: "12345"}},
 		{"--json", &initOptions{asJSON: true, githubAppID: "12345"}},
 	} {
 		e, _ := stageEngine(t, "acme/app\n", c.o) // an answer waiting on stdin is not read

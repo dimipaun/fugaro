@@ -17,7 +17,7 @@ func TestSettingsSetWideningWithYesWritesAndShowsTheDiff(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML("budget:\n  per_run_usd: 10\n"))
 
-	out, _, err := execute(t, "settings", "set", "budget.per_run_usd", "50", "--layer", "repo", "--yes")
+	out, _, err := execute(t, "settings", "set", "budget.per_run_usd", "50", "--layer", "repo")
 	if err != nil {
 		t.Fatalf("--yes did not confirm a widening outside a coding agent's session: %v\n%s", err, out)
 	}
@@ -67,7 +67,7 @@ func TestSettingsSetAgentSessionWithYesIsRefused(t *testing.T) {
 			before := readFileString(t, path)
 			t.Setenv(marker, "1")
 
-			out, _, err := execute(t, "settings", "set", "budget.per_run_usd", "50", "--layer", "repo", "--yes")
+			out, _, err := execute(t, "settings", "set", "budget.per_run_usd", "50", "--layer", "repo")
 			if err == nil {
 				t.Fatal("--yes lifted the agent-session fence for a widening")
 			}
@@ -96,7 +96,7 @@ func TestSettingsUnsetCeilingWithYesWrites(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML("budget:\n  per_run_usd: 10\n"))
 
-	out, _, err := execute(t, "settings", "unset", "budget.per_run_usd", "--layer", "repo", "--yes")
+	out, _, err := execute(t, "settings", "unset", "budget.per_run_usd", "--layer", "repo")
 	if err != nil {
 		t.Fatalf("--yes did not confirm the removal of a ceiling: %v\n%s", err, out)
 	}
@@ -115,7 +115,7 @@ func TestSettingsSetAddOnCeilingWithYesWrites(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML("budget:\n  allowed_models:\n    - claude-sonnet-5\n"))
 
-	out, _, err := execute(t, "settings", "set", "budget.allowed_models", "--add", "claude-opus-5-5", "--layer", "repo", "--yes")
+	out, _, err := execute(t, "settings", "set", "budget.allowed_models", "--add", "claude-opus-5-5", "--layer", "repo")
 	if err != nil {
 		t.Fatalf("--yes did not confirm a member added to a ceiling: %v\n%s", err, out)
 	}
@@ -138,7 +138,7 @@ func TestSettingsSetARowTypedKeyWithYesWrites(t *testing.T) {
 		t.Fatal("the registry no longer marks claude_account_auto as a typed key, so this test covers nothing")
 	}
 
-	out, _, err := execute(t, "settings", "set", "claude_account_auto", "true", "--layer", "local", "--yes")
+	out, _, err := execute(t, "settings", "set", "claude_account_auto", "true", "--layer", "local")
 	if err != nil {
 		t.Fatalf("--yes did not confirm a row-level typed key: %v\n%s", err, out)
 	}
@@ -166,7 +166,7 @@ func TestSettingsUnsetAgentSessionWithYesIsRefused(t *testing.T) {
 			before := readFileString(t, path)
 			t.Setenv(marker, "1")
 
-			out, _, err := execute(t, "settings", "unset", "budget.per_run_usd", "--layer", "repo", "--yes")
+			out, _, err := execute(t, "settings", "unset", "budget.per_run_usd", "--layer", "repo")
 			if err == nil {
 				t.Fatal("--yes lifted the agent-session fence for a widening unset")
 			}

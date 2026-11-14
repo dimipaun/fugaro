@@ -351,7 +351,7 @@ func TestManagedWarningDoesNotClaimAdoptionWithoutOne(t *testing.T) {
 	r := newProjectRig(t)
 	r.bill.AddAccount(billingAcc, true)
 	out, errOut, err := r.run(t, true, "",
-		"--yes", "--create-project", "--managed", "--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc)
+		"--create-project", "--managed", "--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc)
 	all := refusalText(out, errOut, err)
 	if err == nil {
 		t.Fatalf("a declined creation returned no error:\n%s", all)
@@ -468,10 +468,10 @@ func TestAResumedCreationIsNeverMarkedWithoutATypedID(t *testing.T) {
 		args  []string
 		agent bool
 	}{
-		"--yes at a terminal":     {args: []string{"--create-project", "--yes"}},
-		"--yes --non-interactive": {args: []string{"--create-project", "--yes", "--non-interactive"}},
+		"--yes at a terminal":     {args: []string{"--create-project"}},
+		"--yes --non-interactive": {args: []string{"--create-project"}},
 		"a coding agent's session": {
-			args:  []string{"--create-project", "--yes", "--non-interactive"},
+			args:  []string{"--create-project"},
 			agent: true,
 		},
 	}

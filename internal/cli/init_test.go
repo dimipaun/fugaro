@@ -380,9 +380,9 @@ func TestInitRefusesWithoutConfirmation(t *testing.T) {
 func TestLegacyBaseKindRefusalsNameTheMigrationDoc(t *testing.T) {
 	newInitRig(t)
 	for _, args := range [][]string{
-		{"setup", "--yes", "--base", "go"},
-		{"setup", "--yes", "--expect-digest", "go=sha256:" + strings.Repeat("a", 64)},
-		{"setup", "--yes", "--base-image", "go=ghcr.io/me/fugaro-go:mine"}, // "go": removed in 0.7.0
+		{"setup", "--base", "go"},
+		{"setup", "--expect-digest", "go=sha256:" + strings.Repeat("a", 64)},
+		{"setup", "--base-image", "go=ghcr.io/me/fugaro-go:mine"}, // "go": removed in 0.7.0
 	} {
 		_, _, err := executeStdin(t, "", args...)
 		if err == nil || !strings.Contains(err.Error(), config.MigrationDoc) {
@@ -396,7 +396,7 @@ func TestLegacyBaseKindRefusalsNameTheMigrationDoc(t *testing.T) {
 func TestInitAppliesSavedPlan(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
-	if _, _, err := executeStdin(t, "", "setup", "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "", "setup"); err != nil {
 		t.Fatal(err)
 	}
 	var subs []string
@@ -438,7 +438,7 @@ func TestInitRefusesDeletePlan(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
 	r.setPlan(t, change("module.installation.google_storage_bucket.runs", "delete", "create"))
-	_, _, err := executeStdin(t, "", "setup", "--yes")
+	_, _, err := executeStdin(t, "", "setup")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "module.installation.google_storage_bucket.runs") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -448,13 +448,13 @@ func TestInitRefusesDeletePlan(t *testing.T) {
 	// A budget exists only through its flags: the refusal says to pass
 	// them again.
 	r.setPlan(t, change("module.installation.google_billing_budget.this[0]", "delete"))
-	_, _, err = executeStdin(t, "", "setup", "--yes")
+	_, _, err = executeStdin(t, "", "setup")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--budget, --budget-currency and --billing-account") {
 		t.Fatalf("budget delete: exit %d, err %v", ExitCode(err), err)
 	}
 	r.setPlan(t, change("module.installation.google_storage_bucket.runs", "delete", "create"))
 	// Naming the address lets it through.
-	if _, _, err := executeStdin(t, "", "setup", "--yes", "--allow-delete", "module.installation.google_storage_bucket.runs"); err != nil {
+	if _, _, err := executeStdin(t, "", "setup", "--allow-delete", "module.installation.google_storage_bucket.runs"); err != nil {
 		t.Fatal(err)
 	}
 	if len(r.ran(t, "apply")) != 1 {
@@ -476,7 +476,7 @@ func TestInitCreatesStateBucketAfterConfirm(t *testing.T) {
 	if r.gcs.Inserted(initStateBucket) != nil || len(r.ran(t, "init")) != 0 {
 		t.Fatal("the state bucket was created, or terraform ran, without a confirmation")
 	}
-	if _, _, err := executeStdin(t, "", "setup", "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "", "setup"); err != nil {
 		t.Fatal(err)
 	}
 	if r.gcs.Inserted(initStateBucket) == nil {
@@ -501,7 +501,7 @@ func TestInitRemovesRunsBucketViewers(t *testing.T) {
 	conv := gcpfake.ConvenienceBindings(initProject)
 	r.gcs.SetBucketPolicy(initRunsBucket, append(slices.Clone(conv), job))
 	etag := r.gcs.BucketPolicyEtag(initRunsBucket)
-	out, _, err := executeStdin(t, "", "setup", "--yes")
+	out, _, err := executeStdin(t, "", "setup")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -528,7 +528,7 @@ func TestInitRemovesRunsBucketViewers(t *testing.T) {
 		t.Errorf("imports = %s", b)
 	}
 	// A second run finds nothing to remove and asks nothing.
-	if out, _, err := executeStdin(t, "", "setup", "--yes"); err != nil || strings.Contains(out, "project Viewers") {
+	if out, _, err := executeStdin(t, "", "setup"); err != nil || strings.Contains(out, "project Viewers") {
 		t.Fatalf("second run: %v\n%s", err, out)
 	}
 	if len(policySets(r.gcs, initRunsBucket)) != 1 {
@@ -650,7 +650,7 @@ func TestInitRefusesForeignStateBucket(t *testing.T) {
 				num = 999
 			}
 			r.gcs.AddBucket(initStateBucket, num, labels)
-			_, _, err := executeStdin(t, "", "setup", "--yes")
+			_, _, err := executeStdin(t, "", "setup")
 			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), initStateBucket) {
 				t.Fatalf("exit %d, err %v", ExitCode(err), err)
 			}
@@ -667,7 +667,7 @@ func TestInitRefusesOtherProjectEnv(t *testing.T) {
 			r := newInitRig(t)
 			r.stateBucket()
 			t.Setenv(k, "other-project")
-			_, _, err := executeStdin(t, "", "setup", "--yes")
+			_, _, err := executeStdin(t, "", "setup")
 			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), k) {
 				t.Fatalf("exit %d, err %v", ExitCode(err), err)
 			}
@@ -676,7 +676,7 @@ func TestInitRefusesOtherProjectEnv(t *testing.T) {
 			}
 			// The same project is fine.
 			t.Setenv(k, initProject)
-			if _, _, err := executeStdin(t, "", "setup", "--yes"); err != nil {
+			if _, _, err := executeStdin(t, "", "setup"); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -687,7 +687,7 @@ func TestInitRefusesImpersonation(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
 	t.Setenv("GOOGLE_IMPERSONATE_SERVICE_ACCOUNT", "someone@proj-1234.iam.gserviceaccount.com")
-	_, _, err := executeStdin(t, "", "setup", "--yes")
+	_, _, err := executeStdin(t, "", "setup")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "GOOGLE_IMPERSONATE_SERVICE_ACCOUNT") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -701,7 +701,7 @@ func TestInitRefusesHTTP2Debug(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
 	t.Setenv("GODEBUG", "http2debug=1")
-	_, _, err := executeStdin(t, "", "setup", "--yes")
+	_, _, err := executeStdin(t, "", "setup")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "http2debug") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -715,7 +715,7 @@ func TestInitRefusesUnsupportedTerraform(t *testing.T) {
 	r.stateBucket()
 	r.script["version"] = map[string]any{"stdout": `{"terraform_version":"1.6.6"}`}
 	r.save(t)
-	_, _, err := executeStdin(t, "", "setup", "--yes")
+	_, _, err := executeStdin(t, "", "setup")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "1.6.6") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -723,7 +723,7 @@ func TestInitRefusesUnsupportedTerraform(t *testing.T) {
 		t.Fatal("init called the cloud with an unsupported terraform")
 	}
 	t.Setenv("PATH", t.TempDir())
-	if _, _, err := executeStdin(t, "", "setup", "--yes"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "terraform") {
+	if _, _, err := executeStdin(t, "", "setup"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "terraform") {
 		t.Fatalf("no terraform: exit %d, err %v", ExitCode(err), err)
 	}
 }
@@ -736,7 +736,7 @@ func TestInitWritesLocalConfigAndBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc"
-	out, _, err := executeStdin(t, "", "setup", "--yes", "--base-image", base, "--operator", "user:launcher@example.com", "--alert-email", "ops@example.com")
+	out, _, err := executeStdin(t, "", "setup", "--base-image", base, "--operator", "user:launcher@example.com", "--alert-email", "ops@example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -777,7 +777,7 @@ func TestInitWritesLocalConfigAndBackup(t *testing.T) {
 		t.Errorf("tfvars = %v", v)
 	}
 	// Nothing changes on a second run: no second backup.
-	if _, _, err := executeStdin(t, "", "setup", "--yes", "--base-image", base); err != nil {
+	if _, _, err := executeStdin(t, "", "setup", "--base-image", base); err != nil {
 		t.Fatal(err)
 	}
 	if backups, _ := filepath.Glob(r.cfg + ".bak-*"); len(backups) != 1 {
@@ -815,7 +815,7 @@ func TestInitPlanOnly(t *testing.T) {
 	r.stateBucket()
 	r.gcs.AddBucket(initRunsBucket, initProjectNumber, map[string]string{"fugaro": "managed"})
 	r.gcs.SetBucketPolicy(initRunsBucket, gcpfake.ConvenienceBindings(initProject))
-	out, _, err = executeStdin(t, "", "setup", "--plan-only", "--yes")
+	out, _, err = executeStdin(t, "", "setup", "--plan-only")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -837,7 +837,7 @@ func TestInitRetriesStateBucketViewers(t *testing.T) {
 	if !strings.Contains(out, "⚠ CONFIRM (project aurora, GCP project proj-1234): removes project Viewers' read access to gs://"+initStateBucket) {
 		t.Errorf("no banner:\n%s", out)
 	}
-	if _, _, err := executeStdin(t, "", "setup", "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "", "setup"); err != nil {
 		t.Fatal(err)
 	}
 	if hasViewer(r.gcs.BucketPolicy(initStateBucket)) || len(r.gcs.BucketPolicy(initStateBucket)) == 0 {
@@ -859,7 +859,7 @@ func TestInitWritesThroughSymlink(t *testing.T) {
 	if err := os.Symlink(target, r.cfg); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := executeStdin(t, "", "setup", "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "", "setup"); err != nil {
 		t.Fatal(err)
 	}
 	if st, err := os.Lstat(r.cfg); err != nil || st.Mode()&os.ModeSymlink == 0 {
@@ -903,7 +903,7 @@ func TestInitPrintVarsNoCalls(t *testing.T) {
 func TestInitConfigOnly(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
-	if _, _, err := executeStdin(t, "", "setup", "--config-only", "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "", "setup", "--config-only"); err != nil {
 		t.Fatal(err)
 	}
 	if len(r.ran(t, "plan")) != 0 || len(r.ran(t, "apply")) != 0 {
@@ -916,7 +916,7 @@ func TestInitConfigOnly(t *testing.T) {
 
 	// Without a reachable state, the flags write it; nothing is created.
 	r = newInitRig(t)
-	out, _, err := executeStdin(t, "", "setup", "--config-only", "--yes", "--scheduler-region", "us-central1")
+	out, _, err := executeStdin(t, "", "setup", "--config-only", "--scheduler-region", "us-central1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -929,7 +929,7 @@ func TestInitConfigOnly(t *testing.T) {
 	// The registry host is the local config's when it has one.
 	r = newInitRig(t)
 	r.appendConfig(t, "registry_host: us-central1-docker.pkg.dev/proj-1234\n")
-	if _, _, err := executeStdin(t, "", "setup", "--config-only", "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "", "setup", "--config-only"); err != nil {
 		t.Fatal(err)
 	}
 	if lc, err := localcfg.Load(r.cfg); err != nil || lc.RegistryHost != "us-central1-docker.pkg.dev/proj-1234" {
@@ -941,7 +941,7 @@ func TestInitConfigOnly(t *testing.T) {
 	r.script["output"] = map[string]any{"exit": 1, "stderr": "Error: 403 Forbidden"}
 	r.save(t)
 	before, _ := os.ReadFile(r.cfg)
-	if _, _, err := executeStdin(t, "", "setup", "--config-only", "--yes"); ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "403") {
+	if _, _, err := executeStdin(t, "", "setup", "--config-only"); ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "403") {
 		t.Fatalf("an unreadable state: exit %d, err %v", ExitCode(err), err)
 	}
 	if after, _ := os.ReadFile(r.cfg); string(after) != string(before) {
@@ -950,7 +950,7 @@ func TestInitConfigOnly(t *testing.T) {
 	// A foreign state bucket is refused.
 	r = newInitRig(t)
 	r.gcs.AddBucket(initStateBucket, 999, map[string]string{"fugaro": "tfstate"})
-	if _, _, err := executeStdin(t, "", "setup", "--config-only", "--yes"); ExitCode(err) != ExitUserError {
+	if _, _, err := executeStdin(t, "", "setup", "--config-only"); ExitCode(err) != ExitUserError {
 		t.Fatalf("a foreign state bucket: exit %d, err %v", ExitCode(err), err)
 	}
 }
@@ -972,7 +972,7 @@ func TestInitForgetUndoesExclusionThenStateRm(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
 	r.setPlan(t, forgetPlan()...)
-	out, _, err := executeStdin(t, "", "update", "--forget", "--yes")
+	out, _, err := executeStdin(t, "", "update", "--forget")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1004,7 +1004,7 @@ func TestInitForgetUndoesExclusionThenStateRm(t *testing.T) {
 	r = newInitRig(t)
 	r.stateBucket()
 	r.setPlan(t, append(forgetPlan(), change("module.installation.google_service_account.scheduler", "delete"))...)
-	_, _, err = executeStdin(t, "", "update", "--forget", "--yes")
+	_, _, err = executeStdin(t, "", "update", "--forget")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "google_service_account.scheduler") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -1015,7 +1015,7 @@ func TestInitForgetUndoesExclusionThenStateRm(t *testing.T) {
 	r = newInitRig(t)
 	r.stateBucket()
 	r.setPlan(t, change("module.installation.google_storage_bucket.runs", "create"))
-	if _, _, err := executeStdin(t, "", "update", "--forget", "--yes"); ExitCode(err) != ExitUserError || len(r.ran(t, "apply")) != 0 {
+	if _, _, err := executeStdin(t, "", "update", "--forget"); ExitCode(err) != ExitUserError || len(r.ran(t, "apply")) != 0 {
 		t.Fatalf("a create: exit %d, err %v", ExitCode(err), err)
 	}
 }
@@ -1039,7 +1039,7 @@ func TestInitForgetCarriesTheVerifierListAsFound(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(r.root(), infra.VarsFile), []byte(prev), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := executeStdin(t, "", "update", "--forget", "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "", "update", "--forget"); err != nil {
 		t.Fatal(err)
 	}
 	svc, ok := r.tfvars(t)["credentials_service"].(map[string]any)
@@ -1060,7 +1060,7 @@ func TestInitForgetKeepsAdoptedLegacyRegistry(t *testing.T) {
 	r.setPlan(t, forgetPlan()...)
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"legacy_registry": infra.LegacyRegistry})}
 	r.save(t)
-	if _, _, err := executeStdin(t, "", "update", "--forget", "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "", "update", "--forget"); err != nil {
 		t.Fatal(err)
 	}
 	if v := r.tfvars(t); v["adopt_legacy_registry"] != true {
@@ -1072,7 +1072,7 @@ func TestInitForgetKeepsAdoptedLegacyRegistry(t *testing.T) {
 	r.setPlan(t, forgetPlan()...)
 	r.script["output"] = map[string]any{"stdout": "{}"}
 	r.save(t)
-	if _, _, err := executeStdin(t, "", "update", "--forget", "--yes"); ExitCode(err) != ExitUserError || len(r.ran(t, "plan")) != 0 {
+	if _, _, err := executeStdin(t, "", "update", "--forget"); ExitCode(err) != ExitUserError || len(r.ran(t, "plan")) != 0 {
 		t.Fatalf("an empty state: exit %d, err %v, calls %q", ExitCode(err), err, r.calls(t))
 	}
 }
@@ -1084,7 +1084,7 @@ func TestInitForgetRefusesWithRepoStates(t *testing.T) {
 	if err := b.WriteAll(t.Context(), infra.StatePrefixRepos+"bitbucket-acme-sandbox/default.tfstate", []byte("{}"), nil); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := executeStdin(t, "", "update", "--forget", "--yes")
+	_, _, err := executeStdin(t, "", "update", "--forget")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "update --repo --forget") || !strings.Contains(err.Error(), "*.tfstate") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -1133,7 +1133,7 @@ func TestInitForgetIgnoresStaleRepoLock(t *testing.T) {
 	if err := b.WriteAll(t.Context(), infra.StatePrefixRepos+"bitbucket-acme-sandbox/default.tflock", []byte("{}"), nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := executeStdin(t, "", "update", "--forget", "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "", "update", "--forget"); err != nil {
 		t.Fatal(err)
 	}
 	if len(r.ran(t, "state rm")) != 1 {
@@ -1145,7 +1145,7 @@ func TestInitForgetWarnsLogBucketUndelete(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
 	r.setPlan(t, forgetPlan()...)
-	out, _, err := executeStdin(t, "", "update", "--forget", "--yes")
+	out, _, err := executeStdin(t, "", "update", "--forget")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1158,7 +1158,7 @@ func TestInitForgetWarnsLogBucketUndelete(t *testing.T) {
 func TestInitJSON(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
-	out, _, err := executeStdin(t, "", "setup", "--yes", "--json")
+	out, _, err := executeStdin(t, "", "setup", "--json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1263,7 +1263,7 @@ func TestInitRemovesViewersOfCreatedRunsBucket(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
 	r.createOnApply(t)
-	out, _, err := executeStdin(t, "", "setup", "--yes")
+	out, _, err := executeStdin(t, "", "setup")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -1287,7 +1287,7 @@ func TestInitPlanOnlyLeavesCreatedBucketAlone(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
 	r.createOnApply(t)
-	out, _, err := executeStdin(t, "", "setup", "--plan-only", "--yes")
+	out, _, err := executeStdin(t, "", "setup", "--plan-only")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -1310,7 +1310,7 @@ func TestInitNameImmutable(t *testing.T) {
 	if err := os.WriteFile(r.cfg, []byte(strings.Replace(string(data), "name: aurora", "name: borealis", 1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{{"setup", "--yes"}, {"setup", "--yes", "--name", "borealis"}} {
+	for _, args := range [][]string{{"setup"}, {"setup", "--name", "borealis"}} {
 		_, _, err := executeStdin(t, "", args...)
 		if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "the installation's project name is aurora; renaming isn't supported") {
 			t.Fatalf("%v: exit %d, err %v", args, ExitCode(err), err)
@@ -1322,7 +1322,7 @@ func TestInitNameImmutable(t *testing.T) {
 	// --name against the config that selected aurora is refused as well.
 	r = newInitRig(t)
 	r.stateBucket()
-	_, _, err = executeStdin(t, "", "setup", "--yes", "--name", "borealis")
+	_, _, err = executeStdin(t, "", "setup", "--name", "borealis")
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "renaming") {
 		t.Fatalf("--name against the config: exit %d, err %v", ExitCode(err), err)
 	}
@@ -1338,7 +1338,7 @@ func TestInitNameRequiredWhenUnnamed(t *testing.T) {
 	r.stateBucket()
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"project_name": nil})}
 	r.save(t)
-	_, _, err := executeStdin(t, "", "setup", "--yes")
+	_, _, err := executeStdin(t, "", "setup")
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "no project name yet") || !strings.Contains(err.Error(), "--name aurora") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -1346,7 +1346,7 @@ func TestInitNameRequiredWhenUnnamed(t *testing.T) {
 		t.Fatalf("an unnamed installation was planned: %q", r.calls(t))
 	}
 	// With --name the apply goes ahead, and it carries the name.
-	if _, _, err := executeStdin(t, "", "setup", "--yes", "--name", "aurora"); err != nil {
+	if _, _, err := executeStdin(t, "", "setup", "--name", "aurora"); err != nil {
 		t.Fatal(err)
 	}
 	if got := r.tfvars(t)["fugaro_project"]; got != "aurora" {
@@ -1395,7 +1395,7 @@ func TestInitConfigOnlyWithoutProjectName(t *testing.T) {
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"project_name": nil})}
 	r.save(t)
 	before, _ := os.ReadFile(r.cfg)
-	_, _, err := executeStdin(t, "", "setup", "--config-only", "--yes")
+	_, _, err := executeStdin(t, "", "setup", "--config-only")
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "the installation has no project name yet") || !strings.Contains(err.Error(), "fugaro setup --name") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -1409,7 +1409,7 @@ func TestInitConfigOnlyRefusesOtherName(t *testing.T) {
 	r.stateBucket()
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"project_name": "borealis"})}
 	r.save(t)
-	_, _, err := executeStdin(t, "", "setup", "--config-only", "--yes")
+	_, _, err := executeStdin(t, "", "setup", "--config-only")
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "the installation's project name is borealis") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -1567,7 +1567,7 @@ func TestInitRepoRefusesVertexEnforce(t *testing.T) {
 	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: vertex }\nworkflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n")
 	testutil.Git(t, root, "remote", "add", "origin", "https://github.com/acme/webapp.git")
 	t.Chdir(t.TempDir())
-	_, _, err = execute(t, "setup", "--repo", "--yes", "--onboard-repo", "acme/webapp", "--project", "aurora", root)
+	_, _, err = execute(t, "setup", "--repo", "--onboard-repo", "acme/webapp", "--project", "aurora", root)
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "Vertex budgets are not supported yet") {
 		t.Fatalf("update --repo: exit %d, err %v", ExitCode(err), err)
 	}
@@ -1580,7 +1580,7 @@ func TestInitRefusesUnreadableOutputs(t *testing.T) {
 	r.stateBucket()
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"project_name": 5})}
 	r.save(t)
-	_, _, err := executeStdin(t, "", "setup", "--yes")
+	_, _, err := executeStdin(t, "", "setup")
 	if err == nil || !strings.Contains(err.Error(), "project_name") {
 		t.Fatalf("err = %v, want the unreadable output named", err)
 	}
@@ -1628,7 +1628,7 @@ func TestInitNameCheckBeforeViewersRemoval(t *testing.T) {
 	if err := os.WriteFile(r.cfg, []byte(strings.Replace(string(data), "name: aurora", "name: borealis", 1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := executeStdin(t, "", "setup", "--yes"); err == nil || !strings.Contains(err.Error(), "renaming isn't supported") {
+	if _, _, err := executeStdin(t, "", "setup"); err == nil || !strings.Contains(err.Error(), "renaming isn't supported") {
 		t.Fatalf("err = %v", err)
 	}
 	if n := len(policySets(r.gcs, initRunsBucket)); n != 0 {
@@ -1675,7 +1675,7 @@ func TestInitRepoRefusesAnInstallationOfAnotherProject(t *testing.T) {
 	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n")
 	testutil.Git(t, root, "remote", "add", "origin", "https://github.com/acme/webapp.git")
 	t.Chdir(t.TempDir())
-	_, _, err = executeStdin(t, "", "setup", "--repo", "--yes", "--onboard-repo", "acme/webapp", "--project", "aurora", "--github-app-id", "12345", root)
+	_, _, err = executeStdin(t, "", "setup", "--repo", "--onboard-repo", "acme/webapp", "--project", "aurora", "--github-app-id", "12345", root)
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "fugaro.yaml names project aurora, but this installation is project borealis") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -1866,7 +1866,7 @@ func TestInitBaseImagePerKind(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
 	base := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc"
-	if _, _, err := executeStdin(t, "", "setup", "--yes", "--base-image", base); err != nil {
+	if _, _, err := executeStdin(t, "", "setup", "--base-image", base); err != nil {
 		t.Fatal(err)
 	}
 	lc, err := localcfg.Load(r.cfg)
@@ -1878,14 +1878,14 @@ func TestInitBaseImagePerKind(t *testing.T) {
 	}
 	// A later run replaces it.
 	base2 := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-9999999"
-	if _, _, err := executeStdin(t, "", "setup", "--yes", "--base-image", base2); err != nil {
+	if _, _, err := executeStdin(t, "", "setup", "--base-image", base2); err != nil {
 		t.Fatal(err)
 	}
 	if lc, err = localcfg.Load(r.cfg); err != nil || lc.BaseImage("base") != base2 || len(lc.BaseImages) != 1 {
 		t.Fatalf("base_images = %v, %v", lc.BaseImages, err)
 	}
 	// An image whose kind can't be told is refused before anything else.
-	_, _, err = executeStdin(t, "", "setup", "--yes", "--base-image", "reg/some-image:1")
+	_, _, err = executeStdin(t, "", "setup", "--base-image", "reg/some-image:1")
 	if err == nil || !strings.Contains(err.Error(), "KIND=IMAGE") || ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, %v", ExitCode(err), err)
 	}
@@ -2255,7 +2255,7 @@ func TestInitRefusesAProjectJobDeleteWhateverAllowDeleteNames(t *testing.T) {
 	job := mod + ".google_cloud_run_v2_job.this"
 	grant := mod + `.google_cloud_run_v2_job_iam_member.launcher["user:launcher@example.com"]`
 	r.setPlan(t, change(grant, "delete"), change(job, "delete", "create"))
-	_, _, err := executeStdin(t, "", "setup", "--yes", "--allow-delete", job, "--allow-delete", grant)
+	_, _, err := executeStdin(t, "", "setup", "--allow-delete", job, "--allow-delete", grant)
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "retiring a project job is not supported yet") {
 		t.Fatalf("exit %d, err %v; want the project-job refusal", ExitCode(err), err)
 	}

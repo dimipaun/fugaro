@@ -207,7 +207,7 @@ func onlyLog(t *testing.T, cmdName string) (string, string) {
 // first step line on is the account.
 func TestUpdateDefaultOutputIsShort(t *testing.T) {
 	applyingRig(t)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
@@ -356,7 +356,7 @@ func noLogStateDir(t *testing.T) string {
 func TestUpdateWithoutALogKeepsItsWholeAccount(t *testing.T) {
 	applyingRig(t)
 	noLogStateDir(t)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
@@ -381,7 +381,7 @@ func TestUpdateFailurePrintsContextAndLogPath(t *testing.T) {
 	r := applyingRig(t)
 	r.script["apply"] = map[string]any{"exit": 1, "stderr": "Error: quota exceeded\n  with google_project_service.quota\n"}
 	r.save(t)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err == nil {
 		t.Fatalf("the apply failed, yet the run succeeded:\n%s", out)
 	}
@@ -415,7 +415,7 @@ func TestUpdateFailurePrintsContextAndLogPath(t *testing.T) {
 func TestUpdateWithoutALogKeepsTheStreamOnScreen(t *testing.T) {
 	applyingRig(t)
 	elsewhere := noLogStateDir(t)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
@@ -448,7 +448,7 @@ func TestUpdateWithoutALogKeepsTheStreamOnScreen(t *testing.T) {
 // screen as well as in the log, which is what it always was (G10).
 func TestUpdateVerboseStreamsTerraform(t *testing.T) {
 	applyingRig(t)
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "-v")
+	out, errOut, err := executeStdin(t, "", "update", "-v")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
@@ -468,7 +468,7 @@ func TestUpdateLogHoldsTheFullTerraformOutput(t *testing.T) {
 	r := applyingRig(t)
 	r.script["apply"] = map[string]any{"exit": 0, "stderr": "STDERR-NOISE\n"}
 	r.save(t)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
@@ -507,7 +507,7 @@ func TestUpdateLogRedactsHeldSecretsInTheTerraformStream(t *testing.T) {
 	r := applyingRig(t)
 	r.script["apply"] = map[string]any{"exit": 0, "stdout": "applying with " + held + " in the line\n"}
 	r.save(t)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
@@ -593,7 +593,7 @@ func TestUpdateLogRedactsAValueAStageHoldsMidRun(t *testing.T) {
 // human account goes to stderr, where the converge's own writer already went.
 func TestUpdateJSONUnchanged(t *testing.T) {
 	applyingRig(t)
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	out, errOut, err := executeStdin(t, "", "update", "--json")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
@@ -983,7 +983,7 @@ func planRowOf(out, stage string) string {
 func TestUpdateUnderAgentMarkerPrintsTheSameSteps(t *testing.T) {
 	clearAgentMarkers(t)
 	person := applyingRig(t)
-	outPerson, _, errPerson := executeStdin(t, "", "update", "--yes")
+	outPerson, _, errPerson := executeStdin(t, "", "update")
 	if errPerson != nil {
 		t.Fatalf("the person's run: %v\n%s", errPerson, outPerson)
 	}
@@ -993,7 +993,7 @@ func TestUpdateUnderAgentMarkerPrintsTheSameSteps(t *testing.T) {
 
 	t.Setenv("CLAUDECODE", "1")
 	agent := applyingRig(t)
-	outAgent, errAgentOut, errAgent := executeStdin(t, "", "update", "--yes")
+	outAgent, errAgentOut, errAgent := executeStdin(t, "", "update")
 
 	// The marker changes what the run may do, not which stages it reached: every
 	// stage the agent's account names is one the person's names, in the same

@@ -328,7 +328,7 @@ func TestUpdateManagedStopsAtADataHoldingAddress(t *testing.T) {
 func TestUpdateUnmanagedStillRefusesTheSameRetirement(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true, keptAsNote: true, member: true})
 	storedRepoSecrets(t, r)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	text := out + errOut
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s; want the refusal an unmanaged project has always had", ExitCode(err), err, text)

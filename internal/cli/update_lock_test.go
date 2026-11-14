@@ -56,7 +56,7 @@ func updateInProcess() (string, string, error) {
 	cmd.SetIn(strings.NewReader(""))
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)
-	cmd.SetArgs(NormalizeArgs([]string{"update", "--yes", "--json"}))
+	cmd.SetArgs(NormalizeArgs([]string{"update", "--json"}))
 	err := cmd.Execute()
 	return out.String(), errOut.String(), err
 }
@@ -271,7 +271,7 @@ func TestTwoUpdatesOnOneInstallationDoNotClobberEachOther(t *testing.T) {
 
 	// And the lock went with it: the next converge on this installation — the
 	// one the refusal tells the user to rerun — has it.
-	if out, _, err := executeStdin(t, "", "update", "--yes"); err != nil {
+	if out, _, err := executeStdin(t, "", "update"); err != nil {
 		t.Fatalf("the update the refusal asked the user to rerun: %v\n%s", err, out)
 	}
 }
@@ -332,7 +332,7 @@ func TestTheAccountsConvergeTakesTheWorkdirLock(t *testing.T) {
 	defer func() { _ = lock.Release() }()
 
 	before := len(r.calls(t))
-	out, errOut, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a", "--yes")
+	out, errOut, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a")
 	if err == nil {
 		t.Fatalf("the accounts converge ran while a converge held the workdirs:\n%s%s", out, errOut)
 	}

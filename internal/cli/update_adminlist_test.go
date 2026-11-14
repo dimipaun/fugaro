@@ -179,7 +179,7 @@ func TestSetupWritesNoAdminList(t *testing.T) {
 	r := newConvergeRig(t, v6Node())
 	setRoster(t, r, rosterGrant("owner@example.com", "admin", "project"))
 
-	out, _, err := executeStdin(t, "", "setup", "--yes")
+	out, _, err := executeStdin(t, "", "setup")
 	if err != nil {
 		t.Fatalf("fugaro setup failed over an installation that exists (%v)\n%s", err, out)
 	}
@@ -222,7 +222,7 @@ func TestUpdateInACodingAgentsSessionWritesNoAdminList(t *testing.T) {
 	// session the door runs in.
 	agentSession(t)
 
-	out, _, err := executeStdin(t, "", "update", "--yes")
+	out, _, err := executeStdin(t, "", "update")
 	if err == nil {
 		t.Errorf("the run reported success in a coding agent's session, over an installation it applied nothing to:\n%s", out)
 	}

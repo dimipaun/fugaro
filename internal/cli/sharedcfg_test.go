@@ -95,7 +95,7 @@ func TestInitConfigOnlyPublishesTheSharedConfig(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
 	dir := sharedRuns(t)
-	if _, _, err := executeStdin(t, "", "setup", "--config-only", "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "", "setup", "--config-only"); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(sharedObjectPath(dir))
@@ -150,7 +150,7 @@ func TestInitWarnsWhenSharedConfigPublishIsForbidden(t *testing.T) {
 	}
 	t.Cleanup(func() { sharedBucketOpener = old })
 	r.gcs.DenyWrites(initRunsBucket, "fugaro/")
-	out, _, err := executeStdin(t, "", "setup", "--yes")
+	out, _, err := executeStdin(t, "", "setup")
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
@@ -201,7 +201,7 @@ func TestInitPublishFailureWarnsAndSucceeds(t *testing.T) {
 		f.Close()
 		t.Skip("the directory is writable despite its mode (running as root)")
 	}
-	out, _, err := executeStdin(t, "", "setup", "--config-only", "--yes")
+	out, _, err := executeStdin(t, "", "setup", "--config-only")
 	if err != nil {
 		t.Fatalf("a publish failure must not fail init: %v", err)
 	}

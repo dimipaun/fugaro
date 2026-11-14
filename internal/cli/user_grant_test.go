@@ -868,7 +868,7 @@ func TestRevokeIsNotUndoneByTheNextUpdate(t *testing.T) {
 	if got := grantLines(accessGrants(t, db)); !slices.Equal(got, []string{ops + " (admin)"}) {
 		t.Fatalf("the node holds %v, want the revoked member gone:\n%s", got, all)
 	}
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	converge := accessOut(out, errOut, err)
 	if err != nil {
 		t.Fatalf("the update after a revoke failed: %v\n%s", err, converge)

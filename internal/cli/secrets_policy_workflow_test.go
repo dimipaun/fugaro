@@ -46,7 +46,7 @@ func TestSecretsSetAllowDataToWritesTheWorkflowBlockEntry(t *testing.T) {
 	before := readFileString(t, path)
 
 	t.Setenv(accountsAddAgent, "1")
-	if _, _, err := execute(t, "secrets", "set", "deploy-token", "--allow-data-to", "acme/web", "--yes"); err == nil {
+	if _, _, err := execute(t, "secrets", "set", "deploy-token", "--allow-data-to", "acme/web"); err == nil {
 		t.Fatal("a coding agent's session widened a workflow secret's allow_data_to")
 	} else if !strings.Contains(err.Error(), accountsAddAgent) {
 		t.Fatalf("err = %v, want the refusal to name the marker it saw", err)
@@ -90,7 +90,7 @@ func TestSecretsSetAllowDataToOnAWorkflowSecretRefusesAnAgentSession(t *testing.
 	before := readFileString(t, path)
 	t.Setenv(accountsAddAgent, "1") // a coding agent's session
 
-	_, _, err := execute(t, "secrets", "set", "deploy-token", "--allow-data-to", "acme/web", "--yes")
+	_, _, err := execute(t, "secrets", "set", "deploy-token", "--allow-data-to", "acme/web")
 	if err == nil {
 		t.Fatal("the widening was written in a coding agent's session")
 	}
@@ -117,7 +117,7 @@ func TestSecretsSetProxyStaysRefusedForAWorkflowSecret(t *testing.T) {
 	before := readFileString(t, path)
 
 	for _, arg := range []string{"--proxy", "--proxy=false"} {
-		_, _, err := execute(t, "secrets", "set", "deploy-token", arg, "--yes")
+		_, _, err := execute(t, "secrets", "set", "deploy-token", arg)
 		if err == nil {
 			t.Fatalf("%s wrote a workflow secret's entry", arg)
 		}

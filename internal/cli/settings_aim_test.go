@@ -77,7 +77,7 @@ func TestSettingsSetAimedAtAnInstallationWritesThatFile(t *testing.T) {
 	first, second := settingsAimHome(t)
 	beforeFirst := readFileString(t, first)
 
-	out, _, err := execute(t, "settings", "set", "max_parallel", "9", "--layer", "local", "--project", "basalt", "--yes")
+	out, _, err := execute(t, "settings", "set", "max_parallel", "9", "--layer", "local", "--project", "basalt")
 	if err != nil {
 		t.Fatalf("the aimed write was refused: %v\n%s", err, out)
 	}
@@ -89,7 +89,7 @@ func TestSettingsSetAimedAtAnInstallationWritesThatFile(t *testing.T) {
 	}
 
 	// --config aims the same way, and wins over --project where the two agree.
-	if _, _, err := execute(t, "settings", "set", "max_parallel", "11", "--layer", "local", "--project", "basalt", "--config", second, "--yes"); err != nil {
+	if _, _, err := execute(t, "settings", "set", "max_parallel", "11", "--layer", "local", "--project", "basalt", "--config", second); err != nil {
 		t.Fatalf("the write aimed by --config was refused: %v", err)
 	}
 	if got := readFileString(t, second); !strings.Contains(got, "max_parallel: 11") {
@@ -116,7 +116,7 @@ func TestSettingsAimedAtAnUnknownInstallationIsRefused(t *testing.T) {
 		t.Errorf("the refusal does not name the installation that was asked for: %v", err)
 	}
 
-	_, _, err = execute(t, "settings", "set", "max_parallel", "9", "--layer", "local", "--project", "nimbus", "--yes")
+	_, _, err = execute(t, "settings", "set", "max_parallel", "9", "--layer", "local", "--project", "nimbus")
 	if err == nil {
 		t.Fatal("the write accepted --project nimbus, which is no installation on this machine")
 	}
@@ -191,7 +191,7 @@ func settingsAimDisagreement(t *testing.T, op string, rest ...string) {
 	beforeFirst, beforeSecond := readFileString(t, first), readFileString(t, second)
 
 	argv := append([]string{"settings", op}, rest...)
-	argv = append(argv, "--layer", "local", "--project", "aurora", "--config", second, "--yes")
+	argv = append(argv, "--layer", "local", "--project", "aurora", "--config", second)
 	out, _, err := execute(t, argv...)
 	if err == nil {
 		t.Fatalf("%s resolved --project aurora with a --config naming basalt:\n%s", op, out)
@@ -250,7 +250,7 @@ func TestSettingsAimedWriteInAnAgentSessionIsRefused(t *testing.T) {
 			}
 			t.Setenv(marker, "1")
 
-			_, _, err := execute(t, "settings", "set", "max_parallel", "9", "--layer", "local", "--project", "basalt", "--config", aimed, "--yes")
+			_, _, err := execute(t, "settings", "set", "max_parallel", "9", "--layer", "local", "--project", "basalt", "--config", aimed)
 			if err == nil {
 				t.Fatal("--yes lifted the agent-session fence for a write aimed at an installation")
 			}

@@ -53,7 +53,7 @@ func TestUpdateConvergesPastAnInvalidCheckoutFugaroYAML(t *testing.T) {
 		t.Fatalf("the fixture's installed plugin is %q, want %q", got, convergePrev)
 	}
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	out, errOut, err := executeStdin(t, "", "update", "--json")
 	if err == nil {
 		t.Fatalf("the run reported success while the checkout's own fugaro.yaml is invalid:\n%s", out)
 	}
@@ -131,7 +131,7 @@ func TestUpdateDoesNotBuildFromACheckoutFileTheRunDidNotOnboard(t *testing.T) {
 	// the default branch's, so the repository stage stops over it.
 	checkoutFile(t, filepath.Join(r.root, "fugaro.yaml"), strings.Replace(refreshYAML, "build: sh build.sh", "build: sh build2.sh", 1))
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	out, errOut, err := executeStdin(t, "", "update", "--json")
 	if err == nil {
 		t.Fatalf("the run reported success while the checkout's fugaro.yaml is not the default branch's:\n%s", out)
 	}
@@ -186,7 +186,7 @@ func TestUpdateDoesNotBuildPastARepositoryStopThatIsNotAboutTheFile(t *testing.T
 	t.Cleanup(func() { skillWarned.Store(false) })
 	dropAppID(t, r)
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	out, errOut, err := executeStdin(t, "", "update", "--json")
 	if err == nil {
 		t.Fatalf("the run reported success while the repository stage needs the GitHub App's ID:\n%s", out)
 	}
@@ -286,7 +286,7 @@ func TestUpdatePluginLineDoesNotReadCurrentWhileTheInstallIsBehind(t *testing.T)
 		t.Errorf("the plugin stage's check reads %s %q, want the copy Claude Code holds (%s) and the one this stage installs (%s) in it", status.State, status.Detail, convergePrev, convergeRelease)
 	}
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	out, errOut, err := executeStdin(t, "", "update", "--json")
 	if err == nil {
 		t.Fatalf("the run reported success while the checkout's own fugaro.yaml is invalid:\n%s", out)
 	}

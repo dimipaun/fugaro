@@ -39,7 +39,7 @@ func TestFailureLineNamesTheTroubleshootCommand(t *testing.T) {
 	r := applyingRig(t)
 	r.script["apply"] = map[string]any{"exit": 1, "stderr": "Error: quota exceeded\n"}
 	r.save(t)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err == nil {
 		t.Fatalf("the apply failed, yet the run succeeded:\n%s%s", out, errOut)
 	}
@@ -75,7 +75,7 @@ func TestFailureLineIsPrintedOnlyUnderALog(t *testing.T) {
 		r.script["apply"] = map[string]any{"exit": 1, "stderr": "Error: quota exceeded\n"}
 		r.save(t)
 		noLogStateDir(t)
-		out, errOut, err := executeStdin(t, "", "update", "--yes")
+		out, errOut, err := executeStdin(t, "", "update")
 		if err == nil {
 			t.Fatalf("the apply failed, yet the run succeeded:\n%s%s", out, errOut)
 		}
@@ -92,7 +92,7 @@ func TestFailureLineIsPrintedOnlyUnderALog(t *testing.T) {
 		r := applyingRig(t)
 		r.script["apply"] = map[string]any{"exit": 1, "stderr": "Error: quota exceeded\n"}
 		r.save(t)
-		out, errOut, err := executeStdin(t, "", "update", "--yes")
+		out, errOut, err := executeStdin(t, "", "update")
 		if err == nil {
 			t.Fatalf("the apply failed, yet the run succeeded:\n%s%s", out, errOut)
 		}

@@ -385,7 +385,7 @@ func TestTheUpdateWarningsCarryAProject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}

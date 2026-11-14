@@ -1642,7 +1642,7 @@ func TestPolicyPublishRefusesOverUnknownFields(t *testing.T) {
 		"version": projectpolicy.Version, "budget": map[string]any{"mode": "enforce", "per_run_usd": 5},
 		"allow_repos": []string{"github/acme/app"}, "future_key": true,
 	})
-	_, _, err := execute(t, "project", "policy", "publish", "--yes")
+	_, _, err := execute(t, "project", "policy", "publish")
 	if err == nil {
 		t.Fatal("the publish went ahead over a node carrying a key it does not know")
 	}

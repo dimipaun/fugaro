@@ -313,7 +313,7 @@ func TestTheDoorIndependentRefusalsNameTheReadersDoor(t *testing.T) {
 // Terraform's state, which a first run has nothing to do.
 func TestSetupRefusesAnUpdateOnlyFlag(t *testing.T) {
 	firstRunEnv(t)
-	out, errOut, err := executeStdin(t, "", "setup", "--forget", "--yes")
+	out, errOut, err := executeStdin(t, "", "setup", "--forget")
 	if err == nil {
 		t.Fatal("fugaro setup --forget exited 0")
 	}
@@ -347,7 +347,7 @@ func TestUpdateRefusesASetupOnlyFlag(t *testing.T) {
 		{"provision-batch", "--provision-batch"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			out, errOut, err := executeStdin(t, "", "update", tc.arg, "--yes")
+			out, errOut, err := executeStdin(t, "", "update", tc.arg)
 			if err == nil {
 				t.Fatalf("fugaro update %s exited 0", tc.arg)
 			}

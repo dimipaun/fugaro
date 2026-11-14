@@ -38,7 +38,7 @@ func unmanagedUpdateRig(t *testing.T) *initRig {
 // --budget-currency and --billing-account) — under --yes, which covers
 // update's ordinary steps.
 func updateBudgetArgs(extra ...string) []string {
-	return append([]string{"update", "--yes", "--budget", "50", "--budget-currency", "USD", "--billing-account", billingAcc}, extra...)
+	return append([]string{"update", "--budget", "50", "--budget-currency", "USD", "--billing-account", billingAcc}, extra...)
 }
 
 // TestUpdateOnAnUnmanagedInstallationFlagsItAndNeedsNoSecondCommand is the

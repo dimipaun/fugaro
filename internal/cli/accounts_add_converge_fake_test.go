@@ -196,7 +196,6 @@ func (r *addRig) add(t *testing.T, name string, args ...string) (string, string)
 	if r.managed {
 		ownerAtTheTerminal(t)
 	} else {
-		argv = append(argv, "--yes")
 	}
 	out, errOut, err := executeOwnerStdin(t, typed, argv...)
 	if err != nil {
