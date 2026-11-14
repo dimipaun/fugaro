@@ -1100,7 +1100,7 @@ const BitbucketSecret = "bitbucket-token"
 
 // BitbucketTokenSep is the separator of the bundle's Bitbucket token FAMILY
 // (D2350): a DOUBLED dash between the legacy key and the token's name, so that
-// the family's keys are spelling the account-name rule cannot produce (R13).
+// the family's keys are a spelling the account-name rule cannot produce (R13).
 // A single dash would spell claude-oauth-token-bitbucket-token-ci, which is a
 // legal account today, and admitting one name in two families is exactly what
 // the loader refuses a document over.
