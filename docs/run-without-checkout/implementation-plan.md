@@ -1,6 +1,6 @@
 # Launching a run for a repository without its checkout: implementation plan
 
-**Status: design answered by the owner 2026-11-04; A0, A1, A2 and A3 landed (2026-11-10, the person read set, the file-at-a-ref reader, the launch's decision and its read at the forge), A4 landed (2026-11-12, a retry and a follow-up reuse the recorded job) and B1 landed with these pages (2026-11-12); B2, C1 and D1 not started; no other task approved.**
+**Status: design answered by the owner 2026-11-04; A0, A1, A2 and A3 landed (2026-11-10, the person read set, the file-at-a-ref reader, the launch's decision and its read at the forge), A4 landed (2026-11-12, a retry and a follow-up reuse the recorded job) and B1 landed with these pages (2026-11-12); C1 is answered (2026-11-14, the independent review of A0, A1 and A3, its verdict document in review-c1.md); B2 and D1 not started; no other task approved.**
 
 The decisions each task answers are named in its heading; they are **D901–D915** in
 [reconciliation.md §3](reconciliation.md), answered by the owner on 2026-11-04, each with the reason for
@@ -281,7 +281,12 @@ whole `internal/cli` or `internal/runner` run.
 
 ## C1. The independent review (D914)
 
-- **Files:** none — this is the gate, not a change.
+- **Files:** the review's own document (new) and the folder's record of the landing: the status
+  line, the index row and the "What this design does not do" bullet in
+  `docs/run-without-checkout/README.md`, this plan's status line and this section's `Files:` and
+  `Commit:` lines,
+  and the index check in `internal/cli/docs_run_without_checkout_test.go`. No source file, no
+  spec and no `docs/status.md` row: the gate reviews three landed commits and writes the record.
 - **Interfaces:** the review reads A0, A1 and A3 against the threat model in spec.md §12 and answers one
   question per item: the permission set the mint asks with and the two pins it must not move, the person
   the service verifies, the launcher's freedom from the App key and from any environment variable, the
@@ -293,7 +298,7 @@ whole `internal/cli` or `internal/runner` run.
 - **Tests:** the tasks' own suites, run on the reviewed commit.
 - **Command:** `fugaro verify test` on the final commit of the reviewed range.
 - **Red step:** none.
-- **Commit:** none.
+- **Commit:** `docs: the independent review (C1), and the folder's record of it`.
 
 ## D1. What this plan deliberately does not do
 
