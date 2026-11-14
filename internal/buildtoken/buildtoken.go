@@ -37,13 +37,21 @@ type Request struct {
 	// repository the map does not put on it is refused by name.
 	Entry string `json:"entry"`
 	// BuildID is the build this request is made for: the id the build runs under
-	// (BUILD_ID in a Cloud Build step), not the entry's and not the project's. A
-	// project has one build identity (B5, rule 8), so the identity alone cannot
-	// tell two of its builds apart: a Bitbucket pairing keyed on the identity
-	// would be replaced by the second build (and the first's clone refused
-	// partway) or added to (and then either build reaches the other entry's
-	// repositories). The pairing is therefore keyed on the identity and this
-	// build, and every request names its build (F19, rule 2).
+	// (BUILD_ID in a Cloud Build step), in the shape a build id already has
+	// (internal/backend/gcp/build.go's buildIDRE, which exists because it goes
+	// into a path). The service keys the Bitbucket pairing on it, so it checks
+	// that shape rather than taking it as an opaque string.
+	//
+	// It is the caller's own word and nothing more: a project has one build
+	// identity (B5), so every build of the project can name any id. What it buys
+	// is bookkeeping, not authorization — keyed on the identity and this, two
+	// concurrent builds do not share or overwrite one pairing, and each pairing
+	// ends with the build that asked for it. It cannot separate them, because the
+	// proxy authenticates the identity's ID token, which is the same for all of a
+	// project's builds; and it is not what bounds a build's reach, which is the
+	// entry the request names (F19, rules 2 and 8;
+	// docs/shared-jobs-default/contract-build-token.md, "What this contract
+	// cannot promise").
 	BuildID string `json:"build_id"`
 	// Provider is the git provider the credential is minted at
 	// (gitprov.KindGitHub or gitprov.KindBitbucket), and it decides the answer's
@@ -51,6 +59,12 @@ type Request struct {
 	// grant. The repositories are this provider's — one answer covers them all,
 	// and a repository on another provider is not something this contract has an
 	// answer for.
+	//
+	// The entry's map is the authority here and not this field: a canonical name
+	// is owner/name and carries no host (task.CanonicalRepo), so the same name on
+	// the other provider is another repository, and the service refuses a request
+	// whose provider is not the entry's own rather than minting at the caller's
+	// choice of host.
 	Provider string `json:"provider"`
 	// Repositories are the repositories the credential must cover, by canonical
 	// name (task.CanonicalRepo) — the key space of the published image map the
