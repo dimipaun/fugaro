@@ -408,9 +408,11 @@ Read it back per installation:
 fugaro project policy show
 ```
 
-It prints the profiles and, for each account some profile names, the repositories its token may be
-used by. Only accounts a profile names are published: an account nothing lists is one no job
-mounts, and a block entry for it would publish a list on a node every run of the project can read.
+It prints the profiles and, for each account the config names, the repositories its token may be
+used by. Both sources fill that block (§3): the profiles that list the account, and a repository's
+own `repos.<owner/name>.claude_accounts`. An account neither source names is not published: it is
+one no job mounts, and a block entry for it would publish a list on a node every run of the project
+can read.
 
 ## 6. Launch a run as a named account
 
