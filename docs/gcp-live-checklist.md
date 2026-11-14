@@ -13830,10 +13830,19 @@ governance key, and the only policy layers that reach a runner are the default b
 the one the run is cut from (`internal/runner/policy.go`; `policy.Merge` tightens only). A write to the
 local config or the local project layer would reach no runner at all, and a project-layer publish would
 touch every repository of the installation. So the check writes the value into the sandbox checkout's own
-`fugaro.yaml` with `fugaro settings set governance.stage_timeout.implement <value> --layer repo --yes`,
-commits it on a throwaway branch `chk200-<hex>` cut from the branch you are on, pushes that branch, and
-launches the run with `--ref` naming it. The commit lives only on the branch that is deleted, so the
-branch you were on never moved.
+`fugaro.yaml` — the three lines `governance:` / `stage_timeout:` / `implement: <value>` — commits them on
+a throwaway branch `chk200-<hex>` cut from the branch you are on, pushes that branch, and launches the run
+with `--ref` naming it. The commit lives only on the branch that is deleted, so the branch you were on
+never moved.
+
+The check writes those lines itself, because **the CLI answers no write of that key**. A repository's
+`governance.stage_timeout` is one object-valued row: `fugaro settings set governance.stage_timeout
+<value> --layer repo` is refused when the file is read back, `fugaro settings set
+governance.stage_timeout.implement <value> --layer repo` answers "no setting has that name", the project
+layer's `layer.governance.stage_timeout.implement` reaches no run, and `--add-entry` answers that the block
+takes no entry (`internal/cli/settings_set.go`). A sandbox checkout whose `fugaro.yaml` already carries a
+`governance:` block is refused rather than edited twice: its members are yours, and a second `governance:`
+key is a file the strict decoder rejects at the run's bootstrap.
 
 **Run it:**
 

@@ -128,8 +128,8 @@ GCLOUD_EOF
   cat >"$1/bin/fugaro" <<'FUGARO_EOF'
 #!/usr/bin/env bash
 # A fake fugaro for check200.sh's test: the release gate, the doctor, the
-# settings write (which really edits the checkout's fugaro.yaml, because the
-# check commits that edit), the launch and the runs list.
+# settings write (which the product refuses, and which the check therefore never
+# makes), the launch and the runs list.
 set -euo pipefail
 dir=${FAKE200_DIR:?FAKE200_DIR is not set}
 printf 'fugaro %s\n' "$*" >>"$dir/fugaro-calls"
@@ -143,16 +143,15 @@ doctor)
   printf '{"project": {"gcp_project": "%s"}}\n' "${FAKE200_PROJECT:-prj-sandbox-a}"
   ;;
 settings)
-  # `fugaro settings set KEY VALUE --layer repo --yes`, run from the checkout.
-  if [ "${FAKE200_SET_EXIT:-0}" != 0 ]; then
-    printf 'fake fugaro: this write is refused\n' >&2
-    exit "${FAKE200_SET_EXIT}"
-  fi
-  key=$3 value=$4
-  mid=${key%.*}
-  {
-    printf 'governance:\n  %s:\n    %s: %s\n' "${mid##*.}" "${key##*.}" "$value"
-  } >>"$PWD/fugaro.yaml"
+  # The real CLI answers NO write of this key at any layer spelling that could
+  # reach a run's own ref, and the check therefore writes the fugaro.yaml line
+  # itself. The fake answers the product's own refusal (verified against the
+  # CLI: `fugaro settings set governance.stage_timeout.implement 1m --layer
+  # repo` exits 1) rather than performing an edit no real command would make,
+  # so a case that catches the check calling it is catching a call the product
+  # does not answer.
+  printf 'governance.stage_timeout.implement: no setting has that name; the nearest are layer.governance.stage_timeout.implement, governance.stage_timeout, layer.governance.stage_tokens.implement\n' >&2
+  exit 1
   ;;
 runs)
   case "$2" in
@@ -321,7 +320,7 @@ expect_no_writes() { # what
   [ -z "$extra" ] || fail "$1: a gcloud call was made: $(printf '%s' "$extra" | tr '\n' ';')"
   [ ! -s "$dir/state/go-calls" ] || fail "$1: a go call was made: $(tr '\n' ';' <"$dir/state/go-calls")"
   calls=$(cat "$dir/state/fugaro-calls" 2>/dev/null || true)
-  expect_absent "$calls" "settings set" "$1: a setting was written"
+  expect_absent "$calls" "settings" "$1: a settings call was made"
   expect_absent "$calls" "run --repo" "$1: a run was launched"
 }
 
@@ -384,10 +383,13 @@ test_the_three_facts_hold() {
   expect_contains "$out" "FACT restore: PASS" "the three facts: the restore row"
   expect_clean "the three facts"
   expect_scratch_gone "the three facts"
-  # The ceiling the run was launched under is the check's own, written into the
-  # checkout on the branch the run was cut from, and the launch names that ref.
-  expect_contains "$(cat "$dir/state/fugaro-calls")" "settings set governance.stage_timeout.implement 1m --layer repo --yes" \
+  # The ceiling is the check's own edit of the checkout's fugaro.yaml, read back
+  # with git diff — and the CLI is asked for no write of it, because it answers
+  # none (the fake refuses the way the product does, so a call reappearing here
+  # fails this case rather than being performed by a fake).
+  expect_contains "$(fact_line config)" "governance.stage_timeout.implement = 1m is committed on chk200-" \
     "the three facts: the ceiling the check wrote"
+  expect_absent "$(cat "$dir/state/fugaro-calls")" "settings" "the three facts: no settings write is asked of the CLI"
   expect_contains "$(cat "$dir/state/fugaro-calls")" "run --repo $dir/sandbox --ref chk200-" \
     "the three facts: the run is cut from the throwaway branch"
   expect_contains "$(cat "$dir/state/fugaro-calls")" "--task-file" "the three facts: the task is a file, as the plan names it"
@@ -503,15 +505,24 @@ test_the_record_of_another_run_is_a_fail() {
   expect_contains "$(fact_line result-json)" "records run_id=20261114-999999-ffff" "a record of another run: what it read"
 }
 
-test_a_settings_write_that_fails_stops_before_the_run() {
-  setup_case write-refused
-  RUN200_ENV=(FAKE200_SET_EXIT=1)
+# The check writes the ceiling itself on the branch it throws away, and it reads
+# the edit back off the repository rather than off a fake. A file that already
+# carries a governance: block is the one shape it will not write into: a second
+# governance: key is a file the strict decoder refuses at the run's bootstrap,
+# which would read as a finding about the release. So it stops and says so.
+test_a_governance_block_already_there_stops_before_the_run() {
+  setup_case governance-there
+  printf 'governance:\n  review_ratio: 0.5\n' >>"$dir/sandbox/fugaro.yaml"
+  git -C "$dir/sandbox" commit --quiet -am "a governance block of your own"
+  cp "$dir/sandbox/fugaro.yaml" "$dir/state/fugaro.yaml.before"
   run200_default
-  expect_status "$status" 1 "a settings write that fails"
-  expect_contains "$(fact_line config)" "FAIL" "a settings write that fails: the config row"
-  expect_contains "$(fact_line run-launched)" "nothing was launched" "a settings write that fails: nothing was launched"
-  expect_absent "$(cat "$dir/state/fugaro-calls")" "run --repo" "a settings write that fails: no run"
-  expect_clean "a settings write that fails"
+  expect_status "$status" 2 "a fugaro.yaml that already carries a governance: block"
+  expect_contains "$(fact_line config)" "already carries a governance: block" "a governance: block already there: the row"
+  expect_contains "$(fact_line config)" "the ceiling has to sit at governance.stage_timeout.implement" "a governance: block already there: what it asks for"
+  expect_contains "$(fact_line run-launched)" "nothing was launched" "a governance: block already there: nothing was launched"
+  expect_absent "$(cat "$dir/state/fugaro-calls")" "run --repo" "a governance: block already there: no run"
+  expect_contains "$(cat "$dir/sandbox/fugaro.yaml")" "review_ratio: 0.5" "a governance: block already there: your block is untouched"
+  expect_clean "a governance: block already there"
 }
 
 test_a_dirty_fugaro_yaml_stops_before_writing() {
@@ -519,7 +530,7 @@ test_a_dirty_fugaro_yaml_stops_before_writing() {
   run200_default
   expect_status "$status" 2 "a fugaro.yaml with your own work in it"
   expect_contains "$(fact_line config)" "uncommitted changes" "a fugaro.yaml with your own work in it: the row"
-  expect_absent "$(cat "$dir/state/fugaro-calls")" "settings set" "a fugaro.yaml with your own work in it: nothing was written"
+  expect_absent "$(cat "$dir/state/fugaro-calls")" "settings" "a fugaro.yaml with your own work in it: nothing was written"
   expect_contains "$(git -C "$dir/sandbox" status --porcelain -- fugaro.yaml)" "fugaro.yaml" \
     "a fugaro.yaml with your own work in it: your work is still there"
 }
@@ -551,7 +562,7 @@ test_belong_in_the_project_stops_the_sandbox_step() {
   run200_default
   expect_status "$status" 1 "belong in the project"
   expect_contains "$(fact_line aborted)" "belongs to belong-sandbox" "belong in the project: the stop"
-  expect_absent "$(cat "$dir/state/fugaro-calls")" "settings set" "belong in the project: nothing was written"
+  expect_absent "$(cat "$dir/state/fugaro-calls")" "settings" "belong in the project: nothing was written"
   expect_absent "$(cat "$dir/state/fugaro-calls")" "run --repo" "belong in the project: no run"
 }
 
@@ -683,7 +694,7 @@ t test_a_digest_that_refuses_is_a_fail
 t test_a_build_that_is_not_untagged_stops_the_digest_row
 t test_a_run_that_never_ends_is_could_not_tell
 t test_the_record_of_another_run_is_a_fail
-t test_a_settings_write_that_fails_stops_before_the_run
+t test_a_governance_block_already_there_stops_before_the_run
 t test_a_dirty_fugaro_yaml_stops_before_writing
 t test_belong_in_the_checkout_path_is_refused
 t test_belong_in_the_repository_name_is_refused

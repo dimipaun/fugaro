@@ -17,7 +17,10 @@
 #      BRANCH it pushes for the one run and deletes again, so nothing of the
 #      owner's own branch and nothing of the sandbox's configuration is left
 #      changed. A value written to the local config or the local project layer
-#      would reach no runner at all.
+#      would reach no runner at all, and the CLI writes no member of that
+#      object either (a repository's `governance.stage_timeout` is one row, and
+#      `--add-entry` takes no entry of it), so the check writes the three lines
+#      itself and reads the edit back with `git diff`.
 #   2. The image the run itself ran carries edition `ee`: the build record at
 #      `builds/<slug>/<workflow>/image.json` says so (R3's carrier). This is
 #      deliberately NOT `fugaro version`, whose text does not change between
@@ -192,6 +195,10 @@ CORE_OK=no
 # without the ceiling would spend the sandbox's money on a run that has nothing
 # to halt on, and the row above is already the finding.
 CONFIG_OK=no
+# CEILING_WHY is why write_ceiling would not write, in the words the config row
+# reports: the refusal is the row's own sentence rather than a second copy of
+# it at the call site.
+CEILING_WHY=""
 ORIG_REF=""
 BRANCH=""
 BRANCH_MADE=no
@@ -363,10 +370,10 @@ guard_xtrace() {
 }
 
 # guard_agent_session: the check is the owner's, and it drives commands whose
-# writes a coding agent's session is refused — a run, a branch push, a settings
-# write. Refusing here rather than letting each command refuse one at a time is
-# what makes the block say why: a session that ran this far would report the
-# refusals as findings about the release.
+# writes a coding agent's session is refused — the run it launches, and the
+# branch it pushes. Refusing here rather than letting each command refuse one at
+# a time is what makes the block say why: a session that ran this far would
+# report the refusals as findings about the release.
 guard_agent_session() {
   local marker="" name
   for name in CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_REMOTE CURSOR_AGENT AI_AGENT; do
@@ -527,6 +534,31 @@ step_source() {
   esac
 }
 
+# write_ceiling adds the ceiling to a checkout's fugaro.yaml. It is written
+# here rather than with a `fugaro settings set` because the CLI answers no
+# write of it: a repository's `governance.stage_timeout` is one object-valued
+# row, so a scalar set on it is refused when the file is read back; the rows
+# that name a member of it are the project layer's
+# (`layer.governance.stage_timeout.*`), which reaches no run; and
+# settingsEntryBlocks takes no entry of the object
+# (internal/cli/settings_set.go), which is what `--add-entry` would need.
+#
+# A file that already carries a `governance:` block is left alone: its members
+# are the owner's own, and a second `governance:` key — or a `stage_timeout:`
+# beside one that is already there — is a file the strict decoder refuses at
+# the run's bootstrap, which would read as a finding about the release.
+write_ceiling() {
+  local f=$1
+  if grep -qE '^governance:' "$f"; then
+    CEILING_WHY="${f} already carries a governance: block, and this check adds one of its own rather than edit yours: the ceiling has to sit at governance.stage_timeout.implement on the ref the run is cut from, and that block is your work. Run this check from a checkout of a sandbox repository whose fugaro.yaml writes no governance: block"
+    return 1
+  fi
+  if ! printf '\ngovernance:\n  stage_timeout:\n    implement: %s\n' "$STAGE_TIMEOUT" >>"$f"; then
+    CEILING_WHY="${f} could not be written, so the run below would be launched with no ceiling to halt it: the implement stage would spend the sandbox's budget up to its own end"
+    return 1
+  fi
+}
+
 # step_config: the tiny ceiling, written into the one layer that reaches a
 # runner. The run is cut from the branch this check pushes, and the runner
 # merges the default branch's file with the run's own ref, tightening only
@@ -551,22 +583,22 @@ step_config() {
     return 0
   fi
   BRANCH="chk200-${BRANCH_HEX}"
-  say "writing the ceiling on a throwaway branch: git checkout -b ${BRANCH}, fugaro settings set governance.stage_timeout.implement ${STAGE_TIMEOUT} --layer repo"
+  say "writing the ceiling on a throwaway branch: git checkout -b ${BRANCH}, then governance.stage_timeout.implement = ${STAGE_TIMEOUT} in fugaro.yaml"
   run_bounded "$CLI_TIMEOUT" branch "$SANDBOX" git checkout -b "$BRANCH"
   if [ "$BOUNDED_STATUS" != 0 ]; then
     unmeasured config "git checkout -b ${BRANCH} exited ${BOUNDED_STATUS} in ${SANDBOX}: the ceiling has to be on a ref origin has, and this is the branch that carries it. What git printed is in $SCRATCH/branch.err"
     return 0
   fi
   BRANCH_MADE=yes
-  run_bounded "$CLI_TIMEOUT" config "$SANDBOX" "$FUGARO_BIN" settings set governance.stage_timeout.implement "$STAGE_TIMEOUT" --layer repo --yes
-  if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
-    fact config FAIL "fugaro settings set governance.stage_timeout.implement ${STAGE_TIMEOUT} --layer repo exited ${BOUNDED_STATUS} in ${SANDBOX}: the run below is launched to be halted at that ceiling, and a run launched without it would spend the sandbox's money proving nothing. What it printed is in $SCRATCH/config.out and $SCRATCH/config.err"
+  if ! write_ceiling "$SANDBOX/fugaro.yaml"; then
+    unmeasured config "$CEILING_WHY"
     return 0
   fi
   local diff
   diff=$(git -C "$SANDBOX" diff -- fugaro.yaml 2>/dev/null || true)
+  printf '%s\n' "$diff" >"$SCRATCH/config.diff"
   if ! printf '%s' "$diff" | grep -q 'stage_timeout'; then
-    fact config FAIL "the write exited 0 and left no stage_timeout in ${SANDBOX}/fugaro.yaml (git diff names none): the ceiling the run is launched under is written by that command, and the halt below is a reading of it. What git diff printed is in $SCRATCH/config.out"
+    fact config FAIL "the edit left no stage_timeout in ${SANDBOX}/fugaro.yaml (git diff names none): the ceiling the run is launched under is that edit, and the halt below is a reading of it. What git diff printed is in $SCRATCH/config.diff"
     return 0
   fi
   run_bounded "$CLI_TIMEOUT" commit "$SANDBOX" git add fugaro.yaml
@@ -583,7 +615,7 @@ step_config() {
   fi
   BRANCH_PUSHED=yes
   CONFIG_OK=yes
-  fact config PASS "governance.stage_timeout.implement = ${STAGE_TIMEOUT} is committed on ${BRANCH} and pushed to origin: the run below is cut from that branch, so the runner's own merge of the default branch's file with this one is the ceiling it halts on (policy.Merge tightens only)"
+  fact config PASS "governance.stage_timeout.implement = ${STAGE_TIMEOUT} is committed on ${BRANCH} and pushed to origin (written by this check itself and read back with git diff, since the CLI writes no member of that object: see write_ceiling): the run below is cut from that branch, so the runner's own merge of the default branch's file with this one is the ceiling it halts on (policy.Merge tightens only)"
 }
 
 # step_run: the run, launched from the branch that carries the ceiling. The task
@@ -871,7 +903,7 @@ restore() {
   else
     run_note="No run was launched, so this check has no pull request of its own to close."
   fi
-  RESTORE_NOTE="this check wrote no config of yours and no policy: the one setting it wrote lives on the throwaway branch, which is deleted.${found}. ${run_note}${notes:+ What did not go:${notes}}"
+  RESTORE_NOTE="this check wrote no config of yours and no policy: the one edit it made to ${REPO:-the sandbox repository}'s fugaro.yaml lives on the throwaway branch, which is deleted.${found}. ${run_note}${notes:+ What did not go:${notes}}"
 }
 
 cleanup() {
@@ -917,7 +949,7 @@ plan() {
   say "  [offline] fugaro version and fugaro runs digest --help — the release ${RELEASE} gate"
   say "  [network, read] fugaro doctor --json in ${SANDBOX} — the project this checkout belongs to"
   say "  [local, write] go build -o <scratch>/fugaro-core ./cmd/fugaro in ${SOURCE} — the untagged build, proved untagged with 'fugaro report' (the core stub)"
-  say "  [write, the sandbox repository] git checkout -b chk200-<hex>; fugaro settings set governance.stage_timeout.implement ${STAGE_TIMEOUT} --layer repo --yes; git commit; git push origin chk200-<hex>"
+  say "  [write, the sandbox repository] git checkout -b chk200-<hex>; governance.stage_timeout.implement = ${STAGE_TIMEOUT} written into fugaro.yaml (the CLI has no write of it); git commit; git push origin chk200-<hex>"
   say "  [network, BILLABLE] fugaro run --repo ${SANDBOX} --ref chk200-<hex> --task-file <scratch>/task.md --json — ONE sandbox run, launched to be halted at the ${STAGE_TIMEOUT} ceiling, followed with fugaro runs ls --json until it is terminal"
   say "  [read] gcloud storage cat gs://fugaro-runs-<the project>/runs/<the repository's slug>/<run>/result.json — the record: its halt and its checkpoint"
   say "  [read] gcloud storage cat gs://fugaro-runs-<the project>/builds/<slug>/<workflow>/image.json — the edition carrier R3 writes"
