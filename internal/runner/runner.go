@@ -2711,6 +2711,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 		r.d.Log.Info("agent.models.coder ignored: recipe maps coder to reviewer", "recipe", rrec.Name, "coder", cfg.Agent.Models.Coder)
 	}
 	ApplyRoles(&cfg.Agent, rcp)
+	// The recipe's own output bound, beside the role mapping and for the same
+	// reason: resolvePolicy reads the run's per-call limits off this
+	// configuration into the file layer it merges, so a bound written after it
+	// would move the pin without the record or the policy ever seeing it.
+	if applyRecipeOutputLimit(&cfg.Agent, rcp) {
+		r.d.Log.Info("agent.max_output_tokens.reviewer capped: the run-digest review reserves at the recipe's bound",
+			"reviewer", cfg.Agent.MaxOutputTokens.Reviewer)
+	}
 	r.cfg, r.wf, r.rec.Workflow, r.rec.BaseBranch = cfg, wf, name, cfg.Git.BaseBranch
 	// The arm's coder model, after the recipe's own role mapping and before
 	// anything reads a model: the routing switch and the pins resolvePolicy
