@@ -1158,6 +1158,15 @@
           "$comment": "localcfg.DefaultMaxParallel",
           "default": "20"
         },
+        "mobile_allow.*.uid": {
+          "default": "unset = no uid: an entry that names one seeds no device node, and the node is what admits a phone (D231)"
+        },
+        "mobile_allow.*.address": {
+          "default": "unset = required: the administered email or the domain the entry admits"
+        },
+        "mobile_allow.*.role": {
+          "default": "unset = required: an entry with no role is refused rather than given one"
+        },
         "model_grades.strong.access": {
           "default": "unset = the project's default credential"
         },
