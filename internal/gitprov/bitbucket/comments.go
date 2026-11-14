@@ -13,8 +13,10 @@ package bitbucket
 // present; a reply's parent and its own inline field; "resolution": {} on
 // a resolved thread's first comment and absent elsewhere; inline's from,
 // to and path. GET /user answers a repository access token with HTTP 403,
-// so with such a token Fugaro's own comments are never known (SelfKnown
-// false). Not seen live: an outdated comment (a current one's inline has
+// so with only that answer Fugaro's own comments are never known (SelfKnown
+// false); the node's identity set (T13) is the other source of them, and a
+// repository token contributes none to it (R14), so a run holding one can
+// still be unknown. Not seen live: an outdated comment (a current one's inline has
 // no outdated field), a deleted or pending one, a reply without an inline
 // field, and a second page ("next").
 
@@ -48,6 +50,13 @@ func (u *user) accountID() string {
 		return ""
 	}
 	return u.AccountID
+}
+
+func (u *user) uuid() string {
+	if u == nil {
+		return ""
+	}
+	return u.UUID
 }
 
 func (u *user) displayName() string {
@@ -125,15 +134,46 @@ func (p *Provider) selfUser(ctx context.Context) (uuid string, known bool, err e
 		p.identityDone, p.selfUUID = true, u.UUID
 	case err == nil:
 		p.identityDone = true
-		p.o.Warn("bitbucket: the token's user (GET /user) has no uuid; Fugaro's own comments can't be told apart from others")
+		p.warnNoIdentity("bitbucket: the token's user (GET /user) has no uuid; Fugaro's own comments can't be told apart from others")
 	case errors.As(err, &se) && se.Status >= 400 && se.Status < 500 &&
 		se.Status != http.StatusRequestTimeout && se.Status != http.StatusTooManyRequests:
 		p.identityDone = true
-		p.o.Warn(fmt.Sprintf("bitbucket: could not read the token's user (GET /user): %v; Fugaro's own comments can't be told apart from others", err))
+		p.warnNoIdentity(fmt.Sprintf("bitbucket: could not read the token's user (GET /user): %v; Fugaro's own comments can't be told apart from others", err))
 	default:
 		return "", false, fmt.Errorf("reading the token's user: %w", err)
 	}
 	return p.selfUUID, p.selfUUID != "", nil
+}
+
+// warnNoIdentity says once that GET /user did not name the token's user.
+// What that costs is the ability to tell Fugaro's own comments apart, which
+// the node's identity set (T13) can still give without GET /user: only a
+// provider that has neither should read the warning, or it would tell the
+// run something untrue about its own comments.
+func (p *Provider) warnNoIdentity(msg string) {
+	if len(p.o.OwnIdentities) == 0 {
+		p.o.Warn(msg)
+	}
+}
+
+// ownIdentities is Fugaro's own account UUIDs on this provider: the node's
+// identity set (T13, F20), plus the token's own user when GET /user named
+// one. A comment is the run's own when its author is any member, never on a
+// display name or an account_id, which two accounts may share (a second
+// token of the same workspace has its own uuid and its own app account).
+// The set can be partial and can be empty: a repository access token has no
+// identity at that endpoint (R14), so nothing here is an error.
+func (p *Provider) ownIdentities(selfUUID string) map[string]bool {
+	own := make(map[string]bool, len(p.o.OwnIdentities)+1)
+	for _, id := range p.o.OwnIdentities {
+		if id != "" {
+			own[id] = true
+		}
+	}
+	if selfUUID != "" {
+		own[selfUUID] = true
+	}
+	return own
 }
 
 // Comments implements gitprov.Provider: every published comment on the
@@ -149,6 +189,13 @@ func (p *Provider) Comments(ctx context.Context, number int) ([]gitprov.Comment,
 	if err != nil {
 		return nil, fmt.Errorf("listing the comments of pull request #%d: %w", number, err)
 	}
+	// The set answers "is this the run's own?" even where the one token's
+	// GET /user cannot, which is a repository token's usual answer (R14):
+	// a run that knows its identities can tell its own comments apart
+	// whatever one endpoint says, so it never falls back to honouring
+	// markers from every author.
+	own := p.ownIdentities(selfUUID)
+	known = known || len(own) > 0
 	list, err := p.listComments(ctx, number)
 	if err != nil {
 		return nil, err
@@ -167,7 +214,7 @@ func (p *Provider) Comments(ctx context.Context, number int) ([]gitprov.Comment,
 		cm := gitprov.Comment{
 			ID: strconv.Itoa(c.ID), Kind: gitprov.CommentGeneral,
 			Author: c.User.displayName(), AuthorID: c.User.accountID(), Collaborator: true,
-			Self:      known && c.User != nil && c.User.UUID == selfUUID,
+			Self:      own[c.User.uuid()],
 			SelfKnown: known,
 			Deleted:   c.Deleted,
 			Body:      c.Content.Raw, CreatedAt: c.CreatedOn.UTC(), URL: c.Links.HTML.Href,

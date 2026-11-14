@@ -47,7 +47,13 @@ type Selection struct {
 	UntrustedAuthors     []string          // sorted, unique, at most 20
 	UntrustedAuthorCount int               // how many distinct untrusted authors were dropped, beyond the 20 named too
 	Omitted              map[string]int
-	MarkersFromAnyone    bool // no comment was SelfKnown: markers honoured from every author
+	// MarkersFromAnyone is set when no comment was SelfKnown: nothing says
+	// which comments are the run's own, so markers are honoured from every
+	// author. It is therefore read only when the adapter could name no
+	// identity at all — a Bitbucket run has the project's node list each
+	// token's account UUID (T13, F20), and every comment is then SelfKnown,
+	// even where the one token's GET /user is refused.
+	MarkersFromAnyone bool
 }
 
 // Select picks the comments a follow-up acts on: unresolved review threads

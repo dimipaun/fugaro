@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/httpjson"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // DefaultBaseURL is the Bitbucket Cloud API root.
@@ -55,8 +56,16 @@ type Options struct {
 	// once, the first time a PRSpec with non-empty Labels is seen
 	// (Bitbucket Cloud pull requests have no labels, so they are silently
 	// dropped otherwise), and once if the token may not read its own
-	// identity (GET /user). Nil means no-op.
+	// identity (GET /user) while OwnIdentities names none. Nil means no-op.
 	Warn func(string)
+	// OwnIdentities are the account UUIDs Fugaro's own Bitbucket tokens
+	// have, as the project's node lists them (T13, F20). The credentials
+	// service may serve one run with several of those tokens in turn
+	// (D2355), so the run's comments are written as more than one account
+	// and "Fugaro's own" is this set rather than the single account
+	// GET /user answers. Empty is a node without the key, and leaves this
+	// provider reading its identity exactly as it did before.
+	OwnIdentities projectpolicy.BitbucketTokenIdentities
 }
 
 // Provider is a Bitbucket Cloud repository.
