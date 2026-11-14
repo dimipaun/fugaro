@@ -133,9 +133,12 @@ import (
 // the fake `gcloud` serves the run's own objects at its own prefix in the runs
 // bucket out of the case's own directory and refuses every other bucket and
 // every other prefix, so the case bends the stored judge input one needle at a
-// time (a run ID, a branch, the pair ID, a model word, the judge's own word, a
-// run-ID-shaped string, a commit trailer) and says the row FAILs and names the
-// hit; the fake launcher is a counter, so the run ID is the case's own, and a
+// time (a run ID, a branch, the pair ID, an arm's model word, a run-ID-shaped
+// string) and says the row FAILs and names the hit -- and a case per string the
+// vocabulary deliberately leaves (the judge's own model, a word after a model's
+// version, a line that looks like a commit trailer) says it does not, since a
+// false FAIL there is a correct release exiting 1 after a billed judge run; the
+// fake launcher is a counter, so the run ID is the case's own, and a
 // case that rewrites a copy of the script with the U1 row's own test removed
 // proves that row is what the FAIL elsewhere is read from. The fake `belong`
 // logs any call and fails, so a case says the check never reached that

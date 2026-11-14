@@ -24,9 +24,12 @@
 #     (`ab/inputs/<sha256(pair ID)[:8] hex>.json`, A5.3's own object);
 #   * U1, PASS or FAIL, over those stored inputs and nothing else: neither
 #     pass's system text or prompt may carry either arm's run ID, either arm's
-#     branch, the pair ID, the arms' or the judge's model (their IDs, their
-#     names and their vendor family — A5.1's redaction vocabulary, whose
-#     shortest word is four bytes) or a run-ID-shaped string. A5.1 refuses a
+#     branch, the pair ID or either ARM's model (their IDs, their names and
+#     their vendor family — A5.1's redaction vocabulary, whose shortest word is
+#     four bytes) or a run-ID-shaped string. The judge's own model is not
+#     graded: A5.1 is handed the two arms' models alone and the stored input
+#     names the judge model in its own `judge_model` field (the note on the
+#     needles below says why). A5.1 refuses a
 #     pair whose diff names a run and redacts a model word to one placeholder,
 #     so a hit here is the anonymiser not holding on a real pair. The plan's U1
 #     also names a commit trailer, and the object graded here cannot carry one:
@@ -236,9 +239,9 @@ remove_scratch() {
 # `judged` is the one query that takes more than a document: the stored judge
 # input (A5.3's own object), the launcher's manifest and the pair's id. The
 # needles are built HERE rather than in the shell because they are A5.1's own
-# vocabulary — the arms' run IDs, their branches, the pair ID, the arms' and the
-# judge's models with the words their names are built from — and one program
-# holding both halves is what keeps the scan and the redaction from drifting.
+# vocabulary — the arms' run IDs, their branches, the pair ID, the arms' models
+# with the words their names are built from — and one program holding both halves
+# is what keeps the scan and the redaction from drifting.
 write_reader() {
   cat >"$SCRATCH/read.py" <<'PY'
 import json
@@ -431,11 +434,16 @@ def model_words(mid):
 
 def needles_for(manifest, pair_id):
     """Every string one pair's stored input must not carry: the arms' run IDs,
-    their branches, the pair ID, and the arms' and the judge's models."""
+    their branches, the pair ID, and the ARMS' models — and not the judge's.
+
+    The judge model is not one of the pair's identifiers and A5.1 never redacts
+    it: Bundle is handed the two arms' models alone (bundle.go's
+    modelWords(champion.Model, challenger.Model)) and the stored input names the
+    judge model itself in its own top-level `judge_model` field, which A5.2's
+    own test pins. A row that graded a diff for naming the judge's model would
+    fail a correct release after a billed run and blame the anonymiser for
+    something it was never asked to remove."""
     out = []
-    judge = flat(manifest.get("judge_model"))
-    if judge:
-        out.append(("model", judge))
     for pair in manifest.get("pairs") or []:
         if flat(pair.get("pair_id")) != pair_id:
             continue
@@ -1119,9 +1127,8 @@ step_verdicts() {
 # step_inputs: the reading. U1 is graded over every stored judge input the
 # verdicts name — the object the judge saw, read from the run's own prefix — and
 # U2's numbers are taken from the same read. The scan is A5.1's own vocabulary:
-# either arm's run ID, either arm's branch, the pair ID, the arms' and the
-# judge's models with the words their names are built from, and a run-ID-shaped
-# string.
+# either arm's run ID, either arm's branch, the pair ID, the arms' models with
+# the words their names are built from, and a run-ID-shaped string.
 step_inputs() {
   if [ "$VERDICTS_OK" != yes ]; then
     unmeasured input-blind "there are no verdicts naming the stored judge inputs, so nothing was scanned: the row above says why"
@@ -1173,7 +1180,7 @@ step_inputs() {
   if [ -n "$hits" ]; then
     fact input-blind FAIL "the stored judge input names something it must not: ${hits}. A5.1's bundle is what keeps this from happening — it REFUSES a diff carrying a run ID, a branch or the pair ID and REDACTES every model word to one placeholder — and a judge run over real pairs is where that promise is read rather than asserted (TestBundleCarriesNoIdentifier). ${read_n} stored input(s) were read (${chars} characters of system text and prompt); the objects themselves are under runs/${REF}/ab/inputs/ and the read is in $SCRATCH/input-*.out"
   else
-    fact input-blind PASS "all ${read_n} stored judge input(s) the verdicts name — ${chars} characters of system text and prompt, every pass of every judged pair — carry no run ID of either arm, no branch, no pair ID, no model (the arms', the judge's, or a word their names are built from — the vocabulary A5.1 redacts with) and no run-ID-shaped string. This is U1 read from the object the judge was handed rather than from the anonymiser's own test"
+    fact input-blind PASS "all ${read_n} stored judge input(s) the verdicts name — ${chars} characters of system text and prompt, every pass of every judged pair — carry no run ID of either arm, no branch, no pair ID, no arm's model (its ID, its name or a word either is built from — the vocabulary A5.1 redacts with) and no run-ID-shaped string. The judge's own model is not graded here: A5.1 is handed the two arms' models alone, and the stored input names the judge model in its own judge_model field. This is U1 read from the object the judge was handed rather than from the anonymiser's own test"
   fi
   local challenger=0 champion=0 tie=0 winner=""
   while IFS= read -r line; do

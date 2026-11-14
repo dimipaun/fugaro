@@ -28,8 +28,9 @@
 # count does not match the manifest, verdicts naming another judge model, a
 # verdict for a pair the manifest does not hold, a pair neither judged nor
 # skipped, a run that skipped every pair, stored inputs that cannot be read, and
-# -- of U1 itself -- a run ID, a branch, a pair ID, a model word (the champion's
-# and the judge's), a run-ID-shaped string and a commit trailer, one bend each.
+# -- of U1 itself -- a run ID, a branch, a pair ID, a model word (an arm's, and
+# never the judge's: A5.1 is handed the two arms' models alone), a run-ID-shaped
+# string, one bend each.
 #
 # Every command is bounded (see `bounded` below): a check that hangs fails here
 # with the case's own name rather than hanging the suite that runs this file.
@@ -106,9 +107,11 @@ slug=acme-sandbox-9f8e7d6c
 judge_run=chk211-run-0001
 ref=$slug/$judge_run
 # The three models the fixtures name. The arms differ in family and the judge is
-# a third ID: A5.1's redaction vocabulary is the arms' and the judge's models
-# with the words their names are built from, so the cases below can bend the
-# input with ONE model's own word ('opus', 'haiku') and read exactly one hit.
+# a third ID: A5.1's redaction vocabulary is the ARMS' models with the words
+# their names are built from -- Bundle is handed those two and never the judge's
+# -- so the cases below can bend the input with one arm's own word ('opus') and
+# read exactly one hit, and a case that bends it with the judge's ('haiku') reads
+# none.
 champion_model=anthropic/claude-opus-5.5
 challenger_model=openai/gpt-4o
 judge_model=anthropic/claude-haiku-4.5
@@ -1351,14 +1354,19 @@ test_a_model_word_in_the_prompt_is_a_finding() {
   expect_contains "$out" "the prompt carries the model 'opus'" "a model word in the prompt: the hit"
 }
 
-test_the_judge_models_own_word_in_the_prompt_is_a_finding() {
-  local dir=$work/hitjudge
+test_the_judge_models_own_word_is_not_a_finding() {
+  # A5.1 is handed the two arms' models and never the judge's (bundle.go's
+  # modelWords(champion.Model, challenger.Model)), and the stored input names the
+  # judge model in its own `judge_model` field anyway: a row that graded a diff
+  # for naming it would fail a correct release after a billed run and blame the
+  # anonymiser for something it was never asked to remove.
+  local dir=$work/judgeword
   prepare "$dir"
   into_input "$dir" 4 prompt "haiku"
   run_check "$dir"
-  expect_status "$status" 1 "the judge model's own word in the prompt"
-  expect_contains "$out" "FACT input-blind: FAIL" "the judge model's own word in the prompt: the row"
-  expect_contains "$out" "the prompt carries the model 'haiku'" "the judge model's own word in the prompt: the hit"
+  expect_status "$status" 0 "the judge model's own word in the prompt"
+  expect_contains "$out" "FACT input-blind: PASS" "the judge model's own word in the prompt: the row"
+  expect_absent "$out" "the prompt carries the model" "the judge model's own word in the prompt: no hit is reported"
 }
 
 test_a_run_id_shaped_string_in_the_prompt_is_a_finding() {
@@ -1448,8 +1456,8 @@ test_a_model_named_in_the_answer_is_recorded_and_not_graded() {
   # U2 is a RATE: the judge's own answer may name a model, and that is recorded
   # and never a finding. What must not happen is the answer being graded as U1 —
   # the answer is the model's, not the bundle's, and the bundle is what U1 is
-  # about. 'claude' is a word of the judge's name AND of the champion's, and one
-  # answer that carries it is one answer: the rate counts two, not four.
+  # about. 'claude' is a word of the champion's name, so the answer that carries
+  # it names a model once per pass, and the rate counts two.
   local dir=$work/answer
   prepare "$dir"
   into_input "$dir" 1 answer "claude"
@@ -1585,7 +1593,7 @@ t test_a_run_id_in_the_prompt_is_a_finding
 t test_a_branch_in_the_prompt_is_a_finding
 t test_a_pair_id_in_the_prompt_is_a_finding
 t test_a_model_word_in_the_prompt_is_a_finding
-t test_the_judge_models_own_word_in_the_prompt_is_a_finding
+t test_the_judge_models_own_word_is_not_a_finding
 t test_a_run_id_shaped_string_in_the_prompt_is_a_finding
 t test_a_line_that_looks_like_a_commit_trailer_is_not_a_finding
 t test_a_variant_word_after_the_version_is_not_a_finding
