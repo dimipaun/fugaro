@@ -17,6 +17,10 @@ package register
 //   - a licence server that cannot be reached is never a revocation, and never
 //     a failed job: the key keeps its state and the check is recorded
 //     (TestAnUnreachableServerNeverRevokes);
+//   - a licence server that refuses this installation's key and secret is not a
+//     route that failed: the job fails over it, nothing is renewed, and no check
+//     is recorded as though the server had not answered
+//     (TestAServerRefusingThePairIsNotAnOutage);
 //   - a renewal writes the next key beside the old one, with the secret that
 //     renews it in the container first, and nothing is deleted
 //     (TestRenewalWritesTheNextKeyBesideTheOld);
@@ -542,6 +546,92 @@ func TestAnUnreachableServerNeverRevokes(t *testing.T) {
 		if obj := f.object(t); len(obj.Revoked) != 0 {
 			t.Errorf("a streak of unreachable checks recorded %v as revoked", obj.Revoked)
 		}
+	})
+}
+
+// TestAServerRefusingThePairIsNotAnOutage holds the difference between a server
+// that did not answer and one that answered a refusal: a 403 is the licence
+// server saying that this installation's own key and secret are not a pair it
+// serves, which is a state `fugaro licence set` repairs and no later run does.
+// Recording it as an unreachable check would have `fugaro licence status` read a
+// route outage, D2140's thirty-day warning point an admin at the network, and an
+// auto key's renewal window pass with the job green every night until the key
+// expired.
+func TestAServerRefusingThePairIsNotAnOutage(t *testing.T) {
+	t.Run("a refusal on the check route", func(t *testing.T) {
+		f := newLicenceFixture(t)
+		key, secret, _ := f.installed(t, shortTerm(f))
+		server := f.serveJobServer(t, func(route string, call keyservice.RenewalCall) (int, string) {
+			if route != keyservice.RouteStatus {
+				t.Errorf("the job asked %s after the server refused the pair the installation proves itself with", route)
+			}
+			return http.StatusForbidden, `{"error":"forbidden"}`
+		})
+		before := f.object(t).Raw
+
+		out, errOut, err := f.renewJob(t)
+		if err == nil {
+			t.Fatal("licence renew --job succeeded over the licence server's refusal of this installation's key and secret")
+		}
+		if code := fcli.ExitCode(err); code != fcli.ExitUserError {
+			t.Errorf("the refusal exited %d, want %d (a state `fugaro licence set` repairs, as `licence refresh` answers one): %v", code, fcli.ExitUserError, err)
+		}
+		if got := len(server.callsTo(keyservice.RouteStatus)); got != 1 {
+			t.Errorf("the job asked /status %d times, want once", got)
+		}
+		if got := len(server.callsTo(keyservice.RouteRenew)); got != 0 {
+			t.Errorf("the job asked /renew %d times after the server refused the pair, want none", got)
+		}
+		if got := f.object(t); !bytes.Equal(got.Raw, before) {
+			t.Errorf("the project's object after a refusal is %s, want the one it had: a refusal is the server's answer about the pair and not a check that could not be made", got.Raw)
+		}
+		if got := f.status(t); got["state"] != "active" {
+			t.Errorf("the installation reads %v after a refusal, want the key's own term: nothing the server refused touches the key", got["state"])
+		}
+		if !strings.Contains(err.Error(), "refused this installation's renewal secret") {
+			t.Errorf("the refusal %q does not say the licence server refused the pair this installation holds", err.Error())
+		}
+		assertNoKeyMaterial(t, "the job's refusal", out+errOut+err.Error(), key, secret)
+	})
+
+	t.Run("a refusal on the renewal route", func(t *testing.T) {
+		f := newLicenceFixture(t)
+		key, secret, claims := f.installed(t, shortTerm(f))
+		server := f.serveJobServer(t, func(route string, call keyservice.RenewalCall) (int, string) {
+			if route == keyservice.RouteStatus {
+				return licenceAnswerJSON(t, keyservice.Answer{Status: keyservice.StatusOK})
+			}
+			return http.StatusForbidden, `{"error":"forbidden"}`
+		})
+		wrote := secretWrites(f)
+
+		out, errOut, err := f.renewJob(t)
+		if err == nil {
+			t.Fatal("licence renew --job succeeded over the licence server's refusal of the renewal")
+		}
+		if code := fcli.ExitCode(err); code != fcli.ExitUserError {
+			t.Errorf("the refusal exited %d, want %d (a state `fugaro licence set` repairs, as `licence refresh` answers one): %v", code, fcli.ExitUserError, err)
+		}
+		if got := len(server.callsTo(keyservice.RouteRenew)); got != 1 {
+			t.Errorf("the job asked /renew %d times, want once", got)
+		}
+		if got := secretWrites(f); got != wrote {
+			t.Errorf("the container was given %d further versions after a refused renewal, want none", got-wrote)
+		}
+		obj := f.object(t)
+		if len(obj.Keys) != 1 || obj.Keys[0] != key {
+			t.Errorf("the project holds %d keys after a refused renewal, want the one it had", len(obj.Keys))
+		}
+		if got := string(f.secrets.Latest(f.secretContainer())); got != secret {
+			t.Error("the container's newest version is not the secret the installed key renews with")
+		}
+		if obj.Check == nil || obj.Check.Status != project.CheckOK || obj.Check.KeyID != claims.KeyID {
+			t.Errorf("the check record is %+v, want the ok check the server did answer for key %s: the refusal is the renewal's, and a check that reached the server stands", obj.Check, claims.KeyID)
+		}
+		if !strings.Contains(err.Error(), "refused the renewal of key") {
+			t.Errorf("the refusal %q does not say the licence server refused the renewal", err.Error())
+		}
+		assertNoKeyMaterial(t, "the job's refusal", out+errOut+err.Error(), key, secret)
 	})
 }
 

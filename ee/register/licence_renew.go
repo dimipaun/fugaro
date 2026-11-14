@@ -23,9 +23,13 @@ package register
 //     is what no later run would fix by itself: a store or a container it cannot
 //     use — one it cannot read or write, or one whose versions prove no key,
 //     which is a broken installation and `fugaro licence set`'s to repair — and
-//     an answer that is not the pair this installation renews with, which is a
-//     licence server contradicting itself and a state a person has to be told
-//     about.
+//     the server's own refusal of this installation's key and secret, which is a
+//     licence server that will not serve this installation, or an answer that is
+//     not the pair it renews with, which is one contradicting itself. Both are
+//     states a person has to be told about, and neither is recorded as a check:
+//     a refusal is an answer about the pair the installation holds, not a route
+//     that failed, and a check recorded for it would have the installation read
+//     an outage where a person's `fugaro licence set` is what is missing.
 //   - it runs on every installation with a coordinator (K4.2's condition), and
 //     an installation with no key is the ordinary state of one that never
 //     bought a licence: the command no-ops and says so.
@@ -256,6 +260,15 @@ func licenceRenew(cmd *cobra.Command, o *licenceRenewOptions) error {
 		call.RenewalSecret = string(proof)
 		answer, err := licenceStatusRequest(ctx, call, string(proof))
 		if err != nil {
+			if licenceServerRefused(err) {
+				// A refusal is the server's answer about this installation's own
+				// pair, not a route that failed, and the record a failure writes
+				// would be a lie about which of the two it is: `licence status`
+				// would read an outage, D2140's thirty-day warning would send an
+				// admin to the network, and an auto key's renewal window would
+				// pass with the job green until the key expired.
+				return err
+			}
 			return licenceCheckFailed(ctx, errOut, store, claims, view, interval, now, err)
 		}
 		switch answer.Status {
@@ -303,6 +316,14 @@ func licenceRenew(cmd *cobra.Command, o *licenceRenewOptions) error {
 	call.RenewalSecret = string(proof)
 	answer, err := licenceRenewRequest(ctx, call, string(proof))
 	if err != nil {
+		if licenceServerRefused(err) {
+			// The same refusal on the renewal route, answered the same way and
+			// for the same reason: what the server refused is the pair this
+			// installation proves itself with, which no later run changes and
+			// only `fugaro licence set` writes again. A note here would leave a
+			// job that runs green every night of a window it cannot renew in.
+			return err
+		}
 		// An error is not an answer: a renewal that failed changes nothing, and
 		// nothing about it revokes (D2140). The job's log carries it, and the
 		// next run asks again.
@@ -448,6 +469,19 @@ func licenceCheckFailed(ctx context.Context, w io.Writer, store *project.Store, 
 			int(silence.Hours()/24), safetext.Field(claims.KeyID))
 	}
 	return nil
+}
+
+// licenceServerRefused is whether a call to the licence server failed over this
+// installation's own key and secret rather than over the route to it: a 403 is
+// the server refusing the pair, and the two callers — licenceStatusRequest below
+// and its twin licenceRenewRequest (licence.go) — are the whole of what those
+// routes can fail with, answering a refusal as a user error and everything else
+// as a remote one. The kind of the error is therefore the whole of the test, and
+// it is what tells the job's two answers apart: a refusal is a state a person's
+// `fugaro licence set` repairs, and a route that did not answer is one the next
+// run asks again.
+func licenceServerRefused(err error) bool {
+	return fcli.ExitCode(err) == fcli.ExitUserError
 }
 
 // licenceStatusRequest calls the licence server's status route once (K2.3's
