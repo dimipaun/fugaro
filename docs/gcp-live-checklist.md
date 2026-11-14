@@ -693,9 +693,20 @@ request (**P3**), **604** a publish never re-adds a revoked entry (**P5**), **60
 that is not on the node admits nobody (**P5**), **606** the QR carries no identity (**P4**), **607** the
 first screen with no account (**P4**), and **608** the provider refusal on a real project (**P6**). Like
 every claim above the highest written section they are **claimed, not reserved**: a claim is settled at
-its merge, and whichever of two claims merges second renumbers itself. **§9's reason for proposing its
-checks by name is answered here and not overridden**: that section's table carries **ten** rows, and the
-two that are **not** here are the two it marks **runner** — *an exact entry overrides its domain's role*,
+its merge, and whichever of two claims merges second renumbers itself. **These eight sections are
+written before the parts that will run them, and that is a departure from this register's own rule,
+stated here rather than glossed over.** The rule is the one written above and the precedent is Check
+57's, below: the part that ships a check writes its section — 57 has this paragraph, a row and a
+RESULTS block and **no `## Check 57` section at all**, on purpose, until that design's own task writes
+one from its §7.2. No part of **P1–P6** has been written (that plan's §10 says so in as many words),
+and the sections are here anyway because the owner asked for the allocation in this register's own
+form — a row and a section each, owner-run and **NOT RUN** — so that every check can be read and
+scripted now rather than after the parts land. What stays the shipping part's is the **script** each
+section names (`scripts/live-checks/check601.sh` to `check608.sh`, none of which exists yet) and the
+run itself: a part that ships one of these checks and finds its section wrong changes the section in
+the same commit, and nothing in these eight sections is a claim that any part exists or works. **§9's
+reason for proposing its checks by name is answered here and not overridden**: that section's table
+carries **ten** rows, and the two that are **not** here are the two it marks **runner** — *an exact entry overrides its domain's role*,
 which is `internal/mobileauth/`'s resolver and is proved by that package's own tests rather than by a
 live reading, and *the app's boundary on a real build*, which §9 itself calls the app's CI job and not a
 live check — so **eight** sections are written, each naming the part that ships it and the script it is
@@ -15589,8 +15600,10 @@ unpaired.
 
 2. **The declared block, written by you and read by the CLI.** Add both accounts to `fugaro.yaml`'s
    declared block — the exact entries and a domain entry, so that the resolved role is a reading and not
-   a copy — and read the file back through the CLI: `fugaro validate --project fugaro` (or the
-   command's own read of the declaration). **FACT:** the file decodes strictly and both entries are
+   a copy — and read the file back through the CLI: `fugaro validate`, which reads the checkout's own
+   `fugaro.yaml` and declares **no `--project` at all** — it resolves the project from the checkout,
+   which is why every other command in this check names `--project fugaro` and this one cannot.
+   **FACT:** the file decodes strictly and both entries are
    accepted; a malformed entry is **refused** rather than defaulted to a role, which is P5's own claim
    about the schema.
 
