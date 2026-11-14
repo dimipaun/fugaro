@@ -24,6 +24,27 @@ accepted **as recommended**; the **tasks** are approved only where the ruling sa
 proposed and unapproved**, and **"plan only" still describes the tree**: no code, no rules document,
 no Firebase configuration, nothing built.
 
+**Amended 2026-11-14 — P5 is merged, and a review of it at `main` left one gap open.** P5 is in the
+tree (`ce24f96f`, PR #2614): the declared list is read from the machine's own config and
+`fugaro project policy publish` seeds `config/admin/devices` from it when that node is not there.
+The review upheld what this folder's P5 says a review of it must cover — the write is ETag-guarded
+and gated on the node's absence, a declared entry the node does not carry admits nobody, a role is
+refused rather than defaulted, the block is local-only, so neither a launcher of the runs bucket nor
+a run's own session can declare an admin, and every other writer of the device node adds or deletes
+one child — with **one gap left open, reported rather than fixed**: the rule that a publish never
+re-adds an entry an operator removed holds only while the node exists, because revoking the **last**
+device empties the node it was on and an emptied node and an absent one are one read (`pairWaitForKey`
+in `internal/cli/pair.go` says of this same node that an absent one and an empty one are the same
+wait), so the next publish re-seeds every declared entry, the person just revoked among them whenever
+the declaration still names them. Closing that needs a record that a seed has happened, which P5 does
+not have: it is a decision, not a repair. The review found the folder's own text wider than the tree
+on a second point, and this note is where that is said: P5's scope sentence and **D231** put the
+declared list in the **checkout's** `fugaro.yaml`, validated by `schemas/fugaro.schema.json`, while
+the change reads it from the machine's own config (`internal/localcfg`, with the rows the settings
+schema pins) — deliberately, for the reason the field's own comment gives: a repository's
+`fugaro.yaml` travels with the checkout a run is handed, so a declaration there would be a way for a
+pull request to add an admin. The plan's sentence is what disagrees with the tree.
+
 The spec is one page of prose and a flow: sign in with an account already on the phone, scan a
 project QR, let the project's allowlist check the verified email. What the repository holds today is
 the **other** half of that — an allowlist that is a **device node keyed by Firebase Auth uid**, an
