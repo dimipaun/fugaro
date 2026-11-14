@@ -37,7 +37,15 @@ import (
 // repository; its fake `gcloud` and `fugaro` log any call and fail, so the
 // test can say the check never reaches a cloud tool. Check 300's fakes are a
 // fake `gcloud`, a fake `fugaro` and a fake RTDB behind a fake `curl`, and
-// Check 361's are a fake `gcloud` that mints a token sentinel and a fake
+// Checks 303 and 304's fake is a fake `fugaro` alone -- 303's answers `doctor`,
+// `version`, the daemon's `run`, the node's `state` and `events` and the
+// installation's config, and 304's never performs a handoff, so a case can say
+// the check stopped at the build's own verb help -- and Check 305's are a fake
+// `fugaro`, a fake `gcloud` and a fake front door on a loopback port that mints
+// the check's tokens and serves the state group's own documents, with a fake
+// browser that opens the authorization URL the check prints and follows it to
+// the check's own loopback, so both sign-ins run with no network. Check 361's
+// are a fake `gcloud` that mints a token sentinel and a fake
 // `curl` that answers the check's one read from files the test writes and
 // records the request -- the URL, the headers, and the Authorization header
 // of the `--config` file the check handed over -- so a case can say the token
@@ -81,6 +89,9 @@ var liveCheckScripts = []struct {
 	{"check191.sh", "check191_test.sh"},
 	{"check195.sh", "check195_test.sh"},
 	{"check300.sh", "check300_test.sh"},
+	{"check303.sh", "check303_test.sh"},
+	{"check304.sh", "check304_test.sh"},
+	{"check305.sh", "check305_test.sh"},
 	{"check340.sh", "check340_test.sh"},
 	{"check96.sh", "check96_test.sh"},
 	{"check361.sh", "check361_test.sh"},
