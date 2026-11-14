@@ -5,11 +5,13 @@ package cli
 // with every product decision left for the owner.
 //
 // What this file is for is the property the review brief names: the document
-// *asks*, it does not decide. So the guard that matters is that the decisions
-// table is all `open` -- a row the design had quietly settled is exactly the
-// failure mode the owner's ruling (D446: a separate design first) exists to
-// avoid -- together with the sections that carry those questions and the
-// rulings the design is bound by, which it has to name to be checkable at all.
+// *asks*, and answers only where the owner has ruled. So the guard that matters
+// is that every decision row carries an answer the owner gave -- a row the
+// design quietly settled itself is exactly the failure mode D446 (a separate
+// design first) exists to avoid, and a row that lost the answer the owner gave
+// is a task nobody may start -- together with the sections that carry those
+// questions, the rulings the design is bound by, and the two rows the roles-
+// scopes work's D1580 answer supersedes (F26).
 //
 // The two absences are the review's own no-go list: no figure (a price, a
 // per-seat count) and no dollar amount may appear, because the figures are
@@ -29,6 +31,22 @@ const rolesDesignPath = "docs/design/roles.md"
 // of its own (D680-D719), so the shape is `| D` followed by digits.
 var rolesDecisionRow = regexp.MustCompile(`^\|\s*D[0-9]+\s*\|`)
 
+// rolesDecisionNumber reads a decision row's number off its first cell, which
+// is what the two superseded rows below are picked by.
+var rolesDecisionNumber = regexp.MustCompile(`^\|\s*(D[0-9]+)\s*\|`)
+
+// rolesAnsweredToday is the status every row the owner answered carries: the
+// date of the ruling and the owner's "all as recommended" of 2026-10-30.
+const rolesAnsweredToday = "answered 2026-10-30, as recommended"
+
+// rolesSupersededRows are the two answers the roles-scopes work's D1580
+// reverses (F26): D690(a) said the CLI does not rank its own commands, D691(a)
+// that the console does not know a role, and the owner's 2026-11-07 answer of
+// D1580 replaces both. They are named here rather than counted, because which
+// two were reversed is the claim: a third row quietly marked superseded, or one
+// of these two losing its mark, is a reader sent to the wrong answer.
+var rolesSupersededRows = []string{"D690", "D691"}
+
 // rolesSeatFigure is a seat count written as a number -- "5 seats", "seat: 5",
 // "2 per seat". D433 makes a seat a pricing rule and the estimate D439's, so a
 // figure in this document is either a leak of the private figures (D430) or a
@@ -39,10 +57,12 @@ var rolesSeatFigure = regexp.MustCompile(`(?i)(\b[0-9]+\s+(per\s+)?seats?\b)|(\b
 var rolesDollarFigure = regexp.MustCompile(`\$[0-9]`)
 
 // TestDocsRolesDesign: `docs/design/roles.md` is the S5.1/E0 design. It has to
-// ask rather than answer, so every decision row's status is `open`; it has to
-// name the rulings it is bound by, so a reader can check each claim in it
-// against its source; and it has to stay out of the commercial figures, which
-// are not its subject (D430, D433) and are the subscriptions plan's.
+// record the owner's answer to each decision row and nothing it decided itself;
+// it has to mark the two rows the roles-scopes work's D1580 answer supersedes,
+// with D446's narrowing beside them (F26); it has to name the rulings it is
+// bound by, so a reader can check each claim in it against its source; and it
+// has to stay out of the commercial figures, which are not its subject (D430,
+// D433) and are the subscriptions plan's.
 func TestDocsRolesDesign(t *testing.T) {
 	doc := readDoc(t, rolesDesignPath)
 	flat := flattenDoc(doc)
@@ -67,13 +87,43 @@ func TestDocsRolesDesign(t *testing.T) {
 
 	rows := rolesDecisionRows(rolesSection(t, doc, "Decisions for the owner"))
 	if len(rows) < 10 {
-		t.Fatalf("%s's decisions table has %d rows: the design's open questions (the vocabulary, the viewer's cloud grant, the minter, the device role, enforcement in the console and the CLI) are what the owner answers, and a table that short has settled them by omission", rolesDesignPath, len(rows))
+		t.Fatalf("%s's decisions table has %d rows: the design's questions (the vocabulary, the viewer's cloud grant, the minter, the device role, enforcement in the console and the CLI) are what the owner answered on 2026-10-30, and a table that short has lost them", rolesDesignPath, len(rows))
 	}
+	superseded := map[string]bool{}
+	for _, id := range rolesSupersededRows {
+		superseded[id] = true
+	}
+	seenSuperseded := map[string]bool{}
 	for i, row := range rows {
 		cells := strings.Split(strings.Trim(row, "|"), "|")
-		if status := strings.TrimSpace(cells[len(cells)-1]); status != "open" {
-			t.Errorf("%s decisions table row %d says %q, want %q:\n\n%s\n\nEvery product choice in this design is the owner's (D446), so a row the design has answered is the one thing this document may not contain. If the owner has since ruled on it, the answer goes with its ruling in the Settled list and the row leaves the open table.", rolesDesignPath, i+1, status, "open", strings.TrimSpace(row))
+		if len(cells) != 6 {
+			t.Errorf("%s decisions table row %d has %d cells, want 6 (`# | Question | Options | Recommendation | Cost of each | Status`): a row of another shape puts a different cell where the answer is", rolesDesignPath, i+1, len(cells))
+			continue
 		}
+		status := strings.TrimSpace(cells[5])
+		id := rolesDecisionNumber.FindStringSubmatch(row)
+		if id == nil {
+			t.Errorf("%s decisions table row %d has no decision number: %q", rolesDesignPath, i+1, strings.TrimSpace(row))
+			continue
+		}
+		if superseded[id[1]] {
+			seenSuperseded[id[1]] = true
+			if !strings.Contains(status, "superseded by D1580 (2026-11-07)") {
+				t.Errorf("%s's row for %s says %q: the owner's 2026-11-07 answer of D1580 reverses it (F26, docs/roles-scopes/reconciliation.md), and a row that keeps its old answer without the supersession sends a reader to a rule the build does not follow", rolesDesignPath, id[1], status)
+			}
+			continue
+		}
+		if status != rolesAnsweredToday {
+			t.Errorf("%s's row for %s says %q, want %q:\n\n%s\n\nEvery product choice in this design is the owner's (D446): the owner answered them all on 2026-10-30, and a row whose status is neither that answer nor one of the two D1580 supersedes is a decision whose state this document does not record.", rolesDesignPath, id[1], status, rolesAnsweredToday, strings.TrimSpace(row))
+		}
+	}
+	for _, id := range rolesSupersededRows {
+		if !seenSuperseded[id] {
+			t.Errorf("%s carries no row for %s marked superseded by D1580: two answers of 2026-10-30 are reversed by the owner's 2026-11-07 answer of D1580, and this file names them", rolesDesignPath, id)
+		}
+	}
+	if !strings.Contains(flat, "and D446 is narrowed with them") {
+		t.Errorf("%s does not state that D446 is narrowed beside the two supersessions: D1580 puts the role check in the CLI and the console where D446 said the cloud enforced the roles, and the narrowing has to be readable where the supersession is recorded", rolesDesignPath)
 	}
 
 	if m := rolesDollarFigure.FindString(doc); m != "" {

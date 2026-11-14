@@ -217,6 +217,67 @@ func TestDocsRolesScopesChecksStayInTheReservedBlock(t *testing.T) {
 	}
 }
 
+// TestDocsRolesScopesStatedLimits: the stated limits RS10 pins are in print,
+// each in the document a reader meets it in, and the plan's own Check 402
+// carries the re-scope the limits force. Every one of them is a claim this
+// work could ship without: the roles are real, the refusals are real, and what
+// is left is saying out loud where they stop. A scoped role that reads as a
+// barrier promises a contractor isolation the cloud does not hold (F22, F4);
+// an agent-session refusal that reads as a control promises a boundary
+// internal/agentenv says of itself it is not; and a check whose subject holds
+// no IAM is refused everywhere it is aimed and proves nothing about the scope
+// it was written to test (F29b, D1591).
+//
+// The working skill's sentence is here rather than left to the plugin lint
+// because the lint can only hold a skill's commands and flags to the CLI: it
+// reads no prose, and this is the sentence a user's agent repeats.
+func TestDocsRolesScopesStatedLimits(t *testing.T) {
+	roles := flattenDoc(readDoc(t, "docs/design/roles.md"))
+	for _, want := range []struct{ sentence, why string }{
+		{
+			"A scoped role is a policy check, not a cloud barrier",
+			"D1580 answers that the CLI and the console check a scope and the cloud keeps its project-wide IAM (F4), so the design is where a reader is told a scope is a check — a document that calls it a barrier claims an isolation the cloud does not hold",
+		},
+		{
+			"agent sessions are detected by environment variables an agent can unset: a courtesy, not a barrier",
+			"D1590: the refusal in a coding-agent session is real and unsettable, which is what internal/agentenv says of itself, and a document that calls it a barrier claims a control that is not there",
+		},
+		{
+			"anyone given the write the access node needs is effectively a project admin",
+			"F22: roles/firebasedatabase.admin writes every config/ node, the access node included, so a repo-scoped admin handed it could promote themselves to project admin — the fact D1591's option (c) is built on",
+		},
+	} {
+		if !strings.Contains(roles, want.sentence) {
+			t.Errorf("docs/design/roles.md no longer states %q: %s", want.sentence, want.why)
+		}
+	}
+
+	skill := flattenDoc(readDoc(t, "plugin/skills/working/SKILL.md"))
+	if !strings.Contains(skill, "A scoped role is judged by the commands a person runs, not by the cloud") {
+		t.Errorf("plugin/skills/working/SKILL.md no longer tells the agent that a scoped role is judged by the commands a person runs, not by the cloud: the skill is what a user's agent repeats about a grant, and a scope read as a cloud barrier is the false claim docs/design/roles.md states the limit against (D1580)")
+	}
+
+	plan := flattenDoc(readDoc(t, rolesScopesDir+"implementation-plan.md"))
+	for _, want := range []struct{ sentence, why string }{
+		{
+			"the check subject holds the project-wide launcher IAM (operator@project) plus a scoped pair, and the script header says so",
+			"F29b: IAM is derived from project-scope pairs, so a person with no IAM is refused everywhere and proves nothing about a scope — the check has to say which IAM its subject holds, or its refusals read as the scope working",
+		},
+		{
+			"a person with no IAM is refused everywhere and proves nothing",
+			"F29b: the reason the subject's IAM is stated, which a reader of the check needs to read its result at all",
+		},
+		{
+			"half moves to RS12",
+			"F22: the original \"a repo admin changes their repo's settings\" half cannot hold until a write path checks the node, so the check keeps what a repo admin's refusal proves and moves the rest to the per-repository enforcement slice",
+		},
+	} {
+		if !strings.Contains(plan, want.sentence) {
+			t.Errorf("%simplementation-plan.md no longer states %q: %s", rolesScopesDir, want.sentence, want.why)
+		}
+	}
+}
+
 // rolesScopesDeclared is the name of every top-level type and function a Go
 // file declares. It is read with the parser rather than searched for as text:
 // a name a doc comment mentions is not a declaration, and RS1's promises are

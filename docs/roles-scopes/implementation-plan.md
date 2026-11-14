@@ -1,6 +1,6 @@
 # User roles and scopes: implementation plan
 
-**Status as of 2026-11-10: in progress, 3/12 merged; see [docs/status.md](../status.md) for the current table.** Every task below needs the owner's
+**Status as of 2026-11-14: in progress, 11/12 merged; RS10, the closing task (docs, skills and the release notes), is in review; see [docs/status.md](../status.md) for the current table.** Every task below needs the owner's
 explicit go; answering a decision is not approving a task. It builds [spec.md](spec.md) as amended by
 [reconciliation.md](reconciliation.md). Answers that shaped it (2026-11-07): D1580 (CLI and console
 checks first), D1581 (rename and migrate in `update`), D1582 (a lapse limits only Subscription
