@@ -557,7 +557,7 @@ func (d *orchestratorDaemon) decideSeams(ctx context.Context) (orchestrator.Deci
 	if !d.decide {
 		return orchestrator.DecideSeams{}, nil
 	}
-	models, err := d.decisionModels(ctx)
+	blk, err := d.orchestratorBlock(ctx)
 	if err != nil {
 		return orchestrator.DecideSeams{}, err
 	}
@@ -567,37 +567,17 @@ func (d *orchestratorDaemon) decideSeams(ctx context.Context) (orchestrator.Deci
 	}
 	return orchestrator.DecideSeams{
 		Agent: &orchestratorDecider{
-			runner: &decide.Runner{Agent: decide.Claude{}, Models: models, Audit: log, Now: d.db.ServerNow},
+			runner: &decide.Runner{
+				Agent:  decide.Claude{},
+				Models: blk.DecisionModelPerClass,
+				Audit:  log,
+				Now:    d.db.ServerNow,
+			},
 			bucket: d.env.bucket.Bucket,
 			warn:   d.warn,
 		},
 		Log: &orchestratorDecideLog{db: d.db, id: d.id},
 	}, nil
-}
-
-// decisionModels is the model each class of decision runs on: O4's
-// orchestrator.decision_model_per_class with each class filled to its own floor
-// — haiku for a routine decision, opus for a sensitive one — read the way the
-// caps are, the project's published block over Fugaro's ceiling and this
-// machine's own config under it.
-//
-// The class is O1's classifier over the run's changed paths and never a word
-// the change uses about itself (D1234); this map is the other half of that
-// rule, and it is the only place a decision's model comes from.
-func (d *orchestratorDaemon) decisionModels(ctx context.Context) (map[policy.DecisionClass]string, error) {
-	published, _, err := projectPolicyRead(ctx, d.lc)
-	if err != nil {
-		return nil, err
-	}
-	var pub *policy.Orchestrator
-	if published != nil {
-		pub = published.Orchestrator
-	}
-	blk := policy.Orchestrator{}
-	if eff := d.lc.OrchestratorEffective(pub); eff != nil {
-		blk = *eff
-	}
-	return blk.WithDefaults(int64(d.lc.MaxParallel)).DecisionModelPerClass, nil
 }
 
 // orchestratorDecideLog is the fence O13 reads and O12 writes to: O3's audit
@@ -727,13 +707,19 @@ func (a *orchestratorDecider) evidence(ctx context.Context, runID string) ([]str
 	return nil, rec.Reason
 }
 
-// caps are the daemon's guardrails: the project's orchestrator block with the
-// values Fugaro ships filled in, and the kill switch. A switch that cannot be
-// read is ON: a daemon that cannot tell is a daemon that starts nothing.
-func (d *orchestratorDaemon) caps(ctx context.Context) (orchestrator.Caps, error) {
+// orchestratorBlock is O4's orchestrator block as this machine reads it: the
+// project's published block, with Fugaro's ceiling over it and this machine's
+// own config under that, and every key it still leaves unset filled to its own
+// floor (localcfg.OrchestratorEffective, policy.WithDefaults).
+//
+// The caps and the decision models are two halves of this one block, so one
+// function reads it: the daemon's guardrails and the model each class of
+// judgement runs on are the same policy, and a second reader spelling the same
+// merge is a second place a layer could be left out of.
+func (d *orchestratorDaemon) orchestratorBlock(ctx context.Context) (policy.Orchestrator, error) {
 	published, _, err := projectPolicyRead(ctx, d.lc)
 	if err != nil {
-		return orchestrator.Caps{}, err
+		return policy.Orchestrator{}, err
 	}
 	var pub *policy.Orchestrator
 	if published != nil {
@@ -743,7 +729,17 @@ func (d *orchestratorDaemon) caps(ctx context.Context) (orchestrator.Caps, error
 	if eff := d.lc.OrchestratorEffective(pub); eff != nil {
 		blk = *eff
 	}
-	blk = blk.WithDefaults(int64(d.lc.MaxParallel))
+	return blk.WithDefaults(int64(d.lc.MaxParallel)), nil
+}
+
+// caps are the daemon's guardrails: the project's orchestrator block with the
+// values Fugaro ships filled in, and the kill switch. A switch that cannot be
+// read is ON: a daemon that cannot tell is a daemon that starts nothing.
+func (d *orchestratorDaemon) caps(ctx context.Context) (orchestrator.Caps, error) {
+	blk, err := d.orchestratorBlock(ctx)
+	if err != nil {
+		return orchestrator.Caps{}, err
+	}
 	on := true
 	var kg budget.Kill
 	found, err := d.db.Get(ctx, budget.PathKillGlobal, &kg)
