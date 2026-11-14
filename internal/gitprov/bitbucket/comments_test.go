@@ -2,6 +2,7 @@ package bitbucket
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -48,29 +49,31 @@ func TestSelfUserAcceptsAnyTokenIdentity(t *testing.T) {
 	}
 }
 
-// TestSelfUserKnowsTheRunWhenTheTokenHasNoAccountScope: GET /user answers a
-// repository access token with HTTP 403 (R14), and on its own that answer
-// leaves every comment SelfKnown false, which hands every author's marker
-// to the run (followup.MarkersFromAnyone). The node's identity set says who
-// Fugaro is without that endpoint, so the run still recognises its own
-// comment and the fallback never opens.
-func TestSelfUserKnowsTheRunWhenTheTokenHasNoAccountScope(t *testing.T) {
+// TestSelfUserKeepsTheFallbackWhenTheRunsOwnTokenHasNoIdentity: GET /user
+// answers a repository access token with HTTP 403 (R14), so that token has
+// no identity to put in the node's set, and the run writes its comments
+// through it. The set naming the project's other tokens must not turn that
+// into a claim that the run knows its own comments: a comment from the
+// repository token would come back SelfKnown false anyway, and the run
+// needs the markers-from-anyone fallback open — FugaroRuns, checkStale and
+// reportPosted all read it, and a follow-up that cannot see the run that
+// overtook it pushes over that run's work.
+func TestSelfUserKeepsTheFallbackWhenTheRunsOwnTokenHasNoIdentity(t *testing.T) {
 	var warnings []string
-	p := openOwn(t, "user_forbidden.json", "{00000000-0000-4000-8000-00000000b07e}")
+	p := openOwn(t, "user_forbidden.json", "{00000000-0000-4000-8000-0000000000ff}")
 	p.o.Warn = func(m string) { warnings = append(warnings, m) }
 	got, err := p.Comments(ctx, 12)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || !got[0].Self || !got[0].SelfKnown || got[0].AuthorID != botID {
-		t.Fatalf("comments = %+v", got)
+	// The comment is the repository token's own, and it is outside the set.
+	if len(got) != 1 || got[0].Self || got[0].SelfKnown || got[0].AuthorID != botID {
+		t.Fatalf("comments = %+v, want the fallback kept", got)
 	}
-	// What the warning says — that the run cannot tell its own comments
-	// apart — the set makes untrue.
 	if _, err := p.Comments(ctx, 12); err != nil {
 		t.Fatal(err)
 	}
-	if len(warnings) != 0 {
-		t.Fatalf("warnings = %q, want none about GET /user", warnings)
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "can't be told apart") {
+		t.Fatalf("warnings = %q, want one that the run cannot tell its own comments apart", warnings)
 	}
 }

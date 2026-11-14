@@ -49,10 +49,13 @@ type Selection struct {
 	Omitted              map[string]int
 	// MarkersFromAnyone is set when no comment was SelfKnown: nothing says
 	// which comments are the run's own, so markers are honoured from every
-	// author. It is therefore read only when the adapter could name no
-	// identity at all — a Bitbucket run has the project's node list each
-	// token's account UUID (T13, F20), and every comment is then SelfKnown,
-	// even where the one token's GET /user is refused.
+	// author. SelfKnown is the adapter's answer for the identity the run
+	// writes as, so this is read when the run has none — a Bitbucket
+	// repository access token is refused by GET /user (R14). The node's
+	// identity set (T13, F20) does not close that gap: it is partial by
+	// design, so a comment outside it may be the run's own all the same, and
+	// a fallback wrongly shut would let a stale follow-up push over a newer
+	// run's work.
 	MarkersFromAnyone bool
 }
 

@@ -13,10 +13,11 @@ package bitbucket
 // present; a reply's parent and its own inline field; "resolution": {} on
 // a resolved thread's first comment and absent elsewhere; inline's from,
 // to and path. GET /user answers a repository access token with HTTP 403,
-// so with only that answer Fugaro's own comments are never known (SelfKnown
-// false); the node's identity set (T13) is the other source of them, and a
-// repository token contributes none to it (R14), so a run holding one can
-// still be unknown. Not seen live: an outdated comment (a current one's inline has
+// so that token names no account and a comment it wrote comes back
+// SelfKnown false; the node's identity set (T13) can still mark a comment
+// as Fugaro's own (Self), but a repository token contributes no member to
+// it (R14), so a run holding one can still be unable to tell its own
+// comments apart. Not seen live: an outdated comment (a current one's inline has
 // no outdated field), a deleted or pending one, a reply without an inline
 // field, and a second page ("next").
 
@@ -134,26 +135,15 @@ func (p *Provider) selfUser(ctx context.Context) (uuid string, known bool, err e
 		p.identityDone, p.selfUUID = true, u.UUID
 	case err == nil:
 		p.identityDone = true
-		p.warnNoIdentity("bitbucket: the token's user (GET /user) has no uuid; Fugaro's own comments can't be told apart from others")
+		p.o.Warn("bitbucket: the token's user (GET /user) has no uuid; Fugaro's own comments can't be told apart from others")
 	case errors.As(err, &se) && se.Status >= 400 && se.Status < 500 &&
 		se.Status != http.StatusRequestTimeout && se.Status != http.StatusTooManyRequests:
 		p.identityDone = true
-		p.warnNoIdentity(fmt.Sprintf("bitbucket: could not read the token's user (GET /user): %v; Fugaro's own comments can't be told apart from others", err))
+		p.o.Warn(fmt.Sprintf("bitbucket: could not read the token's user (GET /user): %v; Fugaro's own comments can't be told apart from others", err))
 	default:
 		return "", false, fmt.Errorf("reading the token's user: %w", err)
 	}
 	return p.selfUUID, p.selfUUID != "", nil
-}
-
-// warnNoIdentity says once that GET /user did not name the token's user.
-// What that costs is the ability to tell Fugaro's own comments apart, which
-// the node's identity set (T13) can still give without GET /user: only a
-// provider that has neither should read the warning, or it would tell the
-// run something untrue about its own comments.
-func (p *Provider) warnNoIdentity(msg string) {
-	if len(p.o.OwnIdentities) == 0 {
-		p.o.Warn(msg)
-	}
 }
 
 // ownIdentities is Fugaro's own account UUIDs on this provider: the node's
@@ -189,13 +179,17 @@ func (p *Provider) Comments(ctx context.Context, number int) ([]gitprov.Comment,
 	if err != nil {
 		return nil, fmt.Errorf("listing the comments of pull request #%d: %w", number, err)
 	}
-	// The set answers "is this the run's own?" even where the one token's
-	// GET /user cannot, which is a repository token's usual answer (R14):
-	// a run that knows its identities can tell its own comments apart
-	// whatever one endpoint says, so it never falls back to honouring
-	// markers from every author.
+	// The set names the project's other identities (T13, F20), so a comment
+	// by any of them is the run's own even where the one token's GET /user
+	// cannot say so. It does NOT make the run able to tell its own comments
+	// apart, which is what SelfKnown answers: the set is partial by design
+	// (a repository token has no identity at all, R14) and the proxy picks
+	// the token per request (D2355), so a comment outside the set may be
+	// the run's own all the same — a repository token's is. SelfKnown
+	// therefore stays GET /user's answer alone, and a run without it keeps
+	// honouring markers from every author: FugaroRuns, checkStale and
+	// reportPosted all rest on that answer being honest.
 	own := p.ownIdentities(selfUUID)
-	known = known || len(own) > 0
 	list, err := p.listComments(ctx, number)
 	if err != nil {
 		return nil, err

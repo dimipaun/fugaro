@@ -181,10 +181,12 @@ func TestPRAuthorIDPathCovered(t *testing.T) {
 }
 
 // TestNoAccountScopeMarkersPinned: honouring markers from every author is
-// the fallback for a run that knows no identity at all — a token that may
-// not read GET /user and a node whose identity set names nobody (the state
-// the earlier plan called "no account scope"). The node's set turns it off,
-// so a person's marked comment stays a person's while the run's own is the
+// the fallback for a run whose own writing identity is unknown — a token
+// GET /user refuses, which is what a repository access token gets (R14; the
+// state the earlier plan called "no account scope"). The node's identity
+// set names the project's other tokens and not that one, so it does not
+// close the fallback; a run whose identity is known keeps it shut, and then
+// a person's marked comment stays a person's while the run's own is the
 // run's.
 func TestNoAccountScopeMarkersPinned(t *testing.T) {
 	own := self("own", t0.Add(time.Minute), "report\n\n"+gitprov.ReportMarker(runA))
@@ -200,7 +202,8 @@ func TestNoAccountScopeMarkersPinned(t *testing.T) {
 		t.Fatalf("MarkersFromAnyone %v, omitted %v", sel.MarkersFromAnyone, sel.Omitted)
 	}
 
-	// No identity at all: the fallback opens, as it has always been.
+	// The run's own identity is unknown: the fallback opens, as it has
+	// always been.
 	own.Self, own.SelfKnown, person.SelfKnown = false, false, false
 	sel = Select([]gitprov.Comment{own, person}, t0, trust(), DefaultLimits, keep)
 	if len(sel.Comments) != 0 || sel.Omitted["fugaro"] != 2 || !sel.MarkersFromAnyone {
