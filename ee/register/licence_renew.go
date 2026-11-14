@@ -9,9 +9,11 @@ package register
 //
 // It is the loop the specification describes: read the project's key and the
 // renewal secret that renews it, ask the licence server's status route once a
-// check_interval has passed, ask its renewal route from renew_before_days, and
-// write the next key beside the old one. It is not `licence refresh`, and the
-// differences are the ones a timer makes:
+// check_interval has passed, ask its renewal route from renew_before_days for
+// the key whose renewal_mode is auto — a manual key is checked and never
+// renewed, its next term being a person's `licence refresh` (spec section 7) —
+// and write the next key beside the old one. It is not `licence refresh`, and
+// the differences are the ones a timer makes:
 //
 //   - nobody is watching, so nothing here fails over something a person cannot
 //     act on tonight: a server that cannot be reached is a check recorded as
@@ -115,6 +117,12 @@ version first, then the key). It records the check — the answer, whether it
 reached the server, and how many checks in a row have not — and warns after
 thirty days without an answer, because that is how long an installation may be
 unable to verify a revocation at all (D2140).
+
+It renews an auto key and only an auto key (spec section 7): a key whose
+` + "`renewal_mode`" + ` is ` + "`manual`" + ` is checked and never renewed — the check is what
+tells the installation whether the key is still good — and its next term is
+fetched by a person running ` + "`fugaro licence refresh`" + `. A key whose mode is
+` + "`none`" + ` contacts nothing at all.
 
 It never revokes: only an explicit answer from the licence server does, so a
 server that cannot be reached leaves the key exactly as it was. An offline key
@@ -229,7 +237,7 @@ func licenceRenew(cmd *cobra.Command, o *licenceRenewOptions) error {
 	}
 	call := keyservice.RenewalCall{KeyID: claims.KeyID, WorkspaceID: claims.WorkspaceID}
 
-	renewNow := inWindow
+	renewWanted := inWindow
 	if due {
 		call.RenewalSecret = string(proof)
 		answer, err := licenceStatusRequest(ctx, call, string(proof))
@@ -254,7 +262,7 @@ func licenceRenew(cmd *cobra.Command, o *licenceRenewOptions) error {
 			// D2200: the store may hold a key issued after this one — the
 			// successor of a rotation this installation has not read yet — and
 			// then there is a key to fetch whatever the window says.
-			renewNow = renewNow || answer.NewerKey
+			renewWanted = renewWanted || answer.NewerKey
 		default:
 			// A status is a field of a body, and the body is the one place a
 			// key this process never held can come back from
@@ -265,7 +273,17 @@ func licenceRenew(cmd *cobra.Command, o *licenceRenewOptions) error {
 					licenceRedact(fcli.ClipRunes(answer.Status, 40)))))
 		}
 	}
-	if !renewNow {
+	// Spec section 7: the job fetches the next key of an auto key and of no
+	// other. What a manual key gets from the job is the check above and no
+	// more — the server revokes a manual key as it does any other, so the
+	// record is still the job's to write, and the next term is a person's call
+	// to `fugaro licence refresh`.
+	if renewWanted && claims.RenewalMode != licence.RenewalAuto {
+		fmt.Fprintf(out, "key %s renews manually (renewal_mode: %s), so the job checks it and never renews it: `fugaro licence refresh` fetches the next key when a person asks for it\n",
+			safetext.Field(claims.KeyID), safetext.Field(claims.RenewalMode))
+		return nil
+	}
+	if !renewWanted {
 		return nil
 	}
 

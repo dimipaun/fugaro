@@ -30,6 +30,8 @@ package register
 //   - a revocation the server answers is recorded and not acted on: no key is
 //     deleted, and the job stops asking about it
 //     (TestRevokedKeyIsRecordedNotDeleted);
+//   - a manual key is checked and never renewed, and the job says which command
+//     renews it (TestAManualKeyIsCheckedAndNeverRenewed);
 //   - an offline key contacts nothing at all, not even the secret container
 //     (TestOfflineKeyNeverContactsTheServer).
 
@@ -176,6 +178,11 @@ func shortTerm(f *licenceFixture) func(*licence.Claims) {
 		c.RenewBeforeDays = 30
 	}
 }
+
+// manual is the renewal mode whose next term is a person's `licence refresh`
+// rather than the job's: the job still checks the key — a revocation reaches it
+// as it does any other — and never fetches one (spec section 7).
+func manual(c *licence.Claims) { c.RenewalMode = licence.RenewalManual }
 
 // successor mints the key a renewal answers with: the next term of the same
 // entitlement, a new key_id, and the renewal secret it renews with.
@@ -590,6 +597,118 @@ func TestRevokedKeyIsRecordedNotDeleted(t *testing.T) {
 	if obj := f.object(t); len(obj.Revoked) != 1 || !slices.Contains(obj.Revoked, claims.KeyID) {
 		t.Errorf("the second run left revocations %v, want the one the server answered", obj.Revoked)
 	}
+}
+
+// TestAManualKeyIsCheckedAndNeverRenewed holds spec section 7 for the other
+// mode the job does not renew: only an auto key is fetched by it. A manual key
+// is still checked, because a revocation reaches it as it does any other and
+// the record of that is what a person reads, but its next term is the person's
+// `fugaro licence refresh` — the job says so rather than rotating a key its
+// owner meant to rotate by hand.
+func TestAManualKeyIsCheckedAndNeverRenewed(t *testing.T) {
+	t.Run("a manual key in its window is checked and not renewed", func(t *testing.T) {
+		f := newLicenceFixture(t)
+		key, secret, claims := f.installed(t, shortTerm(f), manual)
+		next, nextSecret, _ := f.successor(t, claims)
+		server := f.serveJobServer(t, func(route string, call keyservice.RenewalCall) (int, string) {
+			if route == keyservice.RouteRenew {
+				return licenceAnswerJSON(t, keyservice.Answer{Status: keyservice.StatusOK, Key: next, RenewalSecret: nextSecret})
+			}
+			return licenceAnswerJSON(t, keyservice.Answer{Status: keyservice.StatusOK})
+		})
+
+		out, _, err := f.renewJob(t)
+		if err != nil {
+			t.Fatalf("licence renew --job of a manual key in its window = %v", err)
+		}
+		if got := len(server.callsTo(keyservice.RouteStatus)); got != 1 {
+			t.Errorf("the job asked /status %d times for a manual key, want once: the check is the job's for every key, a manual one included", got)
+		}
+		if got := len(server.callsTo(keyservice.RouteRenew)); got != 0 {
+			t.Errorf("the job asked /renew %d times for a manual key, want none: the job fetches an auto key and no other (spec section 7)", got)
+		}
+		if obj := f.object(t); len(obj.Keys) != 1 || obj.Keys[0] != key {
+			t.Errorf("the project holds %d keys after a manual key's job run, want the one it had", len(obj.Keys))
+		}
+		if n := secretWrites(f); n != 0 {
+			t.Errorf("the container was given %d versions, want none: nothing of the renewal happened", n)
+		}
+		if got := f.secrets.Latest(f.secretContainer()); string(got) != secret {
+			t.Error("a manual key's job run wrote the container")
+		}
+		if obj := f.object(t); obj.Check == nil || obj.Check.Status != project.CheckOK || !obj.Check.LastOK.Equal(f.now) {
+			t.Errorf("the check record is %+v, want the check the job made and no renewal", obj.Check)
+		}
+		if !strings.Contains(out, "renewal_mode: manual") || !strings.Contains(out, "`fugaro licence refresh`") {
+			t.Errorf("the job's answer %q does not say the key renews by hand and does not name the command that renews it", out)
+		}
+		assertNoKeyMaterial(t, "the job's answer", out, key, secret)
+	})
+
+	t.Run("a manual key the server has a newer key for is not renewed either", func(t *testing.T) {
+		// D2200's newer_key is a renewal the job may fetch whatever the window
+		// says, and for a manual key the window is not what decides.
+		f := newLicenceFixture(t)
+		key, _, _ := f.installed(t, func(c *licence.Claims) {
+			// A term that is not running out, so the check's own answer is the
+			// only thing that could make this run renew.
+			c.PaidThrough = f.now.Add(40 * 24 * time.Hour)
+			c.RenewBeforeDays = 30
+			c.RenewalMode = licence.RenewalManual
+		})
+		server := f.serveJobServer(t, func(route string, call keyservice.RenewalCall) (int, string) {
+			if route == keyservice.RouteRenew {
+				t.Error("the job asked for the renewal of a manual key the server has a newer key for")
+			}
+			return licenceAnswerJSON(t, keyservice.Answer{Status: keyservice.StatusOK, NewerKey: true})
+		})
+
+		out, _, err := f.renewJob(t)
+		if err != nil {
+			t.Fatalf("licence renew --job of a manual key with a newer key on the server = %v", err)
+		}
+		if got := len(server.callsTo(keyservice.RouteRenew)); got != 0 {
+			t.Errorf("the job asked /renew %d times, want none", got)
+		}
+		if obj := f.object(t); len(obj.Keys) != 1 || obj.Keys[0] != key {
+			t.Errorf("the project holds %d keys, want the one it had", len(obj.Keys))
+		}
+		if !strings.Contains(out, "`fugaro licence refresh`") {
+			t.Errorf("the job's answer %q does not point at the command that renews a manual key", out)
+		}
+	})
+
+	t.Run("a manual key outside its window is only checked", func(t *testing.T) {
+		// The line is about a renewal the job is weighing, and a run with the
+		// window shut is not weighing one: saying it every night would be noise
+		// in a log nobody reads for that.
+		f := newLicenceFixture(t)
+		_, _, claims := f.installed(t, func(c *licence.Claims) {
+			c.PaidThrough = f.now.Add(40 * 24 * time.Hour)
+			c.RenewBeforeDays = 30
+			c.RenewalMode = licence.RenewalManual
+		})
+		server := f.serveJobServer(t, func(route string, call keyservice.RenewalCall) (int, string) {
+			if route != keyservice.RouteStatus {
+				t.Errorf("the job called %s for a manual key outside its renewal window", route)
+			}
+			return licenceAnswerJSON(t, keyservice.Answer{Status: keyservice.StatusOK})
+		})
+
+		out, _, err := f.renewJob(t)
+		if err != nil {
+			t.Fatalf("licence renew --job of a manual key outside its window = %v", err)
+		}
+		if got := len(server.callsTo(keyservice.RouteStatus)); got != 1 {
+			t.Errorf("the job asked /status %d times, want once: the check is the job's for every key", got)
+		}
+		if strings.Contains(out, "renews manually") {
+			t.Errorf("the job's answer %q talks about a renewal it is not weighing: the window is shut and the server holds no newer key", out)
+		}
+		if obj := f.object(t); obj.Check == nil || obj.Check.KeyID != claims.KeyID {
+			t.Errorf("the check record is %+v, want the check this run made", obj.Check)
+		}
+	})
 }
 
 // TestOfflineKeyNeverContactsTheServer holds spec section 7 for the job: an

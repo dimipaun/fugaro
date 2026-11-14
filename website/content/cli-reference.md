@@ -3951,6 +3951,12 @@ reached the server, and how many checks in a row have not — and warns after
 thirty days without an answer, because that is how long an installation may be
 unable to verify a revocation at all (D2140).
 
+It renews an auto key and only an auto key (spec section 7): a key whose
+`renewal_mode` is `manual` is checked and never renewed — the check is what
+tells the installation whether the key is still good — and its next term is
+fetched by a person running `fugaro licence refresh`. A key whose mode is
+`none` contacts nothing at all.
+
 It never revokes: only an explicit answer from the licence server does, so a
 server that cannot be reached leaves the key exactly as it was. An offline key
 contacts nothing at all, an installation with no key does nothing, and a key the
