@@ -68,13 +68,24 @@ type RunIdentity struct {
 	// Run is the run id (the fr claim), which names the run in the refusal
 	// sentence and in the service's audit line.
 	Run string
-	// Repo is the run's own repository, canonical (projectpolicy.Canonical:
-	// "bitbucket/acme/sandbox"), read from the verified slug claim (fs). A
-	// shared job serves every repository its profile admits, so this claim and
-	// not the calling account is what fixes the repository a run belongs to —
-	// and it is the repository a call is paired to, never one the request
-	// names.
-	Repo string
+	// Slug is the run's own repository as the run identity proves it: the
+	// storage prefix task.Slug derives from the provider and the canonical
+	// path, carried in the uid (r~<slug>~<run>) and repeated by the fs claim,
+	// which credsvc's verifyJob holds to the uid. A shared job serves every
+	// repository its profile admits, so this and not the calling account is
+	// what fixes the repository a run belongs to — and it is the repository a
+	// call is paired to, never one the request names.
+	//
+	// It is a slug and not a canonical name, and it does not invert into one:
+	// the readable half is lossy (a truncated, "-"-joined path, merged across
+	// distinct repositories by design) and the provider is not in it, which is
+	// why credsvc recovers a canonical name from a policy-held list and never
+	// from the slug's own text (internal/credsvc's canonicalOfSlug; F18 of
+	// docs/workspaces). So no side derives a repository from this string, and
+	// the canonical one is resolved against a published source — see
+	// contract.md's "What each side may rely on" for the two the tree has and
+	// the open item about wildcards.
+	Slug string
 }
 
 // Pairing is the credentials service's answer for one call a shared job's run
@@ -104,6 +115,12 @@ type Pairing struct {
 	// an operator reads which repository was refused and edits the profile or
 	// the token's allow_repos. It never carries a credential value, and never
 	// repeats a request's own text beyond the repository's name.
+	//
+	// The name in it is request text by construction, and that is the one place
+	// request text belongs in this shape: it is there for an operator to read,
+	// and it is no part of the verdict — the pairing decides on the verified
+	// slug in Identity alone, so a caller that named another repository in a
+	// refusal it caused has named a repository, not widened anything.
 	//
 	// A pairing that carries one is a refusal whatever Allowed says: these
 	// shapes fail closed, and a sentence naming a repository the call may not

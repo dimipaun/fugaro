@@ -6,6 +6,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // TestStubsReturnTheContractShape is C1's red step and its whole test: this
@@ -23,10 +24,17 @@ import (
 // admits is the one change that would let a side pass its own tests with
 // nothing behind the contract, and this fails on it.
 func TestStubsReturnTheContractShape(t *testing.T) {
+	// The slug is the identity's own repository fact and it is derived, not
+	// spelled: it is what the run token carries, and a literal here would let
+	// the shape drift from the derivation every side reads.
+	slug, err := task.Slug("bitbucket", "acme/sandbox")
+	if err != nil {
+		t.Fatalf("task.Slug: %v", err)
+	}
 	ident := RunIdentity{
 		Account: "fugaro-standard-bitbucket-run@fugaro-dev.iam.gserviceaccount.com",
 		Run:     "fb-20261113-193002-2c83",
-		Repo:    "bitbucket/acme/sandbox",
+		Slug:    slug,
 	}
 	p, err := StubPairing(ident, "standard-bitbucket")
 	if err != nil {
