@@ -51,7 +51,8 @@ export function AuditSection({ api }: { api: OpsApi }) {
       <h2 id="ops-audit">The audit log</h2>
       <p>
         Reads are recorded here as well as changes (D456), and each entry names the person who
-        made it.
+        made it. What is drawn here is the newest page the API answers and nothing older: this
+        shape carries no cursor, so an entry that has fallen off the page cannot be asked for.
       </p>
 
       {failure === null ? null : <p role="alert">{failure}</p>}

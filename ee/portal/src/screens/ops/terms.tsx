@@ -31,6 +31,14 @@ import { dayInstant } from './format'
 import type { OpsActions } from './state'
 import { useSubmission } from './state'
 
+/** What a landed change to a term says, in the action's own words. */
+const LANDED: Record<EntitlementActionKind, string> = {
+  extend: 'The term is extended.',
+  seats: 'The seat count is changed.',
+  comp: 'The term is comped.',
+  revoke: 'The term is revoked, with every key it ever minted (F29).',
+}
+
 export function TermsSection({ api, actions }: { api: OpsApi; actions: OpsActions }) {
   if (!actions.mayAct) {
     return null
@@ -47,7 +55,7 @@ export function TermsSection({ api, actions }: { api: OpsApi; actions: OpsAction
 }
 
 function MintForm({ api, actions }: { api: OpsApi; actions: OpsActions }) {
-  const { busy, failure, submit } = useSubmission(actions)
+  const { busy, failure, landed, submit } = useSubmission(actions)
   const [workspace, setWorkspace] = useState('')
   const [row, setRow] = useState('')
   const [seats, setSeats] = useState('1')
@@ -56,15 +64,23 @@ function MintForm({ api, actions }: { api: OpsApi; actions: OpsActions }) {
 
   function mint(event: FormEvent): void {
     event.preventDefault()
-    void submit(() =>
-      api.mint({
+    void submit(async () => {
+      await api.mint({
         workspace_id: workspace.trim(),
         row: row.trim(),
         seats: Number(seats),
         ends_at: dayInstant(ends) ?? '',
         check_interval: interval.trim() === '' ? null : interval.trim(),
-      }),
-    )
+      })
+      // A form that kept what it had sent would send the same term again on a
+      // second press, and the landed sentence below is what tells the operator
+      // the first one arrived.
+      setWorkspace('')
+      setRow('')
+      setSeats('1')
+      setEnds('')
+      setInterval('')
+    })
   }
 
   return (
@@ -135,12 +151,18 @@ function MintForm({ api, actions }: { api: OpsApi; actions: OpsActions }) {
         </button>
       </fieldset>
       {failure === null ? null : <p role="alert">{failure}</p>}
+      {landed ? (
+        <p role="status">
+          The term is granted. The key is minted when the customer binds the workspace (D2196).
+        </p>
+      ) : null}
     </form>
   )
 }
 
 function ChangeForm({ api, actions }: { api: OpsApi; actions: OpsActions }) {
-  const { busy, failure, submit } = useSubmission(actions)
+  const { busy, failure, landed, submit } = useSubmission(actions)
+  const [sent, setSent] = useState<EntitlementActionKind | null>(null)
   const [entitlement, setEntitlement] = useState('')
   const [seats, setSeats] = useState('')
   const [end, setEnd] = useState('')
@@ -157,7 +179,14 @@ function ChangeForm({ api, actions }: { api: OpsApi; actions: OpsActions }) {
       ends_at: action === 'extend' ? dayInstant(end) : null,
       reason: reason.trim() === '' ? null : reason.trim(),
     }
-    void submit(() => api.act(body))
+    void submit(async () => {
+      await api.act(body)
+      setSent(action)
+      setEntitlement('')
+      setSeats('')
+      setEnd('')
+      setReason('')
+    })
   }
 
   return (
@@ -209,39 +238,59 @@ function ChangeForm({ api, actions }: { api: OpsApi; actions: OpsActions }) {
       />
 
       <div>
-        <button type="button" disabled={busy} onClick={() => change('extend')}>
+        <button
+          type="button"
+          disabled={busy || entitlement.trim() === ''}
+          onClick={() => change('extend')}
+        >
           Extend
         </button>
-        <button type="button" disabled={busy} onClick={() => change('seats')}>
+        <button
+          type="button"
+          disabled={busy || entitlement.trim() === ''}
+          onClick={() => change('seats')}
+        >
           Change seats
         </button>
-        <button type="button" disabled={busy} onClick={() => change('comp')}>
+        <button
+          type="button"
+          disabled={busy || entitlement.trim() === ''}
+          onClick={() => change('comp')}
+        >
           Comp
         </button>
-        <button type="button" disabled={busy} onClick={() => change('revoke')}>
+        <button
+          type="button"
+          disabled={busy || entitlement.trim() === ''}
+          onClick={() => change('revoke')}
+        >
           Revoke
         </button>
       </div>
       {failure === null ? null : <p role="alert">{failure}</p>}
+      {landed && sent !== null ? <p role="status">{LANDED[sent]}</p> : null}
     </fieldset>
   )
 }
 
 function TransferForm({ api, actions }: { api: OpsApi; actions: OpsActions }) {
-  const { busy, failure, submit } = useSubmission(actions)
+  const { busy, failure, landed, submit } = useSubmission(actions)
   const [project, setProject] = useState('')
   const [workspace, setWorkspace] = useState('')
   const [reason, setReason] = useState('')
 
   function transfer(event: FormEvent): void {
     event.preventDefault()
-    void submit(() =>
-      api.transfer({
+    void submit(async () => {
+      await api.transfer({
         project_id: project.trim(),
         workspace_id: workspace.trim(),
         reason: reason.trim() === '' ? null : reason.trim(),
-      }),
-    )
+      })
+      setProject('')
+      setWorkspace('')
+      setReason('')
+    })
   }
 
   return (
@@ -288,18 +337,24 @@ function TransferForm({ api, actions }: { api: OpsApi; actions: OpsActions }) {
         </button>
       </fieldset>
       {failure === null ? null : <p role="alert">{failure}</p>}
+      {landed ? (
+        <p role="status">The project id is transferred to that workspace.</p>
+      ) : null}
     </form>
   )
 }
 
 function HandoverForm({ api, actions }: { api: OpsApi; actions: OpsActions }) {
-  const { busy, failure, submit } = useSubmission(actions)
+  const { busy, failure, landed, submit } = useSubmission(actions)
   const [key, setKey] = useState('')
 
   function cut(event: FormEvent): void {
     event.preventDefault()
     const id = key.trim()
-    void submit(() => api.cutHandover(id))
+    void submit(async () => {
+      await api.cutHandover(id)
+      setKey('')
+    })
   }
 
   return (
@@ -328,6 +383,12 @@ function HandoverForm({ api, actions }: { api: OpsApi; actions: OpsActions }) {
         </button>
       </fieldset>
       {failure === null ? null : <p role="alert">{failure}</p>}
+      {landed ? (
+        <p role="status">
+          The handover is cut. Metadata does not say whether one was waiting, so a key with none
+          changed nothing.
+        </p>
+      ) : null}
     </form>
   )
 }

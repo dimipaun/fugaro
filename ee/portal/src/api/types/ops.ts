@@ -20,7 +20,7 @@ export interface OpsEntitlementAction {
   action: EntitlementActionKind
   /** The new seat count, for `seats`. */
   seats: number | null
-  /** The new end, for `extend` and `comp`. */
+  /** The new end, which `extend` alone reads and the other three send null for. */
   ends_at: string | null
   reason: string | null
 }

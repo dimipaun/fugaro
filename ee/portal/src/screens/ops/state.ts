@@ -35,16 +35,25 @@ export interface OpsActions {
    */
   mayAct: boolean
   /**
-   * Runs a change, or asks for a fresh sign-in instead of sending it. It
-   * resolves either way: a section renders its own failure and never has to
-   * tell "refused locally" from "done".
+   * Runs a change, or asks for a fresh sign-in instead of sending it, and
+   * answers whether the change was sent at all. Refusing locally resolves like
+   * a change does -- a section renders its own failure and does not have to
+   * know why nothing was sent -- but the answer is false, because a change the
+   * gate stopped is not a change that landed.
    */
-  run(change: () => Promise<unknown>): Promise<void>
+  run(change: () => Promise<unknown>): Promise<boolean>
 }
 
 export interface Submission {
   busy: boolean
   failure: string | null
+  /**
+   * True from the moment a change landed until the next one starts. A screen
+   * that sent a change and drew nothing would be a screen where a landed mint
+   * and a button that did nothing look the same, and an operator who could not
+   * tell them apart sends the change again.
+   */
+  landed: boolean
   submit(change: () => Promise<unknown>): Promise<void>
 }
 
@@ -52,13 +61,17 @@ export interface Submission {
 export function useSubmission(actions: OpsActions): Submission {
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState<string | null>(null)
+  const [landed, setLanded] = useState(false)
 
   const submit = useCallback(
     async (change: () => Promise<unknown>) => {
       setBusy(true)
       setFailure(null)
+      setLanded(false)
       try {
-        await actions.run(change)
+        if (await actions.run(change)) {
+          setLanded(true)
+        }
       } catch (error: unknown) {
         setFailure(sentence(error))
       } finally {
@@ -68,5 +81,5 @@ export function useSubmission(actions: OpsActions): Submission {
     [actions],
   )
 
-  return { busy, failure, submit }
+  return { busy, failure, landed, submit }
 }

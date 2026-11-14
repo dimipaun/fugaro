@@ -353,6 +353,9 @@ describe('the operations screens', () => {
     const asked = await screen.findByRole('alert')
     expect(asked.textContent).toMatch(/five minutes/)
     expect(shown.sent('POST', '/api/ops/mints')).toHaveLength(0)
+    // Nothing was sent, so nothing landed: a screen that said otherwise would
+    // be claiming a mint that never left the browser.
+    expect(screen.queryByText(/The term is granted/)).toBeNull()
 
     fireEvent.click(within(asked).getByRole('button', { name: 'Sign in again' }))
     expect(shown.signIn).toHaveBeenCalledWith('google')
@@ -390,6 +393,49 @@ describe('the operations screens', () => {
     send('Mint')
 
     await screen.findByText('This sign-in is older than five minutes, so it cannot mint.')
+    // A change the API refused did not land, and a form that said it had would
+    // be telling the operator to stop when there is still a change to send.
+    expect(screen.queryByText(/The term is granted/)).toBeNull()
+  })
+
+  it('says what landed, in the action’s own words, and clears the form it sent', async () => {
+    const shown = show(
+      person(0),
+      routes({
+        'POST /api/ops/mints': { body: ENTITLEMENT },
+        'POST /api/ops/entitlement-actions': { body: ENTITLEMENT },
+      }),
+    )
+    await screen.findByRole('heading', { name: 'Terms and keys' })
+    fillMint()
+
+    send('Mint')
+
+    // The API's answer is the only thing that says a change arrived, and the
+    // fields it sent are emptied with it: a form that kept them would send the
+    // same term again on a second press.
+    expect(await screen.findByText(/The term is granted/)).toBeDefined()
+    expect((screen.getByLabelText('Workspace') as HTMLInputElement).value).toBe('')
+
+    fireEvent.change(screen.getByLabelText('Entitlement'), { target: { value: 'ent_1' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Revoke' }))
+
+    // The sentence names the action that was sent: the four buttons share one
+    // form, so "a change landed" would leave the operator guessing which one.
+    expect(
+      await screen.findByText('The term is revoked, with every key it ever minted (F29).'),
+    ).toBeDefined()
+    expect(shown.sent('POST', '/api/ops/entitlement-actions')[0]?.body).toEqual({
+      entitlement_id: 'ent_1',
+      action: 'revoke',
+      seats: null,
+      ends_at: null,
+      reason: null,
+    })
+    // The id went with the change, so the next press has nothing to send until
+    // a person names a term again.
+    expect((screen.getByLabelText('Entitlement') as HTMLInputElement).value).toBe('')
+    expect(screen.getByRole('button', { name: 'Revoke' }).hasAttribute('disabled')).toBe(true)
   })
 
   it('decides a parked event from its own facts, and never draws the body it keeps', async () => {
@@ -526,6 +572,16 @@ describe('the operations screens', () => {
       email_domains: ['example.com', 'example.org'],
       microsoft_directories: ['a-directory-id'],
     })
+  })
+
+  it('says the audit log it draws is only the newest page, and not the whole log', async () => {
+    show(person(0), routes())
+    await screen.findByRole('heading', { name: 'The audit log' })
+
+    expect(await screen.findByText(/newest page/)).toBeDefined()
+    // The entry is drawn under the sentence, so a truncated log is never read
+    // as the whole of what operations did (D456).
+    expect(screen.getByText(/ops@example\.com/)).toBeDefined()
   })
 
   it('refuses the screens to a caller who is not in the operations organisation', async () => {

@@ -111,13 +111,14 @@ export function OpsScreen({ api }: OpsScreenProps = {}) {
     gate.status === 'known' && (gate.membership.role === 'owner' || gate.membership.role === 'admin')
 
   const run = useCallback(
-    async (change: () => Promise<unknown>): Promise<void> => {
+    async (change: () => Promise<unknown>): Promise<boolean> => {
       if (user === null || Date.now() - user.authTime > FRESH_SIGN_IN_MS) {
         setFailure(null)
         setStepUp(true)
-        return
+        return false
       }
       await change()
+      return true
     },
     [user],
   )
