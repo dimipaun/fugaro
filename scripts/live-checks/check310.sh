@@ -38,7 +38,8 @@
 #   2. `fugaro update` on a real terminal — colour, the line in flight, one
 #      line per step, the closing line and the exit status (G1, G3, G4).
 #   3. `fugaro setup --plan-only` on a real terminal — the plan view: a header,
-#      one row per stage, no closing line, and the same rows in the log (CL5a).
+#      one row per stage, no closing line, and the screen's rows in the log,
+#      whole (CL5a).
 #   4. `NO_COLOR=1 fugaro update` on a real terminal — no escape sequence and
 #      no carriage return, with the steps still printed (G1, G4).
 #   5. `fugaro update | cat` — stdout a pipe: no escape sequence, no carriage
@@ -52,16 +53,19 @@
 #      holding what the screen did not show.
 #   8. retention: 54 seeded logs stand in for 51 runs (retention reads the
 #      directory, never a history), and the failure run's own open is what
-#      prunes them (G6).
+#      prunes them (G6). The logs of YOURS the rule removes on the way are
+#      copied aside before step 2, since the runs of steps 2 to 7 each prune the
+#      directory as they open their own log.
 #   9. `ls -l` of the log directory, printed for you.
 #
 # It creates nothing, deletes nothing and writes nothing outside the log
 # directory and its own scratch directory: the runs are ordinary `fugaro
 # update`s of an installation that is already converged (so they apply nothing
 # on a converged machine), the seeds are this check's own and are removed
-# again, and any of YOUR logs the retention rule removes while the seeds are
-# there are copied aside first and put back byte for byte in the teardown (the
-# rule would remove them on your next update anyway, and the row names them).
+# again, and any of YOUR logs the retention rule removes while this check runs
+# are copied aside before its first fugaro call and put back byte for byte in
+# the teardown (the rule would remove them on your next update anyway, and the
+# row names them).
 #
 # The register's row and section are docs/gcp-live-checklist.md, "Check 310".
 #
@@ -279,9 +283,10 @@ unseed_mine() {
 }
 
 # restore_owner_logs puts back, byte for byte and mode 0600, every log of the
-# owner's own that the rule removed while the seeds stood in for 51 runs. The
-# list was computed before the run, from the rule itself, so nothing of theirs is
-# lost by a reading that only needed the directory to look full.
+# owner's own that the rule removed while this check ran. The list was computed
+# from the rule itself, over the directory as it stood before the first fugaro
+# call (plan_owner_logs), so nothing of theirs is lost to a reading that only
+# needed the directory to look full.
 restore_owner_logs() {
   [ -n "$LOGDIR" ] || return 0
   [ -d "$LOGDIR" ] || return 0
@@ -760,10 +765,22 @@ def judge_cmd(before, after, keep, command, guards):
     })
 
 
-def plan_cmd(before, keep_placeholder, command, out_path):
-    """The names the rule will remove, so the owner's own can be put back."""
+def plan_cmd(before, command, new_logs, out_path):
+    """The names the rule will remove from this directory, so the owner's own
+    can be copied aside and put back.
+
+    The logs the runs being planned are about to file are part of the reading:
+    the rule keeps the newest 50 of a command's logs, so a new one is what
+    pushes the oldest out, and the log a run is writing is the newest of them
+    whatever its name says (pruneLogs' keep) — which is why the newest of the
+    planned logs is handed to retention_survivors as the keep.
+    """
     entries = read_snapshot(before)
-    survivors, removed = retention_survivors(entries, command, keep_placeholder, time.time())
+    now = time.time()
+    stamp = time.strftime("%Y%m%d%H%M%S", time.gmtime(now))
+    added = [("file", "%s-%s-%d.log" % (command, stamp, 1 + i)) for i in range(int(new_logs))]
+    keep = added[-1][0] if added else ""
+    survivors, removed = retention_survivors(entries + added, command, keep, now)
     with open(out_path, "w") as fh:
         for name in removed:
             fh.write(name + "\n")
@@ -1095,7 +1112,7 @@ step_tty() {
 
 # step_plan_only: `fugaro setup --plan-only` on a real terminal — the plan view
 # (CL5a): a header, one row per stage, no closing line (a plan-only run opens no
-# step, so there is no run to close), and the same rows in the log, whole.
+# step, so there is no run to close), and the screen's rows in the log, whole.
 step_plan_only() {
   run_tty plan env ${ENVV[@]+"${ENVV[@]}"} fugaro setup --plan-only
   # The listing is taken here and not by the caller: the log this run filed has
@@ -1123,7 +1140,12 @@ step_plan_only() {
   fact plan-only "$verdict" "$detail"
 
   # The log's copy of the plan: under --plan-only no step is printed at all, so
-  # the log is the only place a row's reason is whole (initflow's logRow).
+  # the log is the only place a row's reason is whole (initflow's logRow). The
+  # reading is "no fewer", not "the same count": the log is written through a
+  # MultiWriter that also takes Terraform's own output, and the plan is written
+  # there whole (tf.Summary) where the screen is handed the brief one, so a
+  # non-empty plan adds a row to the log alone. A row the screen showed and the
+  # log does not is the finding.
   read_cmd new "$PLAN_BEFORE" "$PLAN_AFTER" setup
   local newlog logrows
   newlog=$(field new)
@@ -1132,8 +1154,8 @@ step_plan_only() {
   else
     read_cmd lines "$LOGDIR/$newlog"
     logrows=$(field plan_rows)
-    if [ "$logrows" = "$rows" ]; then
-      fact plan-log PASS "the log $newlog holds the same $rows plan row(s) the screen showed, whole and uncoloured: under --plan-only no step is printed, so the log is the only copy of a reason the screen cut"
+    if [ "$logrows" -ge "$rows" ]; then
+      fact plan-log PASS "the log $newlog holds the $rows plan row(s) the screen showed, whole and uncoloured, and no fewer ($logrows in all): under --plan-only no step is printed, so the log is the only copy of a reason the screen cut, and it carries what the run wrote besides the plan"
     else
       fact plan-log FAIL "the screen showed $rows plan row(s) and the log $newlog holds $logrows: the log is the whole of what the run printed (D1352), and a row the screen showed is missing from it"
     fi
@@ -1437,12 +1459,64 @@ step_log_mode() {
   fact log-mode "$verdict" "$detail"
 }
 
+# plan_owner_logs: the owner's own logs the rule will remove while this check
+# runs, copied aside so the teardown can put them back byte for byte.
+#
+# It is called before the FIRST fugaro call and not from the retention step:
+# every command this check drives opens a log as it starts and prunes the
+# directory as it opens it, so by the time the retention step seeds its 51 logs
+# a log one of those runs removed is already gone and cannot be copied aside —
+# and the teardown's own reading would then report the owner's log lost. The
+# rule keeps the newest 50 of a command's logs, so the logs the check's own runs
+# file are part of the reading: each command is planned with the number of logs
+# the runs this check makes will file — the five `fugaro update`s (the terminal,
+# `NO_COLOR`, the pipe, `--json` and the forced failure) and the one `fugaro
+# setup --plan-only`. The count only has to be an upper bound: a name planned
+# and not removed is a file copied aside for nothing.
+plan_owner_logs() {
+  [ -n "$LOGDIR" ] || return 0
+  [ -d "$LOGDIR" ] || return 0
+  mkdir -p "$SCRATCH/backup"
+  local pair cmd n
+  for pair in update:5 setup:1; do
+    cmd=${pair%%:*}
+    n=${pair##*:}
+    python3 "$READER" plan "$ORIGINAL_SNAPSHOT" "$cmd" "$n" "$SCRATCH/plan-$cmd" >/dev/null 2>&1 || true
+    cat "$SCRATCH/plan-$cmd" >>"$SCRATCH/removed-expected" 2>/dev/null || true
+  done
+  copy_aside_owner_logs
+}
+
+# copy_aside_owner_logs: every name on the removal list that is one of the
+# owner's own and is still in the directory, byte for byte. The logs this check
+# seeded and its guard entries are its own and are skipped, and a name already
+# copied aside is not copied again (the list grows as the check runs).
+copy_aside_owner_logs() {
+  [ -n "$LOGDIR" ] || return 0
+  [ -f "$SCRATCH/removed-expected" ] || return 0
+  local name kept=0
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    case "$name" in
+    */* | . | ..) continue ;;
+    esac
+    if [ -f "$SCRATCH/backup/$name" ]; then continue; fi
+    if grep -qxF "$name" "$SEEDS_FILE" 2>/dev/null; then continue; fi
+    if grep -qxF "$name" "$GUARDS_FILE" 2>/dev/null; then continue; fi
+    if [ -f "$LOGDIR/$name" ]; then
+      cp "$LOGDIR/$name" "$SCRATCH/backup/$name" 2>/dev/null || true
+      kept=$((kept + 1))
+    fi
+  done <"$SCRATCH/removed-expected"
+  if [ "$kept" -gt 0 ]; then
+    say "$kept of your own log(s) fall inside what the rule removes: they are copied aside and put back at the end"
+  fi
+}
+
 # step_retention: the rule of G6, read off the directory rather than reasoned
 # about. Retention reads the directory, never a history, so 54 seeded logs stand
 # in for 51 runs: 51 inside the 14 days and three past them. The failure run's
-# own open is what prunes them, which is why this step comes after it. Any of
-# the owner's own logs the rule removes while they are there are copied aside
-# here and put back in the teardown, byte for byte.
+# own open is what prunes them, which is why this step comes after it.
 SEEDED=0
 step_retention() {
   local dir=$LOGDIR
@@ -1482,22 +1556,11 @@ PY
   done
   say "seeded $SEEDED logs and 5 guard entries in $dir (they stand in for 51 runs: retention reads the directory, not a history)"
   python3 "$READER" ls "$dir" >"$SCRATCH/retention.before" 2>/dev/null || stop "this check could not read the log directory $dir"
-  # Which of the owner's own logs the rule will remove, so they can be put back.
-  mkdir -p "$SCRATCH/backup"
-  python3 "$READER" plan "$SCRATCH/retention.before" "update-20000101000000-1.log" update "$SCRATCH/removed-expected" >/dev/null 2>&1 || true
-  local kept=0
-  while IFS= read -r name; do
-    [ -n "$name" ] || continue
-    if grep -qxF "$name" "$SEEDS_FILE"; then continue; fi
-    if grep -qxF "$name" "$GUARDS_FILE"; then continue; fi
-    if [ -f "$dir/$name" ]; then
-      cp "$dir/$name" "$SCRATCH/backup/$name" 2>/dev/null || true
-      kept=$((kept + 1))
-    fi
-  done <"$SCRATCH/removed-expected"
-  if [ "$kept" -gt 0 ]; then
-    say "$kept of your own log(s) fall inside what the rule removes: they are copied aside and put back at the end"
-  fi
+  # Which of the owner's own logs the failure run's own open will remove, so
+  # they can be put back: the log that run files is the one it adds.
+  python3 "$READER" plan "$SCRATCH/retention.before" update 1 "$SCRATCH/plan-seeds" >/dev/null 2>&1 || true
+  cat "$SCRATCH/plan-seeds" >>"$SCRATCH/removed-expected" 2>/dev/null || true
+  copy_aside_owner_logs
 }
 
 # step_retention_judge: what the rule did, against what it says it does.
@@ -1792,6 +1855,11 @@ main() {
   # so it has to be a real one rather than an empty file the reader would have
   # written had it not existed yet.
   python3 "$READER" ls "$LOGDIR" >"$ORIGINAL_SNAPSHOT" 2>/dev/null || true
+  # The owner's own logs the rule will remove are copied aside HERE, before the
+  # first fugaro call: each of the runs below prunes the directory as it opens
+  # its log, so a copy taken later is a copy of a directory the check itself has
+  # already emptied.
+  plan_owner_logs
   # A named installation is refused by name BEFORE the first fugaro call: the
   # converge below would otherwise be the thing that touched it.
   if [ -n "$INSTALLATION" ]; then

@@ -397,19 +397,22 @@ FUGARO_EOF
 write_fake "$work"
 
 # ------------------------------------------------------------------ the fixtures
-# seed_owner DIR N LIST: N logs of the owner's own in the directory, 13 days
-# old, so the rule removes them while the seeds stand in for 51 runs and the
-# check has to put them back. Their names are written to LIST for the assertions.
+# seed_owner DIR N LIST [DAYS]: N logs of the owner's own in the directory, 13
+# days old unless DAYS says otherwise, so the rule removes them while the seeds
+# stand in for 51 runs and the check has to put them back. A log past the 14 days
+# is removed by the FIRST run of the check instead, before the seeds exist — the
+# machine whose last fugaro run is a fortnight old — which is what DAYS is for.
+# Their names are written to LIST for the assertions.
 seed_owner() {
-  python3 - "$1" "$2" "$3" <<'PY'
+  python3 - "$1" "$2" "$3" "${4:-13}" <<'PY'
 import os
 import sys
 import time
 
-d, n, listing = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+d, n, listing, days = sys.argv[1], int(sys.argv[2]), sys.argv[3], int(sys.argv[4])
 names = []
 for i in range(n):
-    stamp = time.strftime("%Y%m%d%H%M%S", time.gmtime(time.time() - 13 * 24 * 3600 - i * 3600))
+    stamp = time.strftime("%Y%m%d%H%M%S", time.gmtime(time.time() - days * 24 * 3600 - i * 3600))
     name = "update-%s-%d.log" % (stamp, 600000 + i)
     path = os.path.join(d, name)
     with open(path, "w") as fh:
@@ -727,6 +730,24 @@ case_restore_eat_owner() {
   expect_fact "$out" restore FAIL "a run that loses one of the owner's logs"
 }
 
+# A machine whose last fugaro run is more than 14 days ago: the rule removes the
+# owner's logs at the FIRST run of the check, before the retention step's seeds
+# exist, so a copy taken there would be a copy of a directory the check had
+# already emptied — and the teardown would report the owner's logs lost.
+case_owner_logs_removed_early() {
+  setup_case owner_logs_removed_early happy
+  rm -f "$case_dir/state/fugaro/logs"/*
+  seed_owner "$case_dir/state/fugaro/logs" 2 "$case_dir/ownerlogs" 20
+  run310
+  local out
+  out=$(block)
+  expect_status "$status" 0 "logs the check's own runs remove"
+  expect_fact "$out" restore PASS "logs the check's own runs remove"
+  expect_contains "$(errout)" "of your own log(s) fall inside what the rule removes" "logs the check's own runs remove"
+  no_seeds_left
+  owner_logs_kept
+}
+
 case_belong() {
   setup_case belong happy
   CASE_ARGS=(--installation belong)
@@ -805,6 +826,7 @@ tests=(
   plan_no_rows
   plan_log_empty
   restore_eat_owner
+  owner_logs_removed_early
   belong
   agent
   dry_run

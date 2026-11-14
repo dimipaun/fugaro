@@ -13818,9 +13818,9 @@ plan hands it to you and why the row reads **NOT RUN** until you paste the block
   terminal" is a reading and not the owner's word for one. `NO_COLOR` is read as the plan's G4 writes it — present and
   not empty — and `CLICOLOR_FORCE` is not honoured (T4(a), D1355).
 - **The plan view is the log's own rows.** `fugaro setup --plan-only` prints a header and one row per stage with no
-  closing line, and the log it files holds the same rows whole and uncoloured (CL5a): under `--plan-only` no step is
-  ever run, so the log's copy is the only place a row's whole reason survives. A plan view whose log is missing, or
-  whose log holds fewer rows than the screen, is the finding.
+  closing line, and the log it files holds the screen's rows whole and uncoloured and never fewer (CL5a): under
+  `--plan-only` no step is ever run, so the log's copy is the only place a row's whole reason survives. A plan view
+  whose log is missing, or whose log holds fewer rows than the screen, is the finding.
 - **The read that files no log at all.** `fugaro doctor --json` is a listing: one JSON document and no log
   (G7). The check reads the log directory before and after it and refuses a new name.
 - **The forced failure, and the one shim.** The failure has to land *inside* a stage to reach the block G8 describes,
@@ -13849,8 +13849,9 @@ plan hands it to you and why the row reads **NOT RUN** until you paste the block
 exists: on a converged installation each applies nothing, and **no model call is made by any step of this check**. The
 forced-failure run writes nothing at all — its `terraform` is a fake. Nothing is created, granted or deleted: the only
 writes are the log directory and the check's own scratch directory, whose seeded logs are removed again, and any of
-**your** logs the retention rule removes while the seeds are there are copied aside first and put back byte for byte
-in the teardown (the rule would remove them on your next `fugaro update` anyway, and the `restore` fact names them).
+**your** logs the retention rule removes while the check runs are copied aside before its first `fugaro` call — every
+run of the check prunes the directory as it opens its own log — and put back byte for byte in the teardown (the rule
+would remove them on your next `fugaro update` anyway, and the `restore` fact names them).
 The scratch directory is refused inside a git work tree, so a run cannot be made in a checkout by accident.
 
 **The commands.**
