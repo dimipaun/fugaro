@@ -101,7 +101,11 @@
 #             could not tell, not a number. A run that could not measure a read
 #             ends 2 even if another read also came back the wrong shape: the
 #             table has a hole in it, and a hole is settled before a finding is
-#             read.
+#             read. A `--dry-run` is not a run and ends 0 whatever it was given
+#             — it measures nothing, so it has no hole and no finding to end on,
+#             and a checkout it was not given is not one either — and the only
+#             things it refuses are a shell that is tracing and a name carrying
+#             `belong`.
 set -Eeuo pipefail
 
 # No xtrace, whatever the shell it was started from had: the documents this
@@ -415,10 +419,29 @@ guard_projects() {
   fact project PASS "$(printf '%s ' "${PROJECTS[@]}")— the installation(s) the runs, coordinator and budget reads are made against, selected with FUGARO_PROJECT=<name> so the argv stays the console's own words"
 }
 
+# guard_checkout_names: the `belong` half of the checkout guard, and it is a
+# separate function because a dry run runs it and must not run the measurement
+# below: `--dry-run` prints the commands and records no verdict, so a checkout
+# that is missing or is not one must not put a FAIL row in its block. A name is
+# not a measurement, and refusing one is what a dry run is for — it tells you the
+# command you are about to run is the wrong one before you run it.
+guard_checkout_names() {
+  local path
+  for path in "${CHECKOUTS[@]}"; do
+    case "$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')" in
+    *belong*)
+      fact belong FAIL "the checkout named is $path, which names the owner's own installation's tree: no check script here reads it"
+      stop "Check C0 never reads a checkout under 'belong'. Name a checkout you mean to profile"
+      ;;
+    esac
+  done
+}
+
 # guard_checkouts: a checkout named is the directory the plan read walks, so it
 # has to be one — a directory with a `docs/` in it, which is what `plan status`
 # reads. A path that is not one is recorded rather than stopping the run: the
-# other reads still measure, and the plan row says the run could not tell.
+# other reads still measure, and the plan row says the run could not tell. This
+# is a measurement, so it runs only in a real run.
 CHECKOUT_BAD=()
 guard_checkouts() {
   local i path bad="" good=""
@@ -430,12 +453,6 @@ guard_checkouts() {
   fi
   for i in "${!CHECKOUTS[@]}"; do
     path=${CHECKOUTS[$i]}
-    case "$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')" in
-    *belong*)
-      fact belong FAIL "the checkout named is $path, which names the owner's own installation's tree: no check script here reads it"
-      stop "Check C0 never reads a checkout under 'belong'. Name a checkout you mean to profile"
-      ;;
-    esac
     if [ -d "$path/docs" ]; then
       CHECKOUT_BAD[$i]=""
       good="${good}${good:+, }$path"
@@ -721,7 +738,7 @@ main() {
   build_block_keys
   guard_xtrace
   guard_projects
-  guard_checkouts
+  guard_checkout_names
   # Both belong guards have let the run through: the row they share reads PASS
   # only here, so a refusal in either of them is the one the block carries.
   fact belong PASS "no installation named and no checkout named carries 'belong': the owner's own one is refused before any read is made, and the numbers this check takes come from the name(s) you chose"
@@ -729,6 +746,9 @@ main() {
     print_plan
     return 0
   fi
+  # After the dry-run branch: this one records a row — a checkout that is not
+  # there is `unmeasured` — and a dry run records no verdict.
+  guard_checkouts
   guard_fugaro
   step_runs
   step_coordinator

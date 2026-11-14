@@ -215,6 +215,36 @@ test_dry_run_makes_no_call() {
   assert_scratch_removed "dry run"
 }
 
+test_a_dry_run_is_inert_whatever_it_was_given() {
+  # A dry run measures nothing, so it has no hole to end on and no finding to
+  # report: a missing checkout, or one that is not a checkout, must not put a
+  # FAIL row in its block or turn its exit code into a verdict. The name guards
+  # still run -- that is what a dry run is for, telling you the command is the
+  # wrong one before you run it -- so `belong` is still refused, and still
+  # without a fugaro call.
+  local dir=$work/drynoco
+  prepare "$dir"
+  run_check "$dir" -- --project demo --dry-run
+  expect_status "$status" 0 "a dry run with no checkout at all"
+  expect_contains "$out" "FACT checkout: INFO — not run: --dry-run" "a dry run with no checkout: the row is planned, not judged"
+  expect_absent "$out" "FACT checkout: FAIL" "a dry run with no checkout: no verdict row"
+  expect_contains "$err" "[not run] the plan read: no --checkout was given" "a dry run with no checkout: the plan says so"
+  expect_absent "$err" "could NOT measure" "a dry run with no checkout: nothing was measured, so nothing is missing"
+  expect_absent "$calls" "fugaro" "a dry run with no checkout: no fugaro call at all"
+
+  run_check "$dir" -- --project demo --checkout "$dir/elsewhere" --dry-run
+  expect_status "$status" 0 "a dry run naming a directory that is not a checkout"
+  expect_contains "$out" "FACT checkout: INFO — not run: --dry-run" "a dry run naming a non-checkout: the row is planned, not judged"
+  expect_absent "$out" "FACT plan-status-1: FAIL" "a dry run naming a non-checkout: no verdict row"
+  expect_absent "$calls" "fugaro" "a dry run naming a non-checkout: no fugaro call at all"
+
+  run_check "$dir" -- --project demo --checkout "$dir/belong" --dry-run
+  expect_status "$status" 2 "a dry run naming a checkout under belong"
+  expect_contains "$out" "FACT belong: FAIL" "a dry run naming a checkout under belong: the refusal is still made"
+  expect_contains "$err" "never reads a checkout under 'belong'" "a dry run naming a checkout under belong: the refusal's own words"
+  expect_absent "$calls" "fugaro" "a dry run naming a checkout under belong: no fugaro call at all"
+}
+
 test_the_reads_are_timed_and_sized() {
   local dir=$work/happy
   prepare "$dir"
@@ -502,6 +532,7 @@ t() {
 
 t test_help
 t test_dry_run_makes_no_call
+t test_a_dry_run_is_inert_whatever_it_was_given
 t test_the_reads_are_timed_and_sized
 t test_the_reads_run_where_they_must
 t test_the_current_directory_is_a_checkout
