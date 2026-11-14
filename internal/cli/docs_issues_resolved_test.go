@@ -25,6 +25,8 @@ package cli
 // in the tree reads the page.
 
 import (
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -58,5 +60,30 @@ func TestDocsIssuesResolvedNamesTheObjectAndTheRule(t *testing.T) {
 	}
 	if link := flattenDoc(readDoc(t, docsIssuePage)); !strings.Contains(link, "issues-resolved.md") {
 		t.Errorf("%s never links %s: the issues page is where a reader of the family ends up, and the resolved page is the other half of an issue's life", docsIssuePage, docsIssuesResolvedPage)
+	}
+}
+
+// TestDocsIssuesResolvedPinMovesTheCensusRow: the pin above is a new
+// `docs_*_test.go` in internal/cli, and the census row that counts them is
+// prose the tree cannot regenerate, so the folder that adds one moves the row
+// and says so beside it (the row's own rule, docs/rigor-modes/reconciliation.md).
+func TestDocsIssuesResolvedPinMovesTheCensusRow(t *testing.T) {
+	const path = "docs/rigor-modes/reconciliation.md"
+	doc := readDoc(t, path)
+	row := mdRow(t, path, doc, "| Docs folders that ship their own `internal/cli/docs_*_test.go` pin |")
+	cols := strings.Split(row, "|")
+	if len(cols) < 4 {
+		t.Fatalf("%s' census row is not a three-column row: %q", path, row)
+	}
+	pins, err := filepath.Glob("../../internal/cli/docs_*_test.go")
+	if err != nil {
+		t.Fatalf("the folders' pins could not be listed, so the census row cannot be checked: %v", err)
+	}
+	if stated := strings.TrimSpace(cols[2]); stated != strconv.Itoa(len(pins)) {
+		t.Errorf("%s' census row states %s rows and the tree holds %d `internal/cli/docs_*_test.go` files: the row is a count a reader re-runs, so the folder that adds a pin moves it", path, stated, len(pins))
+	}
+	const amendment = "Amended 2026-11-14: `internal/cli/docs_issues_resolved_test.go`, the issues-resolved-on-update folder's pin"
+	if !strings.Contains(flattenDoc(doc), amendment) {
+		t.Errorf("%s does not carry %q: the row's own text says a folder that writes a pin moves the row in its own commit and says so beside it, and a row that moved without the sentence is the merge the row calls the one that did not", path, amendment)
 	}
 }
