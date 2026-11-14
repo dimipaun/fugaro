@@ -8,6 +8,8 @@ Fugaro runs a coding agent's task (implement, test, review, fix, open a PR) as o
 
 Don't assume, don't hide confusion, surface tradeoffs. State your assumptions; if more than one reading exists, present them instead of picking one silently; if a simpler approach exists, say so and push back; if something is unclear, stop and ask. Keep diffs small and reviewable, follow the surrounding patterns, add no new framework or dependency without asking, and don't reformat code you don't touch. When you ask the user something, use `AskUserQuestion` (structured options) rather than free text.
 
+**Fugaro asks for nothing.** No command waits for interactive input — no y/N, no typing a name back, no "are you sure" — at the owner's terminal or in an agent's session, and no command may hang on a closed stdin. Spending is bounded by the budget caps, by the integrity refusals and by the owner-session fences, all of which name the one command that lifts them: a refusal that says the fix is not a prompt. `--ask` is the whole of the exemption (opt-in per invocation, the owner's terminal only, never an agent session, never `--json`), and a value only a person can type fails at once with no terminal rather than waiting. The policy and every decision under it are in `docs/no-prompt-policy/` — its spec is the owner's, its reconciliation holds D1540–D1559 and wins where the two disagree. **Do not add a confirmation step "for safety".** A change that seems to need one is a design decision to raise first (spec §5), never something to slip into a diff.
+
 ## Path-scoped rules
 
 Short area rules live under `.claude/rules/` and load automatically when Claude touches matching files:
