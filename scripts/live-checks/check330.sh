@@ -100,6 +100,7 @@ set -E
 # A trace would copy every read this check makes to the terminal, and the log
 # lines it reads are the run's own output. Refused before anything else runs.
 XTRACE_AT_START=no
+case "${SHELLOPTS:-}" in *xtrace*) XTRACE_AT_START=yes ;; esac
 case "${BASHOPTS:-}" in *xtrace*) XTRACE_AT_START=yes ;; esac
 { set +x; } 2>/dev/null
 unset BASH_XTRACEFD 2>/dev/null || true
@@ -142,10 +143,15 @@ fact() { # fact KEY PASS|FAIL|INFO "detail"
 # that answered nothing, an execution nobody can name. It reads FAIL in the
 # block (it is not a pass) and the run ends as one that could not tell, exit 2:
 # a check that read nothing is not a check that found nothing.
-UNMEASURED_KEYS=""
+#
+# The keys are collected in a FILE and not in a variable: a reference is resolved
+# inside a command substitution, which is a subshell, and a variable set there
+# would be a row in the block that never reached the verdict.
+UNMEASURED_FILE=""
 unmeasured() { # unmeasured KEY "detail"
   fact "$1" FAIL "$2"
-  UNMEASURED_KEYS="${UNMEASURED_KEYS:+$UNMEASURED_KEYS }$1"
+  [ -n "$UNMEASURED_FILE" ] && printf '%s\n' "$1" >>"$UNMEASURED_FILE"
+  return 0
 }
 
 # on_error: an internal error is a fact, never a verdict. Under `set -e` the
@@ -223,6 +229,8 @@ scratch_up() {
   : >"$SCRATCH/$SCRATCH_MARKER"
   FACTS_FILE="$SCRATCH/facts"
   : >"$FACTS_FILE"
+  UNMEASURED_FILE="$SCRATCH/unmeasured"
+  : >"$UNMEASURED_FILE"
   # A scratch directory inside a work tree could be committed by accident, and
   # this one holds a run's record and its log.
   if (cd "$SCRATCH" && git rev-parse --show-toplevel >/dev/null 2>&1); then
@@ -331,6 +339,10 @@ elif what == "policy":
     value = flat(pol.get("default_claude_account"))
     if value:
         values.add(value)
+    for named in (pol.get("claude_account_stages") or {}).values():
+        named = flat(named)
+        if named:
+            values.add(named)
     for profile in (pol.get("profiles") or {}).values():
         for named in profile.get("claude_accounts") or []:
             named = flat(named)
@@ -344,12 +356,15 @@ elif what == "record":
     print("status=%s" % flat(doc.get("status")))
     print("outcome=%s" % flat(doc.get("outcome")))
     print("cost_usd=%s" % num(cost.get("model_usd")))
-    routes = cost.get("route_by") or {}
-    total = 0.0
-    for name, usd in sorted(routes.items()):
-        total += float(usd or 0)
-        print("route\t%s\t%s" % (flat(name), num(usd)))
-    print("route_by_total=%s" % num(total))
+    routes = cost.get("route_by")
+    if routes is None:
+        print("route_by_total=-")
+    else:
+        total = 0.0
+        for name, usd in sorted(routes.items()):
+            total += float(usd or 0)
+            print("route\t%s\t%s" % (flat(name), num(usd)))
+        print("route_by_total=%s" % num(total))
     # Columns: 2 name, 3 model, 4 model_usd, 5 model_notional_usd,
     # 6 credential, 7 served_by, 8 calls, 9 duration_s.
     for stage in doc.get("stages") or []:
@@ -482,7 +497,9 @@ said() { # said KEY
 # ---------------------------------------------------------------- the guards
 guard_xtrace() {
   if [ "$XTRACE_AT_START" = yes ]; then
-    stop "this shell is tracing (bash -x). Run it without -x: bash scripts/live-checks/check330.sh --sandbox <a sandbox checkout> --run <ref> --contrast <ref> — the check prints its own RESULT block, so a trace is not needed to report a failure, and a trace of this run would copy a run's own log output to the terminal"
+    local why="this shell is tracing (bash -x). Run it without -x: bash scripts/live-checks/check330.sh --sandbox <a sandbox checkout> --run <ref> --contrast <ref> — the check prints its own RESULT block, so a trace is not needed to report a failure, and a trace of this run would copy a run's own log output to the terminal"
+    fact xtrace FAIL "$why"
+    stop "$why"
   fi
   fact xtrace PASS "this shell is not tracing, so no trace of this run can copy a run's own log output"
 }
@@ -496,7 +513,8 @@ guard_agent_session() {
     if [ -n "${!name:-}" ]; then marker="$name"; break; fi
   done
   if [ -n "$marker" ]; then
-    stop "${marker} is set, so this is a coding agent's session: Check 330 is yours to run at your own terminal, on the sandbox only, and no agent runs any step of it"
+    fact agent-session FAIL "$marker is set, so this is a coding agent's session: Check 330 is yours to run at your own terminal, on the sandbox only, and no agent runs any step of it"
+    stop "$marker is set, so this is a coding agent's session: Check 330 is yours to run at your own terminal, on the sandbox only, and no agent runs any step of it"
   fi
   fact agent-session PASS "no coding agent's marker is set (CLAUDECODE and the like): this is your own session, which is the one this check is written for"
 }
@@ -625,9 +643,12 @@ step_runs() {
 }
 
 # read_record KEY TAG PREFIX: the run's own record and launch, out of the runs
-# bucket, read exactly as the owner would read them. A failure is recorded in
-# the PREFIX's own problem variables — never as a row of its own — so the
-# criterion rows that stand on it say what they could not read.
+# bucket, read exactly as the owner would read them. TAG names the files the
+# read is kept in and PREFIX (upper case) the problem variables a failure is
+# recorded in — never as a row of its own — so the
+# criterion rows that stand on it say what they could not read. It returns
+# success either way: a read that did not answer is the variable's own business,
+# and a nonzero return would end the run as this check's internal error.
 read_record() { # read_record KEY TAG PREFIX
   local key=$1 tag=$2 prefix=$3 problem=""
   run_bounded "$TIMEOUT" "$tag-record" "$SANDBOX" gcloud storage cat "gs://$BUCKET/runs/$key/result.json" --project="$P"
@@ -639,16 +660,16 @@ read_record() { # read_record KEY TAG PREFIX
     problem="the record of run $key is not a document this check can read: $SCRATCH/$tag-record.out"
   fi
   if [ -n "$problem" ]; then
-    printf -v "${prefix}_record_problem" '%s' "$problem"
-    return 1
+    printf -v "${prefix}_RECORD_PROBLEM" '%s' "$problem"
+    return 0
   fi
   run_bounded "$TIMEOUT" "$tag-launch" "$SANDBOX" gcloud storage cat "gs://$BUCKET/runs/$key/launch.json" --project="$P"
   if [ "$BOUNDED_TIMED_OUT" = yes ]; then
-    printf -v "${prefix}_launch_problem" '%s' "the launch record of run $key did not answer within ${TIMEOUT}s"
+    printf -v "${prefix}_LAUNCH_PROBLEM" '%s' "the launch record of run $key did not answer within ${TIMEOUT}s"
   elif [ "$BOUNDED_STATUS" -ne 0 ]; then
-    printf -v "${prefix}_launch_problem" '%s' "the launch record of run $key could not be read from gs://$BUCKET/runs/$key/launch.json (exit $BOUNDED_STATUS): $(said "$tag-launch")"
+    printf -v "${prefix}_LAUNCH_PROBLEM" '%s' "the launch record of run $key could not be read from gs://$BUCKET/runs/$key/launch.json (exit $BOUNDED_STATUS): $(said "$tag-launch")"
   elif ! read_json launch "$SCRATCH/$tag-launch.out" "$SCRATCH/$tag-launch.txt"; then
-    printf -v "${prefix}_launch_problem" '%s' "the launch record of run $key is not a document this check can read: $SCRATCH/$tag-launch.out"
+    printf -v "${prefix}_LAUNCH_PROBLEM" '%s' "the launch record of run $key is not a document this check can read: $SCRATCH/$tag-launch.out"
   fi
   return 0
 }
@@ -656,7 +677,8 @@ read_record() { # read_record KEY TAG PREFIX
 # read_calls EXEC TAG PREFIX: the gateway's `model call` lines for one
 # execution, with the CLI's own filter (internal/backend/gcp's executionFilter)
 # and its own scope (the installation's log view when there is one, the
-# project's default log bucket otherwise).
+# project's default log bucket otherwise). Like read_record it returns success
+# either way and leaves the reason in the caller's own variable.
 read_calls() { # read_calls EXEC TAG PREFIX
   local exec=$1 tag=$2 prefix=$3
   local region job name scope=(--resource-names="projects/$P")
@@ -664,24 +686,24 @@ read_calls() { # read_calls EXEC TAG PREFIX
   job=$(printf '%s' "$exec" | cut -d/ -f6)
   name=$(printf '%s' "$exec" | cut -d/ -f8)
   if [ -z "$region" ] || [ -z "$job" ] || [ -z "$name" ]; then
-    printf -v "${prefix}_calls_problem" '%s' "the run's execution '$exec' is not projects/<project>/locations/<region>/jobs/<job>/executions/<name>, so there is no log to read: a run from before the launcher recorded an execution has none"
-    return 1
+    printf -v "${prefix}_CALLS_PROBLEM" '%s' "the run's execution '$exec' is not projects/<project>/locations/<region>/jobs/<job>/executions/<name>, so there is no log to read: a run from before the launcher recorded an execution has none"
+    return 0
   fi
   [ -z "$LOG_VIEW" ] || scope=(--resource-names="$LOG_VIEW")
   local filter
   filter="resource.type=\"cloud_run_job\" AND resource.labels.location=\"$region\" AND resource.labels.job_name=\"$job\" AND labels.\"run.googleapis.com/execution_name\"=\"$name\" AND jsonPayload.message=\"model call\""
   run_bounded "$TIMEOUT" "$tag-calls" "$SANDBOX" gcloud logging read "${scope[@]}" --limit=5000 --freshness=30d --format=json "$filter"
   if [ "$BOUNDED_TIMED_OUT" = yes ]; then
-    printf -v "${prefix}_calls_problem" '%s' "gcloud logging read of execution $name did not answer within ${TIMEOUT}s"
-    return 1
+    printf -v "${prefix}_CALLS_PROBLEM" '%s' "gcloud logging read of execution $name did not answer within ${TIMEOUT}s"
+    return 0
   fi
   if [ "$BOUNDED_STATUS" -ne 0 ]; then
-    printf -v "${prefix}_calls_problem" '%s' "gcloud logging read of execution $name failed (exit $BOUNDED_STATUS): $(said "$tag-calls") — no access, a view that is not there and the wrong project are the three usual reasons"
-    return 1
+    printf -v "${prefix}_CALLS_PROBLEM" '%s' "gcloud logging read of execution $name failed (exit $BOUNDED_STATUS): $(said "$tag-calls") — no access, a view that is not there and the wrong project are the three usual reasons"
+    return 0
   fi
   if ! read_json calls "$SCRATCH/$tag-calls.out" "$SCRATCH/$tag-calls.txt"; then
-    printf -v "${prefix}_calls_problem" '%s' "gcloud logging read of execution $name answered something this check cannot read as a log: $SCRATCH/$tag-calls.out"
-    return 1
+    printf -v "${prefix}_CALLS_PROBLEM" '%s' "gcloud logging read of execution $name answered something this check cannot read as a log: $SCRATCH/$tag-calls.out"
+    return 0
   fi
   return 0
 }
@@ -857,6 +879,7 @@ step_slice_b() {
     for key in review-launch review-env review-log; do
       fact "$key" INFO "slice B was not named (no --review), so the cloud Anthropic-key path was not read: it needs a run you launched with fugaro review --pr N (or fugaro run --pr N --recipe review-only) on an installation that publishes the pairing's sentinel"
     done
+    fact review-run INFO "slice B was not named (no --review), so no review run was resolved and the cloud Anthropic-key path was not read"
     return 0
   fi
   if [ -z "$REVIEW_ID" ]; then
@@ -952,14 +975,15 @@ step_slice_b() {
 }
 
 step_verdict() {
-  local facts status key
+  local facts status key keys
   facts=$(cat "$FACTS_FILE" 2>/dev/null || true)
   status=0
   for key in budget log-coder log-review review-dollars route-by contrast review-launch review-env review-log; do
     if printf '%s\n' "$facts" | grep -q "^$key|FAIL|"; then status=1; fi
   done
-  if [ -n "$UNMEASURED_KEYS" ]; then
-    fact unmeasured FAIL "these rows could not be READ at all: $UNMEASURED_KEYS — a reading nobody took, which is not a finding about the api-key review and not a pass either"
+  keys=$(awk '!seen[$0]++' "$UNMEASURED_FILE" 2>/dev/null | paste -sd, - 2>/dev/null || true)
+  if [ -n "$keys" ]; then
+    fact unmeasured FAIL "these rows could not be READ at all: $keys — a reading nobody took, which is not a finding about the api-key review and not a pass either"
     status=2
   fi
   CRITERIA_STATUS=$status
@@ -1152,16 +1176,22 @@ parse_args() {
   [ -n "$SANDBOX" ] || die "--sandbox is required, and it has to be a SANDBOX repository's checkout: the project and every run this check reads come from there. usage: $USAGE"
   [ -n "$RUN_REF" ] || die "--run is required: slice A's task, the api-key run whose review class this check reads. usage: $USAGE"
   [ -n "$CONTRAST_REF" ] || die "--contrast is required: the same task run again with a review stage account published. The two runs side by side are what this check is for, and one of them alone measures half of it. usage: $USAGE"
-  case "/$RUN_REF/$CONTRAST_REF/$REVIEW_REF/" in
-  *//*/*/*/*) die "a run reference is <slug>/<run-id> or a bare run id, and one of the three given carries two slashes. usage: $USAGE" ;;
-  esac
+  local ref
+  for ref in "$RUN_REF" "$CONTRAST_REF" "$REVIEW_REF"; do
+    case "$ref" in
+    */*/*) die "a run reference is <slug>/<run-id> or a bare run id, and '$ref' carries two slashes. usage: $USAGE" ;;
+    esac
+  done
 }
 
 main() {
   need_tools
   parse_args "$@"
-  guard_xtrace
+  # The scratch directory first, so a refusal below is a row of the block: every
+  # guard stops the run, and a row recorded before there is anywhere to record it
+  # would leave the reader with a key that reads "not reached" for no reason.
   scratch_up
+  guard_xtrace
   write_reader
   say "checking $SANDBOX: slice A $RUN_REF against $CONTRAST_REF${REVIEW_REF:+, slice B $REVIEW_REF}"
   if [ -n "$DRY_RUN" ]; then
@@ -1184,20 +1214,21 @@ main() {
   step_policy
   step_runs
   if [ -n "$RUN_ID" ]; then
-    read_record "$RUN_KEY" run run
-    read_calls "$RUN_EXEC" run run
+    read_record "$RUN_KEY" run RUN
+    read_calls "$RUN_EXEC" run RUN
   fi
   if [ -n "$CONTRAST_ID" ]; then
-    read_record "$CONTRAST_KEY" contrast contrast
+    read_record "$CONTRAST_KEY" contrast CONTRAST
   fi
   if [ -n "$REVIEW_ID" ]; then
-    read_record "$REVIEW_KEY" review-run review
-    read_calls "$REVIEW_EXEC" review-run review
+    read_record "$REVIEW_KEY" review-run REVIEW
+    read_calls "$REVIEW_EXEC" review-run REVIEW
   fi
   step_slice_a
   step_slice_b
   step_verdict
   print_owner_steps
+  REACHED_END=yes
 }
 
 trap finish EXIT
