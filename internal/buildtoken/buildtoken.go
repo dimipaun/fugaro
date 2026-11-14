@@ -41,9 +41,9 @@ type Request struct {
 	// project has one build identity (B5, rule 8), so the identity alone cannot
 	// tell two of its builds apart: a Bitbucket pairing keyed on the identity
 	// would be replaced by the second build (and the first's clone refused
-	// partway) or added to (and either build reach the other entry's
-	// repositories). The pairing is therefore keyed on the identity and this, and
-	// every request names its build (F19, rule 2).
+	// partway) or added to (and then either build reaches the other entry's
+	// repositories). The pairing is therefore keyed on the identity and this
+	// build, and every request names its build (F19, rule 2).
 	BuildID string `json:"build_id"`
 	// Provider is the git provider the credential is minted at
 	// (gitprov.KindGitHub or gitprov.KindBitbucket), and it decides the answer's
