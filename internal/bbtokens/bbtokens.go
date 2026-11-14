@@ -21,7 +21,6 @@ package bbtokens
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
@@ -37,9 +36,10 @@ type Name string
 
 // LegacyName is the document key of the one untyped token an installation that
 // predates the family holds. It takes part in selection as an implicit record
-// whose coverage is the operator's allow_data_to list, ranked after every typed
-// record (R3, R14), so the legacy key ranks last and an installation that never
-// stored a typed token behaves as it did before this work.
+// whose coverage is the node's bitbucket_token.allow_repos list — the
+// operator's allow_data_to list as the node carries it — ranked after every
+// typed record (R3, R14), so the legacy key ranks last and an installation that
+// never stored a typed token behaves as it did before this work.
 const LegacyName Name = "bitbucket-token"
 
 // Type is what a token is scoped to (R1). It is redundant for matching — the
@@ -55,8 +55,9 @@ const (
 	TypeProject Type = "project"
 	// TypeWorkspace is a workspace access token, covering a whole workspace.
 	TypeWorkspace Type = "workspace"
-	// TypeUntyped is the legacy bitbucket-token key, whose coverage is the
-	// operator's allow_data_to list (R3).
+	// TypeUntyped is the legacy bitbucket-token key, whose coverage is the node's
+	// bitbucket_token.allow_repos list, the operator's allow_data_to list as the
+	// node carries it (R3).
 	TypeUntyped Type = ""
 )
 
@@ -68,12 +69,20 @@ type Record struct {
 	// Type is the token's scope: TypeRepo, TypeProject, TypeWorkspace, or
 	// TypeUntyped for the implicit record the legacy key is (R3).
 	Type Type
-	// Coverage are the patterns the token may serve, in the LOCAL CONFIG's
-	// allow_data_to spelling and not the node's: two segments, workspace/name,
-	// written with the characters a repository name is made of and with the
-	// workspace literal, exactly as config's invalidAllowDataToEntry holds an
-	// allow_data_to entry (D464). T3 is what provider-qualifies them into the
-	// node's three-segment allow_repos spelling.
+	// Coverage are the patterns the token may serve, in the ONE spelling a
+	// record has and the node has: provider-qualified, matched against a
+	// canonical repository with projectpolicy.MatchRepo, and held to
+	// projectpolicy.ValidBitbucketTokenCoverage ("bitbucket/acme/app",
+	// "bitbucket/acme/*").
+	//
+	// The node's spelling and not the local config's, because the service reads
+	// only the node: the record the legacy key becomes IS that node's
+	// bitbucket_token.allow_repos list (R3), so a record spelled the config's
+	// two-segment way (D464) would be one the service could neither build the
+	// legacy record in nor match a canonical repository with. The operator's own
+	// allow_data_to entry keeps its two-segment spelling in the config, and
+	// whoever turns it into a record — the node's derivation (T3) — qualifies it
+	// with the provider on the way (R5).
 	//
 	// It says which token CAN serve a repository and never widens what a run
 	// may reach, which stays the operator's allow_data_to (D2354).
@@ -93,6 +102,14 @@ type Record struct {
 // Validate reports a record whose type and coverage disagree, which is refused
 // wherever a record is written or read rather than resolved in the selector's
 // favour (R1).
+//
+// The coverage patterns themselves are held to the node's own rule for a
+// Bitbucket credential's reach, projectpolicy.ValidBitbucketTokenCoverage, and
+// not to a copy of it here: the record the service builds for the legacy key IS
+// the node's bitbucket_token.allow_repos list (R3), so one rule has to accept
+// both, or an installation holding only the legacy key is served by no token at
+// all (F14). What this adds on top is R1's type: which of those reaches each
+// type states.
 func (r Record) Validate() error {
 	switch r.Type {
 	case TypeRepo:
@@ -100,10 +117,11 @@ func (r Record) Validate() error {
 			return fmt.Errorf("the repository token %s covers no repository", r.Name)
 		}
 		for _, c := range r.Coverage {
-			if _, name, err := coverageSegments(c); err != nil {
-				return fmt.Errorf("the repository token %s covers %q, which is not a workspace/repo pattern: %w", r.Name, c, err)
-			} else if strings.Contains(name, "*") {
-				return fmt.Errorf("the repository token %s covers %q, which names more than one repository; a wildcard segment is a workspace token", r.Name, c)
+			if err := projectpolicy.ValidBitbucketTokenCoverage(c); err != nil {
+				return fmt.Errorf("the repository token %s covers %q: %w", r.Name, c, err)
+			}
+			if strings.Contains(c, "*") {
+				return fmt.Errorf("the repository token %s covers %q, which names more than one repository; a wildcard is a workspace token's form", r.Name, c)
 			}
 		}
 		if r.ProjectUUID != "" {
@@ -124,8 +142,14 @@ func (r Record) Validate() error {
 			return fmt.Errorf("the project token %s names no project UUID, and a project key is display only", r.Name)
 		}
 	case TypeUntyped:
+		// An EMPTY list is accepted here and nowhere else. The legacy record is
+		// implicit: its coverage is whatever the node's block holds (R3), and a
+		// node with no block at all holds nothing — an installation that never
+		// named a repository has to keep working with no step (F14), so a record
+		// built from that node must read as "this token reaches nothing" rather
+		// than as a record the reader refuses.
 		for _, c := range r.Coverage {
-			if _, _, err := coverageSegments(c); err != nil {
+			if err := projectpolicy.ValidBitbucketTokenCoverage(c); err != nil {
 				return fmt.Errorf("the untyped token %s covers %q: %w", r.Name, c, err)
 			}
 		}
@@ -138,53 +162,23 @@ func (r Record) Validate() error {
 	return nil
 }
 
-// coversOneWorkspace is the form a project and a workspace token share: the
-// patterns all name the whole of one workspace, and the UUID is what tells the
-// two apart.
+// coversOneWorkspace is the form a project and a workspace token share: every
+// pattern names the whole of one workspace, and the UUID is what tells the two
+// apart. One workspace and not several, because a wildcard owner is outside the
+// rule already: the literal owner segment is the workspace.
 func coversOneWorkspace(r Record) error {
 	if len(r.Coverage) == 0 {
 		return fmt.Errorf("the %s token %s covers no workspace", r.Type, r.Name)
 	}
 	for _, c := range r.Coverage {
-		if _, name, err := coverageSegments(c); err != nil {
-			return fmt.Errorf("the %s token %s covers %q, which is not a workspace/* pattern: %w", r.Type, r.Name, c, err)
-		} else if name != "*" {
-			return fmt.Errorf("the %s token %s covers %q, which does not name the whole workspace", r.Type, r.Name, c)
+		if err := projectpolicy.ValidBitbucketTokenCoverage(c); err != nil {
+			return fmt.Errorf("the %s token %s covers %q: %w", r.Type, r.Name, c, err)
+		}
+		if segs := strings.Split(c, "/"); segs[len(segs)-1] != "*" || len(segs) != 3 {
+			return fmt.Errorf("the %s token %s covers %q, which does not name the whole of one workspace (\"bitbucket/workspace-a/*\")", r.Type, r.Name, c)
 		}
 	}
 	return nil
-}
-
-// coverageSegmentRE is one segment of a coverage pattern: the characters a
-// workspace or a repository name is made of, and "*" as a wildcard inside the
-// segment. It is character for character config's own repoPatternSegmentRE
-// (internal/config/providers.go), which is the copy an allow_data_to entry —
-// the list a record's coverage is written beside in the operator's config — is
-// held to.
-var coverageSegmentRE = regexp.MustCompile(`^[A-Za-z0-9._*-]+$`)
-
-// coverageSegments splits one coverage entry into its two segments, and reports
-// an entry that is not one. It is D464's rule for an allow_data_to entry, the
-// spelling a record's coverage is written in: exactly two segments of the
-// characters above, neither empty nor a dot-path, and a LITERAL workspace —
-// a wildcard workspace would make one token reach every workspace, which is the
-// widening the operator's own list refuses. A wildcard *name* segment is left
-// to the caller, because it is what tells a workspace token from a repository
-// one.
-func coverageSegments(c string) (workspace, name string, err error) {
-	segs := strings.Split(c, "/")
-	if len(segs) != 2 {
-		return "", "", fmt.Errorf("%q is not a coverage pattern of the form workspace/name", c)
-	}
-	for _, s := range segs {
-		if s == "" || s == "." || s == ".." || !coverageSegmentRE.MatchString(s) {
-			return "", "", fmt.Errorf("%q is not a coverage pattern of the form workspace/name", c)
-		}
-	}
-	if strings.Contains(segs[0], "*") {
-		return "", "", fmt.Errorf("%q names a wildcard workspace, which reaches every workspace rather than one", c)
-	}
-	return segs[0], segs[1], nil
 }
 
 // MatchesProject reports whether the record is the project token for the UUID
@@ -267,8 +261,10 @@ type BundleTokens interface {
 // of a request is never half-applied.
 type Snapshot struct {
 	// Policy is the shared policy node the request was admitted by. It is the
-	// whole node rather than its bitbucket_token block alone, because the
-	// legacy untyped record's coverage IS that block's allow_repos list (R3).
+	// whole node rather than its bitbucket_token block alone, because the block
+	// is not a separate document to read: the legacy untyped record's coverage IS
+	// that block's allow_repos list (R3), already in the one spelling a Record's
+	// coverage is in.
 	Policy *projectpolicy.Policy
 	// Bundle is the bundle's tokens, read once with the policy.
 	Bundle BundleTokens

@@ -25,24 +25,37 @@ contract can be written on both sides at once and re-joined in I1.
 `Record` is the operator's own statement about one token: `Name` (the document key), `Type`, `Coverage`, `ProjectUUID`,
 `ProjectKey` and `Expires`. It holds no value; the value is the bundle's and is found by `Name`.
 
-**One spelling of coverage.** A coverage entry is written in the **local config's `allow_data_to` spelling** (D464), and
-not in the policy node's: exactly two segments, `workspace/name`, each of the characters a workspace or repository name is
-made of (`A-Za-z0-9._*-`, config's own `repoPatternSegmentRE`), with the **workspace segment literal** — a wildcard
-workspace would make one token reach every workspace, which is the widening the operator's own list refuses. It is
-character for character the rule `config`'s `invalidAllowDataToEntry` applies to an `allow_data_to` entry, so a token the
-operator could describe there is a token they can describe here. T3 is what provider-qualifies these two segments into the
-node's three-segment `allow_repos` spelling; the node never carries this one and a record never carries that one.
+**One spelling of coverage.** A coverage entry is written in the **policy node's** spelling and not the local config's:
+provider-qualified, as in `bitbucket/workspace-a/repo-a` or `bitbucket/workspace-a/*`, which is what `MatchRepo` compares
+against a canonical repository. It is held to **`projectpolicy.ValidBitbucketTokenCoverage`**, the node's own rule for one
+Bitbucket credential's reach: `ValidPattern` (a provider segment that is a real git provider kind, at least three segments,
+lower-case repository characters, no `.git` suffix, at most four wildcards, `MaxPatternLen`) plus the three narrowings the
+node's `bitbucket_token` block applies to an entry of `allow_repos` — not the bare `*`, the first segment `bitbucket`, a
+**literal owner segment** (a wildcard owner would let one credential reach every workspace, the widening D464 refuses) and
+at most the two wildcards dc73's own bound allows.
 
-`Validate` refuses a record whose type and coverage disagree (R1):
+It is the node's spelling and not the config's on purpose. The credential is forwarded by the credentials service, which
+holds the node and never the operator's local config: the record the legacy `bitbucket-token` key becomes **is** that
+node's `bitbucket_token.allow_repos` list (R3), so a record spelled the config's two-segment `allow_data_to` way (D464)
+would be one the service could neither build the legacy record in nor match a canonical repository with. The operator's
+`allow_data_to` entry keeps its own two-segment spelling in the local config; the node's derivation (T3) qualifies it with
+the provider on the way, and the record travels in that qualified form.
 
-- **`repo`** — every coverage entry is exactly `workspace/repo`, with no `*` anywhere: a repository token covers the
-  repositories it was created for, and a wildcard segment is a workspace token's form. No project UUID.
-- **`workspace`** — every entry is `workspace/*`: a literal workspace and a bare `*` name segment. No project UUID.
-- **`project`** — the same `workspace/*` form **plus** a non-empty `ProjectUUID`. The key is display only; a UUID cannot
-  be renamed and a key can.
-- **untyped** (`TypeUntyped`, the empty string) — the legacy `bitbucket-token` key, whose coverage is the operator's
-  `allow_data_to` list **as written**: any entry in the spelling above, including a wildcard inside the name segment
-  (`acme/api-*`), and no project UUID.
+`Validate` refuses a record whose type and coverage disagree (R1) — the same three forms R1 names, read in that spelling,
+since a Bitbucket canonical repository is `bitbucket/<workspace>/<repo>`:
+
+- **`repo`** — every coverage entry names one repository (`bitbucket/workspace-a/repo-a`), with no `*` anywhere: a
+  repository token covers the repositories it was created for, and a wildcard is a workspace token's form. No project UUID.
+- **`workspace`** — every entry is `bitbucket/workspace-a/*`: the literal workspace and a bare `*` name segment. No
+  project UUID.
+- **`project`** — the same `bitbucket/workspace-a/*` form **plus** a non-empty `ProjectUUID`. The key is display only; a
+  UUID cannot be renamed and a key can.
+- **untyped** (`TypeUntyped`, the empty string) — the legacy `bitbucket-token` key, whose coverage is the node's
+  `allow_repos` list as written: any entry the shared rule accepts, including a wildcard inside the name segment
+  (`bitbucket/workspace-a/api-*`), and no project UUID. An **empty** list is the one case only this type accepts: the
+  record is implicit, a node with no `bitbucket_token` block holds nothing, and an installation that named no repository
+  has to keep working with no step (F14) — so it reads as a token that reaches nothing rather than as a load error. Every
+  typed record refuses an empty coverage: a token the operator named and gave no reach is not a token.
 
 `Type` is redundant for matching and is stored for display and for the add-time check. Coverage states which token **can**
 serve a repository; it never replaces `allow_data_to`, which stays the operator's authorization (D2354).
@@ -101,9 +114,16 @@ read off the error with `errors.As`, never off its text.
 ## The node's key
 
 The node gains one top-level key, `projectpolicy.BitbucketTokensKey` (`bitbucket_tokens`), whose value is
-`BitbucketTokens{Entries: []BitbucketTokenNode{...}}`: per token, the document key, the type, the coverage patterns
-(provider-qualified as `allow_repos` entries are) and the identity UUID — never a value and never a secret version. A
-project that names no typed token publishes no key at all.
+`BitbucketTokens{Entries: []BitbucketTokenNode{...}}`: per token, the document key, the type, the coverage patterns — in
+the same provider-qualified spelling a `Record` carries, held to the same `ValidBitbucketTokenCoverage`, so a record read
+off the node validates as it stands — and the identity UUID, and never a value and never a secret version. A project that
+names no typed token publishes no key at all.
+
+The rule lives in `projectpolicy` with the shape, and not in the package that holds the record, so that one rule holds both
+sides of R3: a rule the node accepted and the record refused would drop the implicit legacy record of an installation whose
+node is fine, and one the record accepted and the node refused would publish a node the next run of the project cannot read
+back. `bitbucket_token`'s own reader states the same narrowings for its list today; that list is the legacy record's
+coverage, so the two spellings and the two rules are one thing stated in two places, and T3 owns that file.
 
 `bitbucket_token` and `Version` are untouched (R5). A top-level key is the right level because every unknown **member** of
 the `bitbucket_token` block is refused by its reader while every unknown **top-level** key is tolerated by a runner of the

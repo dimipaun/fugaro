@@ -1,7 +1,14 @@
 # Bitbucket token types in the credential proxy
 
-**Status: plan only; nothing is implemented; no task approved.** Owner: the project owner (the spec names none).
-Date: 2026-11-13. Checked against `origin/main` at `abd0a60af`.
+**Status (2026-11-14): one task of the plan below is written — C1, the token-store contract, the four files its Files line
+names (`internal/bbtokens/bbtokens.go`, `stub.go`, `bbtokens_test.go` and `stub_test.go`) with `internal/projectpolicy/tokens_shape.go`
+and `docs/bitbucket-token-types/contract.md` besides, on the branch `fugaro/20261113-201001-7a01`, with its red step run; the
+plan is otherwise plan only, and every other task of it is written by the runs launched beside this one.** The owner approved
+every task of this plan (2026-11-13, PR #2586), and C1 is the contract T3, T4, T8, T13 and T16 are written against. Owner: the
+project owner (the spec names none). Date: 2026-11-14. Checked against `origin/main` at `a7921b57`.
+
+*The status as first written, kept:* **Status: plan only; nothing is implemented; no task approved.** Owner: the project
+owner (the spec names none). Date: 2026-11-13. Checked against `origin/main` at `abd0a60af`.
 
 The spec: the credential service's Bitbucket proxy accepts any mix of repository, project and workspace access tokens,
 records each token's coverage, picks the narrowest covering token per request, checks a token when it is added, and
@@ -11,8 +18,9 @@ backs off on rate limits.
 | --- | --- |
 | [spec.md](spec.md) | The spec as received, byte for byte (no typo was fixed). **Where [reconciliation.md](reconciliation.md) disagrees with it, the reconciliation wins** |
 | [reconciliation.md](reconciliation.md) | The spec against the code and against `docs/bitbucket-credentials`, `docs/bitbucket-workspace-token` and `docs/secrets-brokering`: assumptions, findings F1–F23, decisions D2350–D2356 with the owner's answers, resolutions R1–R14, open items O1–O7, UNVERIFIED U1–U8 |
-| [implementation-plan.md](implementation-plan.md) | Five slices, 19 tasks (one contract, one integration task) and one anticipated change request, levels, critical path, shared-files table. Nothing in it is approved |
+| [implementation-plan.md](implementation-plan.md) | Five slices, 19 tasks (one contract, one integration task) and one anticipated change request, levels, critical path, shared-files table. The owner approved every task of it (2026-11-13, PR #2586) |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's tasks as the graph `fugaro plan graph` reads |
+| [contract.md](contract.md) | The token-store contract C1 states: what each side owes, the record, the status, the snapshot, the refusals and the node's key |
 
 ## Number blocks taken
 

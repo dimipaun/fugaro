@@ -1,5 +1,10 @@
 package projectpolicy
 
+import (
+	"fmt"
+	"strings"
+)
+
 // The node's bitbucket_tokens key (R5) and the identity set the Bitbucket
 // adapter compares a comment's author against (F20). Both are declared here
 // rather than in the package that holds, checks and forwards a token, so that
@@ -29,12 +34,12 @@ type BitbucketTokenNode struct {
 	Name string `json:"name"`
 	// Type is the record's own type: repo, project or workspace (R1).
 	Type string `json:"type"`
-	// Coverage are the patterns the token may serve, in the NODE's spelling:
-	// provider-qualified and three-segment, exactly the way allow_repos entries
-	// are and matched with MatchRepo (D464). It is the record's own two-segment
-	// workspace/name coverage with the provider added by T3's derivation, and
-	// never a third spelling: the record's is the local config's allow_data_to
-	// form and this is the one the node matches canonical repositories with.
+	// Coverage are the patterns the token may serve, in the node's spelling:
+	// provider-qualified and matched against a canonical repository with
+	// MatchRepo, held to ValidBitbucketTokenCoverage below ("bitbucket/acme/app",
+	// "bitbucket/acme/*"). It is the same spelling a Record's Coverage is in, so
+	// a record read off this node validates as it stands (R5, and the record's
+	// own comment for why one spelling and not two).
 	Coverage []string `json:"coverage"`
 	// Identity is the account UUID GET /2.0/user answered for the token, and
 	// it is empty for a repository token, which that endpoint refuses (R14,
@@ -48,6 +53,45 @@ type BitbucketTokenNode struct {
 // token keeps a node byte for byte what it was before this key existed.
 type BitbucketTokens struct {
 	Entries []BitbucketTokenNode `json:"entries"`
+}
+
+// ValidBitbucketTokenCoverage checks one coverage pattern of a Bitbucket token:
+// the reach of ONE credential, in the node's provider-qualified spelling.
+//
+// It is ValidPattern — the rule this package decodes every allow_repos entry
+// with — plus the three narrowings the bitbucket_token block's reader applies
+// to an entry of its own list (validBitbucketTokenBlock): the bare "*" that
+// reaches every repository of every provider, a first segment that is not
+// "bitbucket", a wildcard owner, which would let one credential reach every
+// workspace, and more than two wildcards, dc73's own bound on one
+// allow_data_to entry. A project's enrollment may be as wide as "*"; a
+// credential's reach may not, and that difference is the whole reason these
+// narrowings exist rather than ValidPattern alone.
+//
+// It is exported, and it is here rather than in the package that holds the
+// record, because the record and the node must be held to ONE rule: the legacy
+// untyped record's coverage IS this block's allow_repos list (R3), so a rule
+// the block accepts and the record refuses would drop an installation that
+// holds only the legacy key, and one the record accepts and the block refuses
+// would publish a node the next run cannot read back.
+func ValidBitbucketTokenCoverage(pattern string) error {
+	if err := ValidPattern(pattern); err != nil {
+		return err
+	}
+	if pattern == "*" {
+		return fmt.Errorf("%q reaches every repository of every provider, and a Bitbucket token reaches one workspace's: name the workspace (\"bitbucket/workspace-a/*\")", pattern)
+	}
+	segs := strings.Split(pattern, "/")
+	if segs[0] != "bitbucket" {
+		return fmt.Errorf("%q does not name the bitbucket provider: every pattern of a Bitbucket token is a bitbucket repository (\"bitbucket/workspace-a/repo-a\"), and MatchRepo compares the first segment, so neither another provider nor \"*\" would ever admit one", pattern)
+	}
+	if strings.Contains(segs[1], "*") {
+		return fmt.Errorf("%q has a wildcard owner, and the owner segment must be literal: a wildcard owner would let this one credential reach every workspace, so name the workspace", pattern)
+	}
+	if n := strings.Count(pattern, "*"); n > maxBitbucketTokenStars {
+		return fmt.Errorf("%q has %d \"*\"; at most %d are allowed (a pattern with more is a typo, not an intent)", pattern, n, maxBitbucketTokenStars)
+	}
+	return nil
 }
 
 // BitbucketTokenIdentities is the set of account UUIDs Fugaro's own Bitbucket

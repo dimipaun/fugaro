@@ -7,6 +7,12 @@ import "testing"
 // matching, so a record that states one scope and covers another is a record
 // two sides would read differently — refused where it is written and where it
 // is read, never resolved in the selector's favour.
+//
+// Every coverage here is spelled the one way a record has it: the node's
+// provider-qualified form. The config's own two-segment allow_data_to spelling
+// is refused (below), because a record spelled that way is one the service can
+// neither build the legacy key's record in (R3) nor match a canonical
+// repository with.
 func TestContractRecordForms(t *testing.T) {
 	agree := []struct {
 		why string
@@ -14,26 +20,30 @@ func TestContractRecordForms(t *testing.T) {
 	}{
 		{
 			why: "a repository token covers one workspace/repo",
-			rec: Record{Name: "bitbucket-token--repo", Type: TypeRepo, Coverage: []string{"acme/app"}},
+			rec: Record{Name: "bitbucket-token--repo", Type: TypeRepo, Coverage: []string{"bitbucket/acme/app"}},
 		},
 		{
 			why: "a repository token may cover several repositories",
-			rec: Record{Name: "bitbucket-token--pair", Type: TypeRepo, Coverage: []string{"acme/app", "acme/api"}},
+			rec: Record{Name: "bitbucket-token--pair", Type: TypeRepo, Coverage: []string{"bitbucket/acme/app", "bitbucket/acme/api"}},
 		},
 		{
 			why: "a workspace token covers the whole of one workspace",
-			rec: Record{Name: "bitbucket-token--ws", Type: TypeWorkspace, Coverage: []string{"acme/*"}},
+			rec: Record{Name: "bitbucket-token--ws", Type: TypeWorkspace, Coverage: []string{"bitbucket/acme/*"}},
 		},
 		{
 			why: "a project token covers one workspace and names its project",
 			rec: Record{
 				Name: "bitbucket-token--proj", Type: TypeProject,
-				Coverage: []string{"acme/*"}, ProjectUUID: "proj-uuid", ProjectKey: "PROJ",
+				Coverage: []string{"bitbucket/acme/*"}, ProjectUUID: "proj-uuid", ProjectKey: "PROJ",
 			},
 		},
 		{
-			why: "the legacy key is untyped and covers whatever allow_data_to says",
-			rec: Record{Name: LegacyName, Type: TypeUntyped, Coverage: []string{"acme/app", "acme/*"}},
+			why: "the legacy key is untyped and covers the block's allow_repos list",
+			rec: Record{Name: LegacyName, Type: TypeUntyped, Coverage: []string{"bitbucket/acme/app", "bitbucket/acme/*"}},
+		},
+		{
+			why: "the legacy key of a node with no bitbucket_token block covers nothing",
+			rec: Record{Name: LegacyName, Type: TypeUntyped},
 		},
 	}
 	for _, tc := range agree {
@@ -48,80 +58,107 @@ func TestContractRecordForms(t *testing.T) {
 	}{
 		{
 			why: "a repository token may not cover a whole workspace",
-			rec: Record{Name: "bitbucket-token--repo", Type: TypeRepo, Coverage: []string{"acme/*"}},
+			rec: Record{Name: "bitbucket-token--repo", Type: TypeRepo, Coverage: []string{"bitbucket/acme/*"}},
 		},
 		{
 			why: "a workspace token may not cover one repository",
-			rec: Record{Name: "bitbucket-token--ws", Type: TypeWorkspace, Coverage: []string{"acme/app"}},
+			rec: Record{Name: "bitbucket-token--ws", Type: TypeWorkspace, Coverage: []string{"bitbucket/acme/app"}},
 		},
 		{
 			why: "a project token may not cover one repository",
 			rec: Record{
 				Name: "bitbucket-token--proj", Type: TypeProject,
-				Coverage: []string{"acme/app"}, ProjectUUID: "proj-uuid",
+				Coverage: []string{"bitbucket/acme/app"}, ProjectUUID: "proj-uuid",
 			},
 		},
 		{
 			why: "a project token with no project UUID matches nothing",
-			rec: Record{Name: "bitbucket-token--proj", Type: TypeProject, Coverage: []string{"acme/*"}},
+			rec: Record{Name: "bitbucket-token--proj", Type: TypeProject, Coverage: []string{"bitbucket/acme/*"}},
 		},
 		{
 			why: "a workspace token naming a project UUID is a project token",
 			rec: Record{
 				Name: "bitbucket-token--ws", Type: TypeWorkspace,
-				Coverage: []string{"acme/*"}, ProjectUUID: "proj-uuid",
+				Coverage: []string{"bitbucket/acme/*"}, ProjectUUID: "proj-uuid",
 			},
 		},
 		{
 			why: "a repository token naming a project UUID is a project token",
 			rec: Record{
 				Name: "bitbucket-token--repo", Type: TypeRepo,
-				Coverage: []string{"acme/app"}, ProjectUUID: "proj-uuid",
+				Coverage: []string{"bitbucket/acme/app"}, ProjectUUID: "proj-uuid",
+			},
+		},
+		{
+			why: "an untyped token naming a project UUID is a project token",
+			rec: Record{
+				Name: LegacyName, Type: TypeUntyped,
+				Coverage: []string{"bitbucket/acme/*"}, ProjectUUID: "proj-uuid",
 			},
 		},
 		{
 			why: "no type outside the three is a token this build can serve",
-			rec: Record{Name: "bitbucket-token--team", Type: "team", Coverage: []string{"acme/*"}},
+			rec: Record{Name: "bitbucket-token--team", Type: "team", Coverage: []string{"bitbucket/acme/*"}},
 		},
 		{
 			why: "a token covering nothing is not a token",
 			rec: Record{Name: "bitbucket-token--empty", Type: TypeWorkspace},
 		},
 		{
-			why: "a wildcard owner is not a coverage pattern (D464)",
-			rec: Record{Name: "bitbucket-token--any", Type: TypeWorkspace, Coverage: []string{"*/*"}},
+			why: "a coverage entry is in the node's provider-qualified spelling",
+			rec: Record{Name: "bitbucket-token--config", Type: TypeRepo, Coverage: []string{"acme/app"}},
 		},
 		{
-			why: "a pattern deeper than owner/name is not a repository",
-			rec: Record{Name: "bitbucket-token--deep", Type: TypeRepo, Coverage: []string{"acme/app/sub"}},
+			why: "a coverage entry is in the node's provider-qualified spelling",
+			rec: Record{Name: LegacyName, Type: TypeUntyped, Coverage: []string{"acme/app", "acme/*"}},
+		},
+		{
+			why: "a wildcard owner reaches every workspace (D464)",
+			rec: Record{Name: "bitbucket-token--anyowner", Type: TypeWorkspace, Coverage: []string{"bitbucket/*/*"}},
+		},
+		{
+			why: "a wildcard owner reaches every workspace (D464)",
+			rec: Record{Name: "bitbucket-token--prefixws", Type: TypeWorkspace, Coverage: []string{"bitbucket/ac*/*"}},
+		},
+		{
+			why: "a wildcard owner reaches every workspace (D464)",
+			rec: Record{Name: "bitbucket-token--prefix", Type: TypeRepo, Coverage: []string{"bitbucket/ac*/app"}},
+		},
+		{
+			why: "another provider's repository is not one this token reaches",
+			rec: Record{Name: "bitbucket-token--other", Type: TypeRepo, Coverage: []string{"github/acme/app"}},
 		},
 		{
 			why: "a bare wildcard is not a coverage pattern",
 			rec: Record{Name: "bitbucket-token--wild", Type: TypeRepo, Coverage: []string{"*"}},
 		},
 		{
-			why: "a wildcard inside the workspace segment reaches every workspace (D464)",
-			rec: Record{Name: "bitbucket-token--prefix", Type: TypeRepo, Coverage: []string{"ac*/app"}},
-		},
-		{
-			why: "a wildcard inside the workspace segment reaches every workspace (D464)",
-			rec: Record{Name: "bitbucket-token--prefixws", Type: TypeWorkspace, Coverage: []string{"ac*/*"}},
+			why: "a pattern without a provider segment is not a coverage pattern",
+			rec: Record{Name: "bitbucket-token--short", Type: TypeRepo, Coverage: []string{"*/*"}},
 		},
 		{
 			why: "four wildcards in a name segment name no repository",
-			rec: Record{Name: "bitbucket-token--stars", Type: TypeRepo, Coverage: []string{"acme/****"}},
+			rec: Record{Name: "bitbucket-token--stars", Type: TypeRepo, Coverage: []string{"bitbucket/acme/****"}},
 		},
 		{
-			why: "a segment carries only the characters a repository name is made of",
-			rec: Record{Name: "bitbucket-token--space", Type: TypeRepo, Coverage: []string{"acme/we b"}},
+			why: "a segment carries only the lower-case characters a repository name is made of",
+			rec: Record{Name: "bitbucket-token--space", Type: TypeRepo, Coverage: []string{"bitbucket/acme/we b"}},
 		},
 		{
-			why: "a segment carries only the characters a repository name is made of",
-			rec: Record{Name: "bitbucket-token--escape", Type: TypeRepo, Coverage: []string{"acme/ap%2Fp"}},
+			why: "a segment carries only the lower-case characters a repository name is made of",
+			rec: Record{Name: "bitbucket-token--upper", Type: TypeRepo, Coverage: []string{"bitbucket/ACME/app"}},
+		},
+		{
+			why: "a segment carries only the lower-case characters a repository name is made of",
+			rec: Record{Name: "bitbucket-token--escape", Type: TypeRepo, Coverage: []string{"bitbucket/acme/ap%2Fp"}},
 		},
 		{
 			why: "an empty segment names nothing",
-			rec: Record{Name: "bitbucket-token--emptyseg", Type: TypeWorkspace, Coverage: []string{"acme/"}},
+			rec: Record{Name: "bitbucket-token--emptyseg", Type: TypeWorkspace, Coverage: []string{"bitbucket/acme/"}},
+		},
+		{
+			why: "a canonical repository never ends in .git",
+			rec: Record{Name: "bitbucket-token--git", Type: TypeRepo, Coverage: []string{"bitbucket/acme/app.git"}},
 		},
 	}
 	for _, tc := range disagree {
@@ -138,7 +175,7 @@ func TestContractRecordForms(t *testing.T) {
 func TestContractEmptyProjectUUIDNeverMatches(t *testing.T) {
 	project := Record{
 		Name: "bitbucket-token--proj", Type: TypeProject,
-		Coverage: []string{"acme/*"}, ProjectUUID: "proj-uuid", ProjectKey: "PROJ",
+		Coverage: []string{"bitbucket/acme/*"}, ProjectUUID: "proj-uuid", ProjectKey: "PROJ",
 	}
 	if !project.MatchesProject("proj-uuid") {
 		t.Error("a project token does not match the UUID it names")
@@ -150,12 +187,12 @@ func TestContractEmptyProjectUUIDNeverMatches(t *testing.T) {
 		t.Error("a project token matched another project's UUID")
 	}
 
-	unnamed := Record{Name: "bitbucket-token--proj", Type: TypeProject, Coverage: []string{"acme/*"}}
+	unnamed := Record{Name: "bitbucket-token--proj", Type: TypeProject, Coverage: []string{"bitbucket/acme/*"}}
 	if unnamed.MatchesProject("proj-uuid") || unnamed.MatchesProject("") {
 		t.Error("a project token naming no UUID matched")
 	}
 
-	repo := Record{Name: "bitbucket-token--repo", Type: TypeRepo, Coverage: []string{"acme/app"}}
+	repo := Record{Name: "bitbucket-token--repo", Type: TypeRepo, Coverage: []string{"bitbucket/acme/app"}}
 	if repo.MatchesProject("proj-uuid") {
 		t.Error("a repository token matched a project UUID, and only a project token has one")
 	}
