@@ -18,11 +18,13 @@ into **tasks P5.2.1–P5.2.10**, each with its files, its dependencies and its v
 **Nothing is built by the approval** — this document is still the design and no sender, push
 node, registration field or app code exists — it allocates no decision number, and **Q1–Q10
 remain the owner's to answer**: the plan lists each as a question beside the tasks that wait on
-it. Three sentences below were true when they were written and are not true of the tree the plan
-now reads, so each carries its own dated note: **§3.3 and §5's "No Firebase Analytics SDK is
+it. Four sentences below were true when they were written and are not true of the tree the plan
+now reads, so each carries its own dated note: **§2's "`RulesVersion` is 3"** (the constant is
+**4** — the coordinator's generation, merged as #1021 on 2026-10-24 — and generation 3 is P6.4's,
+the generation that bullet is about), **§3.3 and §5's "No Firebase Analytics SDK is
 linked"** (Phase 7's P7.1–P7.3 put `@react-native-firebase/app`, `analytics` and `crashlytics`
-in `mobile/package.json`), and **§8's "P4.2 is scheduled while P5.2 is not"**. The first of
-those is not a detail: with the telemetry project's native config built into the app (**D259**,
+in `mobile/package.json`), and **§8's "P4.2 is scheduled while P5.2 is not"**. The Firebase SDK
+one is not a detail: with the telemetry project's native config built into the app (**D259**,
 accepted 2026-10-19), the app's **default** Firebase app is `fugaro-prod`'s, which is the
 project question the plan now puts to the owner beside Q7.
 
@@ -177,9 +179,14 @@ answered.
   that has not been revoked'*". The generated rules
   `internal/budget/rules/rules.json.tmpl` carry `config/admin/devices/$uid` inside
   `"admin": { ".read": false, ".write": false }`, and
-  `internal/projectpolicy/version.go`'s `RulesVersion` is **3**, whose comment says generation
+  `internal/projectpolicy/version.go`'s `RulesVersion` is **4** — generation 3 is P6.4's, the
+  generation this bullet is about, and the coordinator's `coordinator/` grant took the constant
+  to 4 (#1021, 2026-10-24) — and the comment beside it says generation
   3 "*is P6.4 … the device allowlist `config/admin/devices/<uid>` that USER now requires
-  (D166), and the two pairing nodes of D165*". **What is still missing is anything that
+  (D166), and the two pairing nodes of D165*". *(Amended 2026-11-14: this sentence read
+  "`RulesVersion` is **3**" until then, which the tree had left behind — generation 4 is merged
+  and the constant reads 4; generation 3 is unchanged and is what the rest of the bullet, and
+  the sibling node's ground, rest on.)* **What is still missing is anything that
   *writes* a device node**: `fugaro pair` is **P6.6**, approved 2026-10-18 and **not built**,
   so until it lands the only way to write one is by hand over IAM (the same sentence
   `version.go` carries). There is therefore nowhere a **push** token is stored, and no grant
@@ -1535,8 +1542,10 @@ D160–D179 are not this document's to take.
   nothing else ever writes under `devices/**`. The consequence is that **push cannot ship
   before P6.4**; **the store needs no generation of its own** (the sibling rides generation 3,
   and pairing writes nothing into it). The **registration message** is the one part that does
-  need a later change — a bounded field Q3 (b) asks for — and generation 4 is that change's,
-  not the store's.
+  need a later change — a bounded field Q3 (b) asks for — and **generation 5** is that change's,
+  not the store's *(amended 2026-11-14: it read **generation 4**, which the coordinator's
+  `coordinator/` grant took — #1021, 2026-10-24 — so the registration change's generation is
+  the one after the tree's)*.
 
 **Q3. How does the push token rotate and the user's switches get written, given the app cannot
 write `config/admin`?**
