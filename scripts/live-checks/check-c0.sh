@@ -17,9 +17,15 @@
 #   * `fugaro runs ls --json --since 24h`, `--since 7d` and `--since 0` — the
 #     same listing at three windows, which is what the page's cost is a function
 #     of;
-#   * `fugaro runs ls --json --since 24h --limit 50` — the same window with a
-#     page asked for: `--limit` shortens the listing and not the read, and the
-#     pair of numbers is what says so;
+#   * `fugaro runs ls --json --since 24h --limit 50` AND `... --limit 20` — the
+#     same window with a page asked for: `--limit` shortens the listing and not
+#     the read, and the pair of numbers is what says so. **Both limits are
+#     measured because the plan and the spec do not name the same one**: C0's
+#     own row says `--limit 50` (D818's first page, spec §2.6), while the
+#     `(unmeasured)` size cell in spec §2.2 — the halted-or-failed-job item —
+#     reads `--limit 20` (D810's bounded read). Whichever of the two the owner
+#     settles on, the number for it is in the table, and the drift itself is
+#     reported rather than decided here;
 #   * `fugaro coordinator status --from-store --all --json` — ONCE PER
 #     INSTALLATION YOU NAME, because that document's size is a function of the
 #     repository count (the spec's `~724 KB` was read on a four-repository
@@ -465,6 +471,7 @@ step_runs() {
   read_runs runs-7d "$project" 7d
   read_runs runs-all "$project" 0
   read_runs runs-limit50 "$project" 24h --limit 50
+  read_runs runs-limit20 "$project" 24h --limit 20
 }
 
 read_runs() { # read_runs KEY PROJECT SINCE [EXTRA...]
@@ -554,7 +561,8 @@ print_plan() {
   say "  [network, read] FUGARO_PROJECT=${PROJECTS[0]} fugaro runs ls --json --since 24h — the window the page's action queue reads, and the one the spec's ~5.8 s was measured for"
   say "  [network, read] FUGARO_PROJECT=${PROJECTS[0]} fugaro runs ls --json --since 7d — the same listing at a week"
   say "  [network, read] FUGARO_PROJECT=${PROJECTS[0]} fugaro runs ls --json --since 0 — the same listing with no window at all (every run the bucket holds)"
-  say "  [network, read] FUGARO_PROJECT=${PROJECTS[0]} fugaro runs ls --json --since 24h --limit 50 — the same 24 h window with a page asked for: --limit shortens the listing, not the read, and the pair of numbers is what says what a page saves"
+  say "  [network, read] FUGARO_PROJECT=${PROJECTS[0]} fugaro runs ls --json --since 24h --limit 50 — the same 24 h window with a page asked for: --limit shortens the listing, not the read, and the pair of numbers is what says what a page saves. This is D818's first page, the one the plan's C0 row names"
+  say "  [network, read] FUGARO_PROJECT=${PROJECTS[0]} fugaro runs ls --json --since 24h --limit 20 — the same window at D810's page size, which is what spec.md §2.2's halted-or-failed-job cell reads where its size says (unmeasured). The plan and the spec name different limits and this check settles neither: it measures both"
   say "  [network, read] FUGARO_PROJECT=${PROJECTS[0]} fugaro budget show --json — the fleet's budget document, the read behind the page's budget alert"
   if [ "${#CHECKOUTS[@]}" -eq 0 ]; then
     say "  [not run] the plan read: no --checkout was given and the current directory is not a checkout, so there is nothing to walk. A real run records that row as FAIL and ends 2"
@@ -573,7 +581,7 @@ print_plan() {
 # `FAIL — not reached`, and any other recorded key follows in the order the run
 # recorded it.
 BLOCK_KEYS=()
-READ_KEYS=(runs-24h runs-7d runs-all runs-limit50)
+READ_KEYS=(runs-24h runs-7d runs-all runs-limit50 runs-limit20)
 build_block_keys() {
   local name i
   BLOCK_KEYS=(fugaro-version xtrace project checkout belong "${READ_KEYS[@]}")

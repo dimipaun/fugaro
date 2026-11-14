@@ -206,6 +206,7 @@ test_dry_run_makes_no_call() {
   expect_contains "$err" "fugaro coordinator status --from-store --all --json" "dry run: the plan names the coordinator read"
   expect_contains "$err" "in $dir/co] fugaro plan status --json --all" "dry run: the plan names the checkout"
   expect_contains "$err" "fugaro budget show --json" "dry run: the plan names the budget read"
+  expect_contains "$err" "fugaro runs ls --json --since 24h --limit 20" "dry run: the plan names both page sizes, which the plan and the spec disagree about"
   expect_contains "$out" "CHECK C0 RESULT" "dry run: the block"
   expect_contains "$out" "FACT runs-24h: INFO — not run: --dry-run" "dry run: a planned row is INFO"
   expect_contains "$out" "FACT dry-run: PASS" "dry run: the row that says nothing was run"
@@ -230,7 +231,8 @@ test_the_reads_are_timed_and_sized() {
   expect_contains "$out" "FACT runs-24h: PASS — fugaro runs ls --json --since 24h (FUGARO_PROJECT=demo) — $runs_bytes bytes" "the reads: the 24h size"
   expect_contains "$out" "FACT runs-7d: PASS" "the reads: the 7d window"
   expect_contains "$out" "FACT runs-all: PASS" "the reads: no window"
-  expect_contains "$out" "FACT runs-limit50: PASS — fugaro runs ls --json --since 24h --limit 50" "the reads: the page"
+  expect_contains "$out" "FACT runs-limit50: PASS — fugaro runs ls --json --since 24h --limit 50" "the reads: the page the plan names"
+  expect_contains "$out" "FACT runs-limit20: PASS — fugaro runs ls --json --since 24h --limit 20" "the reads: the page the spec's own cell reads"
   expect_contains "$out" "holding runs 2" "the reads: what the listing held"
   expect_contains "$out" "FACT coordinator-demo: PASS" "the reads: the stored view"
   expect_contains "$out" "holding repos 1, records 1, runs 1, pull requests 1, stored 1, stale 0" "the reads: what the view held"
@@ -238,7 +240,7 @@ test_the_reads_are_timed_and_sized() {
   expect_contains "$out" "holding plans 1, tasks 4, open 1, closed 3" "the reads: what the walk held"
   expect_contains "$out" "FACT budget-show: PASS" "the reads: the budget document"
   expect_contains "$out" "holding repos 1, running 0" "the reads: what the budget held"
-  expect_contains "$out" "FACT readings: PASS — 7 read(s) timed and sized" "the reads: the count of readings"
+  expect_contains "$out" "FACT readings: PASS — 8 read(s) timed and sized" "the reads: the count of readings"
   expect_contains "$out" "CHECK C0 RESULT END (exit 0)" "the reads: the end line"
   # The table, and the lines the owner pastes into the spec's cells.
   expect_contains "$out" "C0 READINGS — bytes and seconds per read" "the reads: the table"
@@ -266,7 +268,7 @@ test_the_reads_run_where_they_must() {
   expect_absent "$places" "cwd=$dir/co project=demo argv=runs ls" "where the reads run: the listing is not in the checkout"
   expect_absent "$places" "cwd=$dir/co project=demo argv=coordinator status" "where the reads run: the view is not in the checkout"
   expect_absent "$places" "cwd=$dir/co project=demo argv=budget show" "where the reads run: the budget is not in the checkout"
-  expect_count "$places" "project=demo argv=runs ls" 4 "where the reads run: the four windows"
+  expect_count "$places" "project=demo argv=runs ls" 5 "where the reads run: the three windows and the two page sizes"
   # The argv is the console's own words: nothing was added to it.
   expect_contains "$calls" "fugaro runs ls --json --since 24h --limit 50" "where the reads run: the page argv"
   expect_absent "$calls" "--project" "where the reads run: no --project is invented"
@@ -292,7 +294,7 @@ test_two_installations_are_read_once_each() {
   expect_count "$places" "project=demo-two argv=coordinator status" 1 "two installations: the second was read as itself"
   # One listing, not two: the window's cost is the bucket's, not the
   # installation's, so the runs rows stay four.
-  expect_contains "$out" "FACT readings: PASS — 8 read(s)" "two installations: one listing per window and one view each"
+  expect_contains "$out" "FACT readings: PASS — 9 read(s)" "two installations: one listing per window and one view each"
 }
 
 test_a_read_that_does_not_answer_is_not_measured() {
@@ -306,7 +308,7 @@ test_a_read_that_does_not_answer_is_not_measured() {
   expect_contains "$out" "FACT coordinator-demo: PASS" "a read that does not answer: the view was still read"
   expect_contains "$out" "FACT budget-show: PASS" "a read that does not answer: the budget was still read"
   expect_contains "$out" "FACT readings: PASS — 3 read(s)" "a read that does not answer: the table carries what answered"
-  expect_contains "$err" "could NOT measure runs-24h, runs-7d, runs-all, runs-limit50" "a read that does not answer: the exit names the rows"
+  expect_contains "$err" "could NOT measure runs-24h, runs-7d, runs-all, runs-limit50, runs-limit20" "a read that does not answer: the exit names the rows"
   expect_contains "$out" "CHECK C0 RESULT END (exit 2)" "a read that does not answer: the end line"
 }
 
