@@ -638,9 +638,13 @@ def cmd_job():
     and its container environment, one line per entry. A secret-backed entry is
     `mount=<ENVVAR> <secret id>` and a plain one is `plain=<ENVVAR>`: the split
     is what tells the account's token mount from a variable like FUGARO_PROJECT,
-    and a mount prints the secret's ID and never its value."""
+    and a mount prints the secret's ID and never its value. gcloud's `run jobs
+    describe` forces the v1 API, whose Job nests its execution template one level
+    below a service's, so the container and the job's account sit at
+    spec.template.spec.template.spec."""
     doc = load()
     spec = ((doc.get("spec") or {}).get("template") or {}).get("spec") or {}
+    spec = (spec.get("template") or {}).get("spec") or {}
     print("sa=%s" % (spec.get("serviceAccountName") or ""))
     for container in spec.get("containers") or []:
         for entry in container.get("env") or []:

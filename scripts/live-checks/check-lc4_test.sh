@@ -179,7 +179,12 @@ FUGARO_EOF
 # write_default_case DIR [ACCOUNT] — one installation's own documents: a doctor
 # that is green for $project in us-central1, the account's job wearing its
 # labels and mounting its own token beside the profile's App key, the account's
-# secret and another account's, and the two policies.
+# secret and another account's, and the two policies. The job documents below
+# are the v1 Job shape `gcloud run jobs describe --format=json` answers with,
+# where the container and the job's account sit at spec.template.spec.template.spec
+# — one level below a service's (check191_test.sh's own fixtures): a fake that
+# nested them the way a service does would agree with a check that read the
+# wrong path and would pass while a real run stopped on an empty account.
 write_default_case() { # dir [account]
   local dir=$1 acct=${2:-work} label secret
   case "$acct" in "" | default)
@@ -202,12 +207,13 @@ JSON
 JSON
   cat >"$dir/json/job.json" <<JSON
 {"metadata":{"name":"$job"},
- "spec":{"template":{"spec":{"serviceAccountName":"$sa",
+ "spec":{"template":{"spec":{"template":{"spec":{
+   "serviceAccountName":"$sa",
    "containers":[{"env":[
      {"name":"FUGARO_PROJECT","value":"sandbox"},
      {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueSource":{"secretKeyRef":{"secret":"$token_secret","version":"latest"}}},
      {"name":"FUGARO_GITHUB_APP_PRIVATE_KEY","valueSource":{"secretKeyRef":{"secret":"$appkey_secret","version":"latest"}}}
-   ]}]}}}}
+   ]}]}}}}}}
 JSON
   cat >"$dir/json/secrets.json" <<JSON
 [{"name":"projects/$project/secrets/$token_secret","labels":{"fugaro_secret":"$secret"}},
@@ -532,8 +538,9 @@ test_no_token_mount_is_a_finding() {
   dir=$(mktemp -d "$work/notoken.XXXX")
   prepare "$dir"
   cat >"$dir/json/job.json" <<JSON
-{"spec":{"template":{"spec":{"serviceAccountName":"$sa",
-  "containers":[{"env":[{"name":"FUGARO_GITHUB_APP_PRIVATE_KEY","valueSource":{"secretKeyRef":{"secret":"$appkey_secret"}}}]}]}}}}
+{"spec":{"template":{"spec":{"template":{"spec":{
+  "serviceAccountName":"$sa",
+  "containers":[{"env":[{"name":"FUGARO_GITHUB_APP_PRIVATE_KEY","valueSource":{"secretKeyRef":{"secret":"$appkey_secret"}}}]}]}}}}}}
 JSON
   run_default "$dir"
   expect_status "$status" 1 "a job with no account-token mount"
@@ -549,11 +556,12 @@ test_two_token_mounts_are_a_finding() {
   dir=$(mktemp -d "$work/twotokens.XXXX")
   prepare "$dir"
   cat >"$dir/json/job.json" <<JSON
-{"spec":{"template":{"spec":{"serviceAccountName":"$sa",
+{"spec":{"template":{"spec":{"template":{"spec":{
+  "serviceAccountName":"$sa",
   "containers":[{"env":[
     {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueSource":{"secretKeyRef":{"secret":"$token_secret"}}},
     {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueSource":{"secretKeyRef":{"secret":"$other_secret"}}}
-  ]}]}}}}
+  ]}]}}}}}}
 JSON
   run_default "$dir"
   expect_status "$status" 1 "two token mounts"
@@ -568,11 +576,12 @@ test_a_token_mounted_out_of_another_accounts_secret_is_a_finding() {
   # The right variable, the right shape, and the wrong secret under it: the
   # account's own secret is not what this job mounts.
   cat >"$dir/json/job.json" <<JSON
-{"spec":{"template":{"spec":{"serviceAccountName":"$sa",
+{"spec":{"template":{"spec":{"template":{"spec":{
+  "serviceAccountName":"$sa",
   "containers":[{"env":[
     {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueSource":{"secretKeyRef":{"secret":"$other_secret"}}},
     {"name":"FUGARO_GITHUB_APP_PRIVATE_KEY","valueSource":{"secretKeyRef":{"secret":"$appkey_secret"}}}
-  ]}]}}}}
+  ]}]}}}}}}
 JSON
   run_default "$dir"
   expect_status "$status" 1 "a token mounted out of another account's secret"
@@ -587,10 +596,11 @@ test_a_job_that_lost_the_profile_mount_is_a_finding() {
   dir=$(mktemp -d "$work/noappkey.XXXX")
   prepare "$dir"
   cat >"$dir/json/job.json" <<JSON
-{"spec":{"template":{"spec":{"serviceAccountName":"$sa",
+{"spec":{"template":{"spec":{"template":{"spec":{
+  "serviceAccountName":"$sa",
   "containers":[{"env":[
     {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueSource":{"secretKeyRef":{"secret":"$token_secret"}}}
-  ]}]}}}}
+  ]}]}}}}}}
 JSON
   run_default "$dir"
   expect_status "$status" 1 "a job with no App-key mount"
@@ -603,11 +613,12 @@ test_an_app_key_mounted_out_of_the_wrong_secret_is_a_finding() {
   dir=$(mktemp -d "$work/wrongappkey.XXXX")
   prepare "$dir"
   cat >"$dir/json/job.json" <<JSON
-{"spec":{"template":{"spec":{"serviceAccountName":"$sa",
+{"spec":{"template":{"spec":{"template":{"spec":{
+  "serviceAccountName":"$sa",
   "containers":[{"env":[
     {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueSource":{"secretKeyRef":{"secret":"$token_secret"}}},
     {"name":"FUGARO_GITHUB_APP_PRIVATE_KEY","valueSource":{"secretKeyRef":{"secret":"$other_secret"}}}
-  ]}]}}}}
+  ]}]}}}}}}
 JSON
   run_default "$dir"
   expect_status "$status" 1 "an App key out of another secret"
@@ -620,12 +631,13 @@ test_another_accounts_token_mounted_beside_its_own_is_a_finding() {
   dir=$(mktemp -d "$work/othermount.XXXX")
   prepare "$dir"
   cat >"$dir/json/job.json" <<JSON
-{"spec":{"template":{"spec":{"serviceAccountName":"$sa",
+{"spec":{"template":{"spec":{"template":{"spec":{
+  "serviceAccountName":"$sa",
   "containers":[{"env":[
     {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueSource":{"secretKeyRef":{"secret":"$token_secret"}}},
     {"name":"FUGARO_GITHUB_APP_PRIVATE_KEY","valueSource":{"secretKeyRef":{"secret":"$appkey_secret"}}},
     {"name":"OTHER_TOKEN","valueSource":{"secretKeyRef":{"secret":"$other_secret"}}}
-  ]}]}}}}
+  ]}]}}}}}}
 JSON
   run_default "$dir"
   expect_status "$status" 1 "another account's token beside its own"

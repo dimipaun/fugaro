@@ -14081,7 +14081,7 @@ bash scripts/live-checks/check-lc4.sh --project <project> --account <name>
 `--profile` defaults to `standard` (the profile a workflow that names none runs on) and `--region`
 defaults to the region `fugaro doctor --json` records; `--dry-run` prints every command a real run
 would make and runs none of them. **You** run it, on the **throwaway installation** 600c used and
-**never `belong`**: a project, a profile or an account whose name contains `belong` (or the other
+**never `belong`**: a project or an account whose name contains `belong` (or the other
 names the guard refuses) stops the run before the first call, and `--project` is held to the project
 `fugaro doctor --json` names, because a reading taken in the wrong project would be another
 installation's account and no row would say so.
@@ -14089,8 +14089,9 @@ installation's account and no row would say so.
 **What it asserts**, seven facts about the account's own Cloud Run job:
 
 - **exactly one job** of the installation wears the account's own labels — `fugaro=managed` with
-  `fugaro_profile` and `fugaro_account` this check's own values — so a second one, or none, is the
-  finding rather than a reading of whichever the listing happened to return first;
+  `fugaro_profile` and `fugaro_account` this check's own values — so no job at all is the finding
+  this part exists for, and a **second** one stops the run rather than being read as the account's
+  own — the order the listing returns jobs in is not what makes one the account's (exit `2`, below);
 - that job's environment carries **exactly one** secret-backed entry named `CLAUDE_CODE_OAUTH_TOKEN`;
 - the secret that entry mounts is **the account's own** derived secret: the one whose `fugaro_secret`
   label is `claude-oauth-token-<name>` (`config.ClaudeAccountSecret`), not the unsuffixed
@@ -14134,13 +14135,15 @@ is the check's whole answer; `restore` here says the run **created nothing, gran
 nothing and deleted nothing**, because every call it makes is a read.
 
 **Exit `0`** is every criterion holding and the Restore confirming there was nothing of this check's
-to undo; **`1`** is a criterion that did not hold — a job missing or doubled, a second token mount, a
+to undo; **`1`** is a criterion that did not hold — a job missing, a second token mount, a
 token that is another account's, a lost App-key mount, an accessor that is not there or is on the
 wrong secret, or a doctor that is not green — and it is a finding about that installation and the
 account it names; **`2`** is the check not being able to tell: a tool missing, `fugaro doctor --json`
 not answering or not naming a project, `--project` or `--region` disagreeing with the installation's
-own record, a gcloud call refused, a document the reader cannot parse, or a run that ended before its
-verdict. `--dry-run` prints the plan (every command, in the order a real run would make them) and a block
+own record, a gcloud call refused, a document the reader cannot parse, two jobs wearing
+`fugaro_profile=<profile>` and `fugaro_account=<name>` — a leftover of an earlier release, which the
+check will not pick between rather than read the wrong one — or a run that ended before its verdict.
+`--dry-run` prints the plan (every command, in the order a real run would make them) and a block
 that says what it was asked to read (`dry-run` among its rows), and it makes **no gcloud call and no `fugaro` call at all**.
 
 **Cost.** **Nothing billable and no model call**: `gcloud run jobs list` and `describe`, `gcloud
