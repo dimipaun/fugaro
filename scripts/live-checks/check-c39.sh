@@ -395,12 +395,19 @@ elif what == "audit":
     purpose = flat(sys.argv[3])
     want = flat(sys.argv[4]) if len(sys.argv) > 4 else ""
     known = ["run", "repository", "job", "caller", "credential", "purpose", "tier", "status", "slip", "owner"]
+    # The service writes the line through runner.NewLogger, whose ReplaceAttr
+    # (internal/runner/log.go) renames slog's own two keys to the ones Cloud
+    # Logging reads -- the text to `message` and the level to `severity` -- and
+    # the JSON handler writes the time beside them. Those three are the
+    # handler's envelope rather than the line's field set, so a line carrying
+    # them carries no field §8 does not name.
+    envelope = ["message", "severity", "time"]
     total = 0
     runs = []
     chosen = None
     for entry in doc if isinstance(doc, list) else []:
         payload = (entry.get("jsonPayload") or {})
-        if flat(payload.get("msg")) != "credsvc: audit":
+        if flat(payload.get("message")) != "credsvc: audit":
             continue
         if flat(payload.get("purpose")) != purpose:
             continue
@@ -414,7 +421,7 @@ elif what == "audit":
     if chosen is not None:
         for key in known:
             print("audit_%s=%s" % (key, flat(chosen.get(key))))
-        extra = sorted(k for k in chosen if k not in known and k != "msg")
+        extra = sorted(k for k in chosen if k not in known and k not in envelope)
         words = []
         walk(chosen, words)
         print("audit_extra=%s" % ",".join(extra))
@@ -851,7 +858,7 @@ step_sign_line() {
   fi
   say "reading the service's audit line: gcloud logging read (purpose=review_sign)"
   run_bounded "$TIMEOUT" audit "$SANDBOX" gcloud logging read \
-    "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"${SERVICE_NAME}\" AND jsonPayload.msg=\"credsvc: audit\" AND jsonPayload.purpose=\"review_sign\"" \
+    "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"${SERVICE_NAME}\" AND jsonPayload.message=\"credsvc: audit\" AND jsonPayload.purpose=\"review_sign\"" \
     --project="$PROJECT" --format=json --limit=100 --freshness="$LOG_FRESHNESS" --order=desc
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
     unmeasured sign-line "gcloud logging read did not answer (exit ${BOUNDED_STATUS}): this row is about the line the service writes when it signs, and it cannot be read without the log. What gcloud printed is in $SCRATCH/audit.err"

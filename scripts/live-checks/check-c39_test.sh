@@ -191,19 +191,19 @@ logging)
   case "$mode" in
   no-audit-line) printf '[]\n' ;;
   audit-names-another-run)
-    printf '[{"jsonPayload":{"msg":"credsvc: audit","purpose":"review_sign","run":"20261109-090000-0001","repository":"%s","job":"%s","caller":"%s","credential":"projects/p/secrets/fugaro-signing-key","tier":"run","status":"ok"}}]\n' \
+    printf '[{"jsonPayload":{"severity":"INFO","time":"2026-11-15T10:00:00Z","message":"credsvc: audit","purpose":"review_sign","run":"20261109-090000-0001","repository":"%s","job":"%s","caller":"%s","credential":"projects/p/secrets/fugaro-signing-key","tier":"run","status":"ok"}}]\n' \
       "$FAKE_SLUG" "$FAKE_REVIEW_JOB" "$FAKE_REVIEW_SA"
     ;;
   audit-carries-a-pull-request)
-    printf '[{"jsonPayload":{"msg":"credsvc: audit","purpose":"review_sign","run":"%s","repository":"%s","job":"%s","caller":"%s","credential":"projects/p/secrets/fugaro-signing-key","tier":"run","status":"ok","pull_request":"17"}}]\n' \
+    printf '[{"jsonPayload":{"severity":"INFO","time":"2026-11-15T10:00:00Z","message":"credsvc: audit","purpose":"review_sign","run":"%s","repository":"%s","job":"%s","caller":"%s","credential":"projects/p/secrets/fugaro-signing-key","tier":"run","status":"ok","pull_request":"17"}}]\n' \
       "$FAKE_RUN" "$FAKE_SLUG" "$FAKE_REVIEW_JOB" "$FAKE_REVIEW_SA"
     ;;
   audit-wrong-caller)
-    printf '[{"jsonPayload":{"msg":"credsvc: audit","purpose":"review_sign","run":"%s","repository":"%s","job":"%s","caller":"someone-else@example.com","credential":"projects/p/secrets/fugaro-signing-key","tier":"run","status":"ok"}}]\n' \
+    printf '[{"jsonPayload":{"severity":"INFO","time":"2026-11-15T10:00:00Z","message":"credsvc: audit","purpose":"review_sign","run":"%s","repository":"%s","job":"%s","caller":"someone-else@example.com","credential":"projects/p/secrets/fugaro-signing-key","tier":"run","status":"ok"}}]\n' \
       "$FAKE_RUN" "$FAKE_SLUG" "$FAKE_REVIEW_JOB"
     ;;
   *)
-    printf '[{"jsonPayload":{"msg":"credsvc: audit","purpose":"review_sign","run":"%s","repository":"%s","job":"%s","caller":"%s","credential":"projects/p/secrets/fugaro-signing-key","tier":"run","status":"ok"}}]\n' \
+    printf '[{"jsonPayload":{"severity":"INFO","time":"2026-11-15T10:00:00Z","message":"credsvc: audit","purpose":"review_sign","run":"%s","repository":"%s","job":"%s","caller":"%s","credential":"projects/p/secrets/fugaro-signing-key","tier":"run","status":"ok"}}]\n' \
       "$FAKE_RUN" "$FAKE_SLUG" "$FAKE_REVIEW_JOB" "$FAKE_REVIEW_SA"
     ;;
   esac
@@ -572,6 +572,11 @@ test_happy_path() {
   expect_contains "$calls" "storage ls gs://$bucket/runs/*/$run_id/artifacts/review.json.sig" "happy path: the signature's path"
   expect_contains "$calls" "logging read" "happy path: the service's log"
   expect_contains "$calls" "jsonPayload.purpose=\"review_sign\"" "happy path: the signing's own line"
+  # The line is filtered on the field the service writes its text in: the
+  # handler renames slog's `msg` to `message` (internal/runner/log.go), so a
+  # filter naming `msg` matches nothing at all against a correct service and the
+  # row would report a signing with no line.
+  expect_contains "$calls" "jsonPayload.message=\"credsvc: audit\"" "happy path: the service's line, by the field the service writes it in"
   expect_contains "$calls" "run services describe fugaro-credentials" "happy path: the service's URL"
   # And every one of them was made in the checkout the check was pointed at: the
   # installation, the project, the region and the bucket the rows report are the
