@@ -17,7 +17,7 @@ Reconciled against `origin/main` at **`5c170e5c`**, on 2026-11-14, by reading th
 - **A5.** The provider list is the two the repository already has: GitHub (through the App) and Bitbucket (through a workspace or project access token). No third provider is implied.
 - **A6.** The credential the empty container is about is the repository's **`github-app-key`**; the Bitbucket equivalent is the token the repository's runs read. Both are **per-repository by default** unless the project's config hoists one.
 - **A7.** The console is a **reader** of the CLI's documents and never a writer of the cloud; the order asks for `status` and `ls` in the console, not for `add` and `rm` there.
-- **A8.** `docs/status.md` is not this work's to touch: the plan holds a task that hands its row to whoever merges the spec, and no task in the plan edits that file.
+- **A8.** `docs/status.md` carries this spec's row from **this design's own sweep** — `repos-management`, `0/7`, nothing merged and no run — and **no task of the plan edits that file**: whoever merges the spec moves the row as tasks land, the `CLAUDE.md` rule for a spec or a plan and the file's own sorting rule 7.
 
 An assumption that no finding contradicts and no decision rests on stays in this list.
 
@@ -33,7 +33,7 @@ An assumption that no finding contradicts and no decision rests on stays in this
 | the agent refusal | `agentMarker` + `initflow.AgentRefusal` at each writer's door |
 | a typed confirmation | `confirmTyped` and `confirmTypedStrict` (`internal/cli/budget.go`); `removalWarning` (`project_enroll.go`) |
 | whether a run is going | `runsInFlight(ctx, db, lc)`, already called on the `rm` path |
-| the local `repos:` entry | `fugaro project repos set` (`internal/cli/project_repos_set.go`, D1173), writing through `applySettingsEdit` and `userSave` |
+| the local `repos:` entry | `fugaro project repos set` (`internal/cli/project_repos_set.go`, D1173), writing through `applySettingsEdit` (`internal/cli/project_repos_set.go:485`) |
 | the image map entry | `runImageMapSet` / `imageMapWith` / `userSave` (`internal/cli/image_map.go`), with the D1906 keep rule in `localcfg.ImageMapEffective` |
 | which catalog entry a workflow gets | `catalog.JobImage` / `ImageRequest` / `Selection` (`internal/catalog/select.go`) |
 | the repository's cloud resources | the `Repository` stage of `internal/initflow` → `repoEngine` (`internal/cli/init.go`) → `deploy/terraform/gcp/roots/repo`, `modules/repo`, `modules/workflow` |
@@ -42,7 +42,7 @@ An assumption that no finding contradicts and no decision rests on stays in this
 | a per-repository secret with no version | `infra.MissingSecret` / `hasEnabledVersion` (`internal/infra/readiness.go`); doctor's `project-secret-stored` (`internal/cli/doctor.go`); the App's own "not stored yet" (`internal/cli/githubapp.go`) |
 | a read-only status with a closed document | `managedStatusDoc` and `newManagedStatusCmd` (`internal/cli/managed_status.go`), read by the console per `console/docs/json-contract.md` §6.21 |
 | the console's reach | `CONSOLE_OPERATIONS` (`console/src/main/spawn.ts`), one literal `words:` array per operation |
-| the removal of a repository's resources | `infra.Retirements` (`internal/infra/retire.go`), `deleteOrphanedJob` (`internal/cli/init_retire.go`), the state removal and `ForgetRepoState` (`internal/cli/init.go`) |
+| the removal of a repository's resources | `infra.Retirements` (`internal/infra/retire.go`), `deleteOrphanedJob` (`internal/cli/init_retire.go`), the state removal and `ForgetRepoState` (`internal/infra/repo.go:191`, called from `internal/cli/init.go:5641`) |
 | secrets never deleted | `lifecycle.prevent_destroy` (`modules/repo/secrets.tf`) and `internal/infra/tf/retire.go` |
 
 Every row of that table is a thing this work **reuses**; none is a thing it should build again. §3 is about the handful that are missing, and about the one thing the order gets wrong about the code.
@@ -177,7 +177,7 @@ Every row of that table is a thing this work **reuses**; none is a thing it shou
 
 ### F21. **Open: no plugin skill names the group**
 
-**What the code does.** A grep over `plugin/` for `fugaro project repos` returns nothing; the skills that touch adjacent ground are `setup` (the budget block, the allow-list's existence) and `working/reference/status.md` and `diagnose.md` (which name `fugaro project policy show` and say the allow-list is the owner's). `plugin/skills/setup/SKILL.md` already carries the rule that a project-wide cap *"is the owner's, in their own terminal, never by you"*.
+**What the code does.** A grep over `plugin/` for `fugaro project repos` returns nothing; the skills that touch adjacent ground are `setup` (the budget block, the allow-list's existence) and `working/reference/status.md` and `diagnose.md` (which name `fugaro project policy show` and say the allow-list is the owner's). `plugin/skills/setup/reference/decisions.md` (line 43) already carries the rule that a project-wide cap *"is the owner's, in their own terminal, never by you"*.
 
 **Consequence.** There is no skill to correct — there is a skill **to write**, and its content is constrained by that existing rule: a skill may tell a session to run `fugaro project repos ls` and `status` and to read the fix a failing row names, and may never tell it to run `add` or `rm`.
 
@@ -236,7 +236,7 @@ Each decision carries its **recommendation** and **what the alternatives cost**.
 
 ### D2402. `add` is idempotent and resumable, and says which it was
 
-**Recommendation.** Both, and they are different readings the command prints: over a **completed** enrolment it writes nothing and says *"already enrolled; nothing changed"* (the sentence `runProjectReposEdit` already prints for an entry the list holds); over a **half-done** one it converges the missing steps and names the ones it skipped as done. The test for each is a fixture state, not a re-run of the converge.
+**Recommendation.** Both, and they are different readings the command prints: over a **completed** enrolment it writes nothing and prints the sentence `runProjectReposEdit` already prints for an entry the list holds — *"%s is already on the allow-list; nothing changed"*, the format string at `internal/cli/project_enroll.go:512`, where `%s` is the canonical name; over a **half-done** one it converges the missing steps and names the ones it skipped as done. The test for each is a fixture state, not a re-run of the converge.
 
 **What the alternatives cost.** *Idempotent only* — the state the owner actually has, a repository half-enrolled by a failure or a Ctrl-C, is the state the command then cannot fix, which is the failure it exists for. *Resumable only* — a command that always writes cannot be run twice by an operator who is unsure, and an operator who is unsure is the operator this is for.
 
@@ -292,17 +292,17 @@ Each decision carries its **recommendation** and **what the alternatives cost**.
 
 ### D2409. One `ls` row per repository, and the two halves of its state are columns
 
-**Recommendation.** One row per repository with: canonical name; provider; base branch; workflows; the image (the entry and whether it is catalog, mapped or the repository's own); its Claude accounts; `published` (in the allow-list, and the pattern that admits it); and `local` (whether this machine's config holds the `repos:` entry). The existing `seen` list — repositories read from the runs bucket's prefixes and Firestore's `spendDaily` over `seenWindowDays` — keeps its own header and its own bounded rendering, and is **not** merged into the per-repository rows: it is a reading with a 30-day window, and a reader who took a window for enrolment would draw the wrong conclusion.
+**Recommendation.** One row per repository with: canonical name; provider; base branch; workflows; the image (the entry and whether it is catalog, mapped or the repository's own); its Claude accounts; `published` (in the allow-list, and the pattern that admits it); and `local` (whether this machine's config holds the `repos:` entry). The existing `seen` list — repositories read from the runs bucket's `runs/<slug>/` prefixes **and** Firestore's `spendDaily` — keeps its own header and its own bounded rendering, and is **not** merged into the per-repository rows: it is a reading of what has run here, and a reader who took it for enrolment would draw the wrong conclusion. **Its two sources are not one window and the design must not call them one**: the runs bucket lists a repository's prefixes with **no window at all** (`runstore.ListSlugs`, whose own comment says *"the window bounds a query rather than the history: a repository whose runs are older than it is still named by the runs bucket"*), and only the `spendDaily` half is read over `seenWindowDays`. Each entry already carries the **sources** it was read from (`seenRepo.Sources`), which is what `seenNote` prints — *"seen in …"* is **where**, not when — and that member, not a window, is what the document carries forward.
 
-**What the alternatives cost.** *One row per allow-list entry only* — the current output, which is one of the two states and says nothing about the other; an operator cannot see a repository that is configured locally and not admitted. *Merge the seen list into the rows* — a repository seen running in the window and no longer admitted would read as enrolled, and a repository admitted and never run would read as absent from the window (`ls` would then have to explain its own window per row).
+**What the alternatives cost.** *One row per allow-list entry only* — the current output, which is one of the two states and says nothing about the other; an operator cannot see a repository that is configured locally and not admitted. *Merge the seen list into the rows* — a repository seen running here and no longer admitted would read as enrolled, and a repository admitted and never run would read as unenrolled (`ls` would then have to explain, per row, which source named it).
 
 **Answer:** _pending._
 
 ### D2410. `ls --json` is a new versioned document, and it carries the window as a window
 
-**Recommendation.** `fugaro project repos ls --json` prints one versioned document (a `version` member, this design's value) with three parts: `repos` (the per-repository rows of D2409), `allow` (the published entry list with the generation it was read at, and the state of a read that did not answer), and `seen` (the window's own list **beside** the window's length in days, never inside `repos`). Every member that can be absent carries its own state sentence rather than a zero, following `managedStatusDoc`'s rule (`AuditState`, `RetirementsState`). The shape is documented in `console/docs/json-contract.md` as its own §6.x section **in the same pull request**, and the console's operation allow-list gains nothing until D2413 says so.
+**Recommendation.** `fugaro project repos ls --json` prints one versioned document (a `version` member, this design's value) with three parts: `repos` (the per-repository rows of D2409), `allow` (the published entry list with the generation it was read at, and the state of a read that did not answer), and `seen` (that list, never inside `repos`, with **each entry carrying the sources it was read from** — the runs bucket, `spendDaily`, or both — and **no window-length member over the list as a whole**, because only one of the two sources is windowed and a member read as covering both would label a runs-bucket entry older than 30 days as seen inside the window). Every member that can be absent carries its own state sentence rather than a zero, following `managedStatusDoc`'s rule (`AuditState`, `RetirementsState`). The shape is documented in `console/docs/json-contract.md` as its own §6.x section **in the same pull request**, and the console's operation allow-list gains nothing until D2413 says so.
 
-**What the alternatives cost.** *No `--json`* — the console and the history have nothing to read, and the group's answers are parsed from a text listing, which is the drift the wire-format rule in `CLAUDE.md` exists to prevent. *`--json` without a version* — the first added field is a silent change for a reader this repository does not control. *One `repos` object with a `seen` boolean* — it makes a 30-day window a property of a repository, which is the misreading D2409 refuses.
+**What the alternatives cost.** *No `--json`* — the console and the history have nothing to read, and the group's answers are parsed from a text listing, which is the drift the wire-format rule in `CLAUDE.md` exists to prevent. *`--json` without a version* — the first added field is a silent change for a reader this repository does not control. *One `repos` object with a `seen` boolean* — it makes a reading of what has run a property of an enrolment, which is the misreading D2409 refuses. *A single window-length member beside the whole `seen` list* — it describes the runs-bucket half, which has no window, so the document would state a window the data does not have (the field-meaning rule in `CLAUDE.md`).
 
 **Answer:** _pending._
 
@@ -324,7 +324,7 @@ Each decision carries its **recommendation** and **what the alternatives cost**.
 
 ### D2413. The verbs live in `fugaro project repos`; the console reads and never writes
 
-**Recommendation.** All four verbs stay in the existing group, whose `Short` and `Long` are rewritten to say what the group now is. The console may call `ls --json` and `status --json` only: two new literal `words:` entries in `CONSOLE_OPERATIONS` (`console/src/main/spawn.ts`), added in the pull request that documents their shapes. The console never calls `add` or `rm`, and no console code constructs their arguments. The plugin skill gets a new reference file under `plugin/skills/working/`, telling a session to read `ls` and `status` and **never** to run `add` or `rm`, which is the rule `plugin/skills/setup/SKILL.md` already states for the owner's own commands.
+**Recommendation.** All four verbs stay in the existing group, whose `Short` and `Long` are rewritten to say what the group now is. The console may call `ls --json` and `status --json` only: two new literal `words:` entries in `CONSOLE_OPERATIONS` (`console/src/main/spawn.ts`), added in the pull request that documents their shapes. The console never calls `add` or `rm`, and no console code constructs their arguments. The plugin skill gets a new reference file under `plugin/skills/working/`, telling a session to read `ls` and `status` and **never** to run `add` or `rm`, which is the rule `plugin/skills/setup/reference/decisions.md` (line 43) already states for the owner's own commands.
 
 **What the alternatives cost.** *A new top-level group* — the allow-list, the `repos:` entry, the map and the root are one subject, and two groups for one subject is two places an operator looks. *Let the console write* — it would run Terraform and write the published policy from a desktop app, with the gate's answer taken from a session that is not the owner's terminal. *No skill change* — a session asked to "add the repository" invents the six steps again, which is where this started.
 
@@ -383,7 +383,7 @@ for b in $(git ls-remote --heads origin | awk '{print $2}' | sed 's#refs/heads/#
 done
 ```
 
-**A number reserved by an unmerged plan is invisible to a grep of `main`**, and a number reserved in a merged plan is invisible to a grep of `docs/gcp-live-checklist.md` — `docs/plans/2026-10-16-voice.md` §5.3 states both, and it is why the fourth command above reads the checklist and the designs' own files rather than one file.
+**A number reserved by an unmerged plan is invisible to a grep of `main`**, and a number reserved in a merged plan is invisible to a grep of `docs/gcp-live-checklist.md` — `docs/plans/2026-10-16-voice.md` §2 (line 58) states both, and it is why the fourth command above reads the checklist and the designs' own files rather than one file. (`§5.3` is [voice.md](../design/voice.md)'s section, not the plan's: it works the same claims through, and the plan is where the allocation is written.)
 
 **This work takes D2400–D2429: D2400–D2417 are written here, every one pending the owner's answer, and D2418–D2429 are reserved and unused.** Its checks are **620–629**, of which **620** is written in the plan and **621–629** are reserved.
 
@@ -396,7 +396,7 @@ done
 - **This design does not remove the empty container's possibility.** A repository whose credential a person has not stored yet still plans no job, and the first `update --repo` on a fresh repository still succeeds while planning nothing. What changes is that `status` **says so** and names the command; the fact itself is the readiness gate's and is not this work's to change.
 - **This design does not verify the Bitbucket half end to end.** Check 620 uses the GitHub sandbox. The Bitbucket rows of `status` reuse `doctorBitbucketTokenValid` and the allow-list checks, which are built and tested, but no owner-run check here reads them on a real workspace. If the owner wants one, it is a second check and a second number in this work's block.
 - **This design does not price anything.** `add` starts no build, and no step of it spends money beyond what `fugaro update`'s own stages spend. D2400 is written so that stays true.
-- **It does not touch `docs/status.md`**, does not edit `.github/workflows/`, and adds no dependency.
+- **It keeps `docs/status.md`'s row for this spec, and gives that file to no task.** The row is written in this design's own sweep and moved by whoever merges the spec; no task of the plan edits the file. It edits nothing under `.github/workflows/` and adds no dependency.
 
 ## 7. UNVERIFIED
 

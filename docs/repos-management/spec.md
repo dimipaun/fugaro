@@ -107,7 +107,7 @@ The HARD RULE stands: **`fugaro update` is the whole upgrade** and it works perf
 - **It must not disturb a run in flight** — no step of `add` or `rm` may rewrite what a run holds.
 - **It must not touch `belong`.** Every live step is owner-run, on the sandbox installation.
 - **It must not weaken `doctor`.** `status` reuses what `doctor` computes; it does not fork it, and it adds no second reader of the same fact.
-- **It must not edit `docs/status.md`** in the tasks this plan holds; the folder that merges a spec moves that spec's row in its own sweep.
+- **It must not leave `docs/status.md` without this spec's row.** The row is written in this design's own sweep, and **no task of the plan edits the file**: whoever merges the spec moves the row as tasks land.
 
 ## 4. What is asked of the owner
 

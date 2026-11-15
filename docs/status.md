@@ -63,6 +63,7 @@ As of 2026-11-14, read from `main`, the open pull requests and each plan's task 
 | Spec | State |
 | --- | --- |
 | repo-image-removal | parked by the owner: 2/11 merged, R2 to R10 deferred by the image setup skill (D1900), not scheduled in any release and not cancelled; no run or pull request open |
+| repos-management | plan only, 0/7 merged; nothing is implemented; D2400–D2417 wait on the owner's answer and RE0–RE6 are approved nowhere; no run is going and the design's own pull request is the only one open |
 | voice-module, collateral, backlog, plans | no plan or not a spec |
 
 ## Done

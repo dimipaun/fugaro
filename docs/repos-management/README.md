@@ -27,7 +27,7 @@ Read **on 2026-11-14** at `origin/main` = **`5c170e5c`**, rather than inherited 
 - **In the open work streams**, every branch that writes a decision block was fetched and read: **none writes a decision above D2399 and none reserves a check in 620–629**. The draft this plan adopts claims nothing here — a task branch writes no decision block.
 - **This work takes D2400–D2429** — **D2400–D2417 written here, every one pending the owner's answer, D2418–D2429 reserved** — and **Checks 620–629**, of which **620** is the plan's one owner-run check and **621–629 are reserved**.
 
-A number reserved by a plan that has not merged is invisible to a grep, and a number reserved in a merged plan is invisible to a grep of the checklist — `docs/plans/2026-10-16-voice.md` §5.3 states both, and it is why §5's fourth command reads the designs' own files and not one file. A later task that needs a number re-checks that section's facts rather than this conclusion.
+A number reserved by a plan that has not merged is invisible to a grep, and a number reserved in a merged plan is invisible to a grep of the checklist — `docs/plans/2026-10-16-voice.md` §2 (line 58) states both, and it is why §5's fourth command reads the designs' own files and not one file. A later task that needs a number re-checks that section's facts rather than this conclusion.
 
 ## What this design does not do
 
@@ -37,6 +37,6 @@ A number reserved by a plan that has not merged is invisible to a grep, and a nu
 - **It does not disturb a run in flight.** `rm` reads whether one is going, takes the strict confirmation when it is, and never rewrites a run's records, its ledger or its counters — the property `fugaro update` already holds and `TestUpdateLeavesARunInFlightRunning` already pins.
 - **It does not fork `doctor`.** `status` reuses the checks that exist and adds four rows that do not; it adds no second reader of a fact `doctor` already computes, and it writes nothing on any path.
 - **It does not change a repository's `fugaro.yaml`.** That file is the only place for repo-specific behaviour, and `add` reads it and never writes it.
-- **It does not touch `docs/status.md`**, does not edit `.github/workflows/`, and adds no dependency.
+- **It writes its own `docs/status.md` row and gives no task that file.** The row is `repos-management`, `0/7`, nothing merged, no run; whoever merges the spec moves it as tasks land, and no task of RE0–RE6 edits the file. It edits nothing under `.github/workflows/` and adds no dependency.
 - **It does not touch `belong`.** Every live step is owner-run on the sandbox installation.
 - **It does not verify the Bitbucket half live.** Check 620 uses the GitHub sandbox; the Bitbucket rows reuse checks that are built and tested, but no owner-run check here reads a real workspace — that is a second check and a reserved number, if the owner wants it.
