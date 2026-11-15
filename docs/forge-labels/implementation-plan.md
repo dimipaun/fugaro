@@ -1,6 +1,6 @@
 # Forge labels: implementation plan
 
-**Spec:** [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md) (decisions D2430-D2440, findings F1-F26, resolutions R1-R8). **Status: plan only; nothing is implemented; no task is approved.** Each task needs the owner's own explicit go. Owner: Dimi Paun. Date: 2026-11-15. Checked against `origin/main` at `f70f520cc`; revised after review rounds 1 to 4.
+**Spec:** [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md) (decisions D2430-D2440, findings F1-F26, resolutions R1-R8). **Status: plan only; nothing is implemented yet; the owner approved all tasks on 2026-11-15 (#2787 merged).** Owner: Dimi Paun. Date: 2026-11-15. Checked against `origin/main` at `f70f520cc`; revised after review rounds 1 to 4.
 
 What it builds: the orchestrator daemon puts `fugaro:running`, `fugaro:failed` and `spec:<name>` labels on the pull requests of the runs it launched. The daemon asks the credentials service to perform each label read and write; the service enforces the namespaces and corroborates the pull request, and no token leaves it (D2439). Answers that shaped the plan: GitHub only (D2431), orchestrator-launched tasks only (D2432), `failed` cleared on the next job or on merge/close (D2433), tick-driven with one bulk read per repository per tick (D2434, D2435), a `spec` field set in the work item's patch (D2438), the service creating labels on first use (D2440), colours (D2437).
 
