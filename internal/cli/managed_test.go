@@ -154,25 +154,23 @@ func (s agentEnvState) apply(t *testing.T) {
 // confirmation is decided under, with what a project that is NOT managed and
 // has NO agent marker must do, written by hand:
 //
-//   - person: whether a person is at this run's own real terminal under the
-//     row — initflow.CanConfirmRun's answer, which
-//     TestManagedConfirmRuleMatchesTheTable reads back out of the row;
 //   - own: whether the run's own answer reaches the step — initRun.ask's
 //     answer, which is what the ordinary confirmation of every apply is, and
 //     a money-or-permanent step's where D12's answer of 2026-10-20 covers it
 //     (askCovered);
 //   - typed: the same for a money-or-permanent step the run's own answer does
 //     NOT reach (askTyped): an answer a run carries never confirms one, and
-//     the person at the terminal does.
+//     the person at the terminal does. It is initflow.CanConfirmRun's answer,
+//     which TestManagedConfirmRuleMatchesTheTable reads back out of the row.
 //
-// The three are read by the property (runConfirms reads the column of the arm
-// it is asked about) and the first by the rule's own test, so a column that
-// drifts from the code it states is a failure rather than a dead field.
+// Both are read by the property (runConfirms reads the column of the arm it is
+// asked about) and the second by the rule's own test, so a column that drifts
+// from the code it states is a failure rather than a dead field.
 //
 // Under any agent marker every one of them is false.
 type confirmRow struct {
 	yes, planOnly, nonInteractive, json, terminal bool
-	person, own, typed                            bool
+	own, typed                                    bool
 	// ask is --ask. It is written LAST rather than beside the flags it is a
 	// sibling of, so that every column the rows had before it keeps its place
 	// in the literal.
@@ -188,71 +186,71 @@ type confirmRow struct {
 // move something are the managed ones, which are not this table's subject:
 // managed_ask_test.go is theirs.
 var confirmTable = []confirmRow{
-	//  yes    plan   nonInt json   term   person own    typed  ask
-	{false, false, false, false, false, false, false, false, false},
-	{false, false, false, false, true, true, true, true, false},
-	{false, false, false, true, false, false, false, false, false},
-	{false, false, false, true, true, false, false, false, false},
-	{false, false, true, false, false, false, false, false, false},
-	{false, false, true, false, true, true, false, false, false},
-	{false, false, true, true, false, false, false, false, false},
-	{false, false, true, true, true, false, false, false, false},
-	{false, true, false, false, false, false, false, false, false},
-	{false, true, false, false, true, true, true, true, false},
-	{false, true, false, true, false, false, false, false, false},
-	{false, true, false, true, true, false, false, false, false},
-	{false, true, true, false, false, false, false, false, false},
-	{false, true, true, false, true, true, false, false, false},
-	{false, true, true, true, false, false, false, false, false},
-	{false, true, true, true, true, false, false, false, false},
-	{true, false, false, false, false, false, true, false, false},
-	{true, false, false, false, true, true, true, false, false},
-	{true, false, false, true, false, false, true, false, false},
-	{true, false, false, true, true, false, true, false, false},
-	{true, false, true, false, false, false, true, false, false},
-	{true, false, true, false, true, true, true, false, false},
-	{true, false, true, true, false, false, true, false, false},
-	{true, false, true, true, true, false, true, false, false},
-	{true, true, false, false, false, false, false, false, false},
-	{true, true, false, false, true, true, true, true, false},
-	{true, true, false, true, false, false, false, false, false},
-	{true, true, false, true, true, false, false, false, false},
-	{true, true, true, false, false, false, false, false, false},
-	{true, true, true, false, true, true, false, false, false},
-	{true, true, true, true, false, false, false, false, false},
-	{true, true, true, true, true, false, false, false, false},
-	{false, false, false, false, false, false, false, false, true},
-	{false, false, false, false, true, true, true, true, true},
-	{false, false, false, true, false, false, false, false, true},
-	{false, false, false, true, true, false, false, false, true},
-	{false, false, true, false, false, false, false, false, true},
-	{false, false, true, false, true, true, false, false, true},
-	{false, false, true, true, false, false, false, false, true},
-	{false, false, true, true, true, false, false, false, true},
-	{false, true, false, false, false, false, false, false, true},
-	{false, true, false, false, true, true, true, true, true},
-	{false, true, false, true, false, false, false, false, true},
-	{false, true, false, true, true, false, false, false, true},
-	{false, true, true, false, false, false, false, false, true},
-	{false, true, true, false, true, true, false, false, true},
-	{false, true, true, true, false, false, false, false, true},
-	{false, true, true, true, true, false, false, false, true},
-	{true, false, false, false, false, false, true, false, true},
-	{true, false, false, false, true, true, true, false, true},
-	{true, false, false, true, false, false, true, false, true},
-	{true, false, false, true, true, false, true, false, true},
-	{true, false, true, false, false, false, true, false, true},
-	{true, false, true, false, true, true, true, false, true},
-	{true, false, true, true, false, false, true, false, true},
-	{true, false, true, true, true, false, true, false, true},
-	{true, true, false, false, false, false, false, false, true},
-	{true, true, false, false, true, true, true, true, true},
-	{true, true, false, true, false, false, false, false, true},
-	{true, true, false, true, true, false, false, false, true},
-	{true, true, true, false, false, false, false, false, true},
-	{true, true, true, false, true, true, false, false, true},
-	{true, true, true, true, false, false, false, false, true},
-	{true, true, true, true, true, false, false, false, true},
+	//  yes    plan   nonInt json   term   own    typed  ask
+	{false, false, false, false, false, false, false, false},
+	{false, false, false, false, true, true, true, false},
+	{false, false, false, true, false, false, false, false},
+	{false, false, false, true, true, false, false, false},
+	{false, false, true, false, false, false, false, false},
+	{false, false, true, false, true, false, false, false},
+	{false, false, true, true, false, false, false, false},
+	{false, false, true, true, true, false, false, false},
+	{false, true, false, false, false, false, false, false},
+	{false, true, false, false, true, true, true, false},
+	{false, true, false, true, false, false, false, false},
+	{false, true, false, true, true, false, false, false},
+	{false, true, true, false, false, false, false, false},
+	{false, true, true, false, true, false, false, false},
+	{false, true, true, true, false, false, false, false},
+	{false, true, true, true, true, false, false, false},
+	{true, false, false, false, false, true, false, false},
+	{true, false, false, false, true, true, false, false},
+	{true, false, false, true, false, true, false, false},
+	{true, false, false, true, true, true, false, false},
+	{true, false, true, false, false, true, false, false},
+	{true, false, true, false, true, true, false, false},
+	{true, false, true, true, false, true, false, false},
+	{true, false, true, true, true, true, false, false},
+	{true, true, false, false, false, false, false, false},
+	{true, true, false, false, true, true, true, false},
+	{true, true, false, true, false, false, false, false},
+	{true, true, false, true, true, false, false, false},
+	{true, true, true, false, false, false, false, false},
+	{true, true, true, false, true, false, false, false},
+	{true, true, true, true, false, false, false, false},
+	{true, true, true, true, true, false, false, false},
+	{false, false, false, false, false, false, false, true},
+	{false, false, false, false, true, true, true, true},
+	{false, false, false, true, false, false, false, true},
+	{false, false, false, true, true, false, false, true},
+	{false, false, true, false, false, false, false, true},
+	{false, false, true, false, true, false, false, true},
+	{false, false, true, true, false, false, false, true},
+	{false, false, true, true, true, false, false, true},
+	{false, true, false, false, false, false, false, true},
+	{false, true, false, false, true, true, true, true},
+	{false, true, false, true, false, false, false, true},
+	{false, true, false, true, true, false, false, true},
+	{false, true, true, false, false, false, false, true},
+	{false, true, true, false, true, false, false, true},
+	{false, true, true, true, false, false, false, true},
+	{false, true, true, true, true, false, false, true},
+	{true, false, false, false, false, true, false, true},
+	{true, false, false, false, true, true, false, true},
+	{true, false, false, true, false, true, false, true},
+	{true, false, false, true, true, true, false, true},
+	{true, false, true, false, false, true, false, true},
+	{true, false, true, false, true, true, false, true},
+	{true, false, true, true, false, true, false, true},
+	{true, false, true, true, true, true, false, true},
+	{true, true, false, false, false, false, false, true},
+	{true, true, false, false, true, true, true, true},
+	{true, true, false, true, false, false, false, true},
+	{true, true, false, true, true, false, false, true},
+	{true, true, true, false, false, false, false, true},
+	{true, true, true, false, true, false, false, true},
+	{true, true, true, true, false, false, false, true},
+	{true, true, true, true, true, false, false, true},
 }
 
 func (c confirmRow) String() string {
@@ -717,7 +715,11 @@ func TestManagedConfirmRuleMatchesTheTable(t *testing.T) {
 			withTerminal(t, row.terminal)
 			marker := env.agentFor(row.terminal)
 			r, _ := confirmRig(t, row, "")
-			want := initflow.Conditions{JSON: row.json, Terminal: row.terminal, Agent: marker, Ask: row.ask}
+			// The run's own answer is the one the step's class used to decide:
+			// it reaches every step the run announces (askCovered's rule,
+			// folded into Conditions.Yes by initRun.conditions) and a
+			// money-or-permanent step only where D12's answer covers it.
+			want := initflow.Conditions{Yes: row.yes && !row.planOnly, NonInteractive: row.nonInteractive, JSON: row.json, Terminal: row.terminal, Agent: marker, Ask: row.ask}
 			if got := r.conditions(); got != want {
 				t.Errorf("%s, %s: initRun.conditions() = %+v, want %+v", row, env.name, got, want)
 			}
@@ -730,9 +732,9 @@ func TestManagedConfirmRuleMatchesTheTable(t *testing.T) {
 				t.Errorf("%s, %s: initEngine.options() has Agent=%q Yes=%v PlanOnly=%v NonInteractive=%v JSON=%v Terminal=%v, want Agent=%q and the row's flags",
 					row, env.name, o.Agent, o.Yes, o.PlanOnly, o.NonInteractive, o.JSON, o.Terminal, marker)
 			}
-			person := row.person && marker == ""
-			if got := initflow.CanConfirmRun(want); got != person {
-				t.Errorf("initflow.CanConfirmRun under %s, %s = %v, want %v", row, env.name, got, person)
+			typ := row.typed && marker == ""
+			if got := initflow.CanConfirmRun(want); got != typ {
+				t.Errorf("initflow.CanConfirmRun under %s, %s = %v, want %v", row, env.name, got, typ)
 			}
 		}
 	}
@@ -1089,7 +1091,7 @@ func TestManagedConditionEnumerationIsComplete(t *testing.T) {
 	for i := 0; i < typ.NumField(); i++ {
 		declared = append(declared, typ.Field(i).Name)
 	}
-	if want := []string{"JSON", "Terminal", "Agent", "Ask"}; !slices.Equal(declared, want) {
+	if want := []string{"Yes", "NonInteractive", "JSON", "Terminal", "Agent", "Ask"}; !slices.Equal(declared, want) {
 		t.Fatalf("initflow.Conditions is %v and the table covers %v (%s)", declared, want, conditionsString(initflow.Conditions{}))
 	}
 }

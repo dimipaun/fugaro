@@ -632,6 +632,22 @@ func TestProcessTerminalFollowsTheReplacedStdinIsTerminal(t *testing.T) {
 	}
 }
 
+// theRunCarriesItsOwnAnswer lets a test that is about something else give its
+// run the answer a command used to take by flag: the repository gate covers the
+// checkout's own repository when the run carries one (init_repo_gate.go's
+// onboardByRunAnswer), and no flag puts one on a command any more (T11,
+// docs/no-prompt-policy), so a test that drives a whole command from the
+// outside has no other way in. What it stands for is what is left of that
+// answer in the product: the converge Fugaro makes of itself (accounts add),
+// which is a run carrying its own. A coding agent's environment still confirms
+// nothing, and the gate's own tests (init_repo_gate_test.go) use the real one.
+func theRunCarriesItsOwnAnswer(t *testing.T) {
+	t.Helper()
+	old := onboardByRunAnswer
+	onboardByRunAnswer = func(r *initRun) bool { return agentMarker(os.Getenv, r.stdinTerminal()) == "" }
+	t.Cleanup(func() { onboardByRunAnswer = old })
+}
+
 // The typed confirmation fugaro setup used to take — the project's name, and
 // nothing else — is gone. What stands in its place is at the command level
 // too: TestInitAsksNoConfirmation.

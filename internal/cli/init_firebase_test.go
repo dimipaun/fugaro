@@ -58,6 +58,7 @@ func newFBRig(t *testing.T) *fbRig { return newFBRigFor(t, fpID) }
 // the installation's (the two-project layout), or initProject itself.
 func newFBRigFor(t *testing.T, fp string) *fbRig {
 	t.Helper()
+	theRunCarriesItsOwnAnswer(t)
 	r := &fbRig{initRig: newInitRig(t), billing: gcpfake.NewBilling(t), db: gcpfake.NewRTDB(t), fbdb: gcpfake.NewFirebaseDB(t), fp: fp}
 	r.idt = gcpfake.NewIdentityToolkit(t, nil, "key", fp)
 	r.fs, r.rules = gcpfake.NewFirestore(t), gcpfake.NewFirebaseRules(t, fp)
