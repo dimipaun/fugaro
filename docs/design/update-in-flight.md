@@ -51,6 +51,7 @@ release could observe or lose.
 | --- | --- | --- | --- | --- |
 | preflight | Reads the environment and the local config; no cloud write | None | Safe | `preflightStage` |
 | installation | Terraform root `installation`: the GCS bucket, the Artifact Registry, the credential containers, the history/coordinator/catalog-check jobs, the shared project jobs, the credentials service's own block (its image is moved by the credentials-service row below) | A create or an update, never a replace: `google_storage_bucket.runs`, the registries and the secret containers carry `prevent_destroy` (`deploy/terraform/gcp/modules/installation/bucket.tf`, `registry.tf`, `secrets.tf`, `credentials.tf`). A job whose *name* would change is ForceNew and is destroyed — see the job row below | Safe, with the job-name caveat | `newInstallationStage`, `deploy/terraform/gcp/roots/installation/main.tf` |
+| installation, the implicit review job (piece 1 of `docs/review-job/spec.md`) | One review-only job per (provider, account) for a project that declares no profile (`ImplicitReviewJobName`), with its own service account and the row the credentials service admits a review caller by. It is composed by the run that finds the `credentials_service` block in the installation's tfvars (`specReviewJobsOfTheService`), so an installation at the previous version — the block deployed by the release behind, no review job beside it — gets the job from ONE `fugaro update`; a config that can no longer compose it keeps the job the record holds (`CarriedProjectReviewJobs`) | None: a create beside the jobs the run's own execution runs on, never a replace of one — a job's template reaches the next execution, and a run in flight holds its own execution's. The job's image and environment are caught up by the NEXT update, the same lag every job of the installation root has behind the images stage | Safe | `implicitReviewVariant`, `internal/infra/projectjobs.go`; `specReviewJobsOfTheService`, `internal/cli/init_stages.go`; `CarriedProjectReviewJobs`, `internal/infra/tfvars.go`; `TestUpdateAddsTheImplicitReviewJobAndLeavesARunInFlightRunning`, `internal/cli/update_review_job_test.go` |
 | Firebase | The Realtime Database instance, the web API key, the token-signing service account | The run reaches the database with an ID token exchanged from a custom token minted by its own launcher: `token.Exchange`, `internal/budget/token/exchange.go`; the database identity is not an IAM identity (`deploy/terraform/gcp/modules/firebase/iam.tf`). A re-apply of the instance's own fields does not invalidate it | Safe | `newFirebaseStage`, `deploy/terraform/gcp/modules/firebase/firebase.tf` |
 | images | Pins `base_images.<kind>` by digest, mirrors the history image, and rebuilds the catalog entries of this checkout whose recorded build was built FROM an older release base (naming the ones another checkout builds, never passing one over); never patches a job | A run's own execution already holds its image; the pin and the rebuilds reach the *next* execution | Safe | `imagesStage`, `internal/cli/init_images.go`, `internal/cli/init_images_catalog.go` |
 | installation, second apply | The history job and the catalog check job, which only the images stage makes deployable | Same as the first apply | Safe | `newInstallation2Stage` |
@@ -239,6 +240,13 @@ converges under `fugaro update` while a run of its own repository is in flight,
 and that run's later writes — its lease, the ledger and the counters the report
 settles, the outcome it ends with, its record and its review session — still
 land under the new rules and the migrated policy.
+`TestUpdateAddsTheImplicitReviewJobAndLeavesARunInFlightRunning`
+(`internal/cli/update_review_job_test.go`) is the same fixture read against the
+one job this release adds (the row above): an installation at the previous
+version — the credentials service the release behind deployed, no implicit
+review job beside it — gets that job from one `fugaro update`, the run in flight
+is left running with every write of its own still landing, and the updates after
+it hand terraform the same job.
 `TestUpdateInFlightLineNamesEveryStepThatCanReachARun` turns each of the three
 steps on alone and asserts the clause is there and the others are not, so a step
 that can reach a run and is not named fails the suite.
