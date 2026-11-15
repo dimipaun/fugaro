@@ -461,19 +461,17 @@ publisher refuses silence for the same reason.
 
 ## S11. The end-to-end converge test (SD3, SD4, D849)
 
-**NOT BUILT 2026-11-10: S2 and S4 are not on `main`, so the loop this task is about cannot be
-written yet.** The loop is the read's as much as the stage's — `unpublished` before the update and
-`WINS policy` after it are S2's (`internal/cli/settings_cloud.go`, which does not exist) and the
-project-layer half is S4's (`internal/cli/settings_layer.go`, which does not exist either) — and
-neither read exists: `settingsCloudLayers` (`internal/cli/settings_read.go`) is still the no-op stub
-its own comment calls "empty until S2 fills it", and nothing in the read touches the published node
-or a Realtime Database key. On an installation whose local config writes `budget.per_run_usd`,
-`fugaro settings budget.per_run_usd` prints `WINS local` and `STATE ok` before **and** after
-`fugaro update` publishes the node, and never `unpublished` — the state spec §2.5 makes this
-command's reason to exist. The stage's half does converge (the write above reaches the published
-node), so the test below, written today, would pin `local`/`ok` for a state that is `unpublished`
-by the spec: a test whose own name says the opposite of what it asserts. **S11 is written when S2
-and S4 land**; nothing here changes its Files line, its tests, its level or the order above.
+**BUILT 2026-11-14: S2 (#2328) and S4 (#2641) are on `main`, so the loop this task is about is
+written and green** — `internal/cli/settings_converge_test.go`, over one hermetic installation, both
+halves. The note that stood here on 2026-11-10 said the two reads did not exist yet: S2's cloud half
+(`internal/cli/settings_cloud.go`, the published node, the caps rows and the `unpublished`
+comparison) and S4's layer half (`internal/cli/settings_layer.go`: this machine's layer file against
+the published object), with `settingsCloudLayers` still the no-op stub — so
+`fugaro settings budget.per_run_usd` printed `WINS local` and `STATE ok` before **and** after
+`fugaro update` published the node, and never `unpublished`, and a test written then would have
+pinned `local`/`ok` for a state spec §2.5 calls `unpublished`. Both halves are in the tree now and
+the test asserts the converge; nothing else in this section changed, and its Files line, its tests,
+its level and its place in the order above stand as written.
 
 The whole design is one loop: set a value, see it `unpublished`, run `fugaro update`, see it `ok`.
 Every task above tests one half of it, and the halves are exactly what can drift apart, so the loop
