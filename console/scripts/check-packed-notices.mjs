@@ -60,7 +60,7 @@ const TARGETS = {
  * the bundler's elkjs worker and the two vendored fonts -- rather than as a
  * directory of `node_modules`. They are not packages of the archive, so the
  * comparison below leaves them out on both sides. */
-const BUNDLED = ['elkjs 0.11.0', 'Instrument Sans', 'IBM Plex Mono']
+const BUNDLED = ['elkjs 0.12.1', 'Instrument Sans', 'IBM Plex Mono']
 
 const target = TARGETS[process.platform]
 if (target === undefined) {

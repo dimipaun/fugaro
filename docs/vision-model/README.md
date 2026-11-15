@@ -1,5 +1,11 @@
 # A vision-capable model for a run on a text-only coder
 
+**Status as of 2026-11-15: 8 of the 9 tasks are merged (V0–V7 — the slot, the price member, the
+release guard, the gateway's refusal, the bootstrap check, the doctor check and the rewrite of the
+coder-role stages); V8, these documents, the working skill and the release notes, is written and in
+review; owner Checks 520 and 521 are named in the plan and in
+[docs/gcp-live-checklist.md](../gcp-live-checklist.md) and have **not been run**;
+[docs/status.md](../status.md) carries the current row.** *The status as first written, kept:*
 **Status: plan only; nothing is implemented; no task is approved.** Spec owner: Dimi Paun. Written
 2026-11-10. **Independent review over these documents has not run.**
 

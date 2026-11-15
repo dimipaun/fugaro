@@ -401,6 +401,41 @@ func TestHeadroomIsDeliveredByTheServiceAndWrittenNowhere(t *testing.T) {
 	}
 }
 
+// The refusal's own marker is the same wire as the headroom, in the other
+// direction of the same fact: what this service writes on a refusal it answers
+// is what a member's gateway reads off it and carries onto the run's halt
+// (gateway.WorkspaceRefusal), so the writer and the reader are held to each
+// other here rather than only each to its own idea of the three words.
+//
+// A reason outside the three is written as no marker, never as the value it
+// was handed: the vocabulary is closed, and a service answering something else
+// is answering a refusal that is not the workspace's own — a marker the member
+// would carry into a record a daemon pauses a queue on.
+func TestTheRefusalMarkerIsTheWireTheMembersGatewayReads(t *testing.T) {
+	for _, reason := range gateway.WorkspaceRefusals() {
+		h := http.Header{}
+		SetWorkspaceRefusal(h, reason)
+		if got := h.Get(gateway.WorkspaceRefusalHeader); got != reason {
+			t.Errorf("the answer carries %q as %v, want %q", gateway.WorkspaceRefusalHeader, got, reason)
+		}
+		got, ok := gateway.WorkspaceRefusal(h)
+		if !ok || got != reason {
+			t.Errorf("the member's gateway read back (%q, %v) from the service's own %q refusal", got, ok, reason)
+		}
+	}
+
+	for _, reason := range []string{"", "STOP", "stopped", "budget_unavailable", "state_unavailable"} {
+		h := http.Header{}
+		SetWorkspaceRefusal(h, reason)
+		if got := h.Values(gateway.WorkspaceRefusalHeader); len(got) != 0 {
+			t.Errorf("a refusal reason %q outside the three wrote the marker %v", reason, got)
+		}
+		if got, ok := gateway.WorkspaceRefusal(h); ok || got != "" {
+			t.Errorf("the member's gateway read %q off an answer carrying no marker", got)
+		}
+	}
+}
+
 // A member the workspace cannot resolve as a caller is refused at the front
 // door, so its calls are never served and never counted: a call that resolved
 // to no member is refused by the meter before it asks the database anything, and
