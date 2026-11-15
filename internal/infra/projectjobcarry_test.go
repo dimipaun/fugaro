@@ -5,9 +5,11 @@ import (
 	"maps"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // projectJobsOf is the project_jobs member of a tfvars document, nil when it
@@ -173,4 +175,73 @@ func firstKey(jobs map[string]any) (string, bool) {
 		return "", false
 	}
 	return names[0], true
+}
+
+// carriedProfileLCBlock is the config of the installation this file's other
+// half is about, one act later: `fugaro update` wrote profiles.standard for the
+// project's GitHub repositories (R1, D2310), a repository on Bitbucket got
+// profiles.standard-bitbucket beside it (R8), and the GitHub fact is gone from
+// the repositories — no github_app_id anywhere — so the config composes no job
+// for standard while the installation holds the one it deployed.
+const carriedProfileLCBlock = `profiles:
+  standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h }
+  standard-bitbucket: { provider: bitbucket, cpu: 2, memory: 8Gi, timeout_class: 6h }
+`
+
+// TestCarriedProfileKeepsThePolicyAndLosesOnlyItsJob: a profile whose job is
+// carried is still the policy's, and only its job is left out of the set.
+//
+// It is installSpec's carry read at its own level (internal/cli): the profile a
+// config can no longer compose a job for is the one `fugaro update` wrote, and
+// it is named `standard` — the name projectpolicy requires whenever a config
+// carries a profiles block at all, because it is the profile a workflow that
+// names none runs on. A composition that dropped the profile whole would move
+// the refusal from the update to every run of the project (the policy's own
+// sentence), which is not a trade a carry may make; what it drops is the JOB,
+// and the deployed one is put back by CarriedProjectJobs.
+//
+// Mutation (run, restore): compose the set from the config without the carried
+// profile — the shape installSpec had before this test — and the composition
+// below is refused by CheckProfiles for the missing standard.
+func TestCarriedProfileKeepsThePolicyAndLosesOnlyItsJob(t *testing.T) {
+	// The GitHub fact gone from the repositories, as the act leaves the config:
+	// the App ID every github job would run on is not there any more.
+	lc := parseLC(t, strings.Replace(implicitReviewLC()+carriedProfileLCBlock, `, github_app_id: "123456789"`, "", 1))
+	if _, err := ProjectJobs(lc, "fugaro-runs-proj-1234", false); err == nil {
+		t.Fatal("the fixture composes a job for a github profile whose config records no App ID: this test would not be about the carry")
+	}
+	jobs, err := projectJobs(lc, "fugaro-runs-proj-1234", false, []string{projectpolicy.DefaultProfileName})
+	if err != nil {
+		t.Fatalf("the carried composition was refused: %v", err)
+	}
+	if got := slotsOfProfile(t, jobs, projectpolicy.DefaultProfileName); len(got) != 0 {
+		t.Errorf("the carried profile composed %v, want nothing: its job is the installation's own, and the document carries the deployed one", got)
+	}
+	// The profile the config declares beside the carried one is a Bitbucket one,
+	// which no shared job serves yet (I1): the set is the carried profile's
+	// absence and nothing else. What the assertion above pins is the refusal
+	// that is NOT here — a composition with the profile dropped whole is refused
+	// by CheckProfiles for the missing standard, and the carry keeps it.
+	review, err := projectReviewJobs(lc, "fugaro-runs-proj-1234", false, []string{projectpolicy.DefaultProfileName})
+	if err != nil {
+		t.Fatalf("the carried review composition was refused: %v", err)
+	}
+	for _, name := range slices.Sorted(maps.Keys(review)) {
+		if job := review[name]; job.Profile == projectpolicy.DefaultProfileName {
+			t.Errorf("the carried profile derived a review variant (%s): its variants are the deployed ones the carry keeps", name)
+		}
+	}
+}
+
+// slotsOfProfile is the job names of a job set whose profile is name, whatever
+// provider and account they are for.
+func slotsOfProfile(t *testing.T, jobs map[string]ProjectJob, name string) []string {
+	t.Helper()
+	var out []string
+	for _, job := range slices.Sorted(maps.Keys(jobs)) {
+		if jobs[job].Profile == name {
+			out = append(out, job)
+		}
+	}
+	return out
 }
