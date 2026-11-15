@@ -14,7 +14,11 @@ package governance_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -22,9 +26,11 @@ import (
 	"github.com/dimipaun/fugaro/ee/governance"
 	_ "github.com/dimipaun/fugaro/ee/register"
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/digest"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runner/runnertest"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -811,11 +817,11 @@ func aCall() anthropicfake.Reply {
 }
 
 // implementOverItsBudget is the implement stage of a run whose own share of
-// the cap is smaller than the call it makes: the call's worst case is a
-// hundred thousand output tokens, and the gateway stops the stage rather than
-// send it (T7.2). It answers the refusal the way a real agent's client does —
-// the call returns, the stage does not — which is the shape the runner has to
-// turn into a halt and a checkpoint.
+// the cap is smaller than the call it makes: the call's worst case is four
+// thousand output tokens and the input bound beside them, and the gateway
+// stops the stage rather than send it (T7.2). It answers the refusal the way a
+// real agent's client does — the call returns, the stage does not — which is
+// the shape the runner has to turn into a halt and a checkpoint.
 func implementOverItsBudget(t *testing.T, _ context.Context, req agent.Request) (agent.Result, error) {
 	t.Helper()
 	if code, body := runnertest.Post(t, req, sonnet, 4000); code != http.StatusForbidden {
@@ -925,5 +931,292 @@ func TestCheckpointCallFailureStillHalts(t *testing.T) {
 	}
 	if pr := h.PR(t); !pr.Draft {
 		t.Errorf("pull request = %+v, want the draft a governance halt leaves", pr)
+	}
+}
+
+// The review-scope stop (T5.2, T7.3, D332). What the tests below drive is the
+// comparison the core records after implement (diffbase.go, readReviewScope)
+// and the reading ee/governance's Before takes of it before a review round:
+// one comparison is a mismatch — a range narrowed to the run's own commits and
+// then moved off them — and every other one is a fact about the run.
+
+// integrationBranch is the branch a test's run cuts its work from, the way a
+// brief that says `git checkout -b <b> origin/<integration>` does
+// (diffbase.go): the commits the run makes are then the ones no branch on
+// origin holds, so the review range narrows to them.
+const integrationBranch = "integration"
+
+// integrationOnRemote pushes an integration branch of two commits onto the
+// remote's main and returns its tip: the commit the run's own range is
+// narrowed to, and the one a fix round moves the branch off.
+func integrationOnRemote(t *testing.T, remote string) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "integration")
+	testutil.Git(t, filepath.Dir(dir), "clone", "--quiet", remote, dir)
+	testutil.WriteFiles(t, dir, map[string]string{"integration.txt": "the integration branch's own file\n"})
+	testutil.Git(t, dir, "add", "-A")
+	testutil.Git(t, dir, "commit", "--quiet", "-m", "the integration branch's first commit")
+	testutil.WriteFiles(t, dir, map[string]string{"more-integration.txt": "more of it\n"})
+	testutil.Git(t, dir, "add", "-A")
+	testutil.Git(t, dir, "commit", "--quiet", "-m", "the integration branch's second commit")
+	testutil.Git(t, dir, "push", "--quiet", "origin", "HEAD:refs/heads/"+integrationBranch)
+	return testutil.Git(t, dir, "rev-parse", "HEAD")
+}
+
+// advanceBranch pushes one commit onto branch on the remote: the base a run is
+// measured against moving on while the run works.
+func advanceBranch(t *testing.T, remote, branch string, files map[string]string) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "advance")
+	testutil.Git(t, filepath.Dir(dir), "clone", "--quiet", remote, dir)
+	testutil.Git(t, dir, "checkout", "--quiet", branch)
+	testutil.WriteFiles(t, dir, files)
+	testutil.Git(t, dir, "add", "-A")
+	testutil.Git(t, dir, "commit", "--quiet", "-m", "a person's commit on "+branch)
+	testutil.Git(t, dir, "push", "--quiet", "origin", "HEAD:refs/heads/"+branch)
+	return testutil.Git(t, dir, "rev-parse", "HEAD")
+}
+
+// cutFromTheIntegrationBranch is implement's work cut from a branch the run's
+// own task never recorded. The refspec brings the branch in as a
+// remote-tracking ref whatever shape the clone has, so the run's own commits
+// are the ones origin holds no branch for and the review range is narrowed to
+// them (narrowReviewRange).
+func cutFromTheIntegrationBranch(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+	t.Helper()
+	runnertest.Script(t, req, "git fetch -q origin +refs/heads/"+integrationBranch+":refs/remotes/origin/"+integrationBranch+
+		" && git checkout -q -b work origin/"+integrationBranch)
+	return runnertest.Implement("feature")(t, ctx, req)
+}
+
+// movedOffTheNarrowedCommit is the fix round that leaves the commit the review
+// range was narrowed to behind: the run's own commit is replayed onto the
+// integration branch's first commit, so the commit the range starts after is
+// no longer an ancestor of HEAD and the round that follows reads the recorded
+// range instead (diffbase.go, reviewRev).
+func movedOffTheNarrowedCommit(t *testing.T, _ context.Context, req agent.Request) (agent.Result, error) {
+	t.Helper()
+	runnertest.Script(t, req, "git rebase -q --onto origin/"+integrationBranch+"~1 origin/"+integrationBranch)
+	return agent.Result{CostUSD: 0.5}, nil
+}
+
+// movedOntoTheRecordedBase is the other way a fix round leaves the narrowed
+// commit behind: the run's own commit is replayed onto main, the base the run
+// recorded, so the round that follows reads the recorded range and is handed
+// nothing implement did not write. It is the drift the digest flags and the
+// stop does not.
+func movedOntoTheRecordedBase(t *testing.T, _ context.Context, req agent.Request) (agent.Result, error) {
+	t.Helper()
+	runnertest.Script(t, req, "git rebase -q --onto origin/main origin/"+integrationBranch)
+	return agent.Result{CostUSD: 0.5}, nil
+}
+
+// TestReviewScopeMismatchHaltsBeforeReview: a review round about to be handed
+// a range that starts where the run's own commits no longer do is a round the
+// run does not buy at all (T5.2, T7.3, D332). The fix round before it moved the
+// branch off the commit the range was narrowed to, so the round would read the
+// recorded base and cover the integration branch's own file, which implement
+// never wrote: the run halts with the review_scope reason, the record carries
+// the comparison the stop was taken on, and no second review round and no
+// second fix are run.
+func TestReviewScopeMismatchHaltsBeforeReview(t *testing.T) {
+	h := runnertest.New(t, fixtureYAML(t), nil)
+	narrowed := integrationOnRemote(t, h.Provider.Remote)
+	rec, err := h.Run(t,
+		cutFromTheIntegrationBranch,
+		runnertest.Review("changes", 1),
+		movedOffTheNarrowedCommit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Halt == nil || rec.Halt.Reason != runstore.HaltReviewScope {
+		t.Fatalf("record = %+v, halt = %+v: the round the stop is about was bought", rec, rec.Halt)
+	}
+	// The detail is the runner's own sentence for it: the two revisions the
+	// comparison was read over, and how many of the range's paths the run never
+	// wrote. It carries no path — the record and the digest's flag hold those.
+	for _, want := range []string{"origin/main", narrowed, "1 path(s)"} {
+		if !strings.Contains(rec.Halt.Detail, want) {
+			t.Errorf("halt detail = %q, want it to name %q", rec.Halt.Detail, want)
+		}
+	}
+	sc := rec.ReviewScope
+	if sc == nil || sc.Applicable || sc.WhyNot != runstore.ReviewScopeRangeMoved || sc.Truncated {
+		t.Fatalf("review scope = %+v, want the moved comparison the stop was taken on", sc)
+	}
+	if len(sc.Outside) != 1 || sc.Outside[0] != "integration.txt" {
+		t.Errorf("review scope outside = %v, want the integration branch's own file alone", sc.Outside)
+	}
+	// Three stages and no fourth: implement, the review round, and the fix that
+	// moved the branch. The round the stop is about is never bought.
+	if got := len(h.Calls()); got != 3 {
+		t.Fatalf("%d stages ran, want implement, review and fix", got)
+	}
+	if pr := h.PR(t); !pr.Draft {
+		t.Errorf("pull request = %+v, want the draft a governance halt leaves", pr)
+	}
+}
+
+// reviewView is a review round's view of one comparison: the stage, the two
+// revisions the stop's detail is made of, and the record's block.
+func reviewView(sc *runstore.ReviewScope) runner.StageView {
+	return runner.StageView{
+		Stage:       "review",
+		ReviewScope: sc,
+		Narrowed:    "1111111111111111111111111111111111111111",
+		ReviewRev:   "origin/main",
+	}
+}
+
+// TestReviewScopeNotApplicableNeverHalts: a comparison that does not apply is a
+// fact about the run and never a mismatch, so no review round is refused for
+// one (T5.2, T7.3, D332). The wide range kept on purpose is driven through a
+// whole run; the rest of the reasons are handed to the decision as a record
+// carries them, because a follow-up, a review run and an autofix's Fixed gate
+// are not runs internal/runner/runnertest can make — it has no follow-up state,
+// no review mode and no check step — and the block each of them writes is what
+// the stop reads.
+//
+// The last case is the control: the one comparison that IS a mismatch, with a
+// path implement never wrote, stops the round, so the table above is not a
+// table of a decision that never fires.
+func TestReviewScopeNotApplicableNeverHalts(t *testing.T) {
+	t.Run("a range kept wide on purpose", func(t *testing.T) {
+		h := runnertest.New(t, fixtureYAML(t), nil)
+		// The base the run recorded moves on while it works, and the run does
+		// not merge it in: the recorded range then holds no more commits than
+		// the run's own, so it is kept as it was and the record says why.
+		baseMovesOn := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+			t.Helper()
+			advanceBranch(t, h.Provider.Remote, "main", map[string]string{"person.txt": "a person's file\n"})
+			runnertest.Script(t, req, "git fetch -q origin main")
+			return runnertest.Implement("feature")(t, ctx, req)
+		}
+		rec, err := h.Run(t, baseMovesOn, runnertest.Review("ship", 0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.Halt != nil || rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+			t.Fatalf("record = %+v, halt = %+v: a range kept wide on purpose stopped the run", rec, rec.Halt)
+		}
+		sc := rec.ReviewScope
+		if sc == nil || sc.Applicable || sc.WhyNot != runstore.ReviewScopeNoNarrowerRange {
+			t.Fatalf("review scope = %+v, want the range recorded as kept wide on purpose", sc)
+		}
+		if got := len(h.Calls()); got != 2 {
+			t.Fatalf("%d stages ran, want implement and review", got)
+		}
+	})
+
+	// A comparison whose lists were capped is not a mismatch either: Outside is
+	// taken over the two bounded lists, so a path it names may be one the run
+	// did change.
+	wrote := make([]string, 0, runstore.MaxReviewScopeFiles+5)
+	for i := range runstore.MaxReviewScopeFiles + 5 {
+		wrote = append(wrote, fmt.Sprintf("w%03d.go", i))
+	}
+	truncated := runstore.NewReviewScope(false, runstore.ReviewScopeRangeMoved, wrote, append([]string{"a.go"}, wrote...))
+	if !truncated.Truncated || len(truncated.Outside) == 0 {
+		t.Fatalf("the fixture is not a truncated comparison with an outside: %+v", truncated)
+	}
+
+	for _, tc := range []struct {
+		name string
+		sc   *runstore.ReviewScope
+	}{
+		{"a follow-up's range", runstore.NewReviewScope(false, runstore.ReviewScopeFollowUp, nil, []string{"a.go"})},
+		{"a review run's range", runstore.NewReviewScope(false, runstore.ReviewScopeReviewRun, nil, []string{"a.go"})},
+		{"an autofix's range", runstore.NewReviewScope(false, runstore.ReviewScopeAutofix, nil, []string{"a.go"})},
+		{"a git too old to read the run's own commits", runstore.NewReviewScope(false, runstore.ReviewScopeGitTooOld, nil, nil)},
+		{"a run with no commits of its own", runstore.NewReviewScope(false, runstore.ReviewScopeNoOwnCommits, nil, nil)},
+		{"a run whose own commits could not be read", runstore.NewReviewScope(false, runstore.ReviewScopeOwnCommitsUnreadable, nil, nil)},
+		{"a comparison whose reads failed", runstore.NewReviewScope(false, runstore.ReviewScopeReadFailed, nil, nil)},
+		{"no comparison at all", nil},
+		{"the range is the run's own commits", runstore.NewReviewScope(true, "", []string{"a.go"}, []string{"a.go"})},
+		{"a moved range that handed over nothing new", runstore.NewReviewScope(false, runstore.ReviewScopeRangeMoved, []string{"a.go"}, []string{"a.go"})},
+		{"a moved range whose lists were truncated", truncated},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if d := governance.Before(reviewView(tc.sc)); d.Halt {
+				t.Errorf("the review round was refused for a comparison that does not apply: %+v", d)
+			}
+		})
+	}
+
+	moved := runstore.NewReviewScope(false, runstore.ReviewScopeRangeMoved, []string{"a.go"}, []string{"a.go", "b.go"})
+	if d := governance.Before(reviewView(moved)); !d.Halt || d.Reason != runstore.HaltReviewScope {
+		t.Fatalf("a moved range that handed over a path the run never wrote did not stop the round: %+v", d)
+	}
+}
+
+// loopsOnOneCommand is the implement stage of a run whose agent ran one
+// identical shell command past the digest's threshold: the stage's own stream
+// is where the runner's relay counts it (T1.4), so the step writes the lines a
+// real agent's transcript would carry.
+func loopsOnOneCommand(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+	t.Helper()
+	line := `{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"sh test.sh"}}]}}` + "\n"
+	for range digest.RepeatedCommandThreshold {
+		if _, err := io.WriteString(req.Transcript, line); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return runnertest.Implement("feature")(t, ctx, req)
+}
+
+// digestFlags is the flags the digest raises for one run's record, as the
+// report prints them: the flags are a reader's, and the record itself carries
+// no flag.
+func digestFlags(t *testing.T, rec *runstore.Record) []string {
+	t.Helper()
+	if rec.FinishedAt == nil {
+		t.Fatal("the record carries no finish time")
+	}
+	p, err := digest.NewPeriod(digest.ByWeek, rec.FinishedAt.UTC().Format("2006-01-02"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := digest.Build([]runstore.Record{*rec}, p).Runs
+	if len(rows) != 1 {
+		t.Fatalf("the digest selected %d runs, want the one this test wrote", len(rows))
+	}
+	out := make([]string, 0, len(rows[0].Flags))
+	for _, f := range rows[0].Flags {
+		out = append(out, f.String())
+	}
+	return out
+}
+
+// TestReportOnlyTripwiresDoNotHalt: the loop tripwire is a report line and
+// nothing else (G8, D332). A stage that ran one identical shell command
+// RepeatedCommandThreshold times or more is flagged in the digest, and the run
+// it happened in goes on — the review round is bought, the run ends ready, and
+// no halt is written for it.
+func TestReportOnlyTripwiresDoNotHalt(t *testing.T) {
+	h := runnertest.New(t, fixtureYAML(t), nil)
+	rec, err := h.Run(t, loopsOnOneCommand, runnertest.Review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Halt != nil || rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("record = %+v, halt = %+v: the loop flag stopped the run", rec, rec.Halt)
+	}
+	// The count is the runner's relay's, off the stage's own stream, and it is
+	// what the digest's flag is raised from: a run whose stages recorded none
+	// would be a run the tripwire never fired in.
+	var repeats int
+	for _, st := range rec.Stages {
+		if st.Name == "implement" && st.Repeats != nil {
+			repeats = *st.Repeats
+		}
+	}
+	if repeats < digest.RepeatedCommandThreshold {
+		t.Fatalf("stages = %+v, want the implement stage's repeats at the threshold", rec.Stages)
+	}
+	if flags := digestFlags(t, rec); !slices.Contains(flags, digest.FlagRepeatedCommand) {
+		t.Errorf("the digest raised %v, want %s among them", flags, digest.FlagRepeatedCommand)
+	}
+	if got := len(h.Calls()); got != 2 {
+		t.Fatalf("%d stages ran, want implement and review", got)
 	}
 }
