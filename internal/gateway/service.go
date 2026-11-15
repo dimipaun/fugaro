@@ -80,6 +80,17 @@ const (
 	// service keeps only its hash — so it is attached here, on the call the
 	// service decides by, and never written to a log, an error or a record.
 	HeaderSlipClaim = "X-Fugaro-Slip-Claim"
+	// HeaderAuthMode is the auth the run's own repository goes out on, as the
+	// runner declares it (B2.2, credsvc.HeaderAuthMode). It is a statement
+	// and never evidence: the service decides from the record `fugaro update`
+	// wrote for that repository and reads this only to check the two agree
+	// (D2070 (a), R7), so a value the agent chose would be refused rather
+	// than served.
+	HeaderAuthMode = "X-Fugaro-Auth-Mode"
+	// HeaderAuthAccount names the Claude account an oauth run goes out on,
+	// spelled as config.ClaudeAccountNameRE spells one. It is read for one
+	// thing only, whether the repository's record names that account.
+	HeaderAuthAccount = "X-Fugaro-Auth-Account"
 )
 
 // The answer headers of the contract (credsvc.HeaderTier,
@@ -343,13 +354,23 @@ func (s *Server) serviceUpstream(ctx context.Context, rt route, in http.Header) 
 	// reason and for one more: they are the run's claim, taken by the runner
 	// and held here, so an agent that sent a slip of its own must not have
 	// it reach the service — what travels below is the claim the run took,
-	// and never a value the agent chose.
-	for _, k := range []string{HeaderTier, HeaderCredential, HeaderSwitch, HeaderProbe, HeaderSlip, HeaderSlipClaim} {
+	// and never a value the agent chose. The run's own auth declaration is
+	// dropped for that same second reason: the agent runs inside the
+	// repository whose auth it is, so a mode or an account it wrote would
+	// read as the runner's statement about a repository it may not be in —
+	// what travels below is what the runner resolved for this run.
+	for _, k := range []string{HeaderTier, HeaderCredential, HeaderSwitch, HeaderProbe, HeaderSlip, HeaderSlipClaim, HeaderAuthMode, HeaderAuthAccount} {
 		h.Del(k)
 	}
 	h.Set("Authorization", "Bearer "+id)
 	h.Set(HeaderRunIdentity, run)
 	h.Set(HeaderRunJob, sv.Job)
+	if mode := s.o.Upstream.AuthMode; mode != "" {
+		h.Set(HeaderAuthMode, mode)
+	}
+	if account := s.o.Upstream.Account; account != "" {
+		h.Set(HeaderAuthAccount, account)
+	}
 	if sv.SlipID != "" {
 		h.Set(HeaderSlip, sv.SlipID)
 		h.Set(HeaderSlipClaim, sv.SlipClaim)

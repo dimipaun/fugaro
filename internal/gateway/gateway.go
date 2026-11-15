@@ -90,6 +90,20 @@ type Upstream struct {
 	// validate refuses a service upstream that carries an in-job credential
 	// (D143).
 	Service *Service
+	// AuthMode is the auth the run's own repository goes out on, declared to
+	// the credentials service on every call (HeaderAuthMode, B2.2). It is
+	// only read with KindService, and only "api-key" and "oauth" are declared:
+	// a cascade run's repository auth is what the service already holds, and
+	// a vertex run never reaches the service at all. Empty sends no
+	// declaration, which the service refuses for a repository it cannot
+	// otherwise place (D2070 (a)).
+	AuthMode string
+	// Account names the Claude account an oauth run goes out on, declared
+	// beside AuthMode (HeaderAuthAccount) and empty for every other auth. The
+	// service reads it against the accounts the repository's record names, so
+	// a run that declares one the record does not have is refused rather than
+	// served another.
+	Account string
 }
 
 // Options configure a gateway.
