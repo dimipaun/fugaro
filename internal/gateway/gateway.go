@@ -97,6 +97,11 @@ type Upstream struct {
 	// a vertex run never reaches the service at all. Empty sends no
 	// declaration, which the service refuses for a repository it cannot
 	// otherwise place (D2070 (a)).
+	//
+	// It is also what admits Routes beside this upstream: an api-key
+	// declaration is a switched api-key run, whose provider keys stay on the
+	// runner path (R6, D1634), so the models its routes claim are the
+	// provider's and the rest are the service's (validateRoutes).
 	AuthMode string
 	// Account names the Claude account an oauth run goes out on, declared
 	// beside AuthMode (HeaderAuthAccount) and empty for every other auth. The
@@ -111,7 +116,9 @@ type Options struct {
 	Upstream Upstream
 	// Routes send the models they claim to a provider, each with its own
 	// credential; every other model goes to Upstream. Only with the
-	// anthropic upstream.
+	// anthropic upstream, or with a service upstream that declares api-key
+	// (B2.2: a switched api-key run's provider keys stay on the runner path,
+	// R6/D1634).
 	Routes []Route
 	Prices *pricing.Table
 	Mode   Mode

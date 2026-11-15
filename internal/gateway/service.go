@@ -319,10 +319,13 @@ type Tried struct {
 // job's own: validate refuses a service upstream that has one, and this
 // function writes only the two identities above — the agent's own headers,
 // the gateway token and every credential header Claude Code sent are already
-// gone from what forwardHeaders returns. A route is refused as well, here and
-// in validateRoutes, on oauthUpstream's reasoning: a route is a provider's
-// own endpoint and is reached with the provider's key, which a service run
-// does not have.
+// gone from what forwardHeaders returns. A route is refused as well, on
+// oauthUpstream's reasoning: a route is a provider's own endpoint and is
+// reached with the provider's key, which a service run does not have. A
+// routed call never reaches this function at all — upstreamRequest returns
+// the provider's own request before the kind switch — and the check is kept
+// so a route handed to it in code cannot have a service call built for it
+// either.
 func (s *Server) serviceUpstream(ctx context.Context, rt route, in http.Header) (http.Header, error) {
 	if rt.provider != nil {
 		return nil, errServiceOnRoute
@@ -378,12 +381,15 @@ func (s *Server) serviceUpstream(ctx context.Context, rt route, in http.Header) 
 	return h, nil
 }
 
-// errServiceOnRoute is the refusal both validateRoutes and serviceUpstream
-// give a route offered to a service upstream. There is no cycle to break
-// here (a route's key would be the job's own credential, which a service run
+// errServiceOnRoute is the refusal a service call gives a route offered to it,
+// from validateRoutes and from serviceUpstream. There is no cycle to break
+// here (a route's key would be the job's own credential, which a cascade run
 // does not have): it is refused by name so a misconfiguration says what it
 // is, and in both places so a Route built in code past validation cannot
-// reach a provider through a service run either.
+// reach a provider through a service run either. The one service upstream
+// that does have a key of its own is a switched api-key run's, whose routes
+// validateRoutes admits (B2.2, R6/D1634) — and whose routed calls the
+// upstream path never builds a service request for.
 var errServiceOnRoute = errors.New("a provider route is never reached through the credentials service: a route is a provider's own endpoint and is called with the job's own key, which a cascade run does not have (D143)")
 
 // errServiceUnidentified is every way a service call fails before it is sent

@@ -35,6 +35,12 @@ import (
 // hand to the agent.
 const plantedOAuthToken = "PLANTED-OAUTH-MOUNT-NOT-A-TOKEN"
 
+// routedModel is the provider's own ID for the model a routed pin names, as
+// the switch renders it (pricing's canonical map). A run that pins it is a run
+// with a provider route, which is the case a switched api-key repository
+// keeps (R6, D1634).
+const routedModel = "anthropic/claude-sonnet-5.5"
+
 // switchedJob is the job of a repository on the switch: the credentials
 // service as a stand-in that answers a served call and keeps what it received,
 // the metadata server the job's own ID token is minted from, and the two
@@ -239,6 +245,53 @@ func TestUnswitchedOAuthRunHasNoGateway(t *testing.T) {
 		t.Fatal("an unswitched oauth run was given an upstream")
 	} else if !strings.Contains(err.Error(), "oauth") {
 		t.Errorf("the refusal doesn't name the auth: %v", err)
+	}
+}
+
+// TestSwitchedRunKeepsItsProviderRoute (R6, D1634): a switched api-key
+// repository whose pins name a provider-served model still starts its gateway.
+// That repository's provider key is the job's own and stays on the runner
+// path, so the route the run registers is the provider's own call and every
+// other call of the run is the service's (B2.2, F30). Before this the run
+// stopped in bootstrap: the service upstream refused the route the run's pins
+// oblige it to register, and the sentence said nothing the operator could act
+// on.
+func TestSwitchedRunKeepsItsProviderRoute(t *testing.T) {
+	env, _ := switchedJob(t)
+	prices, err := pricing.Embedded().With(pricing.Overrides{
+		routedModel: {Rates: pricing.Rates{InputPerM: 1, OutputPerM: 2}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := svcRun(t, "api-key", func(r *run) {
+		r.cfg.Agent.Models = config.ModelRoles{Coder: routedModel, Reviewer: "claude-opus-5"}
+		r.d.Env = append(env, config.ProviderKeyEnv("openrouter-api-key")+"="+routedProviderKey)
+		r.d.Providers = map[string]config.ModelProvider{
+			"openrouter": {
+				Kind: config.ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+				Secret: "openrouter-api-key", Models: []string{routedModel},
+			},
+		}
+		r.spend = Spend{Mode: policy.ModeEnforce, Prices: prices}
+	})
+	r.sess = svcSession(t)
+
+	if routes, err := r.gatewayRoutes(); err != nil || len(routes) != 1 {
+		t.Fatalf("the run's own provider route = %+v (%v), want the one its pins name", routes, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := r.startGateway(ctx); err != nil {
+		t.Fatalf("a switched api-key run that pins a provider-served model: %v", err)
+	}
+	defer func() {
+		c, stop := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stop()
+		_ = r.gw.Close(c)
+	}()
+	if !r.routed {
+		t.Error("the run's gateway registered no provider route: the job's own key is what serves the model its pins name")
 	}
 }
 
