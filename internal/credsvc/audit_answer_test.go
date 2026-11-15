@@ -902,6 +902,102 @@ func TestARefusalBelowTheMintBranchCarriesTheRoutesPurpose(t *testing.T) {
 	}
 }
 
+// TestAuditPurposeLabel: the label route's purpose is a member of the line's
+// closed set, and a line of that purpose has the shape the route's caller gives
+// it (D2439, F5, F19, F26).
+//
+// The route's caller is the installation's orchestrator daemon, which holds no
+// run identity and is not a job of this installation, so a line for its act
+// carries the verified account and the repository the labels are on and NEITHER
+// a run nor a job (callerWithoutJobPurpose, repositoryOnlyPurpose) — and the
+// credential it names is the App key the service mints its own token from, a
+// credential of no tier (credentialWithoutTier). The route performs the act
+// itself, so the token it mints reaches no line and no caller (D2439).
+//
+// Mutation (run, restore): drop PurposeLabel from ValidPurpose. Every line
+// below is refused as an unknown purpose, so the route's refusal writes none at
+// all, and this test is red on its first assertion and on the count.
+func TestAuditPurposeLabel(t *testing.T) {
+	if PurposeLabel != "label" {
+		t.Errorf("the label purpose is spelled %q, want %q: it is a word an operator greps", PurposeLabel, "label")
+	}
+	if !ValidPurpose(PurposeLabel) {
+		t.Errorf("ValidPurpose refuses %q: the route's acts would be unrecordable", PurposeLabel)
+	}
+	if !callerWithoutJobPurpose(PurposeLabel) {
+		t.Error("the label purpose is not one whose caller holds no job: the daemon's line would be refused for naming no job")
+	}
+	if !repositoryOnlyPurpose(PurposeLabel) {
+		t.Error("the label purpose is not one whose line names a repository and no run: the daemon's line would be refused for naming a repository without one")
+	}
+	if !credentialWithoutTier(PurposeLabel) {
+		t.Error("the label purpose is not one whose credential has no tier: a line naming the App key correctly would be refused")
+	}
+	purpose, credential := routeAct(LabelPath)
+	if purpose != PurposeLabel {
+		t.Errorf("routeAct(%s) gives the purpose %q, want %q", LabelPath, purpose, PurposeLabel)
+	}
+	if credential != config.GitHubAppKeySecret {
+		t.Errorf("routeAct(%s) names the credential %q, want the App key %q: it is what the service mints its own token from", LabelPath, credential, config.GitHubAppKeySecret)
+	}
+
+	// The route's own line: the daemon is the one class the gate admits, and
+	// the call it makes is refused by this build, because the act itself is
+	// T3's. The refusal is recorded once, in the shape above.
+	s, auditLog := auditSvc(t, func(sv *svc, cfg *Config) {
+		ac := sv.auth.cfg
+		ac.OrchestratorAccounts = []string{testOrchestratorSA}
+		a, err := NewAuthenticator(ac)
+		if err != nil {
+			t.Fatalf("the daemon class cannot be configured: %v", err)
+		}
+		cfg.Auth, sv.auth = a, a
+	})
+	resp, body := s.postRaw(t, http.MethodPost, LabelPath, func(r *http.Request) {
+		r.Header.Set("Authorization", "Bearer "+s.orchestratorToken())
+	})
+	if resp.StatusCode == http.StatusNotFound {
+		t.Fatalf("POST %s is answered 404: the route is not served", LabelPath)
+	}
+	if resp.StatusCode == http.StatusOK {
+		t.Fatal("the label route answered a call: this build performs no label act, so every call the gate admits is refused")
+	}
+	lines := auditLines(t, auditLog)
+	if len(lines) != 1 {
+		t.Fatalf("the refused label call wrote %d audit lines, want exactly 1: %v", len(lines), lines)
+	}
+	line := lines[0]
+	checkAuditShape(t, line)
+	refused := refusal(t, resp.StatusCode, body)
+	for field, want := range map[string]string{
+		"caller":     testOrchestratorSA,
+		"credential": config.GitHubAppKeySecret,
+		"purpose":    PurposeLabel,
+		"status":     refused.Error,
+		"run":        "",
+		"job":        "",
+		"tier":       "",
+		"repository": "",
+	} {
+		if got := line[field]; got != want {
+			t.Errorf("the label route's line: %s = %v, want %q", field, got, want)
+		}
+	}
+
+	// A caller the gate refused writes no line at all: nothing was verified, so
+	// there is no caller for a line to name — and it is the class that refused
+	// the call, not anything the call sent.
+	other, _ := s.postRaw(t, http.MethodPost, LabelPath, func(r *http.Request) {
+		r.Header.Set("Authorization", "Bearer "+s.jobToken())
+	})
+	if other.StatusCode != StatusUnverified {
+		t.Fatalf("the label route admitted a job's token: HTTP %d", other.StatusCode)
+	}
+	if n := len(auditLines(t, auditLog)); n != 1 {
+		t.Errorf("a refusal taken before the caller was verified wrote a line: %d lines, want the daemon's refusal alone", n)
+	}
+}
+
 // brokenBody is a request body the service cannot read at all: the one state
 // readCall refuses for that is not a body over the gateway's size bound.
 type brokenBody struct{}
