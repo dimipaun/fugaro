@@ -2,13 +2,13 @@
 
 **Spec:** [spec.md](spec.md), "Fugaro Spec: Forge Integration via Labels", verbatim. **Owner: Dimi Paun (D2430). Checked against `origin/main` at `f70f520cc` on 2026-11-15.** Where this file disagrees with `spec.md`, this file wins.
 
-Numbers taken: **D2430-D2449** (the highest in use is D2429, in open pull requests), **Checks 640-649** (the highest is 632, in open pull requests), findings **F1-F26**, assumptions **A1-A5**, resolutions **R1-R8**, open items **O1-O4**, UNVERIFIED **U1-U3**. **Revised after review rounds 1 and 2 (2026-11-15):** F17-F26 and D2438-D2440 are new, F5-F8, F10, F12, F17 and R2-R6 changed, D2436 is superseded by D2439 and D2438 is amended.
+Numbers taken: **D2430-D2449** (the highest in use is D2429, in open pull requests), **Checks 640-649** (the highest is 632, in open pull requests), findings **F1-F26**, assumptions **A1-A5**, resolutions **R1-R8**, open items **O1-O4**, UNVERIFIED **U1-U3**. **Revised after review rounds 1 to 4 (2026-11-15):** F17-F26 and D2438-D2440 are new, F5-F8, F10, F12, F17 and R2-R6 changed, D2436 is superseded by D2439 and D2438 is amended.
 
 ## Assumptions
 
 - **A1.** "The stateless orchestrator" is `internal/orchestrator`, the daemon `fugaro orchestrator run` starts on the owner's machine, not a cloud service: it has a tick (`orchestrator.Tick`) and no inbound endpoint from a forge (it serves one local endpoint on its own machine, which is not a webhook receiver).
 - **A2.** "Job" means a Fugaro run, and a job's state is the work item's `Phase` (`queued`, `running`, `review`, `done`, `failed`, `blocked`, `cancelled`) as the daemon folds it from the run record.
-- **A3.** "A spec's task" means a work item a planning session created from a plan task; the spec name is the plan's folder under `docs/` (for `docs/plans/<x>`, `<x>`), carried on the work item in the patch that creates it (D2438).
+- **A3.** "A spec's task" means a work item a planning session created from a plan task; the spec name is the plan's folder under `docs/` (for `docs/plans/<x>.md`, `<x>` lowercased with other characters replaced by `-`), carried on the work item in the patch that creates it (D2438).
 - **A4.** The labels are for pull requests Fugaro opened; a pull request a person opened never gets one (the daemon only knows pull requests behind its own run ids).
 - **A5.** The feature is off wherever no orchestrator runs: nothing else writes these labels (D2432).
 
@@ -55,12 +55,12 @@ Numbers taken: **D2430-D2449** (the highest in use is D2429, in open pull reques
 
 - **R1.** The daemon writes all labels after the draft exists; `PRSpec.Labels` and `ApplyReady` stay as they are (F1, F2).
 - **R2.** The spec label is `spec:<name>` for the item's `spec` field (D2438), added the first tick the daemon has a corroborated pull request number for the item; an item with no `spec` has no spec label (F4, F6).
-- **R3.** A spec label is written only when the name passes `^[a-z0-9][a-z0-9-]{0,43}$` after lower-casing (F7, F20); otherwise skipped, one log line (F7).
-- **R4.** Desired status label by phase: `running` gives `fugaro:running`; `failed` gives `fugaro:failed` on the pull request of the run that failed, which keeps it until that pull request closes or, for a follow-up run on the same pull request, until that run starts (D2433, R8); `queued`, `review`, `blocked`, `done` and `cancelled` give neither. A merged or closed pull request gets neither (F8, F12).
+- **R3.** A spec label is written only when the name passes `^[a-z0-9][a-z0-9-]{0,43}$` after checking that the name is ASCII and then lower-casing it (F7, F20; the Kelvin sign lowers to `k`); otherwise skipped, one log line (F7).
+- **R4.** Desired status label by phase: `running` gives `fugaro:running`; `failed` gives `fugaro:failed` on the pull request of the run that failed, which keeps it until that pull request closes: the daemon launches no follow-up run on an existing pull request (the launcher sets no branch, F21), so in practice only a close clears it (D2433, R8); `queued`, `review`, `blocked`, `done` and `cancelled` give neither. A merged or closed pull request gets neither (F8, F12).
 - **R5.** Each tick the syncer reads one bulk list of open pull requests per repository that has an item with a pull request (and, once, a pull request absent from it by number), compares it with the desired set, and writes only the difference: it adds its own `spec:` label and the wanted status label, and removes only the exact names `fugaro:running` and `fugaro:failed`, never another label; names match case-insensitively; it remembers which labels it has ensured and which spec labels the host refused (F10, F17, F23).
 - **R6.** The service creates `fugaro:running`, `fugaro:failed` and a spec label, with D2437's colour and description, just before the first add (D2440, F11).
-- **R8.** Label state is per run and its pull request: a pull request is `running` while its own run is in flight, `failed` when its own run ended failed, and neither otherwise; a failed run's pull request stays tracked until it is known closed and clean (F21).
 - **R7.** Label operations are a separate optional interface found by type assertion; a provider without it, or whose `Supported()` is false (Bitbucket), makes every operation a silent no-op: no warning each tick (F1).
+- **R8.** Label state is per run and its pull request: a pull request is `running` while its own run is in flight, `failed` when its own run ended failed, and neither otherwise; a failed run's pull request stays tracked until it is known closed and clean (F21).
 
 ## Decisions
 
@@ -93,8 +93,6 @@ None.
 ## Open items
 
 - **O1.** None (the earlier item, confirming D2436 as amended, is closed by the owner's answer D2439).
-- **O3.** How a follow-up run on an existing pull request is corroborated: its head branch is the first run's `fugaro/<run id>`, so the daemon sends the run id of the run that opened the pull request. To confirm when T3 starts.
-- **O4.** Deferred by design, for a later pass: fold `ensure` into `add` (the service creates on first use, D2440, so a separate `ensure` is reach without a pull request); require ASCII before the shape check lowers a name (the Kelvin sign lowers to `k`); sample the audit of the 30-second reads.
 - **O2.** *Answered 2026-11-15: wait for E10b (the recommendation).* One owner builds the daemon's identity to the credentials service (F19), shared with the merge mint; T7's live path and Check 640 stay blocked until it lands, and this plan adds no task for it.
 - **O3.** *Answered 2026-11-15: the recommendation.* The daemon sends the id of the run that opened the pull request, taken from its own intents, and the service keeps the exact head match `fugaro/<that run id>`.
 - **O4.** *Answered 2026-11-15: later, as follow-ups (the recommendation).* Folding `ensure` into `add` and sampling the audit of the 30-second reads are not in this plan; the ASCII-before-lowering rule is already in T3.

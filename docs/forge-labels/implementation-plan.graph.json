@@ -140,6 +140,7 @@
       "footprint": {
         "prediction": true,
         "paths": [
+          "internal/credsvc/labelroute.go",
           "internal/credsvc/audit.go",
           "internal/credsvc/server.go",
           "internal/credsvc/callerclass_test.go",
@@ -159,6 +160,7 @@
         "paths": [
           "scripts/live-checks/check640.sh",
           "scripts/live-checks/check640_test.sh",
+          "scripts/live_checks_test.go",
           "internal/cli/docs_check640_test.go",
           "docs/gcp-live-checklist.md"
         ]
