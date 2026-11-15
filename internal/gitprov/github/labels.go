@@ -94,12 +94,14 @@ func (p *Provider) AddLabels(ctx context.Context, number int, runID string, name
 //
 // GitHub answers the removal of a label that is not on the pull request with
 // 404, which is the same status it gives for a pull request that is not
-// there. Reading it as success is safe because of who calls this: the
-// service corroborates the pull request before it writes (F17), so the 404
-// this adapter sees is about the label and not about the pull request. Every
-// other refusal is kept and the remaining names are still tried, so one
-// failed removal does not leave the others unwritten for a reason that had
-// nothing to do with them.
+// there. Reading it as success is safe because of who calls this — the
+// service corroborates the pull request before it writes (F17), so a 404
+// about the pull request is not one that reaches here — and because of which
+// request it answers: labelAbsent reads only the DELETE's own 404, so a
+// removal that failed earlier is an error rather than a success. Every other
+// refusal is kept and the remaining names are still tried, so one failed
+// removal does not leave the others unwritten for a reason that had nothing
+// to do with them.
 func (p *Provider) RemoveLabels(ctx context.Context, number int, runID string, names []string) error {
 	var errs []error
 	for _, name := range names {
@@ -190,7 +192,15 @@ func labelAlreadyExists(err error) bool {
 
 // labelAbsent reports whether err is GitHub answering that a label is not on
 // the pull request, which this adapter reads as success.
+//
+// The 404 has to be the DELETE's own. A removal can fail before it reaches
+// the label — the installation lookup that mints the call's token answers 404
+// when the App is no longer installed on the repository — and that answer
+// arrives wrapped, with its status still inside it, so a reading that stopped
+// at the status would report every such removal as done while nothing was
+// removed. The token mint is a GET or a POST, never a DELETE, so the method
+// is what tells the two apart.
 func labelAbsent(err error) bool {
 	var se *httpjson.StatusError
-	return errors.As(err, &se) && se.Status == http.StatusNotFound
+	return errors.As(err, &se) && se.Method == http.MethodDelete && se.Status == http.StatusNotFound
 }

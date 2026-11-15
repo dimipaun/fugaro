@@ -90,6 +90,32 @@ func TestGitHubRemoveAbsentLabel(t *testing.T) {
 	}
 }
 
+// TestGitHubRemoveLabelsNoTokenFails: a removal that never reached the label
+// is a failure. Here the App is no longer installed on the repository, so the
+// lookup that mints the call's token answers 404 — the same status GitHub
+// gives for a label that is not on the pull request — and that answer arrives
+// wrapped inside the mint's error. Reading it as "the label was absent" would
+// report every removal as done while nothing was removed at all.
+func TestGitHubRemoveLabelsNoTokenFails(t *testing.T) {
+	l := labelerOf(t, open(t, "labels_remove_no_installation.json"))
+	err := l.RemoveLabels(ctx, 12, labelRunID, []string{"fugaro:failed"})
+	if err == nil {
+		t.Fatalf("RemoveLabels reported success although no token was minted and no request was made")
+	}
+}
+
+// TestGitHubRemoveLabelsNoMintFails is the same failure one step later: the
+// installation is found, and the mint itself is what GitHub answers 404 to.
+// That answer is a POST's, so the same reading keeps it out — the removal is
+// an error and not a label that was absent.
+func TestGitHubRemoveLabelsNoMintFails(t *testing.T) {
+	l := labelerOf(t, open(t, "labels_remove_no_mint.json"))
+	err := l.RemoveLabels(ctx, 12, labelRunID, []string{"fugaro:failed"})
+	if err == nil {
+		t.Fatalf("RemoveLabels reported success although the mint was refused and no request was made")
+	}
+}
+
 // TestGitHubRemoveLabel is the removal that finds the label: one request per
 // name, on the issue endpoint, and success on GitHub's own answer.
 func TestGitHubRemoveLabel(t *testing.T) {
