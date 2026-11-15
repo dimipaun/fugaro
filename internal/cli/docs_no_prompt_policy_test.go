@@ -87,10 +87,13 @@ var npPolicyCopies = []struct {
 	}},
 	{"SECURITY.md", []string{
 		"**The managed gate records what it used to refuse, and the record is what a reader has afterwards.**",
+		"The gate belongs to `fugaro update` on a managed project",
+		"`fugaro setup` applies its Terraform with no gate at all",
+		"a project that is not managed keeps the confirmations and the coding agent's refusals it had, and leaves no record",
 		"that gate is audit-only for what a plan *contains*",
 		"a delete or replace of a **data-bearing or unclassified** type refuses",
 		"the identity that applied the plan is the identity that could delete the record",
-		"`fugaro doctor` prints the newest record that carries warnings",
+		"`fugaro doctor` prints the newest record that carries warnings, over the two days it reads (today and yesterday)",
 		"is the pre-apply control this decision rests on",
 	}},
 }
