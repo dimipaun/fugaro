@@ -608,7 +608,7 @@ func TestCloneStepFetchesSubmodulesAndLfsObjects(t *testing.T) {
 	lib := filepath.Join(r.out, "lib")
 	for _, want := range []string{
 		"-C " + r.out + " lfs pull",
-		"-C " + r.out + " submodule update --init --quiet",
+		"-C " + r.out + " submodule update --quiet --init",
 		"-C " + lib + " lfs pull",
 		"-C " + lib + " submodule foreach",
 	} {

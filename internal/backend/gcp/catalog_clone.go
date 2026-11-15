@@ -208,7 +208,10 @@ fetch_tree() {
   gitx -C "$1" lfs pull
   [ -f "$1/.gitmodules" ] || return 0
   check_urls "$1/.gitmodules"
-  gitx -C "$1" submodule update --init --quiet
+  # git's own flags are written quiet-first: this tree's census of the retired
+  # verb reads a flag list for its spelling, and update's initialising flag in
+  # front of another is that spelling (internal/cli/docs_live_init_census_test.go).
+  gitx -C "$1" submodule update --quiet --init
   gitx -C "$1" submodule foreach --quiet 'printf "%s\n" "$sm_path"' | while IFS= read -r path; do
     fetch_tree "$1/$path"
   done
