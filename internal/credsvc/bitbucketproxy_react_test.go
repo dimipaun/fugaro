@@ -19,10 +19,14 @@ package credsvc
 // call carries are the ones this route's own tests already pin.
 
 import (
+	"bytes"
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/bbtokens"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -486,5 +490,122 @@ func TestProxyReactionAuditsOnce(t *testing.T) {
 	}
 	if got := stub.Counted; len(got) != 1 || got[0] != proxyNamedToken {
 		t.Errorf("the store counted %v, want the token the request was served with, once", got)
+	}
+}
+
+// reactCtxStore is the contract's stub with the one thing the stub does not
+// have: it HONOURS the context it is handed, so a test can hold the reaction's
+// read and write to the context they were made on. A stub that answered from
+// its map whatever the context said would confirm a mark taken for a caller
+// that has hung up, which is the state the finding is about — and the real
+// store is a database call that a context can cancel.
+//
+// It answers the selection, the resolver and the status store, because it is
+// the one value the service holds (T8's seam): the service is wired with this
+// wrapper, and the test reads the mark off the stub inside it.
+type reactCtxStore struct{ *bbtokens.Stub }
+
+func (c reactCtxStore) Read(ctx context.Context, name bbtokens.Name) (bbtokens.Status, error) {
+	if err := ctx.Err(); err != nil {
+		return bbtokens.Status{}, err
+	}
+	return c.Stub.Read(ctx, name)
+}
+
+func (c reactCtxStore) Write(ctx context.Context, name bbtokens.Name, st bbtokens.Status) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return c.Stub.Write(ctx, name, st)
+}
+
+func (c reactCtxStore) CountRequest(ctx context.Context, name bbtokens.Name) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return c.Stub.CountRequest(ctx, name)
+}
+
+// proxyCallDetached sends one call of the proxy route on a context the test
+// owns and reads nothing of the answer: a client that hangs up mid-call is owed
+// no answer, and what the test measures is what the service recorded. proxyCall
+// cannot be used for it because proxyCall fails the test on a transport error,
+// and a transport error is exactly what the hang-up makes (probe_test.go's
+// callDetached makes the same call for the model route).
+func (s *svc) proxyCallDetached(t *testing.T, ctx context.Context, method, path string, body []byte) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(ctx, method, s.http.URL+path, bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("building the call: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+s.jobToken())
+	req.Header.Set(HeaderRunIdentity, s.runToken(proxyClaims(s.proxyBranch())...))
+	req.Header.Set(HeaderRunJob, s.job)
+	resp, err := s.http.Client().Do(req)
+	if err != nil {
+		// The client's own context ended, which is the disconnect this test
+		// makes. Anything else is the fixture.
+		if ctx.Err() == nil {
+			t.Fatalf("the call failed for a reason that is not the disconnect: %v", err)
+		}
+		return
+	}
+	resp.Body.Close()
+}
+
+// TestProxyReactionSurvivesACallerThatHangsUp: the run hangs up while the 401
+// is being confirmed, and the mark the request's own audit line records as
+// taken is still written — with the facts the store held beside it.
+//
+// The disconnect is made from inside the upstream, at the confirmation read,
+// and the answer is held a moment after it so the hang-up has certainly landed
+// by the time the store is touched (probe_test.go's
+// TestProbeSurvivesAClientDisconnect makes the same disconnect for the probe).
+// The store is the stub under reactCtxStore, which fails a call made on a
+// context that has ended, so an un-detached read or write leaves nothing here —
+// and BOTH are needed: a detached write over a read that failed would write the
+// mark without the identity and the count the store held (R12, D2356), which
+// the live caller's control pins as the shape a mark must have.
+func TestProxyReactionSurvivesACallerThatHangsUp(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		hangUp bool
+	}{
+		{"the caller hangs up while the 401 is confirmed", true},
+		{"the caller stays", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			stub := &bbtokens.Stub{Selected: proxyNamedToken}
+			s, up, _, named := proxyTokensSvc(t, reactCtxStore{Stub: stub})
+			stub.Marks = map[bbtokens.Name]bbtokens.Status{
+				proxyNamedToken: {VerifiedAt: s.now, Identity: "uuid-ci", Count: 7},
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var once sync.Once
+			up.mu.Lock()
+			up.answer = func(r *http.Request) proxyAnswer {
+				if c.hangUp && r.URL.Path == reactConfirmPath {
+					once.Do(cancel)
+					time.Sleep(20 * time.Millisecond)
+				}
+				return proxyAnswer{status: http.StatusUnauthorized}
+			}
+			up.mu.Unlock()
+
+			s.proxyCallDetached(t, ctx, http.MethodGet, reactFetchPath(), nil)
+
+			waitFor(t, "the reaction's mark to be written", func() bool {
+				return stub.Marks[proxyNamedToken].State == bbtokens.StateBroken
+			})
+			want := bbtokens.Status{State: bbtokens.StateBroken, VerifiedAt: s.now, Identity: "uuid-ci", Count: 7}
+			if got := stub.Marks[proxyNamedToken]; got != want {
+				t.Errorf("the store holds %+v, want %+v: the mark is taken whatever the caller does, and it carries the facts the store held (R12, D2356)", got, want)
+			}
+			if got := stub.Counted; len(got) != 1 || got[0] != proxyNamedToken {
+				t.Errorf("the store counted %v, want the token the request was served with, once", got)
+			}
+			reactNoTokenValue(t, s, nil, named)
+		})
 	}
 }

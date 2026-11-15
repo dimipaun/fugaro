@@ -982,8 +982,17 @@ func (s *Server) confirmBitbucket401(ctx context.Context, canonical, token strin
 // is written as the zero one plus the mark: an unreadable store is not a reason
 // to refuse a call bitbucket.org has already served, and a token whose other
 // facts are unknown is still a token that is broken or held.
+//
+// It runs on probeRecordContext — the bounded, detached context the contract
+// reserves for a mark (probe.go) — and not on the caller's: the facts being
+// read are about a credential, and the caller has just been told its answer, so
+// a run that hangs up between the answer and the write must not be the reason
+// the identity and the count are lost. That is the read's half of the pair; the
+// write's half is applyBitbucketReaction's.
 func (s *Server) heldStatus(ctx context.Context, st reactions, name bbtokens.Name, state bbtokens.State, until time.Time) *bbtokens.Status {
-	prev, err := st.Read(ctx, name)
+	readCtx, readDone := probeRecordContext(ctx)
+	defer readDone()
+	prev, err := st.Read(readCtx, name)
 	if err != nil {
 		prev = bbtokens.Status{}
 	}
@@ -1002,13 +1011,24 @@ func (s *Server) heldStatus(ctx context.Context, st reactions, name bbtokens.Nam
 // and nothing else: bitbucket.org's answer is already taken and is on its way to
 // the run, and a bookkeeping write is not a reason to refuse a call the upstream
 // served.
+//
+// The write runs on probeRecordContext, the bounded and detached context
+// heldStatus's read runs on, and the order above is what makes it matter: the
+// line has already recorded the mark as taken (R14), so a caller hanging up
+// between the two must not leave the token in service — it is dead, it keeps
+// answering 401, and the audit trail would say broken while the store, and
+// every listing read off it, said available. The eviction beside it takes no
+// context at all.
 func (s *Server) applyBitbucketReaction(ctx context.Context, react bitbucketReaction, id Identity, purpose string, name bbtokens.Name, canonical string) {
 	st, ok := s.reactionStore()
 	if !ok {
 		return
 	}
 	if react.mark != nil {
-		if err := st.Write(ctx, name, *react.mark); err != nil {
+		writeCtx, writeDone := probeRecordContext(ctx)
+		err := st.Write(writeCtx, name, *react.mark)
+		writeDone()
+		if err != nil {
 			s.log.Warn("credsvc: a Bitbucket token's status could not be recorded", "token", name, "error", err)
 		}
 	}
