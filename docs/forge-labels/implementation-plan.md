@@ -174,7 +174,7 @@ The repository's rigor default is `startup` and `planning.decoupling` is on, so 
 
 **Critical path:** T1, T3, T4, T7, CK. T9, T8, T5, T2 and T6 run beside it.
 
-**Shared files:** only T1 writes `internal/gitprov/labels.go`; only T9 writes `internal/credsvc/server.go`, `audit.go` and the census pins; only T5 writes `internal/orchestrator/tick.go`; T8 writes `state.go` and `patch.go` and T5 does not; only T7 writes `internal/cli/orchestrator_run.go`; T8 writes `orchestrator_import.go` and T7 does not; T6 owns the three documents. No level holds two writers of one file.
+**Shared files:** only T1 writes `internal/gitprov/labels.go`; only T9 writes `internal/credsvc/server.go`, `audit.go` and the census pins; only T5 writes `internal/orchestrator/tick.go`; T8 writes `state.go`, `patch.go` and `summary.go` and T5 does not; only T7 writes `internal/cli/orchestrator_run.go`; T6 owns the documents and the Docs test it adds. No level holds two writers of one file.
 
 | File | Writer | Level |
 | --- | --- | --- |
