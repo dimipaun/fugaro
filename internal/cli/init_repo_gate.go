@@ -71,9 +71,9 @@ func (e *initEngine) authState(o originInfo) (repoAuth, error) {
 		// door and in either mode — the converge and the standalone --repo
 		// engine, whose gate this is too (gateRepo) — for an origin whose
 		// identity is the one it claims. It is still never given by a pipe,
-		// --json, --non-interactive or a coding agent's session
-		// (canConfirmTyped), and the review's own answer is not it either
-		// (onboardCovered).
+		// --json, --non-interactive or a coding agent's session (the run's
+		// own answer is the whole of it), and the review's own answer is not
+		// it either (onboardCovered).
 		//
 		// The two cases onboardCovered refuses stay the gate's own question
 		// wherever they arise: an origin git config rewrites or a host that is
@@ -93,16 +93,23 @@ func (e *initEngine) authState(o originInfo) (repoAuth, error) {
 }
 
 // onboardCovered reports whether the run's own confirmation covers onboarding
-// this repository now: YesOrTyped's rule, the class D12 gives the step in both
-// front doors — and in both of their modes, the converge and the standalone
-// --repo engine, which is what W3.4's row recorded as "Typed, covered after
-// W5.1" and what W5.1's commit inverts — and the run's own confirmation
-// actually given. --yes is the way to give it (r.conditions().Yes, which
-// --plan-only turns off); a run that cannot give it leaves the repository for
+// this repository now: the step is one D12's answer of 2026-10-20 covers in
+// both front doors — and in both of their modes, the converge and the
+// standalone --repo engine, which is what W3.4's row recorded as "Typed,
+// covered after W5.1" and what W5.1's commit inverts — and the run's own
+// confirmation is actually given. An answer a run carries is the way to give it,
+// and no flag sets one any more (T11): a run that still has one is a command's
+// own internal converge, opened on an answer the person already gave, and
+// --plan-only turns it off. A run that cannot give it leaves the repository for
 // the user, and at a terminal the gate's own note is the step's confirmation,
 // shown where it always was (confirmRepo, which reads nothing: T7,
-// docs/no-prompt-policy). A coding agent's session, --json, a pipe and
-// --non-interactive give nothing (canConfirmTyped).
+// docs/no-prompt-policy). A coding agent's session, --json, a pipe and a
+// session nobody is at give nothing.
+//
+// The answer is read through stepConfirmation rather than written out again, so
+// that this gate covers exactly the steps the run's own answer reaches and
+// nothing else: the one rule of what that answer reaches lives in one place,
+// and a session the marker keeps out of a write is kept out of this one too.
 //
 // It reads the run's conditions and never r.review: the review's own answer
 // (init_review.go) covers the installation's ordinary steps, and the repository
@@ -125,10 +132,21 @@ func (e *initEngine) onboardCovered(o originInfo) bool {
 		// gate's own question rather than a step of the converge's.
 		return false
 	}
-	yes := r.conditions()
-	yes.Terminal, yes.NonInteractive, yes.JSON = false, false, false
-	return canConfirmTyped(initflow.YesOrTyped, yes)
+	// The run's own answer and nothing beside it (stepConfirmation's stepByYes,
+	// which ownAnswer covers for this step in both doors, D12): --plan-only
+	// turns it off, and a coding agent's session never reaches it, whatever the
+	// run carries.
+	return onboardByRunAnswer(r)
 }
+
+// onboardByRunAnswer is the run's own answer for this step, as the repository
+// gate reads it: stepConfirmation's own answer, which covers onboarding in both
+// doors (D12, W5.1). It is a package variable only so that a test whose subject
+// is something else can hand its run one — no flag gives a command an answer
+// any more (T11), and a test that drives a whole command from the outside has
+// no other way in. The rule stays stepConfirmation's, and a coding agent's
+// session is refused there whatever this returns.
+var onboardByRunAnswer = func(r *initRun) bool { return r.stepConfirmation(true) == stepByYes }
 
 // checkoutNote is printed once, immediately before the gate's note, when
 // installation-only flags are given in a checkout the gate is about (so it is
@@ -349,7 +367,7 @@ func unknownBecause(project string, o originInfo, optIn string) string {
 // onboardCovered's three refusals — an origin whose identity is not the one it
 // claims (a rewritten URL, a host that is not a provider's own), a name the
 // config knows at another host, and a coding agent's session, which confirms
-// nothing at all (initflow.CanConfirmManaged) and where the flag must not be
+// nothing at all (initflow.PersonAtTheTerminal) and where the flag must not be
 // named as a way in at all, since it would be a line for the agent to paste
 // (AgentAdvice). A door that does not enrol has its own sentence
 // (unknownDetailNotEnrolled), so it never reaches this clause.
@@ -360,13 +378,13 @@ func unknownBecause(project string, o originInfo, optIn string) string {
 func convergeOptIn(lc *localcfg.Config, o originInfo) string {
 	switch {
 	case o.Rewritten || !o.standardHost():
-		return ", and --yes does not give it for an origin whose identity is not the one it claims: the gate's note, read at your own terminal, is what confirms it"
+		return ", and no flag gives it for an origin whose identity is not the one it claims: the gate's note, read at your own terminal, is what confirms it"
 	case repoNameListed(lc, o):
-		return ", and --yes does not give it here: the project's config knows this name at another host, so the origin is this gate's own step, confirmed at your terminal"
+		return ", and no flag gives it here: the project's config knows this name at another host, so the origin is this gate's own step, confirmed at your terminal"
 	case agentMarker(os.Getenv, processTerminal()) != "":
-		return " (a coding agent's session confirms nothing, --yes included): your own terminal window is where it is confirmed"
+		return " (a coding agent's session confirms nothing): your own terminal window is where it is confirmed"
 	}
-	return " — --yes covers it, or a person at your own terminal does, with nothing typed"
+	return " — a person at your own terminal covers it, with nothing typed"
 }
 
 // enrolLeft is what a door that does not enrol a repository by asking leaves

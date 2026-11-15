@@ -156,18 +156,19 @@ func TestRefreshRefusesCustomBase(t *testing.T) {
 	r.check(t, refreshYAML)
 }
 
-// 2026-10-08 decision: --yes does not bypass the custom-base refusal: the
-// full command, given --yes and no terminal at all, still stops with the
-// exact same one-line fix as without --yes.
-func TestRefreshYesStillRefusesCustomBase(t *testing.T) {
+// The person at the terminal is what confirms a step (T7), and it confirms
+// nothing here: the full command, at a real terminal, still stops at
+// preflight's custom-base refusal with the same one-line fix.
+func TestRefreshCustomBaseRefusedAtTheTerminal(t *testing.T) {
 	useVersion(t, "0.5.1")
 	useSelf(t)
 	r := newAnchorModeRig(t, refreshYAML, true)
 	r.appendConfig(t, "base_images: {base: "+refreshHost+"/fugaro-base/fugaro-base:dev-abc}\n")
 	noRecordReads(t)
-	out, _, err := executeStdin(t, "", "image", "refresh", "--workflow", "api", "--yes")
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, "", "image", "refresh", "--workflow", "api")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "base_images.base is "+refreshHost+"/fugaro-base/fugaro-base:dev-abc") ||
-		!strings.Contains(err.Error(), "then rerun fugaro image refresh --workflow api --yes") {
+		!strings.Contains(err.Error(), "then rerun fugaro image refresh --workflow api") {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
 	r.check(t, refreshYAML)
@@ -217,14 +218,11 @@ func TestRefreshAgainKeepsEveryFlag(t *testing.T) {
 	if got := (refreshOptions{}).again(); got != "fugaro image refresh" {
 		t.Errorf("no flags: %q", got)
 	}
-	// 2026-10-08 decision: a rerun of a run given --yes keeps it, so an
-	// unattended run that stops still reruns unattended.
-	o.yes = true
-	if got := o.again(); got != want+" --yes" {
-		t.Errorf("with --yes:\n%s\nwant:\n%s", got, want+" --yes")
-	}
-	if got := (refreshOptions{yes: true}).again(); got != "fugaro image refresh --yes" {
-		t.Errorf("--yes alone: %q", got)
+	// The line names no flag that stands in for a confirmation, whatever the
+	// run's own options carry (T11): --yes is gone from this command, so a
+	// printed line that named it would be refused on the flag.
+	if got := (refreshOptions{yes: true}).again(); got != "fugaro image refresh" {
+		t.Errorf("a run carrying its own answer: %q", got)
 	}
 }
 
@@ -460,7 +458,6 @@ func TestRefreshRefusedInAgentSession(t *testing.T) {
 				fakeTerminal(t)
 				args := []string{"image", "refresh", "--repo", "acme/app"}
 				if yes {
-					args = append(args, "--yes")
 				}
 				_, _, err := executeStdin(t, "", args...)
 				if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro image refresh applies cloud changes: "+initflow.AgentRefusal(marker)) {
@@ -484,14 +481,11 @@ func TestRefreshNeedsATerminal(t *testing.T) {
 	}
 }
 
-// 2026-10-08 decision: --yes needs no terminal at all (stdin not a terminal,
-// as executeStdin's strings.Reader always is), and no --json or
-// --plan-only exist to combine with it.
-func TestRefreshHasYesButNoJSONOrPlanOnly(t *testing.T) {
+// The command defines neither --json nor --plan-only: what confirms a step is
+// the person at the terminal, and neither mode has a word for that, so each is
+// refused as an unknown flag rather than read.
+func TestRefreshHasNoJSONOrPlanOnly(t *testing.T) {
 	cmd := newImageRefreshCmd()
-	if f := cmd.Flags().Lookup("yes"); f == nil {
-		t.Fatal("fugaro image refresh has no --yes flag")
-	}
 	for _, name := range []string{"json", "plan-only"} {
 		if f := cmd.Flags().Lookup(name); f != nil {
 			t.Fatalf("fugaro image refresh defines --%s, which the design excludes: %+v", name, f)
@@ -619,23 +613,22 @@ func TestRefreshStopsSayWhatFinished(t *testing.T) {
 	}
 }
 
-// 2026-10-08 decision: under --yes, a failed build still stops the ones
-// after it, names what finished, and the rerun line to type back now
-// includes --yes too (again() carries it); none of this needs a terminal.
-// Mutation (run, restore): drop `if o.yes { args = append(args, "--yes") }`
-// from refreshOptions.again, and this test fails (the rerun line omits
-// --yes, so a copy-pasted rerun would ask for a terminal again).
-func TestRefreshYesFailureStopsAndRerunLineKeepsYes(t *testing.T) {
+// A failed build still stops the ones after it, names what finished, and the
+// rerun line to type back is the command that reaches the same steps at this
+// terminal (again()); the run itself is at a real terminal, where the person
+// being there is every confirmation it needs (T7).
+func TestRefreshFailureStopsAndNamesTheRerun(t *testing.T) {
 	useVersion(t, "0.5.1")
 	useSelf(t)
 	newAnchorModeRig(t, refreshYAML, true)
+	fakeTerminal(t)
 	ran := fakeSteps(t, "builds", remote(errors.New("503 from the cloud")))
-	out, _, err := executeStdin(t, "", "image", "refresh", "--workflow", "app", "--yes")
+	out, _, err := executeStdin(t, "", "image", "refresh", "--workflow", "app")
 	if ExitCode(err) != ExitRemoteError {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
 	for _, want := range []string{"503 from the cloud", "stopped at step 4 (builds)", "steps finished: preflight, base, check job;",
-		"rerun fugaro image refresh --workflow app --yes in this checkout"} {
+		"rerun fugaro image refresh --workflow app in this checkout"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error lacks %q: %v", want, err)
 		}
@@ -717,8 +710,8 @@ func TestRefreshPreflightStopTexts(t *testing.T) {
 // terminal the command itself refuses before it plans anything — every step of
 // this run is confirmed by the person at the terminal who runs it, so a run
 // with none has nothing to confirm with (refuseRefreshHere, and
-// TestRefreshYesRunsEndToEndNoTerminal for the --yes way past it). The real
-// base step and the real check-job step run through runImageRefresh.
+// TestRefreshRunsEndToEndAtTheTerminal for the run that goes the whole way).
+// The real base step and the real check-job step run through runImageRefresh.
 // Mutation (run, restore): `iopts := &initOptions{yes: true, ...}` in
 // runImageRefresh: checkOpts fails (the options carry a flag that would stand
 // in for the confirmation).
@@ -945,17 +938,15 @@ func TestRepoImageRefreshIsDisabled(t *testing.T) {
 	})
 }
 
-// 2026-10-08 decision: --yes runs the whole command end to end with no
-// terminal at all (a closed stdin, as executeStdin's strings.Reader always
-// is): the plan is printed first, the options every step gets carry yes, and
-// the run ends with the reporter's closing line (CL6) and no prompt anywhere.
-// Mutation (run, restore): drop `if yes { return nil }` from
-// refuseRefreshHere, and this test fails (it is refused for lacking a
-// terminal, same as without --yes).
-func TestRefreshYesRunsEndToEndNoTerminal(t *testing.T) {
+// A run at a real terminal, with nothing typed, goes through the whole
+// command: the plan is printed first, the options every step gets carry no flag
+// standing in for a confirmation (T7), and the run ends with the reporter's
+// closing line and no prompt anywhere.
+func TestRefreshRunsEndToEndAtTheTerminal(t *testing.T) {
 	useVersion(t, "0.5.1")
 	useSelf(t)
 	newAnchorModeRig(t, refreshYAML, true)
+	fakeTerminal(t)
 	var seen *initOptions
 	old := newRefreshSteps
 	newRefreshSteps = func(r *initRun, e *initEngine, p *refreshPlan) refreshSteps {
@@ -968,12 +959,12 @@ func TestRefreshYesRunsEndToEndNoTerminal(t *testing.T) {
 		}
 	}
 	t.Cleanup(func() { newRefreshSteps = old })
-	out, _, err := executeStdin(t, "", "image", "refresh", "--yes")
+	out, _, err := executeStdin(t, "", "image", "refresh")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if seen == nil || !seen.yes {
-		t.Fatalf("the steps did not get yes=true: %+v", seen)
+	if seen == nil || seen.yes || seen.nonInteractive || seen.asJSON || seen.planOnly {
+		t.Fatalf("the steps got an option that stands in for a confirmation: %+v", seen)
 	}
 	reported(t, out, "base", "check job", "builds")
 	if i, j := strings.Index(out, "  5. then, if this checkout's"), strings.Index(out, stepLineOf(reportLines(out), "base")); i < 0 || j < 0 || i > j {

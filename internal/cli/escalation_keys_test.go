@@ -37,7 +37,7 @@ func TestSettingsEscalationKeysRefusedFromAgentSession(t *testing.T) {
 				before := readFileString(t, localPath)
 				t.Setenv(marker, "1")
 
-				args := append(slices.Clone(edit), "--layer", "local", "--yes")
+				args := append(slices.Clone(edit), "--layer", "local")
 				out, _, err := execute(t, append([]string{"settings"}, args...)...)
 				if err == nil {
 					t.Fatalf("a session wrote %v:\n%s", edit, out)
@@ -166,7 +166,7 @@ func TestSettingsWritesTheEscalationBlockAndItsModes(t *testing.T) {
 		{"escalation.modes.pro.r2_coder", "strongest"},
 		{"escalation.merge_judge", "strong"},
 	} {
-		out, _, err := execute(t, "settings", "set", edit[0], edit[1], "--layer", "local", "--yes")
+		out, _, err := execute(t, "settings", "set", edit[0], edit[1], "--layer", "local")
 		if err != nil {
 			t.Fatalf("%s was refused: %v\n%s", edit[0], err, out)
 		}

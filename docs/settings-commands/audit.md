@@ -16,7 +16,7 @@ inserted in front of it, so the agent-session refusal is `:459`) and `internal/c
 - A field never changes meaning.
 - The pattern already designed for `fugaro models` (`docs/models-commands/spec.md` §1, §4.5, §8, §9) and `fugaro rigor` (#1463):
   - Edit the local file only, through a comment-preserving YAML node-tree editor.
-  - Print the diff and confirm. A coding agent's session prints the diff and writes nothing, even with `--yes`.
+  - Print the diff and confirm. A coding agent's session prints the diff and writes nothing.
   - `fugaro update` publishes.
   - Read commands have `--json` and say where each value comes from.
 
@@ -363,12 +363,12 @@ Today the defaults are scattered:
 - Strict re-parse and a decoded-config comparison.
 - Reuse `backupFile`, `writeFileAtomic` and `lineDiff` (init.go:2617, :2653, :2680). Not `localcfg.Config.Marshal` (localcfg.go:1691), which drops comments.
 - Every local or layer write ends with `next: fugaro update`.
-- In an agent session, a local or layer write prints the diff and the command and writes nothing, `--yes` included (D789). A write to the repository `fugaro.yaml` is allowed.
+- In an agent session, a local or layer write prints the diff and the command and writes nothing (D789). A write to the repository `fugaro.yaml` is allowed.
 - Loosening a ceiling or floor asks for the typed project name (the `budget set` precedent).
 
 | Family | Synopsis | Writes | Covers |
 |---|---|---|---|
-| **generic** | `fugaro settings get KEY [--repo R]`; `fugaro settings set KEY VALUE [--layer local|project|repo] [--repo R] [--yes]`; `fugaro settings set KEY --add V \| --remove V` (lists); `fugaro settings unset KEY [--layer …]` | the layer's file | every **scalar or string-list** key in the registry: `budget.{per_run_usd,max_run_tokens,allowed_models,unreachable_grace}`, `base_branch`, `repos.<r>.base_branch`, `max_parallel`, `update_check`, `watch.burn_alert_usd_per_hour`, `commit_name/email`, `defaults.git.*`, `defaults.agent.*`, repository `agent.*`, `git.*`, `followup.*`, `governance.*` scalars, `default_profile`. It refuses keys owned by a dedicated family and points to that family |
+| **generic** | `fugaro settings get KEY [--repo R]`; `fugaro settings set KEY VALUE [--layer local|project|repo] [--repo R]`; `fugaro settings set KEY --add V \| --remove V` (lists); `fugaro settings unset KEY [--layer …]` | the layer's file | every **scalar or string-list** key in the registry: `budget.{per_run_usd,max_run_tokens,allowed_models,unreachable_grace}`, `base_branch`, `repos.<r>.base_branch`, `max_parallel`, `update_check`, `watch.burn_alert_usd_per_hour`, `commit_name/email`, `defaults.git.*`, `defaults.agent.*`, repository `agent.*`, `git.*`, `followup.*`, `governance.*` scalars, `default_profile`. It refuses keys owned by a dedicated family and points to that family |
 | `models` (designed) | `ls`, `search`, `add`, `rm`, `use` | local; repository (`use`) | providers routes (extend only), model_prices, allowed_models, agent.models.* |
 | `rigor` (designed, #1463) | `show`, `set <mode> [--repo R \| --area GLOB]`, `unset` | local layer file; repository | rigor.* |
 | `rigor floor` | `fugaro rigor floor show [--json]`; `set <mode> <l1,l2,…>`; `unset <mode>` | local `review_floor` | G7; lowering needs the typed name (SD10) |

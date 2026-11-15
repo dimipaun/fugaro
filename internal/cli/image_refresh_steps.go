@@ -236,14 +236,14 @@ func builtSoFar(err error, built []string) error {
 // refusal is what that leaves.
 func (r *initRun) announceBuild(what string, g initflow.Managed) error {
 	if marker := agentMarker(os.Getenv, r.stdinTerminal()); marker != "" {
-		if !initflow.CanConfirmManaged(initflow.YesOrTyped, initflow.Conditions{Agent: marker}, g) {
+		if !g.Removes() {
 			return &initflow.AgentError{Marker: marker}
 		}
 		fmt.Fprintf(r.stageDetail(), "fugaro: %s\n  %s\n", what, initflow.AgentProceeded(marker))
 		return nil
 	}
 	fmt.Fprintf(r.stageDetail(), "fugaro: %s\n", what)
-	if initflow.ConfirmsByGate(initflow.YesOrTyped, r.conditions(), g) {
+	if initflow.PersonAtTheTerminal(r.conditions()) && g.Removes() {
 		fmt.Fprintf(r.stageDetail(), "  %s\n", initflow.GateProceeded())
 	}
 	return nil
