@@ -866,7 +866,14 @@ func gatewayHalt(gh gateway.Halt) runstore.Halt {
 	if scope == "" {
 		scope = "run"
 	}
-	return runstore.Halt{Reason: runstore.HaltReason(gh.Reason), Scope: scope, At: gh.At.UTC(), Detail: gh.Detail}
+	return runstore.Halt{Reason: runstore.HaltReason(gh.Reason), Scope: scope, At: gh.At.UTC(), Detail: gh.Detail,
+		// The workspace's own marker travels with the halt and nowhere else
+		// (gateway.Halt.WorkspaceRefusal): the gateway read it off the
+		// refusal the workspace's credentials service answered, so this is
+		// the service's statement about itself and not something the run
+		// inferred. It is carried into the record verbatim, and the runner
+		// decides nothing with it.
+		WorkspaceRefusal: gh.WorkspaceRefusal}
 }
 
 // closeGateway stops the gateway, once, and takes the run's model cost from

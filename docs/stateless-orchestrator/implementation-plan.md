@@ -861,7 +861,7 @@ either half (D2021, answered (a) on 2026-11-10).
 - **Depends on:** O17. **Level 3.** **Commit:** `feat(ee): batch approval for orchestrator work items (O18)`. **Red step:** `TestBatchDefaultIsTenAndOnlyAPersonRaisesIt`.
   **Reviewer:** security.
 
-### O19. `ee/`: a workspace's refusal pauses the queue (slice 3; approved 2026-11-10; BLOCKED 2026-11-13 on a W-side record change — U12 resolved NO)
+### O19. `ee/`: a workspace's refusal pauses the queue (slice 3; approved 2026-11-10; BLOCKED 2026-11-13 on a W-side record change — U12 resolved NO; **the W-side change landed 2026-11-15 as `halt.workspace_refusal`, and O19 itself is still its own task**)
 
 **What "workspace caps" can mean, read against `main` on 2026-11-10** (reconciliation section 8, F29). D1222 put "workspace caps" in `ee/`
 and said nothing more. The workspaces work is now mostly on `main`: W0-W6 and W8 are merged and **W7 — the cap's meter, its alarm and the
@@ -879,7 +879,7 @@ such cycles (`internal/orchestrator/breaker.go`, `BreakerThreshold`). **D2022** 
 - **Files (13):** `internal/orchestrator/hooks.go` (edit: a `WorkspaceFuncs` seam, `Refused func(RunReport) bool`, set once by
   `ee/register`; **the core default answers false**, so an untagged build behaves exactly as today), `internal/orchestrator/hooks_test.go`
   (edit), `internal/orchestrator/runview.go` (edit: `RunReport` carries the refusal's source as the run record states it — **the field's name
-  and spelling would be W7's, and #2275 merged without writing one**), `internal/cli/orchestrator_run.go` (edit: the reader fills that field from the run
+  and spelling were W7's to set, and #2275 merged without writing one — it is `halt.workspace_refusal` as of 2026-11-15, below**), `internal/cli/orchestrator_run.go` (edit: the reader fills that field from the run
   record) with `internal/cli/orchestrator_run_test.go` (edit), `internal/orchestrator/breaker.go` (edit: a trip at once, which raises the **same** `breaker-tripped` decision with the
   workspace's reason, so the pause is the one `Plan` already refuses over through `BreakerOpen`, `breaker.go:126`, and no new pause
   mechanism or decision kind exists), `internal/orchestrator/breaker_test.go` (edit), `internal/orchestrator/tick.go` (edit: the fold asks
@@ -902,8 +902,9 @@ such cycles (`internal/orchestrator/breaker.go`, `BreakerThreshold`). **D2022** 
 - **Command:** `go test ./internal/orchestrator/ -run 'Workspace|Breaker|Tick' -count=1 && go test ./internal/cli/ -run TestRunViewCarriesTheWorkspaceRefusal -count=1 && go test ./ee/orchestrator/ ./ee/register/ -run 'Workspace|Orchestrator' -count=1 && go test ./internal/eeboundary/ -count=1`
 - **Depends on:** O6, O7, O8 and O18 (merged), **O14** (it writes `tick.go` at level 7), and externally **D2022 answered (a)** (done
   2026-11-10) and **W7** (#2275, merged 2026-11-11 as `d3b7613f`). **Serializes after** the open #2207 (`internal/cli/orchestrator_run.go`) and #2202 (`internal/cli/orchestrator_run_test.go`), and after O13 and O14 (`tick.go`,
-  `orchestrator_run.go`). **Level 8**, and both external triggers have fired — **which does not make it launchable: the reading below blocks it,
-  and what unblocks it is a W-side change that puts the refusal's source in the run record, not W7's merge.**
+  `orchestrator_run.go`). **Level 8**, and both external triggers have fired — **which did not make it launchable: the reading below blocked it,
+  and what unblocks it is a W-side change that puts the refusal's source in the run record, not W7's merge. That change landed 2026-11-15
+  (`halt.workspace_refusal`, the third reading below); scheduling O19 after it is the plan's to do, and nothing in this task is done here.**
 - **What waits, exactly, and the trigger:** the `RunReport` field and the reader's mapping waited for **W7's merge** — the trigger, #2275, which
   landed 2026-11-11 — and the first act was reading how a call the workspace refused (its stop, its cap or a failed settle) reaches the run
   record — where the plan already stated the stand: **if it does not reach it distinguishably, O19 cannot be built as written and is reported to
@@ -913,6 +914,14 @@ such cycles (`internal/orchestrator/breaker.go`, `BreakerThreshold`). **D2022** 
   the same `budget_unavailable`/`run` halt a member's own service outage writes, and the cap's refusal is on no call path at all, so O19 is
   blocked and no task of this plan implements it until a W-side change puts the refusal's source in the record — the reading, with its
   citations, is `docs/stateless-orchestrator/reconciliation.md` **U12 (resolved NO)**.
+  Read 2026-11-15 (**the W-side change U12 asked for has landed, and it is not this task's**): a run a workspace refused now says so in its own
+  record — `halt.workspace_refusal` (`runstore.Halt.WorkspaceRefusal`), one of `stop`, `cap` or `settle`, absent for every run no workspace
+  refused. The workspace's service puts the marker on the refusal it already answers (`gateway.WorkspaceRefusalHeader`,
+  `credsvc.SetWorkspaceRefusal`), the member's gateway reads it onto the halt (`internal/gateway/service.go`'s `serviceAnswer`) and the runner
+  copies it into the record (`internal/runner/gateway.go`'s `gatewayHalt`); the halt's `reason`, `scope` and `detail` are what they always
+  were. So the field `RunReport` waits for is named and on `main`, and **O19 is a task of its own that reads it** — nothing above changes
+  because of this: the seam, the trip at once and the tests are still O19's to write, and the writer's obligation below is still the reason a
+  run cannot claim the marker for itself.
 - **Commit:** `feat(ee): a workspace's refusal pauses the orchestrator's queue (O19)`
 - **Red step:** `TestAWorkspaceRefusalPausesTheQueueAtOnce` fails to build (no seam), then fails while a refused run is folded as an ordinary
   refusal and the next approved item is launched into the same stop.
