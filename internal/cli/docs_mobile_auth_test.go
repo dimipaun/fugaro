@@ -571,8 +571,12 @@ var mobileAuthProviderSymbols = map[string][]string{
 	"internal/budget/token/mint.go":     {"func Mint("},
 	"internal/budget/token/exchange.go": {"func Exchange(", "accounts:signInWithCustomToken"},
 	// The generation a first rule reading a provider claim would have to bump,
-	// and the two things the fields would move.
-	"internal/projectpolicy/version.go": {"const RulesVersion = 4"},
+	// and the two things the fields would move. The number moves with every
+	// generation the document adds (it is 5 since the voice policy node, mobile
+	// plan task P5.3.1), which is the point of citing the constant rather than
+	// a number: the sentence this holds is about the *bump*, not about which
+	// generation it currently is.
+	"internal/projectpolicy/version.go": {"const RulesVersion = 5"},
 	// The proof vehicles of section 6: the denial table, the synthetic token
 	// builder it drives, and the node's own gate.
 	"internal/budget/rules/emulator_test.go":         {"func TestDenialTable("},

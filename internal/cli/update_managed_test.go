@@ -190,8 +190,14 @@ func TestUpdateManagedOutOfTableGrantAppliesAndIsRecorded(t *testing.T) {
 			if strings.Contains(got, managedmode.NotConverged) {
 				t.Errorf("the session reads the gate's refusal for a plan it admitted:\n%s", got)
 			}
-			if n := len(r.ran(t, "apply")); n != 1 {
-				t.Fatalf("%d terraform apply(s) ran, want the one the gate admitted:\n%s", n, got)
+			// Two applies, and both are this plan: the installation stage's
+			// own and installation-2's, the stage that re-applies the root once
+			// the images stage has moved the base image the scheduled jobs run
+			// FROM (R7). The rig scripts one plan for the root, so the second
+			// step is admitted on the same document — which is what makes this
+			// count two rather than one.
+			if n := len(r.ran(t, "apply")); n != 2 {
+				t.Fatalf("%d terraform apply(s) ran, want the two the gate admitted (the installation stage's and installation-2's):\n%s", n, got)
 			}
 			// The warning is what the session that applied the plan reads. It
 			// is not decoration: D1545's accepted price is that the tables warn
@@ -206,8 +212,8 @@ func TestUpdateManagedOutOfTableGrantAppliesAndIsRecorded(t *testing.T) {
 			// And the rule is on the record, which is where it outlives the
 			// session that read it.
 			recs := audits(t, r)
-			if len(recs) != 1 || recs[0].Verdict != managedmode.AuditWarned {
-				t.Fatalf("%d record(s) after an applied step, want one warned: %+v", len(recs), recs)
+			if len(recs) != 2 || recs[0].Verdict != managedmode.AuditWarned || recs[1].Verdict != managedmode.AuditWarned {
+				t.Fatalf("%d record(s) after an applied step, want two warned — one per admitted step: %+v", len(recs), recs)
 			}
 			if !strings.Contains(strings.Join(recs[0].Warnings, "\n"), address) {
 				t.Errorf("the record does not carry the rule that fired, so an owner cannot audit it: %+v", recs[0])
@@ -433,15 +439,15 @@ func TestUpdateManagedJobReplaceAppliesWithAWarning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a replace D1551 does not protect was refused, and D1545 applies it with a warning: %v\n%s", err, got)
 	}
-	if n := len(r.ran(t, "apply")); n != 1 {
-		t.Fatalf("%d terraform apply(s) ran, want the one the gate admitted:\n%s", n, got)
+	if n := len(r.ran(t, "apply")); n != 2 {
+		t.Fatalf("%d terraform apply(s) ran, want the two the gate admitted (the installation stage's and installation-2's):\n%s", n, got)
 	}
 	if !strings.Contains(got, gateContentWarning) || !strings.Contains(got, address) {
 		t.Errorf("the session does not read the guard's warning about %s, which is the only thing that says the replace happened:\n%s", address, got)
 	}
 	recs := audits(t, r)
-	if len(recs) != 1 || recs[0].Verdict != managedmode.AuditWarned {
-		t.Fatalf("%d record(s) after an applied replace, want one warned: %+v", len(recs), recs)
+	if len(recs) != 2 || recs[0].Verdict != managedmode.AuditWarned || recs[1].Verdict != managedmode.AuditWarned {
+		t.Fatalf("%d record(s) after an applied replace, want two warned — one per admitted step: %+v", len(recs), recs)
 	}
 	if !strings.Contains(strings.Join(recs[0].Warnings, "\n"), address) {
 		t.Errorf("the record does not carry the delete rule's warning, so an owner cannot audit the replace: %+v", recs[0])
@@ -732,8 +738,8 @@ func TestUpdateManagedStageAdmitsAnAdditivePlan(t *testing.T) {
 		t.Errorf("an additive plan was refused by the gate:\n%s", got)
 	}
 	recs := audits(t, r)
-	if len(recs) != 1 || recs[0].Verdict != managedmode.AuditAdmitted {
-		t.Fatalf("%d record(s) after an admitted step, want one admitted: %+v", len(recs), recs)
+	if len(recs) != 2 || recs[0].Verdict != managedmode.AuditAdmitted || recs[1].Verdict != managedmode.AuditAdmitted {
+		t.Fatalf("%d record(s) after an admitted step, want two admitted — one per admitted step: %+v", len(recs), recs)
 	}
 	// The digest is of the bytes the rules read, which for this rig is the
 	// plan terraform printed — and the record is written only after the apply,
@@ -797,8 +803,8 @@ func TestUpdateManagedConvergesTheLauncherGrantUpgrade(t *testing.T) {
 			t.Errorf("the admitted step does not say it proceeded:\n%s", got)
 		}
 		recs := audits(t, r)
-		if len(recs) != 1 || recs[0].Verdict != managedmode.AuditAdmitted {
-			t.Fatalf("%d record(s) after the upgrade, want one admitted: %+v", len(recs), recs)
+		if len(recs) != 2 || recs[0].Verdict != managedmode.AuditAdmitted || recs[1].Verdict != managedmode.AuditAdmitted {
+			t.Fatalf("%d record(s) after the upgrade, want two admitted — one per admitted step: %+v", len(recs), recs)
 		}
 		// And the record says what admitted THIS plan. Its rules are what an
 		// owner reads back and checks against the plan they kept, so on a plan
@@ -838,12 +844,12 @@ func TestUpdateManagedConvergesTheLauncherGrantUpgrade(t *testing.T) {
 		if err != nil {
 			t.Fatalf("a replace D1551 does not protect was refused, and D1545 applies it with a warning: %v\n%s", err, got)
 		}
-		if n := len(r.ran(t, "apply")); n != 1 {
-			t.Fatalf("%d terraform apply(s) ran, want the one the gate admitted:\n%s", n, got)
+		if n := len(r.ran(t, "apply")); n != 2 {
+			t.Fatalf("%d terraform apply(s) ran, want the two the gate admitted (the installation stage's and installation-2's):\n%s", n, got)
 		}
 		recs := audits(t, r)
-		if len(recs) != 1 || recs[0].Verdict != managedmode.AuditWarned {
-			t.Fatalf("%d record(s) after an applied replace, want one warned: %+v", len(recs), recs)
+		if len(recs) != 2 || recs[0].Verdict != managedmode.AuditWarned || recs[1].Verdict != managedmode.AuditWarned {
+			t.Fatalf("%d record(s) after an applied replace, want two warned — one per admitted step: %+v", len(recs), recs)
 		}
 		rules := strings.Join(recs[0].Rules, "\n")
 		if strings.Contains(rules, "matched out of this plan") {
@@ -917,8 +923,8 @@ func TestUpdateReadsTheGateBeforeAnyWrite(t *testing.T) {
 		if n := markReads(r); n == 0 {
 			t.Error("the run applied a plan without ever reading the runs bucket's managed marker: the write is not gated on the read")
 		}
-		if recs := audits(t, r); len(recs) != 1 || recs[0].Verdict != managedmode.AuditAdmitted {
-			t.Errorf("the admitted step left %+v, want one admitted record", recs)
+		if recs := audits(t, r); len(recs) != 2 || recs[0].Verdict != managedmode.AuditAdmitted || recs[1].Verdict != managedmode.AuditAdmitted {
+			t.Errorf("the admitted steps left %+v, want two admitted records", recs)
 		}
 	})
 
@@ -1067,8 +1073,8 @@ func TestUpdateRevokedMidRunKeepsTheOwnersTerminal(t *testing.T) {
 	_ = e.converge(t.Context())
 
 	got := out.String()
-	if n := len(r.ran(t, "apply")); n != 1 {
-		t.Errorf("%d terraform apply(s) ran in a project the second read found unmanaged, want the one the owner's terminal answers:\n%s", n, got)
+	if n := len(r.ran(t, "apply")); n != 2 {
+		t.Errorf("%d terraform apply(s) ran in a project the second read found unmanaged, want the two the owner's terminal answers (the installation stage's and installation-2's):\n%s", n, got)
 	}
 	if strings.Contains(got, initflow.GateOrdinary()) || strings.Contains(got, initflow.GateProceeded()) {
 		t.Errorf("the revoked run applied a step under the gate's own sentence:\n%s", got)
@@ -1316,8 +1322,8 @@ func TestUpdateManagedRefusalsHoldAtATerminal(t *testing.T) {
 	if !strings.Contains(got, "⚠ CONFIRM (project "+initProjectName+", GCP project "+initProject+"): applies") {
 		t.Errorf("the control's step did not ask its own confirmation, so it does not witness what the gate's refusal holds back:\n%s", got)
 	}
-	if n := len(r.ran(t, "apply")); n != 1 {
-		t.Errorf("%d terraform apply(s) in the control run, want the one:\n%s", n, got)
+	if n := len(r.ran(t, "apply")); n != 2 {
+		t.Errorf("%d terraform apply(s) in the control run, want the two (the installation stage's and installation-2's):\n%s", n, got)
 	}
 }
 
@@ -1325,14 +1331,19 @@ func TestUpdateManagedRefusalsHoldAtATerminal(t *testing.T) {
 // had: --yes covers what it always covered, nothing asks a new question, and no
 // record is written about a decision this design never made.
 //
-// The count of reads is where "keeps every behaviour" is measured. Two calls
-// name the marker object in a person's run, and the second is the one this
-// design adds: the gate reads the marks per command (D1015) in the owner's
-// session too, because whether to show a prompt at all is the question those
-// marks answer (the ruling of 2026-11-01). It is a read and nothing else — no
-// verdict is reached for this run, nothing is applied on it, and the count is
-// the whole of what it costs. A change that makes an owner's run read the mark
-// a third time, or that makes this read reach a write, fails here.
+// The count of reads is where "keeps every behaviour" is measured. One call
+// names the marker object for the installation's own fact, and one more for
+// each gated step the run has: the gate reads the marks per step (D1015) in
+// the owner's session too, because whether to show a prompt at all is the
+// question those marks answer (the ruling of 2026-11-01). An ordinary update
+// has two gated steps — the installation stage's own and installation-2's,
+// which this rig's run makes because its config records no base image for the
+// images stage to leave alone, so the root is applied again for the scheduled
+// jobs (R7) — and three reads is the whole of what the marks cost it. Each is
+// a read and nothing else: no verdict is reached for this run, nothing is
+// applied on it. A change that makes an owner's run read the mark more times
+// than it has gated steps, or that makes one of those reads reach a write,
+// fails here.
 func TestUpdateManagedLeavesAnOwnersRunAlone(t *testing.T) {
 	const additive = "module.installation.google_service_account.scheduler"
 	r := updateRig(t)
@@ -1348,8 +1359,8 @@ func TestUpdateManagedLeavesAnOwnersRunAlone(t *testing.T) {
 	if n := len(r.ran(t, "apply")); n == 0 {
 		t.Errorf("the owner's own terminal stopped covering the installation step:\n%s", got)
 	}
-	if n := markReads(r); n != 2 {
-		t.Errorf("an owner's run read the managed marker %d time(s), want two: the installation's own fact read, and the one the gate makes to know whether to ask at all", n)
+	if n := markReads(r); n != 3 {
+		t.Errorf("an owner's run read the managed marker %d time(s), want three: the installation's own fact read, and the one each of the run's two gated steps makes to know whether to ask at all", n)
 	}
 	if strings.Contains(got, initflow.AgentProceeded("CLAUDECODE")) {
 		t.Errorf("a person's run printed the coding agent's own sentence:\n%s", got)
@@ -1711,8 +1722,8 @@ func TestUpdateManagedGatesTheCredentialsServiceStage(t *testing.T) {
 				}
 				return
 			}
-			if applies != 2 {
-				t.Errorf("%d applies reached the fake, want the installation stage's two (its own and the intake's re-apply, DS4.1) alone: the credentials stage's plan was refused and nothing of it may be applied:\n%s", applies, got)
+			if applies != 3 {
+				t.Errorf("%d applies reached the fake, want the installation stage's two (its own and the intake's re-apply, DS4.1) and installation-2's alone: the credentials stage's plan was refused and nothing of it may be applied:\n%s", applies, got)
 			}
 			if s := stoppedStage(got); s != "(the summary names no failed stage)" {
 				t.Fatalf("the run failed at %s: the gate's refusal is the owner's step, not a failure:\n%s", s, got)
@@ -1738,7 +1749,7 @@ func TestUpdateManagedGatesTheCredentialsServiceStage(t *testing.T) {
 // on a managed project, with the plan the gate refuses in front of the
 // credentials-service stage. The installation root's saved plan is shown more
 // than once in a run — every stage that judges that root reads it again — and
-// the credentials stage's own read is the SEVENTH of them (the installation stage reads its plan three times, then the intake's re-apply of the same root three more, DS4.1), so the refused
+// the credentials stage's own read is the ELEVENTH of them (the installation stage reads its plan three times, the intake's re-apply of the same root three more, DS4.1, and installation-2 — the stage that applies the root again for the scheduled jobs, whose preview pass and step read it four times, R7), so the refused
 // document is the last step of the ordered list (faketerraform's keyed script
 // consumes a list in order and repeats its last step). A run that reads the
 // root one more time before this stage leaves the list a step short, and the
@@ -1755,7 +1766,7 @@ func credentialsStageRun(t *testing.T) (string, int) {
 	r.script["plan@installation"] = map[string]any{"exit": 2}
 	admitted := map[string]any{"stdout": planJSON(t, change("module.installation.google_service_account.scheduler", "create"))}
 	refused := map[string]any{"stdout": planJSON(t, iamBindingCreate())}
-	r.script["show@installation"] = []any{admitted, admitted, admitted, admitted, admitted, admitted, refused}
+	r.script["show@installation"] = []any{admitted, admitted, admitted, admitted, admitted, admitted, admitted, admitted, admitted, admitted, refused}
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 		"credentials_service": credentialsServiceOutput(),
 		// The intake this run deploys: its block is written by the same stage,
