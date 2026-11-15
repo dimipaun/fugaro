@@ -90,7 +90,7 @@ As of 2026-11-14, read from `main`, the open pull requests and each plan's task 
 | image-env | owner Check 291 |
 | image-setup-skill | owner Checks 500 and 501 |
 | in-job-review | historical; delivered through cloud-senior-review, review-levels and api-key-review |
-| issue-mine | owner Checks 470 to 472 |
+| issue-mine | owner Checks 470 to 472: all ran 2026-11-14 and none has passed in full (470 passed in part, its issue-record read and two human steps unmeasured; 471 failed its cache-cleared row; 472 passed on an empty store, not at size), so re-runs are owner-run |
 | managed-agent-converge | none |
 | mcp-server | M9 parked (D936, the fence declined, no release schedules it); M11 declined (2026-11-09) |
 | mobile-auth | owner live checks, proposed by name and not numbered; P5's D231 gap is a follow-up awaiting the owner's decision — revoking the last device empties the node, so the next publish re-seeds the revoked entry |
