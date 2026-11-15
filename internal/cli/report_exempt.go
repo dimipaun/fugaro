@@ -254,6 +254,7 @@ var exemptAnswers = map[string]string{
 	"rigor set":              "writes the project layer's rigor default, or one area rule, and prints the row it wrote",
 	"review":                 "launches a review in a job of its own, and prints the run it started",
 	"runs digest":            "writes a closed period's report into the repository's docs tree, and prints where it landed",
+	"runs reports":           "writes every repository's report of each closed period into the runs bucket, and prints each key it wrote or left alone",
 	"secrets allow":          "adds repositories to a project secret's allow-list, and prints the diff it wrote",
 	"secrets deny":           "removes repositories from a project secret's allow-list, and prints what it dropped",
 	"secrets":                "prints its own help: the work is in the set, ls and rm subcommands beside it",

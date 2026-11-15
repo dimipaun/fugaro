@@ -351,6 +351,27 @@ const recipesV07Since = "0.7.0"
 // planTaskSince's bullet records.
 const digestSince = "0.13.0"
 
+// reportsSince is the first fugaro release whose CLI answers fugaro runs
+// reports --job: the command the project's reports job executes, which writes
+// every repository's closed periods into reports/ of the runs bucket. A build
+// before it knows no such command, so a firing that reaches such a job image
+// fails with "unknown command" and writes no report at all.
+//
+// It is the release's own *Since constant beside digestSince because the two
+// are the two halves of one series and neither implies the other: digestSince
+// is the release whose runner writes a report run into a checkout's docs tree
+// (T3.1's step, which a recipe asks for), and reportsSince is the release
+// whose CLI writes the same reports into the project's bucket with no recipe
+// and no model call. A skill or a recipe that names fugaro runs reports is
+// gated at this value, and the schedule that runs it is the installation's own
+// setting (jobs.reports.paused), which R7 deploys stopped: a schedule an
+// installation turns on is on a CLI of this release or, since fugaro update
+// upgrades launchers and the job image together, of a later one.
+//
+// docs/release.md's ("Before you tag") checklist verifies it equals the
+// release that ships the command.
+const reportsSince = "0.25.0"
+
 // adversarialSince is the first fugaro release whose runner acts on the
 // adversarial step, review level 3 (D720): it runs the step after the senior
 // review, a rejection bounces back to the first-line loop, and the level

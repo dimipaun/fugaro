@@ -148,9 +148,12 @@ func ReadRow(path, key string) (Summary, bool) {
 	return s, true
 }
 
-// Prev is the committed summaries the pattern rules read: every readable
-// report of a period at or before this report's, except its own period, which
-// the rules are handed separately.
+// Prev is the summaries before a period that the pattern rules read: every
+// readable report of a period at or before this report's, except its own
+// period, which the rules are handed separately. The rows are whichever series
+// the caller read -- the stored reports of the runs bucket, the committed ones
+// of a checkout, or the two merged (store.go) -- and every one of them is a
+// Row of this layout whichever hold it came from.
 //
 // A report of a later period is not history: a writer may backfill an older
 // period with the later ones already committed, and a rule that read them
