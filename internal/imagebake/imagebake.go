@@ -479,7 +479,7 @@ func Stage(r Repo, covered []Repo) (string, error) {
 		" && git -C %s reset --quiet --hard \"$commit\" \\\n"+
 		" && %s \\\n"+
 		" && /usr/local/lib/fugaro/finalize-checkout %s\n",
-		repoURLGuard(r.URL), Root, dir, dir, dir, dir, dir, submoduleGuard(dir, covered), dir)
+		repoURLGuard(r.URL), Root, dir, dir, dir, dir, submoduleGuard(dir, covered), dir)
 	return b.String(), nil
 }
 
