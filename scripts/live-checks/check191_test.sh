@@ -299,12 +299,17 @@ logs)
     fi
     ;;
   review)
-    # A review run's own report. `review-silent` is the state the row's own
-    # reading says a review run is in (nothing inside one can make a call the
-    # service would refuse a write on), `review-garbled` is a line that is not
-    # the one the attempt asks for, and the default is a run that reported one.
+    # A review run's own report. `review-silent` is the state a review run whose
+    # agent made no attempt leaves (nothing POINTS a review run at the service —
+    # the runner gives its agent no git credential and no forwarder rewrite, and
+    # a mode: review recipe runs no repository command — so an empty reading says
+    # the attempt did not reach the service, not that it cannot), `review-served`
+    # is the agent reporting a push the service answered, `review-garbled` is a
+    # line that is not the one the attempt asks for, and the default is a run
+    # that reported a refusal.
     case "$mode" in
     review-silent) ;;
+    review-served) echo "CHK191 attempt=push refused=no answer=200" ;;
     review-garbled) echo "CHK191 attempt=push refused=maybe answer=none" ;;
     *) echo "CHK191 attempt=push refused=yes answer=403" ;;
     esac
@@ -530,6 +535,12 @@ elif sub == ("logging", "read"):
             # TestBitbucketRouteEndedRun pins 403 with zero audit lines). The
             # `ended-served` mode is the hole: a line for the ended run is the
             # service having answered it.
+            continue
+        if mode == "review-no-served-line" and kind == "review":
+            # A review run whose own agent reported its push SERVED and whose
+            # lines hold nothing at all for it: the sentence has no service line
+            # behind it, which is the reading this row must not take for a
+            # finding about the proxy.
             continue
         common = {"message": "credsvc: audit", "run": rid,
                   "repository": "bitbucket/workspace-a/repo-a",
@@ -1948,25 +1959,55 @@ test_a_review_runs_refusal_under_another_class_is_a_failure() {
   expect_contains "$out" "FACT refusal-other-repository: PASS" "the wrong class: the working run's own rows still hold"
 }
 
-# The state the code is in: nothing inside a review run can make a call the
-# service would refuse a write on — the runner gives a review run's environment
-# no git credential and no forwarder rewrite, a mode: review recipe runs no
-# repository command, and the runner itself pushes nothing for one — so a review
-# run that reports nothing and is answered nothing is the shape this row expects,
-# and reading it needs a product change the owner decides. It is recorded as one
-# the check could NOT measure rather than failed: a FAIL here would name a hole
-# in an installation that is correct.
+# The state a review run whose agent made no attempt leaves: an empty reading,
+# recorded as NOT MEASURED rather than failed, because a FAIL here would name a
+# hole in an installation that is correct. It is not a claim about the code —
+# the way from inside a run to the service is the runner's own loopback
+# forwarder, which attaches the run's identity to whatever arrives and drops the
+# caller's Authorization (internal/gateway's gitforward), so an agent in that
+# container which finds the port DOES reach it. What nothing does is point a
+# review run at it: the runner gives its agent no git credential and no
+# forwarder rewrite (internal/runner's refreshGitAuth) and a mode: review recipe
+# allows exactly one review step and no repository command (internal/recipe).
 test_a_review_run_that_reached_the_service_for_nothing_is_unmeasured() {
   local dir=$work/reviewnone
   prepare "$dir"
   run_check "$dir" "$script" FAKE_GCLOUD_MODE=no-review-refusal
   expect_status "$status" 2 "a review run whose push left no line"
   expect_contains "$out" "FACT review-run: FAIL" "a review run whose push left no line: the row is reported, never a PASS nobody took"
-  expect_contains "$out" "nothing inside a review run can make a call the service would refuse a write on" \
+  expect_contains "$out" "no attempt that reached the service" \
     "a review run whose push left no line: what is missing is named"
-  expect_contains "$out" "Reading this row needs a product change" \
-    "a review run whose push left no line: the reading that would settle it is named"
+  expect_contains "$out" "loopback forwarder" \
+    "a review run whose push left no line: the row says a review run does have a way to the service"
   expect_contains "$out" "FACT ended-identity: PASS" "a review run whose push left no line: the rows after it were still measured"
+}
+
+# A review run's agent reporting a push the service ANSWERED, with the run's own
+# served call behind it in the service's lines: the finding this row exists for,
+# and it is the service's own line that makes it one. The row never prints it on
+# the agent's word alone.
+test_a_review_run_whose_push_was_served_is_a_failure() {
+  local dir=$work/reviewserved
+  prepare "$dir"
+  run_check "$dir" "$script" FAKE_FUGARO_MODE=review-served
+  expect_status "$status" 1 "a review run whose push was served"
+  expect_contains "$out" "FACT review-run: FAIL" "a served review push: the fact"
+  expect_contains "$out" "the review-only run's push was SERVED" "a served review push: the row says what happened"
+  expect_contains "$out" "the service's own lines carry the served call behind it" \
+    "a served review push: the row says what corroborates it"
+}
+
+# The same sentence from the agent with nothing in the service's own lines for
+# that run: uncorroborated, so the row records it as one it could not measure
+# rather than printing the finding on a model's word.
+test_a_review_run_that_says_its_push_was_served_with_no_service_line_is_unmeasured() {
+  local dir=$work/reviewservednone
+  prepare "$dir"
+  run_check "$dir" "$script" FAKE_FUGARO_MODE=review-served FAKE_GCLOUD_MODE=review-no-served-line
+  expect_status "$status" 2 "a served sentence with no service line behind it"
+  expect_contains "$out" "FACT review-run: FAIL" "a served sentence with no line behind it: the row is reported"
+  expect_contains "$out" "no service line behind it" \
+    "a served sentence with no line behind it: the row says what is missing"
 }
 
 test_a_review_run_that_made_no_attempt_is_unmeasured() {

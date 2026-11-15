@@ -186,16 +186,25 @@
 # log is read for the CHK191 attempt lines alone, and every field of those is
 # cut to a short plain-word shape before it is printed.
 #
-#             The review-only run's push is the one attempt no model-free route
-#             reaches, and this check does not build one: a review run's own
-#             environment carries no git credential and no forwarder rewrite
-#             (internal/runner's refreshGitAuth), a mode: review recipe runs no
-#             repository command at all, and the runner pushes nothing for such
-#             a run — so nothing inside it can make a call the service could
-#             refuse a write on. The row is read from the service's own lines
-#             and is recorded as NOT MEASURED (exit 2) where they carry no
-#             class; what reading it needs is a product change, and the owner
-#             decides (docs/secrets-brokering/check191-steps.md).
+#             The review-only run's push: its agent is asked to make the
+#             attempt, and its own sentence is read against the service's own
+#             lines and never on its word — a refusal has to carry the class of
+#             a service refusal line, and a push the agent says was SERVED only
+#             counts where that run's own lines carry the served call (the one
+#             status that is not a refusal, internal/credsvc's StatusOK). An
+#             empty reading means the agent made no attempt that reached the
+#             service, NOT that nothing inside a review run can reach it: the
+#             way from inside a run to the service is the runner's own loopback
+#             forwarder, which attaches the run's identity to whatever arrives
+#             and drops the caller's own Authorization (internal/gateway's
+#             gitforward). What nothing does is POINT a review run at it — the
+#             runner gives its agent no git credential and no forwarder rewrite
+#             (internal/runner's refreshGitAuth) and a mode: review recipe runs
+#             no repository command (internal/recipe) — and that gap, with the
+#             owner's decision it needs, is written out in
+#             docs/secrets-brokering/check191-steps.md. The row is recorded as
+#             NOT MEASURED (exit 2) where the service's lines carry neither a
+#             class nor a served call for it.
 # Knobs (all CHECK191_*): REPO, OTHER_REPO, PLAIN_REPO (the sandbox
 # repositories), OTHER_PR (the number of an open pull request in REPO — the
 # run's OWN repository, and not the run's own pull request — that the run tries
@@ -1238,6 +1247,15 @@ audit_audited() {
   printf '%s\n' "$1" | grep -c '^request_refused$' || true
 }
 
+# audit_served STATUSES: how many of the run's lines are the one status that is
+# not a refusal — a credential answered, which is what the route writes for a
+# call it forwarded (StatusOK, internal/credsvc/audit.go). It is what backs a
+# probe's own sentence that the service SERVED its call: without a line of this
+# run's own carrying it, that sentence is the caller's word and nothing else.
+audit_served() {
+  printf '%s\n' "$1" | grep -c '^ok$' || true
+}
+
 audit_class_need() { # audit_class_need CLASS
   local row cls n=0
   for row in "${ATTEMPTS[@]}"; do
@@ -1592,28 +1610,43 @@ step_refusals() {
 # review_unmeasured WHY: the review row's own shape — a review-only run whose
 # push the check cannot read as a refusal about the proxy — recorded as one this
 # check could not measure, with the reason WHY was handed to it and the reading
-# that would settle it named. It is NOT a FAIL: nothing inside a review run can
-# make a call the service would refuse a write on, so an empty reading here is
-# the state the code is in rather than a hole in an installation, and the check
-# has no attempt of its own to put in its place (a run's identity is sealed to
+# that would settle it named. It is NOT a FAIL: an empty reading here says the
+# run's own agent made no attempt that reached the service, NOT that the code
+# cannot produce one. The route from inside a run to the service is the runner's
+# own loopback forwarder, which attaches the run's own identity to whatever
+# arrives and drops the caller's own Authorization (internal/gateway's
+# gitforward), so a process in that container which finds the port does reach
+# the service — and that is exactly what this row's SERVED branch reads, once
+# the service's own lines carry the served call. What nothing does is POINT such
+# a run at it: the runner gives a review run's agent no git credential and no
+# forwarder rewrite (internal/runner's refreshGitAuth) and a mode: review recipe
+# allows exactly one review step and no repository command (internal/recipe),
+# so the way to the listener is the agent's own to find. The check has no
+# attempt of its own to put in the run's place (a run's identity is sealed to
 # its own execution).
 review_unmeasured() { # review_unmeasured WHY
-  unmeasured review-run "$1, which is this row's own shape and not a finding about the proxy: nothing inside a review run can make a call the service would refuse a write on. The runner gives a review run's environment no git credential and no forwarder rewrite (internal/runner's refreshGitAuth: 'Neither does a review run's', and the forwarder's URL is written into the environment alone, never into a checkout), so a call a review run's own agent makes never reaches the service; no repository command runs in a review run at all (a mode: review recipe allows exactly one review step and nothing else, internal/recipe); and the runner itself pushes nothing for one. Reading this row needs a product change — a review run's own command given a route to the forwarder, or a check step a mode: review recipe may carry — and that is the owner's decision, not something this check builds. The two classes the rules can answer, once a call reaches them, are read_only (the identity is the installation review-only job class: Decide refuses every push from a read-only identity before the push rules are read, internal/gitproxy/rules.go) and no_run_branch (the identity carries no fb and is not read-only, which is a review-mode run of a per-repository job)"
+  unmeasured review-run "$1. An empty reading of this row says the run's own agent made no attempt that reached the service, NOT that the code cannot produce one: the route from inside a run to the service is the runner's own loopback forwarder, which attaches the run's identity to whatever arrives and drops the caller's own Authorization (internal/gateway's gitforward), so a process in that container that finds the port does reach the service — which is what this row's SERVED branch exists for, once the service's own lines carry the served call. What nothing does is point such a run at it: the runner gives a review run's agent no git credential and no forwarder rewrite (internal/runner's refreshGitAuth), and a mode: review recipe allows exactly one review step and no repository command (internal/recipe). The two classes the rules answer for a review identity's push, once a call reaches them, are read_only (the identity is the installation review-only job class: Decide refuses every push from a read-only identity before the push rules are read, internal/gitproxy/rules.go) and no_run_branch (the identity carries no fb and is not read-only, which is a review-mode run of a per-repository job)"
 }
 
-# step_review_run: the review-only run, and the one attempt this check still
-# cannot make without a model. What the row reads is the SERVICE's own class
-# line for that run, and the two classes a review identity's push can earn are
-# internal/gitproxy's own: read_only, where the identity is the installation's
-# review-only job class (bitbucketproxy sets Identity.ReadOnly from the JOB's
-# class, and Decide refuses every push from a read-only identity before the
-# push's own rules are read), and no_run_branch, where the identity is not
-# read-only and carries no fb — a review-mode run of a per-repository job. The
-# row used to pin no_run_branch alone, which is the wrong expectation for one of
-# the two shapes a review run can be launched in. not_admitted, which an earlier
-# run's log carried, is neither: it is the published block's own rule about the
-# REPOSITORY, decided before any rule about what an identity may write, so it
-# settles nothing about a push.
+# step_review_run: the review-only run, and the one attempt this check cannot
+# make without a model — its own agent is asked to push a branch. What that
+# agent reports is read against the service's own lines and never taken on its
+# word: a refusal has to carry the class of a service refusal line, and a served
+# push has to
+# have a served call of that run behind it (one line of its own carrying the one
+# status that is not a refusal, StatusOK), so the row prints the finding this
+# check exists for only when the service really answered. What the row reads is
+# the SERVICE's own class line for that run, and the two classes a review
+# identity's push can earn are internal/gitproxy's own: read_only, where the
+# identity is the installation's review-only job class (bitbucketproxy sets
+# Identity.ReadOnly from the JOB's class, and Decide refuses every push from a
+# read-only identity before the push's own rules are read), and no_run_branch,
+# where the identity is not read-only and carries no fb — a review-mode run of a
+# per-repository job. The row used to pin no_run_branch alone, which is the
+# wrong expectation for one of the two shapes a review run can be launched in.
+# not_admitted, which an earlier run's log carried, is neither: it is the
+# published block's own rule about the REPOSITORY, decided before any rule about
+# what an identity may write, so it settles nothing about a push.
 step_review_run() {
   local task=$SCRATCH/task-review.md row said classes statuses got what other rid pr
   rid=$(run_id review)
@@ -1680,7 +1713,11 @@ TASK_EOF
   fi
   case "${said%% *}" in
   refused=no)
-    fact review-run FAIL "the review-only run's push was SERVED (${said}): a run that is not admitted to write a branch pushed one, which is the finding this row exists for. Read that run's log and the service's lines"
+    if [ "$(audit_served "$statuses")" -lt 1 ]; then
+      review_unmeasured "the review-only run's own agent reported its push was SERVED (${said}) and the service's own lines hold no served call for that run ($(audit_served "$statuses") line(s) of its own carry the one status that is not a refusal, internal/credsvc's StatusOK, which is what a call the route forwarded writes), so the sentence has no service line behind it: this row is read from the service's own lines, never from the agent's word alone, and a finding about the proxy is not printed on one"
+      return 0
+    fi
+    fact review-run FAIL "the review-only run's push was SERVED (${said}), and the service's own lines carry the served call behind it: a run that is not admitted to write a branch pushed one, which is the finding this row exists for. Read that run's log and the service's lines"
     return 0
     ;;
   refused=none | "")
@@ -2017,7 +2054,7 @@ plan() {
     say "  [network, read] gcloud secrets list --project=${P} --format=json, then gcloud secrets versions list <the credentials service's bundle container> --project=${P} --format=json — whether the service has a model credential to serve a run out of, read here where doctor's own row answers about the invoker grant instead"
     say "  [network, runs] fugaro run --repo ${REPO} --recipe test-and-fix --run-id $(run_id work) — the throwaway run itself, whose task commits one line, pushes it and opens its pull request through the service. Its check step (test-and-fix's one check step, command: test) runs ${REPO}'s own commands.test BEFORE the run's first model call: that command is the probe, scripts/chk191-probe.sh, which makes the seven attempts at the run's own identity through the service's forwarder and prints one CHK191 line per attempt. No model is asked anything about the attempts, and a ${REPO} whose commands.test is not the probe is refused by name rather than failed"
     say "  [network, read] gcloud logging read (service fugaro-credentials, jsonPayload.run) — the service's own lines for each run: its audit lines, and the refusal line that carries a refusal's class"
-    say "  [network, runs] fugaro run --repo ${REPO} --recipe review-only --pr <the working run's own pull request> --run-id $(run_id review) — a review-only run (mode: review is launched with the pull request it reviews, and such a run has no branch of its own), whose push the service must refuse. The two classes the rules can answer for a review identity's push are read_only (the identity is the installation's review-only job class, and every push of it is refused before the push's own rules) and no_run_branch (the identity carries no fb and is not read-only) — not_admitted, which an earlier run's log carried, is the published block's rule about the REPOSITORY and settles nothing about a push. Nothing inside a review run can make a call the service could refuse a write on (its own environment gets no git credential and no forwarder rewrite, and a mode: review recipe runs no repository command), so the row is read from the service's own lines and is recorded as NOT MEASURED where they carry no class: what reading it needs is a product change and the owner's decision, named in docs/secrets-brokering/check191-steps.md"
+    say "  [network, runs] fugaro run --repo ${REPO} --recipe review-only --pr <the working run's own pull request> --run-id $(run_id review) — a review-only run (mode: review is launched with the pull request it reviews, and such a run has no branch of its own), whose push the service must refuse. The two classes the rules can answer for a review identity's push are read_only (the identity is the installation's review-only job class, and every push of it is refused before the push's own rules) and no_run_branch (the identity carries no fb and is not read-only) — not_admitted, which an earlier run's log carried, is the published block's rule about the REPOSITORY and settles nothing about a push. The run's agent is asked to push, and what it reports is read against the service's own lines and never on its word: a refusal count behind it as audited, and a push it says was SERVED only where the run's own lines hold the one status that is not a refusal (StatusOK) — an empty reading means the agent made no attempt that reached the service, not that nothing inside a review run can reach it (the way to the service inside a run is the runner's own loopback forwarder, which attaches the run's identity to whatever arrives and drops the caller's Authorization, internal/gateway's gitforward; nothing POINTS a review run at it, which is the product gap named in docs/secrets-brokering/check191-steps.md)"
     say "  [network, write+delete] ONE Realtime Database node, outcomes/<day>/<slug>/$(run_id ended).json, written by you with your own credentials and deleted again by the restore, and one run ($(run_id ended)) launched with that outcome already written"
     for row in "${ATTEMPTS[@]}"; do
       IFS='|' read -r name key _ <<<"$row"

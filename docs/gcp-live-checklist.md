@@ -12362,15 +12362,22 @@ no branch of its own: the row passes when the service's own lines carry one of t
 review identity's push can earn — `read_only`, or `no_run_branch` for an identity that carries no `fb`
 and is not read-only — and fails on any other class the service wrote, `not_admitted` included: that is
 the published block's rule about the **repository**, decided before any rule about what an identity may
-write, so it is not a reading of a push. Where the service's lines carry no class at all the row is
-recorded as one the check could **not measure** (exit `2`), and that is the state the code is in rather
-than a hole in your installation: **nothing inside a review run can make a call the service would
-refuse a write on** — the runner gives a review run's environment no git credential and no forwarder
-rewrite (`internal/runner`'s `refreshGitAuth`), a `mode: review` recipe admits exactly one review step
-and no repository command (the run's own check command, the one route that reaches the forwarder, is
-therefore not there), and the runner itself pushes nothing for such a run. Reading it needs a product
-change — a review run's own command given a route to the forwarder, or a check step a `mode: review`
-recipe may carry — which is the owner's decision and is not something this check builds);
+write, so it is not a reading of a push. The run's own agent is asked to make the attempt, and its
+sentence is read against the service's own lines and never taken on its word: a push it reports as
+**served** is a FAIL only where that run's lines carry the served call behind it (one line with the one
+status that is not a refusal, `StatusOK`). Where the service's lines carry neither a class nor a served
+call at all the row is
+recorded as one the check could **not measure** (exit `2`), which is a reading of that run and not a
+claim about the code: an empty reading says the agent made no attempt that reached the service —
+**not** that nothing inside a review run can reach it, since the way there is the runner's own loopback
+forwarder, an unauthenticated listener that attaches the run's identity to whatever arrives and drops
+the caller's `Authorization` (`internal/gateway`'s `gitforward`), so a process that finds the port does
+reach the service. What nothing does is point such a run at it — the runner gives a review run's
+environment no git credential and no forwarder rewrite (`internal/runner`'s `refreshGitAuth`), and a
+`mode: review` recipe admits exactly one review step and no repository command (the run's own check
+command, the one route that reaches the forwarder, is therefore not there). Whether a review run should
+be given a route of its own — a review run's own command given a route to the forwarder, or a check step
+a `mode: review` recipe may carry — is the owner's decision and is not something this check builds);
 `ended-identity` (the
 probe's record, the service's own lines and what it wrote, read together: **nothing written, no line for
 the probe in the service's own log, and the record's own sentence naming this execution's forwarder

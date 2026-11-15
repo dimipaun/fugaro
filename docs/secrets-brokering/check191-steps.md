@@ -333,21 +333,33 @@ is not a pass: the audit line is the other half of the reading. A row whose atte
 as one it did **not** make (`refused=none`) reads FAIL and the check ends `2`: the class it needs is a
 refusal the service never wrote, and the answer field names the value the probe was not given.
 
-`review-run` reads the service's own class line for a review-only identity's push, and the two classes
-the rules can answer are `read_only` — the identity is the installation's **review-only job class**, and
+`review-run` reads the service's own lines for a review-only identity's push, and never the run's own
+agent on its word alone. Two things are read there, and one class. The classes the rules answer for such
+a push are `read_only` — the identity is the installation's **review-only job class**, and
 `internal/gitproxy`'s `Decide` refuses every push of a read-only identity before it reads the push rules
 at all — and `no_run_branch`, an identity that is not read-only and carries no `fb` (a review-mode run
 of a per-repository job). Any other class the service wrote is a FAIL (`not_admitted`, for instance, is
 the published block's own rule about the **repository**, decided before any rule about what an identity
-may write, so it settles nothing about a push). Where the run reports no attempt and the service's lines
-carry no class, the row is recorded as one the check could **not measure** (exit `2`): **nothing inside
-a review run can make a call the service would refuse a write on** — the runner gives a review run's
-environment no git credential and no forwarder rewrite (`internal/runner`'s `refreshGitAuth`), no
-repository command runs in one at all (a `mode: review` recipe allows exactly one review step and
-nothing else), and the runner itself pushes nothing for it — so an empty reading here is the state the
-code is in, not a hole in your installation. Reading it needs a product change (a review run's own
-command given a route to the forwarder, or a check step a `mode: review` recipe may carry), which is the
-owner's decision and is not something this check builds.
+may write, so it settles nothing about a push). And a run whose own agent reports the push was
+**served** is only a FAIL where that run's own lines carry the served call behind it — one line with the
+one status that is not a refusal (`StatusOK`, `internal/credsvc`'s audit vocabulary); a sentence with no
+such line behind it is not read as a finding about the proxy. Where the run reports no attempt and the
+service's lines carry neither a class nor a served call, the row is recorded as one the check could
+**not measure** (exit `2`).
+
+**What an empty reading means, and what it does not.** It means the agent made no attempt that reached
+the service — **not** that nothing inside a review run can reach it. The way from inside a run to the
+service is the runner's own loopback forwarder, which is an unauthenticated listener on `127.0.0.1` that
+attaches the run's own identity to whatever arrives and drops the caller's own `Authorization`
+(`internal/gateway`'s `gitforward`): a process in that container which finds the port does reach the
+credentials service, which is exactly what this row's served branch exists to catch. What nothing does
+is **point** a review run at it: the runner gives a review run's agent no git credential and no
+forwarder rewrite (`internal/runner`'s `refreshGitAuth`), and a `mode: review` recipe runs no repository
+command at all (it allows exactly one review step and nothing else). So the row can read a served push
+or a refusal whenever the agent finds its own way there, and an empty reading is that agent having made
+no attempt — a reading of the run, not of the code. Whether a review run should be given a route of its
+own (a repository command it may run, or a check step a `mode: review` recipe may carry) is the owner's
+decision and is not something this check builds.
 
 **Exit codes.** `0` is every criterion that was measured holding. `1` is a measured criterion that did
 not hold, or a guard that stopped the check before it ran. `2` is the check not being able to
