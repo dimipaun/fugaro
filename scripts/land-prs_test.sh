@@ -79,9 +79,34 @@ ready)
   ;;
 merge)
   n=${3:-}
+  shift 3
   if [ -f "$dir/merge.$n.fail" ]; then
     cat "$dir/merge.$n.fail" >&2
     exit 1
+  fi
+  # --match-head-commit is enforced the way GitHub enforces it: the commit the
+  # caller names has to be the head the case says the branch is on now. A case
+  # that never moves the head therefore fails any merge that does not name it,
+  # and a case that pushes after the sweep gets the refusal gh would give.
+  want=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --match-head-commit)
+      want=${2:-}
+      shift 2
+      ;;
+    *) shift ;;
+    esac
+  done
+  if [ -f "$dir/head.$n" ]; then
+    if [ -z "$want" ]; then
+      printf 'X Pull request merge is not pinned to a head commit\n' >&2
+      exit 1
+    fi
+    if [ "$want" != "$(cat "$dir/head.$n")" ]; then
+      printf 'X Pull request head commit does not match\n' >&2
+      exit 1
+    fi
   fi
   printf 'Squashed and merged pull request #%s\n' "$n"
   ;;
@@ -101,14 +126,26 @@ new_case() { # new_case NAME
 }
 view() { # view N STATE DRAFT MERGEABLE TITLE [READ]
   local n=$1 state=$2 draft=$3 merge=$4 title=$5 read=${6:-}
-  local file
+  local file oid
   if [ -n "$read" ]; then
     file=$case_dir/view.$n.$read.json
+    oid="oid-$n-$read"
   else
     file=$case_dir/view.$n.json
+    oid="oid-$n"
   fi
+  printf '{"state":"%s","isDraft":%s,"mergeable":"%s","title":"%s","headRefOid":"%s"}\n' \
+    "$state" "$draft" "$merge" "$title" "$oid" >"$file"
+  # The read names the head, and the branch is on it: a case that wants the two
+  # to disagree -- a push between the sweep and the merge -- says so with push.
+  printf '%s\n' "$oid" >"$case_dir/head.$n"
+}
+view_no_head() { # view_no_head N STATE DRAFT MERGEABLE TITLE -- a read that named no head
   printf '{"state":"%s","isDraft":%s,"mergeable":"%s","title":"%s"}\n' \
-    "$state" "$draft" "$merge" "$title" >"$file"
+    "$2" "$3" "$4" "$5" >"$case_dir/view.$1.json"
+}
+push() { # push N OID -- the branch moved, with no read to say so
+  printf '%s\n' "$2" >"$case_dir/head.$1"
 }
 merge_fails() { # merge_fails N "what gh prints"
   printf '%s\n' "$2" >"$case_dir/merge.$1.fail"
@@ -180,7 +217,9 @@ report_line=$(printf '%s\n' "$OUT" | grep -n '^13: OPEN' | head -n 1 | cut -d: -
 summary_line=$(printf '%s\n' "$OUT" | grep -n '^11: MERGED' | head -n 1 | cut -d: -f1)
 [ -n "$report_line" ] && [ -n "$summary_line" ] && [ "$report_line" -lt "$summary_line" ] ||
   fail "the report is not printed before the merges ($report_line, $summary_line)"
-expect_contains "$(calls)" "pr view 11 --json mergeable,isDraft,state,title" "the read is the one the script documents"
+expect_contains "$(calls)" "pr view 11 --json mergeable,isDraft,state,title,headRefOid" "the read is the one the script documents"
+expect_contains "$(calls)" "pr merge 11 --squash --delete-branch --match-head-commit oid-11" \
+  "the merge names the head the read named"
 expect_absent "$(calls)" "pr ready" "a pull request that is not a draft is not marked ready"
 # No sleeping between merges: every read happened before the first merge, so the
 # batch costs one sweep of reads and then one merge after another.
@@ -346,7 +385,7 @@ new_case repo
 view 96 OPEN false MERGEABLE "the one in another repository"
 land --repo acme/widgets 96
 expect_status "$RC" 0 "a batch in a named repository exits 0"
-expect_contains "$(calls)" "pr view 96 --repo acme/widgets --json mergeable,isDraft,state,title" "the read names the repository"
+expect_contains "$(calls)" "pr view 96 --repo acme/widgets --json mergeable,isDraft,state,title,headRefOid" "the read names the repository"
 expect_contains "$(calls)" "pr merge 96 --repo acme/widgets --squash --delete-branch" "the merge names the repository"
 
 # --------------------------------------------------------------- second pass
@@ -363,6 +402,45 @@ expect_status "$RC" 0 "a pull request unblocked by a merge is landed in the seco
 expect_contains "$OUT" "111: MERGED" "the first pull request merged"
 expect_contains "$OUT" "112: MERGED" "the pull request the merge unblocked merged too"
 expect_contains "$OUT" "merged 2 of 2" "the summary counts both"
+
+# --------------------------------------------- the head moves between the reads
+# A push while GitHub was still computing: the poll reads a head the first read
+# never saw, and what is merged is the one the last read named. The fake refuses
+# a merge that names any other, the way GitHub refuses it, so a stale head here
+# is a failing case and not a silently landed commit.
+new_case head-moves
+view 121 OPEN false UNKNOWN "the one pushed to while GitHub computed" 1
+view 121 OPEN false MERGEABLE "the one pushed to while GitHub computed" 2
+land 121
+expect_status "$RC" 0 "a pull request pushed to between reads is merged at the head last read"
+expect_contains "$OUT" "121: MERGED" "the polled pull request is reported merged"
+expect_contains "$(calls)" "pr merge 121 --squash --delete-branch --match-head-commit oid-121-2" \
+  "the merge names the head the last read saw, not the first"
+expect_absent "$(calls)" "--match-head-commit oid-121-1" "the head the first read saw is never named"
+
+# ------------------------------------------- the head moves after the last read
+# A push between the sweep and the merge. The read that decided this pull request
+# is mergeable judged a commit that is no longer the head, so the merge is not
+# pinned to what is there now and gh refuses it: nothing nobody judged is landed.
+new_case head-moves-after-the-sweep
+view 122 OPEN false MERGEABLE "the one pushed to after the sweep"
+push 122 oid-122-2
+land 122
+expect_status "$RC" 1 "a push after the sweep is not merged"
+expect_contains "$OUT" "122: merge failed: X Pull request head commit does not match" \
+  "gh's refusal of a moved head is reported"
+expect_absent "$OUT" "122: MERGED" "a moved head is never reported merged"
+expect_equal "$(count_calls '^pr merge 122')" 1 "the merge is not retried in the second pass"
+
+# ---------------------------------------------------- a read that named no head
+# Nothing to pin the merge to, so it is not merged: an unpinned merge is exactly
+# what the pin is for.
+new_case no-head
+view_no_head 131 OPEN false MERGEABLE "the one whose head nobody read"
+land 131
+expect_status "$RC" 1 "a mergeable pull request whose head was not read is not merged"
+expect_contains "$OUT" "131: merge failed: no head commit was read for 131" "the reason is reported"
+expect_absent "$(calls)" "pr merge" "nothing is merged without a head to name"
 
 if [ "$failures" -ne 0 ]; then
   echo "$failures case(s) failed" >&2

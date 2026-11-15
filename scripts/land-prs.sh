@@ -33,18 +33,20 @@
 # What it does, in order:
 #
 #   1. every pull request is read at once -- `gh pr view N --json
-#      mergeable,isDraft,state,title`, eight at a time -- and one that answers
-#      UNKNOWN is polled again after a pause, a bounded number of times;
+#      mergeable,isDraft,state,title,headRefOid`, eight at a time -- and one that
+#      answers UNKNOWN is polled again after a pause, a bounded number of times;
 #   2. one line per pull request is printed before anything is touched;
 #   3. every open, MERGEABLE pull request is merged: `gh pr ready N` first when
-#      it is a draft, then `gh pr merge N --squash --delete-branch`. One that is
-#      CONFLICTING, still UNKNOWN after the polls or not open is skipped and
-#      named, never an error that stops the batch, and a merge that fails is
-#      reported with gh's last line while the batch goes on. A merge moves the
-#      base branch, so the pull requests that were not merged and were not
-#      CONFLICTING are read once more at the end and the ones that became
-#      MERGEABLE are merged too -- one pass is cheap, and the second catches the
-#      ones the first merges unblocked;
+#      it is a draft, then `gh pr merge N --squash --delete-branch
+#      --match-head-commit <the head the read named>`. The merge names the commit
+#      the sweep saw, so a push between the sweep and the merge is refused by gh
+#      instead of landing commits nobody judged. One that is CONFLICTING, still
+#      UNKNOWN after the polls or not open is skipped and named, never an error
+#      that stops the batch, and a merge that fails is reported with gh's last
+#      line while the batch goes on. A merge moves the base branch, so the pull
+#      requests that were not merged and were not CONFLICTING are read once more
+#      at the end and the ones that became MERGEABLE are merged too -- one pass
+#      is cheap, and the second catches the ones the first merges unblocked;
 #   4. the summary is one line per pull request -- `N: MERGED`,
 #      `N: CONFLICTING, not merged`, `N: UNKNOWN, not merged`,
 #      `N: not open (STATE)` or `N: merge failed: <gh's last line>` -- and then
@@ -163,6 +165,7 @@ STATE=()
 DRAFTW=()
 MERGE=()
 TITLE=()
+HEAD=()
 VERDICT=()
 RESULT=()
 MSG=()
@@ -170,9 +173,9 @@ WAS_MERGEABLE=()
 
 gh_view() { # gh_view N
   if [ -n "$REPO" ]; then
-    gh pr view "$1" --repo "$REPO" --json mergeable,isDraft,state,title
+    gh pr view "$1" --repo "$REPO" --json mergeable,isDraft,state,title,headRefOid
   else
-    gh pr view "$1" --json mergeable,isDraft,state,title
+    gh pr view "$1" --json mergeable,isDraft,state,title,headRefOid
   fi
 }
 gh_ready() { # gh_ready N
@@ -183,19 +186,12 @@ gh_ready() { # gh_ready N
   fi
 }
 gh_merge() { # gh_merge N
-  if [ "$DELETE_BRANCH" = yes ]; then
-    if [ -n "$REPO" ]; then
-      gh pr merge "$1" --repo "$REPO" --squash --delete-branch
-    else
-      gh pr merge "$1" --squash --delete-branch
-    fi
-  else
-    if [ -n "$REPO" ]; then
-      gh pr merge "$1" --repo "$REPO" --squash
-    else
-      gh pr merge "$1" --squash
-    fi
-  fi
+  local args=()
+  [ -n "$REPO" ] && args+=(--repo "$REPO")
+  args+=(--squash)
+  if [ "$DELETE_BRANCH" = yes ]; then args+=(--delete-branch); fi
+  args+=(--match-head-commit "${HEAD[$1]:-}")
+  gh pr merge "$1" "${args[@]}"
 }
 
 # last_line prints the last non-blank line of what gh printed: gh puts its own
@@ -206,7 +202,7 @@ last_line() {
 }
 
 parse_one() { # parse_one N
-  local n=$1 fields state draft merge title
+  local n=$1 fields state draft merge title head
   fields=$(python3 - "$TMP/view-$n.json" <<'PY' || true
 import json, sys
 try:
@@ -217,23 +213,25 @@ except Exception:
 if not isinstance(d, dict):
     # A read that did not answer is not a pull request that is closed: the
     # state is left unknown so nothing is concluded about it.
-    print("?\tready\tUNKNOWN\t")
+    print("?\tready\tUNKNOWN\t\t")
 else:
     state = d.get("state") or "?"
     draft = "draft" if d.get("isDraft") else "ready"
     merge = d.get("mergeable") or "UNKNOWN"
     title = d.get("title") or ""
-    print("%s\t%s\t%s\t%s" % (state, draft, merge, title))
+    head = d.get("headRefOid") or ""
+    print("%s\t%s\t%s\t%s\t%s" % (state, draft, merge, title, head))
 PY
   )
   if [ -z "$fields" ]; then
-    fields=$(printf '?\tready\tUNKNOWN\t')
+    fields=$(printf '?\tready\tUNKNOWN\t\t')
   fi
-  IFS=$'\t' read -r state draft merge title <<<"$fields" || true
+  IFS=$'\t' read -r state draft merge title head <<<"$fields" || true
   STATE[$n]=$state
   DRAFTW[$n]=$draft
   MERGE[$n]=$merge
   TITLE[$n]=$title
+  HEAD[$n]=$head
 }
 
 read_all() { # read_all "N N N"
@@ -276,6 +274,14 @@ report_one() { # report_one N
 
 merge_one() { # merge_one N
   local n=$1 out
+  # A merge names the commit it lands. Without one from the read there is
+  # nothing to pin the merge to, and merging unpinned is the thing the pin is
+  # for, so this is not merged at all.
+  if [ -z "${HEAD[$n]:-}" ]; then
+    RESULT[$n]=failed
+    MSG[$n]="no head commit was read for $n"
+    return 0
+  fi
   if [ "${DRAFTW[$n]:-ready}" = draft ]; then
     if ! out=$(gh_ready "$n" 2>&1); then
       RESULT[$n]=failed
