@@ -75,7 +75,20 @@ view)
   cat "$answer"
   ;;
 ready)
-  printf 'Pull request #%s is marked as ready for review\n' "${3:-}"
+  # `pr ready N --undo` puts a draft back, and it can fail on its own: a case
+  # says so with undo_fails.
+  undo=no
+  for arg in "$@"; do [ "$arg" = --undo ] && undo=yes; done
+  n=${3:-}
+  if [ "$undo" = yes ]; then
+    if [ -f "$dir/ready.$n.undo.fail" ]; then
+      cat "$dir/ready.$n.undo.fail" >&2
+      exit 1
+    fi
+    printf 'Pull request #%s is converted to draft\n' "$n"
+  else
+    printf 'Pull request #%s is marked as ready for review\n' "$n"
+  fi
   ;;
 merge)
   n=${3:-}
@@ -149,6 +162,9 @@ push() { # push N OID -- the branch moved, with no read to say so
 }
 merge_fails() { # merge_fails N "what gh prints"
   printf '%s\n' "$2" >"$case_dir/merge.$1.fail"
+}
+undo_fails() { # undo_fails N "what gh prints"
+  printf '%s\n' "$2" >"$case_dir/ready.$1.undo.fail"
 }
 calls() { cat "$case_dir/calls"; }
 count_calls() { # count_calls PATTERN
@@ -270,6 +286,47 @@ ready_line=$(line_of '^pr ready 51')
 merge_line=$(line_of '^pr merge 51')
 [ "$ready_line" -gt 0 ] && [ "$merge_line" -gt "$ready_line" ] ||
   fail "the draft is merged before it is marked ready ($ready_line, $merge_line)"
+expect_absent "$(calls)" "pr ready 51 --undo" "a draft that merged is not put back"
+
+# ------------------------------------ a draft whose merge is refused is put back
+# This script marked it ready and nothing merged, so the refusal must not leave
+# it looking ready for review.
+new_case draft-restored
+view 141 OPEN true MERGEABLE "the draft whose merge is refused"
+push 141 oid-141-2
+land 141
+expect_status "$RC" 1 "a draft whose merge is refused exits 1"
+expect_contains "$(calls)" "pr merge 141" "the merge is attempted"
+expect_contains "$(calls)" "pr ready 141 --undo" "the draft this marked ready is put back"
+expect_contains "$OUT" "141: merge failed: X Pull request head commit does not match; " \
+  "the merge's own refusal comes first on the line"
+expect_contains "$OUT" "put back to draft" "the restore is reported on the summary line"
+ready_line=$(line_of '^pr ready 141$')
+merge_line=$(line_of '^pr merge 141')
+undo_line=$(line_of '^pr ready 141 --undo')
+[ "$ready_line" -gt 0 ] && [ "$merge_line" -gt "$ready_line" ] && [ "$undo_line" -gt "$merge_line" ] ||
+  fail "the draft is not marked ready, merged and put back in that order ($ready_line, $merge_line, $undo_line)"
+
+# ----------------------------------- a pull request that was already ready
+# It was not a draft, so this script never marked it ready and has nothing to
+# put back: a refusal leaves it exactly as it was found.
+new_case ready-merge-refused
+view 142 OPEN false MERGEABLE "the one that was already ready"
+push 142 oid-142-2
+land 142
+expect_status "$RC" 1 "a ready pull request whose merge is refused exits 1"
+expect_absent "$(calls)" "pr ready" "a pull request that was not a draft is never marked ready or put back"
+expect_absent "$OUT" "put back to draft" "nothing is reported as restored"
+
+# ------------------------------------------ a restore that itself fails is said
+new_case undo-fails
+view 143 OPEN true MERGEABLE "the draft whose restore fails"
+push 143 oid-143-2
+undo_fails 143 "X could not convert pull request #143 to draft"
+land 143
+expect_status "$RC" 1 "a draft whose restore fails exits 1"
+expect_contains "$OUT" "143: merge failed: X Pull request head commit does not match; gh pr ready 143 --undo failed: X could not convert pull request #143 to draft" \
+  "the merge's refusal stays first and the failed restore is named on the line"
 
 # ------------------------------------------------------------- a failing merge
 new_case failing-merge
@@ -313,6 +370,24 @@ land 8x
 expect_status "$RC" 2 "a number that is not a number is a usage error"
 land --repo
 expect_status "$RC" 2 "--repo without a value is a usage error"
+
+# ------------------------------------------------ numbers with a leading zero
+# A per-pull-request slot is a bash array subscript, and a subscript is
+# evaluated arithmetically: 08 is a base-8 number that does not parse at all,
+# and 011 is 9, which would share a slot with pull request 9. Both are refused
+# as the bad numbers they are, before gh is called.
+new_case leading-zero
+land 011 9
+expect_status "$RC" 2 "011 is a usage error"
+expect_contains "$OUT" "not a pull request number: 011" "the usage error names 011"
+expect_equal "$(calls)" "" "011 is refused before any gh call"
+land 08
+expect_status "$RC" 2 "08 is a usage error"
+expect_contains "$OUT" "not a pull request number: 08" "the usage error names 08"
+expect_equal "$(calls)" "" "08 is refused before any gh call"
+land 0
+expect_status "$RC" 2 "0 is not a pull request number"
+expect_equal "$(calls)" "" "0 is refused before any gh call"
 
 # ------------------------------------------------- a coding agent's session
 # A merge is a person's to make, and the script refuses an agent's session before
@@ -441,6 +516,20 @@ land 131
 expect_status "$RC" 1 "a mergeable pull request whose head was not read is not merged"
 expect_contains "$OUT" "131: merge failed: no head commit was read for 131" "the reason is reported"
 expect_absent "$(calls)" "pr merge" "nothing is merged without a head to name"
+
+# ------------------------------------------- a title with a tab and a newline
+# The read's fields come back on one tab-separated line, so a title holding a tab
+# or a newline could shift the head the merge is pinned to. The head is printed
+# before the title and the title is flattened, so neither happens.
+new_case title-with-a-tab
+view 161 OPEN false MERGEABLE 'the one with a tab\tand a newline\nin its title'
+land 161
+expect_status "$RC" 0 "a title with a tab and a newline still lands"
+expect_contains "$(calls)" "pr merge 161 --squash --delete-branch --match-head-commit oid-161" \
+  "the merge is pinned to the head the read named, not to a piece of the title"
+expect_contains "$OUT" "161: OPEN, ready, MERGEABLE, the one with a tab and a newline in its title" \
+  "the report shows the title flattened onto one line"
+expect_contains "$OUT" "161: MERGED" "the pull request merged"
 
 if [ "$failures" -ne 0 ]; then
   echo "$failures case(s) failed" >&2

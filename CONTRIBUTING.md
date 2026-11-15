@@ -69,7 +69,7 @@ The plugin's skills are in `plugin/skills` (`setup`, `working`, `routing`, `para
 bash scripts/land-prs.sh --repo OWNER/NAME 1234 1235 1236
 ```
 
-It reads every pull request's mergeable state in one parallel sweep and prints one line per pull request — state, draft or ready, MERGEABLE, CONFLICTING or UNKNOWN, and the title — before it touches anything. `--check-only` stops there and merges nothing. Then it merges the ones that are open and MERGEABLE, back to back and in the order given, marking a draft ready first; one that is CONFLICTING, still UNKNOWN or not open is skipped and named, and a merge that fails is reported while the batch goes on. The exit status is 0 when every pull request ended merged, 1 when any did not, and 2 for a usage error or a coding agent's session.
+It reads every pull request's mergeable state in one parallel sweep and prints one line per pull request — state, draft or ready, MERGEABLE, CONFLICTING or UNKNOWN, and the title — before it touches anything. `--check-only` stops there and merges nothing. Then it merges the ones that are open and MERGEABLE, back to back and in the order given, marking a draft ready first; one that is CONFLICTING, still UNKNOWN or not open is skipped and named, and a merge that fails is reported while the batch goes on, with a draft it marked ready put back the way it found it. The exit status is 0 when every pull request ended merged, 1 when any did not, and 2 for a usage error or a coding agent's session.
 
 It never force-pushes, never rewrites a branch, never runs tests and never decides what is safe to merge: the caller has already decided, and the script only merges and reports. Its hermetic test is `scripts/land-prs_test.sh`, driven from `scripts/land_prs_test.go`.
 

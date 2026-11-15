@@ -40,7 +40,9 @@
 #      it is a draft, then `gh pr merge N --squash --delete-branch
 #      --match-head-commit <the head the read named>`. The merge names the commit
 #      the sweep saw, so a push between the sweep and the merge is refused by gh
-#      instead of landing commits nobody judged. One that is CONFLICTING, still
+#      instead of landing commits nobody judged, and a draft this marked ready is
+#      put back with `gh pr ready N --undo` when the merge is refused, so a
+#      refusal never leaves one looking ready. One that is CONFLICTING, still
 #      UNKNOWN after the polls or not open is skipped and named, never an error
 #      that stops the batch, and a merge that fails is reported with gh's last
 #      line while the batch goes on. A merge moves the base branch, so the pull
@@ -138,6 +140,13 @@ while [ $# -gt 0 ]; do
   *)
     case "$1" in
     "" | *[!0-9]*) die_usage "not a pull request number: $1" ;;
+    0*)
+      # The per-pull-request slots are bash array subscripts, and a subscript is
+      # evaluated arithmetically: 08 is a base-8 number that does not parse, and
+      # 011 is 9, which would share a slot with pull request 9 and report and
+      # merge it on that one's state.
+      die_usage "not a pull request number: $1"
+      ;;
     esac
     PRS="$PRS $1"
     shift
@@ -185,6 +194,13 @@ gh_ready() { # gh_ready N
     gh pr ready "$1"
   fi
 }
+gh_unready() { # gh_unready N
+  if [ -n "$REPO" ]; then
+    gh pr ready "$1" --repo "$REPO" --undo
+  else
+    gh pr ready "$1" --undo
+  fi
+}
 gh_merge() { # gh_merge N
   local args=()
   [ -n "$REPO" ] && args+=(--repo "$REPO")
@@ -202,7 +218,7 @@ last_line() {
 }
 
 parse_one() { # parse_one N
-  local n=$1 fields state draft merge title head
+  local n=$1 fields state draft merge head title
   fields=$(python3 - "$TMP/view-$n.json" <<'PY' || true
 import json, sys
 try:
@@ -213,20 +229,30 @@ except Exception:
 if not isinstance(d, dict):
     # A read that did not answer is not a pull request that is closed: the
     # state is left unknown so nothing is concluded about it.
-    print("?\tready\tUNKNOWN\t\t")
+    print("?|ready|UNKNOWN||")
 else:
     state = d.get("state") or "?"
     draft = "draft" if d.get("isDraft") else "ready"
     merge = d.get("mergeable") or "UNKNOWN"
-    title = d.get("title") or ""
     head = d.get("headRefOid") or ""
-    print("%s\t%s\t%s\t%s\t%s" % (state, draft, merge, title, head))
+    # The head is printed before the title, and the title is flattened: the
+    # fields are read from one line, so a title holding a tab or a newline must
+    # not be able to shift the head the merge is pinned to, and the report is
+    # one line per pull request.
+    title = d.get("title") or ""
+    for ch in ("\t", "\n", "\r"):
+        title = title.replace(ch, " ")
+    print("%s|%s|%s|%s|%s" % (state, draft, merge, head, title))
 PY
   )
   if [ -z "$fields" ]; then
-    fields=$(printf '?\tready\tUNKNOWN\t\t')
+    fields=$(printf '?|ready|UNKNOWN||')
   fi
-  IFS=$'\t' read -r state draft merge title head <<<"$fields" || true
+  # The separator is not whitespace on purpose: read collapses runs of a
+  # whitespace IFS into one, so a tab-separated line with an empty field in it
+  # -- a pull request with no title, or a read that named no head -- would shift
+  # every field after it.
+  IFS='|' read -r state draft merge head title <<<"$fields" || true
   STATE[$n]=$state
   DRAFTW[$n]=$draft
   MERGE[$n]=$merge
@@ -273,7 +299,7 @@ report_one() { # report_one N
 }
 
 merge_one() { # merge_one N
-  local n=$1 out
+  local n=$1 out undo_out was_draft=no
   # A merge names the commit it lands. Without one from the read there is
   # nothing to pin the merge to, and merging unpinned is the thing the pin is
   # for, so this is not merged at all.
@@ -283,6 +309,7 @@ merge_one() { # merge_one N
     return 0
   fi
   if [ "${DRAFTW[$n]:-ready}" = draft ]; then
+    was_draft=yes
     if ! out=$(gh_ready "$n" 2>&1); then
       RESULT[$n]=failed
       MSG[$n]=$(last_line "$out")
@@ -297,6 +324,18 @@ merge_one() { # merge_one N
   RESULT[$n]=failed
   MSG[$n]=$(last_line "$out")
   [ -n "${MSG[$n]}" ] || MSG[$n]="gh pr merge $n failed"
+  if [ "$was_draft" = yes ]; then
+    # This script is what marked the draft ready, and nothing merged: a refusal
+    # must not leave a pull request looking ready for review, so it is put back
+    # the way it was found. A pull request that was already ready, or that
+    # merged, is never touched, and the merge's own refusal stays first on the
+    # line.
+    if undo_out=$(gh_unready "$n" 2>&1); then
+      MSG[$n]="${MSG[$n]}; put back to draft with gh pr ready $n --undo"
+    else
+      MSG[$n]="${MSG[$n]}; gh pr ready $n --undo failed: $(last_line "$undo_out")"
+    fi
+  fi
 }
 
 read_all "$PRS"
