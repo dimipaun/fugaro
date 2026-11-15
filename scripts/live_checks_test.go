@@ -149,7 +149,16 @@ import (
 // on stderr -- files a log with the sink's own name shape, mode and retention
 // rule, and fails exactly when the check's own fake `terraform` is first on
 // PATH, so the forced failure is the check's own shim end to end and a case
-// bends the one thing it judges. Check 350's are a fake `gcloud` and a fake
+// bends the one thing it judges. Check 311's fake is none: its subject is a
+// Windows console, so PowerShell and Windows both have to be there for its
+// steps to run at all, and its test is mostly a reading of its own text -- the
+// block keys, the phases, the guards, the readings and the ones it refuses to
+// take -- beside the four modes that run nothing (`-SelfTest`, `-DryRun` and
+// the two refusals that come before the first tool is looked for), which it
+// RUNS wherever `pwsh` is on PATH and says so in one line where it is not. Its
+// one case that is neither runs the self-test's own three rules again in bash,
+// over the script's text, so the tree that carried the rule-1 defect is red on
+// a machine without PowerShell too. Check 350's are a fake `gcloud` and a fake
 // `fugaro` beside a REAL local checkout and its bare origin -- git stays on this
 // machine -- with one shared call log for both fakes, so a case says what the
 // check read AND in what order: the hash of the old record is taken before the
@@ -199,6 +208,7 @@ var liveCheckScripts = []struct {
 	{"check304.sh", "check304_test.sh"},
 	{"check305.sh", "check305_test.sh"},
 	{"check310.sh", "check310_test.sh"},
+	{"check311.ps1", "check311_test.sh"},
 	{"check313.sh", "check313_test.sh"},
 	{"check314.sh", "check314_test.sh"},
 	{"check330.sh", "check330_test.sh"},
