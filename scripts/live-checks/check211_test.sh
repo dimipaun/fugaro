@@ -281,6 +281,20 @@ run)
     exit 0
     ;;
   esac
+  positional=0
+  skip=""
+  for a in "${@:2}"; do
+    if [ -n "$skip" ]; then skip=""; continue; fi
+    case "$a" in
+    --repo | --recipe | --batch) skip=1 ;;
+    -*) ;;
+    *) positional=$((positional + 1)) ;;
+    esac
+  done
+  if [ "$positional" -eq 0 ]; then
+    printf 'fugaro: pass the task as TEXT or with --task-file (- for stdin)\n' >&2
+    exit 1
+  fi
   case "$mode" in
   launch-fails)
     printf 'fugaro: the launch was refused: no judge model is published for this project\n' >&2
@@ -300,6 +314,10 @@ doctor)
   case "$mode" in
   doctor-fails)
     printf 'fugaro: doctor could not read the installation\n' >&2
+    exit 7
+    ;;
+  doctor-exit1)
+    cat "$FAKE_JSON_DIR/doctor.json"
     exit 1
     ;;
   doctor-unreadable)
@@ -874,6 +892,14 @@ test_a_doctor_that_does_not_answer_is_not_measured() {
   expect_contains "$out" "FACT sandbox: FAIL" "a doctor that does not answer: the row"
   expect_contains "$err" "could NOT measure sandbox" "a doctor that does not answer: the exit names the row"
   assert_no_launch "a doctor that does not answer"
+}
+
+test_a_doctor_that_exits_1_with_its_document_is_an_answer() {
+  local dir=$work/doctorexit1
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=doctor-exit1
+  expect_status "$status" 0 "a doctor that exits 1 with its document"
+  expect_contains "$out" "belongs to ${project}" "a doctor that exits 1 with its document: the project it read"
 }
 
 test_a_doctor_without_a_project_is_not_measured() {
@@ -1551,6 +1577,7 @@ t test_yes_is_required
 t test_an_unknown_argument_is_refused
 t test_a_min_pairs_that_is_not_a_number_is_refused
 t test_a_doctor_that_does_not_answer_is_not_measured
+t test_a_doctor_that_exits_1_with_its_document_is_an_answer
 t test_a_doctor_without_a_project_is_not_measured
 t test_a_doctor_document_that_cannot_be_read_is_not_measured
 t test_a_recipe_list_that_fails_is_not_measured

@@ -761,7 +761,8 @@ step_release() {
   local v feature=no
   v=$(fugaro version 2>/dev/null | head -n 1 || true)
   fact "fugaro-version" PASS "${v:-fugaro version printed nothing}"
-  if "$FUGARO_BIN" run --help 2>/dev/null | grep -q -- 'ab-judge'; then feature=yes; fi
+  run_help=$("$FUGARO_BIN" run --help 2>/dev/null || true)
+  if printf '%s' "$run_help" | grep -q -- 'ab-judge'; then feature=yes; fi
   if [ "$feature" = no ]; then
     fact release FAIL "this fugaro's own 'run --help' does not name the 'ab-judge' recipe, so this build carries no judge: the recipe is registered by the Subscription's ee/register, and a core build's catalog has no such name (D522). Check 211 needs release ${RELEASE} (docs/releases/v0.24.0.md) or later, built with the features it ships. Run 'fugaro update' at your terminal — that one command is the whole upgrade — and run this check again on the build it leaves you"
     stop "the installed fugaro carries no judge: this check needs release ${RELEASE}"
@@ -803,7 +804,7 @@ step_sandbox() {
   fi
   say "reading the installation: fugaro doctor --json, in ${SANDBOX}"
   run_bounded "$DOCTOR_TIMEOUT" doctor "$SANDBOX" "$FUGARO_BIN" doctor --json
-  if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
+  if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ] && [ "$BOUNDED_STATUS" != 1 ]; then
     unmeasured sandbox "fugaro doctor --json did not answer in ${SANDBOX} (exit ${BOUNDED_STATUS}): this check cannot read the project this checkout belongs to, and every row below is about that project. Its output is in $SCRATCH/doctor.out and $SCRATCH/doctor.err"
     return 0
   fi
@@ -904,7 +905,7 @@ step_launch() {
     return 0
   fi
   say "launching the judge run: fugaro run --repo ${SANDBOX} --recipe ab-judge --json"
-  run_bounded "$LAUNCH_TIMEOUT" launch "$SANDBOX" "$FUGARO_BIN" run --repo "$SANDBOX" --recipe ab-judge --json
+  run_bounded "$LAUNCH_TIMEOUT" launch "$SANDBOX" "$FUGARO_BIN" run --repo "$SANDBOX" --recipe ab-judge --json "$JUDGE_TASK_TEXT"
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
     unmeasured launch "the judge launch did not answer (exit ${BOUNDED_STATUS}): the run was refused or the launch timed out, and nothing below can be read without it. Its output is in $SCRATCH/launch.out and $SCRATCH/launch.err — the launcher refuses a second judge run while one has not finished (D569, 'a judge run is already running'), so read the error there before running this check again"
     return 0
@@ -1444,6 +1445,7 @@ RUN_TIMEOUT=${CHECK211_RUN_TIMEOUT_SECONDS:-1800}
 POLL_SECONDS=${CHECK211_POLL_SECONDS:-15}
 CLI_TIMEOUT=${CHECK211_CLI_TIMEOUT_SECONDS:-180}
 LAUNCH_TIMEOUT=${CHECK211_LAUNCH_TIMEOUT_SECONDS:-600}
+JUDGE_TASK_TEXT="Judge the unjudged A/B pairs of this repository; the ab-judge recipe reads its own manifest and this text only names the launch."
 DOCTOR_TIMEOUT=${CHECK211_DOCTOR_TIMEOUT_SECONDS:-300}
 # The bound for both halves of the teardown's cancel: the `fugaro cancel --now`
 # this check runs on a judge run that has not ended, and the wait for that run's
