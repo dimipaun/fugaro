@@ -4,8 +4,8 @@
 // in docs/feature-matrix/contract.md).
 //
 // Four tasks are built against this file — T1 builds the snapshot, T2 writes the mapping, T3
-// renders FEATURES.md and T4a renders the page — and three of them start before any of them has
-// run, so the shapes are frozen here rather than by whatever the first caller found convenient.
+// renders FEATURES.md and T4a renders the page — and none of them exists yet, so the shapes are
+// frozen here rather than by whatever the first caller found convenient.
 // Both validators refuse what they were not taught, naming the field: a matrix built from a
 // mapping that grew a status or a plan the page has no mark for is a page that ships a row it
 // cannot explain, and the refusal is the last place that is still cheap to see.

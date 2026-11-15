@@ -2,10 +2,10 @@
 
 The shapes the feature matrix is built from, fixed by task C1 of
 [implementation-plan.md](implementation-plan.md) and enforced by
-`website/src/lib/feature-matrix-model.mjs`. Four tasks are built against this file — T1 builds the
-snapshot, T2 writes the mapping, T3 renders `FEATURES.md` and T4a renders `/features/` — and three
-of them start before any of them has run, so the shapes are frozen here rather than by whatever the
-first caller found convenient. Both validators refuse a shape they were not taught, naming the
+`website/src/lib/feature-matrix-model.mjs`. Four tasks are built against these shapes — T1 builds
+the snapshot, T2 writes the mapping, T3 renders `FEATURES.md` and T4a renders `/features/` — and
+none of them exists yet, so the shapes are frozen here rather than by whatever the first caller
+found convenient. Both validators refuse a shape they were not taught, naming the
 field: a matrix built from a file that grew a status or a plan the page has no mark for is a page
 that ships a row it cannot explain.
 
@@ -128,8 +128,9 @@ three columns are exercised, and its words carry no spec name, no status.md sect
 id and no date.
 
 The fixture belongs to the contract and not to the stub: I1 deletes
-`website/src/lib/feature-matrix-stub.mjs` and its test when the real builder lands, and the tests
-that render the fixture stay. Tests never import the stub.
+`website/src/lib/feature-matrix-stub.mjs` and its own test when the real builder lands, and the
+tests that render the fixture stay. They read it through the model and never import the stub, which
+is what keeps the plan's "tests never import the stub" true once the stub is gone.
 
 The stub's `buildSnapshot({statusMarkdown, mapping, previous, asOf})` answers with the fixture and
 reads none of its arguments. Its signature is the real one, which is what makes I1's change a
