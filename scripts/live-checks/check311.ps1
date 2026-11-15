@@ -157,7 +157,7 @@ function Get-Status([string]$key) {
 # before it, and the run ends 2: a reading nobody could take is never reported as
 # a failure of the thing being read.
 function Stop-Run([string]$why) {
-    Say 'STOPPING: ' + $why
+    Say ('STOPPING: ' + $why)
     Write-Block 2
     exit 2
 }
@@ -364,9 +364,9 @@ function Ask-Owner([string]$key, [string]$question) {
     $flat = ''
     if ($answer) { $flat = $answer.Trim().ToLower() }
     if ($flat -eq 'y' -or $flat -eq 'yes') {
-        Set-Fact $key 'PASS' 'you watched it at this console and said it looked right: ' + $question
+        Set-Fact $key 'PASS' ('you watched it at this console and said it looked right: ' + $question)
     } elseif ($flat -eq 'n' -or $flat -eq 'no') {
-        Set-Fact $key 'FAIL' 'you watched it at this console and said it did NOT look right: ' + $question
+        Set-Fact $key 'FAIL' ('you watched it at this console and said it did NOT look right: ' + $question)
     } else {
         Set-Fact $key 'INFO' ('not measured: the answer was ''' + $answer + ''', which is neither yes nor no')
     }
