@@ -305,6 +305,55 @@ func TestABReviewerArmLaunchesAfterChampionPatch(t *testing.T) {
 	})
 }
 
+// patchOfSize is a diff of exactly n bytes. The arm reads the object and never
+// its content, so the bytes only have to be that many — what the size is for is
+// the cap the read is made under.
+func patchOfSize(n int) string {
+	head := "diff --git a/one.txt b/one.txt\n"
+	if n <= len(head) {
+		return head[:n]
+	}
+	rest := n - len(head)
+	return head + strings.Repeat("+x\n", rest/3) + strings.Repeat("-", rest%3)
+}
+
+// TestABReviewerArmReadsAPatchTheRunnerStoredWhole: the read is capped at the
+// size the runner stores a patch under (runner.MaxPatchBytes, 2 MiB), not at
+// runstore.MaxRecordBytes (1 MiB, the cap for a run's JSON objects), because the
+// champion's record is what says whether the patch is complete: a patch the
+// runner stored whole in the band between the two caps is one the pair is owed,
+// and refusing it for being read would drop a pair the runner considers
+// comparable. An object past the runner's own cap is refused, since nothing the
+// runner stores is that large and its record would be claiming a completeness
+// the object contradicts.
+func TestABReviewerArmReadsAPatchTheRunnerStoredWhole(t *testing.T) {
+	f := newArmFixture(t)
+	for _, tc := range []struct {
+		name string
+		size int
+		want bool
+	}{
+		{"a patch just over the record cap", 1<<20 + 1, true},
+		{"a patch at the runner's own cap", 2 << 20, true},
+		{"a patch past the runner's own cap", 2<<20 + 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f.seed(championRecord(f.store(), task.ABSlotL2))
+			f.putPatch(patchOfSize(tc.size))
+			arm, why, err := f.arm(task.ABSlotL2)
+			if tc.want {
+				if err != nil || why != "" || arm == nil {
+					t.Fatalf("an arm over a %d-byte patch: spec = %v, why = %q, err = %v, want the arm", tc.size, arm, why, err)
+				}
+				return
+			}
+			if err == nil || arm != nil || why != "" {
+				t.Fatalf("an arm over a %d-byte patch: spec = %v, why = %q, err = %v, want a refusal", tc.size, arm, why, err)
+			}
+		})
+	}
+}
+
 // TestABReviewerArmRefusesAnotherLevelsChampion: the arm joins the champion's
 // pair, and a pair varies one slot (B1.1). A champion whose own block names
 // another level, and one whose block names none — the coder pair A3.3

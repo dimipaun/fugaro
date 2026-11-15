@@ -9,9 +9,11 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/dimipaun/fugaro/internal/blobx"
 	fcli "github.com/dimipaun/fugaro/internal/cli"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitops"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -140,11 +142,21 @@ func ReviewerArm(ctx context.Context, run fcli.PlannedRun, champion fcli.RunReco
 	// is the key the record itself names (runstore.PatchKey): an arm that
 	// replayed a diff another run's prefix holds would be an arm of a pair
 	// nobody sampled.
-	if want := runstore.PatchKey(store.Prefix()); rec.PatchObject != want {
+	want := runstore.PatchKey(store.Prefix())
+	if rec.PatchObject != want {
 		return nil, "", fmt.Errorf("the champion %s records its patch as %q, and its own patch object is %q", champion.ID(), rec.PatchObject, want)
 	}
-	if _, err := store.ReadFile(ctx, runstore.PatchName); err != nil {
-		if errors.Is(err, runstore.ErrNotFound) {
+	// The read is capped at what the runner stores a patch under
+	// (runner.MaxPatchBytes, 2 MiB) and takes the bucket directly rather than
+	// Store.ReadFile: that reader's cap for a run's object is
+	// runstore.MaxRecordBytes (blobx's 1 MiB), written for the run's JSON, so a
+	// patch the runner stored whole in the band between the two caps would be
+	// refused for being read — and its record, patch_truncated unset, is the
+	// champion's own word that the object is complete, which is the arm a pair
+	// is owed. The runner's own patch test and the coordinator's get_result
+	// read the object the same way.
+	if _, _, err := run.Cloud.RunsBucket().ReadMax(ctx, want, runner.MaxPatchBytes); err != nil {
+		if errors.Is(err, blobx.ErrNotExist) {
 			return nil, ReasonNoChampionPatch, nil
 		}
 		return nil, "", fcli.RemoteErr(fmt.Errorf("reading the champion %s's patch: %w", champion.ID(), err))
