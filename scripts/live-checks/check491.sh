@@ -628,7 +628,9 @@ step_sandbox() {
   fi
   say "reading the installation: fugaro doctor --json, in ${SANDBOX}"
   run_bounded "$DOCTOR_TIMEOUT" doctor "$SANDBOX" "$FUGARO_BIN" doctor --json
-  if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
+  # doctor exits 1 whenever any of its checks is not ok, warnings included, and
+  # still prints its document; only a timeout or another status is no answer.
+  if [ "$BOUNDED_TIMED_OUT" = yes ] || { [ "$BOUNDED_STATUS" != 0 ] && [ "$BOUNDED_STATUS" != 1 ]; }; then
     unmeasured sandbox "fugaro doctor --json did not answer in ${SANDBOX} (exit ${BOUNDED_STATUS}): this check cannot read the project this checkout belongs to, and every row below is about that project's runs bucket. Its output is in $SCRATCH/doctor.out and $SCRATCH/doctor.err"
     return 0
   fi
