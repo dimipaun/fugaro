@@ -622,8 +622,12 @@ function Invoke-SelfTest {
     foreach ($m in [regex]::Matches($text, "Set-Fact\s+'([a-z-]+)'")) { $literal += $m.Groups[1].Value }
     $owned = @('project', 'belong', 'session', 'state-dir', 'teardown', 'output', 'dry-run')
     foreach ($phase in $script:PhaseKeys.Keys) { $owned += $script:PhaseKeys[$phase] }
+    # The mirror of the rule below, and it consults $owned for the same reason:
+    # the dry-run branch replaces the block's key list with its own four before
+    # it prints, so a key only that branch sets -- 'dry-run' -- is owned without
+    # being in the static list the self-test reads.
     foreach ($key in $literal) {
-        if ($script:BlockKeys -notcontains $key) {
+        if (($script:BlockKeys -notcontains $key) -and ($owned -notcontains $key)) {
             [Console]::Error.WriteLine('check311.ps1: the code sets the key ''' + $key + ''' and the block does not print it: a reading nobody sees is a reading nobody can act on')
             $ok = $false
         }
