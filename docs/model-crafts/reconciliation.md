@@ -107,7 +107,7 @@ D1639 is reserved and unused.
 
 ## 3b. Decisions D1660–D1679 (the activation plan, 2026-11-15)
 
-The four halves 0.24.0's `### Known limits` names, in the owner's order, with the answers the plan builds on. **D1660–D1672 are written and D1673–D1679 are reserved and unused**; the block is this folder's second because D1639 is reserved, `docs/website-changelog` holds D1640–D1659, and D1660 is the next number free above every writer under `docs/` and in the open heads (`docs/short-run-ids/reconciliation.md` reads the same fact). **Nothing here reopens D1620–D1638** — F7, F12, F13, F20, F21, F23, D1625, D1628, D1634, D1635 and D1637 are cited and kept, and the plan's tasks extend MC1–MC10 rather than re-decide them. Findings these rows rest on are the activation plan's own reading of the tree, marked `F27`–`F30` and written with it.
+The four halves 0.24.0's `### Known limits` names, in the owner's order, with the answers the plan builds on. **D1660–D1672 are written and D1673–D1679 are reserved and unused**; the block is this folder's second because D1639 is reserved, `docs/website-changelog` holds D1640–D1659, and D1660 is the next number free above every writer under `docs/` and in the open heads (`docs/short-run-ids/reconciliation.md` reads the same fact). **Nothing here reopens D1620–D1638** — F7, F12, F13, F20, F21, F23, D1625, D1628, D1634, D1635 and D1637 are cited and kept, and the plan's tasks extend MC1–MC10 rather than re-decide them. The one finding these rows rest on is the activation plan's own reading of the tree — **F27**, written with it and the only one of the plan's written down.
 
 | # | Question | Recommendation (reason) | Alternative and cost | Owner's answer |
 | --- | --- | --- | --- | --- |

@@ -11,7 +11,7 @@ The spec replaces the fixed "OpenRouter coder, Opus reviewer" setup with **crede
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The spec as received (verbatim) |
-| [reconciliation.md](reconciliation.md) | Findings F1–F26 and F27–F30, decisions D1620–D1638 (D1639 reserved) and, from the activation plan, D1660–D1672 (D1673–D1679 reserved), open tensions, UNVERIFIED |
+| [reconciliation.md](reconciliation.md) | Findings F1–F26 and F27, decisions D1620–D1638 (D1639 reserved) and, from the activation plan, D1660–D1672 (D1673–D1679 reserved), open tensions, UNVERIFIED |
 | [implementation-plan.md](implementation-plan.md) | Slices, tasks MC1–MC10, levels, critical path, shared-files table, Checks 420–422 (423–429 reserved) |
 | [activation-plan.md](activation-plan.md) | The four halves 0.24.0's known limits name, in the owner's order of 2026-11-15: slices, tasks MC11–MC26, levels, critical path, shared-files table, the rollout order, Checks 628–632 (633–637 reserved) |
 

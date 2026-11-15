@@ -2,6 +2,7 @@ package cli
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -91,6 +92,35 @@ func TestDocsModelCraftsActivation(t *testing.T) {
 	for _, want := range []string{"**D1660**", "**D1668**", "**D1672**"} {
 		if !strings.Contains(rec, want) {
 			t.Errorf("%sreconciliation.md does not carry the decision %s the activation plan is written on", modelCraftsDir, want)
+		}
+	}
+	// A finding the folder claims is one the reconciliation writes. The claims
+	// run over two shapes — F1 to F26 are prose blocks in §2, the plan's own
+	// finding is a row of §3b's table — so the claim is read against the rows
+	// rather than pinned as a string: a range reaching past the last row
+	// ("F27–F30") claims readings nobody wrote, and pinning the sentence would
+	// only have caught the one wording that was wrong.
+	written := map[int]bool{}
+	for _, re := range []*regexp.Regexp{
+		regexp.MustCompile(`(?m)^\*\*F([0-9]+) —`),
+		regexp.MustCompile(`(?m)^\| \*\*F([0-9]+)\*\* \|`),
+	} {
+		for _, m := range re.FindAllStringSubmatch(rec, -1) {
+			if n, err := strconv.Atoi(m[1]); err == nil {
+				written[n] = true
+			}
+		}
+	}
+	for _, m := range regexp.MustCompile(`F([0-9]+)–F?([0-9]+)`).FindAllStringSubmatch(readme+"\n"+rec, -1) {
+		lo, errLo := strconv.Atoi(m[1])
+		hi, errHi := strconv.Atoi(m[2])
+		if errLo != nil || errHi != nil {
+			continue
+		}
+		for n := lo; n <= hi; n++ {
+			if !written[n] {
+				t.Errorf("F%d is claimed as written (F%d–F%d) and reconciliation.md writes no such finding", n, lo, hi)
+			}
 		}
 	}
 }
