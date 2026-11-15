@@ -71,9 +71,9 @@ func TestImageMapSetNotesABakedCopyItsNewJobsCouldRead(t *testing.T) {
 	f.appendConfig(t, "  acme/sandbox: { provider: bitbucket, workflows: [web] }\n")
 	f.appendConfig(t, catalogYAML)
 	slug := mustSlug(gitprov.KindGitHub, "acme/app")
-	baked, err := imagebake.Append([]byte("FROM example.invalid/base\n"), imagebake.Plan{Baked: &imagebake.Repo{
+	baked, err := imagebake.Append([]byte("FROM example.invalid/base\n"), imagebake.Plan{Baked: []imagebake.Repo{{
 		Repo: "acme/app", Slug: slug, URL: "https://github.com/acme/app.git", Branch: "main",
-	}})
+	}}})
 	if err != nil {
 		t.Fatal(err)
 	}

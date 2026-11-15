@@ -71,7 +71,7 @@ An existing repository Dockerfile is evidence of what its repositories need, not
 `bake_repos` is the project's answer to one question, asked by the wizard and changeable later: when it is on (the default), an image bakes the repositories its build account can already read, so a job starts with its checkout in place instead of cloning; every other repository is cloned at job start, exactly as with the switch off. The job's own logic is the same either way. What the user should know before answering:
 
 - Baking trades build time and image size for job start-up time, and the image goes stale: the daily check rebuilds it, and the update below asks before it does.
-- A repository the build account cannot read is **not** baked, and nothing is gained by pretending otherwise — a shared image's build account is one repository's, so a shared image typically bakes nothing and its jobs clone.
+- A shared entry bakes every repository the project's map puts on it and not one: the build asks for a single credential over exactly those repositories, so an image two or three repositories run starts each of their jobs from its own checkout. A repository that reaches the entry without the map saying so — its own workflow names it, or its jobs need its tags — is **not** baked and clones at job start, exactly as with the switch off.
 - Turning the switch off is not a per-repository decision: it is the project's, and every job then pays its own clone and `mise install`.
 
 The switch is written by the user, in their own terminal window, not through the agent — it is a project key a coding agent's session does not write:
