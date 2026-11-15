@@ -46,17 +46,24 @@ const (
 	convergeChildHome = "FUGARO_TEST_CONVERGE_CHILD_XDG_"
 )
 
-// updateInProcess is one `fugaro update --yes`: the command the test's own
+// updateInProcess is one `fugaro update`: the command the test's own
 // process runs, and the one the child process runs. It takes no *testing.T,
 // because the first converge is still inside terraform while the second one is
-// refused and neither may call t.Fatal from there.
-func updateInProcess() (string, string, error) {
+// refused and neither may call t.Fatal from there. asJSON is passed rather than
+// fixed: the first run applies at this terminal, and --json confirms no step
+// (T11), so only the refused run — which reaches no stage to confirm — reads
+// its answer as one object.
+func updateInProcess(asJSON bool) (string, string, error) {
 	cmd := NewRootCmd()
 	var out, errOut bytes.Buffer
 	cmd.SetIn(strings.NewReader(""))
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)
-	cmd.SetArgs(NormalizeArgs([]string{"update", "--yes", "--json"}))
+	args := []string{"update"}
+	if asJSON {
+		args = append(args, "--json")
+	}
+	cmd.SetArgs(NormalizeArgs(args))
 	err := cmd.Execute()
 	return out.String(), errOut.String(), err
 }
@@ -72,7 +79,7 @@ func runConvergeChild() int {
 			os.Setenv(k, v)
 		}
 	}
-	out, errOut, err := updateInProcess()
+	out, errOut, err := updateInProcess(true)
 	fmt.Fprint(os.Stdout, out)
 	fmt.Fprint(os.Stderr, errOut)
 	if err != nil {
@@ -180,6 +187,10 @@ func changedObjects(reqs []gcpfake.Request) int {
 // sees the stage's name where the cause was a second converge on this machine.
 func TestTwoUpdatesOnOneInstallationDoNotClobberEachOther(t *testing.T) {
 	r := updateRig(t)
+	// The owner's own terminal, which is what confirms the first converge's steps
+	// now that the flag which stood in for it is gone (T11). The second run is
+	// refused by the lock before it asks anything.
+	fakeTerminal(t)
 	started, release := blockTheFirstPlan(t, r)
 
 	type ended struct {
@@ -188,7 +199,7 @@ func TestTwoUpdatesOnOneInstallationDoNotClobberEachOther(t *testing.T) {
 	}
 	first := make(chan ended, 1)
 	go func() {
-		out, errOut, err := updateInProcess()
+		out, errOut, err := updateInProcess(false)
 		first <- ended{out, errOut, err}
 	}()
 	waitForPath(t, started, "the first update to be inside terraform plan")
@@ -271,7 +282,7 @@ func TestTwoUpdatesOnOneInstallationDoNotClobberEachOther(t *testing.T) {
 
 	// And the lock went with it: the next converge on this installation — the
 	// one the refusal tells the user to rerun — has it.
-	if out, _, err := executeStdin(t, "", "update", "--yes"); err != nil {
+	if out, _, err := executeStdin(t, "", "update"); err != nil {
 		t.Fatalf("the update the refusal asked the user to rerun: %v\n%s", err, out)
 	}
 }
@@ -332,7 +343,7 @@ func TestTheAccountsConvergeTakesTheWorkdirLock(t *testing.T) {
 	defer func() { _ = lock.Release() }()
 
 	before := len(r.calls(t))
-	out, errOut, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a", "--yes")
+	out, errOut, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a")
 	if err == nil {
 		t.Fatalf("the accounts converge ran while a converge held the workdirs:\n%s%s", out, errOut)
 	}

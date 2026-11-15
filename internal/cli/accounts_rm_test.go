@@ -48,7 +48,7 @@ func TestAccountsRmRefusesWhileAProfileListsIt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, rmErr := executeStdin(t, "", "accounts", "rm", "team-a", "--yes")
+	_, _, rmErr := executeStdin(t, "", "accounts", "rm", "team-a")
 
 	after, err := os.ReadFile(r.cfg)
 	if err != nil {
@@ -121,7 +121,7 @@ func TestAccountsRmRefusesWhileAProfileReferencesTheAccount(t *testing.T) {
 	r := newAddRigWith(t, accountsRmLocalShared)
 	before := readFileString(t, r.cfg)
 
-	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--yes")
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a")
 	if err == nil {
 		t.Fatalf("the account was removed while two profiles still named it:\n%s", out)
 	}
@@ -282,7 +282,7 @@ func TestAccountsRmRefusesWhileAPoolStillListsTheCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, rmErr := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	_, _, rmErr := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
 
 	after, err := os.ReadFile(r.cfg)
 	if err != nil {
@@ -728,7 +728,7 @@ func TestAccountsRmRefusesACodingAgentsSession(t *testing.T) {
 	id := gcp.ProjectSecretID("aurora", config.ClaudeAccountSecret("team-a"))
 	t.Setenv("CLAUDECODE", "1") // a coding agent's session
 
-	out, _, rmErr := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	out, _, rmErr := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
 	if rmErr == nil {
 		t.Fatalf("a coding agent's session removed the account:\n%s", out)
 	}
@@ -797,7 +797,7 @@ func TestAccountsRmRefusesAnAgentSession(t *testing.T) {
 		t.Run(marker, func(t *testing.T) {
 			t.Setenv(marker, "1")
 
-			out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--yes")
+			out, _, err := executeStdin(t, "", "accounts", "rm", "team-a")
 			if err == nil {
 				t.Fatalf("a coding agent's session removed an account its own walk read cleanly:\n%s", out)
 			}
@@ -846,7 +846,7 @@ func TestAccountsRmPutsTheConfigBackWhenTheDeleteFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, _, rmErr := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	out, _, rmErr := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
 	if rmErr == nil {
 		t.Fatalf("the delete was refused and the command succeeded:\n%s", out)
 	}
@@ -1012,7 +1012,7 @@ func TestAccountsRmManagedRefusesTheRemovalInAnAgentSession(t *testing.T) {
 	before := readFileString(t, r.cfg)
 	t.Setenv(accountsAddAgent, "1")
 
-	out, errOut, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	out, errOut, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
 	accountsRmAssertSessionRefused(t, r, before, out, err, accountsRmSessionRule)
 	if err == nil || !strings.Contains(err.Error(), "in your own terminal window") {
 		t.Errorf("the refusal does not leave the removal to the person at their terminal: %v", err)
@@ -1029,7 +1029,7 @@ func TestAccountsRmNamesItselfOnTheOwnersPath(t *testing.T) {
 	r := newAddRig(t)
 	r.add(t, "team-a", "--repos", "owner/repo-a")
 
-	out, errOut, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	out, errOut, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
 	if err != nil {
 		t.Fatalf("accounts rm: %v\nstderr:\n%s", err, errOut)
 	}
@@ -1068,7 +1068,7 @@ func TestAccountsRmManagedRefusesWhileARepositoryStillNamesIt(t *testing.T) {
 	before := readFileString(t, r.cfg)
 	t.Setenv(accountsAddAgent, "1")
 
-	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
 	if err == nil {
 		t.Fatalf("a repository that still names the account did not stop the removal:\n%s", out)
 	}
@@ -1205,7 +1205,7 @@ func TestAccountsRmManagedRefusesAnUncommittedBaseBranchSwitch(t *testing.T) {
 	before := readFileString(t, r.cfg)
 	t.Setenv(accountsAddAgent, "1")
 
-	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
 	if got := r.sm.Deleted(); len(got) != 0 {
 		t.Fatalf("the one-way delete ran while the commit still names the account (%v):\n%s", got, out)
 	}
@@ -1305,7 +1305,7 @@ func TestAccountsRmManagedRefusesTheNameAtTheRefThatNamesABaseBranch(t *testing.
 	before := readFileString(t, r.cfg)
 	t.Setenv(accountsAddAgent, "1")
 
-	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
 	if got := r.sm.Deleted(); len(got) != 0 {
 		t.Fatalf("the one-way delete ran while the ref the runs use still names the account (%v):\n%s", got, out)
 	}
@@ -1349,7 +1349,7 @@ func TestAccountsRmManagedRefusesTheRefALaunchWouldUse(t *testing.T) {
 	before := readFileString(t, r.cfg)
 	t.Setenv(accountsAddAgent, "1")
 
-	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
 	if got := r.sm.Deleted(); len(got) != 0 {
 		t.Fatalf("the one-way delete ran while the branch the runs use still names the account (%v):\n%s", got, out)
 	}
@@ -1388,7 +1388,7 @@ func TestAccountsRmWarnsAboutTheRefALaunchWouldUse(t *testing.T) {
 	accountsRmCheckoutOnBranch(t, "owner/repo-a", "feature", accountsRmRepoYAMLWithoutToken, accountsRmRepoYAML)
 	id := gcp.ProjectSecretID("aurora", config.ClaudeAccountSecret("team-a"))
 
-	out, errOut, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	out, errOut, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
 	// The converge is not what this pins, and this state leaves it a step for
 	// the person: a checkout on a branch other than the default is the
 	// repository stage's own needs-you (the repository is onboarded from the
@@ -1427,7 +1427,7 @@ func TestAccountsRmManagedRefusesThePolicyBaseBranch(t *testing.T) {
 	before := readFileString(t, r.cfg)
 	t.Setenv(accountsAddAgent, "1")
 
-	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
 	if got := r.sm.Deleted(); len(got) != 0 {
 		t.Fatalf("the one-way delete ran while the base branch the policy names still names the account (%v):\n%s", got, out)
 	}
@@ -1525,7 +1525,7 @@ func TestAccountsRmManagedRefusesARefTheSessionMoved(t *testing.T) {
 	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/main", "HEAD")
 	t.Setenv(accountsAddAgent, "1")
 
-	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
 	if got := r.sm.Deleted(); len(got) != 0 {
 		t.Fatalf("the one-way delete ran on a ref the session moved to a commit that hides the name (%v):\n%s", got, out)
 	}
@@ -1598,7 +1598,7 @@ func TestAccountsRmManagedRefusesACheckoutTheSessionMovedAway(t *testing.T) {
 	}
 	t.Setenv(accountsAddAgent, "1")
 
-	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
 	accountsRmAssertSessionRefused(t, r, before, out, err, accountsRmSessionRule)
 }
 
@@ -1616,7 +1616,7 @@ func TestAccountsRmManagedRefusesAMissingCheckoutsRecord(t *testing.T) {
 	accountsRmForgetCheckouts(t)
 	t.Setenv(accountsAddAgent, "1")
 
-	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
 	accountsRmAssertSessionRefused(t, r, before, out, err, accountsRmSessionRule)
 }
 
@@ -1636,7 +1636,7 @@ func TestAccountsRmManagedRefusesARepositoryTheSessionUnenrolled(t *testing.T) {
 	before := readFileString(t, r.cfg)
 	t.Setenv(accountsAddAgent, "1")
 
-	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
 	accountsRmAssertSessionRefused(t, r, before, out, err, accountsRmSessionRule)
 }
 
@@ -1660,7 +1660,7 @@ func TestAccountsRmManagedRefusesAnUnreadablePolicyBaseBranch(t *testing.T) {
 	before := readFileString(t, r.cfg)
 	t.Setenv(accountsAddAgent, "1")
 
-	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
 	if got := r.sm.Deleted(); len(got) != 0 {
 		t.Fatalf("the one-way delete ran while the base branch the policy names could not be read (%v):\n%s", got, out)
 	}
@@ -1691,7 +1691,7 @@ func TestAccountsRmManagedRefusesABranchItCannotRead(t *testing.T) {
 	before := readFileString(t, r.cfg)
 	t.Setenv(accountsAddAgent, "1")
 
-	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
 	if got := r.sm.Deleted(); len(got) != 0 {
 		t.Fatalf("the one-way delete ran while a ref the runs use could not be read (%v):\n%s", got, out)
 	}
@@ -1753,7 +1753,7 @@ func TestAccountsRmManagedRefusesACheckoutItCannotRead(t *testing.T) {
 	before := readFileString(t, r.cfg)
 	t.Setenv(accountsAddAgent, "1")
 
-	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
 	if err == nil {
 		t.Fatalf("a checkout this machine could not read did not stop the removal:\n%s", out)
 	}
@@ -1801,7 +1801,7 @@ func TestAccountsRmManagedRefusesAnUnreadableCheckoutsRecord(t *testing.T) {
 	before := readFileString(t, r.cfg)
 	t.Setenv(accountsAddAgent, "1")
 
-	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
 	if got := r.sm.Deleted(); len(got) != 0 {
 		t.Fatalf("the one-way delete ran with this machine's record of its checkouts unreadable (%v):\n%s", got, out)
 	}
@@ -2241,7 +2241,7 @@ repos:
 // terminal — and answers what it printed.
 func (r *addRig) rm(t *testing.T, name string, args ...string) string {
 	t.Helper()
-	out, errOut, err := executeStdin(t, "", append([]string{"accounts", "rm", name, "--yes"}, args...)...)
+	out, errOut, err := executeStdin(t, "", append([]string{"accounts", "rm", name}, args...)...)
 	if err != nil {
 		t.Fatalf("accounts rm %s: %v\nstdout:\n%s\nstderr:\n%s", name, err, out, errOut)
 	}

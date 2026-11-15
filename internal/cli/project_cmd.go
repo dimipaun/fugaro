@@ -96,7 +96,7 @@ type projectPolicyPublishOptions struct {
 func newProjectPolicyPublishCmd() *cobra.Command {
 	var o projectPolicyPublishOptions
 	cmd := &cobra.Command{
-		Use:   "publish [--seed-repos] [--delete] [--yes] [--remove-routing]",
+		Use:   "publish [--seed-repos] [--delete] [--remove-routing]",
 		Short: "Publish the project's policy from the operator's config (budget admins)",
 		Long: "Build the project's policy from this machine's project config — the budget\n" +
 			"block, the providers (their secrets by NAME, never a value), the model_prices\n" +
@@ -118,7 +118,7 @@ func newProjectPolicyPublishCmd() *cobra.Command {
 			"--delete removes the policy (the children first, the shared node last, so a\n" +
 			"launch mid-delete still sees the policy and keeps its tighter ceiling) and\n" +
 			"puts the project back on the ceiling its jobs' environments carry. It goes\n" +
-			"through the same rules-marker gate as a publish, refuses without --yes while\n" +
+			"through the same rules-marker gate as a publish, refuses while\n" +
 			"runs are in flight, and asks you to type the project's name otherwise. The\n" +
 			"config/policy/repos children are removed too, shared node or not: a delete\n" +
 			"that failed on the shared node leaves them behind, and this is what clears\n" +
@@ -155,7 +155,6 @@ func newProjectPolicyPublishCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.BoolVar(&o.seedRepos, "seed-repos", false, "seed allow_repos from the operator's repositories again")
 	f.BoolVar(&o.delete, "delete", false, "remove the published policy (project-centric mode off again)")
-	f.BoolVar(&o.yes, "yes", false, "confirm the deletion without typing the project's name")
 	f.BoolVar(&o.removeRouting, "remove-routing", false, "drop the published policy's routing block on purpose (an active route stops being taken)")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
@@ -2731,7 +2730,7 @@ func deleteProjectPolicy(cmd *cobra.Command, lc *localcfg.Config, db *rtdb.Clien
 			return err
 		}
 		if inflight > 0 && !o.yes {
-			return userErr("%d run(s) are in flight: a run that is mid-flight keeps the policy until it finishes, so --delete is refused without --yes; wait for them (fugaro runs ls), or pass --yes once you have read what it does", inflight)
+			return userErr("%d run(s) are in flight: a run that is mid-flight keeps the policy until it finishes, so --delete is refused while they run; wait for them (fugaro runs ls), then repeat it", inflight)
 		}
 		if err := confirmRemoval(cmd, lc, o.yes, "this removes the published policy: every run falls back to the ceiling its job's environment carries, and the project's allow-list stops being enforced"); err != nil {
 			return err
@@ -2803,11 +2802,13 @@ func runsInFlight(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) (in
 // policy until it finishes. A flag typed in advance must not be what stops a
 // run that is already running, so this asks for the name itself.
 func confirmRemovalStrict(cmd *cobra.Command, lc *localcfg.Config, what string) error {
-	return confirmTypedStrict(cmd, lc, "--yes does not confirm this one while a run is in flight; wait for it (fugaro runs ls), or type the project's name at a terminal", what)
+	return confirmTypedStrict(cmd, lc, "typing the project's name is the only thing that confirms this one while a run is in flight; wait for it (fugaro runs ls), then confirm it at your own terminal", what)
 }
 
-// confirmRemoval is confirmRemovalStrict where --yes may stand in for the
-// typed name: the caller has checked that nothing is in flight.
+// confirmRemoval is confirmRemovalStrict where the run's own answer may stand
+// in for the typed name: the caller has checked that nothing is in flight. The
+// flag that once carried that answer is gone from the door (T11), so what
+// reaches here is the field the run itself holds.
 func confirmRemoval(cmd *cobra.Command, lc *localcfg.Config, yes bool, what string) error {
 	return confirmTyped(cmd, bufio.NewReader(cmd.InOrStdin()), lc, yes, what)
 }

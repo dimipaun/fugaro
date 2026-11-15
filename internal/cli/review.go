@@ -13,6 +13,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -85,13 +86,15 @@ func newReviewCmd() *cobra.Command {
 		Short: "Review a pull request in a job of its own, on a named account",
 		Long: "Launch an independent review of pull request N, in a container the coding\n" +
 			"run never ran in and with the account you name.\n\n" +
-			"The review runs on the review-only variant of the repository's job: no App\n" +
-			"key, no Claude token and no signing key are mounted in it, and its git\n" +
-			"credential is a read-only one it fetches from the installation's credentials\n" +
-			"service. It reads a fresh clone of the pull request's head, writes its verdict\n" +
-			"as an artifact (fugaro review show RUN prints it) and posts no comment and no\n" +
-			"review on the pull request: what reaches the pull request is the owner's and\n" +
-			"the coordinator's to decide.\n\n" +
+			"The review runs in a job of its own and never in the repository's coding job:\n" +
+			"the review-only variant of the repository's shared project job, or, where the\n" +
+			"repository's workflow resolves no shared project job, the installation's\n" +
+			"implicit default review-only job. No App key, no Claude token and no signing\n" +
+			"key are mounted in it, and its git credential is a read-only one it fetches\n" +
+			"from the installation's credentials service. It reads a fresh clone of the\n" +
+			"pull request's head, writes its verdict as an artifact (fugaro review show\n" +
+			"RUN prints it) and posts no comment and no review on the pull request: what\n" +
+			"reaches the pull request is the owner's and the coordinator's to decide.\n\n" +
 			"The account is picked as everywhere else: --token, else agent.oauth_token in\n" +
 			"fugaro.yaml at the run's ref, else the project's default_claude_account.\n\n" +
 			"--mutate FILE:TEST asks for one mutation check: the reviewer flips a boolean\n" +
@@ -252,15 +255,17 @@ func checkReviewJobAdmitted() error {
 // back (R2-5) and can never disagree with the policy about which profile,
 // provider and account the job belongs to.
 //
-// A launch that resolved no shared project job has no variant to run on: a
-// baked workflow keeps its per-repository job, a project that published no
-// profiles has no project jobs at all, and a repository the profile does not
-// admit is refused long before this. In each case there is nothing deployed
-// beside the coding job to launch, and starting the coding job instead is the
-// one thing this command exists not to do.
-func (e *cloudEnv) reviewJobFor(ctx context.Context, coding *launchProjectJob) (*launchProjectJob, error) {
+// A launch that resolved no shared project job has that variant to derive
+// nothing from: a baked workflow keeps its per-repository job, and a project
+// that published no profiles has no project jobs at all (a repository the
+// profile does not admit is refused long before this). It is the installation's
+// implicit default review-only job a review of such a repository runs on
+// instead (implicitReviewJobFor, the owner's requirement of 2026-11-13, option
+// C), and starting the repository's own coding job in its place is the one
+// thing this command exists not to do.
+func (e *cloudEnv) reviewJobFor(ctx context.Context, coding *launchProjectJob, spec *task.Spec, slug string) (*launchProjectJob, error) {
 	if coding == nil {
-		return nil, userErr("a review runs on the review-only variant of a shared project job, and this repository has none: its workflow runs on a per-repository job (a baked workflow, or a project that has published no profiles), beside which no variant is deployed. Read the review in the run's own job instead, with fugaro run --pr N --recipe " + reviewOnlyRecipe)
+		return e.implicitReviewJobFor(ctx, spec, slug)
 	}
 	p, found, err := e.policy.read(ctx, e.lc)
 	if err != nil {
@@ -275,6 +280,128 @@ func (e *cloudEnv) reviewJobFor(ctx context.Context, coding *launchProjectJob) (
 	}
 	job := projectJobReviewFor(profile, provider, account, coding.Timeout)
 	return &job, nil
+}
+
+// implicitReviewJobFor is the job a review of a repository that resolved no
+// shared project job runs on: the installation's implicit default review-only
+// job, ONE job per (provider, account) that a project has whether or not it
+// declares a profile — so `fugaro review --pr N` works on a repository whose
+// workflow is baked and on a project that has published no profiles, rather
+// than being refused for a job its repository was never going to have. The
+// owner's requirement of 2026-11-13 (option C), and the launcher's half of it:
+// internal/infra deploys the job (implicitReviewVariant), and this resolves a
+// review onto it.
+//
+// Five things decide it, and the first two are the deployment's own facts
+// rather than a second copy of them (implicitReviewJob):
+//
+//   - The provider. The implicit job is on the github provider, which is the
+//     one kind a shared project job serves (infra.SharedJobProvider): every
+//     Bitbucket repository keeps its own job, and no variant is deployed beside
+//     it, so a review of one is refused here with its own sentence. The kind
+//     the review is on is the run's own derivation — the pair the slug names
+//     back (runner.ProviderForSlug), the reading the launcher's other gates
+//     take — and not the local config's repo entry alone: its provider key is
+//     optional, and a repository whose entry names none is on the kind its
+//     checkout's fugaro.yaml gives it (repoSlug), so reading the entry alone
+//     would place a Bitbucket review on the github job.
+//   - The account. The implicit job serves the default account alone
+//     (infra.ImplicitReviewJobName), and a review's job is the job the
+//     credentials service pairs it by: the review container mounts no
+//     credential, and the service serves the account of the caller whose job
+//     row names that account (credsvc.ReviewJobAccountsFor). So a review on
+//     another account cannot run on this job — the run would be refused its
+//     credential inside a job it had already paid for — and it is refused here
+//     instead.
+//   - Whether the installation deploys the job at all. Both of the facts
+//     internal/infra's implicitReviewVariant gates the deployment on are asked
+//     there rather than spelled again: the credentials service, and the single
+//     GitHub App ID its provider needs to start. An installation that has
+//     neither deploys no such job, and this refuses as it did before the job
+//     existed.
+//   - Whether the project has published a policy. The run places itself in the
+//     job it is in by the policy the project published (internal/runner's
+//     matchJobName), and a project job is one that policy defines: with no
+//     policy, this name is a job the run cannot place at all and it halts at
+//     admission inside the container the launch had already paid for
+//     (cannotPlaceJob). A launch of this shape is refused here instead, with
+//     the same fix the run's own refusal names.
+//   - And, where that policy derives this job's name from a profile of its
+//     own, whether the profile admits the repository. The name is then one
+//     entry of the policy's candidate set under the profile's triple rather
+//     than the implicit entry (internal/runner's projectJobCandidates, which
+//     adds the implicit candidate only for a name the policy does not derive
+//     itself; ProjectJobIsImplicitReviewJob is that question asked by name),
+//     and the run in it is admitted by that profile's list rather than by the
+//     project's allow_repos (the implicit arm's comment in internal/runner's
+//     admissionCheck). Without this half a repository the profile does not
+//     admit reaches Cloud Run, takes the claim and mints the token, and stops
+//     only in the runner — which is what the sibling arm refuses for the job
+//     it derives (launchProjectJobFor → profileAdmissionRefusal).
+func (e *cloudEnv) implicitReviewJobFor(ctx context.Context, spec *task.Spec, slug string) (*launchProjectJob, error) {
+	if provider, ok := runner.ProviderForSlug(slug, spec.Repo); ok && !infra.SharedJobProvider(provider) {
+		return nil, userErr("a review runs on the review-only variant of a shared project job, and no shared job serves %s: a Bitbucket credential cannot be scoped to one project's repositories, so every Bitbucket repository keeps its own job and no variant is deployed beside it — and the installation's implicit default review-only job, the one a review of a repository with no shared job of its own runs on, is on the github provider alone. Read the review in the run's own job instead, with fugaro run --pr N --recipe "+reviewOnlyRecipe,
+			pluginwire.Printable(provider))
+	}
+	job, ok := e.implicitReviewJob()
+	if !ok {
+		return nil, userErr("a review runs on the review-only variant of a shared project job, and this repository resolved none: its workflow runs on a per-repository job (a baked workflow, or a project that has published no profiles), and this installation deploys no implicit default review-only job to review it on instead. That job is deployed on an installation that publishes the credentials service — a review container mounts no credential of its own, so the service is where its read-only token and its account come from — and records exactly one GitHub App ID in its local config, which the github provider it runs on refuses to start without: record the App's ID with fugaro update --repo <owner/name> --github-app-id <id>, then run fugaro update, which is the whole upgrade and the command that deploys that job. Until then, read the review in the run's own job, with fugaro run --pr N --recipe " + reviewOnlyRecipe)
+	}
+	account := infra.ReviewVariantAccount(projectJobAccount(reviewAccount(spec)))
+	if account != job.Account {
+		return nil, userErr("a review runs on the review-only variant of a shared project job, and this repository resolved none: it would be reviewed on the installation's implicit default review-only job, which serves the %s account alone, and this review is on %s. A review's job is the job the credentials service pairs it by — the review container mounts no credential of its own, and the service serves the account of the caller whose own job row names that account — so the run would be refused its credential inside a job it had already paid for. Review the pull request on the %s account (drop --token), or give the repository a checkout: clone workflow selecting a profile that serves %s, whose own review-only variant is deployed beside that profile's job; or read the review in the run's own job, with fugaro run --pr N --recipe "+reviewOnlyRecipe,
+			config.DefaultClaudeAccount, pluginwire.Printable(account), config.DefaultClaudeAccount, pluginwire.Printable(account))
+	}
+	// The run's own placement, asked here so that a review the run would halt
+	// on is refused before the claim, the token and the execution rather than
+	// after them. It is the launcher's read of the same document every other
+	// gate reads (launchPolicyGates, which ran before this), so it costs no
+	// call the launch was not already making.
+	p, found, err := e.policy.read(ctx, e.lc)
+	if err != nil {
+		return nil, policyReadErr(err)
+	}
+	if !found || p == nil {
+		return nil, userErr("a review runs on the installation's implicit default review-only job, and this project has published no policy: the run places itself in the job it is in by the policy the project published, and a project job is one that policy defines — with none, this job is one the run cannot place at all, so it would halt at admission inside the container this launch had already paid for. Publish the project's policy with fugaro project policy publish (fugaro doctor first, for the rules a policy is read under and the version this Fugaro writes), and this review has the policy that places it; until then, read the review in the run's own job, with fugaro run --pr N --recipe " + reviewOnlyRecipe)
+	}
+	if profile, provider, _, ok := runner.ProjectJobOfPolicy(p, job.Job); ok && !runner.ProjectJobIsImplicitReviewJob(p, job.Job) {
+		if err := profileAdmissionRefusal(p, profile, provider, spec.Repo); err != nil {
+			return nil, err
+		}
+	}
+	return &launchProjectJob{
+		Name:    job.Job,
+		Profile: job.Profile,
+		Timeout: time.Duration(job.TaskTimeoutS) * time.Second,
+	}, nil
+}
+
+// implicitReviewJob is the installation's implicit default review-only job —
+// the job a project with no profile to declare reviews its repositories on —
+// and whether it is deployed at all. It is the deployer's own derivation
+// (infra.ProjectReviewJobs, which is the function internal/infra's tfvars read
+// the credentials service's review class from), so the name, the account and
+// the task timeout a review launch hands the execution are the installation's
+// own facts and not a second spelling of them: a launcher that computed the
+// name itself would resolve a job nobody deployed, which is the 404 this
+// resolution exists to avoid.
+//
+// A config the derivation refuses is the same answer rather than an error, and
+// the states it refuses in are states in which no such job is deployed: two
+// GitHub App IDs recorded, or a github profile with none, is an update that
+// never converged. This is a question about a job that may simply not be there
+// (implicitReviewVariant answers it the same way), and a review launch is not
+// the place to report an installation's own deploy problem.
+func (e *cloudEnv) implicitReviewJob() (infra.ProjectJob, bool) {
+	if e.lc == nil || e.lc.CredentialsService == nil {
+		return infra.ProjectJob{}, false
+	}
+	jobs, err := infra.ProjectReviewJobs(e.lc, e.lc.RunsBucketName(), e.lc.UsesVertex())
+	if err != nil {
+		return infra.ProjectJob{}, false
+	}
+	job, ok := jobs[infra.ImplicitReviewJobName()]
+	return job, ok
 }
 
 // checkReviewService is E7's first half, and the half an owner can supply. A
