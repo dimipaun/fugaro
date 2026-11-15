@@ -74,6 +74,15 @@ const COMPATIBILITY = '/compatibility/'
 /** The page's `<h1>`, and the word the page's title is built from. */
 const TITLE = 'Features'
 
+/**
+ * The page's three plan headings (D2440), in the words a reader reads over the columns: the
+ * contract's own keys are `FEATURE_PLANS`, and these are the copy the page prints for them. They
+ * are pinned here because the headings are copy — the site's tests pin the words a page prints —
+ * and they are looked up by plan, so the order the table draws them in is the contract's rather
+ * than a second one this file keeps.
+ */
+const PLAN_LABELS = { community: 'Community', team: 'Team', enterprise: 'Enterprise' }
+
 /** The stub task I1 deletes: while it is there, `loadFeatures()` answers with the fixture. */
 const STUB = path.join(SITE, 'src', 'lib', 'feature-matrix-stub.mjs')
 
@@ -194,8 +203,14 @@ export function shapeFailures(html, doc) {
     )
   }
 
-  // The columns: the feature, the status, and one per plan in the contract's own order (D2440).
-  const columns = ['Feature', 'Status', ...FEATURE_PLANS]
+  // The columns: the feature, the status, and one per plan **in the contract's own order**
+  // (D2440) — which is what `FEATURE_PLANS` carries, and why the labels are looked up by plan
+  // rather than written in the order the page happens to draw them. The three labels are the
+  // page's own vocabulary (the plan's keys are not words a reader reads) and they are written here
+  // because a heading is copy: a column renamed on the page fails this case with both lists in its
+  // message, and a fourth plan the contract gains and this file has no label for fails it rather
+  // than reading as a column the page drew and the test never named.
+  const columns = ['Feature', 'Status', ...FEATURE_PLANS.map((plan) => PLAN_LABELS[plan])]
   const head = findAll(table, (el) => el.name === 'thead')[0]
   const header = (head === undefined ? [] : findAll(head, (el) => el.name === 'th')).map((el) => flat(textOf(el)))
   if (header.join(' ') !== columns.join(' ')) {
@@ -360,7 +375,10 @@ export function leakFailures(html) {
 // them (`internal/cli/docs_subscriptions_test.go`: a currency amount, a percentage). A page's
 // stylesheet is dropped before the scan, which is what lets a layout width be a percentage.
 const CURRENCY = /[$€£¥]\s?[\d,]+|\b\d[\d,.]*\s?(?:USD|EUR|GBP|dollars?|euros?|pounds?)\b/i
-const PERCENT = /\b[\d,.]+\s?(?:%|percent|per cent)\b/i
+// The percent sign carries no boundary of its own after it, which is the repository's own shape: a
+// discount is written "20% off", with a space where a `\b` would be, so a reader demanding a word
+// character after the sign would miss the commonest way a page prints one.
+const PERCENT = /[0-9][0-9,]*(?:\.[0-9]+)?\s?(?:%|(?:percent|per cent)\b)/i
 
 /** Every price the built page prints, as failure lines. */
 export function priceFailures(html) {
@@ -429,7 +447,7 @@ test('nothing the page may not print is on it, and it prints no price', () => {
 test('the page carries one link to the compatibility page, and it resolves', () => {
   const html = builtPage()
   const article = articleOf(html)
-  assert.ok(article, 'the built page has no <article data-features-page>: this case reads the page's own part of the document, and the marker is the page\'s own')
+  assert.ok(article, 'the built page has no <article data-features-page>: this case reads the page\'s own part of the document, and the marker is the page\'s own')
   const links = findAll(article, (el) => el.name === 'a' && el.attrs.get('href') === COMPATIBILITY)
   assert.equal(
     links.length,
@@ -470,14 +488,22 @@ test('the page renders the contract\'s own fixture while the stub is the snapsho
 
 // ---- the refusals, kept ------------------------------------------------------------------
 
-/** The built page with one edit, and what the reader says about it. */
-function mutated(from, to) {
+/**
+ * The built page with one edit, and what the reader says about it. `last` edits the anchor's last
+ * occurrence instead of its first, for a string the page carries twice: the lead is both its own
+ * paragraph and the head's `<meta name="description">`, and the description stands first, so a
+ * first-occurrence plant would land in an attribute — where this reading, which takes the page's
+ * text, cannot see it, and the case would pass without proving anything. The anchor itself is
+ * always required to be there: an anchor that drifted is a case that stopped testing.
+ */
+function mutated(from, to, last = false) {
   const html = builtPage()
+  const where = last ? html.lastIndexOf(from) : html.indexOf(from)
   assert.ok(
-    html.includes(from),
+    where !== -1,
     `this case's anchor ${JSON.stringify(from)} is not in the built page, so the edit it makes proves nothing — fix the anchor against the artifact, never the rule`,
   )
-  return html.replace(from, to)
+  return html.slice(0, where) + to + html.slice(where + from.length)
 }
 
 test('every refusal fires on the defect it names, on the built page itself', () => {
@@ -536,12 +562,20 @@ test('every refusal fires on the defect it names, on the built page itself', () 
     'a stamp line that does not carry the snapshot\'s release is not refused',
   )
 
-  // A task id planted in the page's own lead: the refusal names it. Both plants are the two shapes
-  // of the leak the page is held to (R1), and both are planted where a page's copy is written.
-  refuses(leakFailures(mutated('What Fugaro does today', 'T4a: what Fugaro does today')), 'a task id', 'a task id on the built page is not refused')
-  refuses(leakFailures(mutated('What Fugaro does today', 'As of 2026-11-15, what Fugaro does today')), 'a date', 'a date on the built page is not refused')
+  // The two copy leaks the page is held to (R1) — a task id and a date — planted in the lead a
+  // reader reads. **Where the plant lands matters twice.** The lead stands twice in the document:
+  // as its own paragraph, and as the head's `<meta name="description">`, which comes first — so
+  // every plant below takes the *last* occurrence, the paragraph, because this reading takes the
+  // page's text and a plant into an attribute would prove nothing. And the text runs are joined to
+  // one line, so the lead's own first word sits against the `h1`'s last letter ("FeaturesWhat…"),
+  // where neither a task id opening a sentence nor a date's leading digit is a whole token — which
+  // is what `leakProblems` reads. The lead's second sentence is the place both hold: a boundary on
+  // its left, prose on its right.
+  const sentence = '. Every row says'
+  refuses(leakFailures(mutated(sentence, '. T4a: every row says', true)), 'a task id', 'a task id on the built page is not refused')
+  refuses(leakFailures(mutated(sentence, '. As of 2026-11-15, every row says', true)), 'a date', 'a date on the built page is not refused')
 
   // And a price, in the two shapes the repository's own scan refuses.
-  refuses(priceFailures(mutated('What Fugaro does today', 'What $20 buys today')), 'a currency amount', 'a currency amount on the built page is not refused')
-  refuses(priceFailures(mutated('What Fugaro does today', 'What 20% off buys today')), 'a percentage', 'a percentage on the built page is not refused')
+  refuses(priceFailures(mutated('>What Fugaro does today', '>What $20 buys today', true)), 'a currency amount', 'a currency amount on the built page is not refused')
+  refuses(priceFailures(mutated('>What Fugaro does today', '>What 20% off buys today', true)), 'a percentage', 'a percentage on the built page is not refused')
 })
