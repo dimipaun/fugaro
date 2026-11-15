@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/apply-status.schema.json",
+  "title": "Fugaro apply",
+  "description": "The JSON answer of `fugaro apply` and `fugaro apply --status` (docs/composite-commands, D1560, D1568, D1569, D1575): the steps a machine still owes for the management changes made on it, and — for a run — the steps it answered. It is the document the console reads through the fence (D1569, one read, `fugaro apply --status --json`), so it is a contract and not a debug dump: every member is written on every arm, a member is added and never repointed, and the version says which shape the reader is holding (CLAUDE.md, F9). Every object here is closed for the reason the pending-steps document's are: the console and this binary are the only readers, the format decodes strictly, and a member neither knows is an error rather than a figure drawn from a guess. It carries no value and no secret: an entry names the change that asked for a step and never what was set (D1570).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "project",
+    "gcp_project",
+    "recorded",
+    "current",
+    "pending"
+  ],
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "The document's own version, so a reader that was built against one shape refuses another rather than drawing a wrong figure with no error (CLAUDE.md: a field never changes meaning).",
+      "$comment": "applyStatusVersion in internal/cli/apply.go."
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The Fugaro project name this answer is about (config.ProjectNameRE). It is one half of the pair every entry of the record is bound to, and a record whose entries name another pair is refused rather than run (D1575)."
+    },
+    "gcp_project": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The GCP project ID of the installation this answer is about, and the other half of that pair."
+    },
+    "recorded": {
+      "type": "boolean",
+      "description": "Whether a record of what this machine owes is on disk at all. A machine that never made a management change and one whose record was deleted read the same — nothing is owed — and this is what tells the two apart in the answer; a reader must not read `false` as \"everything is live\" (D1575)."
+    },
+    "current": {
+      "type": "boolean",
+      "description": "Whether the record was stamped against the project config as it stands. False means the config changed since the last `fugaro apply` that finished, so what the record owes may be older than the config — or newer than it, when a change was just saved. The stamp is the hash of the local project config's bytes, and `fugaro doctor` is the command that compares it (D1575)."
+    },
+    "pending": {
+      "type": "array",
+      "description": "What is still owed, in the order the steps run (internal/apply's Order over internal/initflow's own stage order), and it is written even when it is empty: `[]` is \"nothing is owed\", which is a different answer from a record that could not be read. Two changes that owe the same step leave one entry, so the steps dedupe (spec rule 3).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "step",
+          "kind",
+          "key"
+        ],
+        "properties": {
+          "step": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The step's name: one of internal/initflow's stage names, or `catalog-build`, the one step that is not a stage — the billable Cloud Build of a catalog image, which `fugaro update` never runs (D1577). It is deliberately not an enum, for the reason the pending-steps document's is not: the vocabulary is initflow's, and a copy of it here would be the second registry of stages D1561 rules out.",
+            "$comment": "apply.CatalogBuild in internal/apply/steps.go, and initflow.Names in internal/initflow/stage.go."
+          },
+          "kind": {
+            "enum": [
+              "setting",
+              "resource"
+            ],
+            "description": "What `key` names: a key of the settings registry (internal/settings), or a resource type a management command manages.",
+            "$comment": "apply.Setting and apply.Resource in internal/apply/steps.go."
+          },
+          "key": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The setting key as `fugaro settings` spells it, or a resource type. It is the change's subject and never its value (D1570). The human arm of this command prints it through safetext, because it is a person's own text landing on a terminal (D1575)."
+          }
+        }
+      }
+    },
+    "applied": {
+      "type": "array",
+      "description": "The steps a run answered, in the order they ran. It is absent for `--status`, which runs none, and it is never present-and-empty for a run: a run that answered nothing has nothing to report as applied. A step is here only when its own answer said the work is done — `changed`, `done` or `skipped`, the last being the read-only check finding nothing to do (D1575) — and a step that failed, was blocked or was left for the person is in `pending` instead (D1563).",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}

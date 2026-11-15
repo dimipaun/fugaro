@@ -264,6 +264,11 @@ func newCoreRoot() *cobra.Command {
 		// read by a read-only agent (docs/diagnose-agent, D1604). Beside
 		// `fugaro diagnose`, which explains a cloud run instead.
 		newTroubleshootCmd(),
+		// The one command that runs the follow-up steps a management command
+		// saved for later (docs/composite-commands, D1560): it sits beside the
+		// commands whose work it finishes rather than under one of them,
+		// because it is the same command for all of them.
+		newApplyCmd(),
 	)
 	annotateManagedMutating(root)
 	return root

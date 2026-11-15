@@ -449,6 +449,13 @@ func (e *initEngine) converge(ctx context.Context) error {
 	// is silent when there is nothing running (update_in_flight.go).
 	e.announceRunsInFlight(ctx)
 	res, err := initflow.Run(ctx, stages, e.options())
+	// The steps this run answered are steps nothing owes any more: `update`
+	// runs every stage, and the entries of the stages it ran successfully are
+	// cleared here and nowhere else (D1567). It is after the loop because the
+	// answer is per stage — a stage that failed or that was blocked behind one
+	// leaves its step owed — and it never touches a catalog build, which
+	// `update` does not run (D1577).
+	e.clearAnsweredSteps(res)
 	if err == nil && res != nil && e.r.o.planOnly && res.Failed == nil {
 		e.planOnlyReview(ctx, res.Stages)
 	}

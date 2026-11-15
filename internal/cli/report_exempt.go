@@ -46,14 +46,18 @@ package cli
 // every value here is a literal in the source or one of builtLogNames' two
 // builders.
 var reporterCommands = map[string]string{
-	"accounts add":       "accounts-add",
-	"accounts alias rm":  "accounts-alias-rm",
-	"accounts alias set": "accounts-alias-set",
-	"accounts clear":     "accounts-clear",
-	"accounts rm":        "accounts-rm",
-	"allow-delete":       "allow-delete",
-	"backlog add":        "backlog-add",
-	"backlog index":      "backlog-index",
+	"accounts add":      "accounts-add",
+	"accounts alias rm": "accounts-alias-rm", "accounts alias set": "accounts-alias-set",
+	"accounts clear": "accounts-clear",
+	"accounts rm":    "accounts-rm",
+	"allow-delete":   "allow-delete",
+	// The one command that runs what a management command saved for later
+	// (docs/composite-commands, D1560): it runs a subset of the converge's
+	// stages through the loop, so its account of the steps is the reporter's
+	// like `accounts add`'s.
+	"apply":         "apply",
+	"backlog add":   "backlog-add",
+	"backlog index": "backlog-index",
 	// One entry per mutating command, and the raise is one: it rewrites a
 	// run's stored task and records the raise beside it, so its account is a
 	// step like the three below it rather than a listing (D1352).

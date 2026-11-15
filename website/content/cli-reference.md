@@ -29,6 +29,7 @@ Subcommands:
 - `fugaro ab` -- Report model A/B results: pairs, wins, cost and the recommendation per group
 - `fugaro accounts` -- List the named Claude accounts a repository may use
 - `fugaro allow-delete` -- Record the objects a run may delete or replace, by address (the project's owner)
+- `fugaro apply` -- Run the follow-up steps a management command saved for later
 - `fugaro artifacts` -- List and download what an artifact run delivered
 - `fugaro backends` -- List the compute backends an installation can run its jobs on
 - `fugaro backlog` -- File a backlog item, read the backlog, regenerate its index
@@ -830,6 +831,43 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for allow-delete |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro apply`
+
+Run the follow-up steps a management command saved for later
+
+Run the follow-up steps a management change saved for later.
+
+A management command (settings set, image add, models rm, workspace add, ...)
+writes its change and then runs the steps that make it live: publishing the
+project policy, redeploying the checkout's repository, building a catalog
+image. With --no-apply it writes the change and stops, and this command runs
+what is owed later.
+
+Every owed step runs once, in the installation's own order, whatever queued it
+and however many changes asked for the same one. Each step checks the state
+first and does nothing when there is nothing to do, so running this command
+again costs nothing. A step that fails leaves its change saved and the step
+owed: this command says so and exits non-zero, and running it again finishes
+the job.
+
+With --status it prints what is owed and changes nothing.
+
+Usage: `fugaro apply [--status]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's own under $XDG_CONFIG_HOME/fugaro/projects) |
+| `-h`, `--help` | bool | `false` | no | help for apply |
+| `--json` | bool | `false` | no | print the answer as a JSON document |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--status` | bool | `false` | no | print the steps that are owed and change nothing |
 
 Subcommands:
 
