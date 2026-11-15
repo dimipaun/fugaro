@@ -1279,6 +1279,44 @@ func TestCatalogBuildRefusesAnUnadmittedRepo(t *testing.T) {
 	})
 }
 
+// TestCatalogBuildClonesABakedRepoFromTheProjectsCloneURL: a repository's clone
+// URL is the project's to choose (`clone_urls`, SD5/D842) and not the provider's
+// to imply, so a stage composed for one of the entry's other repositories clones
+// from the URL the project gives it. The two blocks the URL is read out of are
+// keyed differently — `repos` and `image_map` by "acme/other", `clone_urls` by
+// "bitbucket/acme/other" (projectpolicy.Canonical) — and a lookup in the wrong
+// key space is silent: CloneURL answers the provider's usual host for a name the
+// project gives no URL, so the build would clone from a URL nobody chose and
+// nothing would fail.
+func TestCatalogBuildClonesABakedRepoFromTheProjectsCloneURL(t *testing.T) {
+	const shared = "image_map:\n  acme/app: tools\n  acme/other: tools\nbake_repos: true\n"
+	// The project's URL for acme/other, which is this repository on its own
+	// provider's host and spelled without the ".git" the usual one carries —
+	// the one spelling a clone_urls entry may differ by, since a URL on another
+	// host is refused by that block's own validation and by the one credential
+	// the build asks for (repourl.CloneURL, imagebake.Decide).
+	const urls = "clone_urls:\n  bitbucket/acme/other: https://bitbucket.org/acme/other\n"
+	_, gcs, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
+	addRepoToProject(t, "acme/other")
+	f.appendConfig(t, shared+urls)
+
+	_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
+	if err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	got, _ := catalogCopy(t, gcs, "tools")
+	otherDir, err := imagebake.Path(mustSlug(gitprov.KindBitbucket, "acme/other"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "'https://bitbucket.org/acme/other' " + otherDir; !strings.Contains(got, want) {
+		t.Errorf("the copy has no stage with %q: a baked repository clones from the URL the project gives it (clone_urls)\n%s", want, got)
+	}
+	if strings.Contains(got, "'https://bitbucket.org/acme/other.git'") {
+		t.Errorf("the copy clones acme/other from the provider's usual URL, not from the project's clone_urls entry:\n%s", got)
+	}
+}
+
 // TestCatalogBuildRefusesABakeTheMapDoesNotConfirm: a checkout whose own
 // workflow names the entry being built (T1 (b), `image_name:`, D1155) does run
 // that entry's image, but the build cannot turn that into a bake on its own:

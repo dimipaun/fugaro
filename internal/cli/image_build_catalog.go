@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/repourl"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -262,8 +263,7 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	}
 	imageMap := lc.ImageMapEffective(publishedMap)
 	bakeRepos := lc.BakeReposEffective(publishedBake)
-	// The project's repositories, in the map's own key space (the canonical
-	// form, task.CanonicalRepo), each resolved to where it clones from: the map
+	// The project's repositories, each resolved to where it clones from: the map
 	// is what says which repositories the entry being built serves, and the bake
 	// of each of them needs the slug its checkout is written at and the URL it
 	// clones from. A repository the project records no provider for, or whose
@@ -271,6 +271,16 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	// a config written by hand — is not one of these, and the map putting it on
 	// an entry is refused by name rather than baked from a URL this command
 	// would have to guess (imagebake.Decide).
+	//
+	// The two blocks a repository is read out of are keyed differently, and both
+	// spellings are canonical: `repos` and `image_map` by the repository alone
+	// (task.CanonicalRepo, "acme/app"), and `clone_urls` by the provider and the
+	// repository together (projectpolicy.Canonical, "github/acme/app", which is
+	// the key the block is published under and the key its own validation holds
+	// every entry to). A lookup that mixed them would read every repository as
+	// one the project gives no URL, which is not an error anywhere: CloneURL
+	// answers the provider's usual host for "", so the build would clone from a
+	// URL the project did not choose.
 	cloneURLs := lc.CloneURLsEffective(publishedCloneURLs)
 	var projectRepos []imagebake.Repo
 	for name, r := range lc.Repos {
@@ -282,7 +292,11 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		if err != nil {
 			continue
 		}
-		url, err := repourl.CloneURL(r.Provider, canonical, cloneURLs[canonical])
+		key, err := projectpolicy.Canonical(r.Provider, canonical)
+		if err != nil {
+			continue
+		}
+		url, err := repourl.CloneURL(r.Provider, canonical, cloneURLs[key])
 		if err != nil {
 			continue
 		}
