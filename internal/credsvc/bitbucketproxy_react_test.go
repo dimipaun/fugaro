@@ -21,6 +21,7 @@ package credsvc
 import (
 	"bytes"
 	"context"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -490,6 +491,74 @@ func TestProxyReactionAuditsOnce(t *testing.T) {
 	}
 	if got := stub.Counted; len(got) != 1 || got[0] != proxyNamedToken {
 		t.Errorf("the store counted %v, want the token the request was served with, once", got)
+	}
+}
+
+// TestProxyReactionWaitsForTheAuditLine: a reaction is applied only after the
+// request's own audit line has been written (D143, R14) — the mark, the
+// eviction and the count alike. The line is what RECORDS the reaction, so a
+// reaction whose line could not be written is not taken at all: the upstream's
+// answer is dropped rather than relayed and the caller is refused this route's
+// unaudited-call refusal.
+//
+// The fixture makes the auditor fail the FIRST line it is handed, which on this
+// route is the request's own line and nothing else: the request is admitted and
+// served, so forwardBitbucket's auditCall is the first line the service writes
+// for it, and the refusal that follows is written through the same auditor and
+// is the one line read below (audit_answer_test.go's failFirstHandler, whose
+// TestTheRefusalOfAnUnauditedIssuanceIsAudited reads the model path the same
+// way).
+//
+// The upstream answers an answer that WOULD react, so the store is read to hold
+// nothing: a 401 its own confirmation read confirms — which marks the token
+// broken and counts the request (TestProxy401ConfirmedByARepositoryReadMarksBroken,
+// TestProxyReactionAuditsOnce) — and a 403, which drops the resolver's cached
+// match (TestProxy403EvictsAndMarksNothing). The confirmation read still happens,
+// because the reaction is DECIDED before the line; what the line's failure
+// withholds is the doing of it. An implementation that applied the reaction
+// before the line — the two calls swapped in forwardBitbucket — marks, evicts
+// and counts here, and this test is red.
+func TestProxyReactionWaitsForTheAuditLine(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		status int
+		calls  int
+	}{
+		{"the mark and the count a confirmed 401 earns", http.StatusUnauthorized, 2},
+		{"the eviction a 403 earns", http.StatusForbidden, 1},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			failed := false
+			auditLog := &logBuf{}
+			s, up, stub, _ := proxyReactSvc(t, func(_ *svc, cfg *Config) {
+				cfg.AuditLog = &failFirstHandler{inner: slog.NewJSONHandler(auditLog, nil), failed: &failed}
+			})
+			reactAnswerEveryWay(up, proxyAnswer{status: c.status})
+
+			resp, ans := s.proxyCall(t, http.MethodGet, reactFetchPath(), nil)
+			proxyRefused(t, resp, ans, StatusUnavailable, ErrorStateUnavailable, proxyUnaudited)
+
+			if n := up.count(); n != c.calls {
+				t.Errorf("the upstream saw %d calls, want %d: the reaction is decided before the line — a confirmed 401 reads a repository the token covers — and applied only after it", n, c.calls)
+			}
+			if len(stub.Marks) != 0 {
+				t.Errorf("the store holds %v, want nothing: a mark a line could not record is not written (D143)", stub.Marks)
+			}
+			if len(stub.Evicted) != 0 {
+				t.Errorf("the store evicted %v, want nothing: the reaction waits for the line that records it (D143)", stub.Evicted)
+			}
+			if len(stub.Counted) != 0 {
+				t.Errorf("the store counted %v, want nothing: the count is applied only after the line (D143, D2356)", stub.Counted)
+			}
+
+			lines := auditLines(t, auditLog)
+			if len(lines) != 1 {
+				t.Fatalf("the refused request wrote %d audit lines, want exactly 1 (the refusal's): %v", len(lines), lines)
+			}
+			if line := lines[0]; line["purpose"] != PurposeGit || line["status"] != ErrorStateUnavailable {
+				t.Errorf("the refusal's line = %v, want the git purpose and the refusal's own wire type", line)
+			}
+		})
 	}
 }
 
