@@ -137,8 +137,17 @@ esac
 # This repository, as the forwarder's paths spell it, and the branch this run
 # owns (fb): from the checkout's own origin, never from anything this probe was
 # handed.
+# Bitbucket spells a remote either way — https://bitbucket.org/<workspace>/<repo>.git
+# and git@bitbucket.org:<workspace>/<repo>.git — and the forwarder's paths carry
+# the <workspace>/<repo> half alone: that is what is taken off the origin here,
+# and an origin that leaves no <workspace>/<repo> at all is refused below rather
+# than used as a path.
 origin=$(git remote get-url origin 2>/dev/null || true)
-self=$(printf '%s' "$origin" | sed -n 's|^.*bitbucket\.org/||; s|\.git$||' | head -n 1)
+self=$(printf '%s' "$origin" | sed -e 's|^.*bitbucket\.org[/:]||' -e 's|\.git$||' | head -n 1)
+case "$self" in
+*/*) ;;
+*) self="" ;;
+esac
 branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
 if [ -z "$self" ] || [ -z "$branch" ] || [ "$branch" = HEAD ]; then
   none no_own_repository_or_branch

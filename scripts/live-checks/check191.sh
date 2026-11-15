@@ -1504,9 +1504,9 @@ step_work_run() {
 You are a probe for Fugaro's Check 191, run by this repository's owner.
 
 Do the one thing a run normally does: append one line to this repository's
-README.md saying that Check 191 ran here on $(date -u +%Y-%m-%d), commit it,
-push your branch and open the pull request. Change no other file and make no
-other commit. Every call that takes is served by this installation's
+README.md saying that Check 191 ran here on $(date -u +%Y-%m-%d), then
+commit it, push your branch and open the pull request. Change no other file
+and make no other commit. Every call that takes is served by this installation's
 credentials service — the job holds no Bitbucket token of its own — and that
 served clone, push and pull request is the positive half of what this run is
 for. A run whose agent commits nothing is failed and pushed as a draft anyway,
@@ -1589,6 +1589,18 @@ step_refusals() {
   done
 }
 
+# review_unmeasured WHY: the review row's own shape — a review-only run whose
+# push the check cannot read as a refusal about the proxy — recorded as one this
+# check could not measure, with the reason WHY was handed to it and the reading
+# that would settle it named. It is NOT a FAIL: nothing inside a review run can
+# make a call the service would refuse a write on, so an empty reading here is
+# the state the code is in rather than a hole in an installation, and the check
+# has no attempt of its own to put in its place (a run's identity is sealed to
+# its own execution).
+review_unmeasured() { # review_unmeasured WHY
+  unmeasured review-run "$1, which is this row's own shape and not a finding about the proxy: nothing inside a review run can make a call the service would refuse a write on. The runner gives a review run's environment no git credential and no forwarder rewrite (internal/runner's refreshGitAuth: 'Neither does a review run's', and the forwarder's URL is written into the environment alone, never into a checkout), so a call a review run's own agent makes never reaches the service; no repository command runs in a review run at all (a mode: review recipe allows exactly one review step and nothing else, internal/recipe); and the runner itself pushes nothing for one. Reading this row needs a product change — a review run's own command given a route to the forwarder, or a check step a mode: review recipe may carry — and that is the owner's decision, not something this check builds. The two classes the rules can answer, once a call reaches them, are read_only (the identity is the installation review-only job class: Decide refuses every push from a read-only identity before the push rules are read, internal/gitproxy/rules.go) and no_run_branch (the identity carries no fb and is not read-only, which is a review-mode run of a per-repository job)"
+}
+
 # step_review_run: the review-only run, and the one attempt this check still
 # cannot make without a model. What the row reads is the SERVICE's own class
 # line for that run, and the two classes a review identity's push can earn are
@@ -1603,7 +1615,7 @@ step_refusals() {
 # REPOSITORY, decided before any rule about what an identity may write, so it
 # settles nothing about a push.
 step_review_run() {
-  local task=$SCRATCH/task-review.md row said classes statuses got rid pr
+  local task=$SCRATCH/task-review.md row said classes statuses got what other rid pr
   rid=$(run_id review)
   # The working run's own pull request is what this probe reviews, and it is the
   # only pull request the check knows is open and is its own artifact. A
@@ -1640,23 +1652,43 @@ TASK_EOF
   statuses=$(cat "$SCRATCH/statuses-review" 2>/dev/null || true)
   said=$(sed -n 's/^attempt=push //p' "$SCRATCH/reported-review" | head -n 1)
   got=$(printf '%s\n' "$classes" | grep -m1 -x -e read_only -e no_run_branch || true)
-  if [ "${said%% *}" = refused=yes ] && [ -n "$got" ]; then
-    if [ "$(audit_audited "$statuses")" -lt 1 ]; then
-      fact review-run FAIL "the review-only run's push was refused under ${got} but the service's audit lines hold no request_refused line for it, so the refusal was not recorded (D143): read the audit lines (gcloud logging read, jsonPayload.status) and that run's log"
+  if [ "${said%% *}" = refused=yes ]; then
+    if [ -n "$got" ]; then
+      if [ "$(audit_audited "$statuses")" -lt 1 ]; then
+        fact review-run FAIL "the review-only run's push was refused under ${got} but the service's audit lines hold no request_refused line for it, so the refusal was not recorded (D143): read the audit lines (gcloud logging read, jsonPayload.status) and that run's log"
+        return 0
+      fi
+      case "$got" in
+      read_only)
+        what="the installation review-only job class, whose every push internal/gitproxy refuses before it reads the push rules at all"
+        other="no_run_branch (an identity that is not read-only and carries no fb, which is a review-mode run of a per-repository job)"
+        ;;
+      *)
+        what="an identity that is not read-only and carries no fb, which is a review-mode run of a per-repository job"
+        other="read_only (the installation review-only job class, refused before the push rules are read)"
+        ;;
+      esac
+      fact review-run PASS "the review-only run's push was refused with the service's own words (${said}), the service's own line carries the class ${got} — ${what} — and the refusal is audited. The other of the two classes the rules can answer for a review identity's push is ${other}"
       return 0
     fi
-    fact review-run PASS "the review-only run's push was refused with the service's own words (${said}), the service's own line carries the class ${got} — $([ "$got" = read_only ] && printf 'the read-only identity of the installation'"'"'s review-only job, whose every push the rules refuse before the push'"'"'s own are read' || printf 'an identity that carries no fb and is not read-only, which is a review-mode run of a per-repository job') — and the refusal is audited. The other of the two classes the rules can answer for a review identity's push is $([ "$got" = read_only ] && printf 'no_run_branch (an identity that is not read-only and carries no fb)' || printf 'read_only (the installation'"'"'s review-only job class, whose every push is refused before the push'"'"'s own rules are read)')"
+    if [ -n "$classes" ]; then
+      fact review-run FAIL "the review-only run was refused its push (${said}) and the service's own lines carry $(printf '%s' "$classes" | tr '\n' ' ') for it, none of which is the class a review identity's push earns: read_only (the identity is the installation review-only job class, and every push of it is refused before the push rules) or no_run_branch (the identity carries no fb and is not read-only). not_admitted is neither and is not a wrong reading of a push: it is the published block's own rule about the REPOSITORY, decided before any rule about what an identity may write. The refusal and the service's line about it are two halves of one reading"
+      return 0
+    fi
+    review_unmeasured "the review-only run (${rid}) was refused its push (${said}) and the service's own lines carry no class for it at all"
     return 0
   fi
-  if [ "${said%% *}" != refused=yes ]; then
+  case "${said%% *}" in
+  refused=no)
     fact review-run FAIL "the review-only run's push was SERVED (${said}): a run that is not admitted to write a branch pushed one, which is the finding this row exists for. Read that run's log and the service's lines"
     return 0
-  fi
-  if [ -n "$classes" ]; then
-    fact review-run FAIL "the review-only run was refused its push (${said}) and the service's own lines carry $(printf '%s' "$classes" | tr '\n' ' ') for it, none of which is the class a review identity's push earns: read_only (the identity is the installation's review-only job class, and every push of it is refused before the push's own rules) or no_run_branch (the identity carries no fb and is not read-only). not_admitted is neither and is not a wrong reading of a push: it is the published block's own rule about the REPOSITORY, decided before any rule about what an identity may write. The refusal and the service's line about it are two halves of one reading"
+    ;;
+  refused=none | "")
+    review_unmeasured "the review-only run (${rid}) reported ${said:-no line for the push attempt}, so no attempt of its own reached the service at all"
     return 0
-  fi
-  unmeasured review-run "the review-only run (${rid}) was refused its push ('${said}') and the service's own lines carry no class for it at all, which is this row's own shape and not a finding about the proxy: nothing inside a review run can make a call the service would refuse a write on. The runner gives a review run's environment no git credential and no forwarder rewrite (internal/runner's refreshGitAuth: 'Neither does a review run's', and the forwarder's URL is written into the environment alone, never into a checkout) — so the push the run's own agent tries never reaches the service — no repository command runs in a review run at all (a mode: review recipe allows exactly one review step and nothing else, internal/recipe), and the runner itself pushes nothing for it. Reading this row needs a product change — a review run's own command given a route to the forwarder, or a check step a mode: review recipe may carry — and that is the owner's decision, not something this check builds. The two classes the rules can answer, once a call can reach them, are read_only (the identity is the installation's review-only job class: Decide refuses every push from a read-only identity before the push's own rules, internal/gitproxy/rules.go) and no_run_branch (the identity carries no fb and is not read-only, which is a review-mode run of a per-repository job)"
+    ;;
+  esac
+  fact review-run FAIL "the review-only run printed '${said}' for the push attempt, which is not the one line this attempt asks for ('CHK191 attempt=push refused=<yes|no> answer=<...>'): read that run's log"
 }
 
 # step_ended_identity: the last row of Check 191 — a run whose outcome is
