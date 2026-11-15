@@ -26,7 +26,11 @@ package keyservice
 // authorize endpoint, read the same way. The authorize form's page adds one
 // origin to that rule and no other page does: its submission is answered with
 // the redirect to the CLI's listener, which a browser checks `form-action`
-// against (signInRedirectCSP). The pages these routes render are this
+// against (signInRedirectCSP). The SPA's own authorize page submits no form at
+// all, for that same reason the other way round: it is served under the portal's
+// policy, which this service does not write, so the API answers it the address
+// to navigate to rather than a redirect to follow (apiAuthorize). The pages
+// these routes render are this
 // file's: the plan's amendment of 2026-11-13 gives the SPA its own sign-in
 // screens (P3.5, `ee/portal/src/screens/cli/*`), and until those land the CLI's
 // two browser steps are served from here.
@@ -78,7 +82,33 @@ const (
 	RouteDeviceStart   = "/cli/device/code"
 	RouteDevicePoll    = "/cli/device/token"
 	RouteDeviceApprove = "/cli/device"
+
+	// RouteAPIAuthorize and RouteAPIDevice are the same two browser steps on
+	// the portal's API (P1.0's table, registered from this file's init): the
+	// SPA's authorize and device screens are the pages a person reads (P3.5),
+	// Firebase Hosting serves them from the portal's origin and rewrites
+	// `/api/**` to this service and nothing else (F21), so these are the two
+	// addresses those pages can reach at all — the routes above are reachable
+	// by a program that was handed the service's own address, which is what the
+	// CLI is and what a page served by Hosting is not.
+	//
+	// They register here rather than in service.go because the plan's
+	// reconciliation amends K2.4 to say so: an area file registers its own
+	// routes from its own init, so `service.go` stays P1.0's and nothing in
+	// this task edits it.
+	RouteAPIAuthorize = "/api/cli/authorize"
+	RouteAPIDevice    = "/api/cli/device"
 )
+
+func init() {
+	// Both routes reach the sign-in verifier and say so, so that a deployment
+	// serving the portal without one is refused when it starts rather than
+	// answering every request with a refusal of its own (api.go's `reaching`).
+	registerAPI(http.MethodPost, RouteAPIAuthorize, (*Service).apiAuthorize,
+		withBody(maxFormBytes), reaching(needSignIn))
+	registerAPI(http.MethodPost, RouteAPIDevice, (*Service).apiDevice,
+		withBody(maxDeviceBytes), reaching(needSignIn))
+}
 
 // The path §11.3's redirect lands on, and the only one this service will send a
 // code to.
@@ -175,6 +205,85 @@ func refuseDevicePoll(w http.ResponseWriter) {
 	http.Error(w, refuseDevice, http.StatusForbidden)
 }
 
+// The codes the API's face answers with (api.go's refusal shape): a client
+// branches on the code and a person reads the sentence, and every sentence is
+// one this file already answers with, so one refusal is one wording however it
+// is reached.
+const (
+	signInRefusedCode    = "signin_unverified"
+	deviceRefusedCode    = "device_refused"
+	noLicenceRefusedCode = "no_licence"
+)
+
+// signInFace is how one of the two doors of these flows answers a caller it will
+// not serve, and it is the whole of what the pages this file serves and the
+// portal's API do differently. Everything else — the steps, their order and
+// every decision they take — is written once, so the page a person reads and the
+// SPA's screen cannot come to different answers about the same sign-in.
+//
+// The pages answer a sentence in the body with no shape to it, because what
+// reads them is a browser and what opened it is a terminal that is told what to
+// do. The API answers the one error object the SPA's client parses (refuseAPI,
+// P1.0), because a screen shows a person the sentence the API wrote and a body
+// it cannot read is reported as the client's own generic sentence instead.
+type signInFace struct {
+	// unverifiable is every refusal before a sign-in is verified, whatever the
+	// fault was: one sentence and one status, so a caller cannot tell a bad port
+	// from a bad state from a token that does not verify.
+	unverifiable func(http.ResponseWriter)
+	// device is every refusal of the device step that is not about the caller's
+	// own account: a code that is not one, and a request that is not the one
+	// this step reads. It is uniform over a code space small enough that a probe
+	// must not narrow it.
+	device func(http.ResponseWriter)
+	// account is a refusal about the caller's **own** account, which only a
+	// verified sign-in reaches and which is therefore told plainly.
+	account func(http.ResponseWriter, string)
+	// failed is a request the service could not finish at all.
+	failed func(http.ResponseWriter, error)
+}
+
+// pageFace and apiFace are the two doors' faces: the page's is the routes
+// service.go mounts and this file serves, and the API's is the two routes this
+// file registers from its init.
+var (
+	pageFace = signInFace{
+		unverifiable: refuseSignInToken,
+		device:       refuseDevicePoll,
+		account:      refuseOwnAccount,
+		failed:       fail,
+	}
+	apiFace = signInFace{
+		unverifiable: func(w http.ResponseWriter) {
+			refuseAPI(w, http.StatusForbidden, signInRefusedCode, refuseSignIn)
+		},
+		device: func(w http.ResponseWriter) {
+			refuseAPI(w, http.StatusForbidden, deviceRefusedCode, refuseDevice)
+		},
+		account: func(w http.ResponseWriter, sentence string) {
+			refuseAPI(w, http.StatusForbidden, noLicenceRefusedCode, sentence)
+		},
+		failed: refuseAPIFailure,
+	}
+)
+
+// refuseOwnAccount is the page face's answer to a signed-in account this service
+// cannot hand a key to: the sentence is about the caller's own account, so it is
+// told plainly rather than through the uniform refusal.
+func refuseOwnAccount(w http.ResponseWriter, sentence string) {
+	http.Error(w, sentence, http.StatusForbidden)
+}
+
+// refuseAPIFailure is `fail` on the API's face: the cause goes to the process's
+// log and the answer is the API's own failure shape, which is what a panicking
+// route answers too (errreport.go): a screen parses one shape, and an answer it
+// cannot parse is a person told that the portal could not read the server's
+// answer rather than that the licence site failed.
+func refuseAPIFailure(w http.ResponseWriter, err error) {
+	log.Printf("keyservice: %v", err)
+	refuseAPI(w, http.StatusInternalServerError, apiFailedCode, apiFailedMessage)
+}
+
 // authorizeCode is one authorize request between its sign-in and its exchange:
 // the subscription the account's key is minted for, the PKCE challenge the
 // exchange is bound to, and the instant it stops working.
@@ -183,7 +292,7 @@ func refuseDevicePoll(w http.ResponseWriter) {
 // authorization code's leak turns on: the code went to the target the sign-in
 // validated and the exchange reads none, so a caller that has read a code off a
 // log or out of a browser's history has nothing to point it at — the only party
-// that can exchange it is the one that already received it (redirectWithCode).
+// that can exchange it is the one that already received it (signInCallback).
 type authorizeCode struct {
 	subscription string
 	account      string
@@ -473,13 +582,12 @@ func (s *Service) authorizeForm(w http.ResponseWriter, r *http.Request) {
 	s.renderSignIn(w, signInTemplate, view, signInRedirectCSP(target))
 }
 
-// authorizeSubmit is the sign-in itself: the ID token is verified, the account's
-// own licence is found, and a one-time code bound to the validated redirect and
-// to the PKCE challenge is minted and sent back to the CLI's listener.
-//
-// Nothing is minted here. The code is what the exchange holds, and a browser
-// that never follows the redirect — the ordinary ending of a person who changes
-// their mind — then leaves no key behind at all: what expires is a code.
+// authorizeSubmit is the sign-in itself on the page service.go mounts: the form
+// the person signed in on, answered with the redirect that carries the code to
+// the terminal's listener. This is the page that may answer a submission that
+// way, because it is served by this service beside a policy allowing exactly the
+// redirect its own submission ends at (signInRedirectCSP); the SPA's page is
+// served by Hosting and may not (apiAuthorize).
 func (s *Service) authorizeSubmit(w http.ResponseWriter, r *http.Request) {
 	if !s.limiter.allow("ip:" + clientIP(r)) {
 		refuseSignInToken(w)
@@ -490,40 +598,142 @@ func (s *Service) authorizeSubmit(w http.ResponseWriter, r *http.Request) {
 		refuseSignInToken(w)
 		return
 	}
-	form := r.PostForm
-	target, ok := loopbackRedirect(form.Get("redirect_uri"), "")
+	address, ok := s.authorizeSignIn(w, r, pageFace, AuthorizeCall{
+		RedirectURI: r.PostForm.Get("redirect_uri"),
+		State:       r.PostForm.Get("state"),
+		Challenge:   r.PostForm.Get("code_challenge"),
+		Method:      r.PostForm.Get("code_challenge_method"),
+		IDToken:     r.PostForm.Get("id_token"),
+	})
 	if !ok {
-		refuseSignInToken(w)
 		return
 	}
-	state, ok := authorizeState(form.Get("state"))
-	if !ok {
-		refuseSignInToken(w)
+	http.Redirect(w, r, address, http.StatusFound)
+}
+
+// apiAuthorize is the same sign-in on the portal's API, for the SPA's authorize
+// page (P3.5): that page is served from the portal's own origin and Hosting
+// rewrites `/api/**` to this service and nothing else (F21), so this is the
+// address it can reach at all.
+//
+// The step reads JSON here and a form there, and it **answers** the target
+// rather than the redirect to it. The pages Hosting serves are under the
+// portal's own policy, whose `form-action 'self'` a browser checks against the
+// address a submission ends at as well as against the form's own action (the
+// reading signInRedirectCSP, its test and this file's own pages are written
+// to) — so a submission from a page there would be dropped at the loopback and
+// the terminal would wait for a code nothing sent, however green every handler
+// test stayed. A page that navigates to the address it is answered with is not
+// submitting anything, and no policy of the portal's governs where it goes, so
+// the handover completes without the portal widening what a form on its own
+// origin may do.
+func (s *Service) apiAuthorize(w http.ResponseWriter, r *http.Request) {
+	if !s.limiter.allow("ip:" + clientIP(r)) {
+		apiFace.unverifiable(w)
 		return
 	}
-	challenge, ok := pkceChallenge(form.Get("code_challenge"), form.Get("code_challenge_method"))
-	if !ok {
-		refuseSignInToken(w)
+	var call AuthorizeCall
+	if !readCall(w, r, maxFormBytes, &call) {
+		apiFace.unverifiable(w)
 		return
 	}
-	caller, ok := s.verifySignIn(r.Context(), form.Get("id_token"))
+	address, ok := s.authorizeSignIn(w, r, apiFace, call)
 	if !ok {
-		refuseSignInToken(w)
 		return
+	}
+	writeBundle(w, AuthorizeHandover{Redirect: address})
+}
+
+// AuthorizeCall is §11.3's sign-in as a body: the four parameters the terminal
+// opened the page with and the ID token the session answered, which is every
+// field this step reads on either face.
+//
+// The token is a field here and not the bearer header the API's other routes
+// read, because this is K2.4's own sign-in: the page a person signs in on
+// carries it there, and `verifySignIn` decides it either way — a face that took
+// it from somewhere else would be a second way to say the same thing. The SPA's
+// client attaches the session's token to every request it makes, so the header
+// arrives beside it and this route does not read it. It has no entry in the wire
+// registry for the reason the device step's has none — a registered shape is a
+// JSON Schema, a fixture and the SPA's own types beside it, and those are the
+// portal's wire area's files rather than this file's (trial.go's `TrialCall`).
+type AuthorizeCall struct {
+	RedirectURI string `json:"redirect_uri"`
+	State       string `json:"state"`
+	Challenge   string `json:"code_challenge"`
+	Method      string `json:"code_challenge_method"`
+	IDToken     string `json:"id_token"`
+}
+
+// AuthorizeHandover is what that route answers a sign-in that landed: the
+// terminal's own listener with the one-time code and the state on it, which the
+// SPA's page navigates to (apiAuthorize).
+//
+// It is the same address the service's own page sends as a redirect
+// (signInCallback) and the only one either face can send a code to.
+type AuthorizeHandover struct {
+	Redirect string `json:"redirect"`
+}
+
+// authorizeSignIn is §11.3's sign-in, whatever face it arrived on and whatever
+// carried it: the ID token is verified, the account's own licence is found, and
+// a one-time code bound to the validated redirect and to the PKCE challenge is
+// minted. What it answers is the address that code goes to — the terminal's own
+// listener, rebuilt from the port `loopbackRedirect` accepted in this same
+// request — and whether it answered at all; what a face does with it is the
+// face's own (authorizeSubmit redirects the browser there, apiAuthorize answers
+// it).
+//
+// No key is minted here: the code is what the exchange holds, and a browser that
+// never follows it — the ordinary ending of a person who changes their mind —
+// then leaves no key behind at all, because what expires is a code.
+//
+// The address's allowance is the caller's to spend, before it reads a body, for
+// the reason renew.go's routes spend it first: a body this service never parses
+// is as cheap to serve as a good one.
+//
+// Every refusal is the face's and every decision is this function's, which is
+// what keeps the two doors from drifting apart: neither reads a parameter the
+// other does not, and both refuse a request the other would refuse.
+func (s *Service) authorizeSignIn(w http.ResponseWriter, r *http.Request, face signInFace, call AuthorizeCall) (string, bool) {
+	// The `redirect_uri` is the field both faces send: it is the callback
+	// written out, which `loopbackRedirect` reads and rebuilds the target from —
+	// nothing a caller wrote survives into the address the code goes to. The
+	// second half of that pair is empty because neither face sends `port` beside
+	// it.
+	target, ok := loopbackRedirect(call.RedirectURI, "")
+	if !ok {
+		face.unverifiable(w)
+		return "", false
+	}
+	state, ok := authorizeState(call.State)
+	if !ok {
+		face.unverifiable(w)
+		return "", false
+	}
+	challenge, ok := pkceChallenge(call.Challenge, call.Method)
+	if !ok {
+		face.unverifiable(w)
+		return "", false
+	}
+	caller, ok := s.verifySignIn(r.Context(), call.IDToken)
+	if !ok {
+		face.unverifiable(w)
+		return "", false
 	}
 	sub, held, err := s.accountLicence(r.Context(), caller.Email)
 	if err != nil {
-		fail(w, err)
-		return
+		face.failed(w, err)
+		return "", false
 	}
 	if !held {
-		http.Error(w, refuseNoLicence, http.StatusForbidden)
-		return
+		face.account(w, refuseNoLicence)
+		return "", false
 	}
 	code, err := newSecret()
 	if err != nil {
-		fail(w, err)
-		return
+		face.failed(w, err)
+		return "", false
 	}
 	now := s.now()
 	s.codes.keep(code, authorizeCode{
@@ -532,7 +742,12 @@ func (s *Service) authorizeSubmit(w http.ResponseWriter, r *http.Request) {
 		challenge:    challenge,
 		expires:      now.Add(authorizeCodeTTL),
 	}, now)
-	s.redirectWithCode(w, r, target, code, state)
+	address, err := signInCallback(target, code, state)
+	if err != nil {
+		face.failed(w, err)
+		return "", false
+	}
+	return address, true
 }
 
 // token is §11.3's step 5: the code comes back with the PKCE verifier and is
@@ -547,7 +762,7 @@ func (s *Service) token(w http.ResponseWriter, r *http.Request) {
 		Code         string `json:"code"`
 		CodeVerifier string `json:"code_verifier"`
 	}
-	if !readCall(w, r, &call) {
+	if !readCall(w, r, maxDeviceBytes, &call) {
 		refuseSignInToken(w)
 		return
 	}
@@ -591,7 +806,7 @@ func (s *Service) deviceStart(w http.ResponseWriter, r *http.Request) {
 	var call struct {
 		Installation string `json:"installation"`
 	}
-	if !readCall(w, r, &call) {
+	if !readCall(w, r, maxDeviceBytes, &call) {
 		refuseDevicePoll(w)
 		return
 	}
@@ -662,7 +877,7 @@ func (s *Service) devicePoll(w http.ResponseWriter, r *http.Request) {
 	var call struct {
 		DeviceCode string `json:"device_code"`
 	}
-	if !readCall(w, r, &call) {
+	if !readCall(w, r, maxDeviceBytes, &call) {
 		refuseDevicePoll(w)
 		return
 	}
@@ -709,7 +924,10 @@ type deviceAnswer struct {
 //
 // Both requests carry the ID token in the body, because there is no session here
 // to carry it for them: the confirm step re-verifies it rather than trusting the
-// page that rendered it.
+// page that rendered it. The SPA's own page makes the same two requests as two
+// calls of its own (apiDevice below, P3.5), with the token in a bearer header
+// rather than a field — the step itself is one function for both (deviceStep),
+// so the two pages cannot come to different decisions about a code.
 func (s *Service) deviceApprove(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		s.renderSignIn(w, deviceFormTemplate, signInView{}, signInCSP)
@@ -735,25 +953,12 @@ func (s *Service) deviceApprove(w http.ResponseWriter, r *http.Request) {
 		refuseDevicePoll(w)
 		return
 	}
-	sub, held, err := s.accountLicence(r.Context(), caller.Email)
-	if err != nil {
-		fail(w, err)
+	confirm := form.Get("confirm") != ""
+	asking, sub, ok := s.deviceStep(w, r, pageFace, caller, userCode, confirm)
+	if !ok {
 		return
 	}
-	if !held {
-		http.Error(w, refuseNoLicence, http.StatusForbidden)
-		return
-	}
-	if form.Get("confirm") == "" {
-		// The confirmation is a read of what the code is about, and it is asked
-		// before anything is approved: a code that is not live is refused here
-		// exactly as it is refused at the approval, so the page the person reads
-		// is never a page about a code this service is not holding.
-		asking, found := s.codes.deviceByUserCode(userCode, s.now())
-		if !found {
-			refuseDevicePoll(w)
-			return
-		}
+	if !confirm {
 		s.renderSignIn(w, deviceConfirmTemplate, confirmView{
 			Installation: asking.installation,
 			Organisation: sub.Organisation,
@@ -765,15 +970,144 @@ func (s *Service) deviceApprove(w http.ResponseWriter, r *http.Request) {
 		}, signInCSP)
 		return
 	}
-	approved, found := s.codes.approve(userCode, sub.ID, caller.Email, s.now())
-	if !found {
-		refuseDevicePoll(w)
-		return
-	}
 	s.renderSignIn(w, deviceDoneTemplate, confirmView{
-		Installation: approved.installation,
+		Installation: asking.installation,
 		Organisation: sub.Organisation,
 	}, signInCSP)
+}
+
+// DeviceCall is what the SPA's device page sends to `POST /api/cli/device`: the
+// code the person typed, and — on the second call — that this is the handover
+// and not the read that names the installation before it. One shape carries
+// both, because the two calls are one step apart and what tells them apart is
+// `confirm` and nothing else.
+//
+// It carries no account and no licence: which account approves is the one the
+// bearer token's sign-in proved, and which subscription the terminal's poll
+// mints for is that account's own rather than one this body could name
+// (accountLicence, and its note on what the portal's binding does not decide:
+// the entitlement P3.5's page binds to the project is not read here). A body
+// that named either would be a body this route does not read.
+type DeviceCall struct {
+	UserCode string `json:"user_code"`
+	// Confirm is the second call's field. Absent and `false` are one request —
+	// the read — so a body that names it falsely is never the handover.
+	Confirm bool `json:"confirm"`
+}
+
+// DeviceAsk is what that route answers for a code somebody typed: the name the
+// requesting installation gave, the organisation the licence belongs to, and the
+// code as this service read it, so the page shows the code it is about to
+// approve rather than the text that was typed (confirmView's three fields, on
+// the API's face).
+//
+// The installation is untrusted text and the SPA draws it as a text node
+// (P3.5's `Untrusted`); the shape has no entry in the wire registry for the
+// reason the trial's has none: a registered shape is a JSON Schema, a fixture
+// and the SPA's own types beside it, and those are the portal's wire area's
+// files rather than this file's (trial.go's `TrialCall`).
+type DeviceAsk struct {
+	Installation string `json:"installation"`
+	Organisation string `json:"organisation"`
+	UserCode     string `json:"user_code"`
+}
+
+// apiDevice is §11.4's second step on the portal's API: the SPA's approve page
+// reads a code back here and then hands the licence over, because that page is
+// served from the portal's own origin and Hosting rewrites `/api/**` to this
+// service and nothing else (F21).
+//
+// The caller is the request's own bearer token and never a field of the body:
+// the SPA holds no form session, and a body that named an account would let one
+// account approve for another's licence. The two requests are the two calls the
+// page makes, told apart by `confirm` exactly as the page's own form tells its
+// two apart, and both go through deviceStep, so the two faces decide alike.
+func (s *Service) apiDevice(w http.ResponseWriter, r *http.Request) {
+	if !s.limiter.allow("ip:" + clientIP(r)) {
+		apiFace.device(w)
+		return
+	}
+	var call DeviceCall
+	if !readCall(w, r, maxDeviceBytes, &call) {
+		apiFace.device(w)
+		return
+	}
+	token, ok := bearerToken(r)
+	if !ok {
+		apiFace.unverifiable(w)
+		return
+	}
+	caller, ok := s.verifySignIn(r.Context(), token)
+	if !ok {
+		apiFace.unverifiable(w)
+		return
+	}
+	userCode, ok := userCodeKey(call.UserCode)
+	if !ok {
+		apiFace.device(w)
+		return
+	}
+	asking, sub, ok := s.deviceStep(w, r, apiFace, caller, userCode, call.Confirm)
+	if !ok {
+		return
+	}
+	if !call.Confirm {
+		writeBundle(w, DeviceAsk{
+			Installation: asking.installation,
+			Organisation: sub.Organisation,
+			UserCode:     groupCode(userCode),
+		})
+		return
+	}
+	// The handover's answer is no content, and there is nothing it could say
+	// that the page does not already hold: the licence was bound before this
+	// call and the key is minted where the terminal's poll asks for it (K2.4),
+	// so a body here would be a second statement about the same act. The SPA's
+	// client reads 204 as the empty answer it is rather than parsing a body
+	// nobody wrote (client.ts).
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// deviceStep is §11.4's second step, whatever face it arrived on: the caller
+// whose sign-in has just been verified, the code as this service read it
+// (userCodeKey), and whether this is the read that names the installation or the
+// answer that approves it. What it answers is what the request was about — the
+// live code and the account's own licence — and what it writes is the face's own
+// refusal, which is the only thing the two doors do differently.
+//
+// The read is a read and nothing else: it names the installation and approves
+// nothing, so a person who does not recognise the name leaves a code that is
+// still waiting for whoever holds the terminal (deviceByUserCode). The
+// approval finds the code by the **user code** the person typed and not by the
+// device code, which the CLI holds and the person never sees (codes.approve).
+func (s *Service) deviceStep(w http.ResponseWriter, r *http.Request, face signInFace, caller Caller, userCode string, confirm bool) (deviceCode, Subscription, bool) {
+	sub, held, err := s.accountLicence(r.Context(), caller.Email)
+	if err != nil {
+		face.failed(w, err)
+		return deviceCode{}, Subscription{}, false
+	}
+	if !held {
+		face.account(w, refuseNoLicence)
+		return deviceCode{}, Subscription{}, false
+	}
+	if !confirm {
+		// The confirmation is a read of what the code is about, and it is asked
+		// before anything is approved: a code that is not live is refused here
+		// exactly as it is refused at the approval, so the page the person reads
+		// is never a page about a code this service is not holding.
+		asking, found := s.codes.deviceByUserCode(userCode, s.now())
+		if !found {
+			face.device(w)
+			return deviceCode{}, Subscription{}, false
+		}
+		return asking, sub, true
+	}
+	approved, found := s.codes.approve(userCode, sub.ID, caller.Email, s.now())
+	if !found {
+		face.device(w)
+		return deviceCode{}, Subscription{}, false
+	}
+	return approved, sub, true
 }
 
 // verifySignIn verifies the ID token a form carried and answers the caller it
@@ -812,8 +1146,21 @@ func (s *Service) verifySignIn(ctx context.Context, raw string) (Caller, bool) {
 // the verifier refuses a token whose address its holder has not proved, so a
 // caller cannot bind itself to somebody else's purchase by asserting their
 // address. Where an account has bought more than one, the newest subscription is
-// the one answered; picking among several, and the seats the account holds
-// rather than bought, are the account page's (K5.1).
+// the one answered.
+//
+// **That is the whole of the choice, and it is a gap rather than a decision.**
+// Nothing here is asked which entitlement the portal's login bound to the
+// terminal's project, and neither page sends one with its handover, so an
+// account holding two subscriptions is minted for the newer one whichever
+// licence the person chose and bound (P3.5's pages bind; this is what mints).
+// Closing it is a mint that can be asked for the entitlement bound to a project
+// id, which is the portal's entitlement model — P3.1's binding and P4.2's
+// ledger, the same model this reader is replaced by — and not a check this
+// function could invent from a subscription, so it is recorded as a follow-up in
+// docs/licence-key-v2/reconciliation.md rather than guessed at here. What the
+// portal's screens pick among is what the installation is bound to (K5.1
+// superseded by them), and the seats the account holds rather than bought are
+// the account page's.
 //
 // What "running" is read from is the subscription's own record, and that is a
 // gap this route has rather than one it makes: §8's refund and chargeback write
@@ -993,35 +1340,37 @@ func (s *Service) answerMintFailure(w http.ResponseWriter, err error) {
 	fail(w, err)
 }
 
-// redirectWithCode sends §11.3's step 4: the code and the state back to the
-// CLI's listener.
+// signInCallback is §11.3's step 4 built: the address the one-time code goes to
+// with the state on it, which is the whole of what both faces of the step send.
 //
-// The target is the one the caller asked for, and the whole of what makes it
-// safe is that it came out of `loopbackRedirect` in the same request, which
+// The target is the one `loopbackRedirect` accepted in the same request, which
 // rebuilds a loopback address from a validated port — this function echoes and
-// judges nothing. That matters because a code is a bearer credential for one
-// exchange: one sent to an address the caller could still choose would be the
-// key itself, so any new caller here has to pass a target that came from there.
-func (s *Service) redirectWithCode(w http.ResponseWriter, r *http.Request, target, code, state string) {
+// judges nothing, and the whole of what makes an address safe to send a code to
+// is that it came from there. That matters because a code is a bearer credential
+// for one exchange: one sent to an address the caller could still choose would
+// be the key itself, so any new caller here has to pass a target that came from
+// there. Both faces build this one address — the page redirects the browser to
+// it, the API answers it for the SPA's page to navigate to — so neither can send
+// a code anywhere the other would not.
+func signInCallback(target, code, state string) (string, error) {
 	address, err := url.Parse(target)
 	if err != nil {
-		fail(w, err)
-		return
+		return "", err
 	}
 	query := address.Query()
 	query.Set("code", code)
 	query.Set("state", state)
 	address.RawQuery = query.Encode()
-	http.Redirect(w, r, address.String(), http.StatusFound)
+	return address.String(), nil
 }
 
-// readCall decodes one of these routes' JSON bodies: under this service's own
-// bound and strictly, the way every other wire format here is read. It answers
-// false for everything it will not read, and the caller answers the uniform
-// sentence — which of a caller's mistakes it was is not something these routes
-// tell.
-func readCall(w http.ResponseWriter, r *http.Request, into any) bool {
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxDeviceBytes))
+// readCall decodes one of these routes' JSON bodies: under the bound its caller
+// declares for the route and strictly, the way every other wire format here is
+// read. It answers false for everything it will not read, and the caller answers
+// the uniform sentence — which of a caller's mistakes it was is not something
+// these routes tell.
+func readCall(w http.ResponseWriter, r *http.Request, maxBytes int64, into any) bool {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBytes))
 	if err != nil {
 		return false
 	}
@@ -1254,7 +1603,7 @@ const signInCSP = "default-src 'none'; form-action 'self'; base-uri 'none'; fram
 //
 // What is added is the validated target's own origin and not a wildcard over
 // loopback ports: the value comes from `loopbackRedirect` in this same request,
-// which is also the address `redirectWithCode` sends the code to, so the policy
+// which is also the address `signInCallback` builds for the code, so the policy
 // allows exactly the one place this page's sign-in can end up.
 func signInRedirectCSP(target string) string {
 	address, err := url.Parse(target)

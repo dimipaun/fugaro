@@ -171,7 +171,7 @@ Each task: **Logging (D1352):** every mutating command it migrates calls `report
 | Check | Measures | Who | What the owner types |
 | --- | --- | --- | --- |
 | **310** | A real terminal on macOS: `fugaro update`, `fugaro setup --plan-only`, `NO_COLOR=1 fugaro update`, `fugaro update \| cat`, `fugaro update --json`, a forced failure (the context and the log path), the log file's mode and its retention after 51 runs | the owner | the five commands above, then `ls -l ~/.local/state/fugaro/logs` |
-| **311** | The same on Windows Terminal and the legacy console (virtual-terminal mode through `termenv`; the spinner and colour) | the owner | the same commands in each console |
+| **311** | The same on Windows Terminal and the legacy console (virtual-terminal mode through `termenv`; the spinner and colour) | the owner | the same commands in each console, as one script: `pwsh -NoProfile -File scripts/live-checks/check311.ps1 -Project <fugaro project>`, run **twice**, once in Windows Terminal and once in the legacy console — its section is Check 311 in `docs/gcp-live-checklist.md`, and its sibling test is `scripts/live-checks/check311_test.sh` |
 | **314** | Part B's (see the graph plan); reserved here | | |
 
 The check sections are written into `docs/gcp-live-checklist.md` by the task that implements the first slice that needs them, as **NOT RUN**; this plan writes none.

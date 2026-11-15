@@ -112,6 +112,8 @@ printf 'fugaro %s\n' "$*" >>"$FAKE300_DIR/calls"
 case "${1:-}" in
 doctor)
   cat "$FAKE300_DIR/doctor.json"
+  # exits 1 with its document, as the real doctor does when a check is a warning
+  [ ! -f "$FAKE300_DIR/doctor.exit" ] || exit "$(cat "$FAKE300_DIR/doctor.exit")"
   ;;
 update)
   printf 'update\n' >>"$FAKE300_DIR/ran-update"
@@ -399,6 +401,14 @@ PY
 }
 
 # --------------------------------------------------------------- the healthy run
+case_doctor_exit_1() {
+  setup_case doctor-exit-1
+  printf '1\n' >"$dir/state/doctor.exit"
+  run300 --installation "$INSTALLATION"
+  expect_status "$status" 0 "doctor exit 1: the document it printed is the answer"
+  expect_fact installation PASS "doctor exit 1"
+}
+
 case_healthy() {
   setup_case healthy
   run300 --installation "$INSTALLATION"
@@ -631,6 +641,7 @@ t() {
 }
 
 t case_healthy
+t case_doctor_exit_1
 t case_settled
 t case_skip_update
 t case_stale_marker

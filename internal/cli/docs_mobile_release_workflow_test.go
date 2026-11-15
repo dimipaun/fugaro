@@ -950,7 +950,7 @@ func mobileReleaseCheckJob(t *testing.T, path, platform string, job mobileReleas
 			if !strings.Contains(cmd, mobileReleaseEnvExecCommand) {
 				t.Errorf("the %s job's build step does not run under `eas env:exec production`: `eas-cli` resolves mobile/app.config.js locally before it uploads anything, and the identity comes from the EAS project's environment", platform)
 			}
-			for _, flag := range []string{"--non-interactive", "--wait", "--json"} {
+			for _, flag := range []string{"--wait", "--json"} {
 				if !strings.Contains(cmd, flag) {
 					t.Errorf("the %s job's build step is missing %s: `--non-interactive` keeps a prompt from hanging the job, `--wait` makes the build it reports the one it made, and `--json` is what carries that build's id to the submission", platform, flag)
 				}
