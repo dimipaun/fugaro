@@ -192,42 +192,67 @@ func mobileAuth620Set() map[string]bool {
 	return set
 }
 
+// mobileAuth620Predecessor is the number of the section the register writes
+// immediately above Check 620: Check 235, the last of the forge, authorship and
+// change-set block, which was the work appended before this one.
+const mobileAuth620Predecessor = "235"
+
 // TestDocsMobileChecks620AreAppended: the register appends a work's sections
-// after every section older than them, and in ascending order: a section
-// inserted among older ones, or a number written out of order, is how a reader
-// loses track of which numbers are live. The block is not pinned as the file's
-// **highest** -- a later work appends its own sections below these, and this
-// test would then fail for a reason that is not about this block -- so what is
-// asserted is that the block's own 620 comes after every heading that is not
-// one of the eight, and that 627 is written.
+// where its written sections end, and in ascending order within a block, so a
+// block moved up among older sections, or a number written out of order, is how
+// a reader loses track of which numbers are live.
+//
+// What "appended" is read as, and why it is not a numeric rule: the register's
+// numbers are not its write order. A block whose numbers were **reserved** below
+// this one -- 610 to 619 are `docs/review-job`'s, and the register names others
+// (80, 105-109, 119, 181-189) -- is written whenever its work merges and lands
+// at the end of the file like any other append, below these sections; a rule
+// that read every lower-numbered section as older would call that an insertion.
+// What is asserted instead is the section the block was appended after: the one
+// written immediately above Check 620 is the register's last written section at
+// that head, and anything inserted among older sections changes what precedes
+// it. The block is deliberately not pinned as the file's **highest**, because a
+// later work appends its own sections below these.
 func TestDocsMobileChecks620AreAppended(t *testing.T) {
 	register := readDoc(t, liveChecksDoc)
 	block := mobileAuth620Set()
 
-	prev := 0
-	for _, number := range mobileAuth620Numbers {
-		at := strings.Index(register, "\n## Check "+number+":")
-		if at < 0 {
-			t.Fatalf("%s has no `## Check %s:` section: the row above it points at a section that has to be there", liveChecksDoc, number)
-		}
-		if at < prev {
-			t.Errorf("%s writes Check %s out of the block's ascending order: the eight are one appended block, and a reader takes a number written above an older one for a live one", liveChecksDoc, number)
-		}
-		prev = at
-	}
-
-	first := strings.Index(register, "\n## Check 620:")
-	lastOlder := -1
+	at := make(map[string]int, len(mobileAuth620Numbers))
+	first := -1
+	predecessor, lastOther := "", ""
 	for _, m := range check600NumberRE.FindAllStringSubmatchIndex(register, -1) {
-		if m[0] < first && !block[register[m[2]:m[3]]] {
-			lastOlder = m[0]
+		number := register[m[2]:m[3]]
+		if block[number] {
+			if first < 0 {
+				first, predecessor = m[0], lastOther
+			}
+			if _, seen := at[number]; !seen {
+				at[number] = m[0]
+			}
+			continue
 		}
+		lastOther = number
 	}
-	if lastOlder < 0 {
+	if first < 0 {
+		t.Fatalf("%s has no `## Check 620:` section: the row above it points at a section that has to be there", liveChecksDoc)
+	}
+	if predecessor == "" {
 		t.Fatalf("%s carries no `## Check` section above the mobile-auth block: this assertion would otherwise pass whatever the register holds", liveChecksDoc)
 	}
-	if first < lastOlder {
-		t.Errorf("%s writes Check 620 before the sections that were already written: the block is appended where the register's written sections end, not inserted among them", liveChecksDoc)
+	if predecessor != mobileAuth620Predecessor {
+		t.Errorf("%s writes Check 620 immediately after Check %s, and the block was appended after Check %s: the register appends a work's sections where its written sections end, so a block moved up among older sections changes what precedes it -- and every number below this one that was reserved rather than taken (610 to 619 among them) is written at the end like any other append, which is why what is read here is the section above the block and not the numbers below it", liveChecksDoc, predecessor, mobileAuth620Predecessor)
+	}
+
+	prev := 0
+	for _, number := range mobileAuth620Numbers {
+		pos, ok := at[number]
+		if !ok {
+			t.Fatalf("%s has no `## Check %s:` section: the row above it points at a section that has to be there", liveChecksDoc, number)
+		}
+		if pos < prev {
+			t.Errorf("%s writes Check %s out of the block's ascending order: the eight are one appended block, and a reader takes a number written above an older one for a live one", liveChecksDoc, number)
+		}
+		prev = pos
 	}
 }
 

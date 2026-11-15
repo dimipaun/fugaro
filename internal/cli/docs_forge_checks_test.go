@@ -105,6 +105,11 @@ var forgeCheckEntries = []forgeCheckEntry{
 // and compares it with this list, so the two cannot drift apart.
 var forgeCheckNumbers = []string{"230", "231", "232", "234", "235"}
 
+// forgeCheckPredecessor is the number of the section the register writes
+// immediately above Check 230: Check 311, the Windows half of the CLI's default
+// output, which was the section written last before these five were appended.
+const forgeCheckPredecessor = "311"
+
 // forgeCheckHeadingRE finds every `## Check N:` heading's number, so the five
 // can be placed against the sections that were already written and the register's
 // own highest section can be read.
@@ -249,38 +254,57 @@ func TestDocsForgeChecksWritten(t *testing.T) {
 		t.Errorf("%s carries a `## Check 233:` section: 233 was withdrawn in review round 1 and is reserved and unused", liveChecksDoc)
 	}
 
-	// Appended, not inserted: the five come after every section that was already
-	// in the register **when they were written** and in their own ascending
-	// order. A block written in the middle of older ones is how a reader loses
-	// track of which numbers are live. "Already written" is read as the sections
-	// above the block's own first heading, because the register's rule is that a
-	// later work appends its own sections at the end -- the mobile-auth
-	// allocation of 2026-11-14 writes Checks 620 to 627 below these five, and a
-	// reading of "the sections already written" as everything the file holds
-	// would fail here for a reason that is not about this block.
-	first := strings.Index(register, "\n## Check "+forgeCheckNumbers[0]+":")
+	// Appended, not inserted: the five were appended where the register's
+	// written sections ended, and they are in their own ascending order. A block
+	// written in the middle of older ones is how a reader loses track of which
+	// numbers are live.
+	//
+	// What "appended" is read as, and why it is not a numeric rule: the register's
+	// numbers are not its write order. A block whose numbers were **reserved**
+	// below these five is written whenever its work merges and lands at the end
+	// of the file like any other append, so a rule that read every lower-numbered
+	// section as older would call that an insertion -- and the reverse rule would
+	// fail here for a reason that is not about this block, since the register's
+	// highest written section (Check 600) is already above these five. What is
+	// asserted instead is the section the block was appended after: the one
+	// written immediately above Check 230 is the register's last written section
+	// at that head, and anything inserted among older sections changes what
+	// precedes it.
+	at := make(map[string]int, len(forgeCheckNumbers))
+	first := -1
+	predecessor, lastOther := "", ""
+	for _, m := range forgeCheckHeadingRE.FindAllStringSubmatchIndex(register, -1) {
+		number := register[m[2]:m[3]]
+		if slices.Contains(forgeCheckNumbers, number) {
+			if first < 0 {
+				first, predecessor = m[0], lastOther
+			}
+			if _, seen := at[number]; !seen {
+				at[number] = m[0]
+			}
+			continue
+		}
+		lastOther = number
+	}
 	if first < 0 {
 		t.Fatalf("%s has no `## Check %s:` section: the row above it points at a section that has to be there", liveChecksDoc, forgeCheckNumbers[0])
 	}
-	lastOld := -1
-	for _, m := range forgeCheckHeadingRE.FindAllStringSubmatchIndex(register, -1) {
-		if m[0] < first && !slices.Contains(forgeCheckNumbers, register[m[2]:m[3]]) {
-			lastOld = m[0]
-		}
-	}
-	if lastOld < 0 {
+	if predecessor == "" {
 		t.Fatalf("%s carries no `## Check` section other than these five: this assertion would otherwise pass whatever the register holds", liveChecksDoc)
 	}
-	prev := lastOld
+	if predecessor != forgeCheckPredecessor {
+		t.Errorf("%s writes Check %s immediately after Check %s, and the five were appended after Check %s: the register appends a work's sections where its written sections end, so a block moved up among older sections changes what precedes it -- and a number reserved below these five is written at the end like any other append, which is why what is read here is the section above the block and not the numbers below it", liveChecksDoc, forgeCheckNumbers[0], predecessor, forgeCheckPredecessor)
+	}
+	prev := first
 	for _, number := range forgeCheckNumbers {
-		at := strings.Index(register, "\n## Check "+number+":")
-		if at < 0 {
+		pos, ok := at[number]
+		if !ok {
 			t.Fatalf("%s has no `## Check %s:` section: the row above it points at a section that has to be there", liveChecksDoc, number)
 		}
-		if at < prev {
-			t.Errorf("%s writes Check %s before the sections that were already written: the block is appended where the register's written sections end", liveChecksDoc, number)
+		if pos < prev {
+			t.Errorf("%s writes Check %s out of the block's ascending order: the five are one appended block, and a reader takes a number written above an older one for a live one", liveChecksDoc, number)
 		}
-		prev = at
+		prev = pos
 	}
 
 	// The plan's own X1 section names what this task wrote, this test file
