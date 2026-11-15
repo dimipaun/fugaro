@@ -40,5 +40,5 @@ The paragraph is handed over in this shape on purpose: it names the commands and
 ## What this note does not do
 
 - **It does not edit another design's file.** The three rows belong to `docs/settings-commands/`, `docs/rigor-command/` and `docs/accounts-add/`, and each of those designs writes its own gate call, in its own task, with its own rules. Where this note names a rule, it names it as that design wrote it.
-- **It does not close the missing base-branch opt-in R7 owes**, and it does not decide anything about it.
+- **It does not decide R7's question.** The base-branch opt-in this note once listed as missing was closed on 2026-11-13: the rigor design's R7 dropped that gate rather than built it, so `fugaro run --mode hotfix` needs none (`docs/rigor-command/implementation-plan.md`).
 - **It does not touch `plugin/**`**, which the 2026-10-30 rulings reserve: the paragraph above is text for its owner, and the file it belongs in is unchanged by this folder.
