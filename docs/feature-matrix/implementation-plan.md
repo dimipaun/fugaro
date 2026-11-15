@@ -41,13 +41,14 @@ The owner's answers that shaped the plan (2026-11-15):
 | --- | --- |
 | Statuses are a closed set: `available`, `coming-soon`, `planned` | C1 (`validateMapping`, `validateSnapshot`) |
 | Plans are a closed set: `community`, `team`, `enterprise`; a row lists its lowest plan, and every higher plan is checked | C1; T3 and T4 render the three columns |
-| Every name in every status.md row is a feature's spec or excluded with a reason, or the generator refuses to write and lists the names | T1 |
+| Every name in every status.md row is a feature's spec or excluded with a reason, or the generator refuses to write and lists the names; `npm run check` reads no part of status.md, so no sweep turns it red (R2) | T1 |
 | The generator stops at a status.md table or row it cannot read and names the line | T1 |
 | Available only when every contributing spec is in Done and no `hold` is set; Planned only when no contributing spec has started; all-parked features are omitted | T1 |
-| An Available row in the previous FEATURES.md never comes back as Coming soon or Planned unless a `hold` was added | T1 |
-| No spec name, status.md section name, task id, date or price appears in FEATURES.md or the built page | T3, T4 (each output's own test) |
+| An Available row in the previous FEATURES.md never comes back as Coming soon or Planned, or goes missing, unless a `hold` was added or the id is listed under `retired`; no previous file, no check (R7) | T1 |
+| A parked spec counts for nothing beside specs that are not parked (R6) | T1 |
+| No spec name, status.md section name, task id, date or price appears in FEATURES.md or the built page. A spec name is matched as a whole hyphenated token; single-word spec names (`mobile`, `website`, `portal`, `plans`, ...) are ordinary words and are not matched | T3, T4 (each output's own test) |
 | The page and FEATURES.md show the same rows: the page reads FEATURES.md's embedded block | I1 |
-| FEATURES.md's `as_of` is not behind the newest released CLI notes file | I1 (`feature-matrix-stamp.mjs`), T5 (`release.sh`) |
+| FEATURES.md's `as_of` names an existing notes file not behind the newest one at or below `current` (one release ahead is allowed: F13 criterion 4) | I1 (`feature-matrix-stamp.mjs`), T5 (`release.sh`, ordinary path only) |
 
 ## Slice A: the matrix, inert until the next website promotion
 
@@ -61,7 +62,8 @@ The owner's answers that shaped the plan (2026-11-15):
 - Interfaces: produces
   - `STATUSES` and `PLANS`.
   - The mapping shape: `version`, a `features` list (`id`, `name`, `explanation`, `plan`,
-    `specs`, optional `hold: {status, reason}`) and an `excluded` list (`spec`, `reason`).
+    `specs`, optional `hold: {status: coming-soon, reason}`; `coming-soon` is the only hold
+    status), an `excluded` list (`spec`, `reason`) and a `retired` list of ids (R7).
   - The snapshot shape: `version`, `as_of`, and `rows` of `{id, name, explanation, status,
     plans: {community, team, enterprise}}`.
   - `validateMapping`, `validateSnapshot`.
@@ -88,9 +90,12 @@ The owner's answers that shaped the plan (2026-11-15):
   "To do or parked", "Done"), splits a first cell on commas, and reads "parked by the owner" from
   the To do table's State cell and "Merged" counts from the other tables.
 - Tests: Available with all specs Done; Coming soon with one in WIP; Planned with all in To do and
-  nothing merged; omitted when all are parked; `hold` wins; an unmapped name is refused with its
-  name; a regression is refused with the row and the spec; a renamed table heading is refused
-  with the line.
+  nothing merged; omitted when all are parked; a parked spec beside a Done one leaves the row
+  Available (R6); `hold` wins; an unmapped name is refused with its name; a mapped name status.md
+  lacks is refused; a regression is refused with the row and the spec; an Available id missing from
+  the new snapshot is refused unless retired (R7); no previous snapshot skips the regression
+  check; an unreadable previous block is refused; a renamed table heading is refused with the
+  line.
 - Command: `cd website && node --test test/feature-matrix.mjs`
 - Red step: the Planned and parked cases fail first against a builder that maps only Done.
 - Depends on: C1 (the mapping and snapshot shapes).
@@ -100,8 +105,9 @@ The owner's answers that shaped the plan (2026-11-15):
 ### T2. The mapping
 - Acceptance: every name in every row of `docs/status.md` at the commit the run starts from is a
   spec of exactly one feature or excluded with a reason. Each feature has a user-language name, a
-  one- or two-sentence explanation and its lowest plan. Built but unshipped features (the mobile
-  app; secrets-brokering's switched-off B1.13) carry a `hold` with its reason. Extensions follow
+  one- or two-sentence explanation and its lowest plan. A feature whose specs are all Done but
+  which has not shipped (the mobile app's Done specs, such as `mobile-auth`, while the mobile stream
+  is at `0.0.0`) carries a `hold` with its reason. Extensions follow
   D2445.
 - Files: `docs/feature-matrix/mapping.yaml` (new), `website/test/feature-matrix-mapping.mjs`
   (new).
@@ -112,7 +118,8 @@ The owner's answers that shaped the plan (2026-11-15):
 - Tests: the file is read literally with `parseYAML` and the closed plan and status sets written in
   the test itself, the way `website/test/compatibility.mjs` reads its file, not through the loader
   it checks. Ids are unique; no spec named twice; no explanation
-  longer than two sentences; no name or explanation contains a spec name.
+  longer than two sentences; no name or explanation contains a hyphenated spec name as a whole
+  token.
 - Command: `cd website && node --test test/feature-matrix-mapping.mjs`
 - Red step: the test fails until the file exists.
 - Depends on: none. The shape is fixed in this plan, so T2 runs beside C1.
@@ -125,13 +132,14 @@ The owner's answers that shaped the plan (2026-11-15):
   Community, Team, Enterprise) and the snapshot block. A refusal from `buildSnapshot` exits non-zero,
   prints the names, and leaves the file untouched.
 - Files: `website/src/lib/feature-matrix-markdown.mjs` (new), `website/bin/feature-matrix.mjs`
-  (new), `website/package.json` (the `features` script), `website/test/feature-matrix-markdown.mjs`
-  (new).
+  (new), `website/package.json` (the `features` script), `website/README.md` (the command, which
+  `website/test/readme.mjs` holds to `package.json`'s scripts),
+  `website/test/feature-matrix-markdown.mjs` (new).
 - Interfaces: consumes C1's snapshot, block format and stub `buildSnapshot`. Produces
   `renderMarkdown(snapshot)` and the command.
 - Tests: rendering the stub snapshot gives a table with three checkmark columns; the block reads
-  back equal; the output contains no `STATUSES` key spelled as status.md does, no date other than
-  `as_of`, no task id pattern; a thrown refusal leaves an existing file byte-identical.
+  back equal; the output contains no status.md section name, no hyphenated spec name as a whole
+  token, no date other than `as_of`, no task id pattern; a thrown refusal leaves an existing file byte-identical.
 - Command: `cd website && node --test test/feature-matrix-markdown.mjs`
 - Red step: the column test fails against a two-column render.
 - Depends on: C1 (the snapshot shape and the stub).
@@ -141,21 +149,34 @@ The owner's answers that shaped the plan (2026-11-15):
 ### T4. The /features/ page and its menu entry
 - Acceptance: `/features/` builds from `loadFeatures()`. It shows one table with status words and
   marks (not colour alone) and three plan columns. It links to `/compatibility/`. It sits in the
-  Product menu directly after "How it works" (D2442), and it passes every page-wide gate.
+  Product menu directly after "How it works" (D2442), with the approval recorded in the comments of
+  `Base.astro` and `base-styles.mjs` (O3), and it passes every page-wide gate.
 - Files: `website/src/pages/features.astro` (new), `website/src/content.ts` (`loadFeatures()`,
   reading the stub for now), `website/src/layouts/Base.astro` (the nav entry),
   `website/test/base-styles.mjs` (the Product group's expected routes and labels),
   `website/test/features-page.mjs` (new).
 - Interfaces: consumes C1's snapshot shape through the stub.
 - Tests: the built page has the table, the legend, the three plan columns and the link to
-  compatibility; no status.md section name, spec name or price in the HTML; the Product menu lists
+  compatibility; no status.md section name, hyphenated spec name (whole token) or price in the
+  HTML; the Product menu lists
   `/features/` after `/how-it-works/`; plus the gates `website/test/console-option.mjs` names
-  (accessibility, budget, copy, fold, linkcheck, meta, origins).
+  (a11y, budget, copy, fold, linkcheck, meta, origins, os-cards).
 - Command: `cd website && npm run check`
 - Red step: `features-page.mjs` fails until the page exists; `base-styles.mjs` fails until the nav
   entry is added.
 - Depends on: C1 (the snapshot shape and the stub).
 - Commit: `website: the features page, in the Product menu`.
+- Reviewer tier: standard.
+
+### T7. The compatibility page links to /features/
+- Acceptance: `/compatibility/` carries one link to `/features/`, beside its lead.
+- Files: `website/src/pages/compatibility.astro`, `website/test/compatibility-page.mjs`.
+- Interfaces: none beyond the route.
+- Tests: `compatibility-page.mjs` finds the link; `linkcheck.mjs` resolves it.
+- Command: `cd website && npm run check`
+- Red step: the new assertion fails until the link exists.
+- Depends on: T4 (behaviour: the link check needs the `/features/` page to exist).
+- Commit: `website: the compatibility page links to the feature matrix`.
 - Reviewer tier: standard.
 
 ### I1. Wire the real snapshot and write the first FEATURES.md
@@ -164,18 +185,18 @@ The owner's answers that shaped the plan (2026-11-15):
     `loadFeatures()` reads FEATURES.md's block.
   - FEATURES.md is generated with `as_of` set to the CLI stream's `current` in
     `docs/release-streams.yaml`.
-  - The compatibility page links to `/features/`.
-  - A stamp test holds the stamp to the newest released notes file, the page's rows to the
-    block's, and the mapping's names to status.md (R2).
+  - A stamp test holds the stamp to F13 criterion 4, the built page's rows to the block's, and
+    the block to `validateSnapshot`. It reads no part of status.md (R2).
 - Files: `website/src/lib/feature-matrix-stub.mjs` (deleted), `website/bin/feature-matrix.mjs`,
-  `website/src/content.ts`, `FEATURES.md` (new, generated), `website/src/pages/compatibility.astro`,
-  `website/test/feature-matrix-stamp.mjs` (new).
+  `website/src/content.ts`, `FEATURES.md` (new, generated), `website/test/feature-matrix-stamp.mjs`
+  (new).
 - Interfaces: joins C1, T1, T2, T3 and T4.
-- Tests: `website/test/feature-matrix-stamp.mjs` (end to end: run the command against the tree
-  into a temporary file and compare it with the committed file, except for the stamp line; the
-  built page's rows equal the block's), and the whole `npm run check`.
-- Command: `cd website && npm run features -- --as-of v$(current) && npm run check`, then
-  `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1`.
+- Tests: `website/test/feature-matrix-stamp.mjs`: the stamp rule, with a fixture one release
+  ahead accepted and one behind refused; the built page's rows equal the block's (end to end
+  through the real loader); the whole `npm run check`. The generator's agreement with status.md
+  is proved once, by the run that writes FEATURES.md here, and is not a standing test (F11).
+- Command (from the repository root):
+  `v=$(go run ./internal/streams/cmd/streams get cli | sed -n 's/^current=//p') && (cd website && npm run features -- --as-of "v$v" && npm run check) && GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1`.
 - Red step: the stamp test fails while `loadFeatures()` still reads the stub.
 - Depends on: C1, T1, T2, T3, T4 (it wires their real sides together).
 - Commit: `website: the feature matrix, wired end to end, as of the current release`.
@@ -189,14 +210,19 @@ The owner's answers that shaped the plan (2026-11-15):
     vX.Y.Z` in `website/` and commits FEATURES.md with the notes, the summary line and the
     compatibility stamp. The generator's refusal lists the unmapped specs, and the PR maps them.
   - `scripts/release.sh` refuses in its preconditions when `origin/main`'s FEATURES.md does not
-    carry `as_of: vX.Y.Z`, naming the file.
+    carry `as_of: vX.Y.Z`, naming the file. This applies to the ordinary release path only. The
+    hotfix path does not check it, because `scripts/hotfix-commits.sh` admits no FEATURES.md
+    commit on a release branch, and the matrix waits for the next ordinary release. The step says
+    so in `docs/release.md`'s "Hotfix releases".
   - The root `README.md` links FEATURES.md.
 - Files: `docs/release.md`, `scripts/release.sh`, `scripts/release_test.go`, `README.md`.
 - Interfaces: consumes the `as_of` line format of C1's contract.
-- Tests: a `scripts/release_test.go` case refusing a tree without the stamp and passing with it;
-  the Docs tests.
-- Command: `go test ./scripts/ -run 'TestRelease' -count=1 && GOFLAGS=-p=2 go test ./internal/cli/
-  -run Docs -count=1` (narrow `-run` to the new test's name).
+- Tests: a `TestPreconditionFailures` case refusing a tree without the stamp; every happy-path
+  fixture in `scripts/release_test.go` writes a stamped FEATURES.md, as `writeSummaries` writes
+  the summaries file, so the existing cases keep passing; the hotfix tests show no stamp is
+  demanded; the Docs tests.
+- Command: `go test ./scripts/ -run 'TestPrecondition|TestHotfix' -count=1 && GOFLAGS=-p=2 go test
+  ./internal/cli/ -run Docs -count=1`.
 - Red step: the new release test fails until the precondition exists.
 - Depends on: I1 (data: if `release.sh` demands a FEATURES.md before one is on `main`, the next
   release is refused; a contract cannot supply the file).
@@ -223,6 +249,7 @@ The owner's answers that shaped the plan (2026-11-15):
 | I1 | T1, T2, T3, T4 | it deletes the stub and wires the real sides (and so follows C1 through them) |
 | T5 | I1 | data: `release.sh` must not demand a FEATURES.md that `main` does not have yet |
 | T6 | I1 | behaviour: the owner reads the real rows |
+| T7 | T4 | behaviour: the link check needs the page to exist |
 | CR1 | T6 | raised only if the owner's read asks for a footnote (O1) |
 
 ### Edges broken by C1 (each re-joined by I1)
@@ -233,8 +260,8 @@ The owner's answers that shaped the plan (2026-11-15):
 | T3 needs T1 | the renderer needs the snapshot's shape, not the real build |
 | T4 needs T3 | the page needs the snapshot and the block format, not a real FEATURES.md |
 
-**The gain**, as `fugaro plan graph` reports it: three edges broken, none kept, two tasks added (C1
-and I1). The weighted critical path drops from 13 to 7.5.
+**The gain**, as `fugaro plan graph` reports it: three edges broken, none kept, three tasks added
+(C1, I1 and the conditional CR1). The weighted critical path drops from 13 to 7.5.
 
 ### Levels
 
@@ -242,7 +269,7 @@ and I1). The weighted critical path drops from 13 to 7.5.
 | --- | --- |
 | 0 | C1, T2 |
 | 1 | T1, T3, T4 |
-| 2 | I1 |
+| 2 | I1, T7 |
 | 3 | T5, T6 |
 | 4 | CR1 (only if raised) |
 
@@ -260,6 +287,8 @@ The sequence after I1 is data (T5) and the owner's read (T6), not an interface.
 | `docs/feature-matrix/contract.md`, `website/src/lib/feature-matrix-model.mjs` | C1 (0), CR1 (4) |
 | `website/package.json` | T3 (1) |
 | `website/src/layouts/Base.astro`, `website/test/base-styles.mjs` | T4 (1) |
+| `website/src/pages/compatibility.astro`, `website/test/compatibility-page.mjs` | T7 (2) |
+| `website/README.md` | T3 (1) |
 
 No level holds two writers of one file. C1's own files (`contract.md`,
 `feature-matrix-model.mjs`, its test) are written by no other task.

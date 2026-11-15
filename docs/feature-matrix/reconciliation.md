@@ -58,9 +58,11 @@ not-started specs with specs the owner parked by name. A parked spec can have me
 
 **F5 — Gap: "Done" is not "shipped".** The status page is read from `main`, not from a release. Many
 Done rows have owner live checks still to run (for example `no-prompt-policy`, Checks 380–382). The
-mobile stream's `current` is `0.0.0` in `docs/release-streams.yaml`: the app has never shipped. Some
-merged code sits behind a switch that is still off (`secrets-brokering` B1.13's flip). The rule
-"Available when all specs are Done" alone would claim all of these (D2444).
+mobile stream's `current` is `0.0.0` in `docs/release-streams.yaml`: the app has never shipped,
+yet some of its specs (`mobile-auth`) are in Done. A Done spec's code can also sit behind a switch
+that is still off. The rule "Available when all specs are Done" alone would claim all of these
+(D2444). A spec that is not Done (for example `secrets-brokering`, in WIP) already shows as Coming
+soon and needs no hold.
 
 **F6 — Gap: not every status.md row is a spec, and one row can name several.** Examples: `how-to`
 ("not a spec"); `voice-module, collateral, backlog, plans` (one cell, "no plan or not a spec"); rows
@@ -110,8 +112,9 @@ when the generator writes, not in `npm run check`.
 2. The page and FEATURES.md show the same rows and statuses.
 3. Neither output contains a spec name, a status.md section name ("Nearly there", "Parked", "Work
    in progress"), a task id, a date or a price.
-4. FEATURES.md's `as_of` stamp equals the newest CLI release notes file at or below the stream's
-   `current`.
+4. FEATURES.md's `as_of` stamp names an existing `docs/releases/vX.Y.Z.md` that is not behind the
+   newest notes file at or below the stream's `current`. It may be one release ahead, because the
+   notes PR stamps the version before `scripts/release.sh` moves `current`.
 5. An Available row never turns back to Coming soon because a spec was added to it.
 
 **F14 — Gap: per-spec progress is in the repository already.** The mapping file names specs and
@@ -128,19 +131,31 @@ and FEATURES.md, so neither shows a spec name or a count (F13 criterion 3).
 | **D2443** | Which statuses (F4) | Available, Coming soon, Planned. **Planned** when no contributing spec has started (all are in "To do or parked" with nothing merged). A feature whose specs are all parked by the owner is left off the page | Two statuses only; or parked shown as Planned | **2026-11-15: as recommended.** |
 | **D2444** | When a feature is Available (F5) | Available when every contributing spec is in Done. Owner live checks do not block. A mapping entry can carry `hold: coming-soon` with a `reason` for built but unshipped features (the mobile app, a switch still off), and that hold wins | Also require every owner live check run; or Done alone | **2026-11-15: as recommended.** |
 | **D2445** | A spec that extends an Available feature (F7) | It gets its own row when it is user-visible, and is excluded otherwise. The generator refuses to write when the previous FEATURES.md showed a row Available and the new snapshot shows it Coming soon or Planned, naming the row and the spec that caused it. A `hold` added in the mapping is the deliberate exception | The literal rule: the row drops back until every extension is Done | **2026-11-15: as recommended.** |
-| **D2446** | Where the markdown lives and how the page is built (F12) | `FEATURES.md` at the repository root, written by `website/scripts/feature-matrix.mjs`. The page renders the same snapshot model through a loader in `content.ts`, without parsing markdown. The snapshot the page renders is the one frozen at release (D2447), read from FEATURES.md's embedded data block | The page parses the markdown table; or the file inside the spec folder | **2026-11-15: as recommended.** |
-| **D2447** | Enforcing refresh on release (F10, F11) | The CLI release notes PR runs the generator, which writes FEATURES.md stamped `as_of: vX.Y.Z`, alongside the compatibility stamp. `website/test/feature-matrix-stamp.mjs` refuses a stamp behind the newest released notes file. `scripts/release.sh` refuses a `main` whose FEATURES.md does not carry the version's stamp | The page reads status.md live at every build: always current, but a website-only deploy shows main's unreleased state | **2026-11-15: as recommended.** |
+| **D2446** | Where the markdown lives and how the page is built (F12) | `FEATURES.md` at the repository root, written by `website/bin/feature-matrix.mjs` (path corrected after review; the answer is unchanged). The page renders the same snapshot model through a loader in `content.ts`, without parsing markdown. The snapshot the page renders is the one frozen at release (D2447), read from FEATURES.md's embedded data block | The page parses the markdown table; or the file inside the spec folder | **2026-11-15: as recommended.** |
+| **D2447** | Enforcing refresh on release (F10, F11) | The CLI release notes PR runs the generator, which writes FEATURES.md stamped `as_of: vX.Y.Z`, alongside the compatibility stamp. `website/test/feature-matrix-stamp.mjs` refuses a stamp behind the newest released notes file (F13 criterion 4). `scripts/release.sh` refuses a `main` whose FEATURES.md does not carry the version's stamp, on the ordinary release path only: a hotfix branch may commit nothing but the notes, the summary line and the stream file (`scripts/hotfix-commits.sh`), so a hotfix leaves the matrix to the next ordinary release | The page reads status.md live at every build: always current, but a website-only deploy shows main's unreleased state | **2026-11-15: as recommended.** |
 
 ### Resolutions (one defensible answer, not asked)
 
 - **R1.** Neither output shows a spec name, a count, a task, a date or a price (spec out of scope;
   F9, F13, F14).
-- **R2.** `npm run check` validates the mapping's shape and that every name the mapping cites still
-  appears in status.md. It does not refuse an unmapped name, so a sweep that adds a new spec row
-  stays green. The generator refuses unmapped names when it writes, at release (F11).
+- **R2.** `npm run check` reads no part of status.md. It validates the mapping's shape, the
+  committed snapshot block and the stamp, so no sweep (a new row, a renamed row, a row moved
+  between tables) can turn it red or block a website deploy. Every check against status.md (an
+  unmapped name, a mapped name status.md no longer carries, a regression) runs when the generator
+  writes, at release, and the release's notes PR repairs what it reports (F11; amended after round-1
+  review, which found the first wording read status.md in `npm run check`).
 - **R3.** The generator reads status.md and never writes it. A row or table it cannot read stops
   it and names the line (F8).
 - **R4.** The feature-matrix spec is excluded from its own matrix, as internal.
+- **R6.** A parked spec counts for nothing in a feature that also has specs that are not parked:
+  the status comes from the others. A feature whose specs are all parked is omitted (D2443), so a
+  parked spec never shows on the page as Coming soon or Planned. This follows D2443's reason: a
+  parked spec is not a promise.
+- **R7.** The regression check (D2445) also refuses an id that was Available in the previous
+  FEATURES.md and is missing from the new snapshot, unless the mapping lists it under `retired`.
+  Ids never change; a feature's name may. When there is no previous FEATURES.md (the first
+  generation), the regression check is skipped. A previous file whose block cannot be read stops
+  the generator.
 - **R5.** The frozen snapshot is a fenced JSON block inside FEATURES.md, under the rendered table. The
   page's loader reads that block, so the page and the markdown cannot disagree, and the page never
   reads status.md at build time (D2446, D2447).
@@ -156,6 +171,10 @@ None.
   legal wording, and the page carries none without the owner's words (A5, compatibility D1539's
   precedent). T4 ships the column with no footnote, and the owner's read (T6) decides whether to
   add one, in the owner's own words.
+- **O3.** The nav approval is recorded in `.claude/rules/website.md`, beside the 2026-10-23 and
+  2026-11-10 approvals. That file is a `.claude/**` path, so the merger records D2442 there, not a
+  task. T4 records it in the comments of `Base.astro` and `base-styles.mjs`, as the compatibility
+  entry did.
 - **O2.** The rule comment at the top of status.md does not mention that the generator reads it.
   Adding that is a status.md edit, so it belongs to the merger's sweep, not to a task (F8).
 

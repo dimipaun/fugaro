@@ -64,6 +64,7 @@
           "website/src/lib/feature-matrix-markdown.mjs",
           "website/bin/feature-matrix.mjs",
           "website/package.json",
+          "website/README.md",
           "website/test/feature-matrix-markdown.mjs"
         ]
       }
@@ -98,11 +99,24 @@
           "website/bin/feature-matrix.mjs",
           "website/src/content.ts",
           "FEATURES.md",
-          "website/src/pages/compatibility.astro",
           "website/test/feature-matrix-stamp.mjs"
         ]
       },
       "kind": "integration"
+    },
+    {
+      "id": "T7",
+      "title": "the compatibility page links to /features/",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "website/src/pages/compatibility.astro",
+          "website/test/compatibility-page.mjs"
+        ]
+      }
     },
     {
       "id": "T5",
@@ -199,6 +213,11 @@
       "task": "CR1",
       "needs": "T6",
       "reason": "raised only if the owner's read asks for a footnote (O1)"
+    },
+    {
+      "task": "T7",
+      "needs": "T4",
+      "reason": "behaviour: the link check needs the /features/ page to exist"
     }
   ],
   "decoupling": [
