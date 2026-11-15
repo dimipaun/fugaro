@@ -386,11 +386,15 @@ GCP_PID_FILE=""
 IN_PROJECT=()
 
 write_fake_terraform() {
-  cat >"$SCRATCH_BIN/terraform" <<TERRAFORM_EOF
+  # The delimiter is quoted and the one value the body needs comes in through a
+  # placeholder: an unquoted heredoc would run what the body holds between
+  # backticks, and a docstring naming `fugaro update` would then BE a fugaro
+  # update — in the owner's own directory and before this run's config exists.
+  sed "s|@PROJECT@|$SCRATCH_PROJECT|g" >"$SCRATCH_BIN/terraform" <<'TERRAFORM_EOF'
 #!/usr/bin/env python3
 """A fake terraform for Check 310's scratch mode.
 
-It answers what `fugaro update` and `fugaro setup --plan-only` ask of a real
+It answers what fugaro update and fugaro setup --plan-only ask of a real
 terraform about an installation that exists and is already converged: the
 version, an init that does nothing, a plan with no changes, a state that holds
 the installation's resources and its outputs. It applies nothing, downloads
@@ -400,7 +404,7 @@ reports are the installation the config beside it describes.
 import json
 import sys
 
-project = "$SCRATCH_PROJECT"
+project = "@PROJECT@"
 
 STATE = {
     "format_version": "1.0",
@@ -559,8 +563,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         m = re.match(r"^/storage/v1/b/([^/]+)$", path)
         if m:
             b = bucket(m.group(1))
+            # The marks a real installation's buckets carry. A runs bucket
+            # without fugaro=managed is refused by the CLI's discovery, and the
+            # converge would then read as a failed installation rather than as a
+            # converged one.
             if m.group(1).startswith("fugaro-tfstate-"):
                 b["labels"] = {"fugaro": "tfstate"}
+            elif m.group(1).startswith("fugaro-runs-"):
+                b["labels"] = {"fugaro": "managed", "fugaro_project": PROJECT}
             return 200, b
         return 404, {"error": {"code": 404, "message": "not found", "status": "NOT_FOUND"}}
 
