@@ -2014,11 +2014,16 @@ func jobsPaused(lc *localcfg.Config) (*bool, *bool) {
 // settles the question by itself, whatever it says: silence in the file the
 // stage publishes is its answer, and nothing the published object says may
 // overrule it. A bucket that cannot be read, a layer this CLI does not read and
-// a spec that carries no catalog check all leave the spec exactly as
-// installOptions built it: paused, which is also what the module defaults the
-// value to, and the layer stage names the read that failed a moment later.
+// a spec that carries neither of the scheduled jobs all leave the spec exactly
+// as installOptions built it: paused, which is also what each module defaults
+// its own value to, and the layer stage names the read that failed a moment
+// later.
+//
+// Both jobs are corrected together, and the read is one: jobs.catalog_check and
+// jobs.reports are two keys of one object, so a run that has to ask the bucket
+// asks it once and takes both answers from the same document.
 func (r *initRun) publishedJobsPaused(ctx context.Context, lc *localcfg.Config, spec infra.InstallationSpec) infra.InstallationSpec {
-	if spec.CatalogCheck == nil {
+	if spec.CatalogCheck == nil && spec.Reports == nil {
 		return spec
 	}
 	p, err := layerPlanFor(ctx, lc)
@@ -2029,7 +2034,12 @@ func (r *initRun) publishedJobsPaused(ctx context.Context, lc *localcfg.Config, 
 	if len(ps) > 0 || l == nil {
 		return spec
 	}
-	spec.CatalogCheck.Paused = l.CatalogCheckPaused()
+	if spec.CatalogCheck != nil {
+		spec.CatalogCheck.Paused = l.CatalogCheckPaused()
+	}
+	if spec.Reports != nil {
+		spec.Reports.Paused = l.ReportsPaused()
+	}
 	return spec
 }
 

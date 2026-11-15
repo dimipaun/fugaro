@@ -15,17 +15,17 @@ import (
 
 // ReportsJobDocEnv is where the project's reports job reads its assignment:
 // the JSON ReportsJobDoc below, rendered into the installation's tfvars at
-// var.reports.env. internal/cli's own copy of the document is the reader
-// (fugaro runs reports --job), which refuses to start without it, and a test
-// there renders these bytes and reads them back through it: the two spellings
-// of the wire format are kept in step by that round trip, as CheckSpecEnv's and
+// var.reports.env. The job's own reader is the reports command (R11), and this
+// release deploys the job without it — the schedule ships stopped, so nothing
+// runs the document until the command that reads it lands: what is fixed here
+// is the wire format the reader is written against, as CheckSpecEnv's and
 // CatalogCheckSpecEnv's are.
 const ReportsJobDocEnv = "FUGARO_REPORTS_JOB_SPEC"
 
 // ReportsJobDocVersion is the version of the document ReportsJobDocEnv
-// carries. The reader refuses a version below one, and it is what a later
-// release bumps when the document's meaning changes (a field never changes
-// meaning in place).
+// carries. It is what a later release bumps when the document's meaning
+// changes (a field never changes meaning in place), and what the reader
+// refuses a version below.
 const ReportsJobDocVersion = 1
 
 // The reports job's two names (E4). The job's must start with fugarorpt- for
