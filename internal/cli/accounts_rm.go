@@ -108,7 +108,7 @@ way it was and the command stops: an account whose declaration is gone while
 its secret is still there is the one state this command may not leave behind.
 
 Run it at your own terminal: this command deletes a credential, so a coding
-agent's session is refused, --yes included — a managed project's gate refuses
+agent's session is refused — a managed project's gate refuses
 the removal too, because the refs and the checkouts record its referrer check
 reads are documents the session writes, so no read here answers for what origin
 carries.`,
@@ -119,7 +119,6 @@ carries.`,
 	}
 	f := cmd.Flags()
 	f.StringVar(&o.profile, "profile", "", "the profile whose claude_accounts loses the name (a profile that lists accounts is taken out of it one at a time)")
-	f.BoolVar(&o.yes, "yes", false, "confirm the removal without a prompt")
 	return cmd
 }
 
@@ -220,7 +219,7 @@ func runAccountsRm(cmd *cobra.Command, name string, o accountsRmOptions) error {
 	// The refusal a session with no admission keeps, in this command's own
 	// words. It comes before the diff rather than after it, and --yes does not
 	// answer it.
-	if marker != "" && !initflow.CanConfirmManaged(initflow.YesOrTyped, initflow.Conditions{Agent: marker}, m) {
+	if marker != "" && !m.Removes() {
 		return accountsRmSession(marker, plan, command)
 	}
 
@@ -862,14 +861,13 @@ func accountsRmGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config
 		return initflow.Managed{}, managedGate{}, nil
 	}
 	applied, refused := accountsRmRules(plan, read)
-	conv := managedmode.ConvergeAdmitted(doc, initflow.YesOrTyped, applied)
+	conv := managedmode.ConvergeAdmitted(doc, applied)
 	if len(refused) > 0 {
-		conv = managedmode.ConvergeRefused(doc, initflow.YesOrTyped, refused)
+		conv = managedmode.ConvergeRefused(doc, refused)
 	}
-	// YesOrTyped is the class this step is: the ordinary edit the diff
-	// describes, and not a Typed step — the value D846 reserves for a loosened
-	// ceiling is what the declaration's own rules already refuse here.
-	m, err := gate.admit(ctx, initflow.YesOrTyped, conv)
+	// This step is the ordinary edit the diff describes and not the loosened
+	// ceiling D846 reserves: the declaration's own rules refuse that one here.
+	m, err := gate.admit(ctx, conv)
 	if err == nil {
 		return m, gate, nil
 	}
@@ -884,7 +882,7 @@ func accountsRmGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config
 // accountsRmRules are the rules the gate judges this removal by, in the words
 // the record and the refusal carry: the rules that were applied and passed, and
 // the ones that refused. They are this command's own and live here rather than
-// in internal/managed, where the SHAPE of a verdict and the one class rule are
+// in internal/managed, where the SHAPE of a verdict and its one narrowing rule are
 // (D1021).
 //
 // The rule is the design's whole content for this command (managed spec §4.2,

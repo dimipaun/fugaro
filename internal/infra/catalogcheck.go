@@ -328,6 +328,20 @@ func CatalogBuilds(lc *localcfg.Config) bool {
 	return err == nil && len(repos) > 0
 }
 
+// CatalogRepos is CatalogBuilds' read as a value: the repositories the
+// effective catalog's entries build in, each with the entries assigned to it,
+// nil for a project with no catalog to build.
+//
+// A caller that has to name the checkout an entry's rebuild belongs to reads
+// the same assignment the check job is deployed with (the images stage of
+// `fugaro update`, which rebuilds the entries of the checkout it runs in and
+// names the rest), so the two can never disagree about whose build account an
+// entry's build runs as.
+func CatalogRepos(lc *localcfg.Config) ([]CatalogCheckRepoSpec, error) {
+	_, repos, err := catalogCheckFor(lc)
+	return repos, err
+}
+
 // catalogCheckRepos are the repositories the catalog's entries build in, each
 // with the entries assigned to it: a Dockerfile-sourced entry goes to the
 // repository its source names, an inline definition to the repository this

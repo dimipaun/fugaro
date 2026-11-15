@@ -974,7 +974,7 @@ export class CliSource implements FugaroSource {
   /**
    * settingsEdit runs one phase of the settings write (the settings-edit plan's
    * C3): the dry run, which classifies the edit and writes nothing (D1106), or
-   * the write itself, which carries `--yes` (D1107).
+   * the write itself, which carries no flag (D1107).
    *
    * **A non-zero exit is a returned refusal and not a thrown one**, unlike every
    * read beside it: a dry run the CLI refuses is a sentence the settings window

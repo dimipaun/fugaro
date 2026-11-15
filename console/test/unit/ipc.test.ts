@@ -822,10 +822,10 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * that tab carries (`src/main/spawn.ts`'s `takesProject`) -- so what is left is
  * the command and its one fixed flag. The twenty-second is that read's own
  * write (`settings`, the settings-edit plan's C3, D1103), and it is the one row
- * here that fixes **no** flag: the dry run's `--dry-run --json` and a confirmed
- * write's `--yes`, which both write phases carry, are the phase the main process
- * decides (`SETTINGS_EDIT_PHASE_WORDS`), not words this table gives a renderer,
- * so what is left is the command alone. S4.2's `seats --json` is the
+ * here that fixes **no** flag: the dry run's `--dry-run --json` and the
+ * confirmed write's nothing at all are the phase the main process decides
+ * (`SETTINGS_EDIT_PHASE_WORDS`), not words this table gives a renderer, so what
+ * is left is the command alone. S4.2's `seats --json` is the
  * twenty-seventh, and it follows this convention too: the
  * installation's own `--project` and `[--config]` are main-process state, so the
  * row here is the command and its one fixed flag. **GV3.2's
@@ -2327,7 +2327,8 @@ describe('the argument schemas', () => {
     //     layer -- which is what keeps an edit from being pointed at a layer
     //     the window did not draw;
     //   - **no phase word**: a screen chooses neither `--dry-run`, nor
-    //     `--json`, nor `--yes`. Those are `SETTINGS_EDIT_PHASE_WORDS`'
+    //     `--json`, nor a write's (there is none). Those are
+    //     `SETTINGS_EDIT_PHASE_WORDS`'
     //     (`src/main/spawn.ts`), decided by the main process from the dry run's
     //     own classification, and the row declares no flag at all -- which is
     //     the one place it differs from every read beside it;
@@ -3185,8 +3186,8 @@ describe('the spend read’s arguments', () => {
  * second write, rule 12) and left the other thirty exactly where they were. It
  * is next to `settings.read`, whose own row names the layer this one writes to,
  * and it is the first operation here whose argv depends on a **phase** the main
- * process decides (the dry run's `--dry-run --json`, a write's `--yes`, which
- * both write phases carry) rather than on a flag the row fixes -- which is why
+ * process decides (the dry run's `--dry-run --json`, a write's nothing at all)
+ * rather than on a flag the row fixes -- which is why
  * its `flags` is empty and why its three arguments are the whole of what a
  * renderer may say. **The graph plan's CG9a added the thirty-second**
  * (`graph.read` / `graphRead`: the dependency graph as one versioned document,

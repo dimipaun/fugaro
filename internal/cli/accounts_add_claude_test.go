@@ -136,7 +136,7 @@ func TestAccountsAddClaudeRunsTheLoginThenAsksForOnePaste(t *testing.T) {
 	login := loginStubOnPath(t, loginPrint(), 0)
 	tty := newTTY(t)
 
-	done := runOnTerminal(t, tty, "accounts", "add", "team-a", "--repos", "owner/repo-a", "--claude", "--yes")
+	done := runOnTerminal(t, tty, "accounts", "add", "team-a", "--repos", "owner/repo-a", "--claude")
 	// The owner sees which binary is about to run, at the path it resolved to,
 	// before anything runs, and then that it ran (§3.1 step 1).
 	waitTerminal(t, tty, login.bin)
@@ -166,7 +166,7 @@ func TestAccountsAddClaudeWritesTheValueNowhere(t *testing.T) {
 	loginStubOnPath(t, printed, 0)
 	tty := newTTY(t)
 
-	done := runOnTerminal(t, tty, "accounts", "add", "team-a", "--repos", "owner/repo-a", "--claude", "--yes")
+	done := runOnTerminal(t, tty, "accounts", "add", "team-a", "--repos", "owner/repo-a", "--claude")
 	waitTerminal(t, tty, printed)
 	pasteAtThePrompt(t, tty, config.ClaudeAccountSecret("team-a"), addToken())
 	if err := waitCommand(t, done); err != nil {
@@ -244,7 +244,7 @@ func TestAccountsAddClaudeYesRunsTheLogin(t *testing.T) {
 	login := loginStubOnPath(t, loginPrint(), 0)
 	tty := newTTY(t)
 
-	done := runOnTerminal(t, tty, "accounts", "add", "team-a", "--repos", "owner/repo-a", "--claude", "--yes")
+	done := runOnTerminal(t, tty, "accounts", "add", "team-a", "--repos", "owner/repo-a", "--claude")
 	waitTerminal(t, tty, loginPrint())
 	pasteAtThePrompt(t, tty, config.ClaudeAccountSecret("team-a"), addToken())
 	if err := waitCommand(t, done); err != nil {
@@ -305,7 +305,7 @@ func TestAccountsAddClaudeStillAsksForThePasteAfterAFailedLogin(t *testing.T) {
 	loginStubOnPath(t, "", 3)
 	tty := newTTY(t)
 
-	done := runOnTerminal(t, tty, "accounts", "add", "team-a", "--repos", "owner/repo-a", "--claude", "--yes")
+	done := runOnTerminal(t, tty, "accounts", "add", "team-a", "--repos", "owner/repo-a", "--claude")
 	waitTerminal(t, tty, "exit status 3")
 	waitTerminal(t, tty, "the hidden prompt below is the only token path")
 	pasteAtThePrompt(t, tty, config.ClaudeAccountSecret("team-a"), addToken())
@@ -354,7 +354,7 @@ func TestAccountsAddClaudeRefusesAHostileClaude(t *testing.T) {
 			want := tc.hostile(t)
 			tty := newTTY(t)
 
-			done := runOnTerminal(t, tty, "accounts", "add", "team-a", "--repos", "acme/app", "--claude", "--yes")
+			done := runOnTerminal(t, tty, "accounts", "add", "team-a", "--repos", "acme/app", "--claude")
 			err := waitCommand(t, done)
 			if err == nil {
 				t.Fatalf("a claude fugaro will not run was run:\n%s", tty.displayed())
@@ -396,7 +396,7 @@ func TestAccountsAddClaudeRefusedInEveryAgentSession(t *testing.T) {
 			t.Setenv(marker, "1")
 			tty := newTTY(t)
 
-			done := runOnTerminal(t, tty, "accounts", "add", "team-a", "--repos", "acme/app", "--claude", "--yes")
+			done := runOnTerminal(t, tty, "accounts", "add", "team-a", "--repos", "acme/app", "--claude")
 			err := waitCommand(t, done)
 			if err == nil {
 				t.Fatalf("--claude ran in a coding agent's session:\n%s", tty.displayed())
