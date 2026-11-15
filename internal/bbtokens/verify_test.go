@@ -430,6 +430,80 @@ func TestVerifyNamesWhatIsMissing(t *testing.T) {
 		}
 	})
 
+	// An answer that is neither a read's nor a scope's is the fail-closed bucket
+	// (prove's default): a 500, a 502, a body that is not the document the call
+	// asked for. Each is a call that has shown nothing about the token, so each
+	// must refuse rather than fall through to the OK below it.
+	t.Run("an answer this check cannot read", func(t *testing.T) {
+		for name, status := range map[string]int{"a 500": 500, "a 502": 502} {
+			t.Run(name, func(t *testing.T) {
+				answers := repoAnswers()
+				answers["GET /2.0/repositories/acme/fugaro"] = fakeAnswer{status: status, body: `{"error":{"message":"Server error"}}`}
+				res := refused(t, newFakeBitbucket(t, answers), repoRecord(), testToken)
+				if res.Message != msgRefused {
+					t.Errorf("message = %q, want %q: an answer that is not a read's has shown nothing", res.Message, msgRefused)
+				}
+			})
+		}
+	})
+
+	// A 404 inside a repository the token is already known to cover is the read
+	// itself missing and not a reach the record over-claims, which is the one
+	// difference `uncovered == ""` carries.
+	t.Run("a pull-request read that is not there", func(t *testing.T) {
+		answers := repoAnswers()
+		answers["GET /2.0/repositories/acme/fugaro/pullrequests"] = fakeAnswer{status: 404, body: `{"error":{"message":"Not found"}}`}
+		res := refused(t, newFakeBitbucket(t, answers), repoRecord(), testToken)
+		if res.Message != msgMissingPullRequestRead {
+			t.Errorf("message = %q, want %q", res.Message, msgMissingPullRequestRead)
+		}
+	})
+
+	t.Run("a project listing that is not a listing", func(t *testing.T) {
+		res := refused(t, newFakeBitbucket(t, map[string]fakeAnswer{
+			"GET /2.0/repositories/acme": {status: 200, body: `not a listing`},
+		}), func() Record {
+			rec := projectRecord()
+			rec.ProjectKey, rec.ProjectUUID = "", "{proj-1}"
+			return rec
+		}(), testToken)
+		if res.Message != msgRefused {
+			t.Errorf("message = %q, want %q: a listing that is not one has shown nothing", res.Message, msgRefused)
+		}
+	})
+
+	// Every coverage entry is read or the record is refused: a pattern this check
+	// cannot hold a single read to is refused whole rather than skipped, so no
+	// entry of a record is quietly unchecked.
+	t.Run("a coverage entry that is no pattern", func(t *testing.T) {
+		cases := map[string][]string{
+			"a wildcard workspace":          {"*/fugaro"},
+			"a repository of no workspace":  {"/fugaro"},
+			"a workspace with no repo":      {"acme/"},
+			"a workspace alone":             {"acme"},
+			"a good entry beside a bad one": {"acme/one", "acme"},
+		}
+		for name, coverage := range cases {
+			t.Run(name, func(t *testing.T) {
+				rec := repoRecord()
+				rec.Coverage = coverage
+				res := refused(t, newFakeBitbucket(t, nil), rec, testToken)
+				if res.Message != msgRecord {
+					t.Errorf("message = %q, want %q", res.Message, msgRecord)
+				}
+			})
+		}
+	})
+
+	t.Run("a workspace record covering every workspace", func(t *testing.T) {
+		rec := workspaceRecord()
+		rec.Coverage = []string{"*/*"}
+		res := refused(t, newFakeBitbucket(t, nil), rec, testToken)
+		if res.Message != msgRecord {
+			t.Errorf("message = %q, want %q", res.Message, msgRecord)
+		}
+	})
+
 	t.Run("a record whose type and coverage disagree", func(t *testing.T) {
 		f := newFakeBitbucket(t, nil)
 		rec := repoRecord()
@@ -605,6 +679,31 @@ func TestVerifyReportsWriteNotVerified(t *testing.T) {
 	}
 }
 
+// TestVerifyDropsAHeaderWordThatIsNotAScope pins the one guard between an
+// answer's header and the operator's screen. What is recorded is put in front
+// of the operator by `creds set`, and a header is bitbucket.org's to fill with
+// anything — including, if it ever echoed one, the credential the check just
+// presented. The scope-word shape is what keeps a value from being recorded as
+// a scope, so a header carrying the token reads back as no scope at all.
+func TestVerifyDropsAHeaderWordThatIsNotAScope(t *testing.T) {
+	answers := repoAnswers()
+	answers["GET /2.0/repositories/acme/fugaro"] = fakeAnswer{
+		status: 200,
+		body:   `{"full_name":"acme/fugaro"}`,
+		header: map[string]string{"X-OAuth-Scopes": "repository:read " + testToken + ", Bearer=" + testToken},
+	}
+	res := newFakeBitbucket(t, answers).verifier().Verify(context.Background(), testToken, repoRecord())
+	if !res.OK {
+		t.Fatalf("OK = false, message %q", res.Message)
+	}
+	if want := []string{"repository:read"}; !slices.Equal(res.Scopes, want) {
+		t.Errorf("recorded scopes = %v, want only the scope word the header carried", res.Scopes)
+	}
+	if dump := fmt.Sprintf("%+v", res); strings.Contains(dump, testToken) {
+		t.Errorf("the result carries the token: %s", dump)
+	}
+}
+
 // TestVerifyNeverReturnsTheToken reads every field of the Result back on both
 // sides of the check. The token's own presentation is asserted first: a result
 // that carried no token because the check never presented one would pass the
@@ -654,6 +753,44 @@ func TestVerifyRefusesANonAccessTokenKind(t *testing.T) {
 			}
 		})
 	}
+
+	// The account endpoint's own fail-closed half: an answer that is not the
+	// account document is refused rather than read as an identity with the UUID
+	// left empty, which would enter an empty identity and read as "no identity
+	// known" rather than as a token that could not be read.
+	t.Run("an account answer that is not one", func(t *testing.T) {
+		answers := repoAnswers()
+		answers["GET /2.0/user"] = fakeAnswer{status: 200, body: `not the account`}
+		res := newFakeBitbucket(t, answers).verifier().Verify(context.Background(), testToken, repoRecord())
+		if res.OK {
+			t.Fatal("OK = true, want a refusal")
+		}
+		if want := msgNotAccessToken(TypeRepo); res.Message != want {
+			t.Errorf("message = %q, want %q", res.Message, want)
+		}
+		if res.Identity != "" {
+			t.Errorf("identity = %q, want none", res.Identity)
+		}
+	})
+
+	t.Run("an account endpoint that does not answer the account", func(t *testing.T) {
+		for name, status := range map[string]int{"a 401": 401, "a 500": 500} {
+			t.Run(name, func(t *testing.T) {
+				answers := repoAnswers()
+				answers["GET /2.0/user"] = fakeAnswer{status: status, body: `{"error":{"message":"no"}}`}
+				res := newFakeBitbucket(t, answers).verifier().Verify(context.Background(), testToken, repoRecord())
+				if res.OK {
+					t.Fatal("OK = true, want a refusal")
+				}
+				if res.Message != msgRefused {
+					t.Errorf("message = %q, want %q", res.Message, msgRefused)
+				}
+				if res.Identity != "" {
+					t.Errorf("identity = %q, want none", res.Identity)
+				}
+			})
+		}
+	})
 }
 
 func TestVerifyAccepts403FromUserAsARepositoryToken(t *testing.T) {
