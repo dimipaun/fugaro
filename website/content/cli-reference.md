@@ -3973,9 +3973,61 @@ Flags:
 
 Subcommands:
 
+- `fugaro licence login` -- Sign in to the licence site and install the key it issues (Subscription Edition)
 - `fugaro licence refresh` -- Ask the licence server for the next key now (Subscription Edition)
 - `fugaro licence set` -- Install the installation's licence key (Subscription Edition)
 - `fugaro licence status` -- Show the installation's licence: tier, seats, expiry, state and last check
+
+## `fugaro licence login`
+
+Sign in to the licence site and install the key it issues (Subscription Edition)
+
+Sign this installation in to the licence site and install the key the sign-in
+issues.
+
+Without a flag the command opens the licence site in this machine's browser: a
+listener on 127.0.0.1 takes the one callback the sign-in comes back on, the
+address carries the state the callback is checked against, and the one-time
+code is exchanged for a key with a PKCE verifier that never leaves the process.
+The listener holds five minutes and takes one request; a machine with no browser
+falls back to the code below, and so does `--device`.
+
+With `--device` the command prints an address and a short code: open the address
+on any machine with a browser, sign in, and type the code there. The code is
+worth ten minutes, and the command polls until it is approved or the code
+expires.
+
+The sign-in carries this installation's Firebase project id, and the site binds
+the licence picked on its own page to that id: the id is untrusted text there,
+and nothing proves it. The key that comes back is verified before anything is
+written — against this Fugaro's signing keys and against that same Firebase
+project id, which the key's `workspace_id` must be — so a key bound to another
+workspace, or one this build does not accept, is refused instead of installed.
+
+The key is then written to the project's own store (the runs bucket), so every
+member is upgraded at once, and the renewal secret to the installation's Secret
+Manager container `fugaro update` creates. Nothing here creates it, and after
+it lands, the next `fugaro update` applies the installation's renewal job.
+
+It is refused inside a coding agent's session, before anything is sent, as every
+cloud write is. No line of its output carries the key or the renewal secret.
+
+Usage: `fugaro licence login`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--device` | bool | `false` | no | print a code to type at the licence site on another machine instead of opening a browser here |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for login |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
 
 ## `fugaro licence refresh`
 
