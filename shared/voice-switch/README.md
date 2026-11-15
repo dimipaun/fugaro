@@ -190,7 +190,7 @@ with a recorded consent for **that** name; `blocked by project policy` comes fro
 and never from a policy the app cannot read; every failure input lands on local; and the exported
 surface is pinned as an exact set, so **a new export is a decision that goes into that test**.
 Beyond the plan's list the suite checks the invariant `engine === 'remote' ⟺ provider is a name ⟺
-reason === null` over every probe of a walk of 2 880 combinations (2 directions x 6 settings x 4 consent states x 10 answers x 6 call routes), that the input is never
+reason === null` over every probe of a walk of 3 360 combinations (2 directions x 6 settings x 4 consent states x 10 answers x 7 call routes), that the input is never
 mutated, that every answer is frozen and the same input twice returns equal answers, and that
 every declared state and reason is reachable in both directions.
 
