@@ -157,7 +157,7 @@ function Get-Status([string]$key) {
 # before it, and the run ends 2: a reading nobody could take is never reported as
 # a failure of the thing being read.
 function Stop-Run([string]$why) {
-    Say 'STOPPING: ' + $why
+    Say ('STOPPING: ' + $why)
     Write-Block 2
     exit 2
 }

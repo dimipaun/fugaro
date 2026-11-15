@@ -254,6 +254,22 @@ test_the_non_windows_stop_names_the_sibling_check() {
   expect_contains "$ps" "the only modes this script has off Windows" "and names the two modes that do work there"
 }
 
+test_no_stop_sentence_is_lost_to_a_bare_plus() {
+  # `Say 'STOPPING: ' + $why` is a command invocation with three positional
+  # arguments -- the quoted string, the operator and the variable -- and Say
+  # takes one: the call fails to bind and the sentence never reaches stderr, so
+  # the run stops without saying why. That is the defect f49961dea merged, and
+  # it hid behind a machine without pwsh, where every runtime case of this file
+  # returns early. This reading is taken HERE, where no interpreter is needed:
+  # every call that concatenates must parenthesise it, so a quoted string
+  # followed by a bare `+` is the defect whatever it concatenates.
+  local loose
+  loose=$(grep -nE "(Say|Stop-Run) +['\"][^'\"]*['\"] *\+" "$script" || true)
+  [ -z "$loose" ] ||
+    fail "a stop sentence is concatenated outside parentheses, so the call binds as three arguments and writes nothing: $loose"
+  expect_contains "$(body_of Stop-Run)" "Say ('STOPPING: ' + \$why)" "Stop-Run writes its sentence through a parenthesised concatenation"
+}
+
 # ------------------------------------------------------------- what it runs
 test_the_watched_runs_are_never_captured() {
   expect_contains "$bare_body" "& \$script:Fugaro @argv" "the watched run is started as a command, not through a pipe"
@@ -569,7 +585,7 @@ test_a_phase_that_is_not_one_is_refused_where_pwsh_is() {
   if ! have_pwsh; then skip_no_pwsh "test_a_phase_that_is_not_one_is_refused_where_pwsh_is"; return 0; fi
   run311 -Phase later -Project "$PROJECT"
   expect_status "$status" 2 "a phase that is not one"
-  expect_contains "$err" "--Phase takes all, look, failure or logs" "the refusal says what it takes, on stderr where the stop is written"
+  expect_contains "$err" "-Phase takes all, look, failure or logs" "the refusal says what it takes, on stderr where the stop is written"
   expect_contains "$out" "FACT project: INFO" "and the block is printed with what was measured, which is nothing"
 }
 
@@ -614,6 +630,7 @@ t test_a_row_of_an_unselected_phase_is_not_measured
 t test_the_guards_are_all_there_and_run_before_anything_else
 t test_the_dry_run_branch_comes_after_the_agent_guard_and_before_the_platform_one
 t test_the_non_windows_stop_names_the_sibling_check
+t test_no_stop_sentence_is_lost_to_a_bare_plus
 t test_the_watched_runs_are_never_captured
 t test_the_pipe_and_the_document_are_read_from_a_capture
 t test_the_forced_failure_is_a_terraform_that_answers_version
