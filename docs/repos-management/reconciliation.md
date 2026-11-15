@@ -1,6 +1,6 @@
 # Reconciliation: the order against the code, and the decisions this work needs
 
-**Status: a design, nothing approved and nothing built.** The decisions are **D2400–D2417** (§4), each with a recommendation and the cost of every alternative; the number block is read in §5 and this work holds **D2400–D2429**. The owner's order is recorded verbatim in [spec.md](spec.md) §0. **Where this file and [spec.md](spec.md) disagree, this file wins.**
+**Status: a design, all tasks approved by the owner on 2026-11-15 and nothing built yet.** The decisions are **D2400–D2417** (§4), each with a recommendation and the cost of every alternative, **all eighteen answered by the owner on 2026-11-15, each as recommended**; the number block is read in §5 and this work holds **D2400–D2429**. The owner's order is recorded verbatim in [spec.md](spec.md) §0. **Where this file and [spec.md](spec.md) disagree, this file wins.**
 
 Reconciled against `origin/main` at **`5c170e5c`**, on 2026-11-14, by reading the files rather than the designs that describe them.
 
@@ -216,7 +216,7 @@ Every row of that table is a thing this work **reuses**; none is a thing it shou
 
 ## 4. Decisions
 
-Each decision carries its **recommendation** and **what the alternatives cost**. The owner's answer goes in the last column; nothing here is approved, and the plan's tasks are written to the recommendations until the owner says otherwise.
+Each decision carries its **recommendation** and **what the alternatives cost**. The owner's answer is the last line of each; he answered all eighteen on 2026-11-15, each as recommended, so the plan's tasks are written to the answers. The owner approved every task on 2026-11-15.
 
 ### D2400. `add` is the whole converge behind one confirmation, and the confirmation covers the five writes and not the build
 
@@ -224,7 +224,7 @@ Each decision carries its **recommendation** and **what the alternatives cost**.
 
 **What the alternatives cost.** *One confirmation per step* — this is the six-command order with a shorter keyboard, and it is exactly what the owner got wrong; it also makes the "which are already done" reading impossible to take once. *One confirmation covering the build too* — the confirmation then authorises an unbounded per-build-minute cost from a list that cannot state it, which is the shape every decision in this repository about billable work refuses (the update's build confirmation is `Typed` and separate). *No confirmation at all* — the command writes the published policy, the machine's config and the cloud, which is more than any one-line answer can stand for.
 
-**Answer:** _pending._
+**Answer: Answered 2026-11-15** -- the owner took the recommendation (recommended): one confirmation for the writes, the first image build excluded.
 
 ### D2401. `add` reads what it can and refuses, naming the fixing command, for what it cannot
 
@@ -232,7 +232,7 @@ Each decision carries its **recommendation** and **what the alternatives cost**.
 
 **What the alternatives cost.** *Ask a question for each missing value* — the command becomes the wizard the six-step order already is, and an unattended run cannot finish it. *Guess and warn* — a guessed image or App id is written into the local config and the policy, where a later reader cannot tell it from a decided one. *Refuse without naming the fix* — the state the empty container already put the owner in, which spec §2.4's fix rule exists to end.
 
-**Answer:** _pending._
+**Answer: Answered 2026-11-15** -- the owner took the recommendation (recommended): `add` refuses, naming the fixing command, for what it cannot read.
 
 ### D2402. `add` is idempotent and resumable, and says which it was
 
@@ -240,7 +240,7 @@ Each decision carries its **recommendation** and **what the alternatives cost**.
 
 **What the alternatives cost.** *Idempotent only* — the state the owner actually has, a repository half-enrolled by a failure or a Ctrl-C, is the state the command then cannot fix, which is the failure it exists for. *Resumable only* — a command that always writes cannot be run twice by an operator who is unsure, and an operator who is unsure is the operator this is for.
 
-**Answer:** _pending._
+**Answer: Answered 2026-11-15** -- the owner took the recommendation (recommended): `add` is idempotent and resumable.
 
 ### D2403. `--yes` does not come back; `--ask` is what the command line has
 
@@ -248,7 +248,7 @@ Each decision carries its **recommendation** and **what the alternatives cost**.
 
 **What the alternatives cost.** *Keep `--yes`* — it contradicts a merged ruling, it re-introduces the flag on a command that writes the published policy and the cloud, and it loads a flag the next release's no-prompt sweep would have to remove again. *Drop the confirmation instead* — a converge that writes four stores with no confirmation is the shape `confirmTypedStrict` exists to prevent.
 
-**Answer:** _pending._
+**Answer: Answered 2026-11-15** -- the owner took the recommendation (recommended): `--yes` is dropped; `--ask` is the only knob.
 
 ### D2404. The allow-list-only behaviour survives as one flag, because a pattern has no converge
 
@@ -256,7 +256,7 @@ Each decision carries its **recommendation** and **what the alternatives cost**.
 
 **What the alternatives cost.** *Drop the flag, converge or refuse* — patterns become unwritable through the group, and `fugaro project sync` writes concrete names only, so the wildcard loses its last door. *Keep today's behaviour as the default and put the converge behind `--converge`* — the owner's order says `add` is the converge; a default that still writes one of six steps is the order unimplemented. *Name it `--no-converge`* — a negative flag named for what it does not do reads as the omission rather than the intent.
 
-**Answer:** _pending._
+**Answer: Answered 2026-11-15** -- the owner took the recommendation (recommended): the allow-list-only behaviour survives as the `--allow-list-only` flag.
 
 ### D2405. `rm` removes six things, and the published policy node is one of them
 
@@ -264,7 +264,7 @@ Each decision carries its **recommendation** and **what the alternatives cost**.
 
 **What the alternatives cost.** *Leave the policy node* — a published node keeps naming a repository that is no longer enrolled, and a run of another repository reads it; the `allow_data_to` derivation has already moved on, so the node is the only stale copy left. *Remove the state and not the jobs* — the resources stay and `fugaro update` no longer knows they are ours, which is the orphan the retirement machinery exists to avoid. *A second removal engine* — it would not carry `deleteOrphanedJob`'s label check, which is what refuses to delete a job that is not ours.
 
-**Answer:** _pending._
+**Answer: Answered 2026-11-15** -- the owner took the recommendation (recommended): `rm` removes six things.
 
 ### D2406. `rm` deliberately leaves six things, and says so twice
 
@@ -272,7 +272,7 @@ Each decision carries its **recommendation** and **what the alternatives cost**.
 
 **What the alternatives cost.** *Say nothing* — the owner removes a repository believing its history went with it, or believing its images did, and finds out later; both are the empty container's failure mode again. *Leave them silently and document it in `docs/`* — an operator at the confirmation is not reading `docs/`.
 
-**Answer:** _pending._
+**Answer: Answered 2026-11-15** -- the owner took the recommendation (recommended): `rm` leaves six things and says so twice.
 
 ### D2407. An in-flight run is never disturbed, and the confirmation is the strict one
 
@@ -280,7 +280,7 @@ Each decision carries its **recommendation** and **what the alternatives cost**.
 
 **What the alternatives cost.** *Refuse while a run is going* — the HARD RULE's in-flight property forbids exactly this: an update asks no run to finish first, and `rm` is the same class of convergence. *Remove anyway* — the job the run is executing is deleted under it, which is the one outcome the owner's "never disturb" is about.
 
-**Answer:** _pending._
+**Answer: Answered 2026-11-15** -- the owner took the recommendation (recommended): an in-flight run is never disturbed, and the confirmation is strict.
 
 ### D2408. `--purge` is out of scope
 
@@ -288,7 +288,7 @@ Each decision carries its **recommendation** and **what the alternatives cost**.
 
 **What the alternatives cost.** *Ship `--purge` here* — it is a deletion of a run's history and of a container `prevent_destroy` protects, designed in the same breath as the verbs and reviewed at the same tier, which is how a delete list gets widened by accident. *Ship it as `--purge` on the existing `rm` with the same confirmation* — the confirmation for a policy-entry removal would then stand for the history of every run, which is not what a typed name can mean.
 
-**Answer:** _pending._
+**Answer: Answered 2026-11-15** -- the owner took the recommendation (recommended): no `--purge`.
 
 ### D2409. One `ls` row per repository, and the two halves of its state are columns
 
@@ -296,7 +296,7 @@ Each decision carries its **recommendation** and **what the alternatives cost**.
 
 **What the alternatives cost.** *One row per allow-list entry only* — the current output, which is one of the two states and says nothing about the other; an operator cannot see a repository that is configured locally and not admitted. *Merge the seen list into the rows* — a repository seen running here and no longer admitted would read as enrolled, and a repository admitted and never run would read as unenrolled (`ls` would then have to explain, per row, which source named it).
 
-**Answer:** _pending._
+**Answer: Answered 2026-11-15** -- the owner took the recommendation (recommended): one `ls` row per repository.
 
 ### D2410. `ls --json` is a new versioned document, and it carries the window as a window
 
@@ -304,7 +304,7 @@ Each decision carries its **recommendation** and **what the alternatives cost**.
 
 **What the alternatives cost.** *No `--json`* — the console and the history have nothing to read, and the group's answers are parsed from a text listing, which is the drift the wire-format rule in `CLAUDE.md` exists to prevent. *`--json` without a version* — the first added field is a silent change for a reader this repository does not control. *One `repos` object with a `seen` boolean* — it makes a reading of what has run a property of an enrolment, which is the misreading D2409 refuses. *A single window-length member beside the whole `seen` list* — it describes the runs-bucket half, which has no window, so the document would state a window the data does not have (the field-meaning rule in `CLAUDE.md`).
 
-**Answer:** _pending._
+**Answer: Answered 2026-11-15** -- the owner took the recommendation (recommended): `ls --json` is a new versioned document.
 
 ### D2411. `status [REPO]` carries nine rows, and "not enrolled" is its own answer
 
@@ -312,7 +312,7 @@ Each decision carries its **recommendation** and **what the alternatives cost**.
 
 **What the alternatives cost.** *Fewer rows* — the row dropped is a launch refusal the operator meets later, and the empty container is exactly a row that was not there. *"Not enrolled" folded into a failing row* — an operator who mistyped a name is told a repository they do not have is misconfigured. *One line per repository with no per-repository detail* — the four facts that are per-workflow (image, grant, credential, account) cannot fit, and the fix sentence would name a command without saying which of several subjects it is for.
 
-**Answer:** _pending._
+**Answer: Answered 2026-11-15** -- the owner took the recommendation (recommended): `status` carries nine rows, and "not enrolled" is its own answer.
 
 ### D2412. `status` is read-only, exits nonzero when a launch is blocked, and carries `--json`
 
@@ -320,7 +320,7 @@ Each decision carries its **recommendation** and **what the alternatives cost**.
 
 **What the alternatives cost.** *Exit nonzero on a warning* — a working installation is reported as broken to every script that calls it, and the fix sentence is then a suggestion dressed as a failure. *Write the fixes* — a status that can converge is a status whose output depends on when it ran, and the doctor's read-only property is pinned by `TestDoctorReadOnly` for this reason.
 
-**Answer:** _pending._
+**Answer: Answered 2026-11-15** -- the owner took the recommendation (recommended): `status` is read-only and exits nonzero only on a launch blocker.
 
 ### D2413. The verbs live in `fugaro project repos`; the console reads and never writes
 
@@ -328,7 +328,7 @@ Each decision carries its **recommendation** and **what the alternatives cost**.
 
 **What the alternatives cost.** *A new top-level group* — the allow-list, the `repos:` entry, the map and the root are one subject, and two groups for one subject is two places an operator looks. *Let the console write* — it would run Terraform and write the published policy from a desktop app, with the gate's answer taken from a session that is not the owner's terminal. *No skill change* — a session asked to "add the repository" invents the six steps again, which is where this started.
 
-**Answer:** _pending._
+**Answer: Answered 2026-11-15** -- the owner took the recommendation (recommended): the verbs stay in `project repos`, and the console only reads.
 
 ### D2414. The writes ask admin at the project; the reads ask what a read asks
 
@@ -336,7 +336,7 @@ Each decision carries its **recommendation** and **what the alternatives cost**.
 
 **What the alternatives cost.** *A repository-scoped gate for `add`* — enrolling a repository writes the published policy, which every repository of the project reads; a scoped role that could write it could widen what another repository's runs admit. *The read gate on `add`* — it is a write. *The gate after the reads* — the reads are of the project's own config and the provider, and a session without the role has no business making them.
 
-**Answer:** _pending._
+**Answer: Answered 2026-11-15** -- the owner took the recommendation (recommended): writes need admin at project scope.
 
 ### D2415. Anything that puts a secret in front of a person follows the hidden-prompt rule
 
@@ -344,7 +344,7 @@ Each decision carries its **recommendation** and **what the alternatives cost**.
 
 **What the alternatives cost.** *A `--token` flag* — the value is in the process's command line, where every process on the machine reads it, and in the shell's history. *Read a value to decide a row* — a read that can put a credential in a log is a read that eventually does. *Say "not stored" without the fixing command* — the empty container's failure, which is the whole reason this row exists.
 
-**Answer:** _pending._
+**Answer: Answered 2026-11-15** -- the owner took the recommendation (recommended): hidden prompt or stdin only, and `status` shows presence.
 
 ### D2416. `add` never leaves an installation that `fugaro update` would then change
 
@@ -352,7 +352,7 @@ Each decision carries its **recommendation** and **what the alternatives cost**.
 
 **What the alternatives cost.** *A second deployment path for the root* — two paths that must agree forever, and the one that drifts is found by a launch refusal. *`add` tells the operator to run `fugaro update` afterwards* — that is the operator step the HARD RULE forbids, and it is the six-step order with a shorter keyboard. *`update` learns about enrolments* — update re-derives from the config and the policy; a third input is a state update did not have, and it would then have to be reconciled on every run.
 
-**Answer:** _pending._
+**Answer: Answered 2026-11-15** -- the owner took the recommendation (recommended): `add` runs `update`'s stages in the same order, and `update` writes nothing after.
 
 ### D2417. One owner-run live check, in the shape of Check 313
 
@@ -360,7 +360,7 @@ Each decision carries its **recommendation** and **what the alternatives cost**.
 
 **What the alternatives cost.** *No live check* — the six steps and the empty container are facts about a real installation, and no hermetic test can say that `status` names the right fixing command on a real one. *A check per verb* — four scripts, four rows, four passes by the owner, for one flow whose whole subject is that the steps are one flow. *Run it from an agent's session* — the command refuses one, and the value needs the terminal that can answer the hidden prompt.
 
-**Answer:** _pending._
+**Answer: Answered 2026-11-15** -- the owner took the recommendation (recommended): one owner-run Check 620.
 
 ---
 
@@ -385,7 +385,7 @@ done
 
 **A number reserved by an unmerged plan is invisible to a grep of `main`**, and a number reserved in a merged plan is invisible to a grep of `docs/gcp-live-checklist.md` — `docs/plans/2026-10-16-voice.md` §2 (line 58) states both, and it is why the fourth command above reads the checklist and the designs' own files rather than one file. (`§5.3` is [voice.md](../design/voice.md)'s section, not the plan's: it works the same claims through, and the plan is where the allocation is written.)
 
-**This work takes D2400–D2429: D2400–D2417 are written here, every one pending the owner's answer, and D2418–D2429 are reserved and unused.** Its checks are **620–629**, of which **620** is written in the plan and **621–629** are reserved.
+**This work takes D2400–D2429: D2400–D2417 are written here and every one is answered (2026-11-15, as recommended), and D2418–D2429 are reserved and unused.** Its checks are **620–629**, of which **620** is written in the plan and **621–629** are reserved.
 
 ---
 
