@@ -6,30 +6,32 @@ import (
 )
 
 // The money and permanence steps of the managed set, pinned as tests: the
-// steps the ruling of 2026-11-01 takes the prompt from are the ones the gate's
-// own verdict covers and the ordinary steps the gate does not judge, and these
-// are the ones left out of both — a billable first image build, the Firestore
+// steps the ruling of 2026-11-01 takes the prompt from are the ones the gate
+// stands in for and the ordinary steps it does not judge, and these are the
+// ones left out of both — a billable first image build, the Firestore
 // database's own location, and a registry tag replacement. What decides them is
-// D1026's class rule, and it is the design's rule rather than this build's
-// choice: `Covers` is true only for YesOrTyped, and a step that is money or
-// permanent is one a plan verdict cannot stand in for. The design's own
-// billable path says the same thing from the other end — `fugaro image
-// refresh` stops asking a session's per-build question only because D1013 gave
-// that path a document and a bound, so a prompt is only ever replaced by
-// something that bounds what the prompt was there for.
+// D1026's rule, and it is the design's rule rather than this build's choice: a
+// step that is money or permanent is one a plan verdict cannot stand in for, so
+// it is judged by no plan gate at all (managed.ConvergeUnjudged, which refuses
+// whatever the document says). The design's own billable path says the same
+// thing from the other end — `fugaro image refresh` stops asking a session's
+// per-build question only because D1013 gave that path a document and a bound,
+// so a prompt is only ever replaced by something that bounds what the prompt
+// was there for.
 //
 // What answers for them is the session and no longer a name typed under the
 // banner (T7, docs/no-prompt-policy): a person at their own terminal confirms
-// a step of this kind by being there and types nothing at all, --yes confirms
-// the two whose class takes it, and where nobody is at the terminal — a pipe,
-// --json, --non-interactive, a coding agent's session — the step is left for
-// the user. So each test below asserts the SAME answer in the two worlds, and
-// that is the assertion: a managed project's own terminal is answered for these
-// steps exactly as a project that is not managed is, and what a reading of the
-// marks may never do is answer a money step. The mutation it catches is the
-// tempting one — an arm in askClass or askCovered that returns "confirmed" when
-// gateUnderway() is true — which the world with nobody at the terminal fails,
-// and which would pass every other test in this package.
+// a step of this kind by being there and types nothing at all, a run that
+// carries its own answer confirms the two that answer reaches, and where nobody
+// is at the terminal — a pipe, --json, a coding agent's session — the step is
+// left for the user. So each test below asserts the SAME answer in the two
+// worlds, and that is the assertion: a managed project's own terminal is
+// answered for these steps exactly as a project that is not managed is, and
+// what a reading of the marks may never do is answer a money step. The mutation
+// it catches is the tempting one — an arm in askClass or askCovered that
+// returns "confirmed" when gateUnderway() is true — which the world with nobody
+// at the terminal fails, and which would pass every other test in this
+// package.
 
 // managedTerminalUpdate is one update door's run on a rig, in one of the two
 // sessions a step of this kind ends in: a person at a real terminal, who
@@ -119,11 +121,12 @@ func assertMoneyStep(t *testing.T, out *syncBuf, spy *readSpy, reachable, confir
 
 // The first billable image build of a repository: buildImages' own step
 // (cloudBuildBanner + askCovered), reached by the repository stage of an
-// update. The class is YesOrTyped in this door (D12's answer of 2026-10-20,
-// which is what lets --yes cover the build), and the gate judges no document
-// that names it — the repository stage's document is the Terraform plan, not
-// the Cloud Build the step submits — so the person at the terminal is the one
-// who answers it, and a session with nobody there leaves it.
+// update. The run's own answer reaches it in this door (D12's answer of
+// 2026-10-20, which is what lets a run that carries one cover the build), and
+// the gate judges no document that names it — the repository stage's document
+// is the Terraform plan, not the Cloud Build the step submits — so the person
+// at the terminal is the one who answers it, and a session with nobody there
+// leaves it.
 func TestManagedBillableFirstBuildKeepsTheOwnersTerminal(t *testing.T) {
 	for _, tc := range moneyWorlds() {
 		t.Run(tc.what, func(t *testing.T) {
@@ -139,18 +142,19 @@ func TestManagedBillableFirstBuildKeepsTheOwnersTerminal(t *testing.T) {
 }
 
 // The Firestore database's location: the one step of the firebase stage that is
-// confirmed on its own (init_firebase.go's stepConfirmation(r.stepClass())),
-// and permanent in the way a plan cannot judge — a database's location cannot
-// be changed afterwards. It is YesOrTyped in `update` and Typed in `setup`
-// (stepClass), and the person at the terminal answers it in both; which class
-// the door gives it is what lets --yes reach it in `update` and never in
-// `setup`.
+// asked on its own (init_firebase.go's stepConfirmation, with the door as the
+// own-answer argument), and permanent in the way a plan cannot judge — a
+// database's location cannot be changed afterwards. It is a step the run's own
+// answer reaches in `update` and not in `setup`, and the person at the terminal
+// answers it in both; which door the run is in is what lets that answer reach
+// it in `update` and never in `setup`.
 func TestManagedFirestoreLocationKeepsTheOwnersTerminal(t *testing.T) {
 	for _, tc := range moneyWorlds() {
 		t.Run(tc.what, func(t *testing.T) {
 			_, e, out, spy := managedTerminalUpdate(t, tc.managed, tc.terminal)
-			confirmed, reachable, err := e.r.askClass(e.r.stepClass(),
-				"creates the Firestore database in northamerica-northeast1 for the budget backend")
+			confirmed, reachable, err := e.r.askClass(
+				"creates the Firestore database in northamerica-northeast1 for the budget backend",
+				e.r.o.door == updateDoor.name)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -160,11 +164,11 @@ func TestManagedFirestoreLocationKeepsTheOwnersTerminal(t *testing.T) {
 }
 
 // A registry tag replacement is the third, and it is structural rather than
-// classified: --replace-image is one of the flags that shape the installation
+// judged: --replace-image is one of the flags that shape the installation
 // (initOptions.installationFlags, asked by shapesTheInstallation), so a run
 // that carries it is refused the gate before any mark is read — gateRun returns
 // without a read, gateUnderway() is false, and askCovered (confirmReplace's own
-// class) reaches the session in front of the banner with no verdict of any kind
+// step) reaches the session in front of the banner with no verdict of any kind
 // beside it. That is what makes the answer the same in a managed project, and
 // the test asserts the reason and not only the outcome: the gate is nil, so
 // nothing anywhere could have answered for this step but the person.

@@ -75,8 +75,9 @@ neither deletes nor closes them, and the block names each one.
   credential and settles nothing here — the gate reads an entry, and its PASS row says so. What the
   working run would meet under that row is the node's `credentials.fallback`, which the row also reads:
   where it does not spend, the working run's first model call is refused (the
-  `state_unavailable` halt of 0.23.1 — "creds: no candidate credentials were offered" where the bundle
-  holds no paid key, and the fallback-forbidden refusal where it holds one the policy will not spend);
+  `no_candidate_credentials` refusal — the class that replaced the `state_unavailable` halt of 0.23.1,
+  which read as a state that could not be read — where the bundle holds no paid key, and the
+  fallback-forbidden refusal where it holds one the policy will not spend);
   where it spends (`auto`), that run is served by the project's paid key instead, as far as the
   service's bundle holds that key, which is not a read this check makes. The review-only run is refused
   in either arm: a review caller's identity is paired against this same admission, which the fallback
@@ -281,10 +282,10 @@ knowing by name:
   settles nothing here (the gate reads an entry, and the row says what such an entry does not). The row
   says what the working run would then meet, read from the same document's `credentials.fallback`: under
   `oauth-only` (the default, and the state 0.23.1 measured the halt in) its first model call is refused —
-  `state_unavailable` ("creds: no candidate credentials were offered") where the bundle holds no paid
-  key, and the fallback-forbidden refusal ("no shared subscription credential can serve this call")
-  where it holds one the policy does not spend. Under `auto` a tier-B credential needs no admission
-  (internal/credsvc's `candidates`), so that run would be served by the project's paid key
+  `no_candidate_credentials` (the class that replaced the `state_unavailable` halt it measured) where the
+  bundle holds no paid key, and the fallback-forbidden refusal ("no shared subscription credential can
+  serve this call") where it holds one the policy does not spend. Under `auto` a tier-B credential needs
+  no admission (internal/credsvc's `candidates`), so that run would be served by the project's paid key
   instead, as far as the service's bundle holds that key — which the check does not read, and which is
   a spend it will not launch on. The review-only run is refused in either arm: a review caller's identity
   is paired against this same admission, which the fallback never enters (internal/credsvc's

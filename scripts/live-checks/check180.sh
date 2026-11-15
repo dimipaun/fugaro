@@ -744,7 +744,10 @@ READER_EOF
 
 step_installation() {
   local status rc=0
-  status=$(fugaro doctor --project "$INSTALLATION" --json >"$SCRATCH/doctor.json" 2>"$SCRATCH/doctor.err" && echo ok || echo failed)
+  # doctor exits 1 whenever any of its checks is not ok, warnings included, and
+  # still prints its document; only a timeout or another status is no answer.
+  fugaro doctor --project "$INSTALLATION" --json >"$SCRATCH/doctor.json" 2>"$SCRATCH/doctor.err" || rc=$?
+  if [ "$rc" = 0 ] || [ "$rc" = 1 ]; then status=ok; else status=failed; fi
   local facts
   facts=$(reader doctor "$SCRATCH/doctor.json" 2>/dev/null || true)
   PROJECT_NAME=$(field_of project "$facts")

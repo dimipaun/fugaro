@@ -284,13 +284,12 @@ func TestSettingsJSONNamesTheFamilyThatOwnsTheOthers(t *testing.T) {
 		{"job_profiles.*.cpu", "fugaro project"},
 		{"batch.secrets", "fugaro secrets"},
 		{"budget.firebase_project", settingsOwnerCommands["budget"]},
-		// The account aliases' row names the file, not the family that will
-		// write it: `fugaro accounts alias set/rm` is what converges the node
-		// and the job set on a repoint (D2096) and it is not in this tree yet,
-		// so a row naming `accounts` would print a command that writes nothing
-		// and refuse the write in that family's name. The entry moves to
-		// `fugaro accounts` with the command.
-		{"claude_account_aliases", settingsOwnerCommands["config local"]},
+		// The account aliases' rows name the family that writes them:
+		// `fugaro accounts alias set/rm` is what converges the node and the job
+		// set on a repoint (D2096), and the block's own row is the map the file
+		// holds while the wildcard is one entry of it — one command writes both.
+		{"claude_account_aliases", settingsOwnerCommands["accounts"]},
+		{"claude_account_aliases.*", settingsOwnerCommands["accounts"]},
 	} {
 		row := writableRowOf(t, rows, tc.key, "project")
 		if row.Owner == nil {
@@ -385,7 +384,7 @@ func TestSettingsJSONTargetLayerMatchesWhatSetWrites(t *testing.T) {
 	if row.TargetLayer == nil || *row.TargetLayer != settingsLayerLocal {
 		t.Fatalf("commit_name: target_layer = %v, and a write with no --layer lands in %s", row.TargetLayer, settingsLayerLocal)
 	}
-	if out, _, err := execute(t, "settings", "set", "commit_name", "Fugaro", "--yes"); err != nil {
+	if out, _, err := execute(t, "settings", "set", "commit_name", "Fugaro"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if got := readFileString(t, localPath); !strings.Contains(got, "commit_name: Fugaro") {
@@ -397,7 +396,7 @@ func TestSettingsJSONTargetLayerMatchesWhatSetWrites(t *testing.T) {
 	if row.TargetLayer == nil || *row.TargetLayer != settingsLayerRepo {
 		t.Fatalf("git.base_branch: target_layer = %v, and a write with no --layer lands in %s", row.TargetLayer, settingsLayerRepo)
 	}
-	if out, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--yes"); err != nil {
+	if out, _, err := execute(t, "settings", "set", "git.base_branch", "develop"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if got := readFileString(t, checkout); !strings.Contains(got, "base_branch: develop") {

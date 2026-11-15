@@ -1559,7 +1559,8 @@ D160–D179 are not this document's to take.
   need a later change — a bounded field Q3 (b) asks for — and **generation 5** is that change's,
   not the store's *(amended 2026-11-14: it read **generation 4**, which the coordinator's
   `coordinator/` grant took — #1021, 2026-10-24 — so the registration change's generation is
-  the one after the tree's)*.
+  the one after the tree's; amended again 2026-11-15: the owner ruled that P5.3.1, merged, takes
+  **generation 5**, so the registration change is **generation 6**, built on generation 5)*.
 
 **Q3. How does the push token rotate and the user's switches get written, given the app cannot
 write `config/admin`?**

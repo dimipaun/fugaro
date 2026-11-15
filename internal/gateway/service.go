@@ -80,6 +80,17 @@ const (
 	// service keeps only its hash — so it is attached here, on the call the
 	// service decides by, and never written to a log, an error or a record.
 	HeaderSlipClaim = "X-Fugaro-Slip-Claim"
+	// HeaderAuthMode is the auth the run's own repository goes out on, as the
+	// runner declares it (B2.2, credsvc.HeaderAuthMode). It is a statement
+	// and never evidence: the service decides from the record `fugaro update`
+	// wrote for that repository and reads this only to check the two agree
+	// (D2070 (a), R7), so a value the agent chose would be refused rather
+	// than served.
+	HeaderAuthMode = "X-Fugaro-Auth-Mode"
+	// HeaderAuthAccount names the Claude account an oauth run goes out on,
+	// spelled as config.ClaudeAccountNameRE spells one. It is read for one
+	// thing only, whether the repository's record names that account.
+	HeaderAuthAccount = "X-Fugaro-Auth-Account"
 )
 
 // The answer headers of the contract (credsvc.HeaderTier,
@@ -136,6 +147,18 @@ const (
 	// fail-closed rather than pinning no model. A refusal, so the run halts
 	// (D143), and the halt's detail names what to look at.
 	ErrorRequestRefused = "request_refused"
+	// ErrorNoCandidateCredentials is a call the service had no credential to
+	// serve: every credential the policy offered this repository was dropped
+	// before the selection was made, so there was nothing to select from,
+	// nothing to wait for and no other tier to reach. That is not
+	// ErrorStateUnavailable, whose name would send the operator to the
+	// database: the service read the state, and what it read is that this
+	// repository's admission covers none of the project's model credentials.
+	// A refusal, so the run halts (D143). The names the service considered
+	// reach this job's log and the service's own line, and never the halt's
+	// detail, which the agent reads: the set of the project's credentials is
+	// not the agent's business (D143).
+	ErrorNoCandidateCredentials = "no_candidate_credentials"
 )
 
 // Why a credential was not used, in a refusal's tried list
@@ -308,10 +331,13 @@ type Tried struct {
 // job's own: validate refuses a service upstream that has one, and this
 // function writes only the two identities above — the agent's own headers,
 // the gateway token and every credential header Claude Code sent are already
-// gone from what forwardHeaders returns. A route is refused as well, here and
-// in validateRoutes, on oauthUpstream's reasoning: a route is a provider's
-// own endpoint and is reached with the provider's key, which a service run
-// does not have.
+// gone from what forwardHeaders returns. A route is refused as well, on
+// oauthUpstream's reasoning: a route is a provider's own endpoint and is
+// reached with the provider's key, which a service run does not have. A
+// routed call never reaches this function at all — upstreamRequest returns
+// the provider's own request before the kind switch — and the check is kept
+// so a route handed to it in code cannot have a service call built for it
+// either.
 func (s *Server) serviceUpstream(ctx context.Context, rt route, in http.Header) (http.Header, error) {
 	if rt.provider != nil {
 		return nil, errServiceOnRoute
@@ -343,13 +369,23 @@ func (s *Server) serviceUpstream(ctx context.Context, rt route, in http.Header) 
 	// reason and for one more: they are the run's claim, taken by the runner
 	// and held here, so an agent that sent a slip of its own must not have
 	// it reach the service — what travels below is the claim the run took,
-	// and never a value the agent chose.
-	for _, k := range []string{HeaderTier, HeaderCredential, HeaderSwitch, HeaderProbe, HeaderSlip, HeaderSlipClaim} {
+	// and never a value the agent chose. The run's own auth declaration is
+	// dropped for that same second reason: the agent runs inside the
+	// repository whose auth it is, so a mode or an account it wrote would
+	// read as the runner's statement about a repository it may not be in —
+	// what travels below is what the runner resolved for this run.
+	for _, k := range []string{HeaderTier, HeaderCredential, HeaderSwitch, HeaderProbe, HeaderSlip, HeaderSlipClaim, HeaderAuthMode, HeaderAuthAccount} {
 		h.Del(k)
 	}
 	h.Set("Authorization", "Bearer "+id)
 	h.Set(HeaderRunIdentity, run)
 	h.Set(HeaderRunJob, sv.Job)
+	if mode := s.o.Upstream.AuthMode; mode != "" {
+		h.Set(HeaderAuthMode, mode)
+	}
+	if account := s.o.Upstream.Account; account != "" {
+		h.Set(HeaderAuthAccount, account)
+	}
 	if sv.SlipID != "" {
 		h.Set(HeaderSlip, sv.SlipID)
 		h.Set(HeaderSlipClaim, sv.SlipClaim)
@@ -357,12 +393,15 @@ func (s *Server) serviceUpstream(ctx context.Context, rt route, in http.Header) 
 	return h, nil
 }
 
-// errServiceOnRoute is the refusal both validateRoutes and serviceUpstream
-// give a route offered to a service upstream. There is no cycle to break
-// here (a route's key would be the job's own credential, which a service run
+// errServiceOnRoute is the refusal a service call gives a route offered to it,
+// from validateRoutes and from serviceUpstream. There is no cycle to break
+// here (a route's key would be the job's own credential, which a cascade run
 // does not have): it is refused by name so a misconfiguration says what it
 // is, and in both places so a Route built in code past validation cannot
-// reach a provider through a service run either.
+// reach a provider through a service run either. The one service upstream
+// that does have a key of its own is a switched api-key run's, whose routes
+// validateRoutes admits (B2.2, R6/D1634) — and whose routed calls the
+// upstream path never builds a service request for.
 var errServiceOnRoute = errors.New("a provider route is never reached through the credentials service: a route is a provider's own endpoint and is called with the job's own key, which a cascade run does not have (D143)")
 
 // errServiceUnidentified is every way a service call fails before it is sent
@@ -823,6 +862,17 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 		return http.StatusServiceUnavailable, true, "", nil
 	case ErrorStateUnavailable:
 		return s.haltService(w, refusalDetail(e.Error)), true, "", nil
+	case ErrorNoCandidateCredentials:
+		// The one refusal whose detail is built from the answer rather than
+		// from the type alone (noCredentialDetail): which of the filters
+		// removed the candidates is the whole diagnosis, and a run told only
+		// "no credential" is a run whose operator greps a log with nothing in
+		// it. The names stay out of the detail and go to this job's own log
+		// (triedLog), which is where the run's operator reads them and where
+		// the agent cannot.
+		s.log.Warn("budget: the credentials service had no credential to offer a call",
+			"stage", s.stageName(), "tried", triedLog(e.Tried))
+		return s.haltService(w, noCredentialDetail(e.Tried)), true, "", nil
 	case ErrorRequestRefused:
 		// The service's request check refused the call itself, and the one
 		// cause a forwarded call can really have is a project that publishes
@@ -893,6 +943,83 @@ func refusalDetail(typ string) string {
 		return "the credentials service refused this request (request_refused: check the project's published budget.allowed_models and this call's model, tools and max_tokens)"
 	}
 	return stateDetailUnreadable
+}
+
+// noCredentialDetail is the detail for a call the service had no credential to
+// offer. Unlike every other detail here it is built from the answer, because
+// the cause IS the answer: which filter removed the credentials is what tells
+// the operator whether to look at the project's published policy, the
+// installation's bundle or the repository's own local config, and a run told
+// only that no credential existed is a run whose operator greps a log that
+// says nothing.
+//
+// What is built from the answer is only the set of reasons, and each one is
+// rendered by noCredentialCause, whose every sentence is a constant of this
+// package: no free text, no credential NAME and nothing else the service sent
+// reaches a Detail, which the agent is shown and the run's record keeps (D143).
+// The names are in this job's own log instead (triedLog), which the agent
+// never reads.
+func noCredentialDetail(tried []serviceTried) string {
+	if len(tried) == 0 {
+		// Nothing was dropped because nothing was there: the bundle the
+		// service loads holds no model credential at all, which is a fact
+		// about the installation and not about the policy.
+		return "the credentials service had no credential to offer this call (no_candidate_credentials): the installation's bundle holds no model credential, so there was nothing this policy could admit (check the bundle with the credentials service's own log line for this run)"
+	}
+	causes := noCredentialCauses(tried)
+	return "the credentials service had no credential to offer this call (no_candidate_credentials): " +
+		strings.Join(causes, "; ") +
+		" — check the project policy's credentials.accounts, each account's allow_repos and this repository's own claude_accounts, and the credentials service's own log line for this run, which names every credential it considered"
+}
+
+// noCredentialCause is one tried reason as a sentence of this package's own.
+// Every value it answers is a constant here, and the reason reaches it only
+// after validTriedList held the body to the contract's own closed set: a reason
+// this release does not carry is a detail that says the answer could not be
+// read rather than a word the service chose.
+func noCredentialCause(reason string) string {
+	switch reason {
+	case ReasonNotAdmitted:
+		return "not one of the credentials this repository's policy admits to it (not_admitted)"
+	case ReasonExhausted:
+		return "the credentials it may use are all marked exhausted (exhausted)"
+	case ReasonBroken:
+		return "the credentials it may use are all marked broken (broken)"
+	case ReasonStopped:
+		return "the credentials it may use are stopped by an operator's switch (stopped)"
+	}
+	return stateDetailUnreadable
+}
+
+// noCredentialCauses is the distinct reasons a tried list carries, rendered in
+// this package's own order and never in the order the answer happened to list
+// them, so the same refusal is the same detail whatever order it was built in.
+func noCredentialCauses(tried []serviceTried) []string {
+	present := make(map[string]bool, len(tried))
+	for _, tr := range tried {
+		present[tr.Reason] = true
+	}
+	out := make([]string, 0, len(present))
+	for _, r := range []string{ReasonNotAdmitted, ReasonExhausted, ReasonBroken, ReasonStopped} {
+		if present[r] {
+			out = append(out, noCredentialCause(r))
+		}
+	}
+	return out
+}
+
+// triedLog renders a refusal's tried list for this job's own log: the names the
+// service considered and the reason each was not used, one line. It is the
+// diagnosis that stays out of the halt's detail (noCredentialDetail) because
+// the Detail is displayed to the agent, and it is what an operator greps the
+// run's log for — the service's own line for the same refusal carries the same
+// list, so the two can be read against each other.
+func triedLog(tried []serviceTried) string {
+	parts := make([]string, 0, len(tried))
+	for _, tr := range tried {
+		parts = append(parts, logValue(tr.Name)+" ("+tr.Reason+")")
+	}
+	return strings.Join(parts, ", ")
 }
 
 // haltService records a halt the service's own answer forces, writes the

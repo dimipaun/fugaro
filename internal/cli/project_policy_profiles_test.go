@@ -120,6 +120,74 @@ func TestPublishWithoutProfilesDropsThemAndSaysSo(t *testing.T) {
 	}
 }
 
+// projectBitbucketMountYAML is a config whose default profile is a Bitbucket
+// one mounting the project's workspace token: the shape the owner's ruling of
+// 2026-11-14 refuses at the publish, and the one this test's own profile is
+// bounded by the token block for (allow_repos inside it, exactly as
+// projectpolicy requires of a profile that mounts it).
+const projectBitbucketMountYAML = "project_secrets:\n" +
+	"  bitbucket-token: { allow_data_to: [acme/other] }\n" +
+	"profiles:\n" +
+	"  standard: { provider: bitbucket, cpu: 2, memory: 4Gi, timeout_class: 6h, secrets: [bitbucket-token], allow_repos: [\"bitbucket/acme/other\"] }\n"
+
+// TestPublishRefusesAProfileThatMountsTheBitbucketToken: the owner's ruling of
+// 2026-11-14, which settles what the review left as a product decision. A
+// profile a shared project job is deployed for holds no credential of the
+// provider it serves (D2302: the job is shared by every repository the profile
+// admits, and that token's reach is a per-repository list such a job cannot be
+// bounded by), so the profile is refused where it is written — at the publish,
+// with the rule's own wording (projectpolicy.CheckSharedJobProfile, the
+// function the deployer asks too) — and never reaches `fugaro update`.
+//
+// The refusal must come from that rule and not from the Bitbucket block's own
+// subset rule (validBitbucketProfileRepos): the config below states a token
+// block that admits the profile's repository, so the older rule is satisfied
+// and this one is the only thing between it and a published node.
+func TestPublishRefusesAProfileThatMountsTheBitbucketToken(t *testing.T) {
+	f := newProjectFixture(t, projectBitbucketMountYAML)
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatalf("publishing a profile that mounts %s succeeded:\n%s", config.BitbucketSecret, out)
+	}
+	for _, want := range []string{"profiles.standard.secrets[0]", config.BitbucketSecret, "credentials service"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not carry %q: %v", want, err)
+		}
+	}
+	if f.db.Value(projectpolicy.PathShared()) != nil {
+		t.Error("a refused publish wrote the node")
+	}
+}
+
+// TestPublishWritesAProfileWithoutTheMount is the other half of the same rule:
+// a Bitbucket profile that mounts nothing is what a shared job is deployed for,
+// and the ruling takes nothing from it. The project's token block is still
+// published — a proxied run's job holds no credential at all and the block is
+// the caller's whole admission — so the rule is about the profile's secrets and
+// nothing else.
+func TestPublishWritesAProfileWithoutTheMount(t *testing.T) {
+	f := newProjectFixture(t, `project_secrets:
+  bitbucket-token: { allow_data_to: [acme/other] }
+profiles:
+  standard: { provider: bitbucket, cpu: 2, memory: 4Gi, timeout_class: 6h }
+`)
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatalf("publishing a Bitbucket profile that mounts nothing failed:\n%s\n%v", out, err)
+	}
+	p := publishedPolicy(t, f)
+	standard, ok := p.Profiles[projectpolicy.DefaultProfileName]
+	if !ok {
+		t.Fatalf("profiles = %v, want the operator's default", p.ProfileNames())
+	}
+	if standard.Provider != "bitbucket" || len(standard.Secrets) != 0 {
+		t.Errorf("standard = %+v, want a bitbucket profile mounting nothing", standard)
+	}
+	if p.BitbucketToken == nil {
+		t.Error("the published node carries no bitbucket_token block: the profile mounts nothing, and the block is a proxied job's whole admission")
+	}
+}
+
 // TestPublishRefusesAnUndefinedProfile: step 1's publish half. A config that
 // publishes profiles must define the one every workflow that names none runs
 // on, because a repository selecting it would have every run refused at run

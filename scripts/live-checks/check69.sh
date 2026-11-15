@@ -472,7 +472,8 @@ step_origin() {
   out=$(curl -sS -L -o /dev/null \
     -w '%{scheme} %{http_code} %{remote_ip} %{ssl_verify_result} %{url_effective}' "$C" 2>"$err") || true
   set -- $out
-  scheme=${1:-}
+  # curl 8.x prints %{scheme} in uppercase (HTTPS) and older ones in lowercase.
+  scheme=$(printf '%s' "${1:-}" | tr 'A-Z' 'a-z')
   code=${2:-}
   ip=${3:-}
   verify=${4:-}
