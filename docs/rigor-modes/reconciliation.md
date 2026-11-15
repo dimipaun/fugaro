@@ -874,7 +874,7 @@ folder's pin over the amendment the portal's P9.1 makes to that folder's plan an
 reconciliation and to `docs/design/key-signing-service.md` — the sign-in, the admin page
 and the account pages become the portal's surfaces, the service moves into one project
 with the website, and three questions the design left open are recorded as decided —
-moved the table's row from 132 to 133.
+moved the table's row from 133 to 134.
 Amended 2026-11-11: `abSince`, the launch-image gate the model-A/B work's A3.3
 puts on the pair's own task (`internal/cli/recipes_skew.go`: a runner older than
 the release the ab field landed in refuses the whole task at bootstrap, the
@@ -888,7 +888,23 @@ Amended 2026-11-13: `internal/cli/docs_checks_520_521_test.go`, the vision-model
 folder's pin over its two owner-run checks in the register — 520, the coder
 priced without an image rate with `agent.models.vision` set, and 521, the same
 repository with no slot, refused at bootstrap — moved the table's row from 134 to
-135.) They
+135. Amended 2026-11-13: `internal/cli/docs_checks_303_305_test.go`, the pin over the
+owner-run Checks 303, 304 and 305 in the register, moved the table's row from 135 to
+136. Amended 2026-11-13: `internal/cli/docs_check301_302_test.go`, the pin over the
+owner-run Checks 301 and 302 in the register, moved the table's row from 136 to
+137. Amended 2026-11-14: `internal/cli/docs_issues_resolved_test.go`, the
+issues-resolved-on-update folder's pin over its resolved-on-update page and the
+one-line link to it from `docs/issues.md`, moved the table's row from 137 to
+138. Amended 2026-11-14: `internal/cli/docs_check600_test.go`, the pin over the
+accounts-add owner Check 600 and its four parts 600a–600d in the register, moved
+the table's row from 138 to 139, which is what the row's own command prints — the
+row had been left at 138 over a tree that already held **139**, so that pin is
+the one that arrived without it; and `internal/cli/docs_mobile_telemetry_test.go`,
+the telemetry plan's pin over its own blocks and the register's Checks 120–122,
+is one of the 139 already and moved nothing. Amended 2026-11-14:
+`internal/cli/docs_mobile_checks_620_test.go`, the pin over the mobile-auth work's
+owner Checks 620 to 627 in the register — each of the eight with a row and a
+section, none of them run — moved the table's row from 139 to 140.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
@@ -905,9 +921,9 @@ stale has found a merge that did not.
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 0 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
 | Files in `internal/runner` that mention `Severity` at all | 4 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
-| Image-skew `Since` constants | 44 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Image-skew `Since` constants | 45 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 135 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 140 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 7 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Repo\|Repos\|Repository)'` |

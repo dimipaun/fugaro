@@ -876,6 +876,16 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		ReviewScope: runstore.NewReviewScope(false, runstore.ReviewScopeNoNarrowerRange,
 			[]string{"internal/runner/diffbase.go"},
 			[]string{"internal/runner/diffbase.go", "internal/runner/reviewinput.go"}),
+		// And the raises a launcher made on the chain this run began
+		// (docs/run-limit-carry-over L9, D1061): who, when, why, and each
+		// dimension's figure before and after, in the dimension's own unit.
+		ChainRaises: []runstore.ChainRaise{{
+			By: "someone@example.com", At: at, Reason: "the senior review round needs one more pass",
+			Limits: []runstore.ChainRaiseLimit{
+				{Dimension: runstore.USD, From: 4_000_000, To: 6_000_000},
+				{Dimension: runstore.Time, From: 2700, To: 5400},
+			},
+		}},
 	}
 	data, err := json.Marshal(rec)
 	if err != nil {

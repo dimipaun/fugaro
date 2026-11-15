@@ -41,7 +41,6 @@ func newModelsRmCmd() *cobra.Command {
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runModelsRm(cmd, args[0], &o) },
 	}
-	cmd.Flags().BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
 	return cmd
 }
 

@@ -1321,6 +1321,23 @@ type Record struct {
 	// Policy is the budget and model policy the run ran under, set only
 	// when a layer set something (a run with no policy writes none).
 	Policy *PolicyRecord `json:"policy,omitempty"`
+	// ChainRaises is the raises a launcher made on this run's chain
+	// (docs/run-limit-carry-over L9, D1061): one entry per `fugaro budget
+	// chain raise`, each of which rewrote the stored task of the run that
+	// began the chain — the one place a chain's limit lives (D1041, D1046) —
+	// because the chain had spent it. It is the root run's record that carries
+	// them, the chain's limit being the root launch's number and every link
+	// reading it there.
+	//
+	// A launcher writes it, and that is the point (F21: it holds objectUser
+	// on the runs/ prefix already): the chain limit is a convention the
+	// installation states and not a bound the platform enforces, so who made
+	// the raise and why is the whole of what separates a raise from a
+	// rewritten limit (spec §4). Nothing reads this block back into a merge:
+	// it is the record of an edit, and the figures the edit wrote are in the
+	// root run's stored task. Absent — never an empty list — for a chain
+	// nobody raised, which is every record written before this field existed.
+	ChainRaises []ChainRaise `json:"chain_raises,omitempty"`
 	// Recipe is the recipe the run's loop came from (docs/design/recipes.md
 	// §8); absent in records from before 0.5.0.
 	Recipe *RecipeRecord `json:"recipe,omitempty"`
@@ -1675,6 +1692,40 @@ type PolicyIgnored struct {
 	Source    string `json:"source"`
 	From      string `json:"from"`
 	Clamped   bool   `json:"clamped,omitempty"`
+}
+
+// ChainRaise is one raise a launcher made on a chain that had spent its limit
+// (docs/run-limit-carry-over L9, D1061): who made it, when, why, and each
+// dimension's figure before and after.
+//
+// The figures are the ones the edit wrote, in the dimension's own unit
+// (Amount), which is the unit the chain's reader prints them in too — the
+// chain block of `fugaro runs show` and the launch reply (L6, L7). From is
+// always there: a raise moves a limit the chain has, and a dimension the
+// chain's launch set no figure for is not a limit this command raises.
+type ChainRaise struct {
+	// By is who made the raise, as the launcher states itself
+	// (localcfg.Config.Me): a person's own account, and never the run's.
+	By string `json:"by"`
+	// At is when the raise was made.
+	At time.Time `json:"at"`
+	// Reason is why, in the launcher's own words — the one field that says
+	// what the raise was for, and never empty.
+	Reason string `json:"reason"`
+	// Limits are the dimensions the raise moved, in the order every message
+	// about them reads: dollars, tokens, wall time, review rounds. Never
+	// empty, and never twice one dimension.
+	Limits []ChainRaiseLimit `json:"limits"`
+}
+
+// ChainRaiseLimit is one dimension of one raise: the chain's limit as the
+// launch that began the chain stored it, and the figure the raise wrote in its
+// place, both in the dimension's own unit — micro-dollars for the money,
+// whole tokens, seconds and a count for the rounds (Amount).
+type ChainRaiseLimit struct {
+	Dimension Dimension `json:"dimension"`
+	From      Amount    `json:"from"`
+	To        Amount    `json:"to"`
 }
 
 // FollowUp is what a follow-up run acted on (design §4.4).

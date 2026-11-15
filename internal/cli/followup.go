@@ -638,8 +638,18 @@ func storedRepeat(ctx context.Context, env *cloudEnv, slug string, o *runOptions
 	// pending decisions again must carry the same ruling, and one that gives
 	// none repeats the stored task — the ruling it holds stands — rather than
 	// being refused as a different one.
+	//
+	// --token is a name a person writes, so it may name an alias (D2091), and
+	// what the flag is held to is the account this launch would go out on: the
+	// name resolved through the file's aliases and no other step (nameOrigin's
+	// nameWritten; the allow-list is asked below, over the stored account). A
+	// repeat of `--token ALIAS` whose alias stands for the account the stored
+	// task mounts is the launch the id already holds — refused as a different
+	// task it would answer a caller who asked for exactly what is there, and
+	// the plugin's repeat is documented as idempotent.
+	token, _ := env.lc.ResolveAccount(o.token)
 	if have.PR != pr || have.Task != text || have.Batch != o.batch || (o.title != "" && have.Title != o.title) || string(a) != string(b) || (o.recipe != "" && o.recipe != haveRecipe) ||
-		(o.token != "" && o.token != cmp.Or(have.OAuthToken, config.DefaultClaudeAccount)) ||
+		(o.token != "" && token != cmp.Or(have.OAuthToken, config.DefaultClaudeAccount)) ||
 		(o.planTask != "" && have.PlanTask != o.planTask) ||
 		(o.rigor != "" && string(have.Rigor) != o.rigor) ||
 		(o.ownerRuled != "" && have.OwnerRuled != o.ownerRuled) ||
@@ -657,7 +667,7 @@ func storedRepeat(ctx context.Context, env *cloudEnv, slug string, o *runOptions
 	// whole rule every other launch is: the allow-list, the auth clause, the
 	// mix a config may not declare (config.CheckStageAccountMix) and the
 	// budget mode that mix needs (config.CheckMixBudget).
-	if _, err := claudeAccountFor(ctx, env, have.Repo, cmp.Or(have.OAuthToken, config.DefaultClaudeAccount), "", have.Ref, checkoutOf(ctx, have.Repo)()); err != nil {
+	if _, err := claudeAccountFor(ctx, env, have.Repo, cmp.Or(have.OAuthToken, config.DefaultClaudeAccount), "", have.Ref, checkoutOf(ctx, have.Repo)(), nameRecorded); err != nil {
 		return nil, err
 	}
 	return have, nil
@@ -754,11 +764,12 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 	// special-cased: like a first run's empty default, it simply makes
 	// account the reserved name, which claudeAccountAllowed always allows.
 	account := c.OAuthToken
+	origin := nameRecorded
 	if account == "" {
 		account = config.DefaultClaudeAccount
 	}
 	if o.token != "" {
-		account = o.token
+		account, origin = o.token, nameWritten
 	}
 	// c.OAuthToken (the inherited case) came from the previous run's
 	// task.json, bucket data a launcher can write directly: its shape was
@@ -772,6 +783,14 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 	// (claudeAccountFor), so a follow-up launch is refused a mix its config
 	// may not declare exactly as a fresh one is.
 	//
+	// The two names are not read the same way (nameOrigin): the inherited
+	// account is the one its previous run resolved and wrote down, so it stands
+	// as written and the alias block may not answer it (D2103) — a name the
+	// block answers to is refused rather than followed, because a follow-up
+	// keeps the account its previous run resolved (D2098) and the task written
+	// below carries what this walk answers. Only --token, a name written now,
+	// may name an alias, and it is the one way to move a follow-up on purpose.
+	//
 	// What the walk resolves is what the follow-up launches as, the inherited
 	// name included: a mixed run starts on the job that mounts its account's
 	// token (claudeAccountFor's mixedRunAccount), and a follow-up of one has
@@ -779,14 +798,25 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 	// (one stored before the mix reached the launch, or launched when this
 	// repository mixed nothing), and the name the run's review stages will be
 	// served by is still the config's.
-	resolved, err := claudeAccountFor(ctx, env, repo, account, "", c.Ref, checkout())
+	resolved, alias, err := claudeAccountChoice(ctx, env, repo, account, "", c.Ref, checkout(), origin)
 	if err != nil {
 		return nil, err
 	}
-	if o.token != "" && account != cmp.Or(c.OAuthToken, config.DefaultClaudeAccount) {
+	// A follow-up names the pair only where this launch read an alias:
+	// `--pr N --token ALIAS` takes the alias' current target (D2098), while the
+	// account a follow-up inherits is one its previous run resolved, and the
+	// record carries no alias to name (F4).
+	o.account = launchAccount{Name: resolved, Alias: alias}
+	// The note is about the account the follow-up goes out on, not about the
+	// name the flag was written with: --token may name an alias (D2091), so a
+	// flag whose alias stands for the account the previous run used switches
+	// nothing (a note there would report a move that did not happen), and what
+	// a real switch lands on is the account the alias stands for — no job
+	// mounts an alias by its own name (F4).
+	if o.token != "" && resolved != cmp.Or(c.OAuthToken, config.DefaultClaudeAccount) {
 		fmt.Fprintf(warn, "note: --token %s switches this follow-up from %s's Claude account %s to %s\n",
 			pluginwire.Printable(o.token), pluginwire.Printable(task.ShortRun(oneLineCLI(c.Previous.Run))),
-			pluginwire.Printable(cmp.Or(c.OAuthToken, config.DefaultClaudeAccount)), pluginwire.Printable(account))
+			pluginwire.Printable(cmp.Or(c.OAuthToken, config.DefaultClaudeAccount)), pluginwire.Printable(resolved))
 	}
 	rcp := c.Recipe
 	if o.recipe != "" {

@@ -352,6 +352,92 @@ func TestCredentialsServiceReviewJobAccountsReachTheAuthenticator(t *testing.T) 
 	}
 }
 
+// TestCredentialsServiceSharedJobAccountsReachTheService is the same wiring
+// test for the shared coding class (B5.1), and it is the class's own overlap
+// rule that makes it reachable: a person account may not also be a shared job's
+// service account, because one caller would then be two classes (auth.go). The
+// address below is derived from the document this test sets, by the function
+// the command derives it with — so the refusal exists ONLY if the rows arrived
+// at the authenticator, which a service built with SharedJobAccounts dropped
+// would not draw, and it names no account, which is the process's own no-echo
+// rule.
+//
+// The row is also the one the class's binding needs: a shared caller names no
+// repository, so its row carries the profile and the repositories the profile
+// serves, and the second half of the test pins that the same rows reach the
+// server's own table (Config.SharedAccounts) with them — the two sides a
+// deployment derives from one axis (credsvc.SharedJobAccountsFor), which is
+// what makes a caller's class and the repositories it is served for one
+// statement rather than two.
+//
+// The third half is the optional and the empty half of the wiring: with the
+// document absent — the state of every installation whose module does not
+// render the entry yet, which is every installation today — and with an empty
+// array, the configuration builds and the service starts with no shared job at
+// all. That is what makes the absent value a class refused whole rather than a
+// process that will not bind a port.
+//
+// Mutation (verified, run and restored): dropping SharedJobAccounts from the
+// AuthConfig literal in credentialsServiceConfig -- this test fails on the
+// first half, the configuration building with the person admitted and no shared
+// class configured. Mutation (verified, run and restored): dropping
+// SharedAccounts from that function's returned credsvc.Config -- the second
+// half fails, and with it the class's binding: a caller the authenticator
+// answers as shared would be paired against a table that holds no row of it.
+func TestCredentialsServiceSharedJobAccountsReachTheService(t *testing.T) {
+	// One row over the profile a real installation publishes, with the empty
+	// string for the account (the axis's spelling of the default account) and
+	// the repository the fixture's job serves.
+	const document = `[{"profile":"standard","provider":"github","account":"","repos":["github/acme/webapp"]}]`
+	for _, n := range credentialsServiceEnvNames {
+		t.Setenv(n, credentialsServeEnv[n])
+	}
+	row := credsvc.SharedJobAccountFor("standard", "github", "", []string{"github/acme/webapp"}, credentialsServeEnv[envGCPProject])
+	t.Setenv(envSharedJobAccounts, document)
+	t.Setenv(envPersonAccounts, `["`+row.Email+`"]`)
+	fakeCredentialsService(t)
+
+	_, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error: one address that is both a person and a shared job's service account must refuse the process rather than be dropped on the way to it", err)
+	}
+	if !strings.Contains(err.Error(), "cannot verify its callers") || !strings.Contains(err.Error(), "shared job service account") {
+		t.Fatalf("err = %v, want the refusal that says the service cannot verify its callers because the address is also a shared job service account, which is reachable only if %s reached the authenticator", err, envSharedJobAccounts)
+	}
+	if strings.Contains(err.Error(), row.Email) {
+		t.Errorf("err = %v, which carries the derived shared account itself: the refusal names the variable and never an account", err)
+	}
+
+	t.Setenv(envPersonAccounts, "")
+	cfg, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+	if err != nil {
+		t.Fatalf("credentialsServiceConfig with %s: %v", envSharedJobAccounts, err)
+	}
+	if len(cfg.SharedAccounts) != 1 {
+		t.Fatalf("the server's shared table is %+v, want the document's one row: the class the authenticator answers is paired against the table this side builds", cfg.SharedAccounts)
+	}
+	if got := cfg.SharedAccounts[0]; got.Email != row.Email || got.Profile != "standard" || !slices.Equal(got.Repos, []string{"github/acme/webapp"}) {
+		t.Errorf("the server's shared row is %+v, want the derived account, its profile and the repositories the profile is bound to", got)
+	}
+	if _, err := credsvc.NewServer(cfg); err != nil {
+		t.Fatalf("NewServer with %s: %v", envSharedJobAccounts, err)
+	}
+
+	for _, raw := range []string{"", "[]"} {
+		t.Setenv(envSharedJobAccounts, raw)
+		cfg, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+		if err != nil {
+			t.Fatalf("credentialsServiceConfig with %s = %q: %v (the entry arrives with the deployment of the shared jobs, so an installation whose module does not render it must start the same service it always did)", envSharedJobAccounts, raw, err)
+		}
+		if len(cfg.SharedAccounts) != 0 {
+			t.Errorf("shared accounts with %s = %q: %+v, want none", envSharedJobAccounts, raw, cfg.SharedAccounts)
+		}
+		if _, err := credsvc.NewServer(cfg); err != nil {
+			t.Fatalf("NewServer with %s = %q: %v", envSharedJobAccounts, raw, err)
+		}
+	}
+}
+
 // TestCredentialsServiceReviewJobAccountsAreOneTableWhateverTheDocumentsOrder:
 // the document is a deployment's own text, so its order is not a fact about the
 // installation and the same rows written twice are one account -- the table
@@ -710,6 +796,55 @@ func TestCredentialsServiceConfigRefusesAMalformedVariable(t *testing.T) {
 			set:   map[string]string{envReviewJobAccounts: `[{"profile":"standard","provider":"GitHub","account":"team-a"}]`},
 			names: []string{envReviewJobAccounts},
 		},
+		{
+			name:  "the shared job accounts are not JSON",
+			set:   map[string]string{envSharedJobAccounts: "standard github team-a"},
+			names: []string{envSharedJobAccounts},
+		},
+		{
+			name:  "the shared job accounts are an object",
+			set:   map[string]string{envSharedJobAccounts: `{"profile":"standard","provider":"github","account":"team-a","repos":["github/acme/webapp"]}`},
+			names: []string{envSharedJobAccounts},
+		},
+		{
+			// A shared row carries the repositories its profile is bound to, so
+			// a row written with a single repository under the per-repository
+			// job table's key is an owner expecting a binding this table does
+			// not make: refused rather than ignored (the review table's rule).
+			name:  "a shared row carries a field nothing reads",
+			set:   map[string]string{envSharedJobAccounts: `[{"profile":"standard","provider":"github","account":"team-a","repos":["github/acme/webapp"],"repo":"acme/webapp"}]`},
+			names: []string{envSharedJobAccounts},
+		},
+		{
+			name:  "a shared row has no profile",
+			set:   map[string]string{envSharedJobAccounts: `[{"provider":"github","account":"team-a","repos":["github/acme/webapp"]}]`},
+			names: []string{envSharedJobAccounts},
+		},
+		{
+			name:  "a shared row has no provider",
+			set:   map[string]string{envSharedJobAccounts: `[{"profile":"standard","account":"team-a","repos":["github/acme/webapp"]}]`},
+			names: []string{envSharedJobAccounts},
+		},
+		{
+			name:  "a shared row's provider is not a provider kind",
+			set:   map[string]string{envSharedJobAccounts: `[{"profile":"standard","provider":"GitHub","account":"team-a","repos":["github/acme/webapp"]}]`},
+			names: []string{envSharedJobAccounts},
+		},
+		{
+			// The member is REQUIRED and an empty array is not the same thing:
+			// an empty array is a profile bound to no repository, the deny-all
+			// statement, while a row that omits it is a document nobody could
+			// have written on purpose — read as deny-all it would be a job
+			// every call of which this service refuses, silently.
+			name:  "a shared row names no repositories at all",
+			set:   map[string]string{envSharedJobAccounts: `[{"profile":"standard","provider":"github","account":"team-a"}]`},
+			names: []string{envSharedJobAccounts},
+		},
+		{
+			name:  "a shared row has an empty entry in repos",
+			set:   map[string]string{envSharedJobAccounts: `[{"profile":"standard","provider":"github","account":"team-a","repos":["github/acme/webapp",""]}]`},
+			names: []string{envSharedJobAccounts},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, n := range credentialsServiceEnvNames {
@@ -806,19 +941,20 @@ func TestCredentialsServiceRefusalsNeverCarryAValue(t *testing.T) {
 // The other direction is a name this command reads that nothing sets, which is
 // a fact the service silently does not have.
 //
-// The list is the seven REQUIRED names plus the five optional ones, which is
+// The list is the seven REQUIRED names plus the six optional ones, which is
 // the whole of what the module renders and what this command reads: the
 // optional ones belong here because a name the module sets and this command
 // does not read is the same mistake whether the command requires it or reads it
 // outside the loop. Which of the names is which is pinned by the tests around
 // this one, not by this comparison.
 //
-// All five are rendered conditionally — the module sets each of them only on an
+// All six are rendered conditionally — the module sets each of them only on an
 // installation where it applies — and the reason they belong here rather than
 // in credentialsServiceEnvNames is pinned by the tests around this one. One of
-// them, FUGARO_LAUNCHER_ACCOUNTS (D1938), is rendered by no module yet and is
-// read from CredentialsServiceEnvAwaitingTheModule below, which is the same
-// cover-first order FUGARO_REVIEW_JOB_ACCOUNTS followed.
+// them is rendered by no module yet and is read from
+// CredentialsServiceEnvAwaitingTheModule below: FUGARO_SHARED_JOB_ACCOUNTS
+// (B5.1), whose reader arrived ahead of the module that will render it — the
+// same cover-first order FUGARO_REVIEW_JOB_ACCOUNTS followed.
 //
 // internal/infra/tf's credentialsServiceEnv is the third side of this, and it
 // is held to the module by that package's own test (the cover's allow-list
@@ -831,7 +967,7 @@ func TestCredentialsServiceEnvIsTheDeploymentsOwn(t *testing.T) {
 		inModule[m[1]] = true
 	}
 	pending := infraTF.CredentialsServiceEnvAwaitingTheModule()
-	read := append(slices.Clone(credentialsServiceEnvNames), envVerifierAccounts, envPersonAccounts, envLauncherAccounts, envCoordinatorAccount, envReviewJobAccounts)
+	read := append(slices.Clone(credentialsServiceEnvNames), envVerifierAccounts, envPersonAccounts, envLauncherAccounts, envCoordinatorAccount, envReviewJobAccounts, envSharedJobAccounts)
 	for _, n := range read {
 		if slices.Contains(pending, n) {
 			if inModule[n] {

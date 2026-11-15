@@ -77,42 +77,93 @@ func (e *initEngine) announceRunsInFlight(ctx context.Context) {
 		return
 	}
 	if steps := e.inFlightSteps(ctx, db); len(steps) > 0 {
-		fmt.Fprintf(r.w, "%s%d run(s) are in flight: fugaro update asks no run to finish first and rewrites nothing a run holds, but these steps can still reach them — %s\n",
-			o.programPrefix(), n, strings.Join(steps, "; "))
+		// The step names are the screen's line, and the clause that says why
+		// each one can reach a run is the run's own account (stageDetail: the
+		// log always, the terminal under -v). A run with no log has nowhere
+		// else to put them, so there the whole clause stands where it always
+		// did (G5).
+		if r.repLog == nil {
+			fmt.Fprintf(r.w, "%s%d run(s) are in flight: fugaro update asks no run to finish first and rewrites nothing a run holds, but these steps can still reach them — %s\n",
+				o.programPrefix(), n, inFlightWhy(steps))
+			return
+		}
+		fmt.Fprintf(r.stageDetail(), "%s%d run(s) are in flight: fugaro update asks no run to finish first and rewrites nothing a run holds, but these steps can still reach them — %s\n",
+			o.programPrefix(), n, inFlightWhy(steps))
+		fmt.Fprintf(r.w, "%s%d run(s) are in flight: fugaro update asks no run to finish first and rewrites nothing a run holds; it can still reach them at %s\n",
+			o.programPrefix(), n, strings.Join(inFlightNames(steps), ", "))
 		return
 	}
 	fmt.Fprintf(r.w, "%s%d run(s) are in flight: fugaro update asks no run to finish first and rewrites nothing a run holds, and no step of it can reach them\n",
 		o.programPrefix(), n)
 }
 
+// inFlightStep is one step of this update that can reach a run in flight: the
+// name the door's own line carries, and the clause that says why — the step and
+// the reason, in the words a person reads, which is what the log gets whole.
+type inFlightStep struct {
+	name string
+	why  string
+}
+
+// inFlightWhy is the steps as the one clause each that explains them, for the
+// line that has room for the whole account.
+func inFlightWhy(steps []inFlightStep) string {
+	whys := make([]string, len(steps))
+	for i, s := range steps {
+		whys[i] = s.why
+	}
+	return strings.Join(whys, "; ")
+}
+
+// inFlightNames is the steps as the short names the screen's one line carries:
+// they are what CLAUDE.md's rule is about — the steps that can still reach a
+// run are named there rather than denied.
+func inFlightNames(steps []inFlightStep) []string {
+	names := make([]string, len(steps))
+	for i, s := range steps {
+		names[i] = s.name
+	}
+	return names
+}
+
 // inFlightSteps is the steps of THIS update that can reach a run in flight, one
-// clause each: the step and why, in the words a person reads. An empty result is
-// the update that leaves every run in flight exactly where it is, and it is the
-// ordinary case.
+// entry each: the name the screen's line carries and the clause that says why,
+// in the words a person reads. An empty result is the update that leaves every
+// run in flight exactly where it is, and it is the ordinary case.
 //
 // Every clause is deliberately the question the step itself is gated on rather
 // than the whole of its decision (see budgetModeBindsRuns): the line errs
 // towards naming a step that may end up doing nothing instead of claiming the
 // update cannot reach a run when it can.
-func (e *initEngine) inFlightSteps(ctx context.Context, db *rtdb.Client) []string {
-	var steps []string
+func (e *initEngine) inFlightSteps(ctx context.Context, db *rtdb.Client) []inFlightStep {
+	var steps []inFlightStep
 	// isManaged rather than managed: the package of the same name is read below,
 	// for the two versions the creation fact's step names.
 	isManaged := e.managedProjectRead(ctx)
 	if e.budgetModeBindsRuns(ctx, db, isManaged) {
-		steps = append(steps, fmt.Sprintf("the budget mode's raise to %s, which a run in flight meets at its next lease and which is your own caps taking effect", budget.ModeEnforce))
+		steps = append(steps, inFlightStep{
+			name: fmt.Sprintf("the budget mode's raise to %s", budget.ModeEnforce),
+			why:  fmt.Sprintf("the budget mode's raise to %s, which a run in flight meets at its next lease and which is your own caps taking effect", budget.ModeEnforce)})
 	}
 	if e.policyReadsLive(ctx, db) {
-		steps = append(steps, fmt.Sprintf("the policy this update publishes, which every model call of this project's runs re-reads (%s: %s), so a run in flight is held to the new node from its next call", "routing.claude.via", projectpolicy.RouteCascade))
+		steps = append(steps, inFlightStep{
+			name: "the policy this update publishes",
+			why:  fmt.Sprintf("the policy this update publishes, which every model call of this project's runs re-reads (%s: %s), so a run in flight is held to the new node from its next call", "routing.claude.via", projectpolicy.RouteCascade)})
 	}
 	if e.credentialsWindowOpens(ctx, db) {
-		steps = append(steps, "the credentials service this update replaces, which reads the published node on every call it serves: this run raises the node's version in one stage and moves the service in the next, and a call landing between the two meets the previous release's service with a node its own binary does not understand")
+		steps = append(steps, inFlightStep{
+			name: "the credentials service this update replaces",
+			why:  "the credentials service this update replaces, which reads the published node on every call it serves: this run raises the node's version in one stage and moves the service in the next, and a call landing between the two meets the previous release's service with a node its own binary does not understand"})
 	}
 	if e.markerConverges(ctx) {
-		steps = append(steps, fmt.Sprintf("the creation fact this update rewrites from version %d to version %d, which a run in flight re-reads per command: that run is the release behind, whose reader refuses a version it does not know, so its own apply keeps the typed confirmation instead of applying under the gate — nothing of the run is rewritten, and no record, ledger or counter of it is touched", managed.MarkerVersionBuilds, managed.MarkerVersionNoBuilds))
+		steps = append(steps, inFlightStep{
+			name: "the creation fact this update rewrites",
+			why:  fmt.Sprintf("the creation fact this update rewrites from version %d to version %d, which a run in flight re-reads per command: that run is the release behind, whose reader refuses a version it does not know, so its own apply keeps the typed confirmation instead of applying under the gate — nothing of the run is rewritten, and no record, ledger or counter of it is touched", managed.MarkerVersionBuilds, managed.MarkerVersionNoBuilds)})
 	}
 	if e.retireTakesExecutions(isManaged) {
-		steps = append(steps, "the retirement this update runs, which deletes an orphaned job and takes the executions still running on it")
+		steps = append(steps, inFlightStep{
+			name: "the retirement this update runs",
+			why:  "the retirement this update runs, which deletes an orphaned job and takes the executions still running on it"})
 	}
 	return steps
 }

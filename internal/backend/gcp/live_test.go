@@ -33,7 +33,7 @@
 //
 // Every observation is logged as a "FACT:" line, ready to paste into the M4
 // PR and the runbook.
-package gcp
+package gcp_test
 
 import (
 	"bytes"
@@ -69,6 +69,7 @@ import (
 
 	"github.com/dimipaun/fugaro/images"
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/cache"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -100,7 +101,7 @@ type liveEnv struct {
 	slug   string
 	bucket string // the runs bucket's name
 	stamp  string // unique per test: <yyyymmdd-hhmmss>-<4 hex>
-	opts   Options
+	opts   gcp.Options
 }
 
 // The project, region and sandbox repository the live tests may touch. The
@@ -184,15 +185,15 @@ func openLive(t *testing.T) *liveEnv {
 	return &liveEnv{
 		lc: lc, slug: slug, bucket: lc.RunsBucket,
 		stamp: time.Now().UTC().Format("20060102-150405") + "-" + hex.EncodeToString(rnd[:]),
-		opts:  Options{GCPProject: liveProject, Region: liveRegion, Warn: func(m string) { t.Log("backend warning: " + m) }},
+		opts:  gcp.Options{GCPProject: liveProject, Region: liveRegion, Warn: func(m string) { t.Log("backend warning: " + m) }},
 	}
 }
 
 func (e *liveEnv) name() string { return livePrefix + e.stamp }
 
-func (e *liveEnv) backend(t *testing.T) *Backend {
+func (e *liveEnv) backend(t *testing.T) *gcp.Backend {
 	t.Helper()
-	b, err := New(context.Background(), e.opts)
+	b, err := gcp.New(context.Background(), e.opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +269,7 @@ func TestLiveListAndLogs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	raw, err := b.run.Projects.Locations.Jobs.Executions.List(b.location() + "/jobs/-").PageSize(20).Context(ctx).Do()
+	raw, err := b.RunForLive().Projects.Locations.Jobs.Executions.List(b.LocationForLive() + "/jobs/-").PageSize(20).Context(ctx).Do()
 	if err != nil {
 		t.Fatalf("raw executions.list: %v", err)
 	}
@@ -300,8 +301,8 @@ func TestLiveListAndLogs(t *testing.T) {
 			jobs[id.Job] = true
 		}
 		if i > 0 {
-			prev, perr := parseTime(raw.Executions[i-1].CreateTime)
-			cur, cerr := parseTime(x.CreateTime)
+			prev, perr := gcp.ParseTimeForLive(raw.Executions[i-1].CreateTime)
+			cur, cerr := gcp.ParseTimeForLive(x.CreateTime)
 			if perr == nil && cerr == nil && cur.After(prev) {
 				sorted = false
 			}
@@ -358,10 +359,10 @@ func keysOf(m map[string]any) []string {
 
 // sandboxJob reads the sandbox job and refuses to go on unless its limits
 // are within the spend caps. It logs the forms Cloud Run returns.
-func sandboxJob(t *testing.T, ctx context.Context, e *liveEnv, b *Backend) *run.GoogleCloudRunV2Job {
+func sandboxJob(t *testing.T, ctx context.Context, e *liveEnv, b *gcp.Backend) *run.GoogleCloudRunV2Job {
 	t.Helper()
 	path := b.JobPath(e.slug, liveWorkflow)
-	j, err := b.run.Projects.Locations.Jobs.Get(path).Context(ctx).Do()
+	j, err := b.RunForLive().Projects.Locations.Jobs.Get(path).Context(ctx).Do()
 	if err != nil {
 		t.Fatalf("reading the sandbox job %s: %v", path, err)
 	}
@@ -371,7 +372,7 @@ func sandboxJob(t *testing.T, ctx context.Context, e *liveEnv, b *Backend) *run.
 	tt := j.Template.Template
 	limits := tt.Containers[0].Resources.Limits
 	fact(t, "jobs.get limits: cpu=%q memory=%q; task timeout=%q maxRetries=%d taskCount=%d", limits["cpu"], limits["memory"], tt.Timeout, tt.MaxRetries, j.Template.TaskCount)
-	cpu, cerr := parseCPU(limits["cpu"])
+	cpu, cerr := gcp.ParseCPUForLive(limits["cpu"])
 	mem, merr := backend.MemoryGiB(limits["memory"])
 	if err := errors.Join(cerr, merr); err != nil {
 		t.Fatalf("the job's limits don't parse the way the backend parses them: %v", err)
@@ -430,7 +431,7 @@ func TestLiveExecutionProbe(t *testing.T) {
 			Env: []*run.GoogleCloudRunV2EnvVar{{Name: "FUGARO_RUN", Value: e.slug + "/" + runID}},
 		}},
 	}}
-	op, err := b.run.Projects.Locations.Jobs.Run(j.Name, req).Context(ctx).Do()
+	op, err := b.RunForLive().Projects.Locations.Jobs.Run(j.Name, req).Context(ctx).Do()
 	if err != nil {
 		t.Fatalf("jobs.run: %v", err)
 	}
@@ -443,7 +444,7 @@ func TestLiveExecutionProbe(t *testing.T) {
 		t.Fatalf("operation %s metadata: %v", op.Name, err)
 	}
 	if meta.Name != "" {
-		if id, err := b.canonical(meta.Name); err == nil {
+		if id, err := b.CanonicalForLive(meta.Name); err == nil {
 			execName = id.String()
 		}
 	}
@@ -467,7 +468,7 @@ func TestLiveExecutionProbe(t *testing.T) {
 		time.Sleep(10 * time.Second)
 	}
 	fact(t, "probe execution %s ended %s after %s billed", execName, x.State, x.Billed(time.Now()).Round(time.Second))
-	rawx, err := b.run.Projects.Locations.Jobs.Executions.Get(execName).Context(ctx).Do()
+	rawx, err := b.RunForLive().Projects.Locations.Jobs.Executions.Get(execName).Context(ctx).Do()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -514,13 +515,13 @@ func googleStatus(ge *googleapi.Error) string {
 	return ""
 }
 
-func (e *liveEnv) probeLogs(t *testing.T, ctx context.Context, b *Backend, execName string) {
+func (e *liveEnv) probeLogs(t *testing.T, ctx context.Context, b *gcp.Backend, execName string) {
 	t.Helper()
 	id, _ := backend.ParseExecution(execName)
 	var labels map[string]string
 	var n int
 	for deadline := time.Now().Add(3 * time.Minute); time.Now().Before(deadline); time.Sleep(15 * time.Second) {
-		resp, err := b.logs.Entries.List(&logging.ListLogEntriesRequest{
+		resp, err := b.LogsForLive().Entries.List(&logging.ListLogEntriesRequest{
 			ResourceNames: []string{"projects/" + liveProject},
 			Filter: `resource.type="cloud_run_job" AND resource.labels.job_name=` + strconv.Quote(id.Job) +
 				` AND timestamp>=` + strconv.Quote(time.Now().Add(-15*time.Minute).UTC().Format(time.RFC3339)),
@@ -572,7 +573,7 @@ func impersonatedStorage(t *testing.T, ctx context.Context, sa string) *storage.
 	if _, err := ts.Token(); err != nil {
 		t.Fatalf("minting a token for %s (needs roles/iam.serviceAccountTokenCreator on it and iamcredentials.googleapis.com): %v", sa, err)
 	}
-	c, err := storage.NewClient(ctx, option.WithTokenSource(ts), option.WithLogger(discardLogger))
+	c, err := storage.NewClient(ctx, option.WithTokenSource(ts), option.WithLogger(gcp.DiscardLoggerForLive))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -590,7 +591,7 @@ func TestLiveJobSADeniedOutsideItsPrefixes(t *testing.T) {
 	if sa == "" {
 		t.Skip("FUGARO_LIVE_JOB_SA is not set (the sandbox job's service account; needs roles/iam.serviceAccountTokenCreator)")
 	}
-	want := ServiceAccountID(e.slug, liveWorkflow) + "@" + liveProject + ".iam.gserviceaccount.com"
+	want := gcp.ServiceAccountID(e.slug, liveWorkflow) + "@" + liveProject + ".iam.gserviceaccount.com"
 	if sa != want {
 		t.Fatalf("FUGARO_LIVE_JOB_SA=%s is not the sandbox job's service account %s", sa, want)
 	}
@@ -676,7 +677,7 @@ func TestLiveSecretsRoundTrip(t *testing.T) {
 	e := openLive(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	s, err := NewSecrets(ctx, e.opts)
+	s, err := gcp.NewSecrets(ctx, e.opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -702,7 +703,7 @@ func TestLiveSecretsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var found *SecretInfo
+	var found *gcp.SecretInfo
 	for i := range list {
 		if list[i].ID == id {
 			found = &list[i]
@@ -865,7 +866,7 @@ func TestLiveCloudBuildSecretAndDigest(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
-	bld, err := NewBuilder(ctx, e.opts, e.lc.BuildRegion())
+	bld, err := gcp.NewBuilder(ctx, e.opts, e.lc.BuildRegion())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -921,7 +922,7 @@ docker run --rm --entrypoint sh "$$candidate" /probe.sh run-default || echo "LIV
 			{Id: "smoke-probe", Name: tgt.smoke.Name, Entrypoint: "bash", Args: []string{"-c", runScript}},
 		},
 		AvailableSecrets: &cloudbuild.Secrets{SecretManager: []*cloudbuild.SecretManagerSecret{{
-			Env: "SANDBOX_PROBE", VersionName: "projects/" + liveProject + "/secrets/" + SecretID(e.slug, "sandbox-probe") + "/versions/latest",
+			Env: "SANDBOX_PROBE", VersionName: "projects/" + liveProject + "/secrets/" + gcp.SecretID(e.slug, "sandbox-probe") + "/versions/latest",
 		}}},
 		ServiceAccount: "projects/" + liveProject + "/serviceAccounts/" + tgt.sa,
 		Options:        &cloudbuild.BuildOptions{Logging: "CLOUD_LOGGING_ONLY"},
@@ -935,14 +936,14 @@ docker run --rm --entrypoint sh "$$candidate" /probe.sh run-default || echo "LIV
 		}
 		cctx, ccancel := context.WithTimeout(context.Background(), time.Minute)
 		defer ccancel()
-		name := bld.parent() + "/builds/" + buildID
-		if bd, err := bld.svc.Projects.Locations.Builds.Get(name).Context(cctx).Do(); err == nil && (bd.Status == "QUEUED" || bd.Status == "WORKING" || bd.Status == "PENDING") {
-			_, err := bld.svc.Projects.Locations.Builds.Cancel(name, &cloudbuild.CancelBuildRequest{Name: name, ProjectId: liveProject, Id: buildID}).Context(cctx).Do()
+		name := bld.ParentForLive() + "/builds/" + buildID
+		if bd, err := bld.SvcForLive().Projects.Locations.Builds.Get(name).Context(cctx).Do(); err == nil && (bd.Status == "QUEUED" || bd.Status == "WORKING" || bd.Status == "PENDING") {
+			_, err := bld.SvcForLive().Projects.Locations.Builds.Cancel(name, &cloudbuild.CancelBuildRequest{Name: name, ProjectId: liveProject, Id: buildID}).Context(cctx).Do()
 			t.Logf("CLEANUP: cancel build %s: %v", buildID, err)
 		}
 		deleteCandidate(t, cctx, bld, tgt.image, "candidate-"+buildID)
 	})
-	op, err := bld.svc.Projects.Locations.Builds.Create(bld.parent(), req).Context(ctx).Do()
+	op, err := bld.SvcForLive().Projects.Locations.Builds.Create(bld.ParentForLive(), req).Context(ctx).Do()
 	if err != nil {
 		t.Fatalf("submitting the probe build: %v", err)
 	}
@@ -993,7 +994,7 @@ docker run --rm --entrypoint sh "$$candidate" /probe.sh run-default || echo "LIV
 	if !regexp.MustCompile(`^[^@\s]+@sha256:[0-9a-f]{64}$`).MatchString(digest) {
 		t.Errorf("base digest %q is not repo@sha256:<64 hex>", digest)
 	}
-	if rest, ok := strings.CutPrefix(candidate, tgt.image+"@"); !ok || !IsDigest(rest) {
+	if rest, ok := strings.CutPrefix(candidate, tgt.image+"@"); !ok || !gcp.IsDigest(rest) {
 		t.Errorf("pushed candidate %q is not %s@sha256:<64 hex>", candidate, tgt.image)
 	}
 	checkMetadataProbes(t, meta)
@@ -1019,16 +1020,16 @@ func (e *liveEnv) probeTarget(t *testing.T) probeTarget {
 	t.Helper()
 	// The registry host as infra.RegistryHost picks it (this package can't
 	// import infra): the local config's, else DefaultRegistryHost.
-	host := cmp.Or(e.lc.RegistryHost, DefaultRegistryHost(e.lc.Region, e.lc.GCPProject))
-	spec := BuildSpec{
+	host := cmp.Or(e.lc.RegistryHost, gcp.DefaultRegistryHost(e.lc.Region, e.lc.GCPProject))
+	spec := gcp.BuildSpec{
 		Slug: e.slug, GitProvider: liveProvider, RepoURL: "https://bitbucket.org/" + liveRepo + ".git",
 		BaseBranch: cmp.Or(e.lc.Repos[liveRepo].BaseBranch, "master"), Workflow: liveWorkflow, Base: e.lc.BaseImage("base"),
-		Image:       ImageName(host+"/"+RegistryRepoID(e.slug), e.slug, liveWorkflow),
-		GitSecretID: SecretID(e.slug, "bitbucket-token"), GitUser: "x-token-auth",
-		ServiceAccount: BuildServiceAccountID(e.slug) + "@" + liveProject + ".iam.gserviceaccount.com",
+		Image:       gcp.ImageName(host+"/"+gcp.RegistryRepoID(e.slug), e.slug, liveWorkflow),
+		GitSecretID: gcp.SecretID(e.slug, "bitbucket-token"), GitUser: "x-token-auth",
+		ServiceAccount: gcp.BuildServiceAccountID(e.slug) + "@" + liveProject + ".iam.gserviceaccount.com",
 		Bucket:         "gs://" + e.lc.RunsBucket,
 	}
-	req, err := BuildRequest(liveProject, spec)
+	req, err := gcp.BuildRequest(liveProject, spec)
 	if err != nil {
 		t.Fatalf("the image build's request for %s: %v", liveRepo, err)
 	}
@@ -1049,7 +1050,7 @@ func (e *liveEnv) probeTarget(t *testing.T) probeTarget {
 		if !strings.HasSuffix(e.lc.Build.ServiceAccount, "@"+liveProject+".iam.gserviceaccount.com") {
 			t.Fatalf("the deprecated build.service_account %s is not an account of %s", e.lc.Build.ServiceAccount, liveProject)
 		}
-		image := ImageName(e.lc.Registry, e.slug, liveWorkflow)
+		image := gcp.ImageName(e.lc.Registry, e.slug, liveWorkflow)
 		if e.lc.Registry == "" || strings.Count(e.lc.Registry, "/") != 2 || candidatePackage(image) == "" {
 			t.Fatalf("the legacy registry %q is not <region>-docker.pkg.dev/%s/<repository>", e.lc.Registry, liveProject)
 		}
@@ -1063,7 +1064,7 @@ func (e *liveEnv) probeTarget(t *testing.T) probeTarget {
 // when image is not one in the live project.
 func candidatePackage(image string) string {
 	host, rest, ok := strings.Cut(image, "/"+liveProject+"/")
-	m := registryHostRE.FindStringSubmatch(host + "/" + liveProject)
+	m := gcp.RegistryHostREForLive.FindStringSubmatch(host + "/" + liveProject)
 	repo, pkg, ok2 := strings.Cut(rest, "/")
 	if !ok || !ok2 || m == nil || repo == "" || pkg == "" || strings.Contains(pkg, "/") {
 		return ""
@@ -1080,14 +1081,14 @@ func candidatePackage(image string) string {
 // delete a version that any tag other than a candidate- one points at.
 // (A cancel that lands during the push can let the push finish after this
 // ran; that candidate is left behind.)
-func deleteCandidate(t *testing.T, ctx context.Context, bld *Builder, image, tag string) {
+func deleteCandidate(t *testing.T, ctx context.Context, bld *gcp.Builder, image, tag string) {
 	t.Helper()
 	pkg := candidatePackage(image)
 	if pkg == "" || !strings.HasPrefix(tag, "candidate-") {
 		t.Errorf("CLEANUP: refusing to delete %s:%s", image, tag)
 		return
 	}
-	tags := bld.registries.Projects.Locations.Repositories.Packages.Tags
+	tags := bld.RegistriesForLive().Projects.Locations.Repositories.Packages.Tags
 	tg, err := tags.Get(pkg + "/tags/" + tag).Context(ctx).Do()
 	if httpStatus(err) == http.StatusNotFound {
 		return // never pushed
@@ -1114,7 +1115,7 @@ func deleteCandidate(t *testing.T, ctx context.Context, bld *Builder, image, tag
 		t.Errorf("CLEANUP: refusing to delete %s (%s:%s): it is also tagged %v", tg.Version, image, tag, others)
 		return
 	}
-	if _, err := bld.registries.Projects.Locations.Repositories.Packages.Versions.Delete(tg.Version).Force(true).Context(ctx).Do(); err != nil {
+	if _, err := bld.RegistriesForLive().Projects.Locations.Repositories.Packages.Versions.Delete(tg.Version).Force(true).Context(ctx).Do(); err != nil {
 		t.Errorf("CLEANUP: deleting %s (%s:%s): %v; the test's credentials need artifactregistry.versions.delete on the registry (owner, editor or repoAdmin)", tg.Version, image, tag, err)
 		return
 	}
@@ -1178,7 +1179,7 @@ func checkMetadataProbes(t *testing.T, meta map[string][]string) {
 // (the builds log CLOUD_LOGGING_ONLY), waiting out ingestion.
 func buildLogLines(t *testing.T, ctx context.Context, id string) []string {
 	t.Helper()
-	svc, err := logging.NewService(ctx, option.WithQuotaProject(liveProject), option.WithLogger(discardLogger))
+	svc, err := logging.NewService(ctx, option.WithQuotaProject(liveProject), option.WithLogger(gcp.DiscardLoggerForLive))
 	if err != nil {
 		t.Fatal(err)
 	}

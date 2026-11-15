@@ -76,7 +76,7 @@ func workspaceMemberAddArgsNoYes(extra ...string) []string {
 // workspaceMemberAddArgs is the whole of one `member add`, so the tests that
 // vary one flag vary one flag.
 func workspaceMemberAddArgs(extra ...string) []string {
-	return append(workspaceMemberAddArgsNoYes(), append([]string{"--yes"}, extra...)...)
+	return append(workspaceMemberAddArgsNoYes(), append([]string{}, extra...)...)
 }
 
 // workspaceAddArgsNoYes is the whole of one `workspace add` without its --yes:
@@ -92,7 +92,7 @@ func workspaceAddArgsNoYes(extra ...string) []string {
 
 // workspaceAddArgs is the whole of one `workspace add`.
 func workspaceAddArgs(extra ...string) []string {
-	return append(workspaceAddArgsNoYes(), append([]string{"--yes"}, extra...)...)
+	return append(workspaceAddArgsNoYes(), append([]string{}, extra...)...)
 }
 
 // TestWorkspaceAddAsksNothing and TestWorkspaceRmAsksNothing are the two
@@ -242,7 +242,7 @@ func TestWorkspaceRmRemovesTheKeyAndNothingElse(t *testing.T) {
 	if _, _, err := execute(t, workspaceAddArgs()...); err != nil {
 		t.Fatalf("workspace add: %v", err)
 	}
-	out, _, err := execute(t, "workspace", "rm", "workspace-alpha", "--yes")
+	out, _, err := execute(t, "workspace", "rm", "workspace-alpha")
 	if err != nil {
 		t.Fatalf("workspace rm: %v\n%s", err, out)
 	}
@@ -260,7 +260,7 @@ func TestWorkspaceRmRemovesTheKeyAndNothingElse(t *testing.T) {
 func TestWorkspaceRmRefusesAWorkspaceTheProjectDoesNotName(t *testing.T) {
 	_, path := workspaceWriteHome(t)
 	before := readFileString(t, path)
-	if _, _, err := execute(t, "workspace", "rm", "workspace-alpha", "--yes"); err == nil {
+	if _, _, err := execute(t, "workspace", "rm", "workspace-alpha"); err == nil {
 		t.Fatal("rm removed a membership the project does not have")
 	}
 	if after := readFileString(t, path); after != before {
@@ -269,7 +269,7 @@ func TestWorkspaceRmRefusesAWorkspaceTheProjectDoesNotName(t *testing.T) {
 	if _, _, err := execute(t, workspaceAddArgs()...); err != nil {
 		t.Fatalf("workspace add: %v", err)
 	}
-	_, _, err := execute(t, "workspace", "rm", "workspace-beta", "--yes")
+	_, _, err := execute(t, "workspace", "rm", "workspace-beta")
 	if err == nil || !strings.Contains(err.Error(), "names workspace workspace-alpha, not workspace-beta") {
 		t.Errorf("removing another workspace's name: %v", err)
 	}
@@ -329,8 +329,7 @@ func TestWorkspaceAddRefusesAnIssuerTheProjectDoesNotMint(t *testing.T) {
 			"--firebase-project", "project-ws",
 			"--issuer", issuer,
 			"--assertion-key", "marker-assertion-key",
-			"--service-account", "marker-workspace@project-ws.iam.gserviceaccount.com",
-			"--yes")
+			"--service-account", "marker-workspace@project-ws.iam.gserviceaccount.com")
 		if err == nil {
 			t.Fatalf("--issuer %s was accepted:\n%s", issuer, out)
 		}
@@ -352,8 +351,7 @@ func TestWorkspaceAddRefusesAPinThatIsNotWhole(t *testing.T) {
 	_, _, err := execute(t, "workspace", "add", "workspace-alpha",
 		"--firebase-project", "project-ws",
 		"--issuer", "https://securetoken.google.com/project-ws",
-		"--service-account", "marker-workspace@project-ws.iam.gserviceaccount.com",
-		"--yes")
+		"--service-account", "marker-workspace@project-ws.iam.gserviceaccount.com")
 	if err == nil || !strings.Contains(err.Error(), "--assertion-key") {
 		t.Fatalf("a pin without an assertion key: %v", err)
 	}
@@ -456,8 +454,7 @@ func TestMemberAddReplacesTheEntryItAlreadyDeclares(t *testing.T) {
 		"--firebase-project", "aurora-fb",
 		"--fp", "aurora",
 		"--exchange-url", "https://exchange.example.com/v2",
-		"--repo", "owner/repo-new",
-		"--yes"}
+		"--repo", "owner/repo-new"}
 	out, _, err := execute(t, ours...)
 	if err != nil {
 		t.Fatalf("workspace member add: %v\n%s", err, out)
@@ -569,7 +566,7 @@ func TestMemberRmRemovesTheEntryAndTheEmptyTable(t *testing.T) {
 	if _, _, err := execute(t, workspaceMemberAddArgs()...); err != nil {
 		t.Fatalf("workspace member add: %v", err)
 	}
-	out, _, err := execute(t, "workspace", "member", "rm", "workspace-alpha", "aurora", "--yes")
+	out, _, err := execute(t, "workspace", "member", "rm", "workspace-alpha", "aurora")
 	if err != nil {
 		t.Fatalf("workspace member rm: %v\n%s", err, out)
 	}
@@ -586,7 +583,7 @@ func TestMemberRmRemovesTheEntryAndTheEmptyTable(t *testing.T) {
 func TestMemberRmRefusesAnUndeclaredMember(t *testing.T) {
 	_, _, owner := workspaceOwnerHome(t)
 	before := readFileString(t, owner)
-	_, _, err := execute(t, "workspace", "member", "rm", "workspace-alpha", "aurora", "--yes")
+	_, _, err := execute(t, "workspace", "member", "rm", "workspace-alpha", "aurora")
 	if err == nil || !strings.Contains(err.Error(), "declares no member aurora") {
 		t.Fatalf("removing an undeclared member: %v", err)
 	}
@@ -607,7 +604,7 @@ func TestWorkspaceCapSetRefusesAnAmountTheFileCannotState(t *testing.T) {
 		{"-1", "must be a number from 0 to 100000"},
 		{"200000", "must be a number from 0 to 100000"},
 	} {
-		_, _, err := execute(t, "workspace", "cap", "set", "--workspace", "workspace-alpha", "--monthly", tc.amount, "--yes")
+		_, _, err := execute(t, "workspace", "cap", "set", "--workspace", "workspace-alpha", "--monthly", tc.amount)
 		if err == nil {
 			t.Fatalf("--monthly %s was accepted", tc.amount)
 		}
@@ -615,10 +612,10 @@ func TestWorkspaceCapSetRefusesAnAmountTheFileCannotState(t *testing.T) {
 			t.Errorf("--monthly %s: %v, want a refusal naming %q", tc.amount, err, tc.want)
 		}
 	}
-	if _, _, err := execute(t, "workspace", "cap", "set", "--workspace", "workspace-alpha", "--yes"); err == nil {
+	if _, _, err := execute(t, "workspace", "cap", "set", "--workspace", "workspace-alpha"); err == nil {
 		t.Error("a cap with no amount was accepted")
 	}
-	if _, _, err := execute(t, "workspace", "cap", "set", "--monthly", "50", "--yes"); err == nil ||
+	if _, _, err := execute(t, "workspace", "cap", "set", "--monthly", "50"); err == nil ||
 		!strings.Contains(err.Error(), "never spelled globally") {
 		t.Errorf("a cap with no workspace: %v", err)
 	}
@@ -663,10 +660,10 @@ workspace_cap:
 		args []string
 	}{
 		{"add", workspaceAddArgs()},
-		{"rm", []string{"workspace", "rm", "workspace-alpha", "--yes"}},
+		{"rm", []string{"workspace", "rm", "workspace-alpha"}},
 		{"member add", workspaceMemberAddArgs()},
-		{"member rm", []string{"workspace", "member", "rm", "workspace-alpha", "aurora", "--yes"}},
-		{"cap set", []string{"workspace", "cap", "set", "--workspace", "workspace-alpha", "--monthly", "50", "--yes"}},
+		{"member rm", []string{"workspace", "member", "rm", "workspace-alpha", "aurora"}},
+		{"cap set", []string{"workspace", "cap", "set", "--workspace", "workspace-alpha", "--monthly", "50"}},
 	} {
 		out, _, err := execute(t, tc.args...)
 		if err == nil {
@@ -835,8 +832,8 @@ func TestMemberAddRefusesAWorkspaceThisMachineDoesNotHold(t *testing.T) {
 	workspaceWriteHome(t)
 	for _, args := range [][]string{
 		workspaceMemberAddArgs(),
-		{"workspace", "cap", "set", "--workspace", "workspace-alpha", "--monthly", "50", "--yes"},
-		{"workspace", "member", "rm", "workspace-alpha", "aurora", "--yes"},
+		{"workspace", "cap", "set", "--workspace", "workspace-alpha", "--monthly", "50"},
+		{"workspace", "member", "rm", "workspace-alpha", "aurora"},
 	} {
 		_, _, err := execute(t, args...)
 		if err == nil || !strings.Contains(err.Error(), "holds no config for workspace workspace-alpha's own project") {

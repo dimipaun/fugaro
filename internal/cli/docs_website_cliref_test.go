@@ -234,7 +234,7 @@ func TestCliReferenceNamesEveryCommandAndFlag(t *testing.T) {
 // generator's own test holds the whole file either way.
 func cliRefPaidSection(path string) bool {
 	fields := strings.Fields(path)
-	if len(fields) < 2 || !slices.Contains(paidCommandNames, fields[1]) {
+	if len(fields) < 2 || !slices.Contains(paidCommandNames(), fields[1]) {
 		return false
 	}
 	return !coreSurface().rootCommands[fields[1]]

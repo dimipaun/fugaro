@@ -54,6 +54,12 @@ describe('the stub’s command keys', () => {
       // word, so `--watch` is what tells the two apart -- and a key shared with
       // the read above would leave this row's scenarios answered by `default`.
       'graph --watch',
+      // The dependency-graph plan's GV3.2 (`roadmap.move` /
+      // `moveRoadmapTask`): `coordinator roadmap move`, the console's third
+      // write and the one this table's group prefix narrows -- the key is the
+      // command's three words, because the task, `--to` and `--expect` are the
+      // row's own arguments and never words of the key.
+      'coordinator roadmap move',
       'diagnose',
       'logs',
       'logs --url',
@@ -104,6 +110,12 @@ describe('the stub’s command keys', () => {
       // the installation's bucket -- its key is the command word, because the
       // 90 days it is measured over and the `--json` are the row's own words.
       'seats',
+      // The roles-and-scopes plan's RS7 (`members.list` / `listMembers`): the
+      // Members view's roster read. Its key is the command path, `user ls`,
+      // because the `--json` is the row's own word and the `user` group's other
+      // words -- `grant`, `revoke`, `add`, `rm`, `offboard` -- are on no row of
+      // this table and sit on the never table instead.
+      'user ls',
       'run',
     ])
     // The console's one spawn table, which since the owner's design ruling of
@@ -147,7 +159,7 @@ describe('the stub’s command keys', () => {
       commandKey(['settings', 'set', 'budget.cap_usd', '--layer', 'local', '--dry-run', '--json', '--project', 'fugaro']),
     ).toBe('settings edit')
     expect(
-      commandKey(['settings', 'unset', 'budget.cap_usd', '--layer', 'local', '--yes', '--project', 'fugaro', '--config', '/tmp/config.toml']),
+      commandKey(['settings', 'unset', 'budget.cap_usd', '--layer', 'local', '--project', 'fugaro', '--config', '/tmp/config.toml']),
     ).toBe('settings edit')
     // ...and the read keeps its own key, which is the key the row's words
     // produce and the one every settings section's fixture already uses.

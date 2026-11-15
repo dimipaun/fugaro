@@ -901,7 +901,7 @@ func TestDocsProjectClaudeAccountsExamplesValidate(t *testing.T) {
 			t.Errorf("%s's profiles.%s lists claude_accounts and writes no allow_repos, which the page's own subset rule refuses", projectClaudeAccountsDoc, name)
 		}
 	}
-	derived, err := projectpolicy.DeriveAccounts(profiles, accounts, secrets)
+	derived, err := projectpolicy.DeriveAccounts(profiles, accounts, secrets, nil)
 	if err != nil {
 		t.Fatalf("%s's example is refused where publish derives the accounts block: %v", projectClaudeAccountsDoc, err)
 	}

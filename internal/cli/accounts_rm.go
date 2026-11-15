@@ -108,7 +108,7 @@ way it was and the command stops: an account whose declaration is gone while
 its secret is still there is the one state this command may not leave behind.
 
 Run it at your own terminal: this command deletes a credential, so a coding
-agent's session is refused, --yes included — a managed project's gate refuses
+agent's session is refused — a managed project's gate refuses
 the removal too, because the refs and the checkouts record its referrer check
 reads are documents the session writes, so no read here answers for what origin
 carries.`,
@@ -119,7 +119,6 @@ carries.`,
 	}
 	f := cmd.Flags()
 	f.StringVar(&o.profile, "profile", "", "the profile whose claude_accounts loses the name (a profile that lists accounts is taken out of it one at a time)")
-	f.BoolVar(&o.yes, "yes", false, "confirm the removal without a prompt")
 	return cmd
 }
 
@@ -144,6 +143,15 @@ type accountsRmPlan struct {
 	allow    []string
 	secretID string
 	rest     []string // the profiles that still list the account after the edit
+	// repos is the repository entries whose own claude_accounts names this
+	// account (docs/project-claude-accounts.md §3). They are cleared with the
+	// declaration rather than refused over, for the crafts' reason: no command
+	// of this release edits that list (`repos.*.claude_accounts` is not a
+	// `settings set` path), so a refusal would send the owner to a hand edit,
+	// while an entry left behind is a repository naming an account this file no
+	// longer declares — the state a publish refuses. Empty for a run that keeps
+	// the declaration.
+	repos []string
 	// crafts is the crafts whose access names the typed entry this removal
 	// takes away. They are cleared with it rather than refused over: the key is
 	// the one `fugaro update`'s own conversion writes (init_craft_migrate.go),
@@ -211,7 +219,7 @@ func runAccountsRm(cmd *cobra.Command, name string, o accountsRmOptions) error {
 	// The refusal a session with no admission keeps, in this command's own
 	// words. It comes before the diff rather than after it, and --yes does not
 	// answer it.
-	if marker != "" && !initflow.CanConfirmManaged(initflow.YesOrTyped, initflow.Conditions{Agent: marker}, m) {
+	if marker != "" && !m.Removes() {
 		return accountsRmSession(marker, plan, command)
 	}
 
@@ -299,6 +307,9 @@ func accountsRmResolve(path string, lc *localcfg.Config, name, want string, old 
 			plan.rest = append(plan.rest, p)
 		}
 	}
+	if plan.drop {
+		plan.repos = reposNamingAccount(lc, name)
+	}
 	if plan.drop && plan.typed {
 		plan.crafts = craftsNaming(lc, name)
 	}
@@ -317,6 +328,18 @@ func accountsRmResolve(path string, lc *localcfg.Config, name, want string, old 
 			return accountsRmPlan{}, nil, nil, userErr("claude_accounts.%s: %v", pluginwire.Printable(name), err)
 		}
 		next = n
+		// A repository's own entry that named the account goes on the same
+		// bytes, for the crafts' reason one level out: the declaration it
+		// names is gone, so an entry left behind is a repository admitted to
+		// an account this file no longer defines, and the publish that
+		// derives it refuses.
+		for _, repo := range plan.repos {
+			n, err := yamledit.RemoveListItemWithOptions(next, []string{"repos", repo, "claude_accounts"}, name, yamledit.RemoveOptions{DropEmptyParents: true})
+			if err != nil {
+				return accountsRmPlan{}, nil, nil, userErr("repos.%s.claude_accounts: %v", pluginwire.Printable(repo), err)
+			}
+			next = n
+		}
 	}
 	// The typed half goes with the declaration, on the same bytes: the entry the
 	// account was declared as is the account's, and a name left in the
@@ -416,6 +439,31 @@ func craftAccessKeys(crafts []string) string {
 	keys := make([]string, 0, len(crafts))
 	for _, craft := range crafts {
 		keys = append(keys, "crafts."+craft+".access")
+	}
+	return strings.Join(keys, " and ")
+}
+
+// reposNamingAccount is the local config's repos entries whose own
+// claude_accounts lists the name, in the order the sentence that clears them
+// names them: the repository-level half of the account sources, which is how a
+// repository whose runs are not on a profile job is admitted
+// (docs/project-claude-accounts.md §3).
+func reposNamingAccount(lc *localcfg.Config, name string) []string {
+	var out []string
+	for _, repo := range slices.Sorted(maps.Keys(lc.Repos)) {
+		if slices.Contains(lc.Repos[repo].ClaudeAccounts, name) {
+			out = append(out, repo)
+		}
+	}
+	return out
+}
+
+// repoAccountKeys spells those entries' keys for a sentence, the way
+// craftAccessKeys does: the whole of what the write clears, named one by one.
+func repoAccountKeys(repos []string) string {
+	keys := make([]string, 0, len(repos))
+	for _, repo := range repos {
+		keys = append(keys, "repos."+repo+".claude_accounts")
 	}
 	return strings.Join(keys, " and ")
 }
@@ -813,14 +861,13 @@ func accountsRmGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config
 		return initflow.Managed{}, managedGate{}, nil
 	}
 	applied, refused := accountsRmRules(plan, read)
-	conv := managedmode.ConvergeAdmitted(doc, initflow.YesOrTyped, applied)
+	conv := managedmode.ConvergeAdmitted(doc, applied)
 	if len(refused) > 0 {
-		conv = managedmode.ConvergeRefused(doc, initflow.YesOrTyped, refused)
+		conv = managedmode.ConvergeRefused(doc, refused)
 	}
-	// YesOrTyped is the class this step is: the ordinary edit the diff
-	// describes, and not a Typed step — the value D846 reserves for a loosened
-	// ceiling is what the declaration's own rules already refuse here.
-	m, err := gate.admit(ctx, initflow.YesOrTyped, conv)
+	// This step is the ordinary edit the diff describes and not the loosened
+	// ceiling D846 reserves: the declaration's own rules refuse that one here.
+	m, err := gate.admit(ctx, conv)
 	if err == nil {
 		return m, gate, nil
 	}
@@ -835,7 +882,7 @@ func accountsRmGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config
 // accountsRmRules are the rules the gate judges this removal by, in the words
 // the record and the refusal carry: the rules that were applied and passed, and
 // the ones that refused. They are this command's own and live here rather than
-// in internal/managed, where the SHAPE of a verdict and the one class rule are
+// in internal/managed, where the SHAPE of a verdict and its one narrowing rule are
 // (D1021).
 //
 // The rule is the design's whole content for this command (managed spec §4.2,
@@ -963,6 +1010,10 @@ func accountsRmWhat(plan accountsRmPlan) string {
 			parts = append(parts, fmt.Sprintf("clear %s, which named that entry and would have nothing to spend without it",
 				craftAccessKeys(plan.crafts)))
 		}
+	}
+	if len(plan.repos) > 0 {
+		parts = append(parts, fmt.Sprintf("clear %s, which admitted that repository's own runs to the account",
+			repoAccountKeys(plan.repos)))
 	}
 	parts = append(parts,
 		fmt.Sprintf("delete the secret %s (Secret Manager's own delete, which cannot be undone here)", plan.secretID),

@@ -71,6 +71,15 @@ const (
 	// HeaderRunJob names the Cloud Run job the run reports it is in. It is
 	// the caller's claim and never evidence (C1.10).
 	HeaderRunJob = "X-Fugaro-Run-Job"
+	// HeaderSlip names the slip this run's calls are bound to: the id the
+	// launcher was granted and the run claimed at its own start (D1941,
+	// DS1.5's runner half).
+	HeaderSlip = "X-Fugaro-Slip"
+	// HeaderSlipClaim carries the secret that claim answered. It is the one
+	// credential of this contract, it lives in the runner's memory, and the
+	// service keeps only its hash — so it is attached here, on the call the
+	// service decides by, and never written to a log, an error or a record.
+	HeaderSlipClaim = "X-Fugaro-Slip-Claim"
 )
 
 // The answer headers of the contract (credsvc.HeaderTier,
@@ -207,6 +216,22 @@ type Service struct {
 	// service-account email — so this is a claim, and validate refuses one
 	// that could not be a job name.
 	Job string
+	// SlipID and SlipClaim are the claim the run holds: the slip's id and
+	// the secret the claim route answered it (DS1.5). Both are presented on
+	// every call (HeaderSlip, HeaderSlipClaim), which is what the service
+	// serves a run's own credentials by (R9), and they are all or nothing:
+	// validate refuses a service upstream carrying one without the other,
+	// because a call with a slip and no secret is a request the service
+	// does not read. A run that holds no slip carries neither, and is the
+	// run of an installation that has not deployed the slip routes —
+	// internal/cli's launcher hands it none to claim (DS1.4's skew).
+	//
+	// The secret is a credential and nothing here logs it: unlike IDToken it
+	// is a value rather than a function because the run takes its slip once
+	// before the gateway starts, and the claim does not change under a
+	// running gateway.
+	SlipID    string
+	SlipClaim string
 }
 
 // ServiceAnswer is what the credentials service said about one call: the
@@ -314,13 +339,21 @@ func (s *Server) serviceUpstream(ctx context.Context, rt route, in http.Header) 
 	s.scrubToken(h)
 	// The service's own answer headers mean nothing in a request, and a
 	// client that sent them must not have them arrive as if the service had
-	// answered with them.
-	for _, k := range []string{HeaderTier, HeaderCredential, HeaderSwitch, HeaderProbe} {
+	// answered with them. The slip's two headers are dropped for that
+	// reason and for one more: they are the run's claim, taken by the runner
+	// and held here, so an agent that sent a slip of its own must not have
+	// it reach the service — what travels below is the claim the run took,
+	// and never a value the agent chose.
+	for _, k := range []string{HeaderTier, HeaderCredential, HeaderSwitch, HeaderProbe, HeaderSlip, HeaderSlipClaim} {
 		h.Del(k)
 	}
 	h.Set("Authorization", "Bearer "+id)
 	h.Set(HeaderRunIdentity, run)
 	h.Set(HeaderRunJob, sv.Job)
+	if sv.SlipID != "" {
+		h.Set(HeaderSlip, sv.SlipID)
+		h.Set(HeaderSlipClaim, sv.SlipClaim)
+	}
 	return h, nil
 }
 

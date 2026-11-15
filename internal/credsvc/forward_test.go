@@ -266,19 +266,30 @@ func TestServiceRefusesUnverified(t *testing.T) {
 	}
 }
 
-// TestServiceRefusesASharedJobAccount: Global Constraint 6's gate, seen from the
-// service. A run in one of the installation's shared project jobs is refused
-// until the phase-3 shared-job rules are on main (C3.9), and it is refused from
-// the caller's verified account and never from the job name it reports.
-func TestServiceRefusesASharedJobAccount(t *testing.T) {
+// TestServiceRefusesASharedAccountItsOwnTableDoesNotHold: the class is answered
+// from the verifier's list and the pairing is made from the service's own, and
+// the two are one list in a deployment (SharedJobAccountsFor answers both). A
+// service whose two have drifted apart is one this deployment disagrees with
+// itself about: the caller is verified as a shared project job's account
+// (B5.1) and no row of the table says which profile it serves, so the pairing
+// refuses rather than guesses — the same fail-closed answer the review class's
+// own lookup gives.
+func TestServiceRefusesASharedAccountItsOwnTableDoesNotHold(t *testing.T) {
 	s := newSvc(t)
+	if len(s.server.shared) != 0 {
+		t.Fatalf("the fixture's service holds %d shared rows, and this test is about the state where it holds none", len(s.server.shared))
+	}
 	tok := s.jobToken(func(c map[string]any) { c["email"] = testSharedSA })
 	resp, body := s.callTokens(t, callBody("shared"), s.runToken(), tok, s.job)
 	if resp.StatusCode != StatusUnverified {
 		t.Fatalf("the answer is %d, want %d", resp.StatusCode, StatusUnverified)
 	}
-	if got := refusal(t, resp.StatusCode, body); got.Error != ErrorUnverifiedJobIdentity {
-		t.Errorf("the refusal is %q, want %q: %s", got.Error, ErrorUnverifiedJobIdentity, got.Message)
+	got := refusal(t, resp.StatusCode, body)
+	if got.Error != ErrorUnverifiedRunIdentity {
+		t.Errorf("the refusal is %q, want %q: %s", got.Error, ErrorUnverifiedRunIdentity, got.Message)
+	}
+	if !strings.Contains(got.Message, "shared") {
+		t.Errorf("the refusal is %q, want it to name what could not be read: the calling account is not one of this service's shared job accounts", got.Message)
 	}
 	if n := s.up.Count(); n != 0 {
 		t.Errorf("the upstream saw %d requests, want none", n)

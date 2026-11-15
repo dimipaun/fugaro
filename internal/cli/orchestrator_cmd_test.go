@@ -42,25 +42,41 @@ func workItemUpsert(id, title string) orchestrator.Op {
 // that reaches no node is told apart from one that reads and survives: the
 // count is the proof, and the failure is what a reader sees when the proof does
 // not hold.
-func failEveryCall(t *testing.T) func() int {
+func failEveryCall(t *testing.T) *failedCalls {
 	t.Helper()
-	var (
-		mu    sync.Mutex
-		calls int
-	)
-	budgetTransport = roundTripFunc(func(*http.Request) (*http.Response, error) {
-		mu.Lock()
-		calls++
-		n := calls
-		mu.Unlock()
+	c := &failedCalls{}
+	budgetTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		c.mu.Lock()
+		c.reqs = append(c.reqs, r.Method+" "+r.URL.Path)
+		n := len(c.reqs)
+		c.mu.Unlock()
 		return nil, fmt.Errorf("this run must reach no database, and it made call %d", n)
 	})
 	t.Cleanup(func() { budgetTransport = nil })
-	return func() int {
-		mu.Lock()
-		defer mu.Unlock()
-		return calls
-	}
+	return c
+}
+
+// failedCalls is what failEveryCall saw: every request, as "METHOD path", in
+// the order it was made. The count is the proof a run reached no node; the
+// requests are what a caller reads to say WHICH node a command does reach —
+// a reading command reads the roles, and nothing else.
+type failedCalls struct {
+	mu   sync.Mutex
+	reqs []string
+}
+
+// count is how many requests were made.
+func (c *failedCalls) count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.reqs)
+}
+
+// all is those requests, in order.
+func (c *failedCalls) all() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.reqs...)
 }
 
 // roundTripFunc is a transport of one function.
@@ -419,7 +435,7 @@ func TestStateBriefOfflineReadsOnlyTheCache(t *testing.T) {
 	if !strings.Contains(err.Error(), "--brief") {
 		t.Errorf("the refusal does not name the flag it needs: %v", err)
 	}
-	if n := calls(); n != 0 {
+	if n := calls.count(); n != 0 {
 		t.Errorf("the offline runs made %d database calls, and reading no node at all is the whole of D1243", n)
 	}
 }

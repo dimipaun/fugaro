@@ -8,7 +8,6 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	managed "github.com/dimipaun/fugaro/internal/infra/managed"
-	"github.com/dimipaun/fugaro/internal/initflow"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 )
 
@@ -76,16 +75,16 @@ func newManagedAuditRig(t *testing.T, o managedAuditOpts) *managedAuditRig {
 // with warnings would be building a state no command can reach.
 func (r *managedAuditRig) file(t *testing.T, command, doc string, verdict managedmode.AuditVerdict, at time.Time, warnings ...string) managedmode.AuditRecord {
 	t.Helper()
-	conv := managedmode.ConvergeAdmitted([]byte(doc), initflow.YesOrTyped, []string{"every key is in the registry"})
+	conv := managedmode.ConvergeAdmitted([]byte(doc), []string{"every key is in the registry"})
 	switch verdict {
 	case managedmode.AuditRefused:
 		rules := []string{"the plan removes an address the owner's list does not name"}
-		conv = managedmode.ConvergeRefused([]byte(doc), initflow.YesOrTyped, rules)
+		conv = managedmode.ConvergeRefused([]byte(doc), rules)
 		if len(warnings) > 0 {
-			conv = managedmode.ConvergeRefusedWithWarnings([]byte(doc), initflow.YesOrTyped, rules, warnings)
+			conv = managedmode.ConvergeRefusedWithWarnings([]byte(doc), rules, warnings)
 		}
 	case managedmode.AuditWarned:
-		conv = managedmode.ConvergeWarned([]byte(doc), initflow.YesOrTyped,
+		conv = managedmode.ConvergeWarned([]byte(doc),
 			[]string{"the cover of the embedded roots refused no change of this plan that its integrity rules judge — the changes it did not announce did not refuse it, and they are this record's warnings (D1545)"}, warnings)
 	}
 	rec := managedmode.AuditRecordFor(managedmode.AuditFacts{

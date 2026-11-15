@@ -57,6 +57,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"io/fs"
 	"os"
@@ -252,7 +253,7 @@ var liveRoots = []string{
 // every other bare mention reading as a clean file. The flag is the variable,
 // so the pattern takes the flag as one (`--` and a letter) rather than
 // enumerating the retired command's own flags -- which could not be done
-// anyway, because the live `fugaro config init` shares `--yes` with it.
+// anyway, because the live `fugaro config init` spells flags of its own.
 //
 // It is matched against flattenDoc's output and never against the raw bytes,
 // so a wrapped mention is a mention: a help string's line break inside the
@@ -263,16 +264,16 @@ var initNameRE = regexp.MustCompile(`fugaro init|init --[a-z]`)
 
 // otherInitRE is the other command in this tree that writes `init --<flag>`,
 // and the reason initNameRE can be as wide as it is. It is `fugaro config
-// init --yes`, the live subcommand that writes the minimal `fugaro.yaml`
-// (internal/cli/config_cmd.go), whose flag is the retired verb's own -- the
-// overlap that rules out the flag list above, since a list of the retired
-// command's flags would have to carry `--yes` and so would swallow this one.
+// init`, the live subcommand that writes the minimal `fugaro.yaml`
+// (internal/cli/config_cmd.go), whose own flags -- `--profile`, `--base-branch`
+// -- are spellings of the retired verb's pattern, so a flag list of the retired
+// command's own would swallow this one.
 //
 // A file that mentions it *beside* a real mention must not be read as clean,
 // so the exclusion is not a second pattern that exempts the file: the match is
 // removed from the flattened text and initNameRE reads what is left. `fugaro
-// config init --yes` therefore leaves `fugaro`, and a bare `init --repo` in
-// the same file is still found.
+// config init --profile p` therefore leaves `fugaro`, and a bare `init --repo`
+// in the same file is still found.
 //
 // The list holds what the tree has, not what it might: `git init --bare` is
 // the obvious next entry and is deliberately absent, because no live file
@@ -281,7 +282,7 @@ var initNameRE = regexp.MustCompile(`fugaro init|init --[a-z]`)
 // one does, the census fails on that file and the answer is one of the two
 // this file hands every unexpected mention -- rename it, or add the command
 // here with its reason.
-var otherInitRE = regexp.MustCompile(`config init --[a-z]`)
+var otherInitRE = regexp.MustCompile(`config init`)
 
 // censusRoot is the repository root as this package's tests reach it.
 const censusRoot = "../.."
@@ -436,6 +437,11 @@ var censusOutputDirs = []string{
 	"mobile/dist",
 	"mobile/web-build",
 	"mobile/.expo",
+	// ee/portal/.gitignore: the bundle `vite build` writes, which Hosting is
+	// fed from (P9.2) and which nobody reads as source. The portal's
+	// node_modules is on censusOutputNames with the other apps', from the same
+	// lockfile the licence audit reads.
+	"ee/portal/dist",
 	// testdata/fixture-repo/.gitignore: a fixture repository's own build
 	// directory, which the second walk reaches because testdata/ is not a live
 	// root.
@@ -451,7 +457,8 @@ var censusOutputDirs = []string{
 // censusOutputNames are ignored by name at any depth.
 var censusOutputNames = []string{
 	// website/.gitignore, the console's, mobile/.gitignore,
-	// deploy/sandbox/.gitignore, internal/budget/rules/emulator/.gitignore and
+	// ee/portal/.gitignore, deploy/sandbox/.gitignore,
+	// internal/budget/rules/emulator/.gitignore and
 	// testdata/fixture-repo/.gitignore all declare it, and the reason is the
 	// same under each: `npm ci` writes a tree nobody reviews from a lockfile
 	// that already pins it.
@@ -530,6 +537,22 @@ func censusOutput(rel string) bool {
 		}
 	}
 	return false
+}
+
+// censusIgnoreReachable answers whether a .gitignore censusIgnored classifies is
+// one a walk of the tree at root can arrive at: a file the core build deletes
+// with the directory it lives under is not, and ee/portal/.gitignore is the one.
+//
+// Only "not there" excuses it, which is what a deleted ee/ looks like from here.
+// A directory this process cannot read is a question for the walk rather than an
+// answer for it, or a permission problem would be read as the core build and the
+// row would stop being counted in a tree that has it.
+func censusIgnoreReachable(root, absentWith string) bool {
+	if absentWith == "" {
+		return true
+	}
+	_, err := os.Stat(filepath.Join(root, filepath.FromSlash(absentWith)))
+	return !errors.Is(err, fs.ErrNotExist)
 }
 
 // censusVendoredRoots are the root-level trees of vendored third-party agent
@@ -783,9 +806,9 @@ func TestCensusNamesInitReadsPastTheHead(t *testing.T) {
 //   - the bare spelling is caught *wrapped*, because a comment wraps it across
 //     its `//` marker (init_firebase_test.go, init_images_test.go,
 //     init_review.go and mirror/ref.go all do), and
-//   - `fugaro config init --yes` is not the retired command, while a file that
-//     names it beside a real mention still is: the exclusion is a redaction of
-//     the flattened text, not an exemption for the file.
+//   - `fugaro config init` is not the retired command, while a file that names
+//     it beside a real mention still is: the exclusion is a redaction of the
+//     flattened text, not an exemption for the file.
 //
 // Mutation (run, restore): narrow initNameRE's second alternative back to
 // `init --repo` -- the bare-flag cases fail; drop the `--[a-z]` and match a
@@ -806,8 +829,9 @@ func TestCensusNamesInitMatchesBothSpellingsAndTheOtherCommand(t *testing.T) {
 		{"a bare flag, print-vars", "printVarsUngatedInstallation is init --print-vars's warning\n", true},
 		{"a bare flag, wrapped across a // marker", "// and a marker above this\n// binary says so. init\n// --firebase-project deploys the rules\n", true},
 		{"a bare flag, expect-digest", "Plan's expect digest (init --expect-digest) pins one\n", true},
-		{"the other command alone", "fugaro config init --yes writes the minimal fugaro.yaml\n", false},
-		{"the other command, with the retired one beside it", "fugaro config init --yes writes it; the old text said init --repo\n", true},
+		{"the other command alone", "fugaro config init writes the minimal fugaro.yaml\n", false},
+		{"the other command with one of its flags", "fugaro config init --profile svc writes it\n", false},
+		{"the other command, with the retired one beside it", "fugaro config init writes it; the old text said init --repo\n", true},
 		{"neither spelling", "fugaro setup --repo and fugaro update --firebase-project\n", false},
 		{"a flag with no init in front", "fugaro setup --create-project\n", false},
 	}
@@ -999,51 +1023,71 @@ var censusIgnored = []struct {
 	pattern string // the line in it
 	sample  string // a path that line ignores
 	bySniff bool   // covered by the binary sniff rather than by censusOutput
+	// absentWith is the directory this .gitignore is absent together with, and it
+	// is empty for every file the core build's tree has. The portal's is the one:
+	// ee/portal/.gitignore lives under ee/, and the core builds and tests with
+	// that directory deleted (core-without-ee.yml, and .claude/rules/ee.md), so a
+	// walk of that tree arrives at seven .gitignore files rather than eight.
+	//
+	// What excuses the file is the boundary's absence and never the file's own.
+	// The two are not the same state: ee/ present with its portal .gitignore
+	// missing is a file that governs the tree and is not classified, which is
+	// what the count below fails on -- so this field names a directory to look
+	// for, not a file to forgive.
+	absentWith string
 }{
-	{".gitignore", "/dist/", "dist/fugaro", false},
-	{".gitignore", "/THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.md", false},
-	{".gitignore", "/fugaro", "fugaro", true},
-	{".gitignore", "/clidoc", "clidoc", true},
-	{".gitignore", "*.exe", "fugaro.exe", true},
-	{".gitignore", "/deploy/terraform/**/.terraform/", "deploy/terraform/prod/.terraform/providers/registry.terraform.io/hashicorp/google/6.0.0/linux_amd64/terraform-provider-google", false},
-	{".gitignore", "/deploy/terraform/**/*.tfstate", "deploy/terraform/prod/terraform.tfstate", false},
-	{".gitignore", "/deploy/terraform/**/*.tfstate.*", "deploy/terraform/prod/terraform.tfstate.backup", false},
+	{".gitignore", "/dist/", "dist/fugaro", false, ""},
+	{".gitignore", "/THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.md", false, ""},
+	{".gitignore", "/fugaro", "fugaro", true, ""},
+	{".gitignore", "/clidoc", "clidoc", true, ""},
+	{".gitignore", "*.exe", "fugaro.exe", true, ""},
+	{".gitignore", "/deploy/terraform/**/.terraform/", "deploy/terraform/prod/.terraform/providers/registry.terraform.io/hashicorp/google/6.0.0/linux_amd64/terraform-provider-google", false, ""},
+	{".gitignore", "/deploy/terraform/**/*.tfstate", "deploy/terraform/prod/terraform.tfstate", false, ""},
+	{".gitignore", "/deploy/terraform/**/*.tfstate.*", "deploy/terraform/prod/terraform.tfstate.backup", false, ""},
 	// The key service's own roots, which are the second tree a local init can be
 	// run in (S3.5): the same provider tree and the same state file, written
 	// under ee/ instead.
-	{".gitignore", "/ee/keyservice/terraform/**/.terraform/", "ee/keyservice/terraform/keyring/.terraform/providers/registry.terraform.io/hashicorp/google/8.4.0/linux_amd64/terraform-provider-google", false},
-	{".gitignore", "/ee/keyservice/terraform/**/*.tfstate", "ee/keyservice/terraform/keyring/terraform.tfstate", false},
-	{".gitignore", "/ee/keyservice/terraform/**/*.tfstate.*", "ee/keyservice/terraform/keyring/terraform.tfstate.backup", false},
-	{".gitignore", "*.swp", "internal/cli/.init.go.swp", false},
-	{".gitignore", "/docs/website/redesign/current/*.jpg", "docs/website/redesign/current/home.jpg", false},
-	{".gitignore", "/docs/website/redesign/after/*.jpg", "docs/website/redesign/after/home.jpg", false},
-	{".gitignore", "/.firebase/", ".firebase/hosting.json", false},
-	{".gitignore", "/secrets/", "secrets/owner.json", false},
-	{"website/.gitignore", "node_modules/", "website/node_modules/react/index.js", false},
-	{"website/.gitignore", "dist/", "website/dist/index.html", false},
-	{"website/.gitignore", ".astro/", "website/.astro/types.d.ts", false},
-	{consoleDirName + "/.gitignore", "node_modules/", consoleDirName + "/node_modules/electron/index.js", false},
-	{consoleDirName + "/.gitignore", "dist/", consoleDirName + "/dist/renderer/index.html", false},
-	{consoleDirName + "/.gitignore", "release/", consoleDirName + "/release/fugaro-console.AppImage", false},
-	{consoleDirName + "/.gitignore", "test-results/", consoleDirName + "/test-results/results.xml", false},
-	{consoleDirName + "/.gitignore", "playwright-report/", consoleDirName + "/playwright-report/index.html", false},
-	{consoleDirName + "/.gitignore", ".record-fixture/", consoleDirName + "/.record-fixture/fixture.json", false},
-	{consoleDirName + "/.gitignore", ".bundle-renderer/", consoleDirName + "/.bundle-renderer/bundle.js", false},
-	{consoleDirName + "/.gitignore", ".screenshots/", consoleDirName + "/.screenshots/screenshots.mjs", false},
-	{consoleDirName + "/.gitignore", "/screenshots/", consoleDirName + "/screenshots/MANIFEST.json", false},
-	{"mobile/.gitignore", "node_modules/", "mobile/node_modules/expo/index.js", false},
-	{"mobile/.gitignore", ".expo/", "mobile/.expo/cache/state.json", false},
-	{"mobile/.gitignore", ".metro-health-check*", "mobile/.metro-health-check.json", false},
-	{"mobile/.gitignore", "dist/", "mobile/dist/index.html", false},
-	{"mobile/.gitignore", "web-build/", "mobile/web-build/index.html", false},
-	{"mobile/.gitignore", "*.log", "mobile/app.log", false},
-	{"mobile/.gitignore", "google-services.json", "mobile/google-services.json", false},
-	{"mobile/.gitignore", "GoogleService-Info.plist", "mobile/GoogleService-Info.plist", false},
-	{"deploy/sandbox/.gitignore", "node_modules/", "deploy/sandbox/node_modules/tfjs/index.js", false},
-	{"deploy/sandbox/.gitignore", "junit.xml", "deploy/sandbox/junit.xml", false},
-	{"internal/budget/rules/emulator/.gitignore", "node_modules/", "internal/budget/rules/emulator/node_modules/x/index.js", false},
-	{"testdata/fixture-repo/.gitignore", "build/", "testdata/fixture-repo/build/out.txt", false},
-	{"testdata/fixture-repo/.gitignore", "node_modules/", "testdata/fixture-repo/node_modules/x/index.js", false},
+	{".gitignore", "/ee/keyservice/terraform/**/.terraform/", "ee/keyservice/terraform/keyring/.terraform/providers/registry.terraform.io/hashicorp/google/8.4.0/linux_amd64/terraform-provider-google", false, ""},
+	{".gitignore", "/ee/keyservice/terraform/**/*.tfstate", "ee/keyservice/terraform/keyring/terraform.tfstate", false, ""},
+	{".gitignore", "/ee/keyservice/terraform/**/*.tfstate.*", "ee/keyservice/terraform/keyring/terraform.tfstate.backup", false, ""},
+	{".gitignore", "*.swp", "internal/cli/.init.go.swp", false, ""},
+	{".gitignore", "/docs/website/redesign/current/*.jpg", "docs/website/redesign/current/home.jpg", false, ""},
+	{".gitignore", "/docs/website/redesign/after/*.jpg", "docs/website/redesign/after/home.jpg", false, ""},
+	{".gitignore", "/.firebase/", ".firebase/hosting.json", false, ""},
+	{".gitignore", "/secrets/", "secrets/owner.json", false, ""},
+	{"website/.gitignore", "node_modules/", "website/node_modules/react/index.js", false, ""},
+	{"website/.gitignore", "dist/", "website/dist/index.html", false, ""},
+	{"website/.gitignore", ".astro/", "website/.astro/types.d.ts", false, ""},
+	{consoleDirName + "/.gitignore", "node_modules/", consoleDirName + "/node_modules/electron/index.js", false, ""},
+	{consoleDirName + "/.gitignore", "dist/", consoleDirName + "/dist/renderer/index.html", false, ""},
+	{consoleDirName + "/.gitignore", "release/", consoleDirName + "/release/fugaro-console.AppImage", false, ""},
+	{consoleDirName + "/.gitignore", "test-results/", consoleDirName + "/test-results/results.xml", false, ""},
+	{consoleDirName + "/.gitignore", "playwright-report/", consoleDirName + "/playwright-report/index.html", false, ""},
+	{consoleDirName + "/.gitignore", ".record-fixture/", consoleDirName + "/.record-fixture/fixture.json", false, ""},
+	{consoleDirName + "/.gitignore", ".bundle-renderer/", consoleDirName + "/.bundle-renderer/bundle.js", false, ""},
+	{consoleDirName + "/.gitignore", ".screenshots/", consoleDirName + "/.screenshots/screenshots.mjs", false, ""},
+	{consoleDirName + "/.gitignore", "/screenshots/", consoleDirName + "/screenshots/MANIFEST.json", false, ""},
+	{"mobile/.gitignore", "node_modules/", "mobile/node_modules/expo/index.js", false, ""},
+	{"mobile/.gitignore", ".expo/", "mobile/.expo/cache/state.json", false, ""},
+	{"mobile/.gitignore", ".metro-health-check*", "mobile/.metro-health-check.json", false, ""},
+	{"mobile/.gitignore", "dist/", "mobile/dist/index.html", false, ""},
+	{"mobile/.gitignore", "web-build/", "mobile/web-build/index.html", false, ""},
+	{"mobile/.gitignore", "*.log", "mobile/app.log", false, ""},
+	{"mobile/.gitignore", "google-services.json", "mobile/google-services.json", false, ""},
+	{"mobile/.gitignore", "GoogleService-Info.plist", "mobile/GoogleService-Info.plist", false, ""},
+	// The portal's own two lines: the fourth app in the tree, installed from
+	// its own lockfile and built by Vite rather than by a native toolchain. They
+	// are the two rows that go with ee/ (absentWith), which is the tree the core
+	// build deletes -- and the licence audit reads the same directory that way
+	// (internal/eeboundary/licence_test.go's absentWith on the portal's lockfile),
+	// so the two rules that reach into the portal step back from it together.
+	{"ee/portal/.gitignore", "node_modules/", "ee/portal/node_modules/react/index.js", false, eeDirName},
+	{"ee/portal/.gitignore", "dist/", "ee/portal/dist/index.html", false, eeDirName},
+	{"deploy/sandbox/.gitignore", "node_modules/", "deploy/sandbox/node_modules/tfjs/index.js", false, ""},
+	{"deploy/sandbox/.gitignore", "junit.xml", "deploy/sandbox/junit.xml", false, ""},
+	{"internal/budget/rules/emulator/.gitignore", "node_modules/", "internal/budget/rules/emulator/node_modules/x/index.js", false, ""},
+	{"testdata/fixture-repo/.gitignore", "build/", "testdata/fixture-repo/build/out.txt", false, ""},
+	{"testdata/fixture-repo/.gitignore", "node_modules/", "testdata/fixture-repo/node_modules/x/index.js", false, ""},
 }
 
 // TestCensusOutputCoversEveryIgnoredPathTheWalksReach holds the claim the three
@@ -1069,10 +1113,16 @@ var censusIgnored = []struct {
 // disagrees with the walk.
 func TestCensusOutputCoversEveryIgnoredPathTheWalksReach(t *testing.T) {
 	classified := map[string]bool{}
-	files := map[string]bool{}
+	// The .gitignore files censusIgnored classifies, each with the directory it is
+	// absent together with: the rows of one file have to agree on that, or the
+	// count below depends on which row it read.
+	files := map[string]string{}
 	for _, c := range censusIgnored {
 		classified[c.ignore+"\t"+c.pattern] = true
-		files[c.ignore] = true
+		if absentWith, ok := files[c.ignore]; ok && absentWith != c.absentWith {
+			t.Errorf("censusIgnored rows for %s disagree on the directory it is absent with (%q and %q): one of them would be counted for this tree and the other not", c.ignore, absentWith, c.absentWith)
+		}
+		files[c.ignore] = c.absentWith
 	}
 	if len(files) == 0 {
 		t.Fatal("censusIgnored classifies no .gitignore at all")
@@ -1123,8 +1173,27 @@ func TestCensusOutputCoversEveryIgnoredPathTheWalksReach(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if found != len(files) {
-		t.Errorf("the walk found %d .gitignore files and censusIgnored classifies %d: every one the walks can arrive at has to be classified, or its lines are unchecked", found, len(files))
+	// The count the walk has to agree with is the classified files this tree can
+	// hold. A file absent together with the directory it lives under is not one a
+	// walk of this tree can arrive at -- the core build's tree has no ee/, so it
+	// has no ee/portal/.gitignore -- and counting it would fail the core's own
+	// suite in the tree that suite is for.
+	expected := 0
+	missing := ""
+	for ignore, absentWith := range files {
+		if !censusIgnoreReachable(censusRoot, absentWith) {
+			continue
+		}
+		expected++
+		if _, err := os.Lstat(filepath.Join(censusRoot, filepath.FromSlash(ignore))); err != nil {
+			missing = ignore
+		}
+	}
+	if found != expected {
+		t.Errorf("the walk found %d .gitignore files and censusIgnored classifies %d of them for this tree: every one the walks can arrive at has to be classified, or its lines are unchecked", found, expected)
+	}
+	if missing != "" {
+		t.Errorf("censusIgnored classifies %s, which is not in the tree the walk reads: a file nobody can reach is a row nobody checks, and its lines are unclassified the moment it comes back", missing)
 	}
 
 	for _, c := range censusIgnored {
