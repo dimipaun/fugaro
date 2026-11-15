@@ -29,10 +29,10 @@ func sameWriter(a, b Writer) bool {
 func TestWriterOfMatchesWildcardRows(t *testing.T) {
 	// Each behaviour is registered under its own namespace, so that no pattern
 	// of one case decides the answer of another.
-	exact := Writer{Command: "fugaro writertest exact", Store: StoreRepo}
-	wild := Writer{Command: "fugaro writertest wild", Store: StoreLocal}
-	specific := Writer{Command: "fugaro writertest specific", Store: StoreNode}
-	broad := Writer{Command: "fugaro writertest broad", Store: StoreProject}
+	exact := Writer{Command: "fugaro writertest exact", Argv: []string{"writertest", "exact", KeyPlaceholder}, Store: StoreRepo}
+	wild := Writer{Command: "fugaro writertest wild", Argv: []string{"writertest", "wild", KeyPlaceholder}, Store: StoreLocal}
+	specific := Writer{Command: "fugaro writertest specific", Argv: []string{"writertest", "specific", KeyPlaceholder}, Store: StoreNode}
+	broad := Writer{Command: "fugaro writertest broad", Argv: []string{"writertest", "broad", KeyPlaceholder}, Store: StoreProject}
 
 	for pattern, w := range map[string]Writer{
 		"wtesta.exact.leaf":  exact,
@@ -110,11 +110,13 @@ func TestWriterOfMatchesWildcardRows(t *testing.T) {
 // replacing it.
 func TestRegisterWriterRefusesADuplicatePattern(t *testing.T) {
 	const pattern = "writertest.duplicate.leaf"
-	first := Writer{Command: "fugaro writertest first", Store: StoreLocal}
+	first := Writer{Command: "fugaro writertest first", Argv: []string{"writertest", "first", KeyPlaceholder}, Store: StoreLocal}
 	if err := RegisterWriter(pattern, first); err != nil {
 		t.Fatalf("%s: %v", pattern, err)
 	}
-	err := RegisterWriter(pattern, Writer{Command: "fugaro writertest second", Store: StoreRepo})
+	// The second writer states both shapes in full, so that what the call below
+	// refuses is the duplicate and not a writer the vocabulary already rejects.
+	err := RegisterWriter(pattern, Writer{Command: "fugaro writertest second", Argv: []string{"writertest", "second", KeyPlaceholder}, Store: StoreRepo})
 	if err == nil {
 		t.Fatalf("%s: the second registration was accepted: one pattern has one registrant (docs/contracts/config-ownership.md)", pattern)
 	}
@@ -128,11 +130,14 @@ func TestRegisterWriterRefusesADuplicatePattern(t *testing.T) {
 }
 
 // TestLabelIsOneOfTheThree pins D2611's vocabulary — the three labels, and the
-// empty one an ordinary row carries — and the two refusals that make it real:
-// a label outside it is not a writer, and the `file` label (the one that
-// stands for a key a person edits) carries its one-line reason or the row is
-// not registered at all. T5 makes the label with its reason the pinned fact
-// for a row no command writes, which is what L1 registers.
+// empty one an ordinary row carries — and the refusals that make it real: a
+// label outside it is not a writer, the `file` label (the one that stands for a
+// key a person edits) carries its one-line reason or the row is not registered
+// at all, and a writer states exactly one of the two shapes Writer documents —
+// a row a command writes has a Command, an Argv and a store that is not `none`,
+// and a labelled row has neither an Argv nor a store. T5 makes the label with
+// its reason the pinned fact for a row no command writes, which is what L1
+// registers.
 func TestLabelIsOneOfTheThree(t *testing.T) {
 	for got, want := range map[Label]string{
 		LabelPlumbing:     "plumbing",
@@ -157,13 +162,38 @@ func TestLabelIsOneOfTheThree(t *testing.T) {
 		},
 		{
 			name: "a file row with no reason", pattern: "writertest.label.bare",
-			writer: Writer{Label: LabelFile, Store: StoreLocal},
+			writer: Writer{Label: LabelFile, Store: StoreNone},
 			why:    "a `file` row states in one line why the key is not a settings row, or the label stands for nothing",
 		},
 		{
 			name: "a store outside the six", pattern: "writertest.label.store",
 			writer: Writer{Store: Store("cloud")},
 			why:    "the hook reads the store to decide the stages a write owes (D2615), so a store nobody defined is a write that publishes nothing",
+		},
+		{
+			name: "a row a command writes with no command line", pattern: "writertest.shape.noarg",
+			writer: Writer{Command: "fugaro settings set", Store: StoreRepo},
+			why:    "the conformance test runs the Argv and a refusal prints it, so an unlabelled writer with none puts a bare `fugaro` in both places (T1, W3)",
+		},
+		{
+			name: "a row a command writes that names no command", pattern: "writertest.shape.nocommand",
+			writer: Writer{Argv: []string{"settings", "set", KeyPlaceholder, "<value>"}, Store: StoreRepo},
+			why:    "the settings read and the refusal say which command owns the key, so a runnable writer that names none states half of itself",
+		},
+		{
+			name: "a row a command writes that lands nowhere", pattern: "writertest.shape.nowhere",
+			writer: Writer{Command: "fugaro settings set", Argv: []string{"settings", "set", KeyPlaceholder, "<value>"}, Store: StoreNone},
+			why:    "a writer with an Argv lands in a file or a database, and a store of `none` is a write the hook runs no stage for (D2615)",
+		},
+		{
+			name: "a labelled row that also has a command line", pattern: "writertest.shape.labelarg",
+			writer: Writer{Label: LabelPlumbing, Argv: []string{"setup"}, Store: StoreNone},
+			why:    "the label stands in for a runnable writer, so a labelled row with an Argv is two answers to one question (T5)",
+		},
+		{
+			name: "a labelled row that names a store", pattern: "writertest.shape.labelstore",
+			writer: Writer{Label: LabelFakeEndpoint, Store: StoreLocal},
+			why:    "a row no command writes lands nowhere: the store of a labelled row is `none`, not the file a person's own edit touches (T5)",
 		},
 	}
 	for _, tc := range refused {
@@ -176,8 +206,8 @@ func TestLabelIsOneOfTheThree(t *testing.T) {
 		writer  Writer
 		pattern string
 	}{
-		{Writer{Command: "fugaro setup", Store: StoreLocal, Label: LabelPlumbing}, "writertest.label.plumbing"},
-		{Writer{Command: "fugaro setup", Store: StoreLocal, Label: LabelFakeEndpoint}, "writertest.label.fake"},
+		{Writer{Command: "fugaro setup", Store: StoreNone, Label: LabelPlumbing}, "writertest.label.plumbing"},
+		{Writer{Command: "fugaro setup", Store: StoreNone, Label: LabelFakeEndpoint}, "writertest.label.fake"},
 		{Writer{Label: LabelFile, Store: StoreNone, Reason: "the file is the editor: no command writes it"}, "writertest.label.file"},
 		{Writer{Command: "fugaro settings set", Argv: []string{"settings", "set", KeyPlaceholder, "<value>"}, Store: StoreRepo}, "writertest.label.runnable"},
 	}

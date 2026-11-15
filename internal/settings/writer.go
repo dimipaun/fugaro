@@ -136,8 +136,10 @@ var (
 
 // RegisterWriter registers w as the writer of every key the pattern matches.
 // It answers an error for a pattern that is already registered, for a store or
-// a label outside the two vocabularies above, and for a `file` row that states
-// no reason.
+// a label outside the two vocabularies above, for a `file` row that states no
+// reason, and for a writer that does not state exactly one of the two shapes:
+// a row a command writes carries a Command, a non-empty Argv and a store other
+// than none, and a labelled row carries neither an Argv nor a store.
 //
 // Registration happens in the family's package init, where the error is a
 // programming error rather than a user's mistake: the family panics on it, so
@@ -178,7 +180,9 @@ func WriterOf(key string) (Writer, bool) {
 	return Writer{}, false
 }
 
-// checkWriter is the vocabulary a registration is held to.
+// checkWriter is the vocabulary a registration is held to, and the two shapes
+// above: exactly one of them is stated, and a writer that states neither or
+// both is refused rather than registered as something no reader can act on.
 func checkWriter(w Writer) error {
 	switch w.Store {
 	case StoreLocal, StoreProject, StoreRepo, StoreNode, StoreBudget, StoreNone:
@@ -189,6 +193,24 @@ func checkWriter(w Writer) error {
 	case "", LabelPlumbing, LabelFakeEndpoint, LabelFile:
 	default:
 		return fmt.Errorf("the label %q is not one of %s, %s, %s (or none): the three are the owner's vocabulary (D2611), and a fourth is a reason nobody agreed to", w.Label, LabelPlumbing, LabelFakeEndpoint, LabelFile)
+	}
+	if w.Label == "" {
+		if len(w.Argv) == 0 {
+			return fmt.Errorf("a row a command writes states the command line it is written by, and this one has no Argv: the conformance test runs it and a refusal prints it, so an empty one is bare `fugaro` (T1, W3)")
+		}
+		if w.Command == "" {
+			return fmt.Errorf("a row a command writes names the command that writes it, and this one names none: the settings read and the refusal say which command owns the key (D2609)")
+		}
+		if w.Store == StoreNone {
+			return fmt.Errorf("a row a command writes lands in a store and this one says %s: the %s store is for a row no command writes, and a writer with an Argv that lands nowhere is a write the hook runs no stage for (D2615)", w.Store, StoreNone)
+		}
+		return nil
+	}
+	if len(w.Argv) > 0 {
+		return fmt.Errorf("a row registered with the %s label carries no Argv: the label is what stands in for a runnable writer, and a labelled row that also has a command line is two answers to one question (T5)", w.Label)
+	}
+	if w.Store != StoreNone {
+		return fmt.Errorf("a row registered with the %s label says the %s store, and a row no command writes lands nowhere (%s): setup converging a file is not this row being written by a command (T5)", w.Label, w.Store, StoreNone)
 	}
 	if w.Label == LabelFile && w.Reason == "" {
 		return fmt.Errorf("the %s label needs its one-line reason: a key in a named file nobody edits states why it is not a settings row, or it becomes one (D2611, T5)", LabelFile)

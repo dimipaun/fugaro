@@ -46,10 +46,14 @@ type.
   The family panics on it, so a duplicate or an out-of-vocabulary writer fails
   every command of the binary and the conformance test loudly rather than one
   of the two silently winning.
-- **The vocabularies are closed.** `Store` is `local`, `project`, `repo`,
-  `node`, `budget` or `none`; `Label` is `plumbing`, `fake-endpoint`, `file`
-  or the empty string; every other value is refused. `TestLabelIsOneOfTheThree`
-  and `TestWriterStoreIsOneOfTheSix` pin them.
+- **The vocabularies are closed, and a writer states one of the two shapes.**
+  `Store` is `local`, `project`, `repo`, `node`, `budget` or `none`; `Label` is
+  `plumbing`, `fake-endpoint`, `file` or the empty string; every other value is
+  refused. A row a command writes carries a command, a non-empty `Argv` and a
+  store other than `none`; a labelled row carries neither an `Argv` nor a
+  store. A writer stating neither shape or both is refused at registration, so
+  no reader is handed an empty command line to run or a label beside one.
+  `TestLabelIsOneOfTheThree` and `TestWriterStoreIsOneOfTheSix` pin them.
 - **`Store` is where the registered `Argv` lands** — the file or database the
   write touches, not the place the value is served from. A pool is written in
   the local config and served from the published node: its store is `local`.
