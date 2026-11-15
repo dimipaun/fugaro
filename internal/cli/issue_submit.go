@@ -564,8 +564,6 @@ func issueAskRefusal(c initflow.Conditions) string {
 	switch {
 	case c.Agent != "":
 		return "nothing was filed: " + initflow.AgentRefusal(c.Agent)
-	case c.NonInteractive:
-		return initflow.NeedsTerminal("filing an issue on GitHub") + ", and a run with no terminal cannot answer it: nothing was filed"
 	case c.JSON:
 		return initflow.NeedsTerminal("filing an issue on GitHub") + ", and --json never prompts: nothing was filed"
 	default:

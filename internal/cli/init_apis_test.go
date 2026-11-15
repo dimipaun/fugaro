@@ -246,7 +246,7 @@ func TestPlanOnlyNeverConfirmsInAnyMode(t *testing.T) {
 	if ok, err := r.ask("changes something"); err != nil || ok {
 		t.Fatalf("ask under --plan-only with a covered run: %v, %v", ok, err)
 	}
-	if r.conditions().Yes {
-		t.Error("conditions carry a covered run's answer under --plan-only")
+	if got := r.stepConfirmation(true); got != stepLeave {
+		t.Errorf("--plan-only with a covered run leaves the step as %v, want it left", got)
 	}
 }

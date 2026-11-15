@@ -710,6 +710,26 @@ on that secret and on no other account's. 600d is the one part a **script** can 
 `fugaro` alone); 600a to 600c are human-terminal procedures and are the steps their sections write.
 It is owner-run — **no agent runs any step of it** — and it is **NOT RUN**.
 
+**Checks 620 to 627 are the mobile-auth work's, and they are the first eight numbers free past every
+claim above them** ([`docs/mobile-auth/`](mobile-auth/implementation-plan.md) §9, allocated
+2026-11-14). The reading is taken the way the paragraphs above take theirs, at the head this
+allocation is written on (`13d2b6b8`): the highest **written** `## Check` section in this file is
+**600** — **600a** to **600d**, the accounts-add work's — and above it **610 to 619** are
+`docs/review-job`'s reserved block (its plan's **RJ9** and **RJ10**; [docs/status.md](status.md)
+names **610** and **611** as that work's owner checks). A claim above the highest written section is
+settled at its merge, and the rule for a work that reserved none is the number free past every
+claim, so **620 is the first free number** and this work takes **620–627**. Its own §9 proposes
+**ten** rows and **eight** are owner-run; the two it marks **runner** — the resolver's rule on the
+real declaration the owner wrote, and the app's own CI job, which that plan says is **not a live
+check at all** — take no number here, which is why this block is eight and not ten. **Nothing above
+was renumbered and nothing was surrendered**: 600 stays the accounts-add work's, 610–619 stay
+`docs/review-job`'s, and **601 to 609** stay free — this work took the numbers past the last claim
+rather than the lowest gap, because that is what the rule above says. The five parts that proposed
+these checks are merged (**P2** to **P6**; the allowlist node P2 writes is what 621 and 624 read),
+so each is a section and a row here, written **now** rather than promised:
+**620** to **627** below, each **owner-run** on a real project, **never `belong`**, each **NOT RUN**,
+and **no agent runs any step of any of them**.
+
 **That is the end of the register.** The paragraph below is not another
 reservation: it introduces the check that owns 57, whose row is in the table
 below.
@@ -975,6 +995,20 @@ probe account carries predefined grants only).
 | 310 | The CLI's default output at a real terminal, on macOS ([`docs/cli-output-console-graph/`](cli-output-console-graph/implementation-plan-output.md), its task **CL12** and the guarantees **G1**–**G8** that plan's **CL5b**, **CL9** and **CL10** were written to, whose own table names the five commands below): `fugaro update` at a real terminal draws the colour and the line in flight and prints one line per step with a closing line and an exit status that agree with it (G1, G3, G4); `fugaro setup --plan-only` prints the plan view, and its log holds the same rows, whole and uncoloured (CL5a); `NO_COLOR=1 fugaro update` and `fugaro update \| cat` print every step with no escape sequence and no carriage return (G1, G4); `fugaro update --json` puts one document on stdout and the account on stderr (G2); a forced failure inside a stage prints the step's name, the last lines of the stage's own output and the log's path, and its log is 0600 inside a 0700 directory and holds what the screen did not (G5, G8); and the retention rule removes the oldest log past 14 days or past the newest 50 per command name and touches nothing else — another command's log, a link, a directory, a name that is not the sink's (G6); `fugaro doctor --json` files no log at all (G7) | See "Check 310" below; `bash scripts/live-checks/check310.sh` is the whole of it — one idempotent script, one `PASS`/`FAIL`/`INFO` line per fact, and `--dry-run` to print what it would run without running any of it — and its sibling test `scripts/live-checks/check310_test.sh` drives it against a fake `fugaro` and a fake `terraform` only; **you** run it, on your own machine and your own terminal, against an installation the check reads from `fugaro doctor --json`, one you name with `--installation`, or **no installation of yours at all with `--scratch`** — which makes one of its own in the check's scratch directory (the made-up project `chk310-scratch`, a local config whose every API root is a loopback fake the check starts with `no_auth`, and a fake `terraform` first on PATH), so every command below it runs offline and nothing real is converged; it is the mode to use when every installation you have is one the register refuses, and the two facts that ARE about an installation of yours — `installation` and `belong` — then read `INFO` "not read in `--scratch`" instead of passing on the check's own made-up one — and an installation the register refuses by name — `belong`, `belong-*`, `fugaro-dev`, `fugaro-belong` or `edge-devel-dimi` — or a project naming `belong`, `fugaro-dev` or `edge-devel-dimi`, is refused before the first `fugaro update` and before any call at all when you name it yourself (otherwise `fugaro doctor --json` is the read that names it); **no agent runs any step of it** (a coding agent's session is refused outright) | Four `fugaro update` runs and one `fugaro setup --plan-only`, every one of them a re-converge of an installation that already exists: on a converged one each applies nothing and costs nothing billable, and **no model call is made by any step of this check**. The forced-failure run writes nothing at all — its `terraform` is a fake that answers the version question, refuses the rest, and leaves one marker in the check's own scratch directory and nothing anywhere else. Nothing is created and nothing is granted; the only writes are the log directory and the check's own scratch directory, whose 54 seeded logs are removed again, and any of your own logs the retention rule removes while the check runs are copied aside before its first `fugaro` call and put back byte for byte. A `--scratch` run has none of that second half: it converges an installation the check made itself and reaches no cloud API, so the logs it seeds, prunes and restores are the scratch directory's own (it reads no log, no config and no project of yours), and a dry run changes nothing at all. **USER-RUN, NOT RUN.** |
 | 311 | The same default output on Windows — Windows Terminal and the legacy console ([`docs/cli-output-console-graph/`](cli-output-console-graph/implementation-plan-output.md), its task **CL12** and its own 311 row; the reconciliation's **T4** and **T4(a)**, **D1355**, and the sentence `internal/report/style.go` carries — the ANSI sixteen are what every terminal draws and what the legacy Windows console draws "once virtual terminal processing is on (Check 311)"): whether both consoles draw the colour and the line in flight the reporter draws at a real terminal, whether `NO_COLOR` set to anything and a pipe turn both off there too with every step still printed, whether `--json`'s stdout is one document a Windows shell parses, and — the reading this check exists for — whether the legacy console draws the escapes or prints them, since **nothing in this tree calls `termenv`'s `EnableVirtualTerminalProcessing`** | See "Check 311" below; the steps are the same commands typed in each console, by **you**, on a Windows machine with the CLI installed, and **no agent runs any step of it** — there is **no script** for this one: it is the procedure below, because the subject is a console on a machine no test in this repository can reach | One installation's own `fugaro update` runs in each console, on an installation that is already converged: each applies nothing and **no model call is made**. Nothing is created, granted or deleted, and the log directory is the only thing written. A legacy console that prints the escape sequences is the finding this check exists to make — and it is a **code** decision (the virtual-terminal call), not a reason to edit this row. **USER-RUN, NOT RUN.** |
 | 211 | The judge's input is blind ([`docs/model-ab-testing/`](model-ab-testing/implementation-plan.md), its **Check 211** and task **A5.3**; **A5.1**'s bundle — `identifierIn` refuses a diff naming a run ID, a branch or the pair ID, `modelRedactor` replaces every model word with one placeholder — and **A5.2**'s judge run, whose own manifest and verdicts are what it is read through): on the sandbox installation whose published project layer names `ab.judge_model`, ONE `fugaro run --recipe ab-judge` over the repository's complete, unjudged pairs of its last fortnight (at least five, or the run is not the reading the plan asks for), and then, at the run's **own** prefix in the runs bucket, the launcher's `ab/manifest.json`, the run's `ab/verdicts.json` and each judged pair's stored judge input at the key its verdict names (`ab/inputs/<sha256(pair ID)[:8] hex>.json`) — **U1**: neither pass's system text nor its prompt names either arm's run ID, either arm's branch, the pair ID, either arm's model (its ID and the words its name is built from) or a run-ID-shaped string, PASS or FAIL — and **not** the judge's own model, which A5.1 is never handed and which the stored input names in its own `judge_model` field (the plan's U1 also names a commit trailer, and the object graded is a **tree** diff, which carries no commit metadata at all — so a trailer-shaped line in one is diff body text and the row does not grade it); and **U2** recorded as a rate and never graded — how often a judge's own answers name a model — with the plan's own question ("which model wrote A?") stated in the row as having **no surface in this release**, since the judge's two calls per pair are fixed, no command asks a chosen model a question and a recipe cannot pin one. The run's own row is read too: a judge run publishes nothing — no pull request, and no branch of its own (an evaluate-mode run's record carries `fugaro/<its own run id>` as the branch lock's key and never pushes it, so the row grades a branch that is anything but that key as a push) | See "Check 211" below; `bash scripts/live-checks/check211.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check211_test.sh` drives it against fake `fugaro` and `gcloud` only (beside a fake `git`, `gh` and `belong` that log any call and fail, since a judge run publishes nothing) and launches nothing, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project, account or region naming that installation is refused by name, and so is a coding agent's session); **no agent runs any step of it** | **ONE judge run**: two model calls per pair it takes on `ab.judge_model` through the project's model credential and budget, up to **twenty-five pairs** (so up to fifty calls), plus the launch's own listing — **billable, and `--yes` is required** before anything is launched. Everything else is a read (the catalog, the layer, `doctor`, the runs list and the run's own objects in the bucket), and a premise row that failed launches **nothing at all**. A judge run leaves no branch and no pull request, so the teardown has one thing to settle: a run that has **not ended** is stopped with `fugaro cancel --now` and read back as ended, and a cancel that answers while the run keeps going is a finding rather than a silence. **Nothing is deleted** — the run's manifest, its verdicts and its stored inputs are what the report reads. **OWNER-RUN, NOT RUN.** |
+
+| 620 | The pairing that refuses an address it cannot attribute ([`docs/mobile-auth/`](mobile-auth/implementation-plan.md), its §9 and the number it allocated on 2026-11-14; part **P3** and **D226**): `fugaro pair` may administer **one** address — the pairing operator's own verified one, read by the check `internal/cli/init_members.go`'s `userEmail` already makes for the CLI — and nothing is written until it has proved it. Three arms, each of them one refusal: `--email` naming an address that is **not** the operator's own is refused by name; credentials that are **a service account's** are refused rather than administered (`authenticatedUser`'s `errServiceAccount`); and an identity whose address the endpoint reports as **not verified** is refused with `the email <address> is not verified`. Every one of them lands **before a token is minted and before a byte is written**, which is what makes the refusal a refusal and not an undone write | See "Check 620" below; **you** run it, in the sandbox installation `fugaro` and on the sandbox project `fugaro-dev`, **never `belong`**, and **no agent runs any step of it** | Three `fugaro pair` runs that every one of them ends in a refusal, plus one `fugaro pair ls`: **no device node, no delivery node, no session spent, no model call and no run** — nothing billable. The check reads the device node back with your own credential (which bypasses the rules) before and after, so what it settles is that the two readings are the same. Its third arm is **NOT MEASURED** where you hold no identity the endpoint calls unverified, and the check says so in one line rather than passing it. **OWNER-RUN, NOT RUN.** |
+| 621 | The paired phone cannot read its own entry ([`docs/mobile-auth/`](mobile-auth/implementation-plan.md), its §9 and the number it allocated on 2026-11-14; parts **P2** and **P3**, **D222** and **D223**): the device node `config/admin/devices/<uid>` is the allowlist, and the **deployed** rules carry it as `.read: false, .write: false` — so nothing on the phone reads or writes an entry, and the node's **existence** is the whole of what the rules' `userClaim` USER macro asks. What a paired phone holds is a read of its own mailbox (`mailbox/<uid>`) and of the delivery node its payload was sealed to, and no read of its own entry; `fugaro pair ls` on the laptop, which reads with a credential that bypasses the rules, is the only place an entry is visible | See "Check 621" below; **you** run it, on the sandbox installation and project, with a **real phone** carrying the app the app's own CI job built, **never `belong`**, and **no agent runs any step of it** | One pairing (`fugaro pair`), one `fugaro pair ls --json` and one read the phone makes with the **device token it holds**: no model call, no run, nothing billable. The reading that matters is the **denial** — an authenticated GET of the entry returning `permission denied` on the deployed rules and not on a rules file in this repository. Its restore revokes the device it paired — the device node and the laptop's keychain item; the pairing node it holds, delivery under it among them, is the history sweep's, as Check 622 says. **OWNER-RUN, NOT RUN.** |
+| 622 | A revoked pairing stops on the next request ([`docs/mobile-auth/`](mobile-auth/implementation-plan.md), its §9 and the number it allocated on 2026-11-14; part **P3**, **D166** and **D229**): revocation is the **deletion of the device node**, and the rules read that the node exists — so the request the phone could make a moment before is refused from the revoke on, without waiting for an ID token to expire. `fugaro pair revoke (--uid UID \| --name NAME)` deletes the node first and the OS keychain item for that pairing's MAC key second; it deletes no Auth user (the node's deletion is what makes the orphan the history sweep's) and it does not delete the pairing session's own `p~` node | See "Check 622" below; **you** run it, on the sandbox installation and project, with the same **real phone**, **never `belong`**, and **no agent runs any step of it** | One pairing, one request the phone makes that must succeed, one `fugaro pair revoke`, and the same request again that must be refused: no model call, no run, nothing billable, and the revoke is two deletions. The check records the two readings with their timestamps, and a request that still succeeds after the revoke is the finding it exists for. **OWNER-RUN, NOT RUN.** |
+| 623 | A publish never re-adds a revoked entry ([`docs/mobile-auth/`](mobile-auth/implementation-plan.md), its §9 and the number it allocated on 2026-11-14; part **P5**, its **D231** and **D229**): `fugaro project policy publish` seeds the node from the **declared** allowlist (the machine's own config, `internal/localcfg`'s declared block), and the seed's gate is the node's **absence** (`seedDeclaredDevices`, `internal/cli/project_cmd.go`): a node that is there is never written again, because one revocation is one **deleted child** and an entry a node does not hold cannot be told apart from one an operator removed. **The gap this check must report rather than assume**: revoking the **last** device empties the node, the database prunes a node its last child has left, and the read the gate rests on (`GetETag`, `internal/rtdb/client.go`) reports a null body as an absent node — so the next publish re-seeds **every declared entry, the person just revoked among them** ([`docs/mobile-auth/README.md`](mobile-auth/README.md), amended 2026-11-14). Closing it needs a record that a seed has happened, which P5 does not have: it is a decision and not a repair | See "Check 623" below; **you** run it, on the sandbox installation and project, with the **declared allowlist** written on that machine, **never `belong`**, and **no agent runs any step of it** | One `fugaro project policy publish` and the device-node read before and after it, per arm: **nothing billable, no model call and no run** — the publish writes the policy and the shared node on the sandbox project and costs nothing, and the declared block is **local-only** (a checkout's `fugaro.yaml` never declares an admin). Arm 1 (a node that still carries another device) must show the revoked entry **not** returning; arm 2 (the revoked entry was the last child) is where the gap above is read, and it is reported as a **finding** with the node's own bytes, not as a check that passed. **OWNER-RUN, NOT RUN.** |
+| 624 | A declared entry that is not on the node admits nobody ([`docs/mobile-auth/`](mobile-auth/implementation-plan.md), its §9 and the number it allocated on 2026-11-14; part **P5** and **D222**): the **node** is the authority and the declaration is not — a person the local config declares but the node does not carry is admitted by **nothing**, because the rules read the node's existence and no reader consults the file. Pairing is what admits a person declared after the first seed | See "Check 624" below; **you** run it, on the sandbox installation and project, **never `belong`**, and **no agent runs any step of it** | One write of your own (the deletion of one child under `config/admin/devices`, in the Firebase console or with your own credential) and the phone's request that follows: no model call, no run, nothing billable. The read is the **refusal** of a request from a phone whose entry was removed while the file still declares the address; the check records the node's bytes on both sides. **OWNER-RUN, NOT RUN.** |
+| 625 | The QR carries no identity ([`docs/mobile-auth/`](mobile-auth/implementation-plan.md), its §9 and the number it allocated on 2026-11-14; part **P4**): what `fugaro pair` draws is **discovery and not identity** — the project, its database URL and Identity Toolkit API key, and the one-shot pairing token, which is all the phone needs to know *where* to connect and grants it nothing by itself. It carries **no** address, no uid, no role and no key, and the credentials the phone ends up holding go to it encrypted to the key it generated | See "Check 625" below; **you** run it, on the sandbox installation and project, with a **real phone** and its camera, **never `belong`**, and **no agent runs any step of it** | One `fugaro pair` (which waits for the phone's key and the typed code) or one `fugaro pair --json`, read as **text**: no model call, no run, nothing billable — the payload's own bytes are the whole subject, and the reading is a scan of a real QR rather than of the string the command printed. The check records the payload with the token's **value** redacted and says what each member is; a member the prompt cannot explain is the finding. **OWNER-RUN, NOT RUN.** |
+| 626 | The first screen with no account ([`docs/mobile-auth/`](mobile-auth/implementation-plan.md), its §9 and the number it allocated on 2026-11-14; part **P4**, the spec's step and `mobile/src/app/first-screen.js`): on a device carrying the app the app's own CI job built, the first screen is reachable with **no sign-in at all** — the demo is the front door for somebody who cannot pair — and the "ask your admin" sentence stands beside it rather than in front of it, and never as a substitute for it | See "Check 626" below; **you** run it, on a device with the built app, paired with **nothing**, **never `belong`**, and **no agent runs any step of it** | One app launch on a device with no account: **no run, no cloud call and nothing billable** — the screen is drawn from the app's own bundle, and the demo behind it talks to no project of yours. The reading is a **fresh install** of the artifact the app's CI job published, reached with the network on and no sign-in made. **OWNER-RUN, NOT RUN.** |
+| 627 | The refusal of a public sign-up still holds with a provider on ([`docs/mobile-auth/`](mobile-auth/implementation-plan.md), its §9 and the number it allocated on 2026-11-14; part **P6**, **D221** and `internal/cli/init_firebase.go`'s `refusePublicSignUp`): on the **installation's own** project the Identity Platform step refuses an existing configuration that enables **any** public sign-up path — the web API key is public, so only custom tokens signed by Fugaro's own signer may work — naming the paths it found, saying that the converge never changes an existing configuration, and writing **nothing**. A **workspace's own** project is the one exception and is not this check: there the pinned entries pass and an off-pin path is refused (Check 361) | See "Check 627" below; **you** run it, in the sandbox installation `fugaro`, on the sandbox project `fugaro-dev`, where you have enabled one provider **by hand** in the Firebase console first, **never `belong`**, and **no agent runs any step of it** | Two converges of an installation that already exists (`fugaro setup`, which keeps it — *"this installation is already set up"* — and converges as `update` does rather than offering to create a second one) and one read of the project's Identity Toolkit configuration: **no model call and no run**, and nothing billable on a converged installation. The read happens **before** the step's own confirmation, so a configuration that carries a provider is refused without a write on any stage. The check restores the configuration it changed by disabling the provider again, and reads it back. **OWNER-RUN, NOT RUN.** |
+| 212 | A provider challenger, judged, and below the minimum ([`docs/model-ab-testing/`](model-ab-testing/implementation-plan.md), its **Check 212** and task **A6.2**, and the reconciliation table's **U4**, "Check 212 records both wall times"; **D552**, **D553**, **D554**, **D556**, **D563** and **D567**): on the sandbox installation whose published project layer names challengers that are provider models routed for the sandbox repository and a `judge_model`, small sandbox tasks launched until `fugaro runs ls` shows a pair (**no flag forces a sample**, as in Check 210) — and then, of that pair: **both wall times** (each arm's own `started_at` and `finished_at`, the challenger's recorded beside the champion's; U4 sets no bar for the ratio, so no threshold is applied), **both costs** at or below an identical per-run cap (**D567** — the challenger runs on the champion's cap unchanged and a halt is a loss, so a missing or zero cap, two different caps, a record at no spend and a cost above its cap each fail), the **judge run A5.2 ships** (`fugaro run --recipe ab-judge`, launched by hand, leaving **no branch and no pull request**), the **verdict object** that judge writes under its own prefix (the layer's judge model, an entry for this pair, a winner among `champion`/`challenger`/`tie`, and the two swapped passes — a pair the judge **skipped** is a finding), and `fugaro ab --json` showing the pair **below the minimum** (**D563**'s twenty decisive pairs, read on the row with the lowest decisive count) | See "Check 212" below; `bash scripts/live-checks/check212.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check212_test.sh` drives it against fake `fugaro`, `gcloud`, `git` and `gh` only and launches nothing, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project, account or region naming that installation is refused by name, and so is a coding agent's session); **no agent runs any step of it** | Up to **THIRTY sandbox runs** and what their tasks cost — each champion's implement stage and its review rounds, on the sandbox's own budget — plus **ONE judge run**, whose two model calls per pair go through that run's own gateway and are billed to the project as any call is: **billable, and `--yes` is required** before anything is launched. Everything else is a read (the layer, `models ls --json`, `doctor`, both arms' records out of the runs bucket, the judge's record, the verdict object, `fugaro ab --json`), and the launches stop at the **first** pair. The teardown is part of the check: a launch or the judge run that has not ended is stopped with `fugaro cancel --now` and read back as ended, then every pull request this check's champions opened is closed and every branch they pushed is deleted, each read back; a shadow's branch is never deleted because it never existed. **OWNER-RUN, NOT RUN.** |
+
+| 380 | `fugaro update` with its stdin closed finishes **without a prompt** ([`docs/no-prompt-policy/`](no-prompt-policy/implementation-plan.md), its task **T7** — no command waits on stdin — and its **Check 380**; the HARD RULE that `fugaro update` is the whole upgrade is where that rule is worth most): the check runs `fugaro update` itself with its stdin on `/dev/null` and its whole transcript in files, under a deadline, and a run that **ended by itself and asked nothing** is the reading — a step it leaves for you and refuses to apply is a PASS too, because the policy's answer to a step nobody confirmed is that refusal and not a question (T7: removing a prompt is not the same as applying a step nobody asked for). What a PASS refuses is a **question**: `[y/N]` in any casing, `(y/n)`, `(yes/no)`, a `to confirm:` left open, an enter-prompt, or a question mark followed by a blank; a run still going at the deadline is **killed** and is the failure the check exists for, because a run waiting on a terminal looks exactly like that. The `⚠ CONFIRM` banner is **not** one of those shapes: the policy keeps the banner, which is the note of a step and not a read | See "Check 380" below; `bash scripts/live-checks/check-380-no-prompt-update.sh [--project <name>] [--fugaro-flags '<flags>'] [--deadline <seconds>]` is the whole of it, its sibling test `scripts/live-checks/check-380-no-prompt-update_test.sh` drives it against a fake `fugaro` only — a fake `update` that plays each transcript shape beside the real closed stdin it records, so a case says the check really closed it — and converges nothing, and **you** run it, on the **sandbox installation**, **never `belong`** (refused in what you type and in what `doctor` answers, and so is a coding agent's session); **no agent runs any step of it** | One `fugaro doctor --json` (read-only) and one real `fugaro update`, which is the command itself: it may build an image, apply Terraform and spend what a converge spends. No model call of this check's own and no run launched. It rolls nothing back — a converge is not something to undo, and the reading is only worth having on the release that is installed. **OWNER-RUN, NOT RUN.** |
+| 381 | An image build **over the cap** is refused, with the estimate, the cap, the day's figure and the one command that raises it ([`docs/no-prompt-policy/`](no-prompt-policy/implementation-plan.md), its task **T7** (the typed confirmation is gone from `fugaro image build`) and **T8**'s build lease, its **D1543** and its **Check 381**): the check lowers the repository's **own** caps to `$0.00` — a tightening, so nothing is asked (**D1542**) — reads them back, and then runs `fugaro image build --no-wait` from the checkout, which must exit **1 before the submission** with ONE sentence carrying all four parts: what the build **reserves** and where that price came from (the `N s` build timeout at the machine's rate, read from the Cloud Billing catalog), the **cap** it met, the **figure that cap compared** (the day's counted figure for the repository's daily cap, what the build holds for its per-run one) and the **one command that raises it**. A refusal that lost any part is a FAIL, and so is a build that was **not** refused — it may have been submitted, and the row carries the transcript's own last line. A budget mode that is not `enforce` is a **refusal to run** and not a measurement: in `observe` the over-cap decision comes back as an advisory and the build goes out anyway, which is money (**D1548**), and the mode is your own choice and never this check's to set | See "Check 381" below; `bash scripts/live-checks/check-381-over-cap-build.sh [--checkout <path>] [--project <name>] [--fugaro-flags '<flags>'] [--deadline <seconds>]` is the whole of it, its sibling test `scripts/live-checks/check-381-over-cap-build_test.sh` drives it against a fake `fugaro` — whose `budget set` really applies what it is handed, so the check's read-back of its own lowering and of its own putting back are readings of state that changed — beside a real git checkout and its origin, and **you** run it, in a **sandbox repository checkout** whose project is **never `belong`** (refused in what you type and in what `doctor` answers, and so is a coding agent's session); **no agent runs any step of it** | Four or five reads, two `budget set` (the lowering and the putting back) and one `image build --no-wait` that is refused before it is submitted: **no model call, no image and no Cloud Build** on a healthy installation, and nothing is counted for a build that was refused. It lowers ONE repository's own caps for the few seconds the build takes and puts them back from the exit trap, on every way out, reading them back to say so. **OWNER-RUN, NOT RUN.** |
+| 382 | A coding agent's `budget set` **raise** is refused, and the refusal carries the command its owner can run ([`docs/no-prompt-policy/`](no-prompt-policy/implementation-plan.md), its task **T3** (the fence on every raise form) and **D1542**, and its **Check 382**; **F8** — a cap the session it bounds can lift is not a limit — and **F20** — the fence is a courtesy, as strong as the markers and no stronger): `fugaro budget set --repo <this repository> --daily <more than it holds now>` is run with `CLAUDECODE=1` set **for the child alone**, and must exit **1** with one sentence carrying all of it — the act in its own words ("raising a cap is the owner's own step"), the marker it read, that **nothing was applied**, and the same invocation you would type at your own terminal. A command naming another repository, another value or another project, starting with another program or carrying a flag `budget set --help` does not name is a FAIL: an agent handed half that sentence has nothing to hand over. The caps read back must be exactly what was there before, and a raise that **landed** is the loudest FAIL the check has. The value is chosen so the call is always a raise: setting a cap where none existed is a raise as much as an increase is, and a no-op answers "nothing changed" instead of asking the fence | See "Check 382" below; `bash scripts/live-checks/check-382-agent-cannot-raise-a-cap.sh [--checkout <path>] [--project <name>] [--fugaro-flags '<flags>'] [--deadline <seconds>]` is the whole of it, its sibling test `scripts/live-checks/check-382-agent-cannot-raise-a-cap_test.sh` drives it against a fake `fugaro` whose fence refuses on the marker set in **its own** environment and can be told to bend the sentence each way, beside a real git checkout and its origin, and **you** run it, in a **sandbox repository checkout** whose project is **never `belong`** (refused in what you type and in what `doctor` answers, and so is a coding agent's session); **no agent runs any step of it** | **Nothing at all on a PASS**: five reads, one `budget set --help` and ONE `budget set` refused **before the write** — no model call, no build, no run and no cloud write. A FAIL where the raise landed, or a caps read-back that did not answer, leaves the teardown to put the caps back from the exit trap and read them back. **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -16006,6 +16040,287 @@ anywhere but your own notes.
 one check of the three that costs nothing but the reading, and it is the one that decides whether
 what you are about to submit is true.
 
+## Check 380: `fugaro update` with stdin closed finishes without a prompt (the sandbox installation only, never `belong`; one script you run; NOT RUN)
+
+**NOT RUN.** Written by task **T14** of
+[docs/no-prompt-policy/implementation-plan.md](no-prompt-policy/implementation-plan.md) — its "Checks 380–382"
+— and it reads the policy's first rule on the command the rule is worth most on: **no command waits on stdin**
+(T7). This repository's HARD RULE is that `fugaro update` is the whole upgrade, so a run that stopped to ask
+would stop a person's upgrade on a screen they may never be looking at. **T7 is UNVERIFIED on an installation
+until you run this**, and no unit test can take the reading: `internal/cli/noprompt_harness_test.go` walks every
+leaf of the command tree with a closed stdin in a hermetic world, and `fugaro update` there refuses on that
+world's own runs bucket name before its first stage — the harness says so itself in `closedStdinUnreached`. The
+check is `scripts/live-checks/check-380-no-prompt-update.sh` (its sibling test
+`scripts/live-checks/check-380-no-prompt-update_test.sh` drives it against a fake `fugaro` only and converges
+nothing), and **no agent runs any step of it**: a project naming `belong` is refused in what you type and in
+what `doctor` answers, and so is a coding agent's session.
+
+**What a PASS means, and what it does not.** A PASS means the run **ended by itself and asked nothing**: nothing
+waited, and no question was put to a person who was not there. It does **not** mean the converge finished.
+`fugaro update` with no terminal leaves a step it cannot confirm for you and exits 1 with its own sentence
+naming what is left — that is the policy's answer and not a prompt (T7: removing a prompt is not the same as
+applying a step nobody asked for) — and the `update` row quotes the run's own last line so you can read which
+of the two you got. An exit 2 (a cloud failure) is a FAIL row: the run stopped on the cloud and read little of
+its steps. A run that printed nothing at all is a row this check could not measure, and it says so rather than
+passing on an empty transcript.
+
+**What it reads, in this order.** Every row goes into the one `CHECK 380 RESULT` block on stdout:
+
+- **`xtrace`** — this shell was not started with tracing on. `bash -x` would print the converge's own output
+  and any credential it reads, so a shell that arrived tracing is stopped before anything is run.
+- **`agent-session`** — no coding agent's marker is set (`CLAUDECODE` and the like). This one is yours to run at
+  your own terminal: the run inside an agent's session would measure the agent's path and not yours.
+- **`project`** — which installation this is about, and where the answer came from (you typed it, or `doctor`
+  answered it), the two held to each other.
+- **`belong`** — the project is **not** the owner's own installation, refused in what you typed and again in
+  what `doctor` answered; a name that merely contains `belong` is refused too.
+- **`stdin`** — the run's own streams: **`/dev/null`** for stdin, stdout and stderr in files in the check's own
+  mode-0700 scratch directory, and no pty attached to any of them. `/dev/null` is not a terminal and delivers
+  EOF to the first read, so a prompt site that refuses when it cannot see a terminal returns at once — and one
+  that reads, gets EOF and asks again never returns at all, which is what the deadline is for.
+- **`update`** — the fact this check is: `fugaro update` under the deadline (`--deadline`, 1800 seconds by
+  default). Exit 0 (it converged what it had to, or had nothing to do) and exit 1 (a refusal, or a step left
+  for you) are the two endings a PASS can carry; a run still going at the deadline is **killed (TERM, then
+  KILL)** and FAILs, because a run waiting on a terminal looks exactly like that; exit 2, and any status
+  `update` does not own, FAIL.
+- **`prompt`** — the question, which is what the transcript must not contain. The shapes refused are the ones a
+  prompt leaves behind: `[y/N]` in any casing, `(y/n)` and `(yes/no)`, a `to confirm:` left open, an
+  enter-prompt, and a question mark followed by a blank (a question left waiting), which is not the shape this
+  CLI's own text has. The `⚠ CONFIRM` banner is **not** one of them — the policy keeps the banner, which is the
+  note of a step and not a read (`askBanner` prints no `[y/N]`), and the runs that print it are fine here.
+- **`noprompt`** — the verdict: T7 **HOLDS** (the run ended by itself and asked nothing), **does NOT hold** (it
+  had to be killed, or it asked), or **NOT MEASURED** (a row above could not be read).
+- **`teardown`** — what this run left behind, which is nothing: it wrote nothing outside its scratch directory,
+  which the trap removes on any exit, a Ctrl-C included.
+
+Exit `0` means the claim held (the run ended by itself and asked nothing); `1` means it did not (each row says
+which); `2` means the run could not tell (a guard stopped it, the transcript was empty, a tool is missing, an
+internal error ended it).
+
+**Run it:**
+
+```sh
+bash scripts/live-checks/check-380-no-prompt-update.sh --dry-run
+bash scripts/live-checks/check-380-no-prompt-update.sh
+```
+
+`--dry-run` prints the plan and makes **no call at all**: it asks nothing of your installation and starts no
+run. `--project <name>` is the Fugaro project; leave it out where a project config is in force, since `doctor`
+answers with it and the check holds the two to each other. `--fugaro-flags '<flags>'` adds flags to every
+`fugaro` call (it is split on whitespace, so a value with a space in it cannot be passed). The knobs are
+`CHECK380_FUGARO`, `CHECK380_DEADLINE`, `CHECK380_DRY_RUN` and `CHECK380_KEEP_SCRATCH`, which keeps the scratch
+directory — the run's whole transcript is in `update.out` and `update.err` — so you can read what a failing run
+printed.
+
+**What it costs, and what it does to your installation.** One `fugaro doctor --json` (read-only) and one real
+`fugaro update`, which is the command itself: it may build an image, apply Terraform and spend what a converge
+spends. No model call of this check's own and no run is launched. It converges your installation, or refuses to,
+exactly as `fugaro update` would if you typed it, and it **rolls nothing back**: a converge is not something to
+undo, and it is what you asked the command for. Run it on the sandbox installation, and know that the release
+under test is the one installed — that is what makes the reading worth having.
+
+**Paste back:** the whole `CHECK 380 RESULT` block and nothing else. The run's own last line is in it; the
+transcript itself stays in the scratch directory unless you set `CHECK380_KEEP_SCRATCH=1`.
+
+## Check 381: an image build over the cap is refused, with the estimate, the cap, the day's figure and the command that raises it (a sandbox repository checkout only, never `belong`; one script you run; NOT RUN)
+
+**NOT RUN.** Written by task **T14** of
+[docs/no-prompt-policy/implementation-plan.md](no-prompt-policy/implementation-plan.md) — its "Checks 380–382"
+— and it reads what replaced the typed confirmation in front of a billable build. The no-prompt policy removed
+that confirmation from `fugaro image build` (T7), and what stands in front of the build instead is the **build
+lease** (T8, **D1543**): the build's cost is estimated from the Cloud Billing catalog and judged against the
+project's caps **before** the submission, and a build no cap has room for is refused, non-zero, with the four
+things an operator needs — what it reserves, the cap it met, the figure that cap compared, and the one command
+that raises it (`BuildOverCapError`). That refusal is the whole of what replaced the confirmation, so a release
+that lost it would have replaced a question with nothing at all. The check is
+`scripts/live-checks/check-381-over-cap-build.sh` (its sibling test
+`scripts/live-checks/check-381-over-cap-build_test.sh` drives it against a fake `fugaro` whose `budget set`
+really applies what it is handed, beside a real git checkout and its origin, and builds nothing), and **no agent
+runs any step of it**: a project naming `belong` is refused before anything is run, and so is a coding agent's
+session.
+
+**How the over-cap state is made.** The check does not ask you to spend anything: it makes the state itself by
+**tightening**. The repository's OWN caps node — the one `fugaro project show --json` carries and
+`fugaro budget show --json` reports the effective caps and their sources from — is lowered to **$0.00** with one
+`fugaro budget set`, which is a **tightening and no raise** (**D1542**), so nothing is asked; the per-run cap of
+that node goes to $0.00 too where the repository keeps one of its own, because a node's per-run may not sit
+above its daily, which is the state the CLI itself refuses to leave behind. The lowering is **read back before
+anything is built**: a mid-air project is not worth a reading. A node the check cannot read is a **refusal to
+run** — a cap it cannot put back is a change to your project, not a reading — and the exit trap puts the caps
+back on every way out, reading them back afterwards to say so.
+
+**The mode has to be `enforce`.** A cap only REFUSES a build in enforce (**D1548**): in `observe` the over-cap
+decision comes back as an advisory and the build is submitted anyway, which is money. So a mode that is not
+enforce makes the over-cap refusal **NOT MEASURED** (exit 2) rather than passed, and the row names the one
+command that raises it. The check does not set the mode: that write records **your own** choice of a risk
+posture, and `fugaro update` is what raises it on a project whose owner has not chosen one.
+
+**What it reads, in this order.** Every row goes into the one `CHECK 381 RESULT` block on stdout:
+
+- **`xtrace`** — this shell was not started with tracing on. The check writes to your project's budget and
+  prints a block you would paste back, so a shell that arrived tracing is stopped first.
+- **`agent-session`** — no coding agent's marker is set. This one lowers a real cap on a real project, so it is
+  yours to run at your own terminal.
+- **`project`** — which installation this is about, and where the answer came from, the two held to each other.
+- **`belong`** — the project is not the owner's own installation, refused in what you typed and in what `doctor`
+  answered.
+- **`checkout`** — the checkout is a git work tree and its `origin` remote names the repository, read as
+  `owner/name`. The build runs from here and is charged to this repository, and it is **this** repository's own
+  cap the check lowers: nothing is taken from a flag, so the cap and the build cannot end up on two different
+  repositories.
+- **`mode`** — the project's budget mode, and that it is enforce (above).
+- **`caps`** — the repository's own caps node (what the check puts back) and the effective caps in force with
+  where each comes from, the day's counted figure and the max reserve.
+- **`write`** — the lowering: `fugaro budget set --repo <this repository> --daily 0` (and the node's own per-run
+  with it where it keeps one), and the read-back that says the repository's daily cap now reads $0.00, so a
+  build of it cannot be submitted while the check runs.
+- **`build`** — the fact this check is: `fugaro image build --no-wait` from the checkout, its stdin on
+  `/dev/null`, under the deadline (900 seconds by default). `--no-wait` is there because the refusal comes
+  **before** the submission: a build that WAS submitted must not hold the check open, and the row says so
+  rather than pretending otherwise. Exit 1 is the refusal; exit 0 is a FAIL and the loudest row here, because a
+  build of this repository was submitted with its daily cap at $0.00 and money may be being spent right then;
+  any other status FAILs, and a run still going at the deadline is killed and FAILs.
+- **`refusal`** — the sentence, whitespace-collapsed and read for all four parts: what the build reserves at
+  most and where that price came from (the `N s` build timeout at the machine's rate, read from the Cloud
+  Billing catalog), the cap it met ($0.00, the one this check just set), the figure that cap compared (the day's
+  counted figure for the daily cap, what the build holds for its per-run one) and what the build needed, and the
+  one command that raises that cap. A refusal missing any of them is a FAIL: an operator handed half that
+  sentence cannot act on it.
+- **`overcap`** — the verdict: the over-cap refusal **HOLDS** (the build was refused, non-zero, with all four
+  parts and nothing built), **does NOT hold**, or **NOT MEASURED** (the mode was not enforce, the build never
+  ended, a row above could not be read).
+- **`teardown`** — what goes back: the repository's own caps node restored from the exit trap, on every way
+  out, with the values it wrote and a read-back that says they are there. It reads rather than trusts, because a
+  putting back that printed no error is not one that landed.
+
+Exit `0` means the claim held; `1` means it did not (each row says which); `2` means the check could not tell (a
+guard stopped it, the mode is not enforce, the caps could not be read, a tool is missing).
+
+**Run it:**
+
+```sh
+bash scripts/live-checks/check-381-over-cap-build.sh --checkout <a sandbox repository checkout> --dry-run
+bash scripts/live-checks/check-381-over-cap-build.sh --checkout <a sandbox repository checkout>
+```
+
+`--dry-run` prints the plan and makes **no call at all**: it lowers no cap and starts no build. `--checkout` is
+the checkout to build from (default `.`). `--project <name>` is the Fugaro project; leave it out where a project
+config is in force. `--fugaro-flags '<flags>'` adds flags to every `fugaro` call, and `--deadline` bounds how
+long the build command may take. The knobs are `CHECK381_FUGARO`, `CHECK381_DEADLINE`, `CHECK381_DRY_RUN` and
+`CHECK381_KEEP_SCRATCH`, which keeps the scratch directory with every call's own output.
+
+**What it costs.** `fugaro doctor --json`, `fugaro project show --json`, two or three `fugaro budget show
+--json`, **two** `fugaro budget set` (the lowering and the putting back) and one `fugaro image build --no-wait`
+that is refused before it is submitted: **no model call, no image and no Cloud Build**, and the day counts
+nothing for a build that was refused. On a healthy installation nothing is built at all. A FAIL where the build
+was **not** refused is the exception, and the row says money may be being spent: a build that was submitted
+under `--no-wait` keeps running in Cloud Build, and the check does not cancel it — that is the finding, and the
+build's own transcript's last line is in the block.
+
+**Paste back:** the whole `CHECK 381 RESULT` block and nothing else — it carries the caps before and after, the
+sentence the refusal printed and the row that says the caps are back.
+
+## Check 382: a coding agent's `budget set` raise is refused, and the refusal carries the command its owner can run (a sandbox repository checkout only, never `belong`; one script you run; NOT RUN)
+
+**NOT RUN.** Written by task **T14** of
+[docs/no-prompt-policy/implementation-plan.md](no-prompt-policy/implementation-plan.md) — its "Checks 380–382"
+— and it reads the fence the policy put where the typed confirmation in front of a raise used to be. That
+confirmation is gone from every raise form (T7), and what replaced it is **`raiseOwnerOnly`** (**D1542**): the
+owner's own terminal asks nothing, and a **coding agent's session is refused** — because a cap the session it
+bounds can lift is not a limit (**F8**). The fence is a courtesy and as strong as the markers themselves, no
+stronger (**F20**); what this check reads is that it is there at all, that it fires on the **raise** and not on
+the command, and that an agent's report carries a command its owner can act on without reconstructing the flags
+from a transcript. The check is `scripts/live-checks/check-382-agent-cannot-raise-a-cap.sh` (its sibling test
+`scripts/live-checks/check-382-agent-cannot-raise-a-cap_test.sh` drives it against a fake `fugaro` whose fence
+refuses on the marker set in **its own** environment and can bend the sentence each way, beside a real git
+checkout and its origin, and raises nothing), and **no agent runs any step of it**: a project naming `belong` is
+refused before anything is run, and so is a coding agent's session.
+
+**The raise is made a raise, always.** A no-op answers "nothing changed" without asking the fence, so the value
+is chosen out of the node's own caps: `max(own daily, own per-run) + 0.01`, or `0.01` where the node holds
+nothing of its own. Setting a cap where none existed is a raise as much as an increase is (the CLI's own
+`editMicroNode` rule), and one cent above everything the node holds keeps the call a raise whatever the node
+held, and keeps the per-run cap from being pushed above the daily. The marker (`CLAUDECODE=1`) is set on the
+**child's own command line** and nowhere else, so the environment the check was started in must carry no marker
+either — which is the `agent-session` guard.
+
+**What it reads, in this order.** Every row goes into the one `CHECK 382 RESULT` block on stdout:
+
+- **`xtrace`** — this shell was not started with tracing on. The check prints the command the refusal carries
+  and the block you would paste back, so a shell that arrived tracing is stopped first.
+- **`agent-session`** — no coding agent's marker is set **in this check's environment**: the marker the raise
+  below carries is the one the check put there and nothing else.
+- **`project`** — which installation this is about, and where the answer came from, the two held to each other.
+- **`belong`** — the project is not the owner's own installation, refused in what you typed and in what `doctor`
+  answered.
+- **`checkout`** — the checkout's `origin` remote names the repository this raise is about, read as
+  `owner/name`: the command carries that repository explicitly, so the check and `fugaro budget set` agree on
+  which caps the raise would move.
+- **`caps`** — the repository's own caps node out of `fugaro project show --json` (what a raise would move and
+  what gets put back) and the effective caps out of `fugaro budget show --json`. A node the check cannot read
+  is a **refusal to run**: a cap it cannot put back is a change to your project rather than a reading.
+- **`raise`** — the invocation this check runs, printed so the block says exactly what was attempted:
+  `budget set --repo <this repository> --daily <the value above>`.
+- **`marker`** — the fact this check is: the raise, from the checkout, its stdin on `/dev/null`, under the
+  deadline (300 seconds by default), with `CLAUDECODE=1` on the child alone. Exit **1** is the refusal; exit 0
+  is a FAIL and the loudest one here (the fence let a coding agent's session raise this repository's cap, and
+  the cap has almost certainly moved); any other status FAILs, and a run still going at the deadline is killed
+  and FAILs.
+- **`refusal`** — the sentence, whitespace-collapsed and read for all of it: the act in the fence's own words
+  ("raising a cap is the owner's own step"), the marker it read, that **nothing was applied**, and the same
+  invocation you would type at your own terminal. A refusal missing any part is a FAIL: an agent handed half
+  that sentence has nothing to hand over.
+- **`help`** — `fugaro budget set --help` printed the command's own flags, so the printed command below is read
+  against the CLI this check actually ran rather than against a list the check carries. A help that did not
+  answer makes the `command` row NOT MEASURED.
+- **`command`** — the invocation parsed out of the sentence, held to: the same program this check ran, `budget
+  set`, `--repo` naming this repository, the same value this check raised to, your project, and **no flag that
+  `budget set --help` does not name**. A command with an invented flag is one the owner cannot run, which is the
+  half of the refusal that makes it actionable.
+- **`unchanged`** — the caps read back out of `fugaro budget show --json` and held to what was there before. A
+  raise that **LANDED** is the loudest FAIL there is: the fence did not hold and a cap moved.
+- **`fence`** — the verdict: the fence **HOLDS** on this installation (exit 1, the whole sentence, a runnable
+  command, and the caps exactly as they were), **does NOT hold**, or **NOT MEASURED** (a row above could not be
+  read).
+- **`teardown`** — what goes back. On a PASS, **nothing at all**: the refusal comes before the write and the
+  read-back row says so. Where the raise landed, or where the caps could not be read back at all, the exit trap
+  writes the caps back — the exact values the node held, or `--clear` where it held none — on every way out, and
+  reads them back to say so.
+
+Exit `0` means the claim held; `1` means it did not (each row says which); `2` means the check could not tell (a
+guard stopped it, the caps could not be read, a tool is missing).
+
+**Run it:**
+
+```sh
+bash scripts/live-checks/check-382-agent-cannot-raise-a-cap.sh --checkout <a sandbox repository checkout> --dry-run
+bash scripts/live-checks/check-382-agent-cannot-raise-a-cap.sh --checkout <a sandbox repository checkout>
+```
+
+`--dry-run` prints the plan and makes **no call at all**: it raises nothing. `--checkout` is the checkout the
+raise runs from (default `.`). `--project <name>` is the Fugaro project; leave it out where a project config is
+in force. `--fugaro-flags '<flags>'` adds flags to every `fugaro` call, and `--deadline` bounds how long the
+raise may take. The knobs are `CHECK382_FUGARO`, `CHECK382_DEADLINE`, `CHECK382_DRY_RUN` and
+`CHECK382_KEEP_SCRATCH`, which keeps the scratch directory with every call's own output.
+
+**What it costs.** `fugaro doctor --json`, `fugaro project show --json`, three `fugaro budget show --json`, one
+`fugaro budget set --help` and **one** `fugaro budget set` that is refused before it is applied: no model call,
+no build, no run and **no cloud write at all** unless a row says the raise landed. On a PASS your project is
+untouched and there is nothing to restore.
+
+**What it cannot settle.** The fence is a **marker test**, not a barrier: a session that unsets `CLAUDECODE` is
+outside it (**F20**), and nothing here says anything about a session that clears its own marker — the reading is
+of the marker the check sets itself. The hermetic half is
+`scripts/live-checks/check-382-agent-cannot-raise-a-cap_test.sh`, run from `scripts/live_checks_test.go`: the
+fence there is the fake's own, refusing exactly when one of the markers `agentMarker` knows is set in **its**
+environment, and a case that bends the sentence — a part missing, the command naming another repository, another
+value, another project, an invented flag, another program — proves the FAIL the check reads is the reading's and
+not a word the fake was told to say.
+
+**Paste back:** the whole `CHECK 382 RESULT` block and nothing else. It carries the caps before and after, the
+refusal's sentence and the command it printed; nothing in it is a secret, and the block is what says whether the
+fence is there on your installation.
+
 ## Check 211: the judge's input is blind (sandbox project and sandbox repository only, never `belong`; run by you; NOT RUN)
 
 **NOT RUN.** Written by task **A5.3** of
@@ -16134,6 +16449,131 @@ rather than a task: the bundle is A5.1's, the judge run is A5.2's, and a stored 
 branch, a model or a trailer is the plan's own Global-constraints row ("the judge never sees a run ID,
 branch name, model ID or commit metadata") not holding on real pairs — which is exactly what
 `TestBundleCarriesNoIdentifier` cannot see.
+
+## Check 212: a provider challenger, judged, and below the minimum (sandbox project and sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **A6.2** of
+[docs/model-ab-testing/implementation-plan.md](model-ab-testing/implementation-plan.md) — its "A6.2
+Check 212" — and **run by you**: nothing below is a claim that a shadow on a provider route has the
+same latency profile as the champion. What it measures is a real installation's pair, end to end: small
+sandbox runs launched with the published project layer naming challengers that are provider models
+routed for the sandbox repository and a `judge_model`, until one of them is sampled; then both of that
+pair's arms, the judge run over them, the verdict object it writes and the report line you read. The
+check is `scripts/live-checks/check212.sh` (its sibling test `scripts/live-checks/check212_test.sh`
+drives it against fake `fugaro`, `gcloud`, `git` and `gh` only, and launches nothing), what it starts is
+**up to thirty sandbox runs and one judge run, which are billable**, and **no agent runs any step of
+it**: a project, account or region naming `belong` is refused by name, and so is a coding agent's
+session.
+
+**Why it launches at all, and what it may not do.** As in Check 210, no flag forces a sample: a sample
+is the sampler's hash of the run ID (**D553**), so the pair is reached by launching, "about ten" at
+0.10; `--max-launches` **widens the bound** and never steers the roll. It stops at the **first** pair,
+and it launches nothing at all once a row above it has failed — the layer, the routes **or the judge
+recipe**, since a pair launched for a verdict no build in the catalog can write is money spent on half
+a reading.
+
+**What it settles.** Every fact at the place it is written, so that no row is the record's own word for
+itself:
+
+- **The release, and the judge recipe.** `fugaro version` at **0.24.0** or later — the release the pair
+  launch and the judge ship in, `docs/releases/v0.24.0.md` — with the offline probe `fugaro ab --help`
+  (which names the command's own `--since` flag where a core build answers with **D522**'s stub), and
+  the catalog's own `ab-judge` recipe, which has to be there and launchable for the judge run below to
+  be startable at all.
+- **The premise the launches are a reading of.** The published project layer's `ab:` block, read out of
+  the layer's own text by `fugaro config layer --json` (**no command in this release prints an
+  effective `ab.rate`**), with a rate above zero, at least one challenger and a `judge_model`, and no
+  `ab.rate: 0` opt-out in the sandbox repository's own `fugaro.yaml` (**D556**, **D557**).
+- **The route, offline, before anything billable starts.** `fugaro models ls --json` — which reaches no
+  bucket and no host — must resolve **every** challenger the layer names as a **provider** model (not
+  the direct Anthropic route, where a second run would share the champion's own route and U4's question
+  could not be read from the pair) whose serving route's allow-list admits the sandbox repository
+  (`allow_data_to` naming it or `*`). Whichever challenger the sampler draws is then necessarily one of
+  them.
+- **The pair, through the command the plan's sentence names.** The launch's own `fugaro run --json`
+  names the pair it sampled, and `fugaro runs ls --repo <checkout> --batch <the label it carried>
+  --json` is read back as exactly **two** rows, both ended, both carrying that one label, both keyed to
+  the runs this check launched.
+- **Both records, as you read them.** `runs/<the slug>/<run>/result.json` out of the runs bucket, for
+  each arm. The champion's carries `ab.arm: champion` and the pair's id. The challenger's is the whole
+  claim: `ab.arm: challenger`, `ab.publish: none` (**D554**), `ab.challenger` naming one of the models
+  the route row resolved, with `challenger_source: owner` (**D556**), `outcome: none`, and **no** branch
+  and **no** pull request.
+- **Both wall times (U4).** Each record's own `started_at` and `finished_at`, turned into seconds here,
+  the challenger's beside the champion's and the ratio printed between them. U4 asks the check to
+  **record** the two — "Check 212 records both wall times" — and the plan sets no bar for the ratio, so
+  the row applies none and says so; a much slower shadow is a figure to read, not a finding.
+- **Both costs against the per-run cap (**D567**).** Each record's own `cost_usd` at or below the run's
+  own `policy.effective.per_run_usd`, and the two records' caps **equal to each other** — the challenger
+  runs on the champion's cap unchanged, and a halt is a loss rather than a second budget, so a cap that
+  is missing or zero, two different caps, a record at no spend and a cost above its cap are all
+  findings.
+- **The judge run A5.2 ships.** `fugaro run --repo <checkout> --recipe ab-judge`, launched **by hand**
+  as the release notes say it is (no run starts one by itself, one per repository), waited to its end
+  through the runs list, and read for the one thing the release promises about it: it left **no branch
+  and no pull request** — a `mode: evaluate` run with no checkout of its own.
+- **The verdict object, under the judge run's own prefix.** `runs/<the slug>/<the judge run>/ab/
+  verdicts.json`: the judge model the layer names, an entry for **this** pair, a winner in `champion`,
+  `challenger` or `tie`, and the **two** swapped passes a disagreement between which is a tie
+  (**D552**, **A5.2**). A pair the judge **skipped** decided nothing and reads as a finding here rather
+  than as a tie.
+- **The pair through the report.** `fugaro ab --repo <the sandbox repository> --since <window> --json`
+  shows a row whose challenger is that model with at least one pair in it, and its own recommendation
+  says **`below-minimum`** — **D563**'s gate, because one pair is far under the twenty decisive pairs a
+  conclusion needs. With more than one row for the same challenger (a rigor mode, a tier), the row read
+  is the one with the **lowest** decisive count, which is the one that can still be below the minimum.
+  An installation that has already reached twenty decisive pairs cannot show the fact, and the row says
+  it could not measure it rather than passing it.
+
+**What a run costs.** Up to **THIRTY sandbox runs** and what their tasks cost, on the sandbox's own
+budget, each champion among them pushing its branch and opening its pull request as an ordinary sandbox
+run does — plus **ONE judge run**, whose two model calls per pair go through the run's own gateway and
+are billed to the project as any call is. **Billable, and the check requires `--yes`**: without it the
+check prints the plan, changes nothing and exits. The launches stop at the **first** pair, so a sandbox
+already sampling at 0.10 usually costs a fraction of the bound. On disk it is one scratch directory,
+removed at the end. The teardown is part of the check: a launch or a judge run that has **not ended** is
+stopped with `fugaro cancel --now` and read back as ended first; then the `restore` row closes every
+pull request the champions opened (`gh pr close`) and deletes every branch they pushed (`git push
+--delete`), **each read back afterwards**. A shadow's branch is never deleted, because it never existed.
+`gh` is the one tool the check does not require: a machine without it still deletes the branches and
+says, in the Restore row, which pull requests are left for you.
+
+**Run it:**
+
+```sh
+bash scripts/live-checks/check212.sh --sandbox <a sandbox repository checkout> --dry-run
+bash scripts/live-checks/check212.sh --sandbox <a sandbox repository checkout> --yes
+bash scripts/live-checks/check212.sh --sandbox <a sandbox repository checkout> --yes --max-launches 12
+bash scripts/live-checks/check212.sh --sandbox <a sandbox repository checkout> --yes --task "<the small task>"
+```
+
+`--dry-run` prints what would be read, launched and removed and runs none of it: it reads no project,
+no catalog, no layer, no model and no run, and it launches nothing. It is the way to look at the
+premise before spending anything. A value given as a flag wins over the same value in the environment.
+
+Progress goes to stderr and one `CHECK 212 RESULT` block goes to stdout at the end: paste that whole
+block here and nothing else. The block's last line carries the run's status: **`0`** is every criterion
+that was measured holding; **`1`** is a measured criterion that did not hold, or a guard that stopped
+the run — among them a build older than 0.24.0, a catalog with no `ab-judge` recipe, a layer with no
+`ab:` block and no judge model, a challenger that is not a provider model routed for the repository, no
+pair within the bound, a shadow that published, a judge run that published, a verdict that is missing or
+skipped, a report that draws a conclusion, and a teardown that could not close what it opened; **`2`** is
+the check not being able to measure (a tool missing, the checkout not being one, a `--json` document or
+a record that could not be read, an arm that had not ended, or an installation already at twenty
+decisive pairs). A key the run never reached reads `FAIL — not reached`. The knobs are
+`CHECK212_DRY_RUN`, `CHECK212_YES`, `CHECK212_KEEP_SCRATCH`, `CHECK212_SANDBOX`, `CHECK212_TASK`,
+`CHECK212_MAX_LAUNCHES` (30), `CHECK212_RELEASE` (0.24.0), `CHECK212_SINCE` (1d), `CHECK212_REGION`
+(us-east5), `CHECK212_RUN_TIMEOUT_SECONDS` (3600), `CHECK212_POLL_SECONDS` (15), `CHECK212_CLI_TIMEOUT_SECONDS`
+(180), `CHECK212_CANCEL_TIMEOUT_SECONDS` (300), `CHECK212_LAUNCH_TIMEOUT_SECONDS` (600),
+`CHECK212_DOCTOR_TIMEOUT_SECONDS` (300) and `CHECK212_JUDGE_TIMEOUT_SECONDS` (3600).
+
+**What waits on it.** Nothing merges on it: A/B is off until the owner sets `ab.rate` in the project
+layer, and this check is the only reading of a sampled pair that reaches the judge and the report in the
+installation it is run on. A failed 212 is a **product** finding rather than a task — a shadow that
+published, a judge that published, a verdict that disagrees with the object's own contract, or a cost
+above the cap the record carries is the boundary of **D554**, **D567** or **A5.2** not holding, and the
+task that owns that boundary is where it is fixed. Check 210 is the same pair read for the publishing
+boundary alone, and it exists so that a shadow that pushed is found without spending a judge run on it.
 
 ## Check 230: the author, the committer and the trailers, on GitHub and on Bitbucket (two sandbox repositories carrying `git.author: launcher`, a third with no such key, and their forges; never `belong`; run by you; NOT RUN)
 
@@ -16456,6 +16896,359 @@ repositories and carries `pull_requests: write` alone.
 **What waits on it.** D4 (the advisory merge order) and the change-set half of the spec's promise
 that a set is ready or not ready as a whole: this run is the only reading of it, and a set that
 flips one pull request and leaves the other draft is a finding for this plan's owner.
+
+
+## Check 620: the pairing that refuses an address it cannot attribute (the sandbox installation `fugaro` and project `fugaro-dev`, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written for the **mobile-auth work** ([mobile-auth/implementation-plan.md](mobile-auth/implementation-plan.md)
+§9, part **P3**) and **run by you**; its number is one of the eight that work's §9 allocated on
+2026-11-14, and **no agent runs any step of it**. Its subject is **D226**: a paired device's entry
+carries the **administered email** and the **role the allowlist resolves** for it, and the one
+address `fugaro pair` may administer is the pairing operator's own **verified** one — read by the
+same check `internal/cli/init_members.go`'s `userEmail` already makes for the CLI (`authenticatedUser`),
+and canonicalised by the same rule P1 reads entries with (`pairAdministeredEmail`, `internal/cli/pair.go`).
+
+**What it settles.** That the refusal fires on a **real** project and that **nothing is written**:
+the node's existence is the whole of what the rules read (D222, Check 621 below), so a pairing that
+wrote an address nobody proved they hold would put a device on D166's allowlist under it. Three arms:
+
+- `--email` naming an address that is **not** the operator's own. This is the arm to run first: it
+  needs nothing but the sandbox installation, and it is the whole of D226 in one sentence.
+- Credentials that are **a service account's**. `authenticatedUser` refuses them rather than
+  administering an address no person holds.
+- An identity whose address the userinfo endpoint reports as **not verified** — `the email <address>
+  is not verified`. Where you hold no such identity this arm is **NOT MEASURED**, said in one line;
+  it is the one arm a Google account cannot be turned into on demand.
+
+Every arm is refused **before the pairing token is minted and before a byte is written**, which is
+what makes it a refusal rather than an undone write: the read of the device node before and after is
+the same bytes.
+
+**What has to exist before it runs.** A release build carrying `fugaro pair` and `fugaro pair ls`
+(P6.6's command, whose surface is in the tree); a sandbox installation converged on `fugaro-dev`
+(**never `belong`** — this check reads and writes the device node of the installation it runs in);
+your own Google credential as the operator, for the arms that need one; and, for the second arm, a
+service account key you are willing to point `GOOGLE_APPLICATION_CREDENTIALS` at — a **credential**,
+which no line of this check prints.
+
+**The commands.**
+
+```sh
+fugaro pair --name <a name> --email <an address that is not yours>   # arm 1: refused by name
+GOOGLE_APPLICATION_CREDENTIALS=<a service account key> fugaro pair --name <a name>   # arm 2
+fugaro pair --name <a name>                                        # arm 3, on an unverified identity
+fugaro pair ls --json                                             # the node is unchanged
+```
+
+Record the three refusals and the `pair ls` reading (with the entry list, not a token) under Check
+620 here.
+
+**What a run costs.** Three `fugaro pair` runs that each end in a refusal and one `pair ls`: **no
+device node, no delivery node, no session spent, no model call and no run — nothing billable.**
+Nothing is created, granted or deleted; the check writes nothing, so it has no restore to make.
+
+**What waits on it.** P3's red step and D226: a pairing that could write an address it has not
+proved is the one silent grant this whole allowlist exists to prevent, and this is its only live
+reading.
+
+## Check 621: the paired phone cannot read its own entry (a real phone against the sandbox project `fugaro-dev`, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written for the **mobile-auth work** ([mobile-auth/implementation-plan.md](mobile-auth/implementation-plan.md)
+§9, parts **P2** and **P3**) and **run by you**; its number is one of the eight that work's §9
+allocated on 2026-11-14, and **no agent runs any step of it**. Its subject is **D222** and **D223**:
+the allowlist is a **device node** — `config/admin/devices/<uid>` — and the **deployed** rules carry
+it as `.read: false, .write: false`.
+
+**What it settles.** That no phone reads or writes any entry, and that the node's **existence** is
+the whole of what the rules ask. The rules' device claim is a USER macro on the node's path
+(`userClaim`, `internal/budget/rules`), which is a question about **existence** and not about
+content: a paired phone holds a read of its own **mailbox** (`mailbox/<uid>`, its inbox and the
+heartbeat) and of the one delivery node its payload is sealed to (`pairing/<uid>/delivery`), and
+**no read of its own entry**, so `fugaro pair ls` on the laptop — which reads with a credential that
+bypasses the rules — is the only place an entry is visible at all. A rules file in
+this repository is not what this reads: the reading is the denial the **deployed** rules give.
+
+**What has to exist before it runs.** A converged sandbox installation on `fugaro-dev`, its rules
+deployed by `fugaro update`; a **real phone** carrying the app the app's own CI job built, paired by
+`fugaro pair`; and a way to make one authenticated request **with the device token the phone holds**
+(the app does it itself, or you take the token out of the phone's own storage).
+
+**The commands.**
+
+```sh
+fugaro pair ls --json                    # the entry, read with your own credential
+# on the phone, with its device token:
+#   GET  <database>/config/admin/devices/<uid>.json   -> permission denied
+```
+
+Record both readings under Check 621 here: the entry `pair ls` shows, and the denial with its body.
+The **denial** is the finding; a 200 from the phone's own token is a rules deploy that did not take.
+
+**What a run costs.** One pairing, one `pair ls` and one request the phone makes: **no model call,
+no run, nothing billable.** The pairing writes the device node, the delivery node and the keychain
+item; its restore is `fugaro pair revoke --uid <uid>`, which deletes **the device node and this
+laptop's keychain item, and nothing else** — the pairing node, the delivery under it among them, is
+deliberately left to the history sweep, whose own key it is (`pairing/<uid>` is keyed by the `p~` uid
+`MintPairing` drew and no file here records it; Check 622 below says the same). The residual that
+leaves is `internal/cli/pair.go`'s: the sealed payload stays readable to the **pairing** token for as
+long as that token's ID token lives, and the sweep deletes the node with the `p~` user once the
+pairing is over. What this check's restore therefore settles is the **allowlist** — the device is off
+it from its next request — and not that every node of the pairing is gone.
+
+**What waits on it.** D222's whole shape and P2's field set: this is the check that says the entry is
+unreadable from the device that is on it.
+
+## Check 622: a revoked pairing stops on the next request (the same phone, against the sandbox project `fugaro-dev`, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written for the **mobile-auth work** ([mobile-auth/implementation-plan.md](mobile-auth/implementation-plan.md)
+§9, part **P3**) and **run by you**; its number is one of the eight that work's §9 allocated on
+2026-11-14, and **no agent runs any step of it**. Its subject is **D166** and **D229**: revocation is
+the **deletion of the device node**, and the node's existence is what the rules read — so the next
+request the phone makes is refused, without waiting for an ID token to expire. `fugaro pair revoke
+(--uid UID | --name NAME)` deletes the node first and the OS keychain item for that pairing's MAC key
+second, deletes **no** Auth user (the node's deletion is what makes the orphan the history sweep's to
+remove) and does not delete the pairing session's own `p~` node — it names that sweep instead.
+
+**What it settles.** That a request the phone could make a moment before the revoke is refused from
+it on, on the deployed rules and on a real project. It is the live half of P3's revocation test,
+which drives a fake database; the fake cannot answer for a database that prunes and a credential that
+caches.
+
+**What has to exist before it runs.** Check 621's own setup — the sandbox installation, the deployed
+rules and a **paired phone** — plus the uid or the name `fugaro pair ls` printed for it, and a
+request the phone can make **before** the revoke that succeeds (its own subtree read is the natural
+one).
+
+**The commands.**
+
+```sh
+fugaro pair ls --json                     # the uid and the name to revoke
+# on the phone: a request that SUCCEEDS, with the time it was made
+fugaro pair revoke --uid <uid>
+# on the phone, the same request: refused, with the time it was made
+```
+
+Record the two requests with their timestamps and the revoke's own output under Check 622 here. A
+request that still succeeds after the revoke is the finding this check exists for.
+
+**What a run costs.** One pairing, one revoke and two requests from the phone: **no model call, no
+run, nothing billable**, and the revoke is two deletions. Nothing else is written, so the check's own
+restore is the revoke it already made.
+
+**What waits on it.** D166's property, which the whole allowlist promises: that a revoke is
+immediate.
+
+## Check 623: a publish never re-adds a revoked entry (the sandbox installation and project, with the declared allowlist on that machine, never `belong`; run by you; NOT RUN)
+
+**NOT RUN, and the one check of this block whose outcome is already known in part.** Written for the
+**mobile-auth work** ([mobile-auth/implementation-plan.md](mobile-auth/implementation-plan.md) §9,
+part **P5**) and **run by you**; its number is one of the eight that work's §9 allocated on
+2026-11-14, and **no agent runs any step of it**. Its subject is **D231** and **D229**:
+`fugaro project policy publish` seeds the device node from the **declared** allowlist — the machine's
+own config (`internal/localcfg`), never a checkout's `fugaro.yaml`, because a declaration that
+travelled with a checkout would be a way for a pull request to add an admin — and the seed's gate is
+the node's **absence** (`seedDeclaredDevices`, `internal/cli/project_cmd.go`). A node that is there
+is never written again, because one revocation is one **deleted child** and an entry a node does not
+hold cannot be told apart from one an operator removed.
+
+**The gap this check reads rather than assumes.** The rule holds only while the node exists.
+Revoking the **last** device empties the node it was on, the database prunes a node its last child
+has left, and the read the gate rests on — `GetETag` in `internal/rtdb/client.go` — reports a node
+the database answers with a null body as one that is **not there**: so the next publish re-seeds
+**every declared entry, the person just revoked among them** whenever the declaration still names
+them. It was reported by the review of P5 (`ce24f96f`, PR #2614) and is recorded in
+[mobile-auth/README.md](mobile-auth/README.md)'s amendment of 2026-11-14; closing it needs a record
+that a seed has happened, which is a **decision and not a repair** and is P5's to take.
+**The two arms are therefore not the same reading**, and this section says so:
+
+- **Arm 1, a node that still carries another device.** The revoked entry does **not** come back, and
+  a publish leaves the node's other children as they are. This arm is what D231 claims.
+- **Arm 2, the revoked entry was the last child.** The next publish re-seeds it, and the person is
+  admitted again from a declaration nobody edited. This arm is a **findings run**, not a check that
+  passed: record the node's bytes on both sides and the publish's own output, and report it against
+  D231 rather than treating the check as failed by the agent that reads it.
+
+**What has to exist before it runs.** A converged sandbox installation on `fugaro-dev`, its rules
+deployed; a declared allowlist written in that machine's own config, naming at least **two** entries
+(so arm 1 has a second device to leave standing); at least one paired device per declared entry (or
+the seed is what creates them, which is P5's own first case); and your own credential for the
+credential-bypassing read of the node.
+
+**The commands.**
+
+```sh
+fugaro pair revoke --uid <uid used by arm 1>          # arm 1: one child removed, the node remains
+fugaro project policy publish                        # the publish whose seed must not fire
+# read config/admin/devices with your own credential, before and after
+fugaro pair revoke --uid <uid used by arm 2>         # arm 2: the LAST child, so the node goes
+fugaro project policy publish                        # the publish whose seed DOES fire -- the gap
+```
+
+Record both arms' node reads, both publishes' output (including the seed's own line, which the
+publish prints when it writes the node) and the entry list under Check 623 here.
+
+**What a run costs.** Two publishes and two revokes on the sandbox project: **nothing billable, no
+model call and no run.** The publish writes the policy and the shared node; the declared block is
+local-only. Nothing is created or granted by the seeding half beyond the entries the declaration
+names, and the check's restore is a revoke plus a hand-deletion of any entry arm 2 re-seeded.
+
+**What waits on it.** D231's decision about the record a seed needs, and the sentence
+[mobile-auth/README.md](mobile-auth/README.md) carries about this gap.
+
+## Check 624: a declared entry that is not on the node admits nobody (the sandbox project `fugaro-dev`, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written for the **mobile-auth work** ([mobile-auth/implementation-plan.md](mobile-auth/implementation-plan.md)
+§9, part **P5**) and **run by you**; its number is one of the eight that work's §9 allocated on
+2026-11-14, and **no agent runs any step of it**. Its subject is **D222**: the **node** is the
+authority and the declaration is not.
+
+**What it settles.** That a person the machine's own config declares but the node does not carry is
+admitted by **nothing**: no reader consults the file, and the rules ask whether the node exists. It
+is the other half of Check 623 — that one reads what a publish does not re-add, this one reads that
+the file alone adds nothing — and together they are the pair P5's review upheld.
+
+**What has to exist before it runs.** A converged sandbox installation on `fugaro-dev` with a
+declared allowlist naming at least one address, a **paired phone** whose uid is that person's entry,
+and your own credential for the write and the read of the node.
+
+**The commands.**
+
+```sh
+fugaro pair ls --json                                  # the entry, and the image of it before
+# delete config/admin/devices/<uid> with your own credential (the console, or the REST API),
+# while the machine's own config still declares that address
+# on the phone: the request it could make a moment ago -> refused
+```
+
+Record the node's bytes on both sides, the declaration that still names the address, and the refusal
+under Check 624 here.
+
+**What a run costs.** One hand-deletion and one request from the phone: **no model call, no run,
+nothing billable.** Nothing is created or granted; the check's restore is a pairing for the address
+it removed (or the re-pairing of the phone).
+
+**What waits on it.** D222 and P5's scope sentence: that the node is the authority, which is the
+reason a declaration is a **seed** and never a second allowlist.
+
+## Check 625: the QR carries no identity (the sandbox installation, a real phone's camera, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written for the **mobile-auth work** ([mobile-auth/implementation-plan.md](mobile-auth/implementation-plan.md)
+§9, part **P4**) and **run by you**; its number is one of the eight that work's §9 allocated on
+2026-11-14, and **no agent runs any step of it**.
+
+**What it settles.** What the code `fugaro pair` draws actually carries, read as **text**: the
+project, its database URL and Identity Toolkit API key, and the one-shot pairing token — the
+**discovery** the phone needs in order to know where to connect, which grants it nothing by itself.
+It carries **no** address, **no** uid, **no** role and **no** key, and the credentials the phone
+ends up holding go to it encrypted to the key **it** generated (`internal/cli/pair.go`'s `pairQR`
+and the delivery payload; the MAC key never leaves the laptop's OS keychain in clear and is not in
+the code). The pairing token is a value: this check reads the payload's **members**, and the token is
+redacted wherever the reading is recorded.
+
+**What has to exist before it runs.** A sandbox installation converged on `fugaro-dev` with a
+signer account (`fugaro pair` mints the pairing token and the device token with its
+`fugaroTokenMinter` role, and needs `roles/firebasedatabase.admin` to write the nodes); a **real
+phone** with a camera and the app, so the QR is scanned rather than typed; and a terminal wide enough
+for the drawing, or `--json` for the payload as text.
+
+**The commands.**
+
+```sh
+fugaro pair --name <a name>        # scan the drawing with the phone's camera
+fugaro pair --json                 # the same payload as one JSON event per line
+```
+
+Record the payload's **member names and their shapes** — with the token redacted — and what the
+phone's own scan made of it, under Check 625 here. A member that is a person's address, a uid or a
+role is the finding; so is a key that arrives in the clear.
+
+**What a run costs.** One `fugaro pair`, which waits for the phone's key and the typed code: **no
+model call, no run, nothing billable.** A pairing that is completed writes the device node, the
+delivery node and the keychain item (revoke it after, as Check 621's restore does); a pairing you
+abandon before the typed code leaves the project exactly as it was.
+
+**What waits on it.** P4 and the spec's step 2: that pairing is discovery and not identity.
+
+## Check 626: the first screen with no account (a device carrying the app's built artifact; run by you; NOT RUN)
+
+**NOT RUN.** Written for the **mobile-auth work** ([mobile-auth/implementation-plan.md](mobile-auth/implementation-plan.md)
+§9, part **P4**) and **run by you**; its number is one of the eight that work's §9 allocated on
+2026-11-14, and **no agent runs any step of it**. Its subject is the owner's ruling of 2026-10-19
+that the app's first screen is the demo's front door and `mobile/src/app/first-screen.js`.
+
+**What it settles.** That on a **fresh install** of the artifact the app's own CI job built, the
+first screen is reached with **no sign-in at all**: everything the app shows is reachable without an
+account, the way in is the demo, and the "ask your admin" sentence stands **beside** that control
+rather than in front of it or instead of it. This is a promise made to a store listing's reviewer and
+to a person who cannot pair, and no test in this repository can read it: the app's unit tests read
+the file, not a device.
+
+**What has to exist before it runs.** The app's CI job's own artifact for this revision (the
+`mobile/` workflow's build — **no Node is installed in the container these checks are written in**,
+and the artifact is what a device installs); a device or an emulator with no account, no profile and
+no previous install; and the network on, so that the demo's own path can be read as it really is.
+
+**The commands.** None: this is a **procedure**, not a script — the subject is a screen on a device
+this repository's tests cannot reach. Install the artifact, launch it, read the first screen, tap the
+demo, and record:
+
+- the sentence the first screen carries about the demo and the one about the admin, quoted;
+- that the demo is reachable with no sign-in and no pairing;
+- which control is above the other, since the report of 2026-10-19 is explicit that the pairing
+  control arrives **above** the demo and never instead of it;
+- that nothing on the way in asked for an account, an address or a code.
+
+**What a run costs.** One install and one launch on a device with no account: **no run, no cloud call
+and nothing billable** — the screen is drawn from the app's own bundle, and the demo behind it talks
+to no project of yours, least of all the owner's installation, **never `belong`**. Nothing is created,
+granted or deleted.
+
+**What waits on it.** P4's own acceptance, and the store-listing answer the owner's ruling is about.
+
+## Check 627: the refusal of a public sign-up still holds with a provider on (the sandbox project `fugaro-dev`, one provider enabled by hand, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written for the **mobile-auth work** ([mobile-auth/implementation-plan.md](mobile-auth/implementation-plan.md)
+§9, part **P6**) and **run by you**; its number is one of the eight that work's §9 allocated on
+2026-11-14, and **no agent runs any step of it**. Its subject is **D221** and
+`internal/cli/init_firebase.go`'s `refusePublicSignUp`, reached from the Identity Platform step of
+`fugaro setup` (`idpStep`, read **before** the confirmation and run after it; `setup` keeps an installation that already exists and converges it as `update` does, so this is the door that reaches the step on a project that is already set up).
+
+**What it settles.** That on the **installation's own** project the refusal fires against a
+configuration that really enables a public sign-up path — the web API key is public, so only custom
+tokens signed by Fugaro's own signer may work — naming the paths it found, saying that the converge
+never changes an existing configuration, and writing **nothing**. It is the live half of a step whose
+unit tests answer a fake endpoint: what this reads is the shape the real Identity Toolkit API returns
+for a provider a person turned on in the console. **A workspace's own project is not this check**: it
+is the one exception, where the pinned entries pass and an off-pin path is refused by name
+(Check 361), and a config naming it is what makes that exception apply. Read this on the installation's
+own project alone, and never on a project a workspace is named after.
+
+**What has to exist before it runs.** A converged sandbox installation on `fugaro-dev` (**never
+`belong`**: this check changes the sandbox project's Identity Platform configuration and must not go
+near the owner's); one provider enabled **by hand** in the Firebase console (Authentication, Sign-in
+method) — email/password or Google, either one is a public sign-up path — with its value noted so the
+check's restore can turn it off again; and your own Google credential for the converge.
+
+**The commands.**
+
+```sh
+fugaro setup                          # the Identity Platform step refuses, by name, and writes nothing
+# then disable the provider you enabled, and:
+fugaro setup                          # converges: the step passes and nothing is applied
+```
+
+Record the refusal's whole sentence (it names the paths it found), the paths it named, and that the
+second converge is quiet — under Check 627 here. The restore is yours and is part of the check:
+disable the provider you enabled, and read the configuration back.
+
+**What a run costs.** Two converges of an installation that already exists: **nothing billable and no
+model call** — a converged one applies nothing, and the Identity Platform read happens before its own
+confirmation. The refusal writes nothing at all; the only change on any path is the one you made by
+hand and undid.
+
+**What waits on it.** D221's answer (the provider half is refused, and the path not taken is written
+out in [mobile-auth/provider-sign-in.md](mobile-auth/provider-sign-in.md)) and the sentence that this
+repository refuses every public sign-up path on a project of its own.
 
 ## Check 420: pool failover — one member exhausted, the pool moves off it, and the record names the member that served (sandbox project and sandbox repository only, never `belong`; run by you; NOT RUN)
 

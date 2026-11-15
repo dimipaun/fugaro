@@ -270,7 +270,7 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 			// as it was read, and a coding agent's session reads why with the
 			// record of that refusal behind it. In every other session the zero
 			// gate answers here and the deletion proceeds exactly as it did.
-			m, gerr := gate.admit(ctx, policyPublishClass, policyDeleteVerdict(raw))
+			m, gerr := gate.admit(ctx, policyDeleteVerdict(raw))
 			if gerr != nil {
 				return gerr
 			}
@@ -289,6 +289,16 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 			// otherwise remove the node every run is admitted by and leave no trail
 			// of it, which is the one thing a record exists to prevent.
 			return gate.recorded(ctx)
+		}
+		// The shared-job rule, at the operator's own door and nowhere else in
+		// this run's path: a profile that mounts the Bitbucket credential is
+		// refused here, before a node is built from this config, so the
+		// operator reads it with the file in hand rather than meeting it at the
+		// update's deploy, one step away from the entry
+		// (refuseAProfileMountingTheBitbucketCredential says why the update's
+		// policy stage is not a door of it).
+		if err := refuseAProfileMountingTheBitbucketCredential(lc); err != nil {
+			return publishFailure(err, narrowedSoFar)
 		}
 		old, err := publishedPolicyOf(raw, exists)
 		if err != nil {
@@ -329,7 +339,7 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		// failure re-reads the marks and re-judges the node it would now write
 		// (D1024). A refusal is the gate's own sentence and the record of it is
 		// written before this returns.
-		m, err := gate.admit(ctx, policyPublishClass, policyPublishVerdict(old, pol, body, o.seedRepos, o.removeRouting))
+		m, err := gate.admit(ctx, policyPublishVerdict(old, pol, body, o.seedRepos, o.removeRouting))
 		if err != nil {
 			return err
 		}
@@ -840,6 +850,31 @@ func sharedRepos(ctx context.Context, lc *localcfg.Config) (map[string]localcfg.
 	return sc.Repos, nil
 }
 
+// refuseAProfileMountingTheBitbucketCredential is the operator's door on the
+// shared-job rule, and it does not copy the rule's sentence: the sentence is
+// projectpolicy.CheckSharedJobProfile's, the function the deployer asks too, so
+// the two doors refuse the entry in one wording rather than in two that can
+// drift.
+//
+// The rule is asked here, at the command a person writes a policy with, and not
+// inside buildProjectPolicy, which `fugaro update`'s policy stage builds its
+// node through as well (policyNodeForPublish): an installation whose local
+// config already mounts the credential is one this repository published without
+// complaint before the owner's ruling of 2026-11-14, and the HARD RULE is that
+// `fugaro update` converges it — a refusal at the shared build would stop the
+// update whole and leave the operator editing the file by hand, which is the one
+// step an update must never need. What the stage writes is the config's own
+// node, and internal/infra's ProjectJobs is where a job for such a profile is
+// refused.
+func refuseAProfileMountingTheBitbucketCredential(lc *localcfg.Config) error {
+	for _, name := range slices.Sorted(maps.Keys(lc.Profiles)) {
+		if err := projectpolicy.CheckSharedJobProfile("profiles."+name, projectpolicy.Profile{JobProfile: lc.Profiles[name]}); err != nil {
+			return userErr("%s would not publish as a policy: %v", lc.Name, err)
+		}
+	}
+	return nil
+}
+
 // buildProjectPolicy is the node the publisher writes, from the operator's
 // config. The version is this binary's (P8: a beta cannot publish a shape
 // main cannot read), and the budget block always names a mode — an empty mode
@@ -926,6 +961,19 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 			if pr := lc.Profiles[name]; pr.AllowReposWritten() && len(pr.AllowRepos) == 0 {
 				return nil, false, userErr("this project's config sets profiles.%s.allow_repos to a written list with nothing in it, which is ambiguous: remove the key to fall back to the project's allow_repos, or write the repositories this profile admits (the project's own allow_repos is still required, so a profile's list can only narrow it)", name)
 			}
+			// A profile that mounts the Bitbucket credential is not this
+			// function's to refuse: the update's policy stage builds its node
+			// through it, and the stage must converge an installation whose
+			// local config already mounts the credential — one this repository
+			// published without complaint before the owner's ruling of
+			// 2026-11-14 — where a refusal would stop `fugaro update` whole and
+			// leave the operator editing the file by hand (CLAUDE.md's hard
+			// rule). The operator's own door asks the rule before it gets here
+			// (runProjectPolicyPublish, projectpolicy.CheckSharedJobProfile),
+			// and the deployer asks the same function of the node this build
+			// writes, which is what refuses the job (internal/infra's
+			// ProjectJobs): the entry is refused in one sentence at the two
+			// doors that own the decision, and neither is the stage.
 		}
 	}
 	silent := lc.Routing == nil || lc.Routing.Claude == nil

@@ -64,8 +64,8 @@ import (
 // either alone would ask for the sensitive step over a harmless change or miss a
 // real lowering. Where the new mode ranks below that answer, the step is the
 // sensitive one; D1180 (config-management's reconciliation) settles what that
-// step IS here: it is the `Typed` class of D846/D1552, not D832's typed project
-// name — a coding agent's session is refused it whatever `--yes` says, and the
+// step IS here: it is the widening of D846/D1552, not D832's typed project
+// name — a coding agent's session is refused it whatever a run carries, and the
 // owner's own terminal reads what it lowers and asks nothing.
 //
 // This command writes the mode every run of the project starts from, which is

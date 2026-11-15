@@ -682,8 +682,9 @@ func policyAccountValues(p *projectpolicy.Policy) map[string]string {
 // the node itself — looseningWhy words the first publish as the widening of the
 // whole node, so it never prints the two empty values.
 //
-// It is what gives a first publish the Typed class: the typed name rather than
-// --yes, and a coding agent's session refused by the gate's own D1026 rule
+// It is what makes a first publish the owner's own step: the person's own
+// answer rather than one a run carries, and a coding agent's session refused by
+// the gate's own D1026 rule
 // rather than admitted to the boundary every later run of the project is
 // admitted by.
 func (m *policyMigration) loosening() []policyCeiling {

@@ -150,6 +150,14 @@ import (
 // proves that row is what the FAIL elsewhere is read from. The fake `belong`
 // logs any call and fails, so a case says the check never reached that
 // installation.
+// Check 212's are the same four, down to the counter and the
+// real deletion and close, with the documents a pair, a judge run and its
+// verdict are read through served out of the case's own directory and a mode for
+// each state a case bends (a build without the command, a catalog without the
+// judge recipe, a layer that samples nothing, a challenger on the direct or an
+// unadmitted route, no pair within the bound, a shadow that published, a judge
+// that published, a verdict that is missing, skipped, one-pass or another pair's,
+// and a report that already draws a conclusion).
 // Check 301's fakes are a fake `fugaro`, a fake launchd and a fake systemd
 // whose boot id and unit files the test writes, so a reboot, a second
 // instance's refusal and T7's re-render are all readings of files the test
@@ -188,6 +196,25 @@ import (
 // config, a converge that fails or leaves a step, one that migrates nothing,
 // an account left unconverted with and without the note it is owed, a second
 // converge that moves the keys, and a node that moved, went or cannot be read.
+// Checks 380 to 382 drive a
+// fake `fugaro` over the no-prompt policy's three readings, each fake holding
+// what its check can tell apart: 380's `update` plays the transcript a real run
+// would print (a step left for the owner, a `[y/N]` question, a question left
+// open, an enter-prompt, a cloud failure, an empty transcript, a run that never
+// ends) and records what its own stdin turned out to be, so a case says the
+// check really closed it; 381's holds the repository's caps node, the effective
+// caps, a `budget set` that REALLY applies what it is handed -- so the check's
+// read-back of its own lowering and of its own putting back are readings of
+// state that changed -- and an `image build` that plays the refusal in each
+// shape a case bends (another cap, a lost part, an empty transcript, a build
+// that was not refused, an odd status, one that never ends); 382's refuses on
+// the marker set in ITS OWN environment (agentMarker's list) and can be told to
+// bend the sentence a raise prints (a missing part, the command naming another
+// repository, another value, another project, an invented flag, another
+// program), so a check that forgot to set the marker is caught by the caps
+// moving rather than by a log line. 381's and 382's checkouts are real git work
+// trees with an origin remote, because the repository whose caps are lowered or
+// raised is the one that remote names.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -198,6 +225,7 @@ var liveCheckScripts = []struct {
 	{"check111.sh", "check111_test.sh"},
 	{"check210.sh", "check210_test.sh"},
 	{"check211.sh", "check211_test.sh"},
+	{"check212.sh", "check212_test.sh"},
 	{"check130.sh", "check130_test.sh"},
 	{"check145.sh", "check145_test.sh"},
 	{"check146.sh", "check146_test.sh"},
@@ -243,6 +271,9 @@ var liveCheckScripts = []struct {
 	{"check119.sh", "check119_test.sh"},
 	{"check57b.sh", "check57b_test.sh"},
 	{"check124.sh", "check124_test.sh"},
+	{"check-380-no-prompt-update.sh", "check-380-no-prompt-update_test.sh"},
+	{"check-381-over-cap-build.sh", "check-381-over-cap-build_test.sh"},
+	{"check-382-agent-cannot-raise-a-cap.sh", "check-382-agent-cannot-raise-a-cap_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent

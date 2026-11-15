@@ -1293,7 +1293,7 @@ func TestAccountsRmReadsTheBranchTheCommittedFileNames(t *testing.T) {
 // reference — and let the one-way delete through.
 //
 // What the record says is the assertion, and not the refusal alone: a session is
-// refused here whatever the walk found (accountsRmRules's class rule), so a run
+// refused here whatever the walk found (accountsRmRules's own rules), so a run
 // that stops is no evidence that the walk found anything. The rule the walk
 // writes is the evidence: the ref's own file named the account, so the record
 // carries the referrer rule and not the "read it here and could not resolve
