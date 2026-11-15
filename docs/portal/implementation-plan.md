@@ -618,17 +618,20 @@ Files written by more than one task. Every other file has one writer.
 | `go.mod`, `go.sum` | P1.2 (0), P1.6 (2), P1.7 (3) |
 | `ee/keyservice/orgs.go` | P2.1 (1); P3.1 registers a hook, it does not edit the file |
 | `ee/keyservice/wire_<area>.go`, `ee/portal/schemas/<area>.schema.json` | P1.1 (0), then the one task of that area (1 or later) |
-| `ee/portal/src/api/types/<area>.ts` | P1.4 (1), then the one task of that area (2 or later) |
+| `ee/portal/src/api/types/<area>.ts` | P1.4 (1), then the one task of that area (1 or later) |
+| `ee/portal/test/types.test.ts` | P1.4 (1), then the area task that adds its area's fixtures (1 or later) |
 | `ee/coordinator/mcpauth/firebase.go` | P1.3 (0) |
 | `ee/keyservice/admin.go`, `admin_test.go`, root `firebase.json`, website key files | P9.3 (7) |
 | `docs/licence-key-v2/*`, `docs/design/key-signing-service.md` | P9.1 (0) |
 | `docs/gcp-live-checklist.md` | P9.4 (10) |
 
 No level holds two writers of one file — which is what put P1.6 at level 2 rather than beside P2.1: both write
-`api.go`. It is also what splits the SPA's per-area type file from the area's own schema and Go wire shape in the
-table above: P1.4 writes `src/api/types/<area>.ts` at level 1 and type-checks every fixture there, so the area
-task that runs beside it writes that area's schema and its `wire_<area>.go` and leaves the type file where P1.4
-put it; an area task edits that file only from level 2, where no SPA-skeleton writer is running. API routes
+`api.go`. The SPA's per-area type file, with the fixture sweep beside it, is the one exception, and the sweep is
+why it cannot be otherwise: P1.4 writes `src/api/types/<area>.ts` and `test/types.test.ts` at level 1, and the
+sweep type-checks every fixture against the declarations in that file, so an area task that adds a fixture
+cannot leave it alone — it extends its own area's file and adds its area's rows to the sweep. P2.1 is that task
+at level 1, beside P1.4, and the two write different parts of the one file; every area after it is at level 2 or
+later, where no SPA-skeleton writer is running. API routes
 register through `registerAPI` (P1.0) and screens through `import.meta.glob` (P1.4), so an
 area adds its own routes and screens without editing the registry or the shell. What an area does edit is the
 seam it is the first to reach — `api.go` for the interfaces a route is written against, `service.go` for the
