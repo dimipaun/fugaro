@@ -327,20 +327,7 @@ func TestUpdateKeepsTheDefaultProfilesJobThroughTheRepositoryStage(t *testing.T)
 
 	testutil.Git(t, r.root, "commit", "-qam", "the run's own change to the checkout")
 	fetched(t, r.root)
-	// A repository on a second App is added. The edit is made to the file the
-	// door reads — the installation's own copy, which this rig registered from
-	// the checkout's config (registerInstallation) — and not to the rig's
-	// source copy, which only the registration reads.
-	lc, err := localcfg.Load(installationConfigPath())
-	if err != nil {
-		t.Fatalf("the installation's config does not parse: %v", err)
-	}
-	lc.Repos["acme/other"] = localcfg.Repo{Provider: "github", BaseBranch: "main", Workflows: []string{"app"}, GitHubAppID: "987654321"}
-	if data, err := lc.Marshal(); err != nil {
-		t.Fatal(err)
-	} else if err := os.WriteFile(installationConfigPath(), data, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	secondAppRepo(t)
 
 	out, errOut, err := executeStdin(t, "", "update")
 	s := out + errOut
@@ -359,5 +346,59 @@ func TestUpdateKeepsTheDefaultProfilesJobThroughTheRepositoryStage(t *testing.T)
 	if !reflect.DeepEqual(kept, deployed) {
 		t.Errorf("the job the installation holds is\n%v\nwant it unchanged from\n%v\nthe job the record holds is the job the state holds, and a document that rewrites it is a plan that replaces it\n%s",
 			kept, deployed, s)
+	}
+}
+
+// secondAppRepo adds a repository on a second GitHub App to the installation's
+// own config — the file the door reads, which this rig registered from the
+// checkout's config (registerInstallation), and not the rig's source copy, which
+// only the registration reads. It is one of the two ordinary acts that leave the
+// github default profile with no single App ID to compose its job from.
+func secondAppRepo(t *testing.T) {
+	t.Helper()
+	lc, err := localcfg.Load(installationConfigPath())
+	if err != nil {
+		t.Fatalf("the installation's config does not parse: %v", err)
+	}
+	lc.Repos["acme/other"] = localcfg.Repo{Provider: "github", BaseBranch: "main", Workflows: []string{"app"}, GitHubAppID: "987654321"}
+	if data, err := lc.Marshal(); err != nil {
+		t.Fatal(err)
+	} else if err := os.WriteFile(installationConfigPath(), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestUpdatePlanOnlyConvergesWhereTheUpdateDoes: the preview of the converge
+// must not refuse an installation that `fugaro update` itself converges.
+//
+// What the carry keeps out of the plan is the job the installation already
+// holds, which is the same thing the real run proposes no change to, and it is
+// not a write of this run's: nothing about it is left for a real run to do. A
+// --plan-only run that answered installOptions' sentence about an App ID the
+// project no longer records would tell the operator reading the plan that an
+// update they can see converging from the plan is one their installation
+// refuses — and the refusal names a remedy the operator cannot take without
+// giving up the repository they added.
+//
+// Mutation (run, restore): answer nil from heldDefaultProfiles for --plan-only
+// (the gate this closes) and this is the only test that fails — the preview
+// stops before it plans anything.
+func TestUpdatePlanOnlyConvergesWhereTheUpdateDoes(t *testing.T) {
+	r := newConvergeRig(t, v7Node())
+	convergeOn(t, r, []string{"policy-vs-jobs"})
+	testutil.Git(t, r.root, "commit", "-qam", "the run's own change to the checkout")
+	fetched(t, r.root)
+	secondAppRepo(t)
+
+	out, errOut, err := executeStdin(t, "", "update", "--plan-only")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("--plan-only refused an installation that `fugaro update` converges, so the preview of the update is not the update: %v\n%s", err, s)
+	}
+	if !strings.Contains(s, "No changes") {
+		t.Errorf("the run's account says no stage planned, so this test may not have planned what it is about:\n%s", s)
+	}
+	if !strings.Contains(s, "kept the shared job of profiles.standard") {
+		t.Errorf("the run planned without saying it keeps the job the installation holds, so this test may not have planned the update's own plan:\n%s", s)
 	}
 }

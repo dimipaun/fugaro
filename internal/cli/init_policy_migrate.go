@@ -1675,16 +1675,23 @@ func installSpec(o *initOptions, lc *localcfg.Config, warn func(string)) (infra.
 // of the config the run cannot compose a job for, named by the installation's
 // own tfvars.
 //
-// It answers for the update door's converge alone, and for a real run: this is
-// the write createDefaultProfiles makes, and it is excluded where that step is
-// — `fugaro setup` composes what it plans before anything exists, and a
-// --plan-only run stops before the write — and a run with no local config has
-// no profile to ask about. A workdir that holds no tfvars — a machine whose
-// installation this run has not planned yet — holds no job either: the config is
-// the only thing that says what those profiles are, and installOptions' refusal
-// is the answer.
+// It answers for the update door alone — `fugaro setup` composes what it plans
+// before anything exists, and has no installation holding a job — and a run with
+// no local config has no profile to ask about. A workdir that holds no tfvars —
+// a machine whose installation this run has not planned yet — holds no job
+// either: the config is the only thing that says what those profiles are, and
+// installOptions' refusal is the answer.
+//
+// A --plan-only run is one of those runs and not an exception to them: it is the
+// preview of the same converge, so it must not refuse an installation that
+// `fugaro update` itself converges. What the carry then keeps out of the plan is
+// the job the installation holds, which is what the real run proposes no change
+// to either — what createDefaultProfiles writes is not part of this answer at
+// all: it does not run under --plan-only, so a profile only that write would add
+// is not in the config for this to name, and a profile the config states is one
+// an earlier `fugaro update` wrote or the operator's own.
 func heldDefaultProfiles(o *initOptions, lc *localcfg.Config) []string {
-	if lc == nil || o.doorName() != updateDoor.name || o.planOnly {
+	if lc == nil || o.doorName() != updateDoor.name {
 		return nil
 	}
 	dir, err := infra.InstallationWorkdir(os.Getenv, lc.GCPProject)
