@@ -20,7 +20,6 @@ package cli
 // two writers of the same document, drifting apart.
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -150,12 +149,17 @@ func runProjectReposEnroll(cmd *cobra.Command, o *projectReposOptions, arg strin
 		return err
 	}
 	reposEnrolmentPlan(cmd.OutOrStdout(), lc, plan)
-	// One question for the whole convergence, and --yes answers that question
-	// and nothing else: every refusal above already happened, and not one of
-	// them is a confirmation. Safe while runs are in flight (CLAUDE.md): this
-	// asks no run to finish and rewrites nothing a run holds — the allow-list
-	// write is the ETag-guarded one, and the stages are `fugaro update`'s.
-	if err := confirmTyped(cmd, bufio.NewReader(cmd.InOrStdin()), lc, o.yes, reposEnrolmentWhat(lc, plan)); err != nil {
+	// One question for the whole convergence, and nothing stands in for it: the
+	// project's name typed at the operator's own terminal is the whole of what
+	// confirms it, which is the class T11 left `policy publish --delete` and an
+	// un-enrollment in — no flag answers a step that widens what every run of
+	// the project is admitted by. A pipe, --json or a coding agent's session
+	// reaches no line to read and is refused by the same call. Every refusal
+	// above already happened, and not one of them is a confirmation. Safe while
+	// runs are in flight (CLAUDE.md): this asks no run to finish and rewrites
+	// nothing a run holds — the allow-list write is the ETag-guarded one, and
+	// the stages are `fugaro update`'s.
+	if err := confirmTypedStrict(cmd, lc, "writing an enrolment widens what every run of the project is admitted by, so it is typed rather than answered in advance", reposEnrolmentWhat(lc, plan)); err != nil {
 		return err
 	}
 	return reposEnrolmentApply(ctx, cmd, o, lc, db, configPath, plan)

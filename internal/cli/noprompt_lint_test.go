@@ -764,16 +764,6 @@ var pendingSites = map[string]string{
 	// of 2026-11-06 leaves typed where --yes does not stand in, so no task of
 	// the plan removes them and this entry is not theirs.
 	"project_cmd.go:confirmRemoval": "T6's file, whose callers T6 and T15 remove",
-	// The enrolment's one confirmation (RE1): `fugaro project repos add`
-	// converges a whole enrolment — this machine's entry, the image mapping,
-	// the published allow-list, the publish and the repository's job — and
-	// asks for the project's name once before it writes any of them. It is the
-	// Typed class exactly as the login unit's install is: a non-money step
-	// whose writes reach the project, not the project's budget, so T15's
-	// owner-session-only fence replaces this confirmation as it does that one.
-	// `--yes` answers it and stands in for no refusal beside it, which is what
-	// leaves it a decision read rather than a value.
-	"project_enroll_converge.go:runProjectReposEnroll": "T15 (the non-money Typed steps, whose fence replaces this confirmation)",
 	// The login unit's own command (O9, Q2): a unit is code that runs at every
 	// login, so the confirmation the owner's answer asked for is the Typed
 	// class and stands while that class does. It is a non-money Typed step,

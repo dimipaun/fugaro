@@ -115,8 +115,9 @@ func newProjectReposAddCmd() *cobra.Command {
 			"Every step is idempotent: a repository already enrolled converges to the\n" +
 			"same state, and a step that has nothing to do says so instead of writing\n" +
 			"the same bytes again. A value it cannot read it refuses with the one command\n" +
-			"that supplies it, and never guesses one. --yes answers the confirmation and\n" +
-			"nothing else: it never stands in for a refusal.\n" +
+			"that supplies it, and never guesses one. The confirmation is the project's\n" +
+			"name typed at your own terminal, and no flag stands in for it: a pipe,\n" +
+			"--json or a coding agent's session is refused rather than answered.\n" +
 			"\n" +
 			"Step 5 needs a checkout of the repository on this machine; without one it\n" +
 			"is left for you, and `fugaro update --repo` in a checkout of the repository\n" +
@@ -139,7 +140,6 @@ func newProjectReposAddCmd() *cobra.Command {
 	}
 	addCloudFlags(cmd, &o.cloud)
 	cmd.Flags().BoolVar(&o.allowListOnly, "allow-list-only", false, "Write only the allow-list entry, as this command did before the whole enrolment converged (required for *)")
-	cmd.Flags().BoolVar(&o.yes, "yes", false, "Answer the enrolment's one confirmation without typing the project's name; it never stands in for a refusal, and --allow-list-only asks nothing for it to answer")
 	return cmd
 }
 
