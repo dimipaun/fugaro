@@ -273,6 +273,45 @@ func TestRunnerWithoutTheTokensKeyKeepsToday(t *testing.T) {
 	}
 }
 
+// TestRunnerUnreadableSetIsNotCalledComplete: a set this run could not read is
+// unknown, and unknown is not empty. Both ways of failing to read it are asked
+// -- a node the run's database client cannot reach at all, and a key that is
+// there but will not decode -- and each must come back partial, because the
+// alternative is the adapter claiming SelfKnown: the run asserting it can tell
+// its own comments apart when it cannot name the accounts it may have written
+// with. That claim is the one this task exists to stop making, and a failed read
+// is no better ground for it than the two shapes the key itself leaves
+// incomplete (R14's repository token, R3's legacy record).
+//
+// The accounts in the node are the ones GET /user answers for and nothing else:
+// a read that failed names no account, so the set is empty and the run falls
+// back to its own token's account -- marked, but never called the whole set.
+func TestRunnerUnreadableSetIsNotCalledComplete(t *testing.T) {
+	t.Run("a node this run cannot read", func(t *testing.T) {
+		r := identitiesRun(t, noTokensNode, func(r *run) { r.ident.db = unreachablePolicyDB(t) })
+		wantsOwn(t, r, map[string]bool{selfUUID: true, otherUUID: false, plantedUUID: false}, false)
+	})
+
+	t.Run("a key that will not decode", func(t *testing.T) {
+		r := identitiesRun(t, `{"version":7,"bitbucket_tokens":{"entries":"not a list"}}`, nil)
+		wantsOwn(t, r, map[string]bool{selfUUID: true, otherUUID: false, plantedUUID: false}, false)
+	})
+}
+
+// unreachablePolicyDB is a database client of the run's own making that reaches
+// nothing, the shape of a node the run cannot read: the address is one nothing
+// listens on, so the read fails at once (the client makes one attempt and
+// classifies the transport error as unavailable) rather than waiting out a
+// timeout in the test.
+func unreachablePolicyDB(t *testing.T) *rtdb.Client {
+	t.Helper()
+	db, err := rtdb.New("http://127.0.0.1:1", rtdb.Auth{IDToken: func() string { return "run-id-token" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db
+}
+
 // TestRunnerNeverReadsTheSetFromTheEnvironment: the set is the node writer's
 // decision and nothing else's (F21). Here the node names one account while the
 // run's task, its environment and its workspace each name another -- the three

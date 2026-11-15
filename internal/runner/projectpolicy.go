@@ -152,9 +152,13 @@ func (r *run) projectPolicy(ctx context.Context) (*projectpolicy.Policy, bool, e
 // comments pass as the run's own (F21 trusts the set at the node writer's
 // level, and nowhere below it).
 //
-// partial is true when the set is known to be missing an account this run may
-// write as, which has two shapes. One is an entry whose identity the node could
-// not carry: a repository access token's, which GET /user answers 403 (R14).
+// partial is true when the run cannot name every account it may write as, which
+// is either a set the node names incompletely or a set this run could not read
+// at all.
+//
+// A set the node names incompletely has two shapes. One is an entry whose
+// identity the node could not carry: a repository access token's, which
+// GET /user answers 403 (R14).
 // The other is the node's legacy untyped record beside typed ones (R3): the
 // selector ranks it after every typed record and may serve a call with it, and
 // its identity is on no node at all -- the legacy record is never an entry of
@@ -163,31 +167,42 @@ func (r *run) projectPolicy(ctx context.Context) (*projectpolicy.Policy, bool, e
 // no typed record it is the only candidate and GET /user names it, which is
 // what R3's "the proxy behaves exactly as today" leaves the installation.
 //
-// Either way GET /user naming an account of Fugaro's no longer says the run can
+// In both GET /user naming an account of Fugaro's no longer says the run can
 // tell its own comments apart: an account outside the set may still be one of
 // this run's, and claiming otherwise is what shuts the markers-from-anyone
 // fallback the follow-up trust rules rest on.
 //
-// Every other answer -- no policy, no key, a key this run cannot read -- is
-// today's behaviour: the empty set (or the legacy record's single token, which
-// GET /user answers for), and a run that tells its own comments apart by that
-// answer alone. That fallback is the narrower one (a comment this run did write
-// reads as somebody else's, which the markers-from-anyone rule already
-// answers), and a set nobody could read is not one to widen trust by.
+// A set this run could not read at all is not an empty set but an unknown one,
+// and it is partial too: a node whose read failed, or a key that will not
+// decode. A run that could not say which accounts are Fugaro's must not answer
+// that it can tell its own comments apart -- the claim is what the adapter's
+// SelfKnown carries -- and calling a set complete because it was unreadable is
+// the false claim this read exists to stop making, from the other side. What
+// the run falls back to there is GET /user's own account, the narrower answer,
+// with the markers still read from anyone.
+//
+// What is left -- no published node, a node without the key -- is today's
+// behaviour: the empty set (or the legacy record's single token, which GET
+// /user answers for), and a run that tells its own comments apart by that
+// answer alone. That fallback is the narrower one: a comment this run did write
+// reads as somebody else's, which the markers-from-anyone rule already answers.
 func (r *run) bitbucketOwnIdentities(ctx context.Context) (projectpolicy.BitbucketTokenIdentities, bool) {
 	pp, found, err := r.projectPolicy(ctx)
-	if err != nil || !found {
+	if err != nil {
+		return nil, true
+	}
+	if !found {
 		return nil, false
 	}
 	db, err := r.budgetClient(ctx)
 	if err != nil || db == nil {
-		return nil, false
+		return nil, true
 	}
 	var node map[string]json.RawMessage
 	if _, err := db.Get(ctx, projectpolicy.PathShared(), &node); err != nil {
 		r.d.Log.Warn("policy: the Bitbucket token identities could not be read; this run tells its own comments apart by its own token alone",
 			"node", projectpolicy.PathShared(), "key", projectpolicy.BitbucketTokensKey)
-		return nil, false
+		return nil, true
 	}
 	raw, ok := node[projectpolicy.BitbucketTokensKey]
 	if !ok || projectpolicy.IsNull(raw) {
@@ -199,7 +214,7 @@ func (r *run) bitbucketOwnIdentities(ctx context.Context) (projectpolicy.Bitbuck
 		// read out of a log line, and the key's name is enough to find it.
 		r.d.Log.Warn("policy: the Bitbucket tokens key could not be read; this run tells its own comments apart by its own token alone",
 			"node", projectpolicy.PathShared(), "key", projectpolicy.BitbucketTokensKey)
-		return nil, false
+		return nil, true
 	}
 	var own projectpolicy.BitbucketTokenIdentities
 	seen := make(map[string]bool, len(tokens.Entries))
