@@ -6746,8 +6746,11 @@ unchanged by it. A follow-up (--pr) records one only when it is given, and
 A plan task already being worked on is a refusal: while a run of it is in
 flight, or a run of it left a pull request behind, the launch stops before
 anything is pushed or started and names what holds the task and the ways out
-(--pr, --retry, --continues). --allow-duplicate launches anyway, for a second
-attempt that is deliberate, such as the redundant attempts of one hard task.
+of what it found: --pr where it found a pull request for the task, --continues
+where it found a run in flight that carries none. --retry is not one of them,
+every run it could name having launched already, so it would do nothing.
+--allow-duplicate launches anyway, for a second attempt that is deliberate,
+such as the redundant attempts of one hard task.
 The check reads the run records and never the code host, so a pull request a
 run left is still refused once it has been merged; a read that cannot be made
 is skipped with one warning, and the launch goes ahead: it never blocks on its

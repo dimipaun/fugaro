@@ -406,8 +406,11 @@ func newRunCmd() *cobra.Command {
 			"A plan task already being worked on is a refusal: while a run of it is in\n" +
 			"flight, or a run of it left a pull request behind, the launch stops before\n" +
 			"anything is pushed or started and names what holds the task and the ways out\n" +
-			"(--pr, --retry, --continues). --allow-duplicate launches anyway, for a second\n" +
-			"attempt that is deliberate, such as the redundant attempts of one hard task.\n" +
+			"of what it found: --pr where it found a pull request for the task, --continues\n" +
+			"where it found a run in flight that carries none. --retry is not one of them,\n" +
+			"every run it could name having launched already, so it would do nothing.\n" +
+			"--allow-duplicate launches anyway, for a second attempt that is deliberate,\n" +
+			"such as the redundant attempts of one hard task.\n" +
 			"The check reads the run records and never the code host, so a pull request a\n" +
 			"run left is still refused once it has been merged; a read that cannot be made\n" +
 			"is skipped with one warning, and the launch goes ahead: it never blocks on its\n" +
