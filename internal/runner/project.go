@@ -135,16 +135,19 @@ func providerForSlug(slug, repo string) (kind string, ok bool) {
 // its owner did not choose for it.
 //
 // Only a selection other than the default is checked. A workflow that names
-// none runs on the default (standard), and a policy that carries a profiles
-// block must define it (projectpolicy.validProfiles), so the default can only
-// be defined; a policy with no profiles block at all defines nothing, and a run
-// has no job layout to apply one with yet (task 3.2), so nothing is refused for
-// the default. A workflow that writes `job_profile: standard` says exactly what
-// omitting the key says (docs/project-layer.md), so it is the default too and
-// runs wherever the omission runs. An installation that has published no
-// policy is the phase-2 installation: naming any other job profile there is a
-// claim about a document that does not exist, and it is refused rather than
-// ignored.
+// none runs on the default profile of its repository's provider — `standard`
+// for the project's first provider and `standard-<provider>` for another
+// (D2310, R8), which ProjectJobDefaultProfile resolves — and a policy that
+// carries a profiles block must define its providers' defaults
+// (projectpolicy.validProfiles), so the one a repository on a provider in use
+// resolves to can only be defined; a policy with no profiles block at all
+// defines nothing, and a run has no job layout to apply one with yet (task
+// 3.2), so nothing is refused for the default. A workflow that writes
+// `job_profile: standard` says exactly what omitting the key says
+// (docs/project-layer.md), so it is the default too and runs wherever the
+// omission runs. An installation that has published no policy is the phase-2
+// installation: naming any other job profile there is a claim about a document
+// that does not exist, and it is refused rather than ignored.
 //
 // A run in a project job carries the selection: the job's own name was written
 // from a (profile, provider, account) triple of the policy (task 3.2's layout,
@@ -165,9 +168,27 @@ func (r *run) checkJobProfile(ctx context.Context, workflow string, wf config.Wo
 	if err != nil {
 		return err
 	}
-	if job, project := r.projectJob(); project && job.Profile != wf.JobProfileOrDefault() {
-		return fmt.Errorf("this run is in the Cloud Run job %s, which is the project job of the profile %q, and the workflow %s selects the job profile %q: the job a run is launched as is the one its workflow's selection built, so the two disagreeing means the selection changed after the launch, or the job was chosen by hand. The run stops rather than running the workflow's work on a job nobody selected for it",
-			gcp.ProjectJobName(job.Profile, job.Provider, job.Account), job.Profile, workflow, wf.JobProfileOrDefault())
+	if job, project := r.projectJob(); project {
+		// What the workflow selects, resolved the way the launcher resolved it
+		// when it placed this run in this job: a workflow that names no job
+		// profile runs on the default profile of its repository's provider —
+		// `standard` for the project's first provider and `standard-<provider>`
+		// for another (D2310, R8) — and the provider this job serves is that
+		// repository's. Reading the omission as `standard` halted a run the
+		// launcher had just placed on the other provider's own default job, so
+		// the resolution is the launcher's own (ProjectJobDefaultProfile, which
+		// internal/cli's launchProjectJobFor calls for the same question). want
+		// is "" only when the published policy defines no profile for this
+		// provider at all: nothing then says which profile the workflow meant,
+		// and no omission is refused for it (below).
+		want := wf.JobProfile
+		if want == "" {
+			want = ProjectJobDefaultProfile(p, job.Provider)
+		}
+		if want != "" && job.Profile != want {
+			return fmt.Errorf("this run is in the Cloud Run job %s, which is the project job of the profile %q, and the workflow %s selects the job profile %q: the job a run is launched as is the one its workflow's selection built, so the two disagreeing means the selection changed after the launch, or the job was chosen by hand. The run stops rather than running the workflow's work on a job nobody selected for it",
+				gcp.ProjectJobName(job.Profile, job.Provider, job.Account), job.Profile, workflow, want)
+		}
 	}
 	if wf.JobProfile == "" || wf.JobProfile == projectpolicy.DefaultProfileName {
 		return nil
@@ -488,31 +509,26 @@ func remoteAdmissionErr(remote, kind, repo, slug string) error {
 // the two facts are; this is where they are read, once, from the one read of
 // the published node.
 //
-// A project job is proxied only when the run is a review on the review-only
-// variant of it (owner direction 2026-11-13): that container mounts no
-// Bitbucket token at all, so the service's proxy is the only way it can clone
-// the pull request it reviews, and the variant exists for exactly one class.
-// The class is the run's own marker and the matched candidate's, never a
-// suffix read back out of the job's name (R2-5); the two are already held to
-// each other by checkJobClass, which runs in jobIdentity before this, so a run
-// that reaches here in a project job is in the job of its own class. Every
-// other class on a project job keeps today's answer -- a shared job serves
-// every repository of its profile and holds its own token, and the service
-// admitting a shared coding caller is B5.3, not this.
+// Every Bitbucket job that reaches here is proxied, whichever job model it is
+// and whichever class the run is. A shared project job serves every repository
+// of its profile and holds no Bitbucket token at all (S1's deployer refuses a
+// profile that mounts one, D2302), so the service's proxy is the only way any
+// run of it can clone, fetch, push or call the API; the review-only variant of
+// a project job is the same statement for a second reason (it mounts no secret
+// at all, which is why the class rule stood here alone until S3); and a
+// per-repository job is proxied exactly when the published block admits its
+// repository with proxy: true, which is what B1.7 shipped. The job model
+// therefore decides nothing here, and an earlier revision that read it -- a
+// project job proxied only when its run was a review -- would withhold the
+// proxy from exactly the runs that have nothing else to clone with.
 //
-// This rule is the runner's half of the review variant, and today it is the
-// only half that exists. A Bitbucket profile is deployed no project job at
-// all (internal/infra's ProjectJobs skips a provider no shared job serves,
-// D505), so there is no Bitbucket review variant for a launch to resolve, and
-// a review launch in a Bitbucket repository is refused by internal/cli's
-// reviewJobFor before any container starts. Both halves are follow-ups, the
-// deploy one first: until it lands, no run reaches this path, and nothing here
-// is a substitute for it.
-func (r *run) proxiedBitbucket(p *projectpolicy.Policy, found, project bool, kind, repo string) bool {
+// What a project job does decide is that a repository the block does not serve
+// is a halt rather than a fallback: the run has no token to fall back to, and
+// sharedJobNeedsTheProxy (runner.go) stops it before it clones. The class is
+// still the run's own marker and the matched candidate's and never a suffix
+// read back out of the job's name (R2-5), but nothing here reads it any more.
+func (r *run) proxiedBitbucket(p *projectpolicy.Policy, found bool, kind, repo string) bool {
 	if kind != gitprov.KindBitbucket || !found || p == nil || p.BitbucketToken == nil || !p.BitbucketToken.Proxy {
-		return false
-	}
-	if project && !r.reviewClassRun() {
 		return false
 	}
 	if envLookup(r.d.Env, providers.EnvCredentialsServiceURL) == "" {
@@ -523,6 +539,25 @@ func (r *run) proxiedBitbucket(p *projectpolicy.Policy, found, project bool, kin
 		return false
 	}
 	return projectpolicy.AdmitRepo(p.BitbucketToken.AllowRepos, canonical)
+}
+
+// proxiedOpener builds the opener a proxied run opens its Bitbucket provider
+// with (B1.7, G1): providers.Proxied pointed at this execution's own loopback
+// forwarder, and handed the identity set the project's published node carries
+// (T16, F20).
+//
+// The two belong together because they are the same fact seen twice: the
+// credentials service serves one run with several of the node's tokens in turn
+// (D2355), so the accounts a comment may be written as are the node's set and
+// not the single account GET /user answers for whichever token served this
+// call. Neither value comes from anything a task, a job's environment or a
+// checkout could carry: an identity planted in one of the three would make its
+// author's comments read as the run's own, and that decision is the node
+// writer's alone (F21).
+func (r *run) proxiedOpener(ctx context.Context) gitprov.Opener {
+	own, partial := r.bitbucketOwnIdentities(ctx)
+	return providers.Proxied(r.d.Env, r.forward.URL(), nil,
+		func(msg string) { r.d.Log.Warn(r.redact(msg)) }, own, partial)
 }
 
 // remoteAdmissionRefusal refuses a remote that is not exactly the repository
@@ -1223,17 +1258,15 @@ func (r *run) admissionCheck(ctx context.Context) error {
 	// read here, at the run's one read of the published node: the node's
 	// bitbucket_token block admits this repository with proxy: true, and the
 	// installation has the service on -- the job carries its URL, which is
-	// the only thing that says so (D146/D147). A per-repository job (D505),
-	// and beside it the review-only variant of a project job: that container
-	// mounts no Bitbucket token, so a review run in it has nothing to clone
-	// with but the service's proxy (proxiedBitbucket has the class rule and
-	// why it is safe). A shared project job is not one -- it serves every
-	// repository of its profile, and its job account is the one the service
-	// admits, so a proxied repository is never launched onto one. Everything
-	// downstream reads this fact -- the forwarder, the credential URL, the
-	// provider and the git environment -- so that no second reader can
-	// disagree with this one about which of them a repository is.
-	r.proxied = r.proxiedBitbucket(p, found, project, kind, repo)
+	// the only thing that says so (D146/D147). A per-repository job (D505), a
+	// shared project job and the review-only variant of one: none of them
+	// holds a Bitbucket token any more, so the service's proxy is the only way
+	// any of them reaches Bitbucket (proxiedBitbucket has the rule and why the
+	// job model is not part of it). Everything downstream reads this fact --
+	// the forwarder, the credential URL, the provider and the git environment
+	// -- so that no second reader can disagree with this one about which of
+	// them a repository is.
+	r.proxied = r.proxiedBitbucket(p, found, kind, repo)
 	if !project {
 		// The remote is where the clone comes from, and on a per-repository job
 		// it is the job's own environment (Deps.Remote, RemoteEnv) or the origin
