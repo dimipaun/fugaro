@@ -11,7 +11,18 @@
 > reaper checks pass. Nothing in this document has been measured on an
 > installation that selects it — Check 57b (plan Task 12, owner-run) is that
 > run. 0.8.6's notes said the Batch backend would return in 0.9.0; 0.9.0's own
-> notes state it as a known limit instead.
+> notes state it as a known limit instead. **Since the compute stage learned to
+> record it, enabling the backend is two commands and no hand edit**:
+> `fugaro setup --provision-batch` applies the compute root and writes the
+> installation's `batch:` block from that root's own outputs, and
+> `fugaro backends use cloud-batch` is the one command that selects the name —
+> behind the same doctor gate, and refused until the block is there. The block's
+> `image` is the one field no root output answers, and the one case where the
+> provisioning writes no block and says so on the terminal: §2.1's "fugaro-base
+> at the installation's pinned version" is a path through the installation's
+> remote repository since the remote-repository migration, and §4.4's own mode
+> rule refuses it. [backends.md](../backends.md#the-batch-block) carries the
+> rule; this is the one place where this document and the tree disagree.
 
 Status: design for review (2026-10-15), written to the owner's ruling of
 2026-10-14 (restored in the generic-tool plan, PR #374): the Docker-capable
