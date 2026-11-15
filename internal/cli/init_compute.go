@@ -492,11 +492,15 @@ func (s *computeStage) recordBatchBlock(ctx context.Context) error {
 	r := s.e.r
 	block, why := s.batchBlock()
 	if block == nil {
-		fmt.Fprintln(r.stageDetail(), why)
+		// The terminal, not the log: every one of these lines names something
+		// the owner has to do before this installation can run on the backend,
+		// and a stage that left it in a log file would be a provisioning that
+		// looks complete and is not.
+		fmt.Fprintln(r.w, why)
 		return nil
 	}
 	if s.e.path == "" {
-		fmt.Fprintln(r.stageDetail(), "the batch block was not recorded: this run has no project config file to write it to (the project is read from somewhere else, such as --config with no file of its own)")
+		fmt.Fprintln(r.w, "the batch block was not recorded: this run has no project config file to write it to (the project is read from somewhere else, such as --config with no file of its own)")
 		return nil
 	}
 	old, err := os.ReadFile(s.e.path)
@@ -516,7 +520,7 @@ func (s *computeStage) recordBatchBlock(ctx context.Context) error {
 	merged := mergeBatch(owner, block)
 	if sameBatch(merged, owner) {
 		if why != "" {
-			fmt.Fprintln(r.stageDetail(), why)
+			fmt.Fprintln(r.w, why)
 		}
 		return nil
 	}
@@ -530,7 +534,7 @@ func (s *computeStage) recordBatchBlock(ctx context.Context) error {
 		r.publishSharedConfig(ctx, &next)
 	}
 	if why != "" {
-		fmt.Fprintln(r.stageDetail(), why)
+		fmt.Fprintln(r.w, why)
 	}
 	return nil
 }

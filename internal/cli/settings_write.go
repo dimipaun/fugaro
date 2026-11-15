@@ -301,7 +301,15 @@ func announceSettingsWrite(cmd *cobra.Command, managed bool, what string) error 
 // commands in that refusal, so each family's sentence names its own commands
 // rather than another family's.
 func settingsLocalFile(what string) (localcfg.Selection, *localcfg.Config, error) {
-	sel, lc, err := settingsSelection()
+	return settingsAimedLocalFile(settingsWriteOptions{}, what)
+}
+
+// settingsAimedLocalFile is settingsLocalFile for the commands that can aim the
+// selection with --config and --project (settingsAimedSelection), so the same
+// refusal and the same file are reached either way rather than a second copy of
+// the rule living in the family that gained the flags.
+func settingsAimedLocalFile(o settingsWriteOptions, what string) (localcfg.Selection, *localcfg.Config, error) {
+	sel, lc, err := settingsAimedSelection(o)
 	if err != nil {
 		return sel, nil, err
 	}

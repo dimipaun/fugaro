@@ -9928,12 +9928,52 @@ provisioned; the preloaded boot image fugaro-preload-<the pin's first eight hex>
 
 (`internal/cli/init_compute.go`; the family name is `infra.PreloadedImage`, held to the module's own
 derivation by that package's test, and the label name is the module's `socket_gid_label`). **FACT:**
-the Cloud Build run it started — its build id, that it succeeded, and roughly how long it took.
-**FACT:** a second run of the same command. **expected output:** exactly `No changes: the compute
-backend's provisioning matches the plan.` — the stage re-plans and reports nothing to do, which is
+the lines the stage printed after that one. **expected output:** the block's own line — either
+`the batch block was not recorded: …` (the one case where the stage writes no block, and the line
+names what to do; the `image` key is the field no root output answers, see
+[backends.md](backends.md#the-batch-block)) or nothing at all when every field was formed — and
+**always**, when the installation does not select the backend yet,
+`this installation still runs on cloud-run: select the backend with fugaro backends use cloud-batch`.
+**FACT:** the project config after the apply (`grep -A8 '^batch:' "${HOME}/.config/fugaro/config.yaml"`).
+**expected output:** a `batch:` block carrying `image`, `boot_image` (`projects/<project>/global/images/family/<family>`),
+`network`, `subnetwork` and, on a project whose run accounts are exactly one, `service_account`; the
+block is what the stage derived from the compute root's own outputs, and a hand-set field of yours is
+kept as it was (`internal/cli/init_compute.go`'s `mergeBatch`; the whole rule is in
+[backends.md](backends.md#the-batch-block)). A second provisioning run must not move it: the merge is
+field by field and an unchanged block is not written. **FACT:** the Cloud Build run it started — its
+build id, that it succeeded, and roughly how long it took. **FACT:** a second run of the same
+command. **expected output:** exactly `No changes: the compute backend's provisioning matches the plan.` — the stage re-plans and reports nothing to do, which is
 also the reading that says the apply finished whole.
 
-**(124a-5) `fugaro doctor` for the Batch setup.** The read-back, and the step whose reading is not
+**(124a-5) Select the backend, and read back what that moved.** The provisioning is done, and the
+installation is still on Cloud Run: `fugaro setup --provision-batch` writes the block and applies the
+compute root and does **not** write `backend:` (every launch of the installation would move onto VMs,
+and the reaper deletes there), so the step is the owner's own, one command.
+
+```bash
+fugaro backends use cloud-batch --project fugaro
+```
+
+**FACT:** the whole output and the exit code. **expected output:** `point <path> at cloud-batch: its
+runs are launched on cloud-batch from the next run on`, then `every run of fugaro is launched on Cloud
+Batch from now on: one VM per run, with a Docker daemon, and that VM and its job are the reaper's to
+sweep (fugaro backends use cloud-run moves it back to Cloud Run)`, and `exit: 0`. It asks nothing
+(the no-prompt policy) and it keeps every other byte of the project config. **FACT:** the two
+refusals, read before the write is accepted. **expected output:** on an installation whose config
+carries no `batch:` block, `refusing to select cloud-batch: this installation's config carries no
+batch block …`; on one whose Batch checks do not pass, `refusing to select cloud-batch: N of fugaro
+doctor's Batch checks do not pass for this installation -- …` with the first three checks named. Run
+it in a coding agent's session as well: the write is refused there (it is a widening — a run's job
+gets a VM with a Docker daemon on it, design §1 — the same class as the provisioning step's own
+refusal), and `fugaro backends use cloud-run` is never refused. **FACT:** that `backend:` is not
+shared, and what that means for a second machine: `fugaro doctor --json | grep -i backend` on another
+machine of the same project, and the shared config's own keys. **expected output:** the other
+machine still runs on cloud-run — `backend:` is dropped from the shared config (`localcfg`'s
+`Shared`, `BackendName`) and the runs bucket's reader refuses the key, so the selection is each
+machine's own (`docs/design/shared-config.md` §4), and every machine that should run on the backend
+selects it itself.
+
+**(124a-6) `fugaro doctor` for the Batch setup.** The read-back, and the step whose reading is not
 the one an owner expects (see the note above): the Batch half prints a line only when a check is
 **not** OK, and one `info` line plus the summary line is the pass.
 
@@ -9958,9 +9998,12 @@ whether any `batch-` line appears at all — `doctorBatchChecks` returns nothing
 with no `batch:` block (`internal/cli/doctor_batch.go`, `if lc.Batch == nil`), and the block reaches
 a machine through the project layer's shared config (`internal/projectpolicy`, `MergeShared`), so
 **an installation that prints no `batch-` line at all — not even the `info` one — has no `batch:`
-block to read**, and that is the first thing to fix: the rest of this step says nothing about it.
+block to read**. The block is written by 124a-4's apply, so a machine with none is one the
+provisioning never reached — or one whose apply printed, in that same step, the line saying why it
+wrote none and what to do about it (the `image` key is the one field no root output answers;
+[backends.md](backends.md#the-batch-block) has the rule).
 
-**(124a-6) `fugaro validate` for the Batch setup.** The offline half of the same reading, and the
+**(124a-7) `fugaro validate` for the Batch setup.** The offline half of the same reading, and the
 one an owner can run in ten seconds.
 
 ```bash
@@ -10394,7 +10437,7 @@ keep counting against the project's custom-role limit for seven days after it �
 compute root's own teardown).
 
 **FACT:** the read-back that the installation is whole. **expected output:** the same `batch-` lines
-124a-5 printed — the one `info batch-artifact-boundary:` line and the summary line the rest of the
+124a-6 printed — the one `info batch-artifact-boundary:` line and the summary line the rest of the
 Batch half prints nothing beside (for the reason 124a gives), so a new `warning batch-` line here is
 a finding this check made — plus
 `gcloud compute images list --project="${P:?}" --filter='name~^fugaro-preload-'` still listing the

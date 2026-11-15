@@ -165,6 +165,7 @@ and the name its config selects.`,
 //     drifted apart elsewhere still launches. This command cannot drift: the
 //     selection it writes is one the checks passed for.
 func newBackendsUseCmd() *cobra.Command {
+	var o backendsUseOptions
 	cmd := &cobra.Command{
 		Use:   "use <cloud-run|cloud-batch>",
 		Short: "Select the compute backend this project runs its jobs on",
@@ -197,16 +198,27 @@ follows it: on cloud-batch a run's job is a VM with a Docker daemon, so a
 workflow that needs Docker can run, and that VM and its job are the reaper's to
 sweep.`,
 		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error { return runBackendsUse(cmd, args[0]) },
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runBackendsUse(cmd, args[0], o)
+		},
 	}
+	// The settings family's two aiming flags (settingsAimFlags): the write lands
+	// in the config of the project they name rather than in whichever one the
+	// machine's environment would have picked, which is what a live check's
+	// `--project fugaro` needs and what a machine with several installations
+	// needs. They are the family's, not --gcp-project/--region: nothing here
+	// reads a region or a GCP project from the command line, and a flag that
+	// looked like it did would be one an owner would use to aim a write it does
+	// not aim.
+	settingsAimFlags(cmd, &o.project, &o.config)
 	return cmd
 }
 
-func runBackendsUse(cmd *cobra.Command, name string) error {
+func runBackendsUse(cmd *cobra.Command, name string, o backendsUseOptions) error {
 	if !slices.Contains(selectableBackends, name) {
 		return userErr("backend %s: this installation may run on %s, and nothing else (fugaro backends ls lists them)", pluginwire.Printable(name), strings.Join(selectableBackends, " or "))
 	}
-	sel, lc, err := settingsLocalFile("fugaro backends use")
+	sel, lc, err := settingsAimedLocalFile(settingsWriteOptions{project: o.project, config: o.config}, "fugaro backends use")
 	if err != nil {
 		return err
 	}
@@ -252,6 +264,15 @@ func runBackendsUse(cmd *cobra.Command, name string) error {
 		fmt.Fprintf(cmd.OutOrStdout(), "%s\n", backendsUseAfter(name, lc.Name))
 	}
 	return nil
+}
+
+// backendsUseOptions are `fugaro backends use`'s flags: the settings family's
+// two aiming flags (settingsAimFlags) and nothing else. There is no --yes: this
+// write asks nothing, and the checks in front of it are what stands in place of
+// a question.
+type backendsUseOptions struct {
+	project string
+	config  string
 }
 
 // backendsUseWhat is the sentence the write prints before it writes. It names

@@ -14,7 +14,38 @@ Three optional sub-interfaces are named here as the likely next step, not introd
 
 ## Opening a backend by name
 
-A project config's `backend:` key names the backend (`cloud-run` is the default and, today, the only valid value). `backend.Open(ctx, name, openers)` picks the right constructor from a map the caller builds after resolving its own backend-specific options (GCP project, region, endpoints, ...); the `backend` package never imports a backend implementation, which would cycle back to it. `internal/cli/cloud.go`'s `openCloudFor` is the one production call site.
+A project config's `backend:` key names the backend: `cloud-run` (Cloud Run jobs, the default a config that names none runs on) or `cloud-batch` (Cloud Batch jobs, one VM per run — the VM backend, [design](design/compute-backend.md)). `fugaro backends ls` lists both and marks the one the selected project uses; `backend.Open(ctx, name, openers)` picks the right constructor from a map the caller builds after resolving its own backend-specific options (GCP project, region, endpoints, ...); the `backend` package never imports a backend implementation, which would cycle back to it. `internal/cli/cloud.go`'s `openCloudFor` is the one production call site.
+
+`backend:` is a **per-machine** key: it is dropped from the shared config (`localcfg`'s `Shared`, `BackendName`) and the runs bucket's reader refuses it, so a launcher who writes the file cannot move every teammate onto VMs with a batch block of their choosing — the checks that keep the name safe are `fugaro doctor`'s, and doctor reads the config of the machine running it.
+
+### Selecting it: `fugaro backends use`
+
+`fugaro backends use <cloud-run|cloud-batch>` is the one command that writes the key (`internal/cli/backends.go`). It keeps every comment and every other byte of the project config, backs the old file up, replaces it atomically, and asks nothing. Selecting `cloud-batch` is refused until both of these hold:
+
+- the installation's config carries a `batch:` block (see below) — without one, nothing on the machine knows the machine type, the boot image, the network or the account a run's VMs are built from, and every launch on it fails at create;
+- `fugaro doctor`'s Batch checks pass, read at doctor's own strictness (`doctorRefusals`); doctor names the ones that do not, and `fugaro backends use` refuses with the first three of them.
+
+Selecting `cloud-batch` is also a **widening**: a run's job becomes a Compute Engine VM with the Docker daemon of a Container-Optimized OS boot image available to it through a bind-mounted socket ([design](design/compute-backend.md) §1), so it is the coding-agent refusal's class — no coding agent's session writes it, and the owner's own terminal reads what it widens and writes it. Selecting `cloud-run` is a narrowing and is never refused.
+
+Neither the gate nor the widening holds a **launch** back: `fugaro run` reads no doctor check, so an installation whose selection and provisioning have drifted apart elsewhere still launches. What moves with the selection is where *every* launch of the installation goes, and the reaper's sweep. Not selecting the backend is a supported state — the provisioning is complete, `fugaro doctor` reports the Batch checks as warnings while the installation runs on Cloud Run, and `fugaro setup --provision-batch` prints the one line naming `fugaro backends use cloud-batch` at the end of every run.
+
+## The batch block
+
+The `batch:` block is the installation's own facts about a Cloud Batch run — the machine type, the boot image, the network and subnetwork its VMs are placed in, the account they act as, the job image, the socket gid and the task timeout (`localcfg.Batch`, design §4.4). `fugaro setup --provision-batch` **writes it from the compute root's own outputs** in the same step that applies the root, into the machine's project config, through the writer the other converge stages use (re-read, parse, marshal, diff, backup, atomic replace), and publishes it in the shared config (the block is the installation's, not one machine's, so every machine reads it back).
+
+What it writes, and where each field comes from:
+
+| Key | Written from |
+| --- | --- |
+| `boot_image` | the root's `preload_image` output — `projects/<project>/global/images/family/<family>` |
+| `network`, `subnetwork` | the root's outputs of the same names |
+| `service_account` | the project's own Fugaro run accounts (`infra.JobRunAccounts`), and **only** when there is exactly one: the block carries one account for every workflow of the installation, and a pick among several would put one profile's run under another profile's reach |
+| `image` | the config's own base image, when this installation's Artifact Registry serves it (see below) |
+| `machine_type`, `socket_gid`, `task_timeout`, `secrets` | not written: empty means the backend's own default or its refusal, and the gid's value is a fact about the boot image's build, which no root output carries (`infra.ComputeOutputs`). Set them by hand where you want them |
+
+A field you have already written **wins**: the merge is field by field, over the effective block (the local file's or the published one), and a block already equal to what the stage would write is not written at all. So a re-run changes nothing, and a hand-edited `machine_type`, `image` or `socket_gid` is kept.
+
+`image` is the one field no root output answers, and the one with a condition on it: a Batch job may execute only an image of the installation's own **STANDARD** repository (`doctor`'s `batch-job-image`, the published block's reader, and design §4.4's own reading). A base image the release pins is served through the installation's **remote** (pull-through) repository since the remote-repository migration, and every one of those readers refuses such a path — so the stage records the block only when your config's `base_images.base` is an image of your own registry (`--base-image base=<ref>`, or the copy in `fugaro-base` that releases before the migration pushed), and otherwise writes nothing and prints one line saying what to do: build the base (`sh images/build-base.sh base`), push it into `<region>-docker.pkg.dev/<project>/fugaro-base`, record it with `fugaro setup --base-image base=<ref>`, then run `fugaro setup --provision-batch` again. That is a deliberate refusal and not a gap in the command: writing the pin instead would produce a block the shared config refuses to publish, or one the first run's pull fails on. Until the per-workflow image task resolves that field (`localcfg.Batch.Image` says as much), this is the one place where enabling the Batch backend still asks the owner for an image of their own.
 
 ## The conformance suite
 

@@ -500,7 +500,7 @@ step_doctor() {
     return 0
   fi
   if [ -z "$lines" ]; then
-    fact doctor FAIL "fugaro doctor --all printed no 'batch-' line at all, not even the info one — an installation with no batch: block in its project config is one doctorBatchChecks returns nothing for, and this check is about the Batch backend: this is the first thing to fix, and the rest of 124a-5 says nothing about it. doctor's whole output: $(printf '%s' "$out" | oneline)"
+    fact doctor FAIL "fugaro doctor --all printed no 'batch-' line at all, not even the info one — an installation with no batch: block in its project config is one doctorBatchChecks returns nothing for, and this check is about the Batch backend: this is the first thing to fix, and the rest of 124a-6 says nothing about it. doctor's whole output: $(printf '%s' "$out" | oneline)"
     return 0
   fi
   local summary
@@ -1193,7 +1193,7 @@ step_diff() {
 }
 
 step_whole() {
-  # --all, for the same reason 124a-5 runs it: the boundary line this row
+  # --all, for the same reason 124a-6 runs it: the boundary line this row
   # compares against 124a is a measurement, and the default view prints none.
   run_capture "$SCRATCH/doctor.out" "$SCRATCH/doctor.err" fugaro doctor --all --project "$INSTALL"
   local out failing lines
@@ -1213,7 +1213,7 @@ step_whole() {
   if [ -n "$bad" ]; then
     fact whole FAIL "${bad}the read-back verbatim: batch- lines [$(printf '%s' "$lines" | oneline)], doctor's summary [$(printf '%s\n' "$out" | grep -m1 '^fugaro doctor:' | oneline)], the preload images [$(printf '%s' "$images" | oneline)]"
   else
-    fact whole PASS "the installation is whole after the whole check: the same batch- lines 124a-5 read ('$(printf '%s' "$lines" | oneline)'), doctor's summary '$(printf '%s\n' "$out" | grep -m1 '^fugaro doctor:' | oneline)', and the preload family still there — $(printf '%s' "$images" | oneline). NOTHING was torn down anywhere in this check: the two APIs are still on, the run accounts' IAM is untouched, the reaper's and the preload's accounts and their two custom roles stand, the Cloud NAT and its router stand, both scheduler jobs stand, the reaper job stands, and a teardown of the compute root is NOT this check's restore step — it would take the installation's backend apart, and the two custom roles would keep counting against the project's custom-role limit for seven days after it"
+    fact whole PASS "the installation is whole after the whole check: the same batch- lines 124a-6 read ('$(printf '%s' "$lines" | oneline)'), doctor's summary '$(printf '%s\n' "$out" | grep -m1 '^fugaro doctor:' | oneline)', and the preload family still there — $(printf '%s' "$images" | oneline). NOTHING was torn down anywhere in this check: the two APIs are still on, the run accounts' IAM is untouched, the reaper's and the preload's accounts and their two custom roles stand, the Cloud NAT and its router stand, both scheduler jobs stand, the reaper job stands, and a teardown of the compute root is NOT this check's restore step — it would take the installation's backend apart, and the two custom roles would keep counting against the project's custom-role limit for seven days after it"
   fi
 }
 

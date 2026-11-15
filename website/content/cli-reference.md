@@ -937,7 +937,9 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `-h`, `--help` | bool | `false` | no | help for use |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 
 Subcommands:
 
