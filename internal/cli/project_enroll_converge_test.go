@@ -13,6 +13,7 @@ package cli
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -99,11 +100,23 @@ func atEnrolCheckout(t *testing.T) string {
 	return dir
 }
 
-// enrol runs the command the way a scripted caller does: --yes answers the one
-// confirmation, and nothing else in the command reads a terminal.
+// enrol runs the command the way the person it is for does: the project's name
+// typed at what the confirmation reads as their own terminal. No flag answers
+// it (T11 took --yes out of the tree), so the name and the terminal are the
+// whole of what stands between this fixture and the converge.
 func (r *addRig) enrol(t *testing.T, args ...string) (string, string, error) {
 	t.Helper()
-	return executeStdin(t, "", append([]string{"project", "repos", "add"}, args...)...)
+	return r.enrolTyping(t, r.addLocal(t).Name, args...)
+}
+
+// enrolTyping is enrol with the line the person types under it, for the
+// fixtures that are about the answer rather than about the converge.
+func (r *addRig) enrolTyping(t *testing.T, typed string, args ...string) (string, string, error) {
+	t.Helper()
+	old := stdinIsTerminal
+	stdinIsTerminal = func(io.Reader) bool { return true }
+	t.Cleanup(func() { stdinIsTerminal = old })
+	return executeStdin(t, typed+"\n", append([]string{"project", "repos", "add"}, args...)...)
 }
 
 // TestProjectReposAddEnrolsInOneRun is the whole of RE1 in one run: the five
@@ -112,7 +125,7 @@ func (r *addRig) enrol(t *testing.T, args ...string) (string, string, error) {
 // order the task orders them.
 func TestProjectReposAddEnrolsInOneRun(t *testing.T) {
 	r := enrolRig(t)
-	out, errOut, err := r.enrol(t, enrolRepo, "--yes")
+	out, errOut, err := r.enrol(t, enrolRepo)
 	if err != nil {
 		t.Fatalf("project repos add %s: %v\nstdout:\n%s\nstderr:\n%s", enrolRepo, err, out, errOut)
 	}
@@ -168,12 +181,12 @@ func TestProjectReposAddEnrolsInOneRun(t *testing.T) {
 // third run, whose file has settled, is byte-identical.
 func TestProjectReposAddSecondRunChangesNothing(t *testing.T) {
 	r := enrolRig(t)
-	if _, _, err := r.enrol(t, enrolRepo, "--yes"); err != nil {
+	if _, _, err := r.enrol(t, enrolRepo); err != nil {
 		t.Fatal(err)
 	}
 	before, node := r.addLocal(t), r.nodeText(t)
 
-	out, errOut, err := r.enrol(t, enrolRepo, "--yes")
+	out, errOut, err := r.enrol(t, enrolRepo)
 	if err != nil {
 		t.Fatalf("the second run: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
 	}
@@ -192,7 +205,7 @@ func TestProjectReposAddSecondRunChangesNothing(t *testing.T) {
 
 	// Settled: the third run leaves the file exactly as it found it.
 	settled := r.cfgText(t)
-	if _, _, err := r.enrol(t, enrolRepo, "--yes"); err != nil {
+	if _, _, err := r.enrol(t, enrolRepo); err != nil {
 		t.Fatalf("the third run: %v", err)
 	}
 	if got := r.cfgText(t); got != settled {
@@ -223,7 +236,7 @@ func TestProjectReposAddMergesThePublishedImageMap(t *testing.T) {
 	node["image_map"] = block
 	r.db.Set(projectpolicy.PathShared(), node)
 
-	if _, _, err := r.enrol(t, enrolRepo, "--yes"); err != nil {
+	if _, _, err := r.enrol(t, enrolRepo); err != nil {
 		t.Fatal(err)
 	}
 	m := r.addLocal(t).ImageMap
@@ -241,7 +254,7 @@ func TestProjectReposAddMergesThePublishedImageMap(t *testing.T) {
 // already done.
 func TestProjectReposAddHalfEnrolledConverges(t *testing.T) {
 	r := enrolRigOver(t, enrolledRigLocal())
-	if _, _, err := r.enrol(t, enrolRepo, "--yes"); err != nil {
+	if _, _, err := r.enrol(t, enrolRepo); err != nil {
 		t.Fatal(err)
 	}
 	if p := r.policy(t); !slices.Contains(p.AllowRepos, enrolEntry) {
@@ -258,7 +271,7 @@ func TestProjectReposAddHalfEnrolledConverges(t *testing.T) {
 func TestProjectReposAddAllowListOnlyWritesOnlyTheList(t *testing.T) {
 	r := newAddRigWith(t, enrolledRigLocal())
 	before := r.cfgText(t)
-	if _, _, err := r.enrol(t, enrolRepo, "--allow-list-only", "--yes"); err != nil {
+	if _, _, err := r.enrol(t, enrolRepo, "--allow-list-only"); err != nil {
 		t.Fatal(err)
 	}
 	if got := r.cfgText(t); got != before {
@@ -276,14 +289,14 @@ func TestProjectReposAddAllowListOnlyWritesOnlyTheList(t *testing.T) {
 func TestProjectReposAddRefusesStar(t *testing.T) {
 	r := enrolRig(t)
 	before := r.cfgText(t)
-	_, _, err := r.enrol(t, "*", "--yes")
+	_, _, err := r.enrol(t, "*")
 	if err == nil || !strings.Contains(err.Error(), "--allow-list-only") {
 		t.Fatalf("project repos add *: err = %v, want the refusal that names --allow-list-only", err)
 	}
 	if got := r.cfgText(t); got != before {
 		t.Errorf("the refused run wrote the local config:\n%s", got)
 	}
-	if _, _, err := r.enrol(t, "*", "--allow-list-only", "--yes"); err != nil {
+	if _, _, err := r.enrol(t, "*", "--allow-list-only"); err != nil {
 		t.Fatalf("project repos add * --allow-list-only: %v", err)
 	}
 	if p := r.policy(t); !slices.Contains(p.AllowRepos, "*") {
@@ -298,7 +311,7 @@ func TestProjectReposAddRefusesAnAgentSession(t *testing.T) {
 	r := enrolRig(t)
 	before := r.cfgText(t)
 	t.Setenv(agentMarkers[0], "1")
-	_, _, err := r.enrol(t, enrolRepo, "--yes")
+	_, _, err := r.enrol(t, enrolRepo)
 	if err == nil || !strings.Contains(err.Error(), "nothing was written") {
 		t.Fatalf("in an agent session: err = %v, want the SD8 refusal", err)
 	}
@@ -314,7 +327,7 @@ func TestProjectReposAddRefusesBelong(t *testing.T) {
 	local := strings.Replace(enrolRigLocal, "name: aurora", "name: "+enrolBelongName, 1)
 	r := enrolRigOver(t, local)
 	before := r.cfgText(t)
-	_, _, err := r.enrol(t, enrolRepo, "--yes")
+	_, _, err := r.enrol(t, enrolRepo)
 	if err == nil || !strings.Contains(err.Error(), enrolBelongName) {
 		t.Fatalf("installation %s: err = %v, want the refusal by that name", enrolBelongName, err)
 	}
@@ -333,7 +346,7 @@ func TestProjectReposAddLeavesTheJobStepWithoutACheckout(t *testing.T) {
 	r := newAddRigWith(t, enrolledRigLocal())
 	t.Chdir(t.TempDir())
 
-	out, _, err := r.enrol(t, enrolRepo, "--yes")
+	out, _, err := r.enrol(t, enrolRepo)
 	if err != nil {
 		t.Fatalf("project repos add %s without a checkout: %v\n%s", enrolRepo, err, out)
 	}
