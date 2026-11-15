@@ -308,13 +308,16 @@ var replayPatchPrefixes = []string{"rename from ", "rename to ", "copy from ", "
 //
 // The paths are read from the patch's own header lines rather than from git
 // (git apply --numstat names a rename's new path alone, so a rename away from a
-// refused path would escape the fence), and each is read as a set of path
-// components: git quotes a header path that holds a space or a control
-// character, and C-quoting escapes neither "." nor "/", so a refused component
-// survives in the line's own bytes wherever in the path it sits. A hunk line can
-// never be read as a header — its first byte is a space, a "+", a "-" or a
-// backslash — and the one line that can look like one (a removed line whose own
-// text starts with "--- ") can only add a refusal, never hide one.
+// refused path would escape the fence), and each is read as git's own reader
+// reads it rather than as the line's bytes are written: git writes a path whose
+// bytes need escaping — a space, a control character, a byte outside ASCII — as
+// a C-quoted string, and decodes that string when it applies the patch, so the
+// name git writes is the name the fence judges. "b/\056claude/settings.json" is
+// applied as .claude/settings.json; read as bytes it holds no refused component
+// at all. A hunk line can never be read as a header — its first byte is a
+// space, a "+", a "-" or a backslash — and the one line that can look like one
+// (a removed line whose own text starts with "--- ") can only add a refusal,
+// never hide one.
 func replayPatchRefusal(patch []byte) string {
 	for line := range strings.Lines(string(patch)) {
 		for _, prefix := range replayPatchPrefixes {
@@ -322,9 +325,11 @@ func replayPatchRefusal(patch []byte) string {
 			if !ok {
 				continue
 			}
-			for _, comp := range strings.FieldsFunc(rest, replayPathSep) {
-				if replayRefusesComponent(comp) {
-					return comp
+			for _, name := range replayHeaderNames(rest) {
+				for _, comp := range strings.Split(name, "/") {
+					if replayRefusesComponent(comp) {
+						return comp
+					}
 				}
 			}
 			break
@@ -333,11 +338,92 @@ func replayPatchRefusal(patch []byte) string {
 	return ""
 }
 
-// replayPathSep splits a header line's path into components: the separators of a
-// path, the quote and the escape of git's C-quoted spelling, and whitespace,
-// which is what ends the path in every one of the header shapes above.
-func replayPathSep(r rune) bool {
-	return r == '/' || r == '"' || r == '\\' || unicode.IsSpace(r)
+// replayHeaderNames are the path names that rest, a header line's remainder,
+// names: the diff --git line names two (the old path and the new one), every
+// other header one. Reading every name on the line is a superset of what git
+// reads from it, and a superset can only add a refusal.
+func replayHeaderNames(rest string) []string {
+	var names []string
+	for {
+		rest = strings.TrimLeftFunc(rest, unicode.IsSpace)
+		if rest == "" {
+			return names
+		}
+		name, tail := replayHeaderName(rest)
+		names = append(names, name)
+		rest = tail
+	}
+}
+
+// replayHeaderName reads the name at the head of rest the way git's own reader
+// does, and returns it with what follows it.
+//
+// A name that opens with a double quote is C-quoted and is decoded: \" and \\
+// are the quote and the backslash, \a \b \f \n \r \t \v the control characters
+// those letters name, and up to three octal digits a byte, which is how git
+// writes a path that needs escaping — \056 is "." and \057 is "/", so a patch
+// can spell a refused path without holding its bytes. Any other name runs to the
+// next whitespace and is taken as it stands: an unquoted \056 is a backslash in
+// the file's own name and not a dot.
+//
+// An escape git's writer never writes, and a quote never closed, are decoded to
+// the bytes they hold here. git reads such a header literally, so the file it
+// writes is the line's own bytes and carries no refused component that this
+// reading drops — a decode only ever removes a backslash — and refusing more
+// than git applies is the direction the fence is allowed to be wrong in.
+func replayHeaderName(rest string) (name, tail string) {
+	if rest[0] != '"' {
+		if i := strings.IndexFunc(rest, unicode.IsSpace); i >= 0 {
+			return rest[:i], rest[i:]
+		}
+		return rest, ""
+	}
+	var b strings.Builder
+	for i := 1; i < len(rest); {
+		switch c := rest[i]; {
+		case c == '"':
+			return b.String(), rest[i+1:]
+		case c != '\\' || i+1 == len(rest):
+			b.WriteByte(c)
+			i++
+		case rest[i+1] >= '0' && rest[i+1] <= '7':
+			v := 0
+			for n := 0; n < 3 && i+1 < len(rest) && rest[i+1] >= '0' && rest[i+1] <= '7'; n++ {
+				v = v*8 + int(rest[i+1]-'0')
+				i++
+			}
+			b.WriteByte(byte(v))
+			i++
+		default:
+			b.WriteByte(replayEscape(rest[i+1]))
+			i += 2
+		}
+	}
+	return b.String(), ""
+}
+
+// replayEscape is the byte a C-quote escape letter stands for: the control
+// character it names, and the byte itself for the two escapes that spell
+// themselves. Any other letter is not a quote git's writer writes, and reads as
+// the letter it escapes.
+func replayEscape(e byte) byte {
+	switch e {
+	case 'a':
+		return '\a'
+	case 'b':
+		return '\b'
+	case 'f':
+		return '\f'
+	case 'n':
+		return '\n'
+	case 'r':
+		return '\r'
+	case 't':
+		return '\t'
+	case 'v':
+		return '\v'
+	}
+	return e
 }
 
 // replayApply applies the patch to the checkout.

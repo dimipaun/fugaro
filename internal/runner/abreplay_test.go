@@ -225,34 +225,128 @@ func TestABReplayRefusesPatchFromOtherRun(t *testing.T) {
 // before anything is applied or run (B1.2, D728). A path that merely reads
 // like one is not refused: the fence is a set of path components, not a
 // substring match.
+//
+// The fence reads each path the way git apply reads it, because the patch is
+// what git is handed and a spelling git decodes is a path this run would carry:
+// the quoted headers below name a refused file in bytes that hold none of its
+// name (the review's finding of 2026-11-15), while an unquoted escape is the
+// file's own name and not a refused one.
 func TestABReplayRefusesPatchTouchingAgentConfig(t *testing.T) {
 	cases := []struct {
 		name string
+		// path is the path the patch touches, as the patch spells it.
 		path string
+		// patch, when set, is the whole champion's patch — the header shape
+		// of a rename or a copy, and the quoting and escaping of a path git's
+		// own writer spells that way. touchPatch writes the rest.
+		patch string
 		// comp is the path component the fence refuses, "" when it refuses
 		// nothing: the refusal names the component and not the file, so a
 		// .claude/settings.json is refused as .claude.
 		comp string
 	}{
-		{"the agent's own settings", ".claude/settings.json", ".claude"},
-		{"a plugin directory", ".claude-plugin/plugin.json", ".claude-plugin"},
-		{"a repository recipe", ".fugaro/recipes/deep.yaml", ".fugaro"},
-		{"a workflow", ".github/workflows/ci.yml", ".github"},
-		{"an ignore rule", ".gitignore", ".gitignore"},
-		{"a filter", ".gitattributes", ".gitattributes"},
-		{"the run's own configuration", "fugaro.yaml", "fugaro.yaml"},
-		{"an instruction file", "CLAUDE.md", "CLAUDE.md"},
-		{"a local instruction file", "CLAUDE.local.md", "CLAUDE.local.md"},
-		{"an MCP configuration", ".mcp.json", ".mcp.json"},
-		{"a nested instruction file", "nested/deep/CLAUDE.md", "CLAUDE.md"},
-		{"a path that merely reads like one", "docs/claude-notes.md", ""},
-		{"a file beside a refused one", "src/clauderc.go", ""},
+		{name: "the agent's own settings", path: ".claude/settings.json", comp: ".claude"},
+		{name: "a plugin directory", path: ".claude-plugin/plugin.json", comp: ".claude-plugin"},
+		{name: "a repository recipe", path: ".fugaro/recipes/deep.yaml", comp: ".fugaro"},
+		{name: "a workflow", path: ".github/workflows/ci.yml", comp: ".github"},
+		{name: "an ignore rule", path: ".gitignore", comp: ".gitignore"},
+		{name: "a filter", path: ".gitattributes", comp: ".gitattributes"},
+		{name: "the run's own configuration", path: "fugaro.yaml", comp: "fugaro.yaml"},
+		{name: "an instruction file", path: "CLAUDE.md", comp: "CLAUDE.md"},
+		{name: "a local instruction file", path: "CLAUDE.local.md", comp: "CLAUDE.local.md"},
+		{name: "an MCP configuration", path: ".mcp.json", comp: ".mcp.json"},
+		{name: "a nested instruction file", path: "nested/deep/CLAUDE.md", comp: "CLAUDE.md"},
+		{name: "a path that merely reads like one", path: "docs/claude-notes.md"},
+		{name: "a file beside a refused one", path: "src/clauderc.go"},
+		{
+			// The dot of .claude as an octal escape: git writes the name of a
+			// path that needs escaping this way, and writes .claude/settings.json
+			// when it applies this patch.
+			name: "an escaped instruction file",
+			path: `"b/\056claude/settings.json"`,
+			patch: `diff --git "a/seed.txt" "b/\056claude/settings.json"
+new file mode 100644
+--- /dev/null
++++ "b/\056claude/settings.json"
+@@ -0,0 +1 @@
++one line
+`,
+			comp: ".claude",
+		},
+		{
+			// An escaped slash: the refused component is behind a separator the
+			// patch spells in bytes rather than in "/".
+			name: "an escaped separator",
+			path: `"b/nested\057.github/workflows/ci.yml"`,
+			patch: `diff --git "a/ci.yml" "b/nested\057.github/workflows/ci.yml"
+new file mode 100644
+--- /dev/null
++++ "b/nested\057.github/workflows/ci.yml"
+@@ -0,0 +1 @@
++one line
+`,
+			comp: ".github",
+		},
+		{
+			// A rename names two paths in its own header lines, and both of
+			// them are read: a rename *to* a refused path must not escape the
+			// fence because its diff --git line looks innocent.
+			name: "a rename to an escaped recipe",
+			path: `"b/\056fugaro/recipes/deep.yaml"`,
+			patch: `diff --git a/recipes/deep.yaml "b/\056fugaro/recipes/deep.yaml"
+similarity index 100%
+rename from recipes/deep.yaml
+rename to "b/\056fugaro/recipes/deep.yaml"
+`,
+			comp: ".fugaro",
+		},
+		{
+			name: "a copy from an escaped plugin directory",
+			path: `"a/\056claude-plugin/plugin.json"`,
+			patch: `diff --git "a/\056claude-plugin/plugin.json" b/plugin.json
+similarity index 100%
+copy from "\056claude-plugin/plugin.json"
+copy to plugin.json
+`,
+			comp: ".claude-plugin",
+		},
+		{
+			// Quoted, and decoded to a name no component of the fence refuses:
+			// the fence reads the escaped spelling rather than refusing every
+			// header that holds a quote or an escape.
+			name: "an escaped name that is not refused",
+			path: `"b/\056claude-notes.md"`,
+			patch: `diff --git "a/seed.txt" "b/\056claude-notes.md"
+new file mode 100644
+--- /dev/null
++++ "b/\056claude-notes.md"
+@@ -0,0 +1 @@
++one line
+`,
+		},
+		{
+			// The same bytes unquoted: git takes them as they stand, so the
+			// file it writes is named \056claude2 and not .claude2.
+			name: "an unquoted escape is a name of its own",
+			path: `b/\056claude2/x`,
+			patch: `diff --git a/x b/\056claude2/x
+new file mode 100644
+--- /dev/null
++++ b/\056claude2/x
+@@ -0,0 +1 @@
++one line
+`,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			g, _ := armGWSpec(t, armCfg(t), "50", replayTask(task.ABSlotL2), armLayer)
 			withBucket(g.harness)
-			putChampionPatch(t, g.harness, touchPatch(tc.path))
+			patch := tc.patch
+			if patch == "" {
+				patch = touchPatch(tc.path)
+			}
+			putChampionPatch(t, g.harness, patch)
 			rec, err := g.run(t, replayReview("ship", 0))
 			if err != nil {
 				t.Fatal(err)
