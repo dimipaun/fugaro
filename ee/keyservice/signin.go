@@ -983,8 +983,10 @@ func (s *Service) deviceApprove(w http.ResponseWriter, r *http.Request) {
 // `confirm` and nothing else.
 //
 // It carries no account and no licence: which account approves is the one the
-// bearer token's sign-in proved, and which licence is handed over is the bound
-// one the terminal's own poll mints for (P3.1's binding, K2.4's poll). A body
+// bearer token's sign-in proved, and which subscription the terminal's poll
+// mints for is that account's own rather than one this body could name
+// (accountLicence, and its note on what the portal's binding does not decide:
+// the entitlement P3.5's page binds to the project is not read here). A body
 // that named either would be a body this route does not read.
 type DeviceCall struct {
 	UserCode string `json:"user_code"`
@@ -1144,8 +1146,21 @@ func (s *Service) verifySignIn(ctx context.Context, raw string) (Caller, bool) {
 // the verifier refuses a token whose address its holder has not proved, so a
 // caller cannot bind itself to somebody else's purchase by asserting their
 // address. Where an account has bought more than one, the newest subscription is
-// the one answered; picking among several, and the seats the account holds
-// rather than bought, are the account page's (K5.1).
+// the one answered.
+//
+// **That is the whole of the choice, and it is a gap rather than a decision.**
+// Nothing here is asked which entitlement the portal's login bound to the
+// terminal's project, and neither page sends one with its handover, so an
+// account holding two subscriptions is minted for the newer one whichever
+// licence the person chose and bound (P3.5's pages bind; this is what mints).
+// Closing it is a mint that can be asked for the entitlement bound to a project
+// id, which is the portal's entitlement model — P3.1's binding and P4.2's
+// ledger, the same model this reader is replaced by — and not a check this
+// function could invent from a subscription, so it is recorded as a follow-up in
+// docs/licence-key-v2/reconciliation.md rather than guessed at here. What the
+// portal's screens pick among is what the installation is bound to (K5.1
+// superseded by them), and the seats the account holds rather than bought are
+// the account page's.
 //
 // What "running" is read from is the subscription's own record, and that is a
 // gap this route has rather than one it makes: §8's refund and chargeback write

@@ -20,6 +20,12 @@
 // portal's policy, whose `form-action 'self'` a browser checks against where a
 // submission ends (`ee/portal/firebase.json`, pinned by `test/hosting.test.ts`),
 // so the case that pins the shape asserts there is no form on this page at all.
+//
+// **The two steps are watched in the order they can refuse in.** The service's
+// sign-in is asked for first and the binding second, so a sign-in it refuses
+// leaves the licence unbound (the case with a `redirect_uri` the service will not
+// accept) and a binding that fails leaves the terminal waiting rather than handed
+// a code. Both cases read the calls the page made, in order.
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -123,13 +129,11 @@ describe('the authorize page', () => {
     await waitFor(() => {
       expect(went.went()).toEqual([HANDED])
     })
+    // The service's sign-in is asked first and the binding follows it: the
+    // sign-in is the step that can refuse, so a person who is refused leaves
+    // with the licence unbound rather than bound with no handover.
     expect(api.calls).toEqual([
       { path: `${API_BASE}/entitlements`, method: 'GET', body: undefined },
-      {
-        path: `${API_BASE}/workspaces/bind`,
-        method: 'POST',
-        body: { entitlement_id: 'ent_example', project_id: INSTALLATION },
-      },
       {
         path: `${API_BASE}/cli/authorize`,
         method: 'POST',
@@ -142,6 +146,11 @@ describe('the authorize page', () => {
           // so it travels in it and is never held on the page.
           id_token: ID_TOKEN,
         },
+      },
+      {
+        path: `${API_BASE}/workspaces/bind`,
+        method: 'POST',
+        body: { entitlement_id: 'ent_example', project_id: INSTALLATION },
       },
     ])
   })
@@ -179,7 +188,10 @@ describe('the authorize page', () => {
     await waitFor(() => {
       expect(went.went()).toEqual([HANDED])
     })
-    expect(api.calls[1]?.body).toEqual({
+    // The binding the person chose, and it is asked for after the sign-in the
+    // service answered: `calls[1]` is that sign-in.
+    expect(api.calls[1]?.path).toBe(`${API_BASE}/cli/authorize`)
+    expect(api.calls[2]?.body).toEqual({
       entitlement_id: 'ent_second',
       project_id: INSTALLATION,
     })
@@ -234,7 +246,7 @@ describe('the authorize page', () => {
     ])
   })
 
-  it("shows the API's refusal and submits nothing when the binding fails", async () => {
+  it("shows the API's refusal and goes nowhere when the binding fails", async () => {
     const api = portalApi([pending()], {
       refusals: {
         [`POST ${API_BASE}/workspaces/bind`]: {
@@ -251,10 +263,16 @@ describe('the authorize page', () => {
 
     const alert = await screen.findByRole('alert')
     expect(alert.textContent).toBe('That licence belongs to another installation already.')
-    // The failure is the API's sentence and nothing was handed over: no code was
-    // minted, the sign-in was never sent, and the page stayed where it was.
+    // The failure is the API's sentence and nothing was handed over: the page
+    // stayed where it was, and the code the service minted -- for a sign-in that
+    // did land, since the binding is asked for after it -- was never delivered,
+    // so it expires where it is.
     expect(went.went()).toEqual([])
-    expect(handover(api)).toBeUndefined()
+    expect(api.calls.map((call) => call.path)).toEqual([
+      `${API_BASE}/entitlements`,
+      `${API_BASE}/cli/authorize`,
+      `${API_BASE}/workspaces/bind`,
+    ])
   })
 
   it('draws a name that arrived in the address as text, never as markup', async () => {
@@ -286,7 +304,12 @@ describe('the authorize page', () => {
       redirect_uri: 'https://elsewhere.example/callback',
     })
     // The service refused it, so there is no code and no address to go to: the
-    // page goes nowhere at all.
+    // page goes nowhere at all -- and the licence is not bound either, because
+    // the binding is asked for after the sign-in that refused.
+    expect(api.calls.map((call) => call.path)).toEqual([
+      `${API_BASE}/entitlements`,
+      `${API_BASE}/cli/authorize`,
+    ])
     expect(went.went()).toEqual([])
   })
 

@@ -16,8 +16,10 @@
 // installation's name is drawn as text and never as markup, the code is sent as
 // it was typed and the code the service read is what the approval carries, the
 // choice among several licences is the person's, a refusal is the API's own
-// sentence and stops the handover, and a licence list that could not be read
-// stops it too rather than handing over the account's own licence instead.
+// sentence and stops the handover, a licence list that could not be read stops
+// it too rather than handing over the account's own licence instead, and the
+// approval is asked for **before** the binding, so a code that dies between the
+// panel and the click leaves the licence unbound.
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -106,20 +108,23 @@ describe('the device-approve page', () => {
     await waitFor(() => {
       expect(api.approved).toEqual([READ_CODE])
     })
+    // The approval is asked for before the binding: the confirmation is the
+    // step that can refuse (a code that died after the read above), so a refused
+    // one leaves no licence bound to an installation that never got a key.
     expect(api.calls.map((call) => `${call.method} ${call.path}`)).toEqual([
       `POST ${API_BASE}/cli/device`,
       `GET ${API_BASE}/entitlements`,
-      `POST ${API_BASE}/workspaces/bind`,
       `POST ${API_BASE}/cli/device`,
+      `POST ${API_BASE}/workspaces/bind`,
     ])
     // The code is typed by a person and read by the service: what was typed
     // goes up, and what came back is what the approval carries.
     expect(api.calls[0]?.body).toEqual({ user_code: TYPED_CODE })
-    expect(api.calls[2]?.body).toEqual({
+    expect(api.calls[2]?.body).toEqual({ user_code: READ_CODE, confirm: true })
+    expect(api.calls[3]?.body).toEqual({
       entitlement_id: 'ent_example',
       project_id: INSTALLATION,
     })
-    expect(api.calls[3]?.body).toEqual({ user_code: READ_CODE, confirm: true })
     expect(screen.getByRole('heading', { name: 'Done' })).not.toBeNull()
   })
 
@@ -158,7 +163,9 @@ describe('the device-approve page', () => {
     await waitFor(() => {
       expect(api.approved).toEqual([READ_CODE])
     })
-    expect(api.calls[2]?.body).toEqual({
+    // The binding the person chose, asked for after the confirmation.
+    expect(api.calls[2]?.body).toEqual({ user_code: READ_CODE, confirm: true })
+    expect(api.calls[3]?.body).toEqual({
       entitlement_id: 'ent_second',
       project_id: INSTALLATION,
     })
@@ -203,6 +210,42 @@ describe('the device-approve page', () => {
     })
     // There is no installation to bind to, so the licences are not even read.
     expect(api.calls.map((call) => call.method)).toEqual(['POST', 'POST'])
+  })
+
+  it("binds nothing when the code dies before the approval", async () => {
+    // The panel is drawn from a live code and the person takes a moment to read
+    // the name: the confirmation is what refuses -- the read above was answered
+    // -- and the licence must not be bound by it. Binding first would leave the
+    // installation bound to a licence no terminal ever got a key for, which only
+    // a rebind undoes.
+    const api = portalApi([pending()], {
+      confirmRefusal: {
+        status: 403,
+        code: 'device_refused',
+        message: 'That code is not one this site is asking for.',
+      },
+    })
+    show(api.client)
+
+    type(TYPED_CODE)
+    continueOn()
+    expect((await screen.findByText(INSTALLATION)).tagName).toBe('CODE')
+
+    handOver()
+
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'That code is not one this site is asking for.',
+    )
+    expect(api.approved).toEqual([])
+    expect(api.calls.map((call) => call.path)).toEqual([
+      `${API_BASE}/cli/device`,
+      `${API_BASE}/entitlements`,
+      `${API_BASE}/cli/device`,
+    ])
+    // Nothing was handed over, and the button is still there: the person can
+    // click again and the approval and the binding are retried.
+    expect(screen.queryByRole('heading', { name: 'Done' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Hand over the licence' })).not.toBeNull()
   })
 
   it('draws the installation name as text, never as markup', async () => {

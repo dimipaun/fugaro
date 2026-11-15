@@ -24,8 +24,10 @@
 // the installation's Firebase project id is checked for a real Fugaro
 // installation before anything is bound (D2205); the terminal then exchanges the
 // code for the signed key (`POST /cli/device/token`, K2.4), which is the step
-// that mints. A code nobody polls again therefore leaves no key behind, and the
-// page a person leaves open is not a licence handed out.
+// that mints -- and what that mint reads is the account's own subscription and
+// not the licence bound here (`flow.tsx`'s `bind` says why). A code nobody polls
+// again therefore leaves no key behind, and the page a person leaves open is not
+// a licence handed out.
 
 import { useState } from 'react'
 import type { FormEvent } from 'react'
@@ -70,11 +72,10 @@ export function DeviceScreen({ client }: DeviceScreenProps) {
   const [asking, setAsking] = useState<DeviceAsk | null>(null)
   const [licences, setLicences] = useState<Entitlement[] | null>(null)
   // Reading, read, or refused -- and refused is a state of its own rather than
-  // an empty list. The licences here decide which licence the approval binds,
-  // so a read that failed and was drawn as "none" would leave the button
-  // enabled over a list nobody read, and the approval would hand the
-  // installation the licence the account already runs on instead of the one
-  // the person meant to choose.
+  // an empty list. The licences here decide what the approval binds, so a read
+  // that failed and was drawn as "none" would leave the button enabled over a
+  // list nobody read, and the installation would be approved with nothing bound
+  // to it and nothing for the person to choose from.
   const [read, setRead] = useState<'reading' | 'done' | 'failed'>('reading')
   const [chosen, setChosen] = useState<string | null>(null)
   const [done, setDone] = useState<DeviceAsk | null>(null)
@@ -113,8 +114,18 @@ export function DeviceScreen({ client }: DeviceScreenProps) {
     }
   }
 
-  /** §11.4 step 2's answer: the licence is bound to the installation the code
-   * named, and the approval is what the terminal's next poll reads. */
+  /**
+   * §11.4 step 2's answer, in the order the two steps can refuse in: the
+   * approval is what the terminal's next poll reads, and the binding follows it.
+   *
+   * The approval goes first because it is the step that can refuse for a reason
+   * this page cannot see -- a code that died between the read above and this
+   * click -- and because binding first would leave the installation bound to a
+   * licence no terminal ever got a key for, which only a rebind undoes. A
+   * binding that fails after it leaves the person on this page with the API's
+   * own sentence; clicking again approves the same code a second time and
+   * retries the binding, which is what the button is still there for.
+   */
   async function approve(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
     if (asking === null) {
@@ -123,13 +134,13 @@ export function DeviceScreen({ client }: DeviceScreenProps) {
     setFailure(null)
     setBusy(true)
     try {
-      if (binds && selected !== null) {
-        await bind(client, selected, asking.installation)
-      }
       await client.request<void>('/cli/device', {
         method: 'POST',
         body: { user_code: asking.user_code, confirm: true },
       })
+      if (binds && selected !== null) {
+        await bind(client, selected, asking.installation)
+      }
       setDone(asking)
     } catch (error: unknown) {
       setFailure(sentence(error))

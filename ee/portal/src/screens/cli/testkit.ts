@@ -186,6 +186,13 @@ export interface Refusal {
 
 export interface PortalOptions {
   refusals?: Record<string, Refusal>
+  /** What the API answers the device step's **second** call -- the confirmation
+   * -- for a code that is no longer live. The read before it is answered as
+   * usual and only the handover is refused, which is the refusal a page's
+   * ordering exists for: a code that died between the panel being drawn and the
+   * click. A whole-route refusal cannot say this, because it would refuse the
+   * read the panel is drawn from (`refusals`). */
+  confirmRefusal?: Refusal
   /** The name K2.4 answers for a code, for the case where it is a string no
    * page may draw as markup. */
   installation?: string
@@ -269,6 +276,12 @@ function answer(
   if (method === 'POST' && pathname === `${API_BASE}/cli/device`) {
     const call = body as { user_code: string; confirm?: boolean }
     if (call.confirm === true) {
+      if (options.confirmRefusal !== undefined) {
+        throw new ApiError(options.confirmRefusal.status, {
+          code: options.confirmRefusal.code,
+          message: options.confirmRefusal.message,
+        })
+      }
       approved.push(call.user_code)
       return undefined
     }

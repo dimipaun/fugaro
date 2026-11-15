@@ -89,6 +89,16 @@ export async function readLicences(client: ApiClient): Promise<Entitlement[]> {
  * takes (D2196, D2205): it is P3.1's route and P3.4's own call, so a login binds
  * the same way the workspace screen does and the two cannot disagree about what
  * a binding is.
+ *
+ * **What a binding is not is the choice of key.** K2.4's mint reads the
+ * account's own subscription -- the newest uncancelled one recorded for the
+ * verified address, `accountLicence` in the service -- and neither page sends a
+ * licence with its handover, so an account holding two subscriptions is handed a
+ * key for the newer one whichever entitlement the person bound here. What
+ * decides the key is the entitlement model's to do (a mint asked for the licence
+ * bound to a project id, P3.1's binding and P4.2's ledger: the gap recorded in
+ * `docs/licence-key-v2/reconciliation.md`), and until it does, what the person
+ * is choosing is which licence the installation holds on the portal's side.
  */
 export function bind(client: ApiClient, entitlementId: string, projectId: string): Promise<void> {
   return client.request<void>('/workspaces/bind', {
@@ -137,14 +147,15 @@ export function loopbackCallback(port: string): string | null {
 }
 
 /**
- * Which licence the installation gets: the organisation's unbound ones, or the
- * sentence that says there are none.
+ * Which licence the installation is bound to: the organisation's unbound ones,
+ * or the sentence that says there are none.
  *
  * A single licence is preselected, because there is nothing to decide; two or
  * more are left for the person to choose, because a default among equals is a
- * licence handed over by a click somebody did not mean. With none, the page
- * still hands the licence the account already runs on over -- an organisation
- * whose licences are all bound is the ordinary repeat login, not a dead end.
+ * licence bound by a click somebody did not mean. With none, the page still
+ * hands a licence over -- the account's own, which is the one K2.4's mint reads
+ * (`bind` above) -- because an organisation whose licences are all bound is the
+ * ordinary repeat login, not a dead end.
  */
 export function LicenceChoice({
   licences,

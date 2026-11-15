@@ -8,7 +8,8 @@
 // listener is on, a `state`, a PKCE challenge and the Firebase project id of
 // the installation asking for a licence. The person signs in, reads what that
 // terminal sent -- as text, because nothing has proved it -- picks which of the
-// organisation's unbound licences that installation gets, and hands one over.
+// organisation's unbound licences that installation is bound to, and hands the
+// licence over.
 // The handover itself is the service's step -- K2.4's authorize route, which
 // registers under the portal's API prefix (`POST /api/cli/authorize`, P1.0's
 // table): it mints a one-time code and answers with the address of the
@@ -54,6 +55,16 @@
 // that project before it binds (D2205) and the minter signs at the exchange
 // (K2.4). So a binding that failed leaves the person on this page with the
 // API's own sentence and nothing minted, and the terminal waiting.
+//
+// **The choice decides what is bound and not what is minted.** K2.4's mint reads
+// the account's own subscription -- `accountLicence`: the newest uncancelled one
+// recorded for the verified address -- and no field of this request names a
+// licence, so an account holding two subscriptions is handed a key for the newer
+// one whichever entitlement it bound here. Closing that is the portal's
+// entitlement model's to do and not this page's (the gap recorded in
+// `docs/licence-key-v2/reconciliation.md`, and `flow.tsx`'s `bind` says it once
+// for both pages). What the choice does do is real, which is why the page still
+// offers it: it is the binding the installation keeps.
 
 import { useEffect, useState } from 'react'
 import { useLocation } from 'react-router-dom'
@@ -169,13 +180,21 @@ export function AuthorizeScreen({ client, auth, go = browserGo }: AuthorizeScree
   const binds = projectId !== ''
   const mustChoose = binds && offered.length > 0 && selected === null
 
+  /**
+   * §11.3's handover, in the order the two steps can refuse in.
+   *
+   * The service's sign-in goes first: it is the step that can refuse for what
+   * this page cannot see -- the token, the account's licence, the parameters the
+   * terminal sent -- and all it leaves behind is a one-time code, which expires
+   * unspent and mints nothing. The binding is a state change only a rebind
+   * undoes, so it is asked for last: a sign-in the service refuses then leaves
+   * the licence unbound, and the page says so rather than having bound an
+   * installation its terminal never hears about.
+   */
   async function handOver(): Promise<void> {
     setFailure(null)
     setBusy(true)
     try {
-      if (binds && selected !== null) {
-        await bind(client, selected, projectId)
-      }
       const id = await auth.idToken()
       if (id === null) {
         setFailure(SIGNED_OUT)
@@ -191,6 +210,12 @@ export function AuthorizeScreen({ client, auth, go = browserGo }: AuthorizeScree
           id_token: id,
         },
       })
+      if (binds && selected !== null) {
+        await bind(client, selected, projectId)
+      }
+      // Nothing is handed over until both steps are through: a binding that
+      // failed is the API's own sentence on this page, and the code the service
+      // minted is never delivered to the terminal, so it expires.
       go(handed.redirect)
     } catch (error: unknown) {
       setFailure(sentence(error))
