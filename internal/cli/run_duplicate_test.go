@@ -203,7 +203,9 @@ func TestRunRefusesADuplicatePlanTask(t *testing.T) {
 // pull request a --pr continues, the chain a --retry or a --continues joins,
 // and --allow-duplicate. A guard that only said "refused" would leave the
 // caller to guess, and the guess is what launched the duplicate in the first
-// place.
+// place. The chain is named as the <slug>/<run-id> ref both commands take, and
+// TestRunDuplicateWaysOutRun executes what is printed; the prose beside it
+// still shows the run's ending, which is what every listing shows.
 func TestRunDuplicateRefusalNamesTheWaysOut(t *testing.T) {
 	f := duplicateRig(t)
 	dupFinishedRun(t, f, dupLeft, duplicatePlan, 7, runstore.OutcomeReady)
@@ -212,14 +214,86 @@ func TestRunDuplicateRefusalNamesTheWaysOut(t *testing.T) {
 		"plan task " + duplicatePlan,
 		"nothing was launched",
 		"fugaro run --pr 7",
-		"fugaro run --retry " + task.ShortRun(dupLeft),
-		"--continues " + task.ShortRun(dupLeft),
+		"run " + task.ShortRun(dupLeft) + " left pull request #7 of acme/app",
+		"fugaro run --retry " + dupRef(dupLeft),
+		"--continues " + dupRef(dupLeft),
 		"--allow-duplicate",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("refusal = %q, want %q in it", msg, want)
 		}
 	}
+}
+
+// dupRef is the ref the refusal's commands name a run by, and the one the CLI's
+// own lookups take: the runs bucket's <slug>/<run-id>. A bare ending is not
+// one (runstore.Locate refuses it), which is the mistake this pins.
+func dupRef(id string) string { return appSlug + "/" + id }
+
+// TestRunDuplicateWaysOutRun is the other half of the refusal: the commands it
+// prints are ones the CLI accepts. A refusal whose ways out are themselves
+// refused sends the caller into a second error instead of out of the first, and
+// both of these were printed as the run's bare ending, which neither --retry
+// nor --continues resolves.
+func TestRunDuplicateWaysOutRun(t *testing.T) {
+	t.Run("the run in flight: --continues, as printed", func(t *testing.T) {
+		f := duplicateRig(t)
+		dupLiveRun(t, f, dupLive, duplicatePlan)
+		msg := dupRefused(t, f, "already being worked on", "run", "--repo", "acme/app", "--run-id", dupNext, "--plan-task", duplicatePlan, "Add a feature")
+		ref := dupPrinted(t, msg, "--continues ")
+		// The lookup both commands make first: a ref the CLI cannot resolve is
+		// the refusal naming a fix that is not one.
+		if _, _, err := locateRun(t.Context(), dupEnv(t, f), ref); err != nil {
+			t.Fatalf("--continues %s, as the refusal printed it: %v", ref, err)
+		}
+		// And it is a way out rather than another refusal: the launch it names
+		// happens.
+		if _, _, err := execute(t, "run", "--repo", "acme/app", "--continues", ref, "--run-id", dupOther, "Add a feature"); err != nil {
+			t.Fatalf("the printed --continues way out was refused: %v", err)
+		}
+		if n := len(f.run.Executions()); n != 1 {
+			t.Fatalf("%d executions, want the continued launch's one", n)
+		}
+	})
+
+	t.Run("a pull request a run left: --retry, as printed", func(t *testing.T) {
+		f := duplicateRig(t)
+		dupFinishedRun(t, f, dupLeft, duplicatePlan, 7, runstore.OutcomeReady)
+		msg := dupRefused(t, f, "already being worked on", "run", "--repo", "acme/app", "--run-id", dupNext, "--plan-task", duplicatePlan, "Add a feature")
+		ref := dupPrinted(t, msg, "--retry ")
+		if _, _, err := locateRun(t.Context(), dupEnv(t, f), ref); err != nil {
+			t.Fatalf("--retry %s, as the refusal printed it: %v", ref, err)
+		}
+	})
+}
+
+// dupEnv is the fixture's own cloud environment, the one locateRun reads a
+// printed ref through.
+func dupEnv(t *testing.T, f *cloudFixture) *cloudEnv {
+	t.Helper()
+	b, err := blob.OpenBucket(t.Context(), f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+	return envOn(t, f, blobx.Wrap(b))
+}
+
+// dupPrinted is the argument the refusal's message gives to flag, as a caller
+// reading it would copy it: everything between the flag and the next space or
+// closing bracket. The command is read out of the printed sentence rather than
+// rebuilt here, so the test fails on what the caller is actually told.
+func dupPrinted(t *testing.T, msg, flag string) string {
+	t.Helper()
+	i := strings.Index(msg, flag)
+	if i < 0 {
+		t.Fatalf("refusal = %q, want %s in it", msg, flag)
+	}
+	fields := strings.FieldsFunc(msg[i+len(flag):], func(r rune) bool { return r == ' ' || r == ')' || r == ',' })
+	if len(fields) == 0 {
+		t.Fatalf("refusal = %q, want an argument after %s", msg, flag)
+	}
+	return fields[0]
 }
 
 // TestRunDuplicateNeedsNoCodeHostCredential is the guard's shape pinned against
@@ -291,7 +365,7 @@ func TestRunDuplicateCheckFailsOpen(t *testing.T) {
 	}
 	var warn strings.Builder
 	o := &runOptions{planTask: duplicatePlan}
-	if err := planTaskDuplicate(ctx, envOn(t, f, blobx.Wrap(b)), o, appSlug, dupNext, &warn); err != nil {
+	if err := planTaskDuplicate(ctx, envOn(t, f, blobx.Wrap(b)), o, appSlug, "acme/app", dupNext, &warn); err != nil {
 		t.Fatalf("a read the guard cannot make must not refuse: %v", err)
 	}
 	if !strings.Contains(warn.String(), "could not check whether plan task "+duplicatePlan) {

@@ -804,7 +804,7 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	// for a launch that starts a new task, since a --pr, --retry or --continues
 	// launch is a way out of its refusal rather than one that could meet it.
 	if o.retry == "" && !prSet && o.continues == "" {
-		if err := planTaskDuplicate(ctx, env, o, slug, spec.RunID, cmd.ErrOrStderr()); err != nil {
+		if err := planTaskDuplicate(ctx, env, o, slug, spec.Repo, spec.RunID, cmd.ErrOrStderr()); err != nil {
 			return err
 		}
 	}
@@ -2775,7 +2775,7 @@ func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, 
 	// that is already being worked on is exactly the second run the guard
 	// refuses, and it costs the batch's own run ids nothing -- none of them
 	// exists yet, so the read has no run of this launch's to leave out.
-	if err := planTaskDuplicate(ctx, env, o, plan.slug, "", warn); err != nil {
+	if err := planTaskDuplicate(ctx, env, o, plan.slug, plan.repo, "", warn); err != nil {
 		return err
 	}
 	noteRigorRequest(ctx, o, plan.repo, warn)
