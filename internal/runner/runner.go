@@ -472,6 +472,12 @@ type run struct {
 	// plan is derived from (applyChallenger); the routing switch rewrites it
 	// with the run's own pins (pinSlots). Empty for every other run.
 	championCoder string
+	// replay is the review level a reviewer arm replays (abreplay.go, D728),
+	// empty for every other run: a challenger whose pair varies a review slot
+	// runs no coding loop at all — it reviews the champion's recorded patch at
+	// this level with the challenger model and publishes nothing (B1.2). It is
+	// set at bootstrap, before anything reads a model, and never cleared.
+	replay policy.Level
 	// pr is the early draft pull request's state (prflow.go).
 	pr prFlow
 	// baseSHA is the base branch's commit as bootstrap fetched it (the
@@ -808,6 +814,12 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		r.runEvaluateMode(runCtx)
 	case r.review:
 		r.runReviewMode(runCtx)
+	case r.replay != "":
+		// A pair at a review slot's challenger (abreplay.go, D728): one review
+		// of the champion's recorded patch and nothing else — no implement, no
+		// fix, no test and no push. A review run is never a challenger arm
+		// (readArm), so this arm is only ever reached by a run of its own.
+		r.runReviewReplay(runCtx)
 	default:
 		r.runAgentLoop(runCtx)
 	}
@@ -2773,6 +2785,20 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	if err := r.resolvePolicy(ctx, cfg); err != nil {
 		return err
+	}
+	// The reviewer arm's own model, after the policy has resolved every level
+	// (resolveLevels, inside resolvePolicy) and before checkBudget judges the
+	// pins: the challenger is the slot level's reviewer, so it is written into
+	// that level's block and judged as agent.levels.lN.model, the path the
+	// run's allow-list, price table and provider policy read for a level's own
+	// model (checkLevels, levelModelPath) — and the path the stage itself
+	// reads it from (stageModel). Written after the resolution rather than
+	// before it: the resolution is what says which levels run at all, and a
+	// level the run does not run has no stage for a replay to be.
+	if r.replay != "" {
+		if err := r.applyReplayLevel(); err != nil {
+			return err
+		}
 	}
 	// The tier the task carries and the expectation the policy just resolved
 	// for it (tier.go). Here, and not earlier: the expectation is the run's
