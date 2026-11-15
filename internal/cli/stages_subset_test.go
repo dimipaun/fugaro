@@ -178,6 +178,11 @@ func TestStagesSubsetKeepsOrderAndNeeds(t *testing.T) {
 // (TestAccountsAddLeavesNothingToRun: the node, the job, the secret), and this
 // test does not restate it: what a stage list can get wrong is which stages are
 // in it, which is what a rewire onto stagesNamed can change.
+//
+// The zero door is the registered set the command's own door gets for these
+// three names: what a door decides is the unit stage, whether the project
+// stage is registered at all and whether the Batch backend's is, and none of
+// the three is one of them (initStages).
 func TestAccountsAddStillRunsItsThree(t *testing.T) {
 	e := prodEngine(initOptions{})
 	subset := accountsAddStages(e)
