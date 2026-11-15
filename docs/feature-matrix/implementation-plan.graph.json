@@ -1,0 +1,246 @@
+{
+  "schema_version": 3,
+  "plan": "docs/feature-matrix/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "C1",
+      "title": "the snapshot contract and stub",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/feature-matrix/contract.md",
+          "website/src/lib/feature-matrix-model.mjs",
+          "website/test/feature-matrix-model.mjs",
+          "website/src/lib/feature-matrix-stub.mjs"
+        ]
+      },
+      "kind": "contract",
+      "stubs": [
+        "website/src/lib/feature-matrix-stub.mjs"
+      ]
+    },
+    {
+      "id": "T1",
+      "title": "read status.md and build the snapshot",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "website/src/lib/feature-matrix.mjs",
+          "website/test/feature-matrix.mjs",
+          "website/test/fixtures/feature-matrix/**"
+        ]
+      }
+    },
+    {
+      "id": "T2",
+      "title": "the mapping from specs to features",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/feature-matrix/mapping.yaml",
+          "website/test/feature-matrix-mapping.mjs"
+        ]
+      }
+    },
+    {
+      "id": "T3",
+      "title": "FEATURES.md and the generator command",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "website/src/lib/feature-matrix-markdown.mjs",
+          "website/bin/feature-matrix.mjs",
+          "website/package.json",
+          "website/test/feature-matrix-markdown.mjs"
+        ]
+      }
+    },
+    {
+      "id": "T4",
+      "title": "the /features/ page and its menu entry",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "website/src/pages/features.astro",
+          "website/src/content.ts",
+          "website/src/layouts/Base.astro",
+          "website/test/base-styles.mjs",
+          "website/test/features-page.mjs"
+        ]
+      }
+    },
+    {
+      "id": "I1",
+      "title": "wire the real snapshot and write the first FEATURES.md",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "website/src/lib/feature-matrix-stub.mjs",
+          "website/bin/feature-matrix.mjs",
+          "website/src/content.ts",
+          "FEATURES.md",
+          "website/src/pages/compatibility.astro",
+          "website/test/feature-matrix-stamp.mjs"
+        ]
+      },
+      "kind": "integration"
+    },
+    {
+      "id": "T5",
+      "title": "the release procedure moves and checks the stamp",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/release.md",
+          "scripts/release.sh",
+          "scripts/release_test.go",
+          "README.md"
+        ]
+      }
+    },
+    {
+      "id": "T6",
+      "title": "the owner's read of the mapping and the preview (owner-run)",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/feature-matrix/mapping.yaml"
+        ]
+      }
+    },
+    {
+      "id": "CR1",
+      "title": "amend the snapshot contract with a row note",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/feature-matrix/contract.md",
+          "website/src/lib/feature-matrix-model.mjs"
+        ]
+      },
+      "kind": "contract_change"
+    }
+  ],
+  "edges": [
+    {
+      "task": "T1",
+      "needs": "C1",
+      "reason": "the builder is written against the contract's mapping and snapshot shapes"
+    },
+    {
+      "task": "T3",
+      "needs": "C1",
+      "reason": "the renderer takes the contract's snapshot and block format and calls the stub"
+    },
+    {
+      "task": "T4",
+      "needs": "C1",
+      "reason": "the page's loader reads the contract's snapshot through the stub"
+    },
+    {
+      "task": "I1",
+      "needs": "T1",
+      "reason": "it wires the real builder into the command"
+    },
+    {
+      "task": "I1",
+      "needs": "T2",
+      "reason": "the first FEATURES.md is built from the real mapping"
+    },
+    {
+      "task": "I1",
+      "needs": "T3",
+      "reason": "it runs the real command to write FEATURES.md"
+    },
+    {
+      "task": "I1",
+      "needs": "T4",
+      "reason": "it switches the page's loader from the stub to FEATURES.md"
+    },
+    {
+      "task": "T5",
+      "needs": "I1",
+      "reason": "data: release.sh must not demand a FEATURES.md main does not carry yet"
+    },
+    {
+      "task": "T6",
+      "needs": "I1",
+      "reason": "behaviour: the owner reads the page with the real rows"
+    },
+    {
+      "task": "CR1",
+      "needs": "T6",
+      "reason": "raised only if the owner's read asks for a footnote (O1)"
+    }
+  ],
+  "decoupling": [
+    {
+      "contract": "C1",
+      "was": {
+        "task": "T1",
+        "needs": "T2"
+      },
+      "integration": "I1",
+      "reason": "the builder needs the mapping's shape, not its content; it tests on fixtures"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "T3",
+        "needs": "T1"
+      },
+      "integration": "I1",
+      "reason": "the renderer needs the snapshot's shape, not the real build"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "T4",
+        "needs": "T3"
+      },
+      "integration": "I1",
+      "reason": "the page needs the snapshot and the block format, not a real FEATURES.md"
+    }
+  ],
+  "contract_changes": [
+    {
+      "change": "CR1",
+      "contract": "C1",
+      "raised_by": "T6",
+      "reason": "a per-row or Community footnote, if the owner's read asks for one (O1)",
+      "affects": [
+        "T1",
+        "T3",
+        "T4"
+      ]
+    }
+  ]
+}

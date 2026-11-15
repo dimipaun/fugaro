@@ -1,0 +1,288 @@
+# Implementation plan: the feature matrix
+
+Builds [spec.md](spec.md) **as amended by [reconciliation.md](reconciliation.md)**. **Status:
+plan only; nothing is implemented; no task is approved.** Each task needs the owner's explicit go,
+and an answer to a decision is not that go.
+
+The owner's answers that shaped the plan (2026-11-15):
+- **D2440** (not the recommendation): three plan columns, Community, Team and Enterprise.
+- **D2441**: a hand-kept `docs/feature-matrix/mapping.yaml`.
+- **D2442**: `/features/` in the Product menu after "How it works". This answer is the nav approval.
+- **D2443**: Available, Coming soon and Planned; features whose specs are all parked are left off.
+- **D2444**: Done plus a `hold` in the mapping.
+- **D2445**: an extension gets its own row, and an Available row never regresses.
+- **D2446**: a root `FEATURES.md` and one shared Node library.
+- **D2447**: a release stamp, refused by a website test and by `scripts/release.sh`.
+
+## Conventions every task follows
+
+- `.claude/rules/website.md` and `website/README.md` apply to everything under `website/`. Run
+  `npm run check` before pushing (about 7 minutes). Tests that pin copy, nav and wording are
+  updated, never weakened. The site adds no npm dependency. YAML is read by `parseYAML` from
+  `website/src/content.ts`, imported as `website/src/lib/landing.mjs` already does. A second YAML
+  reader is a second dialect.
+- Docs are tested: a change to `docs/`, `README.md` or `docs/release.md` runs
+  `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1`.
+- **Always:** follow the compatibility matrix's shape (F1). The page writes no claim of its own,
+  and every row comes from the mapping through the snapshot.
+- **Ask first:** any nav change beyond D2442's one entry; any sentence about plans, licences or
+  terms (O1).
+- **Never:** edit `docs/status.md` (only the merger's sweep does, F8); show a spec name, task id,
+  count, date or price on the page or in FEATURES.md (R1); deploy the site (the two dispatches stay
+  in the owner's terminal, `docs/release.md`); edit `.github/workflows/`; use a secret-shaped
+  literal.
+- Rigor for this repository resolves to `startup` (`fugaro settings rigor.default --repo
+  dimipaun/fugaro`), and no area rule matches these paths. The contract-first pass is on
+  (`planning.decoupling` is `true`) and runs at startup's setting: decouple aggressively.
+
+## Global constraints and review focus
+
+| Constraint | Pinned by |
+| --- | --- |
+| Statuses are a closed set: `available`, `coming-soon`, `planned` | C1 (`validateMapping`, `validateSnapshot`) |
+| Plans are a closed set: `community`, `team`, `enterprise`; a row lists its lowest plan, and every higher plan is checked | C1; T3 and T4 render the three columns |
+| Every name in every status.md row is a feature's spec or excluded with a reason, or the generator refuses to write and lists the names | T1 |
+| The generator stops at a status.md table or row it cannot read and names the line | T1 |
+| Available only when every contributing spec is in Done and no `hold` is set; Planned only when no contributing spec has started; all-parked features are omitted | T1 |
+| An Available row in the previous FEATURES.md never comes back as Coming soon or Planned unless a `hold` was added | T1 |
+| No spec name, status.md section name, task id, date or price appears in FEATURES.md or the built page | T3, T4 (each output's own test) |
+| The page and FEATURES.md show the same rows: the page reads FEATURES.md's embedded block | I1 |
+| FEATURES.md's `as_of` is not behind the newest released CLI notes file | I1 (`feature-matrix-stamp.mjs`), T5 (`release.sh`) |
+
+## Slice A: the matrix, inert until the next website promotion
+
+### C1. The snapshot contract
+- Acceptance: the mapping shape, the snapshot shape, the embedded-block format and a stub
+  `buildSnapshot` exist. `validateMapping` and `validateSnapshot` refuse an unknown status, plan
+  or key, naming the field.
+- Files: `docs/feature-matrix/contract.md` (new), `website/src/lib/feature-matrix-model.mjs`
+  (new), `website/test/feature-matrix-model.mjs` (new), and the stub
+  `website/src/lib/feature-matrix-stub.mjs` (new).
+- Interfaces: produces
+  - `STATUSES` and `PLANS`.
+  - The mapping shape: `version`, a `features` list (`id`, `name`, `explanation`, `plan`,
+    `specs`, optional `hold: {status, reason}`) and an `excluded` list (`spec`, `reason`).
+  - The snapshot shape: `version`, `as_of`, and `rows` of `{id, name, explanation, status,
+    plans: {community, team, enterprise}}`.
+  - `validateMapping`, `validateSnapshot`.
+  - `snapshotBlock(snapshot)` and `readSnapshotBlock(markdown)`, which write and read the fenced
+    JSON block FEATURES.md carries (R5).
+  - The stub's `buildSnapshot({statusMarkdown, mapping, previous, asOf})`, which returns a fixed
+    two-row snapshot.
+- Tests: `website/test/feature-matrix-model.mjs`: closed statuses and plans, unknown key refused,
+  the block round-trips, the stub's output passes `validateSnapshot`.
+- Command: `cd website && node --test test/feature-matrix-model.mjs`
+- Red step: the test fails until the module exists, then once on a row with status `nearly-there`.
+- Depends on: none.
+- Commit: `website: the feature matrix's snapshot contract and stub`.
+- Reviewer tier: standard.
+
+### T1. Read status.md and build the snapshot
+- Acceptance: the builder applies D2443–D2445 and R2–R3. Given status.md and a mapping, it
+  returns the snapshot, or it throws listing every unmapped name, every mapped name status.md does
+  not carry, every regression against `previous`, or the first unreadable line.
+- Files: `website/src/lib/feature-matrix.mjs` (new), `website/test/feature-matrix.mjs` (new),
+  `website/test/fixtures/feature-matrix/status.md` (new).
+- Interfaces: consumes C1's shapes and produces the real `buildSnapshot` with the stub's
+  signature. It parses the four tables by heading ("Nearly There (NT)", "Work in progress (WIP)",
+  "To do or parked", "Done"), splits a first cell on commas, and reads "parked by the owner" from
+  the To do table's State cell and "Merged" counts from the other tables.
+- Tests: Available with all specs Done; Coming soon with one in WIP; Planned with all in To do and
+  nothing merged; omitted when all are parked; `hold` wins; an unmapped name is refused with its
+  name; a regression is refused with the row and the spec; a renamed table heading is refused
+  with the line.
+- Command: `cd website && node --test test/feature-matrix.mjs`
+- Red step: the Planned and parked cases fail first against a builder that maps only Done.
+- Depends on: C1 (the mapping and snapshot shapes).
+- Commit: `website: build the feature matrix snapshot from status.md`.
+- Reviewer tier: standard.
+
+### T2. The mapping
+- Acceptance: every name in every row of `docs/status.md` at the commit the run starts from is a
+  spec of exactly one feature or excluded with a reason. Each feature has a user-language name, a
+  one- or two-sentence explanation and its lowest plan. Built but unshipped features (the mobile
+  app; secrets-brokering's switched-off B1.13) carry a `hold` with its reason. Extensions follow
+  D2445.
+- Files: `docs/feature-matrix/mapping.yaml` (new), `website/test/feature-matrix-mapping.mjs`
+  (new).
+- Interfaces: writes the mapping shape this plan states under C1's Interfaces; I1 validates it
+  with C1's `validateMapping`. A feature's plan follows F2: `community` for what the
+  MIT core does, `team` for what needs the Subscription Edition (`ee/`, the console, the mobile
+  app).
+- Tests: the file is read literally with `parseYAML` and the closed plan and status sets written in
+  the test itself, the way `website/test/compatibility.mjs` reads its file, not through the loader
+  it checks. Ids are unique; no spec named twice; no explanation
+  longer than two sentences; no name or explanation contains a spec name.
+- Command: `cd website && node --test test/feature-matrix-mapping.mjs`
+- Red step: the test fails until the file exists.
+- Depends on: none. The shape is fixed in this plan, so T2 runs beside C1.
+- Commit: `docs(feature-matrix): the mapping from specs to features`.
+- Reviewer tier: standard. The owner reads the names in T6.
+
+### T3. FEATURES.md and the generator command
+- Acceptance: `npm run features -- --as-of vX.Y.Z` writes `FEATURES.md` at the repository root.
+  It contains a lead, a legend, the `as_of` line, one table (Feature, What it does, Status,
+  Community, Team, Enterprise) and the snapshot block. A refusal from `buildSnapshot` exits non-zero,
+  prints the names, and leaves the file untouched.
+- Files: `website/src/lib/feature-matrix-markdown.mjs` (new), `website/bin/feature-matrix.mjs`
+  (new), `website/package.json` (the `features` script), `website/test/feature-matrix-markdown.mjs`
+  (new).
+- Interfaces: consumes C1's snapshot, block format and stub `buildSnapshot`. Produces
+  `renderMarkdown(snapshot)` and the command.
+- Tests: rendering the stub snapshot gives a table with three checkmark columns; the block reads
+  back equal; the output contains no `STATUSES` key spelled as status.md does, no date other than
+  `as_of`, no task id pattern; a thrown refusal leaves an existing file byte-identical.
+- Command: `cd website && node --test test/feature-matrix-markdown.mjs`
+- Red step: the column test fails against a two-column render.
+- Depends on: C1 (the snapshot shape and the stub).
+- Commit: `website: render FEATURES.md from the snapshot`.
+- Reviewer tier: standard.
+
+### T4. The /features/ page and its menu entry
+- Acceptance: `/features/` builds from `loadFeatures()`. It shows one table with status words and
+  marks (not colour alone) and three plan columns. It links to `/compatibility/`. It sits in the
+  Product menu directly after "How it works" (D2442), and it passes every page-wide gate.
+- Files: `website/src/pages/features.astro` (new), `website/src/content.ts` (`loadFeatures()`,
+  reading the stub for now), `website/src/layouts/Base.astro` (the nav entry),
+  `website/test/base-styles.mjs` (the Product group's expected routes and labels),
+  `website/test/features-page.mjs` (new).
+- Interfaces: consumes C1's snapshot shape through the stub.
+- Tests: the built page has the table, the legend, the three plan columns and the link to
+  compatibility; no status.md section name, spec name or price in the HTML; the Product menu lists
+  `/features/` after `/how-it-works/`; plus the gates `website/test/console-option.mjs` names
+  (accessibility, budget, copy, fold, linkcheck, meta, origins).
+- Command: `cd website && npm run check`
+- Red step: `features-page.mjs` fails until the page exists; `base-styles.mjs` fails until the nav
+  entry is added.
+- Depends on: C1 (the snapshot shape and the stub).
+- Commit: `website: the features page, in the Product menu`.
+- Reviewer tier: standard.
+
+### I1. Wire the real snapshot and write the first FEATURES.md
+- Acceptance:
+  - The stub is deleted. The command uses T1's `buildSnapshot` with T2's mapping, and
+    `loadFeatures()` reads FEATURES.md's block.
+  - FEATURES.md is generated with `as_of` set to the CLI stream's `current` in
+    `docs/release-streams.yaml`.
+  - The compatibility page links to `/features/`.
+  - A stamp test holds the stamp to the newest released notes file, the page's rows to the
+    block's, and the mapping's names to status.md (R2).
+- Files: `website/src/lib/feature-matrix-stub.mjs` (deleted), `website/bin/feature-matrix.mjs`,
+  `website/src/content.ts`, `FEATURES.md` (new, generated), `website/src/pages/compatibility.astro`,
+  `website/test/feature-matrix-stamp.mjs` (new).
+- Interfaces: joins C1, T1, T2, T3 and T4.
+- Tests: `website/test/feature-matrix-stamp.mjs` (end to end: run the command against the tree
+  into a temporary file and compare it with the committed file, except for the stamp line; the
+  built page's rows equal the block's), and the whole `npm run check`.
+- Command: `cd website && npm run features -- --as-of v$(current) && npm run check`, then
+  `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1`.
+- Red step: the stamp test fails while `loadFeatures()` still reads the stub.
+- Depends on: C1, T1, T2, T3, T4 (it wires their real sides together).
+- Commit: `website: the feature matrix, wired end to end, as of the current release`.
+- Reviewer tier: standard.
+
+## Slice B: the release keeps it fresh
+
+### T5. The release procedure moves and checks the stamp
+- Acceptance:
+  - `docs/release.md` "Before you tag" says the notes PR runs `npm run features -- --as-of
+    vX.Y.Z` in `website/` and commits FEATURES.md with the notes, the summary line and the
+    compatibility stamp. The generator's refusal lists the unmapped specs, and the PR maps them.
+  - `scripts/release.sh` refuses in its preconditions when `origin/main`'s FEATURES.md does not
+    carry `as_of: vX.Y.Z`, naming the file.
+  - The root `README.md` links FEATURES.md.
+- Files: `docs/release.md`, `scripts/release.sh`, `scripts/release_test.go`, `README.md`.
+- Interfaces: consumes the `as_of` line format of C1's contract.
+- Tests: a `scripts/release_test.go` case refusing a tree without the stamp and passing with it;
+  the Docs tests.
+- Command: `go test ./scripts/ -run 'TestRelease' -count=1 && GOFLAGS=-p=2 go test ./internal/cli/
+  -run Docs -count=1` (narrow `-run` to the new test's name).
+- Red step: the new release test fails until the precondition exists.
+- Depends on: I1 (data: if `release.sh` demands a FEATURES.md before one is on `main`, the next
+  release is refused; a contract cannot supply the file).
+- Commit: `release: the notes PR stamps FEATURES.md and release.sh checks it`.
+- Reviewer tier: standard.
+
+### T6. The owner's read (owner-run)
+- Acceptance: the owner has read the mapping's names and explanations and the `/features/` page
+  on the website preview, and has answered O1 (a Community footnote, in the owner's own words, or
+  none).
+- Owner-run: after I1 merges, the owner dispatches `website-preview` from `main` (`gh workflow run
+  website-preview --ref main`), reads `/features/` there, and replies with corrections. Each
+  correction is a mapping edit in a follow-up PR. A footnote, if any, is raised as contract change
+  CR1. No agent performs a step of it.
+- Depends on: I1 (the page with real rows).
+
+## Parallel execution
+
+### Edges kept
+
+| Task | Needs | Reason |
+| --- | --- | --- |
+| T1, T3, T4 | C1 | each is built against the contract's shapes |
+| I1 | T1, T2, T3, T4 | it deletes the stub and wires the real sides (and so follows C1 through them) |
+| T5 | I1 | data: `release.sh` must not demand a FEATURES.md that `main` does not have yet |
+| T6 | I1 | behaviour: the owner reads the real rows |
+| CR1 | T6 | raised only if the owner's read asks for a footnote (O1) |
+
+### Edges broken by C1 (each re-joined by I1)
+
+| Was | Reason it broke |
+| --- | --- |
+| T1 needs T2 | the builder needs the mapping's shape, not its content; T1 tests on fixtures |
+| T3 needs T1 | the renderer needs the snapshot's shape, not the real build |
+| T4 needs T3 | the page needs the snapshot and the block format, not a real FEATURES.md |
+
+**The gain**, as `fugaro plan graph` reports it: three edges broken, none kept, two tasks added (C1
+and I1). The weighted critical path drops from 13 to 7.5.
+
+### Levels
+
+| Level | Tasks |
+| --- | --- |
+| 0 | C1, T2 |
+| 1 | T1, T3, T4 |
+| 2 | I1 |
+| 3 | T5, T6 |
+| 4 | CR1 (only if raised) |
+
+**Critical path:** C1 → T1 → I1 → T6 (→ CR1 if raised). Without CR1: C1 → T1 (or T4) → I1 → T5.
+The sequence after I1 is data (T5) and the owner's read (T6), not an interface.
+
+### Shared files
+
+| File | Writers (level) |
+| --- | --- |
+| `website/src/content.ts` | T4 (1), I1 (2) |
+| `website/bin/feature-matrix.mjs` | T3 (1), I1 (2) |
+| `website/src/lib/feature-matrix-stub.mjs` | C1 (0), I1 (2, deletes) |
+| `docs/feature-matrix/mapping.yaml` | T2 (0); T6 (3) only through follow-up PRs |
+| `docs/feature-matrix/contract.md`, `website/src/lib/feature-matrix-model.mjs` | C1 (0), CR1 (4) |
+| `website/package.json` | T3 (1) |
+| `website/src/layouts/Base.astro`, `website/test/base-styles.mjs` | T4 (1) |
+
+No level holds two writers of one file. C1's own files (`contract.md`,
+`feature-matrix-model.mjs`, its test) are written by no other task.
+
+### Contract changes anticipated
+
+- **CR1:** a `note` on a snapshot row, if the owner's read (O1) wants a per-row or Community
+  footnote. It amends `feature-matrix-model.mjs` and `contract.md`, and reaches T1, T3 and T4,
+  which are merged by then. A follow-up run on each names the contract file by path.
+
+## Considered and declined
+
+- The page parsing FEATURES.md's table (D2446). The page reads the block instead.
+- A byte-exact freshness test in `npm run check` (F11). It would break every status sweep.
+- A Go generator (F12). The website is a second artifact, and the Go module never imports it.
+- Folding the matrix into `/compatibility/` (D2442).
+
+## Checks
+
+None taken. The only owner step is T6's read of the preview. Deploying the live page is the
+existing release website step (`docs/release.md`, "After each release, the website").
+
+## After-deploy steps
+
+None. The first public `/features/` page appears with the next release's website promotion, which
+`docs/release.md` already makes part of every release.
