@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"fmt"
 	"reflect"
 	"slices"
 	"strconv"
@@ -372,5 +373,56 @@ func TestEscalationRegistryKeysAreLocalOnly(t *testing.T) {
 	}
 	if r, ok := Lookup("escalation.ready_drafts"); !ok || r.TypedWhy == "" {
 		t.Error("escalation.ready_drafts carries no TypedWhy, so turning the daemon's readiness authority on is written unasked (D2046)")
+	}
+}
+
+// TestCraftDefaultsNameTheCraftTheyFollow: a craft's DEFAULT column is what
+// `fugaro settings ls` prints for a key the owner has not set, so the craft it
+// names is the craft the read tells him his write will follow. config.CraftParent
+// is the rule — the first-line review and the merge judge follow the coder, the
+// security review follows the senior review — and the judge is the craft where a
+// wrong sentence costs: an owner who reads that the judge follows the senior
+// review, and sets agent.crafts.senior-review.model for it, leaves the judge on
+// the coder's model, on the stage whose verdict gates a merge (E6, D2047).
+//
+// The rows are the two halves wherever a half is the owner's to write: a craft's
+// model in the repository's own file, the project layer and the local config, and
+// its access in the two places an access may be named. The project layer's access
+// row is not one of them: no layer above the local config names a credential, so
+// its DEFAULT column says what unset means there whatever the craft follows.
+func TestCraftDefaultsNameTheCraftTheyFollow(t *testing.T) {
+	// The craft a craft follows, as the column spells it. The key is hyphenated
+	// and the sentence is not.
+	followed := map[string]string{config.CraftCoder: "the coder", config.CraftSeniorReview: "the senior review"}
+	keys := []string{
+		"agent.crafts.%s.model",
+		"layer.defaults.agent.crafts.%s.model",
+		"crafts.%s.model",
+		"agent.crafts.%s.access",
+		"crafts.%s.access",
+	}
+	for _, craft := range config.CraftNames {
+		parent := config.CraftParent(craft)
+		if parent == "" {
+			// The coder and the senior review follow nobody: the spec makes both
+			// required, and their rows say so rather than naming a craft.
+			continue
+		}
+		for _, k := range keys {
+			key := fmt.Sprintf(k, craft)
+			r, ok := Lookup(key)
+			if !ok {
+				t.Errorf("%s has no row: a craft's half is a key an owner looks up", key)
+				continue
+			}
+			half := "model"
+			if strings.HasSuffix(key, ".access") {
+				half = "access"
+			}
+			want := "unset = " + followed[parent] + "'s " + half
+			if r.Default.Unset != want {
+				t.Errorf("%s: the DEFAULT column reads %q, want %q: config.CraftParent(%q) is %q", key, r.Default.Unset, want, craft, parent)
+			}
+		}
 	}
 }

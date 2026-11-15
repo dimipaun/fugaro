@@ -754,7 +754,7 @@ keeps the other half it follows:
 | --- | --- |
 | `review` | `coder` |
 | `security-review` | `senior-review` |
-| `merge-judge` | `senior-review` |
+| `merge-judge` | `coder` |
 
 A craft no layer sets an access for resolves to the project's **default credential**, which is the
 built-in `vertex` at the floor of the layers.

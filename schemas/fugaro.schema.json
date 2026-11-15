@@ -73,7 +73,7 @@
         "crafts": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Each craft's model and the credential or pool its calls go out on (docs/model-crafts/spec.md §3). A craft that sets nothing takes the model and the access of the craft it follows — review follows coder, merge-judge and security-review follow senior-review — and the two halves inherit separately. No key here turns a review level on: level 3 stays the review levels' and the recipe's switch, not the security-review craft's.",
+          "description": "Each craft's model and the credential or pool its calls go out on (docs/model-crafts/spec.md §3). A craft that sets nothing takes the model and the access of the craft it follows — review and merge-judge follow coder, security-review follows senior-review — and the two halves inherit separately. No key here turns a review level on: level 3 stays the review levels' and the recipe's switch, not the security-review craft's.",
           "properties": {
             "coder": { "$ref": "#/$defs/craft", "description": "implement and fix" },
             "review": { "$ref": "#/$defs/craft", "description": "review, level 1" },

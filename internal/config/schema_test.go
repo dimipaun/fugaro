@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -327,5 +328,70 @@ func TestSchemaMatchesDecoder(t *testing.T) {
 	// against the sentence an operator has.
 	if ps := ValidatePublishedPools([]Pool{{Name: "claude", Members: []string{CredentialVertex}}}, nil); len(ps) != 1 {
 		t.Errorf("the schema says a pool's owner is required and the decoder answers %v for a published one without", ps)
+	}
+}
+
+// TestCraftBlockDescriptionsNameTheCraftTheyFollow: a crafts block's own
+// sentence is where an owner reads what a craft that sets nothing takes, and it
+// is the one place the DEFAULT column cannot correct him — `fugaro settings ls`
+// prints a row per craft, while this prose is what an editor's hover and a
+// repository's own CI schema show. config.CraftParent is the rule (the
+// first-line review and the merge judge follow the coder, the security review
+// follows the senior review), and the judge is the craft where a wrong sentence
+// costs: an owner who reads that it follows the senior review, and sets
+// agent.crafts.senior-review.model for it, leaves the judge on the coder's
+// model, on the stage whose verdict gates a merge (E6, D2047).
+func TestCraftBlockDescriptionsNameTheCraftTheyFollow(t *testing.T) {
+	followed := map[string]string{CraftCoder: "coder", CraftSeniorReview: "senior-review"}
+	for _, tc := range []struct {
+		file string
+		path []string
+	}{
+		{"fugaro.schema.json", []string{"properties", "agent", "properties", "crafts"}},
+		{"project-layer.schema.json", []string{"properties", "defaults", "properties", "agent", "properties", "crafts"}},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join("..", "..", "schemas", tc.file))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var doc map[string]any
+			if err := json.Unmarshal(data, &doc); err != nil {
+				t.Fatal(err)
+			}
+			var node any = doc
+			for _, key := range tc.path {
+				obj, ok := node.(map[string]any)
+				if !ok {
+					t.Fatalf("%s: %q is not an object", tc.file, strings.Join(tc.path, "."))
+				}
+				if node, ok = obj[key]; !ok {
+					t.Fatalf("%s has no %s", tc.file, strings.Join(tc.path, "."))
+				}
+			}
+			block, _ := node.(map[string]any)
+			desc, _ := block["description"].(string)
+			if desc == "" {
+				t.Fatalf("%s's crafts block has no description", tc.file)
+			}
+			for _, craft := range CraftNames {
+				parent := CraftParent(craft)
+				if parent == "" {
+					// The coder and the senior review follow nobody: the spec
+					// makes both required, and the sentence says so rather than
+					// naming a craft.
+					continue
+				}
+				// The craft and the craft it follows in one sentence: "review
+				// and merge-judge follow coder, security-review follows
+				// senior-review". A sentence that puts another craft after this
+				// one, or does not name it at all, is the one that tells an
+				// owner the wrong craft.
+				re := regexp.MustCompile(regexp.QuoteMeta(craft) + `[^.]*follows? ` + regexp.QuoteMeta(followed[parent]))
+				if !re.MatchString(desc) {
+					t.Errorf("%s's crafts block does not say %s follows %s: it reads %q, and config.CraftParent says %q", tc.file, craft, followed[parent], desc, parent)
+				}
+			}
+		})
 	}
 }

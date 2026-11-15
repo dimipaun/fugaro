@@ -221,8 +221,8 @@ var yamlMeta = map[string]Row{
 	"agent.crafts.senior-review.access":   {Owner: "accounts", Default: unset("required: the senior review's calls go out on a credential or a pool"), Doc: docCrafts},
 	"agent.crafts.security-review.model":  {Owner: "models", Default: unset("the senior review's model"), Doc: docCrafts},
 	"agent.crafts.security-review.access": {Owner: "accounts", Default: unset("the senior review's access"), Doc: docCrafts},
-	"agent.crafts.merge-judge.model":      {Owner: "models", Default: unset("the senior review's model"), Doc: docCrafts},
-	"agent.crafts.merge-judge.access":     {Owner: "accounts", Default: unset("the senior review's access"), Doc: docCrafts},
+	"agent.crafts.merge-judge.model":      {Owner: "models", Default: unset("the coder's model"), Doc: docCrafts},
+	"agent.crafts.merge-judge.access":     {Owner: "accounts", Default: unset("the coder's access"), Doc: docCrafts},
 
 	// The escalation ladder's two model grades (docs/outer-loop-escalation E2,
 	// D2039): the model each rung runs and the credential or pool its calls go
@@ -633,7 +633,7 @@ var layerRows = []Row{
 	layerRow("defaults.agent.crafts.senior-review.access", "none: only the local config and the policy node name a credential", "accounts", docCrafts),
 	layerRow("defaults.agent.crafts.security-review.model", "the senior review's model", "models", docCrafts),
 	layerRow("defaults.agent.crafts.security-review.access", "none: only the local config and the policy node name a credential", "accounts", docCrafts),
-	layerRow("defaults.agent.crafts.merge-judge.model", "the senior review's model", "models", docCrafts),
+	layerRow("defaults.agent.crafts.merge-judge.model", "the coder's model", "models", docCrafts),
 	layerRow("defaults.agent.crafts.merge-judge.access", "none: only the local config and the policy node name a credential", "accounts", docCrafts),
 	// The grades' layer rows (E2, D2039): the project layer sets both halves
 	// for every repository of it, and a repository's own entry is recorded
@@ -975,8 +975,8 @@ var localRows = []Row{
 	locLocal("crafts.senior-review.access", "required: the senior review's calls go out on a credential or a pool", "accounts", docCrafts),
 	locLocal("crafts.security-review.model", "the senior review's model", "models", docCrafts),
 	locLocal("crafts.security-review.access", "the senior review's access", "accounts", docCrafts),
-	locLocal("crafts.merge-judge.model", "the senior review's model", "models", docCrafts),
-	locLocal("crafts.merge-judge.access", "the senior review's access", "accounts", docCrafts),
+	locLocal("crafts.merge-judge.model", "the coder's model", "models", docCrafts),
+	locLocal("crafts.merge-judge.access", "the coder's access", "accounts", docCrafts),
 
 	loc("project_secrets.*.allow_data_to", "nobody", "secrets", docSetup),
 	loc("project_secrets.*.proxy", "none", "secrets", docSetup),
