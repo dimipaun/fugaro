@@ -90,7 +90,7 @@ As of 2026-11-15, read from `main`, the open pull requests and each plan's task 
 | issues-resolved-on-update | none |
 | managed-agent-converge | none |
 | mcp-server | M9 parked (D936, the fence declined, no release schedules it); M11 declined (2026-11-09) |
-| mobile-auth | owner live checks, not numbered on main (draft #2700 numbers them 601 to 608 and draft #2710 620 to 627); P5's D231 gap is a follow-up awaiting the owner's decision — revoking the last device empties the node, so the next publish re-seeds the revoked entry |
+| mobile-auth | owner Checks 620 to 627 (written in the register on 2026-11-14, not run); P5's D231 gap is a follow-up awaiting the owner's decision — revoking the last device empties the node, so the next publish re-seeds the revoked entry |
 | model-crafts | owner Checks 420 to 422 (written as one script each; not run) |
 | models-commands | none |
 | plugin-user-scope | E1, the release itself (rides the next CLI release; no operator step) |
