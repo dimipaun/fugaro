@@ -127,6 +127,11 @@ other_branch=fugaro/chk211-run-0002
 JUDGE_SYSTEM='You compare two changes and answer with one line: the better one, then one word for why.'
 PROMPT_A='--- BEGIN 1a2b3c4d CHANGE A ---\n... a diff ...\n--- END 1a2b3c4d CHANGE A ---\n--- BEGIN 1a2b3c4d CHANGE B ---\n... a diff ...\n--- END 1a2b3c4d CHANGE B ---\nWhich change is better? Answer with one line and nothing else: A, B or tie, then one word for why (correctness, tests, scope, clarity, safety, other).'
 PROMPT_B='--- BEGIN 1a2b3c4d CHANGE A ---\n... a diff ...\n--- END 1a2b3c4d CHANGE A ---\n--- BEGIN 1a2b3c4d CHANGE B ---\n... a diff ...\n--- END 1a2b3c4d CHANGE B ---\nWhich change is better? Answer with one line and nothing else: A, B or tie, then one word for why (correctness, tests, scope, clarity, safety, other).'
+# The task text the one launch carries: `fugaro run` refuses a launch with none,
+# so the check passes its own sentence and the fake refuses a textless launch the
+# way the real command does. Kept the same as the check's own JUDGE_TASK_TEXT by
+# hand, because the fake sees only the call it is given.
+JUDGE_TASK_TEXT='Judge the unjudged A/B pairs of this repository; the ab-judge recipe reads its own manifest and this text only names the launch.'
 
 pair_id() { printf 'chk211-pair-%s' "$1"; }
 arm_run() { printf 'chk211-arm-%s-%s' "$1" "$2"; }        # arm_run I champ|chall
@@ -735,7 +740,7 @@ test_happy_path() {
   assert_scratch_removed "$dir" "happy path"
   # The commands the reading is made of: the launch from the checkout, the
   # objects out of the bucket at the run's OWN prefix, and nothing else.
-  expect_contains "$calls" "run --repo $dir/sandbox --recipe ab-judge --json (in $dir/sandbox)" "happy path: the launch command"
+  expect_contains "$calls" "run --repo $dir/sandbox --recipe ab-judge --json $JUDGE_TASK_TEXT (in $dir/sandbox)" "happy path: the launch command"
   expect_contains "$calls" "recipes ls --json" "happy path: the catalog"
   expect_contains "$calls" "config layer --json" "happy path: the layer"
   expect_contains "$calls" "runs ls --repo $dir/sandbox --json --limit 50" "happy path: the runs list"
