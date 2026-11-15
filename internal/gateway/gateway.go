@@ -301,7 +301,16 @@ type Halt struct {
 	Reason string // "run_cap"; with a lease also repo_daily_cap, global_daily_cap, no_cap, kill_switch
 	Scope  string // "run", "repo" or "global"; "" is "run"
 	Detail string // "run cap $20.00 reached ($19.84 spent, $1.30 needed)"; with nothing spent, "cannot hold a call that needs up to"
-	At     time.Time
+	// WorkspaceRefusal, when set, says the workspace's own credentials
+	// service refused this call, and which of the workspace's refusals it
+	// was: one of the three gateway.WorkspaceRefusals (workspace_refusal.go).
+	// It is read off the refusal the service answered and from nowhere else,
+	// so it is set only where the service said so — never inferred from a
+	// reason, a scope or a detail, which a member's own service writes the
+	// same way. Empty for every other halt, which is every halt this gateway
+	// wrote before the marker existed.
+	WorkspaceRefusal string
+	At               time.Time
 }
 
 // Ledger is the run's money: what the cap grants, what settled calls

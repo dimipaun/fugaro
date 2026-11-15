@@ -812,10 +812,21 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 	// its first bytes: they go back in front of the rest, so a relayed body
 	// arrives whole and the pump streams it as it always did.
 	resp.Body = replayBody{Reader: io.MultiReader(bytes.NewReader(head), resp.Body), Closer: resp.Body}
+	// The workspace's own marker, if this refusal carried one: which of the
+	// workspace's refusals the service answered (workspace_refusal.go). It is
+	// read here, off the refusal itself, and from nowhere else -- no reason,
+	// scope or detail is ever read as a marker, because a member's own
+	// credentials service writes all three the same way. An answer that
+	// carries no marker, or one this release does not know, marks nothing.
+	wsRefusal, _ := WorkspaceRefusal(resp.Header)
+	// haltOn is the halt this refusal forces, with whatever the service said
+	// about itself recorded on it. Every halt below goes through it, so a
+	// refusal the workspace marked is marked wherever it was answered.
+	haltOn := func(detail string) int { return s.haltServiceMarked(w, detail, wsRefusal) }
 	if rerr != nil {
 		// A body that broke mid-read, before any of it reached the agent:
 		// not a refusal this code can read, and not one to relay.
-		return s.haltService(w, stateDetailUnreadable), true, "", nil
+		return haltOn(stateDetailUnreadable), true, "", nil
 	}
 	e, ok, err := readServiceRefusal(resp.StatusCode, head)
 	if !ok {
@@ -839,18 +850,18 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 		// as it always did. The run is not stopped by it either: another
 		// credential, or a person, may be what fixes it.
 		if (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) && !modelErrorEnvelope(head) {
-			return s.haltService(w, stateDetailUnadmitted), true, "", nil
+			return haltOn(stateDetailUnadmitted), true, "", nil
 		}
 		return resp.StatusCode, false, "", nil // a model error the service relayed
 	}
 	if err != nil {
-		return s.haltService(w, stateDetailUnreadable), true, "", nil
+		return haltOn(stateDetailUnreadable), true, "", nil
 	}
 	switch e.Error {
 	case ErrorExhaustedUntil:
 		ex, err := exhaustedAnswer(e)
 		if err != nil {
-			return s.haltService(w, stateDetailUnreadable), true, "", nil
+			return haltOn(stateDetailUnreadable), true, "", nil
 		}
 		// The wait is not a halt: the runner decides what to do about it
 		// (C1.17), and until it does the call is answered retryably and
@@ -861,7 +872,7 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 			"fugaro: the credentials service has no credential available before "+ex.ResetAt.UTC().Format(time.RFC3339))
 		return http.StatusServiceUnavailable, true, "", nil
 	case ErrorStateUnavailable:
-		return s.haltService(w, refusalDetail(e.Error)), true, "", nil
+		return haltOn(refusalDetail(e.Error)), true, "", nil
 	case ErrorNoCandidateCredentials:
 		// The one refusal whose detail is built from the answer rather than
 		// from the type alone (noCredentialDetail): which of the filters
@@ -872,7 +883,7 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 		// the agent cannot.
 		s.log.Warn("budget: the credentials service had no credential to offer a call",
 			"stage", s.stageName(), "tried", triedLog(e.Tried))
-		return s.haltService(w, noCredentialDetail(e.Tried)), true, "", nil
+		return haltOn(noCredentialDetail(e.Tried)), true, "", nil
 	case ErrorRequestRefused:
 		// The service's request check refused the call itself, and the one
 		// cause a forwarded call can really have is a project that publishes
@@ -883,15 +894,15 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 		// running run. The detail says so, because the service's own sentence
 		// never reaches the agent (D143): without it the operator reads a
 		// detail about a broken service instead of the missing allow-list.
-		return s.haltService(w, refusalDetail(e.Error)), true, "", nil
+		return haltOn(refusalDetail(e.Error)), true, "", nil
 	case ErrorUnverifiedRunIdentity, ErrorUnverifiedJobIdentity:
-		return s.haltService(w, refusalDetail(e.Error)), true, "", nil
+		return haltOn(refusalDetail(e.Error)), true, "", nil
 	}
 	// A refusal whose type this release does not know. It is the service's
 	// own answer and is not relayed, and the call cannot be accounted for
 	// either: stop rather than improvise (D143's posture). The type is from
 	// a closed set the service writes, and is not echoed into the detail.
-	return s.haltService(w, stateDetailUnreadable), true, "", nil
+	return haltOn(stateDetailUnreadable), true, "", nil
 }
 
 // replayBody is a response body whose first bytes were read and put back.
@@ -1029,9 +1040,24 @@ func triedLog(tried []serviceTried) string {
 // cancel the calls in flight, exactly as a run-cap halt does not: each of them
 // settles by its own answer.
 func (s *Server) haltService(w http.ResponseWriter, detail string) int {
+	return s.haltServiceMarked(w, detail, "")
+}
+
+// haltServiceMarked is haltService for an answer that carried the workspace's
+// own marker: the same halt, with the refusal the workspace's credentials
+// service named recorded on it (workspace_refusal.go). workspace is "" for
+// every answer that carried no marker, which is every refusal that is not the
+// workspace's and every answer from a release before the marker existed, and
+// the halt is then the one haltService writes.
+//
+// The marker changes nothing about the halt but the fact it carries: the
+// reason, the scope, the detail and the message are the ones a refusal the
+// service did not mark gets, so a run refused by a workspace stops exactly
+// where it stopped before and only its record says who refused it.
+func (s *Server) haltServiceMarked(w http.ResponseWriter, detail, workspace string) int {
 	s.mu.Lock()
 	if s.halt == nil {
-		h := Halt{Reason: ReasonBudgetUnavailable, Scope: "run", Detail: detail, At: time.Now().UTC()}
+		h := Halt{Reason: ReasonBudgetUnavailable, Scope: "run", Detail: detail, WorkspaceRefusal: workspace, At: time.Now().UTC()}
 		s.haltLocked(h, "fugaro: budget halted: "+haltText(h), s.stageNameLocked(), true)
 	}
 	msg := s.haltMsg
