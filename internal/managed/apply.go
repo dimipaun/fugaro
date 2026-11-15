@@ -896,6 +896,12 @@ func (r Request) advice(v Verdict) string {
 // confirmation to give, and the answer to that is no apply rather than an
 // apply nobody confirmed.
 //
+// The third term the class system had here — the answer a run carries of its
+// own, which a YesOrTyped step took with no session needed at all — is gone
+// with the classes and is not replaced: this command's own session carries no
+// such answer (managedConditions), and the flag that used to put one there is
+// gone too (T11 of docs/no-prompt-policy).
+//
 // A session the rule admits is then one of two. A coding agent's, in a managed
 // project with an admitted plan the inventory did not fall back on, is D55's
 // answer: it proceeds, and says why in initflow's own sentence

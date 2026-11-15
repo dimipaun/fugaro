@@ -2115,7 +2115,7 @@ func printWorkflowWarnings(r *initRun, spec infra.RepoSpec) {
 // conditions is what this run says about who is there.
 func (r *initRun) conditions() initflow.Conditions {
 	o := r.o
-	return initflow.Conditions{JSON: o.asJSON,
+	return initflow.Conditions{Yes: o.yes && !o.planOnly, NonInteractive: o.nonInteractive, JSON: o.asJSON,
 		Terminal: r.stdinTerminal(), Agent: agentMarker(os.Getenv, r.stdinTerminal()), Ask: o.ask}
 }
 

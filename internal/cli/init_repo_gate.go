@@ -136,8 +136,17 @@ func (e *initEngine) onboardCovered(o originInfo) bool {
 	// which ownAnswer covers for this step in both doors, D12): --plan-only
 	// turns it off, and a coding agent's session never reaches it, whatever the
 	// run carries.
-	return r.stepConfirmation(true) == stepByYes
+	return onboardByRunAnswer(r)
 }
+
+// onboardByRunAnswer is the run's own answer for this step, as the repository
+// gate reads it: stepConfirmation's own answer, which covers onboarding in both
+// doors (D12, W5.1). It is a package variable only so that a test whose subject
+// is something else can hand its run one — no flag gives a command an answer
+// any more (T11), and a test that drives a whole command from the outside has
+// no other way in. The rule stays stepConfirmation's, and a coding agent's
+// session is refused there whatever this returns.
+var onboardByRunAnswer = func(r *initRun) bool { return r.stepConfirmation(true) == stepByYes }
 
 // checkoutNote is printed once, immediately before the gate's note, when
 // installation-only flags are given in a checkout the gate is about (so it is

@@ -962,6 +962,7 @@ func TestApplyAsksD55sRuleForTheSessionsOwnConditions(t *testing.T) {
 		cond initflow.Conditions
 	}{
 		{"the zero Conditions", initflow.Conditions{}},
+		{"no marker and no terminal", initflow.Conditions{NonInteractive: true}},
 		{"--json and no terminal", initflow.Conditions{JSON: true}},
 		{"--ask", initflow.Conditions{Ask: true}},
 	} {
@@ -1085,11 +1086,15 @@ func TestApplyIsNotReachableWhileTheGateIsClosed(t *testing.T) {
 // the IDE terminal's marker and a coding agent's.
 func allConditions() []initflow.Conditions {
 	var out []initflow.Conditions
-	for _, js := range []bool{false, true} {
-		for _, term := range []bool{false, true} {
-			for _, agent := range []string{"", initflow.IDEMarker, "CLAUDECODE"} {
-				for _, ask := range []bool{false, true} {
-					out = append(out, initflow.Conditions{JSON: js, Terminal: term, Agent: agent, Ask: ask})
+	for _, yes := range []bool{false, true} {
+		for _, ni := range []bool{false, true} {
+			for _, js := range []bool{false, true} {
+				for _, term := range []bool{false, true} {
+					for _, agent := range []string{"", initflow.IDEMarker, "CLAUDECODE"} {
+						for _, ask := range []bool{false, true} {
+							out = append(out, initflow.Conditions{Yes: yes, NonInteractive: ni, JSON: js, Terminal: term, Agent: agent, Ask: ask})
+						}
+					}
 				}
 			}
 		}
@@ -1121,7 +1126,7 @@ func allConditions() []initflow.Conditions {
 func TestTheConfirmationRuleIsD55sOverTheWholeProduct(t *testing.T) {
 	fallbackInv := CheckedInventory(Decision{Fallback: true, Cause: CauseForeign,
 		Why: "aurora (" + gcpProject + ") holds 1 resource(s) the installation's state does not account for; this run falls back to confirmations, and nothing is deleted (D59)"})
-	n, agent, asked := 0, 0, 0
+	n, agent, asked, refused := 0, 0, 0, 0
 	for _, c := range allConditions() {
 		for _, managed := range []bool{false, true} {
 			for _, fallback := range []bool{false, true} {
@@ -1145,26 +1150,32 @@ func TestTheConfirmationRuleIsD55sOverTheWholeProduct(t *testing.T) {
 				}
 				err := req.confirm(Verdict{OK: true}, "the saved plan's hash")
 				// The rule in the words above, so the three facts are what is
-				// being read rather than the predicate that reads them.
+				// being read rather than the predicate that reads them. gate is
+				// the case a verdict stands in for: the plan admitted on a
+				// managed project whose inventory did not fall back, in a
+				// coding agent's session whatever its terminal is, or at the
+				// owner's own real terminal — and never under --ask, which
+				// takes the verdict off the table. person is the confirmation a
+				// session with no marker gives itself.
+				marker := c.Agent != ""
+				gate := !c.Ask && managed && !fallback && (marker || (c.Terminal && !c.NonInteractive && !c.JSON))
+				person := !marker && c.Terminal && !c.NonInteractive && !c.JSON && !c.Yes
 				switch {
-				case c.Agent != "":
-					proceeds := managed && !fallback
-					if c.Ask {
-						proceeds = false
+				case marker && gate:
+					// D55's case: the agent's session is not asked, and the
+					// verdict is the whole of what applied the plan.
+					agent++
+					if err != nil {
+						t.Errorf("conditions %+v, managed=%v fallback=%v: %v, want the case D55 removes the refusal for", c, managed, fallback, err)
 					}
-					if proceeds {
-						agent++
-						if err != nil {
-							t.Errorf("conditions %+v, managed=%v fallback=%v: %v, want the case D55 removes the refusal for", c, managed, fallback, err)
-						}
-					} else if err == nil {
-						t.Errorf("conditions %+v, managed=%v fallback=%v: a coding agent's session applied the plan", c, managed, fallback)
+					if questions != 0 {
+						t.Errorf("conditions %+v, managed=%v fallback=%v: a coding agent's session was asked %d times", c, managed, fallback, questions)
 					}
-				case c.Agent == "" && c.Terminal && !c.JSON:
-					// A person at a real terminal (initflow.CanConfirmRun's
-					// own condition): asked, and the answer is the apply.
-					// --ask is not read here — the flag takes the GATE out of
-					// the decision, and it is not the gate that would ask.
+				case person || gate:
+					// A person at a real terminal: asked, and the answer is
+					// the apply. --ask is not read here — the flag takes the
+					// VERDICT out of the decision, and it is not the verdict
+					// that would ask.
 					if err != nil {
 						t.Errorf("conditions %+v, managed=%v fallback=%v: %v, want the person's own confirmation", c, managed, fallback, err)
 					}
@@ -1173,8 +1184,12 @@ func TestTheConfirmationRuleIsD55sOverTheWholeProduct(t *testing.T) {
 					}
 					asked++
 				default:
+					refused++
 					if err == nil {
 						t.Errorf("conditions %+v, managed=%v fallback=%v: a session that can neither be asked nor proceed applied the plan", c, managed, fallback)
+					}
+					if questions != 0 {
+						t.Errorf("conditions %+v, managed=%v fallback=%v: a session that may not confirm was asked %d times", c, managed, fallback, questions)
 					}
 				}
 			}
@@ -1183,13 +1198,14 @@ func TestTheConfirmationRuleIsD55sOverTheWholeProduct(t *testing.T) {
 	if want := len(allConditions()) * 4; n != want || n == 0 {
 		t.Fatalf("the property ran %d combinations, want %d", n, want)
 	}
-	// Non-vacuous: both sessions the rule has an answer for were reached, and
-	// the agent's case was reached with a fallback as well as without one.
+	// Non-vacuous: every outcome the rule has was reached. The coding agent's
+	// case is one table row in three, reached once for the one (managed,
+	// fallback) pair D55 removes the refusal for.
 	if want := len(allConditions()) / 3; agent != want {
 		t.Fatalf("the coding agent's case was reached %d times, want %d", agent, want)
 	}
-	if want := len(allConditions()) / 3; asked != want {
-		t.Fatalf("the person's case was reached %d times, want %d", asked, want)
+	if asked == 0 || refused == 0 {
+		t.Fatalf("the property reached %d confirmations and %d refusals, want both", asked, refused)
 	}
 }
 

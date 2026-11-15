@@ -317,7 +317,7 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		// retries below, because it is a decision about the document and not
 		// about the attempt.
 		if len(pol.AllowRepos) == 0 && !emptyAllowListConfirmed {
-			if err := confirmEmptyAllowList(cmd, lc, askConditions(cmd, boolFlag(cmd, "json"))); err != nil {
+			if err := confirmEmptyAllowList(cmd, lc, askConditions(cmd, boolFlag(cmd, "json"), boolFlag(cmd, "non-interactive"))); err != nil {
 				return publishFailure(err, narrowedSoFar)
 			}
 			emptyAllowListConfirmed = true

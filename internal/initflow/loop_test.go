@@ -1386,9 +1386,10 @@ func TestNoTerminalErrorSaysATerminalAndNeverAFlag(t *testing.T) {
 // CanConfirmRun is the run's own one confirmation — the step the run announces
 // and then applies, at the person's own answer — and it is the whole rule of
 // who may give a money-or-permanent one: a person at a real terminal, and a
-// coding agent's session, a pipe and --json never. There is no class to pick a
-// permissive answer from any more (T12), so the rule is one predicate and the
-// caller's own questions (--ask, --plan-only) are read where they belong.
+// coding agent's session, a pipe, --json and a run that never prompts never.
+// There is no class to pick a permissive answer from any more (T12), so the
+// rule is one predicate and the caller's own questions (--ask, --plan-only) are
+// read where they belong.
 func TestCanConfirmRun(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -1398,6 +1399,8 @@ func TestCanConfirmRun(t *testing.T) {
 		{"a person at a real terminal", Conditions{Terminal: true}, true},
 		{"--json", Conditions{Terminal: true, JSON: true}, false},
 		{"no terminal", Conditions{}, false},
+		{"a run that carries its own answer", Conditions{Terminal: true, Yes: true}, false},
+		{"a run that never prompts", Conditions{Terminal: true, NonInteractive: true}, false},
 		{"a coding agent's session", Conditions{Terminal: true, Agent: "CLAUDECODE"}, false},
 		{"a coding agent's session, no terminal", Conditions{Agent: "AI_AGENT"}, false},
 	} {
@@ -1515,13 +1518,16 @@ func TestYesCoversOnlyDeclaredStages(t *testing.T) {
 // Over every mode the loop can be run in: the one confirmation is taken by a
 // person at a real terminal and by nothing else. It is the rule the run reads
 // when it decides whether its own announced step is answered, so a mode that
-// reached it without a person — a pipe, --json, a coding agent's session, a
-// run carrying its own --yes — is a confirmation nobody gave.
+// reached it without a person — a pipe, --json, a coding agent's session, a run
+// that carries an answer of its own, a run that never prompts — is a
+// confirmation nobody gave. The rows are the loop's own options rather than a
+// table written here: a run whose options say nobody can answer, and whose
+// predicate answered true anyway, would be the whole bug this test is for.
 func TestCanConfirmRunMatrix(t *testing.T) {
 	for _, m := range modes() {
 		t.Run(m.name, func(t *testing.T) {
-			c := Conditions{JSON: m.opts.JSON, Terminal: m.opts.Terminal, Agent: m.opts.Agent}
-			want := c.Terminal && !c.JSON && c.Agent == ""
+			c := Conditions{Yes: m.opts.Yes && !m.opts.PlanOnly, NonInteractive: m.opts.NonInteractive, JSON: m.opts.JSON, Terminal: m.opts.Terminal, Agent: m.opts.Agent}
+			want := c.Terminal && !c.Yes && !c.NonInteractive && !c.JSON && c.Agent == ""
 			if got := CanConfirmRun(c); got != want {
 				t.Errorf("CanConfirmRun(%+v) = %v, want %v", c, got, want)
 			}

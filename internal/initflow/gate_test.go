@@ -27,26 +27,32 @@ import (
 //     beside it; a step that reached past it would be a managed project's
 //     plan applied by a pipe or a --json run.
 
-// allConditions is the whole product of the four fields a run says about who
-// is there: 16 rows, each reachable from the CLI. --ask is one of them because
+// allConditions is the whole product of the six fields a run says about who
+// is there: 64 rows, each reachable from the CLI. --ask is one of them because
 // it is a fact about the run and not about a plan: the owner asking for the
 // confirmations back is a condition every predicate below is decided under,
 // and a table without it would test a rule the CLI can pass a different value
-// to.
+// to. So are the two facts a run carries rather than a command: a run that
+// carries its own answer and one that never prompts are rows every predicate
+// here reads, and a table without them would test those rules on one value.
 func allConditions() []Conditions {
 	markers := []string{"", "CLAUDECODE"}
 	var out []Conditions
-	for _, js := range []bool{false, true} {
-		for _, term := range []bool{false, true} {
-			for _, agent := range markers {
-				for _, ask := range []bool{false, true} {
-					out = append(out, Conditions{JSON: js, Terminal: term, Agent: agent, Ask: ask})
+	for _, yes := range []bool{false, true} {
+		for _, ni := range []bool{false, true} {
+			for _, js := range []bool{false, true} {
+				for _, term := range []bool{false, true} {
+					for _, agent := range markers {
+						for _, ask := range []bool{false, true} {
+							out = append(out, Conditions{Yes: yes, NonInteractive: ni, JSON: js, Terminal: term, Agent: agent, Ask: ask})
+						}
+					}
 				}
 			}
 		}
 	}
-	if len(out) != 16 {
-		panic("the conditions product is not 16 rows")
+	if len(out) != 64 {
+		panic("the conditions product is not 64 rows")
 	}
 	return out
 }
@@ -81,8 +87,37 @@ func boolWord(b bool) string {
 }
 
 func conditionsName(c Conditions) string {
-	return "Conditions{JSON:" + boolWord(c.JSON) + ", Terminal:" + boolWord(c.Terminal) + ", Agent:" + c.Agent +
+	return "Conditions{Yes:" + boolWord(c.Yes) + ", NonInteractive:" + boolWord(c.NonInteractive) +
+		", JSON:" + boolWord(c.JSON) + ", Terminal:" + boolWord(c.Terminal) + ", Agent:" + c.Agent +
 		", Ask:" + boolWord(c.Ask) + "}"
+}
+
+// TestManagedTheGateIgnoresTheRunsOwnAnswer is the property the owner's ruling
+// rests on: whether the run carried an answer of its own is not asked for and
+// does not decide. A managed project whose gate stood in only for a run that
+// had answered beforehand would be a project whose owner is still asked for it,
+// which is the whole of what the ruling removes.
+//
+// The mutation caught: putting c.Yes into GateStandsIn or PersonAtTheTerminal —
+// reading the run's own answer as though it were who is there.
+func TestManagedTheGateIgnoresTheRunsOwnAnswer(t *testing.T) {
+	for _, c := range allConditions() {
+		if c.Yes {
+			continue
+		}
+		flipped := c
+		flipped.Yes = true
+		for _, m := range allManaged() {
+			if got, want := GateStandsIn(flipped, m), GateStandsIn(c, m); got != want {
+				t.Errorf("GateStandsIn(%s, %s) = %v with the run's own answer and %v without: the gate's answer is about the document and who is there, not about what the run carried",
+					conditionsName(flipped), managedName(m), got, want)
+			}
+			if got, want := PersonAtTheTerminal(flipped), PersonAtTheTerminal(c); got != want {
+				t.Errorf("PersonAtTheTerminal(%s) = %v with the run's own answer and %v without: who is there does not depend on what the run carried",
+					conditionsName(flipped), got, want)
+			}
+		}
+	}
 }
 
 // TestManagedRemovesHoldsEveryFactAtOnce pins the three facts and what each of
@@ -179,16 +214,16 @@ func TestManagedGateStandsInInBothSessions(t *testing.T) {
 
 // TestManagedGateStandsInIsTheOwnerAtARealTerminal: the terminal case is the
 // same three facts plus the one fact about who is there, and the case it must
-// never be true of is the run nobody is at — a pipe, --json, a session with a
-// coding agent's marker in it, or a run whose owner asked for the prompts back
-// (--ask: the gate is then nobody's answer, which is the whole of what the flag
-// is for).
+// never be true of is the run nobody is at — a pipe, --json, a run that never
+// prompts, a session with a coding agent's marker in it, or a run whose owner
+// asked for the prompts back (--ask: the gate is then nobody's answer, which is
+// the whole of what the flag is for).
 func TestManagedGateStandsInIsTheOwnerAtARealTerminal(t *testing.T) {
 	for _, c := range allConditions() {
 		for _, m := range allManaged() {
 			got := PersonAtTheTerminal(c) && m.Removes()
 			switch {
-			case c.Ask, c.Agent != "", !c.Terminal, c.JSON:
+			case c.Ask, c.Agent != "", !c.Terminal, c.NonInteractive, c.JSON:
 				if got {
 					t.Errorf("the owner half of GateStandsIn(%s, %s) is true with nobody at the terminal", conditionsName(c), managedName(m))
 				}
@@ -211,11 +246,11 @@ func TestManagedGateStandsInIsTheOwnerAtARealTerminal(t *testing.T) {
 // falls in. A marker in the environment is never the owner, whatever else the
 // row says (that is the mutation a "person at a terminal" read as "a terminal"
 // would make: a coding agent's session is a terminal too). And a run nobody is
-// at — a pipe, --json, --ask — is never the owner either, and the answer there
-// is the coding agent's refusal exactly as it was.
+// at — a pipe, --json, a run that never prompts, --ask — is never the owner
+// either, and the answer there is the coding agent's refusal exactly as it was.
 func TestPersonAtTheTerminalIsTheOwnerAndNothingElse(t *testing.T) {
 	for _, c := range allConditions() {
-		want := c.Agent == "" && c.Terminal && !c.JSON && !c.Ask
+		want := c.Agent == "" && c.Terminal && !c.NonInteractive && !c.JSON && !c.Ask
 		if got := PersonAtTheTerminal(c); got != want {
 			t.Errorf("PersonAtTheTerminal(%s) = %v, want %v", conditionsName(c), got, want)
 		}
@@ -325,7 +360,7 @@ func TestManagedAskTakesTheGateOutOfTheDecision(t *testing.T) {
 // answered a managed project's terminal with a refusal, is a failure here.
 func TestAskDecisionIsTheFlagsWholeRule(t *testing.T) {
 	for _, c := range allConditions() {
-		canPrompt := c.Agent == "" && c.Terminal && !c.JSON
+		canPrompt := c.Agent == "" && c.Terminal && !c.NonInteractive && !c.JSON
 		for _, managed := range []bool{false, true} {
 			line, refusal := AskDecision(c, managed)
 			switch {

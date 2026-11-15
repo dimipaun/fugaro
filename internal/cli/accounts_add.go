@@ -253,7 +253,7 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	// run or written: the line it prints, or the refusal that stops this
 	// command where nobody could answer the question it restores
 	// (managed_ask.go). A gate refusal above is still the gate's own sentence.
-	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask}, m.Managed, askConditions(cmd, false)); err != nil {
+	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask}, m.Managed, askConditions(cmd, false, false)); err != nil {
 		return err
 	}
 

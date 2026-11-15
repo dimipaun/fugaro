@@ -225,7 +225,7 @@ func TestAskInAnAgentSessionFailsFastAndDoesNotHang(t *testing.T) {
 	decideOut := &syncBuf{}
 	var decideErr error
 	askWithin(t, "askDecide", func() {
-		decideErr = askDecide(decideOut, askFlags{ask: true}, true, askConditions(s.cmd, false))
+		decideErr = askDecide(decideOut, askFlags{ask: true}, true, askConditions(s.cmd, false, false))
 	})
 	if decideErr == nil {
 		t.Fatal("the flag was honoured in a coding agent's session")

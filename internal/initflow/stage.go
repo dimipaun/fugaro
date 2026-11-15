@@ -927,6 +927,8 @@ func askNobody(c Conditions) string {
 	switch {
 	case c.Agent != "":
 		return "a coding agent's session is present (" + c.Agent + " is set)"
+	case c.NonInteractive:
+		return "this run never prompts"
 	case c.JSON:
 		return "--json never prompts"
 	default:
@@ -948,7 +950,7 @@ func AskDecision(c Conditions, managed bool) (line, refusal string) {
 	if !managed {
 		return AskUnmanaged(), ""
 	}
-	if c.Agent != "" || c.JSON || !c.Terminal {
+	if c.Agent != "" || c.NonInteractive || c.JSON || !c.Terminal {
 		return "", AskRefusal(c)
 	}
 	return AskRestored(), ""
@@ -956,8 +958,14 @@ func AskDecision(c Conditions, managed bool) (line, refusal string) {
 
 // Conditions are what a run says about who is there.
 type Conditions struct {
-	JSON, Terminal bool
-	Agent          string // a coding agent's environment marker, "" for none
+	// Yes is a run carrying its own answer for the steps that answer reaches,
+	// and NonInteractive one that never prompts. Neither is a flag a command
+	// has any more (T11 of docs/no-prompt-policy): what carries them is the
+	// run Fugaro makes of itself — accounts add's converge, which sets both —
+	// and a run a test builds for the shape they stand for. Every rule here
+	// reads them where they take a confirmation away.
+	Yes, NonInteractive, JSON, Terminal bool
+	Agent                               string // a coding agent's environment marker, "" for none
 	// Ask is the owner's --ask in a project the marks say is managed: the
 	// prompts the gate would have stood in for are asked here instead. It never
 	// widens anything: the gate's own admission is decided before this field is
@@ -1063,9 +1071,10 @@ func GateStandsIn(c Conditions, m Managed) bool {
 
 // PersonAtTheTerminal reports whether the conditions put a person at the
 // project's own terminal, there to read a document and answer for it: the
-// owner's own session (no marker), a real terminal, and neither of the two
+// owner's own session (no marker), a real terminal, and none of the three
 // things that say nobody can answer a prompt — --ask (the owner asking to be
-// asked again is a question to put, never a licence to skip one) and --json.
+// asked again is a question to put, never a licence to skip one), a run that
+// never prompts and --json.
 //
 // It is GateStandsIn's condition half, named once so that a caller asking the
 // same question about a document the gate's verdict does not cover — the policy
@@ -1079,18 +1088,23 @@ func GateStandsIn(c Conditions, m Managed) bool {
 // The terminal is the load-bearing half and the one a caller writing this out
 // again would drop: a pipe carries no marker, so a session nobody is at reads
 // exactly like the owner's own, and a coding agent's session is at a terminal
-// too.
+// too. Whether the run carries an answer of its own is deliberately not part
+// of it: this asks who is there to read the document, and a run's own answer
+// reaches other steps and never this one (CanConfirmRun).
 func PersonAtTheTerminal(c Conditions) bool {
-	return !c.Ask && c.Agent == "" && c.Terminal && !c.JSON
+	return !c.Ask && c.Agent == "" && c.Terminal && !c.NonInteractive && !c.JSON
 }
 
 // CanConfirmRun reports whether the run's one confirmation (the step the run
 // announces and then applies, at the person's own answer) can be taken under
 // the conditions: a person at a real terminal. --json and a pipe never take it,
-// and under a coding agent's marker nothing applies at all. Plan-only runs show
+// a run that carries an answer of its own already gave it (it covers the
+// ordinary steps with no review, and a step that needs the person's own answer
+// is not one of them), a run that never prompts has nobody to take it, and
+// under a coding agent's marker nothing applies at all. Plan-only runs show
 // the review and never take it (the caller's own; nothing is applied there).
 func CanConfirmRun(c Conditions) bool {
-	return c.Agent == "" && c.Terminal && !c.JSON
+	return c.Agent == "" && !c.Yes && !c.NonInteractive && c.Terminal && !c.JSON
 }
 
 // Validate checks stages are registered once each, under a known name, and
