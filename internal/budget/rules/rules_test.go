@@ -472,7 +472,11 @@ func TestTemplatePolicyPathsAgreeWithProjectpolicy(t *testing.T) {
 		t.Fatalf("PolicyPaths = (%q, %q, %q), want config/policy/shared, config/policy/repos/x, config/admin", shared, repo, admin)
 	}
 	paths := generatedPaths(t)
-	for _, p := range []string{shared, repo, admin} {
+	// The voice policy node's paths are the same agreement one family over
+	// (P5.3.1): internal/projectpolicy builds them in Go, the template spells
+	// them, and this package names their parent.
+	for _, p := range []string{shared, repo, admin, PathVoice,
+		projectpolicy.PathVoiceShared(), projectpolicy.PathVoiceRepos(), projectpolicy.PathVoiceRepo(slugForPath)} {
 		if _, ok := paths[p]; !ok {
 			t.Errorf("the template does not generate /%s, which internal/projectpolicy names", p)
 		}
@@ -553,6 +557,75 @@ func TestPolicyNodesAreReadPerChild(t *testing.T) {
 		if w, ok := a[".write"]; ok && w != false {
 			t.Errorf("/%s .write = %v, want false under config", p, w)
 		}
+	}
+}
+
+// TestVoicePolicyNodesAreReadPerChild pins §4.3 of the voice design (mobile
+// plan task P5.3.1) without the emulator: the voice subtree is two children of
+// config/policy/voice, each carrying config/policy's own grant for its level,
+// and the parent carries none — because a TOKEN read there would cascade to
+// every project's allow-list at once.
+//
+// It is the parity test as well, from the other side: the template spells the
+// three paths as JSON literals and internal/projectpolicy builds them in Go
+// (PathVoiceShared, PathVoiceRepo, PathVoiceRepos), so a rename updates both or
+// fails here. The parent has no function of its own — PathVoice is this
+// package's, and it is the path the template spells.
+//
+// What the emulator adds is the refusal of a *token*: a run token for one slug
+// reads its own node and is refused its sibling's, and no client writes either.
+// This proves the document says so.
+func TestVoicePolicyNodesAreReadPerChild(t *testing.T) {
+	paths := generatedPaths(t)
+	shared := projectpolicy.PathVoiceShared()
+	repo := projectpolicy.PathVoiceRepo(slugForPath)
+	repos := projectpolicy.PathVoiceRepos()
+	if PathVoice != "config/policy/voice" || shared != PathVoice+"/shared" ||
+		repos != PathVoice+"/repos" || repo != repos+"/"+slugForPath {
+		t.Fatalf("the voice paths disagree: PathVoice = %q, shared = %q, repos = %q, repo = %q", PathVoice, shared, repos, repo)
+	}
+	for _, p := range []string{PathVoice, shared, repos, repo} {
+		if _, ok := paths[p]; !ok {
+			t.Errorf("the template does not generate /%s, which this package and internal/projectpolicy name", p)
+		}
+	}
+
+	// The parent: no grant at all, of its own.
+	if attrs, ok := paths[PathVoice]; !ok {
+		t.Fatalf("the template does not generate /%s", PathVoice)
+	} else {
+		for _, a := range []string{".read", ".write"} {
+			if v, ok := attrs[a]; ok {
+				t.Errorf("/%s has %s = %v: an RTDB read grant on the parent cascades to every project's voice policy", PathVoice, a, v)
+			}
+		}
+	}
+	// The children: the policy's own grants, field for field, and read-only.
+	for _, c := range []struct {
+		p, want string
+	}{{shared, "auth.token.fp"}, {repo, "auth.token.fs == $slug"}} {
+		attrs, ok := paths[c.p]
+		if !ok {
+			continue
+		}
+		read, _ := attrs[".read"].(string)
+		if !strings.Contains(read, c.want) {
+			t.Errorf("/%s .read = %q, want the %s claim (config/policy's own grant for that level)", c.p, read, c.want)
+		}
+		if strings.Contains(read, "auth.token.mu") {
+			t.Errorf("/%s .read = %q carries USER: the phone holds no read of config/policy/**, which is why the switch's project-policy state is the hop's answer", c.p, read)
+		}
+		if w, ok := attrs[".write"]; !ok || w != false {
+			t.Errorf("/%s .write = %v, want false: only an operator's IAM credential writes the voice policy", c.p, w)
+		}
+	}
+	// The shared node is not slug-bound, and a project's node is: the two
+	// grants are the policy's, copied, and not one widened grant.
+	if attrs := paths[shared]; strings.Contains(attrs[".read"].(string), "auth.token.fs") {
+		t.Errorf("/%s .read = %v: the shared node is not slug-bound", shared, attrs[".read"])
+	}
+	if attrs := paths[repos]; len(attrs) != 0 {
+		t.Errorf("/%s carries %v: the grant must be per $slug child", repos, attrs)
 	}
 }
 
@@ -2095,7 +2168,25 @@ func withoutValidate(m map[string]any) map[string]any {
 // look legitimate.
 func isNamedAddition(p string) bool {
 	return isNewCredsPath(p) || p == coordpath.PathRoot || p == PathMCPAuth ||
-		p == PathBuildLeases || p == PathOrchestrator || isNewWorkspacePath(p)
+		p == PathBuildLeases || p == PathOrchestrator || isNewWorkspacePath(p) || isNewVoicePath(p)
+}
+
+// isNewVoicePath reports whether p is one of the four locations the voice
+// policy node adds (mobile plan task P5.3.1, docs/mobile/design/
+// voice-evaluation-switch.md §4.3): the subtree's own node, its two children,
+// and one project's child. All four are equalities and not prefixes, for
+// isNewCredsPath's reason — the whole subtree is what this task adds, so a path
+// *under* a project's node is a change to what it contains, which is the shape
+// a grant hidden one level down takes, and it belongs here as a diff a reviewer
+// reads rather than as a match this function waves through.
+//
+// The parent, PathVoice, is in the list because the template spells it: it
+// carries no grant of its own — the grants are per child, and a read on the
+// parent would cascade to every project's allow-list — and naming it here is
+// what makes an edit that puts one there a diff this test shows.
+func isNewVoicePath(p string) bool {
+	return p == PathVoice || p == projectpolicy.PathVoiceShared() ||
+		p == projectpolicy.PathVoiceRepos() || p == projectpolicy.PathVoiceRepo(slugForPath)
 }
 
 // isNewWorkspacePath reports whether p is one of the paths the workspace family
@@ -2176,8 +2267,14 @@ func isNewCredsPath(p string) bool {
 //     children of nodes runs already write. P3 adds a **grant** — a whole family
 //     a signed-in person may read — and a client holding the older marker would
 //     not know the family is there, which is the drift the marker exists to
-//     report; so the generation moves to 4 and doctor's policy-rules-skew is
-//     what tells an installation whose owner has not redeployed yet.
+//     report; so the generation moved to 4 and doctor's policy-rules-skew is
+//     what tells an installation whose owner has not redeployed yet. P5.3.1
+//     moves it to 5 for the same reason one step over: the voice policy node
+//     (PathVoice, `config/policy/voice/{shared,repos/$slug}`) is a grant too —
+//     a run token reads its own project's node there and did not before — and
+//     the generation is what tells an installation at 4 that its deployed
+//     document is not this binary's. `fugaro update`'s rules stage is the
+//     migration, and it is the same stage every generation is met through.
 //   - projectpolicy.PolicyRulesVersion gates the policy nodes, which neither
 //     change touches. It stays 1.
 //   - rules.CredsRulesVersion is the credentials family's own generation, at 1,
@@ -2192,8 +2289,8 @@ func isNewCredsPath(p string) bool {
 // Hand mutation this fails on: bumping any of the four (or lowering one of the
 // family versions), which is what a reviewer must see argued for.
 func TestRulesVersionUnchanged(t *testing.T) {
-	if projectpolicy.RulesVersion != 4 {
-		t.Errorf("projectpolicy.RulesVersion = %d, want 4: the generation that carries the coordinator's read grant (coordinator plan task P3)", projectpolicy.RulesVersion)
+	if projectpolicy.RulesVersion != 5 {
+		t.Errorf("projectpolicy.RulesVersion = %d, want 5: the generation that carries the voice policy node (mobile plan task P5.3.1)", projectpolicy.RulesVersion)
 	}
 	if projectpolicy.PolicyRulesVersion != 1 {
 		t.Errorf("projectpolicy.PolicyRulesVersion = %d, want 1: this change does not touch the policy nodes", projectpolicy.PolicyRulesVersion)
