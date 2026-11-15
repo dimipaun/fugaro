@@ -140,14 +140,14 @@
     "@playwright/test": "1.65.0",
     "@sentry/cli": "3.8.2",
     "@types/node": "26.6.6",
-    "electron": "45.2.3",
+    "electron": "45.3.1",
     "electron-builder": "26.18.0",
-    "elkjs": "0.11.0",
+    "elkjs": "0.12.1",
     "typescript": "7.0.2",
     "vitest": "5.1.0"
   },
   "dependencies": {
-    "@sentry/electron": "8.3.0",
+    "@sentry/electron": "8.4.0",
     "electron-updater": "6.8.11"
   }
 }
