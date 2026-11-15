@@ -1,0 +1,202 @@
+package cli
+
+import (
+	"maps"
+	"reflect"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
+)
+
+// updateDefaultProfileTests is where S5's own tests live: `fugaro update` writes
+// the default job profile of every provider a project uses into the local
+// config before the installation stage plans (docs/shared-jobs-default,
+// reconciliation R1 and R8, decision D2310), so that the same update deploys
+// the shared job its policy stage publishes.
+//
+// The rig is update_converge_test.go's, which is the state the task is about: an
+// installation a release behind, in a checkout of its own repository, with one
+// GitHub repository (acme/app) and one Bitbucket repository (acme/sandbox)
+// enrolled and no profiles block at all.
+
+// updatedConfig is the local config `fugaro update` left on the machine, read
+// the way the door reads it — the strict loader — so a write that left a file
+// this release would refuse cannot pass for a converge.
+func updatedConfig(t *testing.T) *localcfg.Config {
+	t.Helper()
+	return parseLocalConfigBytes(t, readFile(t, installationConfigPath()))
+}
+
+// installationProjectJobs is the job set the installation stage wrote into its
+// variables, keyed by the job's own name: one job per (profile, provider,
+// Claude account) of every profile the local config names, which is what a run
+// resolves and what the launcher places a run on.
+func installationProjectJobs(t *testing.T, r *convergeRig) map[string]any {
+	t.Helper()
+	vars := r.tfvars(t)
+	jobs, ok := vars["project_jobs"].(map[string]any)
+	if !ok {
+		t.Fatalf("the installation's variables carry no project_jobs: %v", vars)
+	}
+	return jobs
+}
+
+// TestUpdateDeploysTheDefaultProfilesJobInTheSameUpdate is S5's red step: no
+// step wrote a default profile, so an installation that publishes no profile
+// kept every repository on its per-repository job. The write is to the local
+// config before the installation stage plans, which is what makes the one
+// `fugaro update` deploy the shared job its policy stage publishes: the job, the
+// node and the config all name the same profile.
+func TestUpdateDeploysTheDefaultProfilesJobInTheSameUpdate(t *testing.T) {
+	r := newConvergeRig(t, v7Node())
+	out := convergeOn(t, r, []string{"policy-vs-jobs"})
+
+	want := gcp.ProjectJobName(projectpolicy.DefaultProfileName, "github", "")
+	jobs := installationProjectJobs(t, r)
+	if _, ok := jobs[want]; !ok {
+		t.Fatalf("the same update deployed no %s job, so a GitHub run naming no profile has no shared job to land on: %v\n%s",
+			want, slices.Sorted(maps.Keys(jobs)), out)
+	}
+	if lc := updatedConfig(t); lc.Profiles[projectpolicy.DefaultProfileName].Provider != "github" {
+		t.Errorf("the local config carries %+v under %s, want the profile the job above was deployed from",
+			lc.Profiles[projectpolicy.DefaultProfileName], projectpolicy.DefaultProfileName)
+	}
+	if _, ok := convergeNode(t, r).Profiles[projectpolicy.DefaultProfileName]; !ok {
+		t.Errorf("the policy this update published defines no %s profile, so the job it deployed and the node a run reads disagree:\n%s",
+			projectpolicy.DefaultProfileName, out)
+	}
+}
+
+// TestUpdateCreatesTheDefaultProfilePerProvider: a project that mixes providers
+// gets one default profile per provider, named for it — `standard` for the first
+// and `standard-<provider>` for another (D2310, R8) — with the resources every
+// profile must state, no image field (R1. config.JobProfile has none, the job's
+// image is the installation's) and the canonical list of the repositories that
+// provider's runs are held to, and the run says what it created.
+func TestUpdateCreatesTheDefaultProfilePerProvider(t *testing.T) {
+	r := newConvergeRig(t, v7Node())
+	out := convergeOn(t, r, []string{"policy-vs-jobs"})
+	lc := updatedConfig(t)
+
+	standard, ok := lc.Profiles[projectpolicy.DefaultProfileName]
+	if !ok {
+		t.Fatalf("no %s profile was written:\n%s", projectpolicy.DefaultProfileName, readFileString(t, installationConfigPath()))
+	}
+	if standard.Provider != "github" {
+		t.Errorf("profiles.%s.provider = %q, want github, the project's first provider (config.Providers order)",
+			projectpolicy.DefaultProfileName, standard.Provider)
+	}
+	if !slices.Equal(standard.AllowRepos, []string{"github/acme/app"}) {
+		t.Errorf("profiles.%s.allow_repos = %v, want the project's GitHub repositories as canonical names",
+			projectpolicy.DefaultProfileName, standard.AllowRepos)
+	}
+	if standard.CPU != config.DefaultCPU || standard.Memory != config.DefaultMemory || standard.TimeoutClass == "" {
+		t.Errorf("profiles.%s = %+v, want the default cpu and memory and a timeout class: a profile that leaves one out is one the publisher refuses",
+			projectpolicy.DefaultProfileName, standard)
+	}
+
+	bitbucket, ok := lc.Profiles[projectpolicy.DefaultProfileName+"-bitbucket"]
+	if !ok {
+		t.Fatalf("no %s-bitbucket profile was written for the project's Bitbucket repository: %v",
+			projectpolicy.DefaultProfileName, slices.Sorted(maps.Keys(lc.Profiles)))
+	}
+	if bitbucket.Provider != "bitbucket" || !slices.Equal(bitbucket.AllowRepos, []string{"bitbucket/acme/sandbox"}) {
+		t.Errorf("profiles.%s-bitbucket = %+v, want the Bitbucket repository the project enrols",
+			projectpolicy.DefaultProfileName, bitbucket)
+	}
+
+	for _, name := range []string{"standard", "standard-bitbucket"} {
+		if !strings.Contains(out, "wrote the default profile "+name+" ") {
+			t.Errorf("the update does not print the profile %q it wrote, and a write into the operator's own file says what it wrote:\n%s", name, out)
+		}
+	}
+}
+
+// TestUpdateNeverRewritesAnEditedProfile: an existing profile is the operator's,
+// whatever it holds (R1). The fixture's standard profile is a smaller job than
+// the default and admits one repository; the run leaves it exactly as it was and
+// writes the provider that has no default yet beside it.
+func TestUpdateNeverRewritesAnEditedProfile(t *testing.T) {
+	r := newConvergeRig(t, v7Node())
+	r.appendConfig(t, "profiles:\n"+
+		"  standard:\n"+
+		"    provider: github\n"+
+		"    cpu: 2\n"+
+		"    memory: 4Gi\n"+
+		"    timeout_class: 2h\n"+
+		"    allow_repos:\n"+
+		"      - github/acme/app\n")
+	// The operator's profile goes in before the copy the door reads is taken:
+	// the rig clears FUGARO_CONFIG, so the config `fugaro update` reads and
+	// writes is the one this rig left in the XDG projects directory.
+	registerInstallation(t, r.initRig)
+	out := convergeOn(t, r, []string{"policy-vs-jobs"})
+
+	standard := updatedConfig(t).Profiles[projectpolicy.DefaultProfileName]
+	if standard.CPU != 2 || standard.Memory != "4Gi" || standard.TimeoutClass != "2h" {
+		t.Errorf("profiles.%s = %+v, want the operator's own resources: the update rewrote a profile it did not write",
+			projectpolicy.DefaultProfileName, standard)
+	}
+	if !slices.Equal(standard.AllowRepos, []string{"github/acme/app"}) {
+		t.Errorf("profiles.%s.allow_repos = %v, want the operator's own list", projectpolicy.DefaultProfileName, standard.AllowRepos)
+	}
+	if _, ok := updatedConfig(t).Profiles[projectpolicy.DefaultProfileName+"-bitbucket"]; !ok {
+		t.Errorf("the provider with no default was left without one, which is the write this run owed:\n%s", out)
+	}
+}
+
+// TestUpdateDefaultProfileIsIdempotent: the second update finds every name the
+// first wrote and writes nothing at all — not even the same bytes again, which
+// is what the file's own text says.
+func TestUpdateDefaultProfileIsIdempotent(t *testing.T) {
+	r := newConvergeRig(t, v7Node())
+	first := convergeOn(t, r, []string{"policy-vs-jobs"})
+	before := updatedConfig(t).Profiles
+
+	// The door's second run on this rig leaves the repository stage for the
+	// operator — this fixture's checkout is not on its default branch, which is
+	// the checkout's own state and nothing this write does — so the outcome is
+	// read for what this test is about: the profiles the file carries and the
+	// line about them.
+	out, errOut, err := executeStdin(t, "", "update")
+	if err != nil && !strings.Contains(err.Error(), "left for you") {
+		t.Fatalf("the second update failed: %v\n%s\n%s", err, out, errOut)
+	}
+	if after := updatedConfig(t).Profiles; !reflect.DeepEqual(before, after) {
+		t.Errorf("the second update changed the profiles the file carries:\n--- before\n%+v\n--- after\n%+v", before, after)
+	}
+	if strings.Contains(out, "wrote the default profile") {
+		t.Errorf("the second update says it wrote a profile it had already written:\n%s", out)
+	}
+	if !strings.Contains(first, "wrote the default profile") {
+		t.Errorf("the first update does not say what it wrote:\n%s", first)
+	}
+}
+
+// TestUpdatePreviousVersionConverges: an installation of the previous version —
+// the node the release behind publishes is one this reader refuses, so the
+// policy stage has to carry it forward — converges in ONE `fugaro update`, and
+// the write of the defaults survives that migration: the migrated node carries
+// the profiles this same run wrote and deployed.
+func TestUpdatePreviousVersionConverges(t *testing.T) {
+	r := newConvergeRig(t, staleNode(t))
+	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	if got := convergeNode(t, r).Version; got != projectpolicy.Version {
+		t.Fatalf("the published node is version %d after one update, want this binary's %d", got, projectpolicy.Version)
+	}
+	lc := updatedConfig(t)
+	for _, name := range []string{projectpolicy.DefaultProfileName, projectpolicy.DefaultProfileName + "-bitbucket"} {
+		if _, ok := lc.Profiles[name]; !ok {
+			t.Errorf("the migrated installation carries no profiles.%s: %v", name, slices.Sorted(maps.Keys(lc.Profiles)))
+		}
+		if _, ok := convergeNode(t, r).Profiles[name]; !ok {
+			t.Errorf("the migration left profiles.%s out of the node the same update published:\n%s", name, out)
+		}
+	}
+}

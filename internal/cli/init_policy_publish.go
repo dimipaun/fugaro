@@ -221,11 +221,24 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy) []policyDri
 	}
 	add("accounts", accounts, p.Accounts, false)
 	for _, name := range slices.Sorted(maps.Keys(profiles)) {
-		var served []string
-		if np, ok := p.Profiles[name]; ok {
-			served = np.ClaudeAccounts
+		np, ok := p.Profiles[name]
+		if !ok {
+			// The NAME is a difference a publish closes, and the only one in
+			// the block this comparison reports: a config that defines a
+			// profile the node does not carry is a profile nothing resolves —
+			// a workflow that names it, and the default of a provider (R8) —
+			// and `fugaro update` writing the default profile of a provider a
+			// project uses is exactly that config (S5, R1, D2310): the node of
+			// an installation that never carried one learns it here, in the
+			// same run, or the shared job the installation stage deploys is a
+			// job no policy names. The contents are still not compared, for
+			// the reason above them: a publish that fired on those would
+			// rewrite the node on every run without closing the gap it fired
+			// on.
+			out = append(out, policyDrift{Member: "profiles." + name, File: jsonText(profiles[name])})
+			continue
 		}
-		add("profiles."+name+".claude_accounts", profiles[name].ClaudeAccounts, served, false)
+		add("profiles."+name+".claude_accounts", profiles[name].ClaudeAccounts, np.ClaudeAccounts, false)
 	}
 	// The account-choice keys are compared too — the project's
 	// default_claude_account and each stage's own claude_account — because
