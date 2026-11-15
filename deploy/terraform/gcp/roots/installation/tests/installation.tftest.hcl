@@ -117,8 +117,8 @@ run "bucket_is_marked" {
     error_message = "the runs bucket must never be force-destroyed"
   }
   assert {
-    condition     = length(google_storage_bucket.runs.lifecycle_rule) == 4
-    error_message = "the runs bucket must have exactly the bootstrap's three lifecycle rules and the one its versioning adds"
+    condition     = length(google_storage_bucket.runs.lifecycle_rule) == 5
+    error_message = "the runs bucket must have exactly the bootstrap's three lifecycle rules, the one its versioning adds and the one the stored reports expire under"
   }
   assert {
     condition     = one(google_storage_bucket.runs.versioning).enabled == true
@@ -127,8 +127,8 @@ run "bucket_is_marked" {
   assert {
     condition = anytrue([for r in google_storage_bucket.runs.lifecycle_rule :
       one(r.action).type == "Delete" && one(r.condition).days_since_noncurrent_time == 7 &&
-    one(r.condition).matches_prefix == tolist(["runs/", "cache/", "locks/", "tokens/", "issues/"])])
-    error_message = "a noncurrent version under any prefix the rules above empty — runs/, cache/, locks/, tokens/ or issues/ — must be purged after 7 days, or the versioned bucket grows for ever; fugaro/ and builds/ must have no such rule, since the audit record and a build record are never purged"
+    one(r.condition).matches_prefix == tolist(["runs/", "cache/", "locks/", "tokens/", "issues/", "reports/"])])
+    error_message = "a noncurrent version under any prefix the rules above empty — runs/, cache/, locks/, tokens/, issues/ or reports/ — must be purged after 7 days, or the versioned bucket grows for ever; fugaro/ and builds/ must have no such rule, since the audit record and a build record are never purged"
   }
   assert {
     condition = anytrue([for r in google_storage_bucket.runs.lifecycle_rule :
@@ -1004,8 +1004,8 @@ run "budget_token_objects_expire" {
   }
 
   assert {
-    condition     = length(google_storage_bucket.runs.lifecycle_rule) == 5
-    error_message = "with enable_budget the runs bucket has the bootstrap's three lifecycle rules, the one its versioning adds and one for untaken budget tokens"
+    condition     = length(google_storage_bucket.runs.lifecycle_rule) == 6
+    error_message = "with enable_budget the runs bucket has the bootstrap's three lifecycle rules, the one its versioning adds, the one the stored reports expire under and one for untaken budget tokens"
   }
   assert {
     condition     = contains(keys(google_project_service.this), "cloudbilling.googleapis.com")

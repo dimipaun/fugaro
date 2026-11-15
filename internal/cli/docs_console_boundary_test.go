@@ -272,14 +272,16 @@ var consoleBoundaryAllowList = []string{
 // indirect entry with it, so the require line below is the whole of what the
 // module graph gained, and it is not here for the console's sake either.
 //
-// The seventh is the one entry this rule was applied to after the require line
-// had already landed: Dependabot's group bump of 2026-11-14 (33ca6239, "Bump
-// the go_modules group across 1 directory with 2 updates") moved the
-// `go.opentelemetry.io/otel` family from 1.44.0/1.46.0 to 1.47.0, brought
-// `otel/log` with it, and left this baseline recorded at the versions behind.
-// The bump is the toolchain's rather than a person's, and this edit is the one
-// the maintenance rule above asks of it: the versions below are go.mod's, and
-// nothing here is the console's.
+// The seventh is nobody's dependency at all: it is the version of the graph
+// already there, moved by the dependabot `go_modules` group bump (#2677), which
+// took `go.opentelemetry.io/otel` and `/metric` to v1.47.0, `/trace`, `/sdk`
+// and `/sdk/metric` with them, and brought `go.opentelemetry.io/otel/log` into
+// the graph at the same version. A bot cannot make the deliberate edit this
+// slice asks for, so the bump landed without one and this test has been red on
+// `main` since; the six lines move here instead. Nothing under console/ or
+// website/ imports any of them, they carry the Apache-2.0 the module's licence
+// table already cleared, and the console still contributes nothing to this
+// module.
 var consoleGoModRequireBaseline = []string{
 	"cel.dev/expr v0.25.2 // indirect",
 	"cloud.google.com/go v0.123.0 // indirect",

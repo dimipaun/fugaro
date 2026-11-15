@@ -3,7 +3,7 @@
 // The launch, which is the console's **one write** (design section 5.1 rule 11,
 // D22, 2026-10-16). Everything in this file exists because of one fact: a
 // `fugaro run` spends money, and `fugaro run` prompts for nothing -- there is no
-// `--yes` and no question (`internal/cli/run.go`), so the confirmation is the
+// confirmation question (`internal/cli/run.go`), so the confirmation is the
 // console's own and there is nothing behind it.
 //
 // **What this file is, and what it deliberately is not.** V2.5.1a is split in

@@ -126,13 +126,30 @@ import (
 // `model_grades` member sets no grade, which is what the ladder's rungs read as
 // "leave this rung to the owner" (D2039) and what a project that never set one
 // means.
-const Version = 7
+//
+// Version 8 (binary-allow-rule, plan task AR1; decision D990, ruled yes by the
+// owner on 2026-11-15) is the version at which the project's own config states
+// the `binaries` block. The member arrived at version 6 (AR0) and this line
+// does not change the node's shape: what arrives is its *carrier* — the local
+// config gains the key and both publish doors carry it into the node
+// (buildProjectPolicy), where until this release a block could only be
+// hand-written into the node. The bump is what makes a reader of the release
+// behind refuse such a node (RunnerSkew on the job side, CLISkew on the
+// operator's) instead of reading past a grant the owner now states in a file:
+// a version-7 runner knows the key and enforces nothing with it yet, so it
+// would run a project's bytes as if no list had been published at all. The
+// migration step that carries a version-7 node forward is shape-free
+// (internal/projectpolicy/migrate.go), like the two before it: the node keeps
+// its bytes and only the number moves, because a node with no `binaries` block
+// admits nothing — which is what a project that never set one means.
+const Version = 8
 
 // VersionSince names, for each policy version, the fugaro release that
 // introduced it: 1 is the model itself (0.8.0, internal/cli's policySince), 2
 // is the profile gate above (0.8.5), 3 the account axis (0.9.0), 4 the
 // Bitbucket token block (0.14.0), 5 the pools' owner and roster (0.23.0), 6 the
-// binaries block (0.24.0) and 7 the two model grades (0.24.0). It sits beside
+// binaries block (0.24.0), 7 the two model grades (0.24.0) and 8 the binaries
+// block's carrier in the project's own config (0.26.0). It sits beside
 // Version because a bump of Version adds its row in the same change
 // (TestVersionSinceCoversEveryVersion fails until it does), and it is
 // read by every message about a node *ahead* of its reader (SkewSentence, so
@@ -153,6 +170,7 @@ var VersionSince = map[int]string{
 	5: "0.23.0",
 	6: "0.24.0",
 	7: "0.24.0",
+	8: "0.26.0",
 }
 
 // VersionRelease is the release that introduced policy version v, and false
@@ -319,7 +337,37 @@ const PolicyRulesVersion = 1
 // which stays 1). Nothing reads the coordinator's subtree yet: the write path
 // is P4's and the sweep is P5's, so what a person sees before those land is
 // the grant alone, with no document under it.
-const RulesVersion = 4
+//
+// Generation 5 is the voice policy node (mobile plan task P5.3.1, approved by
+// the owner on 2026-11-14; D123 and Q0 answered 2026-10-19): the subtree
+// `config/policy/voice/{shared,repos/$slug}` of docs/mobile/design/
+// voice-evaluation-switch.md §4.3 — the per-project provider allow-list the
+// local/remote voice switch is evaluated against, with `providers`,
+// `direction` and `force_local` in it. It is a *grant* and it bumps for
+// generation 4's reason: a run token reads its own project's node there and
+// did not before, so a run under the older document would be refused a read
+// the switch's server-side hop depends on, and the marker is the only thing
+// that tells an installation its deployed document is not this binary's. The
+// grants are `config/policy/shared`'s and `config/policy/repos/$slug`'s copied
+// field for field (`internal/budget/rules`'s PathVoice, `internal/projectpolicy`'s
+// PathVoiceShared/PathVoiceRepo/PathVoiceRepos), and the parent
+// `config/policy/voice` itself carries none, so a grant on one project's node
+// never reaches another's. No signed-in user reads any of it: the phone holds
+// no read of `config/policy/**`, which is why the switch's "blocked by project
+// policy" state is the hop's answer and not a read.
+//
+// What the bump does to an existing installation is what every bump does, and
+// it is met the same way: `fugaro doctor` reports policy-rules-skew until the
+// owner runs `fugaro update`, whose rules stage deploys this document before
+// the policy stage, so an installation at generation 4 converges in one run
+// and no second command. The deploy still refuses to write this binary's
+// document under a marker *above* it, so an older CLI cannot take the voice
+// grant away behind a newer one's back, and the update is safe while runs are
+// in flight: the subtree is a read grant on a node an operator publishes, so a
+// run that bootstrapped under the release behind keeps its records and its
+// counters and every write it makes still lands
+// (docs/design/update-in-flight.md).
+const RulesVersion = 5
 
 // VersionError is the refusal of a node written in a version this Fugaro does
 // not understand. It carries both versions, so each side prints its own

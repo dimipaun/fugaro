@@ -63,6 +63,7 @@ import { everyNode } from '../support/fakeDom'
 import { FakeDocument } from '../support/fakeDom'
 import { NodeSurface, Surface } from '../support/graphHarness'
 import type { FakeNode } from '../support/fakeDom'
+import { itHostRoute } from '../support/hostRoute'
 import { installStub } from './stub'
 import type { Stub } from './stub'
 
@@ -273,7 +274,7 @@ function aSheet(sheet: MoveSheet | null): MoveSheet {
 // ---------------------------------------------------------------------------
 
 describe('a move names two ids, and the console checks them', () => {
-  it('refuses a node the last read never listed, and starts no child for it', async () => {
+  itHostRoute('refuses a node the last read never listed, and starts no child for it', async () => {
     const stub = aStub()
     const source = await aSource(stub)
     const before = stub.calls()
@@ -287,7 +288,7 @@ describe('a move names two ids, and the console checks them', () => {
     expect(stub.calls(), 'a move for a task the drawing never drew spawned a child').toBe(before)
   })
 
-  it('refuses a release the last read never listed, and starts no child for it', async () => {
+  itHostRoute('refuses a release the last read never listed, and starts no child for it', async () => {
     const stub = aStub()
     const source = await aSource(stub)
     const before = stub.calls()
@@ -296,7 +297,7 @@ describe('a move names two ids, and the console checks them', () => {
     expect(stub.calls(), 'a move into a box no read listed spawned a child').toBe(before)
   })
 
-  it('spells the document’s own id for the task, never the key the caller sent', async () => {
+  itHostRoute('spells the document’s own id for the task, never the key the caller sent', async () => {
     const stub = aStub()
     const source = await aSource(stub)
     const preview = await source.roadmapMove({ node: NODE, toRelease: OTHER, confirmed: false })
@@ -305,7 +306,7 @@ describe('a move names two ids, and the console checks them', () => {
     expect(preview.argv).not.toContain(NODE)
   })
 
-  it('refuses a confirmation of a move no preview drew, and starts no child for it', async () => {
+  itHostRoute('refuses a confirmation of a move no preview drew, and starts no child for it', async () => {
     // **The compare-and-set is the source's, and it is the whole of what makes a
     // confirmation binding.** Both ids here are in the document the last read
     // holds, so nothing above this line refuses them -- and `--expect` is spelled
@@ -327,7 +328,7 @@ describe('a move names two ids, and the console checks them', () => {
     expect(stub.calls(), 'a move no preview drew spawned a child').toBe(before)
   })
 
-  it('authorises exactly one write: the line that was previewed, once', async () => {
+  itHostRoute('authorises exactly one write: the line that was previewed, once', async () => {
     // A preview is consumed by the confirmation it authorises -- `roadmapMove`
     // clears it before the comparison -- so the same pair confirmed twice is one
     // child and one refusal, and a second press on a stale button cannot write
@@ -347,7 +348,7 @@ describe('a move names two ids, and the console checks them', () => {
     expect(stub.calls(), 'one preview authorised a second write').toBe(before + 1)
   })
 
-  it('refuses a confirmation with no preview behind it at all, and starts no child', async () => {
+  itHostRoute('refuses a confirmation with no preview behind it at all, and starts no child', async () => {
     // The cold call: no preview has been drawn since this console read the
     // document, which is what a console that was switched away and back, or a
     // renderer that never showed anything, sends first.
@@ -613,7 +614,7 @@ describe('undo is the inverse move', () => {
     expect(inverseOf(answer({ to: null }))).toEqual({ node: NODE, toRelease: BOX })
   })
 
-  it('spawns the argv back, against the record the move left behind', async () => {
+  itHostRoute('spawns the argv back, against the record the move left behind', async () => {
     const stub = aStub()
     const source = await aSource(stub)
     const flow = new MoveFlow(aPort(source))

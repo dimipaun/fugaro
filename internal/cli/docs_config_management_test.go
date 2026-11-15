@@ -190,13 +190,17 @@ const (
 // block is the project's own model choice (G3), and a repository's entry is
 // dropped and recorded by the merge rather than written by it.
 //
-// The account aliases moved it once more, by one row and not the
-// allowlist's, for the clone URLs' reason: the block is local-only (D2090). Its
-// row is owned by `config local` and not by the `accounts` family the write
-// belongs to (D2096), because `fugaro accounts alias set/rm` -- the write that
-// converges the node and the job set on a repoint -- is a task later than the
-// block, and a row may not name a family command that does not take it (D1178);
-// the row and the reconcile paragraph move together when that command lands.
+// The account aliases moved it twice, by one row each and neither of them the
+// allowlist's, for the clone URLs' reason: the block is local-only (D2090). AL0
+// landed the block's own row, and it was owned by `config local` rather than by
+// the `accounts` family the write belongs to (D2096), because `fugaro accounts
+// alias set/rm` -- the write that converges the node and the job set on a
+// repoint -- was a task later than the block, and a row may not name a family
+// command that does not take it (D1178). AL3 landed that command, and the row
+// moved with it: the map the file holds and the `claude_account_aliases.*`
+// wildcard under it both name the `accounts` family, and the generic path
+// carries neither -- so this count has moved by two rows and the allowlist's by
+// none.
 //
 // The repository-level account list is the last mover, by one row and not the
 // allowlist's: repos.*.claude_accounts is what admits a repository whose runs
@@ -204,8 +208,19 @@ const (
 // local-only and stripped from the shared copy of the map, and its owner is the
 // accounts family, whose `accounts rm` clears a name with the declaration it
 // names -- the generic path writes neither half.
+//
+// AR1 of docs/binary-allow-rule/ is the last mover, by two rows and by none:
+// the local project config gains the `binaries` block, whose two members are
+// the paths a run may add a binary at and the cap one is held to (D981-D983),
+// and both rows belong to the `project` family, because `fugaro project policy
+// publish` is the door that carries the block onto the node the run reads it
+// from. The generic path reaches neither: a path is a doublestar glob held to
+// the node's own rule and the cap to its ceiling, which are checks no scalar
+// write makes -- and both are local-only, because a launcher who could write
+// the block into the shared file would be admitting its own payload to every
+// teammate's runs (D986).
 const (
-	cfmRegistryRows   = 446
+	cfmRegistryRows   = 449
 	cfmAllowlistNamed = 105
 )
 

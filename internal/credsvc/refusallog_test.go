@@ -93,8 +93,13 @@ func refusalLines(t *testing.T, s *svc) []map[string]any {
 
 // refusalFields is the shape of the line: the refusal's own fields, and no
 // others. A field added to the line — which is how a credential's value or a
-// request body would reach it — fails every test that reads this.
-var refusalFields = []string{"type", "status", "repository", "run", "message", "read", "error_class"}
+// request body would reach it — fails every test that reads this. `tried` is
+// the selection's own list (the credentials a refused call considered and the
+// reason each was not used) and carries names and reasons, never a value: it is
+// empty on the paths where no selection was walked, which the tests below pin
+// one by one, and cascade_nocandidates_test.go is where a non-empty one is
+// pinned field by field.
+var refusalFields = []string{"type", "status", "repository", "run", "message", "tried", "read", "error_class"}
 
 // oneRefusalLine is the line a refused call wrote, held to its shape and to
 // the fields every refusal carries: the message it is logged under, the
@@ -273,7 +278,11 @@ func TestTheRefusalLogLeavesTheCandidateListsOwnFailureUnlabelled(t *testing.T) 
 	}
 	line := oneRefusalLine(t, s)
 	for field, want := range map[string]any{
-		"type":        ErrorStateUnavailable,
+		"type": ErrorStateUnavailable,
+		// Empty because no selection was walked: the candidate list failed
+		// before one could be offered, so there is no credential to name and
+		// the sentence says what went wrong instead.
+		"tried":       "",
 		"status":      refusedStatus(StatusUnavailable),
 		"read":        "",
 		"error_class": "",

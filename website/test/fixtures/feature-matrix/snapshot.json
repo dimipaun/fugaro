@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "as_of": "v0.24.0",
+  "rows": [
+    {
+      "id": "bitbucket-support",
+      "name": "Bitbucket support",
+      "explanation": "Runs your tasks on Bitbucket Cloud and opens the pull request there, with the same reviews as on GitHub.",
+      "status": "available",
+      "plans": {
+        "community": true,
+        "team": true,
+        "enterprise": true
+      }
+    },
+    {
+      "id": "model-routing",
+      "name": "Model routing",
+      "explanation": "Sends each stage of a run to the model you choose, so a review can run on a different one from the code.",
+      "status": "available",
+      "plans": {
+        "community": true,
+        "team": true,
+        "enterprise": true
+      }
+    },
+    {
+      "id": "team-roles",
+      "name": "Team roles",
+      "explanation": "Gives each person in your organisation their own access to runs and budgets.",
+      "status": "coming-soon",
+      "plans": {
+        "community": false,
+        "team": true,
+        "enterprise": true
+      }
+    },
+    {
+      "id": "audit-log",
+      "name": "Audit log",
+      "explanation": "Keeps a record of every run and every change to your settings, which you can read back.",
+      "status": "planned",
+      "plans": {
+        "community": false,
+        "team": true,
+        "enterprise": true
+      }
+    },
+    {
+      "id": "single-sign-on",
+      "name": "Single sign-on",
+      "explanation": "Lets your people sign in through your own identity provider.",
+      "status": "planned",
+      "plans": {
+        "community": false,
+        "team": false,
+        "enterprise": true
+      }
+    }
+  ]
+}

@@ -39,6 +39,7 @@ export FAKE57B_ROLE="" FAKE57B_ROLE_PERMS="" FAKE57B_JOB="" FAKE57B_JOB_ACCOUNT=
 export FAKE57B_SCHED="" FAKE57B_SCHED_CRON="" FAKE57B_SCHED_ACCOUNT="" FAKE57B_RUN=""
 export FAKE57B_EXECUTION="" FAKE57B_LOG="" FAKE57B_JOBS="" FAKE57B_SUBMIT=""
 export FAKE57B_CREATED="" FAKE57B_FUGARO=""
+export FAKE57B_GPU_QUOTA="" FAKE57B_MACHINE_TYPE="" FAKE57B_STATE=""
 
 failures=0
 fail() {
@@ -105,11 +106,21 @@ def ago(**kw):
     return (NOW - datetime.timedelta(**kw)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 PROJECT = "fugaro-dev"
+REGION = "us-east5"
+REGION_ZONES = ["us-east5-a", "us-east5-b", "us-east5-c"]
 ACCOUNT = "fugaro-reaper@%s.iam.gserviceaccount.com" % PROJECT
 RUN_URI = ("https://us-east5-run.googleapis.com/apis/run.googleapis.com/v1/"
            "namespaces/%s/jobs/fugaroreap:run" % PROJECT)
 HEADLINE = ("reaped projects/fugaro-dev/locations/us-east5: queue deadline 24h2m0s, "
             "run budget 24h17m0s, max age 48h19m0s")
+
+# The whole VM each machine type this suite's check may name carries, as the
+# Batch API checks it at submit. e2-standard-4 is the type the check used to
+# send an impossible share against -- the owner's run of 2026-11-14 was refused
+# with 'machine_type "e2-standard-4" cannot satisfy compute_resource
+# cpu_milli:64000 memory_mib:1048576' -- so this fake refuses that body in the
+# API's own words rather than accepting whatever a case writes.
+MACHINE_CAPACITY = {"e2-standard-4": (4, 16384), "g4-standard-48": (48, 184320)}
 
 
 def env(name, default=""):
@@ -139,7 +150,7 @@ if args[:3] == ["iam", "roles", "describe"]:
     print(json.dumps({
         "name": "projects/%s/roles/fugaroReaper" % PROJECT,
         "title": "Fugaro Batch reaper",
-        "permissions": [p for p in perms if p],
+        "includedPermissions": [p for p in perms if p],
     }))
 elif args[:3] == ["run", "jobs", "describe"]:
     if env("FAKE57B_JOB") == "missing":
@@ -199,6 +210,35 @@ elif args[:2] == ["logging", "read"]:
             lines.append("deleted job someone-elses-job (queued for 1450 minutes and never "
                          "left QUEUED, past the queue deadline of 24h2m0s)")
         print(json.dumps([{"textPayload": "\n".join(lines)}]))
+elif args[:3] == ["compute", "regions", "describe"]:
+    # The region's own resource, which is where the check reads the two facts
+    # that decide whether stranding a job on a GPU machine type is free. The
+    # quota list carries a CPU entry that is above zero in every case, so a case
+    # can say the check looked at the GPU quotas and not at quotas at large.
+    mode = env("FAKE57B_GPU_QUOTA", "none")
+    if mode == "unread":
+        die("PERMISSION_DENIED: Required 'compute.regions.get' permission for project %s." % PROJECT)
+    gpu = 1.0 if mode == "granted" else 0.0
+    print(json.dumps({
+        "name": REGION,
+        "quotas": [
+            {"metric": "CPUS", "limit": 200.0, "usage": 4.0},
+            {"metric": "NVIDIA_RTX_PRO_6000_GPUS", "limit": gpu, "usage": 0.0},
+            {"metric": "GPUS_ALL_REGIONS", "limit": gpu, "usage": 0.0},
+        ],
+        "zones": ["https://www.googleapis.com/compute/v1/projects/%s/zones/%s" % (PROJECT, z)
+                  for z in REGION_ZONES],
+    }))
+elif args[:3] == ["compute", "machine-types", "list"]:
+    mode = env("FAKE57B_MACHINE_TYPE", "present")
+    if mode == "unread":
+        die("PERMISSION_DENIED: Required 'compute.machineTypes.list' permission for project %s." % PROJECT)
+    if mode == "present" and "name=" + env("FAKE57B_TYPE", "g4-standard-48") in (flag("--filter", "") or ""):
+        # The type is listed in the zones the check asked about, which is what
+        # the real command answers for a type every zone of the region has.
+        for z in (flag("--zones", "") or "").split(","):
+            if z:
+                print(z)
 elif args[:3] == ["batch", "jobs", "list"]:
     mode = env("FAKE57B_JOBS", "none")
     if mode == "none":
@@ -210,15 +250,34 @@ elif args[:3] == ["batch", "jobs", "list"]:
         created = {"fresh": ago(hours=1), "old": ago(days=3)}.get(mode, "not a time")
         print(json.dumps([{"name": "projects/%s/locations/us-east5/jobs/fugaro-chk57b-20261114t1300"
                                    % PROJECT,
-                           "status": {"state": "QUEUED"},
+                           "status": {"state": env("FAKE57B_STATE", "QUEUED")},
                            "createTime": created}]))
 elif args[:3] == ["batch", "jobs", "submit"]:
     if env("FAKE57B_SUBMIT") == "fails":
         die("INVALID_ARGUMENT: the request is refused")
     cfg = flag("--config")
+    body = json.load(open(cfg, encoding="utf-8"))
+    machine = (((body.get("allocationPolicy") or {}).get("instances") or [{}])[0]
+               .get("policy") or {}).get("machineType")
+    res = (((body.get("taskGroups") or [{}])[0].get("taskSpec") or {})
+           .get("computeResource") or {})
+    if machine not in MACHINE_CAPACITY:
+        die("INVALID_ARGUMENT: machine_type field is invalid. machine_type %r is not "
+            "one this suite knows a capacity for" % machine)
+    vcpu, mib = MACHINE_CAPACITY[machine]
+    if int(res.get("cpuMilli", 0)) > vcpu * 1000 or int(res.get("memoryMib", 0)) > mib:
+        die('INVALID_ARGUMENT: machine_type field is invalid. machine_type "%s" cannot '
+            'satisfy compute_resource cpu_milli:%s memory_mib:%s.'
+            % (machine, res.get("cpuMilli"), res.get("memoryMib")))
     shutil.copyfile(cfg, os.path.join(state, "submitted.json"))
 elif args[:3] == ["batch", "jobs", "describe"]:
-    print(env("FAKE57B_CREATED", ago(hours=1)))
+    # Two reads of the same job, told apart by the field the check asked for:
+    # the creation time the sweep is measured from, and the state the check
+    # requires to be QUEUED before it stands on the job at all.
+    if "status.state" in " ".join(args):
+        print(env("FAKE57B_STATE", "QUEUED"))
+    else:
+        print(env("FAKE57B_CREATED", ago(hours=1)))
 else:
     die("this test's fake gcloud has no answer for: %s" % " ".join(args))
 GCLOUD_EOF
@@ -426,7 +485,8 @@ test_happy_path_creates_the_stranded_job() {
   expect_contains "$out" "would reap projects/fugaro-dev/locations/us-east5" "happy path: the local dry run's own headline"
   expect_fact stranded INFO "happy path"
   expect_contains "$out" "so this run created one: fugaro-chk57b-" "happy path: the job this run stranded, named"
-  expect_contains "$out" "64000m/1048576MiB" "happy path: and the request that keeps it out of QUEUED"
+  expect_contains "$out" "g4-standard-48" "happy path: and the machine type whose GPU quota keeps it out of QUEUED"
+  expect_contains "$out" "2000m/4096MiB share that fits it" "happy path: which the request's own share fits"
   expect_contains "$out" "run this script again after then" "happy path: the row says what a later run will show instead"
   expect_fact restore PASS "happy path"
   expect_contains "$out" "is LEFT IN PLACE on purpose" "happy path: the restore row names the job it left"
@@ -449,10 +509,21 @@ for where, labels in (("labels", top), ("allocationPolicy.labels", alloc)):
         bad.append("%s.fugaro_run is %r" % (where, labels.get("fugaro_run")))
 if top.get("fugaro_run") != alloc.get("fugaro_run"):
     bad.append("the two fugaro_run values differ, so the reaper cannot attribute the job to a run")
+# The job the check strands must be one the API ACCEPTS and still cannot
+# schedule: it names the accelerator-optimized type whose GPU is attached with
+# the VM and whose quota this project has never been granted, and its share is
+# well inside that VM -- so the shape the check used to send (a share no machine
+# type can hold) is a failure here, and the fake's submit refuses it as the API
+# does.
+machine = (((d.get("allocationPolicy") or {}).get("instances") or [{}])[0]
+           .get("policy") or {}).get("machineType")
 res = (d.get("taskGroups") or [{}])[0].get("taskSpec", {}).get("computeResource", {})
-if int(res.get("cpuMilli", 0)) <= 4000 or int(res.get("memoryMib", 0)) <= 16384:
-    bad.append("the requested share (%s) is one an e2-standard-4 could hold, so the job would schedule"
-               % res)
+if machine != "g4-standard-48":
+    bad.append("the machine type is %r, not the accelerator-optimized g4-standard-48 whose "
+               "GPU quota is what keeps the job in QUEUED" % machine)
+if int(res.get("cpuMilli", 0)) > 48000 or int(res.get("memoryMib", 0)) > 184320:
+    bad.append("the requested share (%s) is one no g4-standard-48 could hold, which is the "
+               "request the Batch API refuses at submit" % res)
 print("OK" if not bad else "BAD " + "; ".join(bad))
 PY
 )
@@ -492,6 +563,105 @@ test_a_job_past_its_deadline_that_was_not_swept_is_a_fail() {
   expect_contains "$out" "still QUEUED past the queue deadline" "overdue job: the finding, in the reaper's own terms"
   expect_contains "$out" "do not adjust this check to it" "overdue job: and it says not to bend the check"
   expect_contains "$out" "CHECK 57B RESULT: FAIL" "overdue job: the verdict"
+}
+
+# The three facts the shape stands on, each read out of the live project before
+# anything is submitted, and each one able to stop the run: a project that holds
+# GPU quota in the region can be granted the VM the job names, and a machine type
+# no zone of the region offers makes a job that fails rather than one that stays
+# queued. Both cases end with no job: the row that says 'bills nothing' is only
+# ever written about a job that cannot run.
+test_gpu_quota_above_zero_stops_before_submitting() {
+  setup_case quota-granted
+  FAKE57B_GPU_QUOTA=granted run57b
+  FAKE57B_GPU_QUOTA=""
+  expect_status "$status" 1 "GPU quota held"
+  expect_fact stranded FAIL "GPU quota held"
+  expect_contains "$out" "this project holds GPU quota in us-east5 (NVIDIA_RTX_PRO_6000_GPUS limit 1.0, GPUS_ALL_REGIONS limit 1.0)" \
+    "GPU quota held: the quota the region's own resource holds, named"
+  # The CPU quota is above zero in every case, so a guard that refused on any
+  # quota at all would pass the row above and be wrong about why.
+  expect_absent "$out" "CPUS limit" "GPU quota held: the CPU quota is not what the guard read"
+  expect_contains "$out" "Nothing was submitted" "GPU quota held: and that no job was made"
+  expect_absent "$(cat "$dir/state/gcloud.calls")" "batch jobs submit" "GPU quota held: no job was submitted"
+  [ -e "$dir/state/submitted.json" ] && fail "GPU quota held: a request was written where none may be"
+  expect_contains "$out" "the owner's run of 2026-11-14" "GPU quota held: the row names the shape to use instead, with the refusal that made it that"
+  expect_contains "$out" "CHECK 57B RESULT: FAIL" "GPU quota held: the verdict"
+  return 0
+}
+
+test_a_machine_type_no_zone_offers_stops_before_submitting() {
+  setup_case type-absent
+  FAKE57B_MACHINE_TYPE=absent run57b
+  FAKE57B_MACHINE_TYPE=""
+  expect_status "$status" 1 "type not offered"
+  expect_fact stranded FAIL "type not offered"
+  expect_contains "$out" "no zone of us-east5 (us-east5-a,us-east5-b,us-east5-c) lists the machine type g4-standard-48" \
+    "type not offered: the zones that were asked about, named"
+  expect_contains "$out" "Nothing was submitted" "type not offered: and that no job was made"
+  expect_absent "$(cat "$dir/state/gcloud.calls")" "batch jobs submit" "type not offered: no job was submitted"
+  [ -e "$dir/state/submitted.json" ] && fail "type not offered: a request was written where none may be"
+  expect_contains "$out" "CHECK 57B RESULT: FAIL" "type not offered: the verdict"
+  return 0
+}
+
+# A region whose own resource cannot be read is a FAIL and not a pass: without it
+# the check cannot show the project is short of the GPU the job names, and a job
+# it cannot show that about is one that may run and bill.
+test_a_region_that_cannot_be_read_stops_before_submitting() {
+  setup_case region-unread
+  FAKE57B_GPU_QUOTA=unread run57b
+  FAKE57B_GPU_QUOTA=""
+  expect_status "$status" 1 "region unread"
+  expect_fact stranded FAIL "region unread"
+  expect_contains "$out" "the region us-east5's own resource could not be read" "region unread: the read that failed, named"
+  expect_contains "$out" "PERMISSION_DENIED" "region unread: with gcloud's own words quoted"
+  expect_absent "$(cat "$dir/state/gcloud.calls")" "batch jobs submit" "region unread: no job was submitted"
+  expect_contains "$out" "CHECK 57B RESULT: FAIL" "region unread: the verdict"
+  return 0
+}
+
+# The job the run made is read back, not assumed to be the one it asked for: a
+# job Batch handed a VM to is not the job the queue deadline deletes, so the run
+# measures nothing and says which state it found and how to remove the job.
+test_a_submitted_job_that_is_not_queued_is_a_fail() {
+  setup_case not-queued
+  FAKE57B_STATE=SCHEDULED run57b
+  FAKE57B_STATE=""
+  expect_status "$status" 1 "a job that left QUEUED"
+  expect_fact stranded FAIL "a job that left QUEUED"
+  expect_contains "$out" "is in state SCHEDULED and not QUEUED" "a job that left QUEUED: the state it found, named"
+  expect_contains "$out" "means a 48-vCPU GPU machine is billing now" "a job that left QUEUED: and what that state costs"
+  expect_contains "$out" "gcloud batch jobs delete fugaro-chk57b-" "a job that left QUEUED: the one command that removes it"
+  expect_contains "$out" "the guards above — the region's own resource read, no GPU quota in us-east5, and g4-standard-48 offered by one of its zones" \
+    "a job that left QUEUED: the guards the row is judged against, all three named"
+  # The restore row must not leave a job it cannot vouch for: 'holds no VM and
+  # bills nothing' is written about a QUEUED job only.
+  expect_contains "$out" "is in state SCHEDULED, and this check strands only a job that never left QUEUED" \
+    "a job that left QUEUED: the restore row names the state"
+  expect_absent "$out" "is LEFT IN PLACE on purpose" "a job that left QUEUED: the job is not left in place as if it were the sweep's subject"
+  expect_contains "$out" "CHECK 57B RESULT: FAIL" "a job that left QUEUED: the verdict"
+  return 0
+}
+
+# The pass deletes a job that never left QUEUED and only that: a job of this
+# check's that Batch ran is past its deadline and unswept, and judging it by the
+# queue deadline would report the reaper as having missed a sweep it was never
+# owed -- a false FAIL that only gets written once, on the next run.
+test_an_overdue_job_that_left_queued_is_not_read_as_a_missed_sweep() {
+  setup_case overdue-not-queued
+  FAKE57B_JOBS=old FAKE57B_STATE=SUCCEEDED run57b
+  FAKE57B_JOBS="" FAKE57B_STATE=""
+  expect_status "$status" 1 "overdue and not QUEUED"
+  expect_fact stranded FAIL "overdue and not QUEUED"
+  expect_contains "$out" "is in state SUCCEEDED, not QUEUED, so it is not the stranded job this step stands on" \
+    "overdue and not QUEUED: the state it found, named"
+  expect_contains "$out" "nothing here says a pass failed to make it" "overdue and not QUEUED: and that no sweep was owed"
+  expect_absent "$out" "still QUEUED past the queue deadline" "overdue and not QUEUED: the reaper is not blamed for a job it must leave"
+  expect_absent "$out" "do not adjust this check to it" "overdue and not QUEUED: and no finding is written about the pass"
+  expect_contains "$out" "gcloud batch jobs delete fugaro-chk57b-20261114t1300" "overdue and not QUEUED: the job is named for removal"
+  expect_contains "$out" "CHECK 57B RESULT: FAIL" "overdue and not QUEUED: the verdict"
+  return 0
 }
 
 test_a_job_inside_its_deadline_is_a_reading_not_a_verdict() {
@@ -637,6 +807,40 @@ test_a_refused_stranded_job_is_a_fail() {
   expect_fact stranded FAIL "refused submit"
   expect_contains "$out" "INVALID_ARGUMENT: the request is refused" "refused submit: the API's own words, quoted"
   expect_contains "$out" "a refusal of THIS request is a fact about the Batch API to record" "refused submit: and that the refusal is the finding"
+}
+
+# The fake's teeth, and the reason the case above is not vacuous: `batch jobs
+# submit` holds the machine type against the task's share the way the API's
+# submit-time validation does, in the API's own words -- the owner's run of
+# 2026-11-14 was refused with 'machine_type "e2-standard-4" cannot satisfy
+# compute_resource cpu_milli:64000 memory_mib:1048576'. So the request the check
+# writes now is one this fake accepts, and the shape it wrote before is one no
+# case can get past.
+test_the_fake_refuses_the_request_the_api_refuses() {
+  setup_case fake-teeth
+  local status=0
+  cat >"$dir/old.json" <<'JSON'
+{
+  "taskGroups": [{"taskSpec": {"computeResource": {"cpuMilli": "64000", "memoryMib": "1048576"}}}],
+  "allocationPolicy": {"instances": [{"policy": {"machineType": "e2-standard-4"}}]}
+}
+JSON
+  FAKE57B_DIR="$dir/state" "$dir/bin/gcloud" batch jobs submit fugaro-chk57b-old \
+    --project fugaro-dev --location us-east5 --config "$dir/old.json" 2>"$dir/old.err" || status=$?
+  expect_status "$status" 1 "the shape the check used to send"
+  expect_contains "$(cat "$dir/old.err")" \
+    'machine_type "e2-standard-4" cannot satisfy compute_resource cpu_milli:64000 memory_mib:1048576' \
+    "the shape the check used to send: refused in the API's own words"
+  status=0
+  cat >"$dir/new.json" <<'JSON'
+{
+  "taskGroups": [{"taskSpec": {"computeResource": {"cpuMilli": "2000", "memoryMib": "4096"}}}],
+  "allocationPolicy": {"instances": [{"policy": {"machineType": "g4-standard-48"}}]}
+}
+JSON
+  FAKE57B_DIR="$dir/state" "$dir/bin/gcloud" batch jobs submit fugaro-chk57b-new \
+    --project fugaro-dev --location us-east5 --config "$dir/new.json" || status=$?
+  expect_status "$status" 0 "the shape the check sends now"
 }
 
 test_a_stranded_job_with_no_readable_time_measures_nothing() {
@@ -791,7 +995,12 @@ t() {
 t test_happy_path_creates_the_stranded_job
 t test_a_later_run_reads_the_sweep
 t test_a_job_past_its_deadline_that_was_not_swept_is_a_fail
+t test_an_overdue_job_that_left_queued_is_not_read_as_a_missed_sweep
 t test_a_job_inside_its_deadline_is_a_reading_not_a_verdict
+t test_gpu_quota_above_zero_stops_before_submitting
+t test_a_machine_type_no_zone_offers_stops_before_submitting
+t test_a_region_that_cannot_be_read_stops_before_submitting
+t test_a_submitted_job_that_is_not_queued_is_a_fail
 t test_a_sweep_of_some_other_job_is_not_this_checks
 t test_a_sixth_permission_on_the_role_is_a_fail
 t test_the_tree_is_the_authority_for_the_role
@@ -805,6 +1014,7 @@ t test_a_job_that_is_not_the_reapers_invocation_is_a_fail
 t test_a_schedule_at_another_cadence_is_a_fail
 t test_an_unprovisioned_installation_points_at_the_owners_step
 t test_a_refused_stranded_job_is_a_fail
+t test_the_fake_refuses_the_request_the_api_refuses
 t test_a_stranded_job_with_no_readable_time_measures_nothing
 t test_dry_run_runs_nothing
 t test_every_guard_stops

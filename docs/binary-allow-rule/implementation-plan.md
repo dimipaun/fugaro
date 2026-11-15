@@ -1,7 +1,8 @@
 # The binary allow rule and the no-verdict label: implementation plan
 
-**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
-approved.** Written to [spec.md](spec.md) and [reconciliation.md](reconciliation.md), and refreshed
+**Status: design answered by the owner 2026-11-04, with D990, D992 and D993 ruled 2026-11-15; AR0
+and AR2 landed (#2202, #2204); the owner approved ALL binary-allow-rule tasks (AR0–AR7) on
+2026-11-15.** Written to [spec.md](spec.md) and [reconciliation.md](reconciliation.md), and refreshed
 2026-11-04: **#1476 is merged**, so AR3–AR6 lose their external dependency and **AR4 is written**
 (D997 was answered *yes*); AR1's publish rides the **managed** policy-publish gate (D1012/M3) and
 the publish doors both designs' work left on `main`, not a stage this plan waits for. The label's
@@ -120,14 +121,17 @@ the four and leaves the fifth (the console, E2) named.
 The foundation: the canonical shape and the one place it is validated. It is written against the
 node only — nothing reads it yet — so it lands without waiting for anything.
 
+- **Landed at version 5 (#2202):** AR0 shipped the member, its decode and its validation and left
+  `projectpolicy.Version` where it was; the version bump is AR1's (D990, ruled yes 2026-11-15), so the
+  `version.go` and version-test items below are AR1's and not part of AR0 still to do.
 - **Files (6):** `internal/projectpolicy/binaries.go` (the `Binaries` carrier, which AR2 landed; AR0
   adds the decode and the validation the carrier is read through — the four pattern checks of
   `rigor.Area.Validate` / `rebuild.paths` **plus the length
   bound** (`MaxAreaPattern`, 200) that `Area.Validate` adds, and the cap's positivity and ceiling),
   `internal/projectpolicy/policy.go` (the member, `knownTopLevelKeys`),
-  `internal/projectpolicy/version.go` (`Version = 6`, `VersionSince[6] = "0.24.0"` — §4's slot read
-  0.20.0 when this plan was written; the row names the release that ships the node, since it is the
-  floor the launch gate holds a job image to), and the three
+  `internal/projectpolicy/version.go` (AR1 takes `Version` from 7 to 8 and adds `VersionSince[8] =
+  "0.26.0"`; the row names the release that ships the node, since it is the floor the launch gate
+  holds a job image to), and the three
   test files `binaries_test.go` (new), `policy_test.go`, `version_test.go`.
 - **Red step:** `TestBinariesAllowPatternsAreRefusedAtDecode` fails — `/etc/passwd`, a `..`
   component, an empty entry and a pattern the matcher cannot read (`brand/[.png`) are all accepted by
@@ -144,8 +148,9 @@ node only — nothing reads it yet — so it lands without waiting for anything.
   where D987 actually distinguishes them), `TestBinariesMaxBytesDefaultsAndLowerOnly`,
   `TestVersionSinceCoversEveryVersion` (already exists;
   it fails until the row lands), and `TestPolicyUnknownKeysStillListsBinariesForAnOlderReader`
-  (the wrong direction: a version-5 reader must list a version-6 node's member, never decode past
-  it silently — the bump is what makes the refusal `RunnerSkew` instead, D990).
+  (the wrong direction: a version-7 reader must list a version-8 node's member, never decode past
+  it silently — the bump is what makes the refusal `RunnerSkew` instead, D990, which the owner ruled
+  yes on 2026-11-15).
 - **Bounds:** entries bounded in count and length the way `rigor.MaxAreas` / `MaxAreaPattern` bound
   areas, because the list reaches the run record and the pull request body.
   `TestAnOverLongBinariesPatternIsRefused` is the fifth check of §2.1 made a test rather than a
@@ -154,7 +159,13 @@ node only — nothing reads it yet — so it lands without waiting for anything.
 
 ### AR1. The owner's carrier, the publish, and the convergence (D987, D990)
 
-- **Files (8):** `internal/localcfg/localcfg.go` (`BinariesAllow`, `BinariesMaxBytes`, validated at
+AR1 writes the `binaries` member into `buildProjectPolicy` only: the one node build both doors share,
+and no second build path. D990 was ruled **yes** on 2026-11-15, so AR1 also bumps
+`projectpolicy.Version` from 7 to 8 (versions 6 and 7 both shipped in 0.24.0; `VersionSince[8]` is
+`"0.26.0"`, the release that ships AR1) and carries the previous-version convergence test.
+
+- **Files (10):** `internal/projectpolicy/version.go` and `internal/projectpolicy/version_test.go`
+  (`Version = 8`, the `VersionSince[8]` row), `internal/localcfg/localcfg.go` (`BinariesAllow`, `BinariesMaxBytes`, validated at
   load — a misspelt pattern is a refusal, never a rule that quietly admits nothing),
   `internal/cli/sharedcfg.go` (`sharedForbidden`, `sharedcfg.go:216`, gains `binaries`),
   `internal/cli/project_cmd.go` (`buildProjectPolicy`, `project_cmd.go:765`, fills the member;
@@ -162,12 +173,13 @@ node only — nothing reads it yet — so it lands without waiting for anything.
   which for this key is a choice between the node's block and no block at all: an empty list is a
   member the database keeps no value for, so the written-empty spelling is the file's and never the
   node's),
-  `internal/projectpolicy/migrate.go` (the version-5 → 6 step: the node keeps its shape and its
-  version number moves, the shape-free step `migrateV3ToV4` is the precedent for), and the four test
+  `internal/projectpolicy/migrate.go` (the version-7 → 8 step, `migrateV7ToV8` after `migrateV6ToV7`:
+  the node keeps its shape and its version number moves, the shape-free step `migrateV3ToV4` is the
+  precedent for), and the four test
   files `internal/localcfg/localcfg_test.go`, `internal/cli/project_policy_test.go`,
   `internal/cli/sharedcfg_test.go`, `internal/cli/update_converge_test.go`.
-- **Red step:** `TestInstallationAtThePreviousVersionConvergesBinaries` fails — an installation whose
-  published node is version 5 ends `fugaro update` with a version-6 node carrying its `binaries`
+- **Red step:** `TestInstallationAtPolicyVersion7ConvergesBinaries` fails — an installation whose
+  published node is version 7 ends `fugaro update` with a version-8 node carrying its `binaries`
   block, and today the publish (both doors) states no `binaries` member, so there is nothing for the
   node to carry.
 - **Tests:** that one, `TestUpdatePolicyStagePublishesTheBinariesBlock` (the `update` door, whose
@@ -186,7 +198,7 @@ node only — nothing reads it yet — so it lands without waiting for anything.
   member has to change that test on purpose.
 - **Hermetic:** a fake Realtime Database, an ETag, `t.TempDir()`. No apply, no deploy, no cloud.
 - **Carries its own `### For operators` note, in its PR body, for the release PR to copy:**
-  "`fugaro update` republishes the project policy as version 6, which carries `binaries` — the paths
+  "`fugaro update` republishes the project policy as version 8, which carries `binaries` — the paths
   a run may add a binary at. Nothing is required of an operator beyond `fugaro update`; the runner
   image is refreshed by the same command, and a project that sets no list keeps refusing every
   uncommitted binary exactly as before." `docs/releases/**` is another stream's file, so the wording
@@ -308,11 +320,10 @@ exists and the entry is gone rather than marked done.
 
 ## 4. The recommended slot
 
-**0.20.0.** 0.15.0, 0.16.0 and 0.17.0 have all shipped (the newest notes in `docs/releases/`), 0.18.0
-and 0.19.0 are spoken for by work already planned, and this design is **two** works — one of them a
-policy-node version bump, which is the kind of change that has to converge in one `fugaro update`
-(HARD RULE). It fits in one release; it does not need its own. **The row order inside the slot is
-what matters, not the number** — if 0.19.0 opens up, this moves down into it unchanged.
+**0.26.0**, the owner's scope for AR1 (the publish, and with it the policy-node version bump from 7
+to 8, which is the kind of change that has to converge in one `fugaro update`, HARD RULE). AR0 and
+AR2 already landed (#2202, #2204), and the owner approved every task on 2026-11-15. **The row order
+inside the slot is what matters, not the number.**
 
 The order below is this design's recommendation, and **nothing in it waits on another design any
 more**: #1476 is merged, the publish doors and the managed gate are on `main`, and `binaries` is a
@@ -331,22 +342,22 @@ AR3–AR6 in one slot), and the publish last, in the same release.
 
 ## 5. Operator steps
 
-**One, and it is the existing one: `fugaro update`.** It republishes the project policy as version 6
+**One, and it is the existing one: `fugaro update`.** It republishes the project policy as version 8
 — the node that carries `binaries` — and refreshes the job images of the checkout it runs in, in the
 same command and behind that command's own per-build confirmations. Two repositories are not that
 checkout, and the release states both rather than leaving them to be found: a repository whose job
 image is a derived image of another checkout keeps the image it had until that checkout's `fugaro
-image refresh` runs, and the launcher refuses a launch of it onto an image older than 0.24.0 —
+image refresh` runs, and the launcher refuses a launch of it onto an image older than 0.26.0 —
 rather than starting a run that halts at bootstrap — naming that command
 (`internal/cli`'s `policyImageGate`); and the reader accepts a node one shape-free step behind
 (`projectpolicy`'s `ReadsVersion`), so this release's own readers — the runner, the launcher and the
-credentials service it installs — read a version-5 node as it stands, whichever stage the update is
+credentials service it installs — read a version-7 node as it stands, whichever stage the update is
 in. The update still migrates the node before it replaces the credentials service (the stage
 immediately after the policy stage), because the release behind's own service refuses a node above
 its own version and cannot be taught otherwise. A project that sets no `binaries`
 block is unchanged: the node gains a member it does not use, and the run that leaves a build product
-in the tree is refused exactly as it is today. **The version-5 → 6 convergence is AR1's red step**
-(`TestInstallationAtThePreviousVersionConvergesBinaries`), so the HARD RULE's "an installation at
+in the tree is refused exactly as it is today. **The version-7 → 8 convergence is AR1's red step**
+(`TestInstallationAtPolicyVersion7ConvergesBinaries`), so the HARD RULE's "an installation at
 the previous version converges" is a test this plan owns rather than a hope.
 
 The release notes carry that as one line in `### For operators` (`docs/releases/README.md`), drafted

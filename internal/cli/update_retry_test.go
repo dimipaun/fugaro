@@ -214,7 +214,7 @@ func retryBucketFiles(t *testing.T, dir string) map[string]string {
 // the one that fixed it (D1733). The release comes from the shared record and
 // the command and the "offered" flag from this machine's own file (D1735, F28).
 func TestUpdatePrintsRetryForResolvedIssue(t *testing.T) {
-	newConvergeRig(t, v6Node())
+	newConvergeRig(t, v7Node())
 	currentRelease(t)
 
 	// The release behind the one this run installs fixed the issue this machine
@@ -223,7 +223,8 @@ func TestUpdatePrintsRetryForResolvedIssue(t *testing.T) {
 	store := retryStore(t)
 	retryFile(t, store, up.Number, "fugaro update --repo [REDACTED]")
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("fugaro update stopped at %s:\n%s\n%s", stoppedStage(out), out, errOut)
 	}

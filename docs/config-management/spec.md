@@ -100,7 +100,7 @@ would be a second contract for the same document.
 
 **Recommendation (D1165): the widening classification is unchanged, and the typed project name is still
 demanded for a widening.** `settingsTypedWrite` decides whether an edit loosens a ceiling, removes a
-floor or turns a `followup.*` key on; the agent-session fence comes first, and `--yes` answers a widening
+floor or turns a `followup.*` key on; the agent-session fence comes first, and a widening is answered
 only outside a coding agent's session (**D846**, [settings reconciliation](../settings-commands/reconciliation.md:218);
 **D1107**). An entry write that adds a `secrets`
 member or an `allow_data_to` value is a widening by the same rule and takes the same typed name — and, in
@@ -113,7 +113,7 @@ write's members as optional ones.** The document's version is its own contract (
 `schemas/settings-write.schema.json:20`, whose version is `1` today), and **the console pins that
 number**: `SETTINGS_VIEW_DOC_VERSION = 1` (`console/src/main/settingsview.ts:42`) refuses a document at
 any other version (`:181`), so a version 2 would break **every** settings edit the console makes — the
-edit it draws its confirmation for and then spawns `settings set … --yes` behind
+edit it draws its confirmation for and then spawns `settings set …` behind
 ([docs/console-settings-edit](../console-settings-edit/README.md)). An entry write's document needs
 members the version-1 shape does not carry — the operation (`add-entry`, `remove-entry`, `add`,
 `remove`, `set`), the entry's key field and value, and the members the entry carries — and D848's rule
@@ -144,7 +144,7 @@ the resolved mode), **D834**'s `hotfix` refusal, **D838**'s duplicate-glob refus
 
 **Recommendation (D1170): removing or lowering a `review_floor` entry takes the project's name typed at
 a terminal (D846, SD10).** `confirmTypedStrict` (`internal/cli/budget.go:250`) is that
-form: no `--yes` stands in for it, and the agent-session fence comes first, so in a managed project the
+form: no flag stands in for it, and the agent-session fence comes first, so in a managed project the
 removal stays agent-refused even though the gate would otherwise admit a narrowing — because a floor
 removal is not a plan the gate can read (D1026).
 

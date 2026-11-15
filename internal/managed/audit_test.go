@@ -18,7 +18,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	inframanaged "github.com/dimipaun/fugaro/internal/infra/managed"
-	"github.com/dimipaun/fugaro/internal/initflow"
 )
 
 // The audit record's tests (M6, D1014, D1025): what one record holds, where it
@@ -129,7 +128,7 @@ func TestManagedAuditRefusalIsStillRecorded(t *testing.T) {
 	s, _ := auditStorage(t)
 	doc := []byte(`{"version":1,"keys":{}}`)
 	const rule = "the layer names credentials.api_key, which is a reserved key"
-	rec := AuditRecordFor(auditApply(), ConvergeRefused(doc, initflow.YesOrTyped, []string{rule}))
+	rec := AuditRecordFor(auditApply(), ConvergeRefused(doc, []string{rule}))
 
 	got, key, _ := auditRoundTrip(t, s, rec)
 	if got.Verdict != AuditRefused {
@@ -154,7 +153,7 @@ func TestManagedAuditRefusalCarriesTheFindingsRaisedBesideIt(t *testing.T) {
 	doc := []byte(`{"version":1,"keys":{}}`)
 	const rule = "the plan removes a bucket that holds state"
 	const finding = "the plan sets a cost attribute the tables do not carry"
-	rec := AuditRecordFor(auditApply(), ConvergeRefusedWithWarnings(doc, initflow.YesOrTyped, []string{rule}, []string{finding}))
+	rec := AuditRecordFor(auditApply(), ConvergeRefusedWithWarnings(doc, []string{rule}, []string{finding}))
 
 	got, _, _ := auditRoundTrip(t, s, rec)
 	if got.Verdict != AuditRefused {
@@ -211,7 +210,7 @@ func TestParseAuditRecordReadsARecordOlderThanTheWarningsField(t *testing.T) {
 func TestManagedAuditPlanDigestIsTheJudgedBytes(t *testing.T) {
 	s, _ := auditStorage(t)
 	doc := []byte(`{"version":1,"keys":{"rigor":"standard"}}`)
-	rec := AuditRecordFor(auditApply(), ConvergeAdmitted(doc, initflow.YesOrTyped, []string{"every key is in the registry"}))
+	rec := AuditRecordFor(auditApply(), ConvergeAdmitted(doc, []string{"every key is in the registry"}))
 
 	got, _, _ := auditRoundTrip(t, s, rec)
 	if got.PlanDigest != digest(doc) {
@@ -222,7 +221,7 @@ func TestManagedAuditPlanDigestIsTheJudgedBytes(t *testing.T) {
 	// record that could not tell the two apart would be a record an owner
 	// cannot check the applied plan against.
 	other := []byte(`{"version":1,"keys":{"rigor":"strict"}}`)
-	second := AuditRecordFor(auditApply(), ConvergeAdmitted(other, initflow.YesOrTyped, nil))
+	second := AuditRecordFor(auditApply(), ConvergeAdmitted(other, nil))
 	if second.PlanDigest == got.PlanDigest {
 		t.Errorf("two documents differing by one byte carry the same plan_digest %q", got.PlanDigest)
 	}
@@ -238,7 +237,7 @@ func TestManagedAuditPlanDigestIsTheJudgedBytes(t *testing.T) {
 // keeps out of the write path.
 func TestManagedAuditIsWrittenUnderTheOperatorPrefix(t *testing.T) {
 	s, _ := auditStorage(t)
-	rec := AuditRecordFor(auditApply(), ConvergeAdmitted([]byte("{}"), initflow.YesOrTyped, nil))
+	rec := AuditRecordFor(auditApply(), ConvergeAdmitted([]byte("{}"), nil))
 	_, key, _ := auditRoundTrip(t, s, rec)
 
 	if !strings.HasPrefix(key, "fugaro/") {
@@ -264,7 +263,7 @@ func TestManagedAuditIsWrittenUnderTheOperatorPrefix(t *testing.T) {
 func TestManagedAuditWriteFailureFailsTheCommand(t *testing.T) {
 	s, f := auditStorage(t)
 	f.DenyWrites(auditBucket, "fugaro/")
-	rec := AuditRecordFor(auditApply(), ConvergeRefused([]byte("{}"), initflow.YesOrTyped, []string{"the layer widens a scope rule"}))
+	rec := AuditRecordFor(auditApply(), ConvergeRefused([]byte("{}"), []string{"the layer widens a scope rule"}))
 	if _, err := WriteAudit(context.Background(), s, auditBucket, rec); err == nil {
 		t.Fatal("a refused write was reported as written")
 	}
@@ -280,7 +279,7 @@ func TestManagedAuditRecordsTheDeleteListGeneration(t *testing.T) {
 	s, _ := auditStorage(t)
 	apply := auditApply()
 	apply.DeleteListGeneration = 42
-	rec := AuditRecordFor(apply, ConvergeAdmitted([]byte("{}"), initflow.YesOrTyped, []string{"the address is one the owner's list approves"}))
+	rec := AuditRecordFor(apply, ConvergeAdmitted([]byte("{}"), []string{"the address is one the owner's list approves"}))
 
 	got, _, data := auditRoundTrip(t, s, rec)
 	if got.DeleteListGeneration != "42" {
@@ -300,7 +299,7 @@ func TestManagedAuditRecordsTheDeleteListGeneration(t *testing.T) {
 // "generation 0 of the owner's list was in force" and no such list exists.
 func TestManagedAuditRecordsNoDeleteListGenerationWhenNoRemovalWasJudged(t *testing.T) {
 	s, _ := auditStorage(t)
-	rec := AuditRecordFor(auditApply(), ConvergeAdmitted([]byte("{}"), initflow.YesOrTyped, []string{"the plan creates and updates only"}))
+	rec := AuditRecordFor(auditApply(), ConvergeAdmitted([]byte("{}"), []string{"the plan creates and updates only"}))
 
 	got, _, data := auditRoundTrip(t, s, rec)
 	if got.DeleteListGeneration != "" {
@@ -320,7 +319,7 @@ func TestManagedAuditRecordsNoDeleteListGenerationWhenNoRemovalWasJudged(t *test
 // mutation the version exists to stop.
 func TestParseAuditRecordRefusesAnUnknownVersion(t *testing.T) {
 	s, _ := auditStorage(t)
-	rec := AuditRecordFor(auditApply(), ConvergeAdmitted([]byte("{}"), initflow.YesOrTyped, nil))
+	rec := AuditRecordFor(auditApply(), ConvergeAdmitted([]byte("{}"), nil))
 	_, key, data := auditRoundTrip(t, s, rec)
 
 	var m map[string]any
@@ -353,7 +352,7 @@ func TestParseAuditRecordRefusesAnUnknownVersion(t *testing.T) {
 // and an owner cannot compare against anything.
 func TestParseAuditRecordRefusesAGenerationThatIsNotOne(t *testing.T) {
 	s, _ := auditStorage(t)
-	rec := AuditRecordFor(auditApply(), ConvergeAdmitted([]byte("{}"), initflow.YesOrTyped, nil))
+	rec := AuditRecordFor(auditApply(), ConvergeAdmitted([]byte("{}"), nil))
 	_, _, data := auditRoundTrip(t, s, rec)
 	var m map[string]any
 	if err := json.Unmarshal(data, &m); err != nil {
@@ -382,7 +381,7 @@ func TestListAuditRecordsReadsOneDate(t *testing.T) {
 	other.At = time.Date(2026, 11, 2, 9, 30, 0, 0, time.UTC)
 	other.Command = "fugaro update"
 	for _, a := range []AuditFacts{day, day, other} {
-		if _, err := WriteAudit(context.Background(), s, auditBucket, AuditRecordFor(a, ConvergeAdmitted([]byte("{}"), initflow.YesOrTyped, nil))); err != nil {
+		if _, err := WriteAudit(context.Background(), s, auditBucket, AuditRecordFor(a, ConvergeAdmitted([]byte("{}"), nil))); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -426,7 +425,7 @@ func TestListAuditRecordsRefusesAnObjectThatIsNotARecord(t *testing.T) {
 // not one and a zero version are each a refusal and not a record.
 func TestWriteAuditRefusesARecordThisBuildCouldNotRead(t *testing.T) {
 	s, _ := auditStorage(t)
-	good := AuditRecordFor(auditApply(), ConvergeAdmitted([]byte("{}"), initflow.YesOrTyped, nil))
+	good := AuditRecordFor(auditApply(), ConvergeAdmitted([]byte("{}"), nil))
 	for _, tc := range []struct {
 		what string
 		mut  func(*AuditRecord)
@@ -459,7 +458,7 @@ func TestWriteAuditRefusesARecordThisBuildCouldNotRead(t *testing.T) {
 func TestWriteAuditReportsAFailureOfTheWrite(t *testing.T) {
 	s, f := auditStorage(t)
 	f.FailObjectStoresAfterWrite(1)
-	rec := AuditRecordFor(auditApply(), ConvergeRefused([]byte("{}"), initflow.YesOrTyped, []string{"the plan removes a bucket"}))
+	rec := AuditRecordFor(auditApply(), ConvergeRefused([]byte("{}"), []string{"the plan removes a bucket"}))
 	if _, err := WriteAudit(context.Background(), s, auditBucket, rec); err == nil {
 		t.Fatal("a write the cloud answered with an error was reported as written")
 	}
@@ -476,7 +475,7 @@ func TestListAuditRecordsReportsAReadThatFailed(t *testing.T) {
 	if _, err := ListAuditRecords(context.Background(), nil, auditBucket, "2026-11-03"); !errors.Is(err, ErrNoAuditReader) {
 		t.Errorf("a read with no storage client answered %v, want ErrNoAuditReader", err)
 	}
-	if _, err := WriteAudit(context.Background(), nil, auditBucket, AuditRecordFor(auditApply(), ConvergeAdmitted([]byte("{}"), initflow.YesOrTyped, nil))); !errors.Is(err, ErrNoAuditReader) {
+	if _, err := WriteAudit(context.Background(), nil, auditBucket, AuditRecordFor(auditApply(), ConvergeAdmitted([]byte("{}"), nil))); !errors.Is(err, ErrNoAuditReader) {
 		t.Errorf("a write with no storage client answered %v, want ErrNoAuditReader", err)
 	}
 }

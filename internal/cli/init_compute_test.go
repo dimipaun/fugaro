@@ -20,10 +20,11 @@ import (
 )
 
 // The compute stage (design compute-backend §8.1 task 6). It is the owner's
-// step, and the only step --yes may not reach that is neither a project, a
-// secret nor a checkout's own file: what it provisions is money (a NAT's
-// hours, a billable image build) and permanent, so its confirmation is the
-// project's name typed at a real terminal.
+// step, and the only step that is neither a project, a secret nor a checkout's
+// own file: what it provisions is money (a NAT's hours, a billable image build)
+// and permanent, so its confirmation is a person at a real terminal, with
+// nothing typed at them (T7, docs/no-prompt-policy), and no flag reaches it
+// (T11).
 //
 // The rig is the whole converge with --provision-batch: the run accounts come
 // from the project (a service account carrying a Fugaro job display name), the
@@ -182,10 +183,9 @@ func subcommands(calls [][]string) []string {
 // project's name plans the root, shows the summary, applies it in the root's
 // own workdir and state prefix, and starts the preload rebuild at once.
 func TestComputeStageProvisionsAfterATypedConfirmation(t *testing.T) {
-	typedThroughYes(t) // about the provisioning, not about who may confirm it
 	r := computeRig(t)
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-batch")
+	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--provision-batch")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -283,7 +283,7 @@ func TestComputeRootTakesTheLaunchersTheModuleGrants(t *testing.T) {
 			projectGrant(admin, accesslib.RoleAdmin)))
 		computeReady(t, r)
 		fakeTerminal(t)
-		out, _, err := executeStdin(t, "", "setup", "--yes", "--provision-batch")
+		out, _, err := executeStdin(t, "", "setup", "--provision-batch")
 		if err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}
@@ -322,7 +322,7 @@ func TestComputeRootTakesTheLaunchersTheModuleGrants(t *testing.T) {
 		db.Set(accesslib.PathNode, accessNodeDoc(projectGrant(me, accesslib.RoleAdmin)))
 		computeReady(t, r)
 		fakeTerminal(t)
-		out, _, err := executeStdin(t, "", "setup", "--yes", "--provision-batch")
+		out, _, err := executeStdin(t, "", "setup", "--provision-batch")
 		if err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}
@@ -339,7 +339,6 @@ func TestComputeRootTakesTheLaunchersTheModuleGrants(t *testing.T) {
 // of the config's field, and it is what lets an installation keep every
 // schedule in one place it chose.
 func TestComputeStageTakesTheConfigsSchedulerRegion(t *testing.T) {
-	typedThroughYes(t)
 	r := computeRig(t)
 	r.appendConfig(t, "scheduler_region: us-central1\n")
 	// The rebuild the stage starts lives where the config says, not where the
@@ -348,7 +347,7 @@ func TestComputeStageTakesTheConfigsSchedulerRegion(t *testing.T) {
 		"https://cloudbuild.googleapis.com/v1/projects/proj-1234/builds", "fugaro-preload@proj-1234.iam.gserviceaccount.com")
 	r.save(t)
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-batch")
+	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--provision-batch")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -366,7 +365,6 @@ func TestComputeStageTakesTheConfigsSchedulerRegion(t *testing.T) {
 // symlink to /private/var -- so an unresolved comparison finds none of this
 // root's calls and the stage's own calls read as the installation's.
 func TestComputeStageFindsItsWorkdirThroughASymlink(t *testing.T) {
-	typedThroughYes(t)
 	r := computeRig(t)
 	// The same case on any platform: the rig's own state home, reached
 	// through a link. mkdir through it creates the real directory, and the
@@ -378,7 +376,7 @@ func TestComputeStageFindsItsWorkdirThroughASymlink(t *testing.T) {
 	}
 	t.Setenv("XDG_STATE_HOME", filepath.Join(link, "xdg_state_home"))
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-batch")
+	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--provision-batch")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -458,51 +456,58 @@ func TestComputeStageRefusesInAnAgentSession(t *testing.T) {
 	}
 }
 
-// --yes never covers it: it is not a stage --yes is allowed to reach, so a
-// run that passes --yes and types nothing leaves it for the owner instead of
-// applying.
-func TestComputeStageNeverTakesYes(t *testing.T) {
+// The person at the terminal is the whole of the confirmation, and nothing is
+// typed at them (T7, docs/no-prompt-policy): the flag that used to stand in for
+// them is gone (T11), so an empty stdin applies the root and starts its preload
+// rebuild, with what it provisions shown on the screen that authorizes it.
+func TestComputeStageAppliesAtTheTerminalWithNothingTyped(t *testing.T) {
 	r := computeRig(t)
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, "", "setup", "--yes", "--provision-batch")
-	if err == nil || !strings.Contains(err.Error(), "left for you") {
-		t.Fatalf("err = %v, want the step left for the owner\n%s", err, out)
+	out, _, err := executeStdin(t, "", "setup", "--provision-batch")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
 	}
-	if calls := subcommands(computeCalls(t, r)); slices.Contains(calls, "apply") {
-		t.Fatalf("the compute root was applied without the typed name: %q", calls)
+	if calls := subcommands(computeCalls(t, r)); !slices.Contains(calls, "apply") {
+		t.Fatalf("the compute root was not applied at a terminal with nothing typed: %q\n%s", calls, out)
 	}
-	if len(r.sched.Runs()) != 0 {
-		t.Error("the preload rebuild was started by a run that applied nothing")
-	}
-	if !strings.Contains(out, "left for you (compute, prompt)") {
-		t.Errorf("the step was not reported as left for the owner:\n%s", out)
+	if runs := r.sched.Runs(); len(runs) != 1 {
+		t.Errorf("the preload rebuild was started %v, want once by the run that applied", runs)
 	}
 	if !strings.Contains(out, "provisions the Batch compute backend") {
-		t.Errorf("what the step provisions was not shown before it was left:\n%s", out)
+		t.Errorf("what the step provisions was not shown before it was confirmed:\n%s", out)
 	}
 }
 
-// A run that cannot ask does not even enter the stage: no terminal and --yes
-// leaves the compute stage where it stands, and NOTHING of the compute root
-// runs -- not its tfvars, not its init, not its plan.
+// A run that cannot ask does not even enter the stage: with no terminal the
+// compute stage is left where it stands, and NOTHING of the compute root runs
+// -- not its tfvars, not its init, not its plan.
 //
 // This is what the stage's noYes slot in initflow's order buys, and it is not
-// the same guarantee as the stage's own typed prompt: askTyped refuses a --yes
-// run too, but only once Apply is under way, which is after plan() has written
-// the root's tfvars and planned it. Losing noYes would not apply anything --
-// the prompt still stops that -- so nothing else here would fail, which is why
-// this test exists.
+// the same guarantee as the stage's own confirmation: askTyped refuses a run
+// with no terminal too, but only once Apply is under way, which is after plan()
+// has written the root's tfvars and planned it. Losing noYes would not apply
+// anything -- the confirmation still stops that -- so nothing else here would
+// fail, which is why this test exists.
+//
+// The stage is driven on its own, as the single-stage tests drive theirs: a
+// whole converge with no terminal stops at the first ordinary step (the
+// installation's), which is that step's rule and not this one's.
 func TestComputeStageIsLeftUnenteredWithoutATerminal(t *testing.T) {
 	r := computeRig(t)
-	out, _, err := executeStdin(t, "", "setup", "--yes", "--provision-batch")
-	if err == nil || !strings.Contains(err.Error(), "left for you") {
-		t.Fatalf("err = %v, want the step left for the owner\n%s", err, out)
+	noTerminal(t)
+	e := rigEngine(t, r, &initOptions{door: setupDoor.name, provisionBatch: true})
+	res, err := initflow.Run(t.Context(), []initflow.Stage{newComputeStage(e)}, e.options())
+	if err != nil {
+		t.Fatalf("the loop refused the step instead of leaving it for the owner: %v", err)
+	}
+	if stateOf(res, initflow.Compute) != initflow.NeedsYou || len(res.Left) != 1 {
+		t.Fatalf("the step was not left for the owner: %+v %+v", res.Stages, res.Left)
 	}
 	if calls := computeCalls(t, r); len(calls) != 0 {
-		t.Fatalf("a run that cannot confirm reached the compute root: %q\n%s", calls, out)
+		t.Fatalf("a run that cannot confirm reached the compute root: %q", calls)
 	}
-	if len(r.sched.Runs()) != 0 {
-		t.Error("the preload rebuild was started by a run that applied nothing")
+	if runs := r.sched.Runs(); len(runs) != 0 {
+		t.Errorf("the preload rebuild was started %v by a run that applied nothing", runs)
 	}
 }
 
@@ -522,8 +527,8 @@ func TestComputeStageGuardsDeletes(t *testing.T) {
 		name string
 		args []string
 	}{
-		{"the plan view", []string{"setup", "--yes", "--plan-only", "--provision-batch"}},
-		{"the apply", []string{"setup", "--yes", "--provision-batch"}},
+		{"the plan view", []string{"setup", "--plan-only", "--provision-batch"}},
+		{"the apply", []string{"setup", "--provision-batch"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := computeRig(t)
@@ -550,7 +555,7 @@ func TestComputeStageNoChanges(t *testing.T) {
 	r.script["plan"] = map[string]any{"exit": 0} // an empty plan, everywhere
 	r.save(t)
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-batch")
+	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--provision-batch")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -575,7 +580,7 @@ func TestComputeStagePlanOnlyAppliesNothing(t *testing.T) {
 	r.setPlanAt(t, "installation")
 	r.setPlanAt(t, "compute", change("module.compute.google_cloud_scheduler_job.preload_rebuild", "create"))
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, "", "setup", "--yes", "--plan-only", "--provision-batch", "--json")
+	out, _, err := executeStdin(t, "", "setup", "--plan-only", "--provision-batch", "--json")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -627,7 +632,7 @@ func TestComputeStagePlanOnlyAppliesNothing(t *testing.T) {
 func TestComputeStageIsBehindItsFlag(t *testing.T) {
 	r := computeRig(t)
 	fakeTerminal(t)
-	if _, _, err := executeStdin(t, "", "setup", "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "", "setup"); err != nil {
 		t.Fatal(err)
 	}
 	if calls := computeCalls(t, r); len(calls) != 0 {
@@ -721,11 +726,10 @@ func TestComputeStageHoldsItsGrantsToTheCover(t *testing.T) {
 		name string
 		args []string
 	}{
-		{"the plan view", []string{"setup", "--yes", "--plan-only", "--provision-batch"}},
-		{"the apply", []string{"setup", "--yes", "--provision-batch"}},
+		{"the plan view", []string{"setup", "--plan-only", "--provision-batch"}},
+		{"the apply", []string{"setup", "--provision-batch"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			typedThroughYes(t)
 			r := computeRig(t)
 			r.setPlanAt(t, "installation")
 			r.setPlanAt(t, "compute", jobsEditorChange("serviceAccount:"+infra.ReaperAccountID+"@"+initProject+".iam.gserviceaccount.com", []any{}))
@@ -769,13 +773,12 @@ func reaperGapPlan(t *testing.T, r *initRig) {
 // was confirmed.
 func TestComputeStageRetriesIAMPropagation(t *testing.T) {
 	noPropagationWaits(t)
-	typedThroughYes(t)
 	r := computeRig(t)
 	reaperGapPlan(t, r)
 	r.script["apply@compute"] = []any{map[string]any{"exit": 1, "stderr": propagationStderr}, map[string]any{"exit": 0}}
 	r.save(t)
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-batch")
+	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--provision-batch")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -795,13 +798,12 @@ func TestComputeStageRetriesIAMPropagation(t *testing.T) {
 func TestComputeStageRetriesOnlyPropagation(t *testing.T) {
 	t.Run("another failure", func(t *testing.T) {
 		noPropagationWaits(t)
-		typedThroughYes(t)
 		r := computeRig(t)
 		reaperGapPlan(t, r)
 		r.script["apply@compute"] = map[string]any{"exit": 1, "stderr": "Error: quota exceeded"}
 		r.save(t)
 		fakeTerminal(t)
-		_, _, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-batch")
+		_, _, err := executeStdin(t, initProjectName+"\n", "setup", "--provision-batch")
 		if err == nil {
 			t.Fatal("a failed apply succeeded")
 		}
@@ -811,13 +813,12 @@ func TestComputeStageRetriesOnlyPropagation(t *testing.T) {
 	})
 	t.Run("a gap that never closes", func(t *testing.T) {
 		noPropagationWaits(t)
-		typedThroughYes(t)
 		r := computeRig(t)
 		reaperGapPlan(t, r)
 		r.script["apply@compute"] = map[string]any{"exit": 1, "stderr": propagationStderr}
 		r.save(t)
 		fakeTerminal(t)
-		_, _, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-batch")
+		_, _, err := executeStdin(t, initProjectName+"\n", "setup", "--provision-batch")
 		if err == nil || !strings.Contains(err.Error(), "does not exist") {
 			t.Fatalf("err = %v, want the last propagation error", err)
 		}
@@ -827,7 +828,6 @@ func TestComputeStageRetriesOnlyPropagation(t *testing.T) {
 	})
 	t.Run("a re-plan with a grant member outside the cover", func(t *testing.T) {
 		noPropagationWaits(t)
-		typedThroughYes(t)
 		r := computeRig(t)
 		// The first plan is the gap's own AND one of the module's grants to a
 		// run account the stage read, which the compute cover accepts. The
@@ -850,7 +850,7 @@ func TestComputeStageRetriesOnlyPropagation(t *testing.T) {
 		r.script["apply@compute"] = []any{map[string]any{"exit": 1, "stderr": propagationStderr}, map[string]any{"exit": 0}}
 		r.save(t)
 		fakeTerminal(t)
-		out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-batch")
+		out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--provision-batch")
 		if err == nil || !strings.Contains(err.Error(), "the compute root's plan grants what the compute module does not") ||
 			!strings.Contains(err.Error(), "run_log_writer") {
 			t.Fatalf("err = %v, want the compute stage's grant refusal for the re-plan's member:\n%s", err, out)
@@ -861,7 +861,6 @@ func TestComputeStageRetriesOnlyPropagation(t *testing.T) {
 	})
 	t.Run("a re-plan with something new", func(t *testing.T) {
 		noPropagationWaits(t)
-		typedThroughYes(t)
 		r := computeRig(t)
 		first := planJSON(t, created("module.compute.google_service_account.reaper", "google_service_account",
 			map[string]any{"account_id": infra.ReaperAccountID}))
@@ -872,7 +871,7 @@ func TestComputeStageRetriesOnlyPropagation(t *testing.T) {
 		r.script["apply@compute"] = []any{map[string]any{"exit": 1, "stderr": propagationStderr}, map[string]any{"exit": 0}}
 		r.save(t)
 		fakeTerminal(t)
-		_, _, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-batch")
+		_, _, err := executeStdin(t, initProjectName+"\n", "setup", "--provision-batch")
 		if err == nil || !strings.Contains(err.Error(), "google_compute_firewall.extra") {
 			t.Fatalf("err = %v, want the retry refused for the change nobody confirmed", err)
 		}

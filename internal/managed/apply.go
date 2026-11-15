@@ -102,9 +102,9 @@ var (
 	// terraform, no gate inputs.
 	ErrRequest = errors.New("the managed apply has nothing to run")
 	// ErrNotConfirmed is D55's confirmation rule refusing the step: the
-	// session asking for the apply is not one that may apply a plan of this
-	// class — a coding agent's session in a project the read did not say is
-	// managed, or a session with neither a terminal nor a marker. It is a
+	// session asking for the apply is not one that may apply the saved plan —
+	// a coding agent's session in a project the read did not say is managed,
+	// or a session with neither a terminal nor a marker. It is a
 	// refusal and not a fallback: nothing is applied.
 	ErrNotConfirmed = errors.New("this session may not confirm the apply")
 )
@@ -783,9 +783,8 @@ func (r Request) gateAndApply(ctx context.Context, t *tf.TF, cred Credential, pl
 // record cannot say "admitted" about a plan the gate refused or "warned" about
 // one nothing applied (AuditRecordFor reads the same three).
 //
-// class is YesOrTyped because that is what this apply's step is (Request.confirm
-// says the same where it asks the question): the gate judged a saved plan, and
-// money or permanent is not something this command does at all.
+// The step is one a plan gate judges: the gate judged a saved plan, and money
+// or permanent is not something this command does at all.
 //
 // findings are the plan's own content findings and warnings are everything the
 // record carries — the same list with the budget-evidence warning in front of
@@ -795,18 +794,17 @@ func (r Request) gateAndApply(ctx context.Context, t *tf.TF, cred Credential, pl
 // own keeps the plain sentences even when the project's own warning is in the
 // record with it.
 func (r Request) converge(doc []byte, v Verdict, findings, warnings []string) Converge {
-	const class = initflow.YesOrTyped
 	switch {
 	case !v.OK:
 		// A refusal can carry findings too (ConvergeRefusedWithWarnings): the
 		// integrity rules stopped the plan and the content rules raised
 		// something beside them, and a record that named only the first would
 		// drop what the gate saw about the rest of the plan.
-		return ConvergeRefusedWithWarnings(doc, class, RuleLines(v.Refusals), warnings)
+		return ConvergeRefusedWithWarnings(doc, RuleLines(v.Refusals), warnings)
 	case len(warnings) == 0:
-		return ConvergeAdmitted(doc, class, appliedRules(false))
+		return ConvergeAdmitted(doc, appliedRules(false))
 	default:
-		return ConvergeWarned(doc, class, appliedRules(len(findings) > 0), warnings)
+		return ConvergeWarned(doc, appliedRules(len(findings) > 0), warnings)
 	}
 }
 
@@ -883,20 +881,26 @@ func (r Request) advice(v Verdict) string {
 	return ""
 }
 
-// confirm is D55's rule, and this is the caller that reaches its managed case:
-// initflow.CanConfirmManaged is the one predicate, its zero Managed is today's
-// rule word for word, and the value asked with here is this apply's own three
-// facts — the creation fact the marker read answered, the verdict that
-// admitted the plan, and whether the whole-project inventory fell back (D59,
-// Task 4.5).
+// confirm is D55's rule, in the two halves initflow decides it in: the gate's
+// verdict stands in for this step's confirmation (initflow.GateStandsIn, whose
+// zero Managed is today's rule word for word), or a person at a real terminal
+// is there to give it (initflow.CanConfirmRun). The value asked with here is
+// this apply's own three facts — the creation fact the marker read answered,
+// the verdict that admitted the plan, and whether the whole-project inventory
+// fell back (D59, Task 4.5).
 //
-// The step's class is YesOrTyped because that is the class this apply is: the
-// gate judged a saved plan, which is what a YesOrTyped step is, and money or
-// permanent — a project, billing, a secret — is not something this command
+// The step is one a plan gate judges: the gate judged a saved plan, and money
+// or permanent — a project, billing, a secret — is not something this command
 // does at all. The zero Conditions is refused, which is the direction a caller
 // that forgot falls in: a session with neither a marker nor a terminal has no
 // confirmation to give, and the answer to that is no apply rather than an
 // apply nobody confirmed.
+//
+// The third term the class system had here — the answer a run carries of its
+// own, which a YesOrTyped step took with no session needed at all — is gone
+// with the classes and is not replaced: this command's own session carries no
+// such answer (managedConditions), and the flag that used to put one there is
+// gone too (T11 of docs/no-prompt-policy).
 //
 // A session the rule admits is then one of two. A coding agent's, in a managed
 // project with an admitted plan the inventory did not fall back on, is D55's
@@ -930,7 +934,7 @@ func (r Request) confirm(v Verdict, hash string) error {
 	if fallback && r.Out != nil {
 		fmt.Fprintln(r.Out, safetext.MultiLine(r.Inventory.Why()))
 	}
-	if !initflow.CanConfirmManaged(initflow.YesOrTyped, r.Conditions, initflow.Managed{Managed: r.Fact.Managed, Admitted: v.OK, Fallback: fallback}) {
+	if !initflow.GateStandsIn(r.Conditions, initflow.Managed{Managed: r.Fact.Managed, Admitted: v.OK, Fallback: fallback}) && !initflow.CanConfirmRun(r.Conditions) {
 		if marker := r.Conditions.Agent; marker != "" {
 			// The reason is initflow's own sentence, which is where D55's
 			// rule is decided; the fallback's own sentence is appended rather

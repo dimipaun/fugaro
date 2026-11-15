@@ -58,7 +58,7 @@ func newSecretsCmd() *cobra.Command {
 	// pflag quotes an unknown flag, and a value pasted in the wrong place
 	// could be one (`-sk-ant-…`); every secrets command gets a fixed message.
 	cmd.SetFlagErrorFunc(func(*cobra.Command, error) error {
-		return userErr("unknown or malformed flag; secrets commands take --repo, --project-wide, --json, --config, --project, --gcp-project, --region, --allow-data-to, --proxy, --yes and --dry-run, and never the value")
+		return userErr("unknown or malformed flag; secrets commands take --repo, --project-wide, --json, --config, --project, --gcp-project, --region, --allow-data-to, --proxy and --dry-run, and never the value")
 	})
 	// Two families, and they write different things: set, allow, deny, ls and rm
 	// are the repository's and the project's Secret Manager containers, written
@@ -214,7 +214,7 @@ var optionalRepoVerbs = map[string]map[string]bool{
 // change to the command's surface, not to this scan, and is not made here.
 // What this map does is keep the scan's model of pflag true, which is the
 // invariant the doc above claims and the one a future flag addition breaks.
-var secretsBoolFlags = map[string]bool{"--json": true, "--project-wide": true, "--proxy": true, "--yes": true, "--dry-run": true, "--help": true}
+var secretsBoolFlags = map[string]bool{"--json": true, "--project-wide": true, "--proxy": true, "--dry-run": true, "--help": true}
 
 // budgetBoolFlags is the same list for the budget commands whose --repo takes
 // an optional value (optionalRepoVerbs), and it exists for the same reason:
@@ -227,7 +227,7 @@ var secretsBoolFlags = map[string]bool{"--json": true, "--project-wide": true, "
 // entries --json and --help are in secretsBoolFlags too; the scan consults
 // both maps, so a name in either is enough.
 var budgetBoolFlags = map[string]bool{
-	"--global": true, "--defaults": true, "--clear": true, "--yes": true,
+	"--global": true, "--defaults": true, "--clear": true,
 	"--ask": true,
 	"--all": true, "--json": true, "--compute": true,
 	// budget history's own, and the --help cobra adds at Execute time.
@@ -412,7 +412,7 @@ A value is not a setting: it has no row, it is never in a diff, and no dry
 run of this command prints one. secrets set with neither policy flag is the
 value write and reads the value from stdin; to store a value and change its
 policy, run the command twice. A coding agent's session is refused the
-policy flags outright, --yes included (spec §5), because a secret's policy is
+policy flags outright (spec §5), because a secret's policy is
 a value no plan shows.`,
 		Args: func(_ *cobra.Command, args []string) error {
 			switch {
@@ -431,7 +431,6 @@ a value no plan shows.`,
 	f := cmd.Flags()
 	f.StringSliceVar(&o.allowDataTo, "allow-data-to", nil, "add a repository (owner/name) to NAME's allow_data_to — project_secrets.NAME.allow_data_to, or workflow_secrets.NAME.allow_data_to for a workflow secret — the list of repositories the value is stored for; comma-separated or repeated")
 	f.BoolVar(&o.proxy, "proxy", false, "set project_secrets.NAME.proxy, the Bitbucket token's switch for the credentials service (--proxy=false turns it off)")
-	f.BoolVar(&o.yes, "yes", false, "confirm the policy write without a prompt (outside a coding agent's session)")
 	f.BoolVar(&o.dryRun, "dry-run", false, "print what the policy write would do and write nothing")
 	return cmd
 }
@@ -595,15 +594,14 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 	if o.policyWrite(cmd) {
 		return secretsSetPolicy(cmd, o, name)
 	}
-	if o.dryRun || o.yes {
+	if o.dryRun {
 		// A value is not a setting (D1171): it has no registry row, no diff
-		// shows it and no document carries it, so there is nothing for either
-		// flag to answer here — and a dry run answered with an empty document
-		// would read as "the value is not stored" when the write below stores
-		// it. --json is not among them: the store's own result document is
-		// what it prints, and it has printed it since before the policy write
-		// existed.
-		return userErr("--dry-run and --yes are the policy write's flags: a value is not a setting, so storing one has no diff and no confirmation to answer (D1171); pass --allow-data-to or --proxy to write project_secrets.%s, or run this command without them to store a value", pluginwire.Printable(name))
+		// shows it and no document carries it, so there is nothing for a dry
+		// run to answer here — and one answered with an empty document would
+		// read as "the value is not stored" when the write below stores it.
+		// --json is not among them: the store's own result document is what it
+		// prints, and it has printed it since before the policy write existed.
+		return userErr("--dry-run is the policy write's flag: a value is not a setting, so storing one has no diff to answer (D1171); pass --allow-data-to or --proxy to write project_secrets.%s, or run this command without it to store a value", pluginwire.Printable(name))
 	}
 	// The value path's own account (CL7a): one line per step, and --json's
 	// stdout stays the store's own document (G2) because the reporter puts its
