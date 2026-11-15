@@ -926,7 +926,7 @@ stale has found a merge that did not.
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 0 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
 | Files in `internal/runner` that mention `Severity` at all | 4 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
-| Image-skew `Since` constants | 45 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Image-skew `Since` constants | 46 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
 | Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 141 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
@@ -996,6 +996,12 @@ did: the crude `grep -ci repo` counted prose, and the new field's own comment sa
 the project's for every repository of it, so the command counts declared field names at the start
 of a line instead, as the `task.Spec` row above does. Neither the field's name nor its value names
 a repository, which is what the **0** claims.
+
+Amended 2026-11-15: `reportsSince` — the release whose CLI answers the project's
+reports job command (`internal/cli/runs_reports.go`, R11), declared beside
+`digestSince` because a release can ship the stored writer without the terminal
+digest step and the other way round — added one more image-skew `Since` constant
+and left the image-skew row at 45, so it moves to 46.
 
 The **67** is the convention this folder follows: there is no registry test over
 `docs/`, so a folder that wants its documents pinned writes its own file, and

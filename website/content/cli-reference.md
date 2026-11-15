@@ -6836,6 +6836,7 @@ Subcommands:
 
 - `fugaro runs digest` -- Write a closed period's report of this repository into its own docs tree
 - `fugaro runs ls` -- List runs with their status, stage, cost and PR
+- `fugaro runs reports` -- Write every repository's closed-period reports into the runs bucket (the project's reports job)
 - `fugaro runs show` -- Show a run's chain and what is left of its limits
 - `fugaro runs stats` -- Aggregate run records by the person who started each run
 - `fugaro runs summary` -- Count the window's runs and their spend, without reading a run object
@@ -7029,6 +7030,55 @@ Flags:
 | `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
 | `--state` | string | "" | no | only runs in this state, a run's or its pull request's (cancelled, error, failed, halted, infra_error, launching, pending, running, succeeded, unlaunched, unreviewed, live, ready, stalled) |
 | `--watch` | bool | `false` | no | redraw until every run has settled |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro runs reports`
+
+Write every repository's closed-period reports into the runs bucket (the project's reports job)
+
+Write the project's stored reports: one report per repository and closed period,
+under reports/<slug>/<YYYY>/<key>.md of the runs bucket -- D321's layout, in the
+bucket rather than in a repository's docs tree.
+
+With --job, as the project's reports job runs it, the whole assignment is the JSON
+document in FUGARO_REPORTS_JOB_SPEC, which the installation renders: the project,
+the runs bucket, the repository slugs to report and the period kinds to close. The
+job has no checkout and no local config, so nothing here reads either, and without
+the document the command refuses to start rather than writing reports somewhere
+nobody named. It refuses too outside a Cloud Run job, which is where it runs.
+
+Each kind's most recently closed period is taken from this run's own clock (a day
+is yesterday, the week is the one that ended on Sunday, the month and the year are
+the ones that ended yesterday): which periods have closed is the one thing a nightly
+run cannot be handed in advance. A rerun compares every report with the stored one
+first -- equal means the object is left as it is, so a re-fired schedule writes
+nothing the second time, and a period whose records changed is overwritten.
+
+The bytes are internal/digest's own writer, so a stored report is the file fugaro
+runs digest writes for the same repository and period. Each report's pattern rules
+read the series already stored -- the reports before it -- and a yearly report is
+the stored monthly ones of that year added up, because the run records are kept 90
+days.
+
+Nothing in a report is a person or a task's own words (G1, D323). The command
+writes with the job's own credentials and nothing else: no git credential, no model
+credential, no secret, and reports/ is the only prefix it may write. The project's
+own aggregate is a later step of the job's and is not written here.
+
+Without --job there is nothing to report: a person reads or writes one repository's
+report of one period in a checkout with fugaro runs digest.
+
+Usage: `fugaro runs reports`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for reports |
+| `--job` | bool | `false` | no | run as the project's reports job (reads FUGARO_REPORTS_JOB_SPEC) |
 
 Subcommands:
 

@@ -873,3 +873,38 @@ func TestReadSummaryChecksRolledUpMonths(t *testing.T) {
 func reportFile(block string) []byte {
 	return []byte("# Run digest: 2026-W42\n\n```json\n" + block + "\n```\n")
 }
+
+// TestPatternsReadTheStoredReports is E7: the rules read the series a
+// repository's reports make in the runs bucket, together with the committed
+// rows a checkout has, so a period the job wrote is history tonight's report
+// is judged against -- and a hand-edited copy of it in a checkout does not
+// overrule what the bucket holds.
+//
+// The four weeks of the rule are split between the two holds on purpose, and
+// the bucket's copy of one of them says something the checkout's does not: the
+// rule fires only if the stored weeks are read and only if the bucket's copy
+// of a week both hold is the one read.
+func TestPatternsReadTheStoredReports(t *testing.T) {
+	bucket, ctx := storedBucket(t, map[string]string{
+		ReportsPrefix + "/" + storedSlug + "/2026/2026-W40.md": string(storedReport(t, weekBlock("2026-W40", 5, 0, FlagHalt))),
+		ReportsPrefix + "/" + storedSlug + "/2026/2026-W42.md": string(storedReport(t, weekBlock("2026-W42", 5, 0, FlagHalt))),
+	})
+	committed := []Row{
+		// Only the checkout has this week, and the bucket's copy of the other
+		// one raises the flag the checkout's does not.
+		storedRow(t, weekBlock("2026-W41", 5, 0, FlagHalt)),
+		storedRow(t, weekBlock("2026-W42", 5, 0)),
+	}
+	rows, err := bucket.Series(ctx, committed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cur, err := PeriodOfKey(ByWeek, "2026-W43")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := only(t, Patterns(Prev(rows, cur), weekBlock("2026-W43", 5, 0)), RuleFlagRecurs)
+	if want := "2026-W40,2026-W41,2026-W42,2026-W43"; strings.Join(p.Periods, ",") != want {
+		t.Errorf("the pattern read %v, want %s: the stored weeks and the committed one are one series", p.Periods, want)
+	}
+}
