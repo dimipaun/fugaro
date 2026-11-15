@@ -9997,8 +9997,11 @@ kept as it was (`internal/cli/init_compute.go`'s `mergeBatch`; the whole rule is
 [backends.md](backends.md#the-batch-block)). A second provisioning run must not move it: the merge is
 field by field and an unchanged block is not written. **FACT:** the Cloud Build run it started — its
 build id, that it succeeded, and roughly how long it took. **FACT:** a second run of the same
-command. **expected output:** exactly `No changes: the compute backend's provisioning matches the plan.` — the stage re-plans and reports nothing to do, which is
-also the reading that says the apply finished whole.
+command. **expected output:** `No changes: the compute backend's provisioning matches the plan.` —
+the stage re-plans and reports nothing to do, which is also the reading that says the apply finished
+whole — and nothing that moves the config: an unchanged block is not written, and what prints beside
+it is the line naming the selection command while the installation still runs on Cloud Run (and the
+block's own line again, only if the stage still cannot form one).
 
 **(124a-5) Select the backend, and read back what that moved.** The provisioning is done, and the
 installation is still on Cloud Run: `fugaro setup --provision-batch` writes the block and applies the

@@ -173,6 +173,12 @@ type closedStdinFixture struct {
 // because there the sentence is the proof the run got to the ask; elsewhere the
 // proof is the body having run at all, which the harness checks for every leaf.
 var closedStdinFixtures = map[string]closedStdinFixture{
+	// The backend name is the argument the command takes, and cloud-run is the
+	// one that reaches the body without a gate: the selection this world's
+	// config already makes (no backend: key reads as cloud-run) is answered
+	// with the "already runs on" line rather than a write, which is the whole
+	// of what the leaf does with a closed stdin.
+	"fugaro backends use": {args: []string{"cloud-run"}, reaches: "already runs on cloud-run"},
 	// The caps are unset in the fixture's database, so the run sets one from
 	// nothing — the loosening T3's owner-session fence is about. It asks nothing
 	// now, so the sentence is the write itself rather than a banner.
@@ -444,7 +450,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro accounts ls":       "selects no project and names the two ways to (--repo, an origin remote)",
 	"fugaro accounts pool":     "is a name for ls, add and rm: a bare run prints its own usage and returns",
 	"fugaro accounts pool ls":  "reads the selected project's own config, which this world's has no pools in, and prints that none are defined",
-	"fugaro backends":          "is a name for its one subcommand: a bare run prints its own usage and returns",
+	"fugaro backends":          "is a name for ls and use: a bare run prints its own usage and returns",
 	"fugaro backends ls":       "lists every backend a project may name, which needs no project",
 	"fugaro backlog add":       "stops at its own D27 field checks, which this world has no values for",
 	"fugaro backlog index":     "reads docs/backlog, which this world has no checkout to hold",

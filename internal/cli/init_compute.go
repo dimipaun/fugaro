@@ -486,8 +486,10 @@ func (s *computeStage) prepare(ctx context.Context) error {
 // itself is the one every converge stage makes (initRun.writeLocalConfig:
 // re-read, parse, marshal, diff, backup, atomic replace) and not a second
 // writer of its own -- so the block lands the way base_images lands when the
-// images stage records a pin, and the stage's own typed confirmation is what
-// covers it, exactly as it covers that one.
+// images stage records a pin. On the applying path the stage's own typed
+// confirmation is what covers the write, exactly as it covers that one; on the
+// no-changes path there is nothing to apply and so nothing asked, and the write
+// describes the provisioning that is already there.
 func (s *computeStage) recordBatchBlock(ctx context.Context) error {
 	r := s.e.r
 	block, why := s.batchBlock()

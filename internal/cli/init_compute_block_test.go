@@ -171,8 +171,12 @@ func TestComputeStageRerunRecordsNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if !strings.Contains(out, "No changes: the compute backend's provisioning matches the plan.") {
-		t.Fatalf("the second run did not reach the compute stage's no-changes path:\n%s", out)
+	// The stage's own word for nothing to do, read off the step's line: the
+	// stage's longer sentence is the run's account and lands in the log
+	// whenever the run keeps one (init_compute_test.go's no-changes case reads
+	// it there), while the step's line is on the screen on both paths.
+	if !strings.Contains(out, markDone+" compute No changes") {
+		t.Errorf("the second run did not report the compute stage's no-changes path:\n%s", out)
 	}
 	if after := readFileString(t, r.cfg); after != before {
 		t.Errorf("the second run rewrote the config:\n--- before\n%s\n--- after\n%s", before, after)
