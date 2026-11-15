@@ -708,7 +708,11 @@ real run carries — and the register's paragraph says why neither takes a numbe
   take none. The register's paragraph, the eight summary rows and the eight sections are in
   `docs/gcp-live-checklist.md`.
 - **No Go code exists in this work yet, and no part of P1–P6 has been written.** The only files this
-  work has added are the four documents in this folder.
+  work has added are the four documents in this folder. *(Amended 2026-11-14: that is the state the
+  section was written in, kept as what it described. **P0 to P6 have since merged**, each part its
+  own change — P0's being the folder's guard — and that merge is what the check-number bullet above
+  rests on, so the four documents are what this work added **first** rather than all of it. The
+  parts' record is [README.md](README.md)'s and [../status.md](../status.md)'s.)*
 
 ## 11. The owner approval gate
 

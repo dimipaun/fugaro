@@ -91,6 +91,18 @@ import (
 // never a cancel through an ending -- and a fake `gcloud` for the two rows that
 // read the runs bucket, over a run set each case seeds, so a case says what the
 // check measured and that it launched nothing here.
+// Check 291's fakes are a fake `fugaro`, a fake `gcloud` and a fake `gh`, with
+// real git against a bare repository inside each case's own directory: the
+// catalog entry's line, the job's stamp and the names a run drops, the
+// reservation read with a name set on the job by hand, and the run's own
+// transcript all come out of the case's own state files, so a case bends one
+// reading at a time and says what the check then reads -- and its `--dry-run`
+// case pins that a plan makes no call at all. Its fake `run` names the run it
+// launched only in the `--json` document (a person's own line is a reporter step
+// on stderr, and its short name is not the run's id), and its fake `runs ls`
+// keeps a run in flight until its second poll and writes that run's transcript
+// only where the row turns terminal, so a check that read a run id off the human
+// line or read a transcript before its run ended fails these cases.
 // Checks 490 to 492 drive a fake `fugaro` and a fake `gcloud` over the
 // post-review triage work, one per reading an owner takes on a real run: 490
 // launches ONE sandbox run and reads its record's triage block and its
@@ -183,7 +195,17 @@ import (
 // on stderr -- files a log with the sink's own name shape, mode and retention
 // rule, and fails exactly when the check's own fake `terraform` is first on
 // PATH, so the forced failure is the check's own shim end to end and a case
-// bends the one thing it judges. Check 350's are a fake `gcloud` and a fake
+// bends the one thing it judges. Check 311's fake is none: its subject is a
+// Windows console, so PowerShell and Windows both have to be there for its
+// steps to run at all, and its test is mostly a reading of its own text -- the
+// block keys, the phases, the guards, the readings and the ones it refuses to
+// take -- beside the six cases that run nothing (`-SelfTest`, `-DryRun`, the
+// three refusals that come before the first tool is looked for, and the stop a
+// machine that is not Windows makes), which it RUNS wherever `pwsh` is on PATH
+// and says so in one line where it is not. Its
+// one case that is neither runs the self-test's own three rules again in bash,
+// over the script's text, so the tree that carried the rule-1 defect is red on
+// a machine without PowerShell too. Check 350's are a fake `gcloud` and a fake
 // `fugaro` beside a REAL local checkout and its bare origin -- git stays on this
 // machine -- with one shared call log for both fakes, so a case says what the
 // check read AND in what order: the hash of the old record is taken before the
@@ -261,6 +283,7 @@ var liveCheckScripts = []struct {
 	{"check190.sh", "check190_test.sh"},
 	{"check191.sh", "check191_test.sh"},
 	{"check195.sh", "check195_test.sh"},
+	{"check291.sh", "check291_test.sh"},
 	{"check300.sh", "check300_test.sh"},
 	{"check301.sh", "check301_test.sh"},
 	{"check302.sh", "check302_test.sh"},
@@ -268,6 +291,7 @@ var liveCheckScripts = []struct {
 	{"check304.sh", "check304_test.sh"},
 	{"check305.sh", "check305_test.sh"},
 	{"check310.sh", "check310_test.sh"},
+	{"check311.ps1", "check311_test.sh"},
 	{"check313.sh", "check313_test.sh"},
 	{"check314.sh", "check314_test.sh"},
 	{"check330.sh", "check330_test.sh"},
