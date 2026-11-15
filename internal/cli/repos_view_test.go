@@ -195,6 +195,14 @@ func TestReposViewSeenIsNotEnrolment(t *testing.T) {
 	if !r.Local.Present || r.Published.Admitted {
 		t.Errorf("acme/idle is this machine's and not the allow-list's, and the row reads local=%v published=%v", r.Local, r.Published)
 	}
+	// Both halves were read here, so a name no row answers for is decided:
+	// not enrolled, and with no state sentence — the answer RE1 turns into
+	// its own line and a nonzero exit, rather than the "could not be decided"
+	// the test above pins.
+	named := viewOf(t, f.path, f.db, "github/acme/ghost")
+	if named.Named == nil || named.Named.Enrolled || named.Named.State != "" {
+		t.Errorf("a repository neither half names is not decided as not enrolled: %+v", named.Named)
+	}
 }
 
 // A member that could not be read carries the sentence that says so, and
@@ -235,6 +243,22 @@ func TestReposViewAbsentMembersCarryTheirState(t *testing.T) {
 		if strings.Contains(r.Canonical, "broken") {
 			t.Errorf("an entry that could not be read became a row: %s", r.Canonical)
 		}
+	}
+
+	// A named repository no row answers for is "not enrolled" only when both
+	// halves were read (D2411, managed status's rule). Here the allow-list
+	// half did not answer, so the same absent row is a read this view cannot
+	// make — and a caller that printed "not enrolled" would be telling an
+	// operator that a policy nobody could read does not admit them.
+	named := viewOf(t, f.path, f.db, "github/acme/ghost")
+	if named.Named == nil || named.Named.Enrolled {
+		t.Fatalf("a repository no row names reads as enrolled: %+v", named.Named)
+	}
+	if named.Named.Canonical != "github/acme/ghost" {
+		t.Errorf("the named repository is %q, want the canonical name it was asked about", named.Named.Canonical)
+	}
+	if named.Named.State == "" {
+		t.Error("an enrolment that could not be decided carries no state sentence")
 	}
 
 	// The shape, not only the builder: a consumer outside this binary reads

@@ -44,6 +44,12 @@ import (
 // RE1 renders the status document, RE2 the `ls` one; the view below is the
 // read both are built from, and neither version moves without the other's
 // readers being told.
+//
+// The version member belongs to those documents and not to the view: D2410
+// gives each document its own version, and one view printed under two
+// documents would have to carry two. A reader builds its document by
+// embedding the view and adding its own "version" (the JSON tags here are
+// written so that embedding flattens to the member names D2410 names).
 const (
 	reposLsDocVersion     = 1
 	reposStatusDocVersion = 1
@@ -55,10 +61,11 @@ const (
 // the project names none of the three — the image this project builds for the
 // repository itself.
 //
-// The last two are the two checkout kinds whose job runs the installation's own
+// The next two are the two checkout kinds whose job runs the installation's own
 // image, which the selection decides nothing for: a row still has to name what
 // such a job runs, so they are named here rather than folded into an empty
-// source.
+// source. The last is not a source: it is the resolver's refusal, which is a
+// state a row has to be able to carry.
 //
 // The names are the view's own and not catalog.Source's. The resolver answers
 // `catalog` for three of the four — a workflow's reference, the map and the
@@ -85,6 +92,13 @@ const (
 	// reposViewImageShared is the shared dependency-layer image a
 	// checkout: shared job runs.
 	reposViewImageShared reposViewImageSource = "shared"
+	// reposViewImageUnresolved is no source at all: the resolver refused this
+	// workflow's image, so nothing chose one. It is named rather than left
+	// empty for the reason every member here is — an empty source reads as a
+	// job that runs nothing — and the sentence saying why is the workflow's
+	// own State, because the refusal is per workflow and a row can hold
+	// several.
+	reposViewImageUnresolved reposViewImageSource = "unresolved"
 )
 
 // reposView is the value: one row per repository the project knows, the
@@ -156,7 +170,10 @@ type reposViewRepo struct {
 	// ImageSource is which answer chose it.
 	ImageSource reposViewImageSource `json:"image_source"`
 	// ClaudeAccounts are the accounts this repository's own runs may be
-	// served by, as this machine's config records them.
+	// served by, as this machine's config records them. An empty list is a
+	// true answer and not an unread member here — this machine records none —
+	// and Local.Present is the member that says why it records none: the
+	// repository is not in this machine's config at all.
 	ClaudeAccounts []string `json:"claude_accounts"`
 	// Published is the allow-list's half: whether an entry admits it, and the
 	// entry that does.
@@ -268,7 +285,16 @@ type reposViewLocal struct {
 // drawing an absent row as a pass.
 type reposViewNamed struct {
 	Canonical string `json:"canonical"`
-	Enrolled  bool   `json:"enrolled"`
+	// Enrolled is whether either half of the enrolment knows it: a row was
+	// built for it, which is to say this machine's config holds it or an
+	// allow-list entry admits it.
+	Enrolled bool `json:"enrolled"`
+	// State is the sentence for an enrolment that could not be decided, and
+	// "" when it could. Enrolled false means "nothing enrolls it" only when
+	// both halves were read: with the allow-list unread, the same false means
+	// a read that did not answer on the half that would have admitted it,
+	// which is the distinction managed status's rule exists for.
+	State string `json:"state"`
 }
 
 // reposViewCredentials is the credential rows' inputs for one repository: its
@@ -346,6 +372,12 @@ func newReposView(ctx context.Context, lc *localcfg.Config, db *rtdb.Client, can
 		v.Named = &reposViewNamed{Canonical: want}
 		row := slices.IndexFunc(v.Repos, func(r reposViewRepo) bool { return r.Canonical == want })
 		v.Named.Enrolled = row >= 0
+		// The two halves an absent row could have come from are the two whose
+		// reads can fail, and either of them failing makes "nothing enrolls
+		// it" a claim this answer cannot make.
+		if row < 0 && (allow.State != "" || local.State != "") {
+			v.Named.State = "whether " + want + " is enrolled could not be decided: the repository is in none of the halves that were read, and a half that would have named it did not answer"
+		}
 		if row >= 0 {
 			v.Repos[row].Credentials = reposViewCredentialsOf(ctx, lc, v.Repos[row].Provider, reposViewLocalNameOf(want, v.Repos[row].Local.Key))
 		}
@@ -503,10 +535,13 @@ func reposViewRowOf(ctx context.Context, lc *localcfg.Config, cat *config.Catalo
 
 // reposViewRowImage is the row's single image answer.
 func reposViewRowImage(lc *localcfg.Config, cat *config.Catalog, imap map[string]string, localName string, workflows []reposViewWorkflow) (string, reposViewImageSource) {
-	if len(workflows) > 0 && workflows[0].State == "" {
+	if len(workflows) > 0 {
 		return workflows[0].Entry, workflows[0].Source
 	}
-	sel, _ := catalog.JobImage(catalog.ImageRequest{Catalog: cat, ImageMap: imap, Canonical: localName, Backend: catalog.Backend(lc.Backend())})
+	sel, err := catalog.JobImage(catalog.ImageRequest{Catalog: cat, ImageMap: imap, Canonical: localName, Backend: catalog.Backend(lc.Backend())})
+	if err != nil {
+		return "", reposViewImageUnresolved
+	}
 	return sel.Entry.Name, reposViewSourceOf(sel, config.Workflow{})
 }
 
@@ -540,6 +575,7 @@ func reposViewWorkflowOf(lc *localcfg.Config, cat *config.Catalog, imap map[stri
 		Catalog: cat, ImageMap: imap, Canonical: localName, Workflow: w, Backend: catalog.Backend(lc.Backend()),
 	})
 	if err != nil {
+		out.Source = reposViewImageUnresolved
 		out.State = fmt.Sprintf("this workflow's image is not resolved: %s", oneLineCLI(err.Error()))
 		return out
 	}
