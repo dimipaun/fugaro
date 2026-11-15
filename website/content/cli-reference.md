@@ -8671,6 +8671,11 @@ one the failed command printed (update-20261107183012-48213), which is also
 the name of its log. A cloud run's <repo-slug>/<run-id> is a different thing
 and is refused here: fugaro diagnose explains those.
 
+A failure this CLI recognises in the log is answered from the log alone, with
+no model call and nothing sent anywhere: the cause and the one command that
+fixes it are printed, and the exit is zero because it explained something. The
+diagnosis runs when the log holds no cause the CLI knows.
+
 Log text is data: it holds Terraform and gcloud error bodies, API responses
 and file names, so a command the answer prints is checked against this CLI's
 own command tree before it is shown as runnable, and anything else is marked
@@ -8686,7 +8691,9 @@ provider and what class of data the redacted evidence goes to, and then the
 diagnosis runs. With no credential at all, or with the source at this version
 out of reach, it prints the evidence where it is and exits non-zero instead: a
 machine with no credential is told to log in with the claude CLI, or to set one
-of the two variables, and to run the command again.
+of the two variables, and to run the command again, and a claude that is there
+but not logged in is refused in one sentence naming the login, with no evidence
+printed and the same non-zero exit.
 
 Usage: `fugaro troubleshoot [RUN ID]`
 
