@@ -42,12 +42,17 @@ import {
 import './cli.css'
 
 /**
- * What the API answers for a code somebody typed: K2.4's `confirmView`, which
- * is the name the requesting installation gave -- now the installation's
- * Firebase project id, which is what K3.3's amendment has the terminal send --
- * the organisation the licence belongs to, and the code as the service read it,
- * so the page shows the code it is about to approve rather than the text that
- * was typed.
+ * What `POST /api/cli/device` answers for a code somebody typed -- K2.4's
+ * device step registered on the portal's API (P1.0's table, the service's own
+ * `DeviceAsk`): the name the requesting installation gave, which is the
+ * installation's Firebase project id, the organisation the licence belongs to,
+ * and the code as the service read it, so the page shows the code it is about to
+ * approve rather than the text that was typed.
+ *
+ * The route is under `/api` and not at the service's root because this page is
+ * served from the portal's own origin and Hosting rewrites `/api/**` to the
+ * service and every other path to the SPA (F21): the root route is a page's, and
+ * a page's answer is HTML.
  */
 export interface DeviceAsk {
   installation: string

@@ -9,10 +9,14 @@
 // the installation asking for a licence. The person signs in, reads what that
 // terminal sent -- as text, because nothing has proved it -- picks which of the
 // organisation's unbound licences that installation gets, and hands one over.
-// The handover itself is the service's step (`POST /cli/authorize`, K2.4): it
-// mints a one-time code and answers with the redirect to the terminal's
-// listener, so the code reaches the process that started this and never this
-// page.
+// The handover itself is the service's step -- K2.4's authorize route, which
+// registers under the portal's API prefix (`POST /api/cli/authorize`, P1.0's
+// table): it mints a one-time code and answers with the redirect to the
+// terminal's listener, so the code reaches the process that started this and
+// never this page. The prefix is not a detail here: this page is served from the
+// portal's own origin, and Hosting rewrites `/api/**` to the service and every
+// other path to the SPA (F21), so a route outside it is one this page cannot
+// reach at all.
 //
 // **The form is submitted and not fetched, and that is the whole reason it is
 // a form.** The answer is a redirect to `http://127.0.0.1:<port>/callback`,
