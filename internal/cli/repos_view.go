@@ -167,7 +167,11 @@ type reposViewRepo struct {
 	// ImageEntry is the catalog entry the repository's job runs, and "" when
 	// its image is not a catalog entry's.
 	ImageEntry string `json:"image_entry"`
-	// ImageSource is which answer chose it.
+	// ImageSource is which answer chose it: the repository's job's, which is
+	// its first workflow's by name where it states any and the project's own
+	// answer for the repository where it states none. A repository whose
+	// workflows disagree is a state its own per-workflow entries carry, and
+	// this member is the summary a listing has room for.
 	ImageSource reposViewImageSource `json:"image_source"`
 	// ClaudeAccounts are the accounts this repository's own runs may be
 	// served by, as this machine's config records them. An empty list is a
@@ -191,8 +195,8 @@ type reposViewRepo struct {
 type reposViewWorkflow struct {
 	Name  string `json:"name"`
 	Entry string `json:"entry"`
-	// Source is "workflow" for a name the workflow itself stated; see
-	// reposViewImageSource for the four.
+	// Source is which answer chose this workflow's entry; see
+	// reposViewImageSource for the list.
 	Source reposViewImageSource `json:"source"`
 	// Warnings are the resolver's own deploy-time sentences about this
 	// workflow's image (D1146, D1900), in order.
@@ -235,8 +239,13 @@ type reposViewAllow struct {
 	Generation string `json:"generation"`
 	// State is the sentence for a read that did not answer — no node
 	// published, a node this build cannot read, a database that refused —
-	// and "" for one that did. Entries is then the file's own answer only,
-	// and a reader must not draw it as the project's list.
+	// and "" for one that did. Entries is empty in that case, and this member
+	// is the only thing that tells it apart from a policy published with an
+	// empty allow-list: the first is a list nobody could read, the second is
+	// a project that admits nothing, and NotAdmitted's own sentence makes the
+	// same distinction. There is deliberately no fallback here — the image
+	// selection falls back to this machine's file, and no local file states
+	// which repositories a project admits.
 	State string `json:"state"`
 }
 

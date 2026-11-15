@@ -218,8 +218,9 @@ func TestReposViewSeenIsNotEnrolment(t *testing.T) {
 // machine's file cannot be read as a canonical name without.
 //
 // Mutation (verified, run and restored): drop the unreadable entry from
-// reposViewLocalOf instead of naming it in State — this fails on both the
-// sentence and the count.
+// reposViewLocalOf instead of naming it in State — this fails three times
+// over, on the sentence, on the entry the sentence has to name, and on the
+// marshalled document's own `local` member.
 func TestReposViewAbsentMembersCarryTheirState(t *testing.T) {
 	f := newProjectFixture(t, "  acme/broken: { workflows: [web] }\n")
 
@@ -292,10 +293,12 @@ func TestReposViewAbsentMembersCarryTheirState(t *testing.T) {
 // in what the view marshals, and the row must still say what it found, or the
 // test would pass on a view that read nothing at all.
 //
-// Mutation (verified, run and restored): carry gcp.SecretInfo into the member
-// whole instead of copying the four fields — this fails, because SecretInfo
-// gains whatever a later change adds beside them, and the read that produced
-// this container's version is one access call away from the value.
+// Mutation (verified, run and restored): read the container's value in
+// reposViewCredentialsOf — one secrets.Access call, to put it in Name — and
+// the fake refuses it by itself ("gcpfake: a client read the value of secret
+// …"), before any assertion here has to notice. A view that needs a value to
+// answer a row is what D2415 refuses, and the test is written so that the
+// reading is the failure and not only the printing.
 func TestReposViewCredentialsCarryNoValue(t *testing.T) {
 	const stored = "not-a-secret-shaped-literal"
 	f := newProjectFixture(t, "")
