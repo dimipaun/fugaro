@@ -15444,9 +15444,9 @@ the forced failure, `-Phase logs` is the log's name and its protection, and `-Ph
 **What runs where.** On Windows the whole check runs, and on anything else it stops with one line naming Check 310 as the check for that machine.
 Off Windows only two modes work: `-SelfTest`, which parses the script and checks that its block keys, its phases and its code agree — it runs no
 `fugaro` and reads no file of yours — and `-DryRun`, which prints the plan and runs nothing. Its sibling test
-(`bash scripts/live-checks/check311_test.sh`) reads the script as text where PowerShell is not installed, and runs those two modes and the three
-refusals for real wherever `pwsh` is on PATH, saying so in one line where it is not: a green run on a machine without PowerShell must not read as
-"the script works".
+(`bash scripts/live-checks/check311_test.sh`) reads the script as text where PowerShell is not installed, and runs those two modes, the three
+refusals and the stop this machine makes for real wherever `pwsh` is on PATH, saying so in one line where it is not: a green run on a machine
+without PowerShell must not read as "the script works".
 
 **What it writes, and what it never touches.** As Check 310: five real converges against the project you name, a forced failure with this check's own
 `terraform.cmd` first on PATH (creating nothing), and one scratch directory under `%TEMP%` that is removed at the end. It removes no log of yours and

@@ -14,9 +14,10 @@
 # runs no `fugaro` and reads no file of yours. -DryRun, and the three refusals
 # that happen before anything runs (a project that names the owner's
 # installation, a coding agent's session, and a phase that is not one), are the
-# same kind of thing. Where pwsh is on PATH those five are RUN here, and where
-# it is not, every case says so in one line rather than passing quietly: a green
-# run on a machine without PowerShell must not read as "the script works".
+# same kind of thing. Where pwsh is on PATH those five, and the stop a machine
+# that is not Windows makes before any of them, are RUN here, and where it is
+# not, every case says so in one line rather than passing quietly: a green run
+# on a machine without PowerShell must not read as "the script works".
 #
 # The one rule that is checked twice is the self-test's own: its first rule
 # compares the keys the code sets with the block's static list and with the one
@@ -473,10 +474,12 @@ test_the_last_net_prints_a_block_and_ends_two() {
 }
 
 # --------------------------------------------------------- where pwsh exists
-# The four cases below run the script itself. They are the ones that cannot run
+# The six cases below run the script itself. They are the ones that cannot run
 # a converge: the self-test parses and runs nothing, the dry run runs nothing,
-# and the two refusals happen before the first tool is looked for. On a machine
-# without pwsh each of them says so in one line rather than passing quietly.
+# the three refusals happen before the first tool is looked for, and the
+# non-Windows stop comes before all of them on a machine that is not Windows. On
+# a machine without pwsh each of them says so in one line rather than passing
+# quietly.
 have_pwsh() { command -v pwsh >/dev/null 2>&1; }
 
 run311() { # args...

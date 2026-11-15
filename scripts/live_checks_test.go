@@ -153,9 +153,10 @@ import (
 // Windows console, so PowerShell and Windows both have to be there for its
 // steps to run at all, and its test is mostly a reading of its own text -- the
 // block keys, the phases, the guards, the readings and the ones it refuses to
-// take -- beside the four modes that run nothing (`-SelfTest`, `-DryRun` and
-// the two refusals that come before the first tool is looked for), which it
-// RUNS wherever `pwsh` is on PATH and says so in one line where it is not. Its
+// take -- beside the six cases that run nothing (`-SelfTest`, `-DryRun`, the
+// three refusals that come before the first tool is looked for, and the stop a
+// machine that is not Windows makes), which it RUNS wherever `pwsh` is on PATH
+// and says so in one line where it is not. Its
 // one case that is neither runs the self-test's own three rules again in bash,
 // over the script's text, so the tree that carried the rule-1 defect is red on
 // a machine without PowerShell too. Check 350's are a fake `gcloud` and a fake
