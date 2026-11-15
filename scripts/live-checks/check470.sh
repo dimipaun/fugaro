@@ -747,7 +747,7 @@ step_offline() {
   # directory" is a local file and not a network step: the snapshot directory is
   # moved aside, and the Restore puts the original back whatever happens next.
   if [ ! -d "$CACHE/mine" ]; then
-    fact cache-cleared FAIL "the online run left no snapshot under $CACHE/mine/, so the offline listing that stands on it could not be measured with the cache cleared: \`mine\` writes that file on every successful read of the store, and a run that wrote none is a run that never read it"
+    fact cache-cleared FAIL "the online run left no snapshot under $CACHE/mine/ (what $CACHE holds now: $(bounded "$(find "$CACHE" -maxdepth 3 2>/dev/null | head -n 30)" 400); a snapshot line on the offline row above with no directory here means the CLI read its snapshot from a path other than $CACHE), so the offline listing that stands on it could not be measured with the cache cleared: \`mine\` writes that file on every successful read of the store, and a run that wrote none is a run that never read it"
     prompt "TURN THE NETWORK BACK ON now"
     return 0
   fi
