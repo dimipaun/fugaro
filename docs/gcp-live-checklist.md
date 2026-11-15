@@ -923,7 +923,7 @@ probe account carries predefined grants only).
 | 130 | The licence detectors after the open-core skeleton ([`docs/licensing/`](licensing/implementation-plan.md), its Check 130, task L1.10, and the reconciliation's F8 and U1 under the owner's **O2** answer of 2026-10-24; the block **130–134** is that work's and only 130 is written): that GitHub **still reports MIT** for the repository with the skeleton's new root `LICENSING.md` beside an untouched `LICENSE` — read twice and recorded both times, as the repository page's own licence label and the file it opens, and as the licence API's machine-readable reading (`spdx_id: MIT`, `key: mit`, and **`path: LICENSE`**, so the file GitHub classified is the untouched one and not the new statement file, which is what a `path` of `LICENSING.md` would mean) — and that **`LICENSING.md` renders on GitHub** as a page whose every relative link works — every link the guard's `grep` reads out of the file and not a list remembered here, among them `LICENSE`, `ee/README.md`, the vendored skills' `.agents/LICENSE` and the README's trademark paragraph anchor. **What it is not:** pkg.go.dev's classification (U2, not this check's after O2) and the release labels — the plugin manifest's, the Homebrew cask's and the archive's — which stay `MIT` at 0.11.0 because the release build sets no `ee` tag (D303 as amended) and move together in the release that first sets it (plan slice L5) | See "Check 130" below; **you** run it as ONE script — `bash scripts/live-checks/check130.sh`, with its own test `scripts/live-checks/check130_test.sh` — read-only, in a browser and with three `curl` calls against `api.github.com` — the repository read out of the checkout's origin and cross-checked against `go.mod`, so the tree and the page are the same repository — on no cloud project and no installation, never `belong`, holding no credential and writing nothing anywhere, and **no agent runs any step of it**. Its guard stops until task L1.3's `LICENSING.md` is in the tree, so it is run in full by task L1.11, after L1.3 merges | Nothing: three anonymous API reads, which spend part of the anonymous rate limit and change nothing; no image, no bucket, no model call, no Terraform, no node and no file. **USER-RUN, RUN 2026-11-11: PASS.** |
 | 135 | A per-repository job account's read of the runs bucket ([`docs/task-governance/`](task-governance/implementation-plan.md), its Check 135, task T3.5, and the reconciliation's **U2** and **U8**): impersonating the sandbox repository's **job account**, the owner reads one of **its own** run records by name — `runs/<slug>/<run-id>/result.json` — which must **succeed**, and one of a **sibling** repository's the same way, which must be **refused**; then records, for **U8**, whether `gcloud storage ls` of the account's own prefix is allowed (the design leaves a prefix-limited list unverified, and the plan does not need it). **What it is not:** the job's write reach (Checks 7 and 60 read the prefixes' writes) and a **project** job's reach, which is the owner's accepted one (G2) | See "Check 135" below; **you** run it, read-only, on the sandbox installation only — **never `belong`** — at your own terminal, impersonating the sandbox repository's job account, which needs `roles/iam.serviceAccountTokenCreator` on it: you grant it to yourself first and remove it in the Restore, the same step the register's earlier impersonation checks take; **no agent runs any step of it** | One impersonation grant added and removed, and four read-only `gcloud storage` calls: no object written, no run launched, no model call, no image, no bucket and no Terraform. **USER-RUN, NOT RUN.** |
 | 136 | A report run's own pull request ([`docs/task-governance/`](task-governance/implementation-plan.md), its Check 136, task T3.5; **D321/D322/D323** and **G3/G5**; task T3.1's `run-digest` recipe, T3.6's launcher manifest, T3.2's digest step and **T3.3's byte-for-byte guard, all merged**): in the sandbox repository, `fugaro run --recipe run-digest "periodic run review"`, then `fugaro runs ls --watch` until it settles, then the pull request it opened — one file per **due** period under `docs/fugaro-reviews/<YYYY>/` (the seven closed days, plus the week, month or year that closed), the generated index regenerated, and **no address and no task text in any of them** (D323) — with the figures equal to the ones the CLI prints for the same day: the run count and dollars against `fugaro runs ls --json --since 8d` filtered by the finish date the report buckets by, and two sampled rows' stage figures against `fugaro diagnose <run-id> --json` | See "Check 136" below; **you** run it, on the sandbox repository only — **never `belong`** — at your own terminal, launching one report run; it is **run only against a release carrying T3.3's guard**, because the reading it takes — that the pull request holds exactly the generated files — is the guard T3.3 adds, and its guard stops until you confirm T3.3 is in the release you run; **no agent runs any step of it** | One sandbox report run: one `digest` step (no model call of its own), one senior `review` stage's model calls, one job execution and one pull request you decline or merge yourself. **USER-RUN, PARTLY RUN (2026-11-14):** launch, eight files and no-address passed (the pull request was merged); the run halted `budget_unavailable` (`state_unavailable` from the credentials service), so the check's result is FAIL on run-settled. Step 5 (figures): the 2026-11-13 run count (9) and dollars ($0) match the repository-filtered CLI listing; the two sampled `fugaro diagnose` rows are still open. |
-| 139 | What an agent ID distinguishes in a gateway run's log ([`docs/task-governance/`](task-governance/implementation-plan.md), its Check 139, task T3.5, and the reconciliation's **U4**): read-only, in an **existing** sandbox gateway run's logs, the `model call` lines' `agent_id` — the main session's lines carry **an empty one**, each sub-agent a **distinct** non-empty one, and the background model's calls carry **none** — so the distinct-agent count **T7.2**'s fan-out stop spends is a sub-agent count. **It gates T7.2:** that task does not merge until this check has run | See "Check 139" below; **you** run it, read-only, on the sandbox installation only — **never `belong`** — at your own terminal, over a run that already exists, reading the gateway's `model call` entries where they are (`gcloud logging read` with the filter the CLI's own log reader builds, scoped to the run's execution) — **not** `fugaro logs`, which prints the time, severity, stage and message only and would answer nothing; **no agent runs any step of it**, and it launches nothing | Nothing: one read of one run's log entries and one `fugaro diagnose <run-id> --json`. No model call, no run, no object and no policy. **USER-RUN, NOT RUN.** |
+| 139 | What an agent ID distinguishes in a gateway run's log ([`docs/task-governance/`](task-governance/implementation-plan.md), its Check 139, task T3.5, and the reconciliation's **U4**): read-only, in an **existing** sandbox gateway run's logs, the `model call` lines' `agent_id` — the main session's lines carry **an empty one**, each sub-agent a **distinct** non-empty one, and the background model's calls carry **none** — so the distinct-agent count **T7.2**'s fan-out stop spends is a sub-agent count. **It gates T7.2:** that task does not merge until this check has run | See "Check 139" below; `bash scripts/live-checks/check139.sh` is the whole of it — `--run <run-id>` for one run, and no argument to find one — its sibling test `scripts/live-checks/check139_test.sh` drives it against fake `fugaro` and `gcloud` only, and **you** run it, read-only, on the sandbox installation only — **never `belong`** — at your own terminal, over a run that already exists, reading the gateway's `model call` entries where they are (`gcloud logging read` with the filter the CLI's own log reader builds, scoped to the run's execution) — **not** `fugaro logs`, which prints the time, severity, stage and message only and would answer nothing; **no agent runs any step of it**, and it launches nothing | Nothing: one read of one run's log entries and one `fugaro diagnose <run-id> --json`. No model call, no run, no object and no policy. **USER-RUN, NOT RUN.** |
 | 145 | The Bitbucket read consumer's facts ([`docs/bitbucket-credentials/`](bitbucket-credentials/implementation-plan.md), its Check 145, task T2.8 and the script T2.7 writes; the reconciliation's U1–U5, U8, U11, U12, U14 and U15): the sandbox consumer read from a file **you** name and never printed — the token's lifetime (U1); whether the `client_credentials` grant returns a refresh token and whether a single minted token can be revoked (U2); whether the token reaches a second workspace you belong to (U3); whether the sandbox's plan admits consumers (U4); the workspace's seat count before and after (U5); whether IP allowlisting applies to OAuth tokens, and U8 stays **UNVERIFIED** if the plan offers none (U8); whether the token response lists the granted scopes (U11); whether two grants return distinct tokens (U12); whether creating a consumer needs workspace-admin rights and whether the token then reaches admin endpoints (U14); and whether the consumer must be marked private (U15). **It gates the read mint (O4):** tasks T2.3 and T3.1 do not merge before this check passes, and if U3 shows reach beyond the workspace, D360 and D361 go back to the owner before T2.3 merges. It also shows that a write with the read token is refused | See "Check 145" below; **you** run it at your own terminal, on sandbox workspaces only, never `belong`, with the consumer file you name and the script never printing it, and **no agent runs any step of it**. The script lands with task **T2.7**; this section is task **T0.2**'s and carries no steps of its own until then | A sandbox workspace and a second one you belong to, one read consumer created as the installing person, and two `client_credentials` grants; the script's own Restore says what it leaves behind. **USER-RUN, RAN (2026-11-14, exit 0; U3 measured on the second run against the Bitbucket workspace `dimi_bmb`):** U1 the grant's token lives 7200s; U3 the token reaches PAST its own workspace (the consumer's workspace and `dimi_bmb` both answered 200, so a `client_credentials` token reads every workspace its owner can reach), so D360 and D361 went back to the owner (O4), who ruled 2026-11-14 to accept the reach: they stand as answered and the read mint is unblocked; U4 the plan admits an OAuth consumer; U12 two grants return distinct tokens; a write is refused (403). Unverified, and left so: U2 (revoking one token: 401), U5 (seats: 403), U8 (IP allowlist: 404), U11 (the answer lists no scopes, so G7 rests on Check 147), U14 (404), U15 (needs one more run with a consumer that is not private). |
 | 146 | The coordinator sweep reads a Bitbucket repository through the service, and its GitHub views are unchanged ([`docs/bitbucket-credentials/`](bitbucket-credentials/implementation-plan.md), its Check 146, task T2.10 and the script T2.9 writes; D361 and D362): on a sandbox installation with the credentials service on, the sweep's stored view for a Bitbucket repository is **read** rather than `StaleUnsupported`, and the installation's GitHub views — the ones the sweep already writes — are unchanged | See "Check 146" below; **you** run it on a sandbox installation, never `belong`, and **no agent runs any step of it**: `scripts/live-checks/check146.sh --installation <sandbox>`. The script lands with task **T2.9**; this section is task **T0.2**'s and carries no steps of its own until then | One sandbox installation with the service on and one sweep; the script's own Restore says what it leaves behind. **USER-RUN, NOT RUN.** |
 | 148 | The Bitbucket read consumer's stop, rotation and ownership transfer ([`docs/bitbucket-credentials/`](bitbucket-credentials/implementation-plan.md), its Check 148, task T3.8 and the script this task writes; U13, and D1961): on a sandbox installation with the read mint deployed, the consumer is taken **out** of the bundle and a read mint is then **refused**; its secret is regenerated and the mint serves the **new** one while the **old** secret's own `client_credentials` grant is **refused**; and ownership moves to a successor consumer under a second sandbox account, against which a read mint **succeeds** — with **U13** recording whether a token minted **before** the rotation still reads | See "Check 148" below; **you** run it at your own terminal, on `https` or a loopback `http` endpoint, on sandbox workspaces only, never `belong`, and **no agent runs any step of it**: `scripts/live-checks/check148.sh --installation <sandbox> --repo <owner/name> --consumer-file <path> --rotated-consumer-file <path> --successor-consumer-file <path>`. The row and the section are **T0.2**'s | Three sandbox consumer files **you** name and the script never prints (the bundle's own consumer, a successor created under a second sandbox account, and the same consumer after Bitbucket regenerated its secret — the last written **by you during the run**, at the rotation step that asks for it and then holds it to the consumer file's own key and workspace), one sandbox installation with the credentials service on and its coordinator job deployed, and `gcloud`, `fugaro`, `python3` and `curl` on PATH; the script's own Restore says what it leaves behind. **USER-RUN, NOT RUN.** |
@@ -11036,153 +11036,77 @@ the job's own JSON entries in Cloud Logging, with the filter the CLI's own reade
 project config's `log_view` (`internal/localcfg`) — the view's **full resource name**, which gcloud
 takes only as `--resource-names`, because `--view` is refused without `--bucket` and `--location`.
 
-```bash
-# === Check 139: setup + guard. RE-RUN THIS WHOLE BLOCK before every step. ===
-: "${RUN_ID:?a settled sandbox gateway run that spawned a sub-agent, <run-id>}"
-# The sandbox installation's GCP project, and the only one this check reads: a
-# run id of another installation would read that installation's log, and no step
-# here names another.
-: "${P:=fugaro-dev}"
-[ "${P}" = "fugaro-dev" ] || { echo "Check 139 stopped: P is ${P}, and this check reads the sandbox installation's project only (fugaro-dev); it never names another installation" >&2; exit 1; }
-# The view a run's entries live in, when the installation isolates logs: the
-# project config's log_view line (internal/localcfg), which holds the view's
-# full resource name (projects/fugaro-dev/locations/global/buckets/fugaro/views/fugaro-runs).
-# Left empty, gcloud reads the project's default, which is where an installation
-# without isolation writes. gcloud takes that name only as --resource-names:
-# --view is refused without --bucket and --location, and the name here is the
-# whole resource rather than a view's leaf.
-: "${LOG_VIEW:=}"
-SCOPE=(--project="${P}")
-[ -n "${LOG_VIEW}" ] && SCOPE=(--resource-names="${LOG_VIEW}")
-# The stage's background model, when the repository sets one (its fugaro.yaml's
-# agent.models.background, which has no fallback): the guard counts its entries
-# and how many of them carry an agent id. Left empty, that count is not taken
-# and the models: line is where its name is read.
-: "${BG_MODEL:=}"
+**Run it:** `bash scripts/live-checks/check139.sh` — **you** run it, at your own terminal, and its
+sibling test `scripts/live-checks/check139_test.sh` drives it against fake `fugaro` and `gcloud` only,
+launching nothing. The Fugaro project (`fugaro`) and the GCP project (`fugaro-dev`) are hard-coded in
+the script, which never names another: a run id, a project or an account naming `belong` is refused by
+name, and so is a coding agent's session. **No agent runs any step of it.**
 
-# One scratch directory, reused by every re-run of this block and removed by the
-# Restore: the block is re-run before every step, and a fresh mktemp each time
-# would leave one directory per step behind.
-W=${W:-${TMPDIR:-/tmp}/fugaro-check139}
-mkdir -p "${W}" || { echo "Check 139 stopped: cannot create the scratch directory ${W}" >&2; exit 1; }
-
-# The run's execution, off its own record: the filter needs a region, a job and
-# an execution name, and the canonical name carries all three. The project
-# config is named because a bare call outside a sandbox checkout fails with
-# "several project configs", and the config this check reads is the sandbox
-# installation's (`fugaro`, whose gcp_project is the P above).
-EXEC=$(fugaro diagnose "${RUN_ID}" --project fugaro --json | python3 -c 'import json,sys; print(json.load(sys.stdin).get("row",{}).get("execution",""))') \
-  || { echo "Check 139 stopped: fugaro diagnose ${RUN_ID} --project fugaro --json failed (its own line above says why)" >&2; exit 1; }
-[ -n "${EXEC}" ] || { echo "Check 139 stopped: ${RUN_ID} names no execution, so there are no entries to read — a run from before the launcher recorded one, or one of another backend" >&2; exit 1; }
-REGION=$(printf '%s' "${EXEC}" | cut -d/ -f4)
-JOB=$(printf '%s' "${EXEC}" | cut -d/ -f6)
-NAME=$(printf '%s' "${EXEC}" | cut -d/ -f8)
-{ [ -n "${REGION}" ] && [ -n "${JOB}" ] && [ -n "${NAME}" ]; } || { echo "Check 139 stopped: ${EXEC} is not projects/<project>/locations/<region>/jobs/<job>/executions/<name>" >&2; exit 1; }
-
-gcloud logging read "${SCOPE[@]}" --limit=5000 --freshness=30d --format=json \
-  "resource.type=\"cloud_run_job\" AND resource.labels.location=\"${REGION}\" AND resource.labels.job_name=\"${JOB}\" AND labels.\"run.googleapis.com/execution_name\"=\"${NAME}\" AND jsonPayload.message=\"model call\"" \
-  >"${W}/calls.json" \
-  || { echo "Check 139 stopped: gcloud logging read failed (its own line above says why: no access, a view that is not there, or the wrong project)" >&2; exit 1; }
-
-# The counts, and the main sessions' ids. Nothing here prints an entry of the
-# log, and no agent ID is printed at all: the counts are the answer, and an id
-# is Claude Code's own opaque claim. Every figure the four steps below read is
-# printed here, so each step is a line of this output rather than a second
-# script.
-python3 - "${W}/calls.json" "${BG_MODEL}" >"${W}/counts.txt" <<'PY'
-import json, sys
-
-entries = json.load(open(sys.argv[1]))
-bg_model = sys.argv[2] if len(sys.argv) > 2 else ""
-
-empty, ids, id_stage, main, main_count, models = 0, {}, {}, {}, {}, {}
-bg, bg_with_id = 0, 0
-refused, admitted = set(), set()
-
-for e in entries:
-    d = e.get("jsonPayload", {})
-    stage = d.get("stage") or "(none)"
-    model = d.get("model") or "(none)"
-    agent = d.get("agent_id") or ""
-    session = d.get("session_id") or ""
-    models[model] = models.get(model, 0) + 1
-    if bg_model and model == bg_model:
-        bg += 1
-        if agent:
-            bg_with_id += 1
-    if not agent:
-        empty += 1
-        main.setdefault(stage, set()).add(session)
-        main_count[stage] = main_count.get(stage, 0) + 1
-        continue
-    ids.setdefault(agent, set()).add(session)
-    id_stage[agent] = stage
-    if d.get("status") != 200 and d.get("settled") == "zero":
-        refused.add(agent)
-    else:
-        admitted.add(agent)
-
-print("model call entries:", len(entries))
-print("entries with an empty agent_id:", empty)
-print("distinct agent ids:", len(ids))
-print("agent ids whose entries span more than one session:", sum(1 for s in ids.values() if len(s) > 1))
-print("sub-agent ids whose session is also their stage's main session:", sum(1 for a, s in ids.items() if s & main.get(id_stage.get(a), set())))
-print("agent ids seen only on refused entries:", len(refused - admitted))
-if bg_model:
-    print("background-model entries: %d, of them with an agent_id: %d" % (bg, bg_with_id))
-for stage in sorted(main_count):
-    print("stage %s: main-session entries %d, main session ids %s" % (stage, main_count[stage], ", ".join(sorted(main[stage])) or "(none)"))
-print("models:", ", ".join("%s x%d" % (k, v) for k, v in sorted(models.items())))
-PY
-cat "${W}/counts.txt"
-
-# Two stops, and both are the vacuous reading this check must never record: no
-# entry at all answers nothing, and a run whose sub-agents the gateway never saw
-# is not one U4 can be answered from.
-if grep -q '^model call entries: 0$' "${W}/counts.txt"; then
-  echo "Check 139 stopped: no model call entry of ${RUN_ID} in the window — the run did not go through the gateway (an oauth run makes none), or the entries have aged out (30 days, or the view's own retention), or LOG_VIEW is not the view this installation writes to. Pick a gateway run whose entries are still readable." >&2
-  exit 1
-fi
-if grep -q '^distinct agent ids: 0$' "${W}/counts.txt"; then
-  echo "Check 139 stopped: no entry of ${RUN_ID} carries an agent_id, so the run spawned no sub-agent the gateway saw and there is nothing here to answer U4 from. Pick a run with a sub-agent." >&2
-  exit 1
-fi
+```sh
+bash scripts/live-checks/check139.sh                  # find a run, then read it
+bash scripts/live-checks/check139.sh --run <run-id>   # read that run
+bash scripts/live-checks/check139.sh --dry-run        # print the plan and read nothing
 ```
 
-The guard's `counts.txt` is steps 1 to 4's whole reading: every figure each of them asks for is a line
-of that file, so no step runs a second script and each is the line it names.
+With no `--run` the script finds the run itself: from `fugaro runs ls --all --project fugaro --json`
+it takes the newest **settled gateway** run — one whose `cost.model_basis` is `api-list`, so its budget
+was on, since an oauth run reads `subscription` and makes no gateway call at all — and reads that
+run's entries until one carries a non-empty `agent_id`. A listing with none prints
+`FAIL — no run to read` and names the one thing that makes one (a short gateway run that spawns a
+sub-agent) rather than launching anything: **the check starts no run, spends nothing and creates
+nothing**.
+
+It reads one run's `model call` entries with the filter the CLI's own reader builds, scoped to the
+project config's `log_view` as `--resource-names` when the installation isolates its logs, and one
+`fugaro diagnose <run-id> --project fugaro --json` for the execution the filter is built from and for
+the record's own stage `agents`. Progress goes to stderr and one `CHECK 139 RESULT` block goes to
+stdout: paste that whole block — and the one sentence its `paste-back` row carries — here and nothing
+else. **Exit `0`** is U4 answered and holding; **`1`** is a measured row that did not hold (the count
+is not a sub-agent count, which is a finding for T7.2), no run to read, or a guard that stopped the
+run; **`2`** is the check not being able to measure (a tool missing, a listing, record or log read
+that did not answer, or a row with no reading). A row the run never reached reads `FAIL — not
+reached`. The knobs are `CHECK139_RUN`, `CHECK139_BG_MODEL`, `CHECK139_DRY_RUN`,
+`CHECK139_KEEP_SCRATCH`, `CHECK139_SCAN` (50), `CHECK139_SINCE` (30d), `CHECK139_MAX_CANDIDATES` (6),
+`CHECK139_LIMIT` (5000), `CHECK139_FRESHNESS` (30d), `CHECK139_LOG_VIEW`,
+`CHECK139_DOCTOR_TIMEOUT_SECONDS` (60), `CHECK139_CLI_TIMEOUT_SECONDS` (120) and
+`CHECK139_LOG_TIMEOUT_SECONDS` (120).
+
+The block's rows are steps 1 to 4's whole reading: every figure each of them asks for is in it —
+the counts, the per-stage main-session counts and the `models:` line — so no step runs a second
+script and each is the row it names.
 
 1. **The main session carries an empty `agent_id`.** The entries with an empty `agent_id` are the main
-   session's (and, among them, the background model's — step 3). **FACT:** that **every** entry with an
-   empty `agent_id` belongs to the stage's own session — each of the guard's per-stage lines names
-   **one** main session id, beside that stage's count of those entries — and that no stage's main
-   session carries an id, which is what grouping on an empty `agent_id` means.
+   session's (and, among them, the background model's — step 3). **FACT:** the `main-empty` row — that
+   **every** entry with an empty `agent_id` belongs to the stage's own session, each stage's count of
+   those entries named beside the number of main session ids they carry, which is **one** per stage —
+   and that no stage's main session carries an id, which is what grouping on an empty `agent_id` means.
 
-2. **Each sub-agent carries a distinct one.** **FACT:** the guard's `distinct agent ids`; that each id's
-   entries carry **one** session id each (`agent ids whose entries span more than one session` is
-   **0**), so an id is one sub-agent and not a session's rename; and that a sub-agent's session id
-   **differs** from its stage's main session's (`sub-agent ids whose session is also their stage's main
-   session` is **0**), so a sub-agent is not the main session relabelled.
+2. **Each sub-agent carries a distinct one.** **FACT:** the `entries` row's distinct non-empty agent
+   ids; that each id's entries carry **one** session id each (the `subagents-distinct` row's count of
+   ids spanning more than one session is **0**), so an id is one sub-agent and not a session's rename;
+   and that a sub-agent's session id **differs** from its stage's main session's (the same row's count
+   of sub-agent ids sharing their stage's main session is **0**), so a sub-agent is not the main session
+   relabelled.
 
 3. **The background model's calls carry none.** The background model is the stage's
    `agent.models.background` in the repository's `fugaro.yaml` (it has no fallback, so it is set
-   explicitly), and the gateway logs it in `model`. Set `BG_MODEL` to its name before the guard — the
-   `models:` line is where the name is read, and it is printed whether or not `BG_MODEL` is set.
-   **FACT:** the model name; the guard's `background-model entries`, with `of them with an agent_id`
-   reading **0** — a background call that carried one would be counted as a sub-agent and would make
-   the count wrong; and, when `BG_MODEL` is left empty, the count read off the `models:` line with the
-   same agent-id check taken by hand.
+   explicitly), and the gateway logs it in `model`. Name it with `--bg-model` (or `CHECK139_BG_MODEL`) —
+   the `models:` line is where the name is read, and it is printed whether or not one is named.
+   **FACT:** the `background-none` row — the model name, its entry count, and how many of them carry an
+   `agent_id`, which is **0** (a background call that carried one would be counted as a sub-agent and
+   would make the count wrong) — and, when no model is named, that row reads **INFO** with the count not
+   taken and the `models:` line is where the name is read, with the same agent-id check taken by hand.
 
 4. **What the count is, and is not.** Two things are recorded here rather than assumed. First, a call
    **refused before it reserved** — a pin violation, a halt, a 429 — still logs its `agent_id` but
    settles nothing, and the gateway's comment says such a call is in **no** count: the count is the
-   sub-agents whose calls the stage **admitted**, not every one it spawned. **FACT:** the guard's
-   `agent ids seen only on refused entries` — the ids carried by an entry whose `status` is not `200`
-   and whose `settled` is `zero` and by no other entry — which is **0** when every spawned sub-agent's
-   calls were admitted. Second, the run **record's** stage `agents` is a **different figure** (the
-   section "What this check is not"): **FACT:** it is recorded **beside** the log's distinct count,
-   read from `fugaro diagnose "${RUN_ID}" --project fugaro --json` (`stages[].agents`), named as a
-   different figure and never compared with it.
+   sub-agents whose calls the stage **admitted**, not every one it spawned. **FACT:** the `refused-ids`
+   row — the ids carried by an entry whose `status` is not `200` and whose `settled` is `zero` and by no
+   other entry — which is **0** when every spawned sub-agent's calls were admitted. Second, the run
+   **record's** stage `agents` is a **different figure** (the section "What this check is not"):
+   **FACT:** the `record-agents` row records it **beside** the log's distinct count, read from
+   `fugaro diagnose <run-id> --project fugaro --json` (`stages[].agents`), named as a different figure
+   and never compared with it.
 
 **Passes when:** every `model call` entry with an empty `agent_id` belongs to a stage's main session;
 every sub-agent's entries carry one distinct non-empty `agent_id` each, each spanning a single session
@@ -11196,26 +11120,29 @@ sub-agents share one; a sub-agent's id spans more than one session; or an agent 
 entries alone. Each makes the distinct-agent count something other than a sub-agent count. **A failing
 answer is a finding for T7.2, not something this check fixes**: the plan makes T7.2 wait for this check
 rather than the other way round, so the fix is a decision about the fan-out stop — what it counts, or
-whether it counts at all — and it is taken by the owner before T7.2 merges. A guard stop is **not** a
-failing answer: it says the reading could not be taken, and the check is run again on a run whose
-entries are there.
+whether it counts at all — and it is taken by the owner before T7.2 merges. A run with no entries at
+all, or one whose entries carry no sub-agent, is **not** a failing answer either: it says the reading
+could not be taken, and the check is run again on a run whose entries are there.
 
-**Paste back** (no credential and no log excerpt): the guard's counts — the `model call` entries, the
-entries with an empty `agent_id`, the distinct agent ids, the ids spanning more than one session, the
-sub-agent ids sharing their stage's main session, the agent ids seen only on refused entries, the
-background-model entries and how many of them carry an id, the per-stage main-session entry counts, and the
-`models:` line; the stages the entries name; the record's own stage `agents` beside the log's distinct
-count; and the run id, its outcome and the date. **Not the agent IDs and not the session IDs** — they
-are Claude Code's own opaque claims, the counts are what the answer needs, and no entry of the log is
-pasted.
+**Paste back** (no credential and no log excerpt): the block's `paste-back` row, which is the one
+sentence to paste, carrying the `model call` entries, the entries with an empty `agent_id`, the
+distinct agent ids with the counts of those spanning more than one session and those sharing their
+stage's main session, the background-model entries and how many of them carry an id, the ids seen only
+on refused entries, the record's own stage `agents` beside the log's distinct count, and the run id,
+its repository and the date. The block itself carries the rest — the per-stage main-session entry
+counts, the stages the entries name and the `models:` line. **Not the agent IDs and not the session
+IDs** — they are Claude Code's own opaque claims, the counts are what the answer needs, and the script
+prints no id anywhere: no entry of the log is pasted.
 
 **Restore.** Nothing: this check launches no run, writes no object and changes no configuration. Its
 whole footprint is one `gcloud logging read` over one run's entries, one `fugaro diagnose` read and the
-scratch directory (`rm -rf "${W}"`).
+scratch directory, which the script removes itself.
 
-- **Never touch `belong`, EdgeWeb or EdgeServer**: `RUN_ID` is a run of the sandbox repository, the
-  guard stops unless `P` is the sandbox project (`fugaro-dev`), and the read names no project but that
-  one — so no step of this check can be pointed at another installation.
+- **Never touch `belong`, EdgeWeb or EdgeServer**: the check names the sandbox repository's runs, the
+  script is hard-coded to the sandbox installation (the Fugaro project `fugaro` on GCP project
+  `fugaro-dev`) and it stops unless `fugaro doctor --project fugaro --all` names that project, so a run
+  id, an account or a project naming another installation is refused before a single read — no step of
+  this check can be pointed at another installation.
 
 ## Check 145: the Bitbucket read consumer's facts — its lifetime, its reach, the plan, the seats, the scopes and the creator's rights, and the gate on the read mint (sandbox workspaces only, never `belong`; run by you; NOT RUN)
 
