@@ -372,6 +372,15 @@ func (e *initEngine) converge(ctx context.Context) error {
 	// names its jobs in the credentials service's table (the same run grants
 	// them roles/run.invoker on that service: makeOnboardingRepoEntry).
 	e.makeOnboardingRepoEntry()
+	// The default job profile of every provider this project's repositories
+	// use joins the local config here, before the first stage plans, so that
+	// the installation stage — the one that turns profiles into project jobs —
+	// deploys their jobs in this same update (S5). It is after the onboarding
+	// entry above so that the repository this run onboards is one of the
+	// providers in use, and before the loop for the reason syncAccess is
+	// below it: the config every stage of this run reads is the one this run
+	// writes.
+	e.createDefaultProfiles()
 	// The managed project's read, once for the whole run: it is what the run's
 	// one confirmation and the steps the gate does not judge ask about
 	// (update_managed.go's gateRun), and it is made before the first stage so

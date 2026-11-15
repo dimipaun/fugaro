@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -1441,4 +1443,236 @@ func (s *policyMigrateStage) Verify(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// defaultProfileTimeoutClass is the task timeout class a written default
+// profile states. A profile must state one — projectpolicy.validProfiles holds
+// every profile to Cloud Run's own reading, and a profile that left the class
+// out would make the publish refuse the config this step just wrote — and six
+// hours is the class the docs, the fixtures and every profile an operator has
+// today carry.
+const defaultProfileTimeoutClass = "6h"
+
+// defaultProfile is one default profile `fugaro update` writes: the provider it
+// serves, the name it is written under, and the canonical repositories of that
+// provider this project enrols.
+type defaultProfile struct {
+	Provider string
+	Name     string
+	Repos    []string
+}
+
+// jobProfile is the profile as it is written: the provider, the resources every
+// profile must state, and the repositories the provider's runs are held to
+// (R1). It carries no image field, because config.JobProfile has none (R1) —
+// the job's image is the installation's — and no claude_accounts, which R1
+// leaves "to the project's default account": the job a profile listing no
+// account deploys is the profile's own default one.
+func (d defaultProfile) jobProfile() config.JobProfile {
+	return config.JobProfile{
+		Provider:     d.Provider,
+		CPU:          config.DefaultCPU,
+		Memory:       config.DefaultMemory,
+		TimeoutClass: defaultProfileTimeoutClass,
+		AllowRepos:   d.Repos,
+	}
+}
+
+// usedProviders is the providers this project's repositories use, in
+// config.Providers order, with each provider's repositories as canonical names
+// (R1: the default profile is the provider's, and allow_repos is derived from
+// the repositories the project enrols, which is how a run of one of them is
+// admitted).
+//
+// A repos: entry that records no provider is left out rather than guessed: the
+// checkout's fugaro.yaml decides which provider that repository is on
+// (localcfg accepts such an entry, allowSourcesOf skips it for the same
+// reason), so this config does not say which default would serve it. A
+// provider outside config.Providers is left out too: no policy may define a
+// profile for it (projectpolicy.validProfiles), so writing one would make the
+// publish refuse the config the update had just written.
+func usedProviders(lc *localcfg.Config) ([]string, map[string][]string) {
+	repos := map[string][]string{}
+	for _, name := range slices.Sorted(maps.Keys(lc.Repos)) {
+		r := lc.Repos[name]
+		if r.Provider == "" {
+			continue
+		}
+		c, err := projectpolicy.Canonical(r.Provider, name)
+		if err != nil {
+			continue
+		}
+		repos[r.Provider] = append(repos[r.Provider], c)
+	}
+	var order []string
+	for _, p := range config.Providers {
+		if _, ok := repos[p]; ok {
+			order = append(order, p)
+		}
+	}
+	return order, repos
+}
+
+// servedProviders is the providers the config's profiles block serves, in
+// config.Providers order: every provider some profile in the block pins. It is
+// the second half of the providers a default profile is written for (below) and
+// the set the publisher asks its own rule over, so that the block `fugaro
+// update` writes and the block `fugaro project policy publish` accepts cannot
+// disagree about which defaults a block must define.
+func servedProviders(lc *localcfg.Config) []string {
+	served := map[string]bool{}
+	for _, pr := range lc.Profiles {
+		if pr.Provider != "" {
+			served[pr.Provider] = true
+		}
+	}
+	var order []string
+	for _, p := range config.Providers {
+		if served[p] {
+			order = append(order, p)
+		}
+	}
+	return order
+}
+
+// defaultProfileProviders is the providers this step writes a default profile
+// for, in config.Providers order: the ones the project's repositories use (R1)
+// and the ones the block already serves.
+//
+// The second half is what keeps the update converging. The publisher requires a
+// default for every provider the block serves, so a config that pins, say, a
+// Bitbucket profile with no Bitbucket repository enrolled would be refused —
+// and refused by the policy stage of this very `fugaro update`, which is the
+// one thing an update must never do (CLAUDE.md). Its default is written with
+// no allow_repos at all: a provider with no repository of its own in this
+// project falls back to the project's own list, which is the only list that
+// could admit anything.
+func defaultProfileProviders(used, served []string) []string {
+	write := map[string]bool{}
+	for _, p := range used {
+		write[p] = true
+	}
+	for _, p := range served {
+		write[p] = true
+	}
+	var order []string
+	for _, p := range config.Providers {
+		if write[p] {
+			order = append(order, p)
+		}
+	}
+	return order
+}
+
+// firstDefaultProvider is the provider whose default profile carries the name
+// DefaultProfileName: the first of providers, unless the config already writes
+// a profile under that name, which is the provider that profile serves.
+//
+// R8 keeps `standard` where it is — "standard stays the first provider's
+// profile" — so a config whose standard profile is Bitbucket's gets its GitHub
+// default written beside it as standard-github and never on top of it, and an
+// operator's own standard profile is never the name a fresh default lands on.
+// A standard profile that names no provider states nothing this can read: the
+// publisher's own refusal for that profile is the one to read, and the name it
+// holds is left alone (writtenDefaultProfiles only ever adds names the block
+// does not define).
+func firstDefaultProvider(lc *localcfg.Config, providers []string) string {
+	if pr, ok := lc.Profiles[projectpolicy.DefaultProfileName]; ok && pr.Provider != "" {
+		return pr.Provider
+	}
+	if len(providers) == 0 {
+		return ""
+	}
+	return providers[0]
+}
+
+// writtenDefaultProfiles is the default profile of every provider given that
+// the block does not define yet, in that order (R8, D2310): DefaultProfileName
+// for the project's first provider and DefaultProfileName-<provider> for
+// another. A name the config already defines is never returned, whatever it
+// holds (R1): an existing profile is the operator's.
+func writtenDefaultProfiles(lc *localcfg.Config, providers []string, repos map[string][]string) []defaultProfile {
+	first := firstDefaultProvider(lc, providers)
+	var out []defaultProfile
+	for _, p := range providers {
+		name := projectpolicy.DefaultProfileNameFor(p, p == first)
+		if _, ok := lc.Profiles[name]; ok {
+			continue
+		}
+		out = append(out, defaultProfile{Provider: p, Name: name, Repos: repos[p]})
+	}
+	return out
+}
+
+// defaultProfileNames spells the profiles of a write as a person reads them in
+// the file: "profiles.standard, profiles.standard-bitbucket".
+func defaultProfileNames(defaults []defaultProfile) string {
+	names := make([]string, len(defaults))
+	for i, d := range defaults {
+		names[i] = "profiles." + d.Name
+	}
+	return strings.Join(names, ", ")
+}
+
+// createDefaultProfiles writes the default profile of every provider this
+// project's repositories use and whose default profile the config does not
+// define yet, so that the installation stage — the one that turns profiles into
+// project jobs — deploys its job in this same `fugaro update` (S5, R1, D2310).
+//
+// It is the update door's alone: a profile describes a project that exists, and
+// `fugaro setup` is a first run whose plan the operator reads before anything
+// is created.
+//
+// The step is here, before the loop, and not a stage of its own: what it writes
+// is an input to the spec the installation stage plans, so the apply must carry
+// the profiles this run wrote (the same reason syncAccess is where it is), and
+// it runs after makeOnboardingRepoEntry so that the repository this run onboards
+// counts among the providers in use.
+func (e *initEngine) createDefaultProfiles() {
+	r, o := e.r, e.r.o
+	if e.lc == nil || o.doorName() != updateDoor.name || o.planOnly {
+		return
+	}
+	providers, repos := usedProviders(e.lc)
+	created := writtenDefaultProfiles(e.lc, defaultProfileProviders(providers, servedProviders(e.lc)), repos)
+	if len(created) == 0 {
+		return
+	}
+	hadBlock := e.lc.Profiles != nil
+	if !hadBlock {
+		e.lc.Profiles = map[string]config.JobProfile{}
+	}
+	for _, d := range created {
+		e.lc.Profiles[d.Name] = d.jobProfile()
+	}
+	// The written config is held to the deployer's own reading before it is
+	// kept, and withdrawn whole when the deployer would refuse it: `fugaro
+	// update` is the whole upgrade and must converge (CLAUDE.md), and a project
+	// whose GitHub repositories record two different App IDs has no shared
+	// GitHub job at all (infra.projectJobGitHubAppID refuses it), so a default
+	// profile written there would stop the run whole. Nothing is written in
+	// that case — the file keeps what the operator had, those repositories keep
+	// the per-repository jobs they run today, and the line says why, so the
+	// next update writes the profile once the reason is fixed.
+	spec, err := installOptions(o, e.lc)
+	if err != nil {
+		for _, d := range created {
+			delete(e.lc.Profiles, d.Name)
+		}
+		if !hadBlock {
+			e.lc.Profiles = nil
+		}
+		r.warn(fmt.Sprintf("no default profile was written (%s): %s; the repositories of those providers keep their per-repository jobs, and a later %s writes their default profile once that is fixed",
+			defaultProfileNames(created), oneLineCLI(err.Error()), selfCommand()+" update"))
+		return
+	}
+	// The spec every stage below builds is the one this config now yields, so
+	// the installation stage plans and deploys the jobs of the profiles just
+	// written (the rebuild init_members.go's defaultMembers does for the
+	// members it discovered).
+	e.spec = spec
+	for _, d := range created {
+		fmt.Fprintf(r.w, "%swrote the default profile %s (%s) to the local config: it is the job a %s workflow that names no profile runs on, and it admits %s\n",
+			o.programPrefix(), d.Name, d.Provider, d.Provider, strings.Join(d.Repos, ", "))
+	}
 }

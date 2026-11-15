@@ -940,6 +940,27 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 			return nil, false, userErr("this project's config sets profiles: and does not define %q, the profile every workflow that names none runs on: a repository selecting it would have every run refused; define it in %s, or remove the profiles: block (a policy with no profiles block sets no profile at all)",
 				projectpolicy.DefaultProfileName, lc.Name)
 		}
+		// R8, D2310: one default per provider the block serves, not `standard`
+		// alone. A workflow that names no job profile resolves to the default
+		// of its repository's provider (the runner's ProjectJobDefaultProfile:
+		// `standard` when that profile serves the provider and
+		// `standard-<provider>` when the policy defines one), so a block that
+		// serves a provider without defining its default is a block whose
+		// repositories on that provider resolve to no profile at all: they
+		// keep the per-repository jobs the block was published to replace, and
+		// nothing says why. It is refused here, where the file it came from can
+		// be named, and the fix is the one command: `fugaro update` writes the
+		// default profile of every provider a project uses.
+		served := servedProviders(lc)
+		first := firstDefaultProvider(lc, served)
+		for _, provider := range served {
+			name := projectpolicy.DefaultProfileNameFor(provider, provider == first)
+			if _, ok := lc.Profiles[name]; ok {
+				continue
+			}
+			return nil, false, userErr("this project's config sets profiles: and serves %s with them but defines no %q, the default profile of a %s repository whose workflow names none: that workflow would resolve to no profile and keep its per-repository job instead of the shared job this block is published for; run %s (it writes the default profile of every provider a project uses), or define %s in %s",
+				provider, name, provider, selfCommand()+" update", name, lc.Name)
+		}
 		for _, name := range slices.Sorted(maps.Keys(lc.Profiles)) {
 			// A profile's allow_repos is either written or not, and the node
 			// could not tell the two apart: the carrier's json omitempty drops
