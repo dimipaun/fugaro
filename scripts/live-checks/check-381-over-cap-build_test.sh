@@ -497,6 +497,32 @@ test_a_repository_with_no_node_of_its_own_gets_it_removed_again() {
   expect_state "no node of its own: the node is gone" node.exists no
 }
 
+# A node that holds ONLY a per-run cap of its own: the lowering writes both caps (a
+# per-run sitting above its own daily is a state `budget set` itself refuses to
+# leave), and the putting back is TWO calls -- the node is cleared, which removes
+# the daily the lowering wrote and the node never had, and only then is the per-run
+# it held written back. Written the other way round the clear would take that
+# per-run with it, which is what the state read-back at the end is here for.
+test_a_node_with_only_a_per_run_gets_it_back_after_the_clear() {
+  setup_case per-run-only-node
+  mode build refuse-daily
+  state_file node.daily ""
+  state_file node.perrun 2
+  run381_default
+  expect_status "$status" 0 "a node with only a per-run"
+  expect_contains "$(fact_line caps)" "per-run \$2" "a node with only a per-run: the node's own cap"
+  expect_contains "$(fact_line caps)" "no daily of its own" "a node with only a per-run: and no daily"
+  expect_contains "$(fact_line overcap)" "HOLDS" "a node with only a per-run: the reading"
+  expect_contains "$(fact_line teardown)" "PASS" "a node with only a per-run: the putting back"
+  expect_contains "$(fact_line teardown)" "per-run \$2" "a node with only a per-run: what went back"
+  expect_call "a node with only a per-run: both caps were lowered in one call" "budget set --repo $REPO --daily 0 --per-run 0"
+  expect_call "a node with only a per-run: the node was cleared" "budget set --repo $REPO --clear"
+  expect_call "a node with only a per-run: and the per-run went back after the clear" "budget set --repo $REPO --per-run 2"
+  expect_state "a node with only a per-run: the per-run is back" node.perrun 2
+  expect_state "a node with only a per-run: and no daily was left behind" node.daily ""
+  expect_state "a node with only a per-run: the node still exists" node.exists yes
+}
+
 # Where a terminal wraps that sentence is not something a check may depend on, and
 # neither is which of the two streams it lands on: the refusal is read from the
 # collapsed text of both.
@@ -916,6 +942,7 @@ t test_a_dry_run_still_refuses_belong
 t test_the_daily_shape_holds_and_the_caps_go_back
 t test_the_per_run_shape_holds
 t test_a_repository_with_no_node_of_its_own_gets_it_removed_again
+t test_a_node_with_only_a_per_run_gets_it_back_after_the_clear
 t test_the_refusal_is_read_from_either_stream
 t test_a_refusal_that_lost_a_part_is_a_fail
 t test_a_refusal_that_prints_nothing_is_a_fail

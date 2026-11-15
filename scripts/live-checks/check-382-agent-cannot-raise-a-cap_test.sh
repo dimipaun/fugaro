@@ -630,6 +630,28 @@ test_a_refusal_that_landed_anyway_is_read_back_and_put_back() {
   expect_state "a refusal that landed anyway: the cap is back" node.daily 5
 }
 
+# The putting back on a node that held ONLY a per-run cap of its own: the raise this
+# check runs is a daily one, so that node now holds a daily this check wrote, and a
+# putting back that wrote only the per-run back would leave that daily standing and
+# report a project that is not the one it found -- which is what the state read-backs
+# at the end are here for.
+test_a_landed_raise_on_a_per_run_only_node_is_put_back_whole() {
+  setup_case per-run-only-landed
+  state_file node.daily ""
+  state_file node.perrun 7
+  mode set refuse-then-apply
+  run382_default
+  expect_status "$status" 1 "a landed raise on a node with only a per-run"
+  expect_contains "$(fact_line unchanged)" "FAIL" "a landed raise on a node with only a per-run: the read-back"
+  expect_contains "$(fact_line fence)" "does NOT hold" "a landed raise on a node with only a per-run: the verdict"
+  expect_contains "$(fact_line teardown)" "PASS" "a landed raise on a node with only a per-run: the putting back"
+  expect_contains "$(fact_line teardown)" "per-run \$7" "a landed raise on a node with only a per-run: what went back"
+  expect_call "a landed raise on a node with only a per-run: the clear came first" "budget set --repo $REPO --clear"
+  expect_call "a landed raise on a node with only a per-run: and the per-run went back after it" "budget set --repo $REPO --per-run 7"
+  expect_state "a landed raise on a node with only a per-run: the per-run is back" node.perrun 7
+  expect_state "a landed raise on a node with only a per-run: the raised daily is gone" node.daily ""
+}
+
 # The parts of the sentence are the whole point: an agent's report has to carry
 # something its owner can act on, so a missing part is a FAIL naming it.
 test_a_refusal_that_lost_a_part_is_a_fail() {
@@ -1110,6 +1132,7 @@ t test_a_node_with_no_cap_of_its_own_is_raised_from_nothing
 t test_another_marker_is_read_the_same_way
 t test_a_raise_that_is_not_refused_is_a_fail
 t test_a_refusal_that_landed_anyway_is_read_back_and_put_back
+t test_a_landed_raise_on_a_per_run_only_node_is_put_back_whole
 t test_a_refusal_that_lost_a_part_is_a_fail
 t test_a_refusal_about_another_act_is_a_fail
 t test_a_refusal_that_prints_nothing_is_a_fail

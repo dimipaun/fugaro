@@ -950,11 +950,18 @@ restore_caps() {
   fi
   local args=(budget set --repo "$REPO_NAME")
   RESET_OWN=no
+  CLEAR_FIRST=no
   if [ "$OWN_DAILY_SET" = yes ] && [ "$OWN_PERRUN_SET" = yes ]; then
     args+=(--daily "$OWN_DAILY" --per-run "$OWN_PERRUN")
   elif [ "$OWN_DAILY_SET" = yes ]; then
     args+=(--daily "$OWN_DAILY")
   elif [ "$OWN_PERRUN_SET" = yes ]; then
+    # The raise this check runs is a DAILY one, so a node that held only a per-run
+    # of its own now holds a daily this check wrote and the node never had, and
+    # `budget set --per-run X` alone would leave that daily standing: the node is
+    # CLEARED first and the per-run it held is written back after it, which is the
+    # shape 381's putting back has for the same reason.
+    CLEAR_FIRST=yes
     args+=(--per-run "$OWN_PERRUN")
   else
     args+=(--clear)
@@ -962,6 +969,18 @@ restore_caps() {
   fi
   if [ ${#FUGARO_FLAGS[@]} -gt 0 ]; then args+=("${FUGARO_FLAGS[@]}"); fi
   if [ -n "$PROJECT" ]; then args+=(--project "$PROJECT"); fi
+  if [ "$CLEAR_FIRST" = yes ]; then
+    local clr=(budget set --repo "$REPO_NAME" --clear)
+    if [ ${#FUGARO_FLAGS[@]} -gt 0 ]; then clr+=("${FUGARO_FLAGS[@]}"); fi
+    if [ -n "$PROJECT" ]; then clr+=(--project "$PROJECT"); fi
+    say "putting $REPO_NAME's own caps back: ${FUGARO_BIN} ${clr[*]} (the daily this check's raise wrote goes with it), then ${FUGARO_BIN} ${args[*]}"
+    local cstatus=0
+    "$FUGARO_BIN" "${clr[@]}" >"$SCRATCH/cleared.out" 2>"$SCRATCH/cleared.err" || cstatus=$?
+    if [ "$cstatus" -ne 0 ]; then
+      fact teardown FAIL "the repository's own caps were NOT put back: ${FUGARO_BIN} ${clr[*]} exited $cstatus ($(last_line "$SCRATCH/cleared.err")). This check's raise LANDED, so your project is holding a daily cap this check wrote and a per-run of its own that is still there. Run this yourself: ${FUGARO_BIN} ${clr[*]}, then ${FUGARO_BIN} ${args[*]}"
+      return 0
+    fi
+  fi
   if [ "$RESET_OWN" = yes ]; then
     say "putting $REPO_NAME's own caps back: ${FUGARO_BIN} ${args[*]} (the node held no cap of its own)"
   else
