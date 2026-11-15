@@ -39,7 +39,7 @@
 #     exists today, and a claim with no path behind it is a claim the page cannot back.
 version: 1
 as_of:
-  cli: v0.24.0
+  cli: v0.25.0
   console: v0.122.0
 never_say:
   - "any model"
@@ -185,9 +185,9 @@ groups:
         note: "The default backend, on the gen 2 execution environment."
         evidence: "internal/backend/gcp"
       - name: "VM / Cloud Batch"
-        status: built-not-enabled
+        status: supported
         edition: core
-        note: "Built behind the backend seam, and opt-in per installation: the project config accepts cloud-batch as a known name, and fugaro doctor reports an installation that selects it, failing until the backend's own checks pass. Doctor reports and does not fence: a launch is not blocked by it."
+        note: "Opt-in per installation (the project config names it cloud-batch). The owner has declared it operational, on the owner's word: its live checks, 57b and 124, are still owner-run. fugaro doctor reports an installation that selects it, failing until the backend's own checks pass; doctor reports and does not fence, so a launch is not blocked by it."
         evidence: "internal/backend/batch"
   - id: forges
     title: "Forges"

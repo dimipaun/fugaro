@@ -1,0 +1,23 @@
+<!-- SPDX-License-Identifier: LicenseRef-Fugaro-Subscription -->
+<!-- See ee/LICENSE for the terms. -->
+<!--
+  The portal's one page (plan P1.4). Vite serves it in development and builds
+  it into dist/ for Hosting (P9.2); the app is mounted into #root by
+  src/main.tsx, and nothing else about the page is written here.
+
+  No inline script and no third-party tag: a script in this file would be one
+  the consent gate in src/consent.ts never sees, and the portal's whole script
+  surface is the bundle Vite emits.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fugaro</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

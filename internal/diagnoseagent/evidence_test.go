@@ -281,8 +281,8 @@ func TestEvidenceCollectNotesADoctorThatTimesOut(t *testing.T) {
 		t.Fatalf("Collect: %v", err)
 	}
 	got := evidenceRead(t, ev.EvidenceDir)["doctor.txt"]
-	if !strings.Contains(got, "did not finish within") {
-		t.Errorf("doctor.txt = %q, want a note that doctor did not finish in time", got)
+	if !strings.Contains(got, "did not answer in 20ms") || !strings.Contains(got, "run fugaro doctor yourself") {
+		t.Errorf("doctor.txt = %q, want a note that doctor did not answer in the bound and the command that answers the same question", got)
 	}
 	if strings.Contains(got, "too late") {
 		t.Error("doctor.txt carries a doctor's answer to a call that was abandoned")
@@ -317,8 +317,8 @@ func TestEvidenceCollectDoesNotWaitForADoctorThatIgnoresItsDeadline(t *testing.T
 		t.Fatalf("Collect: %v, want it to return without a doctor that never answers", err)
 	}
 	got := evidenceRead(t, ev.EvidenceDir)["doctor.txt"]
-	if !strings.Contains(got, "did not finish within") {
-		t.Errorf("doctor.txt = %q, want a note that doctor did not finish in time: the collection waited on a doctor that ignores its deadline", got)
+	if !strings.Contains(got, "did not answer in 20ms") || !strings.Contains(got, "run fugaro doctor yourself") {
+		t.Errorf("doctor.txt = %q, want a note that doctor did not answer in the bound: the collection waited on a doctor that ignores its deadline", got)
 	}
 	if strings.Contains(got, "too late") {
 		t.Error("doctor.txt carries a doctor's answer to a call that was abandoned")

@@ -128,13 +128,18 @@ func TestServiceUpstreamSendsIDTokenAndRunIdentity(t *testing.T) {
 
 	// The agent sends its own credential and its own identity headers: none
 	// of them may travel on, and none may become something the service reads
-	// as its own answer to us.
+	// as its own answer to us. The slip's two headers are among them, and
+	// this run holds no slip (the stub's Service carries no claim), which is
+	// the case where nothing is set over them: a call that presented the
+	// agent's slip to the service would be a claim the run never took.
 	resp, body := h.post(msg(sonnet, 1000),
 		"authorization", "Bearer sk-ant-the-agent-sent-this",
 		"x-fugaro-run-identity", "an-agent-written-identity",
 		"x-fugaro-tier", "A",
 		"x-fugaro-credential", "a-credential-the-agent-invented",
-		"x-fugaro-switch", `{"from":"x","to":"y","reason":"exhausted"}`)
+		"x-fugaro-switch", `{"from":"x","to":"y","reason":"exhausted"}`,
+		"x-fugaro-slip", "a-slip-the-agent-invented",
+		"x-fugaro-slip-claim", "a-claim-the-agent-invented")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("the call: %d %s", resp.StatusCode, body)
 	}
@@ -158,7 +163,7 @@ func TestServiceUpstreamSendsIDTokenAndRunIdentity(t *testing.T) {
 	if got := up.Header.Get("x-api-key"); got != "" {
 		t.Errorf("the gateway token travelled to the service in x-api-key")
 	}
-	for _, k := range []string{HeaderTier, HeaderCredential, HeaderSwitch} {
+	for _, k := range []string{HeaderTier, HeaderCredential, HeaderSwitch, HeaderSlip, HeaderSlipClaim} {
 		if got := up.Header.Values(k); len(got) > 0 {
 			t.Errorf("the agent's %s reached the service as %q", k, got)
 		}
@@ -180,6 +185,41 @@ func TestServiceUpstreamSendsIDTokenAndRunIdentity(t *testing.T) {
 	}
 	// And nothing about this call reached a log.
 	assertNoSecret(t, "the gateway's log", h.logs.String(), secrets(h, t))
+	noHalt(t, h)
+}
+
+// TestServiceDeclarationIsNeverTheAgents (B2.2): the two headers a switched
+// run declares are dropped from what the agent sent before the runner's own
+// are set — and a call the runner declares nothing on carries neither, which
+// is a cascade run's upstream. The agent runs inside the repository whose auth
+// this is, so a declaration it wrote would reach the service as the runner's
+// statement about a repository the agent may not be in (D2070 (a)).
+//
+// It is the case the mirror test cannot see: there the runner sets both
+// headers itself, so a gateway that let the agent's copy through would have it
+// overwritten by h.Set and the test would pass either way.
+func TestServiceDeclarationIsNeverTheAgents(t *testing.T) {
+	// No AuthMode and no Account: a cascade run declares nothing, so nothing
+	// is set over what the agent sent.
+	h, f := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
+		return serviceOK(TierA, "repo-a")
+	}, nil)
+
+	resp, body := h.post(msg(sonnet, 1000),
+		HeaderAuthMode, "oauth",
+		HeaderAuthAccount, "an-account-the-agent-invented")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the call: %d %s", resp.StatusCode, body)
+	}
+	seen := f.Seen()
+	if len(seen) != 1 {
+		t.Fatalf("the service was called %d times", len(seen))
+	}
+	for _, k := range []string{HeaderAuthMode, HeaderAuthAccount} {
+		if got := seen[0].Header.Values(k); len(got) > 0 {
+			t.Errorf("the agent's %s reached the service as %q", k, got)
+		}
+	}
 	noHalt(t, h)
 }
 
@@ -240,9 +280,11 @@ func TestServiceUpstreamReadsTierAndCredential(t *testing.T) {
 // TestServiceNeverSentToProviderRoute is D143's other half, on
 // TestOAuthNeverSentToProviderRoute's shape: a route is a provider's own
 // endpoint and is reached with the job's own key for that provider, which a
-// cascade run does not have. A service upstream therefore takes no routes at
-// all -- not at start-up, and not from a Route built in code past validation
-// either.
+// cascade run does not have. A cascade's service upstream therefore takes no
+// routes at all -- not at start-up, and not from a Route built in code past
+// validation either. (A switched api-key run's does: it is the one service
+// upstream with a key of its own, and
+// TestSwitchedAPIKeyServiceUpstreamKeepsItsProviderRoutes is that case.)
 func TestServiceNeverSentToProviderRoute(t *testing.T) {
 	_, psrv := anthropicfake.New(t, anthropicfake.MessageOK(dsModel, smallUsage))
 	cred := func() (string, error) { return "provider-key-" + t.Name(), nil }
@@ -302,6 +344,84 @@ func TestServiceNeverSentToProviderRoute(t *testing.T) {
 	if h != nil {
 		t.Errorf("a refused call wrote %v", h)
 	}
+}
+
+// TestSwitchedAPIKeyServiceUpstreamKeepsItsProviderRoutes (B2.2, R6/D1634): a
+// switched api-key run's service upstream is the one that takes routes. That
+// repository's provider keys stay on the runner path and keep their mounts in
+// S2, so a model its routes claim is the provider's own call — the provider's
+// endpoint, with the job's key — and every other model is the service's. Both
+// halves matter: without the routes the run cannot start its gateway at all,
+// and a routed call read as the service's answer (it carries no tier) would
+// halt the run for an answer that is exactly what R6 keeps on the runner path.
+func TestSwitchedAPIKeyServiceUpstreamKeepsItsProviderRoutes(t *testing.T) {
+	routedStage := Stage{Name: "implement", Model: dsModel, Background: sonnet}
+	cred := func() (string, error) { return providerKey, nil }
+
+	prov, psrv := anthropicfake.New(t, anthropicfake.MessageOK(dsModel, smallUsage))
+	h, svc := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
+		return serviceOK(TierB, "repo-shared-b")
+	}, func(o *Options) {
+		o.Upstream.AuthMode = "api-key"
+		o.Routes = []Route{{
+			Name: "openrouter", Models: []string{"deepseek/*"}, BaseURL: psrv.URL + "/api",
+			Auth: "bearer", Credential: cred,
+		}}
+	})
+	h.gw.BeginStage(routedStage)
+
+	// The model the route claims: the provider's own endpoint, with the job's
+	// key, and no tier to read -- and so no halt.
+	if resp, body := h.post(msg(dsModel, 100)); resp.StatusCode != http.StatusOK {
+		t.Fatalf("a routed call beside the service: %d %s", resp.StatusCode, body)
+	}
+	if prov.Count() != 1 || svc.Count() != 0 {
+		t.Fatalf("the provider saw %d calls and the service %d, want the provider's one", prov.Count(), svc.Count())
+	}
+	if got := prov.Seen()[0].Header.Get("Authorization"); got != "Bearer "+providerKey {
+		t.Errorf("the provider's call carries %q, want the route's own key", got)
+	}
+	noHalt(t, h)
+
+	// Every other model is the service's, as it is for a cascade run.
+	if resp, body := h.post(msg(sonnet, 100)); resp.StatusCode != http.StatusOK {
+		t.Fatalf("a served call: %d %s", resp.StatusCode, body)
+	}
+	if svc.Count() != 1 {
+		t.Fatalf("the service saw %d calls, want the second", svc.Count())
+	}
+	if got := svc.Seen()[0].Header.Get(HeaderAuthMode); got != "api-key" {
+		t.Errorf("the service read the declaration %q, want api-key", got)
+	}
+	noHalt(t, h)
+}
+
+// TestSwitchedRunUnreachableProviderIsNotAServiceFailure: a routed call that
+// cannot reach its provider is answered as any other failed upstream request
+// is, and is not a halt for a service this job could not reach (D143): the
+// service is up, the provider is not, and the run's other calls still go to
+// the service.
+func TestSwitchedRunUnreachableProviderIsNotAServiceFailure(t *testing.T) {
+	gone := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	base := gone.URL
+	gone.Close()
+
+	h, _ := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
+		return serviceOK(TierB, "repo-shared-b")
+	}, func(o *Options) {
+		o.Upstream.AuthMode = "api-key"
+		o.Routes = []Route{{
+			Name: "openrouter", Models: []string{"deepseek/*"}, BaseURL: base + "/api",
+			Auth: "bearer", Credential: func() (string, error) { return providerKey, nil },
+		}}
+	})
+	h.gw.BeginStage(Stage{Name: "implement", Model: dsModel, Background: sonnet})
+
+	resp, body := h.post(msg(dsModel, 100))
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("a routed call to an unreachable provider: %d %s", resp.StatusCode, body)
+	}
+	noHalt(t, h)
 }
 
 // TestServiceUnreachableHalts: a job that cannot reach the credentials
@@ -402,6 +522,11 @@ func TestNoInJobFallback(t *testing.T) {
 			{"no identity at all", func(u *Upstream) { u.Service = nil }, "no identity"},
 			{"no job identity", func(u *Upstream) { u.Service.IDToken = nil }, "job identity"},
 			{"no run identity", func(u *Upstream) { u.Service.RunIDToken = nil }, "run identity"},
+			// The claim is all or nothing (credsvc.verifyCallSlip): a run
+			// holding half of one would be refused on every call for a shape
+			// this gateway let through, so it is refused here, where the
+			// mistake is.
+			{"half a slip", func(u *Upstream) { u.Service.SlipID, u.Service.SlipClaim = "a-slip-id", "" }, "half a slip"},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				o := Options{
@@ -556,6 +681,27 @@ func TestServiceRefusalIsNeverRelayed(t *testing.T) {
 			name: "request_refused", status: http.StatusBadRequest,
 			body: `{"error":"request_refused","message":"` + serviceSaid + `"}`,
 			want: http.StatusForbidden, halt: true, detail: refusalDetail(ErrorRequestRefused),
+		},
+		{
+			// A call the service had no credential to offer, and the one
+			// detail built from the answer rather than from the type alone:
+			// the reasons are what tell the operator which filter removed the
+			// candidates, and the names stay in the job's own log
+			// (TestServiceNoCandidateCredentialsDetailNamesTheFilter).
+			name: "no_candidate_credentials", status: http.StatusServiceUnavailable,
+			body: `{"error":"no_candidate_credentials","message":"` + serviceSaid + `","tried":[{"name":"cred-a","tier":"A","reason":"not_admitted"}]}`,
+			want: http.StatusForbidden, halt: true,
+			detail: noCredentialDetail([]serviceTried{{Name: "cred-a", Tier: TierA, Reason: ReasonNotAdmitted}}),
+		},
+		{
+			// The same refusal with nothing behind it: no credential was
+			// dropped because the bundle holds none, and the detail says that
+			// rather than sending the operator to a policy that decided
+			// nothing.
+			name: "no_candidate_credentials with an empty bundle", status: http.StatusServiceUnavailable,
+			body: `{"error":"no_candidate_credentials","message":"` + serviceSaid + `"}`,
+			want: http.StatusForbidden, halt: true,
+			detail: noCredentialDetail(nil),
 		},
 		{
 			// A type this release does not know: the service's own text, and
@@ -744,6 +890,64 @@ func TestServiceRequestRefusedDetailNamesTheWayOut(t *testing.T) {
 		t.Errorf("the halt's detail carries the service's own sentence: %q", halt.Detail)
 	}
 	assertNoSecret(t, "the halt's detail", halt.Detail, secrets(h, t))
+}
+
+// TestServiceNoCandidateCredentialsDetailNamesTheFilter: a call the service had
+// no credential to offer is the one refusal whose detail is built from the
+// answer, because which filter removed the candidates IS the diagnosis — the
+// repository's own node, the account's allow_repos, the project's allow_repos
+// or the repository's recorded auth — and the service's own sentence never
+// reaches the agent (D143).
+//
+// What is built from the answer is the reasons and nothing else: each one is
+// rendered as this package's own sentence, and the credential NAMES the service
+// considered stay out of the detail, which the agent is shown and the run's
+// record keeps. They go to the job's own log (triedLog) instead, which is where
+// the run's operator reads them.
+func TestServiceNoCandidateCredentialsDetailNamesTheFilter(t *testing.T) {
+	const serviceSaid = "no credential is offered to this call, and the state was read; considered and dropped: cred-a (not_admitted), cred-b (broken)"
+	h, _ := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
+		return anthropicfake.Reply{Status: http.StatusServiceUnavailable,
+			Body: `{"error":"no_candidate_credentials","message":"` + serviceSaid + `","tried":[` +
+				`{"name":"cred-a","tier":"A","reason":"not_admitted"},` +
+				`{"name":"cred-b","tier":"B","reason":"broken"}]}`,
+			Header: http.Header{"Content-Type": []string{"application/json"}}}
+	}, nil)
+
+	resp, body := h.post(msg(sonnet, 1000))
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("the agent's answer: %d %s, want 403", resp.StatusCode, body)
+	}
+	if strings.Contains(body, serviceSaid) {
+		t.Errorf("the service's own sentence reached the agent: %s", body)
+	}
+	halt := haltOf(t, h)
+	if halt.Reason != ReasonBudgetUnavailable {
+		t.Errorf("the halt is %q, want %q", halt.Reason, ReasonBudgetUnavailable)
+	}
+	for _, want := range []string{
+		ErrorNoCandidateCredentials,
+		// The filters, each as this package's own sentence, and the documents
+		// that decide the admission.
+		"not_admitted", "broken",
+		"credentials.accounts", "allow_repos", "claude_accounts",
+	} {
+		if !strings.Contains(halt.Detail, want) {
+			t.Errorf("the halt's detail is %q, and it must name %q", halt.Detail, want)
+		}
+	}
+	for _, name := range []string{"cred-a", "cred-b"} {
+		if strings.Contains(halt.Detail, name) {
+			t.Errorf("the halt's detail names a credential the service considered (%q): the agent has no "+
+				"business seeing the set of them (D143), and the run's own log is where they belong", name)
+		}
+	}
+	if logged := h.logs.String(); !strings.Contains(logged, "cred-a (not_admitted)") ||
+		!strings.Contains(logged, "cred-b (broken)") {
+		t.Errorf("the job's own log does not name what the service considered: %s", logged)
+	}
+	assertNoSecret(t, "the halt's detail", halt.Detail, secrets(h, t))
+	assertNoSecret(t, "the job's log", h.logs.String(), secrets(h, t))
 }
 
 func ptrTime(t time.Time) *time.Time { return &t }

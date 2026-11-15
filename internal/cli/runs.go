@@ -404,6 +404,10 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 			return userErr("--mine: %v", err)
 		}
 	}
+	gate, err := accessRowsGate(ctx, env)
+	if err != nil {
+		return err
+	}
 	out := cmd.OutOrStdout()
 	clear := o.watch && !o.asJSON && isTTY(out)
 	// The image warnings are read once: they change about daily, and
@@ -417,6 +421,14 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 		rows, err := loadRows(ctx, env, f, now)
 		if err != nil {
 			return err
+		}
+		// The roles are read once, before the loop (gate), and each redraw
+		// filters the rows it just read: the history a reader sees is the
+		// history of the repositories it holds a role in (D1586's read half),
+		// and what that leaves out is said rather than dropped in silence.
+		var dropped int
+		if rows, dropped = gate.listed(rows); dropped > 0 {
+			fmt.Fprintf(f.warn, "note: %d of the runs read are of repositories this credential holds no role in, and are not listed here: the roles come from the credential (finding F21), and '%s user ls --repo <repo>' prints what it holds there\n", dropped, selfCommand())
 		}
 		page, err := pageRows(rows, o.after, o.limit)
 		if err != nil {

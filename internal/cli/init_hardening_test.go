@@ -23,7 +23,10 @@ func grantChange(name, member, role string, actions ...string) planChange {
 // grant, or a member on neither list, is still refused.
 func TestInitHardeningAllowsOnlyTheLauncherGrantDeletes(t *testing.T) {
 	const a, o = "user:a@example.com", "user:o@example.com"
-	args := []string{"setup", "--yes", "--operator", a, "--operator", o, "--admin", o}
+	args := []string{"setup", "--operator", a, "--operator", o, "--admin", o}
+	// The person at the terminal is what confirms the apply the flag used to
+	// (T11, docs/no-prompt-policy).
+	fakeTerminal(t)
 
 	r := newInitRig(t)
 	r.stateBucket()
@@ -86,7 +89,7 @@ func TestInitHardeningRefusesAMixedPlan(t *testing.T) {
 		grantChange("runs_reader", a, "roles/storage.objectViewer", "create"),
 		grantChange("runs_launcher", a, "roles/storage.objectUser", "create"),
 		grantChange("state", a, "roles/storage.objectAdmin", "delete"))
-	out, _, err := executeStdin(t, "", "setup", "--yes", "--operator", a)
+	out, _, err := executeStdin(t, "", "setup", "--operator", a)
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), `state["`+a+`"]`) {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -120,7 +123,10 @@ func launcherReplaceChange(bucket, member, beforeTitle, beforeExpr string) planC
 func TestInitAdmitsTheLauncherGrantUpgrade(t *testing.T) {
 	const a, o = "user:a@example.com", "user:o@example.com"
 	bucket := "fugaro-runs-" + initProject
-	args := []string{"setup", "--yes", "--operator", a, "--operator", o, "--admin", o}
+	args := []string{"setup", "--operator", a, "--operator", o, "--admin", o}
+	// The person at the terminal is what confirms the apply the flag used to
+	// (T11, docs/no-prompt-policy).
+	fakeTerminal(t)
 
 	r := newInitRig(t)
 	r.stateBucket()
@@ -168,6 +174,9 @@ func TestInstallationAtThePreviousVersionConvergesIssuesGrant(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := updateRig(t)
+			// The person at the terminal is what confirms the replace the flag
+			// used to (T11, docs/no-prompt-policy).
+			fakeTerminal(t)
 			// The installation's own members, as the local config records
 			// them: the guard judges the replace against the launcher list
 			// this run holds, and an installation's list is what its config
@@ -177,7 +186,7 @@ func TestInstallationAtThePreviousVersionConvergesIssuesGrant(t *testing.T) {
 			r.script["plan@installation"] = map[string]any{"exit": 2}
 			r.script["show@installation"] = map[string]any{"stdout": planJSON(t, launcherReplaceChange(bucket, a, tc.title, tc.expr))}
 			r.save(t)
-			out, errOut, err := executeStdin(t, "", "update", "--yes")
+			out, errOut, err := executeStdin(t, "", "update")
 			if err != nil {
 				t.Fatalf("fugaro update left an installation at the previous version behind: %v\n%s%s", err, out, errOut)
 			}
@@ -185,8 +194,11 @@ func TestInstallationAtThePreviousVersionConvergesIssuesGrant(t *testing.T) {
 			if !strings.Contains(all, "bucket access (0.22.0)") || !strings.Contains(all, "  "+a+"\n") {
 				t.Errorf("the update does not name the launcher whose grant it replaces:\n%s", all)
 			}
-			if len(r.ran(t, "apply")) != 1 {
-				t.Fatalf("applies = %d, want the one the converge makes\n%s%s", len(r.ran(t, "apply")), out, errOut)
+			// Two applies: the converge's own, and installation-2's, which
+			// re-applies the root because this rig records no base image and
+			// the scheduled jobs run FROM the one the images stage pins (R7).
+			if len(r.ran(t, "apply")) != 2 {
+				t.Fatalf("applies = %d, want the converge's own and installation-2's\n%s%s", len(r.ran(t, "apply")), out, errOut)
 			}
 			// The state the run wrote is the current condition, which is what
 			// the apply above makes real: the installation holds the issues/

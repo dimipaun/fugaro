@@ -146,6 +146,8 @@ printf 'fugaro %s\n' "$*" >>"$FAKE401_DIR/calls"
 case "${1:-}" in
 doctor)
   cat "$FAKE401_DIR/doctor.json"
+  # exits 1 with its document, as the real doctor does when a check is a warning
+  [ ! -f "$FAKE401_DIR/doctor.exit" ] || exit "$(cat "$FAKE401_DIR/doctor.exit")"
   ;;
 update)
   shift
@@ -344,6 +346,14 @@ converged() { # what — the converge ran
 }
 
 # ------------------------------------------------------------------- the tests
+test_doctor_exit_1_is_an_answer() {
+  setup_case doctor-exit-1
+  printf '1\n' >"$dir/state/doctor.exit"
+  run401 --installation "$PROJECT" --config "$dir/config.yaml"
+  expect_status "$status" 0 "doctor exit 1: the document it printed is the answer"
+  expect_contains "$out" "FACT installation: PASS — " "doctor exit 1: the installation is read"
+}
+
 test_happy_path() {
   setup_case happy
   run401 --installation "$PROJECT" --config "$dir/config.yaml"
@@ -718,6 +728,7 @@ t() {
 }
 
 t test_happy_path
+t test_doctor_exit_1_is_an_answer
 t test_a_converge_that_migrates_nothing_is_a_fail
 t test_a_node_that_is_not_what_the_line_named_is_a_fail
 t test_a_retired_key_still_in_the_file_is_a_fail

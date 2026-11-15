@@ -222,10 +222,14 @@ func TestDoctorIssuesLineWaitsForTheCommandItNames(t *testing.T) {
 // a document rather than a transcript.
 func TestSetupPrintsGhHintOnce(t *testing.T) {
 	r := newInitRig(t)
+	// setup's installation step writes the local config, which the person at
+	// their own terminal confirms by being there (T11 of docs/no-prompt-policy:
+	// the flag that used to stand in for them is gone).
+	fakeTerminal(t)
 	r.stateBucket()
 	r.script["plan"] = map[string]any{"exit": 0}
 	r.save(t)
-	out, _, err := executeStdin(t, "", "setup", "--yes")
+	out, _, err := executeStdin(t, "", "setup")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -237,7 +241,7 @@ func TestSetupPrintsGhHintOnce(t *testing.T) {
 	}
 
 	// --json's stdout is one object: the hint is not part of it.
-	jsonOut, _, err := executeStdin(t, "", "setup", "--yes", "--json")
+	jsonOut, _, err := executeStdin(t, "", "setup", "--json")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, jsonOut)
 	}
@@ -247,7 +251,7 @@ func TestSetupPrintsGhHintOnce(t *testing.T) {
 
 	// And update is not setup: an installation that is already there gets no
 	// hint about filing an issue.
-	upOut, _, err := executeStdin(t, "", "update", "--yes")
+	upOut, _, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, upOut)
 	}

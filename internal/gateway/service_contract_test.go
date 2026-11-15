@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
@@ -74,6 +75,13 @@ func newServiceMirror(t *testing.T, answer func(*http.Request, []byte) anthropic
 // postMirror sends one Messages call and returns its answer, read.
 func postMirror(t *testing.T, gw *gateway.Server) (int, string) {
 	t.Helper()
+	return postMirrorWith(t, gw, nil)
+}
+
+// postMirrorWith is postMirror with headers of the caller's own: a test that
+// asks what the gateway does with a header a client sent has to send one.
+func postMirrorWith(t *testing.T, gw *gateway.Server, extra http.Header) (int, string) {
+	t.Helper()
 	req, err := http.NewRequest("POST", gw.URL()+"/v1/messages",
 		strings.NewReader(`{"model":"`+mirrorModel+`","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`))
 	if err != nil {
@@ -82,6 +90,11 @@ func postMirror(t *testing.T, gw *gateway.Server) (int, string) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("anthropic-version", "2023-06-01")
 	req.Header.Set("x-api-key", gw.Token())
+	for k, vs := range extra {
+		for _, v := range vs {
+			req.Header.Add(k, v)
+		}
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -119,6 +132,8 @@ func TestServiceConstantsMirrorCredsvc(t *testing.T) {
 		{"the credential's header", gateway.HeaderCredential, credsvc.HeaderCredential},
 		{"the switch's header", gateway.HeaderSwitch, credsvc.HeaderSwitch},
 		{"the probe's header", gateway.HeaderProbe, credsvc.HeaderProbe},
+		{"the slip's header", gateway.HeaderSlip, credsvc.HeaderSlip},
+		{"the claim secret's header", gateway.HeaderSlipClaim, credsvc.HeaderSlipClaim},
 	}
 	for _, h := range headers {
 		if h.gateway != h.wire {
@@ -139,6 +154,7 @@ func TestServiceConstantsMirrorCredsvc(t *testing.T) {
 		{gateway.ErrorUnverifiedJobIdentity, credsvc.ErrorUnverifiedJobIdentity},
 		{gateway.ErrorStateUnavailable, credsvc.ErrorStateUnavailable},
 		{gateway.ErrorRequestRefused, credsvc.ErrorRequestRefused},
+		{gateway.ErrorNoCandidateCredentials, credsvc.ErrorNoCandidateCredentials},
 	}
 	for _, x := range errs {
 		if x.gateway != x.wire {
@@ -357,6 +373,16 @@ func TestServiceContractMirrorsCredsvcReadsWhatItWrites(t *testing.T) {
 			wire: credsvc.WireError{Error: credsvc.ErrorStateUnavailable, Tried: []credsvc.Tried{
 				{Name: "cred-a", Tier: credsvc.TierA, Reason: credsvc.ReasonExhausted},
 			}}},
+		// The refusal a repository admitted no credential gets. It is a class
+		// of its own and not state_unavailable, which says the state could not
+		// be read; its detail is the one built from the answer's reasons, so
+		// this case is also what holds the two ends to the same closed set of
+		// reasons — a reason the service may write and this release may not
+		// render would be a detail about a body the gateway cannot read.
+		{name: "no_candidate_credentials", typ: credsvc.ErrorNoCandidateCredentials, wantActedOn: true,
+			wire: credsvc.WireError{Error: credsvc.ErrorNoCandidateCredentials, Message: "no credential is offered to this call", Tried: []credsvc.Tried{
+				{Name: "cred-a", Tier: credsvc.TierA, Reason: credsvc.ReasonNotAdmitted},
+			}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
@@ -434,6 +460,97 @@ func TestServiceContractMirrorsCredsvcReadsWhatItWrites(t *testing.T) {
 			t.Errorf("an exhausted answer halted the run: %q", detail)
 		}
 	})
+}
+
+// TestServiceAuthHeadersMirrorCredsvc: a switched run's declaration (B2.2) is
+// the contract's own in both directions. The two names are internal/credsvc's;
+// the values the runner can declare are values that package's reader admits —
+// ValidAuthMode and ValidAuthAccount are the record's own rules, and a
+// declaration the record could not hold would be refused as a value no
+// repository has (D2070 (a)); and what the gateway sends is read back by
+// RequestFromHTTP, the reader the real service runs, as the declaration the run
+// made. A client's own declaration is not it: the agent runs inside the
+// repository whose auth this is, so a header it wrote must never arrive as the
+// runner's.
+func TestServiceAuthHeadersMirrorCredsvc(t *testing.T) {
+	if gateway.HeaderAuthMode != credsvc.HeaderAuthMode {
+		t.Errorf("the auth mode's header is %q in the gateway and %q on the wire", gateway.HeaderAuthMode, credsvc.HeaderAuthMode)
+	}
+	if gateway.HeaderAuthAccount != credsvc.HeaderAuthAccount {
+		t.Errorf("the account's header is %q in the gateway and %q on the wire", gateway.HeaderAuthAccount, credsvc.HeaderAuthAccount)
+	}
+	// The auths a switched run declares (runner.ServiceSwitchedAuth) and the
+	// account the runner spells for a run that named none (config's own name
+	// for the default account): each is a value the service's reader accepts,
+	// which is what makes the declaration comparable with the record rather
+	// than refused as a value no record could carry.
+	for _, auth := range []string{"api-key", "oauth"} {
+		if !credsvc.ValidAuthMode(auth) {
+			t.Errorf("the runner declares auth %q for a switched run and the service refuses it as no agent auth", auth)
+		}
+	}
+	if !credsvc.ValidAuthAccount(config.DefaultClaudeAccount) {
+		t.Errorf("the runner declares the account %q for a switched run that named none and the service refuses it as no Claude account name", config.DefaultClaudeAccount)
+	}
+
+	const declaredMode = "oauth"
+	declaredAccount := config.DefaultClaudeAccount
+	fake, srv := anthropicfake.New(t)
+	fake.Func = func(*http.Request, []byte) anthropicfake.Reply {
+		rep := anthropicfake.MessageOK(mirrorModel, pricing.Usage{Input: 1, Output: 1})
+		// A service answers a served call with the tier it settled by and the
+		// credential's name, which is what makes the answer one this gateway
+		// can read at all.
+		rep.Header = http.Header{
+			gateway.HeaderTier:       []string{gateway.TierB},
+			gateway.HeaderCredential: []string{"repo-shared-b"},
+		}
+		return rep
+	}
+	gw, err := gateway.Start(context.Background(), gateway.Options{
+		Upstream: gateway.Upstream{
+			Kind: gateway.KindService, BaseURL: srv.URL,
+			Service: &gateway.Service{
+				IDToken:    func(context.Context) (string, error) { return "id-token-" + mirrorName(t), nil },
+				RunIDToken: func() string { return "run-identity-" + mirrorName(t) },
+				Job:        mirrorJob,
+			},
+			AuthMode: declaredMode, Account: declaredAccount,
+		},
+		Prices: pricing.Embedded(),
+		Mode:   gateway.Observe,
+		Log:    slog.New(slog.DiscardHandler),
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	t.Cleanup(func() { _ = gw.Close(ctx) })
+	gw.BeginStage(gateway.Stage{Name: "implement", Model: mirrorModel})
+
+	// The agent's own declaration of both headers, on the call the gateway
+	// proxies: what the service receives must be the runner's.
+	extra := http.Header{}
+	extra.Set(gateway.HeaderAuthMode, "api-key")
+	extra.Set(gateway.HeaderAuthAccount, "not-the-runs-account")
+	if status, body := postMirrorWith(t, gw, extra); status != http.StatusOK {
+		t.Fatalf("the call was answered %d: %s", status, body)
+	}
+	seen := fake.Seen()
+	if len(seen) != 1 {
+		t.Fatalf("the credentials service received %d calls, want one", len(seen))
+	}
+	req, err := credsvc.RequestFromHTTP(seen[0])
+	if err != nil {
+		t.Fatalf("the service's own reader refused what the gateway sent: %v", err)
+	}
+	if req.AuthMode != declaredMode {
+		t.Errorf("the service read the declared auth as %q, want %q", req.AuthMode, declaredMode)
+	}
+	if req.AuthAccount != declaredAccount {
+		t.Errorf("the service read the declared account as %q, want %q", req.AuthAccount, declaredAccount)
+	}
 }
 
 // TestGitForwardMirrorsCredsvc: the loopback forwarder's copy of the wire

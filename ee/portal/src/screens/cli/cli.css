@@ -1,0 +1,105 @@
+/* SPDX-License-Identifier: LicenseRef-Fugaro-Subscription */
+/* See ee/LICENSE for the terms. */
+/*
+ * The licence login screens' own styles (portal plan P3.5). They live beside the
+ * screens for the reason P3.4's do: adding a screen edits no shared file, so the
+ * app's sheet gains no section per task. The token layer is already in scope
+ * (`src/styles.css` imports it), so this file names variables and never a
+ * colour, a size or a radius of its own.
+ *
+ * Mobile-first, as the app's sheet is: one column, bounded by the measure token.
+ * These pages are read on a phone as often as not -- §11.4's whole point is that
+ * the person may be on a different device from the terminal -- so nothing here
+ * needs a wide window to be readable.
+ */
+
+.cli {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: var(--space-xl) var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.cli code {
+  font-family: var(--font-mono);
+}
+
+.cli__reason {
+  margin: 0;
+}
+
+/* The sign-in screen the gate mounts carries its own `<main>` and its own
+ * spacing; the gate only says why the person is looking at it. */
+.cli--gate .signin {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+
+.cli__who,
+.cli__code,
+.cli__approve,
+.cli__handover {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+}
+
+.cli__who > h2 {
+  margin: 0;
+  font-size: var(--font-size-lg);
+}
+
+.cli__who > p,
+.cli__code > p,
+.cli__approve > p {
+  margin: 0;
+}
+
+/* A name a caller chose, drawn as text and read character by character against
+ * the terminal that printed it: mono, and wrapped rather than widening the
+ * panel a stranger's string can be long. */
+.cli__untrusted {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.cli__choice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin: 0;
+  padding: var(--space-sm);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.cli__licence {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: baseline;
+}
+
+.cli__code,
+.cli__handover {
+  align-items: flex-start;
+}
+
+.cli__code label {
+  display: block;
+}
+
+/* The code is eight characters in two groups, which is what the terminal
+ * prints: the field is wide enough for the whole of it at the token layer's
+ * text size, and the letter spacing keeps the groups apart while it is typed. */
+.cli__code input {
+  font-family: var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}

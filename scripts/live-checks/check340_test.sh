@@ -472,6 +472,9 @@ storage)
     ;;
   buckets)
     case "${argv[2]:-}" in
+    describe)
+      if [ -n "${FAKE340_NO_UBLA:-}" ]; then echo False; else echo True; fi
+      ;;
     add-iam-policy-binding)
       [ -n "$condition_file" ] || unknown "${argv[@]}"
       if [ -n "${FAKE340_GRANT_REFUSED:-}" ]; then
@@ -1113,6 +1116,17 @@ test_a_dry_run_still_refuses_belong() {
   expect_status "$status" 2 "dry run belong"
   expect_contains "$out" "FACT belong: FAIL — " "dry run belong: the row fails"
   expect_no_calls "dry run belong"
+}
+
+test_a_bucket_without_uniform_access_stops_before_creating_anything() {
+  setup_case noubla relative
+  RUN340_ENV=(FAKE340_NO_UBLA=yes)
+  run340_default
+  expect_status "$status" 2 "no uniform access"
+  expect_contains "$out" "does not have uniform bucket-level access" "no uniform access: the row says why"
+  expect_contains "$out" "buckets update gs://bkt-sandbox-a" "no uniform access: the row carries the fix"
+  expect_absent "$(cat "$dir/state/calls")" "service-accounts create" "no uniform access: no account was made"
+  expect_absent "$(cat "$dir/state/calls")" "storage cp" "no uniform access: no object was seeded"
 }
 
 # A bucket that cannot be reached is a stop, not a verdict: every reading below
@@ -1870,6 +1884,7 @@ t test_a_refused_removal_the_restore_can_still_do
 t test_belong_is_refused_in_both_places
 t test_a_dry_run_prints_the_plan_and_makes_no_call
 t test_a_dry_run_still_refuses_belong
+t test_a_bucket_without_uniform_access_stops_before_creating_anything
 t test_a_bucket_that_cannot_be_reached_stops
 t test_an_account_that_already_exists_stops
 t test_usage_and_arguments

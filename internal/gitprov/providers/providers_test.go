@@ -304,7 +304,7 @@ func TestProxiedBitbucketReadsNoToken(t *testing.T) {
 		EnvBitbucketToken + "=bb-token-1234",
 		EnvCredentialsServiceURL + "=https://creds.example",
 	}
-	p, secrets, err := Proxied(env, "http://127.0.0.1:1"+forwardPath, nil, nil)(ctx, gitprov.KindBitbucket, "acme/web")
+	p, secrets, err := Proxied(env, "http://127.0.0.1:1"+forwardPath, nil, nil, nil, false)(ctx, gitprov.KindBitbucket, "acme/web")
 	if err != nil {
 		t.Fatalf("opening a proxied bitbucket provider: %v", err)
 	}
@@ -336,7 +336,7 @@ func TestProxiedPagingThroughForwarder(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"is_private":true}`))
 	})
-	p, _, err := Proxied([]string{EnvCredentialsServiceURL + "=https://creds.example"}, srv.URL+forwardPath, nil, nil)(ctx, gitprov.KindBitbucket, "acme/web")
+	p, _, err := Proxied([]string{EnvCredentialsServiceURL + "=https://creds.example"}, srv.URL+forwardPath, nil, nil, nil, false)(ctx, gitprov.KindBitbucket, "acme/web")
 	if err != nil {
 		t.Fatal(err)
 	}

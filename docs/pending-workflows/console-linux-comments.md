@@ -44,8 +44,10 @@ git rm docs/pending-workflows/console-linux-comments.md
 This fragment is named in that page's opening line and in its section
 `## The comment-only fragments`, whose three reference edits are written out
 there as exact text. **One** of them is this file's, and it goes in the same
-commit: the opening line's second sentence goes back from *Four further files
-here are not workflows at all* to *Three*. The exception paragraph under that
+commit: the opening line's second sentence goes back from *Five further files
+here are not workflows at all* to *Four*, its list losing this file's name and
+keeping `ci-hygiene.yml.snippet`, which is not a comment-only fragment and which
+no `git rm` here retires. The exception paragraph under that
 section's numbered list is **not** one of the three, and it goes with this file
 too, because it describes this fragment alone and nothing else. No test can see
 a dangling reference here, because the fragments are `.md` and neither

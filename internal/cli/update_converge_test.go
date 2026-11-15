@@ -468,7 +468,8 @@ func TestUpdateFailsTheCredentialsResolveBeforeItMigratesTheNode(t *testing.T) {
 	r.save(t)
 	recorded := credentialsServiceEntry(t, r.imagesRig)["image"]
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update")
 	s := out + errOut
 	if err == nil {
 		t.Fatalf("an update whose credentials image this release does not publish succeeded, want the resolve's failure:\n%s", s)
@@ -510,8 +511,10 @@ func TestUpdateInAnAgentSessionHoldsTheNodeAtItsVersion(t *testing.T) {
 	t.Setenv("CLAUDECODE", "1")
 	recorded := credentialsServiceEntry(t, r.imagesRig)["image"]
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
-	s := out + errOut
+	out, errOut, err := executeStdin(t, "", "update")
+	// What the policy stage says it did with the node is the run's own
+	// account, so the log is read beside the screen (stageDetail).
+	s := out + errOut + newestLog(t, "update")
 	if err != nil && !strings.Contains(s, "left for you") {
 		t.Fatalf("an update in a coding agent's session failed with something other than the steps it leaves for the user: %v\n%s", err, s)
 	}
@@ -592,6 +595,11 @@ func converge(t *testing.T, node map[string]any, stale []string) {
 func convergeOn(t *testing.T, r *convergeRig, stale []string) string {
 	t.Helper()
 	currentRelease(t)
+	// The owner's own terminal, which is what confirms the steps a converge
+	// asks about (T11 of docs/no-prompt-policy: the flag that used to stand in
+	// for it is gone). A rig with no terminal would stop at the first of them,
+	// which is what the refusals' own tests are for.
+	fakeTerminal(t)
 
 	before := doctorChecks(t, r.root)
 	for _, id := range stale {
@@ -600,7 +608,7 @@ func convergeOn(t *testing.T, r *convergeRig, stale []string) string {
 		}
 	}
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("fugaro update stopped at %s (exit %d), so this installation needs a second command:\n%s\n%s",
 			stoppedStage(out), ExitCode(err), out, errOut)
@@ -1014,6 +1022,119 @@ func TestUpdateConvergesTheOrchestratorRulesFromThePreviousGeneration(t *testing
 	}
 }
 
+// TestUpdateConvergesTheVoicePolicyNodeFromThePreviousGeneration: an
+// installation whose deployed rules predate the voice policy node reaches it
+// with `fugaro update` alone, and the one run writes both halves — the
+// generation marker and the document the marker names — so the hop P5.3.3
+// builds is written against a node that is really there (mobile plan task
+// P5.3.1, approved by the owner on 2026-11-14; the voice-evaluation switch
+// design §4.3).
+//
+// The bump is a rules generation like any other, so the migration is the rules
+// stage `fugaro update` already runs, and nothing here is a second command
+// (CLAUDE.md's HARD RULE). What this test adds to the orchestrator one above is
+// the subtree itself: an installation at the release behind carries no voice
+// node, and after the run it carries the two nodes with the grants the
+// template writes — a run token's read of its own project and of the shared
+// node, and no writer anywhere. That the update is safe to run while a run is
+// in flight, which is the other half of the same rule, is pinned by
+// TestUpdateLeavesARunInFlightRunning.
+func TestUpdateConvergesTheVoicePolicyNodeFromThePreviousGeneration(t *testing.T) {
+	r := newConvergeRig(t, v7Node())
+	currentRelease(t)
+	// The fixture is the release behind, or the assertions below prove
+	// nothing: the marker is the previous generation and the deployed document
+	// is not the one this binary generates — it has no `config` node at all,
+	// so no voice policy can be read under it.
+	if got := r.db.Value(projectpolicy.PathRulesMarker()); fmt.Sprint(got) != fmt.Sprint(projectpolicy.RulesVersion-1) {
+		t.Fatalf("the fixture carries %s = %v, want the previous generation %d: it is not an installation whose rules predate the voice policy node",
+			projectpolicy.PathRulesMarker(), got, projectpolicy.RulesVersion-1)
+	}
+	if infra.SameJSON(r.db.Rules(), generatedRules(t)) {
+		t.Fatal("the fixture's deployed rules are already the document this binary generates, so nothing has to converge")
+	}
+
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	if got := r.db.Value(projectpolicy.PathRulesMarker()); fmt.Sprint(got) != fmt.Sprint(projectpolicy.RulesVersion) {
+		t.Errorf("after one fugaro update, %s = %v, want %d", projectpolicy.PathRulesMarker(), got, projectpolicy.RulesVersion)
+	}
+	// And the document the marker names carries the voice subtree, child by
+	// child: the grants are the whole point of the node, so the parent has
+	// none and each child has its own.
+	var doc struct {
+		Rules map[string]any `json:"rules"`
+	}
+	if err := json.Unmarshal(r.db.Rules(), &doc); err != nil {
+		t.Fatalf("the deployed rules are not JSON: %v", err)
+	}
+	voice := voiceNodeOf(t, doc.Rules, "config", "policy", "voice")
+	if len(voice) != 2 {
+		t.Fatalf("the deployed config/policy/voice holds %d keys (%v), want the two the template writes: `shared` and `repos`", len(voice), sortedAnyKeys(voice))
+	}
+	if _, has := voice[".read"]; has {
+		t.Errorf("the deployed config/policy/voice carries a `.read` of its own: an RTDB grant cascades down, so a grant here would hand every project's voice policy to every run")
+	}
+	if _, has := voice[".write"]; has {
+		t.Errorf("the deployed config/policy/voice carries a `.write` of its own, want none")
+	}
+	shared := voiceNodeOf(t, voice, "shared")
+	// The grants are the template's, rendered: `TOKEN` expands to the run
+	// token's own claims, and the point of the assertion is what is in the
+	// disjunction -- the run's `fp`/`fx`, and no user or consumer claim, which
+	// is why a signed-in reader is refused this subtree.
+	sharedRead, _ := shared[".read"].(string)
+	if !strings.Contains(sharedRead, "auth.token.fp") {
+		t.Errorf("the deployed config/policy/voice/shared .read = %q, want the run token's own predicate (TOKEN)", sharedRead)
+	}
+	if strings.Contains(sharedRead, "auth.token.mu") || strings.Contains(sharedRead, "auth.token.mc") {
+		t.Errorf("the deployed config/policy/voice/shared .read = %q and carries a user or consumer claim: the node is the run token's alone", sharedRead)
+	}
+	if v, has := shared[".write"]; !has || v != false {
+		t.Errorf("the deployed config/policy/voice/shared carries .write = %v, want false", shared[".write"])
+	}
+	repos := voiceNodeOf(t, voice, "repos")
+	if _, has := repos[".read"]; has {
+		t.Errorf("the deployed config/policy/voice/repos carries a `.read` of its own: the grant is on the `$slug` child, and a grant here would be every project's node")
+	}
+	slug := voiceNodeOf(t, repos, "$slug")
+	slugRead, _ := slug[".read"].(string)
+	if !strings.Contains(slugRead, "auth.token.fs == $slug") {
+		t.Errorf("the deployed config/policy/voice/repos/$slug .read = %q, want the run token's predicate bound to this project (`TOKEN && auth.token.fs == $slug`)", slugRead)
+	}
+	if strings.Contains(slugRead, "auth.token.mu") || strings.Contains(slugRead, "auth.token.mc") {
+		t.Errorf("the deployed config/policy/voice/repos/$slug .read = %q and carries a user or consumer claim: the node is the run token's alone", slugRead)
+	}
+	if v, has := slug[".write"]; !has || v != false {
+		t.Errorf("the deployed config/policy/voice/repos/$slug carries .write = %v, want false", slug[".write"])
+	}
+}
+
+// voiceNodeOf walks the deployed document to the named node, one key at a
+// time, and fails the test rather than returning an empty node for a path that
+// is not there: a subtree a marker claims and the document does not carry is
+// the state this convergence is about.
+func voiceNodeOf(t *testing.T, node map[string]any, keys ...string) map[string]any {
+	t.Helper()
+	for i, k := range keys {
+		child, ok := node[k].(map[string]any)
+		if !ok {
+			t.Fatalf("the deployed rules carry no %s node", strings.Join(keys[:i+1], "/"))
+		}
+		node = child
+	}
+	return node
+}
+
+func sortedAnyKeys(node map[string]any) []string {
+	keys := make([]string, 0, len(node))
+	for k := range node {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
 // TestUpdateRefusesToRewindTheOrchestratorMarker: a marker above this binary's
 // generation is a database whose rules came from a newer Fugaro, and the deploy
 // path refuses before anything is planned, so this binary's older document is
@@ -1030,7 +1151,8 @@ func TestUpdateRefusesToRewindTheOrchestratorMarker(t *testing.T) {
 	r.db.Set(rules.PathOrchestratorRulesMarker(), ahead)
 	puts := r.db.RulePuts()
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update")
 	if err == nil {
 		t.Fatalf("fugaro update deployed this binary's rules over a newer orchestrator generation:\n%s", out)
 	}
@@ -1133,7 +1255,8 @@ func TestUpdateEndsTheSpinnerLineBeforeTheProjectHeader(t *testing.T) {
 	isolateState(t)
 	_ = r
 
-	out, err := executeConsole(t, "update", "--yes")
+	fakeTerminal(t)
+	out, err := executeConsole(t, "update")
 	if err != nil {
 		t.Fatalf("fugaro update failed (exit %d): %v\n%s", ExitCode(err), err, out)
 	}
@@ -1193,8 +1316,9 @@ func TestUpdateNeverSendsThePersonToUpdateFromInsideIt(t *testing.T) {
 			if tc.noClaude {
 				noClaudeOnPath(t)
 			}
+			fakeTerminal(t)
 
-			out, errOut, err := executeStdin(t, "", "update", "--yes")
+			out, errOut, err := executeStdin(t, "", "update")
 			if err != nil {
 				t.Fatalf("fugaro update failed (exit %d): %v\n%s\n%s", ExitCode(err), err, out, errOut)
 			}

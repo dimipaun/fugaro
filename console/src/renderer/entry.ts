@@ -267,6 +267,18 @@ import {
 import type { GraphScreen, GraphScope } from './screens/graph'
 import type { GraphTab } from './graph/model'
 import {
+  MOVE_CANCEL_CLASS,
+  MOVE_CONFIRM_CLASS,
+  MOVE_OPEN_CLASS,
+  MOVE_TARGET_CLASS,
+  MOVE_TARGET_UNCHOSEN,
+  MOVE_UNDO_CLASS,
+  MOVE_UNREADABLE_WORD,
+  MoveFlow,
+  moveAnswerOf,
+} from './graph/move'
+import type { MoveRequest, MoveSheet } from './graph/move'
+import {
   SKEW_HEADLINES,
   hidesView,
   launchSupported,
@@ -822,6 +834,38 @@ export function linkBridgeFrom(fugaro: unknown): LinkBridge {
 }
 
 /**
+ * MoveBridge is the Graph screen's one write: `roadmap.move`, a task of the
+ * project's roadmap record dragged into another release or out of every one
+ * (GV3.2, design section 5.1 rule 14). It is a bridge of its own rather than a
+ * member of `ReadBridge` for `LaunchBridge`'s reason: that interface is the reads
+ * a screen is drawn from, and this one **writes the record every console of this
+ * project reads**.
+ *
+ * **It is handed two ids and one boolean.** `node` is the graph document key of
+ * the row that was dragged and `toRelease` the record's key for the box it was
+ * dropped on (the empty string for the unassign) -- both ids that document
+ * printed, checked against it in the main process before any word is built -- and
+ * `confirmed` decides which half of the operation runs: absent or false answers
+ * the move's own command line and starts no child, and true runs it, and only if
+ * the argv this console drew is the argv main builds. **No renderer here states a
+ * task id, a release name or a flag**: what the CLI reads is spelled out of the
+ * document the console last read, so a title can never reach a command line.
+ *
+ * It is answered the way the other writes are: a member that is missing or fails
+ * to answer is `null`, and the sheet draws a sentence it could not read rather
+ * than claiming a move. A reply that arrived is one `RoadmapMoveAnswer` (a
+ * preview, or §6.24's outcome for the confirmed half).
+ */
+export interface MoveBridge {
+  moveRoadmapTask(args: Readonly<Record<string, unknown>>): Promise<unknown>
+}
+
+export function moveBridgeFrom(fugaro: unknown): MoveBridge {
+  const ask = (name: string, args: Readonly<Record<string, unknown>>): Promise<unknown> => askMember(fugaro, name, args)
+  return { moveRoadmapTask: (args) => ask('moveRoadmapTask', args) }
+}
+
+/**
  * valueOf is one form control's value, read through the node behind a drawn
  * element: a screen's interfaces carry text and attributes and never an input's
  * `value`, so this is the one place this file reads a value *as* a value rather
@@ -1102,6 +1146,28 @@ export interface WheelEventLike {
   readonly deltaY: number
   readonly ctrlKey: boolean
   preventDefault(): void
+}
+
+/**
+ * DragEventLike is the one field of a drag this file reads: the transfer a
+ * browser writes a drag's payload into, which is what makes a drag start at all
+ * (`dragstart`), and which the move reads nothing back out of -- the task a drag
+ * carries is held in the entry's own closure, so nothing a page writes into a
+ * transfer can name a task (`wireGraph`).
+ *
+ * Structural, for the reason `KeyEventLike` is: a case drives this under
+ * `vitest` with an object it built, and a real `DragEvent` satisfies it.
+ */
+export interface DragEventLike {
+  readonly dataTransfer?: { setData(type: string, value: string): void } | null
+  preventDefault(): void
+}
+
+/** dragOn attaches a drag listener to a real node, with the same cast and for the
+ * same reason `keydownOn` documents: `Element`'s own signature types the argument
+ * as `Event`, which declares none of the fields these handlers read. */
+function dragOn(node: Element, name: string, listener: (event: DragEventLike) => void): void {
+  node.addEventListener(name, listener as unknown as EventListener)
 }
 
 /** wheelOn attaches a wheel listener to a real node, with the same cast and for
@@ -2902,6 +2968,7 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
     railBridge,
     launchBridge: launchBridgeFrom(scope.fugaro),
     settingsBridge: settingsBridgeFrom(scope.fugaro),
+    moveBridge: moveBridgeFrom(scope.fugaro),
     licenceBridge: licenceBridgeFrom(scope.fugaro),
     linkBridge: linkBridgeFrom(scope.fugaro),
     rows,
@@ -3006,9 +3073,13 @@ interface DashboardDeps {
    * settings-edit plan's C3): the console's second write, and the one that
    * changes a file on disk rather than starting a run. */
   readonly settingsBridge: SettingsBridge
+  /** moveBridge is the Graph screen's own write (`roadmap.move`, GV3.2): the
+   * console's third write, and the one that changes what every other console of
+   * the project is drawn from. */
+  readonly moveBridge: MoveBridge
   /** licenceBridge is the Project tab's licence key (`licence.save`, S2.7): the
-   * console's third write, and the one that keeps a credential the console hands
-   * to every child it spawns. */
+   * console's fourth write, and the one that writes and spawns nothing -- it
+   * keeps a credential the console hands to every child it spawns. */
   readonly licenceBridge: LicenceBridge
   /** linkBridge is the Coordinator's numbers (`link.openPullRequest`, K2a): the
    * one operation that leaves this window, and the only one handed a triple
@@ -3039,7 +3110,7 @@ interface DashboardDeps {
  * figures in it rather than at an empty panel that fills in later.
  */
 async function mountDashboard(deps: DashboardDeps): Promise<void> {
-  const { document, surface, gate, bridge, rail, railBridge, launchBridge, settingsBridge, licenceBridge, linkBridge, wiring, navigator, header } =
+  const { document, surface, gate, bridge, rail, railBridge, launchBridge, settingsBridge, moveBridge, licenceBridge, linkBridge, wiring, navigator, header } =
     deps
   const factory = surface.factory
   const theme = CONSOLE_THEME
@@ -3842,6 +3913,62 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     return classed(tree, BUSY_SLOT_CLASS)[0] ?? null
   }
 
+  /**
+   * moveFlowNow is the move's flow, built on first use.
+   *
+   * **It is the port that makes the fence a fence.** `roadmap.move` is the one
+   * door the flow knocks on, and what this file hands it is the preload surface
+   * and `replyData` -- so a missing bridge, a thrown refusal and an answer this
+   * build cannot read are one shape on the sheet (`MoveRead`), and the flow
+   * itself never reaches a source, a read or a child.
+   *
+   * **One flow lives as long as one installation's screen.** It holds the request
+   * a confirmation is about and the last move the record applied -- which is what
+   * an undo inverts -- and both are facts about the checkout the console is
+   * driving; `forgetLive` drops it with the screen, so a way back is never
+   * offered across two installations.
+   */
+  let moveFlow: MoveFlow | null = null
+  /**
+   * **The two gestures in flight live out here, with the flow, and not inside
+   * `wireGraph`.** Every redraw wires a freshly drawn tree, so a variable
+   * declared in there is a new one per drawing: the key the row's button opened
+   * the sheet for would be gone by the time the select's own change listener --
+   * a listener of the drawing that very redraw made -- read it, and the sheet
+   * would answer nothing whatever a person chose.
+   */
+  let dragging: string | null = null
+  let choosing: string | null = null
+  /**
+   * **moveTurn is which gesture the sheet on screen is the answer to**, and it
+   * lives out here with the two above for the same reason.
+   *
+   * A preview is a child, so its answer lands after whatever the operator did
+   * next: a second drop, another choice from the list, Escape, or the
+   * confirmation of the sheet already up. A drawing made from an answer to a
+   * gesture that is over is the defect this number exists for -- a sheet showing
+   * one release while the flow holds the request for another is a confirmation
+   * that runs what is not drawn -- so every gesture takes a new turn, and a
+   * continuation draws only while its own turn is still the one in hand.
+   */
+  let moveTurn = 0
+  const takeMoveTurn = (): number => {
+    moveTurn += 1
+    return moveTurn
+  }
+  const moveFlowNow = (): MoveFlow => {
+    moveFlow ??= new MoveFlow({
+      move: async (args) => {
+        const { node, toRelease, confirmed } = args
+        const answer = replyData(await moveBridge.moveRoadmapTask({ node, toRelease, confirmed }))
+        if (!answer.ok) return { ok: false, sentence: answer.sentence }
+        const read = moveAnswerOf(answer.data)
+        return read === null ? { ok: false, sentence: MOVE_UNREADABLE_WORD } : { ok: true, answer: read }
+      },
+    })
+    return moveFlow
+  }
+
   /** graphScreenNow is the screen, built on first use. The worker is started
    * here and nowhere else, and `forgetLive` disposes of it. */
   const graphScreenNow = (): GraphScreen => {
@@ -4429,6 +4556,25 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   const FIT_BUTTON: FocusTarget = { classes: ['graph-fit'] }
   const VIEW_BUTTON: FocusTarget = { classes: ['graph-view'] }
 
+  /** CONFIRM_BUTTON, CANCEL_BUTTON, UNDO_BUTTON and TARGET_SELECT are the move
+   * sheet's own four stops (GV3.2). Each is the control the phase it was drawn in
+   * is answered with -- the confirming button while a command line is in hand,
+   * Cancel for every sheet that has no move to run, the way back after the record
+   * applied one, and the select of the boxes while the sheet is choosing -- so
+   * the keyboard lands on the button a person would press, and never on one the
+   * drawing left out. */
+  const CONFIRM_BUTTON: FocusTarget = { classes: [MOVE_CONFIRM_CLASS] }
+  const CANCEL_BUTTON: FocusTarget = { classes: [MOVE_CANCEL_CLASS] }
+  const UNDO_BUTTON: FocusTarget = { classes: [MOVE_UNDO_CLASS] }
+  const TARGET_SELECT: FocusTarget = { classes: [MOVE_TARGET_CLASS] }
+
+  /** moveStop is a record task's own row: the element the sheet was opened from,
+   * where the keyboard goes back when the move is closed or declined. It may not
+   * be in the tree the close draws -- a move that was applied put the row in
+   * another box -- and the row survives that: the key is the document's and the
+   * box it is drawn inside is not part of it. */
+  const moveStop = (key: string): FocusTarget => ({ classes: ['graph-scope-node'], attribute: 'data-key', value: key })
+
   /** stopOf is where the keyboard is, read off a tree the panel holds: the target
    * naming `document.activeElement` when that element is one of the tree's own,
    * and `null` when the keyboard is anywhere else -- another screen, the rail, or
@@ -4763,6 +4909,205 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     if (view !== undefined) {
       surface.nodeOf(view).addEventListener('click', () => {
         redraw(screen.change({ view: screen.current.view === 'graph' ? 'list' : 'graph' }), VIEW_BUTTON)
+      })
+    }
+
+    /**
+     * The move (GV3.2, and design section 5.1 rule 14).
+     *
+     * **The renderer's whole payload is two ids its own drawing put on two
+     * elements**: the row's `data-key` and the target box's `data-release`. This
+     * function never builds a word of a command line and never reads a title --
+     * it hands the pair to the flow, and the sheet it draws is the answer the
+     * main process composed out of the document it checked the pair against.
+     *
+     * **Every gesture ends in the same sheet.** A drop, the row's own button and
+     * the select of the boxes all call `openMove`, which goes to a **preview**
+     * (`confirmed: false`) -- a call that starts no child -- and the sheet that
+     * comes back is what a person confirms or declines. Undo is the flow's
+     * inverse move, previewed the same way, so there is no path from this screen
+     * to a move nobody was shown.
+     */
+    /** drawMove puts one sheet on the drawing -- `null` closes it -- and leaves
+     * the keyboard on the control that sheet is answered with. */
+    const drawMove = (sheet: MoveSheet | null, focus: FocusTarget | null): void => {
+      redraw(screen.change({ move: sheet }), focus)
+    }
+
+    /** openMove previews one move and draws the answer: the reading sheet while
+     * the record is being asked, then the command line it answered with, or the
+     * sentence a refusal came with. **The answer is drawn only while this gesture
+     * is still the current one**: a drop on another box, the list's own choice or
+     * an Escape replaces the sheet, and the reading this call started is then an
+     * answer to a question nobody is asking -- drawn anyway, it is a sheet
+     * showing one move over the request of another, and the confirming click
+     * would run the move the flow holds rather than the one on screen. */
+    const openMove = (node: string, toRelease: string): void => {
+      const mine = takeMoveTurn()
+      choosing = null
+      drawMove({ request: { node, toRelease }, answer: null, sentence: null }, CANCEL_BUTTON)
+      void moveFlowNow()
+        .preview({ node, toRelease })
+        .then((sheet) => {
+          if (mine !== moveTurn || sheet === null) return
+          drawMove(sheet, sheet.answer === null ? CANCEL_BUTTON : CONFIRM_BUTTON)
+        })
+    }
+
+    /** closeMove is Cancel, and the Escape that stands for it: the request is
+     * dropped by the flow, so nothing is sent, and the keyboard goes back to the
+     * row the move was about. A preview still reading is dropped with the request
+     * it was made for -- the answer would otherwise put the sheet back up over
+     * the row a person has just gone back to. */
+    const closeMove = (): void => {
+      takeMoveTurn()
+      const flow = moveFlowNow()
+      const key = choosing ?? flow.pending?.node ?? null
+      flow.decline()
+      choosing = null
+      drawMove(null, key === null ? DRAWING_STOP : moveStop(key))
+    }
+
+    /** confirmMove runs the move the sheet drew -- the flow answers `null` for a
+     * second press, a stale key or a declined sheet, and sends nothing -- and is
+     * followed by a re-read of the drawing, whatever the record answered. A move
+     * it applied leaves the document in hand the one from before it, so the way
+     * back would be refused as stale; a **refused** one is the record saying the
+     * release it holds is not the one this console drew, which leaves the sheet's
+     * own `in` field, the drawing behind it and the `--expect` of every next
+     * move about a record that is no longer there. */
+    const confirmMove = (): void => {
+      const mine = takeMoveTurn()
+      void moveFlowNow()
+        .confirm()
+        .then(async (sheet) => {
+          if (sheet === null || mine !== moveTurn) return
+          const applied = sheet.answer?.outcome?.status === 'applied'
+          drawMove(sheet, applied ? UNDO_BUTTON : CANCEL_BUTTON)
+          await readScope(claim(), graphRead.start())
+          // The sheet is drawn again over the fresh document, and the keyboard
+          // goes to the button that answers it in the light of what the record
+          // said: a reader who confirmed with the keyboard is left on the way
+          // back rather than nowhere.
+          if (mine !== moveTurn) return
+          drawMove(sheet, applied ? UNDO_BUTTON : CANCEL_BUTTON)
+        })
+    }
+
+    /** undoMove is the inverse move, previewed like any other: it does not run
+     * anything, it puts a sheet up. Its answer is dropped while a newer gesture
+     * is in hand, exactly as `openMove`'s is. */
+    const undoMove = (): void => {
+      const mine = takeMoveTurn()
+      void moveFlowNow()
+        .undo()
+        .then((sheet) => {
+          if (mine !== moveTurn || sheet === null) return
+          drawMove(sheet, sheet.answer === null ? CANCEL_BUTTON : CONFIRM_BUTTON)
+        })
+    }
+
+    for (const row of classed(drawn, 'graph-scope-node')) {
+      const key = row.getAttribute('data-key') ?? ''
+      if (row.getAttribute('draggable') !== 'true') continue
+      dragOn(surface.nodeOf(row), 'dragstart', (event) => {
+        // The key is held in this closure and written to the transfer as well:
+        // the transfer is what a browser needs to start a drag at all, and what
+        // the drop below reads is the closure, so the payload of a drag is never
+        // the thing that decides which task moves.
+        dragging = key
+        event.dataTransfer?.setData('text/plain', key)
+      })
+      dragOn(surface.nodeOf(row), 'dragend', () => {
+        dragging = null
+      })
+    }
+
+    /** dropOn makes one element a place a task can be dropped on: a release box,
+     * or the lane's unassigned group -- which is the empty key the operation
+     * declares for taking a task out of every release (D2114). */
+    const dropOn = (element: Drawn, toRelease: string): void => {
+      const node = surface.nodeOf(element)
+      dragOn(node, 'dragover', (event) => {
+        // A drop happens only over a target that said the drag was welcome, and
+        // that answer is also the cursor a person reads as "this box".
+        if (dragging === null) return
+        event.preventDefault()
+      })
+      dragOn(node, 'drop', (event) => {
+        const moved = dragging
+        dragging = null
+        if (moved === null) return
+        event.preventDefault()
+        openMove(moved, toRelease)
+      })
+    }
+    for (const box of classed(drawn, 'graph-scope-box')) {
+      dropOn(box, box.getAttribute('data-release') ?? '')
+    }
+    for (const group of classed(drawn, 'graph-scope-unassigned')) dropOn(group, '')
+
+    for (const button of classed(drawn, MOVE_OPEN_CLASS)) {
+      const key = button.getAttribute('data-key') ?? ''
+      surface.nodeOf(button).addEventListener('click', () => {
+        // The keyboard's way into a move: the sheet opens on the list of boxes
+        // and nothing is asked of the record until one is chosen. It is a gesture
+        // like any other, so it takes the turn: a preview still reading for the
+        // sheet that was up must not draw itself over this one.
+        takeMoveTurn()
+        choosing = key
+        drawMove({ request: null, answer: null, sentence: null }, TARGET_SELECT)
+      })
+    }
+
+    const target = classed(drawn, MOVE_TARGET_CLASS)[0]
+    if (target !== undefined) {
+      surface.nodeOf(target).addEventListener('change', () => {
+        const key = choosing
+        if (key === null) return
+        const chosen = valueOf(surface, target)
+        // The control opens on its own not-yet-chosen option
+        // (`MOVE_TARGET_UNCHOSEN`), which is a value no box key can be and is
+        // not a choice: the sheet stays up with nothing asked of the record,
+        // exactly as it does before anyone has touched the list.
+        if (chosen === MOVE_TARGET_UNCHOSEN) return
+        openMove(key, chosen)
+      })
+    }
+    const confirmButton = classed(drawn, MOVE_CONFIRM_CLASS)[0]
+    if (confirmButton !== undefined) {
+      const node = surface.nodeOf(confirmButton)
+      node.addEventListener('click', () => {
+        confirmMove()
+      })
+      keydownOn(node, (event: KeyEventLike) => {
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          closeMove()
+        }
+      })
+    }
+    const cancelButton = classed(drawn, MOVE_CANCEL_CLASS)[0]
+    if (cancelButton !== undefined) {
+      surface.nodeOf(cancelButton).addEventListener('click', () => {
+        closeMove()
+      })
+    }
+    const undoButton = classed(drawn, MOVE_UNDO_CLASS)[0]
+    if (undoButton !== undefined) {
+      surface.nodeOf(undoButton).addEventListener('click', () => {
+        undoMove()
+      })
+    }
+    const sheet = classed(drawn, 'graph-move')[0]
+    if (sheet !== undefined) {
+      // Escape closes the sheet from wherever the keyboard is inside it, exactly
+      // as it closes the inspector: a confirmation is answered with two buttons
+      // and a key, and Cancel is the one that writes nothing.
+      keydownOn(surface.nodeOf(sheet), (event: KeyEventLike) => {
+        if (event.key !== 'Escape') return
+        event.preventDefault()
+        closeMove()
       })
     }
 
@@ -8364,6 +8709,16 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     // from positions computed for a checkout that is gone.
     graph.screen?.dispose()
     graph.screen = null
+    // And the move in hand is that installation's too: the request a confirm
+    // would send, the answer an undo inverts and the two gestures in flight are
+    // all about the record the console just left -- a drag whose `dragend` never
+    // came would otherwise make the next drop move this installation's key. The
+    // turn is taken as well, so a preview still reading for the old record draws
+    // nothing over the drawing that replaces it.
+    moveFlow = null
+    takeMoveTurn()
+    dragging = null
+    choosing = null
     graph.readAt = 0
     // The scope is the same kind of fact: the plan scope's document belongs to
     // the installation that is gone, so the next one opens on the scope the

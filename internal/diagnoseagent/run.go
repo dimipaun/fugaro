@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -510,8 +511,17 @@ func childSettingsJSON(parent []string) (string, error) {
 // to need it. The proxy and CA variables are here because a machine behind one
 // cannot reach a provider without them; a proxy URL may carry the person's own
 // proxy login, which is theirs and is what the child must present.
+//
+// CLAUDE_CONFIG_DIR is the client's own store, and it is here because a child
+// running on the machine's own login (LocalHandle) has to read that login where
+// this machine keeps it: the store's directory is what the variable decides,
+// and a child without it looks in the default under the home directory and
+// finds no login at all — a diagnosis asked for precisely because the person is
+// logged in here, ending offline instead. It names a directory and carries no
+// value of its own, and the deny payload already names whatever store it points
+// at (childStoresByVar), so the model's own reads are no wider for it.
 var childEnvAllowList = []string{
-	"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TERM", "TZ",
+	"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TERM", "TZ", "CLAUDE_CONFIG_DIR",
 	"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
 	"NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO",
 }
@@ -548,7 +558,9 @@ type Request struct {
 	// Handle is the credential the child is handed, and the only one it has
 	// (F7, T-DG5). A zero Handle is refused: it is a caller that resolved no
 	// credential, and a child started without one would reach its provider on
-	// whatever else the machine holds.
+	// whatever else the machine holds. LocalHandle is the one handle that hands
+	// the child no value: it runs on the login the machine's claude already
+	// holds, which the child reads from the home directory it inherits.
 	Handle Handle
 	// Prompt is the whole prompt, from Prompt(e). It goes to the child on
 	// stdin, and everything in it that is Fugaro's own text is Fugaro's: the
@@ -773,7 +785,28 @@ func Run(ctx context.Context, req Request) (Diagnosis, error) {
 	case !found:
 		return Diagnosis{}, fmt.Errorf("the diagnosis agent exited with code %d without a result event, so it answered nothing", code)
 	case res.IsError:
-		return Diagnosis{}, fmt.Errorf("the diagnosis agent reported an error (%s) and answered nothing", safetext.OneLine(res.Subtype))
+		// claude reports a failed API call (no login, no credit, an
+		// unreachable model) as subtype "success", so the reason is only in
+		// the result text, which can echo account detail and is redacted
+		// like the transcript.
+		//
+		// The subtype is named only when it says something the word "error"
+		// does not. claude's own spelling for a failed call is "success", and
+		// the owner's report of 2026-11-15 is what printing it beside the error
+		// reads as: "the diagnosis agent reported an error (success)", a
+		// sentence that contradicts itself in the one line a person reads for
+		// the answer.
+		msg := "the diagnosis agent reported an error and answered nothing"
+		if sub := safetext.OneLine(res.Subtype); sub != "" && sub != resultSubtypeSuccess {
+			msg = fmt.Sprintf("the diagnosis agent reported an error (%s) and answered nothing", sub)
+		}
+		if why := errorText(res.Text, secrets); why != "" {
+			msg += ": " + why
+		}
+		if notLoggedIn(res.Text) {
+			return Diagnosis{}, fmt.Errorf("%w: %s", ErrNotLoggedIn, msg)
+		}
+		return Diagnosis{}, errors.New(msg)
 	}
 	// The client's own accounting, checked rather than trusted (F14): the
 	// client prices a run against its own estimate of the model, and a run
@@ -798,7 +831,7 @@ func Run(ctx context.Context, req Request) (Diagnosis, error) {
 // confinement or less of a credential than the command promises.
 func (r Request) validate() error {
 	switch {
-	case r.Handle.Secret() == "":
+	case !r.Handle.carries():
 		return fmt.Errorf("a diagnosis is run on one credential and this request carries none: the Handle is the only thing that says which account the child reaches its model on, and a child started without one would fall back on whatever else this machine's environment holds")
 	case r.Prompt == "":
 		return fmt.Errorf("a diagnosis needs the prompt to give the child, and this request carries none")
@@ -865,6 +898,40 @@ func childEnvironment(parent []string, h Handle) []string {
 		}
 	}
 	return append(env, credential...)
+}
+
+// resultSubtypeSuccess is claude's own subtype for a result event, which it
+// writes beside is_error on a failed API call as readily as beside a real
+// answer.
+const resultSubtypeSuccess = "success"
+
+// ErrNotLoggedIn is the diagnosis the machine's own claude refused before any
+// request left it: the client has no login here and says so in its own result
+// text (notLoggedIn) rather than failing an API call. Run wraps it, so a caller
+// reads it with errors.Is and answers with the fix that belongs to its own
+// command — the login the person already has, and not a token this process
+// holds.
+var ErrNotLoggedIn = errors.New("the diagnosis agent is not logged in")
+
+// notLoggedIn reports whether the client's own result text is its refusal for
+// a machine with no login at all ("Not logged in · Please run /login"). Only an
+// is_error result is asked: a client with no credential fails before it reaches
+// a provider, so what it answers here is not a failed call but the absence of
+// one, which is what makes "nothing was sent" true of this case alone.
+//
+// The match is on claude's own words for that state and not on the `/login`
+// hint beside them: the hint is also what an invalid API key is reported with
+// ("Invalid API key · Please run /login"), and that is a credential this
+// process handed the child rather than one the person can log in to.
+//
+// There is no cheaper question to ask first: this tree runs no auth-status
+// subcommand of the client anywhere, and the pinned client's own `--help` is
+// not something a diagnosis reads, so a subcommand it may not have would be a
+// guess — and claude reads an unknown word as the prompt it was given. The
+// result text is therefore the earliest point at which a machine with no login
+// is known, and it is early enough: the client answers it before any call.
+func notLoggedIn(text string) bool {
+	return strings.Contains(strings.ToLower(text), "not logged in")
 }
 
 // isCapSubtype reports whether a result event's subtype is the client saying
@@ -956,4 +1023,12 @@ func answerField(line, name string) (string, bool) {
 // second look rather than the only one (F20).
 func redactOutput(s string, secrets []string) string {
 	return redact.Report(redact.Text(safetext.Text(s, true), secrets))
+}
+
+func errorText(s string, secrets []string) string {
+	s = safetext.OneLine(redactOutput(s, secrets))
+	if r := []rune(s); len(r) > 300 {
+		s = string(r[:300]) + "..."
+	}
+	return s
 }

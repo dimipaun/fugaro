@@ -57,7 +57,7 @@ import (
 // (with a secret, the session has nothing the gate could read), and the Compute
 // stage is `noYes` in the stage table and is not gated (spec §4.2: it
 // provisions money-bearing infrastructure, which is not a plan the gate can
-// bound). A step whose class is Typed is refused by the Converge itself,
+// bound). A step no plan gate may judge is refused by the Converge itself,
 // whatever the plan looked like (D1026), and a step the gate does not admit
 // falls back to its own confirmation, which in a coding agent's session is the
 // refusal it always was.
@@ -94,11 +94,11 @@ import (
 // policy stage's two, the database is this installation's (D1017) and the node
 // is one this binary's own may write over. What the gate may never admit there
 // is a publish that admits more to the group than the node already carries:
-// that step is initflow.Typed (D846) and D1026 admits no plan gate's answer for
-// a Typed step, so the one write that decides who is in the group stays the
-// owner's own word and never a mark's (SEC, rule 1); a coding agent's session
-// is refused the widening whatever the class says, which is the fence D1555
-// puts in the class's place (gateStep).
+// that step is money or permanent (D846) and D1026 admits no plan gate's answer
+// for one, so the one write that decides who is in the group stays the owner's
+// own word and never a mark's (SEC, rule 1); a coding agent's session is
+// refused the widening whatever the gate says, which is the fence D1555 puts in
+// the class's place (gateStep).
 //
 // The policy stage's own two branches that write NO node are outside the gate
 // as well, and they are the ones this map cannot express: D854's bare re-seed
@@ -219,7 +219,7 @@ func (e *initEngine) gateRun(ctx context.Context) error {
 	// The refusal is the user's to read and the run's to stop: it is returned
 	// whole (a user error, exit 1), and nothing after it runs — no stage, no
 	// write, no record.
-	return askDecide(r.w, askFlags{ask: r.o.ask, yes: r.o.yes}, r.gateUnderway(), r.conditions())
+	return askDecide(r.w, askFlags{ask: r.o.ask}, r.gateUnderway(), r.conditions())
 }
 
 // gateable is whether this door has a gate for this run at all. A run whose own
@@ -396,7 +396,7 @@ func restoreAsk(c initflow.Conditions, ask bool) initflow.Conditions {
 // (init_plugin_stage.go) and the lines the review prints about them. It is
 // gateUnderway with --ask struck out, and it is the whole of what the flag does
 // to this door beyond its own line: the steps whose documents the gate judges
-// ask the same question through initflow.GateConfirms (gateStep), which
+// ask the same question through initflow.GateStandsIn (gateStep), which
 // Conditions.Ask answers false to, and the gate's own read, admit and record
 // are untouched either way.
 //
@@ -545,7 +545,6 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 		// about the plan could not be read.
 		return true, &initflow.GatedError{Reason: gateUnreadable, Err: err, Refusal: initflow.GateRefusedUnread}
 	}
-	class := gateClass()
 	// A plan that would retire a project job is refused whatever the verdict
 	// said, and this is the one rule of it that D1545's split does not reach:
 	// the module protects that job from deletion and nothing lifts it, so an
@@ -583,13 +582,13 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 	var conv managedmode.Converge
 	switch {
 	case !verdict.OK:
-		conv = managedmode.ConvergeRefusedWithWarnings(doc, class, managedmode.RuleLines(verdict.Refusals), warnings)
+		conv = managedmode.ConvergeRefusedWithWarnings(doc, managedmode.RuleLines(verdict.Refusals), warnings)
 	case len(warnings) == 0:
-		conv = managedmode.ConvergeAdmitted(doc, class, admittedRules(upgrade, false))
+		conv = managedmode.ConvergeAdmitted(doc, admittedRules(upgrade, false))
 	default:
-		conv = managedmode.ConvergeWarned(doc, class, admittedRules(upgrade, true), warnings)
+		conv = managedmode.ConvergeWarned(doc, admittedRules(upgrade, true), warnings)
 	}
-	m, err := g.g.admit(ctx, class, conv)
+	m, err := g.g.admit(ctx, conv)
 	if err != nil {
 		return true, r.gateRefused(err, doc, verdict, cover, imports)
 	}
@@ -609,7 +608,7 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 	// reach this code — and the verdict M6's helper just built: a gate that
 	// admitted this document replaces the confirmation for this step, and
 	// anything else keeps it.
-	if !initflow.GateConfirms(class, r.conditions(), m) {
+	if !initflow.GateStandsIn(r.conditions(), m) {
 		return false, nil
 	}
 	fmt.Fprintf(r.w, "  %s\n", r.gateProceeded())
@@ -645,12 +644,11 @@ func (s *rulesStage) gateStep(ctx context.Context) (bool, error) {
 	if err != nil {
 		return true, &initflow.GatedError{Reason: gateUnreadable, Err: err, Refusal: initflow.GateRefusedUnread}
 	}
-	class := gateClass()
-	m, err := r.gate.g.admit(ctx, class, managedmode.ConvergeAdmitted(doc, class, rulesAdmittedRules))
+	m, err := r.gate.g.admit(ctx, managedmode.ConvergeAdmitted(doc, rulesAdmittedRules))
 	if err != nil {
 		return true, &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: gateRefusalOf(err)}
 	}
-	if !initflow.GateConfirms(class, r.conditions(), m) {
+	if !initflow.GateStandsIn(r.conditions(), m) {
 		return false, nil
 	}
 	fmt.Fprintf(r.w, "  %s\n", r.gateProceeded())
@@ -701,10 +699,6 @@ func (s *policyMigrateStage) gateStep(ctx context.Context, m *policyMigration) (
 	if !r.gateUnderway() || !m.writesNode() {
 		return false, nil
 	}
-	class := gateClass()
-	if len(m.loosening()) > 0 {
-		class = initflow.Typed
-	}
 	doc := m.payload()
 	if len(doc) == 0 {
 		// A node write with no bytes to write is the stage's own contract
@@ -712,13 +706,21 @@ func (s *policyMigrateStage) gateStep(ctx context.Context, m *policyMigration) (
 		// the one thing this gate must never hand to a write.
 		return true, &initflow.GatedError{Reason: gateUnreadable, Err: errors.New("the policy node this step would publish is empty"), Refusal: initflow.GateRefusedUnread}
 	}
-	conv := managedmode.ConvergeAdmitted(doc, class, policyAdmittedRules)
-	mg, err := r.gate.g.admit(ctx, class, conv)
+	conv := managedmode.ConvergeAdmitted(doc, policyAdmittedRules)
+	if len(m.loosening()) > 0 {
+		// A publish that loosens a ceiling, sets an account-choice key or
+		// writes the project's first node is a step no plan gate judges,
+		// whatever the document looks like (D1026): the record decides who is
+		// admitted to the project, so nothing here stands in for the owner's
+		// own word and nothing is recorded for it.
+		conv = managedmode.ConvergeUnjudged(doc, policyAdmittedRules)
+	}
+	mg, err := r.gate.g.admit(ctx, conv)
 	if err != nil {
 		return true, &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: gateRefusalOf(err)}
 	}
 	marker := agentMarker(os.Getenv, s.e.r.stdinTerminal())
-	if !initflow.GateConfirms(class, r.conditions(), mg) {
+	if !initflow.GateStandsIn(r.conditions(), mg) {
 		// The publish that widens the node is the owner's own step, and the
 		// fence on it is the session's rather than its class's (D1552): a
 		// loosening is what refuses here — m.loosening() is the node's
@@ -746,7 +748,7 @@ func (s *policyMigrateStage) gateStep(ctx context.Context, m *policyMigration) (
 		// inventory is not a verdict about this document either.
 		if len(m.loosening()) > 0 && marker != "" {
 			refused := conv.Refuse()
-			return true, &initflow.GatedError{Reason: refused.Error(), Err: refused, Refusal: initflow.GateRefusedClass}
+			return true, &initflow.GatedError{Reason: refused.Error(), Err: refused, Refusal: initflow.GateRefusedUnjudged}
 		}
 		return false, nil
 	}
@@ -782,27 +784,22 @@ var policyAdmittedRules = []string{
 // said: the record decides who is in the group, so a member this stage adds —
 // and the whole membership, on a workspace that has no published record yet —
 // may only be the owner's own word and never a mark's. A first publish is that
-// class for the policy stage's reason (M3): the document is chosen where none
+// step for the policy stage's reason (M3): the document is chosen where none
 // was, and a session that edited `workspace_members` in the YAML by hand would
 // otherwise publish the group's whole membership behind a mark. Every other
-// publish — a plain rewrite, a migration, a removal — is the ordinary
-// YesOrTyped step the gate may stand in for, which is what the workspaces design
-// says of this write ("it runs under the gate `update` already opens", §6;
-// reconciliation F32 names it the cloud write of the two that the gate ADMITS).
+// publish — a plain rewrite, a migration, a removal — is the ordinary step the
+// gate may stand in for, which is what the workspaces design says of this write
+// ("it runs under the gate `update` already opens", §6; reconciliation F32
+// names it the cloud write of the two that the gate ADMITS).
 //
 // The widening's refusal is read off p.widens and the session's own marker
-// rather than off the class (D1555): the class is the second thing that refuses
-// one, and a fence read off a class the same release deletes would leave the
-// membership unfenced. What a widening therefore still is, class or no class,
-// is a step the gate never admits and a coding agent's session never writes.
+// (D1555): a fence read off a class the same release deletes would have left
+// the membership unfenced. What a widening therefore still is is a step the
+// gate never admits and a coding agent's session never writes.
 func (s *workspaceStage) gateStep(ctx context.Context, p *workspacePublication) (bool, error) {
 	r := s.e.r
 	if !r.gateUnderway() {
 		return false, nil
-	}
-	class := gateClass()
-	if len(p.widens) > 0 {
-		class = initflow.Typed
 	}
 	doc := p.body
 	if len(doc) == 0 {
@@ -811,24 +808,31 @@ func (s *workspaceStage) gateStep(ctx context.Context, p *workspacePublication) 
 		// the one thing this gate must never hand to a write.
 		return true, &initflow.GatedError{Reason: gateUnreadable, Err: errors.New("the workspace node this step would publish is empty"), Refusal: initflow.GateRefusedUnread}
 	}
-	conv := managedmode.ConvergeAdmitted(doc, class, workspaceAdmittedRules)
-	mg, err := r.gate.g.admit(ctx, class, conv)
+	conv := managedmode.ConvergeAdmitted(doc, workspaceAdmittedRules)
+	if len(p.widens) > 0 {
+		// The record decides who is in the group, so a publish that admits a
+		// member — the whole membership on a workspace that has no published
+		// record yet included — is a step no plan gate judges, whatever the
+		// document looks like (D1026): nothing stands in for the owner's own
+		// word and nothing is recorded for it.
+		conv = managedmode.ConvergeUnjudged(doc, workspaceAdmittedRules)
+	}
+	mg, err := r.gate.g.admit(ctx, conv)
 	if err != nil {
 		return true, &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: gateRefusalOf(err)}
 	}
 	marker := agentMarker(os.Getenv, s.e.r.stdinTerminal())
-	if !initflow.GateConfirms(class, r.conditions(), mg) {
+	if !initflow.GateStandsIn(r.conditions(), mg) {
 		// The publish that admits something to the group is the owner's own
-		// step, and the fence on it is the session's rather than its class's
-		// (D1555, the same fence as D1552's): a widening is what refuses here —
-		// p.widens is every write that puts more in the group, the first record
-		// which chooses the whole of it included — and the marker is what asks
-		// it, so the fence keeps refusing a coding agent's session when the
-		// class system goes (D1555's own reason for the fence being this one
-		// and not Typed). The class stays beside it for everything else: it is
-		// what D1026 keeps out of a plan gate's reach, and a step this gate
-		// admits is one the rules above admitted, so what the sentence below
-		// names is the class rule and no rule that passed.
+		// step, and the fence on it is the session's (D1555, the same fence as
+		// D1552's): a widening is what refuses here — p.widens is every write
+		// that puts more in the group, the first record which chooses the whole
+		// of it included — and the marker is what asks it, which is what keeps
+		// refusing a coding agent's session now the class system is gone
+		// (D1555's own reason for the fence being this one). What D1026 keeps
+		// out of a plan gate's reach is the step itself: a widening is one no
+		// plan gate may judge, so the sentence below names that rule and no
+		// rule that passed.
 		//
 		// The sentence is the coding agent's alone, and the person at a real
 		// terminal on a managed project is not asked for the typed name (the
@@ -845,7 +849,7 @@ func (s *workspaceStage) gateStep(ctx context.Context, p *workspacePublication) 
 		// inventory is not a verdict about this document either.
 		if len(p.widens) > 0 && marker != "" {
 			refused := conv.Refuse()
-			return true, &initflow.GatedError{Reason: refused.Error(), Err: refused, Refusal: initflow.GateRefusedClass}
+			return true, &initflow.GatedError{Reason: refused.Error(), Err: refused, Refusal: initflow.GateRefusedUnjudged}
 		}
 		return false, nil
 	}
@@ -1138,16 +1142,6 @@ func (r *initRun) gateDeleteLeft(reason string, doc []byte, verdict managedmode.
 		Commands: []string{selfCommand() + " " + r.o.doorName() + " " + strings.Join(args, " ")},
 	}, true
 }
-
-// gateClass is the confirmation class of a step the gate judges: these are the
-// ordinary applies of their stages, asked with confirmOrdinary, and an
-// ordinary step is initflow.YesOrTyped in both doors (D12's answer of
-// 2026-10-20). It is a function rather than a literal at each call site so
-// there is one place to read what class the gate was asked about, and it is
-// deliberately not r.stepClass(): that one answers for the Firestore
-// database's location, which is Typed in one door and not a step this gate
-// ever sees.
-func gateClass() initflow.ConfirmClass { return initflow.YesOrTyped }
 
 // admittedRules is what the record says admitted the plan: the rules Gate ran,
 // in the order it ran them (internal/managed/plan.go), each one true of the

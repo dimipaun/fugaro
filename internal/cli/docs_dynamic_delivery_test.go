@@ -21,9 +21,12 @@ import (
 // register-wide backstop TestChecklistChecksAreGuarded is deliberately absent).
 //
 // Checks 510 and 511 are the two this work holds, and this is the task that
-// wrote them: both are OWNER-RUN and NOT RUN -- writing a check is not running
-// it (DS0.3 is the run), so either half that read as a result would be a live
-// claim nobody made. The folder's files, the numbers they claim and the links
+// wrote them. Both were written unrun -- writing a check is not running it
+// (DS0.3 is the run), so either half that read as a result would have been a
+// live claim nobody made -- and both have since been run by the owner: 510 on
+// 2026-11-11 and 2026-11-12, 511 on 2026-11-12. The pins below are on the two
+// registrations and not on what the runs found, which is the register's and
+// the two steps files' to state. The folder's files, the numbers they claim and the links
 // between them are pinned here as well, because this folder is where a reader
 // learns what the two checks settle (U3 and F30 for 510, U4 for 511) and which
 // decision each one gates (DS2.2 and DS1.5).
@@ -120,7 +123,7 @@ func TestDynamicDeliveryDocsPinned(t *testing.T) {
 	}{{
 		number: "510", ran: true, steps: check510Steps, stepsRef: check510StepsLink, script: check510Script, scriptTest: check510ScriptTest,
 	}, {
-		number: "511", steps: check511Steps, stepsRef: check511StepsLink, script: check511Script, scriptTest: check511ScriptTest,
+		number: "511", ran: true, steps: check511Steps, stepsRef: check511StepsLink, script: check511Script, scriptTest: check511ScriptTest,
 	}} {
 		row := checkRow(register, c.number)
 		if row == "" {
@@ -191,16 +194,12 @@ func TestDynamicDeliveryDocsPinned(t *testing.T) {
 	// 5. The steps files: each names its own script and that script's test, links
 	// back to the register and to this plan, and says no agent runs any step.
 	for _, c := range []struct {
-		path, number, script, scriptTest string
+		path, number, script, scriptTest, ran string
 	}{
-		{check510Steps, "510", check510Script, check510ScriptTest},
-		{check511Steps, "511", check511Script, check511ScriptTest},
+		{check510Steps, "510", check510Script, check510ScriptTest, "The re-run of 2026-11-12"},
+		{check511Steps, "511", check511Script, check511ScriptTest, "**RUN 2026-11-12"},
 	} {
 		steps := flattenDoc(readDoc(t, c.path))
-		stepsState := "**NOT RUN"
-		if c.number == "510" {
-			stepsState = "The re-run of 2026-11-12"
-		}
 		for _, want := range []string{
 			c.script,
 			c.scriptTest,
@@ -209,7 +208,7 @@ func TestDynamicDeliveryDocsPinned(t *testing.T) {
 			"--dry-run",
 			"bash " + c.script,
 			"No agent runs any step of it",
-			stepsState,
+			c.ran,
 		} {
 			if !strings.Contains(steps, want) {
 				t.Errorf("%s does not say %q: a steps file that leaves out its own script, the register it records into or the fact that no agent runs it is a file a reader cannot follow", c.path, want)

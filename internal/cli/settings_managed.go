@@ -90,18 +90,18 @@ import (
 // marks are read, and the gcpProject a mark read is asked about may never come
 // from content the session can write (spec §1, spec §7).
 //
-// Why the class the gate judges under is YesOrTyped and not the edit's own.
-// The edit's Typed form is the class no session writes and the owner's own hand
-// keeps, and it stays the fence's (settingsEdit.editClass): nothing here
-// touches it. What the
-// gate adds is the refusal the session reads instead of the marker's own — and
-// the typed edit is refused BY A RULE of the gate (settingsOwnerOnlyRule), so
-// the session reads which declaration it tried to move rather than "run this
-// yourself". Both halves hold at once: an edit the Typed class reserves
-// is refused by the gate, and an edit the gate admitted without noticing the
-// typed form would still be refused by the fence, because the fence decides
-// `Typed` on its own (D1026's rule is asked there and is not restated here).
-// No Typed edit can therefore be admitted by any path.
+// Why the gate judges the edit's ordinary form and not the widening one. The
+// edit's Typed form is the form no session writes and the owner's own hand
+// keeps, and it stays the fence's (settings_write.go): nothing here touches it.
+// What the gate adds is the refusal the session reads instead of the marker's
+// own — and the widening edit is refused BY A RULE of the gate
+// (settingsOwnerOnlyRule), so the session reads which declaration it tried to
+// move rather than "run this yourself". Both halves hold at once: an edit the
+// widening form reserves is refused by the gate, and an edit the gate admitted
+// without noticing the widening form would still be refused by the fence,
+// because the fence decides `Typed` on its own (D1026's rule is asked there and
+// is not restated here). No widening edit can therefore be admitted by any
+// path.
 //
 // Why a repository-scoped ordinary write reads nothing in a coding agent's
 // session. Today's fence does not apply inside a repository (`--layer repo`
@@ -312,7 +312,7 @@ func settingsManagedStep(ctx context.Context, lc *localcfg.Config, selPath strin
 		return initflow.Managed{}, managedGate{}, nil
 	}
 	conv := settingsManagedVerdict(ctx, &gate, marker, target, key, typed, why, old, newData)
-	m, err := gate.admit(ctx, initflow.YesOrTyped, conv)
+	m, err := gate.admit(ctx, conv)
 	if err == nil {
 		return m, gate, nil
 	}
@@ -385,9 +385,9 @@ func settingsManagedVerdict(ctx context.Context, g *managedGate, marker string, 
 	}
 	judge(settingsUnjudgedRule, settingsUnjudgedRefusal(old, newData, target.keyPath))
 	if len(refused) > 0 {
-		return managedmode.ConvergeRefused(newData, initflow.YesOrTyped, refused)
+		return managedmode.ConvergeRefused(newData, refused)
 	}
-	return managedmode.ConvergeAdmitted(newData, initflow.YesOrTyped, applied)
+	return managedmode.ConvergeAdmitted(newData, applied)
 }
 
 // The rules, in the words the refusal and the audit record carry. Each is a

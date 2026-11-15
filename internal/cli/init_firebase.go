@@ -171,7 +171,7 @@ func (r *initRun) applyRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd 
 			return nil, remote(err)
 		}
 		if !changed {
-			fmt.Fprintf(r.w, "No changes: the %s root matches the plan.\n", root)
+			fmt.Fprintf(r.stageDetail(), "No changes: the %s root matches the plan.\n", root)
 			stop = r.o.planOnly
 			return nil, nil
 		}
@@ -645,22 +645,22 @@ func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, i
 // confirmLocation is the Firestore database's own confirmation: its location
 // is permanent, so the note below is the whole of what a person reads before
 // it is created. The location is typed nowhere (T7, docs/no-prompt-policy):
-// what answers for the step is confirmNow — --ask's own question, --yes where
-// the class takes it, or the person at their own terminal, who reads the note
-// and is asked nothing. --non-interactive, --json, a pipe and a coding agent
-// still confirm it never, and the class is still D12's answer of 2026-10-20
-// (stepConfirmation, stepClass): the location is Typed in `setup`, the door
-// that asks for it as a first-time question, and YesOrTyped in `update`, which
-// meets it as a step of a stage it owns. Where nothing can confirm it the step
-// is the user's, with the one-line route.
+// what answers for the step is confirmNow — --ask's own question, or the person
+// at their own terminal, who reads the note and is asked nothing.
+// --non-interactive, --json, a pipe and a coding agent still confirm it never,
+// and the door is still D12's answer of 2026-10-20 (stepConfirmation): `setup`
+// asks the location as a first-time question and an answer a run carries never
+// reaches it, while `update` meets it as a step of a stage it owns, so a run
+// opened on an answer the person already gave is covered there. Where nothing
+// can confirm it the step is the user's, with the one-line route.
 func (r *initRun) confirmLocation() error {
 	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s): the Firestore database is created in %s, and a database's location can NEVER be changed.\n", r.projectName, infra.FirestoreLocation)
-	switch r.stepConfirmation(r.stepClass()) {
+	switch r.stepConfirmation(r.o.door == updateDoor.name) {
 	case stepLeave:
 		lf := promptLeft(initflow.Firebase, "run the command below: it prints the note about the Firestore database's permanent location and then creates the database, asking you nothing", r.o.doorName(), "--firebase-project", quoteWord(r.o.firebaseProject()))
 		return &initflow.NeedsYouError{Left: lf}
 	case stepByYes:
-		fmt.Fprintln(r.w, "  confirmed by --yes")
+		fmt.Fprintln(r.w, "  confirmed by this run's own answer")
 		return nil
 	}
 	ok, err := r.confirmNow("create the Firestore database in " + infra.FirestoreLocation + ", a location that can never be changed?")

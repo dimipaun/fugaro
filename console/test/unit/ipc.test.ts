@@ -131,7 +131,7 @@ import {
 } from '../../src/main/installations'
 import { MAX_LICENCE_KEY_LENGTH } from '../../src/main/licence'
 import { APP_ENTRY_URL } from '../../src/main/protocol'
-import { SPAWN_KIND_FOR, SPAWN_COMMANDS, argvFor } from '../../src/main/spawn'
+import { MAX_ARGUMENT_LENGTH, SPAWN_KIND_FOR, SPAWN_COMMANDS, argvFor, isSafeArgumentValue } from '../../src/main/spawn'
 import {
   BRIDGE_VERSION,
   CONSOLE_BRIDGE_KEY,
@@ -683,6 +683,24 @@ const CLI_COMMANDS: readonly CliCommand[] = [
   // `mutating` row would name a command this surface's never list does not
   // refuse.
   { command: 'settings', kind: 'allowed', where: 'internal/cli/settings.go:64' },
+  // **The roles group, classified by what each of its six words does** (RS5
+  // and RS7, the roles-and-scopes plan). `user ls` is the one the surface
+  // drives: the installation's grants as `fugaro user ls --json` prints them,
+  // which is the Members view. The other five each change who may do what --
+  // `grant` and `revoke` write the installation's grants node, `add` and `rm`
+  // rewrite this machine's own copy of the two IAM lists (F42), and `offboard`
+  // drops every roster grant naming the member and has the intake delete the
+  // secrets they stored (DS2.4, D1935) -- so all five are `mutating` and all
+  // five are on `NEVER_REACHABLE` below, both as a command and as a word of
+  // `user`. The group is deliberate and not incidental: a command path that
+  // reads its own subcommand from the renderer is the shape section 3.4 rule 2
+  // refuses.
+  { command: 'user ls', kind: 'allowed', where: 'internal/cli/user_ls.go:135' },
+  { command: 'user grant', kind: 'mutating', where: 'internal/cli/user_grant.go:101' },
+  { command: 'user revoke', kind: 'mutating', where: 'internal/cli/user_grant.go:101' },
+  { command: 'user add', kind: 'mutating', where: 'internal/cli/user.go:129' },
+  { command: 'user rm', kind: 'mutating', where: 'internal/cli/user.go:134' },
+  { command: 'user offboard', kind: 'mutating', where: 'internal/cli/offboard.go:106' },
   // **The console's one write** (design §5.1 rule 11, D22). `run` was the
   // first writer in this list and the one no argv could drive; since V2.5.1a it
   // is a command the allow-list admits, in exactly one argv, so it is `allowed`
@@ -764,17 +782,20 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * is still `runs ls --json` and rule 6's row carries the two words in its
  * parenthetical.
  *
- * **It is twenty-seven argvs, and this surface is the same twenty-seven.** (The
+ * **It is twenty-nine argvs, and this surface is the same twenty-nine.** (The
  * enumeration below numbers twenty-two of them: CG9a's `graph --json` landed
  * after it was written and sits between `plan status --json` and
  * `coordinator status --from-store --all --json`, and this plan's
  * `managed status --json` and `project policy show --json` are the two rows
  * after `coordinator intents --all --json`.) CG9b's `graph --watch --json` is
  * the twenty-sixth and sits directly under the read it is a word longer than,
- * and the subscriptions plan's S4.2 is the twenty-seventh and the last: the
+ * and the subscriptions plan's S4.2 is the twenty-seventh: the
  * Project tab's seat estimate, `seats --json`, whose one fixed flag is the
  * `--json` of every other read here and whose row declares no argument at all --
- * the 90 days it is measured over are the command's own.
+ * the 90 days it is measured over are the command's own. The roles-and-scopes
+ * plan's RS7 is the twenty-ninth and the last: the Members view's read,
+ * `user ls --json`, whose one argument is optional and is taken out here by the
+ * convention above (`--repo R` is the word the schema's `repo` key becomes).
  * The thirteenth is
  * `config list --json`, the rail's own read (owner's design ruling of
  * 2026-10-25): until that ruling there were twelve here and it was pinned where
@@ -801,13 +822,17 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * that tab carries (`src/main/spawn.ts`'s `takesProject`) -- so what is left is
  * the command and its one fixed flag. The twenty-second is that read's own
  * write (`settings`, the settings-edit plan's C3, D1103), and it is the one row
- * here that fixes **no** flag: the dry run's `--dry-run --json` and a confirmed
- * write's `--yes`, which both write phases carry, are the phase the main process
- * decides (`SETTINGS_EDIT_PHASE_WORDS`), not words this table gives a renderer,
- * so what is left is the command alone. S4.2's `seats --json` is the
- * twenty-seventh and the last, and it follows this convention too: the
+ * here that fixes **no** flag: the dry run's `--dry-run --json` and the
+ * confirmed write's nothing at all are the phase the main process decides
+ * (`SETTINGS_EDIT_PHASE_WORDS`), not words this table gives a renderer, so what
+ * is left is the command alone. S4.2's `seats --json` is the
+ * twenty-seventh, and it follows this convention too: the
  * installation's own `--project` and `[--config]` are main-process state, so the
- * row here is the command and its one fixed flag. (`licence.read` never appears
+ * row here is the command and its one fixed flag. **GV3.2's
+ * `coordinator roadmap move --json` is the twenty-eighth**: the
+ * console's third write, and the first whose two arguments are keys of a
+ * document the console read rather than words a caller spells. (`licence.read`
+ * never appears
  * in this list at all, and needs no numbering: it is the one row in
  * `CONSOLE_OPERATIONS` that carries no command, so there is no argv of a child
  * for a renderer to fill.)
@@ -856,6 +881,18 @@ const DESIGN_ARGV: readonly string[] = [
   // out -- and with no argument to fill, no caller word can reach the child
   // (`src/main/spawn.ts`'s empty `args`).
   'coordinator intents --all --json',
+  // The record's move (the dependency-graph plan's GV3.2). This row is the
+  // command and its one fixed flag: the task is the operation's positional
+  // argument and `--to` is its release argument, so this file's convention
+  // takes both out, and `--expect` is no renderer's word at all -- it is the
+  // release the graph document recorded for the node (`src/main/spawn.ts`'s
+  // `roadmapMove`), the compare-and-set GV3.1 pins. `--json` stays because
+  // nothing fills it: it is a word of the command path, the same one every read
+  // here carries, and it is what makes the write answer §6.24's document
+  // (`status`, `reason`, `current`) rather than sentences. The design's own row
+  // states the whole argv, `<plan>/<task> --to <release> --expect <release>
+  // --json` and all.
+  'coordinator roadmap move --json',
   // The managed state and its audit trail (the managed screens' plan's CM4,
   // D1472 to D1477). The row is the whole argv: the command takes no positional
   // word (`cobra.NoArgs`), and the two project flags are main-process state
@@ -894,6 +931,16 @@ const DESIGN_ARGV: readonly string[] = [
   // project flags are main-process state, exactly as they are for every other
   // read of this tab.
   'seats --json',
+  // The Members view's read (the roles-and-scopes plan's RS7). The row's one
+  // argument is the repository a role is asked about, and this file's convention
+  // takes what an argument fills out -- `--repo R` is the word the schema's
+  // `repo` key becomes -- so the row is the command's own two words and its one
+  // fixed flag. The argument is optional, which is the one thing this row has
+  // that no other repository-bearing row here has: the command answers about the
+  // stored pairs and this machine's own pattern matches when no repository is
+  // named. The design's own row states the whole argv,
+  // `user ls --json --repo R --project <name> [--config <path>]` and all.
+  'user ls --json',
   // The settings read (the settings-edit plan's C1). The row fixes the command
   // and `--json`; the two project flags are main-process state rather than
   // arguments, which is this file's convention for taking them out, and the row
@@ -1081,7 +1128,15 @@ describe("the allow-list's read-only invariant", () => {
       expect(row.why.length, row.value).toBeGreaterThan(20)
       expect(row.where.length, row.value).toBeGreaterThan(5)
     }
-    const values = NEVER_REACHABLE.map((row) => `${row.shape}:${row.value}`)
+    // A row's identity is its shape, the command it is about and its value: an
+    // `argv` row refuses **one word of one command**, so `models`'s `add` and
+    // `user`'s `add` are two rows and not one written twice (the roles-and-scopes
+    // plan's RS7 is what made the distinction load-bearing -- until then no two
+    // argv rows shared a word). Leaving the command out of the key would have
+    // reported those two as a duplicate; including it still catches the
+    // duplicate this check exists for, which is the same word refused twice under
+    // the same command.
+    const values = NEVER_REACHABLE.map((row) => `${row.shape}:${row.command ?? ''}:${row.value}`)
     expect(new Set(values).size).toBe(values.length)
   })
 
@@ -1197,6 +1252,66 @@ describe("the allow-list's read-only invariant", () => {
         },
       ]),
     ).toThrow(/models\.add drives add/)
+  })
+
+  it('reaches no `user` word but `ls`, and refuses each of the five writes in both shapes', () => {
+    // **The user group's fence** (the roles-and-scopes plan's RS7). `fugaro
+    // user ls --json` is the one word of this group the console may drive --
+    // the Members view's read -- and the group's other five words each change
+    // who may do what, so the table draws them in the two shapes the models
+    // group's fence is drawn in: a `command` row per write and an `argv` row
+    // per word. Both are read back here in an argv that could actually be
+    // spawned, because the checks above read a row's `command` and never its
+    // `value`: a typo there (`grant` for `grnat`), or a dropped row, would
+    // leave the half of the fence a command row cannot see unguarded while
+    // every test above stayed green.
+    const refusedBy = (command: string, flags: readonly string[]): string | null =>
+      isNeverReachable({ command, flags })?.value ?? null
+
+    expect(CONSOLE_OPERATIONS.filter((operation) => operation.name === 'members.list').map(argvOf)).toEqual([
+      'user ls --json',
+    ])
+    expect(refusedBy('user ls', ['--json'])).toBeNull()
+    expect(refusedBy('user ls', ['--json', '--project', 'chosen'])).toBeNull()
+    // The read's one argument is a repository *value*, and the table refuses
+    // words: the CLI is what validates the repository, and a pattern in the
+    // flag is its own refusal.
+    expect(refusedBy('user ls', ['--json', '--repo', 'example-owner/example-repo'])).toBeNull()
+
+    for (const word of ['grant', 'revoke', 'add', 'rm', 'offboard'] as const) {
+      expect(
+        NEVER_REACHABLE.filter((row) => row.shape === 'command' && row.value === `user ${word}`),
+        word,
+      ).toHaveLength(1)
+      expect(
+        NEVER_REACHABLE.filter(
+          (row) => row.shape === 'argv' && row.command === 'user' && row.value === word,
+        ),
+        word,
+      ).toHaveLength(1)
+      // The command path the design's never list names...
+      expect(refusedBy(`user ${word}`, ['--json']), word).toBe(`user ${word}`)
+      // ...the same word spelled into a longer command path...
+      expect(refusedBy(`user ls ${word}`, ['--json']), word).toBe(word)
+      // ...and into the flags, which is the half a command row cannot see.
+      expect(refusedBy('user ls', ['--json', word]), word).toBe(word)
+    }
+
+    // The whole-table control: an operation driving a `user` write cannot be
+    // added to the surface at all, and the refusal names it.
+    expect(() =>
+      assertReachableSurface([
+        ...CONSOLE_OPERATIONS,
+        {
+          name: 'user.grant',
+          method: 'grantRole',
+          command: 'user grant',
+          flags: ['--json'],
+          summary: 'a write this console must not have',
+          args: [],
+        },
+      ]),
+    ).toThrow(/user\.grant drives user grant/)
   })
 
   it('drives no command whose argv carries a never-table flag', () => {
@@ -1366,12 +1481,13 @@ describe('the never-reachable table', () => {
 
   it('refuses the lapse\'s column on a row that spawns nothing', () => {
     // The lapse's refused class is a column of the row (`refusedAfterLapse`,
-    // subscriptions plan S6.2, design §3.2): the two operations a lapsed
-    // installation loses are the launch and the settings write, and both spawn a
-    // command. A row that spawns **nothing** answers out of this process, and
-    // those answers are the design's kept set -- the reads, the console's own
-    // surface, and the key screen, which §5.6 keeps ungated as the way out of
-    // the lapse -- so a table that refused one of them fails closed here, at
+    // subscriptions plan S6.2, design §3.2): the three operations a lapsed
+    // installation loses are the launch, the settings write and GV3.2's record
+    // move, and all three spawn a command. A row that spawns **nothing** answers
+    // out of this process, and those answers are the design's kept set -- the
+    // reads, the console's own surface, and the key screen, which §5.6 keeps
+    // ungated as the way out of the lapse -- so a table that refused one of them
+    // fails closed here, at
     // registration, rather than at the operator.
     const withheldScreen: readonly ConsoleOperation[] = [
       ...CONSOLE_OPERATIONS,
@@ -1514,6 +1630,13 @@ describe('the never-reachable table', () => {
 // The argument schemas
 // ---------------------------------------------------------------------------
 
+/** RELEASE_KEY is one release box key as the record builds it: a 64-character
+ * lowercase hex digest (`coordinator.ReleaseID`, contract §6.22). It is invented
+ * here, and the operation's grammar is all that reads it -- whether the record
+ * actually holds this box is `src/source/cli.ts`'s membership check, against the
+ * graph document that source read. */
+const RELEASE_KEY = '03a3b740aae4f8a889a7db9ed9665f6170fc5124121da0634cc2746207ed01df'
+
 /** WELL_FORMED is one accepted payload per operation. The mapped type is why a
  * new operation with no entry here is a compile error, and the table is what
  * keeps the refusal tables honest: a validator that refused everything would
@@ -1561,6 +1684,16 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   // command's own fixed word and not a field here, which is why there is no
   // `all: true` and why the pin below refuses every key.
   'coordinator.intents': {},
+  // The move's two keys and its confirmation (the dependency-graph plan's
+  // GV3.2). `node` is a graph document key -- `source:id`, contract §6.22, and
+  // the record's own task id is the qualified `<plan>/<task>` (D2111) -- and
+  // `toRelease` is one of the record's box keys, a 64-character lowercase hex
+  // digest (`coordinator.ReleaseID`), or the empty string for the unassign.
+  // There is **no task id, no release name and no `--expect`** here: those three
+  // words are the main process's, spelled out of the graph document it read
+  // (`src/main/spawn.ts`'s `roadmapMove`), so a renderer has no field for any of
+  // them -- which the pin below reads back key by key.
+  'roadmap.move': { node: 'coordinator:GV/GV3.2', toRelease: RELEASE_KEY, confirmed: false },
   // The empty payload twice more: the two managed reads take no argument at all
   // either (the managed screens' plan's CM4), so what a renderer may say to them
   // is nothing -- not the project, not a generation and not a day. The project
@@ -1625,6 +1758,12 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   // and the two tables it prints are its own words -- there is no window, no
   // project and no day here, which the pin below reads back key by key.
   'seats.read': {},
+  // The one optional key: the repository a role is asked about (the
+  // roles-and-scopes plan's RS7). Absent is the state the view starts in -- the
+  // stored pairs and a pattern's matches on this machine -- so the empty payload
+  // is well formed, and the value is a canonical `owner/name` rather than the
+  // pattern a grant's scope may hold.
+  'members.list': { repo: 'acme/app' },
 }
 
 const RUN_ID = '20261016-121029-4a1b'
@@ -2133,6 +2272,48 @@ describe('the argument schemas', () => {
     }
   })
 
+  it('pins `members.list`’s one key, and that it is optional and a repository', () => {
+    // **RS7's read is the group's one reachable argv** (the roles-and-scopes
+    // plan, roles.md D691(b)): `fugaro user ls --json`, and nothing else under
+    // `fugaro user` -- its other five words (`grant`, `revoke`, `add`, `rm`,
+    // `offboard`) each change who may do what and each is on the never table.
+    // So the claim below is narrower than a schema's and it is the important
+    // one: what a renderer may say to this read is **one repository, or
+    // nothing**.
+    //
+    // The two halves of that, both security claims rather than tidiness ones:
+    // the **repository** is the canonical `owner/name` this surface's other
+    // repository arguments are, so a *pattern* -- which is what a grant's scope
+    // holds, and the one shape that would let a caller widen what the read is
+    // about -- is refused by `REPOSITORY_RE` before a child exists; and it is
+    // **optional**, because the command has a state of its own without it (the
+    // stored pairs, and the repositories of this machine a pattern matches), so
+    // an absent key is a real state and not an unfilled one. The project flags
+    // come from the screened context and never from a payload, which the loop
+    // below reads back.
+    const operation = operationFor('members.list')
+    expect(operation.command).toBe('user ls')
+    expect(operation.flags).toEqual(['--json'])
+    expect(operation.args.map((spec) => `${spec.key}:${spec.kind}:${String(spec.required)}`)).toEqual([
+      'repo:repository:false',
+    ])
+    // Named and absent are both accepted -- the two states the view has.
+    expect(validateArguments('members.list', {}).ok).toBe(true)
+    expect(validateArguments('members.list', WELL_FORMED['members.list']).ok).toBe(true)
+    for (const key of ['project', 'config', 'member', 'role', 'scope', 'pattern', 'json']) {
+      const decision = validateArguments('members.list', { [key]: 'x' })
+      expect(decision.ok, `members.list accepted ${key}`).toBe(false)
+      expect(decision.ok ? '' : decision.reason).toBe(`members.list takes no ${key}`)
+    }
+    // A pattern is not a repository: the scope grammar a grant uses
+    // (`github/acme/*`) is refused by this kind's own rule.
+    for (const value of ['acme/*', 'github/acme/*', 'acme', '*']) {
+      const decision = validateArguments('members.list', { repo: value })
+      expect(decision.ok, `members.list accepted the pattern ${value}`).toBe(false)
+      expect(decision.ok ? '' : decision.reason).toBe('repo must be a repository as owner/name')
+    }
+  })
+
   it('pins `settings.edit`’s three keys, which are the whole of what a write may send', () => {
     // **C3's write is the second operation here whose subject is a document**
     // (the settings-edit plan's C3, D1103), so its payload is the whole of what
@@ -2146,7 +2327,8 @@ describe('the argument schemas', () => {
     //     layer -- which is what keeps an edit from being pointed at a layer
     //     the window did not draw;
     //   - **no phase word**: a screen chooses neither `--dry-run`, nor
-    //     `--json`, nor `--yes`. Those are `SETTINGS_EDIT_PHASE_WORDS`'
+    //     `--json`, nor a write's (there is none). Those are
+    //     `SETTINGS_EDIT_PHASE_WORDS`'
     //     (`src/main/spawn.ts`), decided by the main process from the dry run's
     //     own classification, and the row declares no flag at all -- which is
     //     the one place it differs from every read beside it;
@@ -2286,6 +2468,117 @@ describe('the argument schemas', () => {
       const decision = validateArguments(operation.name, { repo: 'acme/\ud800app', url: 'https://github.com/\ud800' })
       expect(decision.ok, operation.name).toBe(false)
     }
+  })
+})
+
+describe('the roadmap move’s schema (GV3.2)', () => {
+  it('is two ids and a boolean, and the ids are held to key grammars', () => {
+    // `roadmap.move` is the console's third write (`fugaro coordinator roadmap
+    // move <plan>/<task> --to <release|none> --expect <release|none> --json`,
+    // contract §6.25). **A renderer names no word of that command line**: `node`
+    // is the document key the drawing carries on the row it dragged,
+    // `toRelease` is the record's key for the box it was dropped on (or the
+    // empty string for the unassign), and `--expect` is no argument here at all
+    // -- it is the release the graph document the console last read recorded for
+    // the task (`src/main/spawn.ts`'s `expectFlag`).
+    expect(operationFor('roadmap.move').command).toBe('coordinator roadmap move')
+    expect(operationFor('roadmap.move').flags).toEqual(['--json'])
+    expect(operationFor('roadmap.move').method).toBe('moveRoadmapTask')
+    // The one column that makes the move a write a lapse takes away, exactly as
+    // it takes the launch's and the settings edit's.
+    expect(operationFor('roadmap.move').refusedAfterLapse).toBe(true)
+    expect(operationFor('roadmap.move').args.map((spec) => [spec.key, spec.kind, spec.required])).toEqual([
+      ['node', 'roadmapNode', true],
+      ['toRelease', 'roadmapRelease', true],
+      ['confirmed', 'flag', false],
+    ])
+    // **`toRelease` is required and the empty string is a value**: an absent
+    // argument would be "the caller said nothing", and the empty string is "the
+    // record holds no assignment for this task" (D2114) -- a reading a caller
+    // who read the document may state. The word behind it is the main process's
+    // (`none`), so the record's own word never comes from a renderer.
+    expect(validateArguments('roadmap.move', { node: 'coordinator:plans/x/T1' }).ok).toBe(false)
+    expect(validateArguments('roadmap.move', { node: 'coordinator:plans/x/T1', toRelease: '' }).ok).toBe(true)
+    // **`confirmed` is `false` by default and the state a caller reaches by
+    // forgetting is the one that writes nothing** -- it is the launch's
+    // `visible` read the other way round.
+    expect(
+      validateArguments('roadmap.move', { node: 'coordinator:plans/x/T1', toRelease: '' }).ok &&
+        validateArguments('roadmap.move', {
+          node: 'coordinator:plans/x/T1',
+          toRelease: RELEASE_KEY,
+          confirmed: true,
+        }).ok,
+    ).toBe(true)
+    expect(validateArguments('roadmap.move', WELL_FORMED['roadmap.move']).ok).toBe(true)
+
+    // The node key is an **id and not a word**: the grammar is the shape a
+    // document key can be, and a payload carrying a space, a newline, a quote or
+    // a key of another shape is refused here before any child exists -- the
+    // identity of the task is the source's question, asked against the last
+    // document it read. (A leading dash is admitted, and it is harmless for the
+    // reason the whole value is: it never becomes a word of an argv.)
+    for (const node of ['', 'a b', 'a#b', 'a\nb', 'a\u0000b', 'a"b', 'a'.repeat(MAX_ARGUMENT_LENGTH + 1), 7, true, null, ['a']]) {
+      const decision = validateArguments('roadmap.move', { node, toRelease: '' })
+      expect(decision.ok, `roadmap.move accepted the node ${JSON.stringify(node)}`).toBe(false)
+      if (node === '' || node === 'a b' || node === 'a#b' || node === 'a"b') {
+        expect(decision.ok ? '' : decision.reason).toBe('node must be a node key of the graph the console last read')
+      }
+    }
+    // ...and the release is the record's opaque key, 64 lowercase hex, or the
+    // empty string. `none` -- the CLI's own word for the unassign -- is refused
+    // here like any other string: the spelling is the main process's, and a
+    // renderer that could name it would be naming a word of an argv.
+    for (const toRelease of ['none', RELEASE_KEY.toUpperCase(), RELEASE_KEY.slice(1), `${RELEASE_KEY}0`, 'x', 7, null, {}]) {
+      const decision = validateArguments('roadmap.move', { node: 'coordinator:plans/x/T1', toRelease })
+      expect(decision.ok, `roadmap.move accepted the release ${JSON.stringify(toRelease)}`).toBe(false)
+      if (typeof toRelease === 'string' && toRelease.length <= 64) {
+        expect(decision.ok ? '' : decision.reason).toBe('toRelease must be a release key of the record, or empty for no release')
+      }
+    }
+    // The boolean is a boolean: a screen that sent the string would be sending a
+    // word, and the flag kind refuses it.
+    for (const confirmed of ['true', 1, 'yes', {}, []]) {
+      const decision = validateArguments('roadmap.move', {
+        node: 'coordinator:plans/x/T1',
+        toRelease: RELEASE_KEY,
+        confirmed,
+      })
+      expect(decision.ok, `roadmap.move accepted confirmed=${JSON.stringify(confirmed)}`).toBe(false)
+    }
+    // The refusal is this schema's own key list, by name: the two words a
+    // renderer must not be able to state are the ones the operation does not
+    // declare.
+    for (const key of ['expect', 'task', 'plan', 'title', 'from', 'to', 'json', 'project', 'config', 'dir', 'repo']) {
+      const decision = validateArguments('roadmap.move', { ...WELL_FORMED['roadmap.move'], [key]: 'x' })
+      expect(decision.ok, `roadmap.move accepted a ${key}`).toBe(false)
+      expect(decision.ok ? '' : decision.reason, key).toBe(`roadmap.move takes no ${key}`)
+    }
+  })
+
+  it('admits no node key longer than the argv element the move would spell', () => {
+    // **The two bounds are one number.** The word a node key selects is the
+    // document's own `id`, emitted as the positional, and every argv element is
+    // held to `MAX_ARGUMENT_LENGTH` (`src/main/spawn.ts`) -- while the key itself
+    // is held to `MAX_ROADMAP_NODE_LENGTH` here. A schema that admitted a longer
+    // key would let a person select a task this console then refuses to spell,
+    // with a sentence about the value's *alphabet* rather than its length -- so
+    // the boundary either side of the guard is pinned here, both ways round: what
+    // the schema admits, the guard passes, and one character past it neither
+    // does.
+    const longest = 'a'.repeat(MAX_ARGUMENT_LENGTH)
+    const past = `${longest}a`
+    expect(isSafeArgumentValue(longest), 'the guard and this case disagree about the bound').toBe(true)
+    expect(validateArguments('roadmap.move', { node: longest, toRelease: '' }).ok).toBe(true)
+    expect(isSafeArgumentValue(past)).toBe(false)
+    const decision = validateArguments('roadmap.move', { node: past, toRelease: '' })
+    expect(decision.ok).toBe(false)
+    // And the refusal names the length, because that is the whole of what is
+    // wrong with the key: a sentence about the alphabet would be about a value
+    // that spells every character of it correctly.
+    expect(decision.ok ? '' : decision.reason).toBe(
+      `node is longer than ${String(MAX_ARGUMENT_LENGTH)} characters`,
+    )
   })
 })
 
@@ -2814,7 +3107,7 @@ describe('the spend read’s arguments', () => {
  * table's order -- and it is the frozen list the plan asks for: it is spelled
  * here rather than read back from `EXPOSED_OPERATIONS`, because a test that
  * compared the table with itself would hold for a table that had just gained a
- * channel. The claim is "these thirty-eight, and no others".
+ * channel. The claim is "these forty, and no others".
  *
  * Task 2.4 asserted the twelve and said the spend controls widened nothing;
  * Task 3.3 added the thirteenth (`startup.compatibility` / `getCompatibility`,
@@ -2893,8 +3186,8 @@ describe('the spend read’s arguments', () => {
  * second write, rule 12) and left the other thirty exactly where they were. It
  * is next to `settings.read`, whose own row names the layer this one writes to,
  * and it is the first operation here whose argv depends on a **phase** the main
- * process decides (the dry run's `--dry-run --json`, a write's `--yes`, which
- * both write phases carry) rather than on a flag the row fixes -- which is why
+ * process decides (the dry run's `--dry-run --json`, a write's nothing at all)
+ * rather than on a flag the row fixes -- which is why
  * its `flags` is empty and why its three arguments are the whole of what a
  * renderer may say. **The graph plan's CG9a added the thirty-second**
  * (`graph.read` / `graphRead`: the dependency graph as one versioned document,
@@ -2950,6 +3243,58 @@ describe('the spend read’s arguments', () => {
  * (`src/main/spawn.ts`'s `flag: null`): `visible: false` is how the Graph tab
  * says it has gone away, and all the main process can do with it is stop the
  * child.
+ *
+ * **The dependency-graph plan's GV3.2 added the thirty-ninth** (`roadmap.move` /
+ * `moveRoadmapTask`: the Graph screen's drag -- one task of the project's
+ * roadmap record into a release box, or out of one, `fugaro coordinator roadmap
+ * move <plan>/<task> --to <release> --expect <release> --json`) and left the
+ * other thirty-eight exactly where they were. It is next to `coordinator.intents`
+ * because the record it writes is the one the Graph draws, and it is the
+ * surface's **third write** after V2.5.1a's launch and C3's settings edit. Three
+ * things make it unlike the two writes before it. **Its words are the main
+ * process's end to end**: a renderer names two *keys* (`node`, `toRelease`) and
+ * nothing else, `src/main/ipc.ts` holds each to a grammar, and `src/source/cli.ts`
+ * admits only keys the graph document this installation last read listed
+ * (finding F21) -- so a key no read listed is refused before a child exists, and
+ * the caller cannot spell a task, a release or the compare-and-set into an argv.
+ * **It answers a preview and a write both**: `confirmed` is its third argument
+ * and the **fourth on this surface that reaches no word of any argv** --
+ * `graph.watch`'s `visible` is the third -- so a call without it is the exact
+ * command line and no child, and the write is spawned only when its plan builds
+ * the line that preview answered. **And its answer is a document rather than a
+ * sentence** (`--json`, contract §6.24/§6.25): the request's id and what the
+ * record did with it, `applied`, `refused`, `failed` or `pending`.
+ *
+ * **The roles-and-scopes plan's RS7 added the fortieth** (`members.list` /
+ * `listMembers`: the Members view's read of the installation's grants, `fugaro
+ * user ls --json`) and left the other thirty-nine exactly where they were. It
+ * is appended here for the reason every row above was: what the task added must
+ * be visible as a diff. It is next to `licence.read` and `seats.read`, the
+ * surface's two other reads of a section rather than of a run, and three things
+ * about it are its own:
+ *
+ *   - **It is the second row here that reaches a command *group* whose other
+ *     words are refused** -- `models.list` reached the `models` group first, in
+ *     console 0.119.0. `fugaro user` has six subcommands and the console drives
+ *     one: `grant`, `revoke`, `add`, `rm` and `offboard` each change who may do
+ *     what, and each is on this file's never table as a command and as a word
+ *     of `user` -- so `user ls --json` is the group's whole reach, and a second
+ *     row under `user` would have to be argued against those five.
+ *   - **Its one argument is optional, and the read has a state of its own
+ *     without it.** `--repo R` does not filter one answer here, it narrows the
+ *     question: without it the document is the installation's stored pairs,
+ *     with the repositories of this machine each pattern matches, and with it
+ *     the role each person holds in one repository. Optional arguments are not
+ *     new -- `plan.status`'s `all` and `graph.read`'s `source` are two, and
+ *     `live.watch`, `budget.show`, `runs.list` and `accounts.inventory` each
+ *     carry an optional `--repo` too -- but every one of those narrows a list
+ *     or a feed this surface already draws, and none of them changes what the
+ *     read is about.
+ *   - **The word a renderer fills is a repository and never a pattern.** A
+ *     grant's *scope* is a pattern, and a pattern is exactly the value that
+ *     would widen what the read is about; the `repository` kind refuses one
+ *     before a child exists, and the patterns that are stored arrive in the
+ *     document.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['live.watch', 'subscribeLive'],
@@ -2989,6 +3334,12 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['coordinator.status', 'coordinatorStatus'],
   ['coordinator.show', 'coordinatorShow'],
   ['coordinator.intents', 'coordinatorIntents'],
+  // The record's move (the dependency-graph plan's GV3.2), appended for the
+  // reason every row above was: what the task added must be visible as a diff.
+  // It is the surface's **third write**, the first whose two caller-named
+  // arguments are ids of a document the console read rather than words a caller
+  // spells, and the fourth argument here that reaches no word of any argv.
+  ['roadmap.move', 'moveRoadmapTask'],
   ['managed.status', 'managedStatus'],
   ['policy.show', 'policyShow'],
   ['run.launch', 'launchRun'],
@@ -3004,6 +3355,12 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   // running thing -- a count of people -- and it is not withheld in a reduced
   // mode, because its document carries no dollar of any kind.
   ['seats.read', 'readSeats'],
+  // The Members view's read (the roles-and-scopes plan's RS7), appended for the
+  // reason every row above was. It is one of the two rows here whose command is
+  // a word of a group this console otherwise may not touch at all -- the other
+  // is `models.list` -- and its one argument, the repository a role is asked
+  // about, is optional.
+  ['members.list', 'listMembers'],
 ]
 
 /**
@@ -3034,7 +3391,7 @@ export function surfaceOffences(proposed: readonly (readonly [string, string])[]
 }
 
 describe('the frozen list of operations the preload exposes', () => {
-  it('is exactly these thirty-eight, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
+  it('is exactly these forty, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
     expect(EXPOSED_OPERATIONS).toEqual(SHIPPED_SURFACE)
     expect(surfaceOffences(EXPOSED_OPERATIONS)).toEqual([])
     expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
@@ -3051,11 +3408,11 @@ describe('the frozen list of operations the preload exposes', () => {
     // unmutated surface is asserted clean first.
     expect(surfaceOffences(SHIPPED_SURFACE)).toEqual([])
 
-    // A thirty-ninth channel: what each task added must stay one row, and the
+    // A forty-first channel: what each task added must stay one row, and the
     // next task that adds a read cannot do it quietly.
-    const thirtyNinth = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
-    expect(thirtyNinth).toContain('fleet.report: a channel this console does not ship')
-    expect(thirtyNinth).toContain('39 rows, and this console ships 38')
+    const fortyFirst = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
+    expect(fortyFirst).toContain('fleet.report: a channel this console does not ship')
+    expect(fortyFirst).toContain('41 rows, and this console ships 40')
 
     // A write verb, which the allow-list forbids outright: it is refused here
     // for the same reason, one step earlier than `assertReachableSurface`.
@@ -3069,7 +3426,7 @@ describe('the frozen list of operations the preload exposes', () => {
       SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
     )
     expect(withoutTheNewRow).toContain('startup.compatibility: not on the surface at all')
-    expect(withoutTheNewRow).toContain('37 rows, and this console ships 38')
+    expect(withoutTheNewRow).toContain('39 rows, and this console ships 40')
     expect(
       surfaceOffences([
         ...SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
@@ -3084,8 +3441,8 @@ describe('the frozen list of operations the preload exposes', () => {
     )
   })
 
-  it('is frozen, and hands the window a bridge with the thirty-eight methods and nothing else', () => {
-    // The bridge the window is handed: the thirty-eight methods and the names,
+  it('is frozen, and hands the window a bridge with the forty methods and nothing else', () => {
+    // The bridge the window is handed: the forty methods and the names,
     // with no `invoke`, no channel and no method of its own.
     const bridge = createConsoleBridge(fakeRenderer())
     expect(Object.keys(bridge).sort()).toEqual(
@@ -4259,7 +4616,7 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
 
   it('lets every other operation through, so a reduced console is still a console', async () => {
     const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
-    // The non-vacuity half: thirty-one of the surface's thirty-eight operations,
+    // The non-vacuity half: thirty-three of the surface's forty operations,
     // all of them reachable in a reduced mode (the handshake is the one the loop
     // skips and its own test covers; `installation.current`, Task 3.4b, is among
     // the nineteen, because a reduced console's header still names its
@@ -4318,8 +4675,21 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     // no cap anywhere in its document for the reduced mode to withhold -- the
     // seats are a contract pricing rule and not a figure of this installation's
     // spend -- and withholding it would take a panel away from a reduced console
-    // for no figure's sake.
-    expect(THE_OPEN_OPERATIONS.length).toBe(31)
+    // for no figure's sake. **`roadmap.move` (GV3.2) is the thirty-second**, and
+    // it is here for `settings.edit`'s reason and one of its own: the operation
+    // is not in `REDUCED_VIEW_OPERATIONS`, so a reduced console answers it -- and
+    // what it answers with, on a call that leaves `confirmed` out, is the move's
+    // **preview**, which spawns nothing at all. Its document carries no dollar
+    // and no cap either: a release box is repository state, exactly as
+    // `managed.status`'s two marks are.
+    //
+    // **`members.list` (the roles-and-scopes plan's RS7) is the thirty-third**,
+    // and it is not even a near miss: the document is a roster -- people, roles
+    // and scopes -- and no field of it is money, so there is nothing for the mode
+    // to withhold, and a reduced console is precisely the one whose operator may
+    // need to see who still holds a role on the installation they are trying to
+    // bring back.
+    expect(THE_OPEN_OPERATIONS.length).toBe(33)
     expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {
       const reply = await asCallable(
