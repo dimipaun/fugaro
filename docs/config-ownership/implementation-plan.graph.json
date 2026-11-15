@@ -850,7 +850,7 @@
         "needs": "N1"
       },
       "integration": "I1",
-      "reason": "N3's test asserts the published node holds the written value and needed only the carrier field names, not the reconcile"
+      "reason": "N3's test publishes a member the node already carries and needed only the carrier field names, not the reconcile N4 writes"
     }
   ],
   "contract_changes": [
