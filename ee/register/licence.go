@@ -1163,9 +1163,23 @@ func licenceRefresh(cmd *cobra.Command, o *licenceRefreshOptions) error {
 // The order the two writes are made in is the one that leaves this state rather
 // than its mirror: a key whose secret is not in the container cannot renew at
 // all, while a container a version ahead is undone by writing the pair again.
+//
+// The sentence is the one a person's two commands need, and the job's own
+// failure says something else about the same state (licenceJobHalfWritten):
+// what the next run of the job does with it is not what `refresh` does.
 func licenceHalfWritten(lc *localcfg.Config, remedy string) string {
-	return fmt.Sprintf("the renewal secret is in the container %s and the key it belongs to is not in the project, so the two are not a pair yet and nothing can renew until they are: %s",
-		safetext.Field(licenceRenewalSecretID(lc.Name)), remedy)
+	return fmt.Sprintf("%s, so the two are not a pair yet and nothing can renew until they are: %s",
+		licencePairApart(lc), remedy)
+}
+
+// licencePairApart is the state above, named in one place so that both writers
+// of a pair say the state itself the same way: the renewal secret is a version
+// of the installation's container and the key it belongs to is not in the
+// project. What the state means for the next run is what each sentence adds
+// around it, and that is not the same for a person's command and for the job.
+func licencePairApart(lc *localcfg.Config) string {
+	return fmt.Sprintf("the renewal secret is in the container %s and the key it belongs to is not in the project",
+		safetext.Field(licenceRenewalSecretID(lc.Name)))
 }
 
 // licenceRenewRequest calls the licence server's renewal route once (K2.3's
