@@ -1,0 +1,832 @@
+{
+  "schema_version": 3,
+  "plan": "docs/config-ownership/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "C1",
+      "title": "the writer and after-write contract",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/settings/writer.go",
+          "internal/settings/writer_test.go",
+          "internal/cli/after_write.go",
+          "internal/cli/after_write_stub.go",
+          "docs/contracts/config-ownership.md"
+        ]
+      },
+      "kind": "contract",
+      "stubs": [
+        "internal/cli/after_write_stub.go"
+      ]
+    },
+    {
+      "id": "T1",
+      "title": "the writers table of what works today and the executing conformance test",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/writers_table.go",
+          "internal/cli/writer_conformance_test.go",
+          "internal/cli/testdata/writer_gaps.golden"
+        ]
+      }
+    },
+    {
+      "id": "W1",
+      "title": "the resolver: default layer by merge rule and the agent project spelling",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/settings_set.go",
+          "internal/cli/settings_layer_default_test.go"
+        ]
+      }
+    },
+    {
+      "id": "W2",
+      "title": "per-stage governance rows, the project default and the agent fence",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/settings/registry.go",
+          "internal/cli/settings_set.go",
+          "internal/cli/settings_stage_test.go",
+          "internal/settings/registry_stage_test.go"
+        ]
+      }
+    },
+    {
+      "id": "W3",
+      "title": "a refusal names the writer and the working spelling",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/settings_set.go",
+          "internal/cli/settings_set_test.go",
+          "internal/cli/settings_refusal_test.go"
+        ]
+      }
+    },
+    {
+      "id": "R1",
+      "title": "registry rows and the right owner for the fields that have none",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/settings/registry.go",
+          "internal/settings/registry_new_rows_test.go",
+          "schemas/settings.schema.json"
+        ]
+      }
+    },
+    {
+      "id": "N1",
+      "title": "local carriers for the node-only blocks and the additive reconcile in buildProjectPolicy",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/localcfg/localcfg.go",
+          "internal/localcfg/cascade_carrier_test.go",
+          "internal/cli/project_cmd.go",
+          "internal/cli/project_reconcile_test.go"
+        ]
+      }
+    },
+    {
+      "id": "N2",
+      "title": "an installation at the previous version converges through update",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/update_reconcile_converge_test.go",
+          "internal/cli/testdata/node_reconcile/"
+        ]
+      }
+    },
+    {
+      "id": "N3",
+      "title": "the in-process policy stage a semantic command runs after its write",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/write_publish.go",
+          "internal/cli/write_publish_test.go"
+        ]
+      }
+    },
+    {
+      "id": "A1",
+      "title": "pool owner, allowed users and legacy-open, and accounts pool on the shared path",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/accounts_pool.go",
+          "internal/cli/accounts_pool_test.go",
+          "internal/cli/accounts_pool_owner_test.go",
+          "internal/cli/writers_pools.go"
+        ]
+      }
+    },
+    {
+      "id": "A2",
+      "title": "crafts and grades access and a repository's claude accounts",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/accounts_craft.go",
+          "internal/cli/accounts_craft_test.go",
+          "internal/cli/writers_craft_access.go",
+          "internal/cli/accounts.go"
+        ]
+      }
+    },
+    {
+      "id": "M1",
+      "title": "models use writes every role and every layer",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/models_use.go",
+          "internal/cli/models_use_test.go",
+          "internal/cli/models_use_roles_test.go",
+          "internal/cli/writers_models_use.go"
+        ]
+      }
+    },
+    {
+      "id": "M2",
+      "title": "models provider and price writers",
+      "run": null,
+      "version": null,
+      "size": 2.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/models_provider.go",
+          "internal/cli/models_provider_test.go",
+          "internal/cli/writers_providers.go",
+          "internal/cli/models.go"
+        ]
+      }
+    },
+    {
+      "id": "M3",
+      "title": "rigor set reaches the repository layer",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/rigor.go",
+          "internal/cli/rigor_repo_layer_test.go",
+          "internal/cli/writers_rigor.go"
+        ]
+      }
+    },
+    {
+      "id": "M4",
+      "title": "security paths writer",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/rigor_security.go",
+          "internal/cli/rigor_security_test.go",
+          "internal/cli/writers_security.go",
+          "internal/cli/rigor.go"
+        ]
+      }
+    },
+    {
+      "id": "K1",
+      "title": "the credentials cascade writer and the generic allowlist flip",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/accounts_cascade.go",
+          "internal/cli/accounts_cascade_test.go",
+          "internal/cli/settings_set.go",
+          "internal/cli/settings_set_test.go",
+          "internal/cli/accounts.go"
+        ]
+      }
+    },
+    {
+      "id": "K2",
+      "title": "the binaries writer over the allow rule's carrier",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/project_binaries.go",
+          "internal/cli/project_binaries_test.go",
+          "internal/cli/project_cmd.go"
+        ]
+      }
+    },
+    {
+      "id": "L1",
+      "title": "labels for the keys no command writes",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/writers_labels.go",
+          "internal/cli/writers_labels_test.go"
+        ]
+      }
+    },
+    {
+      "id": "I1",
+      "title": "integration: the stub deleted, the conformance test strict, the end-to-end test",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/after_write_stub.go",
+          "internal/cli/writer_conformance_test.go",
+          "internal/cli/testdata/writer_gaps.golden",
+          "internal/cli/config_ownership_e2e_test.go"
+        ]
+      },
+      "kind": "integration"
+    },
+    {
+      "id": "D1",
+      "title": "docs, the working skill and the release notes",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/project-layer.md",
+          "docs/settings-commands/audit.md",
+          "plugin/skills/working/SKILL.md",
+          "docs/releases/",
+          "website/data/release-summaries.yaml"
+        ]
+      }
+    },
+    {
+      "id": "CR1",
+      "title": "amend the writer contract",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/settings/writer.go",
+          "docs/contracts/config-ownership.md"
+        ]
+      },
+      "kind": "contract_change"
+    },
+    {
+      "id": "CR2",
+      "title": "amend the after-write contract",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/after_write.go",
+          "docs/contracts/config-ownership.md"
+        ]
+      },
+      "kind": "contract_change"
+    }
+  ],
+  "edges": [
+    {
+      "task": "T1",
+      "needs": "C1",
+      "reason": "T1 builds against the contract's Writer type and registry"
+    },
+    {
+      "task": "W2",
+      "needs": "W1",
+      "reason": "same file settings_set.go; W2 builds on the resolver W1 changes (one change split in two, so no contract)"
+    },
+    {
+      "task": "W2",
+      "needs": "R1",
+      "reason": "same file registry.go: no level holds two writers; W2 removes the block rows beside the rows R1 adds"
+    },
+    {
+      "task": "W3",
+      "needs": "W2",
+      "reason": "same file settings_set.go; the refusal wording reads rows W2 changes"
+    },
+    {
+      "task": "W3",
+      "needs": "T1",
+      "reason": "the refusal prints the writer table T1 fills; a contract would be the table"
+    },
+    {
+      "task": "N2",
+      "needs": "N1",
+      "reason": "the convergence test runs the reconcile N1 writes"
+    },
+    {
+      "task": "N3",
+      "needs": "C1",
+      "reason": "N3 implements the contract's after-write signature"
+    },
+    {
+      "task": "A1",
+      "needs": "C1",
+      "reason": "registers writers through the contract"
+    },
+    {
+      "task": "A2",
+      "needs": "C1",
+      "reason": "registers writers through the contract"
+    },
+    {
+      "task": "M1",
+      "needs": "C1",
+      "reason": "registers writers through the contract"
+    },
+    {
+      "task": "M2",
+      "needs": "C1",
+      "reason": "registers writers through the contract"
+    },
+    {
+      "task": "M3",
+      "needs": "C1",
+      "reason": "registers writers through the contract"
+    },
+    {
+      "task": "M4",
+      "needs": "C1",
+      "reason": "registers writers through the contract"
+    },
+    {
+      "task": "M4",
+      "needs": "M3",
+      "reason": "same file rigor.go: the subcommand is registered where M3 edits"
+    },
+    {
+      "task": "M4",
+      "needs": "R1",
+      "reason": "the writer's test reads the layer.security rows R1 registers"
+    },
+    {
+      "task": "K1",
+      "needs": "C1",
+      "reason": "registers writers through the contract"
+    },
+    {
+      "task": "K1",
+      "needs": "W3",
+      "reason": "same file settings_set.go: K1 flips the allowlist after the refusal wording is settled"
+    },
+    {
+      "task": "K1",
+      "needs": "R1",
+      "reason": "K1's command writes the credentials rows R1 registers"
+    },
+    {
+      "task": "K1",
+      "needs": "N1",
+      "reason": "K1 writes the carrier fields N1 adds to the local config; a contract for 30 lines of fields would be N1 itself"
+    },
+    {
+      "task": "K1",
+      "needs": "A2",
+      "reason": "same file accounts.go: the cascade command is registered where A2 edits"
+    },
+    {
+      "task": "K2",
+      "needs": "C1",
+      "reason": "registers writers through the contract"
+    },
+    {
+      "task": "K2",
+      "needs": "N1",
+      "reason": "same file project_cmd.go and the carrier N1's reconcile publishes"
+    },
+    {
+      "task": "L1",
+      "needs": "C1",
+      "reason": "registers labels through the contract"
+    },
+    {
+      "task": "I1",
+      "needs": "C1",
+      "reason": "integration waits for the contract and every task it unblocked"
+    },
+    {
+      "task": "I1",
+      "needs": "T1",
+      "reason": "integration waits for the contract and every task it unblocked"
+    },
+    {
+      "task": "I1",
+      "needs": "W1",
+      "reason": "the end-to-end test needs the whole write path in place"
+    },
+    {
+      "task": "I1",
+      "needs": "W2",
+      "reason": "the end-to-end test needs the whole write path in place"
+    },
+    {
+      "task": "I1",
+      "needs": "W3",
+      "reason": "the end-to-end test needs the whole write path in place"
+    },
+    {
+      "task": "I1",
+      "needs": "R1",
+      "reason": "the end-to-end test needs the whole write path in place"
+    },
+    {
+      "task": "I1",
+      "needs": "N1",
+      "reason": "the end-to-end test needs the whole write path in place"
+    },
+    {
+      "task": "I1",
+      "needs": "N2",
+      "reason": "the end-to-end test needs the whole write path in place"
+    },
+    {
+      "task": "I1",
+      "needs": "N3",
+      "reason": "integration waits for the contract and every task it unblocked"
+    },
+    {
+      "task": "I1",
+      "needs": "A1",
+      "reason": "integration waits for the contract and every task it unblocked"
+    },
+    {
+      "task": "I1",
+      "needs": "A2",
+      "reason": "integration waits for the contract and every task it unblocked"
+    },
+    {
+      "task": "I1",
+      "needs": "M1",
+      "reason": "integration waits for the contract and every task it unblocked"
+    },
+    {
+      "task": "I1",
+      "needs": "M2",
+      "reason": "integration waits for the contract and every task it unblocked"
+    },
+    {
+      "task": "I1",
+      "needs": "M3",
+      "reason": "integration waits for the contract and every task it unblocked"
+    },
+    {
+      "task": "I1",
+      "needs": "M4",
+      "reason": "integration waits for the contract and every task it unblocked"
+    },
+    {
+      "task": "I1",
+      "needs": "K1",
+      "reason": "integration waits for the contract and every task it unblocked"
+    },
+    {
+      "task": "I1",
+      "needs": "K2",
+      "reason": "integration waits for the contract and every task it unblocked"
+    },
+    {
+      "task": "I1",
+      "needs": "L1",
+      "reason": "integration waits for the contract and every task it unblocked"
+    },
+    {
+      "task": "D1",
+      "needs": "W1",
+      "reason": "the docs and the skill describe the behaviour this task lands"
+    },
+    {
+      "task": "D1",
+      "needs": "W2",
+      "reason": "the docs and the skill describe the behaviour this task lands"
+    },
+    {
+      "task": "D1",
+      "needs": "W3",
+      "reason": "the docs and the skill describe the behaviour this task lands"
+    },
+    {
+      "task": "D1",
+      "needs": "R1",
+      "reason": "the docs and the skill describe the behaviour this task lands"
+    },
+    {
+      "task": "D1",
+      "needs": "N1",
+      "reason": "the docs and the skill describe the behaviour this task lands"
+    },
+    {
+      "task": "D1",
+      "needs": "A1",
+      "reason": "the docs and the skill describe the behaviour this task lands"
+    },
+    {
+      "task": "D1",
+      "needs": "A2",
+      "reason": "the docs and the skill describe the behaviour this task lands"
+    },
+    {
+      "task": "D1",
+      "needs": "M1",
+      "reason": "the docs and the skill describe the behaviour this task lands"
+    },
+    {
+      "task": "D1",
+      "needs": "M2",
+      "reason": "the docs and the skill describe the behaviour this task lands"
+    },
+    {
+      "task": "D1",
+      "needs": "M3",
+      "reason": "the docs and the skill describe the behaviour this task lands"
+    },
+    {
+      "task": "D1",
+      "needs": "M4",
+      "reason": "the docs and the skill describe the behaviour this task lands"
+    },
+    {
+      "task": "D1",
+      "needs": "K1",
+      "reason": "the docs and the skill describe the behaviour this task lands"
+    },
+    {
+      "task": "D1",
+      "needs": "K2",
+      "reason": "the docs and the skill describe the behaviour this task lands"
+    }
+  ],
+  "decoupling": [
+    {
+      "contract": "C1",
+      "was": {
+        "task": "A1",
+        "needs": "T1"
+      },
+      "integration": "I1",
+      "reason": "needed the writer registry's shape, not the conformance harness"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "A2",
+        "needs": "T1"
+      },
+      "integration": "I1",
+      "reason": "needed the writer registry's shape, not the conformance harness"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "M1",
+        "needs": "T1"
+      },
+      "integration": "I1",
+      "reason": "needed the writer registry's shape, not the conformance harness"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "M2",
+        "needs": "T1"
+      },
+      "integration": "I1",
+      "reason": "needed the writer registry's shape, not the conformance harness"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "M3",
+        "needs": "T1"
+      },
+      "integration": "I1",
+      "reason": "needed the writer registry's shape, not the conformance harness"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "M4",
+        "needs": "T1"
+      },
+      "integration": "I1",
+      "reason": "needed the writer registry's shape, not the conformance harness"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "K1",
+        "needs": "T1"
+      },
+      "integration": "I1",
+      "reason": "needed the writer registry's shape, not the conformance harness"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "K2",
+        "needs": "T1"
+      },
+      "integration": "I1",
+      "reason": "needed the writer registry's shape, not the conformance harness"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "L1",
+        "needs": "T1"
+      },
+      "integration": "I1",
+      "reason": "needed the writer registry's shape, not the conformance harness"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "A1",
+        "needs": "N3"
+      },
+      "integration": "I1",
+      "reason": "needed the after-write signature, not the stage wiring behind it"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "A2",
+        "needs": "N3"
+      },
+      "integration": "I1",
+      "reason": "needed the after-write signature, not the stage wiring behind it"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "M1",
+        "needs": "N3"
+      },
+      "integration": "I1",
+      "reason": "needed the after-write signature, not the stage wiring behind it"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "M2",
+        "needs": "N3"
+      },
+      "integration": "I1",
+      "reason": "needed the after-write signature, not the stage wiring behind it"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "M3",
+        "needs": "N3"
+      },
+      "integration": "I1",
+      "reason": "needed the after-write signature, not the stage wiring behind it"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "M4",
+        "needs": "N3"
+      },
+      "integration": "I1",
+      "reason": "needed the after-write signature, not the stage wiring behind it"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "K1",
+        "needs": "N3"
+      },
+      "integration": "I1",
+      "reason": "needed the after-write signature, not the stage wiring behind it"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "K2",
+        "needs": "N3"
+      },
+      "integration": "I1",
+      "reason": "needed the after-write signature, not the stage wiring behind it"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "T1",
+        "needs": "N3"
+      },
+      "integration": "I1",
+      "reason": "T1's node-store probes call the after-write stage and needed only its signature, not the stage wiring"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "N3",
+        "needs": "N1"
+      },
+      "integration": "I1",
+      "reason": "N3's test asserts the published node holds the written value and needed only the carrier field names, not the reconcile"
+    }
+  ],
+  "contract_changes": [
+    {
+      "change": "CR1",
+      "contract": "C1",
+      "raised_by": "T1",
+      "reason": "the harness may need a per-layer or per-store argv on the Writer, or a store name the contract does not list",
+      "affects": [
+        "A1",
+        "A2",
+        "M1",
+        "M2",
+        "M3",
+        "M4",
+        "K1",
+        "K2",
+        "L1"
+      ]
+    },
+    {
+      "change": "CR2",
+      "contract": "C1",
+      "raised_by": "N3",
+      "reason": "the after-write options may need the refusal sentence helper or the --no-apply word when AP3 lands",
+      "affects": [
+        "A1",
+        "A2",
+        "M1",
+        "M2",
+        "M3",
+        "M4",
+        "K1",
+        "K2"
+      ]
+    }
+  ]
+}

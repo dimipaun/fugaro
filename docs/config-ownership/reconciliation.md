@@ -1,10 +1,10 @@
-# Config ownership: reconciliation (DRAFT, phase 1)
+# Config ownership: reconciliation
 
 `spec.md` as amended by the code and by the owner's answers. Where this file disagrees with `spec.md`,
 this file wins. Checked against `origin/main` at `eddaa041b` on 2026-11-15 (the audit in `audit.md`
 was taken at `3e1b02570`; every claim cited below was re-read at `eddaa041b`).
 
-**Status: draft. No plan is written. Every decision in section 4 has an empty answer cell.**
+**Status: eight decisions answered by the owner on 2026-11-15 (relayed by the coordinator in this conversation); D2608, D2611 and D2612 are NOT answered and stay open with a recommendation; D2613 and D2614 are new and open. The answers approve this reconciliation; the plan beside it approves nothing.**
 Decisions take **D2600-D2639** (highest in use on `main` and in open pull requests' documents: D2551;
 D2600-D2639 are reserved, used or not). Findings are numbered `F1`... within this document, as every
 earlier reconciliation does. Checks: none reserved yet.
@@ -165,51 +165,56 @@ Class: Wrong, Exists, Gap, Rule, Open.
   shared path). **Boundaries:** never edit `.github/workflows/`; no new prompt (`--ask` only, no-prompt
   policy); no secret-shaped literals; new wire fields additive (a field never changes meaning).
 
-## 4. Decisions (all open; answer cells empty)
+## 4. Decisions
 
-Each carries my recommendation, the alternative and its cost.
+Each carries my recommendation, the alternative and its cost. **Answered 2026-11-15 by the owner:**
+D2601-D2607, D2609, D2610. **Not answered (cell empty, recommendation stands, dependent tasks wait):**
+D2608, D2611, D2612, D2613, D2614. A cell marked `recommended` records that the owner took the
+recommendation; none of the nine answers departs from it.
 
 | # | Question | Recommendation | Alternative and cost | Owner's answer |
 | --- | --- | --- | --- | --- |
-| **D2601** | Is this one capability or a map? | **A map of seven modules** (section 7): conformance first, one write path, node publish, then three writer families, then labels and docs. The writer families touch different files and can run in parallel | One capability, two slices: fewer interfaces to settle, but every task reasons over 478 rows and the files collide on `settings_set.go` | |
-| **D2602** | Item 9 against composite-commands: do the semantic commands write the node directly, or through the chain (`policy` stage, pending file, `fugaro apply`)? | **Through the same stage function `update` runs, called in-process as `accounts add` does (`accountsAddStages`), on failure keep the local change and say what is not yet live (composite D1563).** Adopt `--no-apply` and pending when `apply` (AP3) lands | Wait for AP3: composite is parked on no-prompt policy, so this work would stall behind it. Or write the node by a bespoke call: a second path, which item 3 forbids | |
-| **D2603** | Where is the scalar/semantic line for the borderline fields (the audit lists about 60 manual-only keys outside your four concepts: `orchestrator.*`, `issues.nudge_*`, `triage`, `verifier_accounts`, `mobile_allow`, `secret_rotation_days`, `bitbucket_api_roots`, `bitbucket_tokens.*`, `ab.*`, `layer.jobs.*.paused`) | **Scalars and flags go to `settings` (new rows, no new command); `bitbucket_tokens.*` and `secret_*` stay with `secrets`, which gains the missing writes; `mobile_allow` and `orchestrator.decision_model_per_class` go to `settings --add-entry`** | A command per concept (`orchestrator set`, `mobile allow`): more surface, more skill text and docs tests | |
-| **D2604** | How does `governance.stage_timeout.implement` resolve (F1)? | **Concrete stage rows exist at both layers; the unprefixed key defaults to `--layer project` (the owner-level path), a repo write needs `--layer repo` and may only tighten; the four broken block rows are replaced by per-stage rows and `tiers.*` entry rows.** In an agent session a project-layer raise is fenced (composite D1576) | Keep the `layer.` spelling only and make the "no setting has that name" error name it (item 6): one line of code, but the 99% path stays the long spelling | |
-| **D2605** | Default write target (item 7, F17) | **By merge rule: a Tighten (ceiling) key writes the project layer when one exists (else local); a Replace key keeps the repo default; `--layer` always overrides; a layer the key does not have refuses naming the layers it has.** | Require `--layer` whenever a key has more than one layer: explicit, but breaks every skill and the console row that omit it. Cost of recommendation: a behaviour change for scripts that relied on the repo default of a ceiling key | |
-| **D2606** | The `--layer project` spelling for the 17 `agent.*`/`git.*` rows (F9) | **Accept `agent.x --layer project` and map it to `layer.defaults.agent.x` in the one resolver; keep the long spelling working; fix `docs/project-layer.md`** | Remove `project` from those rows' Layers and fix the doc: smaller, but the project default for `agent.*` is then only writable by the long spelling, against item 7 | |
-| **D2607** | The source of truth for node-only blocks (`credentials.*` cascade, node `model_grades`, and crafts/pools/credentials lists) so that "no stale copy survives" (item 9) | **Add a local carrier for each (as AR1 does for `binaries`), so the local config states what the node should hold; publish and `update` copy local to node: silence keeps the node's value, a written value wins, an explicit unset removes; the first reconcile is additive and never deletes a node member the local config does not state; nothing publishes from an agent session** | Writer edits the node only, local has no copy: no new keys or schema, but `update` cannot reconcile what it does not hold, so item 9's second half is empty for these blocks. A mirror (local authoritative) risks wiping hand-made node entries on the first `update` | |
+| **D2601** | Is this one capability or a map? | **A map of seven modules** (section 7): conformance first, one write path, node publish, then three writer families, then labels and docs. The writer families touch different files and can run in parallel | One capability, two slices: fewer interfaces to settle, but every task reasons over 478 rows and the files collide on `settings_set.go` | 2026-11-15: **recommended**: the seven-module map as proposed (`cm-conformance` first; `cm-write-path` and `cm-node-publish` next; then `cm-accounts`, `cm-cascade`, `cm-models`; `cm-docs` last). |
+| **D2602** | Item 9 against composite-commands: do the semantic commands write the node directly, or through the chain (`policy` stage, pending file, `fugaro apply`)? | **Through the same stage function `update` runs, called in-process as `accounts add` does (`accountsAddStages`), on failure keep the local change and say what is not yet live (composite D1563).** Adopt `--no-apply` and pending when `apply` (AP3) lands | Wait for AP3: composite is parked on no-prompt policy, so this work would stall behind it. Or write the node by a bespoke call: a second path, which item 3 forbids | 2026-11-15: **recommended**: the semantic commands call the same `policy` stage `fugaro update` runs, in-process; on failure the local change is kept and the command says it is not yet live (composite D1563). Not waiting for AP3, no bespoke node write. **Amends composite D1566's in-set list** (see section 6): `accounts pool`, `models use`, `rigor set`, `rigor floor` join it. An amendment, not a re-decision. |
+| **D2603** | Where is the scalar/semantic line for the borderline fields (the audit lists about 60 manual-only keys outside your four concepts: `orchestrator.*`, `issues.nudge_*`, `triage`, `verifier_accounts`, `mobile_allow`, `secret_rotation_days`, `bitbucket_api_roots`, `bitbucket_tokens.*`, `ab.*`, `layer.jobs.*.paused`) | **Scalars and flags go to `settings` (new rows, no new command); `bitbucket_tokens.*` and `secret_*` stay with `secrets`, which gains the missing writes; `mobile_allow` and `orchestrator.decision_model_per_class` go to `settings --add-entry`** | A command per concept (`orchestrator set`, `mobile allow`): more surface, more skill text and docs tests | 2026-11-15: **recommended**: scalars and flags get settings rows; `secrets` gains its missing writes; `mobile_allow` and `decision_model_per_class` use `--add-entry`; a command per concept only where the owner already chose one. |
+| **D2604** | How does `governance.stage_timeout.implement` resolve (F1)? | **Concrete stage rows exist at both layers; the unprefixed key defaults to `--layer project` (the owner-level path), a repo write needs `--layer repo` and may only tighten; the four broken block rows are replaced by per-stage rows and `tiers.*` entry rows.** In an agent session a project-layer raise is fenced (composite D1576) | Keep the `layer.` spelling only and make the "no setting has that name" error name it (item 6): one line of code, but the 99% path stays the long spelling | 2026-11-15: **recommended**: per-stage `governance.stage_timeout` rows at both layers; the unprefixed key writes the project layer; a repo write needs `--layer repo` and may only tighten; a project raise is fenced in agent sessions per composite D1576. |
+| **D2605** | Default write target (item 7, F17) | **By merge rule: a Tighten (ceiling) key writes the project layer when one exists (else local); a Replace key keeps the repo default; `--layer` always overrides; a layer the key does not have refuses naming the layers it has.** | Require `--layer` whenever a key has more than one layer: explicit, but breaks every skill and the console row that omit it. Cost of recommendation: a behaviour change for scripts that relied on the repo default of a ceiling key | 2026-11-15: **recommended**: default layer by merge rule (ceilings to the project layer, Replace keys keep the repo default, a wrong layer refuses naming the right ones). Resolves T4 as the owner's choice. |
+| **D2606** | The `--layer project` spelling for the 17 `agent.*`/`git.*` rows (F9) | **Accept `agent.x --layer project` and map it to `layer.defaults.agent.x` in the one resolver; keep the long spelling working; fix `docs/project-layer.md`** | Remove `project` from those rows' Layers and fix the doc: smaller, but the project default for `agent.*` is then only writable by the long spelling, against item 7 | 2026-11-15: **recommended**: `agent.x --layer project` maps to `layer.defaults.agent.x` in the resolver; the long spelling keeps working. |
+| **D2607** | The source of truth for node-only blocks (`credentials.*` cascade, node `model_grades`, and crafts/pools/credentials lists) so that "no stale copy survives" (item 9) | **Add a local carrier for each (as AR1 does for `binaries`), so the local config states what the node should hold; publish and `update` copy local to node: silence keeps the node's value, a written value wins, an explicit unset removes; the first reconcile is additive and never deletes a node member the local config does not state; nothing publishes from an agent session** | Writer edits the node only, local has no copy: no new keys or schema, but `update` cannot reconcile what it does not hold, so item 9's second half is empty for these blocks. A mirror (local authoritative) risks wiping hand-made node entries on the first `update` | 2026-11-15: **recommended**: a local carrier for each node-only block; silence keeps the node value, a written value wins, an explicit unset removes; the first reconcile is additive; nothing publishes from an agent session. |
 | **D2608** | Pool owner, `allowed_users`, `legacy_open` writers (F8) | **`accounts pool add` takes `--owner`, `--allow-user` (repeatable) and `--legacy-open`; an ownerless pool saves locally but refuses to publish with a sentence naming `--owner`** | Default the owner to the signed-in owner: fewer flags, but it grants a spend right by default | |
-| **D2609** | How a refusal names the working spelling (item 6) and where the owner lives (item 4) | **Replace the `Owner` token by a typed writer on the row: the command and the argv template (`fugaro accounts pool add NAME ...`), so the refusal prints the line and the conformance test runs it.** Family map stays for the human sentence | Keep tokens and add a golden table `key -> argv` pinned by a test: cheaper, drifts from the registry | |
-| **D2610** | Shape of the first-task conformance test (D2609 decides the source) | **Executing: for every row, a hermetic fake runs its writer's argv and asserts the key changes in the right store; rows whose store is the cloud (budget database, node-only) are asserted through the fakes in `internal/gcpfake`; a row that names no writer must carry a stated reason label (item 8)** | Structural only (command and flag exist): fast, but passes the 114 misattributions that exist today for the wrong reason | |
+| **D2609** | How a refusal names the working spelling (item 6) and where the owner lives (item 4) | **Replace the `Owner` token by a typed writer on the row: the command and the argv template (`fugaro accounts pool add NAME ...`), so the refusal prints the line and the conformance test runs it.** Family map stays for the human sentence | Keep tokens and add a golden table `key -> argv` pinned by a test: cheaper, drifts from the registry | 2026-11-15: **recommended** (answered together with D2610): a typed writer (command and argv) on each registry row. |
+| **D2610** | Shape of the first-task conformance test (D2609 decides the source) | **Executing: for every row, a hermetic fake runs its writer's argv and asserts the key changes in the right store; rows whose store is the cloud (budget database, node-only) are asserted through the fakes in `internal/gcpfake`; a row that names no writer must carry a stated reason label (item 8)** | Structural only (command and flag exist): fast, but passes the 114 misattributions that exist today for the wrong reason | 2026-11-15: **recommended** (answered together with D2609): an executing conformance test. |
 | **D2611** | Labels for the no-writer keys (item 8) | **Three labels in the owner vocabulary G12 started: `plumbing` (setup/update write it), `fake-endpoint` (test-only; setup never writes `endpoints.*`, to be verified in F18), `file` (a key in a named file nobody edits; each needs a one-line reason or becomes a settings row)** | One label `manual`: fails item 8's "stated reason" | |
 | **D2612** | Sequencing against open pull requests that touch the same files | **Start with the conformance test and the pure registry/spelling tasks (no overlap); hold node-publish and the `binaries.*` rows until #2782 (AR1) merges; hold writer-family tasks that touch `settings_set.go` or `accounts_rm.go` until composite AP5/AP6 are decided (section 6)** | Build all now and rebase: faster, and each of #2782, #2753, #2732 touches `project_cmd.go` or `localcfg.go` | |
+| **D2613** | Names of the new semantic commands (the owner chose the concepts, not the spellings): crafts' and grades' access, a repository's `claude_accounts`, the credentials cascade, `binaries`, providers and prices, security paths | **Under the families that exist, in the audit's own words: `fugaro accounts craft set NAME --access X`, `fugaro accounts grade set strong\|strongest --access X`, `fugaro accounts repo add REPO ACCOUNT`, `fugaro accounts cascade set [--fallback ...]` (the `credentials.*` block), `fugaro project binaries allow\|deny\|max-bytes` (over binary-allow-rule's carrier), `fugaro models provider set\|rm`, `fugaro models price set`, `fugaro rigor security add\|rm`; `models use` and `rigor set` gain the missing roles and `--layer`** | Fewer, wider commands (`fugaro craft set --model --access`): one name per concept but a command that spans two families and two owners' fences | |
+| **D2614** | The sentence a semantic command prints when its in-process policy stage fails (composite D1563 names `fugaro apply`, which AP3 has not built) | **Name `fugaro update` until AP3 lands, through one sentence helper AP3 later repoints; no other file carries the wording** | Name `fugaro apply` now: a command that does not exist in the sentence the user trusts most | |
 
-## 5. Open tensions with the nine direction items
+## 5. Tensions with the nine direction items
 
-None of these re-asks an answered item; each is a place two answers, or an answer and the code, pull
-apart. All are listed for the owner.
+Each is a place two answers, or an answer and the code, pull apart.
 
-- **T1 (item 9 against composite-commands D1561-D1563, D1566).** Item 9 says each semantic command
-  writes the node itself. Composite-commands says a management command saves, runs its chain of named
-  steps, and on a failed step keeps the change and marks the step pending. If the semantic command writes
-  the node in-process it must follow D1563 (saved, not live yet, name the command) or it contradicts a
-  binding answer. D2602 recommends that reading; the owner confirms it.
-- **T2 (item 5 against the code's own rule for `credentials.*`).** The code treats `credentials.*` as a
-  generic-path key (F3); item 1 and item 5 make it semantic. Not a contradiction of the item, a reversal
-  of existing code and its test; listed because an installation's documented `settings set credentials...`
-  habit will start refusing.
-- **T3 (item 7 "uniform `--layer`" against single-layer keys).** Pools and node blocks have no repo layer;
-  `rigor set` has none today. Uniform means the flag everywhere with refusal naming the real layers (A3);
-  if the owner meant every writer accepts all three, the repo layer for pools would need a meaning that
-  the project layer's "repo may only select among crafts" rule (`merge.go` tightenCraft) does not give it.
-- **T4 (item 7's default against composite D1564).** Composite says a repo-layer write edits the file and
-  is live only when merged, commits and opens nothing. D2605 sends ceilings to the project layer by
-  default, which is a cloud write for a key that used to be a file edit: the first `settings set` of a
-  ceiling with no `--layer` now publishes (through the chain). No contradiction of a stated item, but a
-  behaviour change the owner should see.
-- **T5 (item 4 against the 128 manual-only rows).** Item 4 pins that an owner really writes the key; item
-  8 allows labelled manual-only rows. A row labelled `file` has an owner that cannot be run; D2610 makes
-  the label the pinned fact for those rows. Confirm.
+- **T1 (item 9 against composite D1561-D1563, D1566): RESOLVED by D2602 (2026-11-15).** The semantic
+  command writes the node in-process through the `policy` stage and follows D1563 on failure; D1566's
+  in-set list is amended, not re-decided.
+- **T2 (item 5 against the code's own rule for `credentials.*`): not a tension.** Item 5 of the owner's
+  direction already makes `credentials.*` semantic; the code and its test
+  (`TestSettingsGenericKeyIsSpec44sAllowlist`) flip in the plan (task K1). Listed so the refusal an
+  installation's habit now meets is expected.
+- **T3 (item 7 "uniform `--layer`" against single-layer keys): STILL OPEN.** Pools and node blocks have no
+  repo layer; `rigor set` has none today. **Recommendation:** the flag is on every writer, and a layer the
+  key does not have refuses naming the layers it does (A3, the same rule D2605 uses). The plan builds it so.
+  **Alternative:** every writer accepts all three layers: the repo layer for pools would need a meaning
+  the project's "a repo may only select among crafts" rule (`merge.go`, `tightenCraft`) does not give it;
+  cost, a new merge rule for pools and crafts. Waiting on the owner for tasks A1, A2 and K1 only in the
+  sense that their `--layer` refusal text is as the recommendation says.
+- **T4 (item 7's default against composite D1564): RESOLVED by D2605 (2026-11-15), as the owner's
+  choice.** A ceiling with no `--layer` now writes the project layer and publishes through the chain.
+- **T5 (item 4 against the manual-only rows): STILL OPEN, tied to D2611.** Item 4 pins that an owner
+  really writes the key; item 8 allows labelled manual-only rows. A row labelled `file` has an owner that
+  cannot be run. **Recommendation:** for such a row the label and its one-line reason are the pinned fact
+  (the conformance test fails a row with neither a runnable writer nor a label). **Alternative:** no
+  label may stand for a key a person edits at all, so every one becomes a settings row: stronger, and more
+  rows than the 128 deserve (fake endpoints and installation plumbing). Task L1 waits on D2611.
 
 ## 6. Composite-commands: what it decides, what overlaps, what this work must respect
 
@@ -236,8 +241,12 @@ D1560-D1577 are answered by the owner on 2026-11-07 (recommended, or confirmed a
 
 **Where they contradict or leave a hole**
 
-1. Composite names `accounts pool`/`models use`/`rigor set`/`rigor floor` nowhere; D1566's set must
-   be amended, not re-decided (T1).
+1. **Amendment to composite D1566 (owner, 2026-11-15, through D2602).** Composite names
+   `accounts pool`, `models use`, `rigor set` and `rigor floor` nowhere. D1566's in-set list gains them,
+   and every command this work adds (D2613) joins it: their follow-up is the `policy` stage, run
+   in-process, and on failure the change is kept and the command says it is not yet live (D1563). This is
+   an amendment of the list, not a re-decision of D1566, D1561 or D1563. It is recorded here, not in
+   composite-commands' own folder (this work edits no document of another package).
 2. Composite's out-list says `secrets/creds set` write the cloud with no follow-up; this spec's `secrets`
    gains missing writes (D2603) and so stays out of the chain, as D1566 says.
 3. Composite D1577 (update never builds a catalog image) is unaffected.
@@ -260,9 +269,9 @@ Open pull requests that touch the shared files now: #2782 (binary-allow-rule AR1
 2026-11-10, current count unchecked, U5), and settings-commands S11 (the end-to-end converge test) is not built:
 it is the nearest existing test to D2610 and should be reused, not duplicated.
 
-## 7. Proposed capability map (to approve under D2601)
+## 7. Capability map (approved 2026-11-15, D2601)
 
-Arrows point one way. Module ids are final once approved.
+Arrows point one way. Module ids are final. Task ids per module are in `implementation-plan.md`.
 
 | Module | Responsibility | Depends on |
 | --- | --- | --- |
@@ -271,8 +280,16 @@ Arrows point one way. Module ids are final once approved.
 | `cm-node-publish` | The local carriers and the reconcile for crafts, craft_credentials, craft_pools, credentials cascade, model_grades, and the update convergence test (item 9; F5-F7) | `cm-conformance`; held for #2782 |
 | `cm-accounts` | Pool owner/allowed_users/legacy_open, crafts and grades access, `claude_accounts` add (F8) | `cm-write-path`, `cm-node-publish` |
 | `cm-cascade` | A writer for `credentials.*`, `binaries.*` (over AR1's carrier), node `model_grades` | `cm-node-publish` |
-| `cm-models` | Providers, prices, levels, `agent.model/recipe`, `agent.crafts.*`, `layer.claude_models`, `ab.*`, rigor repo path (F10, F13) | `cm-write-path` |
+| `cm-models` | Providers, prices, levels, `agent.model/recipe`, `agent.crafts.*`, `layer.claude_models`, rigor repo path and security paths (F10, F13) | `cm-conformance` (writer contract) |
 | `cm-docs` | The five doc contradictions, the skill, release notes, unregistered fields' rows | all above |
+
+## Open items
+
+- D2608, D2611, D2612, D2613, D2614 unanswered (section 4); T3 and T5 open (section 5). The plan marks
+  each task that waits on one.
+- No check is reserved. The reconcile publishes spend grants at `fugaro update`; whether the owner wants a
+  live check for it (a number block) is not asked here, because no live action is planned.
+- The plan's task ids and numbering are the plan's; this file names modules only.
 
 ## UNVERIFIED
 
