@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1344,6 +1345,11 @@ func TestRunRefusesAnErrorThatIsNotACap(t *testing.T) {
 // TestRunAnErrorCarriesItsOwnText: claude reports a failed API call (no login,
 // no credit, a model it cannot reach) as subtype "success" with is_error set,
 // and the reason is only in the result text, so the refusal has to carry it.
+//
+// That subtype is the one the refusal does not name: printing it beside the
+// word error is the sentence the owner read on 2026-11-15 — "the diagnosis
+// agent reported an error (success)" — and a subtype that says something the
+// word error does not is still named (TestRunRefusesAnErrorThatIsNotACap).
 func TestRunAnErrorCarriesItsOwnText(t *testing.T) {
 	s := newRunSetup(t)
 	_, err := s.run(t, "FAIL: success", answerJSON(t, "FAILTEXT_JSON: ", "Credit balance is too low"))
@@ -1352,6 +1358,39 @@ func TestRunAnErrorCarriesItsOwnText(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Credit balance is too low") {
 		t.Errorf("the refusal drops the reason the client gave: %v", err)
+	}
+	if strings.Contains(err.Error(), "success") {
+		t.Errorf("the refusal calls the error a success: %v", err)
+	}
+}
+
+// TestRunReportsAMachineWithNoLogin: the client refusing for want of a login is
+// the one error a caller has a fix for, so it is reported as ErrNotLoggedIn and
+// not as a plain failure — the child never reached a provider, so nothing was
+// sent and the login the person already has is the whole of the answer.
+func TestRunReportsAMachineWithNoLogin(t *testing.T) {
+	s := newRunSetup(t)
+	_, err := s.run(t, "FAIL: success", answerJSON(t, "FAILTEXT_JSON: ", "Not logged in · Please run /login"))
+	if err == nil {
+		t.Fatal("a run that reported an error was reported as a diagnosis")
+	}
+	if !errors.Is(err, ErrNotLoggedIn) {
+		t.Errorf("the refusal is not reported as a missing login: %v", err)
+	}
+}
+
+// TestRunDoesNotCallARejectedKeyAMissingLogin: an invalid API key is reported
+// with the same `/login` hint, and it is not the person's login to fix — this
+// process handed the child a credential, and sending them to /login would hide
+// the credential that is actually wrong.
+func TestRunDoesNotCallARejectedKeyAMissingLogin(t *testing.T) {
+	s := newRunSetup(t)
+	_, err := s.run(t, "FAIL: success", answerJSON(t, "FAILTEXT_JSON: ", "Invalid API key · Please run /login"))
+	if err == nil {
+		t.Fatal("a run that reported an error was reported as a diagnosis")
+	}
+	if errors.Is(err, ErrNotLoggedIn) {
+		t.Errorf("a rejected API key is reported as a missing login: %v", err)
 	}
 }
 

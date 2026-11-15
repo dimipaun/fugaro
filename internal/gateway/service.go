@@ -80,6 +80,17 @@ const (
 	// service keeps only its hash — so it is attached here, on the call the
 	// service decides by, and never written to a log, an error or a record.
 	HeaderSlipClaim = "X-Fugaro-Slip-Claim"
+	// HeaderAuthMode is the auth the run's own repository goes out on, as the
+	// runner declares it (B2.2, credsvc.HeaderAuthMode). It is a statement
+	// and never evidence: the service decides from the record `fugaro update`
+	// wrote for that repository and reads this only to check the two agree
+	// (D2070 (a), R7), so a value the agent chose would be refused rather
+	// than served.
+	HeaderAuthMode = "X-Fugaro-Auth-Mode"
+	// HeaderAuthAccount names the Claude account an oauth run goes out on,
+	// spelled as config.ClaudeAccountNameRE spells one. It is read for one
+	// thing only, whether the repository's record names that account.
+	HeaderAuthAccount = "X-Fugaro-Auth-Account"
 )
 
 // The answer headers of the contract (credsvc.HeaderTier,
@@ -320,10 +331,13 @@ type Tried struct {
 // job's own: validate refuses a service upstream that has one, and this
 // function writes only the two identities above — the agent's own headers,
 // the gateway token and every credential header Claude Code sent are already
-// gone from what forwardHeaders returns. A route is refused as well, here and
-// in validateRoutes, on oauthUpstream's reasoning: a route is a provider's
-// own endpoint and is reached with the provider's key, which a service run
-// does not have.
+// gone from what forwardHeaders returns. A route is refused as well, on
+// oauthUpstream's reasoning: a route is a provider's own endpoint and is
+// reached with the provider's key, which a service run does not have. A
+// routed call never reaches this function at all — upstreamRequest returns
+// the provider's own request before the kind switch — and the check is kept
+// so a route handed to it in code cannot have a service call built for it
+// either.
 func (s *Server) serviceUpstream(ctx context.Context, rt route, in http.Header) (http.Header, error) {
 	if rt.provider != nil {
 		return nil, errServiceOnRoute
@@ -355,13 +369,23 @@ func (s *Server) serviceUpstream(ctx context.Context, rt route, in http.Header) 
 	// reason and for one more: they are the run's claim, taken by the runner
 	// and held here, so an agent that sent a slip of its own must not have
 	// it reach the service — what travels below is the claim the run took,
-	// and never a value the agent chose.
-	for _, k := range []string{HeaderTier, HeaderCredential, HeaderSwitch, HeaderProbe, HeaderSlip, HeaderSlipClaim} {
+	// and never a value the agent chose. The run's own auth declaration is
+	// dropped for that same second reason: the agent runs inside the
+	// repository whose auth it is, so a mode or an account it wrote would
+	// read as the runner's statement about a repository it may not be in —
+	// what travels below is what the runner resolved for this run.
+	for _, k := range []string{HeaderTier, HeaderCredential, HeaderSwitch, HeaderProbe, HeaderSlip, HeaderSlipClaim, HeaderAuthMode, HeaderAuthAccount} {
 		h.Del(k)
 	}
 	h.Set("Authorization", "Bearer "+id)
 	h.Set(HeaderRunIdentity, run)
 	h.Set(HeaderRunJob, sv.Job)
+	if mode := s.o.Upstream.AuthMode; mode != "" {
+		h.Set(HeaderAuthMode, mode)
+	}
+	if account := s.o.Upstream.Account; account != "" {
+		h.Set(HeaderAuthAccount, account)
+	}
 	if sv.SlipID != "" {
 		h.Set(HeaderSlip, sv.SlipID)
 		h.Set(HeaderSlipClaim, sv.SlipClaim)
@@ -369,12 +393,15 @@ func (s *Server) serviceUpstream(ctx context.Context, rt route, in http.Header) 
 	return h, nil
 }
 
-// errServiceOnRoute is the refusal both validateRoutes and serviceUpstream
-// give a route offered to a service upstream. There is no cycle to break
-// here (a route's key would be the job's own credential, which a service run
+// errServiceOnRoute is the refusal a service call gives a route offered to it,
+// from validateRoutes and from serviceUpstream. There is no cycle to break
+// here (a route's key would be the job's own credential, which a cascade run
 // does not have): it is refused by name so a misconfiguration says what it
 // is, and in both places so a Route built in code past validation cannot
-// reach a provider through a service run either.
+// reach a provider through a service run either. The one service upstream
+// that does have a key of its own is a switched api-key run's, whose routes
+// validateRoutes admits (B2.2, R6/D1634) — and whose routed calls the
+// upstream path never builds a service request for.
 var errServiceOnRoute = errors.New("a provider route is never reached through the credentials service: a route is a provider's own endpoint and is called with the job's own key, which a cascade run does not have (D143)")
 
 // errServiceUnidentified is every way a service call fails before it is sent
@@ -785,10 +812,21 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 	// its first bytes: they go back in front of the rest, so a relayed body
 	// arrives whole and the pump streams it as it always did.
 	resp.Body = replayBody{Reader: io.MultiReader(bytes.NewReader(head), resp.Body), Closer: resp.Body}
+	// The workspace's own marker, if this refusal carried one: which of the
+	// workspace's refusals the service answered (workspace_refusal.go). It is
+	// read here, off the refusal itself, and from nowhere else -- no reason,
+	// scope or detail is ever read as a marker, because a member's own
+	// credentials service writes all three the same way. An answer that
+	// carries no marker, or one this release does not know, marks nothing.
+	wsRefusal, _ := WorkspaceRefusal(resp.Header)
+	// haltOn is the halt this refusal forces, with whatever the service said
+	// about itself recorded on it. Every halt below goes through it, so a
+	// refusal the workspace marked is marked wherever it was answered.
+	haltOn := func(detail string) int { return s.haltServiceMarked(w, detail, wsRefusal) }
 	if rerr != nil {
 		// A body that broke mid-read, before any of it reached the agent:
 		// not a refusal this code can read, and not one to relay.
-		return s.haltService(w, stateDetailUnreadable), true, "", nil
+		return haltOn(stateDetailUnreadable), true, "", nil
 	}
 	e, ok, err := readServiceRefusal(resp.StatusCode, head)
 	if !ok {
@@ -812,18 +850,18 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 		// as it always did. The run is not stopped by it either: another
 		// credential, or a person, may be what fixes it.
 		if (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) && !modelErrorEnvelope(head) {
-			return s.haltService(w, stateDetailUnadmitted), true, "", nil
+			return haltOn(stateDetailUnadmitted), true, "", nil
 		}
 		return resp.StatusCode, false, "", nil // a model error the service relayed
 	}
 	if err != nil {
-		return s.haltService(w, stateDetailUnreadable), true, "", nil
+		return haltOn(stateDetailUnreadable), true, "", nil
 	}
 	switch e.Error {
 	case ErrorExhaustedUntil:
 		ex, err := exhaustedAnswer(e)
 		if err != nil {
-			return s.haltService(w, stateDetailUnreadable), true, "", nil
+			return haltOn(stateDetailUnreadable), true, "", nil
 		}
 		// The wait is not a halt: the runner decides what to do about it
 		// (C1.17), and until it does the call is answered retryably and
@@ -834,7 +872,7 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 			"fugaro: the credentials service has no credential available before "+ex.ResetAt.UTC().Format(time.RFC3339))
 		return http.StatusServiceUnavailable, true, "", nil
 	case ErrorStateUnavailable:
-		return s.haltService(w, refusalDetail(e.Error)), true, "", nil
+		return haltOn(refusalDetail(e.Error)), true, "", nil
 	case ErrorNoCandidateCredentials:
 		// The one refusal whose detail is built from the answer rather than
 		// from the type alone (noCredentialDetail): which of the filters
@@ -845,7 +883,7 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 		// the agent cannot.
 		s.log.Warn("budget: the credentials service had no credential to offer a call",
 			"stage", s.stageName(), "tried", triedLog(e.Tried))
-		return s.haltService(w, noCredentialDetail(e.Tried)), true, "", nil
+		return haltOn(noCredentialDetail(e.Tried)), true, "", nil
 	case ErrorRequestRefused:
 		// The service's request check refused the call itself, and the one
 		// cause a forwarded call can really have is a project that publishes
@@ -856,15 +894,15 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 		// running run. The detail says so, because the service's own sentence
 		// never reaches the agent (D143): without it the operator reads a
 		// detail about a broken service instead of the missing allow-list.
-		return s.haltService(w, refusalDetail(e.Error)), true, "", nil
+		return haltOn(refusalDetail(e.Error)), true, "", nil
 	case ErrorUnverifiedRunIdentity, ErrorUnverifiedJobIdentity:
-		return s.haltService(w, refusalDetail(e.Error)), true, "", nil
+		return haltOn(refusalDetail(e.Error)), true, "", nil
 	}
 	// A refusal whose type this release does not know. It is the service's
 	// own answer and is not relayed, and the call cannot be accounted for
 	// either: stop rather than improvise (D143's posture). The type is from
 	// a closed set the service writes, and is not echoed into the detail.
-	return s.haltService(w, stateDetailUnreadable), true, "", nil
+	return haltOn(stateDetailUnreadable), true, "", nil
 }
 
 // replayBody is a response body whose first bytes were read and put back.
@@ -1002,9 +1040,24 @@ func triedLog(tried []serviceTried) string {
 // cancel the calls in flight, exactly as a run-cap halt does not: each of them
 // settles by its own answer.
 func (s *Server) haltService(w http.ResponseWriter, detail string) int {
+	return s.haltServiceMarked(w, detail, "")
+}
+
+// haltServiceMarked is haltService for an answer that carried the workspace's
+// own marker: the same halt, with the refusal the workspace's credentials
+// service named recorded on it (workspace_refusal.go). workspace is "" for
+// every answer that carried no marker, which is every refusal that is not the
+// workspace's and every answer from a release before the marker existed, and
+// the halt is then the one haltService writes.
+//
+// The marker changes nothing about the halt but the fact it carries: the
+// reason, the scope, the detail and the message are the ones a refusal the
+// service did not mark gets, so a run refused by a workspace stops exactly
+// where it stopped before and only its record says who refused it.
+func (s *Server) haltServiceMarked(w http.ResponseWriter, detail, workspace string) int {
 	s.mu.Lock()
 	if s.halt == nil {
-		h := Halt{Reason: ReasonBudgetUnavailable, Scope: "run", Detail: detail, At: time.Now().UTC()}
+		h := Halt{Reason: ReasonBudgetUnavailable, Scope: "run", Detail: detail, WorkspaceRefusal: workspace, At: time.Now().UTC()}
 		s.haltLocked(h, "fugaro: budget halted: "+haltText(h), s.stageNameLocked(), true)
 	}
 	msg := s.haltMsg

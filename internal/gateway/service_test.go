@@ -188,6 +188,41 @@ func TestServiceUpstreamSendsIDTokenAndRunIdentity(t *testing.T) {
 	noHalt(t, h)
 }
 
+// TestServiceDeclarationIsNeverTheAgents (B2.2): the two headers a switched
+// run declares are dropped from what the agent sent before the runner's own
+// are set — and a call the runner declares nothing on carries neither, which
+// is a cascade run's upstream. The agent runs inside the repository whose auth
+// this is, so a declaration it wrote would reach the service as the runner's
+// statement about a repository the agent may not be in (D2070 (a)).
+//
+// It is the case the mirror test cannot see: there the runner sets both
+// headers itself, so a gateway that let the agent's copy through would have it
+// overwritten by h.Set and the test would pass either way.
+func TestServiceDeclarationIsNeverTheAgents(t *testing.T) {
+	// No AuthMode and no Account: a cascade run declares nothing, so nothing
+	// is set over what the agent sent.
+	h, f := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
+		return serviceOK(TierA, "repo-a")
+	}, nil)
+
+	resp, body := h.post(msg(sonnet, 1000),
+		HeaderAuthMode, "oauth",
+		HeaderAuthAccount, "an-account-the-agent-invented")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the call: %d %s", resp.StatusCode, body)
+	}
+	seen := f.Seen()
+	if len(seen) != 1 {
+		t.Fatalf("the service was called %d times", len(seen))
+	}
+	for _, k := range []string{HeaderAuthMode, HeaderAuthAccount} {
+		if got := seen[0].Header.Values(k); len(got) > 0 {
+			t.Errorf("the agent's %s reached the service as %q", k, got)
+		}
+	}
+	noHalt(t, h)
+}
+
 // TestServiceUpstreamReadsTierAndCredential: the tier, the credential's name
 // and the switch are read off the service's answer and handed to the runner's
 // hook -- and dropped before the answer is copied on, so the agent never
@@ -245,9 +280,11 @@ func TestServiceUpstreamReadsTierAndCredential(t *testing.T) {
 // TestServiceNeverSentToProviderRoute is D143's other half, on
 // TestOAuthNeverSentToProviderRoute's shape: a route is a provider's own
 // endpoint and is reached with the job's own key for that provider, which a
-// cascade run does not have. A service upstream therefore takes no routes at
-// all -- not at start-up, and not from a Route built in code past validation
-// either.
+// cascade run does not have. A cascade's service upstream therefore takes no
+// routes at all -- not at start-up, and not from a Route built in code past
+// validation either. (A switched api-key run's does: it is the one service
+// upstream with a key of its own, and
+// TestSwitchedAPIKeyServiceUpstreamKeepsItsProviderRoutes is that case.)
 func TestServiceNeverSentToProviderRoute(t *testing.T) {
 	_, psrv := anthropicfake.New(t, anthropicfake.MessageOK(dsModel, smallUsage))
 	cred := func() (string, error) { return "provider-key-" + t.Name(), nil }
@@ -307,6 +344,84 @@ func TestServiceNeverSentToProviderRoute(t *testing.T) {
 	if h != nil {
 		t.Errorf("a refused call wrote %v", h)
 	}
+}
+
+// TestSwitchedAPIKeyServiceUpstreamKeepsItsProviderRoutes (B2.2, R6/D1634): a
+// switched api-key run's service upstream is the one that takes routes. That
+// repository's provider keys stay on the runner path and keep their mounts in
+// S2, so a model its routes claim is the provider's own call — the provider's
+// endpoint, with the job's key — and every other model is the service's. Both
+// halves matter: without the routes the run cannot start its gateway at all,
+// and a routed call read as the service's answer (it carries no tier) would
+// halt the run for an answer that is exactly what R6 keeps on the runner path.
+func TestSwitchedAPIKeyServiceUpstreamKeepsItsProviderRoutes(t *testing.T) {
+	routedStage := Stage{Name: "implement", Model: dsModel, Background: sonnet}
+	cred := func() (string, error) { return providerKey, nil }
+
+	prov, psrv := anthropicfake.New(t, anthropicfake.MessageOK(dsModel, smallUsage))
+	h, svc := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
+		return serviceOK(TierB, "repo-shared-b")
+	}, func(o *Options) {
+		o.Upstream.AuthMode = "api-key"
+		o.Routes = []Route{{
+			Name: "openrouter", Models: []string{"deepseek/*"}, BaseURL: psrv.URL + "/api",
+			Auth: "bearer", Credential: cred,
+		}}
+	})
+	h.gw.BeginStage(routedStage)
+
+	// The model the route claims: the provider's own endpoint, with the job's
+	// key, and no tier to read -- and so no halt.
+	if resp, body := h.post(msg(dsModel, 100)); resp.StatusCode != http.StatusOK {
+		t.Fatalf("a routed call beside the service: %d %s", resp.StatusCode, body)
+	}
+	if prov.Count() != 1 || svc.Count() != 0 {
+		t.Fatalf("the provider saw %d calls and the service %d, want the provider's one", prov.Count(), svc.Count())
+	}
+	if got := prov.Seen()[0].Header.Get("Authorization"); got != "Bearer "+providerKey {
+		t.Errorf("the provider's call carries %q, want the route's own key", got)
+	}
+	noHalt(t, h)
+
+	// Every other model is the service's, as it is for a cascade run.
+	if resp, body := h.post(msg(sonnet, 100)); resp.StatusCode != http.StatusOK {
+		t.Fatalf("a served call: %d %s", resp.StatusCode, body)
+	}
+	if svc.Count() != 1 {
+		t.Fatalf("the service saw %d calls, want the second", svc.Count())
+	}
+	if got := svc.Seen()[0].Header.Get(HeaderAuthMode); got != "api-key" {
+		t.Errorf("the service read the declaration %q, want api-key", got)
+	}
+	noHalt(t, h)
+}
+
+// TestSwitchedRunUnreachableProviderIsNotAServiceFailure: a routed call that
+// cannot reach its provider is answered as any other failed upstream request
+// is, and is not a halt for a service this job could not reach (D143): the
+// service is up, the provider is not, and the run's other calls still go to
+// the service.
+func TestSwitchedRunUnreachableProviderIsNotAServiceFailure(t *testing.T) {
+	gone := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	base := gone.URL
+	gone.Close()
+
+	h, _ := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
+		return serviceOK(TierB, "repo-shared-b")
+	}, func(o *Options) {
+		o.Upstream.AuthMode = "api-key"
+		o.Routes = []Route{{
+			Name: "openrouter", Models: []string{"deepseek/*"}, BaseURL: base + "/api",
+			Auth: "bearer", Credential: func() (string, error) { return providerKey, nil },
+		}}
+	})
+	h.gw.BeginStage(Stage{Name: "implement", Model: dsModel, Background: sonnet})
+
+	resp, body := h.post(msg(dsModel, 100))
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("a routed call to an unreachable provider: %d %s", resp.StatusCode, body)
+	}
+	noHalt(t, h)
 }
 
 // TestServiceUnreachableHalts: a job that cannot reach the credentials

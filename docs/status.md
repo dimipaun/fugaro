@@ -53,6 +53,7 @@ As of 2026-11-15, read from `main`, the open pull requests and each plan's task 
 | Spec | State |
 | --- | --- |
 | forge-labels | 0/9: plan only (spec, reconciliation and plan in the docs pull request), no task approved; T1, T8 and T9 are first; T7 and Check 640 wait on the daemon's identity to the credentials service (E10b); owner Check 640 |
+| feature-matrix | 0/12 (the 12th, CR1, is raised only if T6 raises it): all tasks approved 2026-11-15, none merged and no run or pull request open; unblocked now: C1, T2, T4c; then T1, T3, T4a (after C1; T4a also after T4c), then I1, T4b, T7, then T5 and T6 (owner-run, never dispatched), then CR1 only if raised; D2440–D2449 answered; no check taken; no after-deploy step |
 | repo-image-removal | parked by the owner: 2/11 merged, R2 to R10 deferred by the image setup skill (D1900), not scheduled in any release and not cancelled; no run or pull request open |
 | voice-module, collateral, backlog, plans | no plan or not a spec |
 

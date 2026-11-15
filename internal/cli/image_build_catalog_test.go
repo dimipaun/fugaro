@@ -465,12 +465,12 @@ func TestCatalogBuildSubmitsTheContextIdentity(t *testing.T) {
 	if subs := catalogBuildSubs(t, fb); subs["_CONTEXT_DIR"] != "/workspace/src/ci" {
 		t.Errorf("_CONTEXT_DIR = %v, want the checkout's own context directory", subs["_CONTEXT_DIR"])
 	}
-	// The checkout step is made at the context's commit, which is what the
-	// build reads the context from.
-	if st := catalogBuildStep(t, fb, "catalog-context"); st == nil {
-		t.Error("the build has no context step")
+	// The clone step is made at the context's commit, which is what the build
+	// reads the context from.
+	if st := catalogBuildStep(t, fb, "catalog-clone"); st == nil {
+		t.Error("the build has no clone step")
 	} else if env, _ := st["env"].([]any); !slices.Contains(env, "COMMIT="+sha) {
-		t.Errorf("the context step's env is %v, want it to check out %s", env, sha)
+		t.Errorf("the clone step's env is %v, want it to check out %s", env, sha)
 	}
 	// The smoke's own spec is rendered from the commit the build bakes, which
 	// for a context entry is the commit its definition was read at: the smoke
