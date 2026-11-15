@@ -95,7 +95,9 @@ None.
 - **O1.** None (the earlier item, confirming D2436 as amended, is closed by the owner's answer D2439).
 - **O3.** How a follow-up run on an existing pull request is corroborated: its head branch is the first run's `fugaro/<run id>`, so the daemon sends the run id of the run that opened the pull request. To confirm when T3 starts.
 - **O4.** Deferred by design, for a later pass: fold `ensure` into `add` (the service creates on first use, D2440, so a separate `ensure` is reach without a pull request); require ASCII before the shape check lowers a name (the Kelvin sign lowers to `k`); sample the audit of the 30-second reads.
-- **O2.** Who builds the daemon's identity to the credentials service (F19): the merge mint's own wiring (E10b) or a task of this plan. The plan assumes E10b and marks T7 and Check 640 as waiting on it.
+- **O2.** *Answered 2026-11-15: wait for E10b (the recommendation).* One owner builds the daemon's identity to the credentials service (F19), shared with the merge mint; T7's live path and Check 640 stay blocked until it lands, and this plan adds no task for it.
+- **O3.** *Answered 2026-11-15: the recommendation.* The daemon sends the id of the run that opened the pull request, taken from its own intents, and the service keeps the exact head match `fugaro/<that run id>`.
+- **O4.** *Answered 2026-11-15: later, as follow-ups (the recommendation).* Folding `ensure` into `add` and sampling the audit of the 30-second reads are not in this plan; the ASCII-before-lowering rule is already in T3.
 
 ## UNVERIFIED
 
