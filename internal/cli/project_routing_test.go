@@ -221,7 +221,7 @@ func TestProjectRoutingRefusesInAnAgentSession(t *testing.T) {
 			before := readFileString(t, path)
 			t.Setenv(marker, "1")
 
-			out, _, err := execute(t, "project", "routing", "set", "claude", "--via", "direct", "--yes")
+			out, _, err := execute(t, "project", "routing", "set", "claude", "--via", "direct")
 			if err == nil {
 				t.Fatal("the command wrote in a coding agent's session")
 			}

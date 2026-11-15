@@ -161,7 +161,7 @@ func TestConvergeMarkerVersionSkipsInAnAgentSession(t *testing.T) {
 	// not the session the door runs in.
 	agentSession(t)
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	s := out + errOut
 	if err != nil && !strings.Contains(s, "left for you") {
 		t.Fatalf("an update in a coding agent's session failed with something other than the steps it leaves for the user: %v\n%s", err, s)

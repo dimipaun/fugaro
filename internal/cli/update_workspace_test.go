@@ -485,32 +485,29 @@ func TestUpdateWithACapAndNoMemberRunsOn(t *testing.T) {
 	r, db := updateBudgetRig(t)
 	r.appendConfig(t, wsOwnerCap)
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
-	var res convergeJSON
-	if uerr := json.Unmarshal([]byte(out), &res); uerr != nil {
-		t.Fatalf("%v:\n%s\n%s", uerr, out, errOut)
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update")
+	if err != nil {
+		t.Fatalf("a config with a cap and no member failed the run: %v\n%s\n%s", err, out, errOut)
 	}
+	rows := stageRows(out + newestLog(t, "update"))
 	var blocked []string
-	for _, s := range res.Stages {
-		if s.State == "blocked" {
-			blocked = append(blocked, s.Name)
+	for name, row := range rows {
+		if row.word == "waiting" {
+			blocked = append(blocked, name)
 		}
 	}
-	if err != nil {
-		t.Fatalf("a config with a cap and no member failed the run, and %d stage(s) after this one are blocked (%v: %s)\n%s\n%s",
-			len(blocked), err, strings.Join(blocked, ", "), out, errOut)
-	}
-	if got := res.state(initflow.Workspace); got != "skipped" {
+	if got := rows[initflow.Workspace].word; got != "skipped" {
 		t.Errorf("the workspace stage is %q, want skipped: a record listing no member is not this run's to publish\n%s", got, out)
 	}
-	if d := res.stageDetail(t, initflow.Workspace); !strings.Contains(d, "declares no member") {
+	if d := rows[initflow.Workspace].line; !strings.Contains(d, "declares no member") {
 		t.Errorf("the stage does not say what the config states: %q", d)
 	}
 	// The stages after it, and the reason this is the HARD RULE's test: an error
 	// here blocks every one of them — the loop stops the run and marks what it
 	// did not reach — and the release's later work never happens.
 	for _, name := range []string{initflow.Layer, initflow.Checkout} {
-		if got := res.state(name); got == "blocked" || got == "" {
+		if got := rows[name].word; got == "waiting" || got == "" {
 			t.Errorf("the %s stage is %q, want a stage this run reached and did not block:\n%s", name, got, out)
 		}
 	}
@@ -979,9 +976,9 @@ func TestUpdateTheCeilingIsTheDirectionTheWideningIs(t *testing.T) {
 // published record is the whole membership chosen where none was, so the write
 // is the widening the whole classifier is about — every member it names is
 // admitted by it, and from the moment it lands every run of every member reads
-// it. --yes does not stand in, the write happens in the owner's own session at
-// a real terminal, and the refusal says what was chosen rather than naming a
-// comparison that does not exist yet.
+// it. No flag stands in (the run's own answer included), the write happens in
+// the owner's own session at a real terminal, and the refusal says what was
+// chosen rather than naming a comparison that does not exist yet.
 //
 // The state it closes is the one a hand edit reaches: `workspace_members` in
 // the YAML is a document this stage builds a node from, so a session that
@@ -1002,8 +999,8 @@ func TestUpdateTheFirstRecordTakesTheOwnersOwnSession(t *testing.T) {
 	if !strings.Contains(err.Error(), "the whole group: the member list, the repositories each member contributes and the workspace's own ceiling are chosen here for the first time") {
 		t.Errorf("the refusal does not say what this write chooses: %v\n%s", err, out)
 	}
-	if !strings.Contains(err.Error(), "does not stand in") {
-		t.Errorf("the refusal does not tell the operator that --yes was not the answer: %v\n%s", err, out)
+	if !strings.Contains(err.Error(), "no flag stands in for it") {
+		t.Errorf("the refusal does not tell the operator that a flag was not the answer: %v\n%s", err, out)
 	}
 	if p.db.Value(projectpolicy.PathWorkspace("workspace-alpha")) != nil {
 		t.Error("the refused first record was published anyway")
@@ -1283,18 +1280,19 @@ func TestUpdateSkipsAWorkspaceDatabaseThisInstallationDoesNotOwn(t *testing.T) {
 	db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": "workspace-a", "gcp_project": "proj-9999", "version": 1})
 	r.appendConfig(t, wsOwnerTable+wsOwnerCap)
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("another installation's database stopped the whole update: %v\n%s%s", err, out, errOut)
 	}
-	var res convergeJSON
-	if err := json.Unmarshal([]byte(out), &res); err != nil {
-		t.Fatalf("%v:\n%s", err, out)
+	row, ok := stageRows(out + newestLog(t, "update"))[initflow.Workspace]
+	if !ok {
+		t.Fatalf("the run printed no row for the workspace stage:\n%s", out)
 	}
-	if got := res.state(initflow.Workspace); got != "skipped" {
-		t.Errorf("the workspace stage is %q, want skipped:\n%s", got, out)
+	if row.word != "skipped" {
+		t.Errorf("the workspace stage is %q, want skipped:\n%s", row.word, out)
 	}
-	detail := res.stageDetail(t, initflow.Workspace)
+	detail := row.line
 	for _, want := range []string{"workspace-a", "proj-9999"} {
 		if !strings.Contains(detail, want) {
 			t.Errorf("the skip does not name the installation whose database this is (%q): %q", want, detail)
@@ -1330,11 +1328,10 @@ func TestUpdatePublishesTheWorkspaceRecordInTheRunThatNamesTheBackend(t *testing
 	r.appendConfig(t, wsOwnerTable+wsOwnerCap)
 	r.save(t)
 	fakeTerminal(t)
-	// The one thing --yes does not stand in for: the group's first record is
-	// published in the owner's own session, at this terminal, and --yes is
-	// passed only because the other stages of this run take it. The empty stdin
-	// is what says so: a step that asked would read nothing here.
-	out, errOut, err := executeStdin(t, "", "update", "--firebase-project", fpID, "--budget-mode", "observe", "--yes")
+	// The one confirmation no flag stands in for: the group's first record is
+	// published in the owner's own session, here at this terminal, and the empty
+	// stdin is what says so: a step that asked would read nothing here.
+	out, errOut, err := executeStdin(t, "", "update", "--firebase-project", fpID, "--budget-mode", "observe")
 	s := out + errOut
 	if err != nil {
 		t.Fatalf("update --firebase-project failed: %v\n%s", err, s)
@@ -1376,7 +1373,7 @@ func TestUpdatePublishesIntoTheDatabaseTheRunHasJustPointedAt(t *testing.T) {
 	r.appendConfig(t, wsOwnerTable+wsOwnerCap)
 	r.save(t)
 	fakeTerminal(t)
-	out, errOut, err := executeStdin(t, "", "update", "--firebase-project", fpID, "--budget-mode", "observe", "--yes")
+	out, errOut, err := executeStdin(t, "", "update", "--firebase-project", fpID, "--budget-mode", "observe")
 	s := out + errOut
 	if err != nil {
 		t.Fatalf("update --firebase-project failed: %v\n%s", err, s)

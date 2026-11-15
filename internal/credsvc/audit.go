@@ -289,19 +289,20 @@ const StatusOK = "ok"
 // cannot reach. The contract's reasons say why a credential was not used
 // (exhausted, broken, not_admitted, stopped) and its error types say why the
 // call itself was refused (exhausted_until, unverified_run_identity,
-// unverified_job_identity, state_unavailable, request_refused).
+// unverified_job_identity, state_unavailable, request_refused,
+// no_candidate_credentials).
 func ValidStatus(status string) bool {
 	return status == StatusOK || ValidReason(status) || validErrorType(status)
 }
 
 // validErrorType reports whether s is one of the refusal body's error types
 // (wire.go). It is the reader's half of a closed set the writer already owns —
-// all five of them, the request-shape refusal included: the answer path
+// all six of them, the request-shape refusal included: the answer path
 // records that refusal like the rest (server.go), so this set is the wire's own
 // vocabulary and not a subset of what this service happens to answer today.
 func validErrorType(s string) bool {
 	switch s {
-	case ErrorExhaustedUntil, ErrorUnverifiedRunIdentity, ErrorUnverifiedJobIdentity, ErrorStateUnavailable, ErrorRequestRefused:
+	case ErrorExhaustedUntil, ErrorUnverifiedRunIdentity, ErrorUnverifiedJobIdentity, ErrorStateUnavailable, ErrorRequestRefused, ErrorNoCandidateCredentials:
 		return true
 	}
 	return false

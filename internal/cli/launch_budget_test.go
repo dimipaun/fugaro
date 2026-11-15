@@ -724,7 +724,18 @@ func TestLaunchClassifiesAnUnreachablePolicyReadAsRemote(t *testing.T) {
 		t.Fatal(err)
 	}
 	addr := l.Addr().String()
-	l.Close() // nothing answers on that port now
+	// The port stays held and every connection is dropped: a closed port can be
+	// taken by another test's server between the close and the launch.
+	t.Cleanup(func() { l.Close() })
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
 	f := newOffModeBudget(t, "")
 	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: http://"+addr+", token_signer: "+testSigner+
 		", firebase_api_key: "+settingsFakeAPIKey+" }\n")

@@ -141,6 +141,7 @@ func TestServiceConstantsMirrorCredsvc(t *testing.T) {
 		{gateway.ErrorUnverifiedJobIdentity, credsvc.ErrorUnverifiedJobIdentity},
 		{gateway.ErrorStateUnavailable, credsvc.ErrorStateUnavailable},
 		{gateway.ErrorRequestRefused, credsvc.ErrorRequestRefused},
+		{gateway.ErrorNoCandidateCredentials, credsvc.ErrorNoCandidateCredentials},
 	}
 	for _, x := range errs {
 		if x.gateway != x.wire {
@@ -358,6 +359,16 @@ func TestServiceContractMirrorsCredsvcReadsWhatItWrites(t *testing.T) {
 		{name: "with a tried list", typ: credsvc.ErrorStateUnavailable, wantActedOn: true,
 			wire: credsvc.WireError{Error: credsvc.ErrorStateUnavailable, Tried: []credsvc.Tried{
 				{Name: "cred-a", Tier: credsvc.TierA, Reason: credsvc.ReasonExhausted},
+			}}},
+		// The refusal a repository admitted no credential gets. It is a class
+		// of its own and not state_unavailable, which says the state could not
+		// be read; its detail is the one built from the answer's reasons, so
+		// this case is also what holds the two ends to the same closed set of
+		// reasons — a reason the service may write and this release may not
+		// render would be a detail about a body the gateway cannot read.
+		{name: "no_candidate_credentials", typ: credsvc.ErrorNoCandidateCredentials, wantActedOn: true,
+			wire: credsvc.WireError{Error: credsvc.ErrorNoCandidateCredentials, Message: "no credential is offered to this call", Tried: []credsvc.Tried{
+				{Name: "cred-a", Tier: credsvc.TierA, Reason: credsvc.ReasonNotAdmitted},
 			}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -40,15 +40,15 @@ import (
 //	gate, err := readManagedGate(ctx, env, facts)         // marks, ownership
 //	if err != nil { return err }
 //	// the command judges ITS OWN document with ITS OWN rules, and builds a
-//	// managed.Converge from the class, the bytes it read and the rules
-//	m, err := gate.admit(ctx, class, conv)                // re-read, verdict
+//	// managed.Converge from the bytes it read and the rules
+//	m, err := gate.admit(ctx, conv)                       // re-read, verdict
 //	if err != nil { return err }                          // the gate refused it
-//	if !initflow.CanConfirmManaged(class, cond, m) { ... }// the command's own rule
+//	if !initflow.GateStandsIn(cond, m) { ... }            // the command's own rule
 //	// the command's write
 //	if err := gate.recorded(ctx); err != nil { return err }// after the write
 //
 // Why the verdict is handed back as an initflow.Managed rather than as a
-// boolean. That value is the rule D55 already has (initflow.CanConfirmManaged),
+// boolean. That value is the rule D55 already has (initflow.GateStandsIn),
 // and its zero value is "not managed", so a command that never read the gate —
 // or that ignored the error and carried on — keeps today's refusal exactly. A
 // helper that answered "you may proceed" as an error-or-nil would be a second
@@ -231,17 +231,18 @@ func readManagedGate(ctx context.Context, env managedGateEnv, facts managedGateF
 //
 // The value it returns is what the step's confirmation is decided under, field
 // for field: whether the project is managed, whether the gate admitted THIS
-// document, and whether the whole-project inventory fell back. The class is
-// passed beside the verdict because D1026's rule is not this file's to restate:
-// a class the gate does not cover keeps the confirmation it has today whatever
-// the plan looked like, and initflow.CanConfirmManaged is where that is decided.
+// document, and whether the whole-project inventory fell back. D1026's rule is
+// not this file's to restate: a step no plan gate may judge is refused by the
+// Converge itself (managed.ConvergeUnjudged, built at the call site that read
+// the diff), so Admitted is false for it here and the step keeps the
+// confirmation it has today whatever the plan looked like.
 //
 // A refused plan is this call's own error, and it is the gate's own sentence
 // (managed.NotConverged, with the rules that fired) rather than the coding
 // agent's: the session reads why the document was refused. It is returned for
-// every class the gate covers and for no other, and the refusal is recorded
-// before it is returned.
-func (g *managedGate) admit(ctx context.Context, class initflow.ConfirmClass, conv managedmode.Converge) (initflow.Managed, error) {
+// every step the gate may judge at all and for no other, and the refusal is
+// recorded before it is returned.
+func (g *managedGate) admit(ctx context.Context, conv managedmode.Converge) (initflow.Managed, error) {
 	// The document a previous call admitted is spent by the time this one is
 	// made: the step it was admitted for has either recorded it or is being
 	// asked again for a new plan. Only the branch at the end of this call that
@@ -279,7 +280,11 @@ func (g *managedGate) admit(ctx context.Context, class initflow.ConfirmClass, co
 	}
 	g.marks = fresh
 	m := initflow.Managed{Managed: true, Admitted: conv.Refuse() == nil, Fallback: g.facts.InventoryFallback}
-	if !m.Covers(class) {
+	if conv.Unjudged() {
+		// A step no plan gate may judge has no verdict this call could refuse
+		// on and none it could record: it keeps the confirmation it has, and
+		// what stands in a session's way is the caller's own fence, which reads
+		// the same fact off the Converge it built (D1026).
 		return m, nil
 	}
 	if err := conv.Refuse(); err != nil {

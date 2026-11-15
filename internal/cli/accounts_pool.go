@@ -179,8 +179,7 @@ its members with the list on the command line: it is the whole list every time,
 so a member you leave out is dropped.
 
 Run it at your own terminal: a pool decides where a project's calls may be
-spent and whose key they may carry, so a coding agent's session is refused,
---yes included.`,
+spent and whose key they may carry, so a coding agent's session is refused.`,
 		Args: cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAccountsPoolAdd(cmd, args[0], args[1:], o)
@@ -188,7 +187,6 @@ spent and whose key they may carry, so a coding agent's session is refused,
 	}
 	f := cmd.Flags()
 	f.StringVar(&o.strategy, "strategy", "", "how the pool walks its members: failover (the default: try them in order) or round-robin (share the load). Left out, a pool that exists keeps the strategy it has")
-	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
 	return cmd
 }
 
@@ -290,11 +288,10 @@ this config's pools, which is MC4's job, so the removal withdraws nothing from
 the node.
 
 Run it at your own terminal: a pool decides where a project's calls may be
-spent, so a coding agent's session is refused, --yes included.`,
+spent, so a coding agent's session is refused.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runAccountsPoolRm(cmd, args[0], o) },
 	}
-	cmd.Flags().BoolVar(&o.yes, "yes", false, "confirm the removal without a prompt")
 	return cmd
 }
 

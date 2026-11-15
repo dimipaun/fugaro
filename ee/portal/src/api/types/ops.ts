@@ -20,7 +20,7 @@ export interface OpsEntitlementAction {
   action: EntitlementActionKind
   /** The new seat count, for `seats`. */
   seats: number | null
-  /** The new end, for `extend` and `comp`. */
+  /** The new end, which `extend` alone reads and the other three send null for. */
   ends_at: string | null
   reason: string | null
 }
@@ -32,10 +32,18 @@ export interface OpsProjectTransfer {
   reason: string | null
 }
 
-/** The two lists operations sets: the sign-in domains, and the pinned tenants. */
+/**
+ * The two lists operations sets: the sign-in domains, and the Microsoft
+ * (Entra ID) directories a reseller organisation's sign-in is accepted from.
+ * The second field is `microsoft_directories` and is not the `microsoft_tenants`
+ * this declaration carried until D2207 was amended on 2026-11-13 (F43):
+ * Microsoft identity is a directory's claim, and the value compared is the
+ * `tid` of the verified token, which is what `wire_ops.go`, `ops.schema.json`
+ * and its fixture all name.
+ */
 export interface OpsLists {
   email_domains: string[]
-  microsoft_tenants: string[]
+  microsoft_directories: string[]
 }
 
 /** Deciding one open-source request in the queue. */
