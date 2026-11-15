@@ -11001,8 +11001,8 @@ the date with your CLI's version. Nothing else: no report body, no log line and 
 
 **NOT RUN.** Written by **task T3.5** of the task-governance plan (its Check 139), read-only, over a
 run that **already exists**: it launches nothing and spends nothing. **No agent runs any step of it**:
-every command below is yours, at your own terminal, and the guard stops rather than reading anything
-for you. It is the answer to the
+the script below is yours to run, at your own terminal, and its guards stop rather than reading
+anything for you. It is the answer to the
 reconciliation's **U4** — that `x-claude-code-agent-id` distinguishes every sub-agent from the main
 session reliably — and it **gates task T7.2**: the plan makes T7.2's fan-out stop wait for this
 check's answer, so T7.2 does not merge until this check has run and its answer is on the record.
