@@ -11,7 +11,7 @@ row. The plan file is untouched for the same reason — this is not this task's 
 
 ## What J1.3's contract is made of
 
-J1.3's **Interfaces** line (plan line 384) has three parts, and only the first is this task's own:
+J1.3's **Interfaces** line (plan line 383) has three parts, and only the first is this task's own:
 
 1. `jobmax: { auto_launch: false }` in the owner's project config, decoded strictly — a boolean,
    default `false`, any other key under `jobmax:` refused. This part needs nothing from T1.1/T1.2.
@@ -41,8 +41,8 @@ task's diff — those tasks' own deliverables, on those tasks' own files.
 
 ### J1.1 — merged
 
-The plan's own `Done` line for J1.1 (line 358) records it, and `f8b460f9` is the commit. J1.3 does not
-depend on it directly; J1.2 does.
+`da056ce7`, *plugin: job max in the parallelism skill (#1413)*, the commit the plan's own `Done` line
+for J1.1 (line 359) records. An ancestor of the base. J1.3 does not depend on it directly; J1.2 does.
 
 ### T1.1 — **not merged**
 
@@ -60,7 +60,7 @@ depend on it directly; J1.2 does.
 
 | The plan says T1.2 produces | state on `main` |
 |---|---|
-| `settings: { crash_reports: true\|false\|null }` in `project show --json` | absent. `projectShowDoc` (`internal/cli/project_cmd.go:2873`) carries `project`, `gcp_project`, `mode`, `caps`, `policy`, `allow_repos`, `enrolled`, `running_now`, `running_not_enrolled`, `enrolled_not_running` — and no `settings` member |
+| `settings: { crash_reports: true\|false\|null }` in `project show --json` | absent. `projectShowDoc` (`internal/cli/project_cmd.go:2872`) carries `project`, `gcp_project`, `mode`, `caps`, `policy`, `allow_repos`, `enrolled`, `running_now`, `running_not_enrolled`, `enrolled_not_running` — and no `settings` member |
 | the same member in the contract | absent from `console/docs/json-contract.md` |
 | `TestProjectShowSettings`, `TestProjectShowSettingsUnknownIsNull` | neither exists |
 
