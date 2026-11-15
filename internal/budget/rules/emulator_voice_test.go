@@ -3,8 +3,8 @@
 package rules
 
 // The voice policy node against a real rules engine (mobile plan task P5.3.1,
-// approved by the owner on 2026-11-14; docs/mobile/design/
-// voice-evaluation-switch.md §4.3). rules_test.go's
+// approved by the owner on 2026-11-14; the voice-evaluation switch design
+// §4.3). rules_test.go's
 // TestVoicePolicyNodesAreReadPerChild reads the generated document's shape;
 // this file proves the same three claims on the emulator, each beside the
 // positive control that makes its refusal a refusal of the rule and not of an

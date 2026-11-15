@@ -40,7 +40,7 @@ func TestPaths(t *testing.T) {
 
 // TestVoicePathsAreReadableByARunTokenAndNobodyElse: the grants the voice
 // subtree carries are PathShared's and PathRepo's, copied field for field
-// (docs/mobile/design/voice-evaluation-switch.md §4.3), so the two properties
+// (the voice-evaluation switch design §4.3), so the two properties
 // the app's whole design rests on are read off the template here rather than
 // restated: a run token reads them, and a signed-in user reads nothing under
 // them — the phone holds no read of config/policy/**, which is why the
