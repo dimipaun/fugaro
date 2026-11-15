@@ -345,8 +345,8 @@ func TestSetupRigorAnswerLeavesNoSecondCommandWhenDeclined(t *testing.T) {
 // second door to the same key, on both doors that converge.
 func TestUpdateNeverAsksTheRigorQuestion(t *testing.T) {
 	for _, args := range [][]string{
-		{"setup", "--yes", "--rigor", "critical"},
-		{"update", "--yes", "--rigor", "critical"},
+		{"setup", "--rigor", "critical"},
+		{"update", "--rigor", "critical"},
 	} {
 		t.Run(args[0], func(t *testing.T) {
 			newInitRig(t)

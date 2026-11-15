@@ -616,8 +616,8 @@ func setupRigorRefusal(answer string) error {
 // is needed" and the question is asked again (initRun.prompt with an empty
 // suggestion), which is the state the owner's ruling of 2026-10-31 ends.
 //
-// It asks nothing where nobody can answer (canAsk: --yes, --json,
-// --non-interactive, a pipe): the flag is in the run's missing list there
+// It asks nothing where nobody can answer (canAsk: --json, a pipe): the flag
+// is in the run's missing list there
 // (wizardInputs), so such a run is refused with `--rigor <mode>` rather than
 // given the recommendation in the caller's place — a scripted setup is exactly
 // where a default nobody typed would be least visible.
