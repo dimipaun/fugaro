@@ -1009,6 +1009,32 @@ test_a_firestore_location_that_is_not_the_region_is_a_fail() {
   expect_contains "$(fact_line firestore)" "permanent" "the row says the location cannot be changed"
 }
 
+test_a_firestore_location_the_cli_fixes_is_a_pass_on_another_region() {
+  setup_case firestore-region
+  # The CLI creates the (default) database in its own fixed location whatever
+  # --region says (infra.FirestoreLocation, internal/infra/firestore.go:21), so
+  # a correct installation converged on another region must PASS this row: the
+  # read-back is compared with that constant, not with --region. In the case
+  # above the two are the same value, which is why this one has to exist.
+  RUN27_ENV=(FAKE27_FIRESTORE=us-east5)
+  run27_default --region europe-west4
+  expect_status "$status" 0 "a run whose --region is not the CLI's Firestore location"
+  expect_no_fails "a run whose --region is not the CLI's Firestore location"
+  expect_contains "$(fact_line firestore)" "PASS" "the firestore row"
+  expect_contains "$(fact_line firestore)" "us-east5" "the location the CLI itself fixes"
+}
+
+test_a_firestore_location_that_follows_the_region_is_a_fail() {
+  setup_case firestore-follows-region
+  # The other half of the pair: a database answering the run's own --region is
+  # NOT what the CLI creates, so it is a finding even though it matches the flag.
+  RUN27_ENV=(FAKE27_FIRESTORE=europe-west4)
+  run27_default --region europe-west4
+  expect_status "$status" 2 "a Firestore location that follows --region"
+  expect_contains "$(fact_line firestore)" "FAIL" "the firestore row"
+  expect_contains "$(fact_line firestore)" "permanent" "the row says the location cannot be changed"
+}
+
 test_a_missing_bucket_stops_the_installation_row() {
   setup_case no-bucket
   RUN27_ENV=(FAKE27_NO_BUCKET=1)
@@ -1284,6 +1310,46 @@ test_a_vars_env_naming_another_root_is_refused() {
   expect_no_calls "nothing runs when the recorded root is not this check's"
 }
 
+test_a_vars_env_recording_the_same_project_is_accepted() {
+  setup_case root-project-same
+  # C is $DIR/config whatever --project is, so the project is what tells a retry
+  # of this check from a retry against another throwaway. A file recording THIS
+  # run's project is a retry and is accepted.
+  mkdir -p "$dir/root"
+  printf 'C=%s\nCHK27_PROJECT=%s\n' "$dir/root/config" "$PROJECT" >"$dir/root/vars.env"
+  run27_default
+  expect_status "$status" 0 "a retry recording the same project"
+  expect_no_fails "a retry recording the same project"
+  expect_contains "$(fact_line config-root)" "PASS" "the config-root row"
+}
+
+test_a_vars_env_naming_another_project_is_refused() {
+  setup_case root-project-other
+  # A vars.env left by an earlier run on ANOTHER --project: its C is this
+  # check's own, so the root check cannot see it, and the config root under it
+  # still holds that installation's fugaro config.
+  mkdir -p "$dir/root"
+  printf 'C=%s\nCHK27_PROJECT=another-throwaway\n' "$dir/root/config" >"$dir/root/vars.env"
+  run27_default
+  expect_status "$status" 2 "a vars.env naming another project"
+  expect_contains "$out" "CHK27_PROJECT=another-throwaway" "the row names what the file records"
+  expect_contains "$out" "delete $dir/root" "the row says to start again"
+  expect_no_calls "nothing runs when the recorded project is not this run's"
+}
+
+test_a_vars_env_recording_only_the_root_is_accepted() {
+  setup_case root-project-absent
+  # The section's own guard block — and this script before it recorded a project
+  # at all — writes C= alone. A file that records no project has nothing to
+  # disagree with and stays accepted.
+  mkdir -p "$dir/root"
+  printf 'C=%s\n' "$dir/root/config" >"$dir/root/vars.env"
+  run27_default
+  expect_status "$status" 0 "a retry whose vars.env records C alone"
+  expect_no_fails "a retry whose vars.env records C alone"
+  expect_contains "$(fact_line config-root)" "PASS" "the config-root row"
+}
+
 test_the_negative_uses_a_config_root_of_its_own() {
   setup_case neg-root
   run27_default
@@ -1395,6 +1461,8 @@ t test_a_create_that_half_created_is_reported_by_the_restore
 t test_a_billing_link_to_another_account_is_a_fail
 t test_a_billing_readback_is_redacted_in_the_block
 t test_a_firestore_location_that_is_not_the_region_is_a_fail
+t test_a_firestore_location_the_cli_fixes_is_a_pass_on_another_region
+t test_a_firestore_location_that_follows_the_region_is_a_fail
 t test_a_missing_bucket_stops_the_installation_row
 t test_a_missing_job_stops_the_installation_row
 t test_a_missing_image_is_a_fail
@@ -1418,6 +1486,9 @@ t test_a_shell_that_is_tracing_is_refused
 t test_the_config_root_is_left_in_place_and_named
 t test_a_config_root_the_shell_already_points_elsewhere_is_refused
 t test_a_vars_env_naming_another_root_is_refused
+t test_a_vars_env_recording_the_same_project_is_accepted
+t test_a_vars_env_naming_another_project_is_refused
+t test_a_vars_env_recording_only_the_root_is_accepted
 t test_the_negative_uses_a_config_root_of_its_own
 t test_usage_and_arguments
 t test_a_region_that_is_not_one_is_refused

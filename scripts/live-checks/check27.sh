@@ -240,10 +240,15 @@ need_tools() {
   need fugaro "the check is a run of the real CLI: nothing here works around it"
 }
 
-# The region and the Firestore location are one value in this check (the section
-# says so: the two happen to hold the same value and are never derived from one
-# another), and the third live run's own throwaway used us-east5.
+# The region this check's own throwaway used — the third live run's — and the
+# value every later --region flag resolves.
 REGION_DEFAULT=us-east5
+# Where the CLI creates the (default) Firestore database of a project it makes:
+# `infra.FirestoreLocation` (internal/infra/firestore.go:21), a fixed value the
+# CLI uses whatever --region says, because a Firestore location is permanent.
+# The read-back is compared with THIS and never with $REGION, or a correct
+# installation on another --region would FAIL.
+FIRESTORE_LOCATION=us-east5
 # The installation's name: the plan's own allocation for this check, and the
 # name every later --project flag resolves. Nothing else is accepted.
 NAME_FIXED=fugaro
@@ -792,13 +797,27 @@ guard_config_root() {
     if [ -n "$recorded" ] && [ "$recorded" != "$C" ]; then
       stop "$DIR/vars.env records C=$recorded, which is not this check's own root ($C): delete $DIR (rm -rf $DIR) and start again. Nothing was run"
     fi
+    # C is $DIR/config for EVERY --project, so C alone cannot tell a retry of
+    # this check from a retry against another throwaway: the config root would
+    # still hold the earlier installation's fugaro config and the converge would
+    # read it. The project is recorded under CHK27_PROJECT= for exactly that,
+    # and a file that records none (the section's own block writes C= alone, and
+    # so did this script before this line existed) is accepted as before.
+    local recorded_project
+    recorded_project=$(sed -n 's/^CHK27_PROJECT=//p' "$DIR/vars.env" | head -1)
+    if [ -n "$recorded_project" ] && [ "$recorded_project" != "$P" ]; then
+      stop "$DIR/vars.env records CHK27_PROJECT=$recorded_project, which is not this run's project ($P) — the config root under it still holds that installation's fugaro config: delete $DIR (rm -rf $DIR) and start again. Nothing was run"
+    fi
   fi
   if [ -n "${XDG_CONFIG_HOME:-}" ] && [ "$XDG_CONFIG_HOME" != "$C" ]; then
     stop "this shell's XDG_CONFIG_HOME ($XDG_CONFIG_HOME) is not this check's root ($C). Unset it, or start the check in a fresh shell: the machine's own installations must never be read. Nothing was run"
   fi
   mkdir -p "$DIR" "$C"
   chmod 700 "$DIR"
+  # C= stays the first line: the section's own guard block reads C back out of
+  # this same file, and its own block writes C= alone.
   printf 'C=%s\n' "$C" >"$DIR/vars.env"
+  printf 'CHK27_PROJECT=%s\n' "$P" >>"$DIR/vars.env"
   . "$DIR/vars.env"
   [ "${C:-}" = "$DIR/config" ] || stop "the config root recorded in $DIR/vars.env is not this check's own ($C): delete $DIR and start again. Nothing was run"
   export XDG_CONFIG_HOME="$C"
@@ -1018,7 +1037,9 @@ step_billing() {
 }
 
 # step_firestore: the Firestore database and its PERMANENT location (step 3's
-# last input-phase answer, and the one that can never be changed).
+# last input-phase answer, and the one that can never be changed). The location
+# is the CLI's own fixed one and NOT the region this run converged: the two are
+# the same value by coincidence, and a run on another --region is still correct.
 step_firestore() {
   read_out gcloud firestore databases describe --database='(default)' --project="$P" --format='value(locationId)'
   if [ "$READ_STATUS" -ne 0 ]; then
@@ -1027,12 +1048,12 @@ step_firestore() {
   fi
   local loc
   loc=$(printf '%s\n' "$READ_OUT" | head -1)
-  if [ "$loc" = "$REGION" ]; then
-    fact firestore PASS "the (default) database's locationId is $REGION, the region this run converged"
+  if [ "$loc" = "$FIRESTORE_LOCATION" ]; then
+    fact firestore PASS "the (default) database's locationId is $FIRESTORE_LOCATION, the CLI's own fixed location, which does not follow --region (this run converged $REGION)"
     return 0
   fi
-  fact firestore FAIL "the (default) database's locationId reads '${loc:-empty}' and not $REGION: the location is permanent, so this is a finding for the section, not a retry"
-  stop "the Firestore location is '${loc:-empty}' and not $REGION"
+  fact firestore FAIL "the (default) database's locationId reads '${loc:-empty}' and not $FIRESTORE_LOCATION, the location the CLI creates in whatever --region says: the location is permanent, so this is a finding for the section, not a retry"
+  stop "the Firestore location is '${loc:-empty}' and not $FIRESTORE_LOCATION"
 }
 
 # step_installation: the runs bucket and the history job the converge was to
@@ -1377,7 +1398,7 @@ print_plan() {
   say "    which asks 'Type the GCP project's ID: ' and is answered '$P'; the project's confirmation banner, the billing banner and the Firestore location's banner are read and nothing is typed under them"
   say "  [network, reads] gcloud projects describe $P --format='value(projectId,lifecycleState)' (must read $P ACTIVE)"
   say "  [network, reads] gcloud billing projects describe $P --format='value(billingAccountName,billingEnabled)' (must name the account you gave, enabled True)"
-  say "  [network, reads] gcloud firestore databases describe --database='(default)' --project=$P --format='value(locationId)' (must read $REGION)"
+  say "  [network, reads] gcloud firestore databases describe --database='(default)' --project=$P --format='value(locationId)' (must read $FIRESTORE_LOCATION, the CLI's own fixed location and not --region)"
   say "  [network, reads] gcloud storage buckets list --project=$P (must name fugaro-runs-$P), gcloud run jobs list --project=$P --region=$REGION (must name fugarohist)"
   say "  [network, reads] gcloud artifacts docker images list $REGION-docker.pkg.dev/$P/fugaro-base --include-tags (must name the history image)"
   say "  [network+local, reads] fugaro doctor --project $N --all, with no terminal: exit 0, and its project line must name (GCP $P,"
