@@ -284,8 +284,8 @@ knowing by name:
   `oauth-only` (the default, and the state 0.23.1 measured the halt in) its first model call is refused —
   `no_candidate_credentials` (the class that replaced the `state_unavailable` halt it measured) where the
   bundle holds no paid key, and the fallback-forbidden refusal ("no shared subscription credential can
-  serve this call") where it holds one the policy does not spend. Under `auto` a tier-B credential needs no admission
-  (internal/credsvc's `candidates`), so that run would be served by the project's paid key
+  serve this call") where it holds one the policy does not spend. Under `auto` a tier-B credential needs
+  no admission (internal/credsvc's `candidates`), so that run would be served by the project's paid key
   instead, as far as the service's bundle holds that key — which the check does not read, and which is
   a spend it will not launch on. The review-only run is refused in either arm: a review caller's identity
   is paired against this same admission, which the fallback never enters (internal/credsvc's

@@ -13,7 +13,7 @@ package credsvc
 // oauth credential and nothing else (a repository whose runs are the cascade
 // under `oauth-only` has no paid key to fall back to), the shared node offers
 // that account to one repository, and the repository's own node is the
-// admission that decides whether it reaches the call. each test here is one
+// admission that decides whether it reaches the call. Each test here is one
 // answer to "why was this repository served nothing", and none of them is a
 // credential the repository may not use: the admission is the security
 // property and it is unchanged.
