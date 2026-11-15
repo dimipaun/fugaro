@@ -18,7 +18,8 @@ As of 2026-11-15, read from `main`, the open pull requests and each plan's task 
 
 | Spec | Merged | Left |
 | --- | --- | --- |
-| credentials-service | about 32/36 | owner checks; Check 96 holds C2.3; the cascade's empty candidate list is now its own refusal, `no_candidate_credentials` (merged 2026-11-15, #2713; the count above is unchanged, the record does not say which task it was) |
+| account-aliases | 4/5 | AL4 (approved 2026-11-10); D2090–D2102 answered as recommended; owner Check 550 not run |
+| credentials-service | about 32/36 | owner checks; Check 96 holds C2.3 |
 | go-to-market | 9/12 | owner G2.5, and two more |
 | licensing | 21/23 | owner-run only: L0.2's allow-list and status, the Terms publication's L4.3, L5.1 T3(c) |
 | mobile | about 44/58 | P5.1 (split into tasks in drafts #2701 and #2703), P5.2 (design, draft #2687), P5.3.1 to P5.3.7 (approved 2026-11-14, not started), P5.4 (unscheduled); owner P2.3 and P4.4 |
@@ -30,7 +31,6 @@ As of 2026-11-15, read from `main`, the open pull requests and each plan's task 
 
 | Spec | Merged | Left |
 | --- | --- | --- |
-| account-aliases | 4/5 | AL4 (approved 2026-11-10); D2090–D2102 answered as recommended; owner Check 550 not run |
 | binary-allow-rule | 5/11 | AR1 and AR3 to AR7, not started |
 | bitbucket-token-types | 8/19 | T5 (stalled, draft #2588), T7 (stalled, draft #2593); T3, T9 to T12, T14, T16, I1 not started; CK (Checks 590 and 591) owner-run |
 | bitbucket-workspace-token | 7/13 | T1.4, T2.2, T2.4, T2.6 and T2.7 |
@@ -65,8 +65,8 @@ As of 2026-11-15, read from `main`, the open pull requests and each plan's task 
 | c39-review-identity | owner live check |
 | catalog-build-context | none |
 | central-orchestrator | superseded by stateless-orchestrator |
-| cli-output-console-graph | owner Checks 310 (the script is on main; a scratch-mode change is in flight as run c310), 311 (the script is not on main yet; draft #2731), 313 and 314 (scripts on main), not yet run; Check 312 passed 2026-11-13 |
-| cloud-senior-review | CSR1 to CSR16 done; CSR17 and CSR18 moved to api-key-review |
+| cli-output-console-graph | owner Checks 310 (the script is on main; a scratch-mode change is in flight as run c310), 311 (the script is not on main yet; draft #2731), 313 and 314 (scripts on main), not yet run |
+| cloud-senior-review | CSR17 and CSR18 moved to api-key-review |
 | compatibility-matrix | owner CM4 (the read of the copy) |
 | compute-backend | declared operational by the owner 2026-11-15; owner Checks 57b (its stranded-job submission fixed) and 124, not yet run (Task 13 was dropped) |
 | config-management | none |
