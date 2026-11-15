@@ -85,9 +85,10 @@ type ReportsJobSpec struct {
 }
 
 // ReportsJobDoc is the document ReportsJobDocEnv carries: one run's whole
-// assignment. It is deliberately the same shape internal/cli's reader will
-// declare — both halves spell the wire format, and the round-trip test is what
-// keeps them in step (CheckSpec's own arrangement).
+// assignment, and the wire format the reports command (R11) reads. The two
+// halves spell it once each — this type renders it into the plan, that command
+// declares its own copy to decode it — and the round trip over these bytes
+// (CheckSpec's own arrangement) is what keeps them in step.
 type ReportsJobDoc struct {
 	Version int `json:"version"`
 	// Project is the installation's GCP project, the one the runs bucket and
@@ -99,8 +100,8 @@ type ReportsJobDoc struct {
 	// name it (the gs:// form is the environment's FUGARO_BUCKET). The stored
 	// reports are reports/ of it.
 	Bucket string `json:"bucket"`
-	// Repositories are the slug of every repository the project reports, in
-	// the config's own order: the job writes one report per repository and
+	// Repositories are the slug of every repository the project reports,
+	// sorted (ReportsRepos): the job writes one report per repository and
 	// period under reports/<slug>/, and a slug is a function of the provider
 	// and the name (task.Slug), so a job with no checkout cannot derive one
 	// from a name it is given instead.
