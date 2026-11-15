@@ -25,10 +25,10 @@ import (
 
 // Labeler is a provider's label capability.
 //
-// A caller must hold the provider as a Labeler only after checking Supported:
-// the methods below are the host's own operations, and a provider whose host
-// has no labels implements them as no-ops rather than refusing, so a caller
-// that skipped the check would read a silent nothing as done (R7).
+// A caller that has found this interface must still ask Supported before it
+// relies on an answer: a provider whose host has no labels implements the
+// methods below as no-ops rather than refusing (R7), so a caller that
+// skipped the check would read a silent nothing as done.
 type Labeler interface {
 	// Supported reports whether this provider's host has pull request
 	// labels at all. It is a property of the host, not of one call: it does
@@ -87,13 +87,18 @@ const (
 // OwnedLabel reports whether name is a label in a namespace Fugaro writes.
 //
 // The name is compared case-insensitively, because that is how the host
-// compares label names (F23), and the fold is over A–Z only rather than
-// strings.ToLower's. That is the point of the ASCII check R3 states: Unicode
-// folding maps characters that only look like ASCII onto it — the Kelvin
-// sign K folds onto "k" and the long s ſ onto "s" — so a name spelled with
-// one of them would read as a name in a namespace Fugaro owns while being a
-// name the host never matches to one. Folding nothing but A–Z cannot do that:
-// ſpec:forge-labels stays ſpec:forge-labels and is not owned.
+// compares label names (F23), and the fold is over A–Z and nothing else:
+// R3's ASCII-before-lowering rule. Unicode folding maps characters that only
+// look like ASCII onto it — the Kelvin sign K onto "k", the dotted capital I
+// onto "i" — so lowering a name first can turn one the host never matches
+// into one that reads as Fugaro's own. Folding A–Z cannot: ſpec:forge-labels
+// stays ſpec:forge-labels and is not owned.
+//
+// Neither namespace holds a k or an i, so for these two prefixes the answer
+// is the one strings.ToLower would have given as well; the fold is written
+// out because the rule belongs to every comparison of a name Fugaro did not
+// write, and R3's shape check for the spec name is where it bites (a name
+// spelled with the Kelvin sign would pass as one beginning "k").
 //
 // What it answers is the namespace and nothing else. The shape of the part
 // after the colon is the caller's check (R3's expression is the syncer's and

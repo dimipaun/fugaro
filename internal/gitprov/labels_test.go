@@ -7,10 +7,10 @@ import "testing"
 // namespaces, matched the way the host matches them — case-insensitively —
 // and nothing else is ever Fugaro's to touch.
 //
-// The two non-ASCII cases are the reason the fold is over A–Z and not
-// strings.ToLower's: the long s and the Kelvin sign are what a Unicode fold
-// would turn into the "s" of "spec:" and the "k" of a name, so a label a
-// person could make would read as one Fugaro owns.
+// The two non-ASCII cases pin the direction the ASCII rule fails in (R3): a
+// name that only looks like one of the namespaces — the long s in front of
+// "pec:", the Kelvin sign where an ASCII letter would be — is a label the
+// host does not match to Fugaro's, and so is not Fugaro's here.
 func TestOwnedLabel(t *testing.T) {
 	for _, c := range []struct {
 		name  string
@@ -26,7 +26,8 @@ func TestOwnedLabel(t *testing.T) {
 		{name: "spec:", owned: true},
 		{name: "spec:café", owned: true, why: "still the spec: namespace; R3's shape check is what refuses the name"},
 		{name: "spec:Kx", owned: true, why: "the Kelvin sign is after the namespace, and only A–Z folds"},
-		{name: "ſpec:forge-labels", owned: false, why: "the long s folds onto s under Unicode, so the namespace must not be folded"},
+		{name: "ſpec:forge-labels", owned: false, why: "the long s is not the ASCII the spec: namespace is spelled in"},
+		{name: "Kugaro:running", owned: false, why: "the Kelvin sign is not an f, whatever Unicode folds it onto"},
 		{name: "bug", owned: false},
 		{name: "fugaro", owned: false, why: "no colon, so no namespace"},
 		{name: "spec", owned: false},
