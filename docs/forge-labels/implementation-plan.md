@@ -24,17 +24,17 @@ The repository's rigor default is `startup` and `planning.decoupling` is on, so 
 | --- | --- |
 | A label name outside `fugaro:running`, `fugaro:failed` and an allowed `spec:` shape is refused by the service, whatever the daemon sends | T3 `TestLabelRouteRefusesForeignNames` |
 | The syncer removes only the two exact status names and never a `spec:` label a person added; names match case-insensitively | T5 `TestSyncNeverTouchesForeignLabels`, T1 `TestOwnedLabel` |
-| A hostile plan name or spec name cannot make a label name (R3) | T5 `TestSpecLabelShape`, T3 `TestLabelRouteRefusesForeignNames` |
+| A hostile spec name cannot make a label name (R3) | T5 `TestSpecLabelShape`, T3 `TestLabelRouteRefusesForeignNames` |
 | A run that writes another pull request's number into its record cannot get that pull request relabelled: the head must be exactly `fugaro/<run id>` for the run id the daemon sends (F17) | T3 `TestLabelRouteCorroboratesPullRequest` |
 | Every caller class but the orchestrator is refused, each refusal with one audit line | T9 `TestRouteCallerClassMatrix` (the existing matrix gains the route), T3 `TestLabelRouteRefusesEveryOtherClass` |
 | A stolen identity cannot remove a `spec:` label or write label text; colours and descriptions are the service's constants (F26, D2437) | T3 `TestLabelRouteRemovesOnlyStatusNames`, `TestLabelRouteEnsureUsesFixedText` |
 | A finished item's pull request number is read from its run record once and cached (F25) | T7 `TestPRReaderCachesPerRun` |
-| `failed` stays while the last intent failed and no job started, and goes on a new job or on close (D2433) | T5 `TestPhaseToLabels`, `TestSyncFailedStaysUntilNextJob` |
+| `failed` stays on a failed run's pull request until it closes (D2433, R8) | T5 `TestPhaseToLabels`, `TestSyncFailedStaysUntilClose` |
 | The route's permission set is exactly the narrowest the host needs (U2) | T3 `TestLabelRoutePermissionSet` |
 | A second tick with nothing changed makes no write (F15) | T5 `TestSyncChangeOnly`, T7 `TestTickLabelsOnce` |
 | Bitbucket and any provider without the capability: silent no-op, no warning per tick (R7) | T2 `TestBitbucketLabelsSilentNoOp` |
 | A merged or closed pull request loses both status labels, though the bulk list shows only open ones (R5) | T5 `TestSyncClearsOnMergedPR` |
-| Several items on one pull request: the newest decides (R8) | T5 `TestSyncNewestItemWins` |
+| Label state is per run and its pull request: a retry's new pull request leaves the first one `failed` until it closes (R8, F21) | T5 `TestSyncPerRunPullRequest` |
 | A failed label call never fails the tick | T5 `TestSyncFailureLogsOnce` |
 | A daemon restart does not cause redundant writes (F10) | T5 `TestSyncAfterRestartReadsFirst` |
 | The route's own rate limit holds a tick every 30 seconds that writes only on a difference (F22) | T3 `TestLabelRouteRateSizedForTick` |
@@ -64,13 +64,13 @@ The repository's rigor default is `startup` and `planning.decoupling` is on, so 
 - Reviewer tier: standard.
 
 ### T3: the credentials service's label route
-- Acceptance: `creds` holds the route's request and response shapes, its path constant `/v1/github/labels` and the refusal errors; `POST /v1/github/labels` performs one of `list`, `get` (one pull request's state and labels), `ensure`, `add`, `remove` through T1's adapter, using a token it mints itself with exactly `{pull_requests: write, metadata: read}`, caches until near expiry and never returns; the request carries a label name only, and `ensure` applies the colour and description of D2437 itself; it accepts only the orchestrator caller class; it accepts only `fugaro:running`, `fugaro:failed` and a `spec:` name of the shape in R3, and `remove` only the two status names; a write carries the run id the daemon sends, and the service refuses a pull request whose head branch is not exactly `fugaro/<run id>` or whose author is not Fugaro's own identity; a repository outside the installation is refused; one audit line per call and per refusal under the purpose T9 adds; its rate limits (reads and writes counted apart) are stated and tested for a tick every 30 seconds.
+- Acceptance: `creds` holds the route's request and response shapes, its mirror of the path constant and the refusal errors; `POST /v1/github/labels` performs one of `list`, `get` (one pull request's state and labels), `ensure`, `add`, `remove` through T1's adapter, using a token it mints itself with exactly `{pull_requests: write, metadata: read}`, caches until near expiry and never returns; the request carries a label name only, and `ensure` applies the colour and description of D2437 itself; it accepts only the orchestrator caller class; it accepts only `fugaro:running`, `fugaro:failed` and a `spec:` name of the shape in R3, and `remove` only the two status names; a write carries the run id the daemon sends, and the service refuses a pull request whose head branch is not exactly `fugaro/<run id>` or whose head repository is not the base repository (a fork can carry that branch name) or whose author is not Fugaro's own identity (the App's bot login, as `gitprov.PRHead.Self` reports it); a repository outside the installation is refused; exactly one audit line per call, served or refused, under the purpose T9 adds; a name is checked as ASCII before it is lowered; its rate limits (reads and writes counted apart) are stated and tested for a tick every 30 seconds.
 - Files: `internal/creds/labelroute.go` (new), `internal/credsvc/labelroute.go` (new), `internal/credsvc/labelroute_test.go` (new).
 - Interfaces: consumes T1 and T9; produces the shapes T4 consumes and the route T7 reaches.
 - Tests: `TestLabelRouteRefusesForeignNames`, `TestLabelRouteRemovesOnlyStatusNames`, `TestLabelRouteEnsureUsesFixedText`, `TestLabelRouteCorroboratesPullRequest`, `TestLabelRouteRefusesEveryOtherClass` (job, review, verifier, coordinator, person, launcher and a `GcloudAudience` token), `TestLabelRoutePermissionSet`, `TestLabelRouteRateSizedForTick`, `TestLabelRoutePathMatchesClient`.
 - Command: `go test ./internal/credsvc/ ./internal/creds/ -run 'TestLabelRoute' -count=1`
 - Red step: the handler does not exist, so the tests get the refusing default from T9.
-- Depends on: T1 (the adapter it calls: behaviour, not only a shape), T9 (the purpose and the registered route).
+- Depends on: T1 (the adapter it calls: behaviour, not only a shape), T9 (the purpose, the path constant and the gated route).
 - Commit: `credsvc: the label route`.
 - Reviewer tier: opus with a mandatory independent security review and mutation checks on the caller class, the permission set, the name check and the head check (weaken each, expect a test to fail).
 
@@ -86,10 +86,10 @@ The repository's rigor default is `startup` and `planning.decoupling` is on, so 
 - Reviewer tier: opus with an independent security review.
 
 ### T5: the orchestrator's label syncer
-- Acceptance: a `Labels LabelSeams` field on `orchestrator.Tick`, unset meaning no labelling; given items with phase, pull request number, repository and spec name, one tick reads once per repository, computes the desired set (R2-R5, R8; `failed` stays while the item's last intent ended failed and no job started), and writes only the difference through a `gitprov.Labeler`: it adds its own `spec:` label and the wanted status label, removes only the exact names `fugaro:running` and `fugaro:failed`, ensures labels once, and reads by number a pull request absent from the open list until it is known closed and clean; failures log once per cause.
+- Acceptance: a `Labels LabelSeams` field on `orchestrator.Tick`, unset meaning no labelling; given items with phase, pull request number, repository and spec name, one tick reads once per repository, computes the desired set (R2-R5, R8), and writes only the difference through a `gitprov.Labeler`: it adds its own `spec:` label and the wanted status label, removes only the exact names `fugaro:running` and `fugaro:failed`, ensures labels once, and reads by number a pull request absent from the open list until it is known closed and clean; failures log once per cause.
 - Files: `internal/orchestrator/labelplan.go` (new), `internal/orchestrator/labelsync.go` (new), `internal/orchestrator/labelsync_test.go` (new), `internal/orchestrator/tick.go` (field and one call).
 - Interfaces: consumes T1's `Labeler` through a recording double in its own test and T8's `WorkItem.Spec`; produces `LabelSeams` for T7.
-- Tests: `TestSyncChangeOnly`, `TestSyncNeverTouchesForeignLabels`, `TestSpecLabelShape`, `TestSyncClearsOnMergedPR`, `TestSyncNewestItemWins`, `TestSyncFailureLogsOnce`, `TestSyncAfterRestartReadsFirst`, `TestSyncFailedStaysUntilNextJob`, `TestPhaseToLabels`.
+- Tests: `TestSyncChangeOnly`, `TestSyncNeverTouchesForeignLabels`, `TestSpecLabelShape`, `TestSyncClearsOnMergedPR`, `TestSyncPerRunPullRequest`, `TestSyncFailureLogsOnce`, `TestSyncAfterRestartReadsFirst`, `TestSyncFailedStaysUntilClose`, `TestPhaseToLabels`.
 - Command: `go test ./internal/orchestrator/ -run 'TestSync|TestSpecLabelShape|TestPhaseToLabels' -count=1`
 - Red step: the tests reference `LabelSeams`, which does not exist.
 - Depends on: T1 (the interface), T8 (the field).
@@ -108,8 +108,8 @@ The repository's rigor default is `startup` and `planning.decoupling` is on, so 
 - Reviewer tier: opus (it edits `SECURITY.md`).
 
 ### T8: the work item carries its spec
-- Acceptance: `WorkItem` gains an optional `spec` field (a plan folder name, shape-checked as in R3), set by `work_item_upsert` (the daemon has no plan import: a planning session or a person writes it in the patch, D2438), shown in the state summary, and in both schemas as an optional property with no version bump; an item with none is unchanged; an upsert that omits it leaves it alone.
-- Files: `internal/orchestrator/state.go`, `internal/orchestrator/patch.go`, `internal/orchestrator/summary.go`, `schemas/orchestrator-state.schema.json`, `schemas/orchestrator-patch.schema.json`.
+- Acceptance: `WorkItem` gains an optional `spec` field (a plan folder name, shape-checked as in R3), set by `work_item_upsert` (the daemon has no plan import: a planning session or a person writes it in the patch, D2438), and in both schemas as an optional property with no version bump; an item with none is unchanged; an upsert that omits it leaves it alone.
+- Files: `internal/orchestrator/state.go`, `internal/orchestrator/patch.go`, `internal/orchestrator/state_test.go`, `internal/orchestrator/patch_test.go`, `schemas/orchestrator-state.schema.json`, `schemas/orchestrator-patch.schema.json` (the state summary, if it lists fields, is the seventh file; split the schemas off if the run finds it past seven).
 - Interfaces: produces `WorkItem.Spec` for T5 and T7.
 - Tests: `TestWorkItemSpecRoundTrip`, `TestWorkItemSpecShapeRefused`, `TestStateSchemasAcceptSpec`.
 - Command: `go test ./internal/orchestrator/ ./internal/cli/ -run 'TestWorkItemSpec|TestStateSchemasAcceptSpec' -count=1`
@@ -119,14 +119,14 @@ The repository's rigor default is `startup` and `planning.decoupling` is on, so 
 - Reviewer tier: standard.
 
 ### T9: the label route's census
-- Acceptance: a purpose `label` is valid in the audit vocabulary (`ValidPurpose`, `callerWithoutJobPurpose`, `repositoryOnlyPurpose`, the tier rule and the `routeAct` oracle), and `POST /v1/github/labels` is a served route that refuses every call with the service's refusal shape until T3 adds the behaviour; the route sits in the caller-class matrix for every class, and the census pins that name served routes (the 404 sentence and its pins) are updated.
-- Files: `internal/credsvc/audit.go`, `internal/credsvc/server.go`, `internal/credsvc/callerclass_test.go`, `internal/credsvc/audit_answer_test.go`, `internal/credsvc/slip_test.go`.
-- Interfaces: produces the purpose and the registered route T3 fills.
-- Tests: `TestRouteCallerClassMatrix`, `TestAuditPurposeLabel`, `TestServedRoutesCensus`.
+- Acceptance: a purpose `label` is valid in the audit vocabulary (`ValidPurpose`, `callerWithoutJobPurpose`, `repositoryOnlyPurpose`, the tier rule and the `routeAct` oracle); `internal/credsvc` owns the path constant `/v1/github/labels` and serves it with the caller-class gate final (only the orchestrator class passes, every other class is refused with one audit line) and a default refusal behind the gate until T3 adds the behaviour; the route sits in the caller-class matrix, and the census pins that name served routes (the 404 sentence and its pins) are updated.
+- Files: `internal/credsvc/audit.go`, `internal/credsvc/server.go`, `internal/credsvc/callerclass_test.go`, `internal/credsvc/audit_answer_test.go`, `internal/credsvc/slip_test.go` (which also holds the new `TestServedRoutesCensus`).
+- Interfaces: produces the purpose, the path constant and the gated route T3 fills.
+- Tests: `TestRouteCallerClassMatrix`, `TestAuditPurposeLabel`, `TestServedRoutesCensus` (new).
 - Command: `go test ./internal/credsvc/ -run 'TestRouteCallerClassMatrix|TestAuditPurposeLabel|TestServedRoutesCensus' -count=1`
 - Red step: the matrix names a route that is not served.
 - Depends on: none.
-- Commit: `credsvc: the label route's purpose and census`.
+- Commit: `credsvc: the label route's purpose, gate and census`.
 - Reviewer tier: opus with an independent security review.
 
 ## Slice 2: the join
@@ -174,12 +174,12 @@ The repository's rigor default is `startup` and `planning.decoupling` is on, so 
 
 **Critical path:** T1, T3, T4, T7, CK. T9, T8, T5, T2 and T6 run beside it.
 
-**Shared files:** only T1 writes `internal/gitprov/labels.go`; only T9 writes `internal/credsvc/server.go`, `audit.go` and the census pins; only T5 writes `internal/orchestrator/tick.go`; T8 writes `state.go`, `patch.go` and `summary.go` and T5 does not; only T7 writes `internal/cli/orchestrator_run.go`; T6 owns the documents and the Docs test it adds. No level holds two writers of one file.
+**Shared files:** only T1 writes `internal/gitprov/labels.go`; only T9 writes `internal/credsvc/server.go`, `audit.go` and the census pins; only T5 writes `internal/orchestrator/tick.go`; T8 writes `state.go`, `patch.go` and their tests and T5 does not; only T7 writes `internal/cli/orchestrator_run.go`; T6 owns the documents and the Docs test it adds. No level holds two writers of one file.
 
 | File | Writer | Level |
 | --- | --- | --- |
 | `internal/gitprov/labels.go`, `internal/gitprov/github/labels.go` | T1 | L0 |
-| `internal/orchestrator/state.go`, `patch.go`, `summary.go`, the two schemas | T8 | L0 |
+| `internal/orchestrator/state.go`, `patch.go`, `state_test.go`, `patch_test.go`, the two schemas | T8 | L0 |
 | `internal/gitprov/fake/labels.go`, `internal/gitprov/bitbucket/labels.go` | T2 | L1 |
 | `internal/creds/labelroute.go`, `internal/credsvc/labelroute.go` | T3 | L1 |
 | `internal/credsvc/audit.go`, `server.go`, `callerclass_test.go`, `audit_answer_test.go`, `slip_test.go` | T9 | L0 |
@@ -189,7 +189,7 @@ The repository's rigor default is `startup` and `planning.decoupling` is on, so 
 | `internal/cli/orchestrator_labels.go`, `orchestrator_run.go` | T7 | L3 |
 | `scripts/live-checks/check640*.sh`, `internal/cli/docs_check640_test.go`, `docs/gcp-live-checklist.md` | CK | L4 |
 
-**Considered and declined.** A contract task for the interface and the request shape (a gain of one weight; above); a GitLab adapter (D2431); a webhook receiver (D2434); `fugaro setup` or `update` pre-creating the labels (O2, R6); writing labels from the runner (D2432); a sibling token mint with `pull_requests: write` (D2439: a token that can approve or close any pull request); the person's own credential (it is not available to a daemon that runs without them); reading the spec name from the run's launch record (D2438: the run writes it); deriving it in a plan import (none exists).
+**Considered and declined.** A contract task for the interface and the request shape (a gain of one weight; above); a GitLab adapter (D2431); a webhook receiver (D2434); `fugaro setup` or `update` pre-creating the labels (D2440); writing labels from the runner (D2432); a sibling token mint with `pull_requests: write` (D2439: a token that can approve or close any pull request); the person's own credential (it is not available to a daemon that runs without them); reading the spec name from the run's launch record (D2438: the run writes it); deriving it in a plan import (none exists).
 
 ## Checks the plan takes
 

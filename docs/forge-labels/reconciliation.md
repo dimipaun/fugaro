@@ -2,7 +2,7 @@
 
 **Spec:** [spec.md](spec.md), "Fugaro Spec: Forge Integration via Labels", verbatim. **Owner: Dimi Paun (D2430). Checked against `origin/main` at `f70f520cc` on 2026-11-15.** Where this file disagrees with `spec.md`, this file wins.
 
-Numbers taken: **D2430-D2449** (the highest in use is D2429, in open pull requests), **Checks 640-649** (the highest is 632, in open pull requests), findings **F1-F26**, assumptions **A1-A5**, resolutions **R1-R8**, open items **O1-O2**, UNVERIFIED **U1-U3**. **Revised after review rounds 1 and 2 (2026-11-15):** F17-F26 and D2438-D2440 are new, F5-F8, F10, F12, F17 and R2-R6 changed, D2436 is superseded by D2439 and D2438 is amended.
+Numbers taken: **D2430-D2449** (the highest in use is D2429, in open pull requests), **Checks 640-649** (the highest is 632, in open pull requests), findings **F1-F26**, assumptions **A1-A5**, resolutions **R1-R8**, open items **O1-O4**, UNVERIFIED **U1-U3**. **Revised after review rounds 1 and 2 (2026-11-15):** F17-F26 and D2438-D2440 are new, F5-F8, F10, F12, F17 and R2-R6 changed, D2436 is superseded by D2439 and D2438 is amended.
 
 ## Assumptions
 
@@ -43,23 +43,23 @@ Numbers taken: **D2430-D2449** (the highest in use is D2429, in open pull reques
 - **F18 (Gap, security).** The merge mint's fence does not refuse an agent's session: `SECURITY.md` and `credsvc/mergemint.go` say a coding agent's session on the operator's machine can present the daemon account's identity. What the label route keeps from that fence is the caller class, repository scope, rate limit and audit line; its own protection is that the service accepts only an allowed label on a corroborated pull request, which bounds a stolen identity to relabelling Fugaro's own pull requests. *Consequence:* `SECURITY.md` says so (T6).
 - **F19 (Gap).** The daemon has no identity to the service: `OrchestratorAccounts` is set nowhere outside tests, the invoker grant is Terraform and not carried, and nothing mints the daemon's ID token for the service. *Consequence:* a prerequisite outside this plan, named in the plan; T7 and Check 640 cannot pass without it (O2).
 - **F20 (Gap).** GitHub limits a label name to 50 characters and a description to 100 (the first draft had them reversed). The descriptions below are well within it. *Consequence:* R3's bound.
-- **F21 (Gap).** One pull request can have several work items (a follow-up, a retry), and the desired set would flap between them. *Consequence:* the newest item per pull request decides (R8).
+- **F21 (Gap).** Each run pushes to its own branch `fugaro/<run id>` and so opens its own pull request (the launcher sets no branch), so a retry is a new pull request, not a second job on one: a superseded failed run's pull request would keep `fugaro:failed` and never clear. *Consequence:* label state is keyed per run and its pull request (R8).
 - **F22 (Gap).** The service's rate limit for the merge route is 10 an hour per repository; the daemon ticks about every 30 seconds. *Consequence:* the label route states its own limits, tested, sized for a tick that writes only on a difference and reads once per tick, with reads counted apart from writes.
 - **F23 (Rule).** A syncer that "writes the difference" over the whole `fugaro:`/`spec:` set would remove a `spec:` label a person added, against the spec's own rule. *Consequence:* it adds only its own spec label, removes only `fugaro:running` and `fugaro:failed`, and matches names the way GitHub does, case-insensitively (R5).
 - **F24 (Rule).** `website/content/security.md` is `SECURITY.md` regenerated (`go run ./internal/clidoc`), never edited by hand (`.claude/rules/credentials-service.md`).
 - **F25 (Gap).** `RunReport` is only the run id, start, finish and outcome, and the fold reads only intents that have not reported; a finished or failed item still needs its pull request number to keep or clear its labels. *Consequence:* T7 adds a per-run reader of the run record's pull request number, cached per run id because the number is fixed once set.
 - **F26 (Gap, security).** The route accepts a caller-chosen name and text; a stolen daemon identity could write arbitrary label text or remove a `spec:` label a person added. *Consequence:* the request carries only a name, the service applies D2437's colours and descriptions itself, and the service removes only `fugaro:running` and `fugaro:failed`.
-- **F16 (Gap).** `retry`: the daemon allows one automatic retry after a first failure, so the label sequence is running, failed, running. *Consequence:* none; the spec's rules already give it ("on job start: add running, remove failed").
+- **F16 (Gap).** `retry`: the daemon allows one automatic retry after a first failure; the retry is a new run on a new pull request (F21), so the first pull request keeps `fugaro:failed` until it closes, and the second is `running`. *Consequence:* none beyond R8.
 
 ## Resolutions (one defensible answer)
 
 - **R1.** The daemon writes all labels after the draft exists; `PRSpec.Labels` and `ApplyReady` stay as they are (F1, F2).
 - **R2.** The spec label is `spec:<name>` for the item's `spec` field (D2438), added the first tick the daemon has a corroborated pull request number for the item; an item with no `spec` has no spec label (F4, F6).
 - **R3.** A spec label is written only when the name passes `^[a-z0-9][a-z0-9-]{0,43}$` after lower-casing (F7, F20); otherwise skipped, one log line (F7).
-- **R4.** Desired status label by phase: `running` gives `fugaro:running`; `failed` gives `fugaro:failed`, which stays through `queued`, `blocked` and `cancelled` while the item's last intent ended failed, and goes when a new job starts or the pull request closes (D2433); `queued`, `review`, `blocked`, `done` and `cancelled` give neither. A merged or closed pull request gets neither (F8, F12).
+- **R4.** Desired status label by phase: `running` gives `fugaro:running`; `failed` gives `fugaro:failed` on the pull request of the run that failed, which keeps it until that pull request closes or, for a follow-up run on the same pull request, until that run starts (D2433, R8); `queued`, `review`, `blocked`, `done` and `cancelled` give neither. A merged or closed pull request gets neither (F8, F12).
 - **R5.** Each tick the syncer reads one bulk list of open pull requests per repository that has an item with a pull request (and, once, a pull request absent from it by number), compares it with the desired set, and writes only the difference: it adds its own `spec:` label and the wanted status label, and removes only the exact names `fugaro:running` and `fugaro:failed`, never another label; names match case-insensitively; it remembers which labels it has ensured and which spec labels the host refused (F10, F17, F23).
 - **R6.** The service creates `fugaro:running`, `fugaro:failed` and a spec label, with D2437's colour and description, just before the first add (D2440, F11).
-- **R8.** Several items on one pull request: the newest item decides (F21).
+- **R8.** Label state is per run and its pull request: a pull request is `running` while its own run is in flight, `failed` when its own run ended failed, and neither otherwise; a failed run's pull request stays tracked until it is known closed and clean (F21).
 - **R7.** Label operations are a separate optional interface found by type assertion; a provider without it, or whose `Supported()` is false (Bitbucket), makes every operation a silent no-op: no warning each tick (F1).
 
 ## Decisions
@@ -76,7 +76,6 @@ Numbers taken: **D2430-D2449** (the highest in use is D2429, in open pull reques
 | **D2437** | Colours and descriptions | Blue, red, grey (below) | Leave to the owner | **2026-11-15: the recommendation.** |
 | **D2438** | The spec name's source (F6): the launcher records no plan task | A new optional `WorkItem` field | Drop spec labels for now; or read the run's launch record | **2026-11-15: the recommendation; amended after review.** The first answer rested on "the daemon's own plan import", which does not exist (work items come only from patches a session or person writes). Re-confirmed by the owner on 2026-11-15 as: the field is a shape-checked `work_item_upsert` field set in the patch; a run still cannot forge it. |
 | **D2439** | How labels are written (F5, F18) | The credentials service performs the label write itself, so no token leaves it | A sibling token mint with `pull_requests: write`; or wait for the merge mint's wiring | **2026-11-15: the recommendation.** Why: only here is "label-only" true, and the service can enforce the namespaces and corroborate the pull request. Supersedes D2436. |
-
 | **D2440** | Who creates the labels (F11, R6): the spec says `fugaro setup` | The service, on first use | Setup and update pre-create them | **2026-11-15: the recommendation.** Why: `fugaro update` is the whole upgrade, and an installation already set up must converge with no second command. |
 
 **Label table (D2437).**
@@ -94,6 +93,8 @@ None.
 ## Open items
 
 - **O1.** None (the earlier item, confirming D2436 as amended, is closed by the owner's answer D2439).
+- **O3.** How a follow-up run on an existing pull request is corroborated: its head branch is the first run's `fugaro/<run id>`, so the daemon sends the run id of the run that opened the pull request. To confirm when T3 starts.
+- **O4.** Deferred by design, for a later pass: fold `ensure` into `add` (the service creates on first use, D2440, so a separate `ensure` is reach without a pull request); require ASCII before the shape check lowers a name (the Kelvin sign lowers to `k`); sample the audit of the 30-second reads.
 - **O2.** Who builds the daemon's identity to the credentials service (F19): the merge mint's own wiring (E10b) or a task of this plan. The plan assumes E10b and marks T7 and Check 640 as waiting on it.
 
 ## UNVERIFIED

@@ -124,7 +124,8 @@
         "paths": [
           "internal/orchestrator/state.go",
           "internal/orchestrator/patch.go",
-          "internal/orchestrator/summary.go",
+          "internal/orchestrator/state_test.go",
+          "internal/orchestrator/patch_test.go",
           "schemas/orchestrator-state.schema.json",
           "schemas/orchestrator-patch.schema.json"
         ]
