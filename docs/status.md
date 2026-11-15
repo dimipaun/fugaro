@@ -12,21 +12,18 @@ How this page is written
 
 # Fugaro: status of every spec under docs/
 
-As of 2026-11-15, read from `main`, the open pull requests and each plan's task list (the plans' own status lines are stale in about 30 folders). "About" marks an approximate count; **owner-run** is a live check or step only the owner performs. Each folder's README links to this page for its current state. The sections run from the nearest to done to the furthest; the finished specs are at the end. Released: CLI 0.23.1 (Tapir), console 0.122.0 (Strawberry). CLI 0.24.0 (Uakari) waits on Check 191 and the owner's go; CLI 0.25.0 (Vole) and console 0.123.0 (Tangerine) are scoped. Of the 54 open pull requests (this one excepted), 8 are live, 0 ready, 37 stalled and 9 orphan (#2535, #2599, #2602, #2603, #2606, #2608, #2609, #2610 and #2717). Ten runs are live: eight on a pull request and two (a docs run and a CLI run) that have not opened theirs yet.
+As of 2026-11-15, read from `main`, the open pull requests and each plan's task list (the plans' own status lines are stale in about 30 folders). "About" marks an approximate count; **owner-run** is a live check or step only the owner performs. Each folder's README links to this page for its current state. The sections run from the nearest to done to the furthest; the finished specs are at the end. Released: CLI 0.23.1 (Tapir), console 0.122.0 (Strawberry). CLI 0.24.0 (Uakari) waits on Check 191 and the owner's go; CLI 0.25.0 (Vole) and console 0.123.0 (Tangerine) are scoped. There are 45 open pull requests (this one excepted); the live, stalled and orphan breakdown was not recomputed for this sweep. Ten runs were live when this page was last counted: eight on a pull request and two (a docs run and a CLI run) that had not opened theirs yet.
 
 ## Nearly There (NT)
 
 | Spec | Merged | Left |
 | --- | --- | --- |
-| cli-output-console-graph | 30/32 | owner CL12 (Checks 310 and 311) and CG12 (Checks 313 and 314; Check 312 passed 2026-11-13) |
-| console-dependency-graph | 15/17 | GV3.2 (stalled, draft #2501) |
 | credentials-service | about 32/36 | owner checks; Check 96 holds C2.3; the cascade's empty candidate list answered as `state_unavailable` (stalled, draft #2713) |
 | go-to-market | 9/12 | owner G2.5, and two more |
 | licensing | 21/23 | owner-run only: L0.2's allow-list and status, the Terms publication's L4.3, L5.1 T3(c) |
 | mobile | about 44/58 | P5.1 (split into tasks in drafts #2701 and #2703), P5.2 (design, draft #2687), P5.3.1 to P5.3.7 (approved 2026-11-14, not started), P5.4 (unscheduled); owner P2.3 and P4.4 |
-| no-prompt-policy | 14/17 | T12 (stalled, draft #2708), T13 (live, draft #2707), T14 (live, draft #2709), the T11 follow-up (stalled, draft #2706); owner Checks 380 to 382 once T14 lands |
-| stateless-orchestrator | 18/20 | O13 (stalled, draft #2696), O19 (approved, blocked: a run the workspace refused is not distinguishable in the run record, so it waits on a W-side record change; U12 resolved NO 2026-11-13); owner Checks 301 to 304 and 305 (O16b) |
-| task-governance | 25/31 | 6 left: T3.4 (docs; stalled, drafts #2699 and #2702, held until the outer-loop-escalation E6 pull request #2498 merges), and the rest in `ee/governance` |
+| stateless-orchestrator | 19/20 | O19 (approved, blocked: a run the workspace refused is not distinguishable in the run record, so it waits on a W-side record change, whose marker task is draft #2730, live run; U12 resolved NO 2026-11-13); owner Checks 301 to 304 and 305 (O16b) |
+| task-governance | 26/31 | 5 left, all in `ee/governance` |
 | vision-model | 8/9 | V8 not started; owner Checks 520 and 521 not run |
 
 ## Work in progress (WIP)
@@ -68,11 +65,13 @@ As of 2026-11-15, read from `main`, the open pull requests and each plan's task 
 | c39-review-identity | owner live check |
 | catalog-build-context | none |
 | central-orchestrator | superseded by stateless-orchestrator |
+| cli-output-console-graph | owner Checks 310 (the script is on main; a scratch-mode change is in flight as run c310), 311 (the script is not on main yet; in flight as run ee98), 313 and 314 (scripts on main), not yet run; Check 312 passed 2026-11-13 |
 | cloud-senior-review | CSR1 to CSR16 done; CSR17 and CSR18 moved to api-key-review |
 | compatibility-matrix | owner CM4 (the read of the copy) |
 | compute-backend | declared operational by the owner 2026-11-15; owner Checks 57b (its stranded-job submission fixed) and 124, not yet run (Task 13 was dropped) |
 | config-management | none |
 | console-coordinator-v2 | owner Check C0 (profiling) |
+| console-dependency-graph | owner Check 123 (the graph in the packed, signed macOS app, GV2.6), not yet run |
 | console-managed-screens | none (console 0.121.0) |
 | console-settings-edit | none (console 0.120.0) |
 | console-windows | owner Check 119 |
@@ -93,6 +92,7 @@ As of 2026-11-15, read from `main`, the open pull requests and each plan's task 
 | model-ab-testing | owner Checks 210 to 212 (written on main, not run; drafts #2634 and #2637 were closed as superseded) |
 | model-crafts | owner Checks 420 to 422 (written as one script each; not run) |
 | models-commands | none |
+| no-prompt-policy | owner Checks 380 to 382 (scripts on main), not yet run; the T11 verification runs, drafts #2728 and #2729 (open) |
 | plugin-user-scope | E1, the release itself (rides the next CLI release; no operator step) |
 | post-review-triage | owner TR13 (Checks 490 to 492; the scripts are in a run) |
 | project-image-catalog | none |
