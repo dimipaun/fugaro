@@ -421,7 +421,7 @@ func TestSignUpRecordsTermsAcceptance(t *testing.T) {
 	// terms an organisation names are therefore the terms its people were shown.
 	other := newFixtureWith(t, Production, func(f *fixture) { f.cfg.TermsVersion = "2027-01-05" })
 	other.actsAs(danaUID, danaEmail, signInGoogle)
-	moved := readAnswer[WireOrganisation](other, other.apiAs(http.MethodPost, apiOrgsPath, `{"name":"Example Ltd"}`))
+	moved := readAnswer[WireOrganisation](other, other.apiAsCaller(http.MethodPost, apiOrgsPath, `{"name":"Example Ltd"}`))
 	if moved.Terms == nil || moved.Terms.Version != "2027-01-05" {
 		t.Errorf("a deployment serving the terms %q recorded %+v, want that version", "2027-01-05", moved.Terms)
 	}
