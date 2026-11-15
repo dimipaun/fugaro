@@ -432,6 +432,21 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 		s.refuseUnavailable(ctx, w, id, purpose, credential, "the project's policy could not be read")
 		return
 	}
+	// The binding, and the one place it is made (G3, G21). canonical is the
+	// repository this call is served for, and Decide holds the request to it:
+	// the classified repository must be that one and no other. It is the job
+	// account's own repository for a per-repository caller, and the pairing's
+	// answer — the run identity's repository, resolved through the
+	// installation's table and admitted by the calling job's profile — for a
+	// review caller and for a shared project job's caller, whose account names
+	// no repository of its own. Decide's two other gates are the published
+	// block's and are read here rather than in the pairing because they are
+	// the same question for both classes: the repository must be one the
+	// node's allow_repos covers, and the node must proxy at all (G9). A shared
+	// caller is why the comparison belongs to Decide and not to the job
+	// account: what this route forwards reaches the whole workspace, so the
+	// repository a call is served for is fixed before the rules see it and is
+	// never widened by anything the request names.
 	if verdict := gitproxy.Decide(req, proxyIdentity(id), canonical, shared.BitbucketToken); !verdict.Allow {
 		s.refuseProxy(ctx, w, id, purpose, credential, verdict.Reason)
 		return
