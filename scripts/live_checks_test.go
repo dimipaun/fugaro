@@ -18,7 +18,7 @@ import (
 // liveCheckScripts are the owner-run live checks' scripts and their tests.
 // Each test drives its script against fake tools on PATH -- a fake `claude`
 // and a fake upstream for Check 90, fake `gcloud`, `fugaro` and `curl` for
-// Check 91, fake `gcloud` and `fugaro` for Checks 111, 146 and 401, fake `gcloud`,
+// Check 91, fake `gcloud` and `fugaro` for Checks 27, 111, 146 and 401, fake `gcloud`,
 // `git`, `curl` and `fugaro` for Check 190, fake `gcloud`, `fugaro` and a fake
 // Realtime Database behind a fake `curl` for Check 191, fake `gcloud`, `fugaro`
 // and `curl` for Check 195 (a small project whose service and account appear and
@@ -220,6 +220,12 @@ import (
 // origin, so the throwaway branch, the commit, the push and the Restore's own
 // deletion are readings of a repository the test owns rather than of a fake's
 // log.
+// Check 27's fakes are a fake `gcloud` and a fake `fugaro` that hold a throwaway
+// project which exists only once something creates it, its billing link, its
+// Firestore location, its buckets, its jobs, its secret containers and its
+// images — and whose `setup` REFUSES the create path when it has no terminal, so
+// a case says both what the check read back and that the wizard was really given
+// a pty. No live step of it is run.
 // Check C0's fake is a fake `fugaro` alone, serving each read out of a document
 // the test writes -- so a case knows the document's exact length and can hold
 // the byte count in the readings table against the file -- and recording every
@@ -275,6 +281,7 @@ var liveCheckScripts = []struct {
 	name string
 	test string
 }{
+	{"check27.sh", "check27_test.sh"},
 	{"check69.sh", "check69_test.sh"},
 	{"check90.sh", "check90_test.sh"},
 	{"check91.sh", "check91_test.sh"},
