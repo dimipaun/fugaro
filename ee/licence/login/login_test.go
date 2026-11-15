@@ -717,6 +717,70 @@ func TestNothingIsSentToAnAddressThatIsNotTheSites(t *testing.T) {
 	}
 }
 
+// TestARedirectIsNotFollowed holds the rule the flows' own client keeps: a
+// route this package POSTs to is answered in place, never chased. The bodies
+// those routes carry are the one-time code, the PKCE verifier and the device
+// code, so a client that obeyed a Location would re-send them to whatever host
+// the answer named — one the site chose, and one this process never decided to
+// talk to. A 302 is therefore an answer this package reads (a Refusal), and the
+// address it points at is never called.
+//
+// The second server is what makes that observable: it answers a 200 with a
+// whole bundle, so a client that followed the redirect would not merely send
+// the values away — it would come back with a key.
+func TestARedirectIsNotFollowed(t *testing.T) {
+	var (
+		mu    sync.Mutex
+		paths []string
+	)
+	trap := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, bundleJSON())
+	}))
+	t.Cleanup(trap.Close)
+
+	for _, flow := range []string{"authorize", "device"} {
+		t.Run(flow, func(t *testing.T) {
+			s := newSite(t)
+			redirect := func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, trap.URL+"/the-redirects-host", http.StatusFound)
+			}
+			// The one route each flow reaches with a body in hand: the device
+			// flow's start, and the browser flow's exchange.
+			s.answer(func(_ deviceCall, w http.ResponseWriter, r *http.Request) { redirect(w, r) },
+				func(_ tokenCall, w http.ResponseWriter, r *http.Request) { redirect(w, r) }, nil)
+
+			b := &browser{t: t}
+			c := atSite(Client{Out: io.Discard, OpenURL: b.open}, s)
+			var (
+				bundle Bundle
+				err    error
+			)
+			if flow == "device" {
+				bundle, err = c.Device(context.Background())
+			} else {
+				bundle, err = c.Authorize(context.Background())
+			}
+			if err == nil {
+				t.Fatalf("a site that answered a redirect ended the flow with a bundle: %+v", bundle)
+			}
+			var refusal *Refusal
+			if !errors.As(err, &refusal) || refusal.Status != http.StatusFound {
+				t.Errorf("a redirect ended the flow with %v, want the site's own HTTP %d as a refusal", err, http.StatusFound)
+			}
+			mu.Lock()
+			sent := append([]string(nil), paths...)
+			mu.Unlock()
+			if len(sent) != 0 {
+				t.Errorf("the redirect was followed, and the flow's own values were re-sent to the address the site named: %v", sent)
+			}
+		})
+	}
+}
+
 // TestAnInstallationWithNoProjectIDSendsNothing holds the other value a
 // sign-in is about: a key is bound to the installation's Firebase project id
 // (TN2), so an installation with none has nothing to ask for and nothing to
