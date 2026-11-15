@@ -47,9 +47,7 @@
         "paths": [
           "internal/creds/labelroute.go",
           "internal/credsvc/labelroute.go",
-          "internal/credsvc/labelroute_test.go",
-          "internal/credsvc/audit.go",
-          "internal/credsvc/server.go"
+          "internal/credsvc/labelroute_test.go"
         ]
       }
     },
@@ -95,7 +93,8 @@
           "docs/git-providers.md",
           "SECURITY.md",
           "website/content/security.md",
-          "docs/releases/v*.md"
+          "docs/releases/v*.md",
+          "internal/cli/docs_forge_labels_test.go"
         ]
       }
     },
@@ -125,9 +124,26 @@
         "paths": [
           "internal/orchestrator/state.go",
           "internal/orchestrator/patch.go",
-          "internal/cli/orchestrator_import.go",
+          "internal/orchestrator/summary.go",
           "schemas/orchestrator-state.schema.json",
           "schemas/orchestrator-patch.schema.json"
+        ]
+      }
+    },
+    {
+      "id": "T9",
+      "title": "the label route's census",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/audit.go",
+          "internal/credsvc/server.go",
+          "internal/credsvc/callerclass_test.go",
+          "internal/credsvc/audit_answer_test.go",
+          "internal/credsvc/slip_test.go"
         ]
       }
     },
@@ -213,6 +229,11 @@
       "task": "CK",
       "needs": "T7",
       "reason": "the check runs the real path"
+    },
+    {
+      "task": "T3",
+      "needs": "T9",
+      "reason": "fills the purpose and the registered route T9 adds"
     }
   ],
   "decoupling": [],
