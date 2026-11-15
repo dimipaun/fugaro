@@ -1,0 +1,516 @@
+{
+  "about": "The voice switch and its indicator, as a table: every row is one combination of the four inputs the app holds, and the badge and the egress decision that follow from it. Mobile plan task P5.3.4; the rule is shared/voice-switch/index.js and the design is docs/mobile/design/voice-evaluation-switch.md sections 4.2 and 4.5.",
+  "task": "P5.3.4",
+  "rule": "shared/voice-switch/index.js",
+  "design": "docs/mobile/design/voice-evaluation-switch.md",
+  "export": "indicator",
+  "directions": ["stt", "tts"],
+  "engines": ["local", "remote"],
+  "states": ["local", "checking", "blocked", "remote"],
+  "invariant": "every accept has engine === 'remote' exactly when provider is a name and reason is null; every accept where the state is 'remote' has a text of the form 'remote (<provider name>)'",
+  "failClosed": "every case whose inputs are a failure of any kind -- no consent, no answer, a failed query, an unreachable hop, an expired token, a revoked device, a project that refuses, a call that failed -- answers with engine 'local'",
+  "consentAt": 1700000000000,
+  "cases": [
+    {
+      "name": "an unset switch is local on stt, and the project is never even asked",
+      "input": { "direction": "stt" },
+      "expect": {
+        "ok": true, "direction": "stt", "engine": "local", "provider": null,
+        "state": "local", "inFlight": false, "reason": "switch-local", "text": "local"
+      }
+    },
+    {
+      "name": "an unset switch is local on tts as well",
+      "input": { "direction": "tts" },
+      "expect": {
+        "ok": true, "direction": "tts", "engine": "local", "provider": null,
+        "state": "local", "inFlight": false, "reason": "switch-local", "text": "local"
+      }
+    },
+    {
+      "name": "a switch left local stays local with an admitted project and a recorded consent",
+      "input": {
+        "direction": "stt",
+        "settings": { "stt": "local", "tts": "local" },
+        "consent": [{ "provider": "deepgram", "at": 1700000000000 }],
+        "status": {
+          "ok": true, "providers": ["deepgram"],
+          "direction": { "stt": true, "tts": true }, "reason": null
+        }
+      },
+      "expect": {
+        "ok": true, "direction": "stt", "engine": "local", "provider": null,
+        "state": "local", "inFlight": false, "reason": "switch-local", "text": "local"
+      }
+    },
+    {
+      "name": "the other direction's switch does not carry over",
+      "input": {
+        "direction": "tts",
+        "settings": { "stt": "remote", "tts": "local" },
+        "consent": [{ "provider": "deepgram", "at": 1700000000000 }],
+        "status": {
+          "ok": true, "providers": ["deepgram"],
+          "direction": { "stt": true, "tts": true }, "reason": null
+        }
+      },
+      "expect": {
+        "ok": true, "direction": "tts", "engine": "local", "provider": null,
+        "state": "local", "inFlight": false, "reason": "switch-local", "text": "local"
+      }
+    },
+    {
+      "name": "remote is reachable with the switch on, a consent for the name and an admitted project",
+      "input": {
+        "direction": "stt",
+        "settings": { "stt": "remote" },
+        "consent": [{ "provider": "deepgram", "at": 1700000000000 }],
+        "status": {
+          "ok": true, "providers": ["deepgram"],
+          "direction": { "stt": true, "tts": true }, "reason": null
+        }
+      },
+      "expect": {
+        "ok": true, "direction": "stt", "engine": "remote", "provider": "deepgram",
+        "state": "remote", "inFlight": false, "reason": null, "text": "remote (deepgram)"
+      }
+    },
+    {
+      "name": "no recorded consent at all is local, and the consent sheet is the fix",
+      "input": {
+        "direction": "stt",
+        "settings": { "stt": "remote" },
+        "consent": [],
+        "status": {
+          "ok": true, "providers": ["deepgram"],
+          "direction": { "stt": true, "tts": true }, "reason": null
+        }
+      },
+      "expect": {
+        "ok": true, "direction": "stt", "engine": "local", "provider": null,
+        "state": "local", "inFlight": false, "reason": "no-consent", "text": "local"
+      }
+    },
+    {
+      "name": "a consent for a name the project does not admit is local, not blocked",
+      "input": {
+        "direction": "stt",
+        "settings": { "stt": "remote" },
+        "consent": [{ "provider": "elevenlabs", "at": 1700000000000 }],
+        "status": {
+          "ok": true, "providers": ["deepgram"],
+          "direction": { "stt": true, "tts": true }, "reason": null
+        }
+      },
+      "expect": {
+        "ok": true, "direction": "stt", "engine": "local", "provider": null,
+        "state": "local", "inFlight": false, "reason": "no-consent", "text": "local"
+      }
+    },
+    {
+      "name": "before the first project-status answer the state is checking, and never a guess",
+      "input": {
+        "direction": "stt",
+        "settings": { "stt": "remote" },
+        "consent": [{ "provider": "deepgram", "at": 1700000000000 }]
+      },
+      "expect": {
+        "ok": true, "direction": "stt", "engine": "local", "provider": null,
+        "state": "checking", "inFlight": false, "reason": "no-answer", "text": "local — checking"
+      }
+    },
+    {
+      "name": "a project-status query that failed is the same fact as no answer",
+      "input": {
+        "direction": "stt",
+        "settings": { "stt": "remote" },
+        "consent": [{ "provider": "deepgram", "at": 1700000000000 }],
+        "status": { "ok": false, "code": "query-failed" }
+      },
+      "expect": {
+        "ok": true, "direction": "stt", "engine": "local", "provider": null,
+        "state": "checking", "inFlight": false, "reason": "query-failed", "text": "local — checking"
+      }
+    },
+    {
+      "name": "an ID token that expired is local, and the reason says so",
+      "input": {
+        "direction": "stt",
+        "settings": { "stt": "remote" },
+        "consent": [{ "provider": "deepgram", "at": 1700000000000 }],
+        "status": { "ok": false, "code": "expired-token" }
+      },
+      "expect": {
+        "ok": true, "direction": "stt", "engine": "local", "provider": null,
+        "state": "local", "inFlight": false, "reason": "expired-token", "text": "local"
+      }
+    },
+    {
+      "name": "a revoked device node is local, and the reason says so",
+      "input": {
+        "direction": "stt",
+        "settings": { "stt": "remote" },
+        "consent": [{ "provider": "deepgram", "at": 1700000000000 }],
+        "status": { "ok": false, "code": "revoked-device" }
+      },
+      "expect": {
+        "ok": true, "direction": "stt", "engine": "local", "provider": null,
+        "state": "local", "inFlight": false, "reason": "revoked-device", "text": "local"
+      }
+    },
+    {
+      "name": "an unreachable hop is local, and the reason says so",
+      "input": {
+        "direction": "stt",
+        "settings": { "stt": "remote" },
+        "consent": [{ "provider": "deepgram", "at": 1700000000000 }],
+        "status": { "ok": false, "code": "unreachable" }
+      },
+      "expect": {
+        "ok": true, "direction": "stt", "engine": "local", "provider": null,
+        "state": "local", "inFlight": false, "reason": "unreachable", "text": "local"
+      }
+    },
+    {
+      "name": "a project that forces local blocks, and the badge says exactly that",
+      "input": {
+        "direction": "stt",
+        "settings": { "stt": "remote" },
+        "consent": [{ "provider": "deepgram", "at": 1700000000000 }],
+        "status": {
+          "ok": true, "providers": [],
+          "direction": { "stt": false, "tts": false }, "reason": "force-local"
+        }
+      },
+      "expect": {
+        "ok": true, "direction": "stt", "engine": "local", "provider": null,
+        "state": "blocked", "inFlight": false, "reason": "force-local",
+        "text": "blocked by project policy"
+      }
+    },
+    {
+      "name": "an answer that admits nothing and does not say why is no-admission",
+      "input": {
+        "direction": "stt",
+        "settings": { "stt": "remote" },
+        "consent": [{ "provider": "deepgram", "at": 1700000000000 }],
+        "status": { "ok": true }
+      },
+      "expect": {
+        "ok": true, "direction": "stt", "engine": "local", "provider": null,
+        "state": "blocked", "inFlight": false, "reason": "no-admission",
+        "text": "blocked by project policy"
+      }
+    },
+    {
+      "name": "a direction the project does not admit is blocked while the other direction is not",
+      "input": {
+        "direction": "stt",
+        "settings": { "stt": "remote", "tts": "remote" },
+        "consent": [{ "provider": "deepgram", "at": 1700000000000 }],
+        "status": {
+          "ok": true, "providers": ["deepgram"],
+          "direction": { "stt": false, "tts": true }, "reason": "no-admission"
+        }
+      },
+      "expect": {
+        "ok": true, "direction": "stt", "engine": "local", "provider": null,
+        "state": "blocked", "inFlight": false, "reason": "no-admission",
+        "text": "blocked by project policy"
+      }
+    },
+    {
+      "name": "the same answer admits tts, so tts is remote",
+      "input": {
+        "direction": "tts",
+        "settings": { "stt": "remote", "tts": "remote" },
+        "consent": [{ "provider": "deepgram", "at": 1700000000000 }],
+        "status": {
+          "ok": true, "providers": ["deepgram"],
+          "direction": { "stt": false, "tts": true }, "reason": "no-admission"
+        }
+      },
+      "expect": {
+        "ok": true, "direction": "tts", "engine": "remote", "provider": "deepgram",
+        "state": "remote", "inFlight": false, "reason": null, "text": "remote (deepgram)"
+      }
+    },
+    {
+      "name": "a policy that names a provider with no register row blocks, with the hop's own reason",
+      "input": {
+        "direction": "stt",
+        "settings": { "stt": "remote" },
+        "consent": [{ "provider": "elevenlabs", "at": 1700000000000 }],
+        "status": {
+          "ok": true, "providers": ["elevenlabs"],
+          "direction": { "stt": false, "tts": false }, "reason": "no-register-row"
+        }
+      },
+      "expect": {
+        "ok": true, "direction": "stt", "engine": "local", "provider": null,
+        "state": "blocked", "inFlight": false, "reason": "no-register-row",
+        "text": "blocked by project policy"
+      }
+    },
+    {
+      "name": "the name a call would use is the first admitted one the device consented to",
+      "input": {
+        "direction": "stt",
+        "settings": { "stt": "remote" },
+        "consent": [
+          { "provider": "elevenlabs", "at": 1700000000000 },
+          { "provider": "deepgram", "at": 1700000000001 }
+        ],
+        "status": {
+          "ok": true, "providers": ["deepgram", "elevenlabs"],
+          "direction": { "stt": true, "tts": true }, "reason": null
+        }
+      },
+      "expect": {
+        "ok": true, "direction": "stt", "engine": "remote", "provider": "deepgram",
+        "state": "remote", "inFlight": false, "reason": null, "text": "remote (deepgram)"
+      }
+    },
+    {
+      "name": "a remote call in flight is what the badge shows",
+      "input": {
+        "direction": "stt",
+        "settings": { "stt": "remote" },
+        "consent": [{ "provider": "deepgram", "at": 1700000000000 }],
+        "status": {
+          "ok": true, "providers": ["deepgram"],
+          "direction": { "stt": true, "tts": true }, "reason": null
+        },
+        "call": {
+          "direction": "stt", "engine": "remote", "provider": "deepgram",
+          "state": "in-flight", "reason": null
+        }
+      },
+      "expect": {
+        "ok": true, "direction": "stt", "engine": "remote", "provider": "deepgram",
+        "state": "remote", "inFlight": true, "reason": null,
+        "text": "remote (deepgram) — in flight"
+      }
+    },
+    {
+      "name": "a switch turned off mid-call does not make the badge claim local",
+      "input": {
+        "direction": "stt",
+        "settings": { "stt": "local" },
+        "consent": [{ "provider": "deepgram", "at": 1700000000000 }],
+        "status": {
+          "ok": true, "providers": ["deepgram"],
+          "direction": { "stt": true, "tts": true }, "reason": null
+        },
+        "call": {
+          "direction": "stt", "engine": "remote", "provider": "deepgram",
+          "state": "in-flight", "reason": null
+        }
+      },
+      "expect": {
+        "ok": true, "direction": "stt", "engine": "local", "provider": null,
+        "state": "remote", "inFlight": true, "reason": "switch-local",
+        "text": "remote (deepgram) — in flight"
+      }
+    },
+    {
+      "name": "a project that starts blocking mid-call does not make the badge claim local either",
+      "input": {
+        "direction": "stt",
+        "settings": { "stt": "remote" },
+        "consent": [{ "provider": "deepgram", "at": 1700000000000 }],
+        "status": {
+          "ok": true, "providers": [],
+          "direction": { "stt": false, "tts": false }, "reason": "force-local"
+        },
+        "call": {
+          "direction": "stt", "engine": "remote", "provider": "deepgram",
+          "state": "in-flight", "reason": null
+        }
+      },
+      "expect": {
+        "ok": true, "direction": "stt", "engine": "local", "provider": null,
+        "state": "remote", "inFlight": true, "reason": "force-local",
+        "text": "remote (deepgram) — in flight"
+      }
+    },
+    {
+      "name": "a local call in flight shows local in flight and leaves the decision alone",
+      "input": {
+        "direction": "stt",
+        "settings": { "stt": "remote" },
+        "consent": [{ "provider": "deepgram", "at": 1700000000000 }],
+        "status": {
+          "ok": true, "providers": ["deepgram"],
+          "direction": { "stt": true, "tts": true }, "reason": null
+        },
+        "call": {
+          "direction": "stt", "engine": "local", "provider": null,
+          "state": "in-flight", "reason": null
+        }
+      },
+      "expect": {
+        "ok": true, "direction": "stt", "engine": "remote", "provider": "deepgram",
+        "state": "local", "inFlight": true, "reason": null, "text": "local — in flight"
+      }
+    },
+    {
+      "name": "a failed remote call falls back to local, with the default provider-error",
+      "input": {
+        "direction": "stt",
+        "settings": { "stt": "remote" },
+        "consent": [{ "provider": "deepgram", "at": 1700000000000 }],
+        "status": {
+          "ok": true, "providers": ["deepgram"],
+          "direction": { "stt": true, "tts": true }, "reason": null
+        },
+        "call": {
+          "direction": "stt", "engine": "remote", "provider": "deepgram",
+          "state": "failed", "reason": null
+        }
+      },
+      "expect": {
+        "ok": true, "direction": "stt", "engine": "local", "provider": null,
+        "state": "local", "inFlight": false, "reason": "provider-error", "text": "local"
+      }
+    },
+    {
+      "name": "a failed remote call keeps the reason it failed with",
+      "input": {
+        "direction": "stt",
+        "settings": { "stt": "remote" },
+        "consent": [{ "provider": "deepgram", "at": 1700000000000 }],
+        "status": {
+          "ok": true, "providers": ["deepgram"],
+          "direction": { "stt": true, "tts": true }, "reason": null
+        },
+        "call": {
+          "direction": "stt", "engine": "remote", "provider": "deepgram",
+          "state": "failed", "reason": "unreachable"
+        }
+      },
+      "expect": {
+        "ok": true, "direction": "stt", "engine": "local", "provider": null,
+        "state": "local", "inFlight": false, "reason": "unreachable", "text": "local"
+      }
+    },
+    {
+      "name": "a local engine that failed is local-error",
+      "input": {
+        "direction": "stt",
+        "settings": { "stt": "local" },
+        "call": {
+          "direction": "stt", "engine": "local", "provider": null,
+          "state": "failed", "reason": null
+        }
+      },
+      "expect": {
+        "ok": true, "direction": "stt", "engine": "local", "provider": null,
+        "state": "local", "inFlight": false, "reason": "local-error", "text": "local"
+      }
+    },
+    {
+      "name": "a call that finished leaves the decision alone",
+      "input": {
+        "direction": "stt",
+        "settings": { "stt": "remote" },
+        "consent": [{ "provider": "deepgram", "at": 1700000000000 }],
+        "status": {
+          "ok": true, "providers": ["deepgram"],
+          "direction": { "stt": true, "tts": true }, "reason": null
+        },
+        "call": {
+          "direction": "stt", "engine": "remote", "provider": "deepgram",
+          "state": "done", "reason": null
+        }
+      },
+      "expect": {
+        "ok": true, "direction": "stt", "engine": "remote", "provider": "deepgram",
+        "state": "remote", "inFlight": false, "reason": null, "text": "remote (deepgram)"
+      }
+    },
+    {
+      "name": "a call in the other direction is not this direction's business",
+      "input": {
+        "direction": "stt",
+        "settings": { "stt": "remote" },
+        "consent": [{ "provider": "deepgram", "at": 1700000000000 }],
+        "status": {
+          "ok": true, "providers": ["deepgram"],
+          "direction": { "stt": true, "tts": true }, "reason": null
+        },
+        "call": {
+          "direction": "tts", "engine": "remote", "provider": "deepgram",
+          "state": "in-flight", "reason": null
+        }
+      },
+      "expect": {
+        "ok": true, "direction": "stt", "engine": "remote", "provider": "deepgram",
+        "state": "remote", "inFlight": false, "reason": null, "text": "remote (deepgram)"
+      }
+    },
+    {
+      "name": "a URL is not a provider name",
+      "input": {
+        "direction": "stt",
+        "settings": { "stt": "remote" },
+        "consent": [{ "provider": "https://stt.example.com/v1", "at": 1700000000000 }]
+      },
+      "expect": { "ok": false, "code": "bad-provider", "field": "consent.provider" }
+    },
+    {
+      "name": "a call whose engine is remote and which names no provider is refused",
+      "input": {
+        "direction": "stt",
+        "settings": { "stt": "remote" },
+        "call": {
+          "direction": "stt", "engine": "remote", "provider": null,
+          "state": "in-flight", "reason": null
+        }
+      },
+      "expect": { "ok": false, "code": "missing-field", "field": "call.provider" }
+    },
+    {
+      "name": "a call whose engine is local and which names a provider is refused",
+      "input": {
+        "direction": "stt",
+        "call": {
+          "direction": "stt", "engine": "local", "provider": "deepgram",
+          "state": "done", "reason": null
+        }
+      },
+      "expect": { "ok": false, "code": "unexpected-provider", "field": "call.provider" }
+    },
+    {
+      "name": "a failure reason on a call that did not fail is refused",
+      "input": {
+        "direction": "stt",
+        "settings": { "stt": "remote" },
+        "call": {
+          "direction": "stt", "engine": "remote", "provider": "deepgram",
+          "state": "in-flight", "reason": "provider-error"
+        }
+      },
+      "expect": { "ok": false, "code": "unexpected-reason", "field": "call.reason" }
+    },
+    {
+      "name": "a field from a later protocol is refused rather than read past",
+      "input": { "direction": "stt", "egress": "remote" },
+      "expect": { "ok": false, "code": "unknown-field", "field": "input" }
+    },
+    {
+      "name": "a status answer with no ok at all is refused",
+      "input": {
+        "direction": "stt",
+        "settings": { "stt": "remote" },
+        "status": { "providers": ["deepgram"] }
+      },
+      "expect": { "ok": false, "code": "missing-field", "field": "status.ok" }
+    },
+    {
+      "name": "a direction outside the two is refused",
+      "input": { "direction": "microphone" },
+      "expect": { "ok": false, "code": "unknown-direction", "field": "direction" }
+    }
+  ]
+}
