@@ -33,7 +33,7 @@ Everything below replaces those seven with one invocation.
 ## 2. `fugaro accounts add <name>`
 
 ```
-fugaro accounts add <name> [--repos owner/a,owner/b] [--profile NAME] [--claude] [--token-stdin] [--yes]
+fugaro accounts add <name> [--repos owner/a,owner/b] [--profile NAME] [--claude] [--token-stdin]
 fugaro accounts rm <name>
 ```
 
@@ -77,12 +77,6 @@ and the definition differ, and this command is the definition.
 - **`--token-stdin`** — take the token from stdin, exactly as `fugaro secrets set <name>` does
   (`readSecret`, `internal/cli/secrets.go`). It exists for the owner's own scripts; it is never a value
   on the command line, and the flag carries no value.
-- **`--yes`** — answer the one confirmation for everything the command is about to write (§2.6),
-  including a widening of `allow_data_to`. It does not apply in a coding agent's session: that refusal
-  stands, and the command never works around it (§2.4). **It never makes a run the owner at their own
-  terminal on a managed project either** (the owner's ruling of 2026-11-09): the token is that
-  person's own step, the terminal is what makes a caller them, a flag is not a terminal, and a run
-  with `--yes` in a managed project is refused with the caller that answers nothing (§2.4).
 - There is **no `--json`**: the command's whole output is a diff a person reads at a terminal, and it is
   refused where no person is (§2.4). The machine-readable surface stays `fugaro accounts ls --json`
   (`accountsListDoc`, `internal/cli/accounts.go`).
@@ -159,7 +153,7 @@ read back is never written.
 | --- | --- | --- |
 | a coding agent's session, for a declaration that widens `allow_data_to` | two lines: the repositories the token would reach beyond this checkout, and `Name only this checkout's repository, or run without --repos.` | `agentenv.Marker` as `agentEnv` (`internal/cli/initsecrets.go`); the models design's D789 and the settings design's SD8 are the precedent, and D868's widening is the rule that refuses |
 | a coding agent's session, for the token itself | two lines: that the declaration is the whole of what a session may write, and `Run this in your own terminal, not in an agent session.` | D1026: a secret is the class no plan gate admits, so the value is read by nobody in a session |
-| a run that is not the owner's own terminal — a pipe, no terminal, `--yes` — in a project whose marks say it is managed | two lines: the step and that a managed project asks its owner for it, and `Run this in your own terminal.` | the owner's ruling of 2026-11-09: the step is the owner's, and only a real terminal on both streams with no marker is the owner (D1552, D1555) |
+| a run that is not the owner's own terminal — a pipe, a redirected stdin, no terminal — in a project whose marks say it is managed | two lines: the step and that a managed project asks its owner for it, and `Run this in your own terminal.` | the owner's ruling of 2026-11-09: the step is the owner's, and only a real terminal on both streams with no marker is the owner (D1552, D1555) |
 | `bitbucket-token` | `reservedAccountNameMessage`, naming the fix (a different name) | `ValidClaudeAccountRef` → `reservedClaudeAccountName`, `internal/config/claude_accounts.go` |
 | `default` | `"default" is reserved for the unnamed claude-oauth-token secret and may not be configured here` — the definition's rule, not the reference's: a profile may list `default`, `claude_accounts` may not define it | `ValidateClaudeAccounts`, same file |
 | a name that does not match the pattern | the pattern, never the name | `ValidClaudeAccountRef` |
@@ -181,8 +175,8 @@ they read before the prompt is the fact D868 is about — the repositories it ma
 sentence saying a job on those repositories can read it. Nothing is asked: the typed project name the
 first release of this door asked for is gone (the owner's ruling of 2026-11-09), because the name is
 not a secret and the terminal is the guard. A real terminal on the run's **input and output**, no
-coding agent's marker in the environment, and no `--yes`: those four are what make a caller the owner,
-and all four are read the way this tree already reads them, never from a flag or a variable a session
+coding agent's marker in the environment: those three are what make a caller the owner,
+and all three are read the way this tree already reads them, never from a flag or a variable a session
 can set. Every other caller is refused before the file is touched — which is the half this command was
 missing, since the hidden prompt is fed by a pipe as readily as by a hand.
 
@@ -223,8 +217,8 @@ Three consequences the implementation must hold:
 ### 2.6 What it prints, and what it never prints
 
 **The confirmation (D868).** Before anything is written — before the local config, the secret and the
-stages — the command prints the facts below as one confirmation, and this is the text **`--yes` stands
-for**:
+stages — the command prints the facts below as one confirmation, and this is the text **the owner
+answers at their own terminal**:
 
 ```console
 $ fugaro accounts add team-a --repos owner/repo-a,owner/repo-b
@@ -262,8 +256,8 @@ Nothing else to run: fugaro run --token team-a is ready.
   terminal; §3.2 says what that does and does not promise.)
 - The last line is the whole point of the command: it names the *one* thing the owner does next, and it
   is a `fugaro run`, not a `fugaro update`.
-- `--yes` answers the confirmation above, the widening line included, and changes nothing else; the
-  diff is still printed.
+- The owner answers the confirmation above at their own terminal, the widening line included, and
+  changes nothing else; the diff is still printed.
 
 ## 3. `--claude`: Anthropic's own login, then one paste
 
@@ -271,7 +265,7 @@ Nothing else to run: fugaro run --token team-a is ready.
 It is **two acts**, and the second is the path the command already has. The command's **one**
 confirmation (§2.6) comes **before** the login and names the resolved `claude` path, so the person
 answers once, for the whole command, knowing which program is about to run — and answering it with
-anything but `y` (or `--yes`) mints nothing and stores nothing:
+anything but `y` mints nothing and stores nothing:
 
 1. **Act one — the login, in the owner's own terminal.** Fugaro finds the binary, confirms it, and runs
    `claude setup-token` as a child that **inherits the owner's own stdin, stdout and stderr**. Nothing
@@ -544,7 +538,9 @@ implied.
 the repository", and the page's own §1 — and a launcher that may start a run on an account job can have
 that run print the token (design D2). Widening `allow_data_to` therefore widens who may
 reach that token's account, and the confirmation's own text names it, with what it means (D868,
-answered: `--yes` covers everything, so the warning is carried by the sentence rather than by a typed
+answered: the one confirmation covers everything — the flag that answered it is gone from the CLI
+since **T11 of [docs/no-prompt-policy](../no-prompt-policy/implementation-plan.md)**, so the warning
+is carried by the sentence and the owner answers it at their own real terminal rather than by a typed
 gate; §2.6). The account job also mounts the profile's GitHub App key (`internal/infra/projectjobs.go`), so a hostile run on it reaches the forge as well as the Claude account (see the cloud-senior-review
 design's **F3**, [docs/cloud-senior-review/](../cloud-senior-review/reconciliation.md)).
 
@@ -762,8 +758,10 @@ walk begins where the explicit chain's floor already was.
 nothing chooses for the owner. Turning it on is the owner's own act, and it is the act D875 waits for —
 **the owner himself** confirming that the subscription terms allow one project to spread across several
 accounts. That is why the switch is also a sensitive direction (§11.1): the confirmation is a typed
-project name, not a flag a script sets. **D1107 (owner, 2026-11-01)** lets `settings set --yes` answer it outside a
-coding agent's session; in an agent's session it is still refused, `--yes` or not.
+project name, not a flag a script sets. **D1107 (owner, 2026-11-01)** answered it outside a coding
+agent's session; the flag that answer named is gone from the CLI since **T11 of
+[docs/no-prompt-policy](../no-prompt-policy/implementation-plan.md)**, so the owner's own terminal is
+what answers it, and an agent's session is refused whatever is passed.
 
 The switch exists so that the answer, when it comes, is one setting rather than another design: `auto`
 is written down here, built by A7 behind the switch, and off.

@@ -584,17 +584,20 @@ type BillingPausedError struct {
 
 func (e *BillingPausedError) Error() string { return e.Left.Text }
 
-// MissingInputsError is --non-interactive's single refusal, listing every
-// flag every stage still needs.
+// MissingInputsError is a run that never prompts and has a terminal neither:
+// its single refusal, listing every flag every stage still needs to be given
+// on the command line instead.
 type MissingInputsError struct{ Flags []string }
 
 func (e *MissingInputsError) Error() string {
-	return "--non-interactive: missing " + strings.Join(e.Flags, "; ")
+	return "this run never prompts and has no terminal, so a flag is needed for every question it cannot ask: missing " + strings.Join(e.Flags, "; ")
 }
 
-// NoTerminalError is the refusal to prompt without a terminal. With an
-// agent's marker set it never suggests --yes: a coding agent does not get to
-// confirm anything.
+// NoTerminalError is the refusal to prompt without a terminal: the step is the
+// owner's own and there is nobody here to ask, so the refusal names the
+// terminal it needs and no flag stands in for it (T11 of
+// docs/no-prompt-policy). With an agent's marker set it is the agent's own
+// sentence instead: a coding agent does not get to confirm anything.
 type NoTerminalError struct {
 	Stage string
 	Agent string // the coding agent's environment marker, "" for none
@@ -604,7 +607,7 @@ func (e *NoTerminalError) Error() string {
 	if e.Agent != "" {
 		return AgentRefusal(e.Agent)
 	}
-	return NeedsTerminal("typing the confirmation for "+e.Stage) + ", or pass --yes (with --non-interactive in scripts) once you have read what it does"
+	return NeedsTerminal("typing the confirmation for " + e.Stage)
 }
 
 // AgentAdvice is the one sentence a refusal for a coding agent's session
@@ -926,21 +929,12 @@ func askNobody(c Conditions) string {
 	case c.Agent != "":
 		return "a coding agent's session is present (" + c.Agent + " is set)"
 	case c.NonInteractive:
-		return "--non-interactive never prompts"
+		return "this run never prompts"
 	case c.JSON:
 		return "--json never prompts"
 	default:
 		return "this run has no terminal on its input"
 	}
-}
-
-// AskAndYes is the refusal of --ask together with --yes: the two flags say
-// opposite things about the same confirmations, and a run that honoured one
-// silently would be a run whose owner cannot tell which. It is a usage
-// refusal and not a decision about a project, so it is made before any mark is
-// read.
-func AskAndYes() string {
-	return "--ask and --yes contradict each other: --ask asks for the confirmations a managed project's gate would have stood in for, and --yes gives them away. Pass one of them, or neither, and rerun"
 }
 
 // AskDecision is the whole of what --ask does once the marks have been read,

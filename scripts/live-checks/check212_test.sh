@@ -374,6 +374,22 @@ run)
     prev=$a
   done
   if [ "$recipe" = "ab-judge" ]; then
+    positional=0
+    skip=""
+    for a in "${@:2}"; do
+      if [ -n "$skip" ]; then skip=""; continue; fi
+      case "$a" in
+      --repo | --recipe | --batch) skip=1 ;;
+      -*) ;;
+      *) positional=$((positional + 1)) ;;
+      esac
+    done
+    if [ "$positional" -eq 0 ]; then
+      printf 'fugaro: pass the task as TEXT or with --task-file (- for stdin)\n' >&2
+      exit 1
+    fi
+  fi
+  if [ "$recipe" = "ab-judge" ]; then
     case "$mode" in
     judge-fails)
       printf 'fugaro: a judge run for this repository has not finished; one judge run per repository at a time\n' >&2

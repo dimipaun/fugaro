@@ -1414,7 +1414,7 @@ step_judge() {
     return 0
   fi
   say "launching the judge over ${PAIR_ID}: fugaro run --repo ${SANDBOX} --recipe ab-judge --json (one judge run per repository, and it spends on the project's model credential)"
-  run_bounded "$JUDGE_TIMEOUT" judge "$SANDBOX" "$FUGARO_BIN" run --repo "$SANDBOX" --recipe ab-judge --json
+  run_bounded "$JUDGE_TIMEOUT" judge "$SANDBOX" "$FUGARO_BIN" run --repo "$SANDBOX" --recipe ab-judge --json "$JUDGE_TASK_TEXT"
   if [ "$BOUNDED_TIMED_OUT" = yes ]; then
     unmeasured judge-run "the judge launch did not answer inside ${JUDGE_TIMEOUT}s. A judge run is one per repository and it is refused while one has not finished, so a further launch would be refused too: read the repository's runs with 'fugaro runs ls --repo ${SANDBOX} --json', stop the judge with 'fugaro cancel <run> --now' if one is still going, and run this check again. What the launch printed is in $SCRATCH/judge.out and $SCRATCH/judge.err"
     return 0
@@ -1911,6 +1911,7 @@ CLI_TIMEOUT=${CHECK212_CLI_TIMEOUT_SECONDS:-180}
 # run's row to read as ended afterwards.
 CANCEL_TIMEOUT=${CHECK212_CANCEL_TIMEOUT_SECONDS:-300}
 LAUNCH_TIMEOUT=${CHECK212_LAUNCH_TIMEOUT_SECONDS:-600}
+JUDGE_TASK_TEXT="Judge the unjudged A/B pairs of this repository; the ab-judge recipe reads its own manifest and this text only names the launch."
 DOCTOR_TIMEOUT=${CHECK212_DOCTOR_TIMEOUT_SECONDS:-300}
 # The judge run is a whole run of its own — it assembles the pairs' bundles and
 # makes its passes — so it gets a run's own bound rather than a launch's.

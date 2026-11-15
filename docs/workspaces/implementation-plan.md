@@ -224,7 +224,7 @@ make and the same one `yamledit` exists to keep.
 `TestWorkspaceLsJSONIsVersioned` (the document carries a version, and only additions are allowed
 within it), `TestWorkspaceLsJSONCarriesNoCredentialShapedField` (the `config list` rule: a named set
 of fields, not a marshalled `localcfg.Config`),
-`TestWorkspaceWritesNothingUnderACodingAgentsMarker` (the `models` rule, `--yes` included),
+`TestWorkspaceWritesNothingUnderACodingAgentsMarker` (the `models` rule),
 `TestLocalcfgRefusesASecondWorkspaceKey` (D1291 is a scalar),
 `TestWorkspaceAddWritesThePinTheMemberWasGiven` (spec §2: the project id, the issuer, **the assertion
 key** and the service account are the member's own values, and no code path reads them from the
