@@ -1289,7 +1289,7 @@ func TestReleaseRefusesACatalogueItCannotRead(t *testing.T) {
 // TestTagsWithoutPromptOrStdin checks the tag is created with no prompt and
 // no stdin at all, and that --yes is still accepted as a no-op.
 func TestTagsWithoutPromptOrStdin(t *testing.T) {
-	for _, extra := range [][]string{nil, {"--yes"}} {
+	for _, extra := range [][]string{nil, {}} {
 		r := newReleaseRepo(t)
 		g := newGHState(t, r, greenChecks())
 		res := runRelease(t, r, g, "", append([]string{"0.12.0"}, extra...)...)
@@ -1439,7 +1439,7 @@ func TestInterruptPrintsResumeInstructions(t *testing.T) {
 	// loop's sleep (not exited already) when the signal arrives.
 	g.env = append(g.env, "FAKE_GH_MERGE_DELAY_CALLS=1000000")
 	bin := fakeBinDir(t)
-	cmd := exec.Command("bash", filepath.Join(r.local, "scripts", "release.sh"), "0.12.0", "--yes")
+	cmd := exec.Command("bash", filepath.Join(r.local, "scripts", "release.sh"), "0.12.0")
 	cmd.Dir = r.local
 	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "RELEASE_SH_POLL_SECONDS=1")
 	cmd.Env = append(cmd.Env, g.env...)
@@ -1577,7 +1577,7 @@ func requireNoTag(t *testing.T, r *releaseRepo, res runResult) {
 func TestWaitsForPostMergeChecks(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks()).with("FAKE_GH_MISSING_CALLS=2")
-	res := runRelease(t, r, g, "", "0.12.0", "--yes")
+	res := runRelease(t, r, g, "", "0.12.0")
 	res.requireSuccess(t)
 	if !strings.Contains(res.out, "still waiting: check 'test' is missing") {
 		t.Errorf("expected the pending check to be named:\n%s", res.out)
@@ -1592,7 +1592,7 @@ func TestWaitsForPostMergeChecks(t *testing.T) {
 func TestPreconditionWaitsForPendingChecksOnMain(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks()).with("FAKE_GH_PRE_PENDING_CALLS=2")
-	res := runRelease(t, r, g, "", "0.12.0", "--yes")
+	res := runRelease(t, r, g, "", "0.12.0")
 	res.requireSuccess(t)
 	if !strings.Contains(res.out, "still waiting: check 'test' is pending") {
 		t.Errorf("expected the pending check to be named:\n%s", res.out)
@@ -1658,7 +1658,7 @@ func TestIdenticalTreeHeadChecksEndTheWait(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := identicalTreeEnv(newGHState(t, r, greenChecks()))
 	start := time.Now()
-	res := runRelease(t, r, g, "", "0.12.0", "--yes")
+	res := runRelease(t, r, g, "", "0.12.0")
 	res.requireSuccess(t)
 	head := testutil.Git(t, r.bare, "rev-parse", "refs/heads/release/v0.12.0")
 	if !strings.Contains(res.out, "using the checks of "+head+" (identical tree)") {
@@ -1677,7 +1677,7 @@ func TestIdenticalTreeHeadChecksEndTheWait(t *testing.T) {
 func TestIdenticalTreeOwnChecksPreferred(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks()).with("FAKE_GH_IDENTICAL_PR=1")
-	res := runRelease(t, r, g, "", "0.12.0", "--yes")
+	res := runRelease(t, r, g, "", "0.12.0")
 	res.requireSuccess(t)
 	if strings.Contains(res.out, "identical tree") || countLog(t, g, "api repos/") == 0 {
 		t.Errorf("own green checks must be used without a lookup:\n%s", res.out)
@@ -1706,7 +1706,7 @@ func TestIdenticalTreeNotAccepted(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			r := newReleaseRepo(t)
 			g := identicalTreeEnv(newGHState(t, r, greenChecks()), c.extra...)
-			res := runRelease(t, r, g, "", "0.12.0", "--yes")
+			res := runRelease(t, r, g, "", "0.12.0")
 			res.requireFailureContaining(t, "required check 'test' is missing")
 			if strings.Contains(res.out, "identical tree") {
 				t.Errorf("the candidate must not be used:\n%s", res.out)
@@ -1726,7 +1726,7 @@ func TestIdenticalTreeLookupFailureNeverPasses(t *testing.T) {
 		t.Run(c.env, func(t *testing.T) {
 			r := newReleaseRepo(t)
 			g := identicalTreeEnv(newGHState(t, r, greenChecks()), c.env)
-			res := runRelease(t, r, g, "", "0.12.0", "--yes")
+			res := runRelease(t, r, g, "", "0.12.0")
 			res.requireFailureContaining(t, "required check 'test' is missing")
 			if n := strings.Count(res.out, "identical-tree lookup unavailable ("+c.call); n != 1 {
 				t.Errorf("want the note exactly once, got %d:\n%s", n, res.out)
@@ -1741,7 +1741,7 @@ func TestIdenticalTreeLookupFailureNeverPasses(t *testing.T) {
 func TestIdenticalTreeSecondPRCanVouch(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := identicalTreeEnv(newGHState(t, r, greenChecks()), "FAKE_GH_BAD_PR_FIRST=1")
-	res := runRelease(t, r, g, "", "0.12.0", "--yes")
+	res := runRelease(t, r, g, "", "0.12.0")
 	res.requireSuccess(t)
 	head := testutil.Git(t, r.bare, "rev-parse", "refs/heads/release/v0.12.0")
 	if !strings.Contains(res.out, "using the checks of "+head+" (identical tree)") {
@@ -1754,7 +1754,7 @@ func TestIdenticalTreeSecondPRCanVouch(t *testing.T) {
 func TestIdenticalTreeNeverOverridesTargetFailure(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := identicalTreeEnv(newGHState(t, r, greenChecks()), "FAKE_GH_POST_RULES=failed")
-	res := runRelease(t, r, g, "", "0.12.0", "--yes")
+	res := runRelease(t, r, g, "", "0.12.0")
 	res.requireFailureContaining(t, "required check 'rules' is failed")
 	if strings.Contains(res.out, "identical tree") {
 		t.Errorf("the head's checks must not override a failure:\n%s", res.out)
@@ -1767,7 +1767,7 @@ func TestIdenticalTreeNeverOverridesTargetFailure(t *testing.T) {
 func TestTagsMergeCommitWhenMainMoved(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks()).with("FAKE_GH_ADVANCE_AFTER_MERGE=1")
-	res := runRelease(t, r, g, "y\n", "0.12.0", "--yes")
+	res := runRelease(t, r, g, "y\n", "0.12.0")
 	res.requireSuccess(t)
 	tagged := testutil.Git(t, r.bare, "rev-parse", "refs/tags/v0.12.0^{commit}")
 	tip := testutil.Git(t, r.bare, "rev-parse", "refs/heads/main")
@@ -1782,7 +1782,7 @@ func TestTagsMergeCommitWhenMainMoved(t *testing.T) {
 func TestBumpCheckFailsAfterMerge(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks()).with("FAKE_GH_CORRUPT_MERGE=1")
-	res := runRelease(t, r, g, "y\n", "0.12.0", "--yes")
+	res := runRelease(t, r, g, "y\n", "0.12.0")
 	res.requireFailureContaining(t, "want 0.12.0")
 	requireNoTag(t, r, res)
 }
@@ -1814,7 +1814,7 @@ func TestTimeoutMinutesEdgeCases(t *testing.T) {
 		{"fraction", []string{"0.12.0", "--timeout-minutes", "1.5"}},
 		{"leading zero", []string{"0.12.0", "--timeout-minutes", "05"}},
 		{"multi-line", []string{"0.12.0", "--timeout-minutes", "5\nx"}},
-		{"swallows the next flag", []string{"--timeout-minutes", "--yes", "0.12.0"}},
+		{"swallows the next flag", []string{"--timeout-minutes", "0.12.0"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -1987,13 +1987,13 @@ func TestFailedBranchPushLeavesMainAndResumes(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks())
 	installHook(t, r, `while read old new ref; do case "$ref" in refs/heads/release/*) echo "rejected" >&2; exit 1;; esac; done`)
-	res := runRelease(t, r, g, "", "0.12.0", "--yes")
+	res := runRelease(t, r, g, "", "0.12.0")
 	res.requireFailureContaining(t, "pushing release/v0.12.0 failed")
 	if b := currentBranch(t, r); b != "main" {
 		t.Fatalf("checkout left on %q, want main", b)
 	}
 	removeHook(t, r)
-	runRelease(t, r, g, "", "0.12.0", "--yes").requireSuccess(t)
+	runRelease(t, r, g, "", "0.12.0").requireSuccess(t)
 	if out := testutil.Git(t, r.bare, "tag", "--list", "v0.12.0"); out == "" {
 		t.Errorf("the re-run did not finish the release")
 	}
@@ -2002,12 +2002,12 @@ func TestFailedBranchPushLeavesMainAndResumes(t *testing.T) {
 func TestFailedPRCreateLeavesMainAndResumes(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks())
-	res := runRelease(t, r, g.with("FAKE_GH_PR_CREATE_FAIL=1"), "", "0.12.0", "--yes")
+	res := runRelease(t, r, g.with("FAKE_GH_PR_CREATE_FAIL=1"), "", "0.12.0")
 	res.requireFailureContaining(t, "'gh pr create' failed")
 	if b := currentBranch(t, r); b != "main" {
 		t.Fatalf("checkout left on %q, want main", b)
 	}
-	res = runRelease(t, r, g, "", "0.12.0", "--yes")
+	res = runRelease(t, r, g, "", "0.12.0")
 	res.requireSuccess(t)
 	if !strings.Contains(res.out, "resuming pushed branch") {
 		t.Errorf("expected to resume the pushed branch:\n%s", res.out)
@@ -2024,7 +2024,7 @@ func TestSignalsLeaveMain(t *testing.T) {
 			marker := filepath.Join(t.TempDir(), "in-push")
 			installHook(t, r, fmt.Sprintf(`touch %s; sleep 2`, marker))
 			bin := fakeBinDir(t)
-			cmd := exec.Command("bash", filepath.Join(r.local, "scripts", "release.sh"), "0.12.0", "--yes")
+			cmd := exec.Command("bash", filepath.Join(r.local, "scripts", "release.sh"), "0.12.0")
 			cmd.Dir = r.local
 			cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "RELEASE_SH_POLL_SECONDS=1")
 			cmd.Env = append(cmd.Env, g.env...)
@@ -2068,7 +2068,7 @@ func failedTagPush(t *testing.T) (*releaseRepo, *ghState) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks())
 	installHook(t, r, `while read old new ref; do case "$ref" in refs/tags/*) echo "rejected" >&2; exit 1;; esac; done`)
-	res := runRelease(t, r, g, "", "0.12.0", "--yes")
+	res := runRelease(t, r, g, "", "0.12.0")
 	res.requireFailureContaining(t, "git push origin refs/tags/v0.12.0")
 	if b := currentBranch(t, r); b != "main" {
 		t.Fatalf("checkout left on %q, want main", b)
@@ -2117,7 +2117,7 @@ func TestResumeOpenPR(t *testing.T) {
 	g.write(t, "pr_number", "4")
 	g.write(t, "pr_state", "OPEN")
 	g.write(t, "pr_branch", "release/v0.12.0")
-	res := runRelease(t, r, g, "", "0.12.0", "--yes")
+	res := runRelease(t, r, g, "", "0.12.0")
 	res.requireSuccess(t)
 	if countLog(t, g, "pr create") != 0 || countLog(t, g, "pr merge --auto --squash 4") != 1 {
 		t.Errorf("want auto-merge on the open PR #4 and no new PR:\n%s", g.log(t))
@@ -2132,7 +2132,7 @@ func TestExistingRemoteBranchWithoutPR(t *testing.T) {
 	g := newGHState(t, r, greenChecks())
 	initial := testutil.Git(t, r.bare, "rev-parse", "main")
 	pushReleaseBranch(t, r, "0.12.0")
-	res := runRelease(t, r, g, "", "0.12.0", "--yes")
+	res := runRelease(t, r, g, "", "0.12.0")
 	res.requireSuccess(t)
 	if !strings.Contains(res.out, "resuming pushed branch release/v0.12.0") {
 		t.Errorf("expected the pushed branch to be reused:\n%s", res.out)
@@ -2162,7 +2162,7 @@ func TestResumedBranchWithTheBumpStillRecordsTheStream(t *testing.T) {
 	g := newGHState(t, r, greenChecks())
 	pushReleaseBranch(t, r, "0.11.2")
 
-	res := runRelease(t, r, g, "", "0.11.2", "--yes")
+	res := runRelease(t, r, g, "", "0.11.2")
 
 	res.requireSuccess(t)
 	catalogue := testutil.Git(t, r.bare, "show", "main:docs/release-streams.yaml")
@@ -2186,7 +2186,7 @@ func TestResumedBranchWhoseCatalogueRefusesTheVersion(t *testing.T) {
 	testutil.Git(t, clone, "commit", "--quiet", "-am", "release: v0.11.2")
 	testutil.Git(t, clone, "push", "--quiet", "origin", "release/v0.11.2")
 
-	res := runRelease(t, r, g, "", "0.11.2", "--yes")
+	res := runRelease(t, r, g, "", "0.11.2")
 
 	res.requireFailureContaining(t, "on release/v0.11.2 cannot record 0.11.2")
 	if countLog(t, g, "pr create") != 0 {
@@ -2202,7 +2202,7 @@ func TestClosedPRWithBranchDeletedOpensNewOne(t *testing.T) {
 	g := newGHState(t, r, greenChecks())
 	g.write(t, "pr_number", "7")
 	g.write(t, "pr_state", "CLOSED")
-	res := runRelease(t, r, g, "", "0.12.0", "--yes")
+	res := runRelease(t, r, g, "", "0.12.0")
 	res.requireSuccess(t)
 	if countLog(t, g, "pr create") != 1 {
 		t.Errorf("the documented recovery (branch deleted) must open a fresh PR:\n%s", g.log(t))
@@ -2212,7 +2212,7 @@ func TestClosedPRWithBranchDeletedOpensNewOne(t *testing.T) {
 func TestAutoMergeUnavailable(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks()).with("FAKE_GH_AUTOMERGE_FAIL=1")
-	res := runRelease(t, r, g, "", "0.12.0", "--yes")
+	res := runRelease(t, r, g, "", "0.12.0")
 	res.requireFailureContaining(t, "could not enable auto-merge")
 	res.requireFailureContaining(t, "Merge the pull request yourself, then re-run")
 	requireNoTag(t, r, res)
@@ -2227,7 +2227,7 @@ func TestCancelledCheckIsRetriedOnce(t *testing.T) {
 		g := newGHState(t, r, greenChecks())
 		g.write(t, "pr_check_fail", "rules CANCELLED")
 		g.write(t, "pr_check_once", "")
-		res := runRelease(t, r, g, "", "0.12.0", "--yes")
+		res := runRelease(t, r, g, "", "0.12.0")
 		res.requireSuccess(t)
 		if !strings.Contains(res.out, "was cancelled") {
 			t.Errorf("expected a retry notice:\n%s", res.out)
@@ -2237,7 +2237,7 @@ func TestCancelledCheckIsRetriedOnce(t *testing.T) {
 		r := newReleaseRepo(t)
 		g := newGHState(t, r, greenChecks())
 		g.write(t, "pr_check_fail", "rules CANCELLED")
-		res := runRelease(t, r, g, "", "0.12.0", "--yes")
+		res := runRelease(t, r, g, "", "0.12.0")
 		res.requireFailureContaining(t, "check 'rules' failed (CANCELLED)")
 		if countLog(t, g, "pr checks") < 2 {
 			t.Errorf("a cancelled check must be given one more poll:\n%s", g.log(t))

@@ -130,6 +130,87 @@ func TestSelectIgnoresForgedMarker(t *testing.T) {
 	}
 }
 
+// TestAgentCommentAsPersonNeverSteers: the identity decides, never the
+// marker. The credentials service may serve one run with several Bitbucket
+// tokens in turn (D2355), so its comments carry more than one account, and
+// the adapter marks every one of them Self from the project's node (T13,
+// F20): trusting a listed identity would let Fugaro's own report steer the
+// follow-up it opened, and reading a person's marker as Fugaro's would drop
+// a remark they wrote.
+func TestAgentCommentAsPersonNeverSteers(t *testing.T) {
+	const otherBotID = "712020:00000000-0000-4000-8000-0000000000ff"
+	first := self("first", t0.Add(time.Minute), "report\n\n"+gitprov.ReportMarker(runA))
+	second := self("second", t0.Add(2*time.Minute), "same, by the other token\n\n"+gitprov.ReportMarker(runA))
+	second.AuthorID = otherBotID
+	person := general("person", t0.Add(3*time.Minute), "please fix\n\n"+gitprov.ReportMarker(runA))
+
+	tr := NewTrust(config.Followup{Trusted: []string{listedID, botID, otherBotID}}, gitprov.PRInfo{AuthorID: botID})
+	sel := Select([]gitprov.Comment{first, second, person}, t0, tr, DefaultLimits, keep)
+	if got := ids(sel.Comments); !reflect.DeepEqual(got, []string{"person"}) {
+		t.Fatalf("kept %v, want the person's comment alone", got)
+	}
+	if sel.Omitted["fugaro"] != 2 || sel.MarkersFromAnyone {
+		t.Fatalf("omitted %v, MarkersFromAnyone %v; want both of the run's own dropped", sel.Omitted, sel.MarkersFromAnyone)
+	}
+
+	// The same person, unlisted: dropped as a stranger, still not as the
+	// run's own, so the marker never bought them the run's trust.
+	tr = NewTrust(config.Followup{Trusted: []string{botID}}, gitprov.PRInfo{AuthorID: botID})
+	sel = Select([]gitprov.Comment{person}, t0, tr, DefaultLimits, keep)
+	if len(sel.Comments) != 0 || sel.Omitted["untrusted_author"] != 1 || sel.Omitted["fugaro"] != 0 {
+		t.Fatalf("kept %v, omitted %v", ids(sel.Comments), sel.Omitted)
+	}
+}
+
+// TestPRAuthorIDPathCovered: the trust rule drops the pull request's own
+// author as self by the account ID that pull request carries, and that path
+// is what covers a run on its own pull request. A Bitbucket pull request's
+// author is an account_id (<digits>:<uuid>) while the node's identity set
+// holds account UUIDs (T13, F20), so the two never match: without that
+// clause a comment on the run's own pull request, listed in
+// followup.trusted, would steer the run.
+func TestPRAuthorIDPathCovered(t *testing.T) {
+	const accountID = "712020:00000000-0000-4000-8000-00000000b07e"
+	byAuthor := general("author", t0.Add(time.Minute), "please fix\n\n"+gitprov.ReportMarker(runA))
+	byAuthor.AuthorID = accountID // the uuid set holds no account_id form
+	tr := NewTrust(config.Followup{Trusted: []string{accountID}}, gitprov.PRInfo{AuthorID: accountID})
+	sel := Select([]gitprov.Comment{byAuthor}, t0, tr, DefaultLimits, keep)
+	if len(sel.Comments) != 0 || sel.Omitted["self"] != 1 {
+		t.Fatalf("kept %v, omitted %v; want the pull request's author dropped as self", ids(sel.Comments), sel.Omitted)
+	}
+}
+
+// TestNoAccountScopeMarkersPinned: honouring markers from every author is
+// the fallback for a run whose own writing identity is unknown — a token
+// GET /user refuses, which is what a repository access token gets (R14; the
+// state the earlier plan called "no account scope"). The node's identity
+// set names the project's other tokens and not that one, so it does not
+// close the fallback; a run whose identity is known keeps it shut, and then
+// a person's marked comment stays a person's while the run's own is the
+// run's.
+func TestNoAccountScopeMarkersPinned(t *testing.T) {
+	own := self("own", t0.Add(time.Minute), "report\n\n"+gitprov.ReportMarker(runA))
+	person := general("person", t0.Add(2*time.Minute), "look\n\n"+gitprov.ReportMarker(runA))
+
+	// The set named the run: every comment is SelfKnown, so markers are
+	// honoured from the run's own comments only.
+	sel := Select([]gitprov.Comment{own, person}, t0, trust(), DefaultLimits, keep)
+	if got := ids(sel.Comments); !reflect.DeepEqual(got, []string{"person"}) {
+		t.Fatalf("kept %v, want the person's marked comment", got)
+	}
+	if sel.MarkersFromAnyone || sel.Omitted["fugaro"] != 1 {
+		t.Fatalf("MarkersFromAnyone %v, omitted %v", sel.MarkersFromAnyone, sel.Omitted)
+	}
+
+	// The run's own identity is unknown: the fallback opens, as it has
+	// always been.
+	own.Self, own.SelfKnown, person.SelfKnown = false, false, false
+	sel = Select([]gitprov.Comment{own, person}, t0, trust(), DefaultLimits, keep)
+	if len(sel.Comments) != 0 || sel.Omitted["fugaro"] != 2 || !sel.MarkersFromAnyone {
+		t.Fatalf("identity unknown: kept %v, omitted %v, MarkersFromAnyone %v", ids(sel.Comments), sel.Omitted, sel.MarkersFromAnyone)
+	}
+}
+
 func TestSelectDropsSelf(t *testing.T) {
 	all := []gitprov.Comment{
 		self("agent", t0.Add(time.Minute), "posted by a first run's agent with gh"),

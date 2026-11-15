@@ -204,12 +204,12 @@ func TestModelsCommandsPrintAHostileIDEscaped(t *testing.T) {
 		args func(id string) []string
 	}{
 		{"add", func(id string) []string {
-			return []string{"models", "add", id, "--price-in", "1", "--price-out", "2", "--yes"}
+			return []string{"models", "add", id, "--price-in", "1", "--price-out", "2"}
 		}},
 		{"use", func(id string) []string {
-			return []string{"models", "use", "owner/repo-a", "coder", id, "--yes"}
+			return []string{"models", "use", "owner/repo-a", "coder", id}
 		}},
-		{"rm", func(id string) []string { return []string{"models", "rm", id, "--yes"} }},
+		{"rm", func(id string) []string { return []string{"models", "rm", id} }},
 	} {
 		for _, id := range []string{hostile, csi} {
 			out, errOut, err := execute(t, c.args(id)...)
@@ -237,9 +237,9 @@ func TestModelsCommandsPrintAHostileIDEscaped(t *testing.T) {
 		what string
 		args []string
 	}{
-		{"add", []string{"models", "add", csi, "--price-in", "1", "--price-out", "2", "--yes"}},
-		{"rm", []string{"models", "rm", csi, "--yes"}},
-		{"use", []string{"models", "use", "owner/repo-a", "coder", csi, "--yes"}},
+		{"add", []string{"models", "add", csi, "--price-in", "1", "--price-out", "2"}},
+		{"rm", []string{"models", "rm", csi}},
+		{"use", []string{"models", "use", "owner/repo-a", "coder", csi}},
 	} {
 		_, _, err := execute(t, c.args...)
 		if err == nil || !strings.Contains(ErrorText(err), "vendor/model-") {

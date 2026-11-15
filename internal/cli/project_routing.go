@@ -78,7 +78,7 @@ func newProjectRoutingSetCmd() *cobra.Command {
 			"replaced by the next usable credential, and with credentials.fallback: auto\n" +
 			"that reaches the paid tiers.\n\n" +
 			"Sending the switch to a route is a data-egress change and is the widening of\n" +
-			"this block: a coding agent's session writes it to no document, whatever --yes\n" +
+			"this block: a coding agent's session writes it to no document, whatever the flags\n" +
 			"says, and a narrowing (direct, cascade, an unset) is the owner's ordinary\n" +
 			"write.\n\n" +
 			"The change reaches a run through `fugaro update`, which publishes the policy\n" +
@@ -90,12 +90,10 @@ func newProjectRoutingSetCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.StringVar(&o.via, "via", "", "the route: direct, cascade, openrouter or auto")
 	f.StringVar(&o.models, "models", "", "the Claude IDs a route carries, comma-separated (required for openrouter and auto)")
-	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
 	return cmd
 }
 
 func newProjectRoutingUnsetCmd() *cobra.Command {
-	var yes bool
 	cmd := &cobra.Command{
 		Use:   "unset",
 		Short: "Remove the routing switch, when it carries nothing",
@@ -113,9 +111,8 @@ func newProjectRoutingUnsetCmd() *cobra.Command {
 			"The change reaches a run through `fugaro update`. Only the key it removes is\n" +
 			"rewritten: every comment and every other key of the file is kept.",
 		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error { return runProjectRoutingUnset(cmd, yes) },
+		RunE: func(cmd *cobra.Command, _ []string) error { return runProjectRoutingUnset(cmd) },
 	}
-	cmd.Flags().BoolVar(&yes, "yes", false, "confirm the write without a prompt")
 	return cmd
 }
 
@@ -266,7 +263,7 @@ func projectRoutingSetCommand(o *projectRoutingSetOptions) string {
 	return cmd
 }
 
-func runProjectRoutingUnset(cmd *cobra.Command, yes bool) error {
+func runProjectRoutingUnset(cmd *cobra.Command) error {
 	sel, lc, err := settingsLocalFile("project routing unset")
 	if err != nil {
 		return err
@@ -287,7 +284,6 @@ func runProjectRoutingUnset(cmd *cobra.Command, yes bool) error {
 		New:     next,
 		What:    fmt.Sprintf("remove the routing block from %s: the config then sets no Claude switch, which reads as %s, and every Claude call goes to Anthropic (D1b)", sel.Path, config.RouteDirect),
 		Command: "fugaro project routing unset",
-		Yes:     yes,
 	}
 	if err := projectConfigEditLocal(cmd, lc, sel, e); err != nil {
 		return err

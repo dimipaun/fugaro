@@ -60,22 +60,31 @@ func (c convergeJSON) state(name string) string {
 
 // From nothing (no state bucket yet, a plan with changes): the converge
 // creates, applies and reports each stage; the Firebase stage is skipped
-// without --firebase-project.
+// without --firebase-project. --json confirms no step (T7,
+// docs/no-prompt-policy), so the run is read off its own account at a real
+// terminal instead: one line per stage, and a Done line — setup's own line
+// about `gh` is printed after it — because nothing is left for the user.
 func TestConvergeFromNothing(t *testing.T) {
 	r := newInitRig(t)
-	out, _, err := executeStdin(t, "", "setup", "--yes", "--json")
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, "", "setup")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var res convergeJSON
-	if err := json.Unmarshal([]byte(out), &res); err != nil {
-		t.Fatalf("%v:\n%s", err, out)
+	account := reportLines(out)
+	// Done and changed are the same tick to the reporter, so what says the
+	// installation changed is the tick over the one apply below.
+	if l := stepLineOf(account, "installation"); !strings.HasPrefix(l, markDone+" installation ") {
+		t.Errorf("the installation is not a tick: %q\n%s", l, out)
 	}
-	if res.state("preflight") != "done" || res.state("installation") != "changed" || res.state("firebase") != "skipped" || !res.Applied {
-		t.Errorf("stages %+v", res.Stages)
+	if l := stepLineOf(account, "firebase"); !strings.HasPrefix(l, markSkipped+" firebase") {
+		t.Errorf("firebase is not skipped without --firebase-project: %q\n%s", l, out)
 	}
-	if res.Left == nil || len(res.Left) != 0 {
-		t.Errorf("left_for_you = %v: want an empty array", res.Left)
+	if l := stepLineOf(account, "preflight"); !strings.HasPrefix(l, markDone+" preflight") {
+		t.Errorf("the preflight is not a tick: %q\n%s", l, out)
+	}
+	if !slices.ContainsFunc(account, func(l string) bool { return strings.HasPrefix(l, "Done in ") }) {
+		t.Errorf("no Done closing line: nothing is left for the user\n%s", out)
 	}
 	if len(r.ran(t, "apply")) != 1 {
 		t.Errorf("calls %q", r.calls(t))
@@ -88,7 +97,8 @@ func TestRerunPlansNothing(t *testing.T) {
 	r.stateBucket()
 	r.script["plan"] = map[string]any{"exit": 0}
 	r.save(t)
-	out, _, err := executeStdin(t, "", "setup", "--yes")
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, "", "setup")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,38 +110,34 @@ func TestRerunPlansNothing(t *testing.T) {
 	}
 }
 
-// --non-interactive never prompts, even at a terminal: without --yes the
-// run only plans, and the typed name waiting on stdin is never read.
-func TestNonInteractiveNeverPromptsAndNeedsYes(t *testing.T) {
+// A run at a real terminal confirms each step by being there: the plan it
+// planned is applied, nothing is typed at it, and no line of stdin is read.
+func TestATerminalConfirmsTheRunWithNothingTyped(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
 	fakeTerminal(t)
-	in := initProjectName + "\n"
-	out, _, err := executeStdin(t, in, "setup", "--non-interactive")
+	spy := &readSpy{Reader: strings.NewReader(initProjectName + "\n")}
+	out, _, err := executeStdinReader(t, spy, "setup")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if len(r.ran(t, "apply")) != 0 || strings.Contains(out, "Type "+initProjectName+" to apply") {
-		t.Errorf("a prompt or an apply under --non-interactive:\ncalls %q\n%s", r.calls(t), out)
+	if len(r.ran(t, "apply")) != 1 {
+		t.Errorf("calls %q", r.calls(t))
 	}
-	if !strings.Contains(out, "--non-interactive without --yes only plans") {
-		t.Errorf("the run does not say it only planned:\n%s", out)
-	}
-	// With --yes it applies, still without a prompt.
-	out, _, err = executeStdin(t, in, "setup", "--non-interactive", "--yes")
-	if err != nil || len(r.ran(t, "apply")) != 1 || strings.Contains(out, "Type "+initProjectName+" to apply") {
-		t.Fatalf("%v, calls %q\n%s", err, r.calls(t), out)
+	if strings.Contains(out, "Type "+initProjectName+" to apply") || spy.read {
+		t.Errorf("the run asked for a typed answer (read %v):\n%s", spy.read, out)
 	}
 }
 
-// A confirmation that is needed and cannot be had says so in one line, at
-// a terminal or not, under --non-interactive: the state bucket's creation
-// is such a step.
-func TestNonInteractiveRefusesBucketCreationWithoutYes(t *testing.T) {
+// A confirmation that cannot be had says so in one line, and that line names
+// the terminal it needs rather than a flag: the state bucket's creation is
+// such a step, and a plan-only run creates nothing on any word.
+func TestTheStateBucketCreationNeedsARealTerminal(t *testing.T) {
 	r := newInitRig(t)
-	fakeTerminal(t)
-	_, _, err := executeStdin(t, initProjectName+"\n", "setup", "--non-interactive", "--plan-only")
-	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "--yes") || strings.Contains(err.Error(), "\n") {
+	noTerminal(t)
+	_, _, err := executeStdin(t, "", "setup", "--plan-only")
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "needs a real terminal") ||
+		strings.Contains(err.Error(), "--yes") || strings.Contains(err.Error(), "\n") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
 	if len(r.ran(t, "apply")) != 0 {
@@ -286,7 +292,7 @@ func TestInitJSONOnFailure(t *testing.T) {
 	r.stateBucket()
 	r.script["apply"] = map[string]any{"exit": 1}
 	r.save(t)
-	out, _, err := executeStdin(t, "", "setup", "--yes", "--json")
+	out, _, err := executeStdin(t, "", "setup", "--json")
 	if err == nil {
 		t.Fatal("the apply failed, yet init succeeded")
 	}
@@ -326,27 +332,37 @@ func TestSecretsHeldReachTheLoopsRedaction(t *testing.T) {
 
 // --firebase-project runs through the loop: the installation stage is skipped (its
 // applies are the Firebase engine's), the Firebase stage applies, and
-// there are still three applies.
+// there are still three applies. --json confirms no step (T11,
+// docs/no-prompt-policy), so the stages are read off the account at a real
+// terminal: the location is typed nowhere (T7), and the person being there
+// is the whole of its answer.
 func TestFirebaseRunsThroughTheLoop(t *testing.T) {
 	r := newFBRig(t)
 	r.historyImage()
-	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--budget-mode", "observe", "--yes", "--json")
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--budget-mode", "observe")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	var res convergeJSON
-	if err := json.Unmarshal([]byte(out), &res); err != nil {
-		t.Fatalf("%v\n%s", err, out)
+	account := reportLines(out)
+	if l := stepLineOf(account, "installation"); !strings.HasPrefix(l, markSkipped+" installation") {
+		t.Errorf("installation is not skipped: %q\n%s", l, out)
 	}
-	if res.state("installation") != "skipped" || res.state("firebase") != "changed" || res.state("preflight") != "done" {
-		t.Errorf("stages %+v", res.Stages)
+	if l := stepLineOf(account, "firebase"); !strings.HasPrefix(l, markDone+" firebase") {
+		t.Errorf("firebase is not a tick: %q\n%s", l, out)
+	}
+	if l := stepLineOf(account, "preflight"); !strings.HasPrefix(l, markDone+" preflight") {
+		t.Errorf("preflight is not a tick: %q\n%s", l, out)
 	}
 	if got := r.applies(t); !slices.Equal(got, []string{"installation", "firebase", "installation"}) {
 		t.Errorf("applies %v", got)
 	}
 }
 
-// --forget and --config-only never enter the loop: no stages in their JSON.
+// --forget and --config-only never enter the loop: the run prints no stage
+// line at all. --json confirms no step (T11, docs/no-prompt-policy), so the
+// account is read at a real terminal, where the person being there is the
+// confirmation each of their own writes takes.
 func TestForgetAndConfigOnlyDoNotEnterTheLoop(t *testing.T) {
 	for _, tc := range []struct{ flag, door string }{
 		{"--config-only", "setup"},
@@ -358,39 +374,34 @@ func TestForgetAndConfigOnlyDoNotEnterTheLoop(t *testing.T) {
 		r := newInitRig(t)
 		r.stateBucket()
 		r.setPlan(t, forgetPlan()...)
-		out, _, err := executeStdin(t, "", tc.door, flag, "--yes", "--json")
+		fakeTerminal(t)
+		out, _, err := executeStdin(t, "", tc.door, flag)
 		if err != nil {
 			t.Fatalf("%s: %v\n%s", flag, err, out)
 		}
-		var res convergeJSON
-		if err := json.Unmarshal([]byte(out), &res); err != nil {
-			t.Fatalf("%s: %v\n%s", flag, err, out)
-		}
-		if len(res.Stages) != 0 {
-			t.Errorf("%s went through the loop: %+v", flag, res.Stages)
+		if names := stepNames(out); len(names) != 0 {
+			t.Errorf("%s went through the loop: %v\n%s", flag, names, out)
 		}
 	}
 }
 
-// --non-interactive on --forget and --config-only: ask() and confirm() never
-// read stdin, even at a terminal.
-func TestNonInteractiveForgetRefusesWithoutYes(t *testing.T) {
+// --forget's two confirmations come from the terminal a person is at: the
+// rollback applies and the state entry is removed with nothing typed, and
+// no line of stdin is read.
+func TestForgetTakesItsConfirmationsFromTheTerminal(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
 	r.setPlan(t, forgetPlan()...)
 	fakeTerminal(t)
-	_, _, err := executeStdin(t, initProjectName+"\n", "update", "--forget", "--non-interactive")
-	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "--yes") {
-		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	spy := &readSpy{Reader: strings.NewReader(initProjectName + "\n")}
+	_, _, err := executeStdinReader(t, spy, "update", "--forget")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(r.ran(t, "apply")) != 0 {
+	if len(r.ran(t, "state rm")) != 1 || len(r.ran(t, "apply")) < 1 {
 		t.Errorf("calls %q", r.calls(t))
 	}
-	run := &initRun{o: &initOptions{nonInteractive: true}, cmd: NewRootCmd(), w: io.Discard, in: bufio.NewReader(strings.NewReader(initProjectName + "\n"))}
-	if ok, err := run.ask("x"); ok || err != nil {
-		t.Errorf("ask under --non-interactive = %v, %v", ok, err)
-	}
-	if err := run.confirm("x", "nothing"); err == nil || !strings.Contains(err.Error(), "--yes") {
-		t.Errorf("confirm: %v", err)
+	if spy.read {
+		t.Error("stdin was read")
 	}
 }

@@ -264,9 +264,9 @@ which this task rewrites as it goes. `internal/cli/docs_upgrade_test.go` and
 **What it is.** The plugin stage offers to remove a `fugaro@fugaro` pin it finds: it prints the two entries
 as a diff, says in one sentence what the repository loses, removes them, and never commits. **Under D949
 this is the only thing in the tree that touches a pin at all** (F26): U2 deleted the writer, so a task that
-finds this section's removal harmed by a change in U2 has found a real problem and reports it. `--yes`
-confirms; a terminal asks. **In an agent's session it prints the diff and writes nothing**, `--yes`
-included, and says the exact line to run in the user's own terminal. It never unsets the marker that says
+finds this section's removal harmed by a change in U2 has found a real problem and reports it. A person
+at their own real terminal confirms it. **In an agent's session it prints the diff and writes nothing**,
+and says the exact line to run in the user's own terminal. It never unsets the marker that says
 the session is one, and no flag, environment variable or non-interactive mode gets around the refusal. A
 pin it cannot remove — invalid JSON, a fork's marketplace, a ref that is not a release tag — is left with
 its existing refusal text, and the run continues.
