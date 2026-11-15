@@ -124,8 +124,8 @@ func (e *initEngine) announceRunsInFlight(ctx context.Context) (bool, error) {
 // flag, and the gate the flag has something to restore for), which is the
 // condition the update's own confirmations are asked under (confirmNow) and the
 // reason it does not break docs/no-prompt-policy: a managed project asks nothing
-// by default, a coding agent's session, a pipe, --json and --non-interactive are
-// answered without a prompt, and the flag is the policy's one sanctioned
+// by default, a coding agent's session, a pipe and --json are answered without
+// a prompt, and the flag is the policy's one sanctioned
 // exemption, refused where nobody can answer it (askAtTerminal's own session
 // check, which is the package's one read of a y/N — managed_ask.go).
 //
@@ -195,7 +195,7 @@ func (e *initEngine) inFlightSteps(ctx context.Context, db *rtdb.Client) []inFli
 	}
 	if e.credentialsWindowOpens(ctx, db) {
 		steps = append(steps, inFlightStep{
-			line: "credentials service: a call landing mid-update meets a service that cannot read the node"})
+			line: "credentials service: calls mid-update meet a service that cannot read the node"})
 	}
 	if e.markerConverges(ctx) {
 		steps = append(steps, inFlightStep{
