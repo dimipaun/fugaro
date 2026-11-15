@@ -448,13 +448,15 @@ function Invoke-LookPhase {
             Set-Fact 'log-dir' 'FAIL' ($script:LogDir + ' holds no update-*.log after five converges: the log is what a failure''s ''full output:'' line names, and there is none')
         } else {
             Set-Fact 'log-dir' 'PASS' ('the runs above filed their logs in ' + $script:LogDir + ' (the newest is ' + (Split-Path -Leaf $newest) + '), which is where a failure''s path points')
-            # The watched run's own closing line, read from the log it filed:
-            # the bytes of a run at a console cannot be captured here, but the
-            # run writes its own lines to the log, so the closing line is a real
-            # reading of a real run rather than a claim about one.
+            # The newest update run's own closing line, read from the log it
+            # filed: the bytes of a run at a console cannot be captured here,
+            # but the run writes its own lines to the log, so the closing line
+            # is a real reading of a real run rather than a claim about one.
+            # It is the newest log after the five commands, which is the last
+            # update and not necessarily the one watched at the console.
             $closing = Get-ClosingLine $newest
             if ($closing -ne '') {
-                Set-Fact 'tty-summary' 'PASS' ('the run closed with its own line, read from the log it filed (' + (Split-Path -Leaf $newest) + '): ''' + $closing + '''')
+                Set-Fact 'tty-summary' 'PASS' ('the newest update run closed with its own line, read from the log it filed (' + (Split-Path -Leaf $newest) + '): ''' + $closing + '''')
             } else {
                 Set-Fact 'tty-summary' 'FAIL' ('the newest update log (' + (Split-Path -Leaf $newest) + ') carries no closing line: the shape is ''Done in 3.2s, 5 steps'' (or Failed / Left for you), and a run whose account has no last line cannot be read at a glance')
             }

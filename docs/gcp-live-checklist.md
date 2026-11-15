@@ -15477,8 +15477,9 @@ on the wrong platform, or one of the two refusals). The rows are, in order:
   `.local\state`).
 - **`log-dir`** — the converges filed their logs there, which is where a failure's path points.
 - **`console-view`** — YOUR answer: the run and the plan view painted, marked, the line in flight drawn and taken down, and the plan view's own rows.
-- **`tty-summary`** — the watched run closed with its own line, read from the log it filed: a run writes its own lines to the log, which is what lets
-  a closing line be read at all where the bytes of a console run cannot be.
+- **`tty-summary`** — the newest update run's log carries that run's own closing line, read from the file it filed: a run writes its own lines to the log, which is what lets
+  a closing line be read at all where the bytes of a console run cannot be. The log read is the newest one after the five commands, which is the last update rather than the
+  watched one, so this row reads a real run's closing line and not necessarily the one you watched at the console.
 - **`no-color`** — YOUR answer: the `NO_COLOR=1` run was plain while the run before it was painted.
 - **`piped`** — the captured run wrote no escape byte to a pipe.
 - **`json`** — `--json` put ONE document on stdout and it names the project that was typed.

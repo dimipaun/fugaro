@@ -77,12 +77,19 @@ expect_info_row() { # key what
 # expect_block_keys: every key the block is defined to carry is in it, whatever
 # the run measured. A block that lost a row cannot be diffed between two runs,
 # which is the whole point of running this check twice.
-expect_block_keys() { # what
-  local key
-  for key in "${BLOCK_KEYS[@]}"; do
-    expect_contains "$out" "FACT $key: " "$1: the block carries the $key row"
+# expect_block_keys: the rows a block carries, named by the case and not read
+# from the run's own key list: a dry run replaces that list with its own five
+# (check311.ps1 sets $script:BlockKeys in the dry-run branch), so a case that
+# asserted BLOCK_KEYS against a dry run would be asserting rows the run never
+# prints -- and would contradict the same case's assertion that the console row
+# is absent.
+expect_block_keys() { # what key...
+  local what=$1 key
+  shift
+  for key in "$@"; do
+    expect_contains "$out" "FACT $key: " "$what: the block carries the $key row"
   done
-  expect_contains "$out" "CHECK 311 RESULT END" "$1: the block ends with its own line"
+  expect_contains "$out" "CHECK 311 RESULT END" "$what: the block ends with its own line"
 }
 # line_of: the first line of the script carrying a needle, so a case can say one
 # thing happens BEFORE another rather than only that both are in the file.
@@ -103,6 +110,9 @@ BLOCK_KEYS=(project belong agent console vt-mode state-dir log-dir console-view
   tty-summary no-color piped json fail-step fail-context fail-log-path
   fail-log-protection fail-log-context log-name log-protection
   log-dir-protection teardown output)
+# The five rows a dry run prints instead: the branch replaces the run's key list
+# with its own, because a dry run reads no console and runs no command.
+DRY_RUN_KEYS=(project belong agent state-dir dry-run)
 
 # The text of the script, read once: most of the cases below are readings of it.
 ps=$(cat "$script")
@@ -522,7 +532,7 @@ test_a_dry_run_runs_nothing_where_pwsh_is() {
   expect_pass_row agent "and the guard on the session it was run in"
   expect_pass_row state-dir "the state directory it would read"
   expect_pass_row dry-run "and that it ran nothing"
-  expect_block_keys "a dry run"
+  expect_block_keys "a dry run" "${DRY_RUN_KEYS[@]}"
   expect_contains "$err" "dry run: NOTHING below was done" "the plan is printed"
   expect_contains "$err" "[failure] write a terraform.cmd" "and names the forced failure"
   expect_absent "$out" "FACT console: " "a dry run measures no console: it reads no file and runs no command"
@@ -536,7 +546,7 @@ test_the_agent_guard_fires_where_pwsh_is() {
   err=$(cat "$work/err" 2>/dev/null || true)
   expect_status "$status" 2 "a coding agent's session"
   expect_fail_row agent "the guard names the marker it refused"
-  expect_contains "$out" "Check 311 is OWNER-RUN" "and says who runs it"
+  expect_contains "$err" "Check 311 is OWNER-RUN" "and says who runs it, on stderr where the stop is written"
   # The refusal is judged before the dry-run branch: a dry run of an agent's
   # session is still a plan an agent would then run.
   status=0
@@ -552,14 +562,14 @@ test_the_belong_guard_fires_where_pwsh_is() {
   run311 -Project belong
   expect_status "$status" 2 "the owner's own installation"
   expect_fail_row belong "the guard names what it refused"
-  expect_contains "$out" "this check never reads it" "and why"
+  expect_contains "$err" "this check never reads it" "and why, on stderr where the stop is written: the row says 'never touches', the stop says 'never reads it'"
 }
 
 test_a_phase_that_is_not_one_is_refused_where_pwsh_is() {
   if ! have_pwsh; then skip_no_pwsh "test_a_phase_that_is_not_one_is_refused_where_pwsh_is"; return 0; fi
   run311 -Phase later -Project "$PROJECT"
   expect_status "$status" 2 "a phase that is not one"
-  expect_contains "$out" "--Phase takes all, look, failure or logs" "the refusal says what it takes"
+  expect_contains "$err" "--Phase takes all, look, failure or logs" "the refusal says what it takes, on stderr where the stop is written"
   expect_contains "$out" "FACT project: INFO" "and the block is printed with what was measured, which is nothing"
 }
 
