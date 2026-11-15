@@ -104,7 +104,7 @@ goes through `internal/yamledit` (E1) instead of `yaml.Marshal` — which is the
 exist.
 *SEC:* yes. This task writes the file that decides where a credential may be sent. D868's confirmation
 belongs to it: **one** prompt, whose text names a widening of `allow_data_to` and what it means, and
-which `--yes` answers whole (spec §2.6).
+which the owner answers whole at their own real terminal (spec §2.6).
 *Independent review:* yes, together with A2 — the pair is one security surface, and reviewing them apart
 would review half a rule.
 

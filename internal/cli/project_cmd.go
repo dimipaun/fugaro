@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -95,7 +96,7 @@ type projectPolicyPublishOptions struct {
 func newProjectPolicyPublishCmd() *cobra.Command {
 	var o projectPolicyPublishOptions
 	cmd := &cobra.Command{
-		Use:   "publish [--seed-repos] [--delete] [--yes] [--remove-routing]",
+		Use:   "publish [--seed-repos] [--delete] [--remove-routing]",
 		Short: "Publish the project's policy from the operator's config (budget admins)",
 		Long: "Build the project's policy from this machine's project config — the budget\n" +
 			"block, the providers (their secrets by NAME, never a value), the model_prices\n" +
@@ -117,7 +118,7 @@ func newProjectPolicyPublishCmd() *cobra.Command {
 			"--delete removes the policy (the children first, the shared node last, so a\n" +
 			"launch mid-delete still sees the policy and keeps its tighter ceiling) and\n" +
 			"puts the project back on the ceiling its jobs' environments carry. It goes\n" +
-			"through the same rules-marker gate as a publish, refuses without --yes while\n" +
+			"through the same rules-marker gate as a publish, refuses while\n" +
 			"runs are in flight, and asks you to type the project's name otherwise. The\n" +
 			"config/policy/repos children are removed too, shared node or not: a delete\n" +
 			"that failed on the shared node leaves them behind, and this is what clears\n" +
@@ -154,7 +155,6 @@ func newProjectPolicyPublishCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.BoolVar(&o.seedRepos, "seed-repos", false, "seed allow_repos from the operator's repositories again")
 	f.BoolVar(&o.delete, "delete", false, "remove the published policy (project-centric mode off again)")
-	f.BoolVar(&o.yes, "yes", false, "confirm the deletion without typing the project's name")
 	f.BoolVar(&o.removeRouting, "remove-routing", false, "drop the published policy's routing block on purpose (an active route stops being taken)")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
@@ -392,6 +392,26 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 					err, projectpolicy.PathShared(), projectpolicy.PathRepos())
 			}
 			for _, line := range append(append([]string{}, narrowed...), admissions...) {
+				fmt.Fprintln(out, line)
+			}
+			// The declared allowlist's own half, after the node's write for the
+			// reason the admissions are widened after it: it admits people, so a
+			// publish that failed between the two leaves an installation tighter
+			// than the config asked and never looser. It is skipped in a coding
+			// agent's session (SD8): the node it writes is what admits a phone to
+			// every run of the project, the managed gate judges the policy node
+			// and not this one (policyUnjudgedRule reads the members of the node
+			// this command publishes), so a session whose every other write is
+			// judged would otherwise seed a widening nothing judged. A person
+			// seeds it; `fugaro pair` and `fugaro pair revoke` are the writes a
+			// project's devices are kept by.
+			if agent != "" {
+				if len(lc.MobileAllow) > 0 {
+					fmt.Fprintf(out, "the declared allowlist seeded nothing: %s is a device node, and a device is a person's write (`fugaro pair`), not a coding agent's\n", rules.PathDevices)
+				}
+			} else if line, err := seedDeclaredDevices(ctx, db, lc, time.Now().UTC().Format(time.RFC3339)); err != nil {
+				return fmt.Errorf("%w; %s was set, but the device node at %s is not as the declared allowlist asks: run this publish again", err, projectpolicy.PathShared(), rules.PathDevices)
+			} else if line != "" {
 				fmt.Fprintln(out, line)
 			}
 			// The diff is printed after the write, not before it (the review
@@ -637,6 +657,63 @@ func publishAllowRepos(ctx context.Context, lc *localcfg.Config, old *projectpol
 		return nonNil(old.AllowRepos), nil, nil
 	}
 	return seedAllowRepos(ctx, lc)
+}
+
+// seedDeclaredDevices writes the DECLARED allowlist (lc.MobileAllow, D231) into
+// the device node every phone's token is admitted by, and it is
+// publishAllowRepos' rule applied to people: it seeds a project whose node is
+// not there and writes nothing else, ever.
+//
+// The node's absence is the whole condition, and it has to be, because one
+// revocation is one deleted child (D229: `fugaro pair revoke`) and a deletion
+// leaves nothing behind. An entry a node does not hold cannot be told apart
+// from an entry an operator removed, so seeding per entry would re-add every
+// revoked person at the next publish, from a declaration nobody edited — the
+// exact silent re-grant publishAllowRepos' own rule exists to prevent. What
+// follows from it is the honest half: a person declared after the first seed is
+// admitted by pairing, not by a publish, which is what the line this returns
+// when the node is there says.
+//
+// The write is ETag-guarded (`db.PutIfMatch` on the ETag the read that found
+// the node absent returned), so a node another writer created in between is
+// never overwritten: the race is lost loudly, and the node's writer wins.
+//
+// It returns the line the publish prints, and "" when the file declares
+// nothing (a project with no declared allowlist writes no node at all, and says
+// nothing about one).
+func seedDeclaredDevices(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, at string) (string, error) {
+	if len(lc.MobileAllow) == 0 {
+		return "", nil
+	}
+	var raw json.RawMessage
+	etag, found, err := db.GetETag(ctx, rules.PathDevices, &raw)
+	if err != nil {
+		return "", dbErr(lc, err, false)
+	}
+	if found {
+		return fmt.Sprintf("kept the device node at %s: the declared allowlist seeds a project whose node is not there, and it never re-adds a device an operator removed — `fugaro pair` admits a person, `fugaro pair revoke` removes one", rules.PathDevices), nil
+	}
+	nodes := map[string]pairDeviceNode{}
+	for _, e := range lc.MobileAllow {
+		if e.UID == "" {
+			continue
+		}
+		nodes[e.UID] = pairDeviceNode{Email: e.Address, Role: string(e.Role), At: at}
+	}
+	if len(nodes) == 0 {
+		return fmt.Sprintf("the declared allowlist at mobile_allow: names no uid, so %s was not written: a device node is keyed by the uid a pairing minted", rules.PathDevices), nil
+	}
+	body, err := json.Marshal(nodes)
+	if err != nil {
+		return "", fmt.Errorf("building the device node at %s: %w", rules.PathDevices, err)
+	}
+	if err := db.PutIfMatch(ctx, rules.PathDevices, etag, json.RawMessage(body)); err != nil {
+		if errors.Is(err, rtdb.ErrPrecondition) {
+			return "", userErr("%s was written by someone else while this publish ran, so the declared allowlist seeded nothing: the node stands as its writer left it, and a publish seeds a project whose node is not there (a device is added and removed by `fugaro pair`)", rules.PathDevices)
+		}
+		return "", dbErr(lc, err, true)
+	}
+	return fmt.Sprintf("seeded %d device(s) at %s from the declared allowlist", len(nodes), rules.PathDevices), nil
 }
 
 // seedAllowRepos is the seed P4 names: the operator's own repos: map and the
@@ -2653,7 +2730,7 @@ func deleteProjectPolicy(cmd *cobra.Command, lc *localcfg.Config, db *rtdb.Clien
 			return err
 		}
 		if inflight > 0 && !o.yes {
-			return userErr("%d run(s) are in flight: a run that is mid-flight keeps the policy until it finishes, so --delete is refused without --yes; wait for them (fugaro runs ls), or pass --yes once you have read what it does", inflight)
+			return userErr("%d run(s) are in flight: a run that is mid-flight keeps the policy until it finishes, so --delete is refused while they run; wait for them (fugaro runs ls), then repeat it", inflight)
 		}
 		if err := confirmRemoval(cmd, lc, o.yes, "this removes the published policy: every run falls back to the ceiling its job's environment carries, and the project's allow-list stops being enforced"); err != nil {
 			return err
@@ -2725,11 +2802,13 @@ func runsInFlight(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) (in
 // policy until it finishes. A flag typed in advance must not be what stops a
 // run that is already running, so this asks for the name itself.
 func confirmRemovalStrict(cmd *cobra.Command, lc *localcfg.Config, what string) error {
-	return confirmTypedStrict(cmd, lc, "--yes does not confirm this one while a run is in flight; wait for it (fugaro runs ls), or type the project's name at a terminal", what)
+	return confirmTypedStrict(cmd, lc, "typing the project's name is the only thing that confirms this one while a run is in flight; wait for it (fugaro runs ls), then confirm it at your own terminal", what)
 }
 
-// confirmRemoval is confirmRemovalStrict where --yes may stand in for the
-// typed name: the caller has checked that nothing is in flight.
+// confirmRemoval is confirmRemovalStrict where the run's own answer may stand
+// in for the typed name: the caller has checked that nothing is in flight. The
+// flag that once carried that answer is gone from the door (T11), so what
+// reaches here is the field the run itself holds.
 func confirmRemoval(cmd *cobra.Command, lc *localcfg.Config, yes bool, what string) error {
 	return confirmTyped(cmd, bufio.NewReader(cmd.InOrStdin()), lc, yes, what)
 }

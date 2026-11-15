@@ -11,8 +11,8 @@ disagrees with [spec.md](spec.md), it wins.**
   citations were re-read on `main` at `6fb92f44` on 2026-11-07**, because everything this folder
   designed has landed since and every line under a citation moved with it: the prerequisites
   **P1–P4** — `fugaro settings` can be aimed at an installation, the read carries
-  `writable`/`owner`/`target_layer`, `set|unset` have `--dry-run --json`, and `--yes` answers a
-  widening — and the console tasks **C1–C6**, all six of them, in console 0.120.0. So a citation
+  `writable`/`owner`/`target_layer`, `set|unset` have `--dry-run --json`, and a widening is
+  confirmed at the owner's own real terminal — and the console tasks **C1–C6**, all six of them, in console 0.120.0. So a citation
   points at the tree the reader has, a finding's tense is the tree it was read on, and every finding
   the tree has refuted says so in place rather than in a footnote: **F1**, **F3**, **F4**, **F5**,
   **F10**, **F11**, **F12** and **F13**. *(Amended 2026-11-07: the commit named here is one merge
@@ -116,7 +116,7 @@ The marker list is `agentenv.Markers` (`internal/agentenv/agentenv.go:50`): `CLA
 *Consequence, and it cuts both ways:* S5's agent-session refusal (`applySettingsEdit`, **S5 #1525**
 `internal/cli/settings_write.go:104`, reading `agentMarker`) can never fire for a console spawn —
 which is correct, because the console is not a coding agent's session, and it is what makes
-**D1107**'s ruling workable: the console's `settings set … --yes` is never the session the fence
+**D1107**'s ruling workable: the console's `settings set …` is never the session the fence
 refuses — and **the console cannot use that refusal as the reason a row has no pencil**. The human
 confirmation is the window (F2), not the marker. **F9** and **D1111** are the other half of this.
 
@@ -124,11 +124,11 @@ confirmation is the window (F2), not the marker. **F9** and **D1111** are the ot
 `applySettingsEdit` (**S5 #1525** `internal/cli/settings_write.go:104`) is the one write path: the
 line diff, the confirmation, the agent-session refusal, the compare-and-swap re-read
 (`readSettingsCurrent`, `:235`), the backup and the atomic write. Its ordinary confirmation is
-`confirmSettingsWrite` (`:254`) — `--yes` answers it — and its typed one is `confirmTypedStrict`
-(`internal/cli/budget.go:251`), which **no flag answered** as it stood: **D1107** is the owner's
-ruling that `--yes` answers that one too, outside an agent session, and the plan's **P4** was the
-task that makes it so — *(Amended 2026-11-07: **P4 has landed**, so `--yes` answers the typed
-confirmation too, outside an agent session, which is the argv the console spawns.)* Every successful
+`confirmSettingsWrite` (`:254`) — the owner answers it at a real terminal — and its typed one is `confirmTypedStrict`
+(`internal/cli/budget.go:251`), which **no flag answers**: **D1107** is the owner's
+ruling that the typed confirmation is answered outside an agent session, and the plan's **P4** was the
+task that makes it so — *(Amended 2026-11-07: **P4 has landed**, so a widening is confirmed outside
+an agent session, and the console relies on its own confirmation window for it.)* Every successful
 write ends with `next: fugaro update` (`runSettingsSet`, **S5 #1525**
 `internal/cli/settings_set.go:2273`). *Consequence:*
 the console spawns this and reads its sentences; it writes no document of its own, and it never
@@ -279,7 +279,8 @@ CLI changes: it must be able to **name its installation** (F12/P1), it must be t
 writable and by whom** (F10/P2), it must be told **whether an edit widens** and **which layer it
 writes** (F11/P3), and it must have a way to confirm a widening at all, because the CLI's own
 widening confirmation asks for a terminal the console has not got (F5/P4, answered by **D1107**:
-the CLI accepts `--yes` there instead). None of the four is a console change, and all four are small.
+the CLI's write takes no confirmation flag, so the console's own window confirms the widening
+instead). None of the four is a console change, and all four are small.
 
 ## 4. Owner decisions
 

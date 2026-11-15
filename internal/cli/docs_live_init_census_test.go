@@ -253,7 +253,7 @@ var liveRoots = []string{
 // every other bare mention reading as a clean file. The flag is the variable,
 // so the pattern takes the flag as one (`--` and a letter) rather than
 // enumerating the retired command's own flags -- which could not be done
-// anyway, because the live `fugaro config init` shares `--yes` with it.
+// anyway, because the live `fugaro config init` spells flags of its own.
 //
 // It is matched against flattenDoc's output and never against the raw bytes,
 // so a wrapped mention is a mention: a help string's line break inside the
@@ -264,16 +264,16 @@ var initNameRE = regexp.MustCompile(`fugaro init|init --[a-z]`)
 
 // otherInitRE is the other command in this tree that writes `init --<flag>`,
 // and the reason initNameRE can be as wide as it is. It is `fugaro config
-// init --yes`, the live subcommand that writes the minimal `fugaro.yaml`
-// (internal/cli/config_cmd.go), whose flag is the retired verb's own -- the
-// overlap that rules out the flag list above, since a list of the retired
-// command's flags would have to carry `--yes` and so would swallow this one.
+// init`, the live subcommand that writes the minimal `fugaro.yaml`
+// (internal/cli/config_cmd.go), whose own flags -- `--profile`, `--base-branch`
+// -- are spellings of the retired verb's pattern, so a flag list of the retired
+// command's own would swallow this one.
 //
 // A file that mentions it *beside* a real mention must not be read as clean,
 // so the exclusion is not a second pattern that exempts the file: the match is
 // removed from the flattened text and initNameRE reads what is left. `fugaro
-// config init --yes` therefore leaves `fugaro`, and a bare `init --repo` in
-// the same file is still found.
+// config init --profile p` therefore leaves `fugaro`, and a bare `init --repo`
+// in the same file is still found.
 //
 // The list holds what the tree has, not what it might: `git init --bare` is
 // the obvious next entry and is deliberately absent, because no live file
@@ -282,7 +282,7 @@ var initNameRE = regexp.MustCompile(`fugaro init|init --[a-z]`)
 // one does, the census fails on that file and the answer is one of the two
 // this file hands every unexpected mention -- rename it, or add the command
 // here with its reason.
-var otherInitRE = regexp.MustCompile(`config init --[a-z]`)
+var otherInitRE = regexp.MustCompile(`config init`)
 
 // censusRoot is the repository root as this package's tests reach it.
 const censusRoot = "../.."
@@ -806,9 +806,9 @@ func TestCensusNamesInitReadsPastTheHead(t *testing.T) {
 //   - the bare spelling is caught *wrapped*, because a comment wraps it across
 //     its `//` marker (init_firebase_test.go, init_images_test.go,
 //     init_review.go and mirror/ref.go all do), and
-//   - `fugaro config init --yes` is not the retired command, while a file that
-//     names it beside a real mention still is: the exclusion is a redaction of
-//     the flattened text, not an exemption for the file.
+//   - `fugaro config init` is not the retired command, while a file that names
+//     it beside a real mention still is: the exclusion is a redaction of the
+//     flattened text, not an exemption for the file.
 //
 // Mutation (run, restore): narrow initNameRE's second alternative back to
 // `init --repo` -- the bare-flag cases fail; drop the `--[a-z]` and match a
@@ -829,8 +829,9 @@ func TestCensusNamesInitMatchesBothSpellingsAndTheOtherCommand(t *testing.T) {
 		{"a bare flag, print-vars", "printVarsUngatedInstallation is init --print-vars's warning\n", true},
 		{"a bare flag, wrapped across a // marker", "// and a marker above this\n// binary says so. init\n// --firebase-project deploys the rules\n", true},
 		{"a bare flag, expect-digest", "Plan's expect digest (init --expect-digest) pins one\n", true},
-		{"the other command alone", "fugaro config init --yes writes the minimal fugaro.yaml\n", false},
-		{"the other command, with the retired one beside it", "fugaro config init --yes writes it; the old text said init --repo\n", true},
+		{"the other command alone", "fugaro config init writes the minimal fugaro.yaml\n", false},
+		{"the other command with one of its flags", "fugaro config init --profile svc writes it\n", false},
+		{"the other command, with the retired one beside it", "fugaro config init writes it; the old text said init --repo\n", true},
 		{"neither spelling", "fugaro setup --repo and fugaro update --firebase-project\n", false},
 		{"a flag with no init in front", "fugaro setup --create-project\n", false},
 	}

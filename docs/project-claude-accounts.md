@@ -1,6 +1,6 @@
 # Project Claude accounts: one OAuth token per (profile, account)
 
-Status: **0.9.0, released.** The released Fugaro is 0.24.0, and 0.9.0 is the first release any of this page works on:
+Status: **0.9.0, released.** The released Fugaro is 0.24.1, and 0.9.0 is the first release any of this page works on:
 the `claude_accounts` field inside a profile, the `accounts` block in the published policy and the
 jobs they name all ship in 0.9.0 (policy version 3,
 [`internal/projectpolicy/version.go`](../internal/projectpolicy/version.go)), and a 0.8.x binary
@@ -721,7 +721,7 @@ serves them.
 
 All three are **offline** — they read and write this config file and reach no bucket, no database
 and no host — and the two writes are the **owner's**: a pool decides where a project's calls may be
-spent, so a coding agent's session is refused, `--yes` included (§7's rule, and the same one
+spent, so a coding agent's session is refused, whatever it passes (§7's rule, and the same one
 `fugaro accounts add` states for the token).
 
 **A pool's members are served by two halves, and one pool cannot cross them.** An `openrouter` or
