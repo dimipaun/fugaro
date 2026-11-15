@@ -211,7 +211,15 @@ import (
 // check read AND in what order: the hash of the old record is taken before the
 // first CLI read of the window, which is half of what step 4 is about, and a
 // case that rewrites a copy of the script with the comparison removed proves
-// the FAIL it reads elsewhere is the comparison's.
+// the FAIL it reads elsewhere is the comparison's. Check 200's are a fake
+// `gcloud` that serves the run's own record and the image's build record, a
+// fake `fugaro` that answers `version`, `doctor`, the settings write -- which it
+// REFUSES, the way the CLI does, since no command writes that key -- `run` and
+// `runs ls`, and a fake `go` whose build writes a binary that answers a paid
+// name with the core stub -- beside a REAL local git repository and its bare
+// origin, so the throwaway branch, the commit, the push and the Restore's own
+// deletion are readings of a repository the test owns rather than of a fake's
+// log.
 // Check 27's fakes are a fake `gcloud` and a fake `fugaro` that hold a throwaway
 // project which exists only once something creates it, its billing link, its
 // Firestore location, its buckets, its jobs, its secret containers and its
@@ -334,6 +342,7 @@ var liveCheckScripts = []struct {
 	{"check-382-agent-cannot-raise-a-cap.sh", "check-382-agent-cannot-raise-a-cap_test.sh"},
 	{"check550.sh", "check550_test.sh"},
 	{"check139.sh", "check139_test.sh"},
+	{"check200.sh", "check200_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
