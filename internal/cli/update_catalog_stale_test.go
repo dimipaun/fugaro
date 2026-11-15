@@ -103,7 +103,8 @@ func putCatalogRecord(t *testing.T, slug, entry, base string) {
 func TestUpdateRebuildsTheStaleCatalogImageOfThisCheckout(t *testing.T) {
 	_, built, _ := catalogStaleRig(t, pinnedRef(config.BaseKind, convergePrev), pinnedRef(config.BaseKind, convergeRelease))
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("a catalog entry on the previous release's base image does not reach this release with `fugaro update` alone (exit %d):\n%s\n%s", ExitCode(err), out, errOut)
 	}
@@ -128,7 +129,8 @@ func TestUpdateRebuildsTheStaleCatalogImageOfThisCheckout(t *testing.T) {
 func TestUpdateNamesTheStaleCatalogImageOfAnotherCheckout(t *testing.T) {
 	_, built, _ := catalogStaleRig(t, pinnedRef(config.BaseKind, convergeRelease), pinnedRef(config.BaseKind, convergePrev))
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update")
 	if err == nil {
 		t.Fatalf("a run that did not rebuild a stale catalog image of this installation reported success:\n%s", out)
 	}
@@ -169,7 +171,8 @@ func TestUpdateNamesTheStaleCatalogImageOfAnotherCheckout(t *testing.T) {
 func TestUpdateSaysNothingAboutACatalogOnThisReleaseBase(t *testing.T) {
 	_, built, _ := catalogStaleRig(t, pinnedRef(config.BaseKind, convergeRelease), pinnedRef(config.BaseKind, convergeRelease))
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("a catalog on this release's base image is not an update's business, and this run failed over it (exit %d):\n%s\n%s", ExitCode(err), out, errOut)
 	}
@@ -184,26 +187,33 @@ func TestUpdateSaysNothingAboutACatalogOnThisReleaseBase(t *testing.T) {
 	}
 }
 
-// TestUpdateJSONDoesNotReachTheCatalogRebuild: --json is the update's own flag,
-// the document this run prints, and it is NOT the nested build's session. Handed
-// on it becomes the build's own Conditions.JSON, which takes the session out of
-// judgedHere (PersonAtTheTerminal) — and openBuildManaged then returns nil, so
-// the build is submitted with no kill-switch read, no project build rules and no
-// admission record, under its lease alone. That is the bound the stage's own
-// comment claims, gone in exactly the session where nobody is watching it
-// (`fugaro image build` never gets there: runImageBuild refuses --json for a
-// Cloud Build before this machinery is reached).
+// TestUpdateJSONDoesNotReachTheCatalogRebuild: a `fugaro update --json` reaches
+// no catalog rebuild at all, and that is what keeps --json out of the nested
+// build's own session. The run's first step that a person's presence confirms is
+// the installation stage's write, and --json confirms no step (T11,
+// docs/no-prompt-policy), so the run stops there and nothing is submitted.
+//
+// The flag must not reach the build: handed on it becomes the build's own
+// Conditions.JSON, which takes the session out of judgedHere
+// (PersonAtTheTerminal) — and openBuildManaged then returns nil, so the build
+// would be submitted with no kill-switch read, no project build rules and no
+// admission record, under its lease alone. imagesStage.rebuildCatalogEntry
+// builds the nested options from scratch, so the flag cannot ride along on the
+// struct; what this pins is that the command offers no route that carries it
+// there (`fugaro image build` never gets there either: runImageBuild refuses
+// --json for a Cloud Build before this machinery is reached).
 func TestUpdateJSONDoesNotReachTheCatalogRebuild(t *testing.T) {
 	_, built, opts := catalogStaleRig(t, pinnedRef(config.BaseKind, convergePrev), pinnedRef(config.BaseKind, convergeRelease))
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
-	if err != nil {
-		t.Fatalf("a catalog entry on the previous release's base image does not reach this release with `fugaro update --json` (exit %d):\n%s\n%s", ExitCode(err), out, errOut)
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update", "--json")
+	if err == nil {
+		t.Fatalf("a --json run applied a step no word confirmed (exit %d):\n%s\n%s", ExitCode(err), out, errOut)
 	}
-	if len(*built) != 1 {
-		t.Fatalf("the run rebuilt %q, want the stale entry of this checkout alone:\n%s\n%s", *built, out, errOut)
+	if len(*built) != 0 || len(*opts) != 0 {
+		t.Fatalf("a --json update submitted the catalog rebuild(s) %q, though it reaches no stage a word confirms:\n%s\n%s", *built, out, errOut)
 	}
-	if (*opts)[0].asJSON {
-		t.Errorf("the rebuild was handed --json, which the nested build reads as its own session: the managed gate is not read for that one, so the build would be submitted with no kill-switch read, no project build rules and no admission record")
+	if all := out + errOut + newestLog(t, "update"); !strings.Contains(all, "not confirmed (--json confirms no step") {
+		t.Errorf("the run does not name --json as the reason it stopped before the stages:\n%s", all)
 	}
 }

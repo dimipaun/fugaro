@@ -16,11 +16,12 @@ import (
 // Two properties are the reason the file exists at all, and both are the
 // direction a mistake falls:
 //
-//   - The gate never widens the class rule. A Typed step — money or
-//     permanence, and no plan for any of it — takes the same answer whatever
-//     Managed holds (D1026). The row that would break is the one where a
-//     managed project's verdict is read as permission for a billable build or a
-//     loosened ceiling.
+//   - The gate never widens a step no plan for it exists. A step the Converge
+//     refuses (managed.ConvergeUnjudged, D1026) reaches GateStandsIn with
+//     Admitted false, so the answer is the one it had before the managed case
+//     existed whatever the project's marks say. The row that would break is the
+//     one where a managed project's verdict is read as permission for a billable
+//     build or a loosened ceiling.
 //   - The gate never answers for a session nobody is at. Removes may be true in
 //     a run with no terminal, which is why the terminal branch asks for one
 //     beside it; a step that reached past it would be a managed project's
@@ -31,7 +32,9 @@ import (
 // it is a fact about the run and not about a plan: the owner asking for the
 // confirmations back is a condition every predicate below is decided under,
 // and a table without it would test a rule the CLI can pass a different value
-// to.
+// to. So are the two facts a run carries rather than a command: a run that
+// carries its own answer and one that never prompts are rows every predicate
+// here reads, and a table without them would test those rules on one value.
 func allConditions() []Conditions {
 	markers := []string{"", "CLAUDECODE"}
 	var out []Conditions
@@ -72,15 +75,6 @@ func allManaged() []Managed {
 	return out
 }
 
-func allClasses() []ConfirmClass { return []ConfirmClass{Typed, YesOrTyped} }
-
-func className(c ConfirmClass) string {
-	if c == Typed {
-		return "Typed"
-	}
-	return "YesOrTyped"
-}
-
 func managedName(m Managed) string {
 	return "Managed{Managed:" + boolWord(m.Managed) + ", Admitted:" + boolWord(m.Admitted) + ", Fallback:" + boolWord(m.Fallback) + "}"
 }
@@ -98,63 +92,38 @@ func conditionsName(c Conditions) string {
 		", Ask:" + boolWord(c.Ask) + "}"
 }
 
-// TestManagedADecisionNeverDependsOnTheFlag is the property the owner's ruling
-// rests on: --yes is not asked for and does not decide. A managed project that
-// needed a flag remembered at the terminal would be a project whose owner is
-// still asked for it, which is the whole of what the ruling removes.
+// TestManagedTheGateIgnoresTheRunsOwnAnswer is the property the owner's ruling
+// rests on: whether the run carried an answer of its own is not asked for and
+// does not decide. A managed project whose gate stood in only for a run that
+// had answered beforehand would be a project whose owner is still asked for it,
+// which is the whole of what the ruling removes.
 //
-// The mutation caught: putting c.Yes into GateConfirms or ConfirmsByGate —
-// dropping `!c.Yes` from the terminal branch, or writing the branch as
-// CanConfirm is written one line below it.
-func TestManagedADecisionNeverDependsOnTheFlag(t *testing.T) {
-	for _, class := range allClasses() {
-		for _, c := range allConditions() {
-			if c.Yes {
-				continue
-			}
-			flipped := c
-			flipped.Yes = true
-			for _, m := range allManaged() {
-				if got, want := GateConfirms(class, flipped, m), GateConfirms(class, c, m); got != want {
-					t.Errorf("GateConfirms(%s, %s, %s) = %v with --yes and %v without: the gate's answer is about the document and who is there, not about a flag",
-						className(class), conditionsName(flipped), managedName(m), got, want)
-				}
-			}
-		}
-	}
-}
-
-// TestManagedNeverWidensATypedStep is D1026, and it is the one row of the
-// table that must hold for EVERY Managed value: a Typed step is money or
-// permanence — a billable image build, a loosened ceiling, a secret, a
-// Firestore location — and no plan gate says anything about any of them. So
-// the answer for a Typed step is the answer it had before the managed case
-// existed, whatever the project's marks say.
-//
-// The mutation caught: Managed.Covers returning true for every class, which is
-// the smallest edit that would let a managed project's verdict stand where the
-// owner's own word is the only thing that may.
-func TestManagedNeverWidensATypedStep(t *testing.T) {
+// The mutation caught: putting c.Yes into GateStandsIn or PersonAtTheTerminal —
+// reading the run's own answer as though it were who is there.
+func TestManagedTheGateIgnoresTheRunsOwnAnswer(t *testing.T) {
 	for _, c := range allConditions() {
-		// The Typed rule as the design states it: a person at a real terminal,
-		// with no flag and no pipe, and no coding agent's marker.
-		want := c.Agent == "" && c.Terminal && !c.Yes && !c.NonInteractive && !c.JSON
+		if c.Yes {
+			continue
+		}
+		flipped := c
+		flipped.Yes = true
 		for _, m := range allManaged() {
-			if got := CanConfirmManaged(Typed, c, m); got != want {
-				t.Errorf("CanConfirmManaged(Typed, %s, %s) = %v, want %v: a Typed step is the owner's own word whatever a plan looked like",
-					conditionsName(c), managedName(m), got, want)
+			if got, want := GateStandsIn(flipped, m), GateStandsIn(c, m); got != want {
+				t.Errorf("GateStandsIn(%s, %s) = %v with the run's own answer and %v without: the gate's answer is about the document and who is there, not about what the run carried",
+					conditionsName(flipped), managedName(m), got, want)
 			}
-			if m.Removes(Typed) {
-				t.Errorf("Removes(Typed) is true for %s: no plan is money or permanence", managedName(m))
+			if got, want := PersonAtTheTerminal(flipped), PersonAtTheTerminal(c); got != want {
+				t.Errorf("PersonAtTheTerminal(%s) = %v with the run's own answer and %v without: who is there does not depend on what the run carried",
+					conditionsName(flipped), got, want)
 			}
 		}
 	}
 }
 
-// TestManagedRemovesHoldsEveryFactAtOnce pins the four facts and what each of
+// TestManagedRemovesHoldsEveryFactAtOnce pins the three facts and what each of
 // them alone does: dropping any one leaves today's confirmation in place.
 //
-// The mutant predicates below are the four ways this rule is misread, plus the
+// The mutant predicates below are the ways this rule is misread, plus the
 // shape every mistake ends in — a predicate that answers true whatever it is
 // handed. Each is asserted to differ from Managed.Removes on at least one row
 // of the table, so the table is the thing that catches it: this is the mutation
@@ -162,35 +131,27 @@ func TestManagedNeverWidensATypedStep(t *testing.T) {
 func TestManagedRemovesHoldsEveryFactAtOnce(t *testing.T) {
 	mutants := []struct {
 		name string
-		fn   func(Managed, ConfirmClass) bool
+		fn   func(Managed) bool
 	}{
 		// Every one of these is an edit somebody would make to widen the exit
 		// from a prompt, and each is caught by a row below.
-		{"the project's marks alone, with no verdict", func(m Managed, class ConfirmClass) bool {
-			return m.Managed && m.Covers(class) && !m.Fallback
+		{"the project's marks alone, with no verdict", func(m Managed) bool {
+			return m.Managed && !m.Fallback
 		}},
-		{"the verdict alone, with no marks", func(m Managed, class ConfirmClass) bool {
-			return m.Admitted && m.Covers(class) && !m.Fallback
+		{"the verdict alone, with no marks", func(m Managed) bool {
+			return m.Admitted && !m.Fallback
 		}},
-		{"the class rule dropped", func(m Managed, class ConfirmClass) bool {
-			return m.Managed && m.Admitted && !m.Fallback
+		{"the inventory's fallback ignored", func(m Managed) bool {
+			return m.Managed && m.Admitted
 		}},
-		{"the inventory's fallback ignored", func(m Managed, class ConfirmClass) bool {
-			return m.Managed && m.Admitted && m.Covers(class)
-		}},
-		{"every step of every project", func(Managed, ConfirmClass) bool { return true }},
+		{"every step of every project", func(Managed) bool { return true }},
 	}
 	for _, mut := range mutants {
 		t.Run(mut.name, func(t *testing.T) {
 			caught := ""
-			for _, class := range allClasses() {
-				for _, m := range allManaged() {
-					if mut.fn(m, class) != m.Removes(class) {
-						caught = className(class) + ", " + managedName(m)
-						break
-					}
-				}
-				if caught != "" {
+			for _, m := range allManaged() {
+				if mut.fn(m) != m.Removes() {
+					caught = managedName(m)
 					break
 				}
 			}
@@ -200,82 +161,75 @@ func TestManagedRemovesHoldsEveryFactAtOnce(t *testing.T) {
 			t.Logf("%s is caught by %s", mut.name, caught)
 		})
 	}
-	// And the rule itself, in the four-fact form the design states, for every
-	// row: managed, admitted, of a class the gate covers and no fallback.
-	for _, class := range allClasses() {
-		for _, m := range allManaged() {
-			want := m.Managed && m.Admitted && m.Covers(class) && !m.Fallback
-			if got := m.Removes(class); got != want {
-				t.Errorf("Removes(%s) for %s = %v, want %v", className(class), managedName(m), got, want)
-			}
+	// And the rule itself, in the three-fact form the design states, for every
+	// row: managed, admitted by the gate, and no fallback.
+	for _, m := range allManaged() {
+		want := m.Managed && m.Admitted && !m.Fallback
+		if got := m.Removes(); got != want {
+			t.Errorf("Removes() for %s = %v, want %v", managedName(m), got, want)
 		}
 	}
 }
 
-// TestManagedGateConfirmsInBothSessions pins what a caller about to show a
+// TestManagedGateStandsInInBothSessions pins what a caller about to show a
 // prompt asks: under a coding agent's marker the answer is Removes, and in a
-// session with none it is ConfirmsByGate. The two are told apart by the marker
-// because they are different sentences to two different readers
-// (AgentProceeded's and GateProceeded's), and a caller that conflated them
-// would print the wrong one.
+// session with none it is PersonAtTheTerminal beside Removes. The two are told
+// apart by the marker because they are different sentences to two different
+// readers (AgentProceeded's and GateProceeded's), and a caller that conflated
+// them would print the wrong one.
 //
-// The mutation caught: ConfirmsByGate dropping its `c.Agent == ""` — the
-// terminal sentence printed to a coding agent's session — or the two
-// predicates being swapped at a call site, which this equality makes a
+// The mutation caught: PersonAtTheTerminal dropping its `c.Agent == ""` — the
+// terminal sentence printed to a coding agent's session — or the two halves
+// being swapped at a call site, which this equality makes a
 // compile-time-looking mistake rather than a silent one.
 //
 // --ask is the one condition that answers false here whatever else is true of
 // the row, and it is written into the oracle rather than taken from the code:
 // the owner asking for the prompts back is exactly "the gate does not confirm
 // this step", in both sessions.
-func TestManagedGateConfirmsInBothSessions(t *testing.T) {
-	for _, class := range allClasses() {
-		for _, c := range allConditions() {
-			for _, m := range allManaged() {
-				var want bool
-				switch {
-				case c.Ask:
-					want = false
-				case c.Agent != "":
-					want = m.Removes(class)
-				default:
-					want = ConfirmsByGate(class, c, m)
-				}
-				if got := GateConfirms(class, c, m); got != want {
-					t.Errorf("GateConfirms(%s, %s, %s) = %v, want %v", className(class), conditionsName(c), managedName(m), got, want)
-				}
-				// A step the gate confirms is a step the whole rule lets
-				// through: the gate never hands a caller a step its own class
-				// rule then refuses, which is what a caller would print a
-				// "nothing is asked" sentence in front of.
-				if gate := GateConfirms(class, c, m); gate && !CanConfirmManaged(class, c, m) {
-					t.Errorf("GateConfirms(%s, %s, %s) is true and CanConfirmManaged is false", className(class), conditionsName(c), managedName(m))
-				}
+func TestManagedGateStandsInInBothSessions(t *testing.T) {
+	for _, c := range allConditions() {
+		for _, m := range allManaged() {
+			var want bool
+			switch {
+			case c.Ask:
+				want = false
+			case c.Agent != "":
+				want = m.Removes()
+			default:
+				want = PersonAtTheTerminal(c) && m.Removes()
+			}
+			if got := GateStandsIn(c, m); got != want {
+				t.Errorf("GateStandsIn(%s, %s) = %v, want %v", conditionsName(c), managedName(m), got, want)
+			}
+			// A coding agent's session is the one the marker decides: the
+			// gate's sentence names a verdict there and never a person, so a
+			// row that reached the terminal half would print the wrong one.
+			if c.Agent != "" && GateStandsIn(c, m) && PersonAtTheTerminal(c) {
+				t.Errorf("GateStandsIn(%s, %s) is true through the terminal half in a coding agent's session", conditionsName(c), managedName(m))
 			}
 		}
 	}
 }
 
-// TestManagedConfirmsByGateIsTheOwnerAtARealTerminal: the terminal case is the
-// same four facts plus the one fact about who is there, and the case it must
-// never be true of is the run nobody is at — a pipe, --json,
-// --non-interactive, a session with a coding agent's marker in it, or a run
-// whose owner asked for the prompts back (--ask: the gate is then nobody's
-// answer, which is the whole of what the flag is for).
-func TestManagedConfirmsByGateIsTheOwnerAtARealTerminal(t *testing.T) {
-	for _, class := range allClasses() {
-		for _, c := range allConditions() {
-			for _, m := range allManaged() {
-				got := ConfirmsByGate(class, c, m)
-				switch {
-				case c.Ask, c.Agent != "", !c.Terminal, c.NonInteractive, c.JSON:
-					if got {
-						t.Errorf("ConfirmsByGate(%s, %s, %s) is true with nobody at the terminal", className(class), conditionsName(c), managedName(m))
-					}
-				default:
-					if want := m.Removes(class); got != want {
-						t.Errorf("ConfirmsByGate(%s, %s, %s) = %v, want Removes = %v", className(class), conditionsName(c), managedName(m), got, want)
-					}
+// TestManagedGateStandsInIsTheOwnerAtARealTerminal: the terminal case is the
+// same three facts plus the one fact about who is there, and the case it must
+// never be true of is the run nobody is at — a pipe, --json, a run that never
+// prompts, a session with a coding agent's marker in it, or a run whose owner
+// asked for the prompts back (--ask: the gate is then nobody's answer, which is
+// the whole of what the flag is for).
+func TestManagedGateStandsInIsTheOwnerAtARealTerminal(t *testing.T) {
+	for _, c := range allConditions() {
+		for _, m := range allManaged() {
+			got := PersonAtTheTerminal(c) && m.Removes()
+			switch {
+			case c.Ask, c.Agent != "", !c.Terminal, c.NonInteractive, c.JSON:
+				if got {
+					t.Errorf("the owner half of GateStandsIn(%s, %s) is true with nobody at the terminal", conditionsName(c), managedName(m))
+				}
+			default:
+				if want := m.Removes(); got != want {
+					t.Errorf("the owner half of GateStandsIn(%s, %s) = %v, want Removes = %v", conditionsName(c), managedName(m), got, want)
 				}
 			}
 		}
@@ -283,40 +237,32 @@ func TestManagedConfirmsByGateIsTheOwnerAtARealTerminal(t *testing.T) {
 }
 
 // TestPersonAtTheTerminalIsTheOwnerAndNothingElse is the predicate the ruling of
-// 2026-11-06 is decided under, and it is the half of ConfirmsByGate that is
+// 2026-11-06 is decided under, and it is the half of GateStandsIn that is
 // about WHO is there rather than about what a document said: the owner's own
 // session, at a real terminal, with no coding agent's marker in the
-// environment, nothing piped or asked in JSON, and no --ask putting the
-// prompts back.
+// environment, nothing asked in JSON, and no --ask putting the prompts back.
 //
-// Three properties are what it exists for, and each is a direction a mistake
+// Two properties are what it exists for, and each is a direction a mistake
 // falls in. A marker in the environment is never the owner, whatever else the
 // row says (that is the mutation a "person at a terminal" read as "a terminal"
-// would make: a coding agent's session is a terminal too). A run nobody is at —
-// a pipe, --json, --non-interactive, --ask — is never the owner either, and the
-// answer there is the coding agent's refusal exactly as it was. And --yes
-// changes nothing in either direction: the flag is not asked for and does not
-// decide, so a row with it is the same row without it (the mutation caught is
-// `!c.Yes` in this predicate, which would leave the owner of a managed project
-// prompted for exactly the run the ruling is about).
+// would make: a coding agent's session is a terminal too). And a run nobody is
+// at — a pipe, --json, a run that never prompts, --ask — is never the owner
+// either, and the answer there is the coding agent's refusal exactly as it was.
 func TestPersonAtTheTerminalIsTheOwnerAndNothingElse(t *testing.T) {
 	for _, c := range allConditions() {
 		want := c.Agent == "" && c.Terminal && !c.NonInteractive && !c.JSON && !c.Ask
 		if got := PersonAtTheTerminal(c); got != want {
 			t.Errorf("PersonAtTheTerminal(%s) = %v, want %v", conditionsName(c), got, want)
 		}
-		flipped := c
-		flipped.Yes = !c.Yes
-		if PersonAtTheTerminal(flipped) != PersonAtTheTerminal(c) {
-			t.Errorf("PersonAtTheTerminal(%s) and (%s) disagree: --yes is not asked for and does not decide", conditionsName(c), conditionsName(flipped))
-		}
-		// And the predicate is exactly the owner half of ConfirmsByGate: the
+		// And the predicate is exactly the owner half of GateStandsIn: under
+		// it the gate stands in for the step's confirmation, and the
 		// document's own facts are Removes' and nothing else's.
-		for _, class := range allClasses() {
-			for _, m := range allManaged() {
-				if got, want := ConfirmsByGate(class, c, m), PersonAtTheTerminal(c) && m.Removes(class); got != want {
-					t.Errorf("ConfirmsByGate(%s, %s, %s) = %v, want %v", className(class), conditionsName(c), managedName(m), got, want)
-				}
+		if c.Agent != "" {
+			continue
+		}
+		for _, m := range allManaged() {
+			if got, want := GateStandsIn(c, m), PersonAtTheTerminal(c) && m.Removes(); got != want {
+				t.Errorf("GateStandsIn(%s, %s) = %v, want %v", conditionsName(c), managedName(m), got, want)
 			}
 		}
 	}
@@ -379,38 +325,28 @@ func TestGateSentencesNameNoWayPast(t *testing.T) {
 // answer is a refusal and never a silent proceed — including the silently
 // managed proceed the mark would otherwise give.
 //
-// The mutation caught: GateConfirms (or ConfirmsByGate) dropping its `c.Ask`,
-// which is a managed project answering a step with its verdict on a run whose
-// owner asked to be asked.
+// The mutation caught: GateStandsIn (or PersonAtTheTerminal) dropping its
+// `c.Ask`, which is a managed project answering a step with its verdict on a
+// run whose owner asked to be asked.
 func TestManagedAskTakesTheGateOutOfTheDecision(t *testing.T) {
-	for _, class := range allClasses() {
-		for _, c := range allConditions() {
-			if !c.Ask {
-				continue
+	for _, c := range allConditions() {
+		if !c.Ask {
+			continue
+		}
+		for _, m := range allManaged() {
+			if GateStandsIn(c, m) {
+				t.Errorf("GateStandsIn(%s, %s) is true with the confirmations asked for: the gate is nobody's answer in that run",
+					conditionsName(c), managedName(m))
 			}
-			plain := c
-			plain.Ask = false
-			for _, m := range allManaged() {
-				if GateConfirms(class, c, m) {
-					t.Errorf("GateConfirms(%s, %s, %s) is true with the confirmations asked for: the gate is nobody's answer in that run",
-						className(class), conditionsName(c), managedName(m))
-				}
-				got := CanConfirmManaged(class, c, m)
-				if got != CanConfirmManaged(class, c, Managed{}) {
-					t.Errorf("CanConfirmManaged(%s, %s, %s) = %v and %v with nothing read: asking for the confirmations back takes the project's marks out of the decision",
-						className(class), conditionsName(c), managedName(m), got, CanConfirmManaged(class, c, Managed{}))
-				}
-				if c.Agent != "" {
-					if got {
-						t.Errorf("CanConfirmManaged(%s, %s, %s) is true: a coding agent's session answers no confirmation (--ask included)",
-							className(class), conditionsName(c), managedName(m))
-					}
-					continue
-				}
-				if want := CanConfirm(class, plain); got != want {
-					t.Errorf("CanConfirmManaged(%s, %s, %s) = %v, want the class rule's own answer %v: the flag restores a confirmation, it never removes one",
-						className(class), conditionsName(c), managedName(m), got, want)
-				}
+			if PersonAtTheTerminal(c) {
+				t.Errorf("PersonAtTheTerminal(%s) is true with the confirmations asked for: the flag puts the question back, and the owner reads it as one",
+					conditionsName(c))
+			}
+			// A coding agent's session is refused under the flag exactly as it
+			// is without it: a prompt nobody can answer is a refusal and never
+			// a silent proceed, the silently managed one included.
+			if c.Agent != "" && CanConfirmRun(c) {
+				t.Errorf("CanConfirmRun(%s) is true: a coding agent's session answers no confirmation (--ask included)", conditionsName(c))
 			}
 		}
 	}
@@ -450,7 +386,7 @@ func TestAskDecisionIsTheFlagsWholeRule(t *testing.T) {
 	// must never read as a proceed: the sentence says nothing is applied, and
 	// it is the session's own advice (the person's terminal), the way every
 	// refusal for a session nobody can ask is.
-	for _, c := range []Conditions{{Agent: "CLAUDECODE"}, {NonInteractive: true}, {JSON: true}, {Terminal: false}, {Terminal: true, NonInteractive: true}} {
+	for _, c := range []Conditions{{Agent: "CLAUDECODE"}, {JSON: true}, {}, {Terminal: true, JSON: true}} {
 		_, refusal := AskDecision(c, true)
 		if !strings.Contains(refusal, "nothing is applied") {
 			t.Errorf("the refusal for %s does not say that nothing is applied: %q", conditionsName(c), refusal)
@@ -468,7 +404,7 @@ func TestAskDecisionIsTheFlagsWholeRule(t *testing.T) {
 // the rule AgentRefusal and AgentProceeded already follow, and the reason
 // AgentAdvice names a terminal rather than a variable to unset.
 func TestAskRefusalNamesNoWayPast(t *testing.T) {
-	for _, c := range []Conditions{{Agent: "CLAUDECODE"}, {Agent: IDEMarker}, {NonInteractive: true}, {JSON: true}, {}} {
+	for _, c := range []Conditions{{Agent: "CLAUDECODE"}, {Agent: IDEMarker}, {JSON: true}, {}} {
 		refusal := AskRefusal(c)
 		for _, no := range []string{"--ask", "unset ", "export ", "="} {
 			if strings.Contains(refusal, no) {

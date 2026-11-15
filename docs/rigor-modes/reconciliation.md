@@ -901,11 +901,15 @@ the table's row from 138 to 139, which is what the row's own command prints — 
 row had been left at 138 over a tree that already held **139**, so that pin is
 the one that arrived without it; and `internal/cli/docs_mobile_telemetry_test.go`,
 the telemetry plan's pin over its own blocks and the register's Checks 120–122,
-is one of the 139 already and moved nothing. Amended 2026-11-15:
+is one of the 139 already and moved nothing. Amended 2026-11-14:
+`internal/cli/docs_mobile_checks_620_test.go`, the pin over the mobile-auth work's
+owner Checks 620 to 627 in the register — each of the eight with a row and a
+section, none of them run — moved the table's row from 139 to 140.)
+(Amended 2026-11-15:
 `internal/cli/docs_check311_test.go`, the CLI-output plan's pin over its
 owner-run Check 311 in the register — the PowerShell script the Windows half of
 the output work ships, its row and its section, and the sibling test
-`scripts/live_checks_test.go` drives — moved the table's row from 139 to 140.) They
+`scripts/live_checks_test.go` drives — moved the table's row from 140 to 141.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.

@@ -924,7 +924,7 @@ either: that flag's document is the session-start nudge's, not a screen's.
 **Command:** `internal/cli/accounts.go` `newAccountsLsCmd`, indented
 (`printAccounts`). **Document:** `accountsListDoc`:
 `repo` string, `accounts` `[]string`, `complete` bool,
-`note`° (why selection failed), `states`° and `state_note`°. **`complete: false` means the project config
+`note`° (why selection failed), `states`°, `state_note`° and `aliases`°. **`complete: false` means the project config
 could not be selected — the screen renders `unavailable`, never "no
 accounts"** (the type's own doc comment is the authority). Flags: `--repo`
 (always passed explicitly), `--json`, plus the cloud flags. The **names** are
@@ -939,6 +939,14 @@ seconds, not the per-call timeout twice, and the command answers with the names
 and a `state_note` naming the bound. A project with no backend, by contrast,
 makes no call at all: it stays offline and answers with the names and a
 `state_note` of its own.
+
+**`aliases` (the account-aliases work's AL3, D2099)** is this machine's
+`claude_account_aliases` block: each name an account-choice key may hold, to the
+account it stands for. It is **additive within this document's version** (D848),
+so a reader of an older release sees exactly the document it always did, and it
+is **names only**: the block is the owner's own local file and is never published
+(D2090), so a screen draws it as what a launch on this machine would resolve, not
+as anything a run in the project could read.
 
 **`states` (CLI 0.10.0, credentials-service C1.21)** is every listed account's
 credential state, keyed by account name, and it is **absent exactly when no

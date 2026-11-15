@@ -177,7 +177,9 @@ profiles:
   a repository's runs land on: a per-repository job — every Bitbucket repository, and every
   repository no workflow sends to a shared job — has no profile to be named in, and while the block
   was derived from the profiles alone such a repository could be admitted to no account at all (its
-  runs were answered 503 state_unavailable by the credentials service). The translation is explicit:
+  runs were refused by the credentials service on an empty candidate list — answered 503
+  `state_unavailable` while that was the class for one, and `503 no_candidate_credentials` since that
+  class was added). The translation is explicit:
   `allow_data_to` holds `owner/name` slugs (`claude_accounts.go:173-176`); a policy `allow_repos`
   entry is a provider-qualified pattern that may carry `*`
   (`internal/projectpolicy/match.go:105-120`, `ValidPattern`). Publish qualifies each slug with the
