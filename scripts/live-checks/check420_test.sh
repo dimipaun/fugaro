@@ -251,10 +251,12 @@ creds)
   ;;
 doctor)
   case "$mode" in
-  doctor-fails) printf 'fugaro: no installation here\n' >&2; exit 1 ;;
+  doctor-fails) printf 'fugaro: no installation here\n' >&2; exit 2 ;;
+  doctor-warns) status=1 ;;
   doctor-unreadable) printf 'not json at all\n' ;;
   esac
   cat "$FAKE_JSON_DIR/doctor.json"
+  [ "${status:-0}" = 0 ] || exit "$status"
   ;;
 run)
   case "$mode" in
@@ -559,6 +561,13 @@ test_dry_run() {
   expect_absent "$(cat "$dir/logs/gcloud.calls")" "storage" "dry run: the bucket is not read"
   assert_no_run "$dir" "dry run"
   assert_scratch_removed "$dir" "dry run"
+}
+
+test_a_doctor_that_warns_still_answers() {
+  local dir=$work/doctor-warns
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=doctor-warns
+  expect_status "$status" 0 "a doctor that exits 1 on a warning is an answer"
 }
 
 test_happy_path() {
@@ -1072,6 +1081,7 @@ t() {
 t test_help
 t test_dry_run
 t test_happy_path
+t test_a_doctor_that_warns_still_answers
 t test_a_missing_sandbox_is_refused
 t test_a_path_that_is_not_a_checkout_stops_the_check
 t test_xtrace_refused

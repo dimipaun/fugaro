@@ -672,7 +672,7 @@ step_features() {
     missing="fugaro craft ls"
   elif ! help=$("$FUGARO_BIN" update --help 2>&1); then
     missing="fugaro update --help"
-  elif ! printf '%s' "$help" | grep -q -- '--json'; then
+  elif [[ "$help" != *--json* ]]; then
     missing="fugaro update --json"
   fi
   if [ -n "$missing" ]; then
@@ -704,7 +704,7 @@ step_installation() {
     fact installation FAIL "fugaro doctor --json did not answer within ${READ_TIMEOUT}s: the check cannot tell which installation it is looking at"
     stop "fugaro doctor --json timed out after ${READ_TIMEOUT}s. Run it yourself in ${WORKDIR} and fix what it reports"
   fi
-  if [ "$BOUNDED_STATUS" -ne 0 ]; then
+  if [ "$BOUNDED_STATUS" -ne 0 ] && [ "$BOUNDED_STATUS" -ne 1 ]; then
     sed -n '1,5p' "$SCRATCH/doctor.err" >&4 || true
     fact installation FAIL "fugaro doctor --json exited $BOUNDED_STATUS, so this run cannot tell which installation it is looking at"
     stop "fugaro doctor --json did not answer (exit $BOUNDED_STATUS): the check needs your own credentials and a local config for the installation. Fix what it reports and run the check again"

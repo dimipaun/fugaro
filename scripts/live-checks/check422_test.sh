@@ -406,10 +406,12 @@ update)
   ;;
 doctor)
   case "$mode" in
-  doctor-fails) printf 'fugaro: no installation here\n' >&2; exit 1 ;;
+  doctor-fails) printf 'fugaro: no installation here\n' >&2; exit 2 ;;
+  doctor-warns) status=1 ;;
   doctor-unreadable) printf 'not json at all\n' ;;
   esac
   cat "$FAKE_JSON_DIR/doctor.json"
+  [ "${status:-0}" = 0 ] || exit "$status"
   ;;
 *)
   echo "fugaro: unexpected subcommand ${1:-}" >&2
@@ -698,6 +700,13 @@ test_dry_run() {
   assert_scratch_removed "$dir" "dry run"
 }
 
+test_a_doctor_that_warns_still_answers() {
+  local dir=$work/doctor-warns
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=doctor-warns
+  expect_status "$status" 0 "a doctor that exits 1 on a warning is an answer"
+}
+
 test_happy_path() {
   local dir=$work/happy
   prepare "$dir"
@@ -868,7 +877,7 @@ test_a_doctor_that_cannot_be_read_is_not_measured() {
   run_check "$dir" FAKE_MODE=doctor-fails
   expect_status "$status" 2 "doctor that failed"
   expect_contains "$out" "FACT installation: FAIL" "the installation row"
-  expect_contains "$out" "exited 1" "the installation row: the exit"
+  expect_contains "$out" "exited 2" "the installation row: the exit"
   assert_no_update "$dir" "doctor that failed"
   assert_scratch_removed "$dir" "doctor that failed"
 }
@@ -1213,6 +1222,7 @@ t() {
 t test_help
 t test_dry_run
 t test_happy_path
+t test_a_doctor_that_warns_still_answers
 t test_a_converged_installation_asserts_the_end_state
 t test_a_config_of_another_installation_is_refused
 t test_the_config_named_is_the_one_converged
