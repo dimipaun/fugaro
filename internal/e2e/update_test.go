@@ -334,6 +334,13 @@ func (c cliResult) String() string {
 // checkout, with no terminal on stdin.
 func (r *initRepoRig) fugaroInit(t *testing.T, args ...string) cliResult {
 	t.Helper()
+	return r.fugaroInitTyped(t, "", args...)
+}
+
+// fugaroInitNoTerminal is fugaro update with nobody at a terminal: what a
+// coding agent's session or a pipe has, where no step is confirmed.
+func (r *initRepoRig) fugaroInitNoTerminal(t *testing.T, args ...string) cliResult {
+	t.Helper()
 	return r.fugaroInitIn(t, nil, args...)
 }
 
@@ -1138,8 +1145,8 @@ func TestUpdateRefusesUnnamedInstallation(t *testing.T) {
 
 func TestUpdateForget(t *testing.T) {
 	r, state, key := forgetRig(t)
-	// Without a confirmation, nothing is forgotten.
-	res := r.fugaroInit(t, "--repo", r.checkout, "--forget")
+	// Without a terminal, nothing is forgotten.
+	res := r.fugaroInitNoTerminal(t, "--repo", r.checkout, "--forget")
 	if res.code != 1 || count(r.calls(t), "repo state rm module.repo") != 0 || !exists(t, state, key) {
 		t.Fatalf("forgot without a confirmation:\n%s\n%q", res, r.calls(t))
 	}
@@ -1203,7 +1210,7 @@ func TestUpdateForgetThenReinitImports(t *testing.T) {
 	// plans nothing.
 	plans := count(r.calls(t), "installation plan")
 	res := r.fugaroInit(t)
-	if res.code != 1 || !strings.Contains(res.stderr, infra.LogBucketUndelete(initRepoProject)) {
+	if res.code != 1 || !strings.Contains(res.stdout+res.stderr+logNamedIn(t, res.stdout), infra.LogBucketUndelete(initRepoProject)) {
 		t.Fatalf("a retry with the log bucket pending deletion:\n%s", res)
 	}
 	if count(r.calls(t), "installation plan") != plans {
@@ -1371,7 +1378,7 @@ func TestUpdateBuildNeedsConfirmation(t *testing.T) {
 	}
 	r.script(t, "repo", -1, map[string]any{"plan": map[string]any{"exit": 0}})
 	for _, args := range [][]string{{"--repo", r.checkout}, {"--repo", r.checkout, "--json"}} {
-		res := r.fugaroInit(t, args...)
+		res := r.fugaroInitNoTerminal(t, args...)
 		if res.code != 1 {
 			t.Fatalf("%v: want exit 1, the build left for the user:\n%s", args, res)
 		}
@@ -1396,16 +1403,16 @@ func TestUpdateBuildNeedsConfirmation(t *testing.T) {
 			t.Errorf("%v: Cloud Build was called: %d request(s)", args, len(r.build.Requests()))
 		}
 	}
-	// --yes covers it: the build is submitted and the run converges.
+	// The person at a terminal covers it: the build is submitted and the run converges.
 	res := r.fugaroInit(t, "--repo", r.checkout)
 	if res.code != 0 {
-		t.Fatalf("--yes: want exit 0, the build covered:\n%s", res)
+		t.Fatalf("at a terminal: want exit 0, the build covered:\n%s", res)
 	}
-	if !strings.Contains(res.stdout+res.stderr, "confirmed by --yes") {
-		t.Errorf("--yes: the build is not shown as confirmed by --yes:\n%s", res)
+	if !strings.Contains(res.stdout+res.stderr, "built acme/sandbox/web") {
+		t.Errorf("at a terminal: the build is not reported:\n%s", res)
 	}
 	if n := r.builds.Load(); n != 1 {
-		t.Errorf("--yes: builds = %d, want 1", n)
+		t.Errorf("at a terminal: builds = %d, want 1", n)
 	}
 }
 
@@ -1423,8 +1430,8 @@ func TestUpdateEnablesResourceManager(t *testing.T) {
 	r.su.Disable(infra.ServiceResourceManager, r.crm.Server)
 	r.su.Disable("cloudscheduler.googleapis.com", r.sched.Server)
 
-	// No terminal, no --yes: exit 1 with the command, nothing enabled.
-	res := r.fugaroInit(t, "--repo", r.checkout, "--plan-only")
+	// No terminal: exit 1 with the command, nothing enabled.
+	res := r.fugaroInitNoTerminal(t, "--repo", r.checkout, "--plan-only")
 	if res.code != 1 || !strings.Contains(res.stderr, "gcloud services enable cloudresourcemanager.googleapis.com --project "+initRepoProject) {
 		t.Fatalf("want exit 1 with the gcloud command:\n%s", res)
 	}
@@ -1432,10 +1439,10 @@ func TestUpdateEnablesResourceManager(t *testing.T) {
 		t.Fatalf("enables %q, terraform calls %q", r.su.Enables(), r.calls(t))
 	}
 
-	// --plan-only never takes --yes: nothing is enabled on its word.
-	res = r.fugaroInit(t, "--repo", r.checkout, "--plan-only")
+	// --plan-only run again with nobody at a terminal still enables nothing.
+	res = r.fugaroInitNoTerminal(t, "--repo", r.checkout, "--plan-only")
 	if res.code != 1 || len(r.su.Enables()) != 0 || len(r.calls(t)) != 0 {
-		t.Fatalf("--plan-only --yes: exit %d, enables %q, terraform calls %q\n%s", res.code, r.su.Enables(), r.calls(t), res)
+		t.Fatalf("--plan-only without a terminal: exit %d, enables %q, terraform calls %q\n%s", res.code, r.su.Enables(), r.calls(t), res)
 	}
 
 	// The project's name typed at a terminal confirms it.
@@ -1472,4 +1479,20 @@ func TestUpdateStorageDisabledIsRemote(t *testing.T) {
 	if len(r.calls(t)) != 0 {
 		t.Fatalf("terraform calls %q", r.calls(t))
 	}
+}
+
+// logNamedIn reads the run log a stage's failure names ("full output: PATH")
+// when the terminal shows only its first line.
+func logNamedIn(t *testing.T, stdout string) string {
+	t.Helper()
+	_, rest, ok := strings.Cut(stdout, "full output: ")
+	if !ok {
+		return ""
+	}
+	path, _, _ := strings.Cut(rest, "\n")
+	b, err := os.ReadFile(strings.TrimSpace(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }
