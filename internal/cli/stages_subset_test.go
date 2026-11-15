@@ -43,8 +43,9 @@ import (
 // TestStagesSubsetKeepsOrderAndNeeds is the ordering rule, over every door the
 // CLI registers stages for: the subset comes back in initflow's canonical order
 // whatever order it was asked for in, every name the door registers is
-// answered, a name it does not register is reported and not dropped, and no
-// subset ever puts a stage before one it needs.
+// answered, a name it registers no stage under — a stage of initflow's the door
+// leaves out, or a name that is no stage at all — is reported and not dropped,
+// and no subset ever puts a stage before one it needs.
 //
 // The red step is the second field of the pairs below: an implementation that
 // answered the caller's own order — or that filtered initStages() without
@@ -163,6 +164,31 @@ func TestStagesSubsetKeepsOrderAndNeeds(t *testing.T) {
 				if slices.Contains(unanswered, name) {
 					t.Errorf("%s is a stage this door registers and came back unanswered", name)
 				}
+			}
+
+			// And it is this door's registration that decides, not initflow's
+			// table: a stage of initflow's that this door registers no stage
+			// under is unanswered too, and nothing runs for it. Naming the
+			// services slot against the update door is the sharpest case — the
+			// name is a stage of the canonical order and no door builds one —
+			// and the project stage and the Batch backend's compute are the
+			// other two, registered behind `setup`'s first run and behind their
+			// own flag. A helper that answered initflow's name instead of
+			// dropping it would run nothing and say nothing, which is the one
+			// thing a subset may not do.
+			unregistered := 0
+			for _, name := range initflow.Names() {
+				if slices.Contains(registered, name) {
+					continue
+				}
+				unregistered++
+				got, unanswered := stagesNamed(e, name)
+				if len(got) != 0 || !slices.Equal(unanswered, []string{name}) {
+					t.Errorf("the subset of %s, a stage of initflow's this door registers no stage for, = %v unanswered %v, want nothing run and the name reported", name, namesOf(got), unanswered)
+				}
+			}
+			if unregistered == 0 {
+				t.Fatal("this door registers every stage of initflow's, so the loop above proved nothing about the ones a door leaves out")
 			}
 		})
 	}

@@ -372,12 +372,15 @@ func initStages(e *initEngine) []initflow.Stage {
 // back rather than being dropped, for the reason apply.Order keeps the names it
 // cannot place: a run that quietly did fewer steps than it was asked for is the
 // one thing neither may do. Two kinds of name land there and they are one fact
-// to a caller — a stage this door did not register (the Batch backend's
-// compute, the project stage, a stage behind a flag) and a name that is no
-// stage at all (apply.CatalogBuild, which is a step of the change table and not
-// one of initflow's). A caller that names stages it knows are registered
-// ignores it; a caller whose names come from a file it did not write reads it
-// and says what it could not run.
+// to a caller — a stage of initflow's this door did not register (the services
+// slot, which no door fills; the Batch backend's compute and the project stage,
+// which a door registers behind a flag or on the first run of setup) and a name
+// that is no stage at all (apply.CatalogBuild, which is a step of the change
+// table and not one of initflow's). A caller that names stages it knows are
+// registered ignores it; a caller whose names come from a file it did not write
+// reads it and says what it could not run. A name leaves `want` only when a
+// stage really answered it, so "not a stage of this door" and "not a stage"
+// are both answered here, and neither is lost.
 func stagesNamed(e *initEngine, names ...string) (stages []initflow.Stage, unanswered []string) {
 	want := make(map[string]bool, len(names))
 	for _, n := range names {
@@ -391,10 +394,12 @@ func stagesNamed(e *initEngine, names ...string) (stages []initflow.Stage, unans
 		if !want[name] {
 			continue
 		}
-		delete(want, name)
-		if st, ok := byName[name]; ok {
-			stages = append(stages, st)
+		st, ok := byName[name]
+		if !ok {
+			continue
 		}
+		delete(want, name)
+		stages = append(stages, st)
 	}
 	return stages, slices.Sorted(maps.Keys(want))
 }
