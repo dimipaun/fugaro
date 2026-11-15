@@ -172,6 +172,7 @@ Spec owner: the repository owner. Spec received 2026-10-24; reconciled against `
 | [implementation-plan.md](implementation-plan.md) | Slices L0–L5 (L4.2, L4.3 and L5.1 owner-run), tasks with their tests and dependencies, levels, the critical path, the shared-files table. Nothing in it is approved |
 | [licence-key.md](licence-key.md) | The licence key's design (the licence-key-v2 plan's K1.5, superseding the subscriptions plan's S2.1 and this plan's L3.1): the `fgk_` claim set and the policy version, the offline check at `ee/register`, the grace and the read-only lapse, the overlapping renewal, the visible revocation job and its accepted limits, the staging key id, where each product keeps the key and how the console hands it to the CLI it spawns. **A design, not built; no release reads or mounts a key** |
 | [subscription-terms.md](subscription-terms.md) | The Fugaro Subscription Terms, counsel's text of 2026-10-28, approved by counsel and published at https://fugaro.dev/legal/subscription-terms on 2026-11-11 (history: first drafted 2026-10-27, amended the same day to the owner's answers and edited 2026-10-29 on the owner's ruling D531 so it stops calling the coordinator Core) |
+| [subscription-terms-v-next.md](subscription-terms-v-next.md) | Proposed next version of the Terms as a redline (discount carve-out, Free Plan eligibility, Enterprise reseller route, Order Form contents, annual Enterprise certification), for counsel's approval; not part of the Terms and not published |
 
 ## The numbers this work holds
 
