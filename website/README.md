@@ -2305,19 +2305,23 @@ tests it with the tools stubbed on PATH, and `go test ./scripts/` runs that test
 The deploy workflow is still W2.1's and **not a Fugaro run's to write**: W2.1 stages a
 workflow under `docs/pending-workflows/` for the owner to copy in, and the owner runs it to
 deploy to the Firebase project created for the website only (D91, D109) — a run may not
-change `.github/workflows/`. `docs/pending-workflows/` now holds two pending workflows,
-`docs/pending-workflows/portal-tests.yml` and `docs/pending-workflows/website-preview.yml`,
-both staged on 2026-11-14: the first is the portal's own tests in CI (the SPA's vitest
+change `.github/workflows/`. `docs/pending-workflows/` now holds three pending workflows,
+`docs/pending-workflows/portal-tests.yml`, `docs/pending-workflows/website-preview.yml` and
+`docs/pending-workflows/ci.yml`: the first is the portal's own tests in CI (the SPA's vitest
 suite, the key service's Go suite with the deploy script's own test, and the document
-store's Firestore suite against the emulator), and the second is this site's preview
+store's Firestore suite against the emulator), the second is this site's preview
 workflow with the F40 gate added, so that a `firebase.json` naming a Hosting `site` or
 `target` is refused as well as one naming another public dir or a lifecycle hook — the
-portal has a site and a configuration of its own now.
+portal has a site and a configuration of its own now — and the third is the `shard` job's
+matrix and steps, so that every `test-shard` runner finishes in under seven minutes. The
+first two were staged on 2026-11-14 and the third on 2026-11-15, the day its timings were
+read from a run of `main` whose longest runner, `scripts-live-0`, took 598s.
 
 Everything else staged here has been copied in and its staged copy removed, and none of it
 was this site's: the images workflow's nightly republish of the base image skipped when the
-published tags already name the build (issue #1745) and `ci.yml`'s root loop with
-`workspace` and the longer test timeout were copied in on 2026-11-11; the credentials
+published tags already name the build (issue #1745) and that copy of `ci.yml` — its root
+loop with `workspace` and the longer test timeout — were copied in on 2026-11-11, the file
+having been staged again since for the `shard` job; the credentials
 service's image leg in `images.yml` (credentials-service plan task C1.14) on 2026-10-30;
 the shared package's test job, `shared-tests.yml`, on 2026-10-22; the mobile app's release
 workflow, `mobile-release.yml`, and the console's own release stream,
