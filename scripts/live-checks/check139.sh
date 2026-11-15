@@ -468,13 +468,21 @@ def calls(path, bg_model):
         (refused_ids if refused else admitted_ids).add(agent)
 
     multi_session = shared_main = 0
+    main_all = set()
+    for sessions in main.values():
+        main_all |= sessions
     for agent, sessions in ids.items():
         stage = id_stage[agent]
         model = id_model[agent]
         if len(sessions) > 1:
             multi_session += 1
             offenders.append(("multi_session", stage, model))
-        if sessions & main.get(stage, set()):
+        # Run-wide, not per stage: a sub-agent's session being an empty-agent
+        # entry's session is what says the empty agent_id is not the main
+        # session, and the stage a sub-agent runs under is a NAME the runner
+        # reuses across sessions (every review round and retry), so comparing
+        # within one stage would miss the same session under two names.
+        if sessions & main_all:
             shared_main += 1
             offenders.append(("shared_main", stage, model))
     refused_only = refused_ids - admitted_ids
@@ -489,6 +497,7 @@ def calls(path, bg_model):
     print("distinct=%d" % len(ids))
     print("multi_session=%d" % multi_session)
     print("shared_main=%d" % shared_main)
+    print("main_multi=%d" % len(multi_stages))
     print("refused_only=%d" % len(refused_only))
     print("refused_entries=%d" % refused_entries)
     print("bg=%d" % bg)
@@ -859,7 +868,7 @@ offenders_more() {
 
 # step_verdict: U4, one row per part of it, then the sentence to paste back.
 step_verdict() {
-  local multi shared refused_only bg bg_with_id bg_named refused_entries v_main v_sub v_bg v_ref
+  local multi shared refused_only bg bg_with_id bg_named refused_entries v_sub v_bg v_ref
 
   multi=$(field_of multi_session "$CALLS")
   shared=$(field_of shared_main "$CALLS")
@@ -869,29 +878,32 @@ step_verdict() {
   bg_with_id=$(field_of bg_with_id "$CALLS")
   bg_named=$(field_of bg_named "$CALLS")
 
-  # 1. The main session carries an empty agent_id, and every entry with an empty
-  # one belongs to its stage's OWN session.
+  # 1. The main session carries an empty agent_id, and no session an entry with
+  # an empty agent_id names is also a sub-agent's. A stage NAME carrying more
+  # than one session is not a finding: the runner reuses stage names across
+  # sessions by design — every senior review round and every retry is
+  # r.stage("review") with a new session (internal/runner/runner.go), a fix with
+  # no session to resume starts one, and an account-limited attempt gets a new
+  # one — so a run with two review rounds reads two sessions under one name.
   local stages main_multi
   stages=$(printf '%s\n' "$CALLS" | sed -n 's/^stage_main=//p' | awk -F'|' '{ printf "%s%s %s entr%s/%s session%s", (n++ ? ", " : ""), $1, $2, ($2 == 1 ? "y" : "ies"), $3, ($3 == 1 ? "" : "s") }')
-  main_multi=$(printf '%s\n' "$CALLS" | grep -c '^off=main_multi_session|' || true)
+  main_multi=$(field_of main_multi "$CALLS")
   if [ "${main_multi:-0}" -gt 0 ]; then
-    v_main=FAIL
-    fact "main-empty" FAIL "a stage's entries with an empty agent_id span more than one session — $(offenders main_multi_session)$(offenders_more) — so the empty agent_id is not one main session per stage: grouping on an empty agent_id is grouping on something that moved. The per-stage counts are ${stages:-none}"
+    fact "main-empty" INFO "not a finding: a stage name carried more than one session — $(offenders main_multi_session)$(offenders_more) — and the runner reuses stage names across sessions by design (every senior review round and every retry is the same stage name with a new session, and a fix with no session to resume starts one), so two review rounds read two sessions under one name. What this row asserts is that no session id is shared between an entry with an empty agent_id and a sub-agent's entry anywhere in the run, and the subagents-distinct row's shared count is where that is judged: ${shared} here. The per-stage counts are ${stages:-none}"
   else
-    v_main=PASS
-    fact "main-empty" PASS "every entry with an empty agent_id belongs to its stage's own session: ${stages:-no stage logged one} (entries with an empty agent_id, and the distinct session ids they name). No stage's main session carries an id, which is what grouping on an empty agent_id means"
+    fact "main-empty" PASS "every entry with an empty agent_id names a session no sub-agent's entry names: ${stages:-no stage logged one} (entries with an empty agent_id, and the distinct session ids they name). No stage's main session carries an id, which is what grouping on an empty agent_id means"
   fi
 
   # 2. Each sub-agent carries a distinct one, its entries name one session, and
-  # that session is not its stage's main session.
+  # that session is no empty-agent_id entry's, anywhere in the run.
   local distinct
   distinct=$(field_of distinct "$CALLS")
   if [ "${multi:-0}" -eq 0 ] && [ "${shared:-0}" -eq 0 ]; then
     v_sub=PASS
-    fact "subagents-distinct" PASS "${distinct} distinct non-empty agent ids are in the entries, no id's entries span more than one session (0), and no sub-agent's session is its stage's main session (0): an id is one sub-agent and not a session's rename, and a sub-agent is not the main session relabelled"
+    fact "subagents-distinct" PASS "${distinct} distinct non-empty agent ids are in the entries, no id's entries span more than one session (0), and no sub-agent's session is one an entry with an empty agent_id also names (0): an id is one sub-agent and not a session's rename, and a sub-agent is not the main session relabelled"
   else
     v_sub=FAIL
-    fact "subagents-distinct" FAIL "${distinct} distinct non-empty agent ids are in the entries, and ${multi} of them span more than one session while ${shared} name a session their stage's main session also used: an id that outlives its session is a rename rather than a sub-agent, and a sub-agent whose session is the main session's is the main session relabelled. The offending entries, by stage/model: $(offenders multi_session)$(offenders shared_main)$(offenders_more)"
+    fact "subagents-distinct" FAIL "${distinct} distinct non-empty agent ids are in the entries, and ${multi} of them span more than one session while ${shared} name a session an entry with an empty agent_id also names (anywhere in the run): an id that outlives its session is a rename rather than a sub-agent, and a sub-agent whose session is an empty-agent_id entry's is the main session relabelled. The offending entries, by stage/model: $(offenders multi_session)$(offenders shared_main)$(offenders_more)"
   fi
 
   # 3. The background model's calls carry none. The model is the run's EFFECTIVE
@@ -947,8 +959,7 @@ step_verdict() {
 
   # The verdict, and the one sentence the owner pastes back.
   local verdict why=""
-  if [ "$v_main" = FAIL ]; then why="a stage's main session is not one session"; fi
-  if [ "$v_sub" = FAIL ]; then why="${why}${why:+; }a sub-agent's id spans more than one session, or its session is its stage's main session's"; fi
+  if [ "$v_sub" = FAIL ]; then why="${why}${why:+; }a sub-agent's id spans more than one session, or its session is one an entry with an empty agent_id also names"; fi
   if [ "$v_bg" = FAIL ]; then why="${why}${why:+; }the background model's calls carry an agent_id"; fi
   if [ "$v_ref" = FAIL ]; then why="${why}${why:+; }an agent id appears on refused entries alone"; fi
   if [ -n "$why" ]; then
@@ -956,10 +967,10 @@ step_verdict() {
     fact u4 FAIL "a distinct-agent count is NOT a sub-agent count for ${RUN}: ${why}. This is a finding for T7.2 and not something this check fixes: the plan makes T7.2 wait for this answer, so what the fan-out stop counts — or whether it counts at all — is the owner's decision before T7.2 merges"
   elif [ "$v_bg" = UNMEASURED ]; then
     verdict=UNMEASURED
-    unmeasured u4 "U4's first two parts hold for ${RUN} — every entry with an empty agent_id is its stage's main session's, and the ${distinct} distinct non-empty ids are sub-agents — but the background model's row could not be taken, so U4 is not answered whole. The background-none row above says why, and what makes it measurable: a background of the repository's own (agent.models.background, a model no stage runs) is the one that separates a background call from a stage's"
+    unmeasured u4 "U4's first two parts hold for ${RUN} — no entry with an empty agent_id names a session a sub-agent's entry names, and the ${distinct} distinct non-empty ids are sub-agents — but the background model's row could not be taken, so U4 is not answered whole. The background-none row above says why, and what makes it measurable: a background of the repository's own (agent.models.background, a model no stage runs) is the one that separates a background call from a stage's"
   else
     verdict=PASS
-    fact u4 PASS "a distinct-agent count IS a sub-agent count for ${RUN}: the main session's entries carry an empty agent_id and each belongs to its stage's own session, the ${distinct} distinct non-empty ids are one sub-agent each (no id spans two sessions and no sub-agent shares its stage's main session's), $(if [ "$v_bg" = PASS ]; then echo "the background model ${BG_MODEL}'s ${bg} call(s) carry none"; else echo "the background model was not named so its row was not taken (the models: line above is where its name is read)"; fi), and no agent id appears on refused entries alone. T7.2's fan-out stop rests on the reading it was written against"
+    fact u4 PASS "a distinct-agent count IS a sub-agent count for ${RUN}: the main session's entries carry an empty agent_id and name no session a sub-agent's entry names, the ${distinct} distinct non-empty ids are one sub-agent each (no id spans two sessions and no sub-agent shares a session with an entry that carries an empty agent_id), $(if [ "$v_bg" = PASS ]; then echo "the background model ${BG_MODEL}'s ${bg} call(s) carry none"; else echo "the background model was not named so its row was not taken (the models: line above is where its name is read)"; fi), and no agent id appears on refused entries alone. T7.2's fan-out stop rests on the reading it was written against"
   fi
 
   local bg_sentence rec_sentence u4_sentence
@@ -974,7 +985,7 @@ step_verdict() {
   FAIL) u4_sentence="a distinct-agent count is NOT a sub-agent count" ;;
   *) u4_sentence="not answered whole — a row above was not taken" ;;
   esac
-  fact "paste-back" PASS "Check 139 — ${RUN}${REPO:+ (${REPO})}, $(date -u +%Y-%m-%d): ${ENTRIES} model call entries, ${EMPTY} with an empty agent_id, ${distinct} distinct agent ids (${multi} spanning more than one session, ${shared} sharing their stage's main session), ${bg_sentence}, ${refused_only} seen only on refused entries; ${rec_sentence}; U4: ${verdict} — ${u4_sentence}. Read with ${FUGARO_VERSION:-a fugaro build} on $(date -u +%Y-%m-%d), no agent ID and no session ID printed"
+  fact "paste-back" PASS "Check 139 — ${RUN}${REPO:+ (${REPO})}, $(date -u +%Y-%m-%d): ${ENTRIES} model call entries, ${EMPTY} with an empty agent_id, ${distinct} distinct agent ids (${multi} spanning more than one session, ${shared} sharing a session with an entry that carries an empty agent_id), ${bg_sentence}, ${refused_only} seen only on refused entries; ${rec_sentence}; U4: ${verdict} — ${u4_sentence}. Read with ${FUGARO_VERSION:-a fugaro build} on $(date -u +%Y-%m-%d), no agent ID and no session ID printed"
 }
 
 # -------------------------------------------------------------------- the plan

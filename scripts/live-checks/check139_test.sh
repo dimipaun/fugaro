@@ -11,16 +11,17 @@
 # writes, so a case reads the counts the check took rather than a script's own
 # echo. The cases that matter are the ones where that model is bent: a listing
 # whose only settled runs are oauth, a listing whose gateway runs carry no
-# sub-agent, no entry at all, a main session that moved between entries, a
-# sub-agent id spanning two sessions, a sub-agent sharing its stage's main
-# session, an id seen only on refused entries, a background model that carries an
-# id, a background model the run never called, a background model that is also a
-# stage's own model (the run's effective background: the row is not taken rather
-# than counted), an account, a run or a log view naming belong, a read that fails,
-# hangs or answers something that is not a document (or not the shape this check
-# reads), a record naming no execution, a record and a listing that disagree about
-# the execution, a doctor that exits 1 (an answer) and one that does not answer at
-# all.
+# sub-agent, no entry at all, a stage name carrying two sessions (which is not a
+# finding: the runner reuses stage names across sessions by design), a sub-agent
+# id spanning two sessions, a sub-agent sharing a session with an entry whose
+# agent_id is empty (in another stage: the comparison is run-wide), an id seen
+# only on refused entries, a background model that carries an id, a background
+# model the run never called, a background model that is also a stage's own model
+# (the run's effective background: the row is not taken rather than counted), an
+# account, a run or a log view naming belong, a read that fails, hangs or answers
+# something that is not a document (or not the shape this check reads), a record
+# naming no execution, a record and a listing that disagree about the execution, a
+# doctor that exits 1 (an answer) and one that does not answer at all.
 #
 # Every command is bounded (see `bounded` below): a check that hangs fails here
 # with the case's own name rather than hanging the suite that runs this file.
@@ -623,22 +624,29 @@ test_entries_that_are_not_a_document_are_not_measured() {
   expect_contains "$out" "the log entries are not the document this check reads" "entries that are not a document: what happened"
 }
 
-test_a_main_session_that_moved_is_a_finding() {
-  local dir=$work/main-moved
+# A stage NAME is not a session. The runner reuses stage names across sessions
+# by design — every senior review round and every retry is r.stage("review") with
+# a new session (internal/runner/runner.go), a fix with no session to resume
+# starts one, and an account-limited attempt gets a new one — so a run with two
+# review rounds reads two sessions under one name, which is not a finding.
+test_a_stage_name_carrying_two_sessions_is_not_a_finding() {
+  local dir=$work/two-review-rounds
   prepare "$dir"
-  # Two entries with an empty agent_id in ONE stage, naming two sessions: the
-  # empty agent_id is then not one main session per stage.
   write_calls "$dir" \
-    "$(entry build sonnet "" sess-one-7f3a 200 nonzero)" \
-    "$(entry build sonnet "" sess-two-7f3a 200 nonzero)" \
-    "$(entry implement opus "$sub_id" "$sub_session" 200 nonzero)"
-  run_check "$dir" -- --run "$run_id"
-  expect_status "$status" 1 "a main session that moved"
-  expect_contains "$out" "FACT main-empty: FAIL" "a main session that moved: the row"
-  expect_contains "$out" "span more than one session — build/(2 sessions)" "a main session that moved: the stage"
-  expect_contains "$out" "FACT u4: FAIL" "a main session that moved: the verdict"
-  expect_contains "$out" "a stage's main session is not one session" "a main session that moved: why"
-  expect_contains "$out" "the owner's decision before T7.2 merges" "a main session that moved: it is a finding for T7.2"
+    "$(entry build sonnet "" "$main_session" 200 nonzero)" \
+    "$(entry build haiku "" "$main_session" 200 nonzero)" \
+    "$(entry review opus "" sess-review-1-7f3a 200 nonzero)" \
+    "$(entry review opus "" sess-review-2-7f3a 200 nonzero)" \
+    "$(entry implement opus "$sub_id" "$sub_session" 200 nonzero)" \
+    "$(entry implement opus "$sub_id2" sess-sub-8b4c 200 nonzero)"
+  run_check "$dir" -- --run "$run_id" --bg-model haiku
+  expect_status "$status" 0 "two review rounds"
+  expect_contains "$out" "FACT main-empty: INFO" "two review rounds: the row is not a finding"
+  expect_contains "$out" "a stage name carried more than one session — review/(2 sessions)" "two review rounds: the stage that carried two"
+  expect_contains "$out" "the runner reuses stage names across sessions by design" "two review rounds: why it is not a finding"
+  expect_contains "$out" "FACT subagents-distinct: PASS" "two review rounds: the ids are still sub-agents"
+  expect_contains "$out" "FACT u4: PASS" "two review rounds: the verdict"
+  assert_ids_never_printed "two review rounds"
 }
 
 test_a_subagent_id_spanning_two_sessions_is_a_finding() {
@@ -657,19 +665,21 @@ test_a_subagent_id_spanning_two_sessions_is_a_finding() {
   expect_contains "$out" "FACT u4: FAIL" "an id spanning two sessions: the verdict"
 }
 
-test_a_subagent_sharing_the_main_session_is_a_finding() {
+test_a_subagent_sharing_a_session_with_an_empty_agent_id_is_a_finding() {
   local dir=$work/shared-session
   prepare "$dir"
-  # A sub-agent whose session is its stage's main session's: the main session
-  # relabelled rather than a sub-agent.
+  # The sub-agent runs under a DIFFERENT stage from the entry whose agent_id is
+  # empty, and shares its session: the comparison is run-wide, because a stage
+  # name is reused across sessions and comparing within one stage would miss the
+  # same session under two names.
   write_calls "$dir" \
-    "$(entry implement opus "" "$main_session" 200 nonzero)" \
-    "$(entry implement opus "$sub_id" "$main_session" 200 nonzero)"
+    "$(entry build sonnet "" "$sub_session" 200 nonzero)" \
+    "$(entry implement opus "$sub_id" "$sub_session" 200 nonzero)"
   run_check "$dir" -- --run "$run_id"
-  expect_status "$status" 1 "a sub-agent sharing the main session"
-  expect_contains "$out" "FACT subagents-distinct: FAIL" "a sub-agent sharing the main session: the row"
-  expect_contains "$out" "name a session their stage's main session also used" "a sub-agent sharing the main session: why"
-  expect_contains "$out" "FACT u4: FAIL" "a sub-agent sharing the main session: the verdict"
+  expect_status "$status" 1 "a sub-agent sharing a session with an empty-agent_id entry"
+  expect_contains "$out" "FACT subagents-distinct: FAIL" "a sub-agent sharing a session with an empty-agent_id entry: the row"
+  expect_contains "$out" "name a session an entry with an empty agent_id also names (anywhere in the run)" "a sub-agent sharing a session with an empty-agent_id entry: why"
+  expect_contains "$out" "FACT u4: FAIL" "a sub-agent sharing a session with an empty-agent_id entry: the verdict"
 }
 
 test_an_id_only_on_refused_entries_is_a_finding() {
@@ -1109,9 +1119,9 @@ t test_a_run_with_no_subagent_is_not_measured
 t test_a_logging_read_that_fails_is_not_measured
 t test_a_logging_read_that_never_answers_is_not_measured
 t test_entries_that_are_not_a_document_are_not_measured
-t test_a_main_session_that_moved_is_a_finding
+t test_a_stage_name_carrying_two_sessions_is_not_a_finding
 t test_a_subagent_id_spanning_two_sessions_is_a_finding
-t test_a_subagent_sharing_the_main_session_is_a_finding
+t test_a_subagent_sharing_a_session_with_an_empty_agent_id_is_a_finding
 t test_an_id_only_on_refused_entries_is_a_finding
 t test_the_refused_ids_row_is_load_bearing
 t test_a_background_model_that_carries_an_id_is_a_finding

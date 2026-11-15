@@ -11079,16 +11079,20 @@ script and each is the row it names.
 
 1. **The main session carries an empty `agent_id`.** The entries with an empty `agent_id` are the main
    session's (and, among them, the background model's — step 3). **FACT:** the `main-empty` row — that
-   **every** entry with an empty `agent_id` belongs to the stage's own session, each stage's count of
-   those entries named beside the number of main session ids they carry, which is **one** per stage —
-   and that no stage's main session carries an id, which is what grouping on an empty `agent_id` means.
+   **no** session an entry with an empty `agent_id` names is also a sub-agent's, anywhere in the run,
+   with each stage's count of those entries named beside the number of session ids they carry — and that
+   no stage's main session carries an id, which is what grouping on an empty `agent_id` means. A stage
+   **name** carrying more than one session is **not** a finding, and the row says so (`INFO`, naming the
+   stage and its count of sessions): the runner reuses stage names across sessions by design — every
+   senior review round and every retry is the same stage name with a new session — so a run with two
+   review rounds reads two sessions under one name.
 
 2. **Each sub-agent carries a distinct one.** **FACT:** the `entries` row's distinct non-empty agent
    ids; that each id's entries carry **one** session id each (the `subagents-distinct` row's count of
    ids spanning more than one session is **0**), so an id is one sub-agent and not a session's rename;
-   and that a sub-agent's session id **differs** from its stage's main session's (the same row's count
-   of sub-agent ids sharing their stage's main session is **0**), so a sub-agent is not the main session
-   relabelled.
+   and that a sub-agent's session id **differs** from every session an entry with an empty `agent_id`
+   names, anywhere in the run (the same row's count of sub-agent ids sharing such a session is **0**), so
+   a sub-agent is not the main session relabelled.
 
 3. **The background model's calls carry none.** The background model is the run's **effective** one —
    the repository's `agent.models.background`, else the model the provider serves the coder with
@@ -11115,16 +11119,17 @@ script and each is the row it names.
    `fugaro diagnose <run-id> --project fugaro --json` (`stages[].agents`), named as a different figure
    and never compared with it.
 
-**Passes when:** every `model call` entry with an empty `agent_id` belongs to a stage's main session;
-every sub-agent's entries carry one distinct non-empty `agent_id` each, each spanning a single session
-that is not the main session's; every background-model entry carries an empty `agent_id`; and no
+**Passes when:** no session an entry with an empty `agent_id` names is also a sub-agent's; every
+sub-agent's entries carry one distinct non-empty `agent_id` each, each spanning a single session that no
+entry with an empty `agent_id` names; every background-model entry carries an empty `agent_id`; and no
 refused entry carried an agent id that no admitted entry carried. Then **a distinct-agent count is a
 sub-agent count**, **U4 is answered yes**, and T7.2's fan-out stop rests on the reading it was written
 against.
 
-**Fails when:** a background-model call carries an `agent_id`; a stage's main session carries one; two
-sub-agents share one; a sub-agent's id spans more than one session; or an agent id appears on refused
-entries alone. Each makes the distinct-agent count something other than a sub-agent count. **A failing
+**Fails when:** a background-model call carries an `agent_id`; a sub-agent's session is one an entry
+with an empty `agent_id` also names; two sub-agents share one; a sub-agent's id spans more than one
+session; or an agent id appears on refused entries alone. Each makes the distinct-agent count something
+other than a sub-agent count. **A failing
 answer is a finding for T7.2, not something this check fixes**: the plan makes T7.2 wait for this check
 rather than the other way round, so the fix is a decision about the fan-out stop — what it counts, or
 whether it counts at all — and it is taken by the owner before T7.2 merges. A run with no entries at
@@ -11133,8 +11138,9 @@ could not be taken, and the check is run again on a run whose entries are there.
 
 **Paste back** (no credential and no log excerpt): the block's `paste-back` row, which is the one
 sentence to paste, carrying the `model call` entries, the entries with an empty `agent_id`, the
-distinct agent ids with the counts of those spanning more than one session and those sharing their
-stage's main session, the background-model entries and how many of them carry an id, the ids seen only
+distinct agent ids with the counts of those spanning more than one session and those sharing a session
+with an entry that carries an empty `agent_id`, the background-model entries and how many of them carry
+an id, the ids seen only
 on refused entries, the record's own stage `agents` beside the log's distinct count, and the run id,
 its repository and the date. The block itself carries the rest — the per-stage main-session entry
 counts, the stages the entries name and the `models:` line. **Not the agent IDs and not the session

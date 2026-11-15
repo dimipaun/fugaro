@@ -224,16 +224,17 @@ import (
 // the runs list and one run's record out of the case's own files and a fake
 // `gcloud` that serves that run's `model call` entries, with a mode for each
 // state a case bends: a listing whose only settled runs are oauth, one whose
-// gateway runs carry no sub-agent, no entry at all, a main session that moved
-// between entries, a sub-agent id spanning two sessions or sharing its stage's
-// main session, an id seen only on refused entries, a background model that
-// carries an id, a background model the run never called, a background model
-// that is also a stage's own model (the run's effective background, which the
-// row refuses to count), an account, a run or a log view naming belong, a read
-// that fails,
-// hangs or answers something that is not a document, a record naming no
-// execution, a record and a listing that disagree about the execution, a doctor
-// that exits 1 (an answer, #2719) and one that does not answer at all.
+// gateway runs carry no sub-agent, no entry at all, a stage name carrying two
+// sessions (not a finding: the runner reuses stage names across sessions), a
+// sub-agent id spanning two sessions or sharing a session with an entry whose
+// agent_id is empty (in another stage: the comparison is run-wide), an id seen
+// only on refused entries, a background model that carries an id, a background
+// model the run never called, a background model that is also a stage's own
+// model (the run's effective background, which the row refuses to count), an
+// account, a run or a log view naming belong, a read that fails, hangs or
+// answers something that is not a document, a record naming no execution, a
+// record and a listing that disagree about the execution, a doctor that exits 1
+// (an answer, #2719) and one that does not answer at all.
 var liveCheckScripts = []struct {
 	name string
 	test string
