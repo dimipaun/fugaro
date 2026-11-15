@@ -2109,6 +2109,16 @@ func Parse(data []byte) (*Config, error) {
 	if c.Build.MachineType == "" {
 		c.Build.MachineType = DefaultBuildMachineType
 	}
+	// A written `max_bytes: 0` (and a written `max_bytes:` with nothing under
+	// it) is refused while the decoded block cannot tell it from the absent
+	// member: absent means the 2 MiB default, so the zero a decode leaves is
+	// this block's one *wider* answer and a file that wrote it would silently
+	// raise the cap to its ceiling. The node's decode reads the same member off
+	// its own document for the same reason (decodeBinaries), and the two
+	// spellings are told apart the same way there.
+	if blk, ok := top["binaries"]; ok && c.Binaries != nil && c.Binaries.MaxBytes == 0 && mappingValue(&blk, "max_bytes") != nil {
+		return nil, fmt.Errorf("local config: %v", projectpolicy.ValidBinariesMaxBytes(c.Binaries.MaxBytes))
+	}
 	if err := c.validate(); err != nil {
 		return &c, err
 	}
