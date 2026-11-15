@@ -106,7 +106,7 @@ func settingsConvergeFixture(t *testing.T) *settingsConvergeRig {
 	}
 	f := newProjectFixture(t, "")
 	blockBudgetConfig(t, f)
-	if _, _, err := execute(t, "project", "policy", "publish", "--yes"); err != nil {
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
 		t.Fatalf("the fixture publishes no node: %v", err)
 	}
 	c := newSettingsConvergeRig(t, f)
@@ -134,7 +134,7 @@ func settingsConvergeLayerFile(t *testing.T) string {
 // settingsConvergeSet runs one `settings set` and returns its output.
 func settingsConvergeSet(t *testing.T, key, value, layer string) string {
 	t.Helper()
-	out, _, err := execute(t, "settings", "set", key, value, "--layer", layer, "--yes")
+	out, _, err := execute(t, "settings", "set", key, value, "--layer", layer)
 	if err != nil {
 		t.Fatalf("settings set %s %s --layer %s: %v\n%s", key, value, layer, err, out)
 	}
