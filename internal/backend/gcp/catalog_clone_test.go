@@ -141,7 +141,7 @@ func TestCloneStepIsGeneratedAndSeparateFromTheEntryBuild(t *testing.T) {
 				"--output \"type=local,dest=" + catalogCloneDest + "\"",
 				`--build-arg "FUGARO_BASE=$$base"`,
 				" " + catalogCloneWork + "\n",
-				"rm -f " + catalogCloneCredential + "\n",
+				"trap 'rm -f " + catalogCloneCredential + "' EXIT\n",
 			} {
 				if !strings.Contains(script, want) {
 					t.Errorf("the clone step does not run its own build: %q is not in %q", want, script)
@@ -268,10 +268,11 @@ func TestEntryBuildCarriesNoSecretAndNoIdentity(t *testing.T) {
 				t.Errorf("the steps that mount the credential's volume = %v, want %v", withVolume, want)
 			}
 			// And the credential is gone before the entry's build starts: the
-			// clone step removes the file the credential step wrote.
+			// clone step removes the file the credential step wrote, however its
+			// own run ends.
 			clone := step(t, b, catalogCloneStepID)
-			if !strings.Contains(strings.Join(clone.Args, "\n"), "rm -f "+catalogCloneCredential) {
-				t.Error("the clone step leaves the credential file behind")
+			if !strings.Contains(strings.Join(clone.Args, "\n"), "trap 'rm -f "+catalogCloneCredential+"' EXIT") {
+				t.Error("the clone step leaves the credential file behind when it fails")
 			}
 		})
 	}
@@ -520,6 +521,25 @@ func TestCloneStepRefusesAForeignHostInGitmodulesAndLfsconfig(t *testing.T) {
 			name: "an .lfsconfig on the entry's own host",
 			tree: "printf '[lfs]\\n\\turl = https://bitbucket.org/acme/lfs\\n' > \"$CHECKOUT/.lfsconfig\"\n",
 		},
+		{
+			// The other shape git-lfs reads an endpoint out of an .lfsconfig:
+			// a remote's own lfsurl, which this check has to read as well or
+			// the fetch would use an endpoint it never saw.
+			name:    "an .lfsconfig naming a remote's own LFS endpoint on another host",
+			tree:    "printf '[remote \"origin\"]\\n\\tlfsurl = https://cdn.example/objects\\n' > \"$CHECKOUT/.lfsconfig\"\n",
+			refused: true,
+		},
+		{
+			name: "an .lfsconfig naming a remote's own LFS endpoint on the entry's host",
+			tree: "printf '[remote \"origin\"]\\n\\tlfsurl = https://bitbucket.org/acme/lfs\\n' > \"$CHECKOUT/.lfsconfig\"\n",
+		},
+		{
+			// git-lfs follows include.path, so an endpoint named in an included
+			// file is one the fetch would use and this check would not read.
+			name:    "an .lfsconfig that includes another file",
+			tree:    "printf '[include]\\n\\tpath = /tmp/elsewhere.lfsconfig\\n' > \"$CHECKOUT/.lfsconfig\"\n",
+			refused: true,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := runCatalogClone(t, st, tc.tree, tc.submods, map[string]string{"REPO_URL": s.RepoURL}, map[string]string{"bitbucket.org": "fixture-token-1"})
@@ -528,7 +548,7 @@ func TestCloneStepRefusesAForeignHostInGitmodulesAndLfsconfig(t *testing.T) {
 				if r.err == nil {
 					t.Fatalf("the clone fetches a URL that is not the entry's host:\n%s", out)
 				}
-				if !strings.Contains(out, "is not bitbucket.org") {
+				if !strings.Contains(out, "bitbucket.org") {
 					t.Errorf("the refusal does not say which host the credential is for: %v\n%s", r.err, out)
 				}
 				if strings.Contains(out, "evil.example") || strings.Contains(out, "cdn.example") || strings.Contains(out, "user:pass") {

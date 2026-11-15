@@ -174,12 +174,26 @@ check_urls() {
   done
 }
 
+# check_lfs_url refuses the LFS endpoints a checkout declares that are not this
+# host's. Both shapes git-lfs reads out of an .lfsconfig are read here — lfs.url
+# and remote.<name>.lfsurl — because an endpoint named under the second would
+# otherwise be the one the fetch talks to while this check saw nothing.
+#
+# A file that includes another is refused rather than followed: git-lfs follows
+# include.path, so the endpoint it would use is read from a file this check has
+# not seen, and no .lfsconfig needs one — what a repository may name here is its
+# own LFS endpoint.
 check_lfs_url() {
-  url=$(git config --file "$1" --get lfs.url || true)
-  [ -n "$url" ] || return 0
-  foreign_url "$url" || return 0
-  echo "the .lfsconfig names an LFS URL that is not $REPO_HOST: this build's credential is offered to $REPO_HOST alone" >&2
-  return 1
+  if git config --file "$1" --get-regexp '^(include|includeif)\.' >/dev/null; then
+    echo "the .lfsconfig includes another file, so the endpoint it names is not one this build read: this build's credential is offered to $REPO_HOST alone" >&2
+    return 1
+  fi
+  git config --file "$1" --get-regexp '^(lfs\.url|remote\..*\.lfsurl)$' | while read -r key url; do
+    [ -n "$url" ] || continue
+    foreign_url "$url" || continue
+    echo "the .lfsconfig names an LFS URL that is not $REPO_HOST: this build's credential is offered to $REPO_HOST alone" >&2
+    exit 1
+  done
 }
 
 # fetch_tree fetches what a repository holds beside its own files: its LFS
@@ -340,12 +354,14 @@ func (s CatalogBuildSpec) cloneCommit() string {
 // that build and nothing else, so what the credential-holding build reads is
 // what this function wrote (F19: a Dockerfile Fugaro generates entirely).
 //
-// The credential file is removed at the end of every run of this step: the step
-// is the only one that mounts the volume for it, and the entry's build step no
-// longer does.
+// The credential file is removed however this step ends, the build failing and
+// the guard refusing included — an exit trap, the shape the template's own build
+// step uses for the same file. The step is the last that mounts the volume it
+// lives in, and the entry's build step no longer mounts it at all.
 func catalogCloneStepScript(script string, context bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "set -eu\nexport LC_ALL=C\ninstall -d -m 0700 %s\n", catalogCloneWork)
+	fmt.Fprintf(&b, "trap 'rm -f %s' EXIT\n", catalogCloneCredential)
 	fmt.Fprintf(&b, "cat > %s <<'FUGARO_DOCKERFILE'\n%sFUGARO_DOCKERFILE\n", catalogCloneDockerfile, catalogCloneDockerfileText)
 	fmt.Fprintf(&b, "cat > %s <<'FUGARO_SCRIPT'\n%sFUGARO_SCRIPT\n", catalogCloneScript, script)
 	b.WriteString(`base=$(docker image inspect --format '{{index .RepoDigests 0}}' "$FUGARO_BASE") \
@@ -360,7 +376,6 @@ docker build --progress plain \
   --secret "id=git-credentials,src=` + catalogCloneCredential + `" \
   --output "type=local,dest=` + catalogCloneDest + `" \
   ` + catalogCloneWork + "\n")
-	b.WriteString("rm -f " + catalogCloneCredential + "\n")
 	if context {
 		b.WriteString(catalogCloneGuard)
 	}
