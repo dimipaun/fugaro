@@ -493,37 +493,88 @@ func TestProxyReactionAuditsOnce(t *testing.T) {
 	}
 }
 
-// reactCtxStore is the contract's stub with the one thing the stub does not
-// have: it HONOURS the context it is handed, so a test can hold the reaction's
-// read and write to the context they were made on. A stub that answered from
-// its map whatever the context said would confirm a mark taken for a caller
-// that has hung up, which is the state the finding is about — and the real
-// store is a database call that a context can cancel.
+// reactCtxStore is the contract's stub with the two things the stub does not
+// have, and the test below needs both.
+//
+// It HONOURS the context it is handed, so a test can hold the reaction's read
+// and write to the context they were made on. A stub that answered from its map
+// whatever the context said would confirm a mark taken for a caller that has
+// hung up, which is the state the finding is about — and the real store is a
+// database call that a context can cancel.
+//
+// And it is SAFE FOR CONCURRENT USE. The service's handler goroutine is still
+// working after the caller hangs up — that is the whole point of the test, and
+// it is the only test here where the caller goes away mid-call — so the mark it
+// writes and the count it appends land on the stub WHILE the test goroutine is
+// reading them. bbtokens.Stub guards neither its map nor its slice (stub.go):
+// it is a stub for calls a test makes one at a time, and it says so. A test that
+// read them directly, as the others here do across a call that has already
+// returned, would be racing exactly the two writes it is waiting for — which CI
+// catches, because CI runs the package under -race.
+//
+// So every call into the stub takes this mutex, and the test seeds and reads it
+// through the two helpers below, which take it too.
 //
 // It answers the selection, the resolver and the status store, because it is
 // the one value the service holds (T8's seam): the service is wired with this
 // wrapper, and the test reads the mark off the stub inside it.
-type reactCtxStore struct{ *bbtokens.Stub }
+type reactCtxStore struct {
+	*bbtokens.Stub
+	mu sync.Mutex
+}
 
-func (c reactCtxStore) Read(ctx context.Context, name bbtokens.Name) (bbtokens.Status, error) {
+func (c *reactCtxStore) Read(ctx context.Context, name bbtokens.Name) (bbtokens.Status, error) {
 	if err := ctx.Err(); err != nil {
 		return bbtokens.Status{}, err
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.Stub.Read(ctx, name)
 }
 
-func (c reactCtxStore) Write(ctx context.Context, name bbtokens.Name, st bbtokens.Status) error {
+func (c *reactCtxStore) Write(ctx context.Context, name bbtokens.Name, st bbtokens.Status) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.Stub.Write(ctx, name, st)
 }
 
-func (c reactCtxStore) CountRequest(ctx context.Context, name bbtokens.Name) error {
+func (c *reactCtxStore) CountRequest(ctx context.Context, name bbtokens.Name) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.Stub.CountRequest(ctx, name)
+}
+
+func (c *reactCtxStore) Evict(canonical string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Stub.Evict(canonical)
+}
+
+// seed puts the status the store holds for a token beside the mark the
+// reaction is about to write, under the same lock the reaction's own read takes.
+func (c *reactCtxStore) seed(name bbtokens.Name, st bbtokens.Status) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.Marks == nil {
+		c.Marks = make(map[bbtokens.Name]bbtokens.Status)
+	}
+	c.Marks[name] = st
+}
+
+// snapshot is what the store holds for one token: the mark and a copy of the
+// tokens it has counted. Both are read in one locked step, so the value a test
+// asserts is never half of one write and half of the next, and the copy is what
+// lets the assertion be made outside the lock.
+func (c *reactCtxStore) snapshot(name bbtokens.Name) (bbtokens.Status, []bbtokens.Name) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.Marks[name], append([]bbtokens.Name(nil), c.Counted...)
 }
 
 // proxyCallDetached sends one call of the proxy route on a context the test
@@ -566,6 +617,12 @@ func (s *svc) proxyCallDetached(t *testing.T, ctx context.Context, method, path 
 // and BOTH are needed: a detached write over a read that failed would write the
 // mark without the identity and the count the store held (R12, D2356), which
 // the live caller's control pins as the shape a mark must have.
+//
+// The handler goroutine outlives the caller here, so the store is read under
+// the wrapper's own lock (seed, snapshot) and what the test waits for is BOTH
+// halves of what the request leaves behind: the count is written after the
+// answer is copied to the caller (forwardBitbucket's tail), so a mark that has
+// landed does not yet mean the count has.
 func TestProxyReactionSurvivesACallerThatHangsUp(t *testing.T) {
 	for _, c := range []struct {
 		name   string
@@ -575,11 +632,9 @@ func TestProxyReactionSurvivesACallerThatHangsUp(t *testing.T) {
 		{"the caller stays", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			stub := &bbtokens.Stub{Selected: proxyNamedToken}
-			s, up, _, named := proxyTokensSvc(t, reactCtxStore{Stub: stub})
-			stub.Marks = map[bbtokens.Name]bbtokens.Status{
-				proxyNamedToken: {VerifiedAt: s.now, Identity: "uuid-ci", Count: 7},
-			}
+			store := &reactCtxStore{Stub: &bbtokens.Stub{Selected: proxyNamedToken}}
+			s, up, _, named := proxyTokensSvc(t, store)
+			store.seed(proxyNamedToken, bbtokens.Status{VerifiedAt: s.now, Identity: "uuid-ci", Count: 7})
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			var once sync.Once
@@ -595,15 +650,17 @@ func TestProxyReactionSurvivesACallerThatHangsUp(t *testing.T) {
 
 			s.proxyCallDetached(t, ctx, http.MethodGet, reactFetchPath(), nil)
 
-			waitFor(t, "the reaction's mark to be written", func() bool {
-				return stub.Marks[proxyNamedToken].State == bbtokens.StateBroken
+			waitFor(t, "the reaction's mark and count to be written", func() bool {
+				mark, counted := store.snapshot(proxyNamedToken)
+				return mark.State == bbtokens.StateBroken && len(counted) == 1
 			})
+			mark, counted := store.snapshot(proxyNamedToken)
 			want := bbtokens.Status{State: bbtokens.StateBroken, VerifiedAt: s.now, Identity: "uuid-ci", Count: 7}
-			if got := stub.Marks[proxyNamedToken]; got != want {
-				t.Errorf("the store holds %+v, want %+v: the mark is taken whatever the caller does, and it carries the facts the store held (R12, D2356)", got, want)
+			if mark != want {
+				t.Errorf("the store holds %+v, want %+v: the mark is taken whatever the caller does, and it carries the facts the store held (R12, D2356)", mark, want)
 			}
-			if got := stub.Counted; len(got) != 1 || got[0] != proxyNamedToken {
-				t.Errorf("the store counted %v, want the token the request was served with, once", got)
+			if len(counted) != 1 || counted[0] != proxyNamedToken {
+				t.Errorf("the store counted %v, want the token the request was served with, once", counted)
 			}
 			reactNoTokenValue(t, s, nil, named)
 		})
