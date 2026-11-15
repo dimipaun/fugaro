@@ -1445,10 +1445,18 @@ var hopByHop = map[string]bool{
 // rather than travelling beside them: the gateway reads it where they are read
 // (before this copy, so the run's own process has it through DeliveredHeadroom)
 // and the agent is handed the model's answer without it.
+//
+// The workspace's refusal marker is the sixth (workspace_refusal.go), and it
+// joins them for the headroom's reason and one of its own: the marker is the
+// workspace's own statement about itself, delivered to the calling member's
+// job, and it is between the two binaries rather than part of any answer the
+// agent is handed. A refusal is not relayed at all (D143), so the drop is the
+// belt to that brace — a 2xx that carried the header would still not reach the
+// agent with it.
 var dropResponseHeaders = map[string]bool{
 	"Anthropic-Organization-Id": true, "Set-Cookie": true, "Set-Cookie2": true,
 	HeaderTier: true, HeaderCredential: true, HeaderSwitch: true, HeaderProbe: true,
-	WorkspaceHeadroomHeader: true,
+	WorkspaceHeadroomHeader: true, WorkspaceRefusalHeader: true,
 }
 
 func copyResponseHeaders(dst, src http.Header, decoded bool) {
