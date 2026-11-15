@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 
@@ -352,6 +353,55 @@ func initStages(e *initEngine) []initflow.Stage {
 		stages = append(stages, newProjectStage(e))
 	}
 	return stages
+}
+
+// stagesNamed is the named subset of the registered stages: the stages a
+// command runs for the change it made, in place of the whole list `fugaro
+// update` runs (spec §2.5 rule 2, D1561). accountsAddStages names its three
+// through it, and `fugaro apply` runs the stages a pending entry names.
+//
+// The answer is in initflow's order and not the caller's — initflow.Names,
+// which is the linear extension of initflow.Needs — so a stage of the subset is
+// never handed to the loop before one it needs that is also in the subset.
+// Getting that from the caller's own slice is the mistake this exists to make
+// impossible: a subset is not a shorter update, it is a slice of one, and
+// initflow.Run's Validate sorts and checks it either way, but a caller that
+// built its own slice could hand the loop one it cannot order.
+//
+// unanswered is the names this door registered no stage under, and they come
+// back rather than being dropped, for the reason apply.Order keeps the names it
+// cannot place: a run that quietly did fewer steps than it was asked for is the
+// one thing neither may do. Two kinds of name land there and they are one fact
+// to a caller — a stage of initflow's this door did not register (the services
+// slot, which no door fills; the Batch backend's compute and the project stage,
+// which a door registers behind a flag or on the first run of setup) and a name
+// that is no stage at all (apply.CatalogBuild, which is a step of the change
+// table and not one of initflow's). A caller that names stages it knows are
+// registered ignores it; a caller whose names come from a file it did not write
+// reads it and says what it could not run. A name leaves `want` only when a
+// stage really answered it, so "not a stage of this door" and "not a stage"
+// are both answered here, and neither is lost.
+func stagesNamed(e *initEngine, names ...string) (stages []initflow.Stage, unanswered []string) {
+	want := make(map[string]bool, len(names))
+	for _, n := range names {
+		want[n] = true
+	}
+	byName := map[string]initflow.Stage{}
+	for _, st := range initStages(e) {
+		byName[st.Name()] = st
+	}
+	for _, name := range initflow.Names() {
+		if !want[name] {
+			continue
+		}
+		st, ok := byName[name]
+		if !ok {
+			continue
+		}
+		delete(want, name)
+		stages = append(stages, st)
+	}
+	return stages, slices.Sorted(maps.Keys(want))
 }
 
 // converge runs the converge's default and --firebase-project modes through the
