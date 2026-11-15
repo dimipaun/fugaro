@@ -26,11 +26,28 @@
 // Standard library only and no network, as the rest of `src/lib/`: this module is imported by the
 // site's build and by `node --test` alike.
 
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
+// The site's directory, found rather than counted from this file: loaded from `website/src/lib/`
+// — by `node --test` — the two directories above are the site, and inside a build Astro bundles
+// this module into a chunk under `website/dist/.prerender/`, where they are not. The walk is
+// `src/content.ts`'s `findSiteRoot` and for the same reason (T4a's loader reaches this module
+// through the stub at build time); it is repeated here rather than imported, because
+// `content.ts` imports the stub that imports this file, and a cycle is not worth eight lines.
+function findSite() {
+  let dir = path.dirname(fileURLToPath(import.meta.url))
+  for (let depth = 0; depth < 8; depth++) {
+    if (existsSync(path.join(dir, 'astro.config.mjs'))) return dir
+    const parent = path.dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+  return process.cwd()
+}
+
+const SITE = findSite()
 
 /** The statuses a row may carry, and nothing else (D2443, three of them). */
 export const STATUSES = ['available', 'coming-soon', 'planned']
