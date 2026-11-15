@@ -158,6 +158,12 @@ import (
 // unadmitted route, no pair within the bound, a shadow that published, a judge
 // that published, a verdict that is missing, skipped, one-pass or another pair's,
 // and a report that already draws a conclusion).
+// Check 550's fakes are the
+// same two, with the alias the installation holds kept in a file the fake
+// `fugaro` reads and writes, so a case can say what a repoint moved and what the
+// move back put back: its two runs' records are served from the case's own
+// directory, and a case bends the review stage's account in one of them to show
+// the check's claim failing in either direction.
 // Check 301's fakes are a fake `fugaro`, a fake launchd and a fake systemd
 // whose boot id and unit files the test writes, so a reboot, a second
 // instance's refusal and T7's re-render are all readings of files the test
@@ -274,6 +280,7 @@ var liveCheckScripts = []struct {
 	{"check-380-no-prompt-update.sh", "check-380-no-prompt-update_test.sh"},
 	{"check-381-over-cap-build.sh", "check-381-over-cap-build_test.sh"},
 	{"check-382-agent-cannot-raise-a-cap.sh", "check-382-agent-cannot-raise-a-cap_test.sh"},
+	{"check550.sh", "check550_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
