@@ -107,7 +107,7 @@ test('the exported surface is an exact set: a new export is a decision', () => {
   ]);
 });
 
-test('every vocabulary is closed, frozen, and exactly the members the README names', () => {
+test('every vocabulary is closed and frozen, with its members pinned here', () => {
   const vocabularies = [
     [DIRECTION, ['stt', 'tts']],
     [ENGINE, ['local', 'remote']],
@@ -680,6 +680,23 @@ test('every refusal code is reached by a probe, and every probe is one of them',
   }
   assert.deepEqual([...reached].sort(), Object.values(REFUSAL).sort());
   assert.equal(Object.keys(REFUSAL).length, 18);
+});
+
+test('the README\'s refusal table is exactly REFUSAL, read out of the file', () => {
+  // The README says a test fails if its table and REFUSAL ever drift apart, so
+  // this is that test: it reads the file rather than trusting the two to have
+  // been written in the same sitting. A reviewer reads the refusals from the
+  // README, and a table that has drifted is a reader being told a code exists
+  // that the module cannot return -- or one it can that no reader is warned of.
+  const readme = readFileSync(new URL('./README.md', import.meta.url), 'utf8');
+  const section = readme.match(/^## Refusals[^\n]*\n([\s\S]*?)(?=\n## )/m);
+  assert.ok(section, 'README.md carries a `## Refusals` section');
+  const codes = [...section[1].matchAll(/^\|\s*`([a-z][a-z0-9-]*)`\s*\|/gm)].map((row) => row[1]);
+  // Both ways: a row for a code the module cannot return fails as loudly as a
+  // code with no row. The set-size check catches a row listed twice, which the
+  // comparison alone would read as one row.
+  assert.deepEqual(codes.sort(), Object.values(REFUSAL).sort());
+  assert.equal(new Set(codes).size, codes.length, 'no refusal code is listed twice');
 });
 
 test('an array input is not a plain object, and neither is a Map or a class instance', () => {
