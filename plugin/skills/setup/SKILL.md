@@ -57,7 +57,7 @@ Also check `fugaro version` and `fugaro backends ls`, which prints the backends 
 
 ### Does the project publish a project layer?
 
-`fugaro config layer --json` takes `project:` and `gcp_project:` from the checkout's `fugaro.yaml`, else from the selected project config (`$FUGARO_PROJECT`/`$FUGARO_CONFIG`), never a flag. Its four keys are `where`, `generation`, `sha256` and `yaml`; `profiles:` and `default_profile:` are keys inside that text, not fields of the object. Where it prints a layer, tell the user which profiles it offers and ask whether the repository fits one, and fugaro config init --yes then writes the minimal file `fugaro config show --json` confirms ([reference/discovery.md](reference/discovery.md) has the steps, the scratch file and what a real quirk needs). Where no layer applies, or the repository fits no profile, follow the investigative path below.
+`fugaro config layer --json` takes `project:` and `gcp_project:` from the checkout's `fugaro.yaml`, else from the selected project config (`$FUGARO_PROJECT`/`$FUGARO_CONFIG`), never a flag. Its four keys are `where`, `generation`, `sha256` and `yaml`; `profiles:` and `default_profile:` are keys inside that text, not fields of the object. Where it prints a layer, tell the user which profiles it offers and ask whether the repository fits one, and `fugaro config init` then writes the minimal file `fugaro config show --json` confirms ([reference/discovery.md](reference/discovery.md) has the steps, the scratch file and what a real quirk needs). Where no layer applies, or the repository fits no profile, follow the investigative path below.
 
 ## 2. Investigate the repository
 
@@ -132,7 +132,7 @@ fugaro secrets set claude-oauth-token
 
 **Named Claude accounts (optional).** The operator may hold more than one Claude account in their local config (`claude_accounts`; never in `fugaro.yaml`) — `fugaro secrets ls --repo --json` then lists more than one name starting `claude-oauth-token-`. Ask which this repository's `agent.auth: oauth` workflow should use, and write `agent.oauth_token: <name>` under `agent`, the part after `claude-oauth-token-`; never guess one, which `fugaro run` refuses when the config does not list this repository under it.
 
-An account with no stored token is not usable: the operator's one command is `fugaro accounts add <name>`, in their own terminal window, not through the agent, which declares it, stores the token under `claude-oauth-token-<name>` and converges this repository's job set. With `--type claude-oauth` the name is also a **credential** a pool may list; the credentials, the pools and the crafts are the operator's own writes, refused to a session. Minting a *second* account's token is not yet verified.
+An account with no stored token is not usable: the operator's one command is `fugaro accounts add <name>`, in their own terminal window, not through the agent, which declares it, stores the token under `claude-oauth-token-<name>` and converges this repository's job set. With `--type claude-oauth` the name is also a **credential** a pool may list; the credentials, the pools, the **aliases** (`fugaro accounts alias set`) and the crafts are the operator's own writes, refused to a session. Minting a *second* account's token is not yet verified.
 
 ## 9. Hand off
 

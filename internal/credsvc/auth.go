@@ -341,8 +341,10 @@ type AuthConfig struct {
 	// policy's profiles), each bound to the profile it serves (C3.9's coding
 	// half, D2078, G21). A caller whose verified email is one of them is of
 	// the shared class: admitted on the model path for the identity's
-	// repository when it is one of the row's, admitted to the GitHub mint
-	// under the run's own permission set, and refused everywhere else.
+	// repository when it is one of the row's, served on the Bitbucket proxy
+	// route for that repository when the published block lists it and proxies
+	// it (B5.3), admitted to the GitHub mint under the run's own permission
+	// set, and refused everywhere else.
 	//
 	// It is asked about the *verified* email claim, never about the
 	// X-Fugaro-Run-Job header: the header is the caller's own text, and a gate

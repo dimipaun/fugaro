@@ -168,6 +168,7 @@ func happyInstallation(t *testing.T, r *initRig, changes ...planChange) {
 // applied, rather than the old saved plan being applied a second time.
 func TestPropagationRetryRerunsTheInstallationStep(t *testing.T) {
 	noPropagationWaits(t)
+	fakeTerminal(t)
 	r := updateRig(t)
 	happyInstallation(t, r)
 	r.script["apply@installation"] = []any{
@@ -176,7 +177,7 @@ func TestPropagationRetryRerunsTheInstallationStep(t *testing.T) {
 	}
 	r.save(t)
 
-	out, err := updateRun(t, r, "update", "--yes")
+	out, err := updateRun(t, r, "update")
 	if err != nil {
 		t.Fatalf("the retried installation step failed: %v\n%s", err, out)
 	}
@@ -184,7 +185,10 @@ func TestPropagationRetryRerunsTheInstallationStep(t *testing.T) {
 	if n := strings.Count(out, line); n != 1 {
 		t.Errorf("the retry was reported %d times, want one line:\n%s", n, out)
 	}
-	if got, want := rootSubs(t, r, "installation", "plan", "show", "apply"), []string{"plan", "show", "apply", "plan", "show", "apply"}; !slices.Equal(got, want) {
+	// Two whole cycles of the failed step — and installation-2's own, the
+	// stage that applies the root again for the scheduled jobs (R7), which the
+	// retry neither shares nor disturbs.
+	if got, want := rootSubs(t, r, "installation", "plan", "show", "apply"), []string{"plan", "show", "apply", "plan", "show", "apply", "plan", "show", "apply"}; !slices.Equal(got, want) {
 		t.Errorf("the installation root's plan/show/apply = %q, want the whole cycle again\n%s", got, out)
 	}
 }
@@ -202,6 +206,7 @@ func TestPropagationRetryRerunsTheInstallationStep(t *testing.T) {
 // on the same service, which is the whole case.
 func TestPropagationRetryKeepsRetryingAfterItsOwnApplyCreated(t *testing.T) {
 	noPropagationWaits(t)
+	fakeTerminal(t)
 	r := updateRig(t)
 	// The first attempt's plan is the reported failure's own: the service this
 	// apply creates and the two grants on it. The re-plan holds the grants
@@ -220,7 +225,7 @@ func TestPropagationRetryKeepsRetryingAfterItsOwnApplyCreated(t *testing.T) {
 	}
 	r.save(t)
 
-	out, err := updateRun(t, r, "update", "--yes")
+	out, err := updateRun(t, r, "update")
 	if err != nil {
 		t.Fatalf("the retried installation step failed: %v\n%s", err, out)
 	}
@@ -231,13 +236,15 @@ func TestPropagationRetryKeepsRetryingAfterItsOwnApplyCreated(t *testing.T) {
 			t.Errorf("the retry line for wait %d appears %d times, want one: the second failure is the same gap on the resource the first apply created, and the re-plan no longer creates it\n%q\n%s", i+1, n, want, out)
 		}
 	}
-	if got := rootSubs(t, r, "installation", "apply"); len(got) != 3 {
-		t.Errorf("the installation root applied %d times, want 3: the two failures and the apply that closed the gap\n%s", len(got), out)
+	// And installation-2's, which the retry neither shares nor disturbs: the
+	// stage applies the root again for the scheduled jobs (R7).
+	if got := rootSubs(t, r, "installation", "apply"); len(got) != 4 {
+		t.Errorf("the installation root applied %d times, want 4: the two failures, the apply that closed the gap, and installation-2's\n%s", len(got), out)
 	}
 }
 
-// A retried plan is judged afresh, and in a project that is not managed with
-// --yes the guard is the whole of that judgement: the retry re-plans, so a
+// A retried plan is judged afresh, and in a project that is not managed the
+// guard is the whole of that judgement: the retry re-plans, so a
 // plan the guard refuses is refused before it is applied, and never applied
 // under the confirmation given to a plan that did not hold what it holds. The
 // refusal here is the one only the guard sees -- a delete nobody allowed --
@@ -245,6 +252,7 @@ func TestPropagationRetryKeepsRetryingAfterItsOwnApplyCreated(t *testing.T) {
 // guard on the retry's own plan the delete would go through unnamed.
 func TestPropagationRetryHoldsTheNewPlanToTheGuard(t *testing.T) {
 	noPropagationWaits(t)
+	fakeTerminal(t)
 	r := updateRig(t)
 	// The first attempt's plan is the reported failure's own, which the guard
 	// admits; the re-plan holds those changes AND a delete nothing allowed.
@@ -260,7 +268,7 @@ func TestPropagationRetryHoldsTheNewPlanToTheGuard(t *testing.T) {
 	}
 	r.save(t)
 
-	out, err := updateRun(t, r, "update", "--yes")
+	out, err := updateRun(t, r, "update")
 	if err == nil {
 		t.Fatalf("a retried plan holding an unallowed delete was applied:\n%s", out)
 	}
@@ -431,23 +439,25 @@ func TestPropagationRetryJudgesTheNewPlanThroughTheGate(t *testing.T) {
 	}
 	r.save(t)
 
-	got, err := updateRun(t, r, "update", "--yes")
+	got, err := updateRun(t, r, "update")
 	if err != nil {
 		t.Fatalf("the retried installation step failed: %v\n%s", err, got)
 	}
-	// The gate's own sentence is printed once per plan it admits, so two of
-	// them are the gate judging the failed attempt's plan and then the new one.
-	if n := strings.Count(got, initflow.AgentProceeded("CLAUDECODE")); n != 2 {
-		t.Errorf("the gate admitted %d plan(s), want two: the retry re-plans and the gate judges the new plan\n%s", n, got)
+	// The gate's own sentence is printed once per plan it admits: two of them
+	// are the gate judging the failed attempt's plan and then the new one, and
+	// the third is installation-2's step, which the fixture's last answer
+	// serves (R7).
+	if n := strings.Count(got, initflow.AgentProceeded("CLAUDECODE")); n != 3 {
+		t.Errorf("the gate admitted %d plan(s), want three: the retry re-plans and the gate judges the new plan, and installation-2 applies the root again\n%s", n, got)
 	}
-	// Two admissions, two records: the plan the failed apply was on is one the
-	// gate admitted and the apply partly landed, so its record is owed before
-	// the retry judges another plan — the second admission does not replace the
-	// first one's trail (D1014). The order of the two is the listing's own and
-	// is not asserted: both records carry the same second, and the id that
-	// breaks the tie is random.
+	// Three admissions, three records: the plan the failed apply was on is one
+	// the gate admitted and the apply partly landed, so its record is owed
+	// before the retry judges another plan — the second admission does not
+	// replace the first one's trail (D1014) — and installation-2's own is the
+	// third (R7). The order is the listing's own and is not asserted: the
+	// records carry the same second, and the id that breaks the tie is random.
 	recs := audits(t, r)
-	if len(recs) != 2 {
+	if len(recs) != 3 {
 		t.Fatalf("%d record(s) after a retried step, want one per admitted plan: %+v", len(recs), recs)
 	}
 	digests := map[string]managedmode.AuditRecord{}
@@ -497,7 +507,7 @@ func TestPropagationRetryAppliesNothingUnderTheFailedAttemptsAdmission(t *testin
 	}
 	r.save(t)
 
-	got, err := updateRun(t, r, "update", "--yes")
+	got, err := updateRun(t, r, "update")
 	if err == nil {
 		t.Fatalf("a plan the gate refused was applied:\n%s", got)
 	}
@@ -559,12 +569,13 @@ func TestPropagationRetryStopsOnAnythingElse(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			noPropagationWaits(t)
+			fakeTerminal(t)
 			r := updateRig(t)
 			happyInstallation(t, r, tc.changes...)
 			r.script["apply@installation"] = map[string]any{"exit": 1, "stderr": tc.stderr}
 			r.save(t)
 
-			out, err := updateRun(t, r, "update", "--yes")
+			out, err := updateRun(t, r, "update")
 			if err == nil {
 				t.Fatalf("a failed apply succeeded:\n%s", out)
 			}
@@ -586,12 +597,13 @@ func TestPropagationRetryStopsOnAnythingElse(t *testing.T) {
 // this retry existed.
 func TestPropagationRetryStopsAfterTheLastWait(t *testing.T) {
 	noPropagationWaits(t)
+	fakeTerminal(t)
 	r := updateRig(t)
 	happyInstallation(t, r)
 	r.script["apply@installation"] = map[string]any{"exit": 1, "stderr": theReported404s}
 	r.save(t)
 
-	out, err := updateRun(t, r, "update", "--yes")
+	out, err := updateRun(t, r, "update")
 	if err == nil {
 		t.Fatalf("a gap that never closes succeeded:\n%s", out)
 	}

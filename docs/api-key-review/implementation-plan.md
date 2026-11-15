@@ -805,7 +805,9 @@ marking the check run), `docs/api-key-review/README.md` (the status line, when t
 
 **Interfaces:** none.
 
-**Tests and command:** none — the check is a live procedure run by the owner, and §5 is its text.
+**Tests and command:** `bash scripts/live-checks/check330_test.sh` — the check itself is a live
+procedure run by the owner and §5 is its text, so what is tested is the script: a fake `fugaro` and a
+fake `gcloud` on `PATH`, one case per fact of slices A and B, and no cloud call anywhere in it.
 
 **Red step:** none; a live check has no red step. Its evidence is the owner's run, recorded in the
 register.
@@ -813,6 +815,16 @@ register.
 **Mutation:** not applicable.
 
 **Reviewer tier:** owner-run.
+
+**Written 2026-11-14: the check is in the register, and it is NOT RUN.** The number free at that
+merge was **330**, so `docs/gcp-live-checklist.md` carries its summary row and its `## Check 330`
+section — both marked **NOT RUN** — and `scripts/live-checks/check330.sh`, with `check330_test.sh`
+beside it, is the script the owner runs. It is a reader: it launches no run, writes no object, holds
+no credential and prints none, and it reads slice A's two runs and slice B's review-only run off the
+run records, their executions' gateway log lines and the review job's own description. The steps that
+stay the owner's — the key's own name, the refusal of a profile that does not name it, and slice C's
+non-run until Check 50 — are printed by the script and written into the register's section. **No agent
+ran any of it, and nothing in the section is a claim that either path works.**
 
 **Commit:** `docs(checklist): check 330, the api-key review`
 

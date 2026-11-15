@@ -284,9 +284,10 @@ func TestDocsCheck600IsThePlansNumber(t *testing.T) {
 	}
 	// The census of the register's highest written section is a reading of the
 	// register, and this work is what moved it to 600. It moves again every time
-	// a later work writes a higher section -- Check 601 did, below this one --
-	// so the figure is read off the register rather than written in here: what
-	// the periodic-reviews row is held to is the register's own number, not the
+	// a later work writes a higher section -- Check 601 did, below this one, and
+	// so did the mobile-auth allocation of 2026-11-14 (Checks 620 to 627) -- so
+	// the figure is read off the register rather than written in here: what the
+	// periodic-reviews row is held to is the register's own number, not the
 	// number that was true when 600 merged, and a hardcoded one would fail on a
 	// later work's section rather than on a stale row.
 	register := readDoc(t, liveChecksDoc)

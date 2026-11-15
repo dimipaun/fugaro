@@ -63,7 +63,7 @@ func TestCheckRecipeImage(t *testing.T) {
 		}
 		if tc.wantErr != "" && err != nil {
 			for _, want := range []string{"recipe mine needs a job image whose runner knows recipes (fugaro 0.5.0 or later)",
-				imageGateRemedy + ", in your own terminal window, or with --yes from CI or a script (never in a coding agent's session", "this release's base base image", "--recipe default"} {
+				imageGateRemedy + ", in your own terminal window (never in a coding agent's session", "this release's base base image", "--recipe default"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("%q: %v lacks %q", tc.baseRef, err, want)
 				}
@@ -77,6 +77,31 @@ func TestCheckRecipeImage(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "fugaro.yaml's agent.recipe needs a job image") || strings.Contains(err.Error(), "--recipe default") ||
 		!strings.Contains(err.Error(), "its images stage verifies this release's base image, pins it by digest through the installation's remote repository and rebuilds") {
 		t.Fatalf("agent.recipe: %v", err)
+	}
+}
+
+// TestImageGateRefusalCarriesTheCauseMarker: the refusal an image gate writes is
+// what a person's log holds when a launch is turned away over a job image older
+// than the Fugaro its job would run, and `fugaro troubleshoot` answers that class
+// from the log alone by matching a marker inside that sentence
+// (causeMarkerJobImage, troubleshootCauses). A refusal that stopped carrying it
+// would leave that failure — the owner's own, reported 2026-11-15 — unanswered
+// again, and the launch here is the smallest one that really is refused.
+func TestImageGateRefusalCarriesTheCauseMarker(t *testing.T) {
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x",
+		Recipe: &task.Recipe{Name: "mine", Source: "repo"}}
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.4.1")
+	err := checkRecipeImage(context.Background(), env, appSlug, spec, "base", &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("an image older than the recipe gate needs was accepted")
+	}
+	if !strings.Contains(err.Error(), causeMarkerJobImage) {
+		t.Errorf("the refusal does not carry the marker troubleshoot reads for this class (%q): %v", causeMarkerJobImage, err)
+	}
+	if !strings.Contains(err.Error(), imageGateRemedy) {
+		t.Errorf("the refusal no longer names the move the cause answers with: %v", err)
 	}
 }
 

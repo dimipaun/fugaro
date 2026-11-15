@@ -319,7 +319,37 @@ const PolicyRulesVersion = 1
 // which stays 1). Nothing reads the coordinator's subtree yet: the write path
 // is P4's and the sweep is P5's, so what a person sees before those land is
 // the grant alone, with no document under it.
-const RulesVersion = 4
+//
+// Generation 5 is the voice policy node (mobile plan task P5.3.1, approved by
+// the owner on 2026-11-14; D123 and Q0 answered 2026-10-19): the subtree
+// `config/policy/voice/{shared,repos/$slug}` of docs/mobile/design/
+// voice-evaluation-switch.md §4.3 — the per-project provider allow-list the
+// local/remote voice switch is evaluated against, with `providers`,
+// `direction` and `force_local` in it. It is a *grant* and it bumps for
+// generation 4's reason: a run token reads its own project's node there and
+// did not before, so a run under the older document would be refused a read
+// the switch's server-side hop depends on, and the marker is the only thing
+// that tells an installation its deployed document is not this binary's. The
+// grants are `config/policy/shared`'s and `config/policy/repos/$slug`'s copied
+// field for field (`internal/budget/rules`'s PathVoice, `internal/projectpolicy`'s
+// PathVoiceShared/PathVoiceRepo/PathVoiceRepos), and the parent
+// `config/policy/voice` itself carries none, so a grant on one project's node
+// never reaches another's. No signed-in user reads any of it: the phone holds
+// no read of `config/policy/**`, which is why the switch's "blocked by project
+// policy" state is the hop's answer and not a read.
+//
+// What the bump does to an existing installation is what every bump does, and
+// it is met the same way: `fugaro doctor` reports policy-rules-skew until the
+// owner runs `fugaro update`, whose rules stage deploys this document before
+// the policy stage, so an installation at generation 4 converges in one run
+// and no second command. The deploy still refuses to write this binary's
+// document under a marker *above* it, so an older CLI cannot take the voice
+// grant away behind a newer one's back, and the update is safe while runs are
+// in flight: the subtree is a read grant on a node an operator publishes, so a
+// run that bootstrapped under the release behind keeps its records and its
+// counters and every write it makes still lands
+// (docs/design/update-in-flight.md).
+const RulesVersion = 5
 
 // VersionError is the refusal of a node written in a version this Fugaro does
 // not understand. It carries both versions, so each side prints its own

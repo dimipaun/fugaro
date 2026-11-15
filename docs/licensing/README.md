@@ -86,7 +86,7 @@ its licence and README then); it has landed since, the coordinator now being the
 moved and what did not — so the coordinator is out of the Core by section 2's path definition,
 while the released MIT versions stay MIT (amended 2026-11-11).
 Counsel has not been consulted on the edit; the owner tells counsel in the next revision round.
-The licence files are untouched, the draft is still **not in force**, and the broader question of
+The licence files are untouched, the draft was then still not in force (the Terms have been published since 2026-11-11), and the broader question of
 where the coordinator's released MIT versions leave the licence's coverage sentence is still
 counsel's (T10 and F38, in
 [subscriptions/reconciliation.md](../subscriptions/reconciliation.md)).
@@ -99,7 +99,7 @@ It adds a patent licence, an indemnity, resellers, a Quebec language clause and 
 Community Plan, Free Plans and Beta Features, and drops the drafting notes. Two figures in it
 (the late-payment interest rate and the Community liability cap) were first held back as bracketed
 items; the owner ruled on 2026-10-29 that they go in as counsel wrote them. The document still carries counsel's draft banner
-and bracketed party details, so it is still **not in force**; the page at `/legal/subscription-terms`
+and bracketed party details, so it was then still not in force (published since 2026-11-11); the page at `/legal/subscription-terms`
 is regenerated from it. Section map and open points:
 [reconciliation.md](reconciliation.md#amendment-2026-10-29-counsels-restructured-subscription-terms).
 (amended 2026-10-29: the four owner rulings are applied, counsel approved: read-only use keeps cancel and the kill switch, section 9.1; one License Key per Customer for its organisation, stating its User Seats; no covered-versions date, sections 6.1 and 8.2; one free seat per legal person and its Affiliates, sections 6.3, 7.5 and 10.2(a). Sections 5.1(i), 5.3 and 5.5 are written in the present tense on the owner's word of 2026-10-29, and the roles and the seat estimate must be released before the Terms go public).
@@ -171,7 +171,7 @@ Spec owner: the repository owner. Spec received 2026-10-24; reconciled against `
 | [reconciliation.md](reconciliation.md) | Findings F1–F27 against the code and the published licence texts, resolutions R1–R8, decisions D300–D310 with the owner's answers (D301 and D303 amended), tensions T1 (ruled), T2 (accepted) and T3 (D303's mixed-licence release), items O1–O3, UNVERIFIED U1–U8. **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Slices L0–L5 (L4.2, L4.3 and L5.1 owner-run), tasks with their tests and dependencies, levels, the critical path, the shared-files table. Nothing in it is approved |
 | [licence-key.md](licence-key.md) | The licence key's design (the licence-key-v2 plan's K1.5, superseding the subscriptions plan's S2.1 and this plan's L3.1): the `fgk_` claim set and the policy version, the offline check at `ee/register`, the grace and the read-only lapse, the overlapping renewal, the visible revocation job and its accepted limits, the staging key id, where each product keeps the key and how the console hands it to the CLI it spawns. **A design, not built; no release reads or mounts a key** |
-| [subscription-terms.md](subscription-terms.md) | The Fugaro Subscription Terms, a draft for counsel (2026-10-27, amended the same day to the owner's answers and edited 2026-10-29 on the owner's ruling D531 so it stops calling the coordinator Core): not reviewed, not in force; prices and other Order Form items in brackets, with the two open owner items and counsel's questions |
+| [subscription-terms.md](subscription-terms.md) | The Fugaro Subscription Terms, counsel's text of 2026-10-28, approved by counsel and published at https://fugaro.dev/legal/subscription-terms on 2026-11-11 (history: first drafted 2026-10-27, amended the same day to the owner's answers and edited 2026-10-29 on the owner's ruling D531 so it stops calling the coordinator Core) |
 
 ## The numbers this work holds
 

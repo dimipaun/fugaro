@@ -1643,9 +1643,10 @@ func writeMachineKey(t *testing.T, f *licenceFixture, key string, mode os.FileMo
 
 // TestLicenceWritesAreRefusedInAnAgentSession holds the rule every cloud write
 // in this tree keeps: a coding agent's session applies nothing, and the refusal
-// says why and names the marker. Both verbs that write are refused before
+// says why and names the marker. Every verb that writes is refused before
 // anything is read — no bucket write, no secret version, no call to the licence
-// server — and `status`, which is a read, is not refused at all.
+// server, and no sign-in started — and `status`, which is a read, is not
+// refused at all.
 func TestLicenceWritesAreRefusedInAnAgentSession(t *testing.T) {
 	f := newLicenceFixture(t)
 	key, secret, _ := f.bundle(t)
@@ -1660,6 +1661,8 @@ func TestLicenceWritesAreRefusedInAnAgentSession(t *testing.T) {
 	}{
 		{args: []string{"licence", "set"}, stdin: key + "\n" + secret + "\n", want: "nothing was written"},
 		{args: []string{"licence", "refresh"}, want: "nothing was renewed"},
+		{args: []string{"licence", "login"}, want: "nothing was signed in"},
+		{args: []string{"licence", "login", "--device"}, want: "nothing was signed in"},
 	} {
 		out, _, err := f.exec(t, tc.stdin, tc.args...)
 		if err == nil {
@@ -2107,7 +2110,7 @@ func TestLicenceUnknownSubcommandNamesNoArgument(t *testing.T) {
 	if strings.Contains(err.Error(), key) || strings.Contains(out, key) {
 		t.Fatalf("the unknown-subcommand refusal repeats its argument: %v", err)
 	}
-	for _, want := range []string{"set", "status", "refresh"} {
+	for _, want := range []string{"set", "status", "refresh", "login"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal %q does not name the verb %q it does have", err.Error(), want)
 		}
@@ -2130,7 +2133,7 @@ func TestLicenceSubcommandsLandInTheTree(t *testing.T) {
 	for _, sub := range target.Commands() {
 		names = append(names, sub.Name())
 	}
-	for _, want := range []string{"refresh", "set", "status"} {
+	for _, want := range []string{"refresh", "set", "status", "login"} {
 		if !slices.Contains(names, want) {
 			t.Errorf("the built tree's `licence` has verbs %v, and %q is not one of them", names, want)
 		}

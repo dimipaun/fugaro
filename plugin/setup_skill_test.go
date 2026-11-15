@@ -102,13 +102,13 @@ func TestSetupSkillOpensBySayingWhichCommandItIs(t *testing.T) {
 
 // TestSetupSkillNeverApplies: `fugaro setup` and `fugaro update` appear only
 // as a plan (--plan-only, --print-vars, --help) outside a user-runs block,
-// never with a flag that confirms for the user, and the user-runs blocks name
-// them only as the user's own step. Both doors apply — setup creates and
-// update re-converges — so both are the user's to run, and the read-only plan
-// the agent may run is `fugaro update --repo --plan-only`.
+// never with a flag that stands in for the user's own approval, and the
+// user-runs blocks name them only as the user's own step. Both doors apply —
+// setup creates and update re-converges — so both are the user's to run, and
+// the read-only plan the agent may run is `fugaro update --repo --plan-only`.
 func TestSetupSkillNeverApplies(t *testing.T) {
 	initRE := regexp.MustCompile(`fugaro (?:setup|update)\b[^\n]*`)
-	yesRE := regexp.MustCompile(`(^|\s)(--yes|-y|--non-interactive|--allow-delete|--forget|--allow-job-delete)(\s|$|\x60)`)
+	yesRE := regexp.MustCompile(`(^|\s)(--allow-delete|--forget|--allow-job-delete)(\s|$|\x60)`)
 	sawPlan := false
 	for name, text := range setupFiles(t) {
 		inUserRuns, inFence := false, false
@@ -778,7 +778,7 @@ func TestSetupSkillUsesTheProjectLayer(t *testing.T) {
 	skill := files["skills/setup/SKILL.md"]
 	for _, want := range []string{
 		"fugaro config layer --json",
-		"fugaro config init --yes",
+		"fugaro config init",
 		"fugaro config show --json",
 		"the investigative path",
 	} {

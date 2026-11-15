@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/httpjson"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // DefaultBaseURL is the Bitbucket Cloud API root.
@@ -55,8 +56,30 @@ type Options struct {
 	// once, the first time a PRSpec with non-empty Labels is seen
 	// (Bitbucket Cloud pull requests have no labels, so they are silently
 	// dropped otherwise), and once if the token may not read its own
-	// identity (GET /user). Nil means no-op.
+	// identity (GET /user): OwnIdentities does not silence that one, because
+	// the set says which accounts are Fugaro's, never that this run can tell
+	// its own comments apart. Nil means no-op.
 	Warn func(string)
+	// OwnIdentities are the account UUIDs Fugaro's own Bitbucket tokens
+	// have, as the project's node lists them (T13, F20). The credentials
+	// service may serve one run with several of those tokens in turn
+	// (D2355), so the run's comments are written as more than one account
+	// and "Fugaro's own" is this set rather than the single account
+	// GET /user answers. Empty is a node without the key, and leaves this
+	// provider reading its identity exactly as it did before.
+	OwnIdentities projectpolicy.BitbucketTokenIdentities
+	// OwnIdentitiesPartial says OwnIdentities is missing an account this run
+	// may write as: the node holds a token whose identity it could not read,
+	// such as a repository access token's (R14). The credentials service
+	// picks the token per request (D2355): the read GET /user answers and
+	// the write that posts a comment can be served by different tokens, and
+	// a throttled or broken narrower token falls back to a wider one (R12).
+	// GET /user naming one of Fugaro's accounts then no longer means this run
+	// can tell its own comments apart, so that Comments reports every comment
+	// SelfKnown false and the run keeps honouring markers from every author.
+	// False -- a node naming every token it may serve -- leaves that answer
+	// standing.
+	OwnIdentitiesPartial bool
 }
 
 // Provider is a Bitbucket Cloud repository.
