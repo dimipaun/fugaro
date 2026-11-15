@@ -328,11 +328,18 @@ type Transition struct {
 // where it goes, and the bookkeeping the daemon keeps about the attempts at
 // it.
 type WorkItem struct {
-	ID        string    `json:"id"`
-	Title     string    `json:"title"`
-	Repo      string    `json:"repo"`
-	Recipe    string    `json:"recipe"`
-	RigorTier string    `json:"rigor_tier"`
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Repo      string `json:"repo"`
+	Recipe    string `json:"recipe"`
+	RigorTier string `json:"rigor_tier"`
+	// Spec is the plan's folder under docs/ this work belongs to, which is what
+	// the daemon's `spec:<name>` label is built from. Optional and declarative:
+	// a session or a person writes it in the patch that declares the item,
+	// because there is no plan import to derive it from (D2438). That makes it
+	// part of the spec a person approves, and an item carrying none is an item
+	// no tick labels with a spec.
+	Spec      string    `json:"spec,omitempty"`
 	Brief     string    `json:"brief"`
 	DependsOn []string  `json:"depends_on"`
 	Phase     Phase     `json:"phase"`

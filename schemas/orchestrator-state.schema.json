@@ -119,6 +119,11 @@
           "enum": ["trivial", "small", "medium", "large"],
           "description": "The expectation tier (internal/tier). An expectation, never a cap."
         },
+        "spec": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{0,43}$",
+          "description": "The plan's folder under docs/ this work belongs to, which is what the daemon's `spec:<name>` label is built from (docs/forge-labels, R3). Optional: the encoder leaves it out for an item that carries none, and such an item gets no spec label. Stored lower-cased and at most 44 characters, so `spec:` plus the name is at most 49 of GitHub's 50. It is one of the fields a person approves, so an edit to it revokes a standing approval — which is why it is a declaration and not the daemon's to write."
+        },
         "brief": {
           "type": "string",
           "minLength": 1,

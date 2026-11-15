@@ -302,6 +302,88 @@ func TestEditAfterApprovalRevokes(t *testing.T) {
 	}
 }
 
+// TestWorkItemSpecShapeRefused is R3 at the only door a spec name comes
+// through: the patch. The name becomes `spec:<name>` on a pull request, so a
+// name that is not a plan folder — a path, a colon, a space, a name too long
+// for GitHub's 50 characters — is refused where it is written rather than
+// skipped later by the syncer, and the two ends cannot drift apart.
+//
+// The ASCII check comes before the lowering and not after: the Kelvin sign
+// (U+212A) lower-cases to a plain "k", so a name that was lowered first would
+// be accepted here as a name this release then has to label with.
+//
+// Mutation: drop the shape check and every refusal below lands; leave out the
+// ASCII check and the Kelvin-sign case lands, reading as "forge-labelsk".
+func TestWorkItemSpecShapeRefused(t *testing.T) {
+	now := time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
+	s := stateWithAQueuedItem(t, now)
+	write := func(spec string) (orchestrator.State, error) {
+		t.Helper()
+		return applyAs(t, s, orchestrator.Session, "session:20261107-090000-abcd", now,
+			upsertOp("wi-1", func(op *orchestrator.WorkItemOp) { op.Spec = ptr(spec) }))
+	}
+
+	for _, tc := range []struct{ name, spec string }{
+		{"an empty name", ""},
+		{"a path", "docs/forge-labels"},
+		{"a leading dash", "-forge-labels"},
+		{"a colon", "spec:forge-labels"},
+		{"a space", "forge labels"},
+		{"a dot", "forge.labels"},
+		{"an underscore", "forge_labels"},
+		{"a name that is not ASCII", "forge-labelsK"},
+		{"a name one past the bound", strings.Repeat("a", 45)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := write(tc.spec); !errors.Is(err, orchestrator.ErrInvalid) {
+				t.Fatalf("the spec %q landed: err = %v, want %v", tc.spec, err, orchestrator.ErrInvalid)
+			}
+		})
+	}
+
+	// What R3 lets through, which is a name and not a tidier one: 44
+	// characters is the bound ("spec:" plus the name is at most 49 of GitHub's
+	// 50, F20), a trailing dash is a character in the set, and a name is
+	// stored as the label will read it, lower-cased.
+	at := strings.Repeat("a", 44)
+	for _, tc := range []struct{ name, spec, want string }{
+		{"name at the bound", at, at},
+		{"name in mixed case", "Forge-Labels", "forge-labels"},
+		{"name with a trailing dash", "forge-labels-", "forge-labels-"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			next, err := write(tc.spec)
+			if err != nil {
+				t.Fatalf("the spec %q did not land: %v", tc.spec, err)
+			}
+			if got := next.WorkItems[0].Spec; got != tc.want {
+				t.Fatalf("the item carries the spec %q, want %q", got, tc.want)
+			}
+		})
+	}
+
+	// An upsert that carries no spec leaves the item's alone: the field is
+	// written by whoever declares the item and by nothing else (T8).
+	named, err := write("forge-labels")
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := mustApply(t, named, orchestrator.Session, "session:20261107-090000-abcd", now,
+		upsertOp("wi-1", func(op *orchestrator.WorkItemOp) { op.Note = ptr("the spec is unchanged by this") }))
+	if got := after.WorkItems[0].Spec; got != "forge-labels" {
+		t.Fatalf("an upsert that omits the spec changed it to %q", got)
+	}
+
+	// And a state carrying a name outside the shape is not one this release
+	// reads back: the shape is checked on the way out of the document too, so
+	// a hand-written one is refused rather than labelled.
+	edited := named
+	edited.WorkItems[0].Spec = "docs/forge-labels"
+	if err := orchestrator.ValidateState(edited); !errors.Is(err, orchestrator.ErrInvalid) {
+		t.Fatalf("a stored spec outside the shape validated: err = %v, want %v", err, orchestrator.ErrInvalid)
+	}
+}
+
 // TestApprovalBindsTheFullLaunchSpec is the same binding seen from the other
 // side: a digest computed for a spec that is not the item's is refused, so a
 // caller cannot approve one thing and launch another. There is no partial

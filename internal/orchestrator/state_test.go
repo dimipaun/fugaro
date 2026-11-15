@@ -521,6 +521,140 @@ func checkFreshStateMatchesTheSchema(t *testing.T, sch *jsonschema.Schema) {
 	}
 }
 
+// TestWorkItemSpecRoundTrip is the spec field's whole life: the name a
+// session wrote in the patch is what comes back out of the document, and it
+// is digested like every other declarative field, so what a person approved
+// and what the label says cannot drift apart. An item with none is the item
+// it was: the field is optional, the encoder writes no `spec` for it, and
+// nothing about such an item changes (T8).
+//
+// Mutation: leave `spec` out of the digested fields (put it on
+// bookkeepingFields) and the two digests below stop differing, so a spec
+// edited under a standing approval would launch the work the person never saw.
+func TestWorkItemSpecRoundTrip(t *testing.T) {
+	now := time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
+	s := stateWithAQueuedItem(t, now)
+	s.WorkItems[0].Spec = "forge-labels"
+
+	raw, err := orchestrator.EncodeState(s)
+	if err != nil {
+		t.Fatalf("a state carrying a spec is not one this release writes: %v", err)
+	}
+	back, err := orchestrator.DecodeState(raw)
+	if err != nil {
+		t.Fatalf("a state this release wrote is not one it reads: %v", err)
+	}
+	if got := back.WorkItems[0].Spec; got != "forge-labels" {
+		t.Fatalf("the spec came back as %q, want %q", got, "forge-labels")
+	}
+	if got, want := orchestrator.SpecDigest(back.WorkItems[0]), orchestrator.SpecDigest(s.WorkItems[0]); got != want {
+		t.Fatalf("the spec does not survive the wire with the digest it had: %s, want %s", got, want)
+	}
+
+	// The digest covers it: another spec is another spec, which is what makes
+	// an edit to it revoke a standing approval like any other declaration.
+	other := s.WorkItems[0]
+	other.Spec = "outer-loop-escalation"
+	if orchestrator.SpecDigest(other) == orchestrator.SpecDigest(s.WorkItems[0]) {
+		t.Fatal("changing the spec left the digest alone, and the approval binds the digest")
+	}
+
+	// No spec, no field: an item without one is written exactly as this
+	// release wrote it before the field existed.
+	s.WorkItems[0].Spec = ""
+	raw, err = orchestrator.EncodeState(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte(`"spec":`)) {
+		t.Fatalf("an item with no spec carries the field:\n%s", raw)
+	}
+	if err := orchestrator.ValidateState(s); err != nil {
+		t.Fatalf("an item with no spec is not a state this release reads: %v", err)
+	}
+}
+
+// TestStateSchemasAcceptSpec is the reader's half of the field the writer
+// adds: both documents describe it and neither bumps its version, because a
+// field this release writes and the schema does not describe is a document a
+// consumer that validates before it reads would refuse.
+//
+// The two schemas differ in one place on purpose: a patch may write the name
+// in either case and the upsert folds it, while a document stores the folded
+// one and nothing else, so an upper-case name is a patch this release takes and
+// a state it refuses. The remaining cases land on the Go check's own boundary —
+// 44 characters is a name, 45 is not — so the patterns and the checks
+// ValidateState applies cannot drift apart silently.
+//
+// Mutation: drop `spec` from either schema and the property is refused in both
+// documents whatever its name; widen a pattern and a name the daemon refuses
+// (or a 45-character one) is a document the schema calls good.
+func TestStateSchemasAcceptSpec(t *testing.T) {
+	stateSch := compileSchema(t, "../../schemas/orchestrator-state.schema.json")
+	patchSch := compileSchema(t, "../../schemas/orchestrator-patch.schema.json")
+	validates := func(sch *jsonschema.Schema, raw []byte) error {
+		t.Helper()
+		doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(doc)
+	}
+
+	for _, tc := range []struct {
+		name             string
+		spec             string
+		stateOK, patchOK bool
+	}{
+		{"a plan folder", "forge-labels", true, true},
+		{"a name at the 44-character bound", strings.Repeat("a", 44), true, true},
+		{"a name in either case", "Forge-Labels", false, true},
+		{"a name one past it", strings.Repeat("a", 45), false, false},
+		{"a path under docs", "docs/forge-labels", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			carried := document(t, readFixture(t))
+			workItemAt(t, carried, 0)["spec"] = tc.spec
+			if err := validates(stateSch, remarshal(t, carried)); (err == nil) != tc.stateOK {
+				t.Errorf("the state schema reads the spec %q as ok=%v, want %v (err = %v)", tc.spec, err == nil, tc.stateOK, err)
+			}
+
+			patch, err := json.Marshal(map[string]any{
+				"base_rev": 7,
+				"ops": []any{map[string]any{
+					"op":        "work_item_upsert",
+					"work_item": map[string]any{"id": "wi-1", "spec": tc.spec},
+				}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := validates(patchSch, patch); (err == nil) != tc.patchOK {
+				t.Errorf("the patch schema reads the spec %q as ok=%v, want %v (err = %v)", tc.spec, err == nil, tc.patchOK, err)
+			}
+		})
+	}
+
+	// Optional on both sides: the fixture, which carries none, and an upsert
+	// that carries none are documents this release reads and writes.
+	if err := validates(stateSch, readFixture(t)); err != nil {
+		t.Fatalf("the state schema refuses an item with no spec: %v", err)
+	}
+	plain, err := json.Marshal(map[string]any{
+		"base_rev": 7,
+		"ops": []any{map[string]any{
+			"op":        "work_item_upsert",
+			"work_item": map[string]any{"id": "wi-1"},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validates(patchSch, plain); err != nil {
+		t.Fatalf("the patch schema refuses an upsert that carries no spec: %v", err)
+	}
+}
+
 // TestSpecDigestCoversEveryFieldButTheBookkeepingList is what makes an
 // approval mean one spec and not another. Every field that describes the work
 // moves the digest when it changes, the seven bookkeeping fields move it not at
