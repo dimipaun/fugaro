@@ -520,6 +520,42 @@ written, and it takes another number if it merges after this. The check is owner
 runs any step of it** — it reads and writes on your own Windows machine and in one WSL distribution,
 **never `belong`**, and it is **NOT RUN**.
 
+**Check 120, 121 and 122 are the mobile telemetry phase's, and Task P7.5 is the task that writes
+them here** (`docs/mobile/implementation-plan.md`, its Phase 7 and its task **P7.5**; the authority
+for their text, their flags, their allow-list and their labels is
+[plans/2026-10-19-mobile-telemetry.md](plans/2026-10-19-mobile-telemetry.md) — §12 for each check,
+§2.2 for the reading that chose the numbers: the first free number after every claim, three out of
+the block above 119). The phase puts **Firebase Crashlytics and Firebase Analytics in the Expo app
+at `mobile/`**, reporting to a Firebase project **Fugaro operates and not an installation's** —
+**`fugaro-prod`**, the owner's own name for it, and the same project the website lives in — and
+every part of it but this task is merged: the config plugin, the never-committed native files and
+the build-time guard (**P7.1**), the statement the shell renders and the `/privacy/` URL beside it
+(**P7.2**), the closed event allow-list with the scans that hold it (**P7.3**), and the live privacy
+page held true of the build that ships (**P7.4**). **120** is that the reports arrive, that they
+arrive **from the first launch**, and that they arrive at **`fugaro-prod` and no other project** —
+followed by its two negative halves: the app's own shell, and the **absent `AD_ID` permission, read
+from the built artifact's merged manifest** rather than from the source. **121** is a real crash
+reaching that project **with nothing that names anything in it**, and its control: the first
+internal build, which carries neither SDK, produces **no report at all**. **122** is the **two store
+forms and the live privacy statement**, read against what the app actually sends — category by
+category and sentence by sentence — because the page is already live and already ahead of the
+build. All three are **owner-run**: a real device, a signed build, a real network, two store
+consoles and the Firebase console, none of which an agent may touch — **no agent runs any step of
+any of them** — and all three are **NOT RUN**. **Two changes dated after this text stand over it,
+and the three sections carry both rather than smoothing them over.** The plan's own always-on answer
+was superseded on **2026-10-30** by the owner's ruling (recorded as **D731** in
+[review-levels-ab-jobmax/reconciliation.md](review-levels-ab-jobmax/reconciliation.md)):
+**crash reports are on by default and opt-out, and Firebase Analytics is dropped from the app**. The
+amendment to the plan's own text and scan is task **T0.1** and the build is task **T3.1**
+([review-levels-ab-jobmax/implementation-plan.md](review-levels-ab-jobmax/implementation-plan.md)),
+with the owner's two store forms re-answered by **T3.2** once T3.1 has shipped — and **none of the
+three has landed**, which is why the app still declares both reporters and why the statement P7.2
+ships makes **no claim about how collection is turned off, in either direction**. And **no merged
+task of the phase wires the app's own event senders**: P7.3's module writes to a port shaped like
+the SDK's own surface, `mobile/index.js` is where that port is wired, and nothing wires it — so
+**120's first reading has a step that says what has to exist before it can pass**, rather than
+reading as a state of this tree.
+
 **Check 124 is the Cloud Batch backend's own, and it is the next number free above 123** (the
 compute-backend plan `docs/plans/2026-10-19-compute-backend.md`, whose design is
 `docs/design/compute-backend.md`; the subject is the **opt-in Cloud Batch backend** — the
@@ -898,6 +934,7 @@ probe account carries predefined grants only).
 | 303 | The bounded decision agent, and the cost of one cycle ([`docs/stateless-orchestrator/`](stateless-orchestrator/implementation-plan.md), its task **O12** and its Check 303 — the text O2 wrote; reconciliation **U4**, whose cost is a target until this check measures it; **Q4**, answered 2026-11-04, which makes this check the gate on slice 2): with the owner's own Claude login, one real decision call through the bounded agent — the model that answered it being the classifier's and not the output's — the count caps (6 calls an hour, 40 a day) and the breaker at 3 **proved by spending them**, and the cost of one cycle measured end to end. It runs **before O12 is started, not after**: Q4 approves slice 2 (O12, O13) only once slice 1 has run 14 days **and** this number is in | See "Check 303" below; `bash scripts/live-checks/check303.sh --installation <name> --yes` is the whole of it — the bound it will not pass is stated before anything is spent, and `--yes` is the whole of the consent that spends it (`--dry-run` prints the bound and the plan and makes no call) — and **you** run it, with your own login, **never `belong`**; **no agent runs any step of it** | The one thing here that is genuinely billable: one decision call, plus the calls the caps and the breaker spend proving themselves. Its whole point is the number it produces, which replaces U4's target and Q4's proposed bounds. **USER-RUN, NOT RUN.** |
 | 304 | The handoff between two people ([`docs/stateless-orchestrator/`](stateless-orchestrator/implementation-plan.md), its task **O17** and its Check 304 — the text O2 wrote, the `ee/` command O17 builds): an agent handed from one developer to another by an owner or an admin, on a real installation, with the two people in different sessions — the receiving person holding the agent, the giving person no longer able to act as it, and the project-owned agent that belongs to no person at all behaving as the registered extension it is | See "Check 304" below; `bash scripts/live-checks/check304.sh first-person --installation <name> --from <user:address> --to <user:address>` is the first person's half — it checks the Subscription Edition build before anything else, writes the record and prints what the other person runs — and `bash scripts/live-checks/check304.sh second-person --installation <name> --as <user:address> --handoff <the record>` is the second person's; **you** run one phase each, on a real installation with a second person, **never `belong`**, and **no agent runs any step of it** | Two sessions and one handoff: no model call unless the agent is asked to work, and nothing billable in the handoff itself. **USER-RUN, NOT RUN.** |
 | 305 | The MCP state group served — the front door's reach into the node ([`docs/stateless-orchestrator/`](stateless-orchestrator/implementation-plan.md), its task **O16b** and its Check 305 — the text O16b wrote into the number the register held; **D2020** (a) and **D2021** (a), answered 2026-11-10, and the reconciliation's **F27**, **R2** and **R3**): with the front door on, a real MCP client holding `state:read` reads `get_state` and `get_events` for the installation's orchestrator — the same documents `fugaro orchestrator state --json` and `fugaro orchestrator events --json` answer — a token holding only `tasks:*` is refused both, `apply_patch` is absent from `tools/list` (D2021 (a); no `spawn_task` anywhere in it, T2), and the front door's own role in the real project is `firebasedatabase.instances.get` and nothing else, bound to `fugaro-mcp@<the installation's project>` and to nobody else, so the account the public service runs as holds no database write. IAM has no path-level scope, so that read reaches the whole database, and what it exposes node by node is the reconciliation's **U11** — no reading here settles it  | See "Check 305" below; `bash scripts/live-checks/check305.sh --installation <name> [--door <url>]` is the whole of it — it finds the door the way a client does, signs itself in twice and makes every reading the section names (the tool list, both documents, both refusals, the role and the project's policy read back) with its own tokens — and **you** run it, on your own installation with the front door on, **never `belong`**; **no agent runs any step of it** | Nothing billable and no model call: three MCP calls, one role describe and one policy read, and no run and no image build. Nothing is created, granted or deleted by the check itself, so there is nothing to restore — what it reads is a service the installation already runs, a role it already holds and the node its own orchestrator already wrote. **USER-RUN, NOT RUN.** |
+| 330 | The api-key review's own path, and the review-only job beside it ([`docs/api-key-review/`](api-key-review/implementation-plan.md), its task **AK8** and its Check 330 — the plan's §5 is the check's text; **D1410** (both slices) and **D1421** (after 0.20.0), and **F10**, **F11** and **F22**): on a sandbox installation and a sandbox repository, one task whose `fugaro.yaml` writes `agent.auth: api-key`, whose coder runs a model the project's provider route claims and whose `models.reviewer` is a Claude model, runs with **no** `claude_accounts` stage account published, and the same task runs again with a `review` stage account — the gateway's log carries a route for the run's own stages' calls and none for the review class's, the review stage's `model_usd` is the gateway's figure with **no** `model_notional_usd` at all, the run's `route_by` totals the coder's stages rather than the whole run, and the second run's review class reads `credential=oauth` with `model_notional_usd` equal to `model_usd`; and, on an installation that publishes the pairing's sentinel with the credentials service on, a `fugaro review --pr N` runs the review-only job — the job named for the sentinel's review variant, its environment holding no credential of the repository's, its calls route-less in the gateway's log — while a repository whose profile does **not** name the key is still refused. **Slice C (the OpenRouter path) may not be run before Check 50**: `internal/creds/select.go` refuses every tier-C candidate today, so the script refuses `--provider` outright rather than measure that refusal | See "Check 330" below; `bash scripts/live-checks/check330.sh --sandbox <checkout> --run <slug>/<run-id> --contrast <slug>/<run-id> [--review <slug>/<run-id>]` is the whole of it — it reads the sandbox's own project, policy and run listing, the named runs' records, their executions' gateway log lines and the review job's description, and prints PASS or FAIL per fact — and **you** run it, on the sandbox only, **never `belong`**; **no agent runs any step of it** | Nothing billable and no model call: the check launches no run, writes no object, publishes no policy and mints no credential, so there is nothing to restore — what it reads are runs the sandbox already ran and the log lines they wrote, and the key's own name and the refusal stay steps of yours. **USER-RUN, NOT RUN.** |
 | 340 | The prefix-limited listing grant ([`docs/periodic-reviews/`](periodic-reviews/implementation-plan.md) §P8, its Check 340; **R12's, and it gates R12**; `docs/design/bucket-iam.md` §4 — the H3 veto — and §11 item **V7**): which value the `storage.googleapis.com/objectListPrefix` request attribute carries, read as a throwaway service account holding R12's two conditioned bindings (objectViewer on `runs/`, objectUser on `reports/`, each carrying the `resource.name` read clause and the listing clause joined by `\|\|`): that account lists the FOUR prefixes R12's design gives the reports job — `runs/<slug>/`, `reports/<slug>/`, `reports/<slug>/<YYYY>/` and `reports/<YYYY>/` — reads a `runs/` object, and is refused the root listing, a `tokens/` read and a `tokens/` and a `cache/` listing. **The third run (2026-11-13) settled the value form: the attribute carries the request's own RELATIVE prefix (`runs/`, `reports/`) — under the full-path form every listing was refused — and that is the only form the script reads any more.** The bare `reports/` prefix that run was refused despite the binding being read back as present is a **DIAGNOSTIC** row, asked three ways and gating nothing, because the job never lists it. **The wrong form is a grant that lists nothing, and if the listings do not hold, R12's Terraform does not land and the plan stops and asks** (E4) | See "Check 340" below; `bash scripts/live-checks/check340.sh --project <project> --bucket <sandbox bucket>` is the whole of it — the script creates the throwaway account, grants the two bindings, seeds five objects of its own, reads the four listings the job makes and the read it makes (one row per listing, every answer its own), records the bare `reports/` prefix as a diagnostic asked three ways, and tears every bit of it down again — and **you** run it, on a **sandbox bucket** only, never `belong` (a project or a bucket naming that installation is refused before a single call); **no agent runs any step of it** | Nothing billable and no model call: one throwaway service account, five small objects under `runs/`, `reports/` (two depths), `tokens/` and `cache/`, two bucket bindings and one impersonation grant, every one of them removed and read back as gone by the script's own Restore, which runs from its exit trap even on a failed assertion or a Ctrl-C. **USER-RUN, NOT RUN.** Three attempts have been made: two on 2026-11-07, both exit `2` and both aborted — the first with an unreadable block, the second by a `tokens/` listing whose refusal named `storage.objects.get` where the script then accepted only `storage.objects.list` — and one on 2026-11-13, exit `1`, the first run that really read the probe and the one that settled the value form (relative) while leaving the bare `reports/` refusal unexplained. **The row stays NOT RUN**: the revision the third run's reading produced has not itself been run, so no `PASS` for `list-prefix` is recorded here yet; the section below records what each run did and did not measure. |
 | 360 | The managed screens show what the CLI says, on a managed project ([`docs/console-managed-screens/`](console-managed-screens/implementation-plan.md), its Check 360 and task **CM12**; **F3** and **D1489**, the owner's ask of 2026-11-07): the Project tab's five later sections — the managed state, the retirements, the account keys, the credentials service and the policy panel — drawn on a real managed project, each within its own read and from the document that read answers with, agreeing with `fugaro managed status --json`, `fugaro settings --json`, `fugaro project policy show --json` and `fugaro doctor`'s policy lines; **no section offers a control that changes anything**, and no token appears anywhere (**D1471**). Its hermetic half is `console/test/e2e/managed.spec.ts`, which walks the same tab against the stub — and the live reading is the one a stub cannot take | See "Check 360" below; there is **no script** — the check is three steps you do by hand in the console and the reading you take from them — and **you** run it, on your own machine, with an installation and a managed project; **no agent runs any step of it** | One `fugaro update` — the same run you would make anyway — plus two reads and one window: no model call, no run and nothing billable. Nothing is created or written by the check itself, so there is nothing to restore. **USER-RUN, NOT RUN.** |
 | 361 | The workspace's own Firebase's sign-in providers ([`docs/workspaces/`](workspaces/spec.md) spec §3's provider pin, and that plan's **W3**): the Identity Platform configuration of the workspace's **own** project, read once over REST and judged against the pin — `google.com` and `password` enabled, `anonymous` and phone-number sign-in off, no other provider enabled, and public sign-up **not** disabled. It is the check W3's design says no hermetic test can hold: the project and its rules come from the installation path, but `fugaro setup`'s Identity Platform step initializes with **no provider** (`IdentityPlatformStep`, `internal/infra/identityplatform.go`) — right for a member's project and wrong for the workspace's — and `refusePublicSignUp` (`internal/cli/init_firebase.go`) refuses an off-pin provider on a workspace's own project by name while never *requiring* the pinned pair, so the providers are enabled by you and this is the read-back. A workspace whose project carries no provider has nobody who can sign in, and one that carries a provider the pin refuses is a sign-in path the exchange never sees | See "Check 361" below; `bash scripts/live-checks/check361.sh --project <the workspace's own project>` is the whole of it — ONE read-only GET, nothing created and nothing deleted, so it is safe to run repeatedly — and **you** run it: a project whose name contains `belong` is refused before any call, and **no agent runs any step of it** | Nothing billable and no model call: one GET of the project's Identity Platform configuration with your own credentials. **USER-RUN, NOT RUN.** |
@@ -917,6 +954,9 @@ probe account carries predefined grants only).
 | 520 | A text-only coder reads a screenshot, on the vision model ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 520** and task **V8**; **V1**'s `agent.models.vision`, **V2**'s `model_prices.*.image_tokens`, **V7**'s rewrite of the coder role, and **D2016** — which is why the state this measures is the coder priced **without** an image rate and not the plan's "with"): the sandbox repository's coder is priced without an image rate and `agent.models.vision` names a model that can read one, and one run whose task names a console `__screenshots__` PNG (the issue's own case, run `20261107-104613-b2af`) passes `implement` — and `fix`, where the recipe runs one — reaches its own `result.json`, and there every coder-role stage timing names the **vision** model's ID while `cost.model_by` carries that same model, so the split the issue is about is read from the record and not from the configuration; `fugaro diagnose <run> --json` prints the same split through the command an owner reads a run with | See "Check 520" below; `bash scripts/live-checks/check520.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check520_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | ONE sandbox run and what its task costs — the model spend of its coder-role stages, on the sandbox's own budget — plus the pull request that run opens: **billable, and `--yes` is required** before anything is launched. Every other call is a read (doctor, `models ls`, the run record, `diagnose`), and `CHECK520_MAX_MODEL_USD` turns the run's own figure into a criterion when you set it. The run's pull request and branch are left open for you to close. **OWNER-RUN, NOT RUN.** |
 | 521 | The early refusal, and the sentence an owner acts on ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 521** and task **V8**; **V5**'s bootstrap refusal — "the coder can't read an image the task names" — and **D2005**, **D2006** and **D2001**): a repository whose coder is priced without an image rate and with **no** `agent.models.vision`, and a task whose text names a `.png`: the run is refused at **bootstrap**, before its first stage, so no stage's work is paid for and thrown away — the failure the refusal exists to remove; its record's `failure_class` is `config_invalid`, its `reason` names the slot to set and the price member that gives that slot's model an image rate, its stage list is **empty** and its cost is **zero** | See "Check 521" below; `bash scripts/live-checks/check521.sh --sandbox <a sandbox repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check521_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | **NOTHING billable and no model call**: the run is refused at bootstrap, before its first stage, so no stage's work is paid for and the budget is not touched — which is why this check needs no `--yes`. It does start one Cloud Run job execution, and **nothing it launches outlives it**: a run that has not ended within `CHECK521_RUN_TIMEOUT_SECONDS` is cancelled with `fugaro cancel --now`, from the step that gives up on it and from the script's own exit trap. **OWNER-RUN, NOT RUN.** |
 | 292 | A catalog entry whose source names a build `context:` is built with the repository's files in it ([`docs/catalog-build-context/`](catalog-build-context/implementation-plan.md) §6, its **Check 292** and task **CB5**; that folder's **F22**, **F29**, **F30**, **F32** and **F33**, and **D1402**, **D1403**, **D1408** and **D1409**; the amendment it folds into is [`docs/project-image-catalog/context-design.md`](project-image-catalog/context-design.md), its §A5, §A6, §C3, §C4, §C5 and the fold-in at §11): one entry built from a repository's Dockerfile in a **subdirectory**, whose `COPY` reaches a file of the repository — the build the catalog could not run before this work — read back four ways: the built image **contains the copied file**, the record names **one** commit (`source_commit` and `context_commit` the same, and the image's `org.opencontainers.image.revision` that commit), the staged context **fires** the nightly decision with the `catalog-context` reason and the rebuild it submits is pinned to the staged commit, and after that rebuild the same entry decides **without** that reason. **What the plan's own step 4 cannot be run as written is the point of the section below:** the trigger's subject is the digest the operator's own copy **staged**, not the branch, so a pushed commit fires nothing by itself — the check is written against the code and says so | See "Check 292" below; **you** run it, on the **sandbox installation and the sandbox repository only, never `belong`**, from the sandbox repository's checkout, and **no agent runs any step of it** (there is **no script**: the check is the steps below) | One Cloud Build that runs (`fugaro image build <entry>`), one submitted-and-cancelled before its steps run (the staging that leaves the record behind), and the one rebuild the project's catalog check job submits when the entry fires: **all billable, and the rebuild is the point of the step**. Nothing is granted, no run is launched and no model is called, so there is no run spend. Two commits are pushed to the sandbox repository's branch and reverted (a third when step 5 loses its race with the build it cancels), and the entry, its staged objects, its record, its check state and its image are the check's own — the entry and its objects are removed in the Restore, the image is left in the shared registry (`fugaro image rm` never deletes one). **OWNER-RUN, NOT RUN.** |
+| 420 | Pool failover on a real installation ([`docs/model-crafts/`](model-crafts/implementation-plan.md), its **Check 420** and task **MC10**; **MC5**'s ordered failover in a run and **MC6**'s credentials service behind it, with **D1622**/**D1626** for the `subscription_spread` switch a mixed pool needs on and **D1629**/**MC8** for the record's additive `craft_credentials`): the coder craft's effective access names a **failover** pool (`fugaro craft ls --json`) whose members the credentials service serves (`fugaro project policy show --json`, `fugaro creds ls --json`), one member is exhausted at a deliberately tiny cap at the provider, and one sandbox run then shows the pool moving off it — the run ends `succeeded`, its `switches` log carries the move onto another member (the credentials service's own record, C1.16 and D140, and not a reading the script made up), and the credential the record names is a member of that pool | See "Check 420" below; `bash scripts/live-checks/check420.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check420_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused by name, and so is a coding agent's session); **no agent runs any step of it**. **The pool is yours to declare**: no command of this release stores a key under a credential's own name (`fugaro accounts add --type` takes claude-oauth alone), so the two API-key credentials Check 420's sentence names are entries in your own project configuration with their keys stored under their own names, and the pool that lists them is yours too — the check adds no credential and writes no config, and its FAIL rows say which piece is missing | ONE sandbox run and what its task costs, on the sandbox's own budget, plus the pull request it opens: **billable, and `--yes` is required** before anything is launched. Every other call is a read (`doctor`, `craft ls`, `accounts pool ls`, `project policy show`, `creds ls` and the run's own record), and `CHECK420_MAX_MODEL_USD` turns the run's own figure into a criterion when you set it. The pull request and its branch are left open for you to close. **OWNER-RUN, NOT RUN.** |
+| 421 | Round-robin spread over N runs ([`docs/model-crafts/`](model-crafts/implementation-plan.md), its **Check 421** and task **MC10**; **MC7**, whose red step is this check's reading — "three selections must not all pick member 1" — with **D154**'s per-run stickiness and **D1625**'s counter): the coder craft's effective access names a **round-robin** pool of two or more members the credentials service serves, and **no craft the service serves is pinned** to a credential, an OpenRouter key or the built-in `vertex`, because one call hands the service one candidate list and the rotation is only taken up when every craft contributing to it goes out on a pool asking for it; N sandbox runs (two by default) are launched and followed to their ends, and over them **at least two different members served one run each**, read from each run's own record (`craft_credentials` where the build writes it, else `oauth_account`, `stage_accounts` or the switch log). One member serving every run is the pool NOT rotating, which is the state MC7 exists to remove | See "Check 421" below; `bash scripts/live-checks/check421.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check421_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused by name, and so is a coding agent's session); **no agent runs any step of it**. The pool is yours to declare, as Check 420's row says: this check reads the installation's own crafts, published node and bundle, writes no config and no credential, and launches only the runs | N sandbox runs (two by default; `--runs N`, 2 or more) and what their tasks cost, on the sandbox's own budget, plus the pull requests they open: **billable, and `--yes` is required** before anything is launched. Every other call is a read, and `CHECK421_MAX_MODEL_USD` turns the TOTAL figure into a criterion when you set it. The runs' pull requests and branches are left open for you to close. **OWNER-RUN, NOT RUN.** |
+| 422 | `fugaro update` on an installation at the previous version converges with no manual step ([`docs/model-crafts/`](model-crafts/implementation-plan.md), its **Check 422** and task **MC10**; **MC4**'s migration and the reconciliation's **F17** and **D1621**): on a machine whose local config still carries the accounts design's keys (`claude_accounts`, `default_claude_account`, `stages`), one converge converts them in place — a typed `claude-oauth` credential per named account, and a craft access per craft — and finishes with **nothing left for the person**: exit 0, no `left_for_you`, no failed stage. The older keys stay (the migration only ADDS; MC5 moves the readers), a second converge of the same installation leaves the migrated keys byte for byte as the first left them, the crafts the config states resolve through `fugaro craft ls`, and the published policy node's craft members did **not** move — no command of this release writes them, so a converge that rewrote the operator's published crafts is the silent loosening this row catches | See "Check 422" below; `bash scripts/live-checks/check422.sh` is the whole of it — nothing is required but the script's own path, because the installation is the one `fugaro doctor --json` answers and the config is that installation's own local config as the CLI's own default documents it — its sibling test `scripts/live-checks/check422_test.sh` drives it against fake tools only, and **you** run it, on a **sandbox installation**, **never `belong`** (a name or a config path naming that installation is refused, and so is a coding agent's session); **no agent runs any step of it** | **TWO converges of the sandbox installation** — the whole of what `fugaro update` does: the Terraform plan and apply, the rules deploy, the published policy, the job images behind their own confirmation and the local config — the second being the idempotence reading. Nothing here is billable on its own (no run is launched and no model call is made) and `--yes` is passed to each converge, so run it where an image rebuild, a deploy or a first policy publish an unrelated stage decides it wants is acceptable. Two reads of the published policy node with your own credentials are the only other call. On disk it is one scratch directory, removed at the end, and **the migration STAYS**: it is the installation's own state, `fugaro update --forget` is your own rollback and the check never runs it. **OWNER-RUN, NOT RUN.** |
 | 490 | A trivial finding is deferred, and the run still ends ready ([`docs/post-review-triage/`](post-review-triage/implementation-plan.md), its **Check 490** and task **T-TR13**; **T-TR8**'s ruling that a Startup run whose reviewer reports only a finding below the floor finishes ready with the finding recorded as a follow-up, and the two things **T-TR7b** writes for an owner to read): one real Startup run over a task this check writes — exactly one word of one sentence in one documentation file, so the reviewer's finding is the trivial one — read from its own `result.json`: it ends **ready** after **one** review round that reported a finding, the mode it resolved is one the triage step governs, its `triage` block holds a round whose entry for that finding reads `defer` from a source outside the floor, and `deferred.findings` names **the same key**, so the verdict and the follow-up are one finding and not two; and the pull request's **Deferred (follow-ups)** section, read with `gh pr view`, carries that key and the reviewer's own summary — the text Check 491 files from | See "Check 490" below; `bash scripts/live-checks/check490.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check490_test.sh` drives it against fake `gcloud`, `fugaro` and `gh` only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | ONE sandbox run and what its task costs — the model spend of a documentation change, its review rounds and its triage calls, on the sandbox's own budget — plus the pull request that run opens: **billable, and `--yes` is required** before anything is launched. Every other call is a read (doctor, the runs list, the record, `gh pr view`), and `CHECK490_MAX_MODEL_USD` turns the run's own figure into a criterion when you set it. The pull request and its branch are left **open**, because Check 491 files from them. **OWNER-RUN, NOT RUN.** |
 | 491 | The deferrals are filed, one debt task per group, and listed ([`docs/post-review-triage/`](post-review-triage/implementation-plan.md), its **Check 491** and task **T-TR13**; **T-TR10**'s `fugaro followups RUN` and `fugaro runs ls --debt`): after Check 490's pull request is **merged**, the parent run's plan (`fugaro followups RUN --json`, which refuses an open or a closed pull request, so a plan that answers is the reading that it is merged) is held against the parent's own record — every group the triage tied its deferrals into is named by exactly one task, none left over and none counted twice — then `--launch` files **one debt task per group**, each read back from its own `task.json` (the debt mark, the parent run, the keys it settles and the parent's **applied** mode, never empty), `fugaro runs ls --debt --json` lists every one of them and no row that is not a task filed from a deferral, and the plan read again has nothing left to file, which is what makes an interrupted call safe to repeat | See "Check 491" below; `bash scripts/live-checks/check491.sh --sandbox <a sandbox repository checkout> --run <the parent run> --yes` is the whole of it, its sibling test `scripts/live-checks/check491_test.sh` drives it against fake `gcloud` and `fugaro` only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | One sandbox run started per group — each does the work of a start and is cancelled by the check as soon as it has read the task, so the figure is a fraction of a run and the pull request a whole one would open is never opened: **billable, and `--yes` is required** before anything is filed, with `CHECK491_MAX` capping how many groups one call files (the command's own default). Nothing it files outlives it, and the parent run and its pull request are left exactly as they were. **OWNER-RUN, NOT RUN.** |
 | 492 | A `security` finding is never deferred, at level 2 and at the level 3 the request turns on ([`docs/post-review-triage/`](post-review-triage/implementation-plan.md), its **Check 492** and task **T-TR13**; **D1847**'s tension — every level's findings are triaged, and the level-3 pass the plan considered was declined — on **T-TR6**'s table, whose floor no verdict may move, and **T-TR8**'s hold): TWO real Startup runs over a task built to draw an openly exploitable weakness (an argument of a shell command line taken as it arrives), the second launched with `fugaro run --security`, which turns review level 3 on for the run whatever paths it changed. Each run's record must place that finding as `block` from the **table** with the floor's own sentence as its reason — the triage step may not move it — and its `deferred.findings` must name none of the keys the floor held, so no follow-up task can be filed from it; the second run's block must also hold a round at level `l3`, and when that round holds nothing the floor had to hold the row says so rather than reading a pass out of an empty list. **What the check cannot read back is the class itself**: the triage path records no per-finding class, so the class is the task's — the row says so — and what the rows read is the table's own sentence for a finding the severity override covers | See "Check 492" below; `bash scripts/live-checks/check492.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check492_test.sh` drives it against fake `gcloud` and `fugaro` only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | TWO sandbox runs and what their task costs — each small, and the second one paying for the level-3 review round the request asks for — plus the pull requests they open: **billable, and `--yes` is required** before anything is launched. The second run is launched only when the first leg's rows are all PASS: a leg that could not be graded is not a comparison worth a second run's money, and the row that skips it says so. Nothing either run starts outlives the check: a run that has not ended within `CHECK492_RUN_TIMEOUT_SECONDS` is cancelled with `fugaro cancel --now`, from the step that gives up on it and from the script's own exit trap. `CHECK492_MAX_MODEL_USD` turns the two runs' summed figure into a criterion when you set it. The pull requests and their branches are left open for you. **OWNER-RUN, NOT RUN.** |
@@ -928,6 +968,12 @@ probe account carries predefined grants only).
 | 313 | CG13's endpoint on a real machine ([`docs/cli-output-console-graph/`](cli-output-console-graph/implementation-plan-graph.md), its **CG12** row 313, its task **CG13b** and the decision **D1359**, all of 2026-11-06): the registry file the daemon writes under the state directory (`<UserDir state>/fugaro/run/<id>.json`) is mode **0600** in a mode **0700** directory and carries a **nonce** minted per start; nothing about it is judged by a **pid** — liveness is a **handshake** with the file's own token (the answer must read back the id and the nonce, which a port or a pid another process took over cannot) plus the **lock** the daemon holds for its life (an `flock` the kernel drops when the process dies); `fugaro graph --source local:<id>` answers and goes through `endpoint.Probe`; a `kill -9` of the daemon leaves a file the reader must judge dead, **remove**, and never let it touch a **live process that has taken the pid**; and a **reboot** mints a different nonce. The three things CG13b's tests can only fake are real here: a SIGKILL that leaves a file behind, an `flock` the kernel drops, and a loopback listener that answers. A daemon a login unit supervises (launchd's `KeepAlive`, systemd's `Restart=always`) restarts itself within 5 to 10 seconds, so the crash half wants one started **by hand**: where the daemon came back the check reports that half as **NOT MEASURED** (exit 2) with the one line that fixes it, rather than misjudging it | See "Check 313" below; `bash scripts/live-checks/check313.sh [--id <the orchestrator's id>]` is the whole check **before** the reboot, and `bash scripts/live-checks/check313.sh --phase reboot --previous-nonce <the value the first block printed>` is what you run **after rebooting and starting a daemon again** — it repeats every reading and adds the nonce comparison. **You** run it, on your own machine, against a daemon you can lose, with an id that is **not `belong`** (refused before anything is read), and **no agent runs any step of it** | One loopback handshake, one local read and two `fugaro` commands: no model call, no run, no cloud call, nothing billable. **USER-RUN, NOT RUN.** |
 | 314 | The person's viewer role over `orchestrator/` ([`docs/cli-output-console-graph/`](cli-output-console-graph/implementation-plan-graph.md), its **CG12** row 314, the round-3 ruling **T2** of 2026-11-06 and its scheduling row **B4**; CG4 and CG6 merged on 2026-11-10): **T2 is UNVERIFIED until you run it** — no rules test can read a project's IAM, so whether `roles/firebasedatabase.viewer` on a **person's** credential covers the `orchestrator/` subtree is this reading and no other. `fugaro orchestrator ls --json` (CG4's shallow read of that subtree plus one lease read per id) **is** the read T2 is, made by your installation's own application-default credential; the check reads that credential's **type** first (a service account's, an impersonation's or a workload-identity federation's answers a different question and stops the run), reads the installation's own config file for the project its database belongs to (`budget.firebase_project`, else `gcp_project`) and reads the policy **on that project**, reads the roles the policy binds to `user:<the account>` or to its domain, and then reads the listing. A role that covers the whole project (`roles/owner`, `roles/editor`, `roles/firebasedatabase.admin`) bound beside viewer, or an `orchestrator/` holding no node, makes T2 **NOT MEASURED** (exit 2) rather than passed; a refused read is quoted and read as T2 answered **NO**. H7 — that no run or token identity reads or writes it — is CG6's pin, not this check's | See "Check 314" below; `bash scripts/live-checks/check314.sh [--project <name>] [--account <address>]` is the whole check. **You** run it, on a sandbox installation, **never `belong`** (refused in what you type and in what `doctor` answers), and **no agent runs any step of it** | One credential-file read, one `fugaro doctor --json`, one `gcloud projects get-iam-policy` and one `fugaro orchestrator ls --json`: no model call, no run, nothing billable, nothing written. **USER-RUN, NOT RUN.** |
 | 210 | A sampled run's shadow publishes nothing ([`docs/model-ab-testing/`](model-ab-testing/implementation-plan.md), its **Check 210** and task **A2.2**; **D550**–**D557**'s sampler — `ab.rate` and its ceiling, the daily cap, the champion's own hash of the run ID — **D554**'s publish mode `none`, and **A2.1**'s tests for the boundary this plan's Global constraints table states, "a challenger never pushes, never opens, updates or comments on a PR"): on the sandbox installation whose published project layer sets `ab.rate: 0.10` with one challenger named and whose repository carries no `ab.rate: 0` opt-out, small sandbox tasks launched until `fugaro runs ls` shows a pair (about ten launches expected at 0.10, the owner stopping at thirty, and **no flag forces a sample**) — and then, of that pair's two arms, exactly one `fugaro/<run-id>` branch on the remote and one pull request, both the champion's: the challenger's own record carries `ab.arm: challenger`, `ab.publish: none`, `ab.challenger` (the model the owner named) with `challenger_source: owner` and `outcome: none`, and **no** branch and **no** pull request, while **both** arms' patch objects are in the bucket — each fact read where it is written rather than from the row that claims it | See "Check 210" below; `bash scripts/live-checks/check210.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check210_test.sh` drives it against fake `fugaro`, `gcloud`, `git` and `gh` only and launches nothing, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project, account or region naming that installation is refused by name, and so is a coding agent's session); **no agent runs any step of it** | Up to **THIRTY sandbox runs** and what their tasks cost — each champion's implement stage and its review rounds, on the sandbox's own budget — plus the branches and pull requests those champions leave: **billable, and `--yes` is required** before anything is launched. Everything else is a read (the layer, `doctor`, both records out of the runs bucket, the remote's branch list, both patch objects, `fugaro ab --json`), and the launches stop at the **first** pair, so a sandbox already sampling at 0.10 costs a fraction of the bound. The teardown is part of the check: a launch that has not ended is stopped with `fugaro cancel --now` and read back, then every pull request this check's champions opened is closed and every branch they pushed is deleted, each read back. **OWNER-RUN, NOT RUN.** |
+| 120 | The reports arrive, from the first launch, at `fugaro-prod` and no other project ([`mobile/implementation-plan.md`](mobile/implementation-plan.md), its Phase 7 and its task **P7.5**; [plans/2026-10-19-mobile-telemetry.md](plans/2026-10-19-mobile-telemetry.md) §12 is the authority for the text, §2.2 for the numbers being the first free ones after every claim, and the phase's merged code is `mobile/app.config.js`, `mobile/firebase.json` and `mobile/src/telemetry/`): a **signed build of the app carrying the reporters** (Check 89's path), installed on a **real device** and launched with **nothing touched** — no sheet, no switch, no prompt — watched in the Firebase console, where the arrival is read **at the first launch** and **for `fugaro-prod` and for no other project** — on this tree that is **Analytics' automatic `first_open` and `session_start`**, the app's own senders being unwired and Crashlytics recording no launch that does not crash; then the two negative halves, which are what the check is for: the shell's statement is the one `mobile/src/telemetry/notice.js` holds, with the `/privacy/` URL it carries drawn as **text** — the app has **no link opener**, so the URL is text whatever the host list says and answering **D124** does not change that (the section carries the dated correction to §12) — and the **built artifact's merged manifest declares no `AD_ID` permission**, read from the artifact rather than the source | See "Check 120" below; **you** run it, at your own terminal, on your own device, with your own EAS project, your own store credentials and your own Firebase console — Check 89's build is the build it reads, and this work writes no script — **never `belong`**, and **no agent runs any step of it** | One signed build and one installation on one device, plus the minutes the console takes to show an event: **no run, no job, no model call and no dollar** — the build and the device are your own, and the app's own reports are the only bytes the check sends, to the project you operate. The link half waits on a task that grows the app's link opener — the shell draws the URL as text, so the owner's host list naming `fugaro.dev` is not what it waits on; the event half is written against **the build that ships**, because the owner's ruling of 2026-10-30 drops Analytics (**T3.1** builds it, **T0.1** amends the plan), and no merged task wires the app's own senders — step 1 says what has to exist first. **OWNER-RUN, NOT RUN.** |
+| 121 | A real crash reaches `fugaro-prod`, and nothing in the report names anything ([`mobile/implementation-plan.md`](mobile/implementation-plan.md), its Phase 7 and its task **P7.5**; [plans/2026-10-19-mobile-telemetry.md](plans/2026-10-19-mobile-telemetry.md) §12 for the text and §7 for the ban list and the redaction rule; the merged code is `mobile/src/telemetry/breadcrumbs.js`, which takes a constant from its own list or the text through `shared/digest`'s `redact`): crash the app deliberately on a freshly installed device, and the report appears in **Crashlytics under `fugaro-prod`** — with **no message text, no mailbox key, no account id, no `authUid`, no project id, no token and no MAC** in its breadcrumbs, its custom keys, its logs or its device fields, **no `setUserId`** and **no advertising identifier** — and then the control, which is the half that proves the reporting is the SDKs': **the same crash on the first internal build, which carries neither SDK, produces no report at all** | See "Check 121" below; **you** run it, at your own terminal, on your own two builds and one device, with your own Firebase console — no script of this work's — **never `belong`**, and **no agent runs any step of it** | Two builds, one device and one deliberate crash: **no run, no job, no model call and no dollar**, and nothing is created in any project by the check — the reports are the builds' own. Its first half is read against the posture the build carries: the plan wrote it as the always-on answer, and the owner's ruling of 2026-10-30 (**D731**) makes crash reports **on by default and opt-out**, built by **T3.1** after **T0.1** amends the plan, so the section says which build each half is read on. **OWNER-RUN, NOT RUN.** |
+| 122 | The two store forms and the live privacy statement match what the app sends ([`mobile/implementation-plan.md`](mobile/implementation-plan.md), its Phase 7 and its task **P7.5**; [plans/2026-10-19-mobile-telemetry.md](plans/2026-10-19-mobile-telemetry.md) §12 for the text, §8.1 and §8.2 for the two forms category by category and §8.3 for the page being already live and already ahead of the build): Play's **Data safety** form and the App Store **privacy label** as you answered them, read **against the traffic observed in 120 and 121** — every ticked category justified by something seen, and the over-declared ones recorded **as** over-declared, in your own words — and then `https://fugaro.dev/privacy/`, the URL both listings point at, read **sentence by sentence** against the build: every provider and category it names is one the app sends, and every category the app sends is one it names | See "Check 122" below; **you** run it, in your own Play console, App Store Connect and browser, with the build 120 and 121 measured — nothing here is an agent's, and no script of this work's exists — **never `belong`**, and **no agent runs any step of it** | No build, no device, no run and no dollar: two consoles and one page, read against readings you already have. Its two store forms are re-answered by **T3.2** once **T3.1** has shipped the owner's ruling of 2026-10-30 (Analytics dropped, crash reports opt-out), so the section says which answers it holds the build to and which it waits for. **OWNER-RUN, NOT RUN.** |
+| C0 | The console-coordinator page's reads, timed and sized ([`docs/console-coordinator-v2/`](console-coordinator-v2/implementation-plan.md) §C0, and its [`spec.md`](console-coordinator-v2/spec.md) §2.2, whose `(unmeasured)` cells are what this produces; **C0 is a plan task and not a register number — it claims none and reserves none**): `fugaro runs ls --json --since 24h`, `--since 7d`, `--since 0`, `--since 24h --limit 50` and `--since 24h --limit 20` (both limits, because the plan's own row names 50 while the spec's halted-or-failed-job cell reads 20), `coordinator status --from-store --all --json` **once per installation named** — that document's size is a function of the repository count, so two installations give two points on the curve the spec's `~724 KB` is one of — `plan status --json --all` once per checkout named, and `budget show --json`: each run the way the console spawns it, each timed with bash's own `TIMEFORMAT` and sized by the document's own length on stdout | See "Check C0" below; `bash scripts/live-checks/check-c0.sh --project <name> [--project <name>...] [--checkout <path>...]` is the whole of it — a FACT row per read, a table of bytes and seconds, and one `CELL` line per read in the wording the spec's cells need — and **you** run it, on an installation you name, never `belong` (a project or a checkout naming that installation is refused before any read is made); **no agent runs any step of it** | Nothing billable and no model call. **Every command it runs is a read** — the runs listing, the stored view, the plan walk and the budget document — so there is nothing to tear down and the `restore` row says so; the only thing it removes is its own scratch directory, from its exit trap even on a failed read or a Ctrl-C. `plan status` is the one read that is not a single call: it walks the checkout and asks the forge about the pull requests its tasks carry, one `gh` per joined pull request, at most 32 (`planMaxLookups`). **USER-RUN, NOT RUN.** |
+| 310 | The CLI's default output at a real terminal, on macOS ([`docs/cli-output-console-graph/`](cli-output-console-graph/implementation-plan-output.md), its task **CL12** and the guarantees **G1**–**G8** that plan's **CL5b**, **CL9** and **CL10** were written to, whose own table names the five commands below): `fugaro update` at a real terminal draws the colour and the line in flight and prints one line per step with a closing line and an exit status that agree with it (G1, G3, G4); `fugaro setup --plan-only` prints the plan view, and its log holds the same rows, whole and uncoloured (CL5a); `NO_COLOR=1 fugaro update` and `fugaro update \| cat` print every step with no escape sequence and no carriage return (G1, G4); `fugaro update --json` puts one document on stdout and the account on stderr (G2); a forced failure inside a stage prints the step's name, the last lines of the stage's own output and the log's path, and its log is 0600 inside a 0700 directory and holds what the screen did not (G5, G8); and the retention rule removes the oldest log past 14 days or past the newest 50 per command name and touches nothing else — another command's log, a link, a directory, a name that is not the sink's (G6); `fugaro doctor --json` files no log at all (G7) | See "Check 310" below; `bash scripts/live-checks/check310.sh` is the whole of it — one idempotent script, one `PASS`/`FAIL`/`INFO` line per fact, and `--dry-run` to print what it would run without running any of it — and its sibling test `scripts/live-checks/check310_test.sh` drives it against a fake `fugaro` and a fake `terraform` only; **you** run it, on your own machine and your own terminal, against an installation the check reads from `fugaro doctor --json` or you name with `--installation`, and an installation the register refuses by name — `belong`, `belong-*`, `fugaro-dev`, `fugaro-belong` or `edge-devel-dimi` — or a project naming `belong`, `fugaro-dev` or `edge-devel-dimi`, is refused before the first `fugaro update` and before any call at all when you name it yourself (otherwise `fugaro doctor --json` is the read that names it); **no agent runs any step of it** (a coding agent's session is refused outright) | Four `fugaro update` runs and one `fugaro setup --plan-only`, every one of them a re-converge of an installation that already exists: on a converged one each applies nothing and costs nothing billable, and **no model call is made by any step of this check**. The forced-failure run writes nothing at all — its `terraform` is a fake that answers the version question, refuses the rest, and leaves one marker in the check's own scratch directory and nothing anywhere else. Nothing is created and nothing is granted; the only writes are the log directory and the check's own scratch directory, whose 54 seeded logs are removed again, and any of your own logs the retention rule removes while the check runs are copied aside before its first `fugaro` call and put back byte for byte. **USER-RUN, NOT RUN.** |
+| 311 | The same default output on Windows — Windows Terminal and the legacy console ([`docs/cli-output-console-graph/`](cli-output-console-graph/implementation-plan-output.md), its task **CL12** and its own 311 row; the reconciliation's **T4** and **T4(a)**, **D1355**, and the sentence `internal/report/style.go` carries — the ANSI sixteen are what every terminal draws and what the legacy Windows console draws "once virtual terminal processing is on (Check 311)"): whether both consoles draw the colour and the line in flight the reporter draws at a real terminal, whether `NO_COLOR` set to anything and a pipe turn both off there too with every step still printed, whether `--json`'s stdout is one document a Windows shell parses, and — the reading this check exists for — whether the legacy console draws the escapes or prints them, since **nothing in this tree calls `termenv`'s `EnableVirtualTerminalProcessing`** | See "Check 311" below; the steps are the same commands typed in each console, by **you**, on a Windows machine with the CLI installed, and **no agent runs any step of it** — there is **no script** for this one: it is the procedure below, because the subject is a console on a machine no test in this repository can reach | One installation's own `fugaro update` runs in each console, on an installation that is already converged: each applies nothing and **no model call is made**. Nothing is created, granted or deleted, and the log directory is the only thing written. A legacy console that prints the escape sequences is the finding this check exists to make — and it is a **code** decision (the virtual-terminal call), not a reason to edit this row. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -4919,7 +4965,7 @@ FACT: the run's outcome (`fugaro runs ls --project fugaro`, or `fugaro diagnose 
 
 ### 3. The object is worthless without the key, and where the key is (design steps 2 and 3)
 
-**Which job `SANDBOX_JOB` is.** The one step 2's run launched on, which is not always the sandbox repository's own job: a `checkout: clone` workflow of a project whose published policy defines the profile it selects launches on the **shared project job** (`internal/cli/project_job.go`'s `launchProjectJobFor` — the clone path only, and only once the project has published that profile), and a baked workflow, or a project that has published none, keeps the repository's own job. Read it off the run's own launch record — this step is where it is learnt, so steps 1 and 2 do not have it and every step from here re-runs the setup block, which reads it back out of `vars.env` — and use that job in every step below that names it (3 to 7, and 9 — step 4's audit-log filter carries it too, and a filter left on the repository's own job would return nothing and record a false FACT). Every use is `${SANDBOX_JOB:?}`-guarded, so an empty one stops there rather than reaching `gcloud`:
+**Which job `SANDBOX_JOB` is.** The one step 2's run launched on, which is not always the sandbox repository's own job: a workflow of a project whose published policy serves a profile for the repository's provider launches on the **shared project job** (`internal/cli/project_job.go`'s `launchProjectJobFor` — the profile path, and only once the project has published that profile: the workflow's checkout no longer decides the job, D2304), and a repository the policy serves no profile for, a project that has published none, and, until a shared job carries the image a baked workflow declares, a `checkout: baked` workflow, keep the repository's own job. Read it off the run's own launch record — this step is where it is learnt, so steps 1 and 2 do not have it and every step from here re-runs the setup block, which reads it back out of `vars.env` — and use that job in every step below that names it (3 to 7, and 9 — step 4's audit-log filter carries it too, and a filter left on the repository's own job would return nothing and record a false FACT). Every use is `${SANDBOX_JOB:?}`-guarded, so an empty one stops there rather than reaching `gcloud`:
 
 ```bash
 # -er, not -r, AND the non-zero exit is consumed: a launch record with no .job
@@ -13076,6 +13122,104 @@ Exit `0` means T2 holds; `1` means it does not, or the premise was not there (ea
 **Paste back:** the whole `CHECK 314 RESULT` block. The credential file's **path** and its **type** are printed; its contents never are.
 
 
+## Check 330: the api-key review's own path — two runs beside each other, and the review-only job (a sandbox installation and a sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **AK8** of the api-key review
+([`docs/api-key-review/implementation-plan.md`](api-key-review/implementation-plan.md), its **AK8** and its Check 330), under the
+number the register had free at that merge, and the plan's §5 is the check's text. **D1410** (both slices) and **D1421** (after
+0.20.0) are the answers it runs under: **F10** is the admission `fugaro review` needs and **F11** the gateway the review class needs,
+both premises it reads rather than findings it could reach, and **F22** is slice C's, which is not run. **Nothing
+in this section has been run, and it is not a claim that the api-key path works.** It is **OWNER-RUN**: **no agent runs any step of
+it**.
+
+Two things have to be there before any of it is read, and both are the sandbox repository's own: **a `fugaro.yaml` whose
+`agent.auth` is `api-key`**, whose coder runs a model the project's provider route claims and whose `models.reviewer` is a Claude
+model, and **a published policy naming no `claude_accounts` stage account for the review class** — that is slice A's first run, and
+the account published afterwards is the second. An installation whose published budget mode is `off` is refused here rather than
+read: the review class refuses a run with no gateway (F11), so a launch on it would measure the refusal rather than the path.
+
+**Run it:**
+
+```bash
+bash scripts/live-checks/check330.sh --sandbox <a sandbox checkout> --run <slug>/<run-id> --contrast <slug>/<run-id> [--review <slug>/<run-id>]
+```
+
+**You** run it, on a sandbox installation and a sandbox repository and **never `belong`**, and **no agent runs any step of it**. It
+launches nothing and writes nothing: it reads, from the sandbox checkout, `fugaro doctor --json` (the project and the region every
+read is scoped to), `fugaro project policy show --json` (the budget mode and the account values the profiles name) and `fugaro runs ls
+--all --json --since 0` (which resolves the references you pass), and then `gcloud storage cat` of each named run's `result.json` and
+`launch.json`, `gcloud logging read` of each run's execution for the gateway's own `model call` lines, and — with `--review` —
+`gcloud run jobs describe` of the job that run launched on. `--log-view <view>` names an installation whose logs are read through its
+own view. **No credential is printed and none is held**: this check handles no key and guesses none, which is why the key's own name
+stays a step of yours below. `--dry-run` prints the guards and the plan, makes **no** `fugaro` call and **no** `gcloud` call, and
+takes no verdict.
+
+The block is the same shape whatever happened, so two runs of it can be diffed: every row below is printed in its own order, a row
+the run never reached reads `FAIL — not reached`, and the exit status says which of the three the run was — **0** every criterion
+held, **1** a criterion failed, **2** the check could not tell (a guard stopped it, or a row nobody could read). **A row nobody could
+read is never a pass and never a finding**: it ends the run at 2 and names itself.
+
+**What it will read.**
+
+1. **The coder's calls reached the provider, and the review's reached Anthropic.** Rows `log-coder` and `log-review`. The run's own
+   stages (`plan`, `implement`, `fix`, `review_first`) are served by the run's own credential, and the **review class** (`review`,
+   `adversarial`, `triage`) is what a `claude_accounts` stage account serves. **FACT:** the gateway's lines for this execution carry a
+   route for the run's own stages' calls and **no** route for the review class's, and the route-less ones are served by a Claude
+   model — one log names both, which is the whole of this criterion.
+2. **The review's dollars are real.** Row `review-dollars`. **FACT:** the review class's stage timings carry a `model_usd` above zero
+   and **no `model_notional_usd` at all** — an absent figure, not a zero one. A stage that carries notional dollars was served by an
+   account's own token rather than by a key, and the gateway's figure is not money anybody spent.
+3. **The split carries the coder's stages and not the review's.** Row `route-by`. **FACT:** the run's `cost.route_by` is present and
+   totals the run's own stages' `model_usd` — not the run's whole spend (which would put the review's dollars inside the provider's
+   route), and not nothing (which is the split the run never wrote). A record with no `route_by` reads as that, and not as a zero
+   split.
+4. **The contrast, which is what the check is for.** Row `contrast`. With a `review` stage account published and the same task run
+   again, **FACT:** that second run's review class reads `credential=oauth` with `model_notional_usd` equal to `model_usd`, both above
+   zero. The two runs side by side are the pair the block names at its end; either one alone measures half of it.
+5. **The review-only job ran the variant the sentinel names.** Rows `review-launch` and `review-env`, slice B, with `--review`. A run
+   launched with `fugaro review --pr N` (or `fugaro run --pr N --recipe review-only`) on an installation that publishes the pairing's
+   sentinel and has the credentials service on. **FACT:** the job the run was launched on is the one the published policy itself
+   derives for the account — the review-only variant of a `(profile, provider, account)` triple the policy serves, matched by
+   recomputing those names, because a name is not readable for the variant it is (the account is the last segment of it and the
+   policy's long ones are cut off it, so the variant and the same triple's shared job differ in the hash alone) — and that account is
+   a value with a doubled dash: `anthropic-api-key--project`, which is the project's own Anthropic key, or `provider-key--project`,
+   which is slice C's and is noted as such rather than read as this path. A run on the same triple's shared job, or on any job the
+   policy derives for no triple, fails the row — the shared job mounts the App key a review must not be able to read. A run on the
+   installation's own **implicit review-only job** — the review variant of the no-account job of the default profile on github, the
+   one project job a policy that declares no profile for it deploys — fails it too, for the reason an account's own variant does:
+   that job serves the default Claude account, not the project's key. The job's
+   described environment and volumes hold **no** secret-sourced entry and
+   **no** secret volume: the review container mounts no credential of the repository's, because its read-only token and its model calls
+   both come from the credentials service.
+6. **That run's calls were served by the key.** Row `review-log`. **FACT:** the gateway's lines for the review-only execution carry
+   route-less model calls served as a Claude model, the same shape
+   `internal/creds/select.go` gives a sentinel that names the project's key.
+7. **Nothing here names the key.** Which credential of the service's the route-less calls actually spent is the service's own record,
+   and neither the run's record nor the gateway's log names one: that reading is **step 2 of yours** below, and this check never
+   guesses it.
+
+**The steps that stay yours.** The script prints them at the end of a real run, and it does not fake them:
+
+1. **Slice A's setup and its two runs** — the sandbox repository and policy above, one task, then the `review` stage account
+   published and the same task run again for `--contrast`.
+2. **The key's own name** — open the credentials service's own record for slice B's run (or its console) and read that the
+   route-less calls this check saw were served by **the project's Anthropic key** the sentinel names, and not by another credential
+   the service holds.
+3. **The refusal** — in a sandbox repository whose `agent.auth` is `api-key` and whose profile's `claude_accounts` does **not** name
+   the key, run `fugaro review --pr N` and read that the launch is **refused**: nothing launched, no claim and no budget token, with
+   the sentence AK5 rewrote, naming the value, its two kinds and the fix (`profiles.<profile>.claude_accounts`, then `fugaro update`).
+4. **Slice C — the OpenRouter path — is not run.** It may not be run before Check 50, which gates a third-party route for a Claude
+   model, and `internal/creds/select.go` refuses every tier-C candidate today, so a run of it would measure that refusal rather than
+   the path. `--provider`, `--provider-key` and `--slice-c` are refused by the script outright, which reads nothing.
+5. **Record what you read** in this section: the run references, the routes and serving models the block names, and how steps 2 and 3
+   answered.
+
+**Restore.** Nothing is created, granted or deleted: the check launches no run, writes no object, publishes no policy and mints no
+credential. Its whole footprint is the reads above and a scratch directory removed with it.
+
+**Paste back:** the whole `CHECK 330 RESULT` block, the run references, and what steps 2 and 3 answered — and **never a credential,
+never a key, and never `belong`'s project**.
+
 ## Check 340: the prefix-limited listing grant — one script you run (a sandbox bucket only, never `belong`; run by you; NOT RUN)
 
 **NOT RUN.** Three attempts have been made and none of them is an answer. Written by the task that
@@ -15172,6 +15316,666 @@ challenger that pushed, opened a pull request or carried an outcome is the shado
 not holding, and **A2.1**'s job is where it is fixed. A check that cannot reach a pair inside its bound
 says what the sampler refused (`no-challenger`, `daily-count`, `unrouted`, `unpriced`, `needs-enforce`
 and the rest), which is a reading of the installation's own configuration rather than of the release.
+## Check 310: the CLI's default output at a real terminal on macOS — the colour, the line in flight, the plan view, the log's mode and its retention (your own machine and your own terminal; never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **CL12** of
+[docs/cli-output-console-graph/implementation-plan-output.md](cli-output-console-graph/implementation-plan-output.md)
+— its "Owner-run checks (no agent performs any step)" table, whose 310 row names the five commands and the
+`ls -l ~/.local/state/fugaro/logs` that closes them — and **run by you**: what it measures is what the account looks
+like at a terminal a person is watching, and no offline run can answer that. The check is
+`scripts/live-checks/check310.sh` (its sibling test `scripts/live-checks/check310_test.sh` drives it against a fake
+`fugaro` and a fake `terraform` only), the owner types `bash scripts/live-checks/check310.sh`, and **no agent runs any
+step of it** — the script refuses a coding agent's session outright, reading the same markers `internal/agentenv`
+sets, so an agent that tried would get a refusal and not a reading. Nothing here goes near the dev installation: an
+installation the register refuses by name — `belong`, `belong-*`, `fugaro-dev`, `fugaro-belong` or
+`edge-devel-dimi` (the owner's own) — or a project naming `belong`, `fugaro-dev` or `edge-devel-dimi`, is refused by
+name before the first `fugaro update`, and before any call at all where you name the installation with
+`--installation` (without it, the check's own `fugaro version` and `fugaro doctor --json` are the reads that name
+it), which is what **never `belong`** means on this row.
+
+**What it settles.** The guarantees **G1** to **G8** of the plan above, which are the whole of what **CL5b**, **CL9**
+and **CL10** were written to: the account `fugaro update` and `fugaro setup` print, the log behind it and the failure
+block in front of it. Every other test of that work drives the reporter with a fake terminal, a fake environment and a
+fixture; this is the only place the two are a real `fugaro` on a real pty in front of a real person, which is why the
+plan hands it to you and why the row reads **NOT RUN** until you paste the block back.
+
+- **The five commands, in the order the plan's row names them.** `fugaro update` at the terminal draws colour and the
+  line in flight and prints one line per step, a closing line and an exit status that agree (G1, G3, G4); `NO_COLOR=1`
+  set to anything and `| cat` each print every step with **no** escape sequence and **no** carriage return (G1, G4);
+  `--json` puts one document on stdout and the account on stderr, and the document's own outcome agrees with the exit
+  status (G2, G3). The check reads each of the four with the CLI's own stdout on a pty of the check's own, so "a real
+  terminal" is a reading and not the owner's word for one. `NO_COLOR` is read as the plan's G4 writes it — present and
+  not empty — and `CLICOLOR_FORCE` is not honoured (T4(a), D1355).
+- **The plan view is the log's own rows.** `fugaro setup --plan-only` prints a header and one row per stage with no
+  closing line, and the log it files holds the screen's rows whole and uncoloured and never fewer (CL5a): under
+  `--plan-only` no step is ever run, so the log's copy is the only place a row's whole reason survives. A plan view
+  whose log is missing, or whose log holds fewer rows than the screen, is the finding.
+- **The read that files no log at all.** `fugaro doctor --json` is a listing: one JSON document and no log
+  (G7). The check reads the log directory before and after it and refuses a new name.
+- **The forced failure, and the one shim.** The failure has to land *inside* a stage to reach the block G8 describes,
+  so the check puts a fake `terraform` first on PATH — it answers the one question the CLI asks before it converges
+  (its version, in JSON) and refuses every other subcommand. What is then read is the step line naming the stage, the
+  last lines of the stage's own output printed under it, the log's path, and `fugaro troubleshoot`'s own line naming
+  the run (G8). The stage's own output must be in the log **and not** on the screen: without `--verbose` the default
+  view is one line per step, and a run that streamed its stage's output to the terminal is the drift this reading
+  exists for.
+- **The log's mode and its retention.** The failure run's own log is `0600` inside a `0700` directory (G5), the log
+  holds no escape sequence at all (a log is read with a pager, where the colour that helps a person watching is
+  noise), and the retention rule — 14 days, or the newest 50 per command name — prunes the 54 logs the check seeds for
+  you back to the rule and touches **nothing** it must not: another command's log, a symlink, a directory, or a name
+  that is not the sink's own (G6). Retention reads the directory and never a history, which is why 54 seeded logs stand
+  in for 51 runs.
+- **The platform is a row and not a premise.** On macOS the `platform` fact is a `PASS` naming the release; on another
+  system it is `INFO` and says so, because every reading below is the CLI's own output, which is the same on both, and
+  only the plan's 310 row is macOS's. A Linux machine is a useful run and not this check.
+- **A step left for you is a reading too.** Every `fugaro` call gets a real terminal on stdout and `/dev/null` on
+  stdin, so a converge that reaches a question a person would be asked reads end-of-file instead of blocking, and the
+  step it cannot confirm is reported as one left for you. That is a reading of the closing line and the exit status —
+  and on an installation that is already converged there is nothing to confirm, so a run that leaves a step for you is
+  either a real finding or a machine that needs one ordinary `fugaro update` first.
+
+**What a run costs.** Four `fugaro update` runs and one `fugaro setup --plan-only` of an installation that already
+exists: on a converged installation each applies nothing, and **no model call is made by any step of this check**. The
+forced-failure run writes nothing at all — its `terraform` is a fake whose one file is the marker it leaves in the
+check's own scratch directory, which is how the check knows the shim ran. Nothing is created, granted or deleted: the only
+writes are the log directory and the check's own scratch directory, whose seeded logs are removed again, and any of
+**your** logs the retention rule removes while the check runs are copied aside before its first `fugaro` call — every
+run of the check prunes the directory as it opens its own log — and put back byte for byte in the teardown (the rule
+would remove them on your next `fugaro update` anyway, and the `restore` fact names them).
+The scratch directory is refused inside a git work tree, so a run cannot be made in a checkout by accident.
+
+**The commands.**
+
+```sh
+bash scripts/live-checks/check310.sh --dry-run
+bash scripts/live-checks/check310.sh
+bash scripts/live-checks/check310.sh --installation <the installation to re-converge>
+ls -l ~/.local/state/fugaro/logs
+```
+
+The `ls -l` is the plan's own last step: the log directory as the CLI leaves it, printed in the block as the `ls` fact
+and again before the block for you to read in full.
+
+Progress goes to stderr and one `CHECK 310 RESULT` block goes to stdout at the end: paste that block here and nothing
+else. Every key is printed whatever happened — one the run never reached reads `FAIL — not reached` — so the block is
+safe to diff between two runs. **Exit `0`** is every judged fact holding; **`1`** is a judged fact that did not hold
+(the CLI's output has drifted from G1 to G8); **`2`** is the run not being able to tell (a guard stopped it, a command
+never printed the account this check reads, a tool is missing, an internal error ended it). The judged facts are
+`update-tty`, `tty-colour`, `tty-spin`, `plan-only`, `plan-log`, `no-color`, `piped`, `json`, `json-stderr`, `failure`,
+`failure-id`, `failure-log`, `log-plain`, `log-mode`, `retention`, `retention-guards`, `doctor`, `installation` and
+`restore`; `belong`, `xtrace`, `agent`, `platform`, `fugaro`, `logdir` and `ls` are the guards and the readings around
+them. The knobs are `CHECK310_INSTALLATION` (the installation to drive; the same as `--installation`),
+`CHECK310_DRY_RUN` (the same as `--dry-run`) and `CHECK310_RUN_TIMEOUT` (1800 seconds: how long one `fugaro` call may
+take before the check gives up on it, on a machine with `timeout` — GNU coreutils; macOS ships none, so a call there
+is unbounded — and `0` for no bound).
+
+**What it does not read.** `doctor`'s default view (G9) is a screen, and this check compares no screens;
+`fugaro -v` against `fugaro update -v` (G10) is not one of the five commands the plan's row names; and G11 — an agent
+session sees the same default output — is refused rather than read, because this check is the owner's and an agent's
+session is what it must never be run from. The Windows half of the same account is **Check 311** below, and the
+plan's **314** is the graph work's and not this one's.
+
+
+## Check 311: the same default output on Windows — Windows Terminal and the legacy console, the colour and the line in flight (a Windows machine with the CLI installed; never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **CL12** of
+[docs/cli-output-console-graph/implementation-plan-output.md](cli-output-console-graph/implementation-plan-output.md)
+— its "Owner-run checks (no agent performs any step)" table, whose 311 row says "the same commands in each console" —
+and **run by you**: the subject is a console on a machine no test in this repository can reach, so **there is no
+script** for this one and none is proposed. `internal/report/style.go` already carries the claim this check is the
+only reading of — the ANSI sixteen are "what every terminal draws and the legacy Windows console draws once virtual
+terminal processing is on (Check 311)" — and the reconciliation's **T4** records what is not done about it:
+`termenv` v0.16.0 has `EnableVirtualTerminalProcessing` and **nothing in this tree calls it** (D1355). **No agent runs
+any step of it.**
+
+**What it settles.** Whether the account the plan's G1, G3 and G4 describe survives the one platform the reporter's
+colour rule was written around: colour and the line in flight in **Windows Terminal** (which turns virtual-terminal
+processing on for everything it hosts, so ANSI is drawn), the same in the **legacy console** (a real `conhost.exe`
+window, which does not), and — the reading this check exists for — which of the two things the legacy console does
+with the escapes: draw them, or print them literally. `NO_COLOR` set to anything, a pipe and `--json` are read in both
+consoles, because the rule that turns colour and the line in flight off is the CLI's own and must not depend on the
+console. The **log's mode and the 51-log retention rule are Check 310's readings and are not repeated here**: Windows
+has no `0600` and the sink relies on `%LOCALAPPDATA%` being per-user by Windows' own ACL, so this check claims nothing
+about either. `--no-color` and `--ascii` are not among the commands below: neither flag is declared on `fugaro update`
+today (only `fugaro watch` takes them), and `NO_COLOR=1` is the switch the plan's own 310 row names.
+
+**Getting the legacy console, rather than a `cmd.exe` tab in Windows Terminal.** Windows Terminal is the default
+terminal host on Windows 11 and it turns virtual-terminal processing on for every console it hosts, so a `cmd.exe`
+tab inside it is **not** this reading. Open a real one: **Settings → System → For developers → Terminal → "Windows
+Console Host"**, then start `cmd.exe` — the window that opens is `conhost.exe`'s own, and its title bar is the classic
+one. Put it back afterwards if you want your default.
+
+**The commands.** Type these in Windows Terminal first, then in the legacy console. The one-liners are what make a
+reading objective: they print `True`/`False` rather than asking you to look for a control character, and
+`[char]27` is the escape, `[char]13` the carriage return.
+
+```powershell
+fugaro version
+fugaro update
+$env:NO_COLOR = '1'; fugaro update; Remove-Item Env:NO_COLOR
+(fugaro update | Out-String).Contains([char]27)
+(fugaro update | Out-String).Contains([char]13)
+(fugaro update --json | Out-String) | ConvertFrom-Json
+$env:NO_COLOR = '1'; (fugaro update | Out-String).Contains([char]27); Remove-Item Env:NO_COLOR
+```
+
+```bat
+REM the same, in the legacy console (conhost.exe, virtual terminal processing off)
+fugaro version
+fugaro update
+set NO_COLOR=1
+fugaro update
+powershell -NoProfile -Command "(fugaro update | Out-String).Contains([char]27)"
+set NO_COLOR=
+fugaro update | more
+powershell -NoProfile -Command "(fugaro update | Out-String).Contains([char]27)"
+powershell -NoProfile -Command "(fugaro update | Out-String).Contains([char]13)"
+powershell -NoProfile -Command "(fugaro update --json | Out-String) | ConvertFrom-Json | Out-Null; 'parsed'"
+dir "%LOCALAPPDATA%\fugaro\logs"
+```
+
+**The PASS facts.** In **each** console, read in this order:
+
+- **The account, in Windows Terminal.** `fugaro update` prints one line per step with a mark and a colour, draws a line
+  in flight (the frames `|`, `/`, `-`, `\` over the step that is running) and closes with one line naming the outcome
+  — `Done`, `Left for you` or `Failed`. The exit status agrees with it: `$LASTEXITCODE` is `0` for `Done`, `1` for a
+  step left for you or a refusal, `2` for a cloud error (G1, G3). The colour is the sixteen ANSI colours, drawn and not
+  printed: the escape (`[char]27`) is nowhere on the screen.
+- **The account, in the legacy console.** The same lines, the same marks and the same closing line, and the same exit
+  status. What the colour does here is the reading: **either** the marks and the words are coloured (virtual-terminal
+  processing is on — the call `internal/report/style.go` names is being made somewhere, and the sentence in that file
+  is true), **or** each coloured line shows the escape sequence it was written with, literally, around the mark. The
+  second is a **finding**, and it is the one the tree predicts: nothing calls
+  `termenv`'s `EnableVirtualTerminalProcessing`, so the reporter writes ANSI to a console that cannot draw it. It is a
+  **code** decision for the owner (T4, D1355) and not a reason to edit this row — paste the two lines you saw and the
+  block's own line, and the decision is the owner's.
+- **`NO_COLOR=1`.** In each console: every step is still printed, one line per step, and the marks and the words are
+  plain — no colour anywhere, and the line in flight is not drawn either, because it follows the colour rule exactly.
+  The objective half is the one-liner with `NO_COLOR` still set, which must print `False`; the account must still be
+  there in full. This is the reading that says the colour rule is the CLI's own and not the console's.
+- **A pipe.** `(fugaro update | Out-String)` and `fugaro update | more`: stdout is not a terminal, so the steps are
+  still printed and both one-liners are `False` again — the escape and the carriage return are the two things the CLI
+  must never write where nobody is watching. `Out-String` is the `| cat` of PowerShell — the child's stdout is a pipe
+  either way, and what comes back is the string the CLI wrote, which is where an escape sequence would be visible.
+- **`--json`.** `fugaro update --json` prints **one** document on stdout and nothing else, and the account goes to
+  stderr. `ConvertFrom-Json` must parse it and print the object (in the legacy console the one-liner must print
+  `parsed`); a parse error, or any human line mixed into stdout, is the failure (G2). `ConvertFrom-Json` is a real
+  parser and not a substring test, which is what makes this the objective half of G2 on Windows.
+- **The log directory.** `dir "%LOCALAPPDATA%\fugaro\logs"` lists one log per logged command, named
+  `<command>-<14 digits UTC>-<pid>.log`, and the newest one holds the run's own output — including the stage's own
+  output that the screen did not show. The mode is not read here (see above).
+- **The failure block, in either console.** The one path that needs a fake `terraform`, exactly as Check 310's script
+  makes one. Write it with the block below, put its directory first on PATH, and run `fugaro update`: the step line
+  names the stage, the last lines of the stage's own output are printed under it, and the log's path is printed beside
+  the line that names `fugaro troubleshoot <id>`. The fake answers `version` and `version -json` and refuses every
+  other subcommand, so the failure lands inside a stage rather than before it.
+
+```powershell
+$dir = Join-Path $env:TEMP 'check311'
+New-Item -ItemType Directory -Force $dir | Out-Null
+@'
+@echo off
+if "%~1"=="version" goto version
+if "%~1"=="-version" goto plain
+if "%~1"=="--version" goto plain
+goto fail
+:version
+if "%~2"=="-json" (
+  echo {"terraform_version":"1.9.9","platform":"check311","provider_selections":{},"terraform_outdated":false}
+  exit /b 0
+)
+:plain
+echo Terraform v1.9.9
+exit /b 0
+:fail
+echo check311 fake terraform: this subcommand is refused on purpose 1>&2
+exit /b 1
+'@ | Set-Content -Encoding ascii (Join-Path $dir 'terraform.cmd')
+$env:PATH = "$dir;$env:PATH"
+fugaro update
+```
+
+**What a run costs.** One installation's own `fugaro update` in each console, on an installation that is already
+converged: each applies nothing and **no model call is made**. Nothing is created, granted or deleted, and the log
+directory is the only thing written — the fake `terraform` writes nothing at all. The log directory is your own
+machine's, so the only thing to clean up is `%TEMP%\check311` if you want it gone.
+
+**Paste back.** The `CHECK 310 RESULT` block is the macOS half of this row and is not what you paste here; for this
+one, paste the closing line of `fugaro update` from each console, the one-liners' output (`False`, `False`, and the
+parsed document), and — if the legacy console printed escapes — the two lines exactly as they appeared. That is what
+says whether the reporter's colour rule holds on Windows, and it is the whole of what this check decides.
+
+## Check 120: the reports arrive, from the first launch, at `fugaro-prod` and no other project (a signed build carrying the reporters on a real device, your own Firebase console and your own store accounts; run by you; NOT RUN)
+
+**NOT RUN.** Written by **Task P7.5** for the mobile telemetry phase
+(`docs/mobile/implementation-plan.md`, its Phase 7; the authority for this check's text is
+[plans/2026-10-19-mobile-telemetry.md](plans/2026-10-19-mobile-telemetry.md) §12, with §2.2 for the
+numbers, §4.2 for the flags, §5 for the project and §6 for the shell), and written here because
+this is the file the owner runs live checks out of. It is the first of the phase's three readings no
+hermetic test can take: `mobile/src/app-config.test.js` and `mobile/src/app-config.ids.test.js` read
+the plugin list, the ad-ID walk and the identities out of the **source**,
+`mobile/src/telemetry/analytics-calls.test.js` scans the app's own code for the calls the
+allow-list refuses, and `mobile/src/telemetry/events.test.js` drives the event module against a
+**fake port** — and none of them has a device, a network, a native SDK or a store build. **No agent
+runs any step of it**: every step below is yours, at your own terminal, on your own device, with
+your own EAS project, your own store credentials and your own Firebase console.
+
+**What this check measures.** Four readings. **First, that the reports arrive at all, and at the
+project the owner operates** — **`fugaro-prod`** and no other: the app's own events in that
+project's console, and none of them in any other Firebase project you have (an installation's, the
+sandbox's). **Second, that they arrive at the first launch** rather than at any later moment: the
+plan wrote this as its always-on answer, and the owner's ruling of **2026-10-30** leaves the arrival
+at the first launch where it is while making the posture **on by default and opt-out** — so what a
+first launch shows is the default, not a consent step. **Third, the shell**: the paragraph the app
+shows is the one `mobile/src/telemetry/notice.js` holds, rendered by `mobile/src/app/root.js` as the
+shell's last child, carrying **no control** that turns the reports off, and the `/privacy/` URL
+beside it. **Fourth, the artifact**: the built app's **merged manifest declares no `AD_ID`
+permission**, read from the artifact rather than from the source — so the identifier the page
+promises is absent is absent in the build a store holds.
+
+**What this check is not.** It is not the **static** half of the same facts: the four collection
+switches in `mobile/firebase.json`, the plugin list and the ad-ID walk in `mobile/app.config.js`, and
+the scan that refuses a collection call in the app's source are all read by tests on this tree, and
+what is left to this check is the **built artifact** and a **real console**. It is not the **store
+path** — that is Check 89's, and this check reads the build Check 89 produces without repeating it.
+It is not a reading of a **crash** or of what the crash report holds: that is Check 121. It is not
+the labels or the page: that is Check 122. And it is not a measurement of **which** screens a person
+reaches — the `screen_shown` names are the app's own screen set (§7.2's closed enum), and this check
+reads that they arrive, not that they are interesting.
+
+**What has to exist before it runs, and two of these are not true of this tree.**
+
+- **A build that carries the reporters and the native config.** The two identity variables
+  (`FUGARO_IOS_BUNDLE_ID`, `FUGARO_ANDROID_PACKAGE`) exported in your shell, and the two **file**
+  variables (`GOOGLE_SERVICES_JSON`, `GOOGLE_SERVICE_INFO_PLIST`) set in the EAS environment the
+  profile names — a build whose resolved config carries no readable native config file stops in the
+  guard rather than building an app with dead reporting (P7.1b). Check 89's command is the build.
+- **The project and its two apps.** `fugaro-prod` exists and the owner creates the two Firebase apps
+  in it by hand (§5) — no step here creates a project, a member or a key, and no service account may
+  be granted any Analytics or Crashlytics read.
+- **The senders, wired — and nothing wires them today.** P7.3's module writes to a port shaped like
+  the SDK's own surface, and `mobile/index.js` is where that port is wired: it is the one file that
+  knows what a device is, and **no merged task of the phase wires it**, so a build made from this
+  tree emits no event of the app's own — what step 2 reads in `fugaro-prod` on such a build is
+  **Analytics' own automatic events**, `first_open` and `session_start`, which the SDK sends with no
+  code of the app's because `mobile/firebase.json` sets `analytics_auto_collection_enabled: true`.
+  **Crashlytics sends no record of a launch that does not crash** — it reports crashes and non-fatal
+  errors, so a clean first launch leaves its view empty, and an empty Crashlytics view is this
+  build's expected state rather than a finding. This is stated here rather than left for you to
+  discover, and the wiring is a task no phase has taken.
+- **The ruling of 2026-10-30, read against the build.** The owner's ruling drops **Firebase
+  Analytics** from the app and makes crash reports opt-out; task **T0.1** amends the plan's text and
+  its scan, task **T3.1** is the build, and task **T3.2** re-answers the two store forms
+  ([review-levels-ab-jobmax/implementation-plan.md](review-levels-ab-jobmax/implementation-plan.md)).
+  **None of the three has landed.** So the event half of the first reading is the plan's, written
+  against a build that still carries Analytics — and on **this** tree Analytics is the only thing a
+  clean launch sends at all, Crashlytics reporting no launch that does not crash. After T3.1 the app
+  carries no Analytics and a first launch that does not crash sends **nothing**: the first-launch
+  arrival can then be read only from a **deliberate crash or a non-fatal error**, which is **Check
+  121**'s path, so step 2's first reading is taken on a build that still carries Analytics (this
+  tree's), and on T3.1's build the first-launch reading is Check 121's.
+- **The link half cannot pass on this tree, and the owner's host list is not what holds it back.**
+  The app has **no link opener at all**: `mobile/src/app/root.js` draws what `notice()` returns as
+  **text**, unconditionally, which `mobile/src/telemetry/notice.js` states of itself — "the app has
+  no opener today, so `mobile/src/app/root.js` draws the URL as text whatever the answer".
+  `shared/url`'s shipped `DEFAULT_HOST_ALLOW_LIST` is **empty** until you answer **D124**, so
+  `privacyLink` returns the refusal `allow-list-empty` — and **answering D124 does not turn the URL
+  into a link**, because the opener is a task **no phase has taken**, the way no merged task wires
+  the event senders above. **Dated correction (2026-11-14):** the plan's **§12** and its **§6** read
+  the text-drawn URL as D124's state alone, and that is not enough — the link half of step 4 is run
+  once a task grows the opener, so until one does, step 4 reads the **string** and expects **text**,
+  and a URL drawn as text is this tree's own state rather than a broken app.
+
+**Method.** One build, one device, one launch and three reads; nothing is created in any cloud
+project, and no script of this work's exists for any of it.
+
+1. **Build the app that carries the reporters.** `eas build --profile internal` from `mobile/`, with
+   the two identity variables exported and the two file variables set in the EAS environment the
+   profile reads (`mobile/README.md`, "Building for internal testing"). **FACT:** the build ends
+   without an error and the artifact for your device's platform is produced. **What failing looks
+   like:** the build stops in the config, naming one of the two native config variables and the
+   platform — that is the guard doing its job, and it is a stop before a build rather than an SDK
+   that reports nothing.
+2. **Install it, launch it, touch nothing, and watch the console.** Install the artifact on a device,
+   open the app, and **touch nothing**: there is no sheet, no switch and no prompt. In the Firebase
+   console of **`fugaro-prod`**, look for the app's own traffic at this first launch. **FACT:** the
+   first launch's traffic is in `fugaro-prod` — where the senders are wired, the app's events
+   (`app_launch`, then a `screen_shown` as each screen is reached;
+   `mobile/src/telemetry/events.js`'s seven-name allow-list, §7.2) — and it is there **at the first
+   launch** rather than at any later moment. **On a build from this tree the arrival to read is
+   Analytics', not the app's and not Crashlytics':** the app's events need the wiring no merged task
+   has done, and **Crashlytics reports crashes and non-fatal errors only — a launch that does not
+   crash leaves no record in it at all**. What this build sends at a clean first launch is
+   `first_open` and `session_start`, which the Analytics SDK collects by itself
+   (`mobile/firebase.json`'s `analytics_auto_collection_enabled: true`); read them in **DebugView**
+   or in the realtime view, and **leave the Crashlytics view for Check 121**, where the crash that
+   fills it is deliberate. **Two things this step reads against, stated rather than assumed:** the
+   senders (above — no merged task wires them, so on this tree the arrival is Analytics' automatic
+   events), and the owner's ruling of 2026-10-30, after whose build (T3.1) Analytics is gone and a
+   first launch that does not crash sends **nothing** — the first-launch arrival is then read from a
+   **deliberate crash or a non-fatal error**, which is **Check 121**'s path, and this step's first
+   reading is taken on a build that still carries Analytics. **What failing looks like:** **nothing
+   at all** in `fugaro-prod` from an app that was launched, on an artifact that carries the reporters
+   and a config that resolved them — not even Analytics' `first_open` — the failure this check exists
+   for, and the one an app whose native config was silently dropped produces. **Read again before
+   calling it:** Analytics reports on its own schedule, so an event that has not been reported yet
+   and one that was never sent look alike in a console read too early. **On T3.1's build "nothing at
+   all" is the expected state, not this failure**: without Analytics a clean launch sends nothing,
+   and the first-launch reading there is Check 121's.
+3. **Read every other project, and find nothing.** In the same console, open every other Firebase
+   project you have — an installation's own, the sandbox's — over the same window. **FACT:** no event
+   of the app's and no crash of the app's is in any of them — on a build from this tree the same
+   reading is taken of **Analytics' automatic events**, which is what step 2 finds in `fugaro-prod`
+   and what must be in no other project. **Why this is a step of its own:** "the
+   app reports to `fugaro-prod`" is two claims, and the second — *and to no other project* — is the
+   one an installation's config could quietly falsify, because the app signs in to an installation's
+   own Firebase for other reasons entirely. **What failing looks like:** the app's traffic in an
+   installation's project, which is a finding for this plan's owner and not a misconfiguration of
+   yours.
+4. **Read the shell, and the sentence in it.** Open the app's first screen again and read what it
+   says about the reports, then read the URL beside it. **FACT:** the paragraph is the one
+   `mobile/src/telemetry/notice.js` holds — what is sent, to whose project, what a report holds, why
+   it is read, and the three things never sent — and the app carries **no control** that turns the
+   reports off. The string on screen is `https://fugaro.dev/privacy/`, and it is **text** — the app
+   has no link opener, so it is drawn as text **whatever the host list says**, **D124** answered or
+   not (**dated 2026-11-14**: the plan's §12 reads this as D124's state alone; the opener is a task
+   no phase has taken, so this step reads the string and not a link). **What has moved under the
+   ruling of 2026-10-30:** the statement this build carries makes **no claim about how collection is
+   turned off, in either direction** —
+   the clause the plan wrote for its always-on answer is gone, and the opt-out control does not exist
+   yet — so this reading is re-run against the build **T3.1** produces, where the app carries the
+   switch and the sentence beside it. **What failing looks like:** a paragraph that is not the one
+   the module holds, or a control this build should not have; a URL drawn as text is **not** a
+   failure — it is this tree's own state, and the reason the link half is not read here.
+5. **Read the built artifact's merged manifest for `AD_ID`.** Take the artifact you built — the app
+   bundle or the APK, not the checkout — and read its merged manifest (for an Android App Bundle,
+   bundletool's manifest dump; for an APK, `aapt2 dump xmltree --file AndroidManifest.xml`). **FACT:**
+   `com.google.android.gms.permission.AD_ID` is **absent** from the merged manifest, which is the
+   removal `mobile/app.config.js` writes through Expo's own blocked permissions and the one reading
+   that cannot be taken from the source. **On iOS**, read the Podfile the build generated for the
+   analytics variant: it carries `$RNFirebaseAnalyticsWithoutAdIdSupport = true` and links no
+   `AdSupport` framework — §14's first **UNVERIFIED** row, read at the first store build that carries
+   the SDKs, which is this one. **What failing looks like:** the permission present in the merged
+   manifest — a build a store reads as "this app uses the advertising id", against a page that
+   promises the opposite.
+
+**Passes when:** the build produces an artifact; a first launch puts the app's own traffic in
+`fugaro-prod` and at the first launch — on a build from this tree that traffic is **Analytics'
+automatic `first_open` and `session_start`**, the app's own events needing the wiring no merged task
+has done and Crashlytics recording no launch that does not crash; no other Firebase project holds
+any of it; the shell shows the
+statement the module holds with no control that stops the reports, and the URL is the `/privacy/` one
+**drawn as text**, whatever the host list says — this tree has no link opener, so the link half is
+not read here; and the artifact's merged manifest declares no `AD_ID` permission and the iOS build
+links no `AdSupport`.
+
+**Fails when:** the build stops in the config guard, or produces no artifact; nothing reaches
+`fugaro-prod` from a launched app whose artifact carries the reporters — read after Analytics' own
+reporting window, and **not** read on a T3.1 build, where a clean launch sends nothing and the
+first-launch arrival is **Check 121**'s; the app's traffic appears in another project; the shell's paragraph is not the module's, or a control that stops the reports is
+there; or `AD_ID` is in the merged manifest, or `AdSupport` is linked.
+
+**Paste back** (no secret, no value of any variable, nothing from a project): the platform and the
+profile you built; the artifact's file name and whether the build reported signed; what the console
+of `fugaro-prod` showed at the first launch and roughly when, and what the other projects showed; the
+shell's paragraph as you read it on the device, and whether the URL was a link or text; and the merged
+manifest line for `AD_ID` as your tool printed it — present or absent, and the tool you used. Plus
+your device and OS version, the date, and the app's version and build number. Until this check runs,
+whether a real device's first launch reaches `fugaro-prod` is **UNVERIFIED**, and the row stays
+**NOT RUN**.
+
+**Restore.** Nothing is created in any cloud project by the check: no project, no member, no key, no
+run and no job. What the check leaves is a build and an installed app.
+
+- **The build and the installation are yours to keep or delete**: remove the app from the device and
+  delete the build from your EAS project if you do not want it, and note that the **two native
+  config files** the build used are EAS environment files, not files in any checkout — nothing here
+  writes one to disk.
+- **The app's own reports are not retractable**: a crash record in `fugaro-prod` and an event in its
+  Analytics property are what the console holds, and neither store offers a "forget this
+  installation" that this check should use — a real device's report is the point of the reading.
+- **Delete nothing in `fugaro-prod`** on this check's account, and never touch `belong`: the only
+  projects this check reads are `fugaro-prod` and the others you already have.
+
+**Cost.** One signed build, one installation on one device and the minutes the console takes to show
+an event: **no run, no job, no model call and no dollar**, and nothing billable beyond the build and
+the device, which are your own. The app's reports are the only bytes the check sends, to the project
+you operate.
+
+## Check 121: a real crash reaches `fugaro-prod`, and nothing in the report names anything (a signed build carrying the reporters, one real crash on a fresh installation, and the Crashlytics console; run by you; NOT RUN)
+
+**NOT RUN.** Written by **Task P7.5** for the same phase and the same authority as Check 120
+(`docs/mobile/implementation-plan.md`'s Phase 7; [plans/2026-10-19-mobile-telemetry.md](plans/2026-10-19-mobile-telemetry.md)
+§12 for the text, §7.1 for the ban list, §7.3 for the redaction rule and §14 for what stays
+unverified). Its **static** half is on this tree: `mobile/src/telemetry/breadcrumbs.js` takes either
+a constant from the module's own list or the text through `shared/digest`'s `redact`, and
+`mobile/src/telemetry/analytics-calls.test.js` and `events.test.js` hold the ban list and the
+never-send rule. What no test has is a **crash**: the redaction is a property of a report that only
+exists after one, on a device, through a native SDK. **No agent runs any step of it** — the crash is
+yours, the device is yours, and the console is yours.
+
+**What this check measures.** Two readings. **First, that a real crash reaches `fugaro-prod`, and
+that the report names nothing.** The report appears in Crashlytics under that project, and its
+breadcrumbs, its custom keys, its logs and its device fields contain **no message text, no mailbox
+key, no account id, no `authUid`, no project id, no token and no MAC**; `setUserId` is absent from
+it; and **no advertising identifier is in it**. **Second, the control**: the same crash on the **first
+internal build**, which carries neither SDK, produces **no report at all** — which is what makes the
+first reading a fact about the SDKs rather than about something else in the app.
+
+**What this check is not.** It is not a **fuzz** of the redactor: the awkward inputs the redactor is
+fed — a message carrying a token shape, a home path and a repository name — are
+`analytics-calls.test.js`'s and `events.test.js`'s, and this check reads the report a real crash
+produced. It is not the allow-list's own reading — that is Check 120's. It is not a claim that the
+report is **empty**: Crashlytics carries what the SDK carries by default (the device model, the OS
+version, the app's own version and the frames of the crash), and the ban list is about the things
+that **name** something, not about the report being short. It is not the **store's** view of the
+crash: nothing here reads a store console. And it is not a **repeated** reading: one crash on each of
+two builds is the whole of it, and a second crash proves nothing further.
+
+**What has to exist before it runs.**
+
+- **Both builds.** The build Check 120 made, and the **first** internal build — the one that carries
+  neither SDK (the plan's §9 answer) — installed on the same device, one at a time. The first build
+  is a build of a commit before the phase's packages landed, or a profile built without the plugin
+  entries; what matters is that its artifact carries neither reporter.
+- **A way to crash the app deliberately.** The app has no settings screen and no debug menu of its
+  own, so the crash comes from the build's own affordance: a development build's way of forcing a
+  crash, or a debug-only trigger you are willing to have on the device for the length of the check.
+  **This step is yours and no agent does it.**
+- **The posture the report is read under.** The plan wrote this check around its always-on answer;
+  the owner's ruling of **2026-10-30** makes crash reports **on by default and opt-out**, and the
+  build that carries the switch is task **T3.1**'s (after **T0.1** amends the plan). So on a build
+  before T3.1 the report arrives with nothing consented to and nothing to consent to; on the build
+  T3.1 produces it arrives because the reports are on and you have not turned them off. **Say in your
+  paste-back which of the two you ran**, because the two are the same reading of a different posture.
+
+**Method.** Two installations, two crashes, one console. Nothing is created in the cloud, and the
+teardown is the two installations you removed.
+
+1. **Install the SDK-carrying build on a device you are willing to crash.** Install it fresh — not
+   over a previous installation — and open it once so it starts and reports. **FACT:** the app opens,
+   and the console of `fugaro-prod` shows the app's own traffic from that launch (Check 120's step 2).
+2. **Crash it deliberately, and let the app send.** Cause the crash, then open the app again briefly
+   so the report is sent. **FACT:** the crash appears in the Crashlytics console under
+   **`fugaro-prod`**, with the app's own version and build number, and it is the crash you caused
+   rather than another. **What failing looks like:** no issue appears after the app has run again —
+   a crash that never arrives is this project's worst failure mode, because the only other signal is
+   a user's prose.
+3. **Read the report for the things it must not name.** Open the issue and go through its parts: the
+   **breadcrumbs**, the **custom keys**, the **logs**, and the device fields. **FACT:** every one of
+   them is free of **message text, a mailbox key, an account id, an `authUid`, a project id, a token
+   and a MAC**; the breadcrumbs are the constants `mobile/src/telemetry/breadcrumbs.js` holds or text
+   that passed through `shared/digest`'s `redact`; **`setUserId` is absent**, so the report carries no
+   user identifier of the app's; and **no advertising identifier appears anywhere in it**. **What
+   failing looks like:** any of those values in any of those fields, or a user identifier on the
+   report — a finding for this plan's owner **and** a stop on shipping, because the page promises
+   none of them.
+4. **Read the second project once more.** In the same console, check that the crash is **not** in any
+   other Firebase project you have. **FACT:** the crash is in `fugaro-prod` and nowhere else.
+5. **Then the control: the same crash on the first build.** Install the first internal build — the
+   one that carries neither SDK (the plan's §9 answer) — on the same device, crash it the same way,
+   open it again, and wait as long as you waited in step 2. **FACT:** **no report of it appears
+   anywhere** — not in `fugaro-prod`, not in any other project. **Why this is the control:** it is
+   the half that proves the reporting is the **SDKs'** and not something else in the app, and without
+   it a report in step 2 says only that *something* sent one.
+
+**Passes when:** the deliberate crash on the SDK-carrying build appears in Crashlytics under
+`fugaro-prod` and in no other project; its breadcrumbs, custom keys, logs and device fields name
+nothing on the ban list; `setUserId` is absent from it; no advertising identifier is in it; and the
+same crash on the first internal build produces no report at all.
+
+**Fails when:** no report arrives from the SDK-carrying build; any of the banned values appears in
+any part of the report, or a user identifier does; an advertising identifier is in it; the crash
+appears in another project; or the first build produces a report — which would mean the reporting is
+not the SDKs' and the whole reading is about something else.
+
+**Paste back** (no message text, no account, no identifier, nothing from a project): the two builds
+and the commits or versions they were made from; how the crash was caused, in one line and without
+the text of anything; whether the report appeared, and roughly how long it took; what each part of
+the report held, described rather than quoted — "the breadcrumbs were the app's own constants" is
+the answer, and **no field's content itself**; whether `setUserId` was present, and whether any
+advertising identifier was; what the first build did; and which of the two postures above the build
+carried. Plus your device and OS version and the date. Until this check runs, whether a real crash
+reaches `fugaro-prod` at all, and whether a real report is free of the ban list, are **UNVERIFIED**,
+and the row stays **NOT RUN**.
+
+**Restore.** Nothing is created in the cloud: no project, no member, no key, no run and no job.
+
+- **The two installations go**: remove the first build and the SDK-carrying build from the device
+  when you are done, so the device is not left crashing on purpose.
+- **The reports stay**: a crash record in `fugaro-prod` is not retractable, and the check does not
+  try — the report is the reading. Do **not** delete the issue to tidy up: the next person to read
+  this row needs to know it was there.
+- **Never touch `belong`**, and read no other project but the ones you already have.
+
+**Cost.** Two builds, two installations and two deliberate crashes: **no run, no job, no model call
+and no dollar**, and nothing billable beyond the builds and the device. The app's own reports are the
+only bytes the check sends.
+
+## Check 122: the two store forms and the live privacy statement match what the app sends (your own Play console, your own App Store Connect, and the live page in a browser; run by you; NOT RUN)
+
+**NOT RUN.** Written by **Task P7.5** for the same phase and the same authority as Checks 120 and 121
+(`docs/mobile/implementation-plan.md`'s Phase 7; [plans/2026-10-19-mobile-telemetry.md](plans/2026-10-19-mobile-telemetry.md)
+§12 for the text, §8.1 for Play's Data safety form category by category, §8.2 for the App Store
+label, and §8.3 for the page being already live and already ahead of the build). It is the one
+reading of the three that **cannot be taken by any test at all**, and its two halves are why: a store
+form is a page in a console no Go test, no node test and no agent can open, and the live page is a
+URL whose words have to be read against a build rather than against a checkout. **No agent runs any
+step of it**: the two consoles are yours, your answers are yours, and so is the judgement of whether
+a sentence is true of the build.
+
+**What this check measures.** Two readings, and it is their **agreement** that is the check.
+**First, the two forms.** Play's **Data safety** form and the App Store **privacy label** as you
+answered them, read **category by category** against the plan's §8.1 and §8.2 — and against the
+**traffic 120 and 121 observed**, because a ticked category is a claim about what the app sends and
+the only evidence for it is a report or an event somebody saw. The two categories the plan records
+as **over-declared on purpose** (`User IDs`, `Other in-app messages`) are read as over-declared and
+written down in your own words, so that the next reader meets a decision rather than an error.
+**Second, the page.** `https://fugaro.dev/privacy/` — the URL both store listings point at — read
+**sentence by sentence** against the build: every provider and every category it names is one the app
+actually sends, and every category the app sends is one it names.
+
+**What this check is not.** It is not the **website's own gates**: `website/test/privacy.mjs` holds
+the page's app sentences to the plan and to `mobile/package.json` in both directions, and it passes
+on this tree — what a test cannot do is open the two consoles or decide whether a submitted form
+matches a build. It is not the **labels' text** as a document: the forms are answers in two consoles,
+recorded in your own notes, and the plan's §8 tables are what they are read against. It is not a
+reading of **which** categories the SDKs collect in the abstract: it is a reading of the app you
+measured in 120 and 121, so **run it after them**, and a category you cannot tie to something you saw
+is a category you should be able to say why you ticked.
+
+**What has to exist before it runs.**
+
+- **The two readings of 120 and 121**, because the first half is answered from them. With neither
+  run, this check reduces to reading two consoles, and the plan's rule is that the labels are
+  answered **from what the SDKs actually collect** rather than from what the SDKs document.
+- **The forms as you submitted them** — Play's Data safety answers and the App Store Connect privacy
+  answers — and your own notes of them, which is where they live: no file in this repository holds
+  them and nothing reads them.
+- **The build that is being submitted**, so that "what the app sends" has a referent: the page's app
+  paragraph is already **live** and already **ahead** of the build (it says so itself: earlier builds
+  of the app sent nothing at all), and the plan's §8.3 rule is that **the build does not ship until
+  the page and the build agree**.
+- **The owner's ruling of 2026-10-30, which re-answers both forms.** It drops **Firebase Analytics**
+  from the app and makes crash reports **opt-out**; task **T3.1** is the build that carries it and
+  task **T3.2** is the owner's own pass over the two forms in the two consoles
+  ([review-levels-ab-jobmax/implementation-plan.md](review-levels-ab-jobmax/implementation-plan.md)) —
+  Play's Data safety loses Analytics and Crash logs become optional. **Neither has landed**, so this
+  check as written holds the forms the plan's §8 answers describe, and the forms T3.2 leaves are read
+  the same way, against the same page and the same two readings. **Say which pair of forms you read.**
+
+**Method.** Two consoles and one page, and no command of this work's. Read them in this order, and
+read them **against each other** rather than one after the other.
+
+1. **Write down what the app sends, from the two readings you already have.** From 120: the events
+   the console showed, and whether anything arrived at all. From 121: the crash report and each part
+   of it. **FACT:** a short list — crash reports, or crash reports and usage events, plus what the
+   report holds — with **nothing on it that you did not see**. This list is what the two forms and
+   the page are read against, and writing it first is what keeps the reading about the app rather
+   than about the forms.
+2. **Read Play's Data safety form, category by category.** Open the form in the Play console and go
+   through the declarations against the plan's §8.1 table and against step 1's list. **FACT:** every
+   ticked category is justified by something on step 1's list, and the two over-declared categories
+   (`User IDs`, `Other in-app messages`) are ticked **and recorded as over-declared**, in your own
+   words — the plan's own note is that over-declaring in this direction is the policy risk worth
+   taking, and the record is what makes it a decision. **No Advertising ID type is declared in the
+   form**, which is a fact about the build that Check 120's step 5 reads from the artifact. **What
+   failing looks like:** a ticked category you cannot tie to anything you saw, or an Advertising ID
+   declaration beside a build whose manifest declares no `AD_ID`.
+3. **Read the App Store privacy label the same way.** Go through App Store Connect's answers against
+   the plan's §8.2 table and against step 1's list. **FACT:** the label ticked is the one the plan's
+   table gives — **Crash Data**, **Performance Data**, **Other Diagnostic Data**, **Device ID** and
+   **Product Usage** (as Product Interaction) for the events, with **User ID** and **Advertising
+   Data** **not** ticked — and every ticked type is one step 1 supports. **What failing looks like:**
+   a type ticked that the app does not send, or one the app does send left unticked.
+4. **Read the live page, sentence by sentence.** Open `https://fugaro.dev/privacy/` in a browser and
+   read its app paragraph word by word against step 1's list. **FACT:** the page's app paragraph and
+   step 1's list agree **in both directions** — every provider and category the paragraph names is
+   one the app sends, and every category the app sends is one the paragraph names — including the two
+   sentences no ruling moves: the app carries **no advertising identifier**, and the earlier builds
+   that carry no reporters **send nothing at all**. **What failing looks like:** a sentence about a
+   provider the app no longer carries (the one the ruling of 2026-10-30 makes true of the next
+   build), a category the app sends that the page does not name, or the reverse. **The build does not
+   ship until the two agree** — that is the plan's rule, and this step is where it is read.
+5. **Decide, and write down the decision rather than the doubt.** If the three agree, the check
+   passes and you are done. If they do not, the failing side is named: the **form** (re-answer it —
+   **T3.2** is that pass), the **page** (a website change, and its own gates move with it), or the
+   **build** (a finding for this plan's owner). **The mismatch you may not resolve by shipping** is a
+   page that names something the app sends and a form that does not, or the reverse: the page is
+   live, the store listing points at it, and the two are what a user reads before installing.
+
+**Passes when:** every ticked category on both forms is justified by traffic seen in 120 and 121;
+the two over-declared categories are recorded as over-declared, in your words, with no Advertising ID
+type or User ID ticked on the App Store label; and the live page's app paragraph and the build agree
+in both directions, sentence by sentence.
+
+**Fails when:** a category is ticked that nothing you saw justifies, or one is left unticked that
+something you saw does; an advertising-identifier or user-identifier type is declared over a build
+that carries neither; or the live page and the build disagree in either direction — a page naming a
+provider the app does not send, or an app sending a category the page does not name.
+
+**Paste back** (no secret, no account id, no screenshot of a console page if it would carry one): the
+list you wrote in step 1; the two forms as you read them — the categories ticked, the two you record
+as over-declared and why, and whether either console's own wording forced anything; the page's app
+paragraph as you read it, and which of its sentences you checked against which category; and, if the
+three did not agree, which side you decided was wrong and what you did about it. Plus the date, the
+build you were submitting, and which pair of forms you read. Until this check runs, whether either
+submitted form matches what the app sends is **UNVERIFIED** — the plan's §14 keeps it open — and the
+row stays **NOT RUN**.
+
+**Restore.** Nothing at all: this check reads two consoles and one public page and writes nothing
+anywhere but your own notes.
+
+- **The forms are not "restored"**: if you re-answered one during the check, that is the answer, and
+  the console keeps its history.
+- **Nothing on the page is changed by the check**, and no store listing, no submission and no release
+  is made by it — a submission is its own act, and the plan's rule is only that it waits until the
+  page and the build agree.
+- **Never touch `belong`**: no step here names it, and the two consoles are your own accounts.
+
+**Cost.** Two consoles and one page: **no build, no device, no run, no job and no dollar**. It is the
+one check of the three that costs nothing but the reading, and it is the one that decides whether
+what you are about to submit is true.
 
 ## Check 230: the author, the committer and the trailers, on GitHub and on Bitbucket (two sandbox repositories carrying `git.author: launcher`, a third with no such key, and their forges; never `belong`; run by you; NOT RUN)
 
@@ -15495,3 +16299,324 @@ repositories and carries `pull_requests: write` alone.
 that a set is ready or not ready as a whole: this run is the only reading of it, and a set that
 flips one pull request and leaves the other draft is a finding for this plan's owner.
 
+## Check 420: pool failover — one member exhausted, the pool moves off it, and the record names the member that served (sandbox project and sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **MC10** of
+[docs/model-crafts/implementation-plan.md](model-crafts/implementation-plan.md) — its "Checks 420, 421,
+422" — and **run by you**: what it measures is one real sandbox run on a real installation, and neither a
+run's model calls nor the credentials service's own record of a switch is something an offline run can
+answer. The check is `scripts/live-checks/check420.sh` (its sibling test
+`scripts/live-checks/check420_test.sh` drives it against fake `gcloud`, `fugaro` and `curl` only, with a
+fake credentials service behind the `curl`), the owner types
+`bash scripts/live-checks/check420.sh --sandbox <a sandbox repository checkout> --yes`, and **no agent runs
+any step of it**. Nothing here goes near the dev installation: a project or region naming `belong` is
+refused by name before a single call, and so is a coding agent's session, which is what **never `belong`**
+means on this row.
+
+**What it settles.** **MC5** — the ordered failover of an access that names a pool, and the switch a run's
+own ledger records when one member runs out — and **MC6** with the credentials service behind it, which is
+the thing that actually notices an exhausted member. **D1622** and **D1626** are read with it: a mixed
+pool's Claude OAuth subscription member is stepped over unless the project's `subscription_spread` switch
+is on, so the check reads the switch rather than assuming it. **D1629** and **MC8** are the record's half:
+the additive `craft_credentials` names the member that served. All of it is read from outside — the
+installation's own crafts, the published node, the service's bundle and a real run's record.
+
+- **The premise, from the installation's own words rather than assumed.** `fugaro craft ls --json` names
+  the coder craft's effective access; it must be a pool, and `fugaro project policy show --json` — the node
+  the credentials service itself reads — must say that pool is a **failover** pool of two or more members.
+  Every member must be in the service's bundle (`fugaro creds ls --json`, names only and never a value),
+  and a pool that lists a Claude OAuth subscription must have `subscription_spread` on. A build without
+  the four verbs stops on the `features` row instead of measuring a pool that cannot exist.
+- **The pool is yours to declare.** No command of this release stores a key under a credential's own name —
+  `fugaro accounts add --type` takes `claude-oauth` alone — so the two API-key credentials Check 420's own
+  sentence names are entries in your project configuration with their keys stored under their own names,
+  and the pool that lists them is yours too. The check adds no credential, writes no config and publishes
+  no node; its FAIL rows name exactly which piece is missing.
+- **The exhaustion is at the provider, and it is deliberate.** One member is at a deliberately tiny cap
+  there, so the provider refuses it and the credentials service's failover steps to the next member of the
+  pool. That refusal is what the check is buying: a pool whose members are all healthy never fails over,
+  and a run on it says nothing about the feature.
+- **The run is the reading.** One sandbox run with a small task, launched with `fugaro run --json` from the
+  checkout, followed with `fugaro runs ls --json` until it is terminal (a record read while a run is still
+  working is whatever was there before), and then its `result.json` from the runs bucket at the key that
+  listing's own row gives — read against the run id this check launched, because a record read by listing
+  alone could be another run's. The run must end **succeeded**.
+- **The switch, and the member the record names.** The record's `switches` log must carry the move from the
+  pool's first member onto another: that is the failover, and it is the credentials service's own record
+  (**C1.16**, **D140**) rather than a reading this script made up. The credential the record names —
+  `stage_accounts`/`oauth_account`, and the additive `craft_credentials` of **D1629** — must be a member of
+  that pool. **This build's record carries no `craft_credentials`**, so that one row is a finding until
+  MC8's record half lands; it is reported rather than hidden, because Check 420's own sentence is that the
+  field names the member that served.
+
+**What a run costs.** ONE sandbox run and what its task costs, on the sandbox's own budget, plus the pull
+request it opens: **billable, and `--yes` is required** before anything is launched — a dry run prints the
+same sentence and asks for nothing. Every other call is a read (`doctor`, `craft ls`, `accounts pool ls`,
+`project policy show`, `creds ls` and the run's own record), and `CHECK420_MAX_MODEL_USD` turns the run's
+own figure into a criterion when you set it. On disk it is one scratch directory, removed at the end; the
+pull request and its branch are **not** closed by the script and the Restore row names them.
+
+**The commands.**
+
+```sh
+bash scripts/live-checks/check420.sh --dry-run
+bash scripts/live-checks/check420.sh --sandbox <a sandbox repository checkout> --yes
+```
+
+Progress goes to stderr and one `CHECK 420 RESULT` block goes to stdout at the end: paste that block here
+and nothing else. **Exit `0`** is every criterion that was measured holding; **`1`** is a measured criterion
+that did not hold, or a guard that stopped the check — a build without the vocabulary, a craft that names no
+pool, a pool that is not a failover pool, a member the bundle does not hold, `subscription_spread` off on a
+mixed pool, a run that did not end succeeded, no switch in the log, a credential the record names that is
+not a member, the missing `craft_credentials`; **`2`** is the check not being able to measure (a tool
+missing, the checkout not being one, a `--json` document unreadable, the run never ending). A key the run
+never reached reads `FAIL — not reached`. The block's keys, in order, are `fugaro-version`, `features`,
+`xtrace`, `agent-session`, `belong`, `bound`, `sandbox`, `crafts`, `pool`, `bundle`, `run-launched`,
+`terminal`, `result-json`, `run-succeeded`, `budget`, `failover`, `served`, `craft-credentials`, `restore`
+and `scratch-removed`. The knobs are `CHECK420_DRY_RUN`, `CHECK420_KEEP_SCRATCH`, `CHECK420_SANDBOX`,
+`CHECK420_YES`, `CHECK420_REPO`, `CHECK420_TASK`, `CHECK420_RECIPE`, `CHECK420_REGION` (us-east5: the guard
+that refuses a project or region naming `belong` reads it), `CHECK420_RUN_TIMEOUT_SECONDS` (3600),
+`CHECK420_POLL_SECONDS` (15), `CHECK420_CLI_TIMEOUT_SECONDS` (180),
+`CHECK420_LAUNCH_TIMEOUT_SECONDS` (600), `CHECK420_DOCTOR_TIMEOUT_SECONDS` (300) and
+`CHECK420_MAX_MODEL_USD` (unset: the run's figure is read and not graded). No credential value reaches the
+script's stdout, stderr, block or scratch directory.
+
+**What waits on it.** MC8's record half — the `craft_credentials` this build's record does not yet carry —
+and MC9's surfaces, which read the same record; a finding here that is about the record rather than the
+build is what MC8 and MC9 answer. Nothing gates on it: it is the outside reading of the failover the
+folder's own tests can only fake.
+
+## Check 421: round-robin spread over N runs — at least two members served, or the pool is not rotating (sandbox project and sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **MC10** of
+[docs/model-crafts/implementation-plan.md](model-crafts/implementation-plan.md) and **run by you**: the
+rotation is a property of N real runs on a real installation, and no offline test can make the credentials
+service take it up. The check is `scripts/live-checks/check421.sh` (its sibling test
+`scripts/live-checks/check421_test.sh` drives it against fake `gcloud`, `fugaro` and `curl` only), the
+owner types `bash scripts/live-checks/check421.sh --sandbox <a sandbox repository checkout> --yes`, and
+**no agent runs any step of it**. A project or region naming `belong` is refused by name, and so is a
+coding agent's session — **never `belong`**, as on the row.
+
+**What it settles.** That **MC7**'s rotation is really taken up by the service, on an installation rather
+than in a unit test. MC7's own red step is this check's reading — "three selections must not all pick
+member 1" — and what the check reports is the live form of it: over N runs, **at least two different
+members of the pool served one run each**. **D154** is the per-run stickiness the reading depends on (one
+member serves a whole run, and the rotation is between runs), and **D1625** is the counter behind it.
+
+- **The premise, including the part that is easy to get wrong.** The coder craft's effective access must
+  name a pool whose strategy is `round-robin`, of two or more members, every one of them in the service's
+  bundle (`fugaro creds ls --json`). And **no craft the service serves may be pinned** — to a credential,
+  to an OpenRouter key or to the built-in `vertex` — because one call hands the service one candidate list,
+  so the rotation is only taken up when every craft that contributes to that list goes out on a pool asking
+  for it. A craft on `vertex` or on an OpenRouter key contributes nothing to the list, and the check names
+  it as such rather than reading a spread that could not have happened.
+- **The pool is yours to declare.** This check writes no config and no credential: it reads the
+  installation's own crafts, published node and bundle, and launches the N runs. The FAIL rows say exactly
+  which piece is missing.
+- **The runs are the reading.** N sandbox runs (two by default, `--runs` 2 or more) with a small task, each
+  launched with `fugaro run --json`, each followed to its terminal state with `fugaro runs ls --json`, and
+  each one's `result.json` read from the runs bucket against its own run id.
+- **The credential each run names.** `craft_credentials` where the build writes it (D1629, MC8 — this build
+  does not), else `oauth_account`, `stage_accounts` or the switch log: the per-run member is read however
+  the build records it.
+- **THE reading: the spread.** Over the N runs, at least two different members of the pool served one run
+  each. One member serving every run is the pool **not** rotating — the state MC7 exists to remove — and the
+  `spread` row is the FAIL that says so. Two runs are the fewest that can show a spread at all, which is
+  why the check refuses `--runs 1`.
+
+**What a run costs.** N sandbox runs (two by default) and what their tasks cost, on the sandbox's own
+budget, plus the pull requests they open: **billable, and `--yes` is required** before anything is
+launched. Every other call is a read, and `CHECK421_MAX_MODEL_USD` turns the **total** figure into a
+criterion when you set it. On disk it is one scratch directory, removed at the end; the runs' pull requests
+and branches are **not** closed by the script and the Restore row names them.
+
+**The commands.**
+
+```sh
+bash scripts/live-checks/check421.sh --dry-run
+bash scripts/live-checks/check421.sh --sandbox <a sandbox repository checkout> --yes
+bash scripts/live-checks/check421.sh --sandbox <a sandbox repository checkout> --runs 3 --yes
+```
+
+Progress goes to stderr and one `CHECK 421 RESULT` block goes to stdout at the end: paste that block here
+and nothing else. **Exit `0`** is every criterion that was measured holding; **`1`** is a measured criterion
+that did not hold, or a guard that stopped the check — a build without the vocabulary, a craft that names no
+pool, a pool that is not round-robin or holds fewer than two members, a member the bundle does not hold, a
+craft the service serves that is pinned, a run that did not end succeeded, a credential the record names
+that is not a member, one member serving every run; **`2`** is the check not being able to measure (a tool
+missing, the checkout not being one, a `--json` document unreadable, a run never ending). A key the run
+never reached reads `FAIL — not reached`. The block's keys, in order, are `fugaro-version`, `features`,
+`xtrace`, `agent-session`, `belong`, `bound`, `sandbox`, `crafts`, `pool`, `bundle`, `runs-launched`,
+`runs-ended`, `records`, `succeeded`, `budget`, `spread`, `restore` and `scratch-removed`. The knobs are
+`CHECK421_DRY_RUN`, `CHECK421_KEEP_SCRATCH`, `CHECK421_SANDBOX`, `CHECK421_YES`, `CHECK421_REPO`,
+`CHECK421_TASK`, `CHECK421_RECIPE`, `CHECK421_RUNS` (2; two or more, and a smaller count is refused before
+anything is launched), `CHECK421_REGION` (us-east5), `CHECK421_RUN_TIMEOUT_SECONDS` (3600),
+`CHECK421_POLL_SECONDS` (15), `CHECK421_CLI_TIMEOUT_SECONDS` (180),
+`CHECK421_LAUNCH_TIMEOUT_SECONDS` (600), `CHECK421_DOCTOR_TIMEOUT_SECONDS` (300) and
+`CHECK421_MAX_MODEL_USD` (unset: the total is read and not graded). No credential value reaches the
+script's stdout, stderr, block or scratch directory.
+
+**What waits on it.** Nothing gates on it: it is the outside reading of MC7's rotation, and the one to take
+again whenever the candidate list, the pool shape or the counter behind the rotation changes — the three
+things a unit test can pin and a real service's answer cannot be inferred from.
+
+## Check 422: `fugaro update` on an installation at the previous version converges with no manual step (a sandbox installation; never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **MC10** of
+[docs/model-crafts/implementation-plan.md](model-crafts/implementation-plan.md) — its "Checks 420, 421,
+422" — and **run by you**: no test in this tree runs Terraform, the rules deploy and a policy publish
+against a project, and that is exactly what the check's first converge is. The check is
+`scripts/live-checks/check422.sh` (its sibling test `scripts/live-checks/check422_test.sh` drives it
+against a fake `fugaro` whose converge **really** migrates the case's own local config the way the release
+does, a fake `gcloud` that prints an access token and a fake `curl` that serves the published policy node
+before and after), the owner types `bash scripts/live-checks/check422.sh` and nothing else, and **no agent
+runs any step of it**. A name or a config path naming `belong` is refused, whether you typed it or `fugaro
+doctor` answers it, and so is a coding agent's session — **never `belong`**, as on the row.
+
+**What it settles.** **MC4**'s migration and the reconciliation's **F17** and **D1621**, on one installation
+whose local config is still at the previous version: `claude_accounts`, `default_claude_account` and
+`stages` are converted **in place** into the craft vocabulary, and the converge finishes with nothing left
+for the person. The hermetic halves of the same claim are two tests in this tree —
+`TestUpdateConvergesPreviousInstallation` (`internal/cli/init_craft_migrate_test.go`), which drives the
+migration on a config in a temp directory, and `TestUpdateIsIdempotent` (same file), which pins the second
+converge — and the check is what they cannot be: the same claim against a real project.
+
+- **The migration, read from the config rather than from the CLI's account of itself.** The local config's
+  shape is read before the converge (`claude_accounts`, `default_claude_account`, `stages` — the accounts
+  design's keys — and the typed `credentials` and `crafts` the migration writes) and again after it. What
+  is asserted is what **MC4** does: one typed `claude-oauth` credential per named account, and one craft
+  access per craft whose stages all run on one of those accounts.
+- **The older keys stay.** The migration only **ADDS** — the launch, the runner and `fugaro models` still
+  read the account keys until MC5 moves them — so a converge that emptied them would be the finding, not
+  the success: an installation whose runs resolve no model and no credential at all.
+- **Nothing left for the person.** Exit 0, no `left_for_you`, no failed stage. That is the row the task's
+  own sentence is about ("converges with no manual step"), and it is read from the converge's own `--json`
+  document, which the check refuses to proceed without.
+- **The unconvertible key is reported, not refused.** MC4 reports a key it cannot convert as a `note:` line
+  on **every** write, so the check reads the note rather than assuming silence, and an account left
+  unconverted **with** its note is a different row from one left unconverted **without** it.
+- **The idempotence is a second converge of the same installation.** The migrated keys must be left byte for
+  byte as the first converge left them; a second converge that re-appends or rewrites them is the FAIL, and
+  the check compares the two documents rather than re-reading the file for a substring.
+- **The crafts resolve.** `fugaro craft ls --json` must resolve the crafts the migrated config states.
+- **The published policy node did NOT move.** No command of this release writes the crafts members of the
+  published policy — `fugaro project policy publish` keeps whatever the node holds — so the check reads the
+  node `config/policy/shared` **outside the CLI**, with your own credentials (`gcloud auth print-access-token`
+  and the Realtime Database REST endpoint), before and after the converge. A release that started rewriting
+  the operator's published crafts from a local file would be the silent loosening this row exists to catch,
+  and MC5 is where the node's writer is decided.
+
+**What it costs.** TWO converges of the sandbox installation — the whole of what `fugaro update` does: the
+Terraform plan and apply, the rules deploy, the published policy, the job images behind their own
+confirmation and the local config — the second being the idempotence reading. Nothing here is billable on
+its own (no run is launched and no model call is made) and `--yes` is passed to each converge, so run it
+where an image rebuild, a deploy or a first policy publish that an unrelated stage decides it wants is
+acceptable. The plugin stage writes your own Claude Code plugin at user scope, outside every checkout. Two
+reads of the published policy node with your own credentials are the only other call. On disk it is one
+scratch directory, removed at the end — and **the migration STAYS**: it is the installation's own state,
+`fugaro update --forget` is your own rollback and the check never runs it.
+
+**The commands.**
+
+```sh
+bash scripts/live-checks/check422.sh --dry-run
+bash scripts/live-checks/check422.sh
+bash scripts/live-checks/check422.sh --installation <a sandbox project> --config <its local config>
+```
+
+Nothing is required but the script's own path: the installation is the one `fugaro doctor --json` answers
+(run it from a checkout of the sandbox project, or with `$FUGARO_PROJECT`/`$FUGARO_CONFIG` naming it), and
+the config is that installation's own local config as the CLI's own `--config` default documents it
+(`$XDG_CONFIG_HOME/fugaro/projects/<name>.yaml`, else under `~/.config`). `--installation` and `--config`
+are both compared against doctor and against the config's own `name` and `gcp_project`, and a disagreement
+is a STOP before anything runs. Run it on an installation you have **not** yet converged with this CLI;
+on one whose config already holds the typed credentials and the crafts, the check says so and asserts the
+end state and the idempotence alone. Progress goes to stderr and the plan of a dry run, then one
+`CHECK 422 RESULT` block, go to stdout: paste that block here and nothing else. **Exit `0`** is every
+criterion that was measured holding; **`1`** is a measured criterion that did not hold, or a guard that
+stopped the check — a converge that failed, one that left a step for the person, a key migrated with no
+note, a second converge that moved the keys, crafts that do not resolve, a policy node that moved; **`2`**
+is the check not being able to measure (a tool missing, the installation or the config unreadable or
+disagreeing, the converge's `--json` document unreadable, the node unreadable). A key the run never
+reached reads `FAIL — not reached`. The block's keys, in order, are `fugaro-version`, `features`, `xtrace`,
+`agent-session`, `belong`, `bound`, `installation`, `config-before`, `update`, `no-step-left`, `crafts`,
+`policy`, `config-after`, `second-update`, `restore` and `scratch-removed`. The knobs are
+`CHECK422_DRY_RUN`, `CHECK422_KEEP_SCRATCH`, `CHECK422_INSTALLATION`, `CHECK422_CONFIG` (the config path;
+`$FUGARO_CONFIG` is honoured when neither is set) and `CHECK422_TIMEOUT` (3600: how long **one** converge
+may take).
+
+**What waits on it.** MC5 — the task that moves the readers off the account keys and onto the crafts — which
+is why the migration only adds today; when MC5 lands, the older keys' row here is the one to re-read. And
+the release's own `### For operators`: MC4's PR carries the entry that says `fugaro update` converges
+accounts, the auto list and model keys to credentials, pools and crafts in place, which is the step this
+check takes twice.
+
+## Check C0: the console-coordinator page's reads, timed and sized — one script you run (an installation you name, never `belong`; run by you; NOT RUN)
+
+**NOT RUN, and it takes no check number.** C0 is a task of
+[docs/console-coordinator-v2/implementation-plan.md](console-coordinator-v2/implementation-plan.md) rather
+than a check, so this section carries the task's own name: the register's numbering paragraph above is
+untouched, no number is spent on it, and the census sentence that reads the register's highest written
+`## Check` section is unaffected — this heading carries no number for it to find. What it produces is the
+readings [docs/console-coordinator-v2/spec.md](console-coordinator-v2/spec.md) §2.2's cells are waiting for,
+the ones that say **`(unmeasured)`**, and **you** paste them: the script edits no document and never
+decides a number, and filling the table is the plan's C0 itself.
+
+**The one command.**
+
+```sh
+bash scripts/live-checks/check-c0.sh --project <name> [--project <name>...] [--checkout <path>...]
+```
+
+`--project` names the installation the reads are made against, and it is required and repeatable: the
+`coordinator status` read is made **once per name**, which is how the spec's `~724 KB` — read on a
+four-repository installation — gets a second point on the size-versus-repository-count curve. `--checkout`
+names a checkout whose `plan status` is timed; without it the current directory is used when it is a
+checkout (it has a `docs/`), and when it is not, that row says so and the run ends `2`. `--dry-run` prints
+every command a real run would make and runs none of them: no fugaro command, no read, no verdict. A name
+carrying `belong` — in `--project` or in `--checkout` — is refused before any read is made.
+
+**What it measures, and how.** `fugaro runs ls --json` at `--since 24h`, `--since 7d` and `--since 0`, and
+the same window with `--limit 50` and with `--limit 20`; `fugaro coordinator status --from-store --all
+--json` once per installation named; `fugaro plan status --json --all` once per checkout named, run from
+that checkout (the read walks `docs/` there); and `fugaro budget show --json`. The installation travels in
+the read's own environment (`FUGARO_PROJECT=<name>`), so the argv stays the console's own words, and the
+reads that do not need a checkout are made from the check's scratch directory — outside every checkout, the
+way the console's own working directory is the app's — so no checkout's `fugaro.yaml` decides which
+installation answers. The bytes are the document's own length on stdout and the seconds are the whole
+spawn's wall clock, taken with bash's own `TIMEFORMAT` so no GNU `date` is needed. Each document is counted
+by one `python3` reader that prints counts and never a document, and scanned for credential-shaped text
+before any of its own words is echoed.
+
+**Both page sizes, because the plan and the spec disagree.** The plan's C0 row names
+`fugaro runs ls --json --since 24h --limit 50` (D818's first page, spec §2.6), while the `(unmeasured)`
+size cell in spec §2.2 — the halted-or-failed-job item — reads `--limit 20` (D810's bounded read). The
+check measures both and settles neither: a number for a flag combination the spec does not use, and none
+for the one it does, would send you back for a second run. **Which limit the queue uses is a product
+decision, and the reading does not make it.**
+
+**What it prints.** Progress on stderr and ONE block on stdout: a `FACT` row per read, `PASS` when it
+answered with the shape the check reads and `FAIL` when it did not, plus a `C0 READINGS` table — read,
+bytes, human size, seconds, and what the document held — and a `CELLS` section with one line per read in
+the wording the spec's cells need (`size about 1.1 KB, time about 5.8 s`). Exit `0` when every read
+answered, `1` when every read answered and one came back a document this check does not read, and `2` when
+a read did not answer or a guard stopped the run: a run that could not measure a read ends `2` even if
+another read also came back the wrong shape, because the table has a hole in it.
+
+**Why nothing has to be undone.** Every command it runs is a read — a listing of the runs bucket, the
+stored view out of the project's database, the plan walk over a checkout, and the budget document — so the
+check creates nothing, writes nothing, launches no run, mints no credential and changes no cloud state.
+There is therefore nothing for a teardown to put back, and the block's `restore` row says exactly that;
+the only thing removed is the check's own scratch directory, mode 0700, taken from its exit trap even on a
+failed read or a Ctrl-C. The one read that is not a single call is `plan status`: it walks the checkout and
+asks the forge about the pull requests its tasks carry, one `gh` per joined pull request, at most 32.
+
+**What it costs.** Nothing billable and no model call. It is `USER-RUN, NOT RUN`: **no agent runs any step
+of it**, and its own test (`scripts/live-checks/check-c0_test.sh`, wired into `scripts/live_checks_test.go`)
+drives it against a fake `fugaro` on `PATH` alone — no network, no project, no bucket and no credential.
+
+**What waits on it.** The page's own work (C1 to C4 and the console release) reads these numbers: the
+action queue's page size, the decision between the stored view as it stands and one narrowed per
+repository, and whether `plan status` may be one of four reads started together or has to be asked for on
+demand. Nothing is blocked on the reading itself — the tasks are droppable and independent — but a figure
+in that table which the reading contradicts is corrected by C0, and the spec's own sentence says so.

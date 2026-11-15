@@ -4767,6 +4767,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--binary` | string | "" | no | the stable path of the fugaro binary the login unit names: the daemon exits cleanly when the version there differs from this process |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--decide` | bool | `false` | no | wake the decision agent on the judgement cases code cannot decide (a run out of retries, an attempt that never started, a result no phase reads): each judgement is a model call on your own Claude login |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for run |
 | `--interval` | duration | `30s` | no | how long to wait between cycles when the node says nothing moved |

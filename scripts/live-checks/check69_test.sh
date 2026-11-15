@@ -135,16 +135,17 @@ if "%{scheme}" in fmt:
         sys.stderr.write("curl: (6) Could not resolve host: %s\n" % url)
         sys.exit(6)
     if mode == "origin-plain-http":
-        sys.stdout.write("http 301 203.0.113.7 0 %s\n" % url)
+        sys.stdout.write("HTTP 301 203.0.113.7 0 %s\n" % url)
         sys.exit(0)
     if mode == "origin-bad-chain":
         sys.stderr.write(
             "curl: (60) SSL certificate problem: unable to get local issuer certificate\n"
         )
         sys.exit(60)
+    scheme = "https" if mode == "origin-lowercase" else "HTTPS"
     sys.stdout.write(
-        "https 200 203.0.113.7 %s %s\n"
-        % ("1" if mode == "origin-unverified" else "0", url)
+        "%s 200 203.0.113.7 %s %s\n"
+        % (scheme, "1" if mode == "origin-unverified" else "0", url)
     )
     sys.exit(0)
 
@@ -618,6 +619,13 @@ test_an_origin_on_plain_http() {
   expect_contains "$out" "The reading that passes is https with status 200 and ssl_verify_result 0" "plain http origin: the rule is stated"
 }
 
+test_an_origin_whose_curl_prints_the_scheme_in_lowercase() {
+  setup_case origin-lowercase
+  RUN69_MODE=origin-lowercase
+  run69
+  expect_fact https PASS "lowercase scheme: the row passes as the uppercase form does"
+}
+
 test_a_certificate_for_another_host() {
   setup_case cert-other
   printf 'subject=CN = other.example\nissuer=C = US, O = Lets Encrypt\n' >"$dir/state/cert.subject"
@@ -933,6 +941,7 @@ t test_a_canonical_url_that_is_not_https_stops
 t test_an_empty_canonical_url_stops
 t test_an_origin_that_does_not_answer
 t test_an_origin_on_plain_http
+t test_an_origin_whose_curl_prints_the_scheme_in_lowercase
 t test_a_certificate_for_another_host
 t test_a_certificate_named_only_in_the_san
 t test_a_deployed_page_that_is_not_this_build
