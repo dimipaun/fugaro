@@ -75,10 +75,12 @@ workflows:
       # three shards of its own (scripts-live-0..2, 8 to 9 minutes each under -race), and
       # every live check script has its hermetic test elsewhere in the tree. The rest of
       # ./scripts runs here, so a change to scripts/ still runs its package's tests.
-      # The tree without internal/cli runs first, and alone: the one `go test` over
-      # everything that used to run here put the heavy packages beside each other, and that
-      # is what the 15m cap killed. ./scripts alone is 4.5 minutes; beside two internal/cli
-      # invocations it was 13.
+      # The one `go test` over everything that used to run here put the heavy packages beside
+      # each other, and that is what the 15m cap killed. ./scripts is the package the others
+      # slow down -- 4.6 minutes on its own, 13 in the same invocation as the rest of the tree
+      # -- so it runs first and alone. The rest of the tree and the two internal/cli
+      # invocations then share the machine, and none of them is big enough to push another
+      # past the cap.
       # internal/cli is the longest package here: 11 minutes of tests in one binary, past the
       # 15m cap one `go test` puts on every package it builds, so it runs as two invocations
       # at once, cut by the first letter of the test name. `^TestU` is its update and upgrade tests: nine of them wait out a 30s or
@@ -92,14 +94,18 @@ workflows:
         test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       test: |
         rc=0
-        # The tree without internal/cli first, and alone, then internal/cli in the two halves
-        # the comment above describes (the live-check bash tests are the one thing left out;
-        # the cli exclusion is anchored, so internal/clidoc and ee/clidoc stay in).
-        go test -timeout 15m -skip '^TestLiveCheckScripts$' $(go list ./... | grep -v -e /internal/runner -e /internal/e2e -e /internal/image -e /fugaro/images -e '/internal/cli$') || rc=$?
+        # ./scripts first, and alone: it is the one package the others slow down, and it is
+        # the only one big enough to feel them. The rest of the tree and the two internal/cli
+        # halves then run at once (the live-check bash tests are the one thing left out; the
+        # exclusions are anchored, so internal/clidoc and ee/clidoc stay in).
+        go test -timeout 15m -skip '^TestLiveCheckScripts$' ./scripts/ || rc=$?
+        go test -timeout 15m $(go list ./... | grep -v -e /internal/runner -e /internal/e2e -e /internal/image -e /fugaro/images -e '/internal/cli$' -e '/scripts$') &
+        tree=$!
         go test -timeout 15m -run '^TestU' ./internal/cli/ &
         cliU=$!
         go test -timeout 15m -run '^Test[^U]' ./internal/cli/ &
         cliRest=$!
+        wait $tree || rc=$?
         wait $cliU || rc=$?
         wait $cliRest || rc=$?
         # The container's high-water memory since it started, the agent and the build cache
