@@ -56,7 +56,7 @@ member (D493, D1275).
 Adding a repository or turning the switch on is the owner's own step: it asks
 nothing at your own terminal, and a coding agent's session is refused it, with
 the command to run yourself (D1552). This whole family is refused in a session,
-so --yes does not lift it. Nothing here reads or prints a value.
+and no flag lifts it. Nothing here reads or prints a value.
 
 This is a local file edit. It ends on one line: next: fugaro update — the
 published policy's entry is derived from this list, so the change reaches the
@@ -67,7 +67,6 @@ project's runs in that run and not before it.`,
 		},
 	}
 	cmd.Flags().BoolVar(&o.proxy, "proxy", false, "set project_secrets.NAME.proxy, the Bitbucket token's switch for the credentials service (--proxy=false turns it off)")
-	cmd.Flags().BoolVar(&o.yes, "yes", false, "confirm the policy write without a prompt (outside a coding agent's session)")
 	return cmd
 }
 
@@ -90,8 +89,8 @@ A removal that leaves the list empty is allowed and is not a removal of the
 entry: the value is then stored for no repository, and the entry stays for the
 day a pattern is added back.
 
-This whole family is refused in a coding agent's session, --yes included (spec
-§5): what a secret reaches is a decision no plan shows. Nothing here reads or
+This whole family is refused in a coding agent's session (spec §5): what a
+secret reaches is a decision no plan shows. Nothing here reads or
 prints a value.
 
 This is a local file edit. It ends on one line: next: fugaro update — the
@@ -102,7 +101,6 @@ project's runs in that run and not before it.`,
 			return runSecretsAllowDeny(cmd, o, args[0], args[1:], false)
 		},
 	}
-	cmd.Flags().BoolVar(&o.yes, "yes", false, "confirm the policy write without a prompt (outside a coding agent's session)")
 	return cmd
 }
 

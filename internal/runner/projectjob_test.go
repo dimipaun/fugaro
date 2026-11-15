@@ -666,3 +666,88 @@ func TestReviewVariantIsNotTheCodingJob(t *testing.T) {
 		gcp.ProjectJobName(job.profile, job.provider, job.account),
 		"review-only variant", "is not a review", "The run stops")
 }
+
+// TestProjectJobDefaultProfileIsTheProvidersOwn is D2310 and R8's rule as this
+// package answers it: the profile a workflow that names no job profile runs on
+// is the default profile of its *repository's own* provider — `standard` for
+// the project's first provider, and `standard-<provider>` for another — and
+// every job name a launcher computes from that answer is a name this package's
+// candidate set places, on the same (profile, provider, account) triple.
+//
+// It is the runner's half of the agreement C1 requires (contract.md: the
+// launcher and the runner's candidate logic "must agree name for name"), and
+// its other half is internal/cli's TestUnnamedWorkflowResolvesTheProfileOfItsProvider
+// and TestRunnerCandidatesMatchTheLauncher, which drive the launcher itself.
+// The rule lives here rather than in internal/cli because this package is
+// where a job name is computed from the published policy at run time: the
+// launcher reads it (internal/cli's launchProjectJobFor) and a second copy of
+// it on either side is one that can drift.
+//
+// The account loop is not decoration. The account segment of the job's name is
+// the axis config.ProjectJobAccounts derives for the profile, and a launcher
+// that derived it for itself — or read it off the profile's secrets, as the
+// runner once did — would compute the name of a job the deployer never built:
+// a 404 from Cloud Run after the claim and the budget token were spent. Every
+// account of the profile's axis is therefore placed here, not one of them.
+func TestProjectJobDefaultProfileIsTheProvidersOwn(t *testing.T) {
+	const (
+		bitbucketAndGitHub = `{"version":5,"allow_repos":["github/acme/*","bitbucket/acme/*"],` +
+			`"profiles":{"standard":{"provider":"github",` + profileShape + `},` +
+			`"standard-bitbucket":{"provider":"bitbucket",` + profileShape + `}}}`
+		bitbucketFirst = `{"version":5,"allow_repos":["github/acme/*","bitbucket/acme/*"],` +
+			`"profiles":{"standard":{"provider":"bitbucket",` + profileShape + `},` +
+			`"standard-github":{"provider":"github",` + profileShape + `}}}`
+	)
+	for _, tc := range []struct {
+		name     string
+		policy   string
+		provider string
+		want     string
+	}{
+		{"the project's default serves the repository's provider", projectPolicyFor(`["github/acme/*"]`, ""), "github", projectpolicy.DefaultProfileName},
+		{"another provider resolves to standard-<provider>", bitbucketAndGitHub, "bitbucket", projectpolicy.DefaultProfileName + "-bitbucket"},
+		{"the first provider's repository keeps the project's default", bitbucketFirst, "bitbucket", projectpolicy.DefaultProfileName},
+		{"the second provider's resolves to its own", bitbucketFirst, "github", projectpolicy.DefaultProfileName + "-github"},
+		{"a provider the policy serves no default for", projectPolicyFor(`["github/acme/*"]`, ""), "bitbucket", ""},
+		{"a name that lies about its provider", `{"version":5,"allow_repos":["github/acme/*","bitbucket/acme/*"],` +
+			`"profiles":{"standard":{"provider":"github",` + profileShape + `},` +
+			`"standard-bitbucket":{"provider":"github",` + profileShape + `}}}`, "bitbucket", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, found, err := projectpolicy.Decode([]byte(tc.policy))
+			if err != nil || !found || p == nil {
+				t.Fatalf("the fixture's policy node does not decode: %v", err)
+			}
+			got := runner.ProjectJobDefaultProfile(p, tc.provider)
+			if got != tc.want {
+				t.Fatalf("the default profile of a repository on %s is %q, want %q", tc.provider, got, tc.want)
+			}
+			if got == "" {
+				// The choice of no profile: the launch keeps the per-repository
+				// job, which is the same answer every launch of a project with
+				// no profile for the provider has always had.
+				return
+			}
+			pr, err := p.ProfileFor(got)
+			if err != nil {
+				t.Fatalf("the resolved profile is not one the policy defines: %v", err)
+			}
+			if pr.Provider != tc.provider {
+				t.Fatalf("the resolved profile %q serves %s, and the repository is on %s: a launch on it would run the repository's work on another provider's job", got, pr.Provider, tc.provider)
+			}
+			for _, account := range config.ProjectJobAccounts(pr.JobProfile) {
+				name := gcp.ProjectJobName(got, pr.Provider, account)
+				profile, provider, from, ok := runner.ProjectJobOfPolicy(p, name)
+				if !ok || profile != got || provider != pr.Provider || from != account {
+					t.Fatalf("the candidate set places the name %s as (%s, %s, %s, %v), and the launcher computes (%s, %s, %s)", name, profile, provider, from, ok, got, pr.Provider, account)
+				}
+			}
+		})
+	}
+	if got := runner.ProjectJobDefaultProfile(nil, "github"); got != "" {
+		t.Fatalf("a project that published no policy resolves the default profile %q: a project with no profile has no job to run one on", got)
+	}
+	if got := runner.ProjectJobDefaultProfile(nil, ""); got != "" {
+		t.Fatalf("a provider no repository is on resolves the default profile %q", got)
+	}
+}

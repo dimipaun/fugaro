@@ -519,7 +519,7 @@ func (s *projectStage) credentialNote() string {
 // names the flag that did not and the one way out of it.
 func (s *projectStage) declined(what string) error {
 	return &initflow.NeedsYouError{Left: initflow.Left{Stage: initflow.Project, Kind: initflow.LeftPrompt,
-		Text: "not confirmed (" + what + " was not confirmed): " + s.e.r.o.doorName() + " asks this step of a person at a real terminal and --yes never stands in for one — rerun " + selfCommand() + " " + s.e.r.o.doorName() + " in your own terminal window without --yes, read the banner, and the step goes on; nothing further was done"}}
+		Text: "not confirmed (" + what + " was not confirmed): " + s.e.r.o.doorName() + " asks this step of a person at a real terminal and no flag stands in for one — rerun " + selfCommand() + " " + s.e.r.o.doorName() + " in your own terminal window, read the banner, and the step goes on; nothing further was done"}}
 }
 
 func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
