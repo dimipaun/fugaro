@@ -307,12 +307,49 @@ func (v *Verifier) readWorkspaces(ctx context.Context, res *Result, token string
 		return msgRecord, true
 	}
 	for _, workspace := range workspaces {
-		if _, msg, refused := v.prove(ctx, res, token, repositoriesURL(workspace, ""), "workspace "+workspace, msgMissingRepoRead); refused {
+		what := "workspace " + workspace
+		body, msg, refused := v.prove(ctx, res, token, repositoriesURL(workspace, ""), what, msgMissingRepoRead)
+		if refused {
+			return msg, true
+		}
+		if msg := workspaceCovered(body, workspace, what); msg != "" {
 			return msg, true
 		}
 		res.proveRead(scopeRepositoryRead)
 	}
 	return "", false
+}
+
+// workspaceCovered reads the answer of a workspace's repository listing and
+// reports the refusal when it holds no repository of that workspace.
+//
+// A 200 alone is not a proof, for the same reason projectCovered refuses an
+// empty listing: Bitbucket filters a listing by what the token may see, so a
+// workspace the token cannot see — another workspace's, or its own with nothing
+// visible in it — answers 200 with nothing in it. Crediting that would let a
+// token of workspace B pass a record covering bitbucket/A/*, which is the one
+// thing the contract states coverage to prevent. Every entry is checked to be in
+// the workspace asked about for the same reason projectCovered checks each
+// entry's project: the filter is bitbucket.org's behaviour, and the answer is
+// the only thing this side can hold.
+func workspaceCovered(body []byte, workspace, what string) string {
+	var ans struct {
+		Values []struct {
+			FullName string `json:"full_name"`
+		} `json:"values"`
+	}
+	if json.Unmarshal(body, &ans) != nil {
+		return msgRefused
+	}
+	if len(ans.Values) == 0 {
+		return msgNotCovered(what)
+	}
+	for _, item := range ans.Values {
+		if !strings.HasPrefix(item.FullName, workspace+"/") {
+			return msgNotCovered(what)
+		}
+	}
+	return ""
 }
 
 // readProject proves a project record's coverage: the listing of the project's
@@ -598,9 +635,19 @@ func projectURL(workspace, key string) string {
 // (httpjson.DefaultTimeout): `creds set` passes no deadline and has none to
 // pass, so a connection accepted and never answered would otherwise hold the
 // operator at a prompt that never returns, with nothing to tell them the token
-// is fine. A caller's own client is copied rather than changed, and a timeout
-// it set itself is kept: the check is a handful of small reads, so what bounds
-// them is the caller's business when the caller says.
+// is fine. A caller's own client is copied rather than changed and a timeout it
+// set itself is kept: the check is a handful of small reads, so what bounds them
+// is the caller's business when the caller says. What is the check's own and not
+// the caller's is the rule below.
+//
+// No redirect is followed, and that is a rule and not a bound. Go's default
+// follows up to ten hops and keeps the Authorization header on a same-host one,
+// so a 3xx on a coverage read would carry the operator's token to a path the
+// record never named and credit THAT path's 200 as proof of the repository the
+// record does name — the one thing every read here is built to prevent. Reading
+// the 3xx as the refusal it is (prove's default) is what makes the coverage the
+// record states the coverage that was read. projectlookup in this package reads
+// no redirect either, for the same reason on the same credential.
 func (v *Verifier) client() *http.Client {
 	c := http.Client{}
 	if v.Client != nil {
@@ -609,6 +656,7 @@ func (v *Verifier) client() *http.Client {
 	if c.Timeout == 0 {
 		c.Timeout = httpjson.DefaultTimeout
 	}
+	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return &c
 }
 

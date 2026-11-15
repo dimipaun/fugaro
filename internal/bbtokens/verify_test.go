@@ -448,6 +448,60 @@ func TestVerifyNamesWhatIsMissing(t *testing.T) {
 		}
 	})
 
+	// A 200 is not a proof on its own: Bitbucket's listing is filtered by what
+	// the token may see, so an existing workspace the token cannot see answers
+	// 200 with nothing in it. Crediting that would let a workspace B token pass
+	// a record covering bitbucket/A/*.
+	t.Run("a workspace listing with nothing in it", func(t *testing.T) {
+		res := refused(t, newFakeBitbucket(t, map[string]fakeAnswer{
+			"GET /2.0/repositories/acme": {status: 200, body: `{"values":[]}`},
+		}), workspaceRecord(), testToken)
+		if want := "the token does not cover workspace acme"; res.Message != want {
+			t.Errorf("message = %q, want %q: a listing holding nothing has shown nothing", res.Message, want)
+		}
+	})
+
+	t.Run("a workspace listing that answers another workspace", func(t *testing.T) {
+		res := refused(t, newFakeBitbucket(t, map[string]fakeAnswer{
+			"GET /2.0/repositories/acme": {status: 200, body: `{"values":[{"full_name":"other/one"}]}`},
+		}), workspaceRecord(), testToken)
+		if want := "the token does not cover workspace acme"; res.Message != want {
+			t.Errorf("message = %q, want %q: a listing of another workspace is not this one's", res.Message, want)
+		}
+	})
+
+	t.Run("a workspace listing that is not a listing", func(t *testing.T) {
+		res := refused(t, newFakeBitbucket(t, map[string]fakeAnswer{
+			"GET /2.0/repositories/acme": {status: 200, body: `not a listing`},
+		}), workspaceRecord(), testToken)
+		if res.Message != msgRefused {
+			t.Errorf("message = %q, want %q", res.Message, msgRefused)
+		}
+	})
+
+	// The one answer that looks like a proof and is not: Go's client follows a
+	// redirect by default and keeps the Authorization header on a same-host hop,
+	// so the target's 200 would be credited as a read of the repository the
+	// record names. projectlookup in this package reads no redirect either.
+	t.Run("a redirect to another repository", func(t *testing.T) {
+		answers := repoAnswers()
+		answers["GET /2.0/repositories/acme/fugaro"] = fakeAnswer{
+			status: 301,
+			header: map[string]string{"Location": "https://api.bitbucket.org/2.0/repositories/acme/renamed"},
+		}
+		answers["GET /2.0/repositories/acme/renamed"] = fakeAnswer{status: 200, body: `{"full_name":"acme/renamed"}`}
+		f := newFakeBitbucket(t, answers)
+		res := refused(t, f, repoRecord(), testToken)
+		if res.Message != msgRefused {
+			t.Errorf("message = %q, want %q: a redirect has shown nothing about the repository the record names", res.Message, msgRefused)
+		}
+		for _, r := range f.requests() {
+			if strings.Contains(r.path, "renamed") {
+				t.Errorf("the check followed the redirect to %s, presenting the token there", r.path)
+			}
+		}
+	})
+
 	t.Run("a project the token does not cover", func(t *testing.T) {
 		res := refused(t, newFakeBitbucket(t, map[string]fakeAnswer{
 			"GET /2.0/workspaces/acme/projects/FUG": {status: 200, body: `{"uuid":"{proj-1}","key":"FUG"}`},
