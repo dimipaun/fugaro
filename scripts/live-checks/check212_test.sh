@@ -1910,7 +1910,16 @@ test_a_machine_without_gh_still_deletes_the_branches() {
   local dir=$work/nogh
   prepare "$dir"
   rm -f "$dir/bin/gh"
-  run_check "$dir" PATH="$dir/bin:/usr/bin:/bin"
+  # The rest of what the check shells out to, symlinked into a directory of its
+  # own, and that directory is the whole PATH beside the fakes: naming /usr/bin
+  # and /bin would still find a `gh` where CI's own machine keeps one, and the
+  # case would then be about a machine that has it.
+  mkdir -p "$dir/nogh-bin"
+  local tool
+  for tool in bash mktemp date python3 grep sed awk head tail cut sort seq cat rm mv mkdir chmod tr env ls sleep wc uniq basename dirname find tee stat touch cp; do
+    ln -sf "$(command -v "$tool")" "$dir/nogh-bin/$tool" 2>/dev/null || true
+  done
+  run_check "$dir" PATH="$dir/bin:$dir/nogh-bin"
   expect_status "$status" 1 "a machine without gh"
   expect_contains "$out" "FACT restore: FAIL" "a machine without gh: the row"
   expect_contains "$out" "is not on PATH" "a machine without gh: the row names the tool"
