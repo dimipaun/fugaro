@@ -534,6 +534,43 @@ func TestEachCloudWritingStepWritesItsAuditRecordEvenIfALaterStepFails(t *testin
 	}
 }
 
+// TestApplyJudgesItsTerraformStepsAgainstTheRunsOwnCover: a chain builds no
+// review, so the gate judges the plan of a step `apply` runs against the cover
+// the review would have printed — the run's own — and not against the refusing
+// cover of a step whose review was never built. A managed project's Terraform
+// steps would otherwise stay owed forever, refused by a cover that says the
+// review was not available, which is the opposite of what this command is for.
+func TestApplyJudgesItsTerraformStepsAgainstTheRunsOwnCover(t *testing.T) {
+	r := updateManagedRig(t)
+	updating(t, r)
+	owed(t, initflow.Installation, apply.Change{Kind: apply.Setting, Key: "layer.defaults.agent.model"})
+
+	out, errOut, err := executeStdin(t, "", "apply", "--json")
+	if err != nil {
+		t.Fatalf("apply in a managed project: %v\n%s", err, out+errOut)
+	}
+	doc := applyDocOf(t, out)
+	if !slices.Equal(doc.Applied, []string{initflow.Installation}) || len(doc.Pending) != 0 {
+		t.Errorf("the run applied %v and left %v owed, want the installation step and nothing",
+			doc.Applied, applySteps(doc.Pending))
+	}
+	if calls := r.ran(t, "apply"); len(calls) == 0 {
+		t.Errorf("the step was answered without applying its plan: %q", r.calls(t))
+	}
+	// And the step that applied is recorded, under the door that ran: the
+	// record is what an owner reads afterwards, and a chain's write filed as an
+	// update's would name a command that did not run (D1014).
+	recs := audits(t, r)
+	if len(recs) == 0 {
+		t.Fatalf("the step that applied wrote no audit record:\n%s", out+errOut)
+	}
+	for _, rec := range recs {
+		if rec.Command != "fugaro "+applyName {
+			t.Errorf("a record of this run names the command %q", rec.Command)
+		}
+	}
+}
+
 // TestApplyStatusJSONMatchesSchema validates the document every arm of this
 // command writes against schemas/apply-status.schema.json, the contract a
 // reader outside this binary reads it by (D1569, F9).
