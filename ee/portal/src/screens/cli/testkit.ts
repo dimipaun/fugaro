@@ -6,10 +6,10 @@
 //
 // It is one module rather than a copy in each suite because the two pages talk
 // to one service: what they share is a contract -- `/entitlements`,
-// `/workspaces/bind` and K2.4's `/cli/device` -- and two fakes of it would be
-// two places that contract could drift, with a device page approving a licence
-// the authorize page has never heard of. Nothing here is imported by a screen,
-// so nothing here reaches the bundle.
+// `/workspaces/bind` and K2.4's `/cli/authorize` and `/cli/device` -- and two
+// fakes of it would be two places that contract could drift, with a device page
+// approving a licence the authorize page has never heard of. Nothing here is
+// imported by a screen, so nothing here reaches the bundle.
 //
 // No fixture is shaped like a credential: the token, the codes and the names
 // the screens handle are all text that is obviously not one (the plan's rule for
@@ -20,6 +20,7 @@ import { API_BASE, ApiError } from '../../api/client'
 import type { ApiCall, ApiClient } from '../../api/client'
 import type { Entitlement } from '../../api/types/entitlements'
 import type { AuthPort, SignedInUser } from '../../auth/session'
+import { UNVERIFIABLE } from './flow'
 
 /** The text a fake session answers as the ID token. Not a token: it is read by
  * nothing and it is here so a case can see it arrive where the service reads
@@ -40,6 +41,29 @@ export const READ_CODE = 'TEST-CODE'
 export const INSTALLATION = 'example-portal'
 
 export const ORGANISATION = 'Example Ltd'
+
+/** The one-time code K2.4 mints for a sign-in. It is spelled out so that a case
+ * can see the terminal's address arrive with a code on it, and it is obviously a
+ * fixture rather than one. */
+export const MINTED_CODE = 'a-fixture-code-that-is-not-one'
+
+/**
+ * What `POST /api/cli/authorize` answers: the terminal's own listener with the
+ * code and the state on it.
+ *
+ * The code is this fake's own and the address is the one the request named,
+ * which for every request the check below accepts is the one the service names
+ * back: K2.4's `loopbackRedirect` rebuilds it from the port it validated, so
+ * nothing a page writes beyond that port survives. A case asserts the page went
+ * to what this answers, which is the property that matters -- the page navigates
+ * to the service's address and to nothing it assembled itself.
+ */
+export function handedOver(redirectURI: string, state: string): string {
+  const target = new URL(redirectURI)
+  target.searchParams.set('code', MINTED_CODE)
+  target.searchParams.set('state', state)
+  return target.toString()
+}
 
 export function signedIn(): SignedInUser {
   return {
@@ -228,6 +252,19 @@ function answer(
       }
     }
     return undefined
+  }
+  if (method === 'POST' && pathname === `${API_BASE}/cli/authorize`) {
+    const call = body as { redirect_uri: string; state: string }
+    // The service sends a code to the loopback listener it validated and to
+    // nothing else (K2.4's `loopbackRedirect`), so a page that passed an address
+    // this is not is refused here as it is there. What that rule is belongs to
+    // the Go service and is pinned by its own tests; what this fake needs is
+    // enough of it that no case is answered with an address the service would
+    // never have sent.
+    if (!/^http:\/\/127\.0\.0\.1:\d{1,5}\/callback$/.test(call.redirect_uri)) {
+      throw new ApiError(403, { code: 'signin_unverified', message: UNVERIFIABLE })
+    }
+    return { redirect: handedOver(call.redirect_uri, call.state) }
   }
   if (method === 'POST' && pathname === `${API_BASE}/cli/device`) {
     const call = body as { user_code: string; confirm?: boolean }

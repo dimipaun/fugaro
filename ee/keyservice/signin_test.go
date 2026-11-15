@@ -1517,21 +1517,47 @@ func (f *fixture) approveDevice(t *testing.T, userCode, token string) {
 // the portal's origin, where Hosting rewrites `/api/**` to this service and
 // nothing else (F21), so what those pages reach is the API's faces of the same
 // two steps. The tests below drive them the way the screens do: the authorize
-// page submitting its own form, and the device page's two JSON calls with the
-// caller's ID token in a bearer header.
+// page's one JSON call, which is answered with the address it navigates to, and
+// the device page's two JSON calls with the caller's ID token in a bearer
+// header.
 
-// apiForm is the SPA's authorize page submitting its form: the four parameters
-// the terminal sent and the token the session answered, urlencoded. It is a form
-// submission and not a fetch because the answer is the redirect to the
-// terminal's listener, which a fetch cannot follow (authorize.tsx).
-func (f *fixture) apiForm(form url.Values) *httptest.ResponseRecorder {
+// apiAuthorize is the SPA's authorize page's one call: the four parameters the
+// terminal sent and the token the session answered, in the JSON body the page's
+// own client sends. No bearer header is set, because the token of this step is
+// the body's field on both faces (AuthorizeCall) — a case that also wanted to
+// pin that a header is ignored would be pinning an encoding rather than a
+// decision.
+func (f *fixture) apiAuthorize(call map[string]string) *httptest.ResponseRecorder {
 	f.t.Helper()
-	req := httptest.NewRequest(http.MethodPost, intakeOrigin+RouteAPIAuthorize, strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.RemoteAddr = applicantIP
-	rec := httptest.NewRecorder()
-	f.handler.ServeHTTP(rec, req)
-	return rec
+	return f.apiAs("", RouteAPIAuthorize, call)
+}
+
+// handedOver reads what the API answers a sign-in that landed: the address the
+// page navigates to and the two things it carries, in the shape `redirected`
+// reads the page's own redirect in. Both faces send the terminal the same
+// address, and this is the one the SPA's page is given rather than sent to
+// (apiAuthorize).
+func handedOver(t *testing.T, rec *httptest.ResponseRecorder) (code, state, target string) {
+	t.Helper()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the sign-in answered %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != apiJSONType {
+		t.Errorf("the handover's content type is %q, want %q: the page navigates to a field of it", got, apiJSONType)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("the handover's Cache-Control is %q, want no-store: the answer carries a code", got)
+	}
+	var answer AuthorizeHandover
+	if err := json.Unmarshal(rec.Body.Bytes(), &answer); err != nil {
+		t.Fatalf("reading the handover %q: %v", rec.Body.String(), err)
+	}
+	address, err := url.Parse(answer.Redirect)
+	if err != nil {
+		t.Fatalf("parsing the handover's address %q: %v", answer.Redirect, err)
+	}
+	query := address.Query()
+	return query.Get("code"), query.Get("state"), address.Scheme + "://" + address.Host + address.Path
 }
 
 // apiAs is one of the API's two doors reached the way the SPA's own client
@@ -1629,21 +1655,28 @@ func TestTheSPAsDoorsAreTheAPIsOwn(t *testing.T) {
 }
 
 // TestAPIAuthorizeIsTheSignInTheSPAsPageSubmits: §11.3 end to end on the SPA's
-// face. The page submits the callback, the state, the challenge and the token
-// its session answered, and the answer is the redirect to the terminal's
-// listener carrying a code the terminal really exchanges — a bundle at the end
-// of it, which is what a licence login is for.
+// face. The page sends the callback, the state, the challenge and the token its
+// session answered, and the answer is the address of the terminal's listener
+// carrying a code the terminal really exchanges — a bundle at the end of it,
+// which is what a licence login is for.
+//
+// What the page does with that address is navigate to it, and that is the whole
+// reason this face answers an address instead of redirecting: the portal's own
+// policy is `form-action 'self'` and a browser checks it against where a
+// submission ends, so a page under it cannot be sent to a loopback listener by
+// one — the address it navigates to is not a submission and no policy of the
+// portal's governs it. Whatever the portal's policy narrows, this answer is
+// complete on its own.
 func TestAPIAuthorizeIsTheSignInTheSPAsPageSubmits(t *testing.T) {
 	f, spy := subscribed(t)
 	verifier := freshVerifier(t)
-	form := url.Values{
-		"redirect_uri":          {loopbackTarget},
-		"state":                 {signInState},
-		"code_challenge":        {pkceChallengeOf(verifier)},
-		"code_challenge_method": {pkceMethod},
-		"id_token":              {f.acceptedToken(t)},
-	}
-	code, state, target := redirected(t, f.apiForm(form))
+	code, state, target := handedOver(t, f.apiAuthorize(map[string]string{
+		"redirect_uri":          loopbackTarget,
+		"state":                 signInState,
+		"code_challenge":        pkceChallengeOf(verifier),
+		"code_challenge_method": pkceMethod,
+		"id_token":              f.acceptedToken(t),
+	}))
 	if target != loopbackTarget || state != signInState {
 		t.Fatalf("the sign-in sent the terminal %q with state %q, want %q and %q", target, state, loopbackTarget, signInState)
 	}
@@ -1651,8 +1684,8 @@ func TestAPIAuthorizeIsTheSignInTheSPAsPageSubmits(t *testing.T) {
 	if spy.minted() != 1 {
 		t.Errorf("the sign-in minted %d key(s) where the bundle is the exchange's, want 1", spy.minted())
 	}
-	// The other half of the same door: a page a person reloaded submits the
-	// code's exchange again and is refused, because a code is good once.
+	// The other half of the same door: a page a person reloaded sends the code's
+	// exchange again and is refused, because a code is good once.
 	if again := f.exchanged(code, verifier); again.Code != http.StatusForbidden {
 		t.Errorf("a second exchange of the same code answered %d, want %d", again.Code, http.StatusForbidden)
 	}
@@ -1667,32 +1700,36 @@ func TestAPIAuthorizeIsTheSignInTheSPAsPageSubmits(t *testing.T) {
 func TestAPIAuthorizeRefusesInTheAPIsOwnShape(t *testing.T) {
 	f, _ := subscribed(t)
 	verifier := freshVerifier(t)
-	intact := func() url.Values {
-		return url.Values{
-			"redirect_uri":          {loopbackTarget},
-			"state":                 {signInState},
-			"code_challenge":        {pkceChallengeOf(verifier)},
-			"code_challenge_method": {pkceMethod},
-			"id_token":              {f.acceptedToken(t)},
+	intact := func() map[string]string {
+		return map[string]string{
+			"redirect_uri":          loopbackTarget,
+			"state":                 signInState,
+			"code_challenge":        pkceChallengeOf(verifier),
+			"code_challenge_method": pkceMethod,
+			"id_token":              f.acceptedToken(t),
 		}
 	}
-	cases := map[string]func(url.Values){
-		"a target that is not the listener": func(form url.Values) { form.Set("redirect_uri", hostileRedirect) },
-		"no state":                          func(form url.Values) { form.Set("state", "") },
-		"a challenge method this service does not take": func(form url.Values) {
-			form.Set("code_challenge_method", "plain")
+	cases := map[string]func(map[string]string){
+		"a target that is not the listener": func(call map[string]string) { call["redirect_uri"] = hostileRedirect },
+		"no state":                          func(call map[string]string) { call["state"] = "" },
+		"a challenge method this service does not take": func(call map[string]string) {
+			call["code_challenge_method"] = "plain"
 		},
-		"a challenge that is too short": func(form url.Values) { form.Set("code_challenge", "short") },
-		"a token another project signed": func(form url.Values) {
-			form.Set("id_token", f.tokenWith(t, "aud", anotherProject))
+		"a challenge that is too short": func(call map[string]string) { call["code_challenge"] = "short" },
+		"a token another project signed": func(call map[string]string) {
+			call["id_token"] = f.tokenWith(t, "aud", anotherProject)
 		},
-		"no token at all": func(form url.Values) { form.Set("id_token", "") },
+		"no token at all": func(call map[string]string) { call["id_token"] = "" },
+		// A field this step does not read is a body it cannot read at all, which
+		// is the same refusal: what a caller's mistake was is not something
+		// these routes tell (readCall).
+		"a field this step does not read": func(call map[string]string) { call["port"] = "53123" },
 	}
 	sentences := map[string]int{}
 	for _, spoil := range cases {
-		form := intact()
-		spoil(form)
-		sentences[readAPIRefusal(t, f.apiForm(form), http.StatusForbidden, signInRefusedCode)]++
+		call := intact()
+		spoil(call)
+		sentences[readAPIRefusal(t, f.apiAuthorize(call), http.StatusForbidden, signInRefusedCode)]++
 	}
 	if len(sentences) != 1 || sentences[refuseSignIn] != len(cases) {
 		t.Errorf("the sign-in's refusals say %v, want the one uniform sentence %q for every one of them", sentences, refuseSignIn)
@@ -1709,12 +1746,12 @@ func TestAPIAuthorizeRefusesInTheAPIsOwnShape(t *testing.T) {
 func TestAPIAuthorizeTellsAVerifiedAccountWithNoLicence(t *testing.T) {
 	f, _ := signingIn(t)
 	verifier := freshVerifier(t)
-	message := readAPIRefusal(t, f.apiForm(url.Values{
-		"redirect_uri":          {loopbackTarget},
-		"state":                 {signInState},
-		"code_challenge":        {pkceChallengeOf(verifier)},
-		"code_challenge_method": {pkceMethod},
-		"id_token":              {f.acceptedToken(t)},
+	message := readAPIRefusal(t, f.apiAuthorize(map[string]string{
+		"redirect_uri":          loopbackTarget,
+		"state":                 signInState,
+		"code_challenge":        pkceChallengeOf(verifier),
+		"code_challenge_method": pkceMethod,
+		"id_token":              f.acceptedToken(t),
 	}), http.StatusForbidden, noLicenceRefusedCode)
 	if message != refuseNoLicence {
 		t.Errorf("the refusal says %q, want %q", message, refuseNoLicence)
@@ -1852,12 +1889,12 @@ func TestTheTwoDoorsOfAStepDecideAlike(t *testing.T) {
 
 	pageVerifier, apiVerifier := freshVerifier(t), freshVerifier(t)
 	pageCode, _, _ := redirected(t, f.signedIn(t, token, pageVerifier))
-	apiCode, _, _ := redirected(t, f.apiForm(url.Values{
-		"redirect_uri":          {loopbackTarget},
-		"state":                 {signInState},
-		"code_challenge":        {pkceChallengeOf(apiVerifier)},
-		"code_challenge_method": {pkceMethod},
-		"id_token":              {token},
+	apiCode, _, _ := handedOver(t, f.apiAuthorize(map[string]string{
+		"redirect_uri":          loopbackTarget,
+		"state":                 signInState,
+		"code_challenge":        pkceChallengeOf(apiVerifier),
+		"code_challenge_method": pkceMethod,
+		"id_token":              token,
 	}))
 	f.exchanged(pageCode, pageVerifier)
 	f.exchanged(apiCode, apiVerifier)

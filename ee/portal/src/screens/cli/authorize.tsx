@@ -11,22 +11,34 @@
 // organisation's unbound licences that installation gets, and hands one over.
 // The handover itself is the service's step -- K2.4's authorize route, which
 // registers under the portal's API prefix (`POST /api/cli/authorize`, P1.0's
-// table): it mints a one-time code and answers with the redirect to the
-// terminal's listener, so the code reaches the process that started this and
-// never this page. The prefix is not a detail here: this page is served from the
-// portal's own origin, and Hosting rewrites `/api/**` to the service and every
-// other path to the SPA (F21), so a route outside it is one this page cannot
-// reach at all.
+// table): it mints a one-time code and answers with the address of the
+// terminal's listener, which this page goes to, so the code reaches the process
+// that started this. It is the service's address and not a route of this page's
+// building: the prefix is what makes it reachable at all, because this page is
+// served from the portal's own origin and Hosting rewrites `/api/**` to the
+// service and every other path to the SPA (F21), and the address itself is
+// rebuilt there from the port that same request validated. The code is in the
+// answer this page reads, which is one step further than a redirect would carry
+// it: it is single-use, bound to the PKCE challenge, and spendable only by
+// whoever holds the verifier -- which never leaves the terminal (K2.4's
+// exchange) -- so a page that read it could do nothing with it the terminal's
+// own exchange does not already decide.
 //
-// **The form is submitted and not fetched, and that is the whole reason it is
-// a form.** The answer is a redirect to `http://127.0.0.1:<port>/callback`,
-// which is another origin: a `fetch` follows it as a CORS request the terminal
-// refuses and could not read the answer of anyway, and it cannot read the
-// `Location` of a redirect it is not allowed to follow. A browser following a
-// form submission is the one mechanism that reaches a loopback listener, so
-// the button is a submit and the screen calls `submit()` once the API has bound
-// the licence -- which is also why the token is put into the form's own field
-// at that instant rather than held in state (`src/auth/session.tsx`).
+// **The handover is a navigation, and this page's own policy is why it is not a
+// form.** The API answers this step with the address of the terminal's listener
+// -- `http://127.0.0.1:<port>/callback` with the one-time code on it -- and the
+// page goes there. A form submission cannot: this page is served under Hosting's
+// policy, whose `form-action 'self'` a browser checks against where a submission
+// ends as well as against the form's own action (the reading K2.4's own page is
+// built around, `ee/keyservice`'s `signInRedirectCSP`), so a submission from
+// here would be dropped at the loopback and the terminal would wait for a code
+// nothing sent. A navigation is not a submission and no policy of the portal's
+// governs where it goes, so the handover completes without widening what a form
+// on this origin may do -- and the address is the service's own, rebuilt from
+// the port it validated, never one this page assembled.
+//
+// That is also why the token is read at the instant of the call and put in the
+// request rather than held in state (`src/auth/session.tsx`).
 //
 // **A name that arrived in the address is not a name this page trusts.** The
 // project id and the port are the caller's text: they are drawn by `Untrusted`
@@ -43,10 +55,8 @@
 // (K2.4). So a binding that failed leaves the person on this page with the
 // API's own sentence and nothing minted, and the terminal waiting.
 
-import { useEffect, useRef, useState } from 'react'
-import type { FormEvent } from 'react'
+import { useEffect, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { API_BASE } from '../../api/client'
 import type { ApiClient } from '../../api/client'
 import type { Entitlement } from '../../api/types/entitlements'
 import type { AuthPort } from '../../auth/session'
@@ -64,14 +74,39 @@ import './cli.css'
 
 const SIGNED_OUT = 'You are signed out. Sign in again to hand the licence over.'
 
+/**
+ * What `POST /api/cli/authorize` answers a sign-in that landed: the terminal's
+ * own listener with the one-time code on it, which is the address this page goes
+ * to. It is the service's `AuthorizeHandover`, rebuilt from the port K2.4's
+ * `loopbackRedirect` validated and never from an address this page sent, so the
+ * page navigates to a place the terminal chose and the service checked.
+ */
+export interface AuthorizeHandover {
+  redirect: string
+}
+
+/** The browser going to an address, which is the whole of what the handover's
+ * last step is. */
+function browserGo(address: string): void {
+  window.location.assign(address)
+}
+
 export interface AuthorizeScreenProps {
   /** Built by the route from the session; a test hands in a fake. */
   client: ApiClient
-  /** The session's port, for the one token the form carries. */
+  /** The session's port, for the one token the handover carries. */
   auth: AuthPort
+  /**
+   * Where the handover goes, which is the browser's own navigation and neither
+   * the router's nor a route of this SPA's: the address is the terminal's
+   * listener, on another origin. The route hands in nothing and the default is
+   * the browser; a suite hands in its own, because jsdom navigates nowhere and
+   * its `location.assign` cannot even be read back.
+   */
+  go?: (address: string) => void
 }
 
-export function AuthorizeScreen({ client, auth }: AuthorizeScreenProps) {
+export function AuthorizeScreen({ client, auth, go = browserGo }: AuthorizeScreenProps) {
   const location = useLocation()
   const params = new URLSearchParams(location.search)
   const port = params.get('port') ?? ''
@@ -94,11 +129,9 @@ export function AuthorizeScreen({ client, auth }: AuthorizeScreenProps) {
   const [chosen, setChosen] = useState<string | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const form = useRef<HTMLFormElement>(null)
-  const token = useRef<HTMLInputElement>(null)
 
   // What the service will refuse anyway, refused here as well: a page that drew
-  // a sign-in form for parameters it cannot work with would be a form whose only
+  // a handover for parameters it cannot work with would be a page whose only
   // possible answer is a refusal, and the person would read it as their own
   // mistake.
   const carriesTheRequest = callback !== null && state !== '' && challenge !== ''
@@ -136,8 +169,7 @@ export function AuthorizeScreen({ client, auth }: AuthorizeScreenProps) {
   const binds = projectId !== ''
   const mustChoose = binds && offered.length > 0 && selected === null
 
-  async function handOver(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault()
+  async function handOver(): Promise<void> {
     setFailure(null)
     setBusy(true)
     try {
@@ -149,10 +181,17 @@ export function AuthorizeScreen({ client, auth }: AuthorizeScreenProps) {
         setFailure(SIGNED_OUT)
         return
       }
-      if (token.current !== null) {
-        token.current.value = id
-      }
-      form.current?.submit()
+      const handed = await client.request<AuthorizeHandover>('/cli/authorize', {
+        method: 'POST',
+        body: {
+          redirect_uri: callback ?? '',
+          state,
+          code_challenge: challenge,
+          code_challenge_method: method,
+          id_token: id,
+        },
+      })
+      go(handed.redirect)
     } catch (error: unknown) {
       setFailure(sentence(error))
     } finally {
@@ -203,29 +242,21 @@ export function AuthorizeScreen({ client, auth }: AuthorizeScreenProps) {
       {read === 'failed' ? <p>Reload this page to try again.</p> : null}
 
       {read === 'done' ? (
-        <form
-          ref={form}
-          className="cli__handover"
-          method="post"
-          action={`${API_BASE}/cli/authorize`}
-          onSubmit={(event) => {
-            void handOver(event)
-          }}
-        >
-          <input type="hidden" name="redirect_uri" value={callback ?? ''} />
-          <input type="hidden" name="state" value={state} />
-          <input type="hidden" name="code_challenge" value={challenge} />
-          <input type="hidden" name="code_challenge_method" value={method} />
-          <input ref={token} type="hidden" name="id_token" defaultValue="" />
-
+        <div className="cli__handover">
           {binds ? (
             <LicenceChoice licences={offered} chosen={selected} onChoose={setChosen} />
           ) : null}
 
-          <button type="submit" disabled={busy || mustChoose}>
+          <button
+            type="button"
+            onClick={() => {
+              void handOver()
+            }}
+            disabled={busy || mustChoose}
+          >
             {busy ? 'Handing it over…' : 'Hand over the licence'}
           </button>
-        </form>
+        </div>
       ) : null}
     </main>
   )
