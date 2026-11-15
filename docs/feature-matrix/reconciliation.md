@@ -132,7 +132,7 @@ and FEATURES.md, so neither shows a spec name or a count (F13 criterion 3).
 | **D2444** | When a feature is Available (F5) | Available when every contributing spec is in Done. Owner live checks do not block. A mapping entry can carry `hold: coming-soon` with a `reason` for built but unshipped features (the mobile app, a switch still off), and that hold wins | Also require every owner live check run; or Done alone | **2026-11-15: as recommended.** |
 | **D2445** | A spec that extends an Available feature (F7) | It gets its own row when it is user-visible, and is excluded otherwise. The generator refuses to write when the previous FEATURES.md showed a row Available and the new snapshot shows it Coming soon or Planned, naming the row and the spec that caused it. A `hold` added in the mapping is the deliberate exception | The literal rule: the row drops back until every extension is Done | **2026-11-15: as recommended.** |
 | **D2446** | Where the markdown lives and how the page is built (F12) | `FEATURES.md` at the repository root, written by `website/bin/feature-matrix.mjs` (path corrected after review; the answer is unchanged). The page renders the same snapshot model through a loader in `content.ts`, without parsing markdown. The snapshot the page renders is the one frozen at release (D2447), read from FEATURES.md's embedded data block | The page parses the markdown table; or the file inside the spec folder | **2026-11-15: as recommended.** |
-| **D2447** | Enforcing refresh on release (F10, F11) | The CLI release notes PR runs the generator, which writes FEATURES.md stamped `as_of: vX.Y.Z`, alongside the compatibility stamp. `website/test/feature-matrix-stamp.mjs` refuses a stamp behind the newest released notes file (F13 criterion 4). `scripts/release.sh` refuses a `main` whose FEATURES.md does not carry the version's stamp, on the ordinary release path only: a hotfix branch may commit nothing but the notes, the summary line and the stream file (`scripts/hotfix-commits.sh`), so a hotfix leaves the matrix to the next ordinary release | The page reads status.md live at every build: always current, but a website-only deploy shows main's unreleased state | **2026-11-15: as recommended.** |
+| **D2447** | Enforcing refresh on release (F10, F11) | The CLI release notes PR runs the generator, which writes FEATURES.md stamped `as_of: vX.Y.Z`, alongside the compatibility stamp. `website/test/feature-matrix-stamp.mjs` refuses a stamp behind the newest released notes file (F13 criterion 4). `scripts/release.sh` refuses a `main` whose FEATURES.md does not carry the version's stamp, on the ordinary release path only: a hotfix branch may commit nothing but the notes, the summary line and the stream file (`scripts/hotfix-commits.sh`), so a hotfix leaves the matrix to the next ordinary release (this hotfix clause was **amended after review**, round 1: `scripts/hotfix-commits.sh` admits no FEATURES.md commit on a release branch; O4 asks the owner to confirm it) | The page reads status.md live at every build: always current, but a website-only deploy shows main's unreleased state | **2026-11-15: as recommended.** |
 
 ### Resolutions (one defensible answer, not asked)
 
@@ -147,6 +147,9 @@ and FEATURES.md, so neither shows a spec name or a count (F13 criterion 3).
 - **R3.** The generator reads status.md and never writes it. A row or table it cannot read stops
   it and names the line (F8).
 - **R4.** The feature-matrix spec is excluded from its own matrix, as internal.
+- **R5.** The frozen snapshot is a fenced JSON block inside FEATURES.md, under the rendered table. The
+  page's loader reads that block, so the page and the markdown cannot disagree, and the page never
+  reads status.md at build time (D2446, D2447).
 - **R6.** A parked spec counts for nothing in a feature that also has specs that are not parked:
   the status comes from the others. A feature whose specs are all parked is omitted (D2443), so a
   parked spec never shows on the page as Coming soon or Planned. This follows D2443's reason: a
@@ -156,9 +159,9 @@ and FEATURES.md, so neither shows a spec name or a count (F13 criterion 3).
   Ids never change; a feature's name may. When there is no previous FEATURES.md (the first
   generation), the regression check is skipped. A previous file whose block cannot be read stops
   the generator.
-- **R5.** The frozen snapshot is a fenced JSON block inside FEATURES.md, under the rendered table. The
-  page's loader reads that block, so the page and the markdown cannot disagree, and the page never
-  reads status.md at build time (D2446, D2447).
+- **R8.** A row's `id` is public (it is in FEATURES.md's block), so it is a user-language slug and
+  never contains a hyphenated spec name. The leak check covers ids, names and explanations, in the
+  generated FEATURES.md and in the built page, with the spec names read from the mapping (I1).
 
 ## Open tensions
 
@@ -171,12 +174,17 @@ None.
   legal wording, and the page carries none without the owner's words (A5, compatibility D1539's
   precedent). T4 ships the column with no footnote, and the owner's read (T6) decides whether to
   add one, in the owner's own words.
+- **O2.** The rule comment at the top of status.md does not mention that the generator reads it.
+  Adding that is a status.md edit, so it belongs to the merger's sweep, not to a task (F8).
 - **O3.** The nav approval is recorded in `.claude/rules/website.md`, beside the 2026-10-23 and
   2026-11-10 approvals. That file is a `.claude/**` path, so the merger records D2442 there, not a
   task. T4 records it in the comments of `Base.astro` and `base-styles.mjs`, as the compatibility
   entry did.
-- **O2.** The rule comment at the top of status.md does not mention that the generator reads it.
-  Adding that is a status.md edit, so it belongs to the merger's sweep, not to a task (F8).
+
+- **O4.** Confirm D2447 as amended after review: `scripts/release.sh` checks the stamp on the
+  ordinary release path only, and a hotfix release leaves the matrix as it was.
+- **O5.** If the page exceeds the site's word or byte budgets (U2), raising them is an amendment to
+  the website plan's D188 and is the owner's decision. T4a reports it rather than changing a budget.
 
 ## UNVERIFIED
 

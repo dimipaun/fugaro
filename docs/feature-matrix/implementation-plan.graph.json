@@ -15,12 +15,15 @@
           "docs/feature-matrix/contract.md",
           "website/src/lib/feature-matrix-model.mjs",
           "website/test/feature-matrix-model.mjs",
-          "website/src/lib/feature-matrix-stub.mjs"
+          "website/test/fixtures/feature-matrix/snapshot.json",
+          "website/src/lib/feature-matrix-stub.mjs",
+          "website/test/feature-matrix-stub.mjs"
         ]
       },
       "kind": "contract",
       "stubs": [
-        "website/src/lib/feature-matrix-stub.mjs"
+        "website/src/lib/feature-matrix-stub.mjs",
+        "website/test/feature-matrix-stub.mjs"
       ]
     },
     {
@@ -34,7 +37,7 @@
         "paths": [
           "website/src/lib/feature-matrix.mjs",
           "website/test/feature-matrix.mjs",
-          "website/test/fixtures/feature-matrix/**"
+          "website/test/fixtures/feature-matrix/status*.md"
         ]
       }
     },
@@ -70,8 +73,8 @@
       }
     },
     {
-      "id": "T4",
-      "title": "the /features/ page and its menu entry",
+      "id": "T4a",
+      "title": "the /features/ page",
       "run": null,
       "version": null,
       "size": 3,
@@ -80,9 +83,23 @@
         "paths": [
           "website/src/pages/features.astro",
           "website/src/content.ts",
+          "website/test/features-page.mjs",
+          "website/test/home.mjs",
+          "website/test/lib/exempt.mjs"
+        ]
+      }
+    },
+    {
+      "id": "T4b",
+      "title": "the Product menu entry",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
           "website/src/layouts/Base.astro",
-          "website/test/base-styles.mjs",
-          "website/test/features-page.mjs"
+          "website/test/base-styles.mjs"
         ]
       }
     },
@@ -96,9 +113,11 @@
         "prediction": true,
         "paths": [
           "website/src/lib/feature-matrix-stub.mjs",
+          "website/test/feature-matrix-stub.mjs",
           "website/bin/feature-matrix.mjs",
           "website/src/content.ts",
           "FEATURES.md",
+          "docs/feature-matrix/mapping.yaml",
           "website/test/feature-matrix-stamp.mjs"
         ]
       },
@@ -130,6 +149,7 @@
           "docs/release.md",
           "scripts/release.sh",
           "scripts/release_test.go",
+          "scripts/release_hotfix_test.go",
           "README.md"
         ]
       }
@@ -175,7 +195,7 @@
       "reason": "the renderer takes the contract's snapshot and block format and calls the stub"
     },
     {
-      "task": "T4",
+      "task": "T4a",
       "needs": "C1",
       "reason": "the page's loader reads the contract's snapshot through the stub"
     },
@@ -196,7 +216,7 @@
     },
     {
       "task": "I1",
-      "needs": "T4",
+      "needs": "T4a",
       "reason": "it switches the page's loader from the stub to FEATURES.md"
     },
     {
@@ -216,8 +236,13 @@
     },
     {
       "task": "T7",
-      "needs": "T4",
+      "needs": "T4a",
       "reason": "behaviour: the link check needs the /features/ page to exist"
+    },
+    {
+      "task": "T4b",
+      "needs": "T4a",
+      "reason": "behaviour: the menu's link checks need the /features/ page to exist"
     }
   ],
   "decoupling": [
@@ -242,7 +267,7 @@
     {
       "contract": "C1",
       "was": {
-        "task": "T4",
+        "task": "T4a",
         "needs": "T3"
       },
       "integration": "I1",
@@ -258,7 +283,7 @@
       "affects": [
         "T1",
         "T3",
-        "T4"
+        "T4a"
       ]
     }
   ]
