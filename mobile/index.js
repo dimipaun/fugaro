@@ -58,6 +58,13 @@
 // hooks nor react-native itself (`src/app/root.js` explains why); the four
 // imports below are the whole of the demo's reach into the app, and the demo
 // reaches no further than a reviewer's tap.
+//
+// **The voice session's wiring, added 2026-11-13 (VS1.3).** The session is
+// built here too, and *only* here: §5's port is handed in and never imported
+// (`src/voice-session/port.js` says why), this is the file that hands one in,
+// and `src/boundary.test.js` pins that the constructor appears here and nowhere
+// else under `mobile/`. The demo is on the other side of that fence by
+// construction (F10, D212): it has no session to build one with.
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { registerRootComponent } from 'expo';
@@ -76,8 +83,12 @@ import {
 import { createFirstScreen } from './src/app/first-screen.js';
 import { createRoot } from './src/app/root.js';
 import { createGuardedStartup } from './src/app/startup.js';
+import { FakeAudioIn, FakeStt, FakeTts, createVoicePipeline } from './src/audio/index.js';
 import { createDemoMode } from './src/demo/index.js';
 import { createDemoScreen } from './src/demo/screen.js';
+import { createVoiceScreen } from './src/voice/index.js';
+import { FakeVoiceSessionNative } from './src/voice-session/fake.js';
+import * as machine from './src/voice-session/index.js';
 
 // The guard, before anything it guards. It is built from `React` (it needs
 // `Component` for the error boundary -- a class is the only mechanism React
@@ -106,6 +117,71 @@ registerRootComponent(startup.root(() => {
   // exist to be written. `src/demo/safety.test.js` is the fence around both.
   const demo = createDemoMode();
 
+  // **The voice session (VS1.3), and every stand-in it is built from.** VS1.2's
+  // fake answers §5's port where a phone will, exactly as P3.4's three fakes
+  // answer the audio ports: the app has no microphone, no engine, no speaker
+  // and no voice module today (reconciliation F23), and the fake is what lets
+  // it run unchanged while the native halves (VS3, VS4) are written. The values
+  // the app cannot supply yet are named rather than hidden, each with the task
+  // that replaces it -- the writing identity (D114's `authUid`, from P6.8's
+  // pairing), this installation's name for P1.2's lease (the same pairing), the
+  // mailbox client (P3.6's, which needs that account and a database connection
+  // before it can be built), the id source (P3.6's) and the clock (D117's
+  // server-anchored one, which arrives with the mailbox).
+  //
+  // **Nothing reads any of them today, and `UNPAIRED_CLIENT` is the reason one
+  // of them is not a lie.** No control starts this session and `createRoot` is
+  // not given it (VS6 is the task that puts one on a screen), the pipeline is
+  // over the fakes so no transcript ever arrives, and a session nothing drives
+  // composes no message and takes no lease. The client refuses every call with
+  // a code of its own instead of answering `ok`, because a stand-in that said a
+  // message had been written is the one failure this wiring could hide.
+  //
+  // **D127's switch is deliberately not passed.** `createVoiceScreen` defaults
+  // it to `OFF`, the owner has set nothing, and the setting is never written
+  // down -- so the honest wiring is the default and not a stated preference.
+  const UNPAIRED_SENDER = 'unpaired';
+  const UNPAIRED_HOLDER = 'unpaired-installation';
+  /** §8's window. D201's default is the owner's decision and still open, so
+   * this is §8's number rather than a settled one. */
+  const RESUME_TIMEOUT_MS = 180_000;
+  /** The refusal `UNPAIRED_CLIENT` answers with, in D213's shape: a code and
+   * the field it names, and no message. */
+  const NOT_WIRED = Object.freeze({ ok: false, code: 'mailbox-not-wired', field: null });
+  const unpairedClient = Object.freeze({
+    send: async () => NOT_WIRED,
+    poll: async () => NOT_WIRED,
+    licenceRefusal: async () => NOT_WIRED,
+  });
+  let unpairedIds = 0;
+
+  const voiceNative = new FakeVoiceSessionNative();
+  const voicePipeline = createVoicePipeline({
+    audioIn: new FakeAudioIn(),
+    stt: new FakeStt(),
+    tts: new FakeTts(),
+    sender: UNPAIRED_SENDER,
+    newId: () => `unpaired-${(unpairedIds += 1)}`,
+    now: () => Date.now(),
+  });
+  const voiceScreen = createVoiceScreen({
+    pipeline: voicePipeline,
+    client: unpairedClient,
+    now: () => Date.now(),
+    holder: UNPAIRED_HOLDER,
+  });
+  // The door carries the machine and the controller (VS0.3, widened by VS1.3),
+  // so the one import is both arguments: `reduce` and `INITIAL_SESSION_STATE`
+  // are what the session reads off it, and nothing else.
+  const session = machine.createVoiceSession({
+    machine,
+    screen: voiceScreen,
+    pipeline: voicePipeline,
+    native: voiceNative,
+    now: () => Date.now(),
+    resumeTimeoutMs: RESUME_TIMEOUT_MS,
+    title: 'Fugaro',
+  });
   // React's own subscription over the demo's `subscribe`/`state` pair, which is
   // the shape `useSyncExternalStore` takes: the shell re-renders when the demo
   // changes, and never polls it.

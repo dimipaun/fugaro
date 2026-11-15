@@ -23,8 +23,8 @@ import (
 //
 // It is money and it is permanent — a preloaded boot image's Cloud Build, a
 // Cloud NAT's hours, a custom role and a scheduled job — so --yes cannot
-// cover it (the stage is registered noYes, and askTyped's own class refuses it
-// too) and its confirmation is the owner's own session: a person at a real
+// cover it (the stage is registered noYes, and the step is one no answer a run
+// carries reaches either) and its confirmation is the owner's own session: a person at a real
 // terminal is what applies it, and nothing is typed at them (D1540). A coding
 // agent's session is refused rather than left for the owner like a session
 // that merely cannot answer (D1555, Apply), and what it reads beside the
@@ -143,7 +143,7 @@ func (s *computeStage) Apply(ctx context.Context, _ initflow.Env) (initflow.Outc
 	}
 	if plan == nil {
 		s.changes = &infra.PlanCounts{}
-		fmt.Fprintln(r.w, "No changes: the compute backend's provisioning matches the plan.")
+		fmt.Fprintln(r.stageDetail(), "No changes: the compute backend's provisioning matches the plan.")
 		return initflow.Outcome{Detail: "No changes"}, nil
 	}
 	r.planBlock(plan)

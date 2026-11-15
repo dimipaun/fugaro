@@ -328,15 +328,64 @@ func writeRecipeManifest(ctx context.Context, env *cloudEnv, o *runOptions, slug
 	return s.PutFile(ctx, runstore.ManifestName, body, "application/json")
 }
 
-// paidCommandNames are the command names whose code this build does not carry:
-// the commands the owner moves out of the core, and the ones that never lived
-// there — `graph` (D1362) and `ab` (D570) are ee/'s from the start. A core
-// build shows a stub
-// for each name it does not hold rather than leaving the name unknown to cobra,
+// paidCommand is one command name whose code this build does not carry — the
+// commands the owner moves out of the core, and the ones that never lived
+// there: `graph` (D1362) and `ab` (D570) are ee/'s from the start — with the
+// one thing that differs between such names.
+type paidCommand struct {
+	name string
+	// noStub is whether a core build says nothing about the name at all,
+	// leaving it to cobra's own "unknown command", rather than showing the
+	// stub below. It is set for a name a core build may not speak of, which
+	// is the one name that is itself the Subscription's subject: the stub's
+	// sentence carries the command's own name, so a stub for `licence` would
+	// be the licence notice D523 forbids a core build to print (F6: an
+	// untagged build has no licence command and never warns about a licence;
+	// the core never reads a key, D524).
+	noStub bool
+}
+
+// paidCommands are the command names whose code this build does not carry, in
+// the order a reader sees them. They are one list, and the two questions asked
+// of it are answered from it: which names the CLI answers to — what
+// PaidCommandNames answers, what the clidoc table's paid sections and the
+// plugin's own skill checks read — and which of them a core build shows a stub
+// for.
+var paidCommands = []paidCommand{
+	{name: "report"},
+	{name: "ab"},
+	{name: "coordinator"},
+	{name: "graph"},
+	{name: "licence", noStub: true},
+}
+
+// paidCommandNames are the names above, in the order they are written.
+func paidCommandNames() []string {
+	names := make([]string, 0, len(paidCommands))
+	for _, c := range paidCommands {
+		names = append(names, c.name)
+	}
+	return names
+}
+
+// stubCommandNames are the paid names a core build answers with newPaidStub:
+// every name above that a core build may speak of. A core build shows a stub
+// for a name it does not hold rather than leaving the name unknown to cobra,
 // whose "unknown command" would mislead a source builder and the app into
-// thinking the name was never part of the CLI (D522). A build whose edition is
-// ee gets no stub: applyExtensions says why.
-var paidCommandNames = []string{"report", "ab", "coordinator", "graph"}
+// thinking the name was never part of the CLI (D522). A paid name it may not
+// name at all — `licence`, whose absence from an untagged build is D524's and
+// F6's — is left out, and the untagged tree answers cobra's own "unknown
+// command" for it, exactly as it does for a name no build has. A build whose
+// edition is ee gets no stub for any of them: applyExtensions says why.
+func stubCommandNames() []string {
+	names := make([]string, 0, len(paidCommands))
+	for _, c := range paidCommands {
+		if !c.noStub {
+			names = append(names, c.name)
+		}
+	}
+	return names
+}
 
 // newPaidStub is the command a build shows for a paid name it carries no code
 // for. It refuses, non-zero, with the one message D522 fixes, and it carries
@@ -370,7 +419,7 @@ func applyExtensions(root *cobra.Command) {
 	for _, name := range names {
 		root.AddCommand(registrations[name]())
 	}
-	for _, name := range paidCommandNames {
+	for _, name := range stubCommandNames() {
 		if core.rootCommands[name] {
 			// The core command is the one that ships: its stub would take the
 			// name over rather than stand in for absent code. What counts is

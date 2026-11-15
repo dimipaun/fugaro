@@ -295,6 +295,203 @@ func TestBundleBitbucketTokenStrict(t *testing.T) {
 	}
 }
 
+// bitbucketFamilyEntry is one key of the Bitbucket token family (D2350) as the
+// operator types it (`fugaro creds set bitbucket-token--ci`) and as R13 pins the
+// spelling: a DOUBLED dash. It is a literal on purpose — the tests below hold
+// config.BitbucketTokenKey to it — so a change to the separator cannot quietly
+// move the family somewhere the account namespace could spell too.
+const bitbucketFamilyEntry = "bitbucket-token--ci"
+
+// bitbucketFamilyDoc is a document holding the legacy upstream credential
+// beside two of the family's tokens, the later one first so the accessor's own
+// order is told apart from the document's. Its values are built at run time
+// (Convention 2).
+func bitbucketFamilyDoc(t *testing.T) []byte {
+	t.Helper()
+	return []byte(config.BitbucketTokenKey("workspace") + ": " + fakeCred(t, "workspace") + "\n" +
+		config.BitbucketTokenKey("ci") + ": " + fakeCred(t, "ci") + "\n" +
+		config.BitbucketSecret + ": " + fakeCred(t, "legacy") + "\n")
+}
+
+// TestBundleBitbucketTokenFamily: the bundle holds a FAMILY of Bitbucket
+// tokens (D2350, R13) — bitbucket-token--<name> — beside the legacy
+// bitbucket-token, and the two are told apart by their key rather than by a
+// name they share. Each member is an entry of kind KindGit, named by its
+// DOCUMENT KEY (R5: never the bare suffix, which could be read as a model
+// account's), answered by Bundle.BitbucketTokens in a stable order, and in
+// neither the model family's name index nor a coding caller's candidate list.
+// BitbucketToken still answers the legacy entry alone.
+func TestBundleBitbucketTokenFamily(t *testing.T) {
+	if got := config.BitbucketTokenKey("ci"); got != bitbucketFamilyEntry {
+		t.Fatalf("config.BitbucketTokenKey(%q) = %q, want %q", "ci", got, bitbucketFamilyEntry)
+	}
+	b, err := ParseBundle(bitbucketFamilyDoc(t))
+	if err != nil {
+		t.Fatalf("ParseBundle = %v; the document holds the legacy key and two of the family's", err)
+	}
+	tokens := b.BitbucketTokens()
+	if len(tokens) != 2 {
+		t.Fatalf("BitbucketTokens() = %v, want the document's two named tokens", tokens)
+	}
+	// The document writes them the other way round, so this is the accessor's
+	// own order and not the document's: sorted by the key each is named by, so
+	// a rewrite of the document (what `creds set` does on every write) cannot
+	// reorder them and two calls cannot disagree.
+	want := []string{config.BitbucketTokenKey("ci"), config.BitbucketTokenKey("workspace")}
+	for i, w := range want {
+		if tokens[i].Name != w || tokens[i].Key != w {
+			t.Errorf("BitbucketTokens()[%d] = %+v, want the entry named and keyed %q", i, tokens[i], w)
+		}
+		if tokens[i].Kind != KindGit || tokens[i].Tier != "" {
+			t.Errorf("BitbucketTokens()[%d] = %+v, want kind %q and no tier", i, tokens[i], KindGit)
+		}
+	}
+	if got := tokens[1].Value(); got != fakeCred(t, "workspace") {
+		t.Errorf("the token named %q answers %q, want the workspace token's value", want[1], got)
+	}
+	if got := tokens[0].Value(); got != fakeCred(t, "ci") {
+		t.Errorf("the token named %q answers %q, want the ci token's value", want[0], got)
+	}
+	// The bare suffix is a name, not a key: the family is reachable by the
+	// document key alone, and the name index is the MODEL family's.
+	for _, name := range []string{"ci", config.BitbucketSecret} {
+		if e, ok := b.Lookup(name); ok {
+			t.Errorf("Lookup(%q) = %+v, and Lookup answers model credentials only", name, e)
+		}
+	}
+	if got := b.Credentials(); len(got) != 0 {
+		t.Errorf("Credentials() = %v, want nothing: no entry of this document is a model credential", got)
+	}
+	// The legacy entry is still the git credential's own, and it is NOT one of
+	// the family: R3 makes it an implicit untyped record of its own, ranked
+	// after every typed one, so an accessor that answered it here would count
+	// it twice.
+	legacy, ok := b.BitbucketToken()
+	if !ok {
+		t.Fatalf("BitbucketToken() found nothing, and the document holds %q", config.BitbucketSecret)
+	}
+	if legacy.Kind != KindGit || legacy.Key != config.BitbucketSecret || legacy.Value() != fakeCred(t, "legacy") {
+		t.Errorf("BitbucketToken() = %+v, want the legacy entry", legacy)
+	}
+	for _, e := range tokens {
+		if e.Key == config.BitbucketSecret {
+			t.Errorf("BitbucketTokens() carries the legacy entry too: %+v", e)
+		}
+	}
+	// A document with no member of the family answers none, and so does no
+	// bundle at all.
+	plain, err := ParseBundle(bundleDoc(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := plain.BitbucketTokens(); len(got) != 0 {
+		t.Errorf("BitbucketTokens() on a document without the family = %v, want nothing", got)
+	}
+	var none *Bundle
+	if got := none.BitbucketTokens(); len(got) != 0 {
+		t.Errorf("BitbucketTokens() on no bundle = %v, want nothing", got)
+	}
+	// The key and the name are each other's inverse, and only for a name the
+	// family may hold.
+	for _, name := range []string{"a", "ci", "team-ci", strings.Repeat("a", config.MaxClaudeAccountNameLen)} {
+		key := config.BitbucketTokenKey(name)
+		if got, ok := config.BitbucketTokenAccount(key); !ok || got != name {
+			t.Errorf("BitbucketTokenAccount(BitbucketTokenKey(%q)) = (%q, %v), want the name back", name, got, ok)
+		}
+	}
+}
+
+// TestBundleBitbucketNameCollisions: a member of the family is one credential
+// per NAME, so the name is held to the account-name rule that bounds every
+// other name this document derives (the regex AND the length), and a document
+// that spells one name twice, or a key shaped like the family whose name is not
+// one a token may have, is refused whole rather than read as a second
+// credential. The single-dash spelling is a near miss of both families: it is
+// not the legacy key, not a member of the family, and (R13) not an account name
+// either, because the account family reserves the legacy key it resolves to.
+func TestBundleBitbucketNameCollisions(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		doc  string
+		want error
+	}{
+		{"the same name twice", bitbucketFamilyEntry + ": " + fakeCred(t, "x") + "\n" + bitbucketFamilyEntry + ": " + fakeCred(t, "y") + "\n", ErrBundleUnknownKey},
+		{"a name outside the account rule", "bitbucket-token--9ci: " + fakeCred(t, "x") + "\n", ErrBundleUnknownKey},
+		{"a name with a doubled dash of its own", "bitbucket-token--a--b: " + fakeCred(t, "x") + "\n", ErrBundleUnknownKey},
+		{"a name with a trailing dash", "bitbucket-token--ci-: " + fakeCred(t, "x") + "\n", ErrBundleUnknownKey},
+		{"a name in capitals", "bitbucket-token--CI: " + fakeCred(t, "x") + "\n", ErrBundleUnknownKey},
+		{"the family with no name at all", "bitbucket-token--: " + fakeCred(t, "x") + "\n", ErrBundleUnknownKey},
+		{"a single dash, which is neither key", "bitbucket-token-ci: " + fakeCred(t, "x") + "\n", ErrBundleUnknownKey},
+		{"an over-long name", "bitbucket-token--" + strings.Repeat("a", config.MaxClaudeAccountNameLen+1) + ": " + fakeCred(t, "x") + "\n", ErrBundleUnknownKey},
+		// The length half on its own: 30 repetitions of "-a" consume two bytes
+		// each, so this name is 61 bytes and matches the account regex, and only
+		// MaxClaudeAccountNameLen refuses it.
+		{"a dash-heavy name the regex admits", "bitbucket-token--a" + strings.Repeat("-a", 30) + ": " + fakeCred(t, "x") + "\n", ErrBundleUnknownKey},
+		// The account namespace cannot spell a member of the family: a doubled
+		// dash is outside the account rule, so the family's keys are keys no
+		// account can be named after.
+		{"the account namespace spelling the family", config.ClaudeAccountSecret("bitbucket-token--ci") + ": " + fakeCred(t, "x") + "\n", ErrBundleUnknownKey},
+		{"an empty value", bitbucketFamilyEntry + ": \"\"\n", ErrBundleBadValue},
+		{"a value over the bound", bitbucketFamilyEntry + ": " + strings.Repeat("x", MaxBundleValueBytes+1) + "\n", ErrBundleBadValue},
+		{"a value that is not a string", bitbucketFamilyEntry + ": 1234\n", ErrBundleBadValue},
+		{"a mapping where the value belongs", bitbucketFamilyEntry + ":\n  key: " + fakeCred(t, "x") + "\n  secret: " + fakeCred(t, "y") + "\n", ErrBundleBadValue},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ParseBundle([]byte(tc.doc))
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("ParseBundle(%q) = %v, %v; want %v", tc.doc, got, err, tc.want)
+			}
+		})
+	}
+	// The edges are accepted: the shortest name, a name at the length rule's
+	// bound, and the legacy key beside them.
+	atBound := "bitbucket-token--" + strings.Repeat("a", config.MaxClaudeAccountNameLen)
+	doc := []byte("bitbucket-token--a: " + fakeCred(t, "shortest") + "\n" + atBound + ": " + fakeCred(t, "bound") + "\n" +
+		config.BitbucketSecret + ": " + fakeCred(t, "legacy") + "\n")
+	b, err := ParseBundle(doc)
+	if err != nil {
+		t.Fatalf("ParseBundle(%q) = %v; every key of it is legal", doc, err)
+	}
+	if got := b.BitbucketTokens(); len(got) != 2 || got[1].Key != atBound {
+		t.Errorf("BitbucketTokens() = %v, want the two legal names, the longest last", got)
+	}
+}
+
+// TestBundleStillLoadsAnAccountNamedLikeTheLegacyKey: an account whose name
+// STARTS with the legacy key's (claude-oauth-token-bitbucket-token-ci) is a
+// legal account today, and it is why the family's separator is a doubled dash
+// (R13): a single-dash family would spell this name too, and CredentialKey
+// would have to refuse a whole existing document to keep one name from meaning
+// two credentials. The doubled dash is a spelling the account rule cannot
+// produce, so the document holds both and each entry stays reachable by what it
+// is.
+func TestBundleStillLoadsAnAccountNamedLikeTheLegacyKey(t *testing.T) {
+	account := config.BitbucketSecret + "-ci"
+	doc := []byte(config.ClaudeAccountSecret(account) + ": " + fakeCred(t, "account") + "\n" +
+		bitbucketFamilyEntry + ": " + fakeCred(t, "token") + "\n")
+	b, err := ParseBundle(doc)
+	if err != nil {
+		t.Fatalf("ParseBundle(%q) = %v; the account name is legal and so is the key", doc, err)
+	}
+	acct, ok := b.Lookup(account)
+	if !ok {
+		t.Fatalf("Lookup(%q) found nothing, and the document holds that account", account)
+	}
+	if acct.Kind != KindModel || acct.Tier != creds.TierA || acct.Key != config.ClaudeAccountSecret(account) {
+		t.Errorf("Lookup(%q) = %+v, want the tier-A account keyed %q", account, acct, config.ClaudeAccountSecret(account))
+	}
+	if acct.Value() != fakeCred(t, "account") {
+		t.Errorf("Lookup(%q) answered the token, not the account: %q", account, acct.Value())
+	}
+	tokens := b.BitbucketTokens()
+	if len(tokens) != 1 || tokens[0].Key != bitbucketFamilyEntry || tokens[0].Value() != fakeCred(t, "token") {
+		t.Fatalf("BitbucketTokens() = %v, want the family's entry alone", tokens)
+	}
+	if got := b.Credentials(); len(got) != 1 || got[0].Name != account {
+		t.Errorf("Credentials() = %v, want the account alone", got)
+	}
+}
+
 // readConsumerEntry is the read consumer's document key, spelled as the
 // operator types it (`fugaro creds set bitbucket-read-consumer`) and as the
 // release notes speak it. It is a literal on purpose: the tests below hold the
@@ -954,6 +1151,12 @@ func TestBundleValueNeverInErrorOrLog(t *testing.T) {
 		"anthropic-api-key: " + value + "\n" + config.AnthropicSecret + ": " + value + "\n",
 		"anthropic-api-key: [" + value + "\n",
 		"anthropic-api-key: " + value + "\n" + strings.Repeat("# pad\n", MaxBundleBytes/6+10),
+		// A member of the Bitbucket token family (D2350) carries a value like
+		// every other entry, and its refusal names the KEY it is about: this
+		// document spells one name twice, so the refusal carries the key and
+		// never the value beside it.
+		bitbucketFamilyEntry + ": " + value + "\n" + bitbucketFamilyEntry + ": " + fakeCred(t, "y") + "\n",
+		bitbucketFamilyEntry + ": " + value + "\n" + bitbucketFamilyEntry + ": \"\"\n",
 	}
 	for i, doc := range docs {
 		b, err := ParseBundle([]byte(doc))
@@ -995,6 +1198,31 @@ func TestBundleValueNeverInErrorOrLog(t *testing.T) {
 	}
 	if !strings.Contains(rendered[0], config.DefaultClaudeAccount) {
 		t.Errorf("%%v = %q, want the credential names (it is what an operator reads)", rendered[0])
+	}
+	// A member of the Bitbucket token family (D2350) is held to the same rule:
+	// it renders as the key it is named by, and never as its value.
+	fam, err := ParseBundle([]byte(bitbucketFamilyEntry + ": " + value + "\n"))
+	if err != nil {
+		t.Fatalf("ParseBundle with a member of the family = %v", err)
+	}
+	entry := fam.Entries()[0]
+	for _, s := range []string{fmt.Sprintf("%v", entry), fmt.Sprintf("%#v", entry), entry.String()} {
+		if strings.Contains(s, value) {
+			t.Errorf("a family entry renders its value: %s", s)
+		}
+	}
+	for _, s := range []string{
+		fmt.Sprintf("%v", fam),
+		fmt.Sprintf("%+v", fam),
+		fmt.Sprintf("%#v", fam),
+		fam.LogValue().String(),
+	} {
+		if strings.Contains(s, value) {
+			t.Errorf("a rendering of a bundle holding the family carries a credential: %s", s)
+		}
+		if !strings.Contains(s, bitbucketFamilyEntry) {
+			t.Errorf("%q does not name the token it holds (it is what an operator reads)", s)
+		}
 	}
 }
 
@@ -1152,6 +1380,16 @@ func TestBundleSchemaMatchesTheLoader(t *testing.T) {
 	for i := 0; i <= MaxBundleCredentials; i++ {
 		fmt.Fprintf(&tooMany, "claude-oauth-token-a%03d: %s\n", i, fakeCred(t, "x"))
 	}
+	// The same two bounds filled with the Bitbucket token family (D2350): the
+	// count is the document's and not a family's, and a family is what makes a
+	// document reach it, so the bound is pinned with the family's keys as well.
+	var manyTokens, tooManyTokens strings.Builder
+	for i := 0; i < MaxBundleCredentials; i++ {
+		fmt.Fprintf(&manyTokens, "bitbucket-token--t%03d: %s\n", i, fakeCred(t, "x"))
+	}
+	for i := 0; i <= MaxBundleCredentials; i++ {
+		fmt.Fprintf(&tooManyTokens, "bitbucket-token--t%03d: %s\n", i, fakeCred(t, "x"))
+	}
 	for _, tc := range []struct {
 		name string
 		doc  string
@@ -1171,6 +1409,23 @@ func TestBundleSchemaMatchesTheLoader(t *testing.T) {
 		{"a key that is nearly the app key", "github-app-keys: " + fakeCred(t, "x") + "\n"},
 		{"the upstream git credential", config.BitbucketSecret + ": " + fakeCred(t, "x") + "\n"},
 		{"a key that is nearly the git credential", "bitbucket-tokens: " + fakeCred(t, "x") + "\n"},
+		// The Bitbucket token family (D2350, R13): the legacy key, a DOUBLED
+		// dash and a name held to the account-name rule. Its whole-key bound is
+		// the family's own — the legacy key, the separator and
+		// MaxClaudeAccountNameLen — so no branch of the schema admits a name the
+		// loader refuses, and the account namespace cannot spell one.
+		{"a named Bitbucket token", bitbucketFamilyEntry + ": " + fakeCred(t, "x") + "\n"},
+		{"the family beside the legacy key", string(bitbucketFamilyDoc(t))},
+		{"a Bitbucket token name at the account length rule's bound", "bitbucket-token--" + strings.Repeat("a", config.MaxClaudeAccountNameLen) + ": " + fakeCred(t, "x") + "\n"},
+		{"a Bitbucket token name one byte over the account length rule", "bitbucket-token--" + strings.Repeat("a", config.MaxClaudeAccountNameLen+1) + ": " + fakeCred(t, "x") + "\n"},
+		{"a dash-heavy Bitbucket token name the regex admits and the length rule refuses", "bitbucket-token--a" + strings.Repeat("-a", 30) + ": " + fakeCred(t, "x") + "\n"},
+		{"a Bitbucket token name outside the account rule", "bitbucket-token--9ci: " + fakeCred(t, "x") + "\n"},
+		{"the family with no name at all", "bitbucket-token--: " + fakeCred(t, "x") + "\n"},
+		{"the single-dash spelling of a Bitbucket token", "bitbucket-token-ci: " + fakeCred(t, "x") + "\n"},
+		{"the account namespace spelling a Bitbucket token", config.ClaudeAccountSecret("bitbucket-token--ci") + ": " + fakeCred(t, "x") + "\n"},
+		{"a named Bitbucket token whose value is a mapping", bitbucketFamilyEntry + ":\n  key: " + fakeCred(t, "x") + "\n"},
+		{"many Bitbucket tokens at the count bound", manyTokens.String()},
+		{"one Bitbucket token over the count bound", tooManyTokens.String()},
 		// The read consumer (F21) is the one credential of the document whose
 		// value is not a string, so it is the one key the schema names under
 		// `properties` — which is what exempts it from `additionalProperties`

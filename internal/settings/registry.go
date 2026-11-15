@@ -505,6 +505,16 @@ const (
 	// of the stage's own would take the row over.
 	docTriage    = "docs/post-review-triage/implementation-plan.md"
 	docCloneURLs = "docs/project-claude-accounts.md"
+	// docAccounts is the account document, which states the repository-level
+	// source beside the block and the profiles' lists it unions with.
+	docAccounts = "docs/project-claude-accounts.md"
+	// docMobileAuth is the document that states the declared allowlist: D231
+	// of the mobile work's reconciliation decides where the declaration lives,
+	// what the publish seeds from it and what it must never re-add, and the
+	// keys of the block are named there and in the plan's P5 and nowhere else
+	// yet. The spec is the owner's own text and states no key, so a document
+	// of the block's own would be the one that takes these rows over.
+	docMobileAuth = "docs/mobile-auth/reconciliation.md"
 )
 
 // layerRow is a row of the project layer's file. The layer is its only store,
@@ -812,6 +822,20 @@ var localRows = []Row{
 	loc("secret_rotation_days", "0: no rotation period is recorded", "secrets", docSetup),
 	loc("secret_expires", "none: no expiry date is recorded", "secrets", docSetup),
 	loc("bitbucket_api_roots", "the provider's public API", "secrets", docSetup),
+	// The Bitbucket tokens block (T2, R1): what each stored access token
+	// reaches, as the operator's own local config states it. A record's name is
+	// what the bundle key bitbucket-token--<name> is spelled from and what
+	// every audit line carries; the value itself is in the service's bundle
+	// and the identity and verified_at are in the creds state store, so no row
+	// here holds either (R12) — and the owner column is `secrets`, the token
+	// family's, because the block is stated in the machine's own config like
+	// bitbucket_api_roots above it.
+	loc("bitbucket_tokens.*.coverage", "required: the repository, workspace or workspace slug this token reaches", "secrets", docSetup),
+	loc("bitbucket_tokens.*.expires", "none: no expiry date is recorded", "secrets", docSetup),
+	loc("bitbucket_tokens.*.name", "required: the name the bundle key and every audit line are spelled from", "secrets", docSetup),
+	loc("bitbucket_tokens.*.project_key", "none: kept for display, and never matched", "secrets", docSetup),
+	loc("bitbucket_tokens.*.project_uuid", "none: a project token names its project by UUID or key", "secrets", docSetup),
+	loc("bitbucket_tokens.*.type", "required: repo, project or workspace, and coverage is read as the same fact", "secrets", docSetup),
 
 	loc("batch.image", "Fugaro's own batch image", "setup", "docs/backends.md"),
 	loc("batch.machine_type", "the batch design's own machine", "setup", "docs/backends.md"),
@@ -893,19 +917,15 @@ var localRows = []Row{
 	// own — a launcher who could write an alias into the shared file could name
 	// an account the file never admitted, one indirection in.
 	//
-	// The owner is `config local` and not a family, because no command writes
-	// the block yet: D2096 gives the write to `fugaro accounts alias set/rm`,
-	// whose whole point is converging the node and the job set on the repoint,
-	// and that command is a later task than the block and its rules. A row
-	// naming the `accounts` family before the command exists would print an
-	// owner for a key no subcommand of that family takes and refuse the write
-	// in its name, which is the pair the owner column exists not to print
-	// (D1178) — so the row says
-	// what is true of it here: the key is stated in the machine's own config,
-	// and `fugaro update` is what writes that file. The row moves to the
-	// `accounts` family the day the command lands, and D2096 is the entry that
-	// remembers it.
-	locLocal("claude_account_aliases", "none: no alias is defined, and every choice key names an account of claude_accounts directly", "config local", docModels),
+	// The owner is the `accounts` family, which D2096 gives the write to:
+	// `fugaro accounts alias set ALIAS ACCOUNT` and `accounts alias rm ALIAS`
+	// are the two doors, and their whole point is converging the node and the
+	// job set on the repoint, so the generic path carries neither row. The bare
+	// row is the block the file holds and the wildcard is one entry of it: a
+	// reader that asks about `claude_account_aliases.<name>` is asking about the
+	// key the same command writes.
+	locLocal("claude_account_aliases", "none: no alias is defined, and every choice key names an account of claude_accounts directly", "accounts", docModels),
+	locLocal("claude_account_aliases.*", "required: the one account the alias stands for, an account of claude_accounts or default", "accounts", docModels),
 	// The installation's credentials, pools and crafts (docs/model-crafts/
 	// spec.md §1–3). They are local-only for claude_accounts' reason, and the
 	// one key here that names a credential rather than holding one is why: a
@@ -1103,6 +1123,22 @@ var localRows = []Row{
 	// the classes' two ends are the two answers an absent key can take).
 	locTighten("orchestrator.decision_model_per_class", "each class's floor: haiku for a routine decision and opus for a sensitive one", "project policy", docOrchestrator),
 
+	// The declared mobile allowlist's three members (docs/mobile-auth, D231).
+	// The block is stated in the machine's own config, exactly as the
+	// orchestrator's is and for a stronger reason: the role an entry carries is
+	// an authority over every phone admitted to the project's runs, and every
+	// other store of it is one a run or a teammate can write (localcfg's
+	// MobileAllow comment says which). `fugaro project policy publish` is what
+	// carries the entries to the device node the rules read, so the rows name
+	// that token rather than `settings set`, whose allowlist deliberately does
+	// not carry them: an entry is a list of records a scalar write cannot
+	// express, and the role in it is not a value the generic path may set. The
+	// default is the block's own emptiness — an absent mobile_allow: declares
+	// nothing, so nothing is seeded and nobody is admitted by the file.
+	locLocal("mobile_allow.*.uid", "no uid: an entry that names one seeds no device node, and the node is what admits a phone (D231)", "project policy", docMobileAuth),
+	locLocal("mobile_allow.*.address", "required: the administered email or the domain the entry admits", "project policy", docMobileAuth),
+	locLocal("mobile_allow.*.role", "required: an entry with no role is refused rather than given one", "project policy", docMobileAuth),
+
 	// The four members of a repository's entry a PERSON writes are the generic
 	// writer's (D1173, docs/config-management/spec.md §3.4): they are a map of
 	// scalars and one list, which is what `fugaro settings set
@@ -1141,6 +1177,18 @@ var localRows = []Row{
 	// are NOT in that allowlist: they are not a person's settings at all — a
 	// run records what it read and applied (this file's row comments) — so the
 	// generic path's refusal is the right answer for them.
+	// The repository's own account list, beside the keys of the entry it sits
+	// in but not of their kind: it is the half of an account's admission that
+	// keeps a repository whose runs are not on a profile job served
+	// (docs/project-claude-accounts.md §3), so it is local-only, and it is
+	// stripped from the published copy of this map besides
+	// (localcfg.withoutRepoLocalKeys, internal/cli/sharedcfg.go's refusal on
+	// the key). The owner is the accounts family, whose `accounts rm` is what
+	// edits the list: it clears a name with the declaration it names, and this
+	// release gives no command a write that ADDS one — the list is written by
+	// hand, and `repos.*.claude_accounts` is not a `settings set` path, which
+	// is what the read's owner column may say rather than a bare command.
+	locLocal("repos.*.claude_accounts", "nobody: the repository's runs are served by the accounts the profiles of its jobs name", "accounts", docAccounts),
 	loc("repos.*.provider", "none", "settings set", docSetup),
 	loc("repos.*.base_branch", "the project's base_branch", "settings set", docSetup),
 	loc("repos.*.workflows", "every workflow the repository defines", "settings set", docSetup),

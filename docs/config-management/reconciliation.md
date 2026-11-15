@@ -19,7 +19,7 @@ project config** — a sentence it prints and exits on — so the figures below
 are counted from the registry in this tree through the same predicate the write path uses, which is
 what the guard at the end of this section re-runs.
 
-- **F1 — the registry is 442 rows and the generic writer carries 193 of them.** 105 by name
+- **F1 — the registry is 453 rows and the generic writer carries 193 of them.** 105 by name
   (`internal/cli/settings_set.go:106`), made of the thirteen §4.4 names (the four budget scalars,
   `base_branch`, `max_parallel`, `update_check`, `commit_name`, `commit_email`, `layer.default_profile`,
   and D873's three account keys — `default_claude_account`, `claude_account_auto` and the wildcard
@@ -41,7 +41,7 @@ what the guard at the end of this section re-runs.
   `layer.defaults.`, `layer.governance.`, `credentials.`, `clone_urls.`, `escalation.`):
   13 + 7 + 2 + 1 + 37 + 36 + 1 + 4 + 4 = 105, the last four being the ladder's per-mode override rows
   below.
-  **249 rows have no generic writer**, and the audit's whole subject is which of them are a defect and
+  **260 rows have no generic writer**, and the audit's whole subject is which of them are a defect and
   which are the installation's own plumbing (F13, D1182). The count moved from 390 by the image setup
   skill's two rows: the map (D1906) is the `image map` family's and one row, so it is not carried here,
   and the bake switch above is — and it moved again by the stop rule's two rows,
@@ -67,10 +67,14 @@ what the guard at the end of this section re-runs.
   local-only for `claude_account_auto`'s reason (D2090). Its row is one of the two nudge thresholds'
   shape rather than a family's: D2096 gives the write that repoints one to `fugaro accounts alias
   set/rm`, which converges the node and the job set with it, and no such command exists while the
-  block is landed — so the row's owner is `config local`, the token for a key stated in the machine's
+  block is landed — so the row's owner was `config local`, the token for a key stated in the machine's
   own config that no command edits key by key, and it moves to the `accounts` family with the command
   (D2096 leaves no second door: the generic path refuses the key, so the edit is the file's until
-  then) — the registry is one row wider and the rows without a generic writer are one more again. A key
+  then) — the registry is one row wider and the rows without a generic writer are one more again. AL3
+  of that work moved the registry by one row to 447 and by none, and moved that row's owner the way
+  the paragraph above said it would: `fugaro accounts alias set ALIAS ACCOUNT` and `accounts alias rm
+  ALIAS` are the two doors the block is written through, so **both** of its rows — the map the file
+  holds and the wildcard entry under it — name the `accounts` family and neither is carried here. A key
   the registry carries and this list does not is
   refused by `settings set` whatever it is, and a row claiming a family is pointed at that command
   before this list is asked, so the figures are the allowlist's own and move only when it moves. It moved by three more rows to
@@ -82,7 +86,15 @@ what the guard at the end of this section re-runs.
   same work moved both once more, by twelve rows to 436 and by twelve to 193: the local ladder's
   `escalation.*` block is the machine's own (`critical_path_factor`, `ready_drafts` and the rest), so
   the generic path is its door and every one of the twelve is carried — the four per-mode override rows
-  by name, and the eight scalars beside them through the block's own prefix.
+  by name, and the eight scalars beside them through the block's own prefix. T2 of
+  docs/bitbucket-token-types/ moved the registry once more, by six rows to 442 and by none: the
+  `bitbucket_tokens.*` block is the machine's own local file (the operator's typed Bitbucket tokens,
+  whose values live in the credentials service's own bundle), so no name and no prefix in this list
+  reaches it, and the rows without a generic writer are six more for it. E6 of the same work moved the
+  registry once more, by six rows to 453 and by none: the merge judge's craft is a fifth craft, so
+  `agent.crafts.merge-judge.model` and `.access` are written beside the other four, their
+  project-layer pair beside theirs and their local-config pair beside theirs — and all six are owned
+  by the `models` and `accounts` families, which this list does not carry.
 - **F2 — `fugaro rigor` does not exist.** There is no `newRigorCmd` in `internal/cli`, no `rigor` cobra
   command and no `floor` subcommand, while the registry names `rigor` (`internal/settings/registry.go:266`)
   and `rigor floor` (`:682`) as the owners of keys. Two of the registry's owner strings name a command a
@@ -290,7 +302,7 @@ rather than its conclusion.
   (D848), and removing or retyping one bumps it. The console pins the version it reads —
   `SETTINGS_VIEW_DOC_VERSION = 1` (`console/src/main/settingsview.ts:42`) refuses any document at another
   version (`:181`) — so a version 2 would break **every** settings edit the console makes, which is the
-  edit it spawns `settings set … --yes` behind; keeping version 1 and adding optional members is what
+  edit it spawns `settings set …` behind; keeping version 1 and adding optional members is what
   makes "the console keeps working unchanged" true rather than hoped for. An old document that carries
   none of the new members still decodes and still draws. This design edits no console file.
   Cost of the alternative: a version bump is a version the console must be taught in the same release,
@@ -304,8 +316,8 @@ rather than its conclusion.
   Recommendation: the entry pair goes through the same `settingsTypedWrite` classification
   (`internal/cli/settings_set.go:1878`) and the same `applySettingsEdit`
   (`internal/cli/settings_write.go:86`), so a widening is still the typed project name (**D846**,
-  `docs/settings-commands/reconciliation.md:218`), `--yes` still answers it only outside a coding
-  agent's session (**D1107**, `internal/cli/settings_write.go:127`) and the agent-session fence
+  `docs/settings-commands/reconciliation.md:218`), answered only outside a coding
+  agent's session (**D1107**, `internal/cli/settings_write.go:127`), and the agent-session fence
   (`:106`) still comes first. Adding a `secrets` member or an `allow_data_to` value is a widening by the
   same rule, which is what makes D1180's rows possible at all.
   Cost of the alternative: a second classification for entries is a second place a ceiling can be
@@ -365,12 +377,12 @@ rather than its conclusion.
 - **D1170 (lowering or removing a `review_floor` entry takes the project's name typed at a terminal) —
   OPEN, recommended.**
   Recommendation: `fugaro rigor floor` removes and lowers through `confirmTypedStrict`
-  (`internal/cli/budget.go:250`) with no `--yes` standing in, and the agent-session fence comes first, so
+  (`internal/cli/budget.go:250`) with no flag standing in, and the agent-session fence comes first, so
   a managed project's gate never sees the step at all (D1180). Removal is not a plan a document can show:
   what it deletes is a floor, and D1026's rule — a `Typed` step is never admitted
   (`docs/managed-agent-converge/reconciliation.md:223`) — is what keeps the decision in the owner's own
   hands.
-  Cost of the alternative: a `--yes`-able floor removal is a removal an agent can perform in a loop
+  Cost of the alternative: a floor removal a flag could answer is a removal an agent can perform in a loop
   where each step looks additive, which is the whole class of change the typed form exists for. Cost of
   the recommendation: a person removing a stale floor at a terminal types a project name they already
   know, and a script that wants it unattended cannot have it — accepted, because that script is exactly

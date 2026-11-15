@@ -134,6 +134,16 @@ func (r *run) applyRouting(pp *projectpolicy.Policy, found bool) error {
 			return fmt.Errorf("agent.auth is %s and this project's policy (%s) publishes no budget.allowed_models: the credentials service, which carries every call of a cascade run, refuses a project that publishes none, so this run could make no call — add the allow-list to the project policy and publish it (fugaro project policy publish)", config.AuthCascade, projectpolicy.PathShared())
 		}
 	}
+	if r.serviceSwitched() && !r.spend.On() {
+		// D2071: an api-key or oauth repository on the switch is held off it
+		// where the installation's budget mode is off, and the run stops here.
+		// The service is reached through the gateway, which only observe and
+		// enforce start, so this run has no way to the credential the
+		// installation decided serves it — and the one thing that must not
+		// happen in its place is a quiet fall back to a mount the installation
+		// has stopped provisioning for this repository (D2072, D143).
+		return r.serviceSwitchModeRefusal()
+	}
 	if !found || pp == nil || pp.Routing == nil || pp.Routing.Claude == nil {
 		return nil // absent means direct (D1b)
 	}
@@ -446,6 +456,29 @@ func GatewayOn(auth, mode string) bool {
 		return false
 	}
 	return mode == policy.ModeObserve || mode == policy.ModeEnforce
+}
+
+// ServiceSwitchedAuth reports whether an auth is one the credentials service
+// serves once the installation's switch is on: api-key and oauth (B2.2, F30).
+//
+// It is not GatewayOn, and GatewayOn keeps its two-argument answer, because the
+// two are different questions. GatewayOn answers whether a run's gateway exists
+// at all — a fact about the auth and the budget mode, and nothing else — while
+// whether a repository is *switched* is a fact about its job's environment
+// (credentialsServiceURLEnv, B2.3), which the readers that hold a configuration
+// and no run (validate, doctor) cannot see. A reader that asked this predicate
+// in GatewayOn's place would answer "switched" for every api-key repository
+// there is, and read a mount that is not there.
+//
+// cascade is deliberately not here: it is served by the service on every
+// installation that has one, and reaches it through GatewayOn's own arm
+// whatever this answers.
+func ServiceSwitchedAuth(auth string) bool {
+	switch auth {
+	case "api-key", "oauth":
+		return true
+	}
+	return false
 }
 
 // RoutingInert is why the project's routing switch reaches no run of a

@@ -10,6 +10,7 @@ package credsvc
 // than a route that checks.
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -22,6 +23,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/bbtokens"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
@@ -126,6 +128,15 @@ func routeAct(path string) (purpose, credential string) {
 		// tier — and naming one would be recording a fact the route does not
 		// have.
 		return PurposeSlipClaim, ""
+	case WorkflowSecretsPath:
+		// The workflow-secrets route's credential is the CONTAINER the value
+		// was read from, and THAT NAME IS NOT IN THE PATH: it is the record's
+		// answer for the variable the call names (workflowsecrets.go), which
+		// the route reads once the record is in hand — so the route names the
+		// purpose and leaves the credential to the handler, exactly as the sign
+		// route leaves its account's key. A refusal answered before the record
+		// was read has no container to name and so carries none.
+		return PurposeWorkflowSecret, ""
 	case SignPath:
 		// The sign route's credential is the account's review-signing key
 		// (verdict.go), and THAT NAME IS NOT IN THE PATH: it is the caller's
@@ -189,7 +200,7 @@ func servedRoute(r *http.Request) bool {
 		return false
 	}
 	switch r.URL.Path {
-	case MessagesPath, CountTokensPath, MintPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, SlipPath, SlipClaimPath:
+	case MessagesPath, CountTokensPath, MintPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, SlipPath, SlipClaimPath, WorkflowSecretsPath:
 		return true
 	}
 	return false
@@ -209,6 +220,42 @@ type JobAccount struct {
 	Email string
 	Slug  string
 	Repo  string
+	// Workflow is the workflow whose job runs as this account, as the
+	// deployment spells it (RepoJob.Workflow). It is what the workflow-secrets
+	// route serves a call by (B3.2, G19): one repository has one job account
+	// per workflow, the account is the job (nothing about the caller decides
+	// its class), and the account is therefore the only thing that can say
+	// WHICH workflow's secrets a call is served — never X-Fugaro-Run-Job, which
+	// is text the caller writes. A row with no workflow is a row this build
+	// cannot derive (JobAccountsFor refuses one) and is served no workflow
+	// secret at all: the record holds no empty workflow name (creds.
+	// PutWorkflowSecrets refuses one), so such a row is refused by the record
+	// rather than by a check here.
+	Workflow string
+}
+
+// SharedJobAccount is one shared project job's service account and the profile
+// whose runs are launched as it: the binding a shared coding caller's run
+// identity is held to (C3.9's coding half, D2078, G21).
+//
+// Profile is the policy's own name for the profile the job was deployed over
+// (internal/infra/projectjobs.go deploys one job per (profile, provider,
+// account) of the published policy). It is what the call's admission is read
+// through: the repositories the call is bound to are this profile's, and the
+// accounts it may be served by are the ones the profile names.
+//
+// Repos are those repositories, as the published policy spells them
+// (projectpolicy.ProfileAllowRepos: the profile's own allow_repos, the
+// project's when the profile names none), so the canonical repository a run
+// identity resolves to is checked against the same patterns every other
+// admission of this service is. A row with no Repos admits no repository: a
+// profile that enrolls none is a profile whose callers are refused, and the
+// refusal is the fail-closed answer and not a row that could never be
+// deployed.
+type SharedJobAccount struct {
+	Email   string
+	Profile string
+	Repos   []string
 }
 
 // RepoJob is one repository's job service account, as the deployment knows
@@ -254,23 +301,25 @@ func JobAccountsFor(fugaroProject, gcpProject, provider string, jobs []RepoJob) 
 			return nil, fmt.Errorf("credsvc: job accounts for %q: %w", j.Repo, err)
 		}
 		out = append(out, JobAccount{
-			Email: serviceAccountEmail(gcp.ServiceAccountID(slug, j.Workflow), gcpProject),
-			Slug:  slug,
-			Repo:  canonical,
+			Email:    serviceAccountEmail(gcp.ServiceAccountID(slug, j.Workflow), gcpProject),
+			Slug:     slug,
+			Repo:     canonical,
+			Workflow: j.Workflow,
 		})
 	}
 	return out, nil
 }
 
-// SharedJobAccountsFor computes the service accounts of the installation's
-// shared project jobs: one per (profile, provider, account) the policy
-// publishes, derived exactly as internal/infra/projectjobs.go deploys them
+// SharedJobAccountsFor computes the rows of the installation's shared project
+// jobs: one per (profile, provider, account) the policy publishes, derived
+// exactly as internal/infra/projectjobs.go deploys them
 // (gcp.ProjectServiceAccountID over config.ProjectJobAccounts' axis, the two
-// functions the deployer, the launcher and the runner share). It is what
-// C1.10's verifier refuses a run in a shared project job with — Global
-// Constraint 6's gate, which holds until C3.9 — and it is computed from the
-// policy rather than from a list, so the accounts the service refuses are the
-// accounts the deployer created and not a second list that can drift.
+// functions the deployer, the launcher and the runner share), each bound to the
+// profile it serves and to the repositories that profile admits. It is the
+// class C1.10's verifier answers a shared coding caller as (C3.9's coding half,
+// D2078), and it is computed from the policy rather than from a list, so the
+// accounts the service admits are the accounts the deployer created and not a
+// second list that can drift.
 // TestSharedJobAccountsAreTheNamesProjectJobsDeploys builds one installation
 // both ways and requires the two sets to be equal, which is what makes the
 // claim a test rather than a comment.
@@ -282,12 +331,17 @@ func JobAccountsFor(fugaroProject, gcpProject, provider string, jobs []RepoJob) 
 // GCP project, which is the only place the installation's name enters.
 //
 // A policy that publishes no profile yields nothing: an installation with no
-// shared job has no account to refuse.
-func SharedJobAccountsFor(p *projectpolicy.Policy, gcpProject string) []string {
+// shared job has no row, and the class is then one no caller belongs to.
+//
+// A revision does not call this at start-up: reading the published policy there
+// is the dependency on installation state D143 forbids (internal/cli's
+// credentialsServiceConfig builds its rows from its own environment, and
+// SharedJobAccountFor is the derivation that side shares with this one).
+func SharedJobAccountsFor(p *projectpolicy.Policy, gcpProject string) []SharedJobAccount {
 	if p == nil {
 		return nil
 	}
-	var out []string
+	var out []SharedJobAccount
 	for _, name := range p.ProfileNames() {
 		pr, err := p.ProfileFor(name)
 		if err != nil {
@@ -297,12 +351,42 @@ func SharedJobAccountsFor(p *projectpolicy.Policy, gcpProject string) []string {
 			// must not invent an account name from it.
 			continue
 		}
+		// The profile's own list, and never the profile's list alone: what a
+		// caller of this row is bound to is the repositories the profile
+		// serves, and ProfileAllowRepos is the policy's own answer to that
+		// (the project's list when the profile names none, so a profile that
+		// names none is not a profile that admits everything).
+		repos, err := p.ProfileAllowRepos(name)
+		if err != nil {
+			continue
+		}
 		for _, account := range config.ProjectJobAccounts(pr.JobProfile) {
-			out = append(out, serviceAccountEmail(gcp.ProjectServiceAccountID(name, pr.Provider, account), gcpProject))
+			out = append(out, SharedJobAccountFor(name, pr.Provider, account, repos, gcpProject))
 		}
 	}
-	slices.Sort(out)
-	return slices.Compact(out)
+	slices.SortFunc(out, func(a, b SharedJobAccount) int { return cmp.Compare(a.Email, b.Email) })
+	return slices.CompactFunc(out, func(a, b SharedJobAccount) bool { return a.Email == b.Email })
+}
+
+// SharedJobAccountFor derives ONE shared job's row from the profile, the
+// provider and the account its job and its service account were deployed over
+// (gcp.ProjectServiceAccountID, the same derivation the deployer makes), with
+// the repositories that profile serves.
+//
+// It is the one spelling of these rows both sides use — SharedJobAccountsFor
+// builds every row of a published policy with it, and a deployment that cannot
+// read that policy at start-up (D143) derives its own rows with it — so a
+// service's rows and the policy's rows cannot disagree about an account's name.
+// account is the axis's own spelling, in which the empty string is the
+// profile's no-account job, exactly as config.ProjectJobAccounts produces it
+// (ReviewVariantAccount is NOT applied here: this class's job is the coding
+// one, which the axis spells as it is).
+func SharedJobAccountFor(profile, provider, account string, repos []string, gcpProject string) SharedJobAccount {
+	return SharedJobAccount{
+		Email:   serviceAccountEmail(gcp.ProjectServiceAccountID(profile, provider, account), gcpProject),
+		Profile: profile,
+		Repos:   slices.Clone(repos),
+	}
 }
 
 // serviceAccountEmail is a service account ID as the email a Google ID token
@@ -324,6 +408,17 @@ type Config struct {
 	// Policy reads the published policy: the shared node and a repository's
 	// own (C1.2).
 	Policy PolicyReader
+	// Selector chooses the Bitbucket token one proxied call is served with
+	// (T8, D2355). It is the contract's Selector (internal/bbtokens), and the
+	// proxy asks it only after Decide admitted the call and with the one
+	// policy-and-bundle snapshot the decision itself used.
+	//
+	// nil is a service whose token store is not wired: every proxied call is
+	// served with the bundle's legacy bitbucket-token entry, which is the
+	// release behind's behaviour and the state of an installation between this
+	// field and the store's wiring (I1). It is a field of the deployment and
+	// not of the request: no caller, no record and no policy can set it.
+	Selector bbtokens.Selector
 	// State is the cascade's shared state under creds/.
 	State creds.Store
 	// Kills reads the operator's two stop switches.
@@ -358,6 +453,19 @@ type Config struct {
 	// review job signs nothing and is a service this build starts.
 	// *rtdb.Client is one.
 	Signs SignMarks
+	// WorkflowSecrets reads the record `fugaro update` writes for a
+	// repository's jobs (B3.1, B3.2): the workflow-secrets route serves a call
+	// out of it and out of nothing else, so a service with no reader serves no
+	// workflow secret at all (the route refuses rather than answering an empty
+	// value) and *RTDBWorkflowSecrets is the implementation a deployment wires
+	// (internal/cli/credentials_serve.go).
+	//
+	// It may be nil, and nil is the state of an installation whose database
+	// client is not wired for this node: the route refuses, which is why this
+	// is not required at construction the way Slips is — an installation that
+	// predates this release has no record to read and is a service this build
+	// still starts.
+	WorkflowSecrets WorkflowSecretRecords
 	// AuditLog is where the service's audited acts are written (C1.13): every
 	// line this service writes, the mint's (C2.1) and the probe's (C1.12)
 	// included. There is one writer and one handler — Server.audit is the ONLY
@@ -384,9 +492,21 @@ type Config struct {
 	// disagreement is a deployment that cannot serve the class at all.
 	//
 	// It may be empty, and an empty one is the same statement an empty
-	// SharedJobAccounts makes: this installation has no review job, so no
-	// caller of that class exists.
+	// SharedAccounts makes: this installation has no review job, so no caller
+	// of that class exists.
 	ReviewAccounts []ReviewJobAccount
+	// SharedAccounts are the installation's shared project jobs (C3.9's coding
+	// half): the same rows AuthConfig.SharedJobAccounts holds, and the reason
+	// they are here as well is that the pairing needs the profile and the
+	// repositories the row is bound to, where the verifier needs the class. A
+	// caller the verifier answered as a shared one whose email is not in this
+	// table is refused (pairShared): the two lists are configured together, so
+	// a disagreement is a deployment that cannot serve the class at all.
+	//
+	// It may be empty, and an empty one is the statement an empty
+	// SharedJobAccounts makes: this installation has no shared project job, so
+	// no caller of that class exists.
+	SharedAccounts []SharedJobAccount
 	// Repos is the installation's repository table (RepositoryTableFor): the
 	// slug a run identity carries to the canonical repository name the
 	// published policy speaks. It is what pairs a review caller with a run,
@@ -561,6 +681,10 @@ type Server struct {
 	// the pairing and the cascade's offering rule both need the account name
 	// rather than the class.
 	review map[string]ReviewJobAccount
+	// shared is Config.SharedAccounts by folded email, and it holds what the
+	// pairing needs that the class alone does not say: the profile the account
+	// belongs to and the repositories that profile is bound to (pairShared).
+	shared map[string]SharedJobAccount
 	audit  *Auditor
 	// slips holds the slip bodies this service has verified, for the five
 	// minutes R4 gives them (slipCache). It is this service's own memory and
@@ -641,6 +765,13 @@ func NewServer(cfg Config) (*Server, error) {
 		// not the service the deployment configured.
 		return nil, errors.New("credsvc: the service has review job accounts and no repository table, so it can pair no review call with a run")
 	}
+	if len(cfg.SharedAccounts) > 0 && len(cfg.Repos) == 0 {
+		// The same refusal for the shared class and the same reason: its
+		// binding is the repository the run identity names, resolved through
+		// the table, so a service with shared accounts and no table would
+		// refuse every call of that class.
+		return nil, errors.New("credsvc: the service has shared project job accounts and no repository table, so it can pair no shared call with a run")
+	}
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
 	}
@@ -659,7 +790,7 @@ func NewServer(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, log: cfg.Log, now: cfg.Now, jobs: make(map[string]JobAccount, len(cfg.JobAccounts)), review: make(map[string]ReviewJobAccount, len(cfg.ReviewAccounts)), audit: audit, slips: newSlipCache(), mergeMints: newMergeMintRate(cfg.Now)}
+	s := &Server{cfg: cfg, log: cfg.Log, now: cfg.Now, jobs: make(map[string]JobAccount, len(cfg.JobAccounts)), review: make(map[string]ReviewJobAccount, len(cfg.ReviewAccounts)), shared: make(map[string]SharedJobAccount, len(cfg.SharedAccounts)), audit: audit, slips: newSlipCache(), mergeMints: newMergeMintRate(cfg.Now)}
 	for _, ja := range cfg.JobAccounts {
 		if ja.Email == "" || ja.Slug == "" || ja.Repo == "" {
 			return nil, errors.New("credsvc: a job account with no email, slug or repository binds nothing")
@@ -690,6 +821,29 @@ func NewServer(cfg Config) (*Server, error) {
 			continue
 		}
 		s.review[folded] = ra
+	}
+	for _, sa := range cfg.SharedAccounts {
+		if sa.Email == "" || sa.Profile == "" {
+			return nil, errors.New("credsvc: a shared project job account with no email or no profile binds nothing")
+		}
+		// Keyed by the folded email, exactly as the verifier keys its own
+		// shared table (NewAuthenticator) and for the reason the review loop
+		// above gives.
+		folded, ok := foldEmail(sa.Email)
+		if !ok {
+			return nil, errors.New("credsvc: a shared project job service account is not a printable ASCII email address")
+		}
+		if prev, dup := s.shared[folded]; dup {
+			// One account, one profile: the verifier refuses the same
+			// duplicate on its own list and by the same test
+			// (NewAuthenticator), which is what keeps the class a caller is
+			// admitted as and the binding it is paired by one answer.
+			if prev.Profile != sa.Profile {
+				return nil, errors.New("credsvc: the same shared project job account is bound to two profiles")
+			}
+			continue
+		}
+		s.shared[folded] = sa
 	}
 	return s, nil
 }
@@ -762,7 +916,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// "no admin endpoint" is kept by there being nothing to reach rather
 		// than by a check inside a handler.
 		s.refuse(w, http.StatusNotFound, "not_found",
-			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+SlipPath+" and "+SlipClaimPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
+			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+SlipPath+", "+SlipClaimPath+" and "+WorkflowSecretsPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
 		return
 	}
 	if r.URL.Path == VerifyPath {
@@ -877,6 +1031,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// permission set from the class — and what it is scoped to is already
 		// the pairing's answer here.
 		ja = JobAccount{Email: id.JobAccount, Slug: id.Slug, Repo: canonical}
+	case ClassShared:
+		// The shared class's pairing (G21, F40): the repository is the run
+		// identity's own slug and the job's row says which profile's
+		// repositories that may be, so the comparison the per-repository class
+		// makes against its one repository is made here against the profile's
+		// list. What is handed to the mint is spelled the way a review
+		// caller's is, and for the same reason: the account names no
+		// repository, so the pairing's answer is the repository.
+		repo, err := s.pairShared(ctx, id)
+		if err != nil {
+			s.refusePairing(ctx, w, id, purpose, credential, err)
+			return
+		}
+		canonical = repo
+		ja = JobAccount{Email: id.JobAccount, Slug: id.Slug, Repo: canonical}
 	default:
 		bound := false
 		ja, bound = s.jobs[id.JobAccount]
@@ -963,8 +1132,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// fixes the repository the token is scoped to — and the operator's stop
 		// flag has been read, so a stopped service mints nothing. It reads the
 		// bundle itself, because the App key is in it, and it reads no policy
-		// and consults no cascade: an installation token is not a model
-		// credential and no tier or admission has anything to say about it.
+		// of its own and consults no cascade: an installation token is not a
+		// model credential and no tier has anything to say about it. The one
+		// policy this route is held to was read by the pairing above, and only
+		// for a shared caller (pairShared): the project's answer for the calling
+		// job's profile is what says that repository may be served, and the mint
+		// reads no policy here because the gate belongs to the class's binding
+		// rather than to the route.
 		//
 		// The review class reaches this endpoint too, and what it is served
 		// here is the class's own decision (mintPermissions, D1065): CSR1's
@@ -973,6 +1147,23 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// of any other shape, so a coding run launched into the review job never
 		// reaches a mint at all.
 		s.mint(ctx, w, r, id, ja)
+		return
+	}
+	if r.URL.Path == WorkflowSecretsPath {
+		// The workflow-secrets route (B3.2, G19). Everything above it is its
+		// admission and nothing below it is: the two identities have been
+		// verified, the pairing has fixed the repository the calling job's
+		// account is bound to, and the operator's stop switches have been read,
+		// so a stopped service serves no workflow secret. It reads no policy
+		// and consults no cascade and no budget: what it serves is not a model
+		// credential and was chosen at no tier, and the one gate its own class
+		// needs — that the caller IS a per-repository job of a workflow — is the
+		// route's own (workflowsecrets.go), because it is a fact about the
+		// ACCOUNT the pairing has just resolved. What it reads is the record
+		// `fugaro update` wrote for the caller's repository and the one
+		// container that record names, and nothing a caller sends can reach
+		// either beyond the variable's name.
+		s.workflowSecrets(ctx, w, r, id, ja)
 		return
 	}
 	if r.URL.Path == SignPath {
@@ -993,14 +1184,28 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, BitbucketProxyPrefix) {
 		// The Bitbucket proxy route (B1.5). Everything above it is its
 		// admission and nothing below it is: the two identities have been
-		// verified, the pairing has fixed the repository the run's own job
-		// account is (canonical, G3), and the operator's stop flag has been
-		// read, so a stopped service proxies nothing. It reads the project's
-		// published block itself — which is what admits the repository, and
-		// whether the installation proxies it at all (G9) — and the bundle,
-		// for the one token it forwards with; and it consults no cascade,
-		// because a Bitbucket token is not a model credential and no tier,
-		// admission or budget has anything to say about it.
+		// verified, the pairing has fixed the repository this call is served
+		// for (canonical, G3) — the run's own job account's repository for a
+		// per-repository caller, and the run identity's own repository,
+		// resolved through the installation's table and admitted by the
+		// calling job's profile, for a review caller and for a shared project
+		// job's caller (pairShared, G21) — and the operator's stop flag has
+		// been read, so a stopped service proxies nothing. It reads the
+		// project's published block itself — which is what admits the
+		// repository, and whether the installation proxies it at all (G9) —
+		// and the bundle, for the one token it forwards with; and it consults
+		// no cascade, because a Bitbucket token is not a model credential and
+		// no tier, admission or budget has anything to say about it.
+		//
+		// The shared class is served here (B5.3), and what binds its call is
+		// the same three facts a per-repository caller's is, read over the
+		// profile rather than over one row: the repository the request names
+		// must be the identity's own, which the pairing answered with, and
+		// that repository must be one the published block lists and one this
+		// installation proxies (gitproxy.Decide, G3 and G9). The pairing is
+		// what keeps the block's workspace-wide reach off every other
+		// repository of the profile: a call the rules are handed is a call for
+		// the identity's repository or for none at all.
 		s.bitbucketProxy(ctx, w, r, id, canonical)
 		return
 	}

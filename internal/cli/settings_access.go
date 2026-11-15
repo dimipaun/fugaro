@@ -49,15 +49,13 @@ import (
 // this gate refuses in front of `config publish` or `project policy publish`
 // still reaches both writes through `update` — under whatever cloud
 // permissions that caller holds, which is the boundary SD18 leaves in place.
-// The published policy node has two other writers that ask no role either:
+// The published policy node's two other writers are not a gap in it:
 // `fugaro project repos add|rm` and `fugaro project sync` edit its allow_repos
 // through the same ETag-guarded write `project policy publish` uses
-// (putAllowRepos in project_enroll.go), so a caller this gate refuses the
-// publish can still widen the list of repositories the project admits with
-// `project repos add '*'` — the widening the gate on the publish exists to
-// stop, and the gap in it worth closing first (Slice D of the plan: every
-// management command asks the resolver). What bounds that write until then is
-// the cloud permission the node itself needs.
+// (putAllowRepos in project_enroll.go) and ask the same project-scope admin
+// before the write (accessGateProject, F19), so the widening of the list of
+// repositories the project admits — `project repos add '*'` — is refused there
+// too.
 // And the writers outside this task that reach the same single write path,
 // `applySettingsEdit`, without asking are the ones whose keys live in the same
 // three files: `fugaro rigor set` (the project layer file); `fugaro workflow
@@ -207,11 +205,11 @@ func settingsAccessJudge(ctx context.Context, in accesslib.Input, action accessl
 // nothing remembers is its own origin remote.
 func settingsAccessRepo(ctx context.Context, lc *localcfg.Config, o settingsWriteOptions) (string, error) {
 	if o.repo == "" {
-		repo, err := originRepo(ctx)
-		if err != nil {
-			return "", settingsAccessNoOrigin()
-		}
-		return canonicalRepoArg(lc, repo)
+		// The checkout's own origin, not originRepo's owner/name through
+		// canonicalRepoArg: that takes a bare owner/name's provider from the
+		// config's repos: map and refuses a checkout the config does not list,
+		// which is the write the comment above says must go through.
+		return settingsAccessOriginRepo(ctx)
 	}
 	repo, err := canonicalRepoArg(lc, o.repo)
 	if err != nil {

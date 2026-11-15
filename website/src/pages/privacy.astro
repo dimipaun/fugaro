@@ -56,12 +56,18 @@
  * Google Analytics under a consent that part states, and a software-part sentence calling the
  * website unaffected would be this page contradicting its own first half.
  *
- * **The app's paragraph describes the app as it will be, and says so.** Crashlytics and
- * Analytics are the owner's ruling of 2026-10-19 and are not in the app yet, so the
- * sentences above them are read off the design that will build them, and the page says which
- * version carries the reports rather than implying the build a reader may hold does. When the
- * telemetry plan lands in this repository, the gate's second direction becomes the plan file
- * rather than the page's own "earlier builds" sentence, with no change to this page.
+ * **The app's paragraph is held to the build that ships, and no sentence of it moved for
+ * that.** The two reporters it names are in the app's own dependency list and wired into its
+ * native build (P7.1a and P7.1b of the telemetry plan), the app carries the statement and the
+ * closed event allow-list (P7.2 and P7.3), and the plan is in this repository — so
+ * `website/test/privacy.mjs` now reads this paragraph against the plan **and** against
+ * `mobile/package.json`, in both directions: a reporter the app declares and the page does not
+ * name is refused, and so is a product the page names that neither holds. The page keeps
+ * saying which version of the app carries the reports rather than implying the build a reader
+ * may hold does, because the earlier builds — the voice-less first one — send nothing at all
+ * (D258). **Task P7.4 of the telemetry plan is that holding and not a rewrite**: it adds no
+ * sentence here, and the count this page carries is the one `website/README.md` derives the
+ * words ceiling from, so a sentence added here re-derives it in the same commit.
  *
  * **It is measured like every other page**, and D188's ceiling is no longer 250 words: the
  * privacy statement is the one page that is not the site's pitch — it carries what a reader

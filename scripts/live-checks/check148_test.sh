@@ -713,19 +713,33 @@ setup_case() {
 
 FAKE_PORT=""
 FAKE_PID=""
+# start_fake DIR — starts the fake Bitbucket and waits, bounded, for the port it
+# reports on its own startup line.
+#
+# The wait is a poll and not a read taken the moment the server goes to the
+# background: the redirect that makes fake.out belongs to the child, so a read
+# that lands before the child has opened it finds NO file at all — and sed
+# failing on a missing file (this suite runs with `set -e` and `pipefail`) ends
+# the suite where it stands, with sed's own complaint and no case named, which is
+# exactly how this raced on CI. The bound is 20s of 0.1s probes, far above a
+# python start on a loaded machine; a fake that died is reported at once with
+# what it printed rather than waited out.
 start_fake() { # start_fake DIR
   FAKE148_DIR="$1/state" python3 "$1/fake.py" >"$1/state/fake.out" 2>"$1/state/fake.err" &
   FAKE_PID=$!
   pids+=("$FAKE_PID")
-  local i=0
+  local out=$1/state/fake.out i=0
+  FAKE_PORT=""
   while [ "$i" -lt 200 ]; do
-    FAKE_PORT=$(sed -n 's/^fake148 listening on 127\.0\.0\.1:\([0-9]\{1,\}\)$/\1/p' "$1/state/fake.out" | head -n 1)
-    [ -n "$FAKE_PORT" ] && return 0
+    if [ -e "$out" ]; then
+      FAKE_PORT=$(sed -n 's/^fake148 listening on 127\.0\.0\.1:\([0-9]\{1,\}\)$/\1/p' "$out" | head -n 1)
+      [ -n "$FAKE_PORT" ] && return 0
+    fi
     kill -0 "$FAKE_PID" 2>/dev/null || { fail "the fake Bitbucket died: $(tail -n 3 "$1/state/fake.err" | tr '\n' ' ')"; return 1; }
-    sleep 0.05
+    sleep 0.1
     i=$((i + 1))
   done
-  fail "the fake Bitbucket did not report that it is listening"
+  fail "the fake Bitbucket never reported 'fake148 listening on 127.0.0.1:<port>' in $out within 20s"
   return 1
 }
 

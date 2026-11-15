@@ -263,6 +263,25 @@ var consoleBoundaryAllowList = []string{
 // modules were already in this module's graph at these versions, and none of
 // the three is here for the console's sake: the console contributes nothing to
 // this module.
+//
+// The sixth is the portal's too, and the second of F24's three to land. The
+// plan names `github.com/getsentry/sentry-go` as what the portal's API reports a
+// panic or a 5xx answer with (task P1.6): ee/keyservice/errreport.go is its
+// only importer, the API mount is the only thing that builds a client, and
+// nothing outside `ee/` imports any of it. At this version it brings no
+// indirect entry with it, so the require line below is the whole of what the
+// module graph gained, and it is not here for the console's sake either.
+//
+// The seventh is nobody's dependency at all: it is the version of the graph
+// already there, moved by the dependabot `go_modules` group bump (#2677), which
+// took `go.opentelemetry.io/otel` and `/metric` to v1.47.0, `/trace`, `/sdk`
+// and `/sdk/metric` with them, and brought `go.opentelemetry.io/otel/log` into
+// the graph at the same version. A bot cannot make the deliberate edit this
+// slice asks for, so the bump landed without one and this test has been red on
+// `main` since; the six lines move here instead. Nothing under console/ or
+// website/ imports any of them, they carry the Apache-2.0 the module's licence
+// table already cleared, and the console still contributes nothing to this
+// module.
 var consoleGoModRequireBaseline = []string{
 	"cel.dev/expr v0.25.2 // indirect",
 	"cloud.google.com/go v0.123.0 // indirect",
@@ -292,6 +311,7 @@ var consoleGoModRequireBaseline = []string{
 	"github.com/envoyproxy/protoc-gen-validate v1.3.3 // indirect",
 	"github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect",
 	"github.com/felixge/httpsnoop v1.1.0 // indirect",
+	"github.com/getsentry/sentry-go v0.50.0",
 	"github.com/go-jose/go-jose/v4 v4.1.6 // indirect",
 	"github.com/go-logr/logr v1.4.4 // indirect",
 	"github.com/go-logr/stdr v1.2.2 // indirect",
@@ -324,11 +344,12 @@ var consoleGoModRequireBaseline = []string{
 	"go.opentelemetry.io/contrib/detectors/gcp v1.44.0 // indirect",
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.68.0 // indirect",
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0 // indirect",
-	"go.opentelemetry.io/otel v1.46.0 // indirect",
-	"go.opentelemetry.io/otel/metric v1.46.0 // indirect",
-	"go.opentelemetry.io/otel/sdk v1.44.0 // indirect",
-	"go.opentelemetry.io/otel/sdk/metric v1.44.0 // indirect",
-	"go.opentelemetry.io/otel/trace v1.46.0 // indirect",
+	"go.opentelemetry.io/otel v1.47.0 // indirect",
+	"go.opentelemetry.io/otel/log v1.47.0 // indirect",
+	"go.opentelemetry.io/otel/metric v1.47.0 // indirect",
+	"go.opentelemetry.io/otel/sdk v1.47.0 // indirect",
+	"go.opentelemetry.io/otel/sdk/metric v1.47.0 // indirect",
+	"go.opentelemetry.io/otel/trace v1.47.0 // indirect",
 	"gocloud.dev v0.46.0",
 	"golang.org/x/crypto v0.57.0 // indirect",
 	"golang.org/x/net v0.59.0 // indirect",

@@ -52,7 +52,7 @@ release could observe or lose.
 | preflight | Reads the environment and the local config; no cloud write | None | Safe | `preflightStage` |
 | installation | Terraform root `installation`: the GCS bucket, the Artifact Registry, the credential containers, the history/coordinator/catalog-check jobs, the shared project jobs, the credentials service's own block (its image is moved by the credentials-service row below) | A create or an update, never a replace: `google_storage_bucket.runs`, the registries and the secret containers carry `prevent_destroy` (`deploy/terraform/gcp/modules/installation/bucket.tf`, `registry.tf`, `secrets.tf`, `credentials.tf`). A job whose *name* would change is ForceNew and is destroyed — see the job row below | Safe, with the job-name caveat | `newInstallationStage`, `deploy/terraform/gcp/roots/installation/main.tf` |
 | Firebase | The Realtime Database instance, the web API key, the token-signing service account | The run reaches the database with an ID token exchanged from a custom token minted by its own launcher: `token.Exchange`, `internal/budget/token/exchange.go`; the database identity is not an IAM identity (`deploy/terraform/gcp/modules/firebase/iam.tf`). A re-apply of the instance's own fields does not invalidate it | Safe | `newFirebaseStage`, `deploy/terraform/gcp/modules/firebase/firebase.tf` |
-| images | Pins `base_images.<kind>` by digest and mirrors the history image; never patches a job | A run's own execution already holds its image; the pin reaches the *next* execution | Safe | `imagesStage`, `internal/cli/init_images.go` |
+| images | Pins `base_images.<kind>` by digest, mirrors the history image, and rebuilds the catalog entries of this checkout whose recorded build was built FROM an older release base (naming the ones another checkout builds, never passing one over); never patches a job | A run's own execution already holds its image; the pin and the rebuilds reach the *next* execution | Safe | `imagesStage`, `internal/cli/init_images.go`, `internal/cli/init_images_catalog.go` |
 | installation, second apply | The history job and the catalog check job, which only the images stage makes deployable | Same as the first apply | Safe | `newInstallation2Stage` |
 | secrets | Secret containers and their IAM; no version is written | A job's mounts read `version = "latest"`, so a new version reaches the *next* execution (`docs/bitbucket-workspace-token/reconciliation.md`, F3) | Safe | `newSecretsStage`, `deploy/terraform/gcp/modules/repo/secrets.tf` |
 | plugin | The plugin pin and the Claude Code install on this machine | None: no run reads either | Safe | `newPluginStage`, `internal/cli/init_plugin_stage.go` |
@@ -62,7 +62,7 @@ release could observe or lose.
 | credentials-service | Moves the installation's recorded credentials image onto this release's, then applies the installation root with it | The service reads the published node once per cascade and Bitbucket-proxied call and refuses a node its own binary does not understand, so this apply may not run before the policy stage's migration; it follows it in the stage immediately after, with nothing between the two, and it is an apply of tfvars alone — every image it needs was published by the images stage. What the order cannot reach is the release behind's own service, which refuses the migrated node until this apply lands: the window is that one apply, and the binary that reads it was released. A run that replaces no service raises no node either: the policy stage holds its write at the version it found — a coding agent's session and a development build both replace nothing, and the image the move would pin is resolved **before** that write, so a resolve this run cannot make fails with the node exactly where it was | Safe by intent, named in the line: the policy clause names the cascade read, and this row's window is named when the same run raises the node's version and moves the service | `newCredentialsStage`, `moveCredentialsImage`, `credentialsMoveHeld`, `credentialsResolveBeforeRaise`, `internal/cli/init_stages.go`; `credentialsWindowOpens`, `internal/cli/update_in_flight.go` |
 | workspace | Migrates and/or publishes the workspace record `workspaces/<name>` in the workspace's own database | No run reads the workspace record: it is the workspace owner's document (`docs/workspaces/spec.md`). A member's run makes no request for it at all | Safe | `newWorkspaceStage`, `internal/cli/update_workspace.go` |
 | layer | Publishes the project layer object and seeds/re-seeds the local file | A run's layer travels with its task and is parsed at bootstrap (`resolveConfig`, `internal/runner/runner.go`); there is no mid-run re-read | Safe | `newLayerStage`, `internal/cli/init_layer_stage.go` |
-| checkout | The plugin pin, the Claude Code plugin and the repository's job images (`fugaro upgrade`'s three steps) | The job image is the execution's own. `fugaro image refresh` patches a job's container image in place and never starts an execution — the patch body drops the execution tokens (`TestApplyCheckJobDropsExecutionTokens`, `internal/infra/checkjob_test.go`) | Safe | `newCheckoutStage`, `internal/cli/init_checkout_upgrade.go`; `infra.PlanCheckJob`/`ApplyCheckJob`, `internal/infra/checkjob.go` |
+| checkout | The plugin pin an older release left, the Claude Code plugin and the repository's job images (`fugaro update`'s checkout steps) | The job image is the execution's own. `fugaro image refresh` patches a job's container image in place and never starts an execution — the patch body drops the execution tokens (`TestApplyCheckJobDropsExecutionTokens`, `internal/infra/checkjob_test.go`) | Safe | `newCheckoutStage`, `internal/cli/init_checkout_upgrade.go`; `infra.PlanCheckJob`/`ApplyCheckJob`, `internal/infra/checkjob.go` |
 | budget mode | Raises `config/mode` to `enforce` on a managed project, and records `config/modeSet = update` | The mode is re-read live (`Session.readConfig`), so a run that bootstrapped under `observe` is bounded by the caps from its next lease, and a lease the caps refuse halts it. The step already refuses to raise without the caps that would halt every run, and it says what it did | **The one step that can bound or halt a run in flight.** Recorded, not fixed: it is the operator's own caps taking effect | `raiseBudgetMode`, `internal/cli/update_budget_mode.go` |
 | creation fact | Rewrites `fugaro/managed.json` in the runs bucket from version 3 to the version this release writes, which records the budget amount and no image build count (D1543) | A run in flight re-reads the fact per command, and the run is the release behind, whose reader refuses a version it does not know: its own apply keeps the typed confirmation instead of applying under the gate. Nothing of the run is rewritten, and no record, ledger or counter of it is touched | Safe, named in the line | `convergeMarkerVersion`, `internal/cli/update_marker_version.go`; `markerConverges`, `internal/cli/update_in_flight.go` |
 | retire (`--retire`, `--allow-delete`, or a managed project's own retirement) | Removes addresses from Terraform's state and deletes orphaned resources, an orphaned job included | A job delete takes its executions with it. `--retire` is behind `--allow-delete`, the job's labels and `deletion_protection`; a **managed** project reaches the same flow with no flag at all (`retireManaged`, issue #1794), behind the managed gate's admission rather than a typed confirmation, and its API delete at the run's last step is the same one | Needs care, named in the line | `readRetirements`, `deleteOrphanedJob`, `retireManaged`, `internal/cli/init_retire.go` |
@@ -123,10 +123,26 @@ the node at the version it found and says why (`credentialsMoveHeld`), which is
 the same question the service's own stage answers with its skip.
 
 **A job image older than the node is refused at the launch, not by the update.**
-The update rebuilds the derived images of the checkout it runs in and nothing
-else, so a repository of the project on another checkout's image keeps the image
-it had — and a run of that repository, started on it, would halt at bootstrap on
-a node its runner cannot read. The launcher refuses that launch before the
+The update rebuilds the derived images of the checkout it runs in, and — for a
+catalog project, whose catalog image *is* the image its jobs run (D1900) — the
+catalog entries of that checkout whose own build record says they were built
+FROM a base image older than this release's. A catalog entry is otherwise built
+by the daily check job and by `fugaro image build`, so an installation whose
+schedule is paused, or whose entry nobody pushed, kept an image the launcher
+refuses while the stage that had just pinned the new base reported nothing to
+do: that is the failure of 2026-11-14, and the record read is what closes it
+(`internal/cli/init_images_catalog.go`). What it does not rebuild is anything
+else: a repository of the project on another checkout's image keeps the image it
+had, and so does a catalog entry whose build runs as another repository's build
+account — a catalog build holds the submitting checkout's credential and
+secrets, so this run cannot submit it. That one is never passed over in silence:
+the images stage prints one line per such entry naming the entry, its checkout
+and the exact command (`fugaro image build <entry>`), ends with a line saying
+what it did not cover, and leaves the command as a step for the user (exit 1)
+rather than reporting a stage that skipped half of itself as done.
+
+A run of that repository, started on an image it kept, would halt at bootstrap
+on a node its runner cannot read. The launcher refuses that launch before the
 execution exists, from the same `*Since` gates every image lockstep uses
 (`internal/cli`'s `policyImageGate`), naming the operator's own move
 (`fugaro image refresh …`, or `fugaro update --base base`). What the update never
@@ -192,14 +208,13 @@ and rewrites nothing a run holds — and never the flat "the runs are unaffected
 which the budget-mode raise below makes false; what it can still reach is named
 instead. It is absent when nothing runs, under `--json` and `--print-vars`
 (whose stdout is a document), and under `--plan-only` (which applies nothing).
-The refusal stays where it is not the update door's: `fugaro upgrade`'s own
-policy step, and `fugaro project policy publish --delete` /
+The refusal stays where it is not the update door's: `fugaro project policy publish --delete` /
 `fugaro project repos rm`, which are not the whole upgrade and are their own
 commands. The other two doors that reach this stage through `initStages` —
 `fugaro setup`, and `fugaro accounts add` / `accounts rm` — are not the update
 door either, so they keep the answer they had before this ruling, which is the
 ruling of 2026-11-06: a managed project's own session is told the count as a note
-and writes, and every other session is refused without `--yes`
+and writes, and every other session is refused
 (`inflightManaged`, `policyMigrateStage.inflightAnswer`, which reads the answer
 off the door rather than taking it as a parameter). The one line above is the
 update door's and is not printed by those doors.
@@ -227,9 +242,9 @@ land under the new rules and the migrated policy.
 `TestUpdateInFlightLineNamesEveryStepThatCanReachARun` turns each of the three
 steps on alone and asserts the clause is there and the others are not, so a step
 that can reach a run and is not named fails the suite.
-`TestUpgradePolicyStepRefusesTheWriteWhileARunIsInFlight` and
+`TestTheRefusingInflightAnswerStopsTheWrite` and
 `TestSetupPolicyStepKeepsTheRunsInFlightAnswer`
-(`internal/cli/init_policy_migrate_test.go`) pin the refusal on the doors that
-keep it — `fugaro upgrade`'s own policy step, and `fugaro setup`, once refused
-and once written-with-the-note on a managed project — so the update door's quiet
+(`internal/cli/init_policy_migrate_test.go`) pin the refusal where it is kept —
+the answer no door passes any more, and `fugaro setup`, once refused and once
+written-with-the-note on a managed project — so the update door's quiet
 answer reaching a door that is not it fails the suite.

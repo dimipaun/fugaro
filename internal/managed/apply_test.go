@@ -964,6 +964,7 @@ func TestApplyAsksD55sRuleForTheSessionsOwnConditions(t *testing.T) {
 		{"the zero Conditions", initflow.Conditions{}},
 		{"no marker and no terminal", initflow.Conditions{NonInteractive: true}},
 		{"--json and no terminal", initflow.Conditions{JSON: true}},
+		{"--ask", initflow.Conditions{Ask: true}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newApplyRig(t, plainRoot())
@@ -1019,7 +1020,7 @@ func TestApplyIsNotReachableWhileTheGateIsClosed(t *testing.T) {
 				// whose project the read says is managed and whose plan the gate
 				// admitted — the case that would apply if the config gate were
 				// open and nothing else changed.
-				proceeds := c.Agent != "" && initflow.CanConfirmManaged(initflow.YesOrTyped, c, initflow.Managed{Managed: managed, Admitted: admitted})
+				proceeds := c.Agent != "" && initflow.GateStandsIn(c, initflow.Managed{Managed: managed, Admitted: admitted})
 				r := newApplyRig(t, plainRoot())
 				r.planWithChanges(t, bucket(planBucket))
 				if !admitted {
@@ -1066,15 +1067,23 @@ func TestApplyIsNotReachableWhileTheGateIsClosed(t *testing.T) {
 		t.Fatalf("the property ran %d combinations, want %d", n, want)
 	}
 	// Non-vacuous: the rows the predicate proceeds in are reached, and each of
-	// them is an apply once the gate is open.
-	if want := len(allConditions()) * 2 / 3; wouldProceed != want || opened != want {
+	// them is an apply once the gate is open. They are the coding agent's
+	// sessions whose owner did not ask for the prompts back, each with the read
+	// saying managed and the gate admitting the plan.
+	agentRows := 0
+	for _, c := range allConditions() {
+		if c.Agent != "" && !c.Ask {
+			agentRows++
+		}
+	}
+	if want := agentRows; wouldProceed != want || opened != want {
 		t.Fatalf("the predicate proceeds in %d rows and %d of them applied, want %d of each", wouldProceed, opened, want)
 	}
 }
 
-// allConditions is the whole product of initflow.Conditions — the same five
-// flags internal/cli's completeness test enumerates — with three marker states:
-// none, the IDE terminal's marker and a coding agent's.
+// allConditions is the whole product of initflow.Conditions — the same fields
+// internal/cli's completeness test enumerates — with three marker states: none,
+// the IDE terminal's marker and a coding agent's.
 func allConditions() []initflow.Conditions {
 	var out []initflow.Conditions
 	for _, yes := range []bool{false, true} {
@@ -1082,7 +1091,9 @@ func allConditions() []initflow.Conditions {
 			for _, js := range []bool{false, true} {
 				for _, term := range []bool{false, true} {
 					for _, agent := range []string{"", initflow.IDEMarker, "CLAUDECODE"} {
-						out = append(out, initflow.Conditions{Yes: yes, NonInteractive: ni, JSON: js, Terminal: term, Agent: agent})
+						for _, ask := range []bool{false, true} {
+							out = append(out, initflow.Conditions{Yes: yes, NonInteractive: ni, JSON: js, Terminal: term, Agent: agent, Ask: ask})
+						}
 					}
 				}
 			}
@@ -1091,72 +1102,134 @@ func allConditions() []initflow.Conditions {
 	return out
 }
 
-// The red step's first half: D55's removal is one predicate wide, and it is
-// removed only when all three of the plan's conditions hold. Over the whole
-// product of the run's conditions, the marker read and the verdict:
+// The red step's first half: D55's removal is one predicate wide, and it holds
+// only when all three of the plan's facts do. This is the rule the command
+// itself reads, over the whole product of the run's conditions, the marker read
+// and the inventory:
 //
-//   - a project the read does not say is managed never loses a prompt, and its
-//     decision is CanConfirm's byte for byte;
-//   - a verdict that refused never loses one either;
-//   - an inventory that fell back never loses one, whatever else holds (D59,
-//     Task 4.5): the confirmation the fallback keeps is this one;
-//   - and the removal happens for no class but the one the gate covers, so a
-//     Typed step — money or permanent — never becomes the step that proceeds.
+//   - a coding agent's session proceeds exactly when the read said managed, the
+//     gate admitted THIS plan and the inventory did not fall back — and is
+//     refused in every other row, whatever it could type;
+//   - a project the read does not say is managed keeps the person's
+//     confirmation, which is the direction a caller that forgot falls in;
+//   - an inventory that fell back keeps it too, for a person AND for an agent
+//     (D59, Task 4.5): the confirmation a coding agent's session cannot give is
+//     exactly the one the fallback keeps, and a person at the terminal is then
+//     asked and the plan applied — the fallback does not halt the run;
+//   - and a run whose owner asked for the prompts back (--ask) is never the
+//     agent's case, however clean the plan.
 //
-// A predicate that removes the refusal for any project, or over a fallback,
-// turns this red.
-func TestManagedRefusalIsRemovedOnlyForAManagedAdmittedPlan(t *testing.T) {
-	n, removed := 0, 0
+// The person's own half of it (a real terminal, no marker, no --json) is
+// initflow's and is enumerated in internal/initflow's own tests; what this pins
+// is the three facts THIS command hands the rule and the direction a mistake
+// falls in.
+func TestTheConfirmationRuleIsD55sOverTheWholeProduct(t *testing.T) {
+	fallbackInv := CheckedInventory(Decision{Fallback: true, Cause: CauseForeign,
+		Why: "aurora (" + gcpProject + ") holds 1 resource(s) the installation's state does not account for; this run falls back to confirmations, and nothing is deleted (D59)"})
+	n, agent, asked, refused := 0, 0, 0, 0
 	for _, c := range allConditions() {
 		for _, managed := range []bool{false, true} {
-			for _, admitted := range []bool{false, true} {
-				for _, fallback := range []bool{false, true} {
-					for _, class := range []initflow.ConfirmClass{initflow.YesOrTyped, initflow.Typed} {
-						n++
-						m := initflow.Managed{Managed: managed, Admitted: admitted, Fallback: fallback}
-						got := initflow.CanConfirmManaged(class, c, m)
-						base := initflow.CanConfirm(class, c)
-						removes := managed && admitted && class == initflow.YesOrTyped && !fallback
-						switch {
-						case c.Agent != "" && removes:
-							removed++
-							if !got {
-								t.Errorf("conditions %+v, %+v: the managed case did not remove the refusal", c, m)
-							}
-						case c.Agent != "" && got:
-							t.Errorf("conditions %+v, %+v: a coding agent's session confirmed a step it may not", c, m)
-						case got != base:
-							t.Errorf("conditions %+v, %+v, class %v: the decision is %v, want CanConfirm's %v", c, m, class, got, base)
-						}
-						if m.Removes(initflow.Typed) {
-							t.Errorf("%+v: a Typed step is covered by the gate's removal", m)
-						}
+			for _, fallback := range []bool{false, true} {
+				n++
+				inv := CheckedInventory(Decision{})
+				if fallback {
+					inv = fallbackInv
+				}
+				questions := 0
+				req := Request{
+					Project:    project,
+					GCPProject: gcpProject,
+					Conditions: c,
+					Fact:       Fact{Managed: managed},
+					Inventory:  inv,
+					Out:        io.Discard,
+					Ask: func(string) (bool, error) {
+						questions++
+						return true, nil
+					},
+				}
+				err := req.confirm(Verdict{OK: true}, "the saved plan's hash")
+				// The rule in the words above, so the three facts are what is
+				// being read rather than the predicate that reads them. gate is
+				// the case a verdict stands in for: the plan admitted on a
+				// managed project whose inventory did not fall back, in a
+				// coding agent's session whatever its terminal is, or at the
+				// owner's own real terminal — and never under --ask, which
+				// takes the verdict off the table. person is the confirmation a
+				// session with no marker gives itself.
+				marker := c.Agent != ""
+				gate := !c.Ask && managed && !fallback && (marker || (c.Terminal && !c.NonInteractive && !c.JSON))
+				person := !marker && c.Terminal && !c.NonInteractive && !c.JSON && !c.Yes
+				switch {
+				case marker && gate:
+					// D55's case: the agent's session is not asked, and the
+					// verdict is the whole of what applied the plan.
+					agent++
+					if err != nil {
+						t.Errorf("conditions %+v, managed=%v fallback=%v: %v, want the case D55 removes the refusal for", c, managed, fallback, err)
+					}
+					if questions != 0 {
+						t.Errorf("conditions %+v, managed=%v fallback=%v: a coding agent's session was asked %d times", c, managed, fallback, questions)
+					}
+				case person || gate:
+					// A person at a real terminal: asked, and the answer is
+					// the apply. --ask is not read here — the flag takes the
+					// VERDICT out of the decision, and it is not the verdict
+					// that would ask.
+					if err != nil {
+						t.Errorf("conditions %+v, managed=%v fallback=%v: %v, want the person's own confirmation", c, managed, fallback, err)
+					}
+					if questions != 1 {
+						t.Errorf("conditions %+v, managed=%v fallback=%v: the person was asked %d times, want once", c, managed, fallback, questions)
+					}
+					asked++
+				default:
+					refused++
+					if err == nil {
+						t.Errorf("conditions %+v, managed=%v fallback=%v: a session that can neither be asked nor proceed applied the plan", c, managed, fallback)
+					}
+					if questions != 0 {
+						t.Errorf("conditions %+v, managed=%v fallback=%v: a session that may not confirm was asked %d times", c, managed, fallback, questions)
 					}
 				}
 			}
 		}
 	}
-	if want := len(allConditions()) * 16; n != want || n == 0 {
+	if want := len(allConditions()) * 4; n != want || n == 0 {
 		t.Fatalf("the property ran %d combinations, want %d", n, want)
 	}
-	if want := len(allConditions()) * 2 / 3; removed != want {
-		t.Fatalf("the removal happened %d times, want it in the %d rows that are a coding agent's session with a managed project, an admitted plan and an inventory that did not fall back", removed, want)
+	// Non-vacuous: every outcome the rule has was reached. The coding agent's
+	// case is one table row in three, reached once for the one (managed,
+	// fallback) pair D55 removes the refusal for.
+	if want := len(allConditions()) / 3; agent != want {
+		t.Fatalf("the coding agent's case was reached %d times, want %d", agent, want)
+	}
+	if asked == 0 || refused == 0 {
+		t.Fatalf("the property reached %d confirmations and %d refusals, want both", asked, refused)
 	}
 }
 
 // The zero value of Managed is the whole of the safety of delegating: every
 // caller that does not know about managed projects — init's embedded roots, the
-// plugin stage — keeps today's rule exactly.
+// plugin stage — keeps today's rule exactly, and a coding agent's session keeps
+// every refusal it had.
 func TestManagedZeroValueKeepsEveryRefusal(t *testing.T) {
 	var m initflow.Managed
+	if m.Removes() {
+		t.Fatal("the zero Managed says the gate stands in for a step")
+	}
 	for _, c := range allConditions() {
-		for _, class := range []initflow.ConfirmClass{initflow.YesOrTyped, initflow.Typed} {
-			if m.Removes(class) {
-				t.Fatalf("the zero Managed removes the refusal of a %v step", class)
-			}
-			if got, want := initflow.CanConfirmManaged(class, c, m), initflow.CanConfirm(class, c); got != want {
-				t.Errorf("conditions %+v, class %v: %v, want CanConfirm's %v", c, class, got, want)
-			}
+		if initflow.GateStandsIn(c, m) {
+			t.Errorf("conditions %+v: the zero Managed stands in for a step's confirmation", c)
+		}
+		req := Request{Project: project, GCPProject: gcpProject, Conditions: c, Inventory: CheckedInventory(Decision{}), Out: io.Discard,
+			Ask: func(string) (bool, error) { return true, nil }}
+		// The zero value decides nothing about who is there: what is left is
+		// the run's own confirmation, asked exactly as it was before the
+		// managed case existed (initflow.CanConfirmRun).
+		want := initflow.CanConfirmRun(c)
+		if got := req.confirm(Verdict{OK: true}, "hash") == nil; got != want {
+			t.Errorf("conditions %+v: the zero Managed applied the plan is %v, want the run's own confirmation, %v", c, got, want)
 		}
 	}
 }
@@ -1406,7 +1479,7 @@ func noFlagName(t *testing.T, s string) {
 	t.Helper()
 	for _, flag := range []string{
 		"--allow-delete", "--allow-job-delete", "--operator", "--admin", "--alert-email",
-		"--budget", "--billing-account", "--yes", "--non-interactive", "--managed",
+		"--budget", "--billing-account", "--managed",
 	} {
 		if strings.Contains(s, flag) {
 			t.Errorf("the refusal names %s:\n%s", flag, s)

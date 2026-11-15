@@ -204,7 +204,8 @@
         "reason": { "enum": ["kill_switch", "run_cap", "repo_daily_cap", "global_daily_cap", "no_cap", "token_cap", "budget_unavailable", "budget_token_expired", "no_credential", "creds_rules_denied", "stage_budget", "review_ratio", "fanout", "review_scope", "expected_exceeded", "owner_decision"] },
         "scope": { "enum": ["run", "repo", "global"] },
         "at": { "type": "string", "format": "date-time" },
-        "detail": { "type": "string" }
+        "detail": { "type": "string" },
+        "workspace_refusal": { "enum": ["stop", "cap", "settle"], "description": "The workspace's own credentials service refused this run, and which of the workspace's refusals it was (docs/workspaces/spec.md §5, §9; D2022's O19): its stop switch, the workspace's own spend cap, or a call the service made and could not record the cost of, which it refuses rather than serves. It is the marker a run the workspace refused did not have — the refusal reaches a member's run as the same budget_unavailable/run halt a member's own credentials-service outage writes, so a reader of records alone cannot tell the two apart (docs/stateless-orchestrator/reconciliation.md U12) — and it is read off the marker the workspace's service put on the refusal it answered (internal/gateway's WorkspaceRefusalHeader) and never inferred from reason, scope or detail, which a member's own service writes the same way. The enum is internal/gateway's WorkspaceRefusals, which TestResultSchemaWorkspaceRefusalsAgreeWithGo holds this list to. reason, scope and detail keep exactly what they said before this property existed: a run refused by a workspace stops where it always stopped. Absent — never an empty string — for every run no workspace refused, which is every run on an installation with no workspace and every record written before this property existed, so an old reader sees the record it always saw and version stays 1 (the field is additive)." }
       }
     },
     "checkpoint": {
@@ -286,6 +287,35 @@
               "source": { "enum": ["ceiling", "default-branch", "branch", "chain", "policy"], "description": "The layer of the effective value." },
               "from": { "enum": ["ceiling", "default-branch", "branch", "chain"], "description": "The layer that asked for the dropped value. The ceiling is here for one case: a stage timeout the run's own timeouts.stage bounds at least as tightly, which the run drops and records (T7.6) — the layer that wrote it can be the project layer's governance, which is the ceiling. chain is a launch's own chain limits, the last layer a value is asked for from." },
               "clamped": { "type": "boolean", "description": "True for the one shape that is not 'looser than the limits in force': a stage timeout the run's own timeouts.stage bounds at least as tightly, which the run drops rather than give a deadline of its own (T7.6). Absent (false) for the merge's looser values, which is also a stage timeout dropped because a tighter layer capped it — the two cannot be told apart by key, source and from alone." }
+            }
+          }
+        }
+      }
+    },
+    "chain_raises": {
+      "type": "array",
+      "description": "The raises a launcher made on this run's chain (docs/run-limit-carry-over L9, D1061): one entry per `fugaro budget chain raise`, each of which rewrote the stored task of the run that began the chain, where the chain's limit lives. The root run's record is the one that carries them. A launcher writes it and no merge reads it: the chain limit is a convention the installation states and not a bound the platform enforces, so who and why is what tells a raise from a rewritten limit. Absent for a chain nobody raised, and in records written before this field existed.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["by", "at", "reason", "limits"],
+        "properties": {
+          "by": { "type": "string", "minLength": 1, "description": "Who made the raise, as the launcher states itself (localcfg.Config.Me): a person's own account, never the run's." },
+          "at": { "type": "string", "format": "date-time", "description": "When the raise was made." },
+          "reason": { "type": "string", "minLength": 1, "description": "Why, in the launcher's own words; never empty, because the reason is what the raise is recorded for." },
+          "limits": {
+            "type": "array",
+            "minItems": 1,
+            "description": "The dimensions the raise moved, in the order every message about them reads: dollars, tokens, wall time, review rounds.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["dimension", "from", "to"],
+              "properties": {
+                "dimension": { "enum": ["usd", "tokens", "time", "review_rounds"] },
+                "from": { "type": "number", "minimum": 0, "description": "The chain's limit as the launch that began it stored it, in the dimension's own unit: micro-dollars, whole tokens, seconds, a count." },
+                "to": { "type": "number", "minimum": 0, "description": "The figure the raise wrote, in the same unit, above from." }
+              }
             }
           }
         }

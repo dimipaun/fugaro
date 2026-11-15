@@ -108,7 +108,7 @@
       "additionalProperties": false,
       "required": [
         "email_domains",
-        "microsoft_tenants"
+        "microsoft_directories"
       ],
       "properties": {
         "email_domains": {
@@ -119,9 +119,9 @@
             "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$"
           }
         },
-        "microsoft_tenants": {
+        "microsoft_directories": {
           "type": "array",
-          "description": "The Microsoft tenants a reseller organisation's microsoft.com sign-in is accepted from (D2207): Microsoft identity is a tenant's claim, so a reseller's sign-in is pinned to the tenants it sells through. An empty list refuses every microsoft.com sign-in, which is the safe reading of \"nobody set one\".",
+          "description": "The Microsoft (Entra ID) directories a reseller organisation's microsoft.com sign-in is accepted from (D2207 as amended on 2026-11-13): Microsoft identity is a directory's claim, so a reseller's sign-in is pinned to the directories it sells through, and the value compared is the `tid` of the verified token and never the Identity Platform tenant a client names at sign-in. An empty list refuses every microsoft.com sign-in, which is the safe reading of \"nobody set one\".",
           "items": {
             "type": "string",
             "minLength": 1

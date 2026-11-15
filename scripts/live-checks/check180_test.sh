@@ -105,10 +105,12 @@ state=${FAKE180_STATE:-/tmp}
 printf '%s\n' "$*" >>"$log"
 case "${1:-}" in
 doctor)
-  [ "$mode" = doctor-fails ] && { echo "doctor: no usable credentials on this machine" >&2; exit 1; }
+  [ "$mode" = doctor-fails ] && { echo "doctor: no usable credentials on this machine" >&2; exit 2; }
   name=sandbox
   [ "$mode" = doctor-wrong-name ] && name=otherproject
   printf '{"ok":true,"project":{"name":"%s","gcp_project":"sandbox-p","region":"us-east5"}}\n' "$name"
+  # exits 1 with its document, as the real doctor does when a check is a warning
+  [ "$mode" = doctor-warns ] && exit 1
   exit 0
   ;;
 secrets)
@@ -581,6 +583,16 @@ FAKE_EOF
 }
 
 FAKE_PORT=""
+# start_fake DIR — starts the fake Bitbucket and waits, bounded, for the port it
+# reports on its own startup line.
+#
+# The wait is a poll and not a read taken the moment the server goes to the
+# background: the redirect that makes fake.out belongs to the child, so a read
+# that lands before the child has opened it finds NO file at all — and sed
+# failing on a missing file (this suite runs with `set -e` and `pipefail`) ends
+# the suite where it stands, with sed's own complaint and no case named. The
+# bound is 20s of 0.1s probes, far above a python start on a loaded machine; a
+# fake that died is reported at once with what it printed rather than waited out.
 start_fake() { # start_fake DIR — the fakes go in DIR/bin, which is put on PATH
   write_fakes "$1/bin"
   : >"$1/fake.log"
@@ -590,15 +602,18 @@ start_fake() { # start_fake DIR — the fakes go in DIR/bin, which is put on PAT
     python3 "$1/bin/fake.py" >"$1/fake.out" 2>"$1/fake.err" &
   local pid=$!
   pids+=("$pid")
-  local i=0
+  local out=$1/fake.out i=0
+  FAKE_PORT=""
   while [ "$i" -lt 200 ]; do
-    FAKE_PORT=$(sed -n 's/^fake180 listening on 127\.0\.0\.1:\([0-9]\{1,\}\)$/\1/p' "$1/fake.out" | head -n 1)
-    [ -n "$FAKE_PORT" ] && return 0
+    if [ -e "$out" ]; then
+      FAKE_PORT=$(sed -n 's/^fake180 listening on 127\.0\.0\.1:\([0-9]\{1,\}\)$/\1/p' "$out" | head -n 1)
+      [ -n "$FAKE_PORT" ] && return 0
+    fi
     kill -0 "$pid" 2>/dev/null || { fail "the fake Bitbucket died: $(tail -n 3 "$1/fake.err" | tr '\n' ' ')"; return 1; }
-    sleep 0.05
+    sleep 0.1
     i=$((i + 1))
   done
-  fail "the fake Bitbucket did not report that it is listening"
+  fail "the fake Bitbucket never reported 'fake180 listening on 127.0.0.1:<port>' in $out within 20s"
   return 1
 }
 
@@ -1244,6 +1259,14 @@ test_hostile_endpoint_prints_nothing_it_was_given() {
   expect_absent "$out" '"echo"' "hostile: no response field reached the block"
 }
 
+test_doctor_exit_1_is_an_answer() {
+  RUN180_MODE=doctor-warns
+  RUN180_ARGS=(--merge --new-token-file "$work/doctor-warns/token2" --gcloud-config "$work/doctor-warns/gcloudconfig")
+  run180 doctor-warns
+  expect_status "$status" 0 "doctor exits 1: the document it printed is the answer"
+  expect_contains "$out" "FACT installation: PASS — " "doctor exits 1: the installation is read"
+}
+
 test_installation_mismatch_and_doctor_failure() {
   RUN180_MODE=doctor-wrong-name
   run180 doctor-wrong-name
@@ -1359,6 +1382,7 @@ t() {
 }
 
 t test_happy_path
+t test_doctor_exit_1_is_an_answer
 t test_unmeasured_criteria_are_not_a_pass
 t test_dry_run_touches_nothing
 t test_the_plan_and_the_usage_need_no_cloud_tools

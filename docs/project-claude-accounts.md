@@ -1,6 +1,6 @@
 # Project Claude accounts: one OAuth token per (profile, account)
 
-Status: **0.9.0, released.** The released Fugaro is 0.23.1, and 0.9.0 is the first release any of this page works on:
+Status: **0.9.0, released.** The released Fugaro is 0.24.1, and 0.9.0 is the first release any of this page works on:
 the `claude_accounts` field inside a profile, the `accounts` block in the published policy and the
 jobs they name all ship in 0.9.0 (policy version 3,
 [`internal/projectpolicy/version.go`](../internal/projectpolicy/version.go)), and a 0.8.x binary
@@ -26,7 +26,8 @@ never from an argument, a flag or the environment.
 **credential** (§12), credentials group into ordered **pools** (§13), and the five **crafts** of a
 run — coder, first-line review, senior review, security review and the escalation ladder's merge
 judge — choose the model and the credential or pool their calls go out on (§14). §1 to §11 describe the account itself, and every rule in them
-still holds.
+still holds; §15 adds one further indirection over the account-choice keys of §8, without changing any
+of them.
 
 ## 1. What a named account is
 
@@ -152,7 +153,10 @@ prompt, never from an argument, a flag or the environment.
 - **Removing an account.** `fugaro accounts rm <name>` is the inverse and converges the same way: it
   refuses while a profile still lists the account — `fugaro accounts rm <name> --profile PROFILE`
   takes the name out of one profile's list alone — and once no profile lists it, the declaration,
-  the secret and the job go together. A committed `fugaro.yaml` that still names the account in
+  the secret and the job go together. A `repos.<owner/name>.claude_accounts` that names the account
+  is cleared with the declaration (§2, §3): the entry is what admits that repository's own runs, and
+  left behind it would name an account the file no longer defines, which the next
+  `fugaro project policy publish` refuses. A committed `fugaro.yaml` that still names the account in
   `agent.oauth_token` is warned about rather than edited — that file belongs to the repository, not
   to this installation.
 
@@ -213,9 +217,50 @@ profile mounts a token. The profile's `allow_repos` is the repositories that pro
 both `default` and `acme-team` carry both repositories, and a profile that admits a repository one
 of its accounts does not carry is refused at publish rather than deployed.
 
+**The repository's own entry**, which is how a repository whose runs are *not* on a profile job is
+admitted to an account:
+
+```yaml
+# per installation: the project's local config
+repos:
+  acme/tools:
+    provider: bitbucket
+    workflows:
+      - implement
+    claude_accounts:
+      - acme-team
+```
+
+`repos.<owner/name>.claude_accounts` is a list of account names inside the repository's own entry —
+the entry `fugaro update --repo .` already writes for an onboarded repository. It exists because a
+profile is not the only kind of job a repository's runs land on: a **per-repository job** — every
+Bitbucket repository, which never reaches a shared job, and every repository no workflow sends to
+one — has no profile to name its accounts in. Before this key the published `accounts` block was
+derived from the profiles alone, so such a repository had no way to be admitted to an account at
+all: the block carried no entry for its account, the credentials service's intersection with its
+admission (`config/policy/repos/$slug.credentials.accounts`) came out empty, the cascade offered no
+candidate and every model call of its runs was refused `503 no_candidate_credentials` — the class that
+says the state *was* read and names the empty candidate list, with every credential it dropped and
+the filter that dropped it (the same halt was answered `503 state_unavailable` before that class
+existed, which read as a state that could not be read).
+
+The entry adds **the repository's own canonical name** — `bitbucket/acme/tools` above — to each
+account it names, and the `provider` on the entry is what qualifies it (the same provider a profile
+carries for its `allow_repos`); an entry that names accounts and no provider is refused rather than
+guessed at. A profile and a repository entry may both name one account: the published
+`accounts.<name>.allow_repos` is the **union** of what the profiles name and what the repository
+entries add, so nothing already admitted is narrowed. Each account a repository entry names must
+**cover that repository** (§4, the same subset rule a profile meets), and the same `publish` writes
+the repository's child admission under `config/policy/repos/$slug` from the account list it
+published. The list lives in this entry alone — it is in no `fugaro.yaml` and in no Terraform input
+— so the `fugaro update --repo .` that rebuilds the entry from those two **carries it over**:
+writing the key once and updating the repository afterwards keeps the admission, and only `fugaro
+accounts rm` (§2) or an edit of the file takes it away.
+
 ## 4. The rules `publish` and `fugaro setup` enforce
 
-Neither the `accounts` block nor the profile field is written by hand into the policy: both are
+Neither the `accounts` block nor the profile field nor a repository's own entry is written by hand
+into the policy: all three are
 derived and checked by `fugaro project policy publish` (per installation) and by `fugaro setup`
 (per installation, and `fugaro update --repo .` per repository checkout), which validate the profiles
 they are about to deploy against the same block. The rules, and what a refusal says:
@@ -230,6 +275,13 @@ they are about to deploy against the same block. The rules, and what a refusal s
   credential, and a repository the account does not cover is one whose run the token must never
   reach. An absent list means "the project's", which no account is required to cover, so it cannot
   be decided and is refused.
+- **A repository's own entry obeys the subset rule too.** `repos.<owner/name>.claude_accounts`
+  naming an account that does not carry the repository — a named account whose `allow_data_to`, or
+  the `default` account's `project_secrets` entry, does not list it — is refused at publish
+  (`projectpolicy`'s `repoAccountCovers`), with the same repair: add the repository to the account's
+  own list and publish again, or take the account off the repository's entry. The provider is
+  required on such an entry, because the repository's canonical name is what the account's
+  `allow_repos` gains, and this entry is the only place a per-repository job's provider is stated.
 - **No Anthropic API key beside the accounts (D4).** A profile that lists `claude_accounts` may not
   also mount `anthropic-api-key` (in either spelling): an account job holds its account's token, and
   a key beside it is a credential no OAuth run of that job can use — and which credential the job
@@ -270,6 +322,12 @@ publish (`projectpolicy`'s `validProfileAccounts`), with a refusal naming both l
 repository in one and not the other: the repair is the account's `allow_data_to` (add the
 repository there and publish again) or the profile's `allow_repos`, and the operator meets that
 decision where they make it rather than at a run.
+
+**A repository entry and a profile are one answer about one credential, and their published lists
+are unioned**: a repository admitted by a profile keeps that admission and gains the repository
+entry's, and neither narrows the other. What the entry may never do is widen the *account*: the
+account's own list is still the bound, and the entry is refused when the account does not cover the
+repository (§3, and the subset-rule bullet above).
 
 ## 5. What `fugaro setup` deploys, and the version-3 rollout
 
@@ -353,9 +411,11 @@ Read it back per installation:
 fugaro project policy show
 ```
 
-It prints the profiles and, for each account some profile names, the repositories its token may be
-used by. Only accounts a profile names are published: an account nothing lists is one no job
-mounts, and a block entry for it would publish a list on a node every run of the project can read.
+It prints the profiles and, for each account the config names, the repositories its token may be
+used by. Both sources fill that block (§3): the profiles that list the account, and a repository's
+own `repos.<owner/name>.claude_accounts`. An account neither source names is not published: it is
+one no job mounts, and a block entry for it would publish a list on a node every run of the project
+can read.
 
 ## 6. Launch a run as a named account
 
@@ -664,7 +724,7 @@ serves them.
 
 All three are **offline** — they read and write this config file and reach no bucket, no database
 and no host — and the two writes are the **owner's**: a pool decides where a project's calls may be
-spent, so a coding agent's session is refused, `--yes` included (§7's rule, and the same one
+spent, so a coding agent's session is refused, whatever it passes (§7's rule, and the same one
 `fugaro accounts add` states for the token).
 
 **A pool's members are served by two halves, and one pool cannot cross them.** An `openrouter` or
@@ -732,6 +792,95 @@ reads.
   policy publish` **keeps** those members as they are — no command of this release writes them from
   your config — so a pool declared here changes what `fugaro craft ls` and a launch read, and which
   member serves a call is a later release's work.
+
+## 15. Aliases: one name the choice keys may hold
+
+An **alias** is another name for one account, so the keys that choose an account can name the alias
+instead of the account, and moving every key that names it takes one command rather than an edit per
+key. It lives in **your local project config alone** — the block `claude_account_aliases`, beside
+`claude_accounts` — and it never reaches the published policy node, a task, a run record or a job image
+by its own name (D2090): every reader resolves it first, so what it writes down is the account.
+
+It is local-only in the same sense the choice keys of §8 are, and for the same reason: the block joins
+`default_claude_account`, `stages` and `claude_account_auto` in the keys a **shared file** in the runs
+bucket may not carry, so a launcher on another machine reads no alias, exactly as it reads no
+`default_claude_account` today. It is in no `fugaro.yaml` and in no project layer either — which is why
+the tighten-only policy merge never sees one, and why no repository can name one.
+
+```yaml
+# per installation: the project's local config
+claude_account_aliases:
+  reviewer: acme-team       # alias -> one account of claude_accounts (§3), or default
+default_claude_account: reviewer
+stages:
+  review: {claude_account: reviewer}
+```
+
+**The one command**, per installation, in your own terminal:
+
+```bash
+fugaro accounts alias set <alias> <account>
+fugaro accounts alias rm <alias>
+```
+
+`set` declares the alias or repoints it and then converges in the same command — the policy node with
+the account the keys now resolve to, the job set, and this checkout's repository root, through the
+stages `fugaro update` runs (§5) — so its last line is what is left, which is nothing. It **adds** the
+new target's job and **never deletes** the old target's (D2095): the account may still be served by
+another profile or named by another alias, and a job delete takes the executions on it. It asks nothing
+— no typed name and no confirmation — and a coding agent's session is refused before it reads anything
+(D2097), as `fugaro accounts add`'s token step is, because a repoint decides which credential this
+project's stages spend.
+
+`alias rm` is the inverse, and it is **refused while a choice key still names the alias**, naming every
+key: the key would resolve to a name this config no longer defines. Point those keys at the account they
+should choose instead (`fugaro accounts alias set <alias> <account>`) or change them, and remove the
+alias once nothing names it. `fugaro accounts rm <account>` is refused the same way while an alias
+stands for the account, naming the `alias set` that moves it (D2101).
+
+**What may name an alias (D2091):** `default_claude_account`, every `stages.<stage>.claude_account`
+(§8), and `fugaro run --token` / `fugaro review --token`. Nothing else does: a committed
+`agent.oauth_token` in `fugaro.yaml` names an account and never an alias, because a repository's own
+file may not depend on a name only your config holds, and neither may the lists that decide which jobs
+exist — `profiles.<p>.claude_accounts` and `job_profiles.*.claude_accounts`.
+
+**What an alias may stand for (D2093):** one account `claude_accounts` defines, or `default` for the
+unsuffixed account. Never another alias (a chain would need a cycle check and a reader that prints the
+path a name came through), never a pool (its members are chosen inside the run, at the stage boundary,
+which is the re-resolution a repoint must not cause), and never a credential of another type. Its own
+name follows the account name rule and the credential names that are reserved, in **one namespace** with
+`claude_accounts`, `credentials` and `pools` (D2092), so a name written in a choice key always means
+exactly one thing.
+
+**A repoint changes new launches only.** The launch resolves the alias, and it does so **before** the
+account's own `allow_data_to` is asked about it: the allow-list is asked about the account the run will
+hold and never about the alias, so an alias is no way around an account's own list. What the run then
+carries is the resolved account — the task's account, the job variant it lands on, and the record's
+`oauth_account` and `stage_accounts` all name the account, and no alias field is added anywhere
+(D2099). **A run already in flight keeps the account its launch resolved**: its job mounts that
+account's token, and the runner reads the account choice once, at bootstrap, so a repoint never rewrites
+a record, a ledger or a counter. A follow-up keeps its previous run's account too, as it does today;
+`--pr N --token <alias>` is what moves one, and it takes the alias's current target (D2098).
+
+**What the reads show (D2099).**
+
+```bash
+fugaro accounts ls --json
+```
+
+`fugaro accounts ls` prints each alias and the account it stands for, one `alias -> account` line per
+alias after the account names, and `--json` gains an additive `aliases` member (alias to account) — a
+field added within the document's own version, so a reader of an older release sees exactly the
+document it always did. `fugaro settings` shows the `claude_account_aliases.<alias>` rows, owned by the
+`accounts` family. A launch whose account came through an alias prints the pair, `ALIAS -> ACCOUNT`, on
+its own line. The run record names the resolved account only.
+
+**What an alias is not.** `claude_account_auto`'s walk is a walk over the accounts, and an alias is
+never one of its candidates; a pool may not list an alias, and a craft's access may name one only in a
+later release, after the stage keys move into it (D2100). Nothing about this adds reach: the target must
+be an account you already defined, every name is checked against that account's own `allow_data_to`
+after resolution, and the block lives only where you alone write — so a repoint moves which admitted
+account a stage uses, and cannot make an account usable by a repository that account does not admit.
 
 ## See also
 

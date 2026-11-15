@@ -390,7 +390,9 @@ step_installation() {
   fi
   say "reading the installation: fugaro doctor --json, in ${SANDBOX}"
   run_bounded "$DOCTOR_TIMEOUT" doctor "$SANDBOX" "$FUGARO_BIN" doctor --json
-  if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
+  # doctor exits 1 whenever any of its checks is not ok, warnings included, and
+  # still prints its document; only a timeout or another status is no answer.
+  if [ "$BOUNDED_TIMED_OUT" = yes ] || { [ "$BOUNDED_STATUS" != 0 ] && [ "$BOUNDED_STATUS" != 1 ]; }; then
     unmeasured installation "fugaro doctor --json did not answer in ${SANDBOX} (exit ${BOUNDED_STATUS}): this check cannot read the installation this checkout belongs to, and every row below is about it. Its output is in $SCRATCH/doctor.out and $SCRATCH/doctor.err"
     return 0
   fi
@@ -471,7 +473,9 @@ step_pin_after() {
   fi
   say "reading the pin the update left: fugaro doctor --json"
   run_bounded "$DOCTOR_TIMEOUT" pin "$SANDBOX" "$FUGARO_BIN" doctor --json
-  if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
+  # doctor exits 1 whenever any of its checks is not ok, warnings included, and
+  # still prints its document; only a timeout or another status is no answer.
+  if [ "$BOUNDED_TIMED_OUT" = yes ] || { [ "$BOUNDED_STATUS" != 0 ] && [ "$BOUNDED_STATUS" != 1 ]; }; then
     unmeasured pin-after "fugaro doctor --json did not answer after the update (exit ${BOUNDED_STATUS}), so this check cannot read the pin the update left. Its output is in $SCRATCH/pin.out and $SCRATCH/pin.err"
     return 0
   fi

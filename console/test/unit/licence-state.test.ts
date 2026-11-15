@@ -6,12 +6,13 @@
 // What this file holds, and why each part is a test rather than an argument:
 //
 //   - **the refused class is the table's, not a list of names.** The lapse takes
-//     two operations away -- `run.launch` and `settings.edit` -- and it must
-//     classify them by the column their own rows carry (`refusedAfterLapse`),
+//     three operations away -- `run.launch`, `settings.edit` and GV3.2's
+//     `roadmap.move` -- and it must classify them by the column their own rows
+//     carry (`refusedAfterLapse`),
 //     because the design's rule is that a later cancel, whose row differs from
 //     the launch's in exactly that field, must not be refused the day it is
 //     added. A gate built from a list beside the table would pass every case
-//     below and fail that one, so the set is asserted here twice: as the two
+//     below and fail that one, so the set is asserted here twice: as the three
 //     names, and as the rows the column marks;
 //   - **the refusal happens in the main process, before any child exists.** The
 //     renderer is not the gate: the channels come from the operation table and
@@ -63,7 +64,17 @@ import type {
   OperationName,
 } from '../../src/main/ipc'
 import { GRACE_DAYS } from '../../src/main/licence'
-import { LAPSE_REFUSAL, lapseHandlers, licenceStateOf } from '../../src/main/licence-state'
+import {
+  LAPSE_REFUSAL,
+  lapseHandlers,
+  licenceStateOf,
+  MAX_LICENCE_STATUS_BYTES,
+  MAX_LICENCE_STATUS_STRING,
+  MAX_LICENCE_WARNING_WINDOWS,
+  parseLicenceStatusDocument,
+  projectLicenceWarning,
+} from '../../src/main/licence-state'
+import type { LicenceReaderRole, ProjectLicenceStatus } from '../../src/main/licence-state'
 import type { LicenceReply } from '../../src/main/licence-store'
 import { APP_ENTRY_URL } from '../../src/main/protocol'
 import { createConsoleBridge, EXPOSED_OPERATIONS } from '../../src/preload/index'
@@ -113,8 +124,10 @@ const OPERATIONS: readonly ConsoleOperation[] = CONSOLE_OPERATIONS
 
 /** THE_REFUSED is the lapsed state's whole class, written out as a literal so
  * the column is checked against the design rather than against itself: T12 takes
- * the console's launch and its configuration change away, and nothing else. */
-const THE_REFUSED: readonly OperationName[] = ['run.launch', 'settings.edit']
+ * the console's launch and its configuration change away, and GV3.2 adds the
+ * console's third write -- the move of a task between the record's releases
+ * (design section 5.1 rule 14) -- and nothing else does. */
+const THE_REFUSED: readonly OperationName[] = ['run.launch', 'settings.edit', 'roadmap.move']
 
 /** THE_KEPT is every other operation: the non-vacuity guard for a wrapper that
  * refused the whole surface. */
@@ -132,14 +145,18 @@ const EMPTY_PAYLOADS: readonly OperationName[] = THE_KEPT.filter((name) => {
 })
 
 /**
- * WELL_FORMED is what the registrar's own schema accepts for the two refused
+ * WELL_FORMED is what the registrar's own schema accepts for the three refused
  * operations. The tests that go through the bridge for a refusal are about the
  * gate, and a payload the schema refuses would answer a refusal this file is not
- * about; `ipc.test.ts` holds the same two payloads for the same reason.
+ * about; `ipc.test.ts` holds the same three payloads for the same reason. The
+ * move's two ids are a document key and a release key as the graph document
+ * spells them (contract section 6.22) -- the gate never reads them, and the
+ * source behind this fake handler is never reached.
  */
 const WELL_FORMED: Readonly<Record<string, Record<string, unknown>>> = Object.freeze({
   'run.launch': { installation: 'sandbox', repository: 'acme/app', task: 'do the thing' },
   'settings.edit': { op: 'set', key: 'budget.cap_usd', value: '25' },
+  'roadmap.move': { node: 'coordinator:plans/gv/T1', toRelease: 'a'.repeat(64), confirmed: true },
 })
 
 /** recordingIpcMain is Electron's `ipcMain`, as far as the registrar uses it: a
@@ -251,18 +268,18 @@ describe('the five states a licence reply puts the console in', () => {
 })
 
 describe('the refused class is the table\'s column', () => {
-  it('marks exactly the two operations the design takes away, and no other row', () => {
+  it('marks exactly the three operations the design takes away, and no other row', () => {
     const marked = OPERATIONS.filter((operation) => operation.refusedAfterLapse === true).map(
       (operation) => operation.name,
     )
     expect([...marked].sort()).toEqual([...THE_REFUSED].sort())
   })
 
-  it('names the target installation on the launch row, and on no other of the two', () => {
-    // The second column the gate reads, and the reason the two rows are not
+  it('names the target installation on the launch row, and on none of the other two', () => {
+    // The second column the gate reads, and the reason the rows are not
     // decided the same way: the launch acts on the installation its payload
-    // names, and the settings write acts on the installation the console is
-    // driving. `assertReachableSurface` (`ipc.ts`) holds the column's *shape*
+    // names, and the settings write and the roadmap move act on the installation
+    // the console is driving. `assertReachableSurface` (`ipc.ts`) holds the column's *shape*
     // -- a required `installationName` argument of the same row -- and this
     // holds the *set*: a settings write given an installation argument would ask
     // the store about a name its own payload never carries.
@@ -274,6 +291,7 @@ describe('the refused class is the table\'s column', () => {
     ).toEqual([
       ['run.launch', 'installation'],
       ['settings.edit', undefined],
+      ['roadmap.move', undefined],
     ])
   })
 
@@ -299,14 +317,15 @@ describe('the refused class is the table\'s column', () => {
 })
 
 describe('the lapse, at the handler', () => {
-  it('refuses the launch and the settings write in the main process, and reaches no source', async () => {
+  it('refuses the launch, the settings write and the roadmap move in the main process, and reaches no source', async () => {
     const { bridge, reached } = lapsedConsole(() => AT['lapsed'] as LicenceReply)
     for (const name of THE_REFUSED) {
       const reply = await bridgeMethod(bridge, name)(WELL_FORMED[name])
       expect(reply, name).toEqual({ ok: false, reason: LAPSE_REFUSAL })
     }
-    // **The point of the gate**: neither operation reached its handler, so no
-    // child was spawned and no setting was read or written. A gate applied after
+    // **The point of the gate**: none of the three reached its handler, so no
+    // child was spawned, no setting was read or written, and the record the move
+    // would have written is untouched. A gate applied after
     // the handler answers the identical sentence and has already spawned.
     expect(reached).toEqual([])
   })
@@ -357,6 +376,7 @@ describe('the lapse, at the handler', () => {
     }
     expect(reached).not.toContain('run.launch')
     expect(reached).not.toContain('settings.edit')
+    expect(reached).not.toContain('roadmap.move')
   })
 
   it('works in full within the grace, which is what the grace is for', async () => {
@@ -491,5 +511,357 @@ describe('the lapse, at the handler', () => {
     // and it does so before the source, which is the whole of the gate.
     await expect(wrapped['run.launch']({})).rejects.toThrow(LAPSE_REFUSAL)
     expect(source.reached).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The project key's state, as `fugaro licence status --json` answers it
+// (licence-key-v2 plan K3.6). What is held here is the reader: which document it
+// accepts, what it makes of the state word (D2143 above all: no key is Free and
+// not a lapse), what it refuses and by which sentence, and which reader a
+// warning window reaches. Nothing here spawns anything -- the argv that prints
+// this document is the spawn allow-list's -- and nothing here gates anything:
+// the gate is held by the cases above, over the console's own store.
+// ---------------------------------------------------------------------------
+
+/** STATUS is one document as the CLI prints one, field for field, with every
+ * value the reader uses. A test moves one field of it at a time, so what a case
+ * is about is the one key it names rather than a document written out again. */
+function statusDocument(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    project: 'sandbox',
+    state: 'active',
+    tier: 'team',
+    seats: 5,
+    paid_through: '2027-11-12T00:00:00Z',
+    kind: 'paid',
+    renewal_mode: 'auto',
+    source: 'project',
+    revoked: false,
+    last_check: null,
+    warning: null,
+    ...overrides,
+  })
+}
+
+/** readStatus is the parse of one document that is expected to be read, so a
+ * case about a figure does not restate the refusal it is not about. */
+function readStatus(overrides: Record<string, unknown> = {}): ProjectLicenceStatus {
+  const parsed = parseLicenceStatusDocument(statusDocument(overrides))
+  if (!parsed.ok) throw new Error(parsed.reason)
+  return parsed.status
+}
+
+/** refuseStatus is the parse of one document that is expected to be refused:
+ * the sentence, so a case can hold both that it was refused and which field the
+ * sentence names. */
+function refuseStatus(overrides: Record<string, unknown>): string {
+  const parsed = parseLicenceStatusDocument(statusDocument(overrides))
+  if (parsed.ok) throw new Error('the document was read, and this case is about a refusal')
+  return parsed.reason
+}
+
+/** WARNING is K3.5's field as the default policy writes it: the admins from the
+ * first moment of the grace, and every role a week in (spec section 7.1). The
+ * sentence is the CLI's own and does not vary by window. */
+const WARNING = Object.freeze({
+  windows: Object.freeze([
+    Object.freeze({ opens: '2027-11-12T00:00:00Z', roles: Object.freeze(['admin']) }),
+    Object.freeze({ opens: '2027-11-19T00:00:00Z', roles: Object.freeze(['admin', 'operator', 'viewer']) }),
+  ]),
+  message: 'licence: the paid period ended on 2027-11-12T00:00:00Z and the grace ends on 2027-12-12T00:00:00Z: renew it with `fugaro licence refresh` before then',
+})
+
+describe('the project key\'s state as the CLI answers it', () => {
+  it('reads the CLI\'s four state words onto this console\'s own', () => {
+    // The words are the CLI's (`licenceStateName`, `ee/register/licence.go`) and
+    // the states are this file's, so the mapping is the whole of the join.
+    expect(readStatus({ state: 'free' }).state).toBe('no-key')
+    expect(readStatus({ state: 'active' }).state).toBe('valid')
+    expect(readStatus({ state: 'grace' }).state).toBe('grace')
+    expect(readStatus({ state: 'expired' }).state).toBe('lapsed')
+  })
+
+  it('reads an installation with no key as Free, which keeps working (D2143)', () => {
+    // The decision, and the reason it is not `lapsed`: an installation that was
+    // never given a key is the ordinary Free state (spec section 2, section 11.1
+    // -- the key step is optional), and a reader that turned it into a lapse
+    // would take a capability away over a state nothing judged.
+    const free = readStatus({
+      state: 'free',
+      tier: undefined,
+      seats: 0,
+      paid_through: null,
+      kind: undefined,
+      renewal_mode: undefined,
+      source: undefined,
+    })
+    expect(free.state).toBe('no-key')
+    expect(free.state).not.toBe('lapsed')
+    // And nothing beside it pretends to a figure: the CLI leaves the empty words
+    // out (`omitempty`) and writes `null` for the stamp, which read as `null`
+    // here.
+    expect(free.tier).toBeNull()
+    expect(free.seats).toBe(0)
+    expect(free.paidThrough).toBeNull()
+    expect(free.kind).toBeNull()
+    expect(free.renewalMode).toBeNull()
+    expect(free.source).toBeNull()
+    expect(free.revoked).toBe(false)
+    expect(free.lastCheck).toBeNull()
+    expect(free.warning).toBeNull()
+  })
+
+  it('reads a revoked key as the CLI words it, with the flag beside the state', () => {
+    // The CLI answers a revoked key `expired` with `revoked: true`: Free in
+    // behaviour, and different news. The reader keeps both, because which of the
+    // two a screen says is the screen's business and losing one here would lose
+    // it everywhere.
+    const revoked = readStatus({ state: 'expired', revoked: true })
+    expect(revoked.state).toBe('lapsed')
+    expect(revoked.revoked).toBe(true)
+  })
+
+  it('refuses a state word it does not know, and never reads it as Free', () => {
+    // D7: a screen that misreports because it read a shape it did not understand
+    // is worse than one that says it cannot read it. A sixth state a later CLI
+    // adds is exactly that -- and the fail-open reading (anything unknown is
+    // Free) is the one this refuses.
+    const reason = refuseStatus({ state: 'suspended' })
+    expect(reason).toContain('state')
+    expect(reason).not.toContain('suspended')
+  })
+
+  it('refuses text that is not a JSON object, and says so', () => {
+    expect(parseLicenceStatusDocument('not json at all')).toEqual({
+      ok: false,
+      reason: 'the CLI’s licence status is not JSON',
+    })
+    expect(parseLicenceStatusDocument('[1, 2, 3]')).toEqual({
+      ok: false,
+      reason: 'the CLI’s licence status is not a JSON object',
+    })
+    expect(parseLicenceStatusDocument('null')).toEqual({
+      ok: false,
+      reason: 'the CLI’s licence status is not a JSON object',
+    })
+  })
+
+  it('refuses a document whose field this console uses is missing or the wrong type, by name', () => {
+    // Rule 2 of the section's header: the schema is closed on the fields the
+    // console uses. Each sentence names its own field, so a reader of the
+    // refusal knows which key the CLI and this console disagree about.
+    expect(refuseStatus({ project: undefined })).toContain('`project`')
+    expect(refuseStatus({ state: undefined })).toContain('`state`')
+    expect(refuseStatus({ seats: '5' })).toContain('`seats`')
+    expect(refuseStatus({ seats: -1 })).toContain('`seats`')
+    expect(refuseStatus({ seats: 1.5 })).toContain('`seats`')
+    expect(refuseStatus({ revoked: 'true' })).toContain('`revoked`')
+    expect(refuseStatus({ paid_through: 1_800_000_000 })).toContain('`paid_through`')
+    expect(refuseStatus({ last_check: 'none' })).toContain('`last_check`')
+    expect(refuseStatus({ warning: 'none' })).toContain('`warning`')
+    expect(refuseStatus({ tier: 3 })).toContain('`tier`')
+    expect(refuseStatus({ kind: 3 })).toContain('`kind`')
+    expect(refuseStatus({ renewal_mode: 3 })).toContain('`renewal_mode`')
+    expect(refuseStatus({ source: 3 })).toContain('`source`')
+  })
+
+  it('refuses a missing key the CLI always writes, and reads a null one as the value it is', () => {
+    // `paid_through`, `last_check` and `warning` are the three keys the CLI
+    // always writes and that are `null` where there is nothing to say. `null` is
+    // a value here; a key that is not there at all is a document this console has
+    // not seen, and reading it as `null` would draw "never checked" for a
+    // document that never said so.
+    for (const key of ['paid_through', 'last_check', 'warning']) {
+      const absent: Record<string, unknown> = {}
+      absent[key] = undefined
+      expect(refuseStatus(absent), key).toContain(`\`${key}\``)
+    }
+    const bare = readStatus({ paid_through: null, last_check: null, warning: null })
+    expect([bare.paidThrough, bare.lastCheck, bare.warning]).toEqual([null, null, null])
+  })
+
+  it('ignores a key this console does not know', () => {
+    // The CLI's JSON only grows (`shared/schema.ts`): a field a newer CLI adds
+    // reaches no screen and no decision, and must not turn the licence section
+    // into a skew screen.
+    const status = readStatus({ check_interval: 'P1D', seats_used: 2, note: 'design partner' })
+    expect(status.state).toBe('valid')
+    expect(status.seats).toBe(5)
+    expect(Object.keys(status)).not.toContain('check_interval')
+  })
+
+  it('reads the figures beside the state, and the words the CLI leaves out as null', () => {
+    const status = readStatus()
+    expect(status.project).toBe('sandbox')
+    expect(status.tier).toBe('team')
+    expect(status.seats).toBe(5)
+    expect(status.paidThrough).toBe('2027-11-12T00:00:00Z')
+    expect(status.kind).toBe('paid')
+    expect(status.renewalMode).toBe('auto')
+    expect(status.source).toBe('project')
+    // The four the CLI writes with `omitempty` are absent rather than empty in a
+    // document that has nothing to say about them, and absent is `null` here --
+    // the CLI's own meaning, and not the empty string a screen would draw.
+    const bare = readStatus({ tier: undefined, kind: undefined, renewal_mode: undefined, source: undefined })
+    expect(bare.tier).toBeNull()
+    expect(bare.kind).toBeNull()
+    expect(bare.renewalMode).toBeNull()
+    expect(bare.source).toBeNull()
+  })
+
+  it('reads the last check, and null where the installation never ran one', () => {
+    const checked = readStatus({
+      last_check: {
+        key_id: 'lk_01J9Z',
+        at: '2027-11-12T00:00:00Z',
+        status: 'ok',
+        failures: 2,
+        last_ok: '2027-11-12T00:00:00Z',
+      },
+    })
+    expect(checked.lastCheck).toEqual({
+      at: '2027-11-12T00:00:00Z',
+      status: 'ok',
+      failures: 2,
+      lastOk: '2027-11-12T00:00:00Z',
+    })
+    // `failures` and `last_ok` are `omitempty`/`omitzero` on the CLI's record: a
+    // check that reached the server writes neither, and a missing count is zero
+    // checks in a row and not an unreadable figure.
+    const first = readStatus({ last_check: { at: '2027-11-12T00:00:00Z', status: 'ok' } })
+    expect(first.lastCheck).toEqual({
+      at: '2027-11-12T00:00:00Z',
+      status: 'ok',
+      failures: 0,
+      lastOk: null,
+    })
+    // The key id the record carries is deliberately not read: the console draws
+    // nothing from it, and a reader that carried one would be one writer away
+    // from a screen.
+    expect(Object.keys(checked.lastCheck ?? {})).not.toContain('keyId')
+  })
+
+  it('refuses a check it cannot read, rather than drawing half of one', () => {
+    expect(refuseStatus({ last_check: { at: '2027-11-12T00:00:00Z' } })).toContain('`last_check`')
+    expect(refuseStatus({ last_check: { status: 'ok', failures: -1 } })).toContain('`last_check`')
+    expect(refuseStatus({ last_check: 'none' })).toContain('`last_check`')
+  })
+
+  it('bounds the document, its strings and its windows', () => {
+    // A bound is what stops a child's output deciding how much this process
+    // holds: the CLI's own answer is a few hundred bytes, so these are far above
+    // it and still finite.
+    expect(parseLicenceStatusDocument(' '.repeat(MAX_LICENCE_STATUS_BYTES + 1)).ok).toBe(false)
+    expect(refuseStatus({ project: 'a'.repeat(MAX_LICENCE_STATUS_STRING + 1) })).toContain(
+      '`project`',
+    )
+    const window = { opens: '2027-11-12T00:00:00Z', roles: ['admin'] }
+    const windows = Array.from({ length: MAX_LICENCE_WARNING_WINDOWS + 1 }, () => window)
+    expect(refuseStatus({ warning: { windows, message: WARNING.message } })).toContain('`warning`')
+    expect(
+      parseLicenceStatusDocument(
+        statusDocument({ warning: { windows, message: WARNING.message } }),
+      ).ok,
+    ).toBe(false)
+  })
+
+  it('puts no text out of the document into a refusal', () => {
+    // A refusal is drawn on a screen, so it is the console's own sentence: the
+    // value that was refused never reaches it, whatever the CLI (or something
+    // wearing the CLI's stdout) put there. This is the reason every sentence
+    // above names a field and none quotes one.
+    const hostile = '<img src=x onerror="alert(1)">'
+    // Each refusal is exactly one of the reader's own constants -- so the
+    // assertion is equality and not "does not contain": there is no place in a
+    // sentence a document's text could reach in the first place.
+    const refused: readonly (readonly [Record<string, unknown>, string])[] = [
+      [{ state: hostile }, 'the CLI’s licence status names a state this console does not know'],
+      [{ seats: hostile }, 'the CLI’s licence status has no usable `seats`'],
+      [{ project: { hostile } }, 'the CLI’s licence status has no usable `project`'],
+      [{ tier: { hostile } }, 'the CLI’s licence status has a `tier` that is not a string'],
+      [{ last_check: { at: hostile } }, 'the CLI’s licence status has no usable `last_check`'],
+      [{ warning: hostile }, 'the CLI’s licence status has no usable `warning`'],
+    ]
+    for (const [overrides, sentence] of refused) {
+      expect(parseLicenceStatusDocument(statusDocument(overrides)), sentence).toEqual({
+        ok: false,
+        reason: sentence,
+      })
+      expect(sentence).not.toContain(hostile)
+    }
+  })
+})
+
+describe('the warning the key\'s own policy owes one reader', () => {
+  it('answers the sentence to every role the open windows reach', () => {
+    // The default policy reaches admins from the first moment of the grace and
+    // everyone a week in (spec section 7.1), so at the later instant all three
+    // are owed the sentence -- and it is the same sentence, because the CLI
+    // composes one for the whole warning.
+    const status = readStatus({ state: 'grace', warning: WARNING })
+    for (const role of ['admin', 'operator', 'viewer'] as const) {
+      expect(projectLicenceWarning(status, role), role).toBe(WARNING.message)
+    }
+  })
+
+  it('answers nobody a warning the key\'s windows do not reach', () => {
+    // The first week of the grace warns admins only: an operator is not owed the
+    // sentence yet, and a reader that warned everyone from the first window would
+    // be telling a developer to renew a licence that is not theirs to renew.
+    const adminsOnly = readStatus({
+      state: 'grace',
+      warning: { windows: [WARNING.windows[0]], message: WARNING.message },
+    })
+    expect(projectLicenceWarning(adminsOnly, 'admin')).toBe(WARNING.message)
+    expect(projectLicenceWarning(adminsOnly, 'operator')).toBeNull()
+    expect(projectLicenceWarning(adminsOnly, 'viewer')).toBeNull()
+  })
+
+  it('answers the newest window\'s decision when two reach one role', () => {
+    // Two windows may reach one role and the later one is the news that has just
+    // changed (the CLI's own rule, `ee/register/warn.go`). The windows are listed
+    // in the order they open, which is the CLI's promise for the field, so the
+    // reader never compares the stamps as text -- a sub-second spelling sorts
+    // before a whole second's and would pick the older window.
+    const later = { opens: '2027-11-19T00:00:00.5Z', roles: ['admin'] }
+    const earlier = { opens: '2027-11-12T00:00:00Z', roles: ['admin'] }
+    const status = readStatus({
+      state: 'grace',
+      warning: { windows: [earlier, later], message: WARNING.message },
+    })
+    expect(projectLicenceWarning(status, 'admin')).toBe(WARNING.message)
+    // A role no window names is reached by nothing, whatever the windows say.
+    expect(projectLicenceWarning(status, 'viewer')).toBeNull()
+  })
+
+  it('answers no warning at all where the CLI sent none', () => {
+    // A key inside its paid term warns nobody (spec section 7.1's "Active:
+    // nobody"), and an installation with no key has no policy to speak of: the
+    // CLI sends `null` and there is nothing for a role to weigh.
+    for (const state of ['active', 'free'] as const) {
+      const status = readStatus({ state, warning: null })
+      for (const role of ['admin', 'operator', 'viewer'] as const) {
+        expect(projectLicenceWarning(status, role), `${state}/${role}`).toBeNull()
+      }
+    }
+  })
+
+  it('reads the windows beside the sentence, roles and all', () => {
+    const status = readStatus({ state: 'grace', warning: WARNING })
+    expect(status.warning?.windows).toEqual([
+      { opens: '2027-11-12T00:00:00Z', roles: ['admin'] },
+      { opens: '2027-11-19T00:00:00Z', roles: ['admin', 'operator', 'viewer'] },
+    ])
+    // The roles are kept as the CLI's own words and are not narrowed to the
+    // three this console knows: a window naming a role this build has never
+    // heard of reaches no reader here (the role a caller passes is one of the
+    // three), and dropping it would be this reader editing the key's policy.
+    const unknown = readStatus({
+      state: 'grace',
+      warning: { windows: [{ opens: '2027-11-12T00:00:00Z', roles: ['owner'] }], message: WARNING.message },
+    })
+    expect(unknown.warning?.windows[0]?.roles).toEqual(['owner'])
+    expect(projectLicenceWarning(unknown, 'admin')).toBeNull()
   })
 })

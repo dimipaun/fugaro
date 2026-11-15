@@ -17,8 +17,9 @@ package keyservice
 // **What this file adds** is every rule that depends on WHO is asking, which the
 // token cannot answer: the SSO rule of the membership the request uses (D2207,
 // F10), the age of the sign-in itself (`auth_time`, not the token's `iat`, which
-// is what D2187's five minutes are about), and the tenant a Microsoft sign-in
-// has to come from. The addresses are compared through access.Member on BOTH
+// is what D2187's five minutes are about), and the Microsoft (Entra ID)
+// directory a Microsoft sign-in has to come from. The addresses are compared
+// through access.Member on BOTH
 // sides (F31): the member this verifier builds and the member a stored record
 // carries are one spelling of one person, so a list entry cannot be missed by a
 // fold or matched by a domain's case. The member is built from the address as
@@ -27,40 +28,58 @@ package keyservice
 // keeps the local part byte for byte, so building it from the folded spelling
 // would give a member a capitalised local part can never equal.
 //
-// **D2207, and what P1.3 found.** The operations organisation accepts
-// `google.com` only. A reseller organisation accepts Google, or Microsoft only
-// when the token carries a tenant on its list — and P1.3 records that no
-// Firebase-minted token carries a Microsoft (Entra ID) directory id at all: the
-// ID token's claim set has no field for one, and the Microsoft sign-in recorded
-// in portalauth_test.go carries none. The only tenant-shaped value Firebase
-// writes is `firebase.tenant`, which is Identity Platform's own tenant
-// (mcpauth.Identity.TenantID) — the tenant the sign-in was MADE IN, which the
-// client names when it calls the SDK, and NOT the directory the person's account
-// lives in.
+// **D2207, and the owner's ruling of 2026-11-13 ("Pin the real directory id").**
+// The operations organisation accepts `google.com` only. A reseller organisation
+// accepts Google, or Microsoft only when the VERIFIED token's Microsoft (Entra
+// ID) directory id — the `tid` claim, which mcpauth reads out of the signed
+// token and which the person signing in cannot choose — is on the reseller's
+// pinned list.
 //
-// **So a pinned list is a directory control only half way, and the other half is
-// deployment configuration this file can neither see nor check.** The tenant id
-// a list entry pins stands for a directory only when that Identity Platform
-// tenant's Microsoft provider is backed by a **single-tenant Azure app
-// registration** for that one directory: that registration is what admits only
-// its own directory's accounts, so a token minted in the tenant is one of that
-// directory's people. A tenant whose registration is multi-tenant admits every
-// Entra directory there is, and the same list entry then pins nothing at all —
-// an owner who sets the list up without that half has a control that reads as a
-// directory pin and is not one. The registration is the owner's (P0's accounts
-// in docs/portal/reconciliation.md name it) and pinners of a tenant should be
-// told so.
+// **What P1.3 first pinned, and what #2515's fourth review round found.** P1.3
+// compared the list against `firebase.tenant`, and that claim is the Identity
+// Platform tenant the sign-in was MADE IN (mcpauth.Identity.TenantID), which the
+// CLIENT names when it calls the SDK. A list entry over it therefore admits
+// whoever names a pinned value rather than the directory the person's account
+// lives in — the tenant is a door, not an identity — and the list read as a
+// directory control only because the deployment was also expected to back that
+// tenant's Microsoft provider with a single-tenant Azure app registration. The
+// pin is now the directory and nothing else: `SignIn.TenantID` is carried and
+// RequireSSO never reads it.
 //
-// A deployment that will not or cannot hold that half takes D2207's own fallback
-// for "no usable Microsoft tenant id": a reseller organisation is Google-only
-// too, which is the zero SSORule — no pinned tenant, and so every `microsoft.com`
-// sign-in refused — and the state the recorded shape is already in.
-// `TestResellerMicrosoftNeedsAPinnedTenant` is what holds that. The recorded
-// shape is also what P2.2 needs about `email_verified`: it is a claim Firebase
-// sets from the provider's own report, and this verifier requires it of every
-// sign-in, so whether a Microsoft directory's addresses arrive verified never
-// decides an admission here — no Firebase-minted Microsoft sign-in is admitted
-// at all until a tenant is pinned.
+// **Where the directory id comes from, and where it does not.** mcpauth reads
+// `tid` out of `firebase.sign_in_attributes`, where Identity Platform puts a
+// federated provider's own claims, and that is the only place it reads: the
+// value is then the provider's own report of where an account lives, which is
+// the property `firebase.tenant` does not have. The token's own top level is
+// deliberately NOT read beside it, and that is a rule rather than an omission:
+// that level is the CUSTOM-CLAIMS namespace, where this repository's own project
+// writes `mu`, `fs` and `fr`, so a `tid` there is a value any project-side writer
+// of custom claims can mint and a pin over it is one that writer satisfies —
+// `firebase.tenant`'s hole in another claim (mcpauth's `directoryID`,
+// TestATopLevelTidIsNotADirectory). Whether a project's Microsoft provider
+// forwards a `tid` at all is deployment configuration this file can neither see
+// nor check (P0.1's provider accounts, docs/portal/reconciliation.md): a
+// provider that forwards none leaves every `microsoft.com` sign-in carrying no
+// directory, and that is refused below.
+//
+// **The single-tenant app registration is a belt-and-braces and not the
+// control.** Backing a tenant's Microsoft provider with a registration for one
+// directory still narrows which directories can reach that provider, and an
+// owner who wants the provider itself to stop at one directory keeps doing it.
+// It is no longer what makes the list a directory control: the `tid` in the
+// token is, and a multi-tenant registration can no longer turn a pinned entry
+// into an admission for every Entra directory there is.
+//
+// A deployment that cannot get a directory into the token takes D2207's own
+// fallback for "no usable Microsoft directory id": a reseller organisation is
+// Google-only too, which is the zero SSORule — no pinned directory, and so every
+// `microsoft.com` sign-in refused — and the state the recorded shape is already
+// in. `TestResellerMicrosoftNeedsAPinnedDirectory` is what holds that. The
+// recorded shape is also what P2.2 needs about `email_verified`: it is a claim
+// Firebase sets from the provider's own report, and this verifier requires it of
+// every sign-in, so whether a Microsoft directory's addresses arrive verified
+// never decides an admission here — no Microsoft sign-in without a pinned
+// directory is admitted at all.
 //
 // **The Scheduler token is a different document** (F33): a Cloud Scheduler job
 // presents an OIDC ID token Google signs, and the API checks its ACCOUNT and its
@@ -146,9 +165,13 @@ var (
 	// portal never offers, or a Microsoft sign-in at the operations organisation,
 	// which is Google-only.
 	ErrSSORequired = errors.New("keyservice: this membership requires a Google or Microsoft SSO sign-in")
-	// ErrTenantNotPinned is a Microsoft sign-in whose tenant is not one the
-	// organisation pinned: no tenant at all, or one outside its list.
-	ErrTenantNotPinned = errors.New("keyservice: the Microsoft sign-in is not from a pinned tenant")
+	// ErrDirectoryNotPinned is a Microsoft sign-in whose Microsoft (Entra ID)
+	// directory is not one the organisation pinned: no directory in the token at
+	// all, or one outside its list. It is a sentinel of its own and not
+	// ErrSSORequired because the two answers differ for the person: an SSO
+	// refusal is "sign in the other way", and this one is "your directory is not
+	// one this organisation sells through", which no other button fixes.
+	ErrDirectoryNotPinned = errors.New("keyservice: the Microsoft sign-in is not from a pinned directory")
 	// ErrStaleSignIn is a sign-in older than the action allows (D2187's five
 	// minutes for a mint, P5.1's reads included), or one that attests no sign-in
 	// time at all.
@@ -186,10 +209,18 @@ type VerifiedSignIn struct {
 	AuthTime time.Time
 	// TenantID is `firebase.tenant`, the Identity Platform tenant the sign-in
 	// came from, or empty when the project runs none. It is the tenant the
-	// client asked for and not the Microsoft (Entra ID) directory the person's
-	// account lives in, which is what RequireSSO's list entry is read as only
-	// with the single-tenant app registration this file's comment names.
+	// client asked for at sign-in — a door and not an identity — and NOT the
+	// Microsoft (Entra ID) directory the person's account lives in, which is
+	// DirectoryID. RequireSSO reads the directory and never this, because a rule
+	// over a value the client chooses admits whoever chooses a pinned one.
 	TenantID string
+	// DirectoryID is the Microsoft (Entra ID) directory the verified token
+	// reports the person's account lives in: the `tid` the provider signed into
+	// `firebase.sign_in_attributes`, which is the only place mcpauth reads one —
+	// a `tid` in the token's own claim set is a custom claim and is ignored. It
+	// is empty for a Google sign-in and for a Microsoft one whose provider
+	// forwarded no directory, which RequireSSO refuses.
+	DirectoryID string
 }
 
 // SSORule is what the organisation a request USES demands of the sign-in
@@ -198,22 +229,26 @@ type VerifiedSignIn struct {
 // a reseller membership whatever that request is about.
 //
 // It is the caller's to build from the organisation's own record — operations
-// sets the tenant lists (P5.1) — and its zero value is the strictest rule there
-// is: SSO with no Microsoft tenant, which is Google only.
+// sets the two lists (P5.1) — and its zero value is the strictest rule there is:
+// SSO with no Microsoft directory, which is Google only.
 type SSORule struct {
 	// Operations is the operations organisation, which accepts `google.com`
-	// only: a Microsoft sign-in is refused whatever MicrosoftTenants holds,
+	// only: a Microsoft sign-in is refused whatever MicrosoftDirectories holds,
 	// because D2207's answer for operations is Google alone and a list that
 	// could widen it is a list somebody would set.
 	Operations bool
-	// MicrosoftTenants is a reseller organisation's pinned tenant list, and
-	// D2207's condition for Microsoft: a `microsoft.com` sign-in is admitted
-	// only when the token's tenant is one of these. Empty or nil refuses every
+	// MicrosoftDirectories is a reseller organisation's pinned Microsoft (Entra
+	// ID) directory list, and D2207's condition for Microsoft as the owner's
+	// ruling of 2026-11-13 pins it: a `microsoft.com` sign-in is admitted only
+	// when the VERIFIED token's `tid` is one of these. Empty or nil refuses every
 	// Microsoft sign-in (F40), which is what a reseller is left with until the
-	// owner pins a tenant Firebase can carry AND backs it with a single-tenant
-	// app registration — the list on its own pins the tenant the client asked
-	// for and not the directory the person is in (this file's comment).
-	MicrosoftTenants []string
+	// owner pins a directory its Microsoft provider forwards into the token — a
+	// list over the Identity Platform tenant a client names would instead admit
+	// whoever named a pinned value (this file's comment). Entries are compared
+	// exactly, as the memberships in this tree are: the value is one the owner
+	// copies out of the token, and a second fold here would be one spelling of a
+	// directory that only one of the two sides applies.
+	MicrosoftDirectories []string
 }
 
 // PortalVerifier verifies the portal's sign-in tokens and applies the rules a
@@ -285,21 +320,25 @@ func (v *PortalVerifier) Verify(ctx context.Context, raw string) (VerifiedSignIn
 		return VerifiedSignIn{}, fmt.Errorf("%w: the identity's address is not one this service can compare", ErrUnverifiedSignIn)
 	}
 	return VerifiedSignIn{
-		UID:      id.UID,
-		Email:    id.Email,
-		Member:   member,
-		Provider: id.Provider,
-		AuthTime: id.AuthTime,
-		TenantID: id.TenantID,
+		UID:         id.UID,
+		Email:       id.Email,
+		Member:      member,
+		Provider:    id.Provider,
+		AuthTime:    id.AuthTime,
+		TenantID:    id.TenantID,
+		DirectoryID: id.DirectoryID,
 	}, nil
 }
 
 // RequireSSO refuses a sign-in the membership the request uses does not admit
 // (D2207, F10): anything but `google.com` and `microsoft.com` is refused before
 // the rule is read, a Microsoft sign-in at the operations organisation is
-// refused outright, and at a reseller it is admitted only from a tenant on the
-// rule's list — a list whose entries are directories only when the deployment
-// holds the app-registration half this file's comment names.
+// refused outright, and at a reseller it is admitted only when the VERIFIED
+// token's Microsoft (Entra ID) directory id is on the rule's list — the `tid`
+// the provider wrote into `firebase.sign_in_attributes`, never the Identity
+// Platform tenant the client named at sign-in and never a `tid` in the token's
+// own custom-claims level, both of which are carried on the sign-in and read
+// nowhere here.
 //
 // It is called for a request that uses an operations or a reseller membership —
 // the rule follows the ACTOR and not the organisation the request is about — and
@@ -313,8 +352,8 @@ func (v *PortalVerifier) RequireSSO(signIn VerifiedSignIn, rule SSORule) error {
 		if rule.Operations {
 			return fmt.Errorf("%w: the operations organisation signs in with Google only (D2207)", ErrSSORequired)
 		}
-		if signIn.TenantID == "" || !slices.Contains(rule.MicrosoftTenants, signIn.TenantID) {
-			return fmt.Errorf("%w: a Microsoft sign-in is admitted only from a tenant the organisation pinned", ErrTenantNotPinned)
+		if signIn.DirectoryID == "" || !slices.Contains(rule.MicrosoftDirectories, signIn.DirectoryID) {
+			return fmt.Errorf("%w: a Microsoft sign-in is admitted only when the token's tid is a directory the organisation pinned", ErrDirectoryNotPinned)
 		}
 		return nil
 	default:

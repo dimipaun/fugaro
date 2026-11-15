@@ -247,15 +247,24 @@ func (rg *apiRegistry) missing(deps Deps) error {
 // the method the route names, and the subtree's own answer for a path no area
 // registered.
 //
+// Every door mounted here is wrapped in the deploy's error reporting (P1.6,
+// errreport.go): a route that panics is reported and refused rather than
+// closing the connection on the SPA, and a 5xx answer is reported as it goes
+// out. It is the mount's rather than each area's for the reason the body cap
+// is — a handler that has to remember it is a handler that will not — and the
+// subtree's own answer is wrapped with the rest so that every path under the
+// rewrite is answered through one shape.
+//
 // No route here sets a CORS header, and that is the whole of "no CORS": Hosting
 // serves the SPA from the origin it rewrites /api/** from (F21), so the browser
 // calls this same-origin, and a header admitting another origin would admit it
 // to an API whose answers are a customer's own records.
 func (rg *apiRegistry) mount(mux *http.ServeMux, s *Service) {
+	reports := newErrReporter(s.cfg.SentryDSN, string(s.cfg.Environment))
 	for _, path := range rg.paths() {
-		mux.HandleFunc(path, s.apiDispatch(path))
+		mux.HandleFunc(path, reports.wrap(path, s.apiDispatch(path)))
 	}
-	mux.HandleFunc(apiPrefix, unknownAPIRoute)
+	mux.HandleFunc(apiPrefix, reports.wrap(apiPrefix, unknownAPIRoute))
 }
 
 // unknownAPIRoute answers a path under the rewrite's subtree that no area
@@ -377,22 +386,32 @@ type Tx interface {
 var ErrNoDocument = errors.New("keyservice: the document is not there")
 
 // Caller is who a verified request is: the account, the address its provider
-// wrote, how it signed in and when, and the tenant when the provider is one that
-// has them (F31, D2207).
+// wrote, how it signed in and when, the tenant when the provider is one that has
+// them, and the Microsoft (Entra ID) directory the account lives in when the
+// token carries one (F31, D2207 as amended on 2026-11-13).
 type Caller struct {
 	UID      string
 	Email    string
 	Provider string
 	AuthTime time.Time
 	TenantID string
+	// DirectoryID is the Microsoft directory the sign-in came from, which is the
+	// value an SSO rule pins. It is NOT TenantID: that one is the Identity
+	// Platform tenant the CLIENT names at sign-in, and a rule over it admits
+	// whoever names a pinned value (portalauth.go's comment).
+	DirectoryID string
 }
 
-// SignIn verifies one sign-in (plan P1.3): it turns the ID token the SPA sends
-// into the caller that token names, having checked the token's audience, its
-// issuer, its signature and that the address is verified, first. What an area
-// then asks of a caller — the provider rule, a fresh sign-in, a pinned tenant —
-// is P1.3's, on this type.
-type SignIn interface {
+// SignInVerifier verifies one sign-in (plan P1.3): it turns the ID token the SPA
+// sends into the caller that token names, having checked the token's audience,
+// its issuer, its signature and that the address is verified, first. What an
+// area then asks of a caller — the provider rule, a fresh sign-in, a pinned
+// directory — is P1.3's, on the sign-in it answers.
+//
+// The name is a verifier's and not SignIn's because P1.3's own type is the
+// verified sign-in itself (portalauth.go's SignIn): the two are one concept at
+// two stages, and a package cannot hold one identifier for both.
+type SignInVerifier interface {
 	Verify(ctx context.Context, idToken string) (Caller, error)
 }
 

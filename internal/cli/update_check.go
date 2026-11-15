@@ -43,7 +43,9 @@ import (
 type stepOptions struct {
 	// check is the read-only mode: every step answers and nothing is written.
 	check bool
-	// yes is --yes, passed on to the cloud step's refresh.
+	// yes is the enclosing run's own confirmation, passed on to the cloud
+	// step's refresh. No flag sets it any more (T11 removed --yes): a run
+	// that covers a step is a run that covers it internally.
 	yes bool
 	// refresh holds the cloud step's flags, passed on to runImageRefresh.
 	refresh refreshOptions
@@ -77,6 +79,22 @@ type stepCtx struct {
 	o     stepOptions
 	loc   pluginwire.Location // the checkout's top and its settings file
 	agent string              // the coding agent's marker, "" outside one
+
+	// detail is where a step's prose goes: the log always, the terminal only
+	// under -v, and w itself where the run has no log to write (detailOut). A
+	// step's own line, the confirmations it asks and everything a person has
+	// to read stay on w.
+	detail io.Writer
+}
+
+// detailOut is u.detail with the fallback of the run that has no log: a step
+// built outside the converge (a helper of a test, `fugaro update --check`,
+// update-skills) writes its prose where it writes everything else.
+func (u *stepCtx) detailOut() io.Writer {
+	if u.detail == nil {
+		return u.w
+	}
+	return u.detail
 }
 
 type checkStep struct {
@@ -184,7 +202,7 @@ func runUpdateCheck(cmd *cobra.Command, o *initOptions, args []string) error {
 		// window, where the converge's confirmations can be answered
 		// (cloudLine is that line, and this is what it is for besides the
 		// cloud step's own refusals).
-		fmt.Fprintf(w, "stale: run %s in your own terminal window to bring %s up to date\n", u.o.cloudLine(loc.Root, false), pluginwire.Printable(loc.Root))
+		fmt.Fprintf(w, "stale: run %s in your own terminal window to bring %s up to date\n", u.o.cloudLine(loc.Root), pluginwire.Printable(loc.Root))
 		return &ExitError{Code: code, Err: errors.New("something is stale, and nothing was written: the steps above say what")}
 	case allCurrentOrSkipped(results):
 		fmt.Fprintf(w, "nothing to do: %s is current", pluginwire.Printable(loc.Root))
@@ -306,10 +324,6 @@ func (o stepOptions) again(path string) string {
 	args := []string{selfCommand(), "update"}
 	if o.check {
 		args = append(args, "--check")
-	} else {
-		if o.yes {
-			args = append(args, "--yes")
-		}
 	}
 	for _, f := range []struct{ name, v string }{
 		{"config", o.refresh.cloud.config}, {"project", o.refresh.cloud.project},
