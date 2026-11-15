@@ -150,6 +150,14 @@ import (
 // proves that row is what the FAIL elsewhere is read from. The fake `belong`
 // logs any call and fails, so a case says the check never reached that
 // installation.
+// Check 212's are the same four, down to the counter and the
+// real deletion and close, with the documents a pair, a judge run and its
+// verdict are read through served out of the case's own directory and a mode for
+// each state a case bends (a build without the command, a catalog without the
+// judge recipe, a layer that samples nothing, a challenger on the direct or an
+// unadmitted route, no pair within the bound, a shadow that published, a judge
+// that published, a verdict that is missing, skipped, one-pass or another pair's,
+// and a report that already draws a conclusion).
 // Check 301's fakes are a fake `fugaro`, a fake launchd and a fake systemd
 // whose boot id and unit files the test writes, so a reboot, a second
 // instance's refusal and T7's re-render are all readings of files the test
@@ -198,6 +206,7 @@ var liveCheckScripts = []struct {
 	{"check111.sh", "check111_test.sh"},
 	{"check210.sh", "check210_test.sh"},
 	{"check211.sh", "check211_test.sh"},
+	{"check212.sh", "check212_test.sh"},
 	{"check130.sh", "check130_test.sh"},
 	{"check145.sh", "check145_test.sh"},
 	{"check146.sh", "check146_test.sh"},

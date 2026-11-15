@@ -1004,6 +1004,7 @@ probe account carries predefined grants only).
 | 625 | The QR carries no identity ([`docs/mobile-auth/`](mobile-auth/implementation-plan.md), its §9 and the number it allocated on 2026-11-14; part **P4**): what `fugaro pair` draws is **discovery and not identity** — the project, its database URL and Identity Toolkit API key, and the one-shot pairing token, which is all the phone needs to know *where* to connect and grants it nothing by itself. It carries **no** address, no uid, no role and no key, and the credentials the phone ends up holding go to it encrypted to the key it generated | See "Check 625" below; **you** run it, on the sandbox installation and project, with a **real phone** and its camera, **never `belong`**, and **no agent runs any step of it** | One `fugaro pair` (which waits for the phone's key and the typed code) or one `fugaro pair --json`, read as **text**: no model call, no run, nothing billable — the payload's own bytes are the whole subject, and the reading is a scan of a real QR rather than of the string the command printed. The check records the payload with the token's **value** redacted and says what each member is; a member the prompt cannot explain is the finding. **OWNER-RUN, NOT RUN.** |
 | 626 | The first screen with no account ([`docs/mobile-auth/`](mobile-auth/implementation-plan.md), its §9 and the number it allocated on 2026-11-14; part **P4**, the spec's step and `mobile/src/app/first-screen.js`): on a device carrying the app the app's own CI job built, the first screen is reachable with **no sign-in at all** — the demo is the front door for somebody who cannot pair — and the "ask your admin" sentence stands beside it rather than in front of it, and never as a substitute for it | See "Check 626" below; **you** run it, on a device with the built app, paired with **nothing**, **never `belong`**, and **no agent runs any step of it** | One app launch on a device with no account: **no run, no cloud call and nothing billable** — the screen is drawn from the app's own bundle, and the demo behind it talks to no project of yours. The reading is a **fresh install** of the artifact the app's CI job published, reached with the network on and no sign-in made. **OWNER-RUN, NOT RUN.** |
 | 627 | The refusal of a public sign-up still holds with a provider on ([`docs/mobile-auth/`](mobile-auth/implementation-plan.md), its §9 and the number it allocated on 2026-11-14; part **P6**, **D221** and `internal/cli/init_firebase.go`'s `refusePublicSignUp`): on the **installation's own** project the Identity Platform step refuses an existing configuration that enables **any** public sign-up path — the web API key is public, so only custom tokens signed by Fugaro's own signer may work — naming the paths it found, saying that the converge never changes an existing configuration, and writing **nothing**. A **workspace's own** project is the one exception and is not this check: there the pinned entries pass and an off-pin path is refused (Check 361) | See "Check 627" below; **you** run it, in the sandbox installation `fugaro`, on the sandbox project `fugaro-dev`, where you have enabled one provider **by hand** in the Firebase console first, **never `belong`**, and **no agent runs any step of it** | Two converges of an installation that already exists (`fugaro setup`, which keeps it — *"this installation is already set up"* — and converges as `update` does rather than offering to create a second one) and one read of the project's Identity Toolkit configuration: **no model call and no run**, and nothing billable on a converged installation. The read happens **before** the step's own confirmation, so a configuration that carries a provider is refused without a write on any stage. The check restores the configuration it changed by disabling the provider again, and reads it back. **OWNER-RUN, NOT RUN.** |
+| 212 | A provider challenger, judged, and below the minimum ([`docs/model-ab-testing/`](model-ab-testing/implementation-plan.md), its **Check 212** and task **A6.2**, and the reconciliation table's **U4**, "Check 212 records both wall times"; **D552**, **D553**, **D554**, **D556**, **D563** and **D567**): on the sandbox installation whose published project layer names challengers that are provider models routed for the sandbox repository and a `judge_model`, small sandbox tasks launched until `fugaro runs ls` shows a pair (**no flag forces a sample**, as in Check 210) — and then, of that pair: **both wall times** (each arm's own `started_at` and `finished_at`, the challenger's recorded beside the champion's; U4 sets no bar for the ratio, so no threshold is applied), **both costs** at or below an identical per-run cap (**D567** — the challenger runs on the champion's cap unchanged and a halt is a loss, so a missing or zero cap, two different caps, a record at no spend and a cost above its cap each fail), the **judge run A5.2 ships** (`fugaro run --recipe ab-judge`, launched by hand, leaving **no branch and no pull request**), the **verdict object** that judge writes under its own prefix (the layer's judge model, an entry for this pair, a winner among `champion`/`challenger`/`tie`, and the two swapped passes — a pair the judge **skipped** is a finding), and `fugaro ab --json` showing the pair **below the minimum** (**D563**'s twenty decisive pairs, read on the row with the lowest decisive count) | See "Check 212" below; `bash scripts/live-checks/check212.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check212_test.sh` drives it against fake `fugaro`, `gcloud`, `git` and `gh` only and launches nothing, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project, account or region naming that installation is refused by name, and so is a coding agent's session); **no agent runs any step of it** | Up to **THIRTY sandbox runs** and what their tasks cost — each champion's implement stage and its review rounds, on the sandbox's own budget — plus **ONE judge run**, whose two model calls per pair go through that run's own gateway and are billed to the project as any call is: **billable, and `--yes` is required** before anything is launched. Everything else is a read (the layer, `models ls --json`, `doctor`, both arms' records out of the runs bucket, the judge's record, the verdict object, `fugaro ab --json`), and the launches stop at the **first** pair. The teardown is part of the check: a launch or the judge run that has not ended is stopped with `fugaro cancel --now` and read back as ended, then every pull request this check's champions opened is closed and every branch they pushed is deleted, each read back; a shadow's branch is never deleted because it never existed. **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -16135,6 +16136,131 @@ rather than a task: the bundle is A5.1's, the judge run is A5.2's, and a stored 
 branch, a model or a trailer is the plan's own Global-constraints row ("the judge never sees a run ID,
 branch name, model ID or commit metadata") not holding on real pairs — which is exactly what
 `TestBundleCarriesNoIdentifier` cannot see.
+
+## Check 212: a provider challenger, judged, and below the minimum (sandbox project and sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **A6.2** of
+[docs/model-ab-testing/implementation-plan.md](model-ab-testing/implementation-plan.md) — its "A6.2
+Check 212" — and **run by you**: nothing below is a claim that a shadow on a provider route has the
+same latency profile as the champion. What it measures is a real installation's pair, end to end: small
+sandbox runs launched with the published project layer naming challengers that are provider models
+routed for the sandbox repository and a `judge_model`, until one of them is sampled; then both of that
+pair's arms, the judge run over them, the verdict object it writes and the report line you read. The
+check is `scripts/live-checks/check212.sh` (its sibling test `scripts/live-checks/check212_test.sh`
+drives it against fake `fugaro`, `gcloud`, `git` and `gh` only, and launches nothing), what it starts is
+**up to thirty sandbox runs and one judge run, which are billable**, and **no agent runs any step of
+it**: a project, account or region naming `belong` is refused by name, and so is a coding agent's
+session.
+
+**Why it launches at all, and what it may not do.** As in Check 210, no flag forces a sample: a sample
+is the sampler's hash of the run ID (**D553**), so the pair is reached by launching, "about ten" at
+0.10; `--max-launches` **widens the bound** and never steers the roll. It stops at the **first** pair,
+and it launches nothing at all once a row above it has failed — the layer, the routes **or the judge
+recipe**, since a pair launched for a verdict no build in the catalog can write is money spent on half
+a reading.
+
+**What it settles.** Every fact at the place it is written, so that no row is the record's own word for
+itself:
+
+- **The release, and the judge recipe.** `fugaro version` at **0.24.0** or later — the release the pair
+  launch and the judge ship in, `docs/releases/v0.24.0.md` — with the offline probe `fugaro ab --help`
+  (which names the command's own `--since` flag where a core build answers with **D522**'s stub), and
+  the catalog's own `ab-judge` recipe, which has to be there and launchable for the judge run below to
+  be startable at all.
+- **The premise the launches are a reading of.** The published project layer's `ab:` block, read out of
+  the layer's own text by `fugaro config layer --json` (**no command in this release prints an
+  effective `ab.rate`**), with a rate above zero, at least one challenger and a `judge_model`, and no
+  `ab.rate: 0` opt-out in the sandbox repository's own `fugaro.yaml` (**D556**, **D557**).
+- **The route, offline, before anything billable starts.** `fugaro models ls --json` — which reaches no
+  bucket and no host — must resolve **every** challenger the layer names as a **provider** model (not
+  the direct Anthropic route, where a second run would share the champion's own route and U4's question
+  could not be read from the pair) whose serving route's allow-list admits the sandbox repository
+  (`allow_data_to` naming it or `*`). Whichever challenger the sampler draws is then necessarily one of
+  them.
+- **The pair, through the command the plan's sentence names.** The launch's own `fugaro run --json`
+  names the pair it sampled, and `fugaro runs ls --repo <checkout> --batch <the label it carried>
+  --json` is read back as exactly **two** rows, both ended, both carrying that one label, both keyed to
+  the runs this check launched.
+- **Both records, as you read them.** `runs/<the slug>/<run>/result.json` out of the runs bucket, for
+  each arm. The champion's carries `ab.arm: champion` and the pair's id. The challenger's is the whole
+  claim: `ab.arm: challenger`, `ab.publish: none` (**D554**), `ab.challenger` naming one of the models
+  the route row resolved, with `challenger_source: owner` (**D556**), `outcome: none`, and **no** branch
+  and **no** pull request.
+- **Both wall times (U4).** Each record's own `started_at` and `finished_at`, turned into seconds here,
+  the challenger's beside the champion's and the ratio printed between them. U4 asks the check to
+  **record** the two — "Check 212 records both wall times" — and the plan sets no bar for the ratio, so
+  the row applies none and says so; a much slower shadow is a figure to read, not a finding.
+- **Both costs against the per-run cap (**D567**).** Each record's own `cost_usd` at or below the run's
+  own `policy.effective.per_run_usd`, and the two records' caps **equal to each other** — the challenger
+  runs on the champion's cap unchanged, and a halt is a loss rather than a second budget, so a cap that
+  is missing or zero, two different caps, a record at no spend and a cost above its cap are all
+  findings.
+- **The judge run A5.2 ships.** `fugaro run --repo <checkout> --recipe ab-judge`, launched **by hand**
+  as the release notes say it is (no run starts one by itself, one per repository), waited to its end
+  through the runs list, and read for the one thing the release promises about it: it left **no branch
+  and no pull request** — a `mode: evaluate` run with no checkout of its own.
+- **The verdict object, under the judge run's own prefix.** `runs/<the slug>/<the judge run>/ab/
+  verdicts.json`: the judge model the layer names, an entry for **this** pair, a winner in `champion`,
+  `challenger` or `tie`, and the **two** swapped passes a disagreement between which is a tie
+  (**D552**, **A5.2**). A pair the judge **skipped** decided nothing and reads as a finding here rather
+  than as a tie.
+- **The pair through the report.** `fugaro ab --repo <the sandbox repository> --since <window> --json`
+  shows a row whose challenger is that model with at least one pair in it, and its own recommendation
+  says **`below-minimum`** — **D563**'s gate, because one pair is far under the twenty decisive pairs a
+  conclusion needs. With more than one row for the same challenger (a rigor mode, a tier), the row read
+  is the one with the **lowest** decisive count, which is the one that can still be below the minimum.
+  An installation that has already reached twenty decisive pairs cannot show the fact, and the row says
+  it could not measure it rather than passing it.
+
+**What a run costs.** Up to **THIRTY sandbox runs** and what their tasks cost, on the sandbox's own
+budget, each champion among them pushing its branch and opening its pull request as an ordinary sandbox
+run does — plus **ONE judge run**, whose two model calls per pair go through the run's own gateway and
+are billed to the project as any call is. **Billable, and the check requires `--yes`**: without it the
+check prints the plan, changes nothing and exits. The launches stop at the **first** pair, so a sandbox
+already sampling at 0.10 usually costs a fraction of the bound. On disk it is one scratch directory,
+removed at the end. The teardown is part of the check: a launch or a judge run that has **not ended** is
+stopped with `fugaro cancel --now` and read back as ended first; then the `restore` row closes every
+pull request the champions opened (`gh pr close`) and deletes every branch they pushed (`git push
+--delete`), **each read back afterwards**. A shadow's branch is never deleted, because it never existed.
+`gh` is the one tool the check does not require: a machine without it still deletes the branches and
+says, in the Restore row, which pull requests are left for you.
+
+**Run it:**
+
+```sh
+bash scripts/live-checks/check212.sh --sandbox <a sandbox repository checkout> --dry-run
+bash scripts/live-checks/check212.sh --sandbox <a sandbox repository checkout> --yes
+bash scripts/live-checks/check212.sh --sandbox <a sandbox repository checkout> --yes --max-launches 12
+bash scripts/live-checks/check212.sh --sandbox <a sandbox repository checkout> --yes --task "<the small task>"
+```
+
+`--dry-run` prints what would be read, launched and removed and runs none of it: it reads no project,
+no catalog, no layer, no model and no run, and it launches nothing. It is the way to look at the
+premise before spending anything. A value given as a flag wins over the same value in the environment.
+
+Progress goes to stderr and one `CHECK 212 RESULT` block goes to stdout at the end: paste that whole
+block here and nothing else. The block's last line carries the run's status: **`0`** is every criterion
+that was measured holding; **`1`** is a measured criterion that did not hold, or a guard that stopped
+the run — among them a build older than 0.24.0, a catalog with no `ab-judge` recipe, a layer with no
+`ab:` block and no judge model, a challenger that is not a provider model routed for the repository, no
+pair within the bound, a shadow that published, a judge run that published, a verdict that is missing or
+skipped, a report that draws a conclusion, and a teardown that could not close what it opened; **`2`** is
+the check not being able to measure (a tool missing, the checkout not being one, a `--json` document or
+a record that could not be read, an arm that had not ended, or an installation already at twenty
+decisive pairs). A key the run never reached reads `FAIL — not reached`. The knobs are
+`CHECK212_DRY_RUN`, `CHECK212_YES`, `CHECK212_KEEP_SCRATCH`, `CHECK212_SANDBOX`, `CHECK212_TASK`,
+`CHECK212_MAX_LAUNCHES` (30), `CHECK212_RELEASE` (0.24.0), `CHECK212_SINCE` (1d), `CHECK212_REGION`
+(us-east5), `CHECK212_RUN_TIMEOUT_SECONDS` (3600), `CHECK212_POLL_SECONDS` (15), `CHECK212_CLI_TIMEOUT_SECONDS`
+(180), `CHECK212_CANCEL_TIMEOUT_SECONDS` (300), `CHECK212_LAUNCH_TIMEOUT_SECONDS` (600),
+`CHECK212_DOCTOR_TIMEOUT_SECONDS` (300) and `CHECK212_JUDGE_TIMEOUT_SECONDS` (3600).
+
+**What waits on it.** Nothing merges on it: A/B is off until the owner sets `ab.rate` in the project
+layer, and this check is the only reading of a sampled pair that reaches the judge and the report in the
+installation it is run on. A failed 212 is a **product** finding rather than a task — a shadow that
+published, a judge that published, a verdict that disagrees with the object's own contract, or a cost
+above the cap the record carries is the boundary of **D554**, **D567** or **A5.2** not holding, and the
+task that owns that boundary is where it is fixed. Check 210 is the same pair read for the publishing
+boundary alone, and it exists so that a shadow that pushed is found without spending a judge run on it.
 
 ## Check 230: the author, the committer and the trailers, on GitHub and on Bitbucket (two sandbox repositories carrying `git.author: launcher`, a third with no such key, and their forges; never `belong`; run by you; NOT RUN)
 
