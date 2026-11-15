@@ -71,11 +71,13 @@ workflows:
       # lint: npm run lint        # the check step's gate command (build | test | lint)
       # fix: npm run lint -- --fix   # the check step's autofix command; needs lint, since the gate runs fix, then lint
       reports: ["**/junit*.xml"]   # JUnit XML, such as jest-junit or Vitest's junit reporter
-    secrets:                  # logical names; infrastructure maps them to Secret Manager
-      # bitbucket-token, github-app-key, claude-oauth-token, anthropic-api-key, and anything
-      # starting claude-oauth-token- (a named Claude account's own secret, set in the local
-      # config's claude_accounts, never here) are reserved and refused as a workflow's own name
-      - { name: npm-token, env: NPM_TOKEN }
+    # secrets:                # logical names; disabled for now and ignored (D2313), like a
+    #                         # repository's own image: a shared job mounts only the project's
+    #                         # secrets, so store the value once for the project instead
+    #   # bitbucket-token, github-app-key, claude-oauth-token, anthropic-api-key, and anything
+    #   # starting claude-oauth-token- (a named Claude account's own secret, set in the local
+    #   # config's claude_accounts, never here) are reserved and refused as a workflow's own name
+    #   - { name: npm-token, env: NPM_TOKEN }
     resources: { cpu: 4, memory: 8Gi }
     timeouts: { total: 3h, stage: 60m, verify: 30m, finalize_reserve: 5m }   # the defaults; a stage and the verify step may not exceed the total
     # rebuild:                # optional; the daily image check. A changed image:, dockerfile:, base or image.setup always rebuilds
@@ -94,7 +96,7 @@ workflows:
         command: ./gradlew test
         each: "--tests {id}"  # appended once per failed test ID
       reports: ["**/build/test-results/**/*.xml"]
-    secrets:
-      - { name: artifactory-token, env: ARTIFACTORY_TOKEN }
+    # secrets:                # disabled for now and ignored (D2313)
+    #   - { name: artifactory-token, env: ARTIFACTORY_TOKEN }
     resources: { cpu: 8, memory: 32Gi }
     timeouts: { total: 3h, stage: 60m, verify: 30m, finalize_reserve: 5m }   # the defaults; a stage and the verify step may not exceed the total
