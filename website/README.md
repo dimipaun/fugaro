@@ -1353,7 +1353,7 @@ added or removed without this sentence moving fails there:
     `data/compatibility.yaml` — 46 rows of names, notes, statuses and editions, **1037
     words** on the build of 2026-11-10 — so the words a reader reads there are the matrix's
     own and not a page's prose. `/features/` is the sixth, added on 2026-11-15, before the
-    page itself (the feature matrix's plan, Task T4a, which names `test/lib/exempt.mjs`): its
+    page itself (the feature matrix's plan, Task T4c, which names `test/lib/exempt.mjs`): its
     one table prints the feature matrix — a row per feature with its name, its status and the
     lowest plan it is in (D2448) — so the words a reader reads there are the table's and not a
     page's prose either, and the page's lead is still held to the 40-word lead ceiling like

@@ -11,9 +11,10 @@
 //     are the matrix's own and not a page's prose, and — since 2026-11-15 — `/features/`, whose
 //     one table prints the feature matrix: a row per feature with its name, its status and the
 //     lowest plan it is in (D2448), so the words a reader reads there are the table's and not a
-//     page's prose either. The tasks that add the pages are each plan's own — the compatibility
-//     matrix's implementation plan (CM2) and the feature matrix's (T4a) — and each names this
-//     file; the ceiling itself is recorded in D188's row, which the set below is held equal to.
+//     page's prose either. The pages' tasks are each plan's own — the compatibility matrix's
+//     implementation plan (CM2, the task that adds that page and names this file) and the feature
+//     matrix's (T4c, the exemption's own task, which names it too) — and the ceiling itself is
+//     recorded in D188's row, which the set below is held equal to.
 //   - **The wording rules** — the retired word and D249's banned framing phrases
 //     (`test/wording.mjs`) — exempt only the first four. The reason is the one the ceiling gives
 //     for them and not for the two data tables: a page that renders a document of this
@@ -56,7 +57,7 @@ export const DOCUMENT_PAGES = new Set([
  * words are a data table's: the compatibility matrix's own page, which renders a file this site
  * owns rather than a document of the repository quoted whole (D1537; the compatibility matrix's
  * plan, Task CM2), and the features page, added on 2026-11-15 with the page itself still to come
- * (D2448; the feature matrix's plan, Task T4a).
+ * (D2448; the feature matrix's plan, Task T4c).
  */
 export const CEILING_ONLY_PAGES = ['/compatibility/', '/features/']
 
