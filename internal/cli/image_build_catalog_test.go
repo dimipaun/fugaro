@@ -1268,10 +1268,10 @@ func TestCatalogBuildRefusesAnUnadmittedRepo(t *testing.T) {
 		if smoke.RepoDir != appDir || smoke.Commit != commit || smoke.Origin != "https://bitbucket.org/acme/app.git" {
 			t.Errorf("the smoke's spec is %+v, want the baked checkout of the build's own repository at %s on %s", smoke, appDir, commit)
 		}
-		// Both repositories are named, with the directory each was baked at: the
+		// Both repositories are named with the directory each was baked at: the
 		// operator asked for a bake of the entry, and what the image carries is
 		// every repository the project's map puts on it (D2301).
-		for _, want := range []string{"bakes the checkouts of", "acme/app", "acme/other", appDir, otherDir} {
+		for _, want := range []string{"bakes the checkouts of", "acme/app at " + appDir, "acme/other at " + otherDir} {
 			if !strings.Contains(stderr, want) {
 				t.Errorf("stderr = %q, want the line about both baked checkouts to carry %q", stderr, want)
 			}

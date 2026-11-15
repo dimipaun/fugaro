@@ -901,19 +901,20 @@ func noteBakePlan(cmd *cobra.Command, entry string, p imagebake.Plan) {
 	// per-slug path instead of cloning, and the one it opens is the one its own
 	// slug names.
 	repos := make([]string, len(p.Baked))
-	dirs := make([]string, len(p.Baked))
 	for i, r := range p.Baked {
 		dir, err := imagebake.Path(r.Slug)
 		if err != nil {
 			return // Decide refused this slug, so this cannot happen; a note is not worth a refusal of the build
 		}
-		repos[i], dirs[i] = pluginwire.Printable(r.Repo), dir
+		repos[i] = pluginwire.Printable(r.Repo) + " at " + dir
 	}
 	if len(p.Baked) == 1 {
-		fmt.Fprintf(cmd.ErrOrStderr(), "note: the catalog entry %s bakes the checkout of %s at %s, so the image carries that repository's source\n",
-			pluginwire.Printable(entry), repos[0], dirs[0])
+		fmt.Fprintf(cmd.ErrOrStderr(), "note: the catalog entry %s bakes the checkout of %s, so the image carries that repository's source\n",
+			pluginwire.Printable(entry), repos[0])
 		return
 	}
-	fmt.Fprintf(cmd.ErrOrStderr(), "note: the catalog entry %s bakes the checkouts of %s at %s, so the image carries the source of every repository the project's map puts on it\n",
-		pluginwire.Printable(entry), strings.Join(repos, ", "), strings.Join(dirs, ", "))
+	// Each repository travels with the directory its checkout is at, rather than
+	// one list of names and one of paths a reader has to zip up by position.
+	fmt.Fprintf(cmd.ErrOrStderr(), "note: the catalog entry %s bakes the checkouts of %s, so the image carries the source of every repository the project's map puts on it\n",
+		pluginwire.Printable(entry), strings.Join(repos, ", "))
 }
