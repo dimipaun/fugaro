@@ -49,8 +49,14 @@ func TestModelGradesSinceIsTheReleaseTheKeyShipsIn(t *testing.T) {
 	if modelGradesSince != "0.24.0" {
 		t.Errorf("modelGradesSince = %q: the model_grades key ships in CLI 0.24.0", modelGradesSince)
 	}
-	if rel, ok := projectpolicy.VersionRelease(projectpolicy.Version); !ok || rel != modelGradesSince {
-		t.Errorf("policy version %d arrived in %q, want %q: the node walk that carries it and the reader that knows the key are the same release", projectpolicy.Version, rel, modelGradesSince)
+	// The version E2 bumped for the key, named rather than read from
+	// projectpolicy.Version: AR1 has since moved that to 8 for a block of its
+	// own (the binaries carrier, 0.26.0), and what this test holds is the
+	// release the key's own node walk shipped in — which is not the release
+	// every later bump lands in.
+	const keyPolicyVersion = 7
+	if rel, ok := projectpolicy.VersionRelease(keyPolicyVersion); !ok || rel != modelGradesSince {
+		t.Errorf("policy version %d arrived in %q, want %q: the node walk that carries it and the reader that knows the key are the same release", keyPolicyVersion, rel, modelGradesSince)
 	}
 }
 
