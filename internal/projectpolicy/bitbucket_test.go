@@ -458,6 +458,27 @@ func TestDeriveBitbucketTokensKey(t *testing.T) {
 	if !strings.Contains(err.Error(), "bitbucket_tokens.repo-a") {
 		t.Errorf("the refusal does not name the operator's record: %v", err)
 	}
+	// A record whose NAME the key family cannot spell is refused here too, for
+	// the reason the coverage guard above exists: the rule the config judges a
+	// name by is the account-name regex alone, whose repetitions bound
+	// character pairs and so admit a name past the family's length bound, while
+	// config.BitbucketTokenKey demands both — and answers "" for the name it
+	// refuses. An entry named "" is one this package's own reader refuses, so
+	// the node would be refused by every reader and every run of the project,
+	// and the identity would be looked up under the empty key.
+	long := strings.Repeat("a-", 20) + "b"
+	if ps := config.ValidateBitbucketTokens([]config.BitbucketToken{
+		{Name: long, Type: config.BitbucketTokenTypeRepo, Coverage: []string{"Workspace-A/Repo-A"}},
+	}); len(ps) > 0 {
+		t.Fatalf("the fixture name %q is refused by the config's own rule (%s), so this case would not reach the derivation's guard", long, ps[0].String())
+	}
+	if _, err := DeriveBitbucketTokens([]config.BitbucketToken{
+		{Name: long, Type: config.BitbucketTokenTypeRepo, Coverage: []string{"Workspace-A/Repo-A"}},
+	}, nil); err == nil {
+		t.Errorf("a record named %q, which the key family cannot spell, derived a key", long)
+	} else if !strings.Contains(err.Error(), "bitbucket_tokens.") || !strings.Contains(err.Error(), long) {
+		t.Errorf("the refusal does not name the operator's record: %v", err)
+	}
 	// A record the config's own rules refuse is refused before anything is
 	// derived from it: the halves of a record state one fact (R1), and a node
 	// derived from halves that disagree would be a token served as the wrong
@@ -466,6 +487,60 @@ func TestDeriveBitbucketTokensKey(t *testing.T) {
 		{Name: "ws-a", Type: config.BitbucketTokenTypeRepo, Coverage: []string{"Workspace-A/*"}},
 	}, nil); err == nil {
 		t.Error("a record whose type and coverage disagree derived a key")
+	}
+}
+
+// TestDecodeRefusesAMalformedTokensEntry is the reader's per-entry guard, one
+// refusal at a time: validBitbucketTokenNode, which holds an entry to the
+// node's own spelling of a token — the family's document key, one of the three
+// types, a coverage that names something, and patterns the node's own rule
+// admits. The mutation is that guard answering nil, which leaves the node
+// accepting the legacy key as a typed token's name, a bare suffix, a type
+// outside the three, an entry that reaches nothing, and every pattern
+// ValidBitbucketTokenCoverage refuses — the hole C1 closed on the record side,
+// reopened on the node's.
+//
+// Each refusal names the entry it is about — bitbucket_tokens.entries[i], and
+// the index of the entry rather than the first one — because that is what an
+// operator edits: an entry is derived from a record of their own file.
+func TestDecodeRefusesAMalformedTokensEntry(t *testing.T) {
+	good := `{"name":"bitbucket-token--repo-a","type":"repo","coverage":["bitbucket/workspace-a/repo-a"]}`
+	// The shapes the derivation writes are the shapes the node accepts: the
+	// guard refuses a broken entry, not the key.
+	p, err := decodeBitbucketNode(t, `"`+BitbucketTokensKey+`":{"entries":[`+good+`]}`)
+	if err != nil {
+		t.Fatalf("a node carrying one derived entry was refused: %v", err)
+	}
+	if p.BitbucketTokens == nil || len(p.BitbucketTokens.Entries) != 1 {
+		t.Fatalf("the key read back as %+v, want the one entry", p.BitbucketTokens)
+	}
+	for _, tc := range []struct {
+		why   string
+		entry string
+	}{
+		{"the legacy key as a name", `{"name":"bitbucket-token","type":"repo","coverage":["bitbucket/workspace-a/repo-a"]}`},
+		{"the bare suffix as a name", `{"name":"repo-a","type":"repo","coverage":["bitbucket/workspace-a/repo-a"]}`},
+		{"no name", `{"type":"repo","coverage":["bitbucket/workspace-a/repo-a"]}`},
+		{"a name past the family's length", `{"name":"bitbucket-token--` + strings.Repeat("a-", 20) + `b","type":"repo","coverage":["bitbucket/workspace-a/repo-a"]}`},
+		{"no type", `{"name":"bitbucket-token--repo-a","coverage":["bitbucket/workspace-a/repo-a"]}`},
+		{"a type outside the three", `{"name":"bitbucket-token--repo-a","type":"owner","coverage":["bitbucket/workspace-a/repo-a"]}`},
+		{"no coverage", `{"name":"bitbucket-token--repo-a","type":"repo","coverage":[]}`},
+		{"every repository of every provider", `{"name":"bitbucket-token--ws-a","type":"workspace","coverage":["*"]}`},
+		{"a wildcard owner", `{"name":"bitbucket-token--ws-a","type":"workspace","coverage":["bitbucket/*/*"]}`},
+		{"another provider", `{"name":"bitbucket-token--repo-a","type":"repo","coverage":["github/workspace-a/repo-a"]}`},
+		{"three stars", `{"name":"bitbucket-token--repo-a","type":"repo","coverage":["bitbucket/workspace-a/a*b*c*"]}`},
+	} {
+		// The broken entry is the second one, so a refusal that names the
+		// first — or that names the key and no entry — fails here.
+		doc := `"` + BitbucketTokensKey + `":{"entries":[` + good + `,` + tc.entry + `]}`
+		_, err := decodeBitbucketNode(t, doc)
+		if err == nil {
+			t.Errorf("%s was accepted: %s", tc.why, tc.entry)
+			continue
+		}
+		if want := BitbucketTokensKey + ".entries[1]"; !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: the refusal does not name %s: %v", tc.why, want, err)
+		}
 	}
 }
 

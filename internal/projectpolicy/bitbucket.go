@@ -291,7 +291,9 @@ var bitbucketTokenNodeMembers = carrierMembers(reflect.TypeOf(BitbucketTokenNode
 // to ValidBitbucketTokenCoverage, the rule this package decodes the node with,
 // so a record whose coverage the node cannot read back is refused here, where
 // the sentence names the operator's own entry, rather than published as a node
-// every run of the project then refuses.
+// every run of the project then refuses. The entry's name is held to the same
+// rule, by config.BitbucketTokenKey: the key it answers is what the node's
+// reader judges that name with.
 func DeriveBitbucketTokens(records []config.BitbucketToken, identities map[string]string) (*BitbucketTokens, error) {
 	if len(records) == 0 {
 		return nil, nil
@@ -312,7 +314,19 @@ func DeriveBitbucketTokens(records []config.BitbucketToken, identities map[strin
 			}
 			coverage = append(coverage, qualified)
 		}
+		// The name is the other half of that guard, and it is asked here because
+		// the rule the config judges a record's name by is not the whole of
+		// this one: config's name rule reads the account-name regex, whose
+		// repetitions bound CHARACTER PAIRS and so admit a name longer than
+		// MaxClaudeAccountNameLen, which BitbucketTokenKey also demands. A name
+		// past that bound answers "" — an entry with no name, which this
+		// package's own reader refuses and every run of the project would then
+		// refuse, and an identity looked up under the empty key. So the record
+		// is refused here, where the sentence names the operator's own entry.
 		name := config.BitbucketTokenKey(rec.Name)
+		if name == "" {
+			return nil, fmt.Errorf("projectpolicy: %s.name %q is not a name a typed Bitbucket token may have (%s, and at most %d characters): an entry is spoken of by the document key bitbucket-token--<name> (R5), and a name that key cannot spell would publish an entry every reader of the node refuses", config.BitbucketTokenPath(records, i), rec.Name, config.ClaudeAccountNameRE, config.MaxClaudeAccountNameLen)
+		}
 		entries = append(entries, BitbucketTokenNode{
 			Name:        name,
 			Type:        rec.Type,
