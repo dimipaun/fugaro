@@ -126,13 +126,30 @@ import (
 // `model_grades` member sets no grade, which is what the ladder's rungs read as
 // "leave this rung to the owner" (D2039) and what a project that never set one
 // means.
-const Version = 7
+//
+// Version 8 (binary-allow-rule, plan task AR1; decision D990, ruled yes by the
+// owner on 2026-11-15) is the version at which the project's own config states
+// the `binaries` block. The member arrived at version 6 (AR0) and this line
+// does not change the node's shape: what arrives is its *carrier* — the local
+// config gains the key and both publish doors carry it into the node
+// (buildProjectPolicy), where until this release a block could only be
+// hand-written into the node. The bump is what makes a reader of the release
+// behind refuse such a node (RunnerSkew on the job side, CLISkew on the
+// operator's) instead of reading past a grant the owner now states in a file:
+// a version-7 runner knows the key and enforces nothing with it yet, so it
+// would run a project's bytes as if no list had been published at all. The
+// migration step that carries a version-7 node forward is shape-free
+// (internal/projectpolicy/migrate.go), like the two before it: the node keeps
+// its bytes and only the number moves, because a node with no `binaries` block
+// admits nothing — which is what a project that never set one means.
+const Version = 8
 
 // VersionSince names, for each policy version, the fugaro release that
 // introduced it: 1 is the model itself (0.8.0, internal/cli's policySince), 2
 // is the profile gate above (0.8.5), 3 the account axis (0.9.0), 4 the
 // Bitbucket token block (0.14.0), 5 the pools' owner and roster (0.23.0), 6 the
-// binaries block (0.24.0) and 7 the two model grades (0.24.0). It sits beside
+// binaries block (0.24.0), 7 the two model grades (0.24.0) and 8 the binaries
+// block's carrier in the project's own config (0.26.0). It sits beside
 // Version because a bump of Version adds its row in the same change
 // (TestVersionSinceCoversEveryVersion fails until it does), and it is
 // read by every message about a node *ahead* of its reader (SkewSentence, so
@@ -153,6 +170,7 @@ var VersionSince = map[int]string{
 	5: "0.23.0",
 	6: "0.24.0",
 	7: "0.24.0",
+	8: "0.26.0",
 }
 
 // VersionRelease is the release that introduced policy version v, and false

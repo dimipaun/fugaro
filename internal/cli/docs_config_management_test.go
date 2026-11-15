@@ -208,8 +208,19 @@ const (
 // local-only and stripped from the shared copy of the map, and its owner is the
 // accounts family, whose `accounts rm` clears a name with the declaration it
 // names -- the generic path writes neither half.
+//
+// AR1 of docs/binary-allow-rule/ is the last mover, by two rows and by none:
+// the local project config gains the `binaries` block, whose two members are
+// the paths a run may add a binary at and the cap one is held to (D981-D983),
+// and both rows belong to the `project` family, because `fugaro project policy
+// publish` is the door that carries the block onto the node the run reads it
+// from. The generic path reaches neither: a path is a doublestar glob held to
+// the node's own rule and the cap to its ceiling, which are checks no scalar
+// write makes -- and both are local-only, because a launcher who could write
+// the block into the shared file would be admitting its own payload to every
+// teammate's runs (D986).
 const (
-	cfmRegistryRows   = 447
+	cfmRegistryRows   = 449
 	cfmAllowlistNamed = 105
 )
 
