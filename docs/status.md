@@ -105,7 +105,7 @@ As of 2026-11-14, read from `main`, the open pull requests and each plan's task 
 | setup-wizard | owner Checks 27 and 111 |
 | short-run-ids | owner SR13 |
 | troubleshoot-issue | none |
-| website | W3.3 explainer video (parked), owner Check 69 |
+| website | W3.3 explainer video (parked), owner Check 69c (not written yet; 69a and 69b passed 2026-11-15) |
 | website-changelog | WC4 lands with the next release |
 | windows-cli | superseded by console-windows |
 | workspaces | none |
