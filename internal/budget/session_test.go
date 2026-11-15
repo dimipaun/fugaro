@@ -1144,6 +1144,9 @@ func TestHeartbeatDropsModeWhenTheRulesRefuseIt(t *testing.T) {
 		e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any)
 		return e != nil && e["stage"] == "bootstrap" && e["mode"] == nil && e["from"] == nil
 	})
+	// The patch lands before the warning is logged, so the document settling
+	// does not mean the line is there yet.
+	waitFor(t, "the fallback warning", func() bool { return strings.Contains(logs.String(), "predate the rigor mode") })
 	if n := strings.Count(logs.String(), "predate the rigor mode"); n != 1 {
 		t.Fatalf("fallback warning logged %d times:\n%s", n, logs.String())
 	}
