@@ -553,7 +553,11 @@ var branchRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
 // owner and the name, lower-cased, with a trailing "/" and ".git" off. Two
 // things follow from that fold and both are the point of it. A URL that carries
 // a credential cannot put it in the build log, because everything before the
-// first "@" is off the text a refusal prints. And a repository on another host
+// last "@" is off the text a refusal prints, as is everything from a "?" or a
+// "#" — a token in a userinfo, a query or a fragment is a spelling a repository
+// committed to .gitmodules, and the line the refusal prints is a build log (the
+// fold also drops control characters, so nothing in that URL can rewrite the log
+// it appears in). And a repository on another host
 // is not this build's to fetch whatever its owner and name are: the covered set
 // holds the host, because the credential is for one host (rule 5 of
 // contract-build-token.md) and this stage's clone is the one place a submodule
@@ -572,10 +576,29 @@ func submoduleGuard(dir string, covered []Repo) string {
 			folded = append(folded, id)
 		}
 	}
-	return "submodules=$(git -C " + dir + " config --file " + dir + "/.gitmodules --get-regexp '^submodule\\..*\\.url$' 2>/dev/null | cut -d' ' -f2- || true)" +
-		" && for url in $submodules; do" +
-		" repo=$(printf '%s' \"$url\" | tr 'A-Z' 'a-z');" +
-		" repo=${repo%/}; repo=${repo%%.git}; repo=${repo#*://}; repo=${repo#*@};" +
+	return "submodules='';" +
+		// A checkout with no .gitmodules is the ordinary case and declares nothing.
+		// One that is there and that git cannot read is not the same answer: the
+		// declarations would go unread, and a guard that passed over them would be
+		// passing over submodules it never saw. git's own message names the file
+		// and the line and never its content, so a URL in it stays out of the log.
+		" if [ -e " + dir + "/.gitmodules ]; then" +
+		// git alone in the substitution, so its status is the one read here: beside
+		// a pipeline it would be the last command's, and an unreadable file would
+		// read as a checkout that declares nothing. 1 is git's "no match", which is
+		// a .gitmodules with nothing in it; anything else — a file git cannot parse
+		// — fails the stage rather than passing over declarations nobody read.
+		" submodules=$(git -C " + dir + " config --file " + dir + "/.gitmodules --get-regexp '^submodule\\..*\\.url$'); st=$?;" +
+		" [ \"$st\" -le 1 ] || exit 1;" +
+		" submodules=$(printf '%s\\n' \"$submodules\" | cut -d' ' -f2-);" +
+		" fi;" +
+		" for url in $submodules; do" +
+		// The fold, and the one thing it does beyond submoduleID's: the URL is text
+		// from the checkout, and this shell's refusal is a build log line, so the
+		// scheme, the userinfo, a query, a fragment and control characters come off
+		// it before anything is compared or printed.
+		" repo=$(printf '%s' \"$url\" | tr 'A-Z' 'a-z' | tr -d '\\000-\\037\\177');" +
+		" repo=${repo#*://}; repo=${repo##*@}; repo=${repo%%[?]*}; repo=${repo%%[#]*}; repo=${repo%/}; repo=${repo%%.git};" +
 		" case \" " + strings.Join(folded, " ") + " \" in *\" $repo \"*) [ -n \"$repo\" ] && continue ;; esac;" +
 		" echo \"a submodule of this checkout is ${repo:-a repository this build cannot read}, which this build's credential does not cover: it covers the repositories of the entry being built and no others\" >&2; exit 1;" +
 		" done"

@@ -601,9 +601,13 @@ func TestRepoURLGuardHoldsTheRepositoryNotTheSpelling(t *testing.T) {
 //
 // The declaration is read with git's own parser and what the refusal names is
 // the repository the URL resolves to, folded to host/owner/name. That fold is
-// what keeps a credential out of the build log — everything before the first "@"
-// is off the text printed — and what refuses a repository of the entry's own
-// owner and name that lives on another host.
+// what keeps a credential out of the build log — everything before the last "@",
+// and everything from a "?" or a "#", is off the text printed, and so is every
+// control character — and what refuses a repository of the entry's own owner and
+// name that lives on another host. A checkout with no .gitmodules declares
+// nothing and the guard passes; one whose .gitmodules git cannot read is not the
+// same answer, and the guard fails rather than passing over declarations it
+// never saw.
 func TestBakedSubmoduleOutsideTheCredentialNamesTheRepo(t *testing.T) {
 	dir := t.TempDir()
 	covered := []Repo{repoSpec("acme/app", "app-1234abcd"), repoSpec("acme/web", "web-2222bbbb")}
@@ -611,13 +615,19 @@ func TestBakedSubmoduleOutsideTheCredentialNamesTheRepo(t *testing.T) {
 	sub := func(name, url string) string {
 		return "[submodule \"" + name + "\"]\n\tpath = " + name + "\n\turl = " + url + "\n"
 	}
-	// run writes a .gitmodules and runs the guard the stage carries, through the
-	// shell a stage runs it with: the invariant is what the shell does with a
-	// declaration, and a guard whose text alone is pinned can be relaxed to an
-	// always-accepting arm with nothing failing.
-	run := func(t *testing.T, body string) (string, error) {
+	// run writes a .gitmodules — or takes it away, for the checkout that declares
+	// none — and runs the guard the stage carries, through the shell a stage runs
+	// it with: the invariant is what the shell does with a declaration, and a
+	// guard whose text alone is pinned can be relaxed to an always-accepting arm
+	// with nothing failing.
+	run := func(t *testing.T, body string, remove bool) (string, error) {
 		t.Helper()
-		if err := os.WriteFile(filepath.Join(dir, ".gitmodules"), []byte(body), 0o600); err != nil {
+		path := filepath.Join(dir, ".gitmodules")
+		if remove {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+		} else if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		cmd := exec.Command("sh", "-c", guard)
@@ -631,22 +641,25 @@ func TestBakedSubmoduleOutsideTheCredentialNamesTheRepo(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		body string
+		// remove takes the file away instead of writing body.
+		remove bool
 		// named is the repository the refusal has to name, "" when the guard
 		// accepts the declaration.
 		named string
 	}{
-		{"nothing declared", "", ""},
-		{"an empty .gitmodules", "# nothing\n", ""},
-		{"a submodule the credential covers", sub("lib", "https://github.com/acme/web.git"), ""},
-		{"a submodule it covers, spelt another way", sub("lib", "https://GitHub.com/Acme/Web/"), ""},
-		{"a submodule it does not cover", sub("lib", "https://github.com/acme/lib.git"), "github.com/acme/lib"},
-		{"a submodule of another host", sub("lib", "https://gitlab.com/acme/web.git"), "gitlab.com/acme/web"},
-		{"a relative submodule", sub("lib", "../lib"), "../lib"},
-		{"a submodule in git's scp spelling", sub("lib", "git@github.com:acme/web.git"), "github.com:acme/web"},
-		{"the second of two declared", sub("a", "https://github.com/acme/app.git") + sub("b", "https://github.com/acme/zzz.git"), "github.com/acme/zzz"},
+		{"no .gitmodules at all", "", true, ""},
+		{"nothing declared", "", false, ""},
+		{"an empty .gitmodules", "# nothing\n", false, ""},
+		{"a submodule the credential covers", sub("lib", "https://github.com/acme/web.git"), false, ""},
+		{"a submodule it covers, spelt another way", sub("lib", "https://GitHub.com/Acme/Web/"), false, ""},
+		{"a submodule it does not cover", sub("lib", "https://github.com/acme/lib.git"), false, "github.com/acme/lib"},
+		{"a submodule of another host", sub("lib", "https://gitlab.com/acme/web.git"), false, "gitlab.com/acme/web"},
+		{"a relative submodule", sub("lib", "../lib"), false, "../lib"},
+		{"a submodule in git's scp spelling", sub("lib", "git@github.com:acme/web.git"), false, "github.com:acme/web"},
+		{"the second of two declared", sub("a", "https://github.com/acme/app.git") + sub("b", "https://github.com/acme/zzz.git"), false, "github.com/acme/zzz"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			out, err := run(t, tc.body)
+			out, err := run(t, tc.body, tc.remove)
 			if tc.named == "" {
 				if err != nil {
 					t.Fatalf("the guard refused a checkout whose submodules the credential covers: %v\n%s", err, out)
@@ -664,10 +677,17 @@ func TestBakedSubmoduleOutsideTheCredentialNamesTheRepo(t *testing.T) {
 			}
 		})
 	}
+	// An unreadable .gitmodules is refused, and what is printed is git's own
+	// message: it names the file and the line and never what the line holds.
+	if out, err := run(t, sub("lib", `https://github.com/acme/\qweb.git`), false); err == nil {
+		t.Errorf("the guard passed over a .gitmodules it could not read:\n%s", out)
+	} else if strings.Contains(out, "acme") {
+		t.Errorf("the refusal carries the line git could not read, which may be a URL with a credential in it:\n%s", out)
+	}
 	// A URL that carries a credential is refused — the repository is not one the
 	// credential covers — and the token never reaches the build log, which is what
-	// the fold's dropping everything before the first "@" is for.
-	out, err := run(t, sub("lib", "https://x-token:tok3n@github.com/acme/lib.git"))
+	// the fold's dropping everything before the last "@" is for.
+	out, err := run(t, sub("lib", "https://x-token:tok3n@github.com/acme/lib.git"), false)
 	if err == nil {
 		t.Fatal("the guard accepted a submodule URL carrying a credential")
 	}
@@ -677,9 +697,52 @@ func TestBakedSubmoduleOutsideTheCredentialNamesTheRepo(t *testing.T) {
 	if !strings.Contains(out, "github.com/acme/lib") {
 		t.Errorf("the guard refused without naming the repository:\n%s", out)
 	}
+	// The same with an "@" inside the password: the fold drops up to the LAST one,
+	// so what is left is the host and the path and not the tail of a credential.
+	out, err = run(t, sub("lib", "https://x-token:pa@ss:tok3n@github.com/acme/lib.git"), false)
+	if err == nil {
+		t.Fatal("the guard accepted a submodule URL carrying a credential")
+	}
+	for _, secret := range []string{"tok3n", "ss", "pa@"} {
+		if strings.Contains(out, secret) {
+			t.Errorf("the guard put %q, part of a credential in a submodule URL, into the build log:\n%s", secret, out)
+		}
+	}
+	if !strings.Contains(out, "github.com/acme/lib") {
+		t.Errorf("the guard refused without naming the repository:\n%s", out)
+	}
+	// A token in a query or a fragment is not a repository's name, and it does not
+	// reach the log either.
+	for _, url := range []string{
+		"https://github.com/acme/lib.git?access_token=tok3n",
+		"https://github.com/acme/lib.git#tok3n",
+	} {
+		out, err := run(t, sub("lib", url), false)
+		if err == nil {
+			t.Fatalf("the guard accepted the uncovered repository in %q", url)
+		}
+		if strings.Contains(out, "tok3n") {
+			t.Errorf("the guard printed the token %q carried:\n%s", url, out)
+		}
+		if !strings.Contains(out, "github.com/acme/lib") {
+			t.Errorf("the guard refused without naming the repository:\n%s", out)
+		}
+	}
+	// A control character in a declaration cannot rewrite the log line it appears
+	// in: what is printed is the repository's name and nothing around it.
+	out, err = run(t, sub("lib", "https://github.com/acme/\x1b[31mzzz.git"), false)
+	if err == nil {
+		t.Fatal("the guard accepted a URL carrying a control character")
+	}
+	if strings.ContainsAny(out, "\x1b\x07") {
+		t.Errorf("the guard printed a control character from a submodule URL:\n%q", out)
+	}
+	if !strings.Contains(out, "github.com/acme/[31mzzz") {
+		t.Errorf("the guard refused without naming the repository:\n%s", out)
+	}
 	// A URL on the covered host and name, with a credential in it, is the covered
 	// repository: git sends that credential to that host, and nothing is printed.
-	out, err = run(t, sub("lib", "https://x-token:tok3n@github.com/acme/web.git"))
+	out, err = run(t, sub("lib", "https://x-token:tok3n@github.com/acme/web.git"), false)
 	if err != nil {
 		t.Fatalf("the guard refused a submodule of the covered repository: %v\n%s", err, out)
 	}
