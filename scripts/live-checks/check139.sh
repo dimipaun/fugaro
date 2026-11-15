@@ -82,7 +82,11 @@
 # script's stdout, its stderr, the block or any file it writes. They are Claude
 # Code's own opaque claims — nothing in this tree verifies what a real Claude
 # Code puts in them — and the counts are what U4's answer needs. The one
-# sentence the block ends with is what the owner pastes back.
+# sentence the block ends with is what the owner pastes back. The one document
+# that carries an id is the raw `gcloud logging read` output, and it is deleted
+# as soon as the counts have been read out of it (read_calls): the counts are
+# what is kept, so a scratch directory kept with CHECK139_KEEP_SCRATCH=1 holds
+# no id either.
 #
 # Knobs (all CHECK139_*): RUN (the run to read, as --run), BG_MODEL (the run's
 # EFFECTIVE background model — the repository's `agent.models.background`, else
@@ -652,8 +656,14 @@ read_log_view() {
 # and the counts into $SCRATCH/calls.txt. 0 when the entries were read, 1 when
 # EXEC is not an execution name, 2 when the read did not answer, 3 when what it
 # answered is not the document this check reads.
+#
+# The raw read is the ONE document that carries an agent_id and a session_id, so
+# every path out of this function deletes it once the counts have been read out
+# of it: what a scratch directory holds — kept or not — is the counts, never an
+# id. The messages that point the owner at what a failed read printed say so
+# rather than pointing at a file that is gone.
 read_calls() { # read_calls EXEC
-  local exec_=$1 region job name filter
+  local exec_=$1 region job name filter rc=0
   region=$(printf '%s' "$exec_" | cut -d/ -f4)
   job=$(printf '%s' "$exec_" | cut -d/ -f6)
   name=$(printf '%s' "$exec_" | cut -d/ -f8)
@@ -668,13 +678,15 @@ read_calls() { # read_calls EXEC
   else
     run_bounded "$LOG_TIMEOUT" calls gcloud --quiet logging read --project="$P" "$filter" --limit="$LIMIT" --freshness="$FRESHNESS" --format=json
   fi
-  if [ "$BOUNDED_TIMED_OUT" = yes ]; then
+  if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
+    # A read that did not answer can still have written part of its document:
+    # the raw output goes with the answer it did not give.
+    rm -f "$SCRATCH/calls.out"
     return 2
   fi
-  if [ "$BOUNDED_STATUS" != 0 ]; then
-    return 2
-  fi
-  reader calls "$SCRATCH/calls.out" "$BG_MODEL" >"$SCRATCH/calls.txt" 2>"$SCRATCH/reader.err" || return 3
+  reader calls "$SCRATCH/calls.out" "$BG_MODEL" >"$SCRATCH/calls.txt" 2>"$SCRATCH/reader.err" || rc=$?
+  rm -f "$SCRATCH/calls.out"
+  if [ "$rc" != 0 ]; then return 3; fi
   return 0
 }
 
@@ -807,7 +819,7 @@ step_calls() {
       return 0
       ;;
     *)
-      unmeasured entries "the log entries are not the document this check reads ($(last_line "$(cat "$SCRATCH/reader.err" 2>/dev/null || true)")): what gcloud printed is in $SCRATCH/calls.out"
+      unmeasured entries "the log entries are not the document this check reads ($(last_line "$(cat "$SCRATCH/reader.err" 2>/dev/null || true)")): what gcloud printed is not kept, because the raw entries carry the agent ids and session ids this check never writes down — read the entries yourself with 'gcloud logging read' and the filter this check prints in --dry-run"
       STOP=yes
       return 0
       ;;

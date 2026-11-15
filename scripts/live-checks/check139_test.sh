@@ -17,9 +17,10 @@
 # id, a background model the run never called, a background model that is also a
 # stage's own model (the run's effective background: the row is not taken rather
 # than counted), an account, a run or a log view naming belong, a read that fails,
-# hangs or answers something that is not a document, a record naming no execution,
-# a record and a listing that disagree about the execution, a doctor that exits 1
-# (an answer) and one that does not answer at all.
+# hangs or answers something that is not a document (or not the shape this check
+# reads), a record naming no execution, a record and a listing that disagree about
+# the execution, a doctor that exits 1 (an answer) and one that does not answer at
+# all.
 #
 # Every command is bounded (see `bounded` below): a check that hangs fails here
 # with the case's own name rather than hanging the suite that runs this file.
@@ -396,6 +397,19 @@ assert_ids_never_printed() { # assert_ids_never_printed WHAT
   for id in "$sub_id" "$sub_id2" "$sub_session" "$main_session"; do
     expect_absent "$out" "$id" "$what: the agent id $id never reaches the block"
     expect_absent "$err" "$id" "$what: the agent id $id never reaches the progress output"
+  done
+}
+
+# The other half of that promise, and the one a scratch directory kept with
+# CHECK139_KEEP_SCRATCH=1 makes testable: no id reaches any FILE the check writes
+# either. The raw `gcloud logging read` output is the one document that carries
+# one, so it must not survive the read that derived the counts from it — the ids
+# are asserted against every file under the scratch root, not just stdout.
+assert_ids_never_on_disk() { # assert_ids_never_on_disk DIR WHAT
+  local dir=$1 what=$2 id hits
+  for id in "$sub_id" "$sub_id2" "$sub_session" "$main_session"; do
+    hits=$(grep -rl -- "$id" "$dir/tmp" 2>/dev/null || true)
+    [ -z "$hits" ] || fail "$what: $hits holds the agent id $id — no id may reach a file this check writes, kept scratch or not"
   done
 }
 
@@ -1013,6 +1027,41 @@ test_a_kept_scratch_directory_is_reported() {
   rm -rf "$scratch"
 }
 
+# A kept scratch directory is the only way a file the check wrote can be looked
+# at after the run, so it is the only way to hold the promise the header makes
+# about files: what survives the read is the counts, and no agent id with them.
+test_a_kept_scratch_directory_holds_no_id() {
+  local dir=$work/kept-ids
+  prepare "$dir"
+  run_check "$dir" CHECK139_KEEP_SCRATCH=1 -- --run "$run_id" --bg-model haiku
+  [ -n "$scratch" ] || fail "a kept scratch and no id: the check named no scratch directory"
+  [ -d "$scratch" ] || fail "a kept scratch and no id: it was removed anyway"
+  [ -f "$scratch/calls.txt" ] || fail "a kept scratch and no id: the counts the rows are read from are gone too"
+  expect_contains "$(cat "$scratch/calls.txt" 2>/dev/null || true)" "entries=5" "a kept scratch and no id: the counts are what is kept"
+  assert_ids_never_on_disk "$dir" "a kept scratch and no id"
+  rm -rf "$scratch"
+}
+
+# The reader's other way out: gcloud answers a document, and it carries an id,
+# but it is not the shape this check reads — so the raw output is on disk with
+# the ids in it, the row is not measured, and the raw output goes with the answer
+# it did not give. The message says so rather than naming a file that is gone.
+test_a_kept_scratch_of_a_read_of_another_shape_holds_no_id() {
+  local dir=$work/kept-ids-shaped
+  prepare "$dir"
+  printf '{"entries":[%s]}\n' "$(entry implement opus "$sub_id" "$sub_session" 200 nonzero)" >"$dir/json/calls.json"
+  run_check "$dir" CHECK139_KEEP_SCRATCH=1 -- --run "$run_id" --bg-model haiku
+  # 1, not 2: keeping the scratch directory is itself the FAIL row that decides
+  # the exit, so the unmeasured row beside it does not get to make it 2.
+  expect_status "$status" 1 "a kept scratch of a read of another shape"
+  expect_contains "$out" "the log entries are not the document this check reads" "a kept scratch of a read of another shape: what happened"
+  expect_absent "$out" "calls.out" "a kept scratch of a read of another shape: the message does not point at raw entries that are not kept"
+  [ -n "$scratch" ] || fail "a kept scratch of a read of another shape: the check named no scratch directory"
+  [ -d "$scratch" ] || fail "a kept scratch of a read of another shape: it was removed anyway"
+  assert_ids_never_on_disk "$dir" "a kept scratch of a read of another shape"
+  rm -rf "$scratch"
+}
+
 test_an_unknown_argument_is_refused() {
   local dir=$work/unknown-arg
   prepare "$dir"
@@ -1089,6 +1138,8 @@ t test_a_project_config_naming_belongs_log_view_is_refused
 t test_a_background_model_that_is_a_stage_model_is_not_counted
 t test_the_stage_model_collision_row_is_load_bearing
 t test_a_kept_scratch_directory_is_reported
+t test_a_kept_scratch_directory_holds_no_id
+t test_a_kept_scratch_of_a_read_of_another_shape_holds_no_id
 t test_an_unknown_argument_is_refused
 t test_a_candidate_count_of_zero_is_refused
 
