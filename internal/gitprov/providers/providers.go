@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/gitprov/httpjson"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // Environment variables the runner reads its provider credentials from.
@@ -156,7 +157,17 @@ func FromEnv(env []string, hc *http.Client, warn func(string)) gitprov.Opener {
 //
 // hc is the client the forwarder is called with; nil means the default one.
 // warn is FromEnv's.
-func Proxied(env []string, forwarder string, hc *http.Client, warn func(string)) gitprov.Opener {
+//
+// own is the identity set the adapter treats a comment's author as the run's
+// own by (bitbucket.Options.OwnIdentities, T13, F20), and ownPartial whether
+// that set is known to be missing an account this run may write as (R14). The
+// runner reads both from the project's published node (T16) -- the service
+// serves one run with several of the node's tokens in turn, so "Fugaro's own"
+// is a set and not the single account GET /user answers -- and hands them
+// here, where the adapter's options are filled. Nothing read from the task,
+// the environment or the workspace reaches them: an identity the agent could
+// plant would be an identity whose comments the run treats as its own.
+func Proxied(env []string, forwarder string, hc *http.Client, warn func(string), own projectpolicy.BitbucketTokenIdentities, ownPartial bool) gitprov.Opener {
 	vars := envVars(env)
 	return func(_ context.Context, kind, repo string) (gitprov.Provider, []string, error) {
 		if kind != gitprov.KindBitbucket {
@@ -179,6 +190,7 @@ func Proxied(env []string, forwarder string, hc *http.Client, warn func(string))
 		p, err := bitbucket.New(bitbucket.Options{
 			Workspace: owner, Slug: name, Proxied: true,
 			HTTP: proxiedClient(forwarder, hc), Warn: warn,
+			OwnIdentities: own, OwnIdentitiesPartial: ownPartial,
 		})
 		return p, nil, err
 	}

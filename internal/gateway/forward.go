@@ -788,7 +788,7 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 
 	first, firstSent, err := s.upstreamRequest(ctx, r, rt, body)
 	if err != nil {
-		if s.o.Upstream.Kind == KindService && errors.Is(err, errServiceUnidentified) {
+		if rt.provider == nil && s.o.Upstream.Kind == KindService && errors.Is(err, errServiceUnidentified) {
 			// C1.15 (service.go), D143: a service call this job cannot
 			// present its own identity on is a run the service cannot serve
 			// at all. The metadata server is the only place the job's ID
@@ -806,7 +806,7 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		return s.upstreamRequest(ctx, r, rt, body)
 	}, p.model)
 	if err != nil {
-		if s.o.Upstream.Kind == KindService && s.serviceUnreachable(w, s.base, r.Context()) {
+		if rt.provider == nil && s.o.Upstream.Kind == KindService && s.serviceUnreachable(w, s.base, r.Context()) {
 			// C1.15 (service.go), D143: an unreachable credentials service
 			// halts the run -- it never falls back to a credential of the
 			// job's own, which this upstream has none of. Nothing reached
@@ -841,13 +841,19 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		return zeroOutcome(p.model, true), lost
 	}
 	*status = resp.StatusCode
-	if s.o.Upstream.Kind == KindService {
+	if rt.provider == nil && s.o.Upstream.Kind == KindService {
 		// C1.15 (service.go): what the service said about this call is read
 		// here, where it leaves the upstream and before a byte of it reaches
 		// the agent -- the tier the call settles by, the credential's name,
 		// the switch, and the refusals that are the service's own answer and
 		// are never relayed. A model answer (2xx, or a model error the
 		// service relayed) is not touched: it goes on to the pump below.
+		//
+		// A routed call is never one of these, even beside a service
+		// upstream: it went to the provider's own endpoint (withRoute,
+		// upstreamRequest), so its answer is the provider's and carries no
+		// tier -- read as the service's, it would halt the run for an answer
+		// that is exactly what R6/D1634 keep on the runner path.
 		st, done, served, probes := s.serviceAnswer(w, resp, true)
 		*tier = served // "" when the answer carried none, which is a halt or a relayed error
 		*probed = probes

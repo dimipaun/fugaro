@@ -238,8 +238,10 @@ one — has no profile to name its accounts in. Before this key the published `a
 derived from the profiles alone, so such a repository had no way to be admitted to an account at
 all: the block carried no entry for its account, the credentials service's intersection with its
 admission (`config/policy/repos/$slug.credentials.accounts`) came out empty, the cascade offered no
-candidate and every model call of its runs was answered `503 state_unavailable` ("creds: no
-candidate credentials were offered").
+candidate and every model call of its runs was refused `503 no_candidate_credentials` — the class that
+says the state *was* read and names the empty candidate list, with every credential it dropped and
+the filter that dropped it (the same halt was answered `503 state_unavailable` before that class
+existed, which read as a state that could not be read).
 
 The entry adds **the repository's own canonical name** — `bitbucket/acme/tools` above — to each
 account it names, and the `provider` on the entry is what qualifies it (the same provider a profile

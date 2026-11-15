@@ -343,15 +343,16 @@ func accountsAddRunStages(ctx context.Context, cmd *cobra.Command, run *stepRun,
 // rules, the plugin wiring, the checkout's own steps) is not this command's
 // business: an account's declaration changes none of them, and running them
 // would make this command a second `fugaro update`.
+//
+// The three are named through stagesNamed (spec §2.5: a command runs the steps
+// the change it made needs, in initflow's order), so this command and every
+// later composite command name a subset the same way. The names are initflow's
+// own constants, which are the registered names by construction — the second
+// answer is discarded here because a name that is not a registered stage cannot
+// be spelled with a constant, and a test pins the three the door runs.
 func accountsAddStages(e *initEngine) []initflow.Stage {
-	var out []initflow.Stage
-	for _, st := range initStages(e) {
-		switch st.Name() {
-		case initflow.Policy, initflow.Installation, initflow.Repository:
-			out = append(out, st)
-		}
-	}
-	return out
+	stages, _ := stagesNamed(e, initflow.Policy, initflow.Installation, initflow.Repository)
+	return stages
 }
 
 // accountsAddCheck is spec §2.2 step 8: `fugaro accounts ls` for the first

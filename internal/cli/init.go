@@ -1156,9 +1156,10 @@ func (r *initRun) creation() string {
 // behind. fugaro_created=true says an earlier run of fugaro setup created the
 // project, but it is a label anyone with resourcemanager.projects.update can
 // set, so it is never enough on its own: the run must be one a person is at,
-// the bar fugaro managed flag keeps (stepConfirmation(Typed): a real terminal,
-// no --json, no --non-interactive, no coding agent's session, and --yes never
-// stands in for it), and the banner above the mark is what that reader reads.
+// the bar fugaro managed flag keeps (stepConfirmation(false): a real terminal,
+// no --json, no --non-interactive, no coding agent's session, and no answer a
+// run carries stands in for it), and the banner above the mark is what that
+// reader reads.
 // Nothing is typed: the policy's confirmations are gone (T7), and --ask is the
 // flag that puts the question back. Where no person is at the terminal, and
 // under --yes, nothing is marked and the run says how to mark it.
@@ -1166,7 +1167,7 @@ func (r *initRun) confirmResumedMark() bool {
 	id := r.gcpProject
 	later := fmt.Sprintf("project %s carries %s=%s (an earlier run of fugaro setup created it) and this run finished its setup, but it is not marked as managed: marking it takes a run a person is at, at your own terminal. Rerun fugaro setup there, or run fugaro managed flag %s --budget N --budget-currency CCC",
 		id, infra.CreatedLabelKey, infra.CreatedLabelValue, id)
-	if r.stepConfirmation(initflow.Typed) != stepTyped {
+	if r.stepConfirmation(false) != stepTyped {
 		r.warn(later)
 		return false
 	}
@@ -2013,11 +2014,16 @@ func jobsPaused(lc *localcfg.Config) (*bool, *bool) {
 // settles the question by itself, whatever it says: silence in the file the
 // stage publishes is its answer, and nothing the published object says may
 // overrule it. A bucket that cannot be read, a layer this CLI does not read and
-// a spec that carries no catalog check all leave the spec exactly as
-// installOptions built it: paused, which is also what the module defaults the
-// value to, and the layer stage names the read that failed a moment later.
+// a spec that carries neither of the scheduled jobs all leave the spec exactly
+// as installOptions built it: paused, which is also what each module defaults
+// its own value to, and the layer stage names the read that failed a moment
+// later.
+//
+// Both jobs are corrected together, and the read is one: jobs.catalog_check and
+// jobs.reports are two keys of one object, so a run that has to ask the bucket
+// asks it once and takes both answers from the same document.
 func (r *initRun) publishedJobsPaused(ctx context.Context, lc *localcfg.Config, spec infra.InstallationSpec) infra.InstallationSpec {
-	if spec.CatalogCheck == nil {
+	if spec.CatalogCheck == nil && spec.Reports == nil {
 		return spec
 	}
 	p, err := layerPlanFor(ctx, lc)
@@ -2028,7 +2034,12 @@ func (r *initRun) publishedJobsPaused(ctx context.Context, lc *localcfg.Config, 
 	if len(ps) > 0 || l == nil {
 		return spec
 	}
-	spec.CatalogCheck.Paused = l.CatalogCheckPaused()
+	if spec.CatalogCheck != nil {
+		spec.CatalogCheck.Paused = l.CatalogCheckPaused()
+	}
+	if spec.Reports != nil {
+		spec.Reports.Paused = l.ReportsPaused()
+	}
 	return spec
 }
 
@@ -2110,12 +2121,6 @@ func printWorkflowWarnings(r *initRun, spec infra.RepoSpec) {
 		}
 	}
 }
-
-// canConfirmTyped is initflow.CanConfirm, the one rule of who may give a
-// money or permanent confirmation. A package variable only so a test that is
-// about something else can type through --yes: the tests of the rule itself
-// (the matrix) use the real one.
-var canConfirmTyped = initflow.CanConfirm
 
 // conditions is what this run says about who is there.
 func (r *initRun) conditions() initflow.Conditions {
@@ -2305,7 +2310,7 @@ func (r *initRun) askBanner(what string) (bool, error) {
 	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
 		return false, &initflow.AgentError{Marker: m}
 	}
-	if r.refresh.asksNothing(r.conditions()) {
+	if r.refresh.asksNothing(r) {
 		r.willDo(what)
 		fmt.Fprintf(r.stageDetail(), "  %s\n", initflow.GateOrdinary())
 		return true, nil
@@ -2383,56 +2388,47 @@ func confirmStageWrite(cmd *cobra.Command, lc *localcfg.Config, c initflow.Condi
 	return nil
 }
 
-// stepClass is the confirmation class of the one money-or-permanent step this
-// door decides differently: the Firestore database's location. It is
-// initflow.Typed in `setup`, which asks for it as a first-time question, and
-// initflow.YesOrTyped in `update`, which meets it as a step of a stage it owns
-// — the owner's answer of 2026-10-20 (reconciliation §5, D12), and the one of
-// the four call sites that moves in one front door rather than two.
-//
-// The other three carry no door: a billable first image build and replacing a
-// registry tag are YesOrTyped in **both** doors (askCovered), and creating the
-// project and linking the billing account are Typed in both, `update` refusing
-// their flags outright, so no class here can reach them (init_project.go).
-//
-// A run with no door is a hand-built options value, a test's: it is `setup`
-// (doorName), and the location stays Typed.
-func (r *initRun) stepClass() initflow.ConfirmClass {
-	if r.o.door == updateDoor.name {
-		return initflow.YesOrTyped
-	}
-	return initflow.Typed
-}
-
 // stepConfirmation is how a money-or-permanent step of this door is confirmed
-// now: nothing here can confirm it, --yes did, or the person types the step's
-// own confirmation.
+// now: the run's own answer, which only a run a command opened on an answer the
+// person already gave carries, or the person at this run's own terminal, who
+// types nothing (T7) — being there is the confirmation.
 type stepConfirmation int
 
 const (
 	stepLeave stepConfirmation = iota // nothing was asked: the caller leaves the step
 	stepByYes                         // the run carries its own answer: show no prompt
-	stepTyped                         // the person types this step's own confirmation
+	stepTyped                         // the person at the terminal is the confirmation
 )
 
-// stepConfirmation says which of the three this run is at, for a step of the
-// class. It is one function because it is one rule: who is there, and then the
-// class. The two are read in this order and not the other way round, so that
-// the class cannot widen what a terminal may do: a person who can type the
-// step's own confirmation types it, whatever the class (canConfirmTyped(Typed)),
-// and only a run that is not such a person — no terminal, a pipe, --json,
-// --non-interactive, a coding agent's session, or --yes — falls through to
-// --yes, which confirms a YesOrTyped step and nothing else. --plan-only is not
-// such a person either and --yes is not given it (r.conditions().Yes), so it
-// applies nothing whatever it is passed.
-func (r *initRun) stepConfirmation(class initflow.ConfirmClass) stepConfirmation {
-	if canConfirmTyped(initflow.Typed, r.conditions()) {
+// stepConfirmation says which of the three this run is at, for a step the run's
+// own answer reaches (ownAnswer) or does not.
+//
+// A coding agent's session is settled first: the marker is the whole of what
+// keeps an agent out of a write, and no answer a run carries reaches past it —
+// the rule this function replaces refused a marked session in every one
+// of its branches, whatever it had been given.
+//
+// What is left is the run's own answer, which decides the whole answer, and
+// ownAnswer is what keeps it from widening a step: creating the project,
+// linking the billing account and the Firestore location are the person's alone
+// (D12, 2026-10-20), and only a billable first image build and replacing a
+// registry tag are covered by the answer the command was opened with.
+//
+// The run's own answer is r.o.yes, which no flag sets any more (T11): what
+// still carries one is an internal converge a command opens on an answer the
+// person already gave — `fugaro accounts add`'s own apply — and --plan-only is
+// not given it, so such a run applies nothing whatever it is passed.
+func (r *initRun) stepConfirmation(ownAnswer bool) stepConfirmation {
+	switch {
+	case agentMarker(os.Getenv, r.stdinTerminal()) != "":
+		return stepLeave
+	case r.o.yes && !r.o.planOnly:
+		if ownAnswer {
+			return stepByYes
+		}
+		return stepLeave
+	case r.canType():
 		return stepTyped
-	}
-	yes := r.conditions()
-	yes.Terminal, yes.NonInteractive, yes.JSON = false, false, false
-	if class == initflow.YesOrTyped && canConfirmTyped(initflow.YesOrTyped, yes) {
-		return stepByYes
 	}
 	return stepLeave
 }
@@ -2446,14 +2442,15 @@ func (r *initRun) stepConfirmation(class initflow.ConfirmClass) stepConfirmation
 // (AgentAdvice).
 const neverConfirmsBuild = "no terminal, --json, a pipe and a coding agent never confirm it"
 
-// askClass is the confirmation of a step that is money or permanent, of the
-// class. It shows the banner, and reachable says whether it could be asked at
-// all; when it could not, nothing was asked and the caller leaves the step for
-// the user. What answers for it is confirmNow: nothing a person types, --yes
-// where the class takes it, and the y/N --ask puts back.
-func (r *initRun) askClass(class initflow.ConfirmClass, what string) (confirmed, reachable bool, err error) {
+// askClass is the confirmation of a step that is money or permanent: ownAnswer is
+// whether the run's own answer reaches it. It shows the banner, and
+// reachable says whether it could be asked at all; when it could not, nothing
+// was asked and the caller leaves the step for the user. What answers for it is
+// confirmNow: the person at the terminal, who types nothing, and the y/N --ask
+// puts back.
+func (r *initRun) askClass(what string, ownAnswer bool) (confirmed, reachable bool, err error) {
 	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
-	switch r.stepConfirmation(class) {
+	switch r.stepConfirmation(ownAnswer) {
 	case stepLeave:
 		return false, false, nil
 	case stepByYes:
@@ -2464,20 +2461,22 @@ func (r *initRun) askClass(class initflow.ConfirmClass, what string) (confirmed,
 	return ok, true, err
 }
 
-// askTyped is askClass for a step that stays Typed in both front doors: never
-// --yes, --non-interactive, --json, a pipe or a coding agent.
+// askTyped is askClass for a step the run's own answer never reaches: creating
+// the project, linking the billing account and the Firestore location in
+// `setup` are the person's alone (D12, 2026-10-20). A pipe, --json,
+// --non-interactive or a coding agent's session answers them no more than it
+// answers anything else.
 func (r *initRun) askTyped(what string) (confirmed, reachable bool, err error) {
-	return r.askClass(initflow.Typed, what)
+	return r.askClass(what, false)
 }
 
 // askCovered is askClass for a step D12's answer of 2026-10-20 covers in BOTH
-// front doors — a billable first image build and replacing a registry tag,
-// where the class is YesOrTyped whatever door the reader is at. The door is
-// not asked: only three things stay typed (creating the project, linking the
-// billing account, and the Firestore location in `setup`), and neither of
-// these is one of them.
+// front doors — a billable first image build and replacing a registry tag. The
+// door is not asked: only three things stay the person's (creating the project,
+// linking the billing account, and the Firestore location in `setup`), and
+// neither of these is one of them.
 func (r *initRun) askCovered(what string) (confirmed, reachable bool, err error) {
-	return r.askClass(initflow.YesOrTyped, what)
+	return r.askClass(what, true)
 }
 
 // resourceManagerRetries are the waits between reads of the project's
@@ -5541,9 +5540,9 @@ func (r *initRun) writeRepoConfig(ctx context.Context, lc *localcfg.Config, spec
 	// it would drop it, erasing in silence the only admission a
 	// per-repository job can state (a Bitbucket repository, or any repository
 	// no workflow sends to a shared job, has no profile to name one in). The
-	// runs would then be answered 503 state_unavailable by the credentials
-	// service while the node this publish writes still carries the admission,
-	// which is the state this key exists to end.
+	// runs would then be answered 503 no_candidate_credentials by the
+	// credentials service while the node this publish writes still carries the
+	// admission, which is the state this key exists to end.
 	var ready *bool
 	var accounts []string
 	if entry, ok := lc.Repos[key]; ok {

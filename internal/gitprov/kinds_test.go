@@ -41,6 +41,7 @@ var forgeKindGoSites = map[string]string{
 	"ee/coordinator/project.go":                "the project-wide view's read mint, and the kinds it reads",
 	"internal/backend/gcp/build.go":            "the image build's credential env, its secret env and the provider it is given",
 	"internal/backend/gcp/catalog.go":          "the catalog build's credential env, its secret env and the provider it is given",
+	"internal/bbtokens/projectlookup.go":       "the kind the canonical repository of a project lookup must carry, before the workspace and the repository are read off it",
 	"internal/catalog/fetch.go":                "the kinds whose catalog sources this build can read (Readable)",
 	"internal/claudeplugin/plan.go":            "NOT a forge kind: the plugin marketplace's source, which is GitHub whatever a repository's provider is",
 	"internal/cli/catalog_provider.go":         "the credential environment a catalog build reads a Dockerfile with",

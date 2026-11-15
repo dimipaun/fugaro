@@ -51,6 +51,7 @@ variable "bucket_lifecycle" {
     runs_days              = optional(number, 90)
     cache_custom_time_days = optional(number, 30)
     cache_age_days         = optional(number, 180)
+    reports_days           = optional(number, 548)
   })
   default  = {}
   nullable = false
@@ -196,6 +197,29 @@ variable "catalog_check" {
         expression = string
       })
     }))
+  })
+  default = null
+}
+
+variable "reports" {
+  description = "The project's reports job (E4), or null when fugaro update deploys none: modules/installation/reports.tf and its variable of the same name. fugaro update writes it; it is passed through unchanged, and the module validates it."
+  type = object({
+    account_id       = string
+    job              = string
+    image            = string
+    scheduler_job    = string
+    scheduler_region = string
+    schedule         = optional(string, "37 5 * * *")
+    paused           = optional(bool, true)
+    env              = map(string)
+    read_condition = object({
+      title      = string
+      expression = string
+    })
+    write_condition = object({
+      title      = string
+      expression = string
+    })
   })
   default = null
 }
