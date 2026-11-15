@@ -531,7 +531,7 @@ These record where the build settled something the design left open. The authori
   limits               {maxReserveMicros, policyRules, credsRules}
   kill/global          {on, by, at, reason}
   kill/repos/<slug>    {on, by, at, reason}
-  policy/voice/shared  # the voice provider allow-list (mobile plan task P5.3.1): {providers, direction, force_local}
+  policy/voice/shared  # the voice provider allow-list, beside policy/shared and policy/repos/<slug> (mobile plan task P5.3.1): {providers, direction, force_local}
   policy/voice/repos/<slug>  #   the same three fields, per project; a run token reads its own node and the shared one, never a sibling's
 /creds                                     # the credential cascade's shared state (credentials service, D136): the SERVICE's own account only
   marks/<name>                             #   {state, until, since, backoff}: exhausted-until or broken, shared across runs
