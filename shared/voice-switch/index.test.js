@@ -175,8 +175,8 @@ test('the vectors file replays exactly: every state and every refusal', () => {
   }
   // The counts are pinned so that a case deleted from the table is a failure
   // rather than a smaller table nobody notices.
-  assert.equal(vectors.cases.length, 35);
-  assert.equal(accepts, 28);
+  assert.equal(vectors.cases.length, 36);
+  assert.equal(accepts, 29);
   assert.equal(refusals, 7);
   assert.equal(vectors.cases.length, accepts + refusals);
 });
@@ -242,7 +242,7 @@ test('the state table walks the four inputs the app actually holds', () => {
             if (settingsCase !== undefined) input.settings = settingsCase;
             if (consentCase !== undefined) input.consent = consentCase;
             if (statusCase !== undefined) input.status = statusCase;
-            if (callCase !== undefined) input.call = callCase;
+            if (callCase !== undefined) input.lastCallInDirection = callCase;
             const result = indicator(input);
             probes += 1;
             assert.equal(result.ok, true, `probe ${JSON.stringify(input)}`);
@@ -428,6 +428,32 @@ test('an answer that names no direction admits neither: a name alone is no admis
   }
 });
 
+test('an answer that says the project forces local is blocked, whatever its lists say', () => {
+  // `force-local` is the policy node's own switch (§4.3), so it outranks the two
+  // lists beside it: an answer that lists this direction and a name the device
+  // consented to, and then says the project forces local, contradicts itself, and
+  // the reading that cannot send audio is the one the operator's switch states.
+  // Read only where the lists refuse, that answer would be served remote.
+  for (const direction of Object.values(DIRECTION)) {
+    const result = indicator({
+      direction,
+      settings: { [direction]: ENGINE.REMOTE },
+      consent: PERMISSIVE.consent,
+      status: {
+        ok: true,
+        providers: ['deepgram'],
+        direction: { stt: true, tts: true },
+        reason: POLICY_REASON.FORCE_LOCAL,
+      },
+    });
+    assert.equal(result.state, STATE.BLOCKED, direction);
+    assert.equal(result.reason, POLICY_REASON.FORCE_LOCAL, direction);
+    assert.equal(result.engine, ENGINE.LOCAL, direction);
+    assert.equal(result.provider, null, direction);
+    assert.equal(result.text, 'blocked by project policy', direction);
+  }
+});
+
 test('every failure input lands on local, which is the one direction the whole table fails in', () => {
   const failures = [
     ['an expired token', failed(STATUS_FAILURE.EXPIRED_TOKEN)],
@@ -450,8 +476,8 @@ test('every failure input lands on local, which is the one direction the whole t
     for (const [name, extra] of [
       ['no consent recorded', { consent: [] }],
       ['a consent for another name', { consent: consentOf(['elevenlabs']) }],
-      ['a provider that failed', { consent: PERMISSIVE.consent, call: route(direction, ENGINE.REMOTE, 'deepgram', CALL_STATE.FAILED, CALL_FAILURE.PROVIDER_ERROR) }],
-      ['the local engine itself failing', { settings: { [direction]: ENGINE.LOCAL }, call: route(direction, ENGINE.LOCAL, null, CALL_STATE.FAILED) }],
+      ['a provider that failed', { consent: PERMISSIVE.consent, lastCallInDirection: route(direction, ENGINE.REMOTE, 'deepgram', CALL_STATE.FAILED, CALL_FAILURE.PROVIDER_ERROR) }],
+      ['the local engine itself failing', { settings: { [direction]: ENGINE.LOCAL }, lastCallInDirection: route(direction, ENGINE.LOCAL, null, CALL_STATE.FAILED) }],
     ]) {
       const result = indicator({ direction, settings: { [direction]: ENGINE.REMOTE }, status: PERMISSIVE.allowed, ...extra });
       assert.equal(result.engine, ENGINE.LOCAL, `${name} must not be served remotely`);
@@ -470,9 +496,9 @@ test('engine is remote exactly when provider is a name and reason is null', () =
     { direction: DIRECTION.STT, settings: { stt: ENGINE.REMOTE }, consent: PERMISSIVE.consent, status: PERMISSIVE.allowed },
     { direction: DIRECTION.STT, settings: { stt: ENGINE.REMOTE }, consent: PERMISSIVE.consent, status: failed(STATUS_FAILURE.UNREACHABLE) },
     { direction: DIRECTION.STT, settings: { stt: ENGINE.REMOTE }, consent: PERMISSIVE.consent, status: admitted([], { stt: false, tts: false }, POLICY_REASON.FORCE_LOCAL) },
-    { direction: DIRECTION.STT, settings: { stt: ENGINE.REMOTE }, consent: PERMISSIVE.consent, status: PERMISSIVE.allowed, call: route(DIRECTION.STT, ENGINE.LOCAL, null, CALL_STATE.IN_FLIGHT) },
-    { direction: DIRECTION.STT, settings: { stt: ENGINE.LOCAL }, consent: PERMISSIVE.consent, status: PERMISSIVE.allowed, call: route(DIRECTION.STT, ENGINE.REMOTE, 'deepgram', CALL_STATE.IN_FLIGHT) },
-    { direction: DIRECTION.STT, settings: { stt: ENGINE.REMOTE }, consent: PERMISSIVE.consent, status: PERMISSIVE.allowed, call: route(DIRECTION.STT, ENGINE.REMOTE, 'deepgram', CALL_STATE.FAILED, CALL_FAILURE.PROVIDER_ERROR) },
+    { direction: DIRECTION.STT, settings: { stt: ENGINE.REMOTE }, consent: PERMISSIVE.consent, status: PERMISSIVE.allowed, lastCallInDirection: route(DIRECTION.STT, ENGINE.LOCAL, null, CALL_STATE.IN_FLIGHT) },
+    { direction: DIRECTION.STT, settings: { stt: ENGINE.LOCAL }, consent: PERMISSIVE.consent, status: PERMISSIVE.allowed, lastCallInDirection: route(DIRECTION.STT, ENGINE.REMOTE, 'deepgram', CALL_STATE.IN_FLIGHT) },
+    { direction: DIRECTION.STT, settings: { stt: ENGINE.REMOTE }, consent: PERMISSIVE.consent, status: PERMISSIVE.allowed, lastCallInDirection: route(DIRECTION.STT, ENGINE.REMOTE, 'deepgram', CALL_STATE.FAILED, CALL_FAILURE.PROVIDER_ERROR) },
   ];
   for (const input of cases) {
     const result = indicator(input);
@@ -490,7 +516,7 @@ test('a switch turned off mid-call does not make the badge claim local', () => {
     settings: { stt: ENGINE.LOCAL },
     consent: PERMISSIVE.consent,
     status: PERMISSIVE.allowed,
-    call: route(DIRECTION.STT, ENGINE.REMOTE, 'deepgram', CALL_STATE.IN_FLIGHT),
+    lastCallInDirection: route(DIRECTION.STT, ENGINE.REMOTE, 'deepgram', CALL_STATE.IN_FLIGHT),
   });
   assert.deepEqual(result, {
     ok: true,
@@ -520,7 +546,7 @@ test('the badge and the egress decision answer two questions, and agree everywhe
           settings: { [direction]: switchValue },
           consent: PERMISSIVE.consent,
           status,
-          call: calls[1],
+          lastCallInDirection: calls[1],
         };
         const result = indicator(input);
         // A call in flight is the badge's business and the only thing that can
@@ -535,7 +561,15 @@ test('the badge and the egress decision answer two questions, and agree everywhe
   }
 });
 
-test('a call that finished, a call in the other direction and no call all leave the decision alone', () => {
+test('the route read is the asked direction\'s, and a call in the other direction leaves this one\'s badge alone', () => {
+  // The field is `lastCallInDirection` and the badge is per direction, so the
+  // caller passes the record for the direction it is asking about -- that is the
+  // contract, and this test is its pin. It is what keeps the RED-STEP guard's
+  // promise: a remote `stt` stream in flight is not hidden from the `stt` badge
+  // by a later `tts` call, because the `tts` call is not what the `stt` badge is
+  // told about; a caller that passed it would have read the field's name wrong.
+  // A record naming the other direction is therefore read as no call here, and
+  // the four inputs' decision stands untouched.
   const decision = indicator({
     direction: DIRECTION.STT,
     settings: { stt: ENGINE.REMOTE },
@@ -543,7 +577,7 @@ test('a call that finished, a call in the other direction and no call all leave 
     status: PERMISSIVE.allowed,
   });
   assert.equal(decision.state, STATE.REMOTE);
-  for (const call of [
+  for (const lastCallInDirection of [
     undefined,
     null,
     route(DIRECTION.STT, ENGINE.REMOTE, 'deepgram', CALL_STATE.DONE),
@@ -555,7 +589,7 @@ test('a call that finished, a call in the other direction and no call all leave 
       settings: { stt: ENGINE.REMOTE },
       consent: PERMISSIVE.consent,
       status: PERMISSIVE.allowed,
-      call,
+      lastCallInDirection,
     });
     assert.deepEqual(result, decision);
   }
@@ -569,18 +603,18 @@ test('a failed call falls back to local, with its own reason or the default for 
     status: PERMISSIVE.allowed,
   };
   assert.equal(
-    indicator({ ...base, call: route(DIRECTION.STT, ENGINE.REMOTE, 'deepgram', CALL_STATE.FAILED) }).reason,
+    indicator({ ...base, lastCallInDirection: route(DIRECTION.STT, ENGINE.REMOTE, 'deepgram', CALL_STATE.FAILED) }).reason,
     CALL_FAILURE.PROVIDER_ERROR,
   );
   assert.equal(
-    indicator({ ...base, call: route(DIRECTION.STT, ENGINE.REMOTE, 'deepgram', CALL_STATE.FAILED, CALL_FAILURE.UNREACHABLE) }).reason,
+    indicator({ ...base, lastCallInDirection: route(DIRECTION.STT, ENGINE.REMOTE, 'deepgram', CALL_STATE.FAILED, CALL_FAILURE.UNREACHABLE) }).reason,
     CALL_FAILURE.UNREACHABLE,
   );
   assert.equal(
     indicator({
       direction: DIRECTION.TTS,
       settings: { tts: ENGINE.LOCAL },
-      call: route(DIRECTION.TTS, ENGINE.LOCAL, null, CALL_STATE.FAILED),
+      lastCallInDirection: route(DIRECTION.TTS, ENGINE.LOCAL, null, CALL_STATE.FAILED),
     }).reason,
     CALL_FAILURE.LOCAL_ERROR,
   );
@@ -609,12 +643,12 @@ const FIELDS = [
   'status.direction.stt',
   'status.direction.tts',
   'status.reason',
-  'call',
-  'call.direction',
-  'call.engine',
-  'call.provider',
-  'call.state',
-  'call.reason',
+  'lastCallInDirection',
+  'lastCallInDirection.direction',
+  'lastCallInDirection.engine',
+  'lastCallInDirection.provider',
+  'lastCallInDirection.state',
+  'lastCallInDirection.reason',
 ];
 
 /**
@@ -721,18 +755,18 @@ const REFUSALS = [
   ['the direction map carries a field this module does not name', { direction: DIRECTION.STT, status: { ok: true, direction: { stt: true, mic: true } } }, REFUSAL.UNKNOWN_FIELD, 'status.direction'],
   ['a direction admission is not a boolean', { direction: DIRECTION.STT, status: { ok: true, direction: { stt: 'yes' } } }, REFUSAL.WRONG_TYPE, 'status.direction.stt'],
   ['the policy reason is outside the set', { direction: DIRECTION.STT, status: { ok: true, reason: 'because' } }, REFUSAL.UNKNOWN_CODE, 'status.reason'],
-  ['the call carries a field this module does not name', { direction: DIRECTION.STT, call: { direction: DIRECTION.STT, engine: 'local', provider: null, state: 'done', reason: null, at: AT } }, REFUSAL.UNKNOWN_FIELD, 'call'],
-  ['the call names no direction', { direction: DIRECTION.STT, call: { engine: 'local', provider: null, state: 'done', reason: null } }, REFUSAL.MISSING_FIELD, 'call.direction'],
-  ['the call direction is not one of the two', { direction: DIRECTION.STT, call: { direction: 'mic', engine: 'local', provider: null, state: 'done', reason: null } }, REFUSAL.UNKNOWN_DIRECTION, 'call.direction'],
-  ['the call names no engine', { direction: DIRECTION.STT, call: { direction: DIRECTION.STT, provider: null, state: 'done', reason: null } }, REFUSAL.MISSING_FIELD, 'call.engine'],
-  ['the call engine is neither local nor remote', { direction: DIRECTION.STT, call: { direction: DIRECTION.STT, engine: 'cloud', provider: null, state: 'done', reason: null } }, REFUSAL.UNKNOWN_ENGINE, 'call.engine'],
-  ['the call names no state', { direction: DIRECTION.STT, call: { direction: DIRECTION.STT, engine: 'local', provider: null, reason: null } }, REFUSAL.MISSING_FIELD, 'call.state'],
-  ['the call state is outside the three', { direction: DIRECTION.STT, call: { direction: DIRECTION.STT, engine: 'local', provider: null, state: 'pending', reason: null } }, REFUSAL.UNKNOWN_CALL_STATE, 'call.state'],
-  ['a remote call names no provider', { direction: DIRECTION.STT, call: { direction: DIRECTION.STT, engine: 'remote', provider: null, state: 'in-flight', reason: null } }, REFUSAL.MISSING_FIELD, 'call.provider'],
-  ['a local call names a provider', { direction: DIRECTION.STT, call: { direction: DIRECTION.STT, engine: 'local', provider: 'deepgram', state: 'done', reason: null } }, REFUSAL.UNEXPECTED_PROVIDER, 'call.provider'],
-  ['a call provider is not a name', { direction: DIRECTION.STT, call: { direction: DIRECTION.STT, engine: 'remote', provider: 'https://x.example', state: 'done', reason: null } }, REFUSAL.BAD_PROVIDER, 'call.provider'],
-  ['a call reason is outside the set', { direction: DIRECTION.STT, call: { direction: DIRECTION.STT, engine: 'remote', provider: 'deepgram', state: 'failed', reason: 'timeout' } }, REFUSAL.UNKNOWN_CODE, 'call.reason'],
-  ['a call that did not fail carries a failure reason', { direction: DIRECTION.STT, call: { direction: DIRECTION.STT, engine: 'remote', provider: 'deepgram', state: 'done', reason: 'provider-error' } }, REFUSAL.UNEXPECTED_REASON, 'call.reason'],
+  ['the call carries a field this module does not name', { direction: DIRECTION.STT, lastCallInDirection: { direction: DIRECTION.STT, engine: 'local', provider: null, state: 'done', reason: null, at: AT } }, REFUSAL.UNKNOWN_FIELD, 'lastCallInDirection'],
+  ['the call names no direction', { direction: DIRECTION.STT, lastCallInDirection: { engine: 'local', provider: null, state: 'done', reason: null } }, REFUSAL.MISSING_FIELD, 'lastCallInDirection.direction'],
+  ['the call direction is not one of the two', { direction: DIRECTION.STT, lastCallInDirection: { direction: 'mic', engine: 'local', provider: null, state: 'done', reason: null } }, REFUSAL.UNKNOWN_DIRECTION, 'lastCallInDirection.direction'],
+  ['the call names no engine', { direction: DIRECTION.STT, lastCallInDirection: { direction: DIRECTION.STT, provider: null, state: 'done', reason: null } }, REFUSAL.MISSING_FIELD, 'lastCallInDirection.engine'],
+  ['the call engine is neither local nor remote', { direction: DIRECTION.STT, lastCallInDirection: { direction: DIRECTION.STT, engine: 'cloud', provider: null, state: 'done', reason: null } }, REFUSAL.UNKNOWN_ENGINE, 'lastCallInDirection.engine'],
+  ['the call names no state', { direction: DIRECTION.STT, lastCallInDirection: { direction: DIRECTION.STT, engine: 'local', provider: null, reason: null } }, REFUSAL.MISSING_FIELD, 'lastCallInDirection.state'],
+  ['the call state is outside the three', { direction: DIRECTION.STT, lastCallInDirection: { direction: DIRECTION.STT, engine: 'local', provider: null, state: 'pending', reason: null } }, REFUSAL.UNKNOWN_CALL_STATE, 'lastCallInDirection.state'],
+  ['a remote call names no provider', { direction: DIRECTION.STT, lastCallInDirection: { direction: DIRECTION.STT, engine: 'remote', provider: null, state: 'in-flight', reason: null } }, REFUSAL.MISSING_FIELD, 'lastCallInDirection.provider'],
+  ['a local call names a provider', { direction: DIRECTION.STT, lastCallInDirection: { direction: DIRECTION.STT, engine: 'local', provider: 'deepgram', state: 'done', reason: null } }, REFUSAL.UNEXPECTED_PROVIDER, 'lastCallInDirection.provider'],
+  ['a call provider is not a name', { direction: DIRECTION.STT, lastCallInDirection: { direction: DIRECTION.STT, engine: 'remote', provider: 'https://x.example', state: 'done', reason: null } }, REFUSAL.BAD_PROVIDER, 'lastCallInDirection.provider'],
+  ['a call reason is outside the set', { direction: DIRECTION.STT, lastCallInDirection: { direction: DIRECTION.STT, engine: 'remote', provider: 'deepgram', state: 'failed', reason: 'timeout' } }, REFUSAL.UNKNOWN_CODE, 'lastCallInDirection.reason'],
+  ['a call that did not fail carries a failure reason', { direction: DIRECTION.STT, lastCallInDirection: { direction: DIRECTION.STT, engine: 'remote', provider: 'deepgram', state: 'done', reason: 'provider-error' } }, REFUSAL.UNEXPECTED_REASON, 'lastCallInDirection.reason'],
 ];
 
 test('every refusal code is reached by a probe, and every probe is one of them', () => {
@@ -778,7 +812,7 @@ test('a refusal is frozen, carries no answer, and never echoes what it was hande
   const inputs = [
     { direction: DIRECTION.STT, secret: marker },
     { direction: DIRECTION.STT, consent: [{ provider: marker, at: AT }] },
-    { direction: DIRECTION.STT, call: { direction: DIRECTION.STT, engine: marker, provider: null, state: 'done' } },
+    { direction: DIRECTION.STT, lastCallInDirection: { direction: DIRECTION.STT, engine: marker, provider: null, state: 'done' } },
     { direction: marker },
   ];
   for (const input of inputs) {
@@ -830,7 +864,7 @@ test('null where the device has recorded nothing is read as absent, and as nothi
     settings: { stt: ENGINE.REMOTE },
     consent: PERMISSIVE.consent,
     status: PERMISSIVE.allowed,
-    call: null,
+    lastCallInDirection: null,
   });
   assert.deepEqual(withNulls, absent);
   const device = indicator({
@@ -842,7 +876,7 @@ test('null where the device has recorded nothing is read as absent, and as nothi
     settings: { stt: ENGINE.REMOTE },
     consent: null,
     status: null,
-    call: null,
+    lastCallInDirection: null,
   });
   assert.deepEqual(deviceNulls, device);
   assert.equal(device.reason, REASON.NO_CONSENT);
@@ -854,7 +888,7 @@ test('an undoable answer: the same input twice returns equal, frozen answers', (
     settings: { stt: ENGINE.REMOTE },
     consent: PERMISSIVE.consent,
     status: PERMISSIVE.allowed,
-    call: route(DIRECTION.STT, ENGINE.REMOTE, 'deepgram', CALL_STATE.IN_FLIGHT),
+    lastCallInDirection: route(DIRECTION.STT, ENGINE.REMOTE, 'deepgram', CALL_STATE.IN_FLIGHT),
   };
   const first = indicator(input);
   const second = indicator(structuredClone(input));

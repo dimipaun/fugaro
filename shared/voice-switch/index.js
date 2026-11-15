@@ -288,7 +288,13 @@ const BADGE = Object.freeze({
 const IN_FLIGHT = ' — in flight';
 
 /** The input's own fields. An unknown one is refused: this is not a bag. */
-const INPUT_FIELDS = Object.freeze(['direction', 'settings', 'consent', 'status', 'call']);
+const INPUT_FIELDS = Object.freeze([
+  'direction',
+  'settings',
+  'consent',
+  'status',
+  'lastCallInDirection',
+]);
 
 /** The two switches, exactly. Both are optional, and both default to local. */
 const SWITCH_FIELDS = Object.freeze(['stt', 'tts']);
@@ -305,7 +311,16 @@ const STATUS_FAILED_FIELDS = Object.freeze(['ok', 'code']);
 /** The status answer's per-direction map. */
 const STATUS_DIRECTION_FIELDS = Object.freeze(['stt', 'tts']);
 
-/** The last call's route. */
+/**
+ * The last call's route, **for the direction being asked about**: the field is
+ * named for the question it answers, because a badge that is asked about `stt`
+ * must be told about the `stt` call and never about whichever call the app
+ * happens to have made most recently. The app holds one route per direction
+ * (each direction is its own pipeline), so the caller passes the record for the
+ * direction it is asking about; a record that names the other direction is not
+ * this direction's route, and the module reads the badge as if no call were in
+ * flight in this one.
+ */
 const CALL_FIELDS = Object.freeze(['direction', 'engine', 'provider', 'state', 'reason']);
 
 /**
@@ -321,8 +336,9 @@ const CALL_FIELDS = Object.freeze(['direction', 'engine', 'provider', 'state', '
  *              | { ok: false, code: 'expired-token' | 'revoked-device'
  *                                | 'unreachable' | 'query-failed' }
  *              | null,
- *       call?: { direction: 'stt', engine: 'local' | 'remote',
- *                provider: 'name' | null, state: 'in-flight' | 'done' | 'failed',
+ *       lastCallInDirection?: { direction: 'stt' | 'tts',
+ *                engine: 'local' | 'remote', provider: 'name' | null,
+ *                state: 'in-flight' | 'done' | 'failed',
  *                reason: 'provider-error' | ... | null } | null,
  *     })
  *
@@ -332,6 +348,13 @@ const CALL_FIELDS = Object.freeze(['direction', 'engine', 'provider', 'state', '
  * **present and unreadable** is a refusal rather than a default, because a
  * value this module could not read is a bug in the caller rather than a fact
  * about the world.
+ *
+ * `lastCallInDirection` is **this direction's** last call, and the caller is the
+ * one that knows which that is: the badge is per direction, and a call in flight
+ * in the other direction must not be read as this one's, nor this one's be
+ * dropped because a call in the other direction came later. The record still
+ * carries its own `direction`, and one that names the other direction is read as
+ * no call in this one.
  *
  * It returns the answer above, frozen, or `{ ok: false, code, field }`. The
  * egress triple holds one invariant in every answer: `engine` is `remote` exactly
@@ -378,13 +401,16 @@ function indicatorUnguarded(input) {
   const consent = readConsent(values.consent);
   if (!consent.ok) return consent;
 
-  const call = readCall(values.call);
+  const call = readCall(values.lastCallInDirection);
   if (!call.ok) return call;
 
   const status = readStatus(values.status);
   if (!status.ok) return status;
 
   const decision = decide(direction, switches.values, consent.values, status.values);
+  // The record is this direction's by contract, and it says which direction it
+  // is: one that names the other one is read as no call here, so a badge about
+  // `stt` can never be made to show a `tts` call in flight.
   const last = call.values !== null && call.values.direction === direction ? call.values : null;
 
   return answer(direction, overlay(decision, last));
@@ -431,6 +457,14 @@ function decide(direction, switches, consented, status) {
   // the policy tree and does not try to. An answer that admits nothing names its
   // reason; one that does not say why is `no-admission`, the default deny §4.3
   // is built on.
+  //
+  // `force-local` is the policy node's own switch (§4.3), and it outranks the two
+  // lists beside it: an answer that lists names and admits this direction while
+  // saying the project forces local is an answer that contradicts itself, and the
+  // safe reading is the one the operator's switch states -- nothing new leaves the
+  // device. The other two reasons are consequences of the lists, so they are read
+  // where the lists refuse.
+  if (status.reason === POLICY_REASON.FORCE_LOCAL) return blocked(POLICY_REASON.FORCE_LOCAL);
   if (status.direction[direction] !== true || status.providers.length === 0) {
     return blocked(status.reason === null ? POLICY_REASON.NO_ADMISSION : status.reason);
   }
@@ -687,45 +721,45 @@ function readConsent(value) {
  */
 function readCall(value) {
   if (value === undefined || value === null) return { ok: true, values: null };
-  const read = readFields(value, CALL_FIELDS, 'call');
+  const read = readFields(value, CALL_FIELDS, 'lastCallInDirection');
   if (!read.ok) return read;
   const call = read.values;
 
   const direction = call.direction;
-  if (direction === undefined) return refuse(REFUSAL.MISSING_FIELD, 'call.direction');
+  if (direction === undefined) return refuse(REFUSAL.MISSING_FIELD, 'lastCallInDirection.direction');
   if (typeof direction !== 'string' || !DIRECTIONS.includes(direction)) {
-    return refuse(REFUSAL.UNKNOWN_DIRECTION, 'call.direction');
+    return refuse(REFUSAL.UNKNOWN_DIRECTION, 'lastCallInDirection.direction');
   }
 
   const engine = call.engine;
-  if (engine === undefined) return refuse(REFUSAL.MISSING_FIELD, 'call.engine');
+  if (engine === undefined) return refuse(REFUSAL.MISSING_FIELD, 'lastCallInDirection.engine');
   if (typeof engine !== 'string' || !ENGINES.includes(engine)) {
-    return refuse(REFUSAL.UNKNOWN_ENGINE, 'call.engine');
+    return refuse(REFUSAL.UNKNOWN_ENGINE, 'lastCallInDirection.engine');
   }
 
   const state = call.state;
-  if (state === undefined) return refuse(REFUSAL.MISSING_FIELD, 'call.state');
+  if (state === undefined) return refuse(REFUSAL.MISSING_FIELD, 'lastCallInDirection.state');
   if (typeof state !== 'string' || !CALL_STATES.includes(state)) {
-    return refuse(REFUSAL.UNKNOWN_CALL_STATE, 'call.state');
+    return refuse(REFUSAL.UNKNOWN_CALL_STATE, 'lastCallInDirection.state');
   }
 
   const rawProvider = call.provider;
   const provider = rawProvider === undefined ? null : rawProvider;
-  if (provider !== null && !isProvider(provider)) return refuse(REFUSAL.BAD_PROVIDER, 'call.provider');
+  if (provider !== null && !isProvider(provider)) return refuse(REFUSAL.BAD_PROVIDER, 'lastCallInDirection.provider');
   if (engine === ENGINE.REMOTE && provider === null) {
-    return refuse(REFUSAL.MISSING_FIELD, 'call.provider');
+    return refuse(REFUSAL.MISSING_FIELD, 'lastCallInDirection.provider');
   }
   if (engine === ENGINE.LOCAL && provider !== null) {
-    return refuse(REFUSAL.UNEXPECTED_PROVIDER, 'call.provider');
+    return refuse(REFUSAL.UNEXPECTED_PROVIDER, 'lastCallInDirection.provider');
   }
 
   const rawReason = call.reason;
   const reason = rawReason === undefined ? null : rawReason;
   if (reason !== null && !CALL_FAILURES.includes(reason)) {
-    return refuse(REFUSAL.UNKNOWN_CODE, 'call.reason');
+    return refuse(REFUSAL.UNKNOWN_CODE, 'lastCallInDirection.reason');
   }
   if (state !== CALL_STATE.FAILED && reason !== null) {
-    return refuse(REFUSAL.UNEXPECTED_REASON, 'call.reason');
+    return refuse(REFUSAL.UNEXPECTED_REASON, 'lastCallInDirection.reason');
   }
 
   return { ok: true, values: Object.freeze({ direction, engine, provider, state, reason }) };

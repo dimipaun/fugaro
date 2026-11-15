@@ -21,7 +21,7 @@ const where = indicator({
     direction: { stt: true, tts: true },
     reason: null,
   },
-  call: null,                                     // the last call's route, if any
+  lastCallInDirection: null,                      // this direction's last call, if any
 });
 // ok: true, engine: 'remote', provider: 'deepgram', state: 'remote',
 // inFlight: false, reason: null, text: 'remote (deepgram)'
@@ -52,7 +52,7 @@ one case in `vectors.json`.
 | 3 | the switch is not `remote` (unset included) | `local` | `local` | `switch-local` |
 | 4 | no consent is recorded at all | `local` | `local` | `no-consent` |
 | 5 | no project-status answer yet, or a query that failed | `checking` | `local — checking` | `no-answer` / `query-failed` |
-| 6 | the hop's answer refuses this direction | `blocked` | `blocked by project policy` | the hop's own reason, or `no-admission` |
+| 6 | the hop's answer refuses this direction — `force-local` outranks the two lists beside it | `blocked` | `blocked by project policy` | the hop's own reason, or `no-admission` |
 | 7 | no admitted name has a consent | `local` | `local` | `no-consent` |
 | 8 | otherwise | `remote` | `remote (<the first admitted name consented to>)` | `null` |
 
@@ -66,10 +66,22 @@ half is what is missing. A project that forces local is reported as `blocked` wh
 on, which is the moment the user is asking for remote and the refusal is what they need to see;
 with the switch off, the same project answers `local`/`switch-local`.
 
-**Steps 1 and 2 are the last call's route.** A call in flight is what the badge shows, whatever
-the switch now says: a switch turned off mid-call must not make the indicator say `local` while
-the audio is still going out — that is the one lie the badge exists to prevent. A failed call is
+**Steps 1 and 2 are the asked direction's last call, and that is what the input's name says.** A
+call in flight is what the badge shows, whatever the switch now says: a switch turned off mid-call
+must not make the indicator say `local` while the audio is still going out — that is the one lie
+the badge exists to prevent. The field is `lastCallInDirection` and not "the last call", because
+the badge is per direction and the app holds one route per direction: each direction is its own
+pipeline, so the caller passes the record for the direction it is asking about. A route that names
+the **other** direction is read as no call in this one — a badge asked about `stt` can never be
+made to show a `tts` call in flight — and the contract is pinned by a test
+(`the route read is the asked direction's …`) rather than only by this sentence. A failed call is
 §4.5's fallback: the app answers from the local engine and the badge says `local`.
+
+**Step 6 reads `force-local` before its two lists, because the policy node's own switch outranks
+them** (§4.3): an answer that lists this direction and an admitted name while saying the project
+forces local is read as a refusal rather than as an admission — `blocked`, with `force-local` as
+the reason. `no-admission` and `no-register-row` are consequences of the lists, so they are read
+where the lists refuse.
 
 ## The two triples, and the two cases where they differ
 
@@ -124,7 +136,7 @@ a failure too:
 | `unknown-direction` | a `direction` that is neither `stt` nor `tts` |
 | `unknown-engine` | a switch or a call's engine that is neither `local` nor `remote` |
 | `unknown-call-state` | a call's `state` outside `in-flight` / `done` / `failed` |
-| `unknown-code` | a `status.code`, a `status.reason` or a `call.reason` outside its closed set |
+| `unknown-code` | a `status.code`, a `status.reason` or a `lastCallInDirection.reason` outside its closed set |
 | `bad-provider` | a provider name that is not a name: empty, past 64 characters, or URL-shaped |
 | `invalid-at` | a consent's `at` that is not an epoch-millisecond integer in `1 .. MAX_TIMESTAMP` |
 | `invalid-consent` | a `consent` that is not a plain array, or is longer than 64 |
@@ -138,7 +150,7 @@ a failure too:
 `wrong-type` are spelled exactly as [`shared/confirm`](../confirm/README.md) spells them, so a
 reader of both does not have to learn two vocabularies for the same failures. No refusal echoes a
 value, and **no refusal names a key the caller chose**: an unknown key is reported by the
-container this module named (`input`, `settings`, `status`, `call`), never by the key itself — a
+container this module named (`input`, `settings`, `status`, `lastCallInDirection`), never by the key itself — a
 refusal that repeated the input would make the refusal itself a channel.
 
 ## The numbers
@@ -185,8 +197,8 @@ register names (§7) are lowercase and fit.
 ## Evidence, and how to reproduce it
 
 ```sh
-cd shared && npm test                       # 513 tests in the package, 513 pass, 0 fail (Node 22)
-shared/voice-switch/mutation-proof.sh       # 45 guards: 45 killed, 0 survived, 0 not applied
+cd shared && npm test                       # 514 tests in the package, 514 pass, 0 fail (Node 22)
+shared/voice-switch/mutation-proof.sh       # 46 guards: 46 killed, 0 survived, 0 not applied
 ```
 
 The suite pins the plan's verification list, each item as its own test: the state table walks the
@@ -206,14 +218,22 @@ flight**, the one way the indicator can be made to say `local` while audio leave
 it refuses to report anything unless the pristine suite passes with tests actually run and a
 `refuse()` that always succeeds is caught first.
 
-`vectors.json` carries the state table **as data** (`cases: [{ name, input, expect }]`, 35 cases:
-28 accepts and 7 refusals) and the suite replays it verbatim, so a row that stops being the rule is
+`vectors.json` carries the state table **as data** (`cases: [{ name, input, expect }]`, 36 cases:
+29 accepts and 7 refusals) and the suite replays it verbatim, so a row that stops being the rule is
 a failure rather than a table nobody re-reads. The counts are pinned in the test: deleting a case
 is a failure too. It is the only reader of that file today; a later task's tests that want the
 table should read this file rather than copy it.
 
 ## Honest limits
 
+- **Which record is "this direction's last call" is the caller's to pick, and this module cannot
+  check it.** It reads `lastCallInDirection` and compares the record's own `direction` with the one
+  it was asked about, so a route for the other direction can never enter this direction's answer —
+  but a caller that keeps one call record for the whole app and passes it for both directions will
+  still be told `local`, `inFlight: false` for the direction whose stream is actually live. Holding
+  one route per direction is the caller's half of the contract; a shape carrying both routes at
+  once (`calls: { stt, tts }`) would make it the module's, and is a later decision rather than a
+  fix round's.
 - **The badge and the egress decision can disagree, by design, while a call is in flight** — in the
   two cases the vectors name: a remote call that is no longer admissible, and a local call over a
   decision that still admits remote. Both fields are right about their own question, and a caller

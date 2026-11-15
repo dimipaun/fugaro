@@ -217,6 +217,23 @@
       }
     },
     {
+      "name": "an answer that admits the direction and a name but says the project forces local is blocked: force-local outranks the lists",
+      "input": {
+        "direction": "stt",
+        "settings": { "stt": "remote" },
+        "consent": [{ "provider": "deepgram", "at": 1700000000000 }],
+        "status": {
+          "ok": true, "providers": ["deepgram"],
+          "direction": { "stt": true, "tts": true }, "reason": "force-local"
+        }
+      },
+      "expect": {
+        "ok": true, "direction": "stt", "engine": "local", "provider": null,
+        "state": "blocked", "inFlight": false, "reason": "force-local",
+        "text": "blocked by project policy"
+      }
+    },
+    {
       "name": "a direction the project does not admit is blocked while the other direction is not",
       "input": {
         "direction": "stt",
@@ -295,7 +312,7 @@
           "ok": true, "providers": ["deepgram"],
           "direction": { "stt": true, "tts": true }, "reason": null
         },
-        "call": {
+        "lastCallInDirection": {
           "direction": "stt", "engine": "remote", "provider": "deepgram",
           "state": "in-flight", "reason": null
         }
@@ -316,7 +333,7 @@
           "ok": true, "providers": ["deepgram"],
           "direction": { "stt": true, "tts": true }, "reason": null
         },
-        "call": {
+        "lastCallInDirection": {
           "direction": "stt", "engine": "remote", "provider": "deepgram",
           "state": "in-flight", "reason": null
         }
@@ -337,7 +354,7 @@
           "ok": true, "providers": [],
           "direction": { "stt": false, "tts": false }, "reason": "force-local"
         },
-        "call": {
+        "lastCallInDirection": {
           "direction": "stt", "engine": "remote", "provider": "deepgram",
           "state": "in-flight", "reason": null
         }
@@ -358,7 +375,7 @@
           "ok": true, "providers": ["deepgram"],
           "direction": { "stt": true, "tts": true }, "reason": null
         },
-        "call": {
+        "lastCallInDirection": {
           "direction": "stt", "engine": "local", "provider": null,
           "state": "in-flight", "reason": null
         }
@@ -378,7 +395,7 @@
           "ok": true, "providers": ["deepgram"],
           "direction": { "stt": true, "tts": true }, "reason": null
         },
-        "call": {
+        "lastCallInDirection": {
           "direction": "stt", "engine": "remote", "provider": "deepgram",
           "state": "failed", "reason": null
         }
@@ -398,7 +415,7 @@
           "ok": true, "providers": ["deepgram"],
           "direction": { "stt": true, "tts": true }, "reason": null
         },
-        "call": {
+        "lastCallInDirection": {
           "direction": "stt", "engine": "remote", "provider": "deepgram",
           "state": "failed", "reason": "unreachable"
         }
@@ -413,7 +430,7 @@
       "input": {
         "direction": "stt",
         "settings": { "stt": "local" },
-        "call": {
+        "lastCallInDirection": {
           "direction": "stt", "engine": "local", "provider": null,
           "state": "failed", "reason": null
         }
@@ -433,7 +450,7 @@
           "ok": true, "providers": ["deepgram"],
           "direction": { "stt": true, "tts": true }, "reason": null
         },
-        "call": {
+        "lastCallInDirection": {
           "direction": "stt", "engine": "remote", "provider": "deepgram",
           "state": "done", "reason": null
         }
@@ -444,7 +461,7 @@
       }
     },
     {
-      "name": "a call in the other direction is not this direction's business",
+      "name": "a route for the other direction is not this direction's route, so no call is in flight here",
       "input": {
         "direction": "stt",
         "settings": { "stt": "remote" },
@@ -453,7 +470,7 @@
           "ok": true, "providers": ["deepgram"],
           "direction": { "stt": true, "tts": true }, "reason": null
         },
-        "call": {
+        "lastCallInDirection": {
           "direction": "tts", "engine": "remote", "provider": "deepgram",
           "state": "in-flight", "reason": null
         }
@@ -477,35 +494,35 @@
       "input": {
         "direction": "stt",
         "settings": { "stt": "remote" },
-        "call": {
+        "lastCallInDirection": {
           "direction": "stt", "engine": "remote", "provider": null,
           "state": "in-flight", "reason": null
         }
       },
-      "expect": { "ok": false, "code": "missing-field", "field": "call.provider" }
+      "expect": { "ok": false, "code": "missing-field", "field": "lastCallInDirection.provider" }
     },
     {
       "name": "a call whose engine is local and which names a provider is refused",
       "input": {
         "direction": "stt",
-        "call": {
+        "lastCallInDirection": {
           "direction": "stt", "engine": "local", "provider": "deepgram",
           "state": "done", "reason": null
         }
       },
-      "expect": { "ok": false, "code": "unexpected-provider", "field": "call.provider" }
+      "expect": { "ok": false, "code": "unexpected-provider", "field": "lastCallInDirection.provider" }
     },
     {
       "name": "a failure reason on a call that did not fail is refused",
       "input": {
         "direction": "stt",
         "settings": { "stt": "remote" },
-        "call": {
+        "lastCallInDirection": {
           "direction": "stt", "engine": "remote", "provider": "deepgram",
           "state": "in-flight", "reason": "provider-error"
         }
       },
-      "expect": { "ok": false, "code": "unexpected-reason", "field": "call.reason" }
+      "expect": { "ok": false, "code": "unexpected-reason", "field": "lastCallInDirection.reason" }
     },
     {
       "name": "a field from a later protocol is refused rather than read past",

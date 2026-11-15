@@ -182,7 +182,7 @@ run "the egress decision follows the call in flight (the badge may not widen it)
       provider: decision.provider,
       state: going ? STATE.REMOTE : STATE.LOCAL,
       inFlight: true,"
-run "a call in flight in the OTHER direction is not this direction's business" \
+run "a route for the other direction is not this direction's route" \
   "  const last = call.values !== null && call.values.direction === direction ? call.values : null;" \
   "  const last = call.values;"
 run "a call that finished does not change the badge" \
@@ -242,6 +242,9 @@ run "the direction map is read for the direction being asked about" \
 run "an answer that names no direction admits nothing: the default is deny" \
   "  const both = { [DIRECTION.STT]: false, [DIRECTION.TTS]: false };" \
   "  const both = { [DIRECTION.STT]: true, [DIRECTION.TTS]: true };"
+run "force-local outranks the lists beside it in the hop's own answer" \
+  "  if (status.reason === POLICY_REASON.FORCE_LOCAL) return blocked(POLICY_REASON.FORCE_LOCAL);
+" ""
 run "an answer with no reason of its own is no-admission, the default deny" \
   "    return blocked(status.reason === null ? POLICY_REASON.NO_ADMISSION : status.reason);" \
   "    return blocked(POLICY_REASON.FORCE_LOCAL);"
@@ -280,15 +283,15 @@ run "the badge says a call is in flight" \
 
 run "a remote call that names no provider is refused" \
   "  if (engine === ENGINE.REMOTE && provider === null) {
-    return refuse(REFUSAL.MISSING_FIELD, 'call.provider');
+    return refuse(REFUSAL.MISSING_FIELD, 'lastCallInDirection.provider');
   }" ""
 run "a local call that names a provider is refused" \
   "  if (engine === ENGINE.LOCAL && provider !== null) {
-    return refuse(REFUSAL.UNEXPECTED_PROVIDER, 'call.provider');
+    return refuse(REFUSAL.UNEXPECTED_PROVIDER, 'lastCallInDirection.provider');
   }" ""
 run "a failure reason on a call that did not fail is refused" \
   "  if (state !== CALL_STATE.FAILED && reason !== null) {
-    return refuse(REFUSAL.UNEXPECTED_REASON, 'call.reason');
+    return refuse(REFUSAL.UNEXPECTED_REASON, 'lastCallInDirection.reason');
   }" ""
 
 # ---------------------------------------------------------------------------
