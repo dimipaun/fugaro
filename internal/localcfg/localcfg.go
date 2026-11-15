@@ -1349,6 +1349,14 @@ type Batch struct {
 	TaskTimeout config.Duration `yaml:"task_timeout,omitempty"`
 }
 
+// ValidBatchImage reports whether ref is a reference a batch block's image may
+// be: the spelling validateBatch holds Batch.Image to. It is exported for the
+// one caller that FORMS such a reference instead of reading one -- the compute
+// stage's own block write (internal/cli/init_compute.go), which must not write
+// a block this parser would then refuse -- and validateBatch goes through it so
+// the formed value and the accepted one cannot come apart.
+func ValidBatchImage(ref string) bool { return ref != "" && batchImageRE.MatchString(ref) }
+
 // BatchTaskTimeout is the task timeout a Batch job gets when the launch names
 // none: the config's batch.task_timeout, or backend.MaxRunTime when this file
 // sets none (see Batch.TaskTimeout's comment for why the default is the
@@ -1372,7 +1380,7 @@ func validateBatch(bad func(string, ...any), c *Config) {
 	switch {
 	case b.Image == "":
 		bad("batch.image: the Cloud Batch backend needs the image a run's job runs; set it to the installation's registry image")
-	case !batchImageRE.MatchString(b.Image):
+	case !ValidBatchImage(b.Image):
 		bad("batch.image %q is not a container image reference (a lowercase registry path with a tag or a digest, such as <region>-docker.pkg.dev/<project>/fugaro/fugaro:1)", b.Image)
 	}
 	if b.MachineType != "" && !vmMachineTypeRE.MatchString(b.MachineType) {

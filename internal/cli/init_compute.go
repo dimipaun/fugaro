@@ -3,16 +3,19 @@ package cli
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/mirror"
 )
 
 // The compute stage: the Batch backend's installation-level provisioning
@@ -64,6 +67,12 @@ type computeStage struct {
 	// between the plan, the apply and the outputs.
 	t    *tf.TF
 	spec infra.ComputeSpec
+	// outs are those outputs as the root answered them (infra.ComputeOutputs):
+	// the preloaded family and the label beside it that the stage reports, and
+	// the network and the subnetwork the block recorded below names. Read on
+	// both paths that reach the block, since a run that applies nothing still
+	// has a state to read the family out of.
+	outs infra.ComputeOutputs
 }
 
 func newComputeStage(e *initEngine) *computeStage { return &computeStage{e: e} }
@@ -144,6 +153,15 @@ func (s *computeStage) Apply(ctx context.Context, _ initflow.Env) (initflow.Outc
 	if plan == nil {
 		s.changes = &infra.PlanCounts{}
 		fmt.Fprintln(r.stageDetail(), "No changes: the compute backend's provisioning matches the plan.")
+		// The provisioning is already there, so nothing is applied -- and the
+		// block is written from what its state holds all the same: an
+		// installation provisioned by an earlier release (or by hand, before
+		// this stage wrote one) gets its block on the first rerun rather than
+		// needing a re-apply it would be told it does not need.
+		if err := s.recordBatchBlock(ctx); err != nil {
+			return initflow.Outcome{}, err
+		}
+		s.announceBackend()
 		return initflow.Outcome{Detail: "No changes"}, nil
 	}
 	r.planBlock(plan)
@@ -193,6 +211,10 @@ func (s *computeStage) Apply(ctx context.Context, _ initflow.Env) (initflow.Outc
 		return initflow.Outcome{}, err
 	}
 	fmt.Fprintf(r.w, "provisioned; the preloaded boot image %s is being built now (Cloud Build, about two minutes), and rebuilt on its schedule; each generation records the socket's gid under its %s label, read off the builder VM\n", s.image, s.gidLabel)
+	if err := s.recordBatchBlock(ctx); err != nil {
+		return initflow.Outcome{}, err
+	}
+	s.announceBackend()
 	return initflow.Outcome{Changed: true, Detail: "applied: " + counts.String() + " (preload image " + s.image + ", socket gid label " + s.gidLabel + ")"}, nil
 }
 
@@ -310,6 +332,7 @@ func (s *computeStage) readOutputs(ctx context.Context) error {
 	if err != nil {
 		return remote(err)
 	}
+	s.outs = outs
 	s.image = outs.PreloadImage
 	s.gidLabel = outs.PreloadSocketGIDLabel
 	return nil
@@ -443,6 +466,285 @@ func (s *computeStage) prepare(ctx context.Context) error {
 	}
 	s.t, s.spec = t, spec
 	return nil
+}
+
+// recordBatchBlock writes the `batch:` block this provisioning answers for into
+// this machine's project config: the block names the boot image family the
+// preload publishes, the network and subnetwork a run's VMs are placed in, the
+// run account they act as, and the installation's own job image. Before this,
+// the block was written by hand -- the stage applied the root and left the
+// config alone -- so an installation that had provisioned still could not run
+// on the backend until someone typed four lines out of `terraform output`.
+//
+// What it does NOT do is switch the backend: the selection is
+// `fugaro backends use`'s, at the owner's own terminal (announceBackend says
+// so in one line), because it moves every launch of the installation onto VMs
+// and puts the reaper's deletions behind it.
+//
+// A field the owner has already written is kept, field by field, and a block
+// that is already what this run would write is not written at all. The write
+// itself is the one every converge stage makes (initRun.writeLocalConfig:
+// re-read, parse, marshal, diff, backup, atomic replace) and not a second
+// writer of its own -- so the block lands the way base_images lands when the
+// images stage records a pin, and the stage's own typed confirmation is what
+// covers it, exactly as it covers that one.
+func (s *computeStage) recordBatchBlock(ctx context.Context) error {
+	r := s.e.r
+	block, why := s.batchBlock()
+	if block == nil {
+		fmt.Fprintln(r.stageDetail(), why)
+		return nil
+	}
+	if s.e.path == "" {
+		fmt.Fprintln(r.stageDetail(), "the batch block was not recorded: this run has no project config file to write it to (the project is read from somewhere else, such as --config with no file of its own)")
+		return nil
+	}
+	old, err := os.ReadFile(s.e.path)
+	if err != nil {
+		return userErr("reading the local config to record the batch block: %v", err)
+	}
+	cur, err := localcfg.Parse(old)
+	if err != nil {
+		return userErr("%s: %v", s.e.path, err)
+	}
+	// The owner's block is the EFFECTIVE one, which is the local file's or the
+	// published one the shared config serves (localcfg.MergeShared's whole-block
+	// rule), and a merged block equal to it is not written: materializing a
+	// published block into this file would make this machine's copy shadow the
+	// installation's for good.
+	owner := s.e.lc.Batch
+	merged := mergeBatch(owner, block)
+	if sameBatch(merged, owner) {
+		if why != "" {
+			fmt.Fprintln(r.stageDetail(), why)
+		}
+		return nil
+	}
+	next := *cur
+	next.Batch = merged
+	if err := r.writeLocalConfig(&next, s.e.path, old, true); err != nil {
+		return err
+	}
+	s.e.lc = &next
+	if !r.o.planOnly {
+		r.publishSharedConfig(ctx, &next)
+	}
+	if why != "" {
+		fmt.Fprintln(r.stageDetail(), why)
+	}
+	return nil
+}
+
+// batchBlock is the block this provisioning answers for, and the line saying
+// why there is none when one of its fields cannot be formed.
+//
+// Every field but the image comes from the apply: the family from the root's
+// own outputs (with the values the root was given as the fallback for a state
+// an older release wrote), and the account from the project's run accounts.
+// The image is the one field no output answers -- localcfg.Batch says so in as
+// many words, and it is a per-workflow fact on the design's own reading -- so
+// it is formed from the installation's base image (batchJobImage), and an
+// installation with no base image gets no block rather than one the parser
+// refuses: localcfg refuses a batch block with an empty image, and that
+// refusal is not this stage's to drop.
+func (s *computeStage) batchBlock() (*localcfg.Batch, string) {
+	image := s.batchJobImage()
+	if image == "" {
+		return nil, "the batch block was not recorded: this installation's config names no base image (base_images." + config.BaseKind + ") this stage can record as the image a run's job runs (batch.image), which is the one field of the block no root output answers; set batch.image to the image your runs may execute, or record the installation's base with fugaro setup (the images stage pins it), then run fugaro setup --provision-batch again"
+	}
+	network, subnetwork := s.outs.Network, s.outs.Subnetwork
+	if network == "" {
+		network = s.spec.Network
+	}
+	if subnetwork == "" {
+		subnetwork = s.spec.Subnetwork
+	}
+	// The family the preload publishes, from the root's own output -- the state
+	// this stage just applied or planned against -- and from the pin it derives
+	// it from when that output is not in the state (a state an earlier release
+	// wrote, and the no-changes path, which reads no outputs at all). The two
+	// are the same name by construction: the module's local is
+	// "<preload image>-<sha256(var.base_image) first 8>" (modules/compute's
+	// preload.tf) and infra.PreloadedImage is that computation (compute.go),
+	// which exists so a caller can name the family without a state.
+	family := s.outs.PreloadImage
+	if family == "" && s.spec.BaseImage != "" {
+		family = infra.PreloadedImage(s.spec.BaseImage)
+	}
+	if family == "" {
+		return nil, "the batch block was not recorded: neither the compute root's state nor this installation's base image names the preloaded boot image family a run's VM boots (batch.boot_image), so the root's state holds no outputs and the base pin is empty"
+	}
+	account, why := batchBlockAccount(s.spec.RunAccounts)
+	return &localcfg.Batch{
+		Image: image,
+		// The family resource name and not the family's own name: a run's
+		// bootDisk.image takes the resource (doctor's batch-image-family reads
+		// the same shape, infra.ComputeOutputs.PreloadImage is where the bare
+		// name is explained).
+		BootImage:      "projects/" + s.spec.Project + "/global/images/family/" + family,
+		Network:        network,
+		Subnetwork:     subnetwork,
+		ServiceAccount: account,
+	}, why
+}
+
+// batchJobImage is the container image the block records: the installation's
+// own base image at the version it pins, as the installation's OWN standard
+// repository serves it.
+//
+// Why not the pin itself. The block's image is what a run's VMs execute, and a
+// reference served from a repository that is not a STANDARD_REPOSITORY is
+// refused by name -- doctor's batch-job-image (Task 10's disposition, design
+// compute-backend.md §4.4) and, for the published block, the shared config's
+// own reader (sharedcfg.go's ParseShared, which refuses a fugaro-ghcr path
+// outright). Since the mirror design the pin IS a fugaro-ghcr path (a
+// pull-through repository), so a block the pin named could neither be
+// published nor read: what is recorded instead is the same base image at the
+// same version in the installation's own `fugaro-base` repository, the shape
+// internal/mirror's Dest builds and the pre-migration job image had.
+//
+// A base the installation points at itself is kept exactly as it is: it is
+// already that installation's own answer, and whether its repository is one a
+// run may execute from is the job-image check's to judge, never this stage's.
+func (s *computeStage) batchJobImage() string {
+	lc := s.e.lc
+	pin := lc.BaseImage(config.BaseKind)
+	if pin == "" {
+		return ""
+	}
+	// The registry host is the installation's own, from the config or from the
+	// region and project this run already holds: whether the pin is this tool's
+	// is a question asked OF that host, so the comparison is with the same
+	// string the images stage compares with.
+	host, err := infra.RegistryHost(lc)
+	if err != nil {
+		return ""
+	}
+	owner := baseOwner(lc)
+	// Is the recorded base a base this tool put in place for the kind? That is
+	// exactly what managedVersion answers, in the same grammar the images stage
+	// moves a pin on by -- so the version this block names is the version the
+	// pin names, read by the code that owns that spelling rather than by a
+	// second parser here that could come apart from it.
+	if v, ok := managedVersion(pin, host, config.BaseKind, owner); ok {
+		dst, err := mirror.Dest(host, lc.GCPProject, "fugaro-"+config.BaseKind, v)
+		if err != nil {
+			return ""
+		}
+		// The installation's own STANDARD repository, and the same image at
+		// the same version: what a run's VMs execute, in the one repository of
+		// this project the job-image check accepts (see this function's comment).
+		return dst.String()
+	}
+	// Anything ELSE under this installation's remote repository is not a base
+	// of this installation: the proxy serves all of ghcr.io, so a path there
+	// belongs to whoever wrote it, and the images stage refuses one outright
+	// for that reason (foreignProxyRef). A job image is the worse place to
+	// carry it -- it is what the run's VMs execute, as the run account, so it
+	// would not merely be a base that is not ours but a stranger's code running
+	// with this installation's grants -- so no block is written from it either.
+	if foreignProxyRef(pin, host, config.BaseKind, owner) {
+		return ""
+	}
+	// Everything else is a base the owner points at themselves -- another
+	// registry of their own, a digest they built, a dev tag -- and it is kept
+	// exactly as recorded: whether the repository it names is one a run may
+	// execute from is the job-image check's to judge, and a stage that
+	// second-guessed it would overwrite the owner's own answer.
+	if localcfg.ValidBatchImage(pin) {
+		return pin
+	}
+	return ""
+}
+
+// batchBlockAccount is the account the block records as the one a job's VMs run
+// as, and the line saying why it records none.
+//
+// One account is written, and never a choice among several: the run accounts
+// are per (profile, account) pair (infra.JobRunAccounts), the block carries ONE
+// for every workflow of the installation, and a pick among them would put a
+// run of one profile under another profile's reach -- which SECURITY.md's "The
+// IAM boundary is unchanged" accepts only because Cloud Run's shared job
+// already runs every repository on one account, and does not accept across
+// profiles. So an installation with more than one gets a block without the
+// field and the reason beside it, and the owner writes the one their runs may
+// use; infra.JobRunAccounts sorts its answer, so a single account is written
+// the same way on every run.
+func batchBlockAccount(members []string) (email, why string) {
+	switch len(members) {
+	case 0:
+		return "", ""
+	case 1:
+		_, e, _ := strings.Cut(members[0], ":")
+		return e, ""
+	}
+	return "", fmt.Sprintf("the batch block records no service_account: this project holds %d Fugaro run accounts (%s), one per (profile, account) pair, and the block carries one account for every workflow of the installation; set batch.service_account to the account your runs may act as", len(members), strings.Join(members, ", "))
+}
+
+// mergeBatch is the block that gets written: what this stage formed, with every
+// field the owner has already written left alone. The owner's value wins field
+// by field -- a hand-set machine type, a network they placed the VMs in, an
+// image they built themselves, a socket gid they measured -- and the fields
+// they left empty take this stage's answer. The block has no field this stage
+// CLEARS: an owner value is never replaced with an empty one.
+func mergeBatch(owner, want *localcfg.Batch) *localcfg.Batch {
+	if owner == nil {
+		return want
+	}
+	out := *want
+	if owner.Image != "" {
+		out.Image = owner.Image
+	}
+	if owner.MachineType != "" {
+		out.MachineType = owner.MachineType
+	}
+	if owner.BootImage != "" {
+		out.BootImage = owner.BootImage
+	}
+	if owner.Network != "" {
+		out.Network = owner.Network
+	}
+	if owner.Subnetwork != "" {
+		out.Subnetwork = owner.Subnetwork
+	}
+	if owner.ServiceAccount != "" {
+		out.ServiceAccount = owner.ServiceAccount
+	}
+	if owner.Secrets != nil {
+		out.Secrets = owner.Secrets
+	}
+	if owner.SocketGID != 0 {
+		out.SocketGID = owner.SocketGID
+	}
+	if owner.TaskTimeout.Set {
+		out.TaskTimeout = owner.TaskTimeout
+	}
+	return &out
+}
+
+// sameBatch reports whether two blocks carry the same fields, nil included.
+func sameBatch(a, b *localcfg.Batch) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Image == b.Image && a.MachineType == b.MachineType && a.BootImage == b.BootImage &&
+		a.Network == b.Network && a.Subnetwork == b.Subnetwork && a.ServiceAccount == b.ServiceAccount &&
+		maps.Equal(a.Secrets, b.Secrets) && a.SocketGID == b.SocketGID && a.TaskTimeout == b.TaskTimeout
+}
+
+// announceBackend is the one line the stage ends with while the installation
+// has not selected the backend it just provisioned: the command that does, and
+// nothing beside it. The stage does not select it -- every launch of the
+// installation would move onto VMs, the reaper deletes resources there, and
+// the block this run wrote carries no confirmation for either -- and it is not
+// left unsaid either: the provisioning is money already spent, and an owner
+// who reads nothing here would go looking for the block by hand, which is what
+// this stage exists to spare them.
+func (s *computeStage) announceBackend() {
+	if s.e.lc.Backend() == backend.CloudBatch {
+		return
+	}
+	fmt.Fprintf(s.e.r.w, "this installation still runs on %s: select the backend with fugaro backends use %s\n", s.e.lc.Backend(), backend.CloudBatch)
 }
 
 // registryRepository is the Artifact Registry repository the installation's
