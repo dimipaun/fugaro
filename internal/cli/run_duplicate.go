@@ -117,7 +117,15 @@ func (d duplicateOf) what(planTask, slug string) string {
 // guard found -- the same run --retry resolves, since an ending two runs share
 // is refused there rather than guessed at.
 func (d duplicateOf) refusal(planTask, slug string) string {
-	ways := fmt.Sprintf("continue the chain with fugaro run --retry %s (or --continues %s), or launch a deliberate second attempt of the same task with --allow-duplicate (the run records, and not the code host, are where that pull request is read from)", d.run(), d.run())
+	second := "launch a deliberate second attempt of the same task with --allow-duplicate"
+	if d.pr != 0 {
+		// The caveat belongs where the pull request is named and nowhere else:
+		// the records cannot see a merge, so one that is done with still
+		// refuses, and the caller has to hear that before it reaches for the
+		// flag.
+		second += " (the run records, and not the code host, are where that pull request is read from, so one since merged or closed refuses too)"
+	}
+	ways := fmt.Sprintf("continue the chain with fugaro run --retry %s (or --continues %s), or %s", d.run(), d.run(), second)
 	if d.pr != 0 {
 		ways = fmt.Sprintf("continue that pull request with fugaro run --pr %d, %s", d.pr, ways)
 	} else {
