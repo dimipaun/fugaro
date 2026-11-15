@@ -171,7 +171,7 @@ becomes `<mode>`. In order:
    the owner's own config home, so `set` and `unset` of the project layer are refused where
    `fugaro config publish` is refused (`agentenv.Marker`, F15), and in the same words the `models`
    commands use (SD9, D789 there): the command **prints the diff and the command it would have run,
-   and writes nothing** — `--yes` included, since `--yes` answers a prompt and not this refusal.
+   and writes nothing** — no flag included, since a flag answers a prompt and not this refusal.
    `show` runs anywhere, and §4's `--repo R` form writes a repository's own file and is allowed: an
    agent may edit the tree it was given.
 4. **Resolve the file.** It is §1's one path, `~/.config/fugaro/projects/<project>.layer.yaml`:
@@ -204,7 +204,7 @@ becomes `<mode>`. In order:
 5. **Check the result.** The edited document must `config.ParseProjectLayer` cleanly, against the
    same anchor the publisher uses, and must pass `Area.Validate` on every rule it touches.
 6. **Show, confirm, back up, write.** The command prints the line diff, asks for confirmation at a
-   terminal (`--yes` confirms outside a terminal), backs up the old file to `<file>.bak-<UTC
+   terminal, backs up the old file to `<file>.bak-<UTC
    timestamp>` (mode 0600) and writes the new one atomically (temporary file, rename, mode 0600) —
    through the **shared write helper** the settings design's S5 lands in
    **`internal/cli/settings_write.go`** (README, the joint order), not through a copy of it. The
@@ -224,7 +224,7 @@ read before anything is written — not the value of one `default` key: with a r
 that decides is whichever one `Resolve` picks, and a comparison against any other one would either
 ask for the typed name over a harmless change or miss a real lowering. When the new mode ranks below
 that answer, the confirmation is the **typed project name**, as `fugaro project repos rm` asks
-(`confirmTypedStrict`), and `--yes` does not stand in for it (D832). Raising, or setting a mode equal
+(`confirmTypedStrict`), and no flag stands in for it (D832). Raising, or setting a mode equal
 to the resolved one, is an ordinary y/N. **A project that has published no layer and has no local
 file is not the exception**: nothing sets a default there, so the resolution returns Fugaro's
 built-in one, `pro` (`internal/rigor`'s `Default`, §2.1's `default` row) — `poc` and `startup` are
@@ -250,9 +250,9 @@ exactly as `fugaro models use` does (D781 there):
   inside the repository and an agent may edit it, so the write is not refused the way §3's is — but a
   lowering here needs a confirmation only the owner can give, so in that session the command prints
   the diff and the command it would have run and **writes nothing** (SD9, F15's wording in §3 step
-  3); `--yes` is not an answer to a typed name either way (D832). Raising, or setting an equal mode,
+  3); no flag is an answer to a typed name (D832). Raising, or setting an equal mode,
   is an ordinary y/N an agent's session can answer.
-- It prints the diff and asks for confirmation (`--yes` outside a terminal). It **never** commits,
+- It prints the diff and asks for confirmation. It **never** commits,
   pushes or opens a pull request: the change reaches runs when the user's branch is merged to the
   base branch, which is what every run reads (D25).
 - `show` runs anywhere.

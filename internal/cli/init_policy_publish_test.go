@@ -1065,15 +1065,19 @@ func TestUpdatePolicyPublishSkipsTheDatabaseTheRulesStageSkips(t *testing.T) {
 			_, db, _ := unadoptedRig(t, s)
 			db.Set(projectpolicy.PathShared(), staleBudgetNode())
 
-			out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+			// The person is at their own terminal, which is what confirms the
+			// covered stages now that no flag does (T11): --json confirms no
+			// step, so a run that reaches the stages at all is this one, and
+			// the state it reads is the account the run prints.
+			fakeTerminal(t)
+			out, errOut, err := executeStdin(t, "", "update")
 			if err != nil {
 				t.Fatalf("a database the pair does not prove is ours stopped the whole update: %v\n%s%s", err, out, errOut)
 			}
-			res := convergeJSONOf(t, out)
-			if got := res.state(initflow.Policy); got != "skipped" {
-				t.Errorf("the policy stage is %q, want skipped: the publish wrote the node into a database this installation never adopted\n%s", got, out)
+			if l := stepLineOf(reportLines(out), initflow.Policy); !strings.HasPrefix(l, markSkipped+" "+initflow.Policy) {
+				t.Errorf("the policy stage is %q, want skipped: the publish wrote the node into a database this installation never adopted\n%s", l, out)
 			}
-			detail := res.stageDetail(t, initflow.Policy)
+			detail := out + errOut + newestLog(t, "update")
 			for _, want := range s.wants {
 				if !strings.Contains(detail, want) {
 					t.Errorf("the skip does not name %q: %q", want, detail)
@@ -1516,9 +1520,9 @@ func raisedGuardrailFixture(t *testing.T) *projectFixture {
 // is one decision and not two.
 //
 // Before the fix, the block was a member no rule judged on either door: the
-// stage raised a spawn rate with the ordinary YesOrTyped class, so an agent's
-// session in a managed project published it with nothing asked and no record of
-// anything but a step that passed.
+// stage raised a spawn rate as an ordinary covered step, so an agent's session
+// in a managed project published it with nothing asked and no record of anything
+// but a step that passed.
 func TestUpdatePublishRaisedGuardrailNeedsTheTypedName(t *testing.T) {
 	old := selfCommand
 	selfCommand = func() string { return "fugaro" }

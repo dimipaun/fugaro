@@ -197,9 +197,9 @@ func Run(ctx context.Context, stages []Stage, o Options) (*Result, error) {
 			return nil, &MissingInputsError{Flags: l.redactAll(missing)}
 		}
 		if !o.Yes && !o.PlanOnly {
-			// An apply needs --yes; without it the run is --plan-only.
+			// A run nobody answers applies nothing: it is --plan-only.
 			l.o.PlanOnly = true
-			l.res.Note = "--non-interactive without --yes only plans; pass --yes to apply"
+			l.res.Note = "a run that never prompts and carries no answer of its own only plans; the owner's own run is what applies"
 		}
 	}
 	l.res.PlanOnly = l.o.PlanOnly
@@ -656,7 +656,7 @@ func (l *loop) converge(ctx context.Context, stages []Stage) error {
 		}
 		if !YesCovers(name) && (!l.interactive || l.o.JSON) {
 			// Never auto-confirmed, never prompted: left for the user.
-			l.needsYou(name, "needs your own confirmation, which --yes does not give", s.Left())
+			l.needsYou(name, "needs your own confirmation, which no flag gives", s.Left())
 			stops = append(stops, stop{name: name, yours: true})
 			continue
 		}
@@ -793,7 +793,7 @@ func (l *loop) agentApplied(ctx context.Context, s Stage) (done bool, err error)
 	case errors.As(err, &ge):
 		// The gate's sentence is the detail, and what stands beside it is the
 		// refusal's own answer about who this step is for: the stage's Left
-		// only when the step IS the owner's (the class refusal, D1026), and a
+		// only when the step IS the owner's (no plan gate may judge it, D1026), and a
 		// commandless refusal otherwise — a plan the cover would not admit is
 		// nobody's to type past (CV1), and the stage's own prompt asks this
 		// reader to do the one thing the gate exists to make impossible.

@@ -434,15 +434,15 @@ adding a name to a followup.* list or turning one of those keys on, is a
 widening, and a widening is the owner's own step: nothing is asked for it at
 your own terminal, and a coding agent's session is refused it with the command
 to run yourself (D1552). Writing outside a repository is refused in a coding
-agent's session, --yes included: --yes never lifts that fence.
+agent's session, and no flag lifts that fence.
 
 --dry-run says what the edit would do — the key, the layer, the file, the old
 and the new value, and whether it raises a limit — and writes nothing: no
 confirmation, no backup, no change to any file. It is answered with no
 terminal, and with --json it prints the versioned document
 schemas/settings-write.schema.json describes, which is what a caller that draws
-an edit reads. --dry-run takes neither --yes (the two answer different
-questions) nor a bare --json.
+an edit reads. --dry-run takes no bare --json (the two answer different
+questions).
 
 Every write ends with one line: next: fugaro update.`,
 		Args: cobra.ArbitraryArgs,
@@ -454,8 +454,7 @@ Every write ends with one line: next: fugaro update.`,
 	settingsAimFlags(cmd, &o.project, &o.config)
 	f.StringVar(&o.layer, "layer", "", "the layer to write ("+strings.Join(settingsWriteLayers, ", ")+")")
 	f.StringVar(&o.repo, "repo", "", "the repository whose fugaro.yaml to edit (owner/name, or a path inside its checkout)")
-	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
-	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmation this write would otherwise get (the y/N) instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back — a widening is the owner's own step and is asked nothing with or without it (D1552). Refused where nobody can answer them (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes")
+	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmation this write would otherwise get (the y/N) instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back — a widening is the owner's own step and is asked nothing with or without it (D1552). Refused where nobody can answer them (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed")
 	f.StringVar(&o.add, "add", "", "add an item to a string-list key")
 	f.StringVar(&o.remove, "remove", "", "remove an item from a string-list key")
 	f.StringArrayVar(&o.addEntry, "add-entry", nil, "add one entry to a map or an object list (field=value, once per member the entry has)")
@@ -493,8 +492,8 @@ writing one does (spec §3.7).
 value it takes away, and whether it raises a limit — and writes nothing: no
 confirmation, no backup, no change to any file. It is answered with no
 terminal, and with --json it prints the versioned document
-schemas/settings-write.schema.json describes. --dry-run takes neither --yes
-(the two answer different questions) nor a bare --json.
+schemas/settings-write.schema.json describes. --dry-run takes no bare --json
+(the two answer different questions).
 
 Every write ends with one line: next: fugaro update.`,
 		Args: cobra.ArbitraryArgs,
@@ -506,8 +505,7 @@ Every write ends with one line: next: fugaro update.`,
 	settingsAimFlags(cmd, &o.project, &o.config)
 	f.StringVar(&o.layer, "layer", "", "the layer to write ("+strings.Join(settingsWriteLayers, ", ")+")")
 	f.StringVar(&o.repo, "repo", "", "the repository whose fugaro.yaml to edit (owner/name, or a path inside its checkout)")
-	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
-	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmation this removal would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes, --dry-run and --json")
+	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmation this removal would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed; refused beside --dry-run and --json")
 	f.BoolVar(&o.executableChanges, "executable-changes", false, "allow a --layer repo write that takes away a workflow's commands or image steps, or a --layer project write that changes a profile's commands or image steps (both run as shell in every run of the repositories that take them)")
 	f.BoolVar(&o.dryRun, "dry-run", false, "print what the edit would do and write nothing")
 	f.BoolVar(&o.jsonOut, "json", false, "print the dry run's document (with --dry-run)")
@@ -2006,9 +2004,6 @@ func settingsWriteCommand(op, key, value string, o settingsWriteOptions, layer s
 // runSettingsSet is `settings set`: find the row, find the layer, check the
 // value, then the shared write path (spec §4.2).
 func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) error {
-	if err := askConflict(askFlags{ask: o.ask, yes: o.yes}); err != nil {
-		return err
-	}
 	if err := settingsDryRunFlags(o); err != nil {
 		return err
 	}
@@ -2275,7 +2270,7 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 	// --ask, once the marks are read: the sentence it prints, or the refusal
 	// that stops the run before a byte is written (managed_ask.go). It is
 	// after the gate's own admit and never instead of it.
-	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask, yes: o.yes}, managed.Managed, settingsEditConditions(cmd, edit)); err != nil {
+	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask}, managed.Managed, settingsEditConditions(cmd, edit)); err != nil {
 		return err
 	}
 	edit.Managed = managed
@@ -2298,9 +2293,6 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 // runSettingsUnset is `settings unset`: remove the key from one layer so the
 // layer below decides again, never writing a default in its place (spec §4.3).
 func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions) error {
-	if err := askConflict(askFlags{ask: o.ask, yes: o.yes}); err != nil {
-		return err
-	}
 	if err := settingsDryRunFlags(o); err != nil {
 		return err
 	}
@@ -2387,7 +2379,7 @@ func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions)
 	if err := settingsLayerGate(cmd, target, o, key, old, newData); err != nil {
 		return err
 	}
-	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask, yes: o.yes}, managed.Managed, settingsEditConditions(cmd, edit)); err != nil {
+	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask}, managed.Managed, settingsEditConditions(cmd, edit)); err != nil {
 		return err
 	}
 	edit.Managed = managed
@@ -2433,15 +2425,13 @@ func settingsLayerReservedGate(cmd *cobra.Command, target settingsTarget, key st
 }
 
 // settingsDryRunFlags refuses the flag combinations a dry run does not take.
-// --dry-run and --yes answer different questions — one says what the edit would
-// do, the other answers a write that is about to happen — so the pair is
-// refused rather than resolved (D1106); --json is the dry run's own shape, and
-// a caller that asked for a document must not silently get a table instead.
+// --dry-run and --ask answer different questions — one says what the edit would
+// do, the other asks for the confirmations a write that is about to happen gets
+// — so the pair is refused rather than resolved (D1106); --json is the dry run's
+// own shape, and a caller that asked for a document must not silently get a
+// table instead.
 func settingsDryRunFlags(o settingsWriteOptions) error {
 	if o.dryRun {
-		if o.yes {
-			return userErr("--dry-run and --yes answer different questions: a dry run says what the edit would do and writes nothing, --yes answers a write; name one")
-		}
 		if o.ask {
 			return userErr("--dry-run and --ask answer different questions: a dry run confirms nothing and writes nothing, --ask is about the confirmations a write is given; name one")
 		}

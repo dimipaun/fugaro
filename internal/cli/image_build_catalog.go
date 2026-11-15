@@ -873,7 +873,17 @@ func noteBakePlan(cmd *cobra.Command, entry string, p imagebake.Plan) {
 		return
 	}
 	if p.Baked == nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "note: the catalog entry %s bakes no checkout: %s\n", pluginwire.Printable(entry), p.Reason)
+		// Note-only gate: the switch reads an absent bake_repos as true, but a
+		// build that never wrote it asked for nothing, so it has no refusal to
+		// explain.
+		if !p.Asked {
+			return
+		}
+		line := fmt.Sprintf("note: %s: no checkout baked (%s)", pluginwire.Printable(entry), p.Reason)
+		if p.Fix != "" {
+			line += ". " + p.Fix
+		}
+		fmt.Fprintln(cmd.ErrOrStderr(), line)
 		return
 	}
 	dir, err := imagebake.Path(p.Baked.Slug)
