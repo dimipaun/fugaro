@@ -11,69 +11,91 @@ package cli
 // (docs/status.md is a snapshot, and a task's own pull request never touches
 // it): the launch itself has to read the live data.
 //
-// So the guard reads what the CLI already reads for a launch decision — the
-// rows `fugaro runs ls` builds, through the same loader and with the same
-// noCache rule resolvePR uses, and the forge through the same provider seam
-// `fugaro followups` uses (so a Bitbucket repository is read by its own
-// adapter). It refuses on either half: a run in flight on the task, or a pull
-// request a run of it left open.
+// So the guard reads the rows `fugaro runs ls` builds — the same loader, with
+// the same noCache rule resolvePR uses — and nothing else: a run in flight on
+// the task, or a run of it that carries a pull request, is a duplicate. It
+// reads no code host, which is the point of this shape rather than a
+// limitation worked around. The launcher holds no App key and no Bitbucket
+// token (docs/git-providers.md): opening the forge from a launch would fail on
+// an ordinary operator's machine — every launch warns and goes ahead, and the
+// guard is worth nothing exactly where the duplicates happened — and, where
+// the operator does export one, it would mint an installation token from a
+// coding agent's session, which is the read every other path refuses there.
+// A run's own record already says what it left: the run id, and the pull
+// request with the state the listing folds the records into (markPRStates).
 //
-// It is a fence and not a barrier, in three ways that are deliberate. A lookup
-// that fails (no network, no provider credential, a bucket that cannot be
-// read) warns once and launches: a guard that blocks on its own failure is
-// worse than none, and the failure it would block on is this machine's rather
-// than the task's. --allow-duplicate launches anyway, for the second attempt
-// that is deliberate (the redundant attempts the parallelism skill plans). And
-// a launch that names no plan task is not checked at all: with no task to
+// The cost is that the records cannot see a merge: a run that left its pull
+// request ready reads ready after a person merged it, so re-running a task
+// whose pull request is done is refused too. That is the safe direction for a
+// guard whose whole purpose is a launch that would spend the money twice, it
+// is a refusal with a way out rather than a silent stop, and the refusal says
+// so.
+//
+// It is a fence and not a barrier, in three ways that are deliberate. A read
+// that fails (a bucket that cannot be read, a backend that cannot be listed)
+// warns once and launches: a guard that blocks on its own failure is worse
+// than none, and the failure it would block on is this machine's rather than
+// the task's. --allow-duplicate launches anyway, for the second attempt that
+// is deliberate (the redundant attempts the parallelism skill plans). And a
+// launch that names no plan task is not checked at all: with no task to
 // duplicate there is nothing to find.
 
 import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"slices"
 	"strings"
 	"time"
 
-	"github.com/dimipaun/fugaro/internal/config"
-	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
-// openDuplicateProvider is OpenProvider, a seam for the guard's one read on a
-// code host (openFollowUpsProvider's pattern): whether the pull request a run
-// of the plan task left is still open, read with the process environment's own
-// credential, the way every read outside a run's own job is.
-var openDuplicateProvider = OpenProvider
-
 // duplicateOf is what the guard found: the run of the plan task that is in
-// flight, the pull request one of its runs left open, or both. Either alone is
-// a duplicate, and a run in flight may carry a pull request of its own (a
+// flight, the pull request a run of it left, or both. Either alone is a
+// duplicate, and a run in flight may carry a pull request of its own (a
 // follow-up the task's own chain is on).
 type duplicateOf struct {
 	// live is the run in flight, as its short ending; "" when none is.
 	live string
 	// status is that run's own word: launching, pending or running.
 	status string
-	// pr is the pull request found open on the task, 0 when none is: the run
-	// in flight's own, or one a run that ended left open.
+	// pr is the pull request found on the task, 0 when none is: the run in
+	// flight's own, or one a run that ended left behind.
 	pr int
-	// prRun is the short ending of the run whose record carries that pull
+	// prRun is the short ending of the run whose row carries that pull
 	// request, when it is not the run in flight.
 	prRun string
+	// prState is that pull request as the records fold it (markPRStates):
+	// runview's live, ready or stalled, the words `fugaro runs ls --state`
+	// matches. "" when no pull request was found.
+	prState string
 }
 
 // run is the run to name as the task's: the one in flight when there is one,
-// else the one whose record carries the open pull request. Both are a run of
-// the chain --retry and --continues take.
+// else the one whose row carries the pull request. Both are a run of the chain
+// --retry and --continues take.
 func (d duplicateOf) run() string {
 	if d.live != "" {
 		return d.live
 	}
 	return d.prRun
+}
+
+// prWord is the pull request's state as a reader of the refusal meets it: the
+// listing's own word where it is a fact about the pull request after its runs
+// ended, and the sentence for live, where the row of the task is not itself
+// the run that is going.
+func (d duplicateOf) prWord() string {
+	switch d.prState {
+	case prStateReady, prStateStalled:
+		return d.prState
+	case prStateLive:
+		return "still being worked on"
+	}
+	return "still there"
 }
 
 // what names the duplicate, as the whole of the --allow-duplicate note and the
@@ -85,7 +107,7 @@ func (d duplicateOf) what(planTask, slug string) string {
 	case d.live != "":
 		return fmt.Sprintf("plan task %s is already being worked on (run %s is still %s)", planTask, d.live, d.status)
 	default:
-		return fmt.Sprintf("plan task %s is already being worked on (run %s left pull request #%d of %s open)", planTask, d.prRun, d.pr, slug)
+		return fmt.Sprintf("plan task %s is already being worked on (run %s left pull request #%d of %s, %s)", planTask, d.prRun, d.pr, slug, d.prWord())
 	}
 }
 
@@ -95,7 +117,7 @@ func (d duplicateOf) what(planTask, slug string) string {
 // guard found -- the same run --retry resolves, since an ending two runs share
 // is refused there rather than guessed at.
 func (d duplicateOf) refusal(planTask, slug string) string {
-	ways := fmt.Sprintf("continue the chain with fugaro run --retry %s (or --continues %s), or launch a deliberate second attempt of the same task with --allow-duplicate", d.run(), d.run())
+	ways := fmt.Sprintf("continue the chain with fugaro run --retry %s (or --continues %s), or launch a deliberate second attempt of the same task with --allow-duplicate (the run records, and not the code host, are where that pull request is read from)", d.run(), d.run())
 	if d.pr != 0 {
 		ways = fmt.Sprintf("continue that pull request with fugaro run --pr %d, %s", d.pr, ways)
 	} else {
@@ -116,14 +138,14 @@ func (d duplicateOf) refusal(planTask, slug string) string {
 // A --pr follow-up, a --retry and a --continues launch never reach it: they
 // are the ways out of the refusal, and each continues a run that already
 // exists rather than starting a second one.
-func planTaskDuplicate(ctx context.Context, env *cloudEnv, o *runOptions, repo, slug, runID string, warn io.Writer) error {
+func planTaskDuplicate(ctx context.Context, env *cloudEnv, o *runOptions, slug, runID string, warn io.Writer) error {
 	if o.planTask == "" {
 		return nil
 	}
 	if warn == nil {
 		warn = io.Discard
 	}
-	d, found := findPlanTaskDuplicate(ctx, env, o, repo, slug, runID, warn)
+	d, found := findPlanTaskDuplicate(ctx, env, o, slug, runID, warn)
 	if !found {
 		return nil
 	}
@@ -138,7 +160,7 @@ func planTaskDuplicate(ctx context.Context, env *cloudEnv, o *runOptions, repo, 
 // it, if anything does. A read it cannot make warns and answers nothing found:
 // the launch goes ahead, and the warning is the whole of what the caller hears
 // about the check that did not happen.
-func findPlanTaskDuplicate(ctx context.Context, env *cloudEnv, o *runOptions, repo, slug, runID string, warn io.Writer) (duplicateOf, bool) {
+func findPlanTaskDuplicate(ctx context.Context, env *cloudEnv, o *runOptions, slug, runID string, warn io.Writer) (duplicateOf, bool) {
 	now := time.Now()
 	// The window is the runs bucket's own lifecycle age, so every run it still
 	// holds is seen, as --pr reads one pull request's chain; noCache, because
@@ -151,6 +173,11 @@ func findPlanTaskDuplicate(ctx context.Context, env *cloudEnv, o *runOptions, re
 		warnDuplicateLookup(warn, err, o.planTask)
 		return duplicateOf{}, false
 	}
+	// The pull request's state comes from the rows themselves, exactly as a
+	// listing computes it: the records' own word, and no code host read. The
+	// guard is a launch decision, so it makes the call every launch-time read
+	// makes and asks nothing of the network its environment may not have.
+	markPRStates(rows, nil)
 	var (
 		found  duplicateOf
 		newest time.Time
@@ -169,79 +196,40 @@ func findPlanTaskDuplicate(ctx context.Context, env *cloudEnv, o *runOptions, re
 			}
 			continue
 		}
-		// A run that ended may have left a pull request open, which is the
-		// other half of the guard and the one the forge has to answer. A
-		// review of the task's pull request carries it while its record names
-		// none (runview's PRState note), so a row with no number is passed
-		// over rather than read as no pull request.
+		// A run that ended left its pull request behind, and that is the other
+		// half of the guard. A run whose record names no pull request left
+		// none: one that failed before it pushed, or that only put the branch
+		// back on its base. A review of the task's pull request carries it
+		// while its record names none (runview's PRState note), so the row
+		// that has the number is the one that speaks for it.
 		if r.PR != 0 && !slices.ContainsFunc(prs, func(p duplicatePR) bool { return p.pr == r.PR }) {
-			prs = append(prs, duplicatePR{pr: r.PR, run: task.ShortRun(oneLine(r.Run)), created: r.Created})
+			prs = append(prs, duplicatePR{pr: r.PR, run: task.ShortRun(oneLine(r.Run)), state: r.PRState, created: r.Created})
 		}
 	}
 	if found.live != "" {
 		// A run in flight is a duplicate on its own, and the pull request it
-		// carries is the row's own: the forge is asked only when no run is
-		// going, which is the case this guard exists for -- the run that
-		// finished and left its pull request waiting.
+		// carries is its row's own: the rows that ended are asked only when no
+		// run is going, which is the case this guard exists for -- the run
+		// that finished and left its pull request waiting.
 		return found, true
 	}
 	if len(prs) == 0 {
 		return duplicateOf{}, false
 	}
+	// The newest pull request is the one a reader would look at first, and the
+	// one the task's newest run is on.
 	slices.SortFunc(prs, func(a, b duplicatePR) int { return b.created.Compare(a.created) })
-	p, ok, err := openPlanTaskPR(ctx, env, repo, prs, warn)
-	if err != nil {
-		warnDuplicateLookup(warn, err, o.planTask)
-		return duplicateOf{}, false
-	}
-	if !ok {
-		return duplicateOf{}, false
-	}
-	found.pr, found.prRun = p.pr, p.run
+	found.pr, found.prRun, found.prState = prs[0].pr, prs[0].run, prs[0].state
 	return found, true
 }
 
 // duplicatePR is one pull request a run of the plan task carries, with the run
-// whose row carries it.
+// whose row carries it and the state the records fold it into.
 type duplicatePR struct {
 	pr      int
 	run     string
+	state   string
 	created time.Time
-}
-
-// openPlanTaskPR answers the first of prs the forge still has open, newest
-// first. Every failure -- no repository kind, no credential, an unreachable
-// host -- is the caller's to warn about and launch through: the guard refuses
-// on what it read, never on what it could not read.
-func openPlanTaskPR(ctx context.Context, env *cloudEnv, repo string, prs []duplicatePR, warn io.Writer) (duplicatePR, bool, error) {
-	co := checkoutConfig(ctx, repo)
-	if co == nil {
-		co = &config.Config{}
-	}
-	kind := env.repoProvider(repo, co)
-	if kind == "" {
-		return duplicatePR{}, false, fmt.Errorf("cannot tell which git provider %s is on: set provider in its repos entry of the local config, or run this from its checkout", repo)
-	}
-	_, open, err := openDuplicateProvider(os.Environ(), func(w string) {
-		fmt.Fprintf(warn, "fugaro: warning: %s\n", w)
-	})
-	if err != nil {
-		return duplicatePR{}, false, err
-	}
-	p, _, err := open(ctx, kind, repo)
-	if err != nil {
-		return duplicatePR{}, false, fmt.Errorf("opening %s: %w", repo, err)
-	}
-	for _, c := range prs {
-		info, err := p.PullRequest(ctx, c.pr)
-		if err != nil {
-			return duplicatePR{}, false, fmt.Errorf("reading pull request #%d of %s: %w", c.pr, repo, err)
-		}
-		if info.State == gitprov.PROpen {
-			return c, true, nil
-		}
-	}
-	return duplicatePR{}, false, nil
 }
 
 // liveStatus reports whether a row's status is a run in flight: the three
@@ -262,6 +250,6 @@ func liveStatus(s string) bool {
 // run: the launch goes ahead, and the warning says so plainly rather than
 // leaving the user to think the task was checked.
 func warnDuplicateLookup(warn io.Writer, err error, planTask string) {
-	fmt.Fprintf(warn, "fugaro: warning: could not check whether plan task %s is already being worked on: %s; launching without that check, so the task may already have a run or an open pull request\n",
+	fmt.Fprintf(warn, "fugaro: warning: could not check whether plan task %s is already being worked on: %s; launching without that check, so the task may already have a run or a pull request\n",
 		oneLine(planTask), oneLine(strings.TrimSpace(err.Error())))
 }
