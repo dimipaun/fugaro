@@ -39,7 +39,7 @@ Every finding and decision below is written inside that ruling.
 | G§6 dashboard, outlier sweep | `fugaro report` (spend by day/week/month/year/repo/model/person), `fugaro runs stats --by user`, `fugaro stats runs` (per-recipe percentiles, owner-only), `fugaro diagnose`, `fugaro watch`; the `working` skill's "Inspect the expensive runs daily" and "Look at a run when it passes half its cap" sections; the owner's private daily script (prototype, not in the tree) | No report that joins cost, stage calls, review rounds and halts; no outlier rule (F19–F23) |
 | P daily/weekly/monthly/yearly reports, committed | `report.PeriodKey` already defines UTC day, ISO week, month and year; `docs/backlog/` is a precedent for Fugaro writing Markdown into a user's tree | No committed report tree, no generator (F24–F27) |
 | P pattern watching | Nothing | F28 |
-| P skills for every user | `plugin/skills/working/SKILL.md` already prescribes a daily inspection; skills are versioned with the CLI and pinned by `fugaro update-skills`/`fugaro upgrade --local` | Weekly/monthly/yearly cadence, the report command, the submission step (F29) |
+| P skills for every user | `plugin/skills/working/SKILL.md` already prescribes a daily inspection; skills are versioned with the CLI and installed on the machine by `fugaro update-skills` | Weekly/monthly/yearly cadence, the report command, the submission step (F29) |
 | P central submission of learnings | Issue forms (`bug_report.yml`, `feature_request.yml`), Discussions enabled, CLA rule for outside PRs (`CONTRIBUTING.md`) | No learning channel; licence of submitted text unsettled (F30–F32) |
 
 ## 3. Findings
@@ -206,8 +206,8 @@ or doc), **Open** (the spec's own unanswered question).
   state file. **Consequence:** D325 (outlier rule) and D326 (pattern rule and state).
 - **F29 — Exists (distribution).** Skills are versioned with the CLI: `plugin/.claude-plugin/plugin.json`
   `version`, a `fugaro-skill … fugaro-version=` header on every skill file, kept equal to the tag by
-  `scripts/bump-plugin-version.sh`; `fugaro update-skills` and `fugaro upgrade --local` pin the
-  marketplace ref in the repository's `.claude/settings.json`, and commands warn on a stale pin.
+  `scripts/bump-plugin-version.sh`; `fugaro update-skills` installs the plugin in Claude Code at user scope, and commands warn on a
+  stale pin a checkout still carries from an older release.
   `plugin/skills_lint_test.go` checks every command and flag a skill names against the CLI and holds
   size budgets (`TestLintSizeBudget`, `TestLintByteBudget`). **Consequence:** "update our skills so
   everybody does this" ships with the next release through the existing channel; the `working`
@@ -280,7 +280,7 @@ or doc), **Open** (the spec's own unanswered question).
   (F15).
 - **R6 — Skills ship through the existing versioned channel.** The cadence and the report command
   go into `plugin/skills/working` (moving the long how-to into a `reference/` file to keep the
-  size budget), shipped with the release and picked up by `fugaro upgrade --local` (F29).
+  size budget), shipped with the release and picked up by `fugaro update-skills` (F29).
 - **R7 — A submitted learning is never pasted into a skill.** A maintainer rewrites it into a
   normal PR with review; the submission is input, not text that ships (F32).
 - **R8 — No Fugaro-side scheduler.** The product ships the command; the user schedules it
@@ -424,7 +424,10 @@ data every later governance step (G§7.3–7.9) and self-calibration read. G§7.
 - **U3** — Whether Claude Code's `result` line reports a call or sub-agent count usable for oauth
   runs (R1's oauth half).
 - **U4** — That `x-claude-code-agent-id` distinguishes every sub-agent from the main session
-  reliably (F12).
+  reliably (F12). **Open, and it gates T7.2:** the owner's ruling of 2026-11-15 records that Check
+  139 — the read-only look at one sandbox gateway run's `model call` entries, which is what answers
+  this — has not been run over any run, so nothing on the record answers U4 and T7.2 does not merge
+  until something does (`docs/gcp-live-checklist.md`, Check 139, **USER-RUN, NOT RUN**).
 - **U5** — The Cloud Run job's maximum task timeout, which bounds D329's alternative.
 - **U6** — Whether a required checkbox on an issue form is a sufficient licence grant (D328): the
   owner's, and counsel's, to confirm.

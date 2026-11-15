@@ -78,8 +78,24 @@ type WireOrgCreate struct {
 	Name string `json:"name"`
 }
 
+// WireOrgList is one person's organisations: the switcher's list, the one they
+// last worked in first (P2.1). It is a plain object rather than a bare array
+// because an answer is an object everywhere else in this API, and because a list
+// that grows a field — a page's cursor, a count — is then not a new shape.
+type WireOrgList struct {
+	Organisations []WireOrganisation `json:"organisations"`
+}
+
+// WireOrgMembers is one organisation's members (P2.1), which its owners and its
+// admins read and a member does not (D2186).
+type WireOrgMembers struct {
+	Members []WireMembership `json:"members"`
+}
+
 func init() {
 	registerWire("orgs.organisation", func() any { return new(WireOrganisation) })
 	registerWire("orgs.membership", func() any { return new(WireMembership) })
 	registerWire("orgs.create", func() any { return new(WireOrgCreate) })
+	registerWire("orgs.list", func() any { return new(WireOrgList) })
+	registerWire("orgs.members", func() any { return new(WireOrgMembers) })
 }

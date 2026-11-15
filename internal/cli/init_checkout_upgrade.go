@@ -456,8 +456,8 @@ func (s *checkoutStage) stepFailure(r stepResult, u *stepCtx, step checkStep) er
 
 // leftBehind is what this apply leaves the user, or nil: the parked cloud half,
 // as a step of this run that only the user can run. The commands are the ones
-// the parked step's own refusal names — this run's flags for this checkout,
-// with and without --yes (cloudLine) — rather than this stage's one line,
+// the parked step's own refusal names — this run's flags for this checkout
+// (cloudLine) — rather than this stage's one line,
 // because the refusal is what knows the flags this run carries. The why is the
 // plan's line, in the step's own words (cloudAgentRefusal).
 func (s *checkoutStage) leftBehind(u *stepCtx, steps []plannedStep) *initflow.Left {
@@ -467,7 +467,7 @@ func (s *checkoutStage) leftBehind(u *stepCtx, steps []plannedStep) *initflow.Le
 		}
 		return &initflow.Left{Stage: initflow.Checkout, Kind: initflow.LeftCommand,
 			Text:     "in your own terminal window, not through a coding agent or a pipe, run the checkout's cloud half — the base image, the daily check job's config and the billable job-image builds, each confirmed as it is — by running",
-			Commands: []string{u.o.cloudLine(u.loc.Root, true), u.o.cloudLine(u.loc.Root, false)}}
+			Commands: []string{u.o.cloudLine(u.loc.Root)}}
 	}
 	return nil
 }
@@ -499,8 +499,12 @@ func (e *initEngine) stepCtx(env initflow.Env, loc pluginwire.Location) *stepCtx
 			// answer is in (G1). The reader is the same value the stage's own
 			// steps read through, so a typed-ahead answer is not lost between
 			// two readers over one stdin.
-			in: e.r.in, out: e.r.w}},
+			in: e.r.in, out: e.r.w, detail: e.r.stageDetail()}},
 		loc:   loc,
 		agent: e.options().Agent,
+		// What the step says about itself — the claude binary it runs, the
+		// subprocess lines under it — is the converge's own account, not the
+		// step's line: it goes where the rest of that account does (§9.2).
+		detail: e.r.stageDetail(),
 	}
 }

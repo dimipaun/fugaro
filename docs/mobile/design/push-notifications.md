@@ -10,6 +10,27 @@ one documentation test beside it (`internal/cli/docs_mobile_push_test.go`, by th
 test is red until this document exists). **No decision number is allocated here**: the
 questions at the end are **Q1, Q2 …** for the owner, and a later pass assigns the numbers.
 
+**Status as of 2026-11-14: the owner approved P5.2, and this document is what its tasks are
+built from.** The owner's order of that date — *"Approve P5.\*"* — approved **Task P5.2**, and
+[the plan](../implementation-plan.md) records it: the task's heading carries the approval, every
+word of the section it carried while the task was unscheduled is kept, and the work is split
+into **tasks P5.2.1–P5.2.10**, each with its files, its dependencies and its verification.
+**Nothing is built by the approval** — this document is still the design and no sender, push
+node, registration field or app code exists — it allocates no decision number, and **Q1–Q10
+remain the owner's to answer**: the plan lists each as a question beside the tasks that wait on
+it. Six sentences below were true when they were written and are not true of the tree the plan
+now reads, so each carries its own dated note: **§2's and §11's "`fugaro pair` is P6.6 …
+not built"** (P6.6 is **built** — `internal/cli/pair.go`, `internal/budget/token/device.go`
+and the sweep's `m~`/`p~` prefixes are on `main`, so `fugaro pair` writes the device node and
+`fugaro pair revoke` deletes it), **§2's "`RulesVersion` is 3"** (the constant is
+**4** — the coordinator's generation, merged as #1021 on 2026-10-24 — and generation 3 is P6.4's,
+the generation that bullet is about), **§3.3 and §5's "No Firebase Analytics SDK is
+linked"** (Phase 7's P7.1–P7.3 put `@react-native-firebase/app`, `analytics` and `crashlytics`
+in `mobile/package.json`), and **§8's "P4.2 is scheduled while P5.2 is not"**. The Firebase SDK
+one is not a detail: with the telemetry project's native config built into the app (**D259**,
+accepted 2026-10-19), the app's **default** Firebase app is `fugaro-prod`'s, which is the
+project question the plan now puts to the owner beside Q7.
+
 **Why this document exists, and why it is not a reversal.** **D121 was answered by the owner
 on 2026-10-17: "no push in v1."** The answer is the reconciliation's own recommendation, and
 it defers push to "a **separate decision** with its own service, its own device-token store
@@ -161,12 +182,23 @@ answered.
   that has not been revoked'*". The generated rules
   `internal/budget/rules/rules.json.tmpl` carry `config/admin/devices/$uid` inside
   `"admin": { ".read": false, ".write": false }`, and
-  `internal/projectpolicy/version.go`'s `RulesVersion` is **3**, whose comment says generation
+  `internal/projectpolicy/version.go`'s `RulesVersion` is **4** — generation 3 is P6.4's, the
+  generation this bullet is about, and the coordinator's `coordinator/` grant took the constant
+  to 4 (#1021, 2026-10-24) — and the comment beside it says generation
   3 "*is P6.4 … the device allowlist `config/admin/devices/<uid>` that USER now requires
-  (D166), and the two pairing nodes of D165*". **What is still missing is anything that
+  (D166), and the two pairing nodes of D165*". *(Amended 2026-11-14: this sentence read
+  "`RulesVersion` is **3**" until then, which the tree had left behind — generation 4 is merged
+  and the constant reads 4; generation 3 is unchanged and is what the rest of the bullet, and
+  the sibling node's ground, rest on.)* **What is still missing is anything that
   *writes* a device node**: `fugaro pair` is **P6.6**, approved 2026-10-18 and **not built**,
   so until it lands the only way to write one is by hand over IAM (the same sentence
-  `version.go` carries). There is therefore nowhere a **push** token is stored, and no grant
+  `version.go` carries). *(Amended 2026-11-14: **P6.6 has landed** — `internal/cli/pair.go`
+  (`newPairCmd`, `newPairLsCmd`, `newPairRevokeCmd`) and `internal/budget/token/device.go` are
+  on `main` — so `fugaro pair` writes the device node and `fugaro pair revoke` deletes it, and
+  "by hand over IAM" is the state of 2026-10-19. What the bullet is really about is unchanged:
+  nothing writes a **push** node, since `fugaro pair revoke` does not delete the sibling
+  `config/admin/push/$uid` (the plan's task P5.2.5) and no path carries a registration token.)*
+  There is therefore nowhere a **push** token is stored, and no grant
   that would admit one — an allowlist keyed by uid is not a token store, and this design keeps
   its own data in a **sibling** node precisely so that stays true (§3.4). **There is also no
   path that could carry one yet**: the pairing session's one client write admits only the
@@ -354,6 +386,15 @@ provider learns a category and a device address" understates it by four fields a
 series. **No Firebase Analytics SDK is linked** (`mobile/package.json` declares no Firebase or
 analytics package), so Google does not additionally receive app-usage events from this build —
 which is true of the recommended shape and would stop being true if a later task links one.
+*(Amended 2026-11-14: it did stop being true. `mobile/package.json` declares
+`@react-native-firebase/app`, `@react-native-firebase/analytics` and
+`@react-native-firebase/crashlytics` at 27.1.0 — Phase 7's P7.1–P7.3, merged — so a Firebase
+Analytics SDK **is** linked and Google does receive app-usage events from this build, under the
+telemetry plan's own closed allow-list and redaction rule. What that changes for push is not the
+analytics: the native config files the build carries are the **telemetry** project's (**D259**,
+accepted 2026-10-19), so the app's **default** Firebase app is `fugaro-prod`'s, and a
+registration token minted on it belongs to that project rather than to the installation's. The
+plan puts that question to the owner beside **Q7**.)*
 
 **The alternative: Expo's push service.** The app is an Expo app (`mobile/package.json`,
 `mobile/app.json`), and `expo-notifications` obtains an Expo push token and posts to Expo's
@@ -1173,6 +1214,9 @@ fail, need answers or bind a budget (§3.3). The first draft's "a provider learn
 a device address" **understated this by four fields and a timing series**, and is corrected
 here. **No Firebase Analytics SDK is linked** (`mobile/package.json` declares no Firebase or
 analytics package), so this build sends Google no app-usage events beyond the push path itself.
+*(Amended 2026-11-14: the state of 2026-10-19, and not true of `main` — see §3.3. The app links
+`@react-native-firebase/analytics` and `@react-native-firebase/crashlytics` now, so this
+attacker sees those events too, and the app's default Firebase app is the telemetry project's.)*
 *What this design does*: makes the payload carry nothing (§3.1). The design does **not** claim
 end-to-end secrecy — it cannot, FCM and APNs see the payload by construction — and it does not
 pretend the payload is encrypted for the phone, because the phone has no key the push path
@@ -1275,7 +1319,11 @@ the number is unclaimed.
 **Who writes it: the plan says P4.2, and this design says so too rather than claiming it.**
 The plan allocates the *writing* explicitly — "**checks 80 and 83–88 by P4.2**", and Task
 **P4.2: Checks 80–89, written into the register** — and P4.2 is **scheduled** while **P5.2 is
-not**. So the register entry for 88 is written by P4.2, in the register's own block form, under
+not**. *(Amended 2026-11-14: the owner approved **P5.2** on that date, so the contrast is spent
+— and its other half was loose already, because Phase 4 is not approved either. **P4.2 remains
+the register text's writer**, as the plan allocated it, and this design's refusal to move it
+stands; what the plan now does is put the allocation itself to the owner as a question, since
+P5.2 is approved and P4.2 is not.)* So the register entry for 88 is written by P4.2, in the register's own block form, under
 the plan's rule that a check is never run before its text is in the register; the check is
 **run by the owner only if the owner builds push**. This design **names Check 88 and does not write it**,
 and it does not move the writing to a task that may never be scheduled. It is
@@ -1424,7 +1472,12 @@ bent are §4's rules (content-free, never-a-confirmation) and §3.6's choice of 
 - Never ship before the device node it hangs off is **deployed and writable**: P6.4's
   generation 3 is approved (2026-10-18) and **merged** (#601), so the rules are in the tree,
   but `fugaro pair` is **P6.6** — approved, not built — and until it lands nothing writes a
-  device node, so no phone can be paired and no registration can exist (§2, §3.4).
+  device node, so no phone can be paired and no registration can exist (§2, §3.4). *(Amended
+  2026-11-14: **P6.6 has landed** — `internal/cli/pair.go` and
+  `internal/budget/token/device.go` are on `main` — so the node is deployed and writable now,
+  and what the rule still forbids shipping before is the **registration**: no path carries a
+  token until the consumer that would (P6.7, not built) and P5.2.1's `registration` kind are
+  in the tree.)*
 
 ## 12. Open for the owner
 
@@ -1503,8 +1556,11 @@ D160–D179 are not this document's to take.
   nothing else ever writes under `devices/**`. The consequence is that **push cannot ship
   before P6.4**; **the store needs no generation of its own** (the sibling rides generation 3,
   and pairing writes nothing into it). The **registration message** is the one part that does
-  need a later change — a bounded field Q3 (b) asks for — and generation 4 is that change's,
-  not the store's.
+  need a later change — a bounded field Q3 (b) asks for — and **generation 5** is that change's,
+  not the store's *(amended 2026-11-14: it read **generation 4**, which the coordinator's
+  `coordinator/` grant took — #1021, 2026-10-24 — so the registration change's generation is
+  the one after the tree's; amended again 2026-11-15: the owner ruled that P5.3.1, merged, takes
+  **generation 5**, so the registration change is **generation 6**, built on generation 5)*.
 
 **Q3. How does the push token rotate and the user's switches get written, given the app cannot
 write `config/admin`?**

@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -95,7 +96,7 @@ type projectPolicyPublishOptions struct {
 func newProjectPolicyPublishCmd() *cobra.Command {
 	var o projectPolicyPublishOptions
 	cmd := &cobra.Command{
-		Use:   "publish [--seed-repos] [--delete] [--yes] [--remove-routing]",
+		Use:   "publish [--seed-repos] [--delete] [--remove-routing]",
 		Short: "Publish the project's policy from the operator's config (budget admins)",
 		Long: "Build the project's policy from this machine's project config — the budget\n" +
 			"block, the providers (their secrets by NAME, never a value), the model_prices\n" +
@@ -117,16 +118,23 @@ func newProjectPolicyPublishCmd() *cobra.Command {
 			"--delete removes the policy (the children first, the shared node last, so a\n" +
 			"launch mid-delete still sees the policy and keeps its tighter ceiling) and\n" +
 			"puts the project back on the ceiling its jobs' environments carry. It goes\n" +
-			"through the same rules-marker gate as a publish, refuses without --yes while\n" +
+			"through the same rules-marker gate as a publish, refuses while\n" +
 			"runs are in flight, and asks you to type the project's name otherwise. The\n" +
 			"config/policy/repos children are removed too, shared node or not: a delete\n" +
 			"that failed on the shared node leaves them behind, and this is what clears\n" +
 			"them.\n\n" +
-			"Each repository an account a profile names admits also gets a child under\n" +
+			"Each repository an account admits also gets a child under\n" +
 			"config/policy/repos/$slug, holding the NAMES of its admitted accounts and\n" +
-			"nothing else: the accounts published are the ones some profile names,\n" +
-			"qualified by that profile's provider, so an account this config defines but\n" +
-			"no profile names admits nothing a run could read. The children are narrowed before the shared node and widened\n" +
+			"nothing else. An account is admitted by the profiles that name it, each\n" +
+			"qualified by its profile's provider, and by a repository's own\n" +
+			"repos.<owner/name>.claude_accounts, qualified by that entry's provider:\n" +
+			"an account this config defines but neither names admits nothing a run\n" +
+			"could read — a repository whose runs are not on a profile job (a\n" +
+			"per-repository job, which is every Bitbucket repository) names its\n" +
+			"accounts there, because a profile is not the only kind of job its runs\n" +
+			"land on. The two are a union, so nothing a profile admits is narrowed by\n" +
+			"a repository's entry.\n" +
+			"The children are narrowed before the shared node and widened\n" +
 			"after it, so a publish that stops between the two writes leaves the installation tighter than the config asked, never looser.\n" +
 			"When the node this publish writes carries a member an older Fugaro refuses\n" +
 			"whole — a credentials\n" +
@@ -147,7 +155,6 @@ func newProjectPolicyPublishCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.BoolVar(&o.seedRepos, "seed-repos", false, "seed allow_repos from the operator's repositories again")
 	f.BoolVar(&o.delete, "delete", false, "remove the published policy (project-centric mode off again)")
-	f.BoolVar(&o.yes, "yes", false, "confirm the deletion without typing the project's name")
 	f.BoolVar(&o.removeRouting, "remove-routing", false, "drop the published policy's routing block on purpose (an active route stops being taken)")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
@@ -263,7 +270,7 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 			// as it was read, and a coding agent's session reads why with the
 			// record of that refusal behind it. In every other session the zero
 			// gate answers here and the deletion proceeds exactly as it did.
-			m, gerr := gate.admit(ctx, policyPublishClass, policyDeleteVerdict(raw))
+			m, gerr := gate.admit(ctx, policyDeleteVerdict(raw))
 			if gerr != nil {
 				return gerr
 			}
@@ -282,6 +289,16 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 			// otherwise remove the node every run is admitted by and leave no trail
 			// of it, which is the one thing a record exists to prevent.
 			return gate.recorded(ctx)
+		}
+		// The shared-job rule, at the operator's own door and nowhere else in
+		// this run's path: a profile that mounts the Bitbucket credential is
+		// refused here, before a node is built from this config, so the
+		// operator reads it with the file in hand rather than meeting it at the
+		// update's deploy, one step away from the entry
+		// (refuseAProfileMountingTheBitbucketCredential says why the update's
+		// policy stage is not a door of it).
+		if err := refuseAProfileMountingTheBitbucketCredential(lc); err != nil {
+			return publishFailure(err, narrowedSoFar)
 		}
 		old, err := publishedPolicyOf(raw, exists)
 		if err != nil {
@@ -322,7 +339,7 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		// failure re-reads the marks and re-judges the node it would now write
 		// (D1024). A refusal is the gate's own sentence and the record of it is
 		// written before this returns.
-		m, err := gate.admit(ctx, policyPublishClass, policyPublishVerdict(old, pol, body, o.seedRepos, o.removeRouting))
+		m, err := gate.admit(ctx, policyPublishVerdict(old, pol, body, o.seedRepos, o.removeRouting))
 		if err != nil {
 			return err
 		}
@@ -387,13 +404,33 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 			for _, line := range append(append([]string{}, narrowed...), admissions...) {
 				fmt.Fprintln(out, line)
 			}
+			// The declared allowlist's own half, after the node's write for the
+			// reason the admissions are widened after it: it admits people, so a
+			// publish that failed between the two leaves an installation tighter
+			// than the config asked and never looser. It is skipped in a coding
+			// agent's session (SD8): the node it writes is what admits a phone to
+			// every run of the project, the managed gate judges the policy node
+			// and not this one (policyUnjudgedRule reads the members of the node
+			// this command publishes), so a session whose every other write is
+			// judged would otherwise seed a widening nothing judged. A person
+			// seeds it; `fugaro pair` and `fugaro pair revoke` are the writes a
+			// project's devices are kept by.
+			if agent != "" {
+				if len(lc.MobileAllow) > 0 {
+					fmt.Fprintf(out, "the declared allowlist seeded nothing: %s is a device node, and a device is a person's write (`fugaro pair`), not a coding agent's\n", rules.PathDevices)
+				}
+			} else if line, err := seedDeclaredDevices(ctx, db, lc, time.Now().UTC().Format(time.RFC3339)); err != nil {
+				return fmt.Errorf("%w; %s was set, but the device node at %s is not as the declared allowlist asks: run this publish again", err, projectpolicy.PathShared(), rules.PathDevices)
+			} else if line != "" {
+				fmt.Fprintln(out, line)
+			}
 			// The diff is printed after the write, not before it (the review
 			// finding on this change): it is a claim about the node as it now
 			// is, and a write that came back refused — the policy changed
 			// while this ran, or the credential may not write it — left the
 			// node exactly as it was, so a diff printed first would have the
 			// operator reading a change that did not happen.
-			printPolicyDiff(out, old, pol, sources, lc.CloneURLs == nil)
+			printPolicyDiff(out, old, pol, sources, lc.CloneURLs == nil, lc.Binaries == nil)
 			fmt.Fprintf(out, "set %s\n", projectpolicy.PathShared())
 			// The generation this write moved the node to is recorded in the file
 			// it was built from, the same record the policy stage keeps (D854): the
@@ -525,6 +562,10 @@ func rulesMarkerPrePolicyText(gen int) string {
 // P6.4, D166).
 const rulesDeviceGeneration = 3
 
+// rulesCoordinatorGeneration is the rules generation that added the
+// coordinator's read grant (coordinator plan P3, D194).
+const rulesCoordinatorGeneration = 4
+
 // rulesMarkerOlderText is the sentence for the state between the two
 // generations: at or above PolicyRulesVersion and below RulesVersion. Nothing
 // refuses here — Read reads the policy the marker's rules carry and
@@ -534,10 +575,17 @@ const rulesDeviceGeneration = 3
 // is this release's own document, whose mailbox the mobile app has no grant for
 // until the owner deploys it (mobile plan P2.3).
 //
-// A marker at rulesDeviceGeneration already carries the mailbox and the device
-// binding, so for it the sentence names the one thing generation 4 adds: the
-// coordinator's read grant (coordinator plan P3).
+// Each branch names the one thing the next generation adds, so the sentence
+// never sends the operator after a grant the deployed rules already carry: a
+// marker at rulesDeviceGeneration already has the mailbox and the device
+// binding, and one at rulesCoordinatorGeneration already has the coordinator's
+// read grant, so for it the sentence names the voice policy node (mobile plan
+// task P5.3.1).
 func rulesMarkerOlderText(gen int) string {
+	if gen >= rulesCoordinatorGeneration {
+		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox, the device binding and the coordinator's read grant, so runs, a published policy, the mobile app and the coordinator are unaffected — what they predate is this release's own document, which adds the voice policy node %s/{shared,repos/$slug} (mobile plan task P5.3.1): a run token reads its own project's node there, and no client writes either node; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
+			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, rules.PathVoice, projectpolicy.RulesVersion)
+	}
 	if gen >= rulesDeviceGeneration {
 		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox and the device binding, so runs, a published policy and the mobile app are unaffected — what they predate is this release's own document, which adds the read grant on the coordinator's state (coordinator plan P3): a signed-in reader is refused every read of %s/ until it is deployed; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
 			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, coordpath.PathRoot, projectpolicy.RulesVersion)
@@ -630,6 +678,63 @@ func publishAllowRepos(ctx context.Context, lc *localcfg.Config, old *projectpol
 		return nonNil(old.AllowRepos), nil, nil
 	}
 	return seedAllowRepos(ctx, lc)
+}
+
+// seedDeclaredDevices writes the DECLARED allowlist (lc.MobileAllow, D231) into
+// the device node every phone's token is admitted by, and it is
+// publishAllowRepos' rule applied to people: it seeds a project whose node is
+// not there and writes nothing else, ever.
+//
+// The node's absence is the whole condition, and it has to be, because one
+// revocation is one deleted child (D229: `fugaro pair revoke`) and a deletion
+// leaves nothing behind. An entry a node does not hold cannot be told apart
+// from an entry an operator removed, so seeding per entry would re-add every
+// revoked person at the next publish, from a declaration nobody edited — the
+// exact silent re-grant publishAllowRepos' own rule exists to prevent. What
+// follows from it is the honest half: a person declared after the first seed is
+// admitted by pairing, not by a publish, which is what the line this returns
+// when the node is there says.
+//
+// The write is ETag-guarded (`db.PutIfMatch` on the ETag the read that found
+// the node absent returned), so a node another writer created in between is
+// never overwritten: the race is lost loudly, and the node's writer wins.
+//
+// It returns the line the publish prints, and "" when the file declares
+// nothing (a project with no declared allowlist writes no node at all, and says
+// nothing about one).
+func seedDeclaredDevices(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, at string) (string, error) {
+	if len(lc.MobileAllow) == 0 {
+		return "", nil
+	}
+	var raw json.RawMessage
+	etag, found, err := db.GetETag(ctx, rules.PathDevices, &raw)
+	if err != nil {
+		return "", dbErr(lc, err, false)
+	}
+	if found {
+		return fmt.Sprintf("kept the device node at %s: the declared allowlist seeds a project whose node is not there, and it never re-adds a device an operator removed — `fugaro pair` admits a person, `fugaro pair revoke` removes one", rules.PathDevices), nil
+	}
+	nodes := map[string]pairDeviceNode{}
+	for _, e := range lc.MobileAllow {
+		if e.UID == "" {
+			continue
+		}
+		nodes[e.UID] = pairDeviceNode{Email: e.Address, Role: string(e.Role), At: at}
+	}
+	if len(nodes) == 0 {
+		return fmt.Sprintf("the declared allowlist at mobile_allow: names no uid, so %s was not written: a device node is keyed by the uid a pairing minted", rules.PathDevices), nil
+	}
+	body, err := json.Marshal(nodes)
+	if err != nil {
+		return "", fmt.Errorf("building the device node at %s: %w", rules.PathDevices, err)
+	}
+	if err := db.PutIfMatch(ctx, rules.PathDevices, etag, json.RawMessage(body)); err != nil {
+		if errors.Is(err, rtdb.ErrPrecondition) {
+			return "", userErr("%s was written by someone else while this publish ran, so the declared allowlist seeded nothing: the node stands as its writer left it, and a publish seeds a project whose node is not there (a device is added and removed by `fugaro pair`)", rules.PathDevices)
+		}
+		return "", dbErr(lc, err, true)
+	}
+	return fmt.Sprintf("seeded %d device(s) at %s from the declared allowlist", len(nodes), rules.PathDevices), nil
 }
 
 // seedAllowRepos is the seed P4 names: the operator's own repos: map and the
@@ -756,6 +861,31 @@ func sharedRepos(ctx context.Context, lc *localcfg.Config) (map[string]localcfg.
 	return sc.Repos, nil
 }
 
+// refuseAProfileMountingTheBitbucketCredential is the operator's door on the
+// shared-job rule, and it does not copy the rule's sentence: the sentence is
+// projectpolicy.CheckSharedJobProfile's, the function the deployer asks too, so
+// the two doors refuse the entry in one wording rather than in two that can
+// drift.
+//
+// The rule is asked here, at the command a person writes a policy with, and not
+// inside buildProjectPolicy, which `fugaro update`'s policy stage builds its
+// node through as well (policyNodeForPublish): an installation whose local
+// config already mounts the credential is one this repository published without
+// complaint before the owner's ruling of 2026-11-14, and the HARD RULE is that
+// `fugaro update` converges it — a refusal at the shared build would stop the
+// update whole and leave the operator editing the file by hand, which is the one
+// step an update must never need. What the stage writes is the config's own
+// node, and internal/infra's ProjectJobs is where a job for such a profile is
+// refused.
+func refuseAProfileMountingTheBitbucketCredential(lc *localcfg.Config) error {
+	for _, name := range slices.Sorted(maps.Keys(lc.Profiles)) {
+		if err := projectpolicy.CheckSharedJobProfile("profiles."+name, projectpolicy.Profile{JobProfile: lc.Profiles[name]}); err != nil {
+			return userErr("%s would not publish as a policy: %v", lc.Name, err)
+		}
+	}
+	return nil
+}
+
 // buildProjectPolicy is the node the publisher writes, from the operator's
 // config. The version is this binary's (P8: a beta cannot publish a shape
 // main cannot read), and the budget block always names a mode — an empty mode
@@ -842,6 +972,19 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 			if pr := lc.Profiles[name]; pr.AllowReposWritten() && len(pr.AllowRepos) == 0 {
 				return nil, false, userErr("this project's config sets profiles.%s.allow_repos to a written list with nothing in it, which is ambiguous: remove the key to fall back to the project's allow_repos, or write the repositories this profile admits (the project's own allow_repos is still required, so a profile's list can only narrow it)", name)
 			}
+			// A profile that mounts the Bitbucket credential is not this
+			// function's to refuse: the update's policy stage builds its node
+			// through it, and the stage must converge an installation whose
+			// local config already mounts the credential — one this repository
+			// published without complaint before the owner's ruling of
+			// 2026-11-14 — where a refusal would stop `fugaro update` whole and
+			// leave the operator editing the file by hand (CLAUDE.md's hard
+			// rule). The operator's own door asks the rule before it gets here
+			// (runProjectPolicyPublish, projectpolicy.CheckSharedJobProfile),
+			// and the deployer asks the same function of the node this build
+			// writes, which is what refuses the job (internal/infra's
+			// ProjectJobs): the entry is refused in one sentence at the two
+			// doors that own the decision, and neither is the stage.
 		}
 	}
 	silent := lc.Routing == nil || lc.Routing.Claude == nil
@@ -879,7 +1022,7 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	// a profile admitting a repository one of its accounts does not cover is
 	// refused before anything is written.
 	profiles := policyProfiles(lc)
-	accounts, err := projectpolicy.DeriveAccounts(profiles, lc.ClaudeAccounts, lc.ProjectSecrets)
+	accounts, err := projectpolicy.DeriveAccounts(profiles, lc.ClaudeAccounts, lc.ProjectSecrets, lc.PolicyRepoAccounts())
 	if err != nil {
 		return nil, false, userErr("%v", err)
 	}
@@ -1127,6 +1270,28 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		oldCloneURLs = old.CloneURLs
 	}
 	pol.CloneURLs = lc.CloneURLsEffective(oldCloneURLs)
+	// The binaries block is the owner's grant of the paths a run may add a
+	// binary at and of the cap one is held to, and the local config is its
+	// carrier from this release on (AR1): `fugaro.yaml` still has no such key
+	// (D986 — the checkout's own agent writes that file, and a key there would
+	// let the coder admit the payload the rule refuses), and the shared config
+	// refuses it for the launcher's reason, so this file is where the operator
+	// states it. A file that says nothing keeps the node's block
+	// (BinariesEffective), and a written empty block clears it (D987) — the two
+	// spellings a publisher has, and the difference between them is what a
+	// publish must not decide for itself.
+	//
+	// The member is carried over byte for byte only while the file says nothing
+	// (policyNodeBytes, keepBinaries), the clone_urls rule: the block's own
+	// spellings are the reason it is carried rather than re-encoded, and once
+	// the file states it, the file is what the operator's own edit wrote. The
+	// typed copy is what the diff reads (printPolicyDiff's kept line) and what
+	// the node is built from.
+	var publishedBinaries *projectpolicy.Binaries
+	if old != nil {
+		publishedBinaries = old.Binaries
+	}
+	pol.Binaries = lc.BinariesEffective(publishedBinaries)
 	if old != nil {
 		// The credentials block is kept too, and for the same reason plus a
 		// stronger one: D153 makes every member of it operator-written policy
@@ -1156,27 +1321,6 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		pol.CraftCredentials = old.CraftCredentials
 		pol.CraftPools = old.CraftPools
 		pol.Crafts = old.Crafts
-		// The binaries block is kept for the clone_urls reason, and this member
-		// is the one where dropping it would be silent *and* a loosening: no key
-		// of the operator's config states it (D986 keeps it off `fugaro.yaml` and
-		// the shared config), so the node's block is the only one, and a publish
-		// that wrote a node without it would take the owner's grant away — an
-		// allow list gone, and max_bytes back at the 2 MiB ceiling it was lowered
-		// from. Before this member was modelled the same node was *refused* rather
-		// than rewritten (publishedPolicyOf's unknown-key refusal, "publishing
-		// would drop them"), so a drop here would be a loosening this release
-		// introduced.
-		//
-		// The typed copy is what the diff reads (printPolicyDiff's kept line) and
-		// what the node is built from; the *bytes* are carried over on top of it
-		// (policyNodeBytes), the clone_urls way, so a publish is never the thing
-		// that picks a spelling for a member the operator hand-wrote. The block's
-		// own spellings are the reason it is carried rather than re-encoded: a
-		// written empty list and the absent member are different statements to the
-		// publisher (D987), and while the database keeps no member for an empty
-		// list — so the empty spelling cannot be a node's answer — the carry is
-		// what keeps this binary from being the one that decides.
-		pol.Binaries = old.Binaries
 		// The model grades are kept for the binaries member's reason, and they
 		// are the sharper case of it: no key of this release's config states
 		// them on the node — the project layer's defaults.model_grades is what
@@ -1384,7 +1528,7 @@ func policyPrices(lc *localcfg.Config) projectpolicy.Prices {
 // A node with no routing member, and one whose member is written as null, are
 // both written without one — that is direct (D1b), and the policy's own decode
 // reads the two the same way.
-func policyNodeBytes(pol *projectpolicy.Policy, oldRaw []byte, exists, keepRouting, keepCloneURLs bool) ([]byte, error) {
+func policyNodeBytes(pol *projectpolicy.Policy, oldRaw []byte, exists, keepRouting, keepCloneURLs, keepBinaries bool) ([]byte, error) {
 	node, err := json.Marshal(pol)
 	if err != nil {
 		return nil, userErr("building the policy: %v", err)
@@ -1410,22 +1554,16 @@ func policyNodeBytes(pol *projectpolicy.Policy, oldRaw []byte, exists, keepRouti
 			return nil, userErr("building the policy: %v", err)
 		}
 	}
-	// The binaries member is carried over byte for byte for the same reason: no
-	// command of this release writes it (D986 keeps it off the operator's
-	// config), so the node's block is the only one, and a publish that
-	// re-encoded it would be choosing a spelling for a member the operator
-	// hand-wrote. `binaries.allow` is a list, and its *empty* spelling is a
-	// statement to the publisher — a written block that admits nothing, which
-	// D987 tells from the silence a file that says nothing leaves alone — while
-	// an absent member is that silence. The node is not where the difference
-	// lives: the database keeps no member for an empty list, so the empty
-	// spelling is one the node cannot hold, and what a node carries is the
-	// block's value members (an allow list with entries in it, a lowered cap),
-	// which a re-encode would keep. Carrying the bytes is what keeps this
-	// function from answering a question that is the operator's.
+	// The binaries member is carried over byte for byte while this machine's
+	// config states no block of its own (keepBinaries), for the clone_urls
+	// reason: the member is then the node's, and the carry is what keeps this
+	// function from choosing a spelling for a block the operator hand-wrote.
+	// Once the file states the block — the empty one included, which is how an
+	// operator clears it (D987) — the file is what the operator's own edit
+	// wrote, and the encoded value is what is written.
 	if member, ok, err := jsonMember(oldRaw, "binaries"); err != nil {
 		return nil, userErr("%s cannot be read back as a document, so its binaries block cannot be kept: %v; fix it by hand, or remove it with 'fugaro project policy publish --delete'", projectpolicy.PathShared(), err)
-	} else if ok && !projectpolicy.IsNull(member) {
+	} else if ok && keepBinaries && !projectpolicy.IsNull(member) {
 		if node, err = patchPolicyJSON(node, "binaries", member); err != nil {
 			return nil, userErr("building the policy: %v", err)
 		}
@@ -1984,7 +2122,7 @@ func repoAdmissions(pol *projectpolicy.Policy) (map[string][]string, error) {
 // allow-list, every field of every provider entry, and every price override —
 // so the operator reads the values about money and data sharing that this
 // publish replaces rather than a count of them.
-func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[string]string, keepCloneURLs bool) {
+func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[string]string, keepCloneURLs, keepBinaries bool) {
 	if old == nil {
 		fmt.Fprintf(out, "%s: not published yet; writing version %d\n", projectpolicy.PathShared(), new.Version)
 	} else {
@@ -2084,13 +2222,15 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 		fmt.Fprintf(out, "  credentials kept: %s\n", credentialsText(new.Credentials))
 	}
 	// The binaries block is the owner's grant of the paths a run may add a
-	// binary at and of the cap it is held to, and no key of this release's
-	// config states it (buildProjectPolicy), so a publish keeps it — a fact the
-	// operator reading this diff has to be told, the way the clone URLs' line
-	// tells them: the block is unchanged, so no +/- line of the diff above
-	// mentions it, and an operator who hand-wrote the block would read that
-	// silence as "it is gone".
-	if new.Binaries != nil {
+	// binary at and of the cap it is held to, and the local config is where the
+	// operator states it from this release on (AR1). While that file says
+	// nothing the node's block stands (buildProjectPolicy), and a fact the
+	// operator reading this diff has to be told is worth a line, the clone
+	// URLs' `kept` line: the block is unchanged, so no +/- line of the diff
+	// above mentions it, and an operator who hand-wrote the block would read
+	// that silence as "it is gone". A file that states the block writes it, and
+	// then the line would be the operator's own edit read back.
+	if keepBinaries && new.Binaries != nil {
 		fmt.Fprintf(out, "  binaries kept: %s\n", binariesText(new.Binaries))
 	}
 	// The model grades are the project's own choice of model for the ladder's
@@ -2589,10 +2729,15 @@ func profilesText(p *projectpolicy.Policy) string {
 }
 
 // accountsText is the policy's account names as one line, for the diff's
-// summary row (the per-account lines carry the repositories).
+// summary row (the per-account lines carry the repositories). The empty row
+// names BOTH sources of the block, because either one alone may fill it: the
+// profiles that name an account, and the repositories whose own
+// repos.<owner/name>.claude_accounts does (DeriveAccounts). A row that named
+// the profiles only would tell an operator whose per-repository job is the
+// whole point of the entry that there is nothing to look for.
 func accountsText(p *projectpolicy.Policy) string {
 	if len(p.Accounts) == 0 {
-		return "none (no profile serves a Claude account)"
+		return "none (no profile and no repository entry serves a Claude account)"
 	}
 	return strings.Join(p.AccountNames(), ", ")
 }
@@ -2641,7 +2786,7 @@ func deleteProjectPolicy(cmd *cobra.Command, lc *localcfg.Config, db *rtdb.Clien
 			return err
 		}
 		if inflight > 0 && !o.yes {
-			return userErr("%d run(s) are in flight: a run that is mid-flight keeps the policy until it finishes, so --delete is refused without --yes; wait for them (fugaro runs ls), or pass --yes once you have read what it does", inflight)
+			return userErr("%d run(s) are in flight: a run that is mid-flight keeps the policy until it finishes, so --delete is refused while they run; wait for them (fugaro runs ls), then repeat it", inflight)
 		}
 		if err := confirmRemoval(cmd, lc, o.yes, "this removes the published policy: every run falls back to the ceiling its job's environment carries, and the project's allow-list stops being enforced"); err != nil {
 			return err
@@ -2713,11 +2858,13 @@ func runsInFlight(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) (in
 // policy until it finishes. A flag typed in advance must not be what stops a
 // run that is already running, so this asks for the name itself.
 func confirmRemovalStrict(cmd *cobra.Command, lc *localcfg.Config, what string) error {
-	return confirmTypedStrict(cmd, lc, "--yes does not confirm this one while a run is in flight; wait for it (fugaro runs ls), or type the project's name at a terminal", what)
+	return confirmTypedStrict(cmd, lc, "typing the project's name is the only thing that confirms this one while a run is in flight; wait for it (fugaro runs ls), then confirm it at your own terminal", what)
 }
 
-// confirmRemoval is confirmRemovalStrict where --yes may stand in for the
-// typed name: the caller has checked that nothing is in flight.
+// confirmRemoval is confirmRemovalStrict where the run's own answer may stand
+// in for the typed name: the caller has checked that nothing is in flight. The
+// flag that once carried that answer is gone from the door (T11), so what
+// reaches here is the field the run itself holds.
 func confirmRemoval(cmd *cobra.Command, lc *localcfg.Config, yes bool, what string) error {
 	return confirmTyped(cmd, bufio.NewReader(cmd.InOrStdin()), lc, yes, what)
 }

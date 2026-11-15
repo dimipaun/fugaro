@@ -100,7 +100,7 @@ const missingAnthropicKey = config.MissingAnthropicKey
 
 // validateRoutes: routes need the Anthropic upstream's kind, never its key
 // (a run whose models are all routed has no key, and that is exactly when
-// they matter).
+// they matter) — or the one service upstream that does have a key of its own.
 func validateRoutes(u Upstream, routes []Route) error {
 	if len(routes) == 0 {
 		return nil
@@ -113,11 +113,24 @@ func validateRoutes(u Upstream, routes []Route) error {
 	}
 	if u.Kind == KindService {
 		// C1.15 (service.go): a route is reached with the job's own key for
-		// the provider, and a cascade run has no key of its own (D143). A
-		// service upstream takes no routes at all, whatever they name.
-		return fmt.Errorf("gateway: the service upstream takes no routes: %w", errServiceOnRoute)
+		// the provider, and a cascade run has no key of its own (D143). The
+		// one service upstream that does have one is a switched api-key run
+		// (B2.2): its own repository's auth is what AuthMode declares, and
+		// R6/D1634 keep that repository's provider keys on the runner path
+		// and mounted, so the calls a route claims go to the provider's own
+		// endpoint with the job's key and every other call goes to the
+		// service. A declaration of oauth is no such run — a provider pin
+		// under oauth is refused before a gateway is built
+		// (config.CheckProviderAuth) — and an upstream that declares nothing
+		// is a cascade's.
+		if u.AuthMode != "api-key" {
+			return fmt.Errorf("gateway: the service upstream takes no routes: %w", errServiceOnRoute)
+		}
 	}
-	if u.Kind != "anthropic" {
+	if u.Kind != "anthropic" && u.Kind != KindService {
+		// A KindService upstream reaching here declared api-key, and its
+		// routes are validated exactly as the anthropic upstream's are: the
+		// one service upstream whose calls are not all the service's.
 		return fmt.Errorf("gateway: routes need the anthropic upstream, not %q (a run does not mix credentials)", u.Kind)
 	}
 	for i, r := range routes {

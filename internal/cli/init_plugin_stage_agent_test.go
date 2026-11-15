@@ -45,7 +45,7 @@ import (
 // installs, the repository stage stops needs-you, and the checkout runs past
 // that stop to park its cloud half.
 func TestInitPluginStageMovesInAgentSessionAheadOfARepositoryStop(t *testing.T) {
-	r := newConvergeRigYAML(t, v6Node(), convergeLegacyYAML)
+	r := newConvergeRigYAML(t, v7Node(), convergeLegacyYAML)
 	currentRelease(t)
 	// The staleness line is once per process; an earlier test's run may have
 	// spent it.
@@ -55,7 +55,7 @@ func TestInitPluginStageMovesInAgentSessionAheadOfARepositoryStop(t *testing.T) 
 	// leave an applying stage for the user.
 	t.Setenv("CLAUDECODE", "1")
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	out, errOut, err := executeStdin(t, "", "update", "--json")
 	if err == nil {
 		t.Fatalf("the run reported success while the checkout's cloud half is parked:\n%s", out)
 	}

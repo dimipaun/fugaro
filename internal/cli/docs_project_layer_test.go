@@ -520,19 +520,19 @@ func TestNoShippedTextNamesTheRetiredOAuthGate(t *testing.T) {
 
 // TestDocsProjectLayerStatesThePolicyVersionItShips: docs/project-layer.md's
 // reference paragraph said, in the present tense, that "the policy is version 2
-// from fugaro 0.8.5" — and the bump to version 7 raises `projectpolicy.Version`
-// (VersionSince[7] = "0.24.0", the release that states the escalation ladder's
-// model grades in the node), so the sentence must name the version and release
-// this tree writes. The paragraph now leads with version 7 and keeps version 6
-// as the node that came before it, which is what the table says.
+// from fugaro 0.8.5" — and the bump to version 8 raises `projectpolicy.Version`
+// (VersionSince[8] = "0.26.0", the release whose own config states the binaries
+// block, AR1), so the sentence must name the version and release this tree
+// writes. The paragraph now leads with version 8 and keeps version 7 as the node
+// that came before it, which is what the table says.
 //
 // The version the page names is read from the constants rather than typed
 // twice, so the next bump fails here instead of shipping a page describing
 // another release's node.
 //
 // Mutation (verified, run and restored): put back the clause the bump
-// replaced — "the release that states the binaries block in it" for "the
-// release that states the escalation ladder's model grades in it" — and this
+// replaced — "the release that states the escalation ladder's model grades in
+// it" for "the release whose own config states the binaries block" — and this
 // test fails naming the sentence it wants.
 func TestDocsProjectLayerStatesThePolicyVersionItShips(t *testing.T) {
 	doc := readDoc(t, "docs/project-layer.md")
@@ -540,7 +540,7 @@ func TestDocsProjectLayerStatesThePolicyVersionItShips(t *testing.T) {
 	if !ok {
 		t.Fatalf("projectpolicy.VersionSince has no row for Version %d, and this page names the release each version came in", projectpolicy.Version)
 	}
-	want := fmt.Sprintf("**The policy is version %d from fugaro %s, the release that states the escalation ladder's model grades in it**", projectpolicy.Version, rel)
+	want := fmt.Sprintf("**The policy is version %d from fugaro %s, the release whose own config states the binaries block**", projectpolicy.Version, rel)
 	if !strings.Contains(doc, want) {
 		t.Errorf("docs/project-layer.md does not say %q: the page describes the node this release writes, and projectpolicy.Version/%d is that node", want, projectpolicy.Version)
 	}
@@ -621,7 +621,7 @@ func TestDocsProjectLayerSaysWhatTiesARepositoryToAProject(t *testing.T) {
 		"There is **no registration record**",
 		"the runs bucket's `runs/<slug>/` prefixes and Firestore's `spendDaily`",
 		"Discovery stays **optional and explicit**",
-		"| `fugaro project sync [--bitbucket <workspace>] [--bitbucket-project <key>] [--check] [--github-app-id <id>] [--github-app-key] [--yes]` |",
+		"| `fugaro project sync [--bitbucket <workspace>] [--bitbucket-project <key>] [--check] [--github-app-id <id>] [--github-app-key]` |",
 		"The **enrolled** against the **seen**",
 		"the ones the allow-list does not already admit, in **one batch, with no confirmation**",
 		"the discovery answer has shipped too",
@@ -757,18 +757,19 @@ func TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes(t *testing.T) {
 //
 // Mutation (verified, run and restored): delete the admissions sentence from the
 // row — this fails naming the order; delete the warning sentence — it fails
-// naming the warning; restore "an account's `allow_data_to` admits" in place of
-// "an account **a profile names** admits" — it fails naming the accounts that
-// are published (security review m-4: the row claimed every account's
-// allow_data_to publishes a child, and the code publishes the accounts some
-// profile names, which is narrower); delete the cascade-refusal clause — it
-// fails naming it (security review M-1's behaviour is described here too).
+// naming the warning; drop the repository-entry half of the sources sentence —
+// it fails naming the accounts that are published (security review m-4: the row
+// claimed every account's allow_data_to publishes a child, and the code
+// publishes the accounts a profile or a repository entry names, which is
+// narrower); delete the cascade-refusal clause — it fails naming it (security
+// review M-1's behaviour is described here too).
 func TestDocsProjectLayerSaysTheAdmissionsAndTheSkewWarning(t *testing.T) {
 	doc := readDoc(t, "docs/project-layer.md")
 	for _, want := range []string{
 		"`config/policy/repos/$slug` holding the **names** of its admitted accounts",
-		"each repository an account **a profile names** admits gets a child",
-		"an account the config defines but no profile names admits nothing a run reads",
+		"each repository an account admits gets a child",
+		"`repos.<owner/name>.claude_accounts`, qualified by that entry's provider",
+		"an account the config defines but neither names admits nothing a run reads",
 		"is written **before** the shared node while the widening half follows it",
 		"leaves the installation tighter than the config asked and never looser",
 		"The diff also **warns** when the node it wrote carries a member an older",
@@ -784,7 +785,8 @@ func TestDocsProjectLayerSaysTheAdmissionsAndTheSkewWarning(t *testing.T) {
 	help := newProjectPolicyPublishCmd().Long
 	for _, want := range []string{
 		"holding the NAMES of its admitted accounts",
-		"an account a profile names admits",
+		"Each repository an account admits also gets a child",
+		"repos.<owner/name>.claude_accounts, qualified by that entry's provider",
 		"an account this config defines but",
 		"narrowed before the shared node and widened",
 		"tighter than the config asked, never looser",

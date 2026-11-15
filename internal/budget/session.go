@@ -87,7 +87,7 @@ type Config struct {
 	LocalEnforce              bool
 
 	// Grace is the D14 window (zero: DefaultGrace); HeartbeatEvery the
-	// registry and usage cadence (zero: 15 s).
+	// registry and usage cadence (zero: DefaultHeartbeatEvery).
 	Grace          time.Duration
 	HeartbeatEvery time.Duration
 	// Now is the local clock, used until the database has told its own
@@ -114,6 +114,16 @@ type Config struct {
 // while the local predicate says it should pass (a stale read) before the
 // backend counts as unavailable.
 const maxStale = 8
+
+// DefaultHeartbeatEvery is the cadence of the registry's beat and every
+// interval derived from it (Config.HeartbeatEvery when it is zero). It is
+// exported because the runner's keep-warm beat against the credentials
+// service keeps the same interval — one request per 15 s is the cadence Check
+// 511 measured the service answering at across its whole 300 s window, with no
+// cold start (D1934; that check exited 2 on its instance-ids row, so what it
+// settled is the timing and not how many instances answered) — and the two
+// beats are one cadence by intent rather than two numbers that happen to agree.
+const DefaultHeartbeatEvery = 15 * time.Second
 
 // Session is a run's connection to the budget backend: its Firebase
 // identity, the database client, the registry entry, the kill watch and the
@@ -175,7 +185,7 @@ func Open(ctx context.Context, cfg Config, custom string) (_ *Session, rerr erro
 		cfg.Now = time.Now
 	}
 	if cfg.HeartbeatEvery <= 0 {
-		cfg.HeartbeatEvery = 15 * time.Second
+		cfg.HeartbeatEvery = DefaultHeartbeatEvery
 	}
 	if cfg.RetryEvery <= 0 {
 		cfg.RetryEvery = 5 * time.Second
@@ -634,3 +644,11 @@ func (s *Session) IDToken() func() string { return s.tok.Token }
 // so far, for the run record.
 func (s *Session) GrantedMicros() Micros  { s.mu.Lock(); defer s.mu.Unlock(); return s.granted }
 func (s *Session) ReleasedMicros() Micros { s.mu.Lock(); defer s.mu.Unlock(); return s.released }
+
+// HeartbeatEvery is the cadence this session beats at: the interval its
+// configuration named, or DefaultHeartbeatEvery when it named none (Open
+// settles that once, so a reader here never has to). A caller that has to
+// beat alongside the session -- the runner's keep-warm request, D1934 -- reads
+// the cadence here rather than respelling the default beside it, so the two
+// beats of one run are one number.
+func (s *Session) HeartbeatEvery() time.Duration { return s.cfg.HeartbeatEvery }

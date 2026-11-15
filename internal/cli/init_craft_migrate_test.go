@@ -112,6 +112,65 @@ func TestCraftMigrationKeepsTheAccountEveryStageRunsOn(t *testing.T) {
 	}
 }
 
+// aliasInstallation is previousInstallation with its account keys naming
+// aliases instead of accounts: the default names the alias standing for team-a
+// and the first-line review names the one standing for team-b. An alias is a
+// name the choice keys may hold (D2091), and the migration reads two of them —
+// default_claude_account and stages.<stage>.claude_account — so the keys it
+// derives have to be the accounts those aliases stand for, which is the account
+// each stage ran on before (D2102).
+const aliasInstallation = `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+claude_accounts:
+  team-a: { allow_data_to: [dimipaun/fugaro] }
+  team-b: { allow_data_to: [dimipaun/fugaro] }
+claude_account_aliases:
+  primary: team-a
+  reviewer: team-b
+default_claude_account: primary
+stages:
+  review_first: { claude_account: reviewer }
+`
+
+// TestCraftMigrationResolvesAnAlias: `fugaro update` on an installation whose
+// account keys name aliases derives the crafts from the accounts the aliases
+// stand for. A craft key written with the alias' own name would name something
+// no credential of this release stands for — an alias is a name the choice keys
+// hold, never an account's name (D2092) — and the run would go out on a
+// credential the resolver cannot find.
+//
+// It is the same installation as TestCraftMigrationKeepsTheAccountEveryStage
+// RunsOn under aliases, so the crafts it resolves are the ones that test pins.
+func TestCraftMigrationResolvesAnAlias(t *testing.T) {
+	before := parseLocalConfig(t, aliasInstallation)
+	lc := parseLocalConfig(t, aliasInstallation)
+
+	if notes := migrateCraftKeys(lc); len(notes) != 0 {
+		t.Fatalf("the fixture migrates whole, but the run reported %v", notes)
+	}
+	// The alias is not an account, so no credential is derived from it: the
+	// file gains one credential per account and none per name pointing at one.
+	for _, alias := range []string{"primary", "reviewer"} {
+		if holdsCredential(lc, alias) {
+			t.Errorf("the alias %s became a credential, and an alias is not an account", alias)
+		}
+	}
+	got := resolveCrafts(t, lc)
+	for craftName, stage := range craftStage {
+		want := installationAccount(before, stage)
+		account, alias := lc.ResolveAccount(want)
+		if alias == "" {
+			t.Fatalf("the fixture's stage %s names %q, which is not one of its aliases", stage, want)
+		}
+		if got[craftName].Access != account {
+			t.Errorf("craft %s resolves access %q, but its stage %s runs on the account %q the alias %s stands for", craftName, got[craftName].Access, stage, account, alias)
+		}
+	}
+}
+
 // TestCraftMigrationIsIdempotent: the second run of the migration writes
 // nothing and says nothing, so `fugaro update` twice is `fugaro update` once
 // and a converged installation reports no changes.
@@ -519,7 +578,7 @@ crafts:
 // release with default_claude_account set reaches the craft vocabulary with
 // `fugaro update` alone, and doctor is clean afterwards (the HARD RULE, F17).
 func TestUpdateConvergesPreviousInstallation(t *testing.T) {
-	r := newConvergeRig(t, v6NodeWithAccounts())
+	r := newConvergeRig(t, v7NodeWithAccounts())
 	r.appendConfig(t, migratedAccounts)
 	// The keys go in before the copy the door reads is taken: the rig clears
 	// FUGARO_CONFIG, so the local config `fugaro update` reads and writes is the
@@ -568,7 +627,7 @@ func TestUpdateConvergesPreviousInstallation(t *testing.T) {
 // refusal). What idempotence means for this migration is a property of the file
 // it produced, and that is what the test reads.
 func TestUpdateIsIdempotent(t *testing.T) {
-	r := newConvergeRig(t, v6NodeWithAccounts())
+	r := newConvergeRig(t, v7NodeWithAccounts())
 	r.appendConfig(t, migratedAccounts)
 	// The keys go in before the copy the door reads is taken: the rig clears
 	// FUGARO_CONFIG, so the local config `fugaro update` reads and writes is the
@@ -596,7 +655,7 @@ func TestUpdateIsIdempotent(t *testing.T) {
 // already — is one nobody reads, and the keys it is about are the same keys
 // every time.
 func TestUpdateReportsTheKeysItCannotConvert(t *testing.T) {
-	node := v6NodeWithAccounts()
+	node := v7NodeWithAccounts()
 	// The node carries the stage key too: an account key the node does not
 	// carry is a widening of what the project's runs may reach, and publishing
 	// one needs a typed confirmation at a real terminal (policyAccountWidening).
@@ -607,7 +666,10 @@ func TestUpdateReportsTheKeysItCannotConvert(t *testing.T) {
 		"  team-b: { allow_data_to: [dimipaun/fugaro] }\n"+
 		"default_claude_account: team-a\nstages:\n  implement: { claude_account: team-b }\n")
 	registerInstallation(t, r.initRig)
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	// The note and the write it belongs to are the run's own account of the
+	// file it converged, so both are in the log beside the screen (stageDetail),
+	// and the order between them is the log's.
+	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"}) + newestLog(t, "update")
 
 	note := "note: crafts.coder:"
 	if !strings.Contains(out, note) {
@@ -685,14 +747,14 @@ default_claude_account: team-a
 	}
 }
 
-// v6NodeWithAccounts is v6Node carrying the account-choice members this
+// v7NodeWithAccounts is v7Node carrying the account-choice members this
 // fixture's local config states, so the policy stage's publish is a publish of
 // the verifier list alone: an account key the node does not carry is a widening
 // of what every run of the project may reach, and publishing one needs a typed
 // confirmation at a real terminal (policyAccountWidening), which is the one
 // thing a headless test cannot give.
-func v6NodeWithAccounts() map[string]any {
-	node := v6Node()
+func v7NodeWithAccounts() map[string]any {
+	node := v7Node()
 	node["default_claude_account"] = "team-a"
 	node["claude_account_stages"] = map[string]any{"review_first": "team-b"}
 	return node

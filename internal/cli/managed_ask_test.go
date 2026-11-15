@@ -17,14 +17,13 @@ import (
 // table that rule is read against and the runs that show it in the product.
 //
 // The table is the one the rule has to answer for: three states of the marks
-// (managed, not managed, a mark that could not be read) × three flag states
-// (neither, --yes, --ask) × every session a run can be in (a real terminal, a
-// coding agent's session with and without one, a pipe, --json,
-// --non-interactive), with both confirmation classes walked beside them. Every
-// expectation is written by hand, and the two mutations the flag's safety rests
-// on are run against it: a read predicate that answered "managed" for
-// everything must fail the not-managed rows, and a decision that dropped the
-// refusal must fail the sessions that cannot answer one.
+// (managed, not managed, a mark that could not be read) × two flag states
+// (neither, --ask) × every session a run can be in (a real terminal, a coding
+// agent's session with and without one, a pipe, --json). Every expectation is
+// written by hand, and the two mutations the flag's safety rests on are run
+// against it: a read predicate that answered "managed" for everything must fail
+// the not-managed rows, and a decision that dropped the refusal must fail the
+// sessions that cannot answer one.
 //
 // The runs below are the product's own paths and not the rule: `fugaro update`
 // over the real gate read in faked installations, and the two step-level
@@ -47,18 +46,16 @@ type askSession struct {
 func askSessions() []askSession {
 	return []askSession{
 		{"a real terminal", initflow.Conditions{Terminal: true}},
-		{"a real terminal with --yes", initflow.Conditions{Terminal: true, Yes: true}},
 		{"a coding agent's session at a terminal", initflow.Conditions{Terminal: true, Agent: "CLAUDECODE"}},
 		{"a coding agent's session with no terminal", initflow.Conditions{Agent: "CLAUDECODE"}},
 		{"a pipe", initflow.Conditions{}},
 		{"--json at a terminal", initflow.Conditions{Terminal: true, JSON: true}},
-		{"--non-interactive at a terminal", initflow.Conditions{Terminal: true, NonInteractive: true}},
 	}
 }
 
-// askFlagStates is the three flag states, in the spelling the rule's own
-// comments use.
-var askFlagStates = []string{"neither", "--yes", "--ask"}
+// askFlagStates is the two flag states, in the spelling the rule's own comments
+// use: --yes was the other one, and T11 removed it (docs/no-prompt-policy).
+var askFlagStates = []string{"neither", "--ask"}
 
 // askOracle is the flag's whole rule, written by hand and never derived from
 // initflow.AskDecision:
@@ -79,7 +76,7 @@ func askOracle(isManaged bool, flag string, c initflow.Conditions) (line, refusa
 	if !isManaged {
 		return initflow.AskUnmanaged(), ""
 	}
-	if c.Agent != "" || c.NonInteractive || c.JSON || !c.Terminal {
+	if c.Agent != "" || c.JSON || !c.Terminal {
 		return "", initflow.AskRefusal(c)
 	}
 	return initflow.AskRestored(), ""
@@ -113,16 +110,15 @@ func askProductDecide(f askFlags, managed bool, c initflow.Conditions) (line, re
 // otherwise move the oracle with it and pass itself — which is exactly the
 // mutation the first check exists to catch.
 //
-// The two classes are walked beside the sessions. --ask is the same decision for
-// both (AskDecision takes no class), and what the rows assert about them is that
-// the flag takes the gate's verdict out of BOTH: a step of the stricter class is
-// never left to the gate by the flag that asked for the confirmations, which is
-// the direction a mistake here would fall in.
+// The gate's own predicate is walked beside the sessions: what the rows assert
+// is that the flag takes the gate's verdict out of every one of them, because a
+// step left to the gate under the flag that asked for the confirmations is the
+// direction a mistake here would fall in.
 func askViolations(decide askDecider, mode func(bool, string, error) bool, reads []managedRead) (bad []string, n int) {
 	for _, rd := range reads {
 		isManaged := mode(rd.ok, rd.reason, rd.err)
 		// The gate's own verdict for this read with the plan admitted: the most
-		// the gate ever gives, so a class it is not taken out of here is one
+		// the gate ever gives, so a session it is not taken out of here is one
 		// --ask cannot take out at all.
 		m := initflow.Managed{Managed: rd.managed, Admitted: rd.managed}
 		for _, flag := range askFlagStates {
@@ -130,8 +126,7 @@ func askViolations(decide askDecider, mode func(bool, string, error) bool, reads
 				n++
 				c := s.c
 				c.Ask = flag == "--ask"
-				c.Yes = c.Yes || flag == "--yes"
-				f := askFlags{ask: flag == "--ask", yes: flag == "--yes"}
+				f := askFlags{ask: flag == "--ask"}
 				wantLine, wantRefusal := askOracle(rd.managed, flag, c)
 				line, refusal := decide(f, isManaged, c)
 				where := rd.state + ", " + flag + ", " + s.name
@@ -141,15 +136,8 @@ func askViolations(decide askDecider, mode func(bool, string, error) bool, reads
 				if refusal != wantRefusal {
 					bad = append(bad, where+": refusal "+askQuote(refusal)+", want "+askQuote(wantRefusal))
 				}
-				if c.Ask {
-					for _, class := range []struct {
-						class initflow.ConfirmClass
-						name  string
-					}{{initflow.Typed, "Typed"}, {initflow.YesOrTyped, "YesOrTyped"}} {
-						if initflow.GateConfirms(class.class, c, m) {
-							bad = append(bad, where+": the gate still stands in for a "+class.name+" step")
-						}
-					}
+				if c.Ask && initflow.GateStandsIn(c, m) {
+					bad = append(bad, where+": the gate still stands in for this step")
 				}
 			}
 		}
@@ -253,7 +241,7 @@ func TestManagedAskPropertyCatchesADecisionWithNoRefusal(t *testing.T) {
 	}
 	for _, s := range []string{
 		"a coding agent's session at a terminal", "a coding agent's session with no terminal",
-		"a pipe", "--json at a terminal", "--non-interactive at a terminal",
+		"a pipe", "--json at a terminal",
 	} {
 		if !askMentionsSession(bad, s) {
 			t.Errorf("dropping the refusal is not caught in %s:\n%s", s, firstFew(bad))
@@ -268,7 +256,7 @@ func TestManagedAskPropertyCatchesADecisionWithNoRefusal(t *testing.T) {
 			if !f.ask {
 				return "", ""
 			}
-			if !isManaged || c.Agent != "" || c.NonInteractive || c.JSON || !c.Terminal {
+			if !isManaged || c.Agent != "" || c.JSON || !c.Terminal {
 				return "", initflow.AskRefusal(c)
 			}
 			return initflow.AskRestored(), ""
@@ -606,28 +594,6 @@ func TestUpdateAskOnAPlanOnlyRunSaysThereWasNothingToRestore(t *testing.T) {
 	}
 	if n := len(r.ran(t, "apply")); n != 0 {
 		t.Errorf("--plan-only applied %d step(s)", n)
-	}
-}
-
-// The two flags contradict each other, and the refusal is made before anything
-// is read: no mark, no gate, no prompt, no write.
-func TestUpdateAskAndYesAreRefused(t *testing.T) {
-	r := askUpdateRig(t, askMarkWorlds()[0])
-	fakeTerminal(t)
-	noAgentSession(t)
-
-	got, err := updateRun(t, r, "update", "--ask", "--yes")
-	if err == nil {
-		t.Fatalf("the run honoured two contradictory flags:\n%s", got)
-	}
-	if !strings.Contains(got, initflow.AskAndYes()) {
-		t.Errorf("the refusal is not the pair's own sentence:\n%s", got)
-	}
-	if n := markReads(r); n != 0 {
-		t.Errorf("the pair was refused after %d mark read(s)", n)
-	}
-	if n := len(r.ran(t, "apply")); n != 0 {
-		t.Errorf("%d apply(s) ran", n)
 	}
 }
 

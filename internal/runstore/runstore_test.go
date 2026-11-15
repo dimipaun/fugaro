@@ -23,6 +23,7 @@ import (
 	"gocloud.dev/blob/memblob"
 	"gocloud.dev/gcerrors"
 
+	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -216,6 +217,74 @@ func TestRecordRoundTripsToleratedFindings(t *testing.T) {
 	}
 	if len(got.Reviews) != 1 || got.Reviews[0].Findings != 2 {
 		t.Fatalf("old record reviews = %+v, want the round it always carried", got.Reviews)
+	}
+}
+
+// TestRecordRoundTripsChainRaises is the raise entry's own round trip
+// (docs/run-limit-carry-over L9, D1061): a raise a launcher made on the chain
+// this run began — who, when, why, and each dimension's figure before and
+// after — survives as the root run's own block, the member is the wire name a
+// reader outside this binary reads, the field is additive (the version does
+// not move, an empty list is omitted, and a record written before it existed
+// decodes unchanged), and the figures are the dimension's own unit on both
+// sides of the write.
+func TestRecordRoundTripsChainRaises(t *testing.T) {
+	s := newStore(t)
+	at := time.Date(2026, 11, 13, 9, 30, 0, 0, time.UTC)
+	raises := []ChainRaise{{
+		By: "someone@example.com", At: at, Reason: "the senior review round needs one more pass",
+		Limits: []ChainRaiseLimit{
+			{Dimension: USD, From: 4_000_000, To: 6_000_000},
+			{Dimension: Time, From: 2700, To: 5400},
+		},
+	}}
+	rec := &Record{Version: 1, RunID: runID, Status: StatusSucceeded, Outcome: OutcomeReady,
+		StartedAt: time.Now().UTC(), ChainRaises: raises}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadRecord(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.ChainRaises, raises) {
+		t.Fatalf("ReadRecord chain_raises = %+v, want %+v", got.ChainRaises, raises)
+	}
+	// The units are the dimension's own, which is the unit the chain's reader
+	// prints and the launch reply carries (L6, L7): micro-dollars for the
+	// money, seconds for the wall time.
+	if got.ChainRaises[0].Limits[0].From != 4_000_000 || got.ChainRaises[0].Limits[0].To != 6_000_000 {
+		t.Errorf("the money figures = %+v, want micro-dollars", got.ChainRaises[0].Limits[0])
+	}
+	if got.Version != 1 {
+		t.Errorf("version = %d, want 1: the field is additive", got.Version)
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"chain_raises"`) {
+		t.Fatalf("a record with a raise does not encode the member a reader looks for: %s", data)
+	}
+
+	// Empty is omitted, so a chain nobody raised writes the record it always
+	// wrote rather than an empty list.
+	data, err = json.Marshal(&Record{Version: 1, RunID: runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "chain_raises") {
+		t.Fatalf("a record with no raise encoded the field: %s", data)
+	}
+
+	// A record written before this field existed still parses, without one.
+	old := `{"version":1,"run_id":"` + runID + `","status":"succeeded","stage":"writeback","outcome":"ready","cost_usd":1,"started_at":"2026-09-26T22:15:30Z"}`
+	if err := s.PutFile(ctx, "result.json", []byte(old), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.ReadRecord(ctx)
+	if err != nil || got.ChainRaises != nil {
+		t.Fatalf("old record = %+v, %v, want no raise block", got, err)
 	}
 }
 
@@ -1248,6 +1317,80 @@ func TestRecordHaltRoundTrip(t *testing.T) {
 	data, _ := json.Marshal(&Record{Version: 1})
 	if strings.Contains(string(data), `"halt"`) {
 		t.Fatalf("an unset halt is written: %s", data)
+	}
+}
+
+// TestHaltWorkspaceRefusalIsAdditive: the marker a workspace's refusal leaves
+// on a run's halt (docs/stateless-orchestrator/reconciliation.md U12, D2022's
+// O19) is written only where a workspace refused the run, and a halt without one
+// is the record this project wrote before the field existed — byte for byte,
+// because a reader that predates the field, and an installation that deploys no
+// workspace at all, must see the record they always saw.
+func TestHaltWorkspaceRefusalIsAdditive(t *testing.T) {
+	at := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	plain := Halt{Reason: HaltBudgetUnavailable, Scope: "run", At: at, Detail: "d"}
+	data, err := json.Marshal(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The bytes of a halt no workspace refused, pinned: an added key here would
+	// be a record every reader of the old shape has to be taught about.
+	const want = `{"reason":"budget_unavailable","scope":"run","at":"2026-10-02T12:00:00Z","detail":"d"}`
+	if string(data) != want {
+		t.Fatalf("a halt no workspace refused is written\n %s\nwant\n %s", data, want)
+	}
+	// And on a whole record: the halt node carries the four keys it carried
+	// before, and nothing beside them.
+	recData, err := json.Marshal(&Record{Version: 1, RunID: runID, Status: StatusHalted, Halt: &plain})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(recData), "workspace_refusal") {
+		t.Fatalf("a record no workspace refused names the marker: %s", recData)
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(recData, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var haltNode map[string]json.RawMessage
+	if err := json.Unmarshal(doc["halt"], &haltNode); err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	for k := range haltNode {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	if !slices.Equal(keys, []string{"at", "detail", "reason", "scope"}) {
+		t.Fatalf("a halt no workspace refused carries the keys %v, want the four it always carried", keys)
+	}
+
+	// Each of the workspace's three refusals survives the round trip, so the
+	// value the wire carries is the value the record keeps.
+	for _, reason := range gateway.WorkspaceRefusals() {
+		marked := plain
+		marked.WorkspaceRefusal = reason
+		markedData, err := json.Marshal(marked)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var back Halt
+		if err := json.Unmarshal(markedData, &back); err != nil {
+			t.Fatal(err)
+		}
+		if back != marked || back.WorkspaceRefusal != reason {
+			t.Fatalf("the workspace's %s refusal round-tripped to %+v", reason, back)
+		}
+	}
+
+	// A record written before the field existed reads as one no workspace
+	// refused — never as an empty refusal, and never as an error.
+	var old Halt
+	if err := json.Unmarshal([]byte(want), &old); err != nil {
+		t.Fatal(err)
+	}
+	if old.WorkspaceRefusal != "" || old != plain {
+		t.Fatalf("the old record's halt read as %+v", old)
 	}
 }
 

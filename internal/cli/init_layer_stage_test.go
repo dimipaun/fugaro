@@ -92,9 +92,10 @@ func recordLayer(t *testing.T, text, generation string) {
 // D830 names, and the owner's first `fugaro rigor set` has nothing to edit.
 func TestUpdateSeedsTheLocalLayerFromThePublishedOne(t *testing.T) {
 	newLayerRig(t, testProjectLayer)
+	fakeTerminal(t)
 	path := localLayerPath(t)
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("fugaro update did not seed the local layer file: %v\n%s%s", err, out, errOut)
 	}
@@ -198,12 +199,13 @@ func TestUpdateAppliesThePublishedLayersJobsSettingWithNoLocalLayerFile(t *testi
 	} {
 		t.Run(tc.what, func(t *testing.T) {
 			r := newLayerRig(t, testProjectLayer+"jobs:\n  catalog_check: { paused: false }\n")
+			fakeTerminal(t)
 			r.appendConfig(t, catalog)
 			r.save(t)
 			if tc.file {
 				recordLayer(t, testProjectLayer, "0")
 			}
-			out, errOut, err := executeStdin(t, "", "update", "--yes")
+			out, errOut, err := executeStdin(t, "", "update")
 			if err != nil {
 				t.Fatalf("fugaro update: %v\n%s%s", err, out, errOut)
 			}
@@ -266,10 +268,11 @@ default_profile: svc
 // that is the publish half's job, after a diff the owner is shown.
 func TestUpdateSeedWritesNothingWhenTheLocalFileExists(t *testing.T) {
 	r := newLayerRig(t, testProjectLayer)
+	fakeTerminal(t)
 	path := localLayerPath(t)
 	recordLayer(t, localEdit, "0")
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("fugaro update refused an owner's own layer file: %v\n%s%s", err, out, errOut)
 	}
@@ -287,8 +290,9 @@ func TestUpdateSeedWritesNothingWhenTheLocalFileExists(t *testing.T) {
 // edit publishes by accident.
 func TestUpdateSeedWritesNothingWhenNoLayerIsPublished(t *testing.T) {
 	r := newLayerRig(t, "")
+	fakeTerminal(t)
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("fugaro update: %v\n%s%s", err, out, errOut)
 	}
@@ -305,10 +309,11 @@ func TestUpdateSeedWritesNothingWhenNoLayerIsPublished(t *testing.T) {
 // shown and the fan-out runs — and the file itself is left exactly as it is.
 func TestUpdatePublishesTheProjectLayerWhenItIsUnpublished(t *testing.T) {
 	r := newLayerRig(t, testProjectLayer)
+	fakeTerminal(t)
 	path := localLayerPath(t)
 	recordLayer(t, localEdit, "0")
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("fugaro update did not publish the local layer file: %v\n%s%s", err, out, errOut)
 	}
@@ -342,10 +347,11 @@ func TestUpdatePublishesTheProjectLayerWhenItIsUnpublished(t *testing.T) {
 // equal, publishes nothing rather than the same bytes again.
 func TestUpdatePublishesALayerFileAWriterJustWrote(t *testing.T) {
 	r := newLayerRig(t, testProjectLayer)
+	fakeTerminal(t)
 	path := localLayerPath(t)
 	recordLayer(t, testProjectLayer, "0")
 
-	out, errOut, err := execute(t, "settings", "set", "layer.defaults.agent.max_budget_usd", "30", "--layer", "project", "--yes")
+	out, errOut, err := execute(t, "settings", "set", "layer.defaults.agent.max_budget_usd", "30", "--layer", "project")
 	if err != nil {
 		t.Fatalf("the write path refused the key: %v\n%s%s", err, out, errOut)
 	}
@@ -357,7 +363,7 @@ func TestUpdatePublishesALayerFileAWriterJustWrote(t *testing.T) {
 		t.Fatalf("the write path did not write the entry into %s:\n%s", path, wrote)
 	}
 
-	out, errOut, err = executeStdin(t, "", "update", "--yes")
+	out, errOut, err = executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("fugaro update did not publish the file the write path wrote: %v\n%s%s", err, out, errOut)
 	}
@@ -375,11 +381,14 @@ func TestUpdatePublishesALayerFileAWriterJustWrote(t *testing.T) {
 		t.Errorf("the publish rewrote the writer's file:\n%s", data)
 	}
 
-	out, errOut, err = executeStdin(t, "", "update", "--yes")
+	out, errOut, err = executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("the second fugaro update: %v\n%s%s", err, out, errOut)
 	}
-	all := out + errOut
+	// The row is the run's own account of the step — the screen keeps the steps
+	// and the log the table (§9.2) — so it is read in the log beside them, and a
+	// run whose log could not be opened prints the table itself (G5).
+	all := out + errOut + newestLog(t, "update")
 	if row := planRowOf(all, "layer"); !strings.HasPrefix(row, markDone+" done") {
 		t.Errorf("the run after the publish does not find the file and the object equal: %q\n%s", row, all)
 	}
@@ -396,14 +405,15 @@ func TestUpdatePublishesALayerFileAWriterJustWrote(t *testing.T) {
 // run twice.
 func TestUpdateLayerStageIsANoOpWhenNothingChanged(t *testing.T) {
 	r := newLayerRig(t, testProjectLayer)
+	fakeTerminal(t)
 	path := localLayerPath(t)
 	recordLayer(t, testProjectLayer, "0")
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("fugaro update: %v\n%s%s", err, out, errOut)
 	}
-	all := out + errOut
+	all := out + errOut + newestLog(t, "update")
 	if row := planRowOf(all, "layer"); !strings.HasPrefix(row, markDone+" done") {
 		t.Errorf("the layer stage is not the no-op it is: %q\n%s", row, all)
 	}
@@ -434,12 +444,13 @@ func TestUpdateLayerStageIsANoOpWhenNothingChanged(t *testing.T) {
 func TestUpdateLayerStageSkipsWhenNoLayerFile(t *testing.T) {
 	t.Run("nothing is published", func(t *testing.T) {
 		r := newLayerRig(t, "")
+		fakeTerminal(t)
 
-		out, errOut, err := executeStdin(t, "", "update", "--yes")
+		out, errOut, err := executeStdin(t, "", "update")
 		if err != nil {
 			t.Fatalf("fugaro update: %v\n%s%s", err, out, errOut)
 		}
-		all := out + errOut
+		all := out + errOut + newestLog(t, "update")
 		if row := planRowOf(all, "layer"); !strings.HasPrefix(row, markSkipped+" skipped") {
 			t.Errorf("the layer stage is not skipped: %q\n%s", row, all)
 		}
@@ -453,8 +464,9 @@ func TestUpdateLayerStageSkipsWhenNoLayerFile(t *testing.T) {
 
 	t.Run("the project has published one", func(t *testing.T) {
 		r := newLayerRig(t, testProjectLayer)
+		fakeTerminal(t)
 
-		out, errOut, err := executeStdin(t, "", "update", "--yes")
+		out, errOut, err := executeStdin(t, "", "update")
 		if err != nil {
 			t.Fatalf("fugaro update: %v\n%s%s", err, out, errOut)
 		}
@@ -479,12 +491,13 @@ func TestUpdateLayerStageSkipsWhenNoLayerFile(t *testing.T) {
 // the stage is skipped rather than done.
 func TestUpdateLayerStageSkipsWithNoLocalFileAndNoPublishedLayer(t *testing.T) {
 	newLayerRig(t, "")
+	fakeTerminal(t)
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("fugaro update: %v\n%s%s", err, out, errOut)
 	}
-	all := out + errOut
+	all := out + errOut + newestLog(t, "update")
 	if row := planRowOf(all, "layer"); !strings.HasPrefix(row, markSkipped+" skipped") {
 		t.Errorf("the layer stage is not skipped: %q\n%s", row, all)
 	}
@@ -497,10 +510,11 @@ func TestUpdateLayerStageSkipsWithNoLocalFileAndNoPublishedLayer(t *testing.T) {
 // Fugaro cannot read is the owner's to fix, and nothing is published from it.
 func TestUpdateLayerStageRefusesAFileThatDoesNotParse(t *testing.T) {
 	r := newLayerRig(t, testProjectLayer)
+	fakeTerminal(t)
 	path := localLayerPath(t)
 	recordLayer(t, "version: 1\nproject: aurora\ngcp_project: proj-1234\nnonsense_key: 1\n", "0")
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("fugaro update accepted a layer file that does not parse: %v\n%s%s", err, out, errOut)
 	}
@@ -518,9 +532,10 @@ func TestUpdateLayerStageRefusesAFileThatDoesNotParse(t *testing.T) {
 // flag to acknowledge it — the same banner and refusal config publish gives.
 func TestUpdateLayerStageRefusesExecutableChangesWithoutTheFlag(t *testing.T) {
 	r := newLayerRig(t, testProjectLayer)
+	fakeTerminal(t)
 	recordLayer(t, executableEdit, "0")
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("fugaro update published a command change without the gate: %v\n%s%s", err, out, errOut)
 	}
@@ -533,14 +548,14 @@ func TestUpdateLayerStageRefusesExecutableChangesWithoutTheFlag(t *testing.T) {
 	}
 }
 
-// TestUpdateLayerStageAppliesNothingInAnAgentSessionEvenWithYes: the project
+// TestUpdateLayerStageAppliesNothingInAnAgentSession: the project
 // layer changes what every repository of the project runs, so it is a cloud
 // write like any other and a coding agent's session never reaches it.
-func TestUpdateLayerStageAppliesNothingInAnAgentSessionEvenWithYes(t *testing.T) {
+func TestUpdateLayerStageAppliesNothingInAnAgentSession(t *testing.T) {
 	r := newLayerRig(t, testProjectLayer)
 	t.Setenv(agentMarkers[0], "1")
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err == nil {
 		t.Fatalf("the run succeeded in an agent's session:\n%s%s", out, errOut)
 	}
@@ -561,6 +576,7 @@ func TestUpdateLayerStageAppliesNothingInAnAgentSessionEvenWithYes(t *testing.T)
 // guard needs no record and holds on a first run as on any other.
 func TestUpdateLayerStageRefusesWhenTheGenerationMovedSinceTheSeed(t *testing.T) {
 	r := newLayerRig(t, testProjectLayer)
+	fakeTerminal(t)
 	path := localLayerPath(t)
 	recordLayer(t, localEdit, "0")
 	race := layerPublishRace
@@ -569,7 +585,7 @@ func TestUpdateLayerStageRefusesWhenTheGenerationMovedSinceTheSeed(t *testing.T)
 		r.put(t, testProjectLayer+"# someone else's publish\n")
 	}
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("fugaro update overwrote a publisher it never read: %v\n%s%s", err, out, errOut)
 	}
@@ -591,6 +607,7 @@ func TestUpdateLayerStageRefusesWhenTheGenerationMovedSinceTheSeed(t *testing.T)
 // confirmation, and the object is not written.
 func TestUpdateLayerStageRefusesWhenThePublishedGenerationIsNewer(t *testing.T) {
 	r := newLayerRig(t, testProjectLayer)
+	fakeTerminal(t)
 	path := localLayerPath(t)
 	recordLayer(t, localEdit, "3")
 	read := layerPublishedRead
@@ -599,7 +616,7 @@ func TestUpdateLayerStageRefusesWhenThePublishedGenerationIsNewer(t *testing.T) 
 		return []byte(testProjectLayer), 7, true, nil
 	}
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("fugaro update: %v\n%s%s", err, out, errOut)
 	}
@@ -628,6 +645,7 @@ func TestUpdateLayerStageRefusesWhenThePublishedGenerationIsNewer(t *testing.T) 
 // than refusing once to force a record.
 func TestUpdateLayerStageAdoptsTheGenerationWhenNothingIsRecorded(t *testing.T) {
 	r := newLayerRig(t, testProjectLayer)
+	fakeTerminal(t)
 	path := localLayerPath(t)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
@@ -636,7 +654,7 @@ func TestUpdateLayerStageAdoptsTheGenerationWhenNothingIsRecorded(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("fugaro update refused an installation with no record: %v\n%s%s", err, out, errOut)
 	}
@@ -662,6 +680,7 @@ func TestUpdateLayerStageAdoptsTheGenerationWhenNothingIsRecorded(t *testing.T) 
 // generation adopted, and not refused for the record it does not have.
 func TestInstallationAtThePreviousVersionConverges(t *testing.T) {
 	r := newLayerRig(t, testProjectLayer)
+	fakeTerminal(t)
 	path := localLayerPath(t)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
@@ -670,7 +689,7 @@ func TestInstallationAtThePreviousVersionConverges(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("fugaro update left an installation at the previous version behind: %v\n%s%s", err, out, errOut)
 	}
@@ -692,10 +711,11 @@ func TestUpdateLayerStageRefusesAFileTheDoorsDoNotRead(t *testing.T) {
 	for _, kind := range unreadableLayerKinds {
 		t.Run(kind, func(t *testing.T) {
 			r := newLayerRig(t, testProjectLayer)
+			fakeTerminal(t)
 			path := localLayerPath(t)
 			reason := unreadableLayerFile(t, path, kind)
 
-			out, errOut, err := executeStdin(t, "", "update", "--yes")
+			out, errOut, err := executeStdin(t, "", "update")
 			if err == nil || ExitCode(err) != ExitUserError {
 				t.Fatalf("fugaro update accepted a file the doors do not read: %v\n%s%s", err, out, errOut)
 			}
@@ -719,15 +739,16 @@ func TestUpdateLayerStageRefusesAFileTheDoorsDoNotRead(t *testing.T) {
 // the guard itself do.
 func TestUpdateLayerStageSkipsAGSBucketOnFakeEndpoints(t *testing.T) {
 	updateRig(t)
+	fakeTerminal(t)
 	old := skipGSOnFakeEndpoints
 	skipGSOnFakeEndpoints = true
 	t.Cleanup(func() { skipGSOnFakeEndpoints = old })
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("fugaro update: %v\n%s%s", err, out, errOut)
 	}
-	all := out + errOut
+	all := out + errOut + newestLog(t, "update")
 	if row := planRowOf(all, "layer"); !strings.HasPrefix(row, markSkipped+" skipped") {
 		t.Errorf("the layer stage did not skip the fake-endpoint bucket: %q\n%s", row, all)
 	}
@@ -751,6 +772,7 @@ func TestUpdateLayerStageSkipsAGSBucketOnFakeEndpoints(t *testing.T) {
 // (always generation 0) can only be handed through this seam.
 func TestUpdateLayerStageRefusesWhenTheObjectChangedSinceItsPlanRead(t *testing.T) {
 	r := newLayerRig(t, testProjectLayer+"# another publisher's layer\n")
+	fakeTerminal(t)
 	recordLayer(t, localEdit, "0")
 	read := layerPublishedRead
 	t.Cleanup(func() { layerPublishedRead = read })
@@ -758,7 +780,7 @@ func TestUpdateLayerStageRefusesWhenTheObjectChangedSinceItsPlanRead(t *testing.
 		return []byte(testProjectLayer), 0, true, nil
 	}
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if got, _ := layerObject(t, r); got != testProjectLayer+"# another publisher's layer\n" {
 		t.Fatalf("the object another publisher wrote was overwritten: %q\n%s%s", got, out, errOut)
 	}
@@ -1077,6 +1099,7 @@ func TestUpdateLayerStageVerifiesTheReseedItWrote(t *testing.T) {
 // from, so the run re-seeds rather than publishing them.
 func TestUpdateLayerStageRefusesWhenTheRecordIsAheadOfThePublishedGeneration(t *testing.T) {
 	r := newLayerRig(t, testProjectLayer)
+	fakeTerminal(t)
 	path := localLayerPath(t)
 	recordLayer(t, localEdit, "9")
 	read := layerPublishedRead
@@ -1085,7 +1108,7 @@ func TestUpdateLayerStageRefusesWhenTheRecordIsAheadOfThePublishedGeneration(t *
 		return []byte(testProjectLayer), 7, true, nil
 	}
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("fugaro update: %v\n%s%s", err, out, errOut)
 	}

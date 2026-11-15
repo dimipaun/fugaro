@@ -249,23 +249,34 @@ the gateway changes (D1059). The ledger figures it can read are its own run's (L
 ## L9. Raising a chain that has spent its limit: a record rewrite with a reason (D1061). **SEC**
 
 A chain limit is a launcher's number held in the **root launch's `task.json`** (D1046), so raising an
-exhausted chain is a **rewrite of that stored task, with the reason for the raise recorded** — no new command
-and no new node (F22, spec §4). The design does not pretend a launcher cannot do it: a launcher holds
+exhausted chain is a **rewrite of that stored task, with the reason for the raise recorded** — no new node,
+no operator-only write path, and **one new command, which the file list below is** (F22, spec §4). The design
+does not pretend a launcher cannot do it: a launcher holds
 `objectUser` on the `runs/` and `tokens/` prefixes (F21), so what this task builds is the **supported path**
 an honest launcher uses, and
 the reason it is a convention rather than a platform-enforced bound is written where a reader finds it
 (spec §9).
 
-- **Files (4):** `internal/cli/budget_chain.go` (new: the subcommand, beside the budget family, rewriting the
-  root run's stored task through the same runs-bucket path a launcher already has, and recording the reason),
-  `internal/cli/budget_chain_test.go` (new: the rewrite, the reason, and the refusals),
+- **Files (11):** `internal/cli/budget_chain.go` (new: the subcommand, beside the budget family, rewriting
+  the root run's stored task through the same runs-bucket path a launcher already has, and recording the
+  reason), `internal/cli/budget_chain_test.go` (new: the rewrite, the reason, the refusals, and the fence),
+  `internal/cli/budget.go` (the registration, as L6's own list names its own),
   `internal/runstore/runstore.go` (the record gains the raise's entry — who, when, from, to and why — beside
-  the policy record it already writes at `:859-865`), `internal/runstore/runstore_test.go`.
+  the policy record it already writes at `:859-865`), `internal/runstore/runstore_test.go`,
+  `schemas/result.schema.json` and `schemas/schemas_test.go` (the member is a wire shape, and this record's
+  schema is closed, so both learn it in the same change), `website/content/cli-reference.md` (regenerated,
+  not hand-edited: a new visible command changes the tree the reference is written from),
+  `website/src/components/CapsCosts.astro` (the caps guide prints the whole `fugaro budget` interface and
+  stops the build for a subcommand it does not carry, so the new heading lands in that list too),
+  `internal/cli/report_exempt.go` and `internal/cli/noprompt_harness_test.go` (the two censuses a new
+  mutating command has to answer: the reporter, and the closed-stdin run).
 - **Red step:** `TestChainRaiseRewritesTheRootTask` fails while the subcommand does not exist;
-  `TestChainRaiseRefusesAnEmptyReason` fails while a reasonless raise is accepted.
+  `TestChainRaiseRefusesAnEmptyReason` fails while a reasonless raise is accepted;
+  `TestChainRaiseRefusesInAnAgentSession` fails while the raise is open to an agent session.
 - **Tests:** `TestChainRaiseRewritesTheRootTask`, `TestChainRaiseRecordsTheReasonAndTheFigures`,
   `TestChainRaiseRefusesAnEmptyReason`, `TestChainRaiseLeavesTheTaskUntouchedOnFailure`,
-  `TestRunRefusesARaiseShapedFlag` (no launcher-reachable raise flag on `fugaro run`).
+  `TestChainRaiseRefusesInAnAgentSession`, `TestRunRefusesARaiseShapedFlag` (no launcher-reachable raise
+  flag on `fugaro run`).
 
 ## Shared files
 
@@ -274,7 +285,7 @@ A file that more than one task writes, and what each writes there.
 | File | Tasks | What each writes |
 | --- | --- | --- |
 | `internal/budget/ledger.go` | L1, and read by L0 | L1 adds the named read; L0 consumes it through its one-method `LedgerReader` interface, so the fake in L0's tests is the whole seam |
-| `schemas/schemas_test.go` | L2, L6 | one row per new schema or new member |
+| `schemas/schemas_test.go` | L2, L6, L9 | one row per new schema or new member (L9's is `result.json`'s `chain_raises`) |
 | `internal/cli/run.go` | L3, L4, L7 | L3 the four flags, L4 `--continues` and the follow-up inheritance, L7 the reply's members |
 | `internal/cli/runs.go` | L4, L6 | L4 the `--pr`-found-nothing hint, L6 the `runs show` subcommand registration |
 | `internal/task/task.go` | L2, and read by L3 | L2 adds the four `Overrides` members; L3 writes them |
