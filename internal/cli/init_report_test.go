@@ -597,13 +597,19 @@ func TestUpdateLogRedactsAValueAStageHoldsMidRun(t *testing.T) {
 //
 // --json confirms no step (T7, docs/no-prompt-policy): a run that has one to
 // take is refused rather than applied under it, so the run read here is one
-// with nothing to confirm — an installation that already matches — which is
-// the shape every --json converge has now. The plan runs and its own output is
+// with nothing to confirm — an installation that already matches. That state
+// is the first run's: it is the person's own, at this terminal, and it writes
+// the local config the rig's fixture only approximates. The --json run that
+// follows it is the one read here, and the plan still runs on it: its output is
 // what the log has to hold.
 func TestUpdateJSONUnchanged(t *testing.T) {
 	r := updateRig(t)
 	r.script["plan"] = map[string]any{"exit": 0, "stdout": convergeNoise + "\n"}
 	r.save(t)
+	fakeTerminal(t)
+	if out, errOut, err := executeStdin(t, "", "update"); err != nil {
+		t.Fatalf("the person's own run before the --json one failed: %v\n%s%s", err, out, errOut)
+	}
 	out, errOut, err := executeStdin(t, "", "update", "--json")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
@@ -621,7 +627,7 @@ func TestUpdateJSONUnchanged(t *testing.T) {
 	if !strings.Contains(errOut, markDone+" installation") {
 		t.Errorf("the account is not on stderr under --json:\n%s", errOut)
 	}
-	if _, log := onlyLog(t, "update"); !strings.Contains(log, convergeNoise) {
+	if log := newestLog(t, "update"); !strings.Contains(log, convergeNoise) {
 		t.Errorf("a --json run of a mutating command kept no log of its output")
 	}
 }
