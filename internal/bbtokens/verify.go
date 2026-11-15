@@ -452,16 +452,35 @@ type coveredRepo struct {
 	repo      string
 }
 
+// qualifiedRepo reads one coverage entry of the node's provider-qualified form
+// ("bitbucket/acme/fugaro") as the workspace and repository pair Bitbucket's own
+// API paths are built from, and reports an entry that is not one.
+//
+// The rule is the node's own — projectpolicy.ValidBitbucketTokenCoverage, the
+// one Record.Validate holds a record to — and not a copy of it here. It is the
+// same rule because the record the service builds for the legacy key IS the
+// node's allow_repos list (R3): a second, hand-rolled spelling of it in this
+// file is exactly how the check came to refuse every record the contract
+// accepts, and there is nothing here that a shared rule does not already say.
+func qualifiedRepo(entry string) (workspace, repo string, ok bool) {
+	if projectpolicy.ValidBitbucketTokenCoverage(entry) != nil {
+		return "", "", false
+	}
+	segs := strings.Split(entry, "/")
+	return segs[1], strings.Join(segs[2:], "/"), true
+}
+
 // repoCoverage answers the repositories a repository record's coverage names,
-// each of them one of R1's `ws/repo` forms. A wildcard is refused here even
-// though the policy's allow_repos may carry one (D464): a pattern that names
-// several repositories is not a reach a single read can be held to, and the
-// check would otherwise report a coverage it never proved.
+// each of them the qualified form of one repository. A wildcard in the name is
+// refused here on top of the node's rule: a pattern that names several
+// repositories is not a reach a single read can be held to, and
+// ValidBitbucketTokenCoverage admits up to two stars for a pattern the operator
+// wrote in the config, which a typed record's coverage may not carry.
 func repoCoverage(rec Record) ([]coveredRepo, bool) {
 	var repos []coveredRepo
 	for _, entry := range rec.Coverage {
-		workspace, repo, found := strings.Cut(entry, "/")
-		if !found || workspace == "" || workspace == "*" || repo == "" || strings.ContainsAny(repo, "/*") {
+		workspace, repo, ok := qualifiedRepo(entry)
+		if !ok || strings.Contains(repo, "*") {
 			return nil, false
 		}
 		repos = append(repos, coveredRepo{workspace: workspace, repo: repo})
