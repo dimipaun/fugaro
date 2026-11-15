@@ -188,9 +188,12 @@ func (f *fixture) actsAs(uid, email, provider string) {
 	f.signIn.caller = Caller{UID: uid, Email: email, Provider: provider, AuthTime: f.now}
 }
 
-// apiAs sends one request to the portal's API behind a sign-in, which is how the
-// SPA calls it.
-func (f *fixture) apiAs(method, path, body string) *httptest.ResponseRecorder {
+// apiAsCaller sends one request to the portal's API behind the sign-in the
+// fixture holds (actsAs), which is how the SPA calls it. It is named apart from
+// signin_test.go's apiAs, which posts one body to one of §11's two doors with an
+// explicit token: the two are the same act at two doors, and a package holds one
+// name for one method.
+func (f *fixture) apiAsCaller(method, path, body string) *httptest.ResponseRecorder {
 	f.t.Helper()
 	req := httptest.NewRequest(method, intakeOrigin+path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -206,7 +209,7 @@ func (f *fixture) apiAs(method, path, body string) *httptest.ResponseRecorder {
 func (f *fixture) signedUp(uid, email, name string) WireOrganisation {
 	f.t.Helper()
 	f.actsAs(uid, email, signInGoogle)
-	rec := f.apiAs(http.MethodPost, apiOrgsPath, `{"name":`+jsonString(f.t, name)+`}`)
+	rec := f.apiAsCaller(http.MethodPost, apiOrgsPath, `{"name":`+jsonString(f.t, name)+`}`)
 	if rec.Code != http.StatusCreated {
 		f.t.Fatalf("signing %s up as %q answered %d: %s", email, name, rec.Code, rec.Body)
 	}
@@ -275,7 +278,7 @@ func (f *fixture) auditEntries() []WireAuditEntry {
 // listOrgs reads the switcher's list as the account the verifier answers.
 func (f *fixture) listOrgs() []WireOrganisation {
 	f.t.Helper()
-	rec := f.apiAs(http.MethodGet, apiOrgsPath, "")
+	rec := f.apiAsCaller(http.MethodGet, apiOrgsPath, "")
 	if rec.Code != http.StatusOK {
 		f.t.Fatalf("the switcher's list answered %d: %s", rec.Code, rec.Body)
 	}
@@ -340,7 +343,7 @@ func TestSignUpRecordsTermsAcceptance(t *testing.T) {
 	f := newFixture(t)
 	f.actsAs(danaUID, danaEmail, signInGoogle)
 
-	rec := f.apiAs(http.MethodPost, apiOrgsPath, `{"name":"  Example Ltd  "}`)
+	rec := f.apiAsCaller(http.MethodPost, apiOrgsPath, `{"name":"  Example Ltd  "}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("a sign-up answered %d: %s", rec.Code, rec.Body)
 	}
@@ -403,7 +406,7 @@ func TestSignUpRecordsTermsAcceptance(t *testing.T) {
 		{name: "a name over the schema's bound", body: `{"name":` + jsonString(t, strings.Repeat("a", maxOrganisationName+1)) + `}`, code: http.StatusUnprocessableEntity},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			rec := f.apiAs(http.MethodPost, apiOrgsPath, tc.body)
+			rec := f.apiAsCaller(http.MethodPost, apiOrgsPath, tc.body)
 			if rec.Code != tc.code {
 				t.Errorf("a sign-up with %s answered %d (%s), want %d", tc.name, rec.Code, rec.Body, tc.code)
 			}
@@ -441,7 +444,7 @@ func TestTheSignUpBodyIsCappedAtItsOwnBytes(t *testing.T) {
 	if len(at) != maxOrgBodyBytes {
 		t.Fatalf("the body at the cap is %d bytes, want this route's own %d", len(at), maxOrgBodyBytes)
 	}
-	rec := f.apiAs(http.MethodPost, apiOrgsPath, at)
+	rec := f.apiAsCaller(http.MethodPost, apiOrgsPath, at)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("a sign-up whose body is %d bytes was answered %d (%s), want the organisation: this route reads a body of %d", len(at), rec.Code, rec.Body, maxOrgBodyBytes)
 	}
@@ -454,7 +457,7 @@ func TestTheSignUpBodyIsCappedAtItsOwnBytes(t *testing.T) {
 	if len(over) != maxOrgBodyBytes+1 {
 		t.Fatalf("the body over the cap is %d bytes, want one past this route's own %d", len(over), maxOrgBodyBytes)
 	}
-	refused := f.apiAs(http.MethodPost, apiOrgsPath, over)
+	refused := f.apiAsCaller(http.MethodPost, apiOrgsPath, over)
 	if refused.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("a sign-up whose body is %d bytes was answered %d (%s), want the 413 a body over this route's own cap is refused with", len(over), refused.Code, refused.Body)
 	}
@@ -497,7 +500,7 @@ func TestOrgCreatedHooksRun(t *testing.T) {
 	// owner's membership, and nothing the hook wrote.
 	before := len(f.organisations())
 	testOrgHook.refuse, testOrgHook.err = "Doomed Ltd", errors.New("the free seat could not be minted")
-	rec := f.apiAs(http.MethodPost, apiOrgsPath, `{"name":"Doomed Ltd"}`)
+	rec := f.apiAsCaller(http.MethodPost, apiOrgsPath, `{"name":"Doomed Ltd"}`)
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("a sign-up whose hook failed answered %d (%s), want this service's own failure", rec.Code, rec.Body)
 	}
@@ -568,10 +571,10 @@ func TestRolesLiveInMemberships(t *testing.T) {
 		OrganisationID: org.ID, UID: erinUID, Email: erinEmail, Role: roleMember, CreatedAt: f.now,
 	})
 	f.actsAs(erinUID, erinEmail, signInGoogle)
-	if rec := f.apiAs(http.MethodGet, apiOrgPathOf(org.ID), ""); rec.Code != http.StatusOK {
+	if rec := f.apiAsCaller(http.MethodGet, apiOrgPathOf(org.ID), ""); rec.Code != http.StatusOK {
 		t.Errorf("a member reading their own organisation was answered %d (%s), want it: a member works in the product", rec.Code, rec.Body)
 	}
-	members := f.apiAs(http.MethodGet, apiOrgMembersPathOf(org.ID), "")
+	members := f.apiAsCaller(http.MethodGet, apiOrgMembersPathOf(org.ID), "")
 	if members.Code != http.StatusForbidden {
 		t.Fatalf("a member reading the member list was answered %d (%s), want the refusal D2186 makes of it", members.Code, members.Body)
 	}
@@ -581,7 +584,7 @@ func TestRolesLiveInMemberships(t *testing.T) {
 
 	// The same sign-in, and the only thing that changed is the stored role.
 	f.setRole(org.ID, erinUID, roleAdmin)
-	after := f.apiAs(http.MethodGet, apiOrgMembersPathOf(org.ID), "")
+	after := f.apiAsCaller(http.MethodGet, apiOrgMembersPathOf(org.ID), "")
 	if after.Code != http.StatusOK {
 		t.Fatalf("an admin reading the member list was answered %d (%s), want it: the role is the membership's", after.Code, after.Body)
 	}
@@ -597,7 +600,7 @@ func TestRolesLiveInMemberships(t *testing.T) {
 	//
 	// And taking the role away takes the access away.
 	f.setRole(org.ID, erinUID, roleMember)
-	if back := f.apiAs(http.MethodGet, apiOrgMembersPathOf(org.ID), ""); back.Code != http.StatusForbidden {
+	if back := f.apiAsCaller(http.MethodGet, apiOrgMembersPathOf(org.ID), ""); back.Code != http.StatusForbidden {
 		t.Errorf("a member demoted from admin was answered %d (%s), want the refusal again", back.Code, back.Body)
 	}
 }
@@ -640,7 +643,7 @@ func TestSSORuleFollowsTheActorsMembership(t *testing.T) {
 		{name: "selecting the operations organisation", method: http.MethodPost, path: apiOrgSelectPathOf(operations.ID)},
 	} {
 		t.Run(tc.name+" by email link", func(t *testing.T) {
-			rec := f.apiAs(tc.method, tc.path, "")
+			rec := f.apiAsCaller(tc.method, tc.path, "")
 			if rec.Code != http.StatusForbidden {
 				t.Fatalf("%s was answered %d (%s), want the SSO refusal", tc.name, rec.Code, rec.Body)
 			}
@@ -653,7 +656,7 @@ func TestSSORuleFollowsTheActorsMembership(t *testing.T) {
 	// Reading an organisation the operations membership reaches ACROSS is the
 	// request that rule carries in accessTo, and it is refused for the same
 	// reason: D2207 admits the operations team's reads on Google or Microsoft.
-	if rec := f.apiAs(http.MethodGet, apiOrgPathOf(reseller.ID), ""); rec.Code != http.StatusForbidden {
+	if rec := f.apiAsCaller(http.MethodGet, apiOrgPathOf(reseller.ID), ""); rec.Code != http.StatusForbidden {
 		t.Errorf("an operations member by email link reading across organisations was answered %d (%s), want the SSO refusal", rec.Code, rec.Body)
 	}
 
@@ -664,13 +667,13 @@ func TestSSORuleFollowsTheActorsMembership(t *testing.T) {
 	// with it, and would empty the switcher of the operations organisation the
 	// spec keeps in it so that selecting one opens the dialog (spec
 	// §Architecture).
-	if rec := f.apiAs(http.MethodGet, apiOrgPathOf(customer.ID), ""); rec.Code != http.StatusOK {
+	if rec := f.apiAsCaller(http.MethodGet, apiOrgPathOf(customer.ID), ""); rec.Code != http.StatusOK {
 		t.Errorf("an operations member by email link reading their own customer organisation was answered %d (%s), want it: nothing follows a customer membership", rec.Code, rec.Body)
 	}
-	if rec := f.apiAs(http.MethodPost, apiOrgSelectPathOf(customer.ID), ""); rec.Code != http.StatusNoContent {
+	if rec := f.apiAsCaller(http.MethodPost, apiOrgSelectPathOf(customer.ID), ""); rec.Code != http.StatusNoContent {
 		t.Errorf("an operations member by email link selecting their own customer organisation was answered %d (%s), want the selection", rec.Code, rec.Body)
 	}
-	switcher := f.apiAs(http.MethodGet, apiOrgsPath, "")
+	switcher := f.apiAsCaller(http.MethodGet, apiOrgsPath, "")
 	if switcher.Code != http.StatusOK {
 		t.Fatalf("an operations member by email link read the switcher's list %d (%s), want the organisations they belong to: the list is the memberships' own, and the refusal is the selection's", switcher.Code, switcher.Body)
 	}
@@ -681,14 +684,14 @@ func TestSSORuleFollowsTheActorsMembership(t *testing.T) {
 
 	// The same person, signed in with Google: admitted both.
 	f.actsAs(opsUID, opsEmail, signInGoogle)
-	read := f.apiAs(http.MethodGet, apiOrgPathOf(operations.ID), "")
+	read := f.apiAsCaller(http.MethodGet, apiOrgPathOf(operations.ID), "")
 	if read.Code != http.StatusOK {
 		t.Fatalf("an operations member signed in with Google was answered %d (%s), want the organisation", read.Code, read.Body)
 	}
 	if got := readAnswer[WireOrganisation](f, read); got.ID != operations.ID {
 		t.Errorf("the read answered the organisation %q, want %q", got.ID, operations.ID)
 	}
-	if across := f.apiAs(http.MethodGet, apiOrgPathOf(reseller.ID), ""); across.Code != http.StatusOK {
+	if across := f.apiAsCaller(http.MethodGet, apiOrgPathOf(reseller.ID), ""); across.Code != http.StatusOK {
 		t.Errorf("the operations read across organisations signed in with Google was answered %d (%s), want the organisation", across.Code, across.Body)
 	}
 	if list := f.listOrgs(); len(list) != 2 {
@@ -698,13 +701,13 @@ func TestSSORuleFollowsTheActorsMembership(t *testing.T) {
 	// A reseller's member is refused the same way until a directory is pinned
 	// (D2207's fallback: Google only, which is the rule's zero value).
 	f.actsAs(sellerUID, sellerMail, signInEmailLink)
-	if rec := f.apiAs(http.MethodGet, apiOrgPathOf(reseller.ID), ""); rec.Code != http.StatusForbidden {
+	if rec := f.apiAsCaller(http.MethodGet, apiOrgPathOf(reseller.ID), ""); rec.Code != http.StatusForbidden {
 		t.Errorf("a reseller's member by email link was answered %d (%s), want the SSO refusal", rec.Code, rec.Body)
 	}
-	if rec := f.apiAs(http.MethodPost, apiOrgSelectPathOf(reseller.ID), ""); rec.Code != http.StatusForbidden {
+	if rec := f.apiAsCaller(http.MethodPost, apiOrgSelectPathOf(reseller.ID), ""); rec.Code != http.StatusForbidden {
 		t.Errorf("a reseller's member by email link selecting it was answered %d (%s), want the SSO refusal", rec.Code, rec.Body)
 	}
-	switcher = f.apiAs(http.MethodGet, apiOrgsPath, "")
+	switcher = f.apiAsCaller(http.MethodGet, apiOrgsPath, "")
 	if switcher.Code != http.StatusOK {
 		t.Fatalf("a reseller's member by email link read the switcher's list %d (%s), want their organisation in it: the refusal is the selection's, and the switcher is where the dialog that explains it is opened from", switcher.Code, switcher.Body)
 	}
@@ -712,14 +715,14 @@ func TestSSORuleFollowsTheActorsMembership(t *testing.T) {
 		t.Errorf("a reseller's member by email link listed %+v, want their own organisation %q in the switcher", listed, reseller.ID)
 	}
 	f.actsAs(sellerUID, sellerMail, signInGoogle)
-	if rec := f.apiAs(http.MethodGet, apiOrgPathOf(reseller.ID), ""); rec.Code != http.StatusOK {
+	if rec := f.apiAsCaller(http.MethodGet, apiOrgPathOf(reseller.ID), ""); rec.Code != http.StatusOK {
 		t.Errorf("a reseller's member signed in with Google was answered %d (%s), want the organisation", rec.Code, rec.Body)
 	}
 
 	// Nothing follows a customer organisation: the person who signed up by email
 	// link reads the organisation they made.
 	f.actsAs(danaUID, danaEmail, signInEmailLink)
-	if rec := f.apiAs(http.MethodGet, apiOrgPathOf(customer.ID), ""); rec.Code != http.StatusOK {
+	if rec := f.apiAsCaller(http.MethodGet, apiOrgPathOf(customer.ID), ""); rec.Code != http.StatusOK {
 		t.Errorf("a customer reading their own organisation by email link was answered %d (%s), want it: the rule follows operations and reseller memberships and no other", rec.Code, rec.Body)
 	}
 	if list := f.listOrgs(); len(list) != 1 || list[0].ID != customer.ID {
@@ -740,7 +743,7 @@ func TestOperationsReadsAreAudited(t *testing.T) {
 
 	// The customer's own read is nobody's business but theirs.
 	f.actsAs(danaUID, danaEmail, signInGoogle)
-	if rec := f.apiAs(http.MethodGet, apiOrgPathOf(customer.ID), ""); rec.Code != http.StatusOK {
+	if rec := f.apiAsCaller(http.MethodGet, apiOrgPathOf(customer.ID), ""); rec.Code != http.StatusOK {
 		t.Fatalf("the customer's own read was answered %d (%s)", rec.Code, rec.Body)
 	}
 	if entries := f.auditEntries(); len(entries) != 0 {
@@ -749,7 +752,7 @@ func TestOperationsReadsAreAudited(t *testing.T) {
 
 	// The operations membership's read of somebody else's organisation.
 	f.actsAs(opsUID, opsEmail, signInGoogle)
-	if rec := f.apiAs(http.MethodGet, apiOrgPathOf(customer.ID), ""); rec.Code != http.StatusOK {
+	if rec := f.apiAsCaller(http.MethodGet, apiOrgPathOf(customer.ID), ""); rec.Code != http.StatusOK {
 		t.Fatalf("the operations read was answered %d (%s)", rec.Code, rec.Body)
 	}
 	entries := f.auditEntries()
@@ -772,7 +775,7 @@ func TestOperationsReadsAreAudited(t *testing.T) {
 
 	// The member list is an action of its own, so a reader can tell the two
 	// reads apart without reading the action's name for a verb.
-	if rec := f.apiAs(http.MethodGet, apiOrgMembersPathOf(customer.ID), ""); rec.Code != http.StatusOK {
+	if rec := f.apiAsCaller(http.MethodGet, apiOrgMembersPathOf(customer.ID), ""); rec.Code != http.StatusOK {
 		t.Fatalf("the operations member read was answered %d (%s)", rec.Code, rec.Body)
 	}
 	entries = f.auditEntries()
@@ -783,7 +786,7 @@ func TestOperationsReadsAreAudited(t *testing.T) {
 	// A read that is refused wrote nothing: the log is of what happened, and an
 	// organisation the caller may not read is one that was not read.
 	before := len(f.auditEntries())
-	if rec := f.apiAs(http.MethodGet, apiOrgPathOf("org_nobody"), ""); rec.Code != http.StatusNotFound {
+	if rec := f.apiAsCaller(http.MethodGet, apiOrgPathOf("org_nobody"), ""); rec.Code != http.StatusNotFound {
 		t.Fatalf("a read of an organisation that is not there answered %d (%s), want the not-found refusal", rec.Code, rec.Body)
 	}
 	if len(f.auditEntries()) != before {
@@ -796,7 +799,7 @@ func TestOperationsReadsAreAudited(t *testing.T) {
 	f.deps.Docs = refusingAuditDocs{Docs: f.docs, collection: auditCollection}
 	f.start()
 	f.actsAs(opsUID, opsEmail, signInGoogle)
-	if rec := f.apiAs(http.MethodGet, apiOrgPathOf(customer.ID), ""); rec.Code != http.StatusInternalServerError {
+	if rec := f.apiAsCaller(http.MethodGet, apiOrgPathOf(customer.ID), ""); rec.Code != http.StatusInternalServerError {
 		t.Errorf("a read across organisations was answered %d (%s) with an unwritable log, want this service's own failure", rec.Code, rec.Body)
 	}
 }
@@ -877,7 +880,7 @@ func TestLastUsedOrg(t *testing.T) {
 
 	// Selecting the older one puts it in front, and records when.
 	f.advance(time.Hour)
-	if rec := f.apiAs(http.MethodPost, apiOrgSelectPathOf(first.ID), ""); rec.Code != http.StatusNoContent {
+	if rec := f.apiAsCaller(http.MethodPost, apiOrgSelectPathOf(first.ID), ""); rec.Code != http.StatusNoContent {
 		t.Fatalf("selecting an organisation answered %d (%s), want nothing", rec.Code, rec.Body)
 	}
 	if list := f.listOrgs(); len(list) != 2 || list[0].ID != first.ID || list[1].ID != second.ID {
@@ -905,7 +908,7 @@ func TestLastUsedOrg(t *testing.T) {
 	// selection is their own record, and there is none to write.
 	f.actsAs(danaUID, danaEmail, signInGoogle)
 	f.advance(time.Hour)
-	if rec := f.apiAs(http.MethodPost, apiOrgSelectPathOf("org_nobody"), ""); rec.Code != http.StatusNotFound {
+	if rec := f.apiAsCaller(http.MethodPost, apiOrgSelectPathOf("org_nobody"), ""); rec.Code != http.StatusNotFound {
 		t.Errorf("selecting an organisation that is not there answered %d (%s), want the not-found refusal", rec.Code, rec.Body)
 	}
 	if list := f.listOrgs(); len(list) != 2 || list[0].ID != first.ID {
@@ -931,12 +934,12 @@ func TestOrgCreationIsRateLimited(t *testing.T) {
 	f.actsAs(danaUID, danaEmail, signInGoogle)
 	for i := 0; i < orgDailyLimit; i++ {
 		body := fmt.Sprintf(`{"name":"Tenant %d"}`, i)
-		if rec := f.apiAs(http.MethodPost, apiOrgsPath, body); rec.Code != http.StatusCreated {
+		if rec := f.apiAsCaller(http.MethodPost, apiOrgsPath, body); rec.Code != http.StatusCreated {
 			t.Fatalf("organisation %d of the day answered %d (%s), want it created", i+1, rec.Code, rec.Body)
 		}
 	}
 	before := len(f.organisations())
-	over := f.apiAs(http.MethodPost, apiOrgsPath, `{"name":"One Too Many"}`)
+	over := f.apiAsCaller(http.MethodPost, apiOrgsPath, `{"name":"One Too Many"}`)
 	if over.Code != http.StatusTooManyRequests {
 		t.Fatalf("the organisation past the day's limit answered %d (%s), want the refusal", over.Code, over.Body)
 	}
@@ -949,14 +952,14 @@ func TestOrgCreationIsRateLimited(t *testing.T) {
 
 	// Another account has a day of its own.
 	f.actsAs(erinUID, erinEmail, signInGoogle)
-	if rec := f.apiAs(http.MethodPost, apiOrgsPath, `{"name":"Erin's Ltd"}`); rec.Code != http.StatusCreated {
+	if rec := f.apiAsCaller(http.MethodPost, apiOrgsPath, `{"name":"Erin's Ltd"}`); rec.Code != http.StatusCreated {
 		t.Errorf("another account's first organisation answered %d (%s), want it created: the limit is per account", rec.Code, rec.Body)
 	}
 
 	// And the window is a day: the same account may create again after it.
 	f.actsAs(danaUID, danaEmail, signInGoogle)
 	f.advance(orgLimitWindow + time.Minute)
-	if rec := f.apiAs(http.MethodPost, apiOrgsPath, `{"name":"Tomorrow Ltd"}`); rec.Code != http.StatusCreated {
+	if rec := f.apiAsCaller(http.MethodPost, apiOrgsPath, `{"name":"Tomorrow Ltd"}`); rec.Code != http.StatusCreated {
 		t.Errorf("a sign-up a day later answered %d (%s), want it created: the day's count is the last 24 hours", rec.Code, rec.Body)
 	}
 }
@@ -978,7 +981,7 @@ func TestConcurrentSignUpsRespectTheDailyLimit(t *testing.T) {
 	f.actsAs(danaUID, danaEmail, signInGoogle)
 
 	codes := together(burst, func(i int) *httptest.ResponseRecorder {
-		return f.apiAs(http.MethodPost, apiOrgsPath, fmt.Sprintf(`{"name":"Tenant %d"}`, i))
+		return f.apiAsCaller(http.MethodPost, apiOrgsPath, fmt.Sprintf(`{"name":"Tenant %d"}`, i))
 	})
 
 	if got := answered(codes, http.StatusCreated); got != orgDailyLimit {
@@ -1029,14 +1032,14 @@ func TestAnotherOrgsMembersAreRefused(t *testing.T) {
 			{name: "selecting another organisation", method: http.MethodPost, path: apiOrgSelectPathOf(beta.ID)},
 		} {
 			t.Run(tc.name+" signed in with "+signIn, func(t *testing.T) {
-				rec := f.apiAs(tc.method, tc.path, "")
+				rec := f.apiAsCaller(tc.method, tc.path, "")
 				if rec.Code != http.StatusNotFound {
 					t.Fatalf("%s was answered %d (%s), want the not-found refusal", tc.name, rec.Code, rec.Body)
 				}
 				// The same answer an organisation that is not there gets, so nothing
 				// about another customer's organisation is told by the refusal: which
 				// ids exist is a list of who the portal's customers are.
-				missing := f.apiAs(tc.method, strings.Replace(tc.path, beta.ID, "org_nobody", 1), "")
+				missing := f.apiAsCaller(tc.method, strings.Replace(tc.path, beta.ID, "org_nobody", 1), "")
 				if missing.Code != rec.Code || missing.Body.String() != rec.Body.String() {
 					t.Errorf("the refusal for another organisation is (%d) %s and for one that is not there (%d) %s, want the two the same",
 						rec.Code, rec.Body, missing.Code, missing.Body)
@@ -1048,7 +1051,7 @@ func TestAnotherOrgsMembersAreRefused(t *testing.T) {
 				// whoever asked which ids name an organisation of the operations
 				// team or of a reseller.
 				for _, special := range []string{"org_operations", "org_reseller"} {
-					guessed := f.apiAs(tc.method, strings.Replace(tc.path, beta.ID, special, 1), "")
+					guessed := f.apiAsCaller(tc.method, strings.Replace(tc.path, beta.ID, special, 1), "")
 					if guessed.Code != http.StatusNotFound || guessed.Body.String() != rec.Body.String() {
 						t.Errorf("the %s %s the caller is not in is answered (%d) %s, want the same not-found refusal as one that is not there (%d) %s",
 							special, tc.name, guessed.Code, guessed.Body, rec.Code, rec.Body)
@@ -1064,7 +1067,7 @@ func TestAnotherOrgsMembersAreRefused(t *testing.T) {
 	if list := f.listOrgs(); len(list) != 1 || list[0].ID != alpha.ID {
 		t.Errorf("the switcher's list is %+v, want only the caller's own organisation %q", list, alpha.ID)
 	}
-	members := f.apiAs(http.MethodGet, apiOrgMembersPathOf(alpha.ID), "")
+	members := f.apiAsCaller(http.MethodGet, apiOrgMembersPathOf(alpha.ID), "")
 	if members.Code != http.StatusOK {
 		t.Fatalf("the owner reading their own member list was answered %d (%s)", members.Code, members.Body)
 	}
@@ -1189,7 +1192,7 @@ func TestAnIDTheStoreCannotFileIsNotThere(t *testing.T) {
 	f.start()
 	f.actsAs(danaUID, danaEmail, signInGoogle)
 
-	absent := f.apiAs(http.MethodGet, apiOrgPathOf("org_nobody"), "")
+	absent := f.apiAsCaller(http.MethodGet, apiOrgPathOf("org_nobody"), "")
 	if absent.Code != http.StatusNotFound {
 		t.Fatalf("a read of an organisation that is not there answered %d (%s), want the not-found refusal", absent.Code, absent.Body)
 	}
@@ -1210,7 +1213,7 @@ func TestAnIDTheStoreCannotFileIsNotThere(t *testing.T) {
 			{name: "members read", method: http.MethodGet, path: apiOrgMembersPathOf(name)},
 			{name: "selection", method: http.MethodPost, path: apiOrgSelectPathOf(name), body: "{}"},
 		} {
-			rec := f.apiAs(route.method, route.path, route.body)
+			rec := f.apiAsCaller(route.method, route.path, route.body)
 			switch {
 			case rec.Code != http.StatusNotFound:
 				t.Errorf("the %s of %q answered %d (%s), want the not-found refusal: a name no organisation could be created with is not one to argue with", route.name, name, rec.Code, rec.Body)
