@@ -700,11 +700,12 @@ func TestInstallationAtPolicyVersion7ConvergesBinaries(t *testing.T) {
 }
 
 // TestUpdatePolicyStagePublishesTheBinariesBlock is the other half of the same
-// command: the owner's own config states a block — the key the project layer
-// gained with this release (AR1) — and `fugaro update` is what carries it onto
-// the node. No second command, which is the HARD RULE's whole point here: an
-// operator who edits `binaries:` in the project layer and runs `fugaro update`
-// has published it, and one who never edits it never sees the member move.
+// command: the owner's own config states a block — the key the local project
+// config gained with this release (AR1; the project layer file refuses it) —
+// and `fugaro update` is what carries it onto the node. No second command,
+// which is the HARD RULE's whole point here: an operator who edits `binaries:`
+// in the local project config and runs `fugaro update` has published it, and
+// one who never edits it never sees the member move.
 //
 // The fixture's node is this binary's own version (v8Node), because what this
 // test is about is the editor's path and not the migration: nothing about the
