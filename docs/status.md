@@ -26,7 +26,7 @@ As of 2026-11-15, read from `main`, the open pull requests and each plan's task 
 | mobile | about 44/58 | P5.1 (split into tasks in drafts #2701 and #2703), P5.2 (design, draft #2687), P5.3.1 to P5.3.7 (approved 2026-11-14, not started), P5.4 (unscheduled); owner P2.3 and P4.4 |
 | model-ab-testing | 16/18 | owner Checks 210 to 212 |
 | no-prompt-policy | 14/17 | T12 (stalled, draft #2708), T13 (live, draft #2707), T14 (live, draft #2709), the T11 follow-up (stalled, draft #2706); owner Checks 380 to 382 once T14 lands |
-| stateless-orchestrator | 18/20 | O13 (stalled, draft #2696), O19 (approved, blocked: a run the workspace refused is not distinguishable in the run record, so it waits on a W-side record change; U12 resolved NO 2026-11-13); owner Checks 301 to 304 and 305 (O16b) |
+| stateless-orchestrator | 18/20 | O13 (stalled, draft #2696), O19 (approved; the W-side record change U12 asked for is in a draft pull request — `halt.workspace_refusal` on the halt, 2026-11-15 — and the field names a refusal without authenticating one, so O19 still owes U12's bound on the pause or a source a run cannot write); owner Checks 301 to 304 and 305 (O16b) |
 | task-governance | 25/31 | 6 left: T3.4 (docs; stalled, drafts #2699 and #2702, held until the outer-loop-escalation E6 pull request #2498 merges), and the rest in `ee/governance` |
 | vision-model | 8/9 | V8 not started; owner Checks 520 and 521 not run |
 

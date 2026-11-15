@@ -5,7 +5,9 @@ O5 (#2043), O6 (#1950), O7 (#2040), O8 (#2064), O10 (#2191), O17 (#2024) and O18
 started: O11, O13, O14 (it follows #2193 and #2207), and the three this revision writes — **O16 is now two tasks**: **O16a** (the state scopes,
 the catalogue rows and the read handlers, dormant; **approved and launchable**, after the open #1994) and **O16b** (serving them; approved,
 waits on the MCP folder's wiring task), and **O19** (a workspace's refusal pauses the queue; approved, its gate W7 #2275 merged and **the reading of
-2026-11-13 found the run record does not mark the refusal, so it is blocked on a W-side record change** — U12 resolved NO). **The owner answered
+2026-11-13 found the run record does not mark the refusal, so it was blocked on a W-side record change** — U12 resolved NO, and that change is now
+in a draft pull request: `halt.workspace_refusal` on the halt, 2026-11-15, while the marker names a refusal without authenticating one, so O19
+still owes U12's bound on the pause or a source a run cannot write). **The owner answered
 D2020-D2022 as recommended and approved all tasks on 2026-11-10** (reconciliation section 8). The paragraph below is the status of 2026-11-08, kept.
 
 **Status (2026-11-08): six tasks of this plan are built, all merged on `main`.** **Task O0, the state schema, the typed patch and the validator, is merged on `main`** on
