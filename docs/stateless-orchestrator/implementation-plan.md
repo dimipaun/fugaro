@@ -904,7 +904,9 @@ such cycles (`internal/orchestrator/breaker.go`, `BreakerThreshold`). **D2022** 
   2026-11-10) and **W7** (#2275, merged 2026-11-11 as `d3b7613f`). **Serializes after** the open #2207 (`internal/cli/orchestrator_run.go`) and #2202 (`internal/cli/orchestrator_run_test.go`), and after O13 and O14 (`tick.go`,
   `orchestrator_run.go`). **Level 8**, and both external triggers have fired — **which did not make it launchable: the reading below blocked it,
   and what unblocks it is a W-side change that puts the refusal's source in the run record, not W7's merge. That change landed 2026-11-15
-  (`halt.workspace_refusal`, the third reading below); scheduling O19 after it is the plan's to do, and nothing in this task is done here.**
+  (`halt.workspace_refusal`, the third reading below) — **and it does not make O19 launchable on its own: the marker names a refusal without
+  authenticating one, so the bound U12 asked for is still O19's to write**, which the third reading below states; scheduling O19 after the
+  record change is the plan's to do, and nothing in this task is done here.**
 - **What waits, exactly, and the trigger:** the `RunReport` field and the reader's mapping waited for **W7's merge** — the trigger, #2275, which
   landed 2026-11-11 — and the first act was reading how a call the workspace refused (its stop, its cap or a failed settle) reaches the run
   record — where the plan already stated the stand: **if it does not reach it distinguishably, O19 cannot be built as written and is reported to
@@ -914,14 +916,17 @@ such cycles (`internal/orchestrator/breaker.go`, `BreakerThreshold`). **D2022** 
   the same `budget_unavailable`/`run` halt a member's own service outage writes, and the cap's refusal is on no call path at all, so O19 is
   blocked and no task of this plan implements it until a W-side change puts the refusal's source in the record — the reading, with its
   citations, is `docs/stateless-orchestrator/reconciliation.md` **U12 (resolved NO)**.
-  Read 2026-11-15 (**the W-side change U12 asked for has landed, and it is not this task's**): a run a workspace refused now says so in its own
+  Read 2026-11-15 (**the W-side change U12 asked for has landed, and it is not this task's**): a run a workspace refused can say so in its own
   record — `halt.workspace_refusal` (`runstore.Halt.WorkspaceRefusal`), one of `stop`, `cap` or `settle`, absent for every run no workspace
-  refused. The workspace's service puts the marker on the refusal it already answers (`gateway.WorkspaceRefusalHeader`,
-  `credsvc.SetWorkspaceRefusal`), the member's gateway reads it onto the halt (`internal/gateway/service.go`'s `serviceAnswer`) and the runner
-  copies it into the record (`internal/runner/gateway.go`'s `gatewayHalt`); the halt's `reason`, `scope` and `detail` are what they always
-  were. So the field `RunReport` waits for is named and on `main`, and **O19 is a task of its own that reads it** — nothing above changes
-  because of this: the seam, the trip at once and the tests are still O19's to write, and the writer's obligation below is still the reason a
-  run cannot claim the marker for itself.
+  refused. The member's gateway reads the marker off a refusal onto the halt (`gateway.WorkspaceRefusalHeader`, `internal/gateway/service.go`'s
+  `serviceAnswer`) and the runner copies it into the record (`internal/runner/gateway.go`'s `gatewayHalt`); `credsvc.SetWorkspaceRefusal` is
+  the writer and has no caller yet, so no refusal of this release carries it; the halt's `reason`, `scope` and `detail` are what they always
+  were. So the field `RunReport` waits for is named and on `main`, and **O19 is a task of its own that reads it** — the seam, the trip at once
+  and the tests are still O19's to write. **The field does not meet U12's consideration, and O19 must not read it as if it did:** the record is
+  the run's own write, so a run can put the marker in its own record — its job account writes `result.json`, and a hostile run reads that
+  account's token from the metadata server (`SECURITY.md`, "Runs of one repository can see each other") — and O19 therefore still owes a bound
+  on the pause, or a source a run cannot write, before it stops a queue on a claimed refusal. The field names the refusal; it does not
+  authenticate it.
 - **Commit:** `feat(ee): a workspace's refusal pauses the orchestrator's queue (O19)`
 - **Red step:** `TestAWorkspaceRefusalPausesTheQueueAtOnce` fails to build (no seam), then fails while a refused run is folded as an ordinary
   refusal and the next approved item is launched into the same stop.

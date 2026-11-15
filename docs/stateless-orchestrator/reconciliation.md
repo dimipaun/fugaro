@@ -786,13 +786,19 @@ whole-database read and no write; the compounding case (D2020 (a) with D2021 (b)
   run's own record, which the O7 join already treats as the run's to write (`internal/orchestrator/runview.go:3-11`), and the pause it
   triggers is `waiting_on: person` — so the field's writer owes the reason a run cannot claim it, or the daemon a bound on the pause, before
   a claimed refusal can stop a queue until a person answers.
-  **Follow-up, 2026-11-15: the W-side change this unit asked for has landed, and the reading above stands as the record of what W7 left.**
+  **Follow-up, 2026-11-15: the W-side change this unit asked for has landed, and it is the field's reader — not the consideration above.**
   `runstore.Halt` carries `workspace_refusal` (`internal/runstore/runstore.go`), one of `stop`, `cap` or `settle`
   (`internal/gateway/workspace_refusal.go`), absent for every run no workspace refused — so a record no longer reads the same for a
-  workspace's refusal and a member's own service outage. The writer answers the consideration above by construction rather than by a bound:
-  the marker is **never inferred** from the reason, the scope or the detail, only copied from the header the workspace's service puts on the
-  refusal it already answers (`gateway.WorkspaceRefusalHeader`, read in `internal/gateway/service.go`'s `serviceAnswer`,
-  `credsvc.SetWorkspaceRefusal` writing it), and a run that does not reach the workspace's service can therefore not claim it. What is still
-  true from the reading above is the second half: `WorkspaceMeter.Reserve` and `Settle` have no non-test caller, so no call is refused at a
-  workspace ceiling and none fails to settle yet — the `cap` and `settle` markers are the wire's and the record's, and the calls that would
-  write them arrive with the meter's wiring. O19 is unblocked on the field and remains a task of its own.
+  workspace's refusal and a member's own service outage. What the field buys is that the honest writer cannot write it by accident: it is
+  **never inferred** from the reason, the scope or the detail, only copied from the header a workspace's service puts on a refusal
+  (`gateway.WorkspaceRefusalHeader`, read in `internal/gateway/service.go`'s `serviceAnswer`; `credsvc.SetWorkspaceRefusal` is its writer and
+  has no caller yet, so no refusal of this release carries it). **It does not answer the consideration above, and its landing must not be read
+  as if it did.** The halt is written into the run's own record by the run's own job account, and a run is the untrusted party here: a hostile
+  run reaches that account's token from the metadata server, so it can write `halt.workspace_refusal` into its own record — or another run's —
+  with no workspace's service involved at all (`SECURITY.md`, "Runs of one repository can see each other"). The gateway's read decides what the
+  honest path writes and bounds nothing else. **So O19 still owes exactly what this unit asked for: a bound on the pause, or a source a run
+  cannot write, before a claimed refusal stops a queue until a person answers.** The field names the refusal; it does not authenticate it, and
+  a daemon that pauses on the record alone pauses on a claim any run can make. What is still true from the reading above is the second half:
+  `WorkspaceMeter.Reserve` and `Settle` have no non-test caller, so no call is refused at a workspace ceiling and none fails to settle yet —
+  the `cap` and `settle` markers are the wire's and the record's, and the calls that would write them arrive with the meter's wiring. O19
+  remains a task of its own.
