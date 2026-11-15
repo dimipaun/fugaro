@@ -616,6 +616,14 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 		// NewServer refuses a service that cannot write one, because a service
 		// that cannot grant a run its credentials has no purpose at all.
 		Slips: &creds.RTDBStore{DB: db},
+		// The workflow-secrets record (B3.1, B3.2): what `fugaro update` wrote
+		// for each repository's jobs, read over the same client and therefore
+		// the same service identity. It is the ONE node the workflow-secrets
+		// route serves a call out of, so a deployment that wired nothing here
+		// would refuse every one of those calls rather than answer an empty
+		// value — which is why the reader is wired with the route's own field
+		// and not left to the database the other routes write through.
+		WorkflowSecrets: credsvc.RTDBWorkflowSecrets{DB: db},
 		// Every audited act goes to the process's log, which is the stream
 		// Cloud Logging reads; the one auditor that redacts is built inside
 		// NewServer (NewProbeAuditor arms it with this service's loader).

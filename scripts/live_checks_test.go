@@ -18,7 +18,7 @@ import (
 // liveCheckScripts are the owner-run live checks' scripts and their tests.
 // Each test drives its script against fake tools on PATH -- a fake `claude`
 // and a fake upstream for Check 90, fake `gcloud`, `fugaro` and `curl` for
-// Check 91, fake `gcloud` and `fugaro` for Checks 111, 146 and 401, fake `gcloud`,
+// Check 91, fake `gcloud` and `fugaro` for Checks 27, 111, 146 and 401, fake `gcloud`,
 // `git`, `curl` and `fugaro` for Check 190, fake `gcloud`, `fugaro` and a fake
 // Realtime Database behind a fake `curl` for Check 191, fake `gcloud`, `fugaro`
 // and `curl` for Check 195 (a small project whose service and account appear and
@@ -85,6 +85,24 @@ import (
 // older than the release, a coder that reads images itself, a slot that is set,
 // a run that never ends, a record that is another run's, and a refusal whose
 // sentence has lost one of the parts an owner needs.
+// Check 440's fakes are a fake `fugaro` that resolves a run ending the way the
+// CLI does -- the active runs and the window first, the whole bucket only on a
+// miss, the numbered pick list and one question only at a real terminal, and
+// never a cancel through an ending -- and a fake `gcloud` for the two rows that
+// read the runs bucket, over a run set each case seeds, so a case says what the
+// check measured and that it launched nothing here.
+// Check 291's fakes are a fake `fugaro`, a fake `gcloud` and a fake `gh`, with
+// real git against a bare repository inside each case's own directory: the
+// catalog entry's line, the job's stamp and the names a run drops, the
+// reservation read with a name set on the job by hand, and the run's own
+// transcript all come out of the case's own state files, so a case bends one
+// reading at a time and says what the check then reads -- and its `--dry-run`
+// case pins that a plan makes no call at all. Its fake `run` names the run it
+// launched only in the `--json` document (a person's own line is a reporter step
+// on stderr, and its short name is not the run's id), and its fake `runs ls`
+// keeps a run in flight until its second poll and writes that run's transcript
+// only where the row turns terminal, so a check that read a run id off the human
+// line or read a transcript before its run ended fails these cases.
 // Checks 490 to 492 drive a fake `fugaro` and a fake `gcloud` over the
 // post-review triage work, one per reading an owner takes on a real run: 490
 // launches ONE sandbox run and reads its record's triage block and its
@@ -177,13 +195,37 @@ import (
 // on stderr -- files a log with the sink's own name shape, mode and retention
 // rule, and fails exactly when the check's own fake `terraform` is first on
 // PATH, so the forced failure is the check's own shim end to end and a case
-// bends the one thing it judges. Check 350's are a fake `gcloud` and a fake
+// bends the one thing it judges. Check 311's fake is none: its subject is a
+// Windows console, so PowerShell and Windows both have to be there for its
+// steps to run at all, and its test is mostly a reading of its own text -- the
+// block keys, the phases, the guards, the readings and the ones it refuses to
+// take -- beside the six cases that run nothing (`-SelfTest`, `-DryRun`, the
+// three refusals that come before the first tool is looked for, and the stop a
+// machine that is not Windows makes), which it RUNS wherever `pwsh` is on PATH
+// and says so in one line where it is not. Its
+// one case that is neither runs the self-test's own three rules again in bash,
+// over the script's text, so the tree that carried the rule-1 defect is red on
+// a machine without PowerShell too. Check 350's are a fake `gcloud` and a fake
 // `fugaro` beside a REAL local checkout and its bare origin -- git stays on this
 // machine -- with one shared call log for both fakes, so a case says what the
 // check read AND in what order: the hash of the old record is taken before the
 // first CLI read of the window, which is half of what step 4 is about, and a
 // case that rewrites a copy of the script with the comparison removed proves
-// the FAIL it reads elsewhere is the comparison's.
+// the FAIL it reads elsewhere is the comparison's. Check 200's are a fake
+// `gcloud` that serves the run's own record and the image's build record, a
+// fake `fugaro` that answers `version`, `doctor`, the settings write -- which it
+// REFUSES, the way the CLI does, since no command writes that key -- `run` and
+// `runs ls`, and a fake `go` whose build writes a binary that answers a paid
+// name with the core stub -- beside a REAL local git repository and its bare
+// origin, so the throwaway branch, the commit, the push and the Restore's own
+// deletion are readings of a repository the test owns rather than of a fake's
+// log.
+// Check 27's fakes are a fake `gcloud` and a fake `fugaro` that hold a throwaway
+// project which exists only once something creates it, its billing link, its
+// Firestore location, its buckets, its jobs, its secret containers and its
+// images — and whose `setup` REFUSES the create path when it has no terminal, so
+// a case says both what the check read back and that the wizard was really given
+// a pty. No live step of it is run.
 // Check C0's fake is a fake `fugaro` alone, serving each read out of a document
 // the test writes -- so a case knows the document's exact length and can hold
 // the byte count in the readings table against the file -- and recording every
@@ -239,6 +281,7 @@ var liveCheckScripts = []struct {
 	name string
 	test string
 }{
+	{"check27.sh", "check27_test.sh"},
 	{"check69.sh", "check69_test.sh"},
 	{"check90.sh", "check90_test.sh"},
 	{"check91.sh", "check91_test.sh"},
@@ -255,6 +298,7 @@ var liveCheckScripts = []struct {
 	{"check190.sh", "check190_test.sh"},
 	{"check191.sh", "check191_test.sh"},
 	{"check195.sh", "check195_test.sh"},
+	{"check291.sh", "check291_test.sh"},
 	{"check300.sh", "check300_test.sh"},
 	{"check301.sh", "check301_test.sh"},
 	{"check302.sh", "check302_test.sh"},
@@ -262,6 +306,7 @@ var liveCheckScripts = []struct {
 	{"check304.sh", "check304_test.sh"},
 	{"check305.sh", "check305_test.sh"},
 	{"check310.sh", "check310_test.sh"},
+	{"check311.ps1", "check311_test.sh"},
 	{"check313.sh", "check313_test.sh"},
 	{"check314.sh", "check314_test.sh"},
 	{"check330.sh", "check330_test.sh"},
@@ -279,6 +324,7 @@ var liveCheckScripts = []struct {
 	{"check511.sh", "check511_test.sh"},
 	{"check520.sh", "check520_test.sh"},
 	{"check521.sh", "check521_test.sh"},
+	{"check440.sh", "check440_test.sh"},
 	{"check420.sh", "check420_test.sh"},
 	{"check421.sh", "check421_test.sh"},
 	{"check422.sh", "check422_test.sh"},
@@ -296,6 +342,7 @@ var liveCheckScripts = []struct {
 	{"check-382-agent-cannot-raise-a-cap.sh", "check-382-agent-cannot-raise-a-cap_test.sh"},
 	{"check550.sh", "check550_test.sh"},
 	{"check139.sh", "check139_test.sh"},
+	{"check200.sh", "check200_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent

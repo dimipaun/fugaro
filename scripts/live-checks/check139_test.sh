@@ -633,6 +633,7 @@ test_a_logging_read_that_fails_is_not_measured() {
   expect_contains "$out" "FACT entries: FAIL" "a log read that fails: the row"
   expect_contains "$out" "the run's log entries could not be read" "a log read that fails: what happened"
   expect_contains "$out" "roles/logging.viewer" "a log read that fails: the permission it needs"
+  expect_absent "$out" "timed out" "a log read that fails: a permission failure is not a timeout"
   expect_contains "$out" "CHECK 139 RESULT END (exit 2)" "a log read that fails: the exit"
   assert_scratch_removed "a log read that fails"
 }

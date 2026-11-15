@@ -825,7 +825,13 @@ step_calls() {
       return 0
       ;;
     2)
-      unmeasured entries "the run's log entries could not be read (gcloud exited ${BOUNDED_STATUS}${BOUNDED_TIMED_OUT:+, timed out after ${LOG_TIMEOUT}s}): reading them needs roles/logging.viewer on ${P}. Its output is in $SCRATCH/calls.err; read the entries yourself with 'gcloud logging read' and the filter this check prints in --dry-run"
+      # Both a bound that killed the read and a gcloud that exited non-zero
+      # arrive here as rc=2, and run_bounded sets BOUNDED_TIMED_OUT to yes or
+      # no, never to nothing: the suffix is added on the value, or a permission
+      # failure (exit 1) would read as a read that timed out.
+      local timeout_phrase=""
+      if [ "$BOUNDED_TIMED_OUT" = yes ]; then timeout_phrase=", timed out after ${LOG_TIMEOUT}s"; fi
+      unmeasured entries "the run's log entries could not be read (gcloud exited ${BOUNDED_STATUS}${timeout_phrase}): reading them needs roles/logging.viewer on ${P}. Its output is in $SCRATCH/calls.err; read the entries yourself with 'gcloud logging read' and the filter this check prints in --dry-run"
       STOP=yes
       return 0
       ;;

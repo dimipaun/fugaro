@@ -503,6 +503,14 @@ const (
 	// of the stage's own would take the row over.
 	docTriage    = "docs/post-review-triage/implementation-plan.md"
 	docCloneURLs = "docs/project-claude-accounts.md"
+	// docBinaryAllow is the design of the binary allow rule (D981–D983,
+	// binary-allow-rule plan task AR1): it states the two members — the globs a
+	// run may add a binary at and the cap one is held to — and what a file that
+	// states neither is read as, which is the whole of the DEFAULT column for
+	// the two rows below. Unlike docTriage and the other plan documents, the
+	// spec is where the rule itself lives, so the rows point there rather than
+	// at the plan.
+	docBinaryAllow = "docs/binary-allow-rule/spec.md"
 	// docAccounts is the account document, which states the repository-level
 	// source beside the block and the profiles' lists it unions with.
 	docAccounts = "docs/project-claude-accounts.md"
@@ -1081,6 +1089,26 @@ var localRows = []Row{
 	// into the shared file would be choosing the code every teammate's runs
 	// execute.
 	locLocal("clone_urls", "none: a run clones from its provider's own URL for its repository (https://github.com/owner/name.git)", "project clone-url", docCloneURLs),
+
+	// The binaries block is the owner's grant of the paths a run may add a
+	// binary at and of the cap a run is held to (D981–D983; binary-allow-rule,
+	// plan task AR1), and one row per member for the catalog's reason: a
+	// settings read names the leaf a value came from, and the two members are
+	// what the rule's two inputs are. Both rows are local-only, like the clone
+	// URLs above and for a reason one step out: the block is read by the
+	// project's runs as the rule they are held to, so a launcher who could
+	// write it into the runs bucket's shared file would be admitting its own
+	// payload to every teammate's runs (D986; Shared nils it besides, and
+	// sharedForbidden refuses the key).
+	//
+	// The owner is the project family because `fugaro project policy publish`
+	// is the door that carries the block onto the node — the run reads it
+	// there and nowhere else — and because no generic write reaches these
+	// leaves: an entry is a doublestar path glob held to the node's own rule
+	// (projectpolicy.ValidBinariesAllow) and the cap to its ceiling, which are
+	// checks no scalar write can make.
+	locLocal("binaries.allow", "none: no path is admitted, so a run that adds a binary anywhere fails finalize and the person reads the reason there", "project", docBinaryAllow),
+	locLocal("binaries.max_bytes", "2097152 (2 MiB): the largest a single added file may be, and a project may lower it", "project", docBinaryAllow),
 
 	// The orchestrator daemon's own guardrails (D1239, D1234) are the owner's
 	// policy like the catalog above, and one row per member for the catalog's
