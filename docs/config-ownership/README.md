@@ -2,8 +2,8 @@
 
 Spec owner: Dimi (repository owner). Spec received 2026-11-15.
 
-**Status: plan only; nothing is implemented; no task approved.** Nine decisions are answered
-(D2601-D2607, D2609, D2610, 2026-11-15); D2608, D2611, D2612, D2613, D2614, D2615, D2616 and D2617 are open with a
+**Status: plan only; nothing is implemented; no task approved.** Thirteen decisions are answered
+(D2601-D2610 except D2611, D2612, D2615, D2617, 2026-11-15); D2611, D2613, D2614 and D2616 are open with a
 recommendation, and tensions T3 and T5 are open. Tasks that wait on one say so.
 
 This folder is not `docs/config-management/`, which is the 2026-11-03 package ("no configuration file
