@@ -788,7 +788,7 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 
 	first, firstSent, err := s.upstreamRequest(ctx, r, rt, body)
 	if err != nil {
-		if s.o.Upstream.Kind == KindService && errors.Is(err, errServiceUnidentified) {
+		if rt.provider == nil && s.o.Upstream.Kind == KindService && errors.Is(err, errServiceUnidentified) {
 			// C1.15 (service.go), D143: a service call this job cannot
 			// present its own identity on is a run the service cannot serve
 			// at all. The metadata server is the only place the job's ID
@@ -806,7 +806,7 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		return s.upstreamRequest(ctx, r, rt, body)
 	}, p.model)
 	if err != nil {
-		if s.o.Upstream.Kind == KindService && s.serviceUnreachable(w, s.base, r.Context()) {
+		if rt.provider == nil && s.o.Upstream.Kind == KindService && s.serviceUnreachable(w, s.base, r.Context()) {
 			// C1.15 (service.go), D143: an unreachable credentials service
 			// halts the run -- it never falls back to a credential of the
 			// job's own, which this upstream has none of. Nothing reached
@@ -841,13 +841,19 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		return zeroOutcome(p.model, true), lost
 	}
 	*status = resp.StatusCode
-	if s.o.Upstream.Kind == KindService {
+	if rt.provider == nil && s.o.Upstream.Kind == KindService {
 		// C1.15 (service.go): what the service said about this call is read
 		// here, where it leaves the upstream and before a byte of it reaches
 		// the agent -- the tier the call settles by, the credential's name,
 		// the switch, and the refusals that are the service's own answer and
 		// are never relayed. A model answer (2xx, or a model error the
 		// service relayed) is not touched: it goes on to the pump below.
+		//
+		// A routed call is never one of these, even beside a service
+		// upstream: it went to the provider's own endpoint (withRoute,
+		// upstreamRequest), so its answer is the provider's and carries no
+		// tier -- read as the service's, it would halt the run for an answer
+		// that is exactly what R6/D1634 keep on the runner path.
 		st, done, served, probes := s.serviceAnswer(w, resp, true)
 		*tier = served // "" when the answer carried none, which is a halt or a relayed error
 		*probed = probes
@@ -1439,10 +1445,18 @@ var hopByHop = map[string]bool{
 // rather than travelling beside them: the gateway reads it where they are read
 // (before this copy, so the run's own process has it through DeliveredHeadroom)
 // and the agent is handed the model's answer without it.
+//
+// The workspace's refusal marker is the sixth (workspace_refusal.go), and it
+// joins them for the headroom's reason and one of its own: the marker is the
+// workspace's own statement about itself, delivered to the calling member's
+// job, and it is between the two binaries rather than part of any answer the
+// agent is handed. A refusal is not relayed at all (D143), so the drop is the
+// belt to that brace — a 2xx that carried the header would still not reach the
+// agent with it.
 var dropResponseHeaders = map[string]bool{
 	"Anthropic-Organization-Id": true, "Set-Cookie": true, "Set-Cookie2": true,
 	HeaderTier: true, HeaderCredential: true, HeaderSwitch: true, HeaderProbe: true,
-	WorkspaceHeadroomHeader: true,
+	WorkspaceHeadroomHeader: true, WorkspaceRefusalHeader: true,
 }
 
 func copyResponseHeaders(dst, src http.Header, decoded bool) {

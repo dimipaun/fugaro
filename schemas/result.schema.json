@@ -204,7 +204,8 @@
         "reason": { "enum": ["kill_switch", "run_cap", "repo_daily_cap", "global_daily_cap", "no_cap", "token_cap", "budget_unavailable", "budget_token_expired", "no_credential", "creds_rules_denied", "stage_budget", "review_ratio", "fanout", "review_scope", "expected_exceeded", "owner_decision"] },
         "scope": { "enum": ["run", "repo", "global"] },
         "at": { "type": "string", "format": "date-time" },
-        "detail": { "type": "string" }
+        "detail": { "type": "string" },
+        "workspace_refusal": { "enum": ["stop", "cap", "settle"], "description": "The workspace's own credentials service refused this run, and which of the workspace's refusals it was (docs/workspaces/spec.md §5, §9; D2022's O19): its stop switch, the workspace's own spend cap, or a call the service made and could not record the cost of, which it refuses rather than serves. It is the marker a run the workspace refused did not have — the refusal reaches a member's run as the same budget_unavailable/run halt a member's own credentials-service outage writes, so a reader of records alone cannot tell the two apart (docs/stateless-orchestrator/reconciliation.md U12) — and it is read off the marker the workspace's service put on the refusal it answered (internal/gateway's WorkspaceRefusalHeader) and never inferred from reason, scope or detail, which a member's own service writes the same way. The enum is internal/gateway's WorkspaceRefusals, which TestResultSchemaWorkspaceRefusalsAgreeWithGo holds this list to. reason, scope and detail keep exactly what they said before this property existed: a run refused by a workspace stops where it always stopped. Absent — never an empty string — for every run no workspace refused, which is every run on an installation with no workspace and every record written before this property existed, so an old reader sees the record it always saw and version stays 1 (the field is additive)." }
       }
     },
     "checkpoint": {

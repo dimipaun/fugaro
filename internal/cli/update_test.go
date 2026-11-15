@@ -221,27 +221,29 @@ func stageDetailOf(res *initflow.Result, name string) string {
 // (D12): at the owner's own terminal every stage it registers is planned and
 // applied or skipped, nothing is left for the user and the run exits 0. The
 // project stage is not in it, and neither is the Batch backend's.
+//
+// The account read here is the run's own plan view in its log rather than a
+// --json document: --json confirms no step (T11, docs/no-prompt-policy), so a
+// --json run of this rig stops at the installation stage's first write and
+// never reaches the stage set this test is about.
 func TestUpdateIsTotalOverItsOwnStageSet(t *testing.T) {
 	r := updateRig(t)
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, "", "update", "--json")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
-		t.Fatalf("%v\n%s", err, out)
+		t.Fatalf("%v\n%s\n%s", err, out, errOut)
 	}
-	var res convergeJSON
-	if err := json.Unmarshal([]byte(out), &res); err != nil {
-		t.Fatalf("%v:\n%s", err, out)
-	}
+	rows := stageRows(out + newestLog(t, "update"))
 	var names []string
-	for _, st := range res.Stages {
-		names = append(names, st.Name)
-		switch st.State {
-		case "needs-you", "blocked", "failed":
-			t.Errorf("%s is %s at the terminal: %s", st.Name, st.State, st.Detail)
+	for name, row := range rows {
+		names = append(names, name)
+		switch row.word {
+		case "left for you", "waiting", "failed":
+			t.Errorf("%s is %s at the terminal: %s", name, row.word, row.line)
 		}
 	}
-	if len(res.Left) != 0 {
-		t.Errorf("the run left something for the user: %+v", res.Left)
+	if strings.Contains(out, "Left for you") {
+		t.Errorf("the run left something for the user:\n%s", out)
 	}
 	for _, want := range []string{initflow.Preflight, initflow.Installation, initflow.Firebase, initflow.Images,
 		initflow.Installation2, initflow.Secrets, initflow.Plugin, initflow.Repository} {

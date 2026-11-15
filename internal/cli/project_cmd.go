@@ -290,6 +290,16 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 			// of it, which is the one thing a record exists to prevent.
 			return gate.recorded(ctx)
 		}
+		// The shared-job rule, at the operator's own door and nowhere else in
+		// this run's path: a profile that mounts the Bitbucket credential is
+		// refused here, before a node is built from this config, so the
+		// operator reads it with the file in hand rather than meeting it at the
+		// update's deploy, one step away from the entry
+		// (refuseAProfileMountingTheBitbucketCredential says why the update's
+		// policy stage is not a door of it).
+		if err := refuseAProfileMountingTheBitbucketCredential(lc); err != nil {
+			return publishFailure(err, narrowedSoFar)
+		}
 		old, err := publishedPolicyOf(raw, exists)
 		if err != nil {
 			return publishFailure(err, narrowedSoFar)
@@ -552,6 +562,10 @@ func rulesMarkerPrePolicyText(gen int) string {
 // P6.4, D166).
 const rulesDeviceGeneration = 3
 
+// rulesCoordinatorGeneration is the rules generation that added the
+// coordinator's read grant (coordinator plan P3, D194).
+const rulesCoordinatorGeneration = 4
+
 // rulesMarkerOlderText is the sentence for the state between the two
 // generations: at or above PolicyRulesVersion and below RulesVersion. Nothing
 // refuses here — Read reads the policy the marker's rules carry and
@@ -561,10 +575,17 @@ const rulesDeviceGeneration = 3
 // is this release's own document, whose mailbox the mobile app has no grant for
 // until the owner deploys it (mobile plan P2.3).
 //
-// A marker at rulesDeviceGeneration already carries the mailbox and the device
-// binding, so for it the sentence names the one thing generation 4 adds: the
-// coordinator's read grant (coordinator plan P3).
+// Each branch names the one thing the next generation adds, so the sentence
+// never sends the operator after a grant the deployed rules already carry: a
+// marker at rulesDeviceGeneration already has the mailbox and the device
+// binding, and one at rulesCoordinatorGeneration already has the coordinator's
+// read grant, so for it the sentence names the voice policy node (mobile plan
+// task P5.3.1).
 func rulesMarkerOlderText(gen int) string {
+	if gen >= rulesCoordinatorGeneration {
+		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox, the device binding and the coordinator's read grant, so runs, a published policy, the mobile app and the coordinator are unaffected — what they predate is this release's own document, which adds the voice policy node %s/{shared,repos/$slug} (mobile plan task P5.3.1): a run token reads its own project's node there, and no client writes either node; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
+			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, rules.PathVoice, projectpolicy.RulesVersion)
+	}
 	if gen >= rulesDeviceGeneration {
 		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox and the device binding, so runs, a published policy and the mobile app are unaffected — what they predate is this release's own document, which adds the read grant on the coordinator's state (coordinator plan P3): a signed-in reader is refused every read of %s/ until it is deployed; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
 			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, coordpath.PathRoot, projectpolicy.RulesVersion)
@@ -840,6 +861,31 @@ func sharedRepos(ctx context.Context, lc *localcfg.Config) (map[string]localcfg.
 	return sc.Repos, nil
 }
 
+// refuseAProfileMountingTheBitbucketCredential is the operator's door on the
+// shared-job rule, and it does not copy the rule's sentence: the sentence is
+// projectpolicy.CheckSharedJobProfile's, the function the deployer asks too, so
+// the two doors refuse the entry in one wording rather than in two that can
+// drift.
+//
+// The rule is asked here, at the command a person writes a policy with, and not
+// inside buildProjectPolicy, which `fugaro update`'s policy stage builds its
+// node through as well (policyNodeForPublish): an installation whose local
+// config already mounts the credential is one this repository published without
+// complaint before the owner's ruling of 2026-11-14, and the HARD RULE is that
+// `fugaro update` converges it — a refusal at the shared build would stop the
+// update whole and leave the operator editing the file by hand, which is the one
+// step an update must never need. What the stage writes is the config's own
+// node, and internal/infra's ProjectJobs is where a job for such a profile is
+// refused.
+func refuseAProfileMountingTheBitbucketCredential(lc *localcfg.Config) error {
+	for _, name := range slices.Sorted(maps.Keys(lc.Profiles)) {
+		if err := projectpolicy.CheckSharedJobProfile("profiles."+name, projectpolicy.Profile{JobProfile: lc.Profiles[name]}); err != nil {
+			return userErr("%s would not publish as a policy: %v", lc.Name, err)
+		}
+	}
+	return nil
+}
+
 // buildProjectPolicy is the node the publisher writes, from the operator's
 // config. The version is this binary's (P8: a beta cannot publish a shape
 // main cannot read), and the budget block always names a mode — an empty mode
@@ -926,6 +972,19 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 			if pr := lc.Profiles[name]; pr.AllowReposWritten() && len(pr.AllowRepos) == 0 {
 				return nil, false, userErr("this project's config sets profiles.%s.allow_repos to a written list with nothing in it, which is ambiguous: remove the key to fall back to the project's allow_repos, or write the repositories this profile admits (the project's own allow_repos is still required, so a profile's list can only narrow it)", name)
 			}
+			// A profile that mounts the Bitbucket credential is not this
+			// function's to refuse: the update's policy stage builds its node
+			// through it, and the stage must converge an installation whose
+			// local config already mounts the credential — one this repository
+			// published without complaint before the owner's ruling of
+			// 2026-11-14 — where a refusal would stop `fugaro update` whole and
+			// leave the operator editing the file by hand (CLAUDE.md's hard
+			// rule). The operator's own door asks the rule before it gets here
+			// (runProjectPolicyPublish, projectpolicy.CheckSharedJobProfile),
+			// and the deployer asks the same function of the node this build
+			// writes, which is what refuses the job (internal/infra's
+			// ProjectJobs): the entry is refused in one sentence at the two
+			// doors that own the decision, and neither is the stage.
 		}
 	}
 	silent := lc.Routing == nil || lc.Routing.Claude == nil
