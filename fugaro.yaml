@@ -70,6 +70,15 @@ workflows:
       # internal/e2e, about 12 and 6 minutes each, internal/image and images (the base-image builds), whose tests need
       # Docker and a git checkout the container doesn't have. A change to those packages
       # should run them (CI does).
+      # One test is left out with them, and it is the one that made ./scripts too big for
+      # this step: TestLiveCheckScripts, the bash tests of scripts/live-checks. CI gives it
+      # three shards of its own (scripts-live-0..2, 8 to 9 minutes each under -race), and
+      # every live check script has its hermetic test elsewhere in the tree. The rest of
+      # ./scripts runs here, so a change to scripts/ still runs its package's tests.
+      # internal/cli is the longest package here (about 16 minutes of sequential tests on
+      # a 4-CPU box), which is more than the one -timeout a single `go test` gives every
+      # package it builds, so it runs the way CI runs it -- its update tests whole, the
+      # rest by name -- with both parts at once. Every test of the package still runs here.
       build: |
         set -e
         go build ./...
@@ -77,7 +86,18 @@ workflows:
         test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       test: |
         rc=0
-        go test -timeout 15m $(go list ./... | grep -v -e /internal/runner -e /internal/e2e -e /internal/image -e /fugaro/images) || rc=$?
+        # Three invocations at once: everything else, and internal/cli as the two parts CI
+        # runs (see the comment above). The live-check bash tests are the one thing left
+        # out; the cli pattern is anchored, so internal/clidoc and ee/clidoc stay in.
+        go test -timeout 15m -skip '^TestLiveCheckScripts$' $(go list ./... | grep -v -e /internal/runner -e /internal/e2e -e /internal/image -e /fugaro/images -e '/internal/cli$') &
+        rest=$!
+        go test -timeout 15m -run '^TestUpdate' ./internal/cli/ &
+        update=$!
+        go test -timeout 15m -skip '^TestUpdate' ./internal/cli/ &
+        cli=$!
+        wait $rest || rc=$?
+        wait $update || rc=$?
+        wait $cli || rc=$?
         # The container's high-water memory since it started, the agent and the build cache
         # included (Cloud Run keeps the disk in memory): the number to size resources.memory by.
         for f in /sys/fs/cgroup/memory.peak /sys/fs/cgroup/memory/memory.max_usage_in_bytes; do
