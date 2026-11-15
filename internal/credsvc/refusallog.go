@@ -17,8 +17,9 @@ package credsvc
 // refusal's type and status, the run and the repository it was about, the
 // sentence the run is sent, the credentials the selection considered and the
 // reason each was not used (tried), and the two facts only the service has —
-// which read failed, and the Go type of the error it failed with. That sentence is this
-// service's own class-only one everywhere but in the one place where the run is
+// which read failed, and the Go type of the error it failed with. That
+// sentence is this service's own class-only one everywhere but in the one place
+// where the run is
 // sent another system's text instead — a selection that failed on the state,
 // which the run is told in the store's own words (refuseSelection) — and there
 // the line carries this service's sentence for it (selectionUnreadable), so the
