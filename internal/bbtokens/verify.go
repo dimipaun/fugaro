@@ -50,6 +50,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/gitprov/httpjson"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // maxAnswerBytes bounds one of the check's reads. Every call it makes is a
@@ -492,8 +493,8 @@ func repoCoverage(rec Record) ([]coveredRepo, bool) {
 }
 
 // workspacesCovered answers the workspaces a workspace record's coverage names,
-// each of them R1's `ws/*` form, in the record's own order and without a
-// repeat.
+// each of them the qualified form of one whole workspace, in the record's own
+// order and without a repeat.
 func workspacesCovered(rec Record) ([]string, bool) {
 	var workspaces []string
 	for _, entry := range rec.Coverage {
@@ -523,14 +524,21 @@ func oneWorkspaceCovered(rec Record) (string, bool) {
 	return workspaces[0], true
 }
 
-// wholeWorkspace reads one coverage entry of R1's `ws/*` form: a literal owner
-// and a bare `*` segment.
+// wholeWorkspace reads one coverage entry as the one workspace it names:
+// "bitbucket/<owner>/*", exactly the form C1's coversOneWorkspace holds a
+// workspace and a project record to, and the same rule behind it for the same
+// reason qualifiedRepo shares it. The owner is the workspace, and it is literal
+// because the rule refuses a wildcard owner — that is what keeps one credential
+// from reaching every workspace.
 func wholeWorkspace(entry string) (string, bool) {
-	owner, rest, found := strings.Cut(entry, "/")
-	if !found || owner == "" || owner == "*" || rest != "*" {
+	if projectpolicy.ValidBitbucketTokenCoverage(entry) != nil {
 		return "", false
 	}
-	return owner, true
+	segs := strings.Split(entry, "/")
+	if len(segs) != 3 || segs[2] != "*" {
+		return "", false
+	}
+	return segs[1], true
 }
 
 // projectWhat names the project a refusal is about: the key the operator knows
@@ -550,7 +558,20 @@ func projectWhat(key, uuid, workspace string) string {
 // adapter's own paths (bitbucketproxy's upstreamURL builds the same three for
 // the calls it forwards).
 func repoURL(workspace, repo string) string {
-	return bitbucket.DefaultBaseURL + "/repositories/" + url.PathEscape(workspace) + "/" + url.PathEscape(repo)
+	return bitbucket.DefaultBaseURL + "/repositories/" + url.PathEscape(workspace) + "/" + escapeSegments(repo)
+}
+
+// escapeSegments escapes each "/"-separated segment of a repository path and
+// joins them back. Bitbucket's API path nests wherever the coverage pattern
+// does (ValidBitbucketTokenCoverage admits "bitbucket/acme/group/app"), so what
+// this keeps is the rule the whole file keeps: a name can add no path segment of
+// its own, while a nested one keeps the shape the API takes.
+func escapeSegments(path string) string {
+	segs := strings.Split(path, "/")
+	for i, s := range segs {
+		segs[i] = url.PathEscape(s)
+	}
+	return strings.Join(segs, "/")
 }
 
 func pullRequestsURL(workspace, repo string) string {

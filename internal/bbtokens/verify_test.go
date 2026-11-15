@@ -160,25 +160,80 @@ func repoAnswers() map[string]fakeAnswer {
 	}
 }
 
+// The three fixtures spell coverage the ONE way a record on this side has it:
+// the node's provider-qualified form, which is also the form Record.Validate
+// holds a record to and the verifier must therefore accept. A fixture in the
+// config's two-segment spelling is a record the contract refuses, and a check
+// that agreed with it would agree with nothing: the test that keeps the two in
+// step is checksValid below, asserted in every success test.
 func repoRecord() Record {
-	return Record{Name: "bitbucket-token--ci", Type: TypeRepo, Coverage: []string{"acme/fugaro"}, Expires: aDayComesLater}
+	return Record{Name: "bitbucket-token--ci", Type: TypeRepo, Coverage: []string{"bitbucket/acme/fugaro"}, Expires: aDayComesLater}
 }
 
 func workspaceRecord() Record {
-	return Record{Name: "bitbucket-token--ws", Type: TypeWorkspace, Coverage: []string{"acme/*"}, Expires: aDayComesLater}
+	return Record{Name: "bitbucket-token--ws", Type: TypeWorkspace, Coverage: []string{"bitbucket/acme/*"}, Expires: aDayComesLater}
 }
 
-func projectRecord() Record {
-	return Record{Name: "bitbucket-token--proj", Type: TypeProject, Coverage: []string{"acme/*"}, ProjectKey: "FUG", Expires: aDayComesLater}
+// keyOnlyProjectRecord names a KEY and no UUID, which is the record `creds set` holds
+// just before the check resolves the key — the one fixture Record.Validate
+// refuses, and the reason the check resolves rather than refuses it. The
+// subtests that need a Validate-clean project record give it a UUID.
+func keyOnlyProjectRecord() Record {
+	return Record{Name: "bitbucket-token--proj", Type: TypeProject, Coverage: []string{"bitbucket/acme/*"}, ProjectKey: "FUG", Expires: aDayComesLater}
+}
+
+// checksValid asserts that a fixture the check accepted is a record the contract
+// accepts too. Without it the two drift silently: a verifier reading a different
+// coverage spelling than Validate holds a record to refuses every real record
+// while its own tests stay green.
+func checksValid(t *testing.T, rec Record) {
+	t.Helper()
+	if err := rec.Validate(); err != nil {
+		t.Errorf("the check accepted the record %s, and the contract refuses it: %v", rec.Name, err)
+	}
+}
+
+// TestVerifyFixturesAreRecordsTheContractAccepts pins the drift this check was
+// found in. The verifier reads coverage in whatever spelling the record has, and
+// the contract holds a record to exactly one; a fixture in the other spelling
+// lets the check and the contract disagree while every test stays green, which
+// is how this shipped refusing every record `creds set` would hand it. Each
+// fixture is asserted here, and the key-only project record — the one record the
+// contract refuses, and the resolution the check exists to perform — is asserted
+// to still be that exception rather than one the contract has grown to accept.
+func TestVerifyFixturesAreRecordsTheContractAccepts(t *testing.T) {
+	for name, rec := range map[string]Record{
+		"the repository record": repoRecord(),
+		"the workspace record":  workspaceRecord(),
+		"the project record":    keyOnlyProjectRecord(),
+	} {
+		err := rec.Validate()
+		if name == "the project record" {
+			if err == nil {
+				t.Errorf("%s names a key and no UUID, and the contract is expected to refuse it: the check resolves the key, and this fixture covers that", name)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s is not a record the contract accepts, so the check and the contract have drifted: %v", name, err)
+		}
+	}
+	withUUID := keyOnlyProjectRecord()
+	withUUID.ProjectKey, withUUID.ProjectUUID = "", "{proj-1}"
+	if err := withUUID.Validate(); err != nil {
+		t.Errorf("the project record naming its UUID is not one the contract accepts: %v", err)
+	}
 }
 
 func TestVerifyRepoWorkspaceAndProjectCoverage(t *testing.T) {
 	t.Run("a repository token", func(t *testing.T) {
+		rec := repoRecord()
 		f := newFakeBitbucket(t, repoAnswers())
-		res := f.verifier().Verify(context.Background(), testToken, repoRecord())
+		res := f.verifier().Verify(context.Background(), testToken, rec)
 		if !res.OK {
 			t.Fatalf("OK = false, message %q", res.Message)
 		}
+		checksValid(t, rec)
 		if res.Message != "" {
 			t.Errorf("message = %q, want none", res.Message)
 		}
@@ -202,11 +257,12 @@ func TestVerifyRepoWorkspaceAndProjectCoverage(t *testing.T) {
 			"GET /2.0/user": {status: 200, body: `{"uuid":"{aaaa-2222}","kind":"repository_access_token"}`},
 		})
 		rec := repoRecord()
-		rec.Coverage = []string{"acme/one", "acme/two"}
+		rec.Coverage = []string{"bitbucket/acme/one", "bitbucket/acme/two"}
 		res := f.verifier().Verify(context.Background(), testToken, rec)
 		if !res.OK {
 			t.Fatalf("OK = false, message %q", res.Message)
 		}
+		checksValid(t, rec)
 		if want := []string{"repository:read", "pullrequest:read"}; !slices.Equal(res.ReadScopes, want) {
 			t.Errorf("read scopes = %v, want each proven once, %v", res.ReadScopes, want)
 		}
@@ -217,10 +273,12 @@ func TestVerifyRepoWorkspaceAndProjectCoverage(t *testing.T) {
 			"GET /2.0/repositories/acme": {status: 200, body: `{"values":[{"full_name":"acme/one"}]}`},
 			"GET /2.0/user":              {status: 200, body: `{"uuid":"{bbbb-3333}","kind":"workspace_access_token"}`},
 		})
-		res := f.verifier().Verify(context.Background(), testToken, workspaceRecord())
+		rec := workspaceRecord()
+		res := f.verifier().Verify(context.Background(), testToken, rec)
 		if !res.OK {
 			t.Fatalf("OK = false, message %q", res.Message)
 		}
+		checksValid(t, rec)
 		if res.Identity != "{bbbb-3333}" {
 			t.Errorf("identity = %q, want the account UUID Bitbucket answered", res.Identity)
 		}
@@ -236,11 +294,12 @@ func TestVerifyRepoWorkspaceAndProjectCoverage(t *testing.T) {
 			"GET /2.0/user":               {status: 200, body: `{"uuid":"{bbbb-3333}","kind":"workspace_access_token"}`},
 		})
 		rec := workspaceRecord()
-		rec.Coverage = []string{"acme/*", "other/*"}
+		rec.Coverage = []string{"bitbucket/acme/*", "bitbucket/other/*"}
 		res := f.verifier().Verify(context.Background(), testToken, rec)
 		if !res.OK {
 			t.Fatalf("OK = false, message %q", res.Message)
 		}
+		checksValid(t, rec)
 		if got := len(f.requests()); got != 3 {
 			t.Errorf("the check made %d calls (%v), want both listings and the identity", got, f.paths())
 		}
@@ -255,7 +314,15 @@ func TestVerifyRepoWorkspaceAndProjectCoverage(t *testing.T) {
 			"GET /2.0/repositories/acme":            {status: 200, body: `{"values":[{"project":{"uuid":"{proj-1}"}}]}`},
 			"GET /2.0/user":                         {status: 200, body: `{"uuid":"{cccc-4444}","kind":"project_access_token"}`},
 		})
-		res := f.verifier().Verify(context.Background(), testToken, projectRecord())
+		// This is the one fixture the contract refuses, and deliberately so: it is
+		// the record `creds set` holds before the check resolves the key, and
+		// resolving it rather than refusing it is the whole of what this subtest
+		// proves. Asserted rather than assumed, so the fixture cannot drift into
+		// one Validate accepts and quietly stop covering the resolution.
+		if err := keyOnlyProjectRecord().Validate(); err == nil {
+			t.Error("the key-only project fixture is a record the contract accepts, so this subtest no longer covers the resolution")
+		}
+		res := f.verifier().Verify(context.Background(), testToken, keyOnlyProjectRecord())
 		if !res.OK {
 			t.Fatalf("OK = false, message %q", res.Message)
 		}
@@ -287,12 +354,13 @@ func TestVerifyRepoWorkspaceAndProjectCoverage(t *testing.T) {
 			"GET /2.0/repositories/acme": {status: 200, body: `{"values":[{"project":{"uuid":"{proj-1}"}}]}`},
 			"GET /2.0/user":              {status: 200, body: `{"uuid":"{cccc-4444}","kind":"project_access_token"}`},
 		})
-		rec := projectRecord()
+		rec := keyOnlyProjectRecord()
 		rec.ProjectKey, rec.ProjectUUID = "", "{proj-1}"
 		res := f.verifier().Verify(context.Background(), testToken, rec)
 		if !res.OK {
 			t.Fatalf("OK = false, message %q", res.Message)
 		}
+		checksValid(t, rec)
 		if res.ProjectUUID != "{proj-1}" {
 			t.Errorf("project UUID = %q, want the record's own", res.ProjectUUID)
 		}
@@ -364,7 +432,7 @@ func TestVerifyNamesWhatIsMissing(t *testing.T) {
 			"GET /2.0/repositories/acme/two":              {status: 404, body: `{"error":{"message":"Not found"}}`},
 		})
 		rec := repoRecord()
-		rec.Coverage = []string{"acme/one", "acme/two"}
+		rec.Coverage = []string{"bitbucket/acme/one", "bitbucket/acme/two"}
 		res := refused(t, f, rec, testToken)
 		if want := "the token does not cover repository acme/two"; res.Message != want {
 			t.Errorf("message = %q, want %q", res.Message, want)
@@ -384,7 +452,7 @@ func TestVerifyNamesWhatIsMissing(t *testing.T) {
 		res := refused(t, newFakeBitbucket(t, map[string]fakeAnswer{
 			"GET /2.0/workspaces/acme/projects/FUG": {status: 200, body: `{"uuid":"{proj-1}","key":"FUG"}`},
 			"GET /2.0/repositories/acme":            {status: 200, body: `{"values":[]}`},
-		}), projectRecord(), testToken)
+		}), keyOnlyProjectRecord(), testToken)
 		if want := "the token does not cover project FUG in workspace acme"; res.Message != want {
 			t.Errorf("message = %q, want %q", res.Message, want)
 		}
@@ -394,7 +462,7 @@ func TestVerifyNamesWhatIsMissing(t *testing.T) {
 		res := refused(t, newFakeBitbucket(t, map[string]fakeAnswer{
 			"GET /2.0/repositories/acme": {status: 200, body: `{"values":[{"project":{"uuid":"{other-project}"}}]}`},
 		}), func() Record {
-			rec := projectRecord()
+			rec := keyOnlyProjectRecord()
 			rec.ProjectKey, rec.ProjectUUID = "", "{proj-1}"
 			return rec
 		}(), testToken)
@@ -463,7 +531,7 @@ func TestVerifyNamesWhatIsMissing(t *testing.T) {
 		res := refused(t, newFakeBitbucket(t, map[string]fakeAnswer{
 			"GET /2.0/repositories/acme": {status: 200, body: `not a listing`},
 		}), func() Record {
-			rec := projectRecord()
+			rec := keyOnlyProjectRecord()
 			rec.ProjectKey, rec.ProjectUUID = "", "{proj-1}"
 			return rec
 		}(), testToken)
@@ -477,19 +545,25 @@ func TestVerifyNamesWhatIsMissing(t *testing.T) {
 	// entry of a record is quietly unchecked.
 	t.Run("a coverage entry that is no pattern", func(t *testing.T) {
 		cases := map[string][]string{
-			"a wildcard workspace":          {"*/fugaro"},
-			"a repository of no workspace":  {"/fugaro"},
-			"a workspace with no repo":      {"acme/"},
-			"a workspace alone":             {"acme"},
-			"a good entry beside a bad one": {"acme/one", "acme"},
+			"a wildcard workspace":          {"bitbucket/*/fugaro"},
+			"another provider":              {"github/acme/fugaro"},
+			"no provider at all":            {"acme/fugaro"},
+			"a repository of no workspace":  {"bitbucket//fugaro"},
+			"a workspace with no repo":      {"bitbucket/acme/"},
+			"a workspace alone":             {"bitbucket/acme"},
+			"a good entry beside a bad one": {"bitbucket/acme/one", "acme/two"},
 		}
 		for name, coverage := range cases {
 			t.Run(name, func(t *testing.T) {
+				f := newFakeBitbucket(t, nil)
 				rec := repoRecord()
 				rec.Coverage = coverage
-				res := refused(t, newFakeBitbucket(t, nil), rec, testToken)
+				res := refused(t, f, rec, testToken)
 				if res.Message != msgRecord {
 					t.Errorf("message = %q, want %q", res.Message, msgRecord)
+				}
+				if got := f.requests(); len(got) != 0 {
+					t.Errorf("a record this check cannot read was checked with %v, want no call", got)
 				}
 			})
 		}
@@ -497,7 +571,18 @@ func TestVerifyNamesWhatIsMissing(t *testing.T) {
 
 	t.Run("a workspace record covering every workspace", func(t *testing.T) {
 		rec := workspaceRecord()
-		rec.Coverage = []string{"*/*"}
+		rec.Coverage = []string{"bitbucket/*/*"}
+		res := refused(t, newFakeBitbucket(t, nil), rec, testToken)
+		if res.Message != msgRecord {
+			t.Errorf("message = %q, want %q", res.Message, msgRecord)
+		}
+	})
+
+	// The other half of a two-segment entry: a workspace record's, which the
+	// whole form refuses for the same reason a repository record's is.
+	t.Run("a workspace record covering a repository", func(t *testing.T) {
+		rec := workspaceRecord()
+		rec.Coverage = []string{"acme/fugaro"}
 		res := refused(t, newFakeBitbucket(t, nil), rec, testToken)
 		if res.Message != msgRecord {
 			t.Errorf("message = %q, want %q", res.Message, msgRecord)
@@ -519,7 +604,7 @@ func TestVerifyNamesWhatIsMissing(t *testing.T) {
 
 	t.Run("a repository record covering a whole workspace", func(t *testing.T) {
 		rec := repoRecord()
-		rec.Coverage = []string{"acme/*"}
+		rec.Coverage = []string{"bitbucket/acme/*"}
 		res := refused(t, newFakeBitbucket(t, nil), rec, testToken)
 		if res.Message != msgRecord {
 			t.Errorf("message = %q, want %q", res.Message, msgRecord)
@@ -554,7 +639,7 @@ func TestVerifyNamesWhatIsMissing(t *testing.T) {
 	})
 
 	t.Run("a project record that names no project", func(t *testing.T) {
-		rec := projectRecord()
+		rec := keyOnlyProjectRecord()
 		rec.ProjectKey = ""
 		res := refused(t, newFakeBitbucket(t, nil), rec, testToken)
 		if res.Message != msgRecord {
@@ -563,8 +648,8 @@ func TestVerifyNamesWhatIsMissing(t *testing.T) {
 	})
 
 	t.Run("a project record covering two workspaces", func(t *testing.T) {
-		rec := projectRecord()
-		rec.Coverage = []string{"acme/*", "other/*"}
+		rec := keyOnlyProjectRecord()
+		rec.Coverage = []string{"bitbucket/acme/*", "bitbucket/other/*"}
 		res := refused(t, newFakeBitbucket(t, nil), rec, testToken)
 		if res.Message != msgRecord {
 			t.Errorf("message = %q, want %q", res.Message, msgRecord)
