@@ -1585,8 +1585,11 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 			}
 			// The installation's spec is read the run's own way again: it was
 			// built before the images stage, and the catalog check job's image
-			// is one of the things that stage moves.
-			next, err := installOptions(e.r.o, e.lc)
+			// is one of the things that stage moves. installSpec and not
+			// installOptions, for the reason the repository stage reads it that
+			// way too: a config this run cannot compose the default profile's
+			// job from must not stop a stage of a converging update.
+			next, err := installSpec(e.r.o, e.lc, e.r.warn)
 			if err != nil {
 				return err
 			}

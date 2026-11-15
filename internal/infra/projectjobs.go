@@ -66,9 +66,38 @@ type ProjectJob struct {
 // claim design §13 makes about the service-account count and the golden test
 // asserts (plan step 6).
 func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]ProjectJob, error) {
+	return projectJobs(lc, bucket, vertex, nil)
+}
+
+// projectJobs is ProjectJobs with the named profiles carried: no job is
+// composed for them, and the installation's own document carries the job it
+// deployed for each instead (CarriedProjectJobs, and internal/cli's
+// installSpec, which is the one caller that passes any).
+//
+// It is the carry of a profile this run cannot compose a job for — the
+// default profile `fugaro update` wrote, in a config that has since lost the
+// fact that job is composed from (its last GitHub repository moved to
+// Bitbucket, so no single App ID is recorded any more). The profile stays the
+// policy's: CheckProfiles judges it here with every other profile, and the
+// name stays in the published policy, which is where a project whose
+// workflows name none reads it — a document that left the profile out of the
+// policy whole would refuse those workflows at run start instead of leaving
+// the run that stops converging, which is not a trade a carry may make. What
+// is left out is the JOB alone, so the plan proposes neither a creation nor a
+// destruction of it, and the carried document's job is the one the
+// installation already runs.
+//
+// The App ID (projectJobGitHubAppID) is resolved over the profiles that get a
+// job and not over every profile of the config: a carried github profile
+// needs no App from the config, because the job that holds its App is not
+// composed here — it is the deployed one, and it runs on the ID it was
+// deployed with. A profile that is NOT carried and records no ID still
+// refuses, as it does today.
+func projectJobs(lc *localcfg.Config, bucket string, vertex bool, carried []string) (map[string]ProjectJob, error) {
 	if len(lc.Profiles) == 0 {
 		return nil, nil
 	}
+	isCarried := func(name string) bool { return slices.Contains(carried, name) }
 	// The profiles are the policy's own document (config.JobProfile, one
 	// declaration), so they are held to the policy's rules here rather than
 	// to a second copy of them: `fugaro update` must not deploy a job that
@@ -99,7 +128,11 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 	// Bitbucket ones deploys no github job, so it needs no App and is not
 	// refused for lacking one (docs/bitbucket-workspace-token's constraint 5).
 	appID := ""
-	if slices.ContainsFunc(slices.Collect(maps.Values(lc.Profiles)), func(pr config.JobProfile) bool { return pr.Provider == githubProvider }) {
+	if slices.ContainsFunc(slices.Collect(maps.Values(lc.Profiles)), func(pr config.JobProfile) bool {
+		return pr.Provider == githubProvider
+	}) && slices.ContainsFunc(slices.Sorted(maps.Keys(lc.Profiles)), func(name string) bool {
+		return !isCarried(name) && lc.Profiles[name].Provider == githubProvider
+	}) {
 		if appID, err = projectJobGitHubAppID(lc); err != nil {
 			return nil, err
 		}
@@ -107,6 +140,12 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 	out := make(map[string]ProjectJob, len(lc.Profiles))
 	for _, name := range slices.Sorted(maps.Keys(lc.Profiles)) {
 		pr := lc.Profiles[name]
+		// A carried profile's job is the installation's own (projectJobs'
+		// header): nothing is composed for it, and CheckProfiles above has
+		// already judged the profile for the policy that keeps it.
+		if isCarried(name) {
+			continue
+		}
 		// A profile of a provider no shared job serves is skipped, not
 		// refused: the policy may name one — projectpolicy admits it, a
 		// repository's workflow may select it, and the runner only requires a
@@ -349,7 +388,17 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 // (credsvc.ReviewJobAccountsFor), not by the job it ran on — so one job
 // serves every repository the service admits.
 func ProjectReviewJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]ProjectJob, error) {
-	coding, err := ProjectJobs(lc, bucket, vertex)
+	return projectReviewJobs(lc, bucket, vertex, nil)
+}
+
+// projectReviewJobs is ProjectReviewJobs with the named profiles carried: the
+// variants are derived from the coding set, so a carried profile derives none
+// — its variants are the deployed ones the carry keeps beside its coding job
+// (CarriedProjectJobs carries both keys), and a variant composed here for a
+// job nothing composes would be a second job of a profile the config cannot
+// stand behind.
+func projectReviewJobs(lc *localcfg.Config, bucket string, vertex bool, carried []string) (map[string]ProjectJob, error) {
+	coding, err := projectJobs(lc, bucket, vertex, carried)
 	if err != nil {
 		return nil, err
 	}

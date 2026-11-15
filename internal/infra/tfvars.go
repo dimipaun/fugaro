@@ -95,6 +95,12 @@ type InstallOptions struct {
 	// or a local config that records the opt-in sets it, so an installation
 	// that never asked plans exactly what it planned before the job existed.
 	Coordinator bool
+	// CarriedJobProfiles are the profiles whose shared job this run does not
+	// compose (projectJobs' header): the installation's own document carries
+	// the job it deployed for each, whole, so the plan proposes no change to
+	// it. It is internal/cli's installSpec that sets it, and only for a
+	// default profile the config can no longer compose a job for.
+	CarriedJobProfiles []string
 	// MCPServer is the owner's SECOND opt-in, and the one that makes the
 	// installation reachable from the network (D920, D934): the coordinator's
 	// front door, its own service account, its uploaded image and D920's
@@ -1679,12 +1685,12 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 		LogBucketDescription: LogBucketDescription,
 		ProjectSecrets:       projectSecretContainers(lc),
 	}
-	jobs, err := ProjectJobs(lc, bucket, s.EnableVertex)
+	jobs, err := projectJobs(lc, bucket, s.EnableVertex, o.CarriedJobProfiles)
 	if err != nil {
 		return InstallationSpec{}, err
 	}
 	s.ProjectJobs = jobs
-	review, err := ProjectReviewJobs(lc, bucket, s.EnableVertex)
+	review, err := projectReviewJobs(lc, bucket, s.EnableVertex, o.CarriedJobProfiles)
 	if err != nil {
 		return InstallationSpec{}, err
 	}

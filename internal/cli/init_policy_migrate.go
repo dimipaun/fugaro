@@ -1629,10 +1629,14 @@ func defaultProfileNames(defaults []defaultProfile) string {
 //
 // The job that profile deployed is the installation's own record, and it is
 // kept from it (infra.CarriedProjectJobs, prepare): what this composes is the
-// spec of the config WITHOUT that profile, and the carry puts the deployed job
-// back into the document the plan is made from, so the plan proposes no change
-// to it and the run converges. The config keeps the profile: only the spec this
-// run plans from is composed without it.
+// spec of the config with no JOB for that profile, and the carry puts the
+// deployed job back into the document the plan is made from, so the plan
+// proposes no change to it and the run converges. The profile itself stays
+// composed — in the spec's policy as in the config — because the published
+// policy is where a workflow that names no profile reads it: a spec that
+// dropped the profile whole would leave those workflows refused at run start
+// (projectpolicy's rule that DefaultProfileName be defined), and the refusal
+// would move from the update to every run of the project.
 //
 // The fallback is exactly this narrow: a default-named profile, of a provider a
 // shared job serves, whose job the installation's own tfvars hold (and this
@@ -1647,18 +1651,14 @@ func installSpec(o *initOptions, lc *localcfg.Config, warn func(string)) (infra.
 		return spec, nil
 	}
 	held := heldDefaultProfiles(o, lc)
-	// The profile whose absence from the spec is what the refusal is about, and
-	// only it: the spec is composed once without each held profile in turn, and
-	// the first composition that succeeds names it. A profile the config can
-	// still compose is never pruned — its job follows the config, as an edit of
-	// it means it to — and a refusal two of them together explain is not a
-	// refusal this carries: installOptions' own message names that reason, and
-	// it stands.
+	// The profile the refusal is about, and only it: the spec is composed once
+	// with each held profile carried in turn, and the first composition that
+	// succeeds names it. A profile the config can still compose is never
+	// carried — its job follows the config, as an edit of it means it to — and
+	// a refusal two of them together explain is not a refusal this carries:
+	// installOptions' own message names that reason, and it stands.
 	for _, name := range held {
-		pruned := *lc
-		pruned.Profiles = maps.Clone(lc.Profiles)
-		delete(pruned.Profiles, name)
-		kept, kerr := installOptions(o, &pruned)
+		kept, kerr := installOptionsCarrying(o, lc, []string{name})
 		if kerr != nil {
 			continue
 		}

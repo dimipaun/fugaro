@@ -221,7 +221,16 @@ func newConvergeRigYAML(t *testing.T, node map[string]any, yaml string) *converg
 // already carries.
 func seedAppSecret(t *testing.T, r *initRig, logical string) {
 	t.Helper()
-	slug, err := task.Slug("github", "acme/app")
+	seedRepoSecret(t, r, "github", logical)
+}
+
+// seedRepoSecret is seedAppSecret for a named provider's repository, which the
+// tests that move a checkout from one provider to the other need: the secrets a
+// repository's runs want are stored under the slug of the provider the config
+// records it at, so a repository that moves wants its secrets there.
+func seedRepoSecret(t *testing.T, r *initRig, provider, logical string) {
+	t.Helper()
+	slug, err := task.Slug(provider, "acme/app")
 	if err != nil {
 		t.Fatal(err)
 	}

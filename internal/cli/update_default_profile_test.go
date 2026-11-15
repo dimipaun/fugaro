@@ -2,6 +2,7 @@ package cli
 
 import (
 	"maps"
+	"os"
 	"reflect"
 	"slices"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // updateDefaultProfileTests is where S5's own tests live: `fugaro update` writes
@@ -260,5 +262,84 @@ func TestUpdateKeepsTheDefaultProfilesJobWhenTheConfigCannotComposeIt(t *testing
 	if pr, ok := localConfigOf(t, r).Profiles[projectpolicy.DefaultProfileName]; !ok || pr.Provider != "github" {
 		t.Errorf("the update dropped profiles.%s from the local config: %+v. The profile is the operator's file's, and the job it deployed is kept, so the file keeps both",
 			projectpolicy.DefaultProfileName, pr)
+	}
+}
+
+// TestUpdateKeepsTheDefaultProfilesJobThroughTheRepositoryStage: the whole of
+// `fugaro update` goes on converging when the config loses the fact the default
+// profile's job is composed from — the repository stage included.
+//
+// The carry is read by every stage that composes the installation's spec, and
+// the repository stage is the one an operator meets first: it plans the
+// checkout's own root, so a run that refused there would stop before the
+// policies, the credentials service and everything else, on every later update,
+// for a profile the update wrote itself.
+//
+// The act here is a repository added on a second App, which is one of the two
+// ordinary ones that leave the github default profile with no single App ID to
+// compose its job from. It is the one this rig can stage whole: the other — the
+// project's last GitHub repository moved to Bitbucket — moves the checkout's own
+// provider with it, and this rig's checkout is the repository that act moves, so
+// the run would stop at the repository stage's own onboarding question before
+// reaching the engine this test is about (the act itself is pinned for the
+// installation stage by TestUpdateKeepsTheDefaultProfilesJobWhenTheConfigCannot
+// ComposeIt, whose rig has no checkout).
+//
+// The checkout is committed and its origin/main ref moved first, which is the
+// person's own step after an update leaves its pin removal as a diff: the
+// repository stage reads the working tree and refuses a fugaro.yaml that is not
+// the default branch's, and that would hide the stage this test is about.
+//
+// The job the installation holds is compared with its base image left out: the
+// images stage re-pins it on every update, and that is the one thing about the
+// job that is meant to move.
+//
+// Mutation (run, restore): read the repository stage's spec with installOptions
+// rather than installSpec and the second update stops there with
+// recordedGitHubAppID's sentence about a project that uses several Apps.
+func TestUpdateKeepsTheDefaultProfilesJobThroughTheRepositoryStage(t *testing.T) {
+	r := newConvergeRig(t, v7Node())
+	convergeOn(t, r, []string{"policy-vs-jobs"})
+	name := gcp.ProjectJobName(projectpolicy.DefaultProfileName, "github", "")
+	deployed, _ := installationProjectJobs(t, r)[name].(map[string]any)
+	if deployed == nil {
+		t.Fatalf("the update that wrote profiles.%s deployed no %s job: %v",
+			projectpolicy.DefaultProfileName, name, installationProjectJobs(t, r))
+	}
+
+	testutil.Git(t, r.root, "commit", "-qam", "the run's own change to the checkout")
+	fetched(t, r.root)
+	// A repository on a second App is added. The edit is made to the file the
+	// door reads — the installation's own copy, which this rig registered from
+	// the checkout's config (registerInstallation) — and not to the rig's
+	// source copy, which only the registration reads.
+	lc, err := localcfg.Load(installationConfigPath())
+	if err != nil {
+		t.Fatalf("the installation's config does not parse: %v", err)
+	}
+	lc.Repos["acme/other"] = localcfg.Repo{Provider: "github", BaseBranch: "main", Workflows: []string{"app"}, GitHubAppID: "987654321"}
+	if data, err := lc.Marshal(); err != nil {
+		t.Fatal(err)
+	} else if err := os.WriteFile(installationConfigPath(), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, errOut, err := executeStdin(t, "", "update")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("the repository stage refused an update of an installation that converges today, so it needs a second command: %v\n%s", err, s)
+	}
+	if !strings.Contains(s, "\u2714 repository") {
+		t.Errorf("the run's account says nothing about the repository stage having run, so this test may not have run the stage it is about:\n%s", s)
+	}
+	if !strings.Contains(s, "✔ installation") {
+		t.Errorf("the run's account says nothing about the installation stage having planned, so this test may not have run the converge it is about:\n%s", s)
+	}
+	kept, _ := installationProjectJobs(t, r)[name].(map[string]any)
+	delete(deployed, "image")
+	delete(kept, "image")
+	if !reflect.DeepEqual(kept, deployed) {
+		t.Errorf("the job the installation holds is\n%v\nwant it unchanged from\n%v\nthe job the record holds is the job the state holds, and a document that rewrites it is a plan that replaces it\n%s",
+			kept, deployed, s)
 	}
 }

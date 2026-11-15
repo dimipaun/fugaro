@@ -1929,11 +1929,21 @@ func newProjectConfig(name, gcpProject, region string) (*localcfg.Config, error)
 // installOptions is the installation's spec from the local config and the
 // flags. Discovery sets whether the legacy registry is adopted.
 func installOptions(o *initOptions, lc *localcfg.Config) (infra.InstallationSpec, error) {
+	return installOptionsCarrying(o, lc, nil)
+}
+
+// installOptionsCarrying is installOptions with the named profiles' shared jobs
+// left to the installation's own document: the spec composes no job for them
+// (infra.InstallOptions.CarriedJobProfiles), and the carry puts the deployed job
+// back into the document the plan is made from. installSpec is the one caller
+// that passes any.
+func installOptionsCarrying(o *initOptions, lc *localcfg.Config, carried []string) (infra.InstallationSpec, error) {
 	opts := infra.InstallOptions{
-		StateBucket:     o.stateBucket,
-		AlertEmail:      o.alertEmail,
-		RegistryCleanup: cmp.Or(o.registryCleanup, lc.Terraform.RegistryCleanup),
-		NoLogIsolation:  o.noLogIsolation || lc.Terraform.NoLogIsolation,
+		CarriedJobProfiles: carried,
+		StateBucket:        o.stateBucket,
+		AlertEmail:         o.alertEmail,
+		RegistryCleanup:    cmp.Or(o.registryCleanup, lc.Terraform.RegistryCleanup),
+		NoLogIsolation:     o.noLogIsolation || lc.Terraform.NoLogIsolation,
 	}
 	if o.operatorsChanged {
 		opts.Launchers = append([]string{}, o.operators...)
@@ -4339,7 +4349,13 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 			return err
 		}
 	}
-	inst, err := installOptions(o, lc)
+	// The run's own reading of the installation's spec, not installOptions: a
+	// config that can no longer compose the job of the default profile this
+	// update wrote — its last GitHub repository moved to Bitbucket, or spread
+	// over two Apps — is refused by that function, and the repository stage is
+	// where every later update of such an installation would stop
+	// (installSpec).
+	inst, err := installSpec(o, lc, r.warn)
 	if err != nil {
 		return err
 	}

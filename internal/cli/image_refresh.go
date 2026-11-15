@@ -50,6 +50,15 @@ type refreshOptions struct {
 	ask bool
 	// dir is the checkout to refresh ("" is the working directory).
 	dir string
+	// door is the door this refresh runs under, empty for the command itself:
+	// the converge runs the refresh as one of its own steps
+	// (init_checkout_upgrade.go's stepCtx), and a step of `fugaro update`'s
+	// converge is that door's work with that door's spec — the carry of a
+	// default profile the config can no longer compose included (installSpec,
+	// init_policy_migrate.go). It travels with the options for the same reason
+	// managed does: it is the caller's, and it is the same value at every step
+	// of the run.
+	door string
 	// rerun, when set, is the whole line a stop names instead of again()
 	// (the caller's own, which already names the checkout). It is
 	// printed as it is: the caller must quote every word with quoteWord
@@ -600,7 +609,7 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 	// behind r.confirm/r.ask ask the gate beside it: in a managed project's own
 	// terminal the marks are read and the typed name is replaced
 	// (refreshManaged.asksNothing, and r.refresh below).
-	iopts := &initOptions{cloud: o.cloud, imageSource: o.imageSource, expectDigests: o.expectDigests, yes: o.yes, ask: o.ask}
+	iopts := &initOptions{cloud: o.cloud, imageSource: o.imageSource, expectDigests: o.expectDigests, yes: o.yes, ask: o.ask, door: o.door}
 	o.managed = openRefreshManaged(ctx, cmd, o, iopts)
 	// --ask answers for the marks, and it answers before the command's own
 	// refusal: the flag's whole rule is that a managed project's confirmations
@@ -642,7 +651,11 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 		o.onPlan(p.snapshot())
 	}
 	r.setProject(p.lc)
-	spec, err := installOptions(iopts, p.lc)
+	// The spec of the door this refresh runs under: installSpec is
+	// installOptions for the command's own door (a refresh that is nobody's
+	// step carries nothing), and the carry of a default profile the config can
+	// no longer compose for the converge's (init_policy_migrate.go).
+	spec, err := installSpec(iopts, p.lc, r.warn)
 	if err != nil {
 		return refreshStopped(1, nil, o, err)
 	}
