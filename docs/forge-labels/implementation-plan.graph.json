@@ -5,7 +5,7 @@
   "nodes": [
     {
       "id": "T1",
-      "title": "the GitHub label adapter",
+      "title": "the label capability and the GitHub adapter",
       "run": null,
       "version": null,
       "size": 3,
@@ -38,31 +38,32 @@
     },
     {
       "id": "T3",
-      "title": "the credentials service's label mint",
+      "title": "the credentials service's label route",
       "run": null,
       "version": null,
       "size": 3,
       "footprint": {
         "prediction": true,
         "paths": [
-          "internal/creds/labelmint.go",
-          "internal/credsvc/labelmint.go",
-          "internal/credsvc/labelmint_test.go",
+          "internal/creds/labelroute.go",
+          "internal/credsvc/labelroute.go",
+          "internal/credsvc/labelroute_test.go",
+          "internal/credsvc/audit.go",
           "internal/credsvc/server.go"
         ]
       }
     },
     {
       "id": "T4",
-      "title": "the label mint client",
+      "title": "the daemon's label client",
       "run": null,
       "version": null,
       "size": 2,
       "footprint": {
         "prediction": true,
         "paths": [
-          "internal/creds/labelmint_service.go",
-          "internal/creds/labelmint_service_test.go"
+          "internal/creds/labelclient.go",
+          "internal/creds/labelclient_test.go"
         ]
       }
     },
@@ -94,7 +95,7 @@
           "docs/git-providers.md",
           "SECURITY.md",
           "website/content/security.md",
-          "docs/releases/**"
+          "docs/releases/v*.md"
         ]
       }
     },
@@ -114,6 +115,23 @@
       }
     },
     {
+      "id": "T8",
+      "title": "the work item carries its spec",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/orchestrator/state.go",
+          "internal/orchestrator/patch.go",
+          "internal/cli/orchestrator_import.go",
+          "schemas/orchestrator-state.schema.json",
+          "schemas/orchestrator-patch.schema.json"
+        ]
+      }
+    },
+    {
       "id": "CK",
       "title": "Check 640",
       "run": null,
@@ -123,6 +141,8 @@
         "prediction": true,
         "paths": [
           "scripts/live-checks/check640.sh",
+          "scripts/live-checks/check640_test.sh",
+          "internal/cli/docs_check640_test.go",
           "docs/gcp-live-checklist.md"
         ]
       }
@@ -132,22 +152,37 @@
     {
       "task": "T2",
       "needs": "T1",
-      "reason": "the fake and Bitbucket implement the Labeler interface T1 writes"
+      "reason": "implements the Labeler interface T1 writes"
     },
     {
       "task": "T5",
       "needs": "T1",
-      "reason": "the syncer is written against the Labeler interface and OwnedLabel T1 writes"
+      "reason": "written against the Labeler interface and OwnedLabel T1 writes"
+    },
+    {
+      "task": "T3",
+      "needs": "T1",
+      "reason": "the route performs its writes through T1's adapter"
     },
     {
       "task": "T4",
       "needs": "T3",
-      "reason": "the client speaks the request and response shape T3 writes"
+      "reason": "speaks the request and response shape T3 writes"
     },
     {
-      "task": "T7",
+      "task": "T4",
       "needs": "T1",
-      "reason": "wires the real adapter"
+      "reason": "implements the Labeler interface"
+    },
+    {
+      "task": "T5",
+      "needs": "T8",
+      "reason": "reads the spec field"
+    },
+    {
+      "task": "T6",
+      "needs": "T3",
+      "reason": "documents the reach T3 fixes"
     },
     {
       "task": "T7",
@@ -157,7 +192,7 @@
     {
       "task": "T7",
       "needs": "T3",
-      "reason": "wires the real service"
+      "reason": "reaches the real route"
     },
     {
       "task": "T7",
@@ -167,7 +202,12 @@
     {
       "task": "T7",
       "needs": "T5",
-      "reason": "wires the real syncer into the tick"
+      "reason": "wires the real syncer"
+    },
+    {
+      "task": "T7",
+      "needs": "T8",
+      "reason": "passes the spec name"
     },
     {
       "task": "CK",

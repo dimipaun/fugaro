@@ -52,7 +52,7 @@ As of 2026-11-15, read from `main`, the open pull requests and each plan's task 
 
 | Spec | State |
 | --- | --- |
-| forge-labels | 0/7: plan only (spec, reconciliation and plan in the docs pull request), no task approved; T1, T3 and T6 are first; owner Check 640 |
+| forge-labels | 0/8: plan only (spec, reconciliation and plan in the docs pull request), no task approved; T1 and T8 are first; T7 and Check 640 wait on the daemon's identity to the credentials service (E10b); owner Check 640 |
 | repo-image-removal | parked by the owner: 2/11 merged, R2 to R10 deferred by the image setup skill (D1900), not scheduled in any release and not cancelled; no run or pull request open |
 | voice-module, collateral, backlog, plans | no plan or not a spec |
 

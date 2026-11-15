@@ -7,10 +7,10 @@ The spec: the stateless orchestrator puts `fugaro:running`, `fugaro:failed` and 
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The spec as received, byte for byte (no typo was fixed). **Where [reconciliation.md](reconciliation.md) disagrees with it, the reconciliation wins** |
-| [reconciliation.md](reconciliation.md) | The spec against the code: assumptions A1-A5, findings F1-F16, resolutions R1-R7, decisions D2430-D2437 with the owner's answers, open items O1-O2, UNVERIFIED U1-U3 |
-| [implementation-plan.md](implementation-plan.md) | Two slices, seven tasks T1-T7 and Check 640; levels, critical path, shared-files table. The contract-first pass ran and reported no gain, so it was undone. Nothing in it is approved |
+| [reconciliation.md](reconciliation.md) | The spec against the code: assumptions A1-A5, findings F1-F24, resolutions R1-R8, decisions D2430-D2439 with the owner's answers, open items O1-O2, UNVERIFIED U1-U3 |
+| [implementation-plan.md](implementation-plan.md) | Two slices, eight tasks T1-T8 and Check 640; levels, critical path, shared-files table. The contract-first pass ran and was declined (a gain of one weight). Nothing in it is approved |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's tasks as the graph `fugaro plan graph` reads |
 
-**Numbers taken:** D2430-D2449 (D2430-D2437 used), Checks 640-649 (640 used). The highest in use were D2429 and Check 632, both in open pull requests.
+**Numbers taken:** D2430-D2449 (D2430-D2439 used), Checks 640-649 (640 used). The highest in use were D2429 and Check 632, both in open pull requests.
 
-**Waits on something external:** U1 (the GitHub App's permission to write labels) is the owner's to read; Check 640 is owner-run.
+**Waits on something external:** the daemon's identity to the credentials service (E10b, not built; O2) blocks T7's live path and Check 640; U1 (the GitHub App's permission) is the owner's to read; Check 640 is owner-run.
