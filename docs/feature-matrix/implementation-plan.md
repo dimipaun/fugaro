@@ -249,7 +249,8 @@ The owner's answers that shaped the plan (2026-11-15):
   I1 has seven paths: two are stub deletions and one is the generated file.
 - Red step: the stamp test fails while `loadFeatures()` still reads the stub.
 - Depends on: T1, T2, T3, T4a (it wires their real sides together). Merge I1 and T5 back to back
-  in one batch, so no release falls between the matrix and the step that refreshes it.
+  in one batch, so no release falls between the matrix and the step that refreshes it. The owner
+  confirmed this on 2026-11-15: T5 is launched alongside I1 and both merge in one batch.
 - Commit: `website: the feature matrix, wired end to end, as of the current release`.
 - Reviewer tier: standard.
 
