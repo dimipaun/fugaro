@@ -162,7 +162,6 @@ func newProjectCloneURLSetCmd() *cobra.Command {
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error { return runProjectCloneURLSet(cmd, args[0], args[1], &o) },
 	}
-	cmd.Flags().BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
 	return cmd
 }
 
@@ -230,7 +229,6 @@ func newProjectCloneURLRmCmd() *cobra.Command {
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runProjectCloneURLRm(cmd, args[0], &o) },
 	}
-	cmd.Flags().BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
 	return cmd
 }
 

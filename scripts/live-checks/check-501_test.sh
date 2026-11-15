@@ -118,6 +118,8 @@ case "${1:-}" in
 version) printf '0.24.0\n' ;;
 doctor)
   cat "$FAKE_JSON_DIR/doctor.json"
+  # exits 1 with its document, as the real doctor does when a check is a warning
+  [ ! -f "$FAKE_JSON_DIR/doctor.exit" ] || exit "$(cat "$FAKE_JSON_DIR/doctor.exit")"
   ;;
 update)
   case "$mode" in
@@ -565,9 +567,20 @@ t() {
   "$1"
 }
 
+test_doctor_exit_1_is_an_answer() {
+  local dir=$work/doctor-exit-1
+  prepare "$dir"
+  printf '1\n' >"$dir/json/doctor.exit"
+  run_check "$dir"
+  expect_status "$status" 0 "doctor exits 1: the document it printed is the answer"
+  expect_contains "$out" "FACT installation: PASS" "doctor exits 1: the first row is measured"
+  expect_absent "$out" "did not answer" "doctor exits 1: it did answer"
+}
+
 t test_help
 t test_dry_run
 t test_happy_path
+t test_doctor_exit_1_is_an_answer
 t test_the_update_is_run_without_yes
 t test_skip_update_reads_the_pin_and_runs
 t test_an_update_that_fails_is_a_finding

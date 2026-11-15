@@ -713,7 +713,7 @@ func (m *policyMigration) loosening() []policyCeiling {
 // written now is the one every run of the project is admitted by from here on.
 func (m *policyMigration) looseningWhy(loosening []policyCeiling) string {
 	if m.firstPublish {
-		return fmt.Sprintf("the project has no published policy node at %s, and this run writes the one every run of the project is admitted by — its allow-list, its ceilings and its catalog are chosen here for the first time. The project's own name is what confirms it and --yes does not stand in; run this yourself at your own terminal: %s",
+		return fmt.Sprintf("the project has no published policy node at %s, and this run writes the one every run of the project is admitted by — its allow-list, its ceilings and its catalog are chosen here for the first time. The project's own name is what confirms it, and no flag stands in; run this yourself at your own terminal: %s",
 			projectpolicy.PathShared(), selfCommand()+" update")
 	}
 	var b strings.Builder
@@ -724,7 +724,7 @@ func (m *policyMigration) looseningWhy(loosening []policyCeiling) string {
 		}
 		fmt.Fprintf(&b, "%s %s -> %s", c.Member, c.Was, c.Now)
 	}
-	fmt.Fprintf(&b, ". The project's own name is what confirms it and --yes does not stand in; run this yourself at your own terminal: %s", selfCommand()+" update")
+	fmt.Fprintf(&b, ". The project's own name is what confirms it, and no flag stands in; run this yourself at your own terminal: %s", selfCommand()+" update")
 	return b.String()
 }
 

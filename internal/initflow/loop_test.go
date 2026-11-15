@@ -970,22 +970,22 @@ type mode struct {
 func modes() []mode {
 	out := func() io.Writer { return &bytes.Buffer{} }
 	return []mode{
-		{"--yes", Options{Yes: true, Terminal: true, Out: out()}},
-		{"--non-interactive", Options{NonInteractive: true, Terminal: true, Out: out()}},
-		{"--non-interactive --yes", Options{NonInteractive: true, Yes: true, Terminal: true, Out: out()}},
+		{"a run that carries its own answer", Options{Yes: true, Terminal: true, Out: out()}},
+		{"a run that never prompts", Options{NonInteractive: true, Terminal: true, Out: out()}},
+		{"a run that never prompts and carries its own answer", Options{NonInteractive: true, Yes: true, Terminal: true, Out: out()}},
 		{"--json", Options{JSON: true, Terminal: true, Out: out()}},
-		{"--json --yes", Options{JSON: true, Yes: true, Terminal: true, Out: out()}},
+		{"--json, a run that carries its own answer", Options{JSON: true, Yes: true, Terminal: true, Out: out()}},
 		{"no terminal", Options{Out: out()}},
-		{"no terminal --yes", Options{Yes: true, Out: out()}},
+		{"no terminal, a run that carries its own answer", Options{Yes: true, Out: out()}},
 		{"agent env", Options{Terminal: true, Agent: "CLAUDECODE", Out: out()}},
-		{"agent env --yes", Options{Yes: true, Terminal: true, Agent: "CLAUDECODE", Out: out()}},
-		{"agent env --yes --non-interactive", Options{Yes: true, NonInteractive: true, Terminal: true, Agent: "CLAUDECODE", Out: out()}},
+		{"agent env, a run that carries its own answer", Options{Yes: true, Terminal: true, Agent: "CLAUDECODE", Out: out()}},
+		{"agent env, a run that carries its own answer and never prompts", Options{Yes: true, NonInteractive: true, Terminal: true, Agent: "CLAUDECODE", Out: out()}},
 		{"terminal", Options{Terminal: true, Out: out()}},
 	}
 }
 
 // selfStage is an engine-like stage: it is let run without a terminal and
-// refuses itself unless it was given --yes or may prompt.
+// refuses itself unless it carries its own answer or may prompt.
 type selfStage struct {
 	*fake
 	refused bool
@@ -1372,13 +1372,13 @@ func TestARefusalBlockIsThreeShortLines(t *testing.T) {
 	}
 }
 
-func TestNoTerminalErrorDropsTheYesHintForAnAgent(t *testing.T) {
+func TestNoTerminalErrorSaysATerminalAndNeverAFlag(t *testing.T) {
 	plain := (&NoTerminalError{Stage: "installation"}).Error()
-	if !strings.Contains(plain, "--yes") {
-		t.Errorf("%q: without an agent the hint stays", plain)
+	if !strings.Contains(plain, "needs a real terminal") || strings.Contains(plain, "--") {
+		t.Errorf("%q: without an agent the refusal names the terminal the step needs, and no flag", plain)
 	}
 	agent := (&NoTerminalError{Stage: "installation", Agent: "CLAUDECODE"}).Error()
-	if strings.Contains(agent, "--yes") || !strings.Contains(agent, "coding agent") {
+	if strings.Contains(agent, "needs a real terminal") || !strings.Contains(agent, "coding agent") {
 		t.Errorf("%q", agent)
 	}
 }

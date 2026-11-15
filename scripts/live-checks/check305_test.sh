@@ -103,6 +103,8 @@ case "${1:-}" in
 doctor)
   status_of doctor
   cat "$FAKE305_DIR/doctor.json"
+  # exits 1 with its document, as the real doctor does when a check is a warning
+  [ ! -f "$FAKE305_DIR/doctor.exit" ] || exit "$(cat "$FAKE305_DIR/doctor.exit")"
   ;;
 version)
   status_of version
@@ -746,6 +748,16 @@ expect_no_writes() { # what
 }
 
 # ------------------------------------------------------------------- the cases
+case_doctor_exit_1() {
+  setup_case doctor-exit-1
+  BROWSER_WANT=2
+  mkdir -p "$dir/saved"
+  printf '1\n' >"$dir/state/doctor.exit"
+  run305 --installation "$INSTALLATION" --door "$DOOR" --firebase-project "$FB_PROJECT" --save "$dir/saved"
+  expect_status "$status" 0 "doctor exit 1: the document it printed is the answer"
+  expect_fact installation PASS "doctor exit 1"
+}
+
 case_full_pass() {
   setup_case full
   BROWSER_WANT=2
@@ -1031,7 +1043,7 @@ case_name_mismatch() {
 
 case_doctor_refused() {
   setup_case doctorout
-  printf '1\n' >"$dir/state/doctor.status"
+  printf '2\n' >"$dir/state/doctor.status"
   run305 --installation "$INSTALLATION" --door "$DOOR"
   expect_status "$status" 2 "doctorout: doctor not answering stops the run"
   expect_contains "$errtext" "fugaro doctor --json did not answer" "doctorout: the stop says so"
@@ -1232,6 +1244,7 @@ t() {
 }
 
 t case_full_pass
+t case_doctor_exit_1
 t case_door_off
 t case_no_door_published
 t case_signin_wrong_state
