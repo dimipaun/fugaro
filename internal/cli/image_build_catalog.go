@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/repourl"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -255,39 +256,46 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	published, _, _ := env.policy.read(ctx, lc)
 	var publishedMap map[string]string
 	var publishedBake *bool
+	var publishedCloneURLs map[string]string
 	if published != nil {
-		publishedMap, publishedBake = published.ImageMap, published.BakeRepos
+		publishedMap, publishedBake, publishedCloneURLs = published.ImageMap, published.BakeRepos, published.CloneURLs
 	}
 	imageMap := lc.ImageMapEffective(publishedMap)
 	bakeRepos := lc.BakeReposEffective(publishedBake)
 	// The project's repositories, in the map's own key space (the canonical
-	// form, task.CanonicalRepo), and the entry the catalog marks as its default:
-	// the two things Decide reads the map against. The map is a statement about
-	// the repositories it names, so a project repository it names none for is
-	// one whose image a build cannot know — the deploy resolves it by that
-	// repository's own config — and the default entry is the one every
-	// repository that names no entry runs, whatever the map says.
-	var projectRepos []string
-	for name := range lc.Repos {
-		if canonical, err := task.CanonicalRepo(name); err == nil {
-			projectRepos = append(projectRepos, canonical)
+	// form, task.CanonicalRepo), each resolved to where it clones from: the map
+	// is what says which repositories the entry being built serves, and the bake
+	// of each of them needs the slug its checkout is written at and the URL it
+	// clones from. A repository the project records no provider for, or whose
+	// provider and name make no slug or URL this build could clone — the case of
+	// a config written by hand — is not one of these, and the map putting it on
+	// an entry is refused by name rather than baked from a URL this command
+	// would have to guess (imagebake.Decide).
+	cloneURLs := lc.CloneURLsEffective(publishedCloneURLs)
+	var projectRepos []imagebake.Repo
+	for name, r := range lc.Repos {
+		canonical, err := task.CanonicalRepo(name)
+		if err != nil || r.Provider == "" {
+			continue
 		}
-	}
-	catDefault := ""
-	for _, e := range cat.Entries {
-		if e.Default {
-			catDefault = e.Name
-			break
+		slug, err := task.Slug(r.Provider, canonical)
+		if err != nil {
+			continue
 		}
+		url, err := repourl.CloneURL(r.Provider, canonical, cloneURLs[canonical])
+		if err != nil {
+			continue
+		}
+		projectRepos = append(projectRepos, imagebake.Repo{
+			Repo: canonical, Slug: slug, URL: url, Branch: cmp.Or(r.BaseBranch, "main"),
+		})
 	}
 	// What the map and the switch decide, and what they do not (imagebake.
-	// Decide): the map is the build's only evidence about any repository but
-	// the checkout's own, so a stage is composed only for an entry the map puts
-	// this repository alone on — a shared image is O3 (b)'s F18 boundary, and
-	// no answer to bake_repos puts a checkout into one. An installation that
-	// maps nothing therefore composes nothing at all, which is byte-for-byte
-	// the definition it had. No path under fugaro update writes a definition at
-	// all (O1), which is what keeps it a one-command upgrade.
+	// Decide): every repository the map puts on an entry is baked into that
+	// entry's image when the image is one this build's own repository runs, so an
+	// installation that maps nothing composes nothing at all — byte-for-byte the
+	// definition it had. No path under fugaro update writes a definition at all
+	// (O1), which is what keeps it a one-command upgrade.
 	bakeRepo := imagebake.Repo{Repo: canon, Slug: rs.Slug, URL: repoURL, Branch: cmp.Or(rs.BaseBranch, "main")}
 	bakeRef := bakeReference(cfg, cat, rs.Slug, catalog.Backend(lc.Backend()))
 	// The image is spelled from the host the installation's registries are
@@ -446,13 +454,13 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 				return failStep(sr.rep, step, withLease(userErr("%v", err), lease.release(ctx)))
 			}
 			// The bake this entry's definition may carry, decided here where the
-			// entry's name is: the build's own repository, and only when this is
-			// the image that repository's jobs run (O3 reading (b), so the other
-			// repositories the image serves clone at job start).
+			// entry's name is: every repository the project's map puts on it, when
+			// this is the image this build's own repository runs (imagebake.
+			// Decide).
 			bakePlan := imagebake.Decide(imagebake.Request{
 				Entry: e.Name, Repo: bakeRepo, Reference: bakeRef,
 				Map: imageMap, Bake: bakeRepos,
-				Repos: projectRepos, Default: catDefault,
+				Repos: projectRepos,
 			})
 			noteBakePlan(cmd, e.Name, bakePlan)
 			src, dropped, err := writeCatalogDockerfile(ctx, rb, opener, env.repoProvider(e.Source.Repo, cfg), e, bakePlan)
@@ -863,16 +871,16 @@ func bakeReference(cfg *config.Config, cat *config.Catalog, slug string, be cata
 }
 
 // noteBakePlan is the line a build prints about its bake decision: the two
-// things a person cannot read off the Dockerfile are that an entry's image
-// bakes one repository and that every other repository it serves clones at its
-// own job start (O3 reading (b)). Which plans are worth a line is the plan's
-// own answer (imagebake.Plan.Notable), so the rule that decides the bake and
-// the rule that decides what is said about it cannot drift apart.
+// things a person cannot read off the Dockerfile are which repositories the
+// image carries a checkout of and where each of them was written (D2301). Which
+// plans are worth a line is the plan's own answer (imagebake.Plan.Notable), so
+// the rule that decides the bake and the rule that decides what is said about it
+// cannot drift apart.
 func noteBakePlan(cmd *cobra.Command, entry string, p imagebake.Plan) {
 	if !p.Notable {
 		return
 	}
-	if p.Baked == nil {
+	if len(p.Baked) == 0 {
 		// Note-only gate: the switch reads an absent bake_repos as true, but a
 		// build that never wrote it asked for nothing, so it has no refusal to
 		// explain.
@@ -886,20 +894,26 @@ func noteBakePlan(cmd *cobra.Command, entry string, p imagebake.Plan) {
 		fmt.Fprintln(cmd.ErrOrStderr(), line)
 		return
 	}
-	dir, err := imagebake.Path(p.Baked.Slug)
-	if err != nil {
-		return // Decide refused this slug, so this cannot happen; a note is not worth a refusal of the build
+	// What the line claims is what the image carries and where. That a job of a
+	// repository reads its own checkout is not a promise this command has to
+	// hedge: IS8's reader is in main (runner.openBakedCheckout, over
+	// runner.BakedDir), so a job whose image carries a checkout opens the
+	// per-slug path instead of cloning, and the one it opens is the one its own
+	// slug names.
+	repos := make([]string, len(p.Baked))
+	dirs := make([]string, len(p.Baked))
+	for i, r := range p.Baked {
+		dir, err := imagebake.Path(r.Slug)
+		if err != nil {
+			return // Decide refused this slug, so this cannot happen; a note is not worth a refusal of the build
+		}
+		repos[i], dirs[i] = pluginwire.Printable(r.Repo), dir
 	}
-	alone := "no other repository the project maps to it runs it"
-	if len(p.Cloned) > 0 {
-		alone = fmt.Sprintf("the other repositories the project maps to it (%s) run this image too, so their jobs can read this checkout, and they clone their own at job start", strings.Join(p.Cloned, ", "))
+	if len(p.Baked) == 1 {
+		fmt.Fprintf(cmd.ErrOrStderr(), "note: the catalog entry %s bakes the checkout of %s at %s, so the image carries that repository's source\n",
+			pluginwire.Printable(entry), repos[0], dirs[0])
+		return
 	}
-	// What the line claims is what the image carries and where. That a job of
-	// the repository reads it is not a promise this command has to hedge: IS8's
-	// reader is in main (runner.openBakedCheckout, over runner.BakedDir), so a
-	// job whose image carries a checkout opens the per-slug path instead of
-	// cloning, and the only repository it opens it for is the one the checkout
-	// is of — which is the other half of what the line says about the rest.
-	fmt.Fprintf(cmd.ErrOrStderr(), "note: the catalog entry %s bakes the checkout of %s at %s, so the image carries that repository's source; %s\n",
-		pluginwire.Printable(entry), pluginwire.Printable(p.Baked.Repo), dir, alone)
+	fmt.Fprintf(cmd.ErrOrStderr(), "note: the catalog entry %s bakes the checkouts of %s at %s, so the image carries the source of every repository the project's map puts on it\n",
+		pluginwire.Printable(entry), strings.Join(repos, ", "), strings.Join(dirs, ", "))
 }

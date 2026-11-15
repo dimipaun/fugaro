@@ -1,6 +1,6 @@
-// Package imagebake is the bake step a catalog build generates: the stage it
-// appends to an entry's Dockerfile so the image carries the checkout of a
-// repository, and the rule that says which repository that is.
+// Package imagebake is the bake step a catalog build generates: the stages it
+// appends to an entry's Dockerfile so the image carries the checkouts of the
+// repositories that entry serves, and the rule that says which they are.
 //
 // A job whose image carries its repository's checkout skips the clone it would
 // otherwise pay for (internal/runner's openCheckout opens a checkout already in
@@ -11,37 +11,64 @@
 // the entries the image setup skill generates — the bake step the plan splits
 // out as IS8b, which waited on the owner's O3.
 //
-// # The owner's ruling (O3, 2026-11-09: reading (b))
+// # The owner's ruling (D2301, 2026-11-13: several repositories, one credential)
 //
-// A catalog build runs as ONE repository's build account with that
-// repository's credential (docs/project-image-catalog; internal/backend/gcp's
-// CatalogBuildSpec.check refuses any other account). The grant reaches exactly
-// one repository — the one the build runs for — so a build cannot read a second
-// repository and there is no cross-repo credential here: the repositories an
-// entry serves that are NOT the one this build runs for are cloned by their own
-// jobs at start, and this package only ever bakes the build's own. The build
-// says so out loud (Plan.Cloned lists them), because "bake your repos" reads
-// like every repo of the project and what it means is this one.
+// One catalog build bakes every repository its entry serves, not the one it
+// runs for alone: D2301 overturns O3's reading (b) ("the bake set is the
+// repositories that share the image's own repository grant — typically none for
+// a shared image"), which held while a build's credential reached exactly the
+// repository it ran for.
 //
-// # The generated stage
+// What replaced it is a build credential over exactly those repositories: one
+// request to the credentials service's build route, for the entry being built,
+// and one narrowed answer covering the entry's repositories and no others
+// (internal/buildtoken, docs/shared-jobs-default/contract-build-token.md; the
+// build's own step asks for it — internal/cli's `fugaro image git-credential
+// --entry`). It is what makes a second repository's checkout bakeable at all,
+// and it is F19's single point of compromise: the clone runs in a build step
+// Fugaro generates entirely, whose Dockerfile the entry cannot alter, so no
+// entry RUN can read the credential (B8 — the stages this package composes into
+// the entry's own definition carry the credential until B8 moves the clone out
+// of it).
 //
-// It bakes at Path(slug) — a per-slug directory under Root, so one image can
-// hold several repositories' checkouts without them colliding — and never at
-// /work/repo: the work directory an old image baked at belongs to the
-// repository that authored its Dockerfile, and an engine stage that wrote there
-// would hand one repository's checkout to every job the image serves. A job
-// finds its own checkout at its slug's path (IS8).
+// What that leaves is F23: a job whose image carries several checkouts can read
+// the others' source, which is the exposure F18 named. Its answer is not a
+// refusal here but the runner's: it removes every baked directory but the run's
+// own before the agent starts (D2309, task S9).
 //
-// The clone uses the build's own credential, the git-credentials BuildKit
-// secret the catalog build already mounts (docs/project-image-catalog, D1150):
-// the same secret file, for the same account, with the same REPO_URL,
-// BASE_BRANCH and FUGARO_COMMIT build arguments the catalog build already
-// passes. No new credential, no new build argument, and nothing of it reaches
-// a layer: the mount is a secret mount, and no ARG or COPY carries a token.
+// # The generated stages
+//
+// One stage per repository the entry serves. Each bakes at Path(slug) — a
+// per-slug directory under Root, so an image can hold several repositories'
+// checkouts without them colliding — and never at /work/repo: the work
+// directory an old image baked at belongs to the repository that authored its
+// Dockerfile, and an engine stage that wrote there would hand one repository's
+// checkout to every job the image serves. A job finds its own checkout at its
+// slug's path (IS8).
+//
+// The stage for the repository the build runs for is the one a nightly rebuild
+// composes again, so it takes REPO_URL, BASE_BRANCH and FUGARO_COMMIT as build
+// arguments and holds REPO_URL to the repository it was composed for (Stage).
+// The stages for the entry's other repositories spell their clone URL and
+// branch into the definition, because the build's own arguments name another
+// repository and the build holds no commit of a repository it does not run for
+// (OtherStage).
+//
+// Nothing of a credential reaches a layer: the clone mounts the git-credentials
+// BuildKit secret (docs/project-image-catalog, D1150) and no ARG, ENV or COPY
+// names a token, and the one secret mount of a step is what B8 replaces with the
+// build route's narrowing.
+//
+// Every stage ends with the submodule guard: a repository a checkout declares as
+// a submodule, and that the build's credential does not cover, fails the build
+// naming the repository rather than being fetched (submoduleGuard). The
+// credential reaches one host, so the guard holds a submodule's own host to the
+// plan's: a repository of the entry's owner and name on some other host is not
+// one this build's credential covers.
 //
 // # When nothing is baked
 //
-// Three things have to hold, and none of them is the switch's to override.
+// Two things have to hold, and neither is the switch's to override.
 //
 // The entry being built is the image the repository runs (a catalog reference
 // in its own workflow beats the project's map, T1 reading (b); the map answers
@@ -52,20 +79,13 @@
 // installation predating the field — the same way the settings, the skill and
 // the publisher do.
 //
-// The entry serves no other repository, and the build can say so: a checkout
-// baked into an image another repository's jobs run is source they can read
-// (F18), and O3's reading (b) bakes "only the repos that share the image's own
-// repository grant — typically none for a shared image". So nothing is baked
-// into a shared image whatever the switch says: bake_repos: true asks for a
-// bake where one may land, and the switch is not an answer to F18.
-//
-// The map is the evidence for both of those, because it is the only thing a
-// build holds that speaks about any repository but its own (a build's
-// credential reaches one, O3 (b), so it reads no other repository's config).
-// A repository the map does not put on the entry — one that runs it by its own
-// workflow's reference — is therefore refused rather than baked: the build
-// cannot name the repositories that run the entry as well, and Plan.Cloned
-// would be a guess.
+// The repositories the entry serves are the project's own, and the build can
+// say so: the map is the one thing a build holds that speaks about a repository
+// other than its own (it reads one repository's config), so the entry's
+// repositories are read off it, keyed against the project's own list. An entry
+// the map serves a repository the project does not admit is refused, naming the
+// repository rather than baking a checkout the build cannot clone: Request.Repos
+// is the project's own answer for the repositories it has.
 //
 // An installation that predates both fields is byte-for-byte what it was: it
 // maps nothing, so no entry is its own, and no composed stage is ever quiet
@@ -98,20 +118,7 @@ import (
 // the three ends together.
 const Root = "/work/baked"
 
-// sortedClone lists the names a plan reports as the repositories that clone at
-// job start, in one order, so the same map always produces the same sentence.
-// Nothing of a plan is hashed, so this is for the person reading the line and
-// not for a reader comparing bytes.
-func sortedClone(m map[string]string) []string {
-	out := make([]string, 0, len(m))
-	for slug := range m {
-		out = append(out, slug)
-	}
-	slices.Sort(out)
-	return out
-}
-
-// Repo is the repository one build bakes.
+// Repo is one repository a build bakes.
 type Repo struct {
 	// Repo is the repository's canonical name (task.CanonicalRepo), which is
 	// what image_map keys and what a person reads.
@@ -143,23 +150,17 @@ type Request struct {
 	// job of it would read.
 	Reference string
 	// Map is the project's effective repo-to-image map (image_map, D1906), keyed
-	// by canonical repository name. It is the only evidence a build has about
-	// who else runs the entry — a build reads one repository's config — so the
-	// bake hangs off it: see Decide.
+	// by canonical repository name. It is what says which repositories the entry
+	// being built serves, and it is the only evidence a build has about any
+	// repository but the build's own — a build reads one repository's config —
+	// so the bake hangs off it: see Decide.
 	Map map[string]string
-	// Repos are the project's repositories, as canonical names (task.
-	// CanonicalRepo), which is the map's own key space. The map is read here
-	// against this list rather than trusted whole: a repository the map does not
-	// name is one whose image the build cannot know, because the deploy resolves
-	// it by that repository's own reference or by the tag-cover rule and a build
-	// reads neither — so it may be a reader of this entry (see Decide).
-	Repos []string
-	// Default is the name of the entry the project's catalog marks as its
-	// default, "" when it marks none (config.Entry.Default). A repository that
-	// names no entry of its own runs it, whatever the map says and whether or
-	// not the map names that repository at all, which makes it an entry this
-	// build cannot call its own: see Decide.
-	Default string
+	// Repos are the project's repositories, each resolved to where it clones
+	// from — its canonical name, its storage slug, its https URL and its base
+	// branch. A repository the project lists but cannot place (no provider
+	// recorded for it, or no URL that names it) is not one of these, and the
+	// build bakes none of a repository it cannot clone: see Decide.
+	Repos []Repo
 	// Bake is the project's effective bake switch (bake_repos, D1901): nil when
 	// the project answered nothing, which is what an installation predating the
 	// field has, and true or false when an operator answered it. Nil and true
@@ -171,15 +172,16 @@ type Request struct {
 // Plan is the bake decision, and the whole of what a build tells a person
 // about it.
 type Plan struct {
-	// Baked is the repository the stage clones, nil when this build bakes
-	// nothing.
-	Baked *Repo
-	// Cloned are the other repositories the project's map puts on this build's
-	// image — they run on it and are cloned by their own jobs at start, because
-	// the build's credential reaches this build's repository alone (O3 (b)). It
-	// is what the build can say about who else reads the image, and it is why a
-	// non-empty list refuses the bake: see Decide.
-	Cloned []string
+	// Baked are the repositories the stages clone — every repository the
+	// project's map puts on the entry being built (D2301), in one order, the
+	// build's own LAST; empty when this build bakes nothing.
+	//
+	// The last element's being the build's own is a fact a reader relies on and
+	// not a decoration: BakedSlug answers one repository per definition, and the
+	// stage that runs last is the one the smoke and the nightly rebuild read, so
+	// the checkout a definition is known by is the one the build baked as its
+	// own (Append).
+	Baked []Repo
 	// Reason is why nothing is baked, as a short clause a build prints inside
 	// parentheses. It is empty when Baked is set.
 	Reason string
@@ -200,9 +202,21 @@ type Plan struct {
 	Notable bool
 }
 
-// Decide is the rule: a build bakes the repository it runs for, and only when
-// that repository runs this entry, when the project's map leaves the entry to
-// that repository alone, and when the project asked for the bake.
+// Repositories is the canonical names of the repositories a plan bakes, in
+// Baked's order: the repositories the build's one credential has to cover, and
+// the set the submodule guard holds a checkout to.
+func (p Plan) Repositories() []string {
+	out := make([]string, 0, len(p.Baked))
+	for _, r := range p.Baked {
+		out = append(out, r.Repo)
+	}
+	return out
+}
+
+// Decide is the rule: a build bakes every repository the project's map puts on
+// the entry being built, and only when that entry is one the build's own
+// repository runs, the entry's repositories are the project's own, and the
+// project asked for the bake.
 //
 // The entry a repository runs is the one its own workflow names, then the map's
 // answer for it, in the resolver's own order (T1 (b); IS1's one resolver), so
@@ -210,76 +224,60 @@ type Plan struct {
 // an image they never pull is work nobody reads. A repository that runs this
 // entry neither way bakes nothing, and says nothing.
 //
-// # The bake switch, and what it does not decide
+// # Which repositories an entry bakes
+//
+// The repositories the map puts on the entry being built, the build's own
+// included: they are the ones its jobs start, so they are the ones whose
+// checkouts belong in its image (D2301). The build's own is Baked's last, which
+// is what BakedSlug and the smoke read a definition by.
+//
+// The set is not a proof of who runs the entry — a repository the map puts on
+// another entry reaches this one by its own workflow's reference or by the tags
+// its jobs need, and a build reads the config of no repository but its own — but
+// it is the project's own account of its repositories, and it is what the
+// credential is minted from: the request names the entry, and the service reads
+// the repositories a build may be given from the published map for that entry
+// (contract-build-token.md rule 8). A repository that reaches the entry without
+// the map saying so is a clone at job start, which is what it was before the
+// bake existed.
+//
+// # The map, and the project's own list
+//
+// The map is the only thing a build holds that speaks about any repository but
+// its own, and it is read against Request.Repos — the project's own answer for
+// the repositories it has, each resolved to where it clones from. A repository
+// the map puts on this entry and the project does not admit is refused, naming
+// it: the build bakes no repository it cannot clone, and a key the project's own
+// list does not answer for is either a map the project does not own or a
+// repository it records no provider for. A repository of the entry's on another
+// host is refused the same way, for the credential's own reason: one credential
+// is for one host.
+//
+// # The bake switch
 //
 // bake_repos: false bakes nothing. Anything else — true, or the project
 // answering nothing, which is every installation predating the field — bakes
-// the repository's own checkout into the entry's image where a bake may land.
-// Absent and true decide the same way, because that is what the switch means
-// everywhere else it is read (projectpolicy.Policy.BakesRepos): one published
-// node does not tell a settings reader "on" and a build "nothing is baked".
+// the entry's repositories into its image. Absent and true decide the same way,
+// because that is what the switch means everywhere else it is read
+// (projectpolicy.Policy.BakesRepos): one published node does not tell a settings
+// reader "on" and a build "nothing is baked".
 //
-// A shared image is not somewhere a bake may land, whichever way the switch is
-// set (O3 reading (b): the bake set is the repositories that share the image's
-// own repository grant, which for a shared image is typically none). Whatever
-// is baked into an image the entry's other repositories run is source their
-// jobs can read (F18), and bake_repos: true is an operator asking for a bake —
-// not the answer to a boundary the owner ruled on. So a non-empty Plan.Cloned
-// refuses the bake, and the line a build prints names those repositories as the
-// reason rather than as a warning.
-//
-// # What the map has to say, and what it does not
-//
-// Both of those are read off the project's map, the only thing a build holds
-// that speaks about a repository other than its own: it reads one repository's
-// config and its credential reaches one repository (O3 (b)), so a build cannot
-// ask what the project's other repositories run. That makes the map a
-// requirement and not a hint — a repository the map does not put on the entry,
-// even one that runs it by its own workflow's reference, is refused rather than
-// baked, because the build cannot name the repositories that run the entry as
-// well and Plan.Cloned would be a guess.
-//
-// The map is not, on its own, evidence that the entry is this repository's: a
-// job resolves its image with catalog.Choose, which reads a repository's own
-// reference, then the tag-cover rule over the tags it needs, and then the
-// catalog's default — and never the map, until IS1 makes the map that resolver.
-// So two further things refuse the bake, each of them a way the entry reaches a
-// job the map says nothing about. The entry the catalog marks as its default is
-// run by every repository of the project that names no entry of its own. And a
-// repository the map does not name at all is one whose image the build cannot
-// know at all, since the deploy resolves it by that repository's own config
-// (Request.Repos). What is left is the case the map is evidence for: every
-// repository of the project is accounted for by it, this repository is on this
-// entry, and no other repository is.
-//
-// That account is the project's own and not a proof of who runs the entry: a
-// repository the map puts on another entry reaches this one by its own
-// workflow's reference or by the tags its jobs need, and a build reads the
-// config of no repository but its own (O3 (b)), so it cannot rule that out.
-// What it can refuse is the entry the project's account says nothing about, and
-// that is what the refusals above do.
+// A plan that bakes is Plan.Notable; one that bakes nothing is quiet unless the
+// operator asked for a bake or the reason is one they can act on.
 func Decide(req Request) Plan {
-	// The other repositories this image serves: they are the clone-at-start
-	// half of O3 (b) and are named whether or not this build bakes.
-	cloned := []string{}
-	for _, name := range sortedClone(req.Map) {
-		if req.Map[name] == req.Entry && name != req.Repo.Repo {
-			cloned = append(cloned, name)
-		}
-	}
 	asked := req.Bake != nil && *req.Bake
 	// The slug is validated here rather than at the stage: a slug that is not
 	// one is a bug this package's caller cannot fix by deciding differently,
 	// and baking nothing is the direction that cannot write a path a reader
 	// would not look at.
 	if _, err := Path(req.Repo.Slug); err != nil {
-		return Plan{Cloned: cloned, Notable: true, Asked: asked, Reason: fmt.Sprintf("slug %s is not bakeable: %v", req.Repo.Slug, err)}
+		return Plan{Notable: true, Asked: asked, Reason: fmt.Sprintf("slug %s is not bakeable: %v", req.Repo.Slug, err)}
 	}
 	switch {
 	case req.Reference != "" && req.Reference != req.Entry:
-		return Plan{Cloned: cloned, Asked: asked, Reason: fmt.Sprintf("this repo runs %s", req.Reference)}
+		return Plan{Asked: asked, Reason: fmt.Sprintf("this repo runs %s", req.Reference)}
 	case req.Reference == "" && req.Map[req.Repo.Repo] != req.Entry:
-		return Plan{Cloned: cloned, Asked: asked, Reason: fmt.Sprintf("the image map doesn't put %s on it", req.Repo.Repo)}
+		return Plan{Asked: asked, Reason: fmt.Sprintf("the image map doesn't put %s on it", req.Repo.Repo)}
 	}
 	// Only a written false turns the bake off: bake_repos absent and true are
 	// one statement everywhere else that reads the switch
@@ -287,64 +285,112 @@ func Decide(req Request) Plan {
 	// build that read the absent case as anything else would be a second
 	// meaning for one field.
 	if req.Bake != nil && !*req.Bake {
-		return Plan{Cloned: cloned, Notable: true, Asked: asked, Reason: "bake_repos is false"}
+		return Plan{Notable: true, Asked: asked, Reason: "bake_repos is false"}
 	}
-	// The map is the build's only evidence about any repository but its own (O3
-	// (b): one credential, one checkout, no second repository's config read), so
-	// where it does not put this repository on this entry the build cannot say
-	// who else runs the entry. A bake there is a checkout read by repositories
-	// the build cannot name — the reference is a fact about this repository's
-	// jobs and not about the project's.
+	// The map is the build's only evidence about any repository but its own, so
+	// where it does not put this repository on this entry there is no bake to
+	// compose: the stage a rebuild of this definition could reproduce is the
+	// build's own checkout, and its jobs never pull this image.
 	if req.Map[req.Repo.Repo] != req.Entry {
-		return Plan{Cloned: cloned, Notable: true, Asked: asked, Reason: fmt.Sprintf("the image map doesn't list %s", req.Repo.Repo), Fix: fmt.Sprintf("To bake: fugaro image map set %s %s", req.Repo.Repo, req.Entry)}
+		return Plan{Notable: true, Asked: asked, Reason: fmt.Sprintf("the image map doesn't list %s", req.Repo.Repo), Fix: fmt.Sprintf("To bake: fugaro image map set %s %s", req.Repo.Repo, req.Entry)}
 	}
-	// The catalog's default is the entry every repository that names nothing
-	// runs, and the deploy resolves that without reading the map (catalog.Choose
-	// step 3). So the map saying nothing about a repository is not the map saying
-	// the repository runs something else: a project whose map puts this
-	// repository alone on the default entry still hands that entry's image to
-	// every other repository of the project, and the bake would be a checkout in
-	// their jobs (F18).
-	if req.Default != "" && req.Default == req.Entry {
-		return Plan{Cloned: cloned, Notable: true, Asked: asked, Reason: "default entry, shared by every repo"}
+	baked, refused := entryRepos(req)
+	if refused != "" {
+		return Plan{Notable: true, Asked: asked, Reason: refused}
 	}
-	// A repository the map does not name at all is one whose image this build
-	// cannot know: the deploy resolves it by that repository's own reference or
-	// by the tag-cover rule, and a build reads neither — one repository's config
-	// and one credential (O3 (b)). It is therefore a possible reader of this
-	// entry, and the map is only whole evidence when it names every repository
-	// the project has.
-	if unknown := unmapped(req.Repos, req.Map, req.Repo.Repo); len(unknown) > 0 {
-		return Plan{Cloned: cloned, Notable: true, Asked: asked, Reason: fmt.Sprintf("unmapped repos: %s", strings.Join(unknown, ", ")), Fix: "Map them: fugaro image map set <repo> <entry>"}
-	}
-	// A shared image is O3 (b)'s own boundary and not the switch's: bake_repos:
-	// true asks for a bake, and it does not decide who may read the result.
-	if len(cloned) > 0 {
-		return Plan{Cloned: cloned, Notable: true, Asked: asked, Reason: fmt.Sprintf("shared with %s", strings.Join(cloned, ", "))}
-	}
-	baked := req.Repo
-	return Plan{Baked: &baked, Cloned: cloned, Notable: true, Asked: asked}
-
+	return Plan{Baked: baked, Notable: true, Asked: asked}
 }
 
-// unmapped lists the project's repositories the map names no entry for, in one
-// order, other than repo itself: the repositories whose image a build cannot
-// know, and therefore the ones whose jobs it cannot rule out as readers of an
-// entry it bakes into. A repository the map names, whatever it names for it, is
-// left out — the map is a statement about it, and Decide refuses the bake where
-// that statement puts it on this entry.
-func unmapped(repos []string, m map[string]string, self string) []string {
-	var out []string
-	for _, name := range repos {
-		if name == self {
-			continue
-		}
-		if _, known := m[name]; !known {
-			out = append(out, name)
+// entryRepos is the entry's repositories: every repository the project's map
+// puts on the entry being built, in one order, the build's own last, or the
+// reason no bake can be composed.
+//
+// The map is read against the project's own repositories rather than trusted
+// whole: a repository the project does not admit — a key the project's list does
+// not answer for, or one it lists without a provider to clone it from — is one
+// this build cannot bake, and the reason names it. A slug that is not one is
+// refused for Path's reason: it is spelled into a generated definition. And so is
+// a repository that clones from another host than the build's own: a plan is one
+// credential, a credential is for one host (rule 5 of contract-build-token.md),
+// and a stage composed for the other one would be a clone the credential does
+// not reach.
+//
+// The build's own repository is the exception, and it is not an exemption: it is
+// the one repository whose clone URL and branch this build holds itself
+// (Request.Repo), so it is admitted by construction, and the project's list
+// answers for the others alone.
+func entryRepos(req Request) ([]Repo, string) {
+	byName := make(map[string]Repo, len(req.Repos))
+	for _, r := range req.Repos {
+		byName[r.Repo] = r
+	}
+	var names []string
+	for name, entry := range req.Map {
+		if entry == req.Entry {
+			names = append(names, name)
 		}
 	}
-	slices.Sort(out)
-	return slices.Compact(out)
+	// The build's own repository is the last stage, whichever order the map
+	// hands the others in (Plan.Baked).
+	slices.SortFunc(names, func(a, b string) int {
+		if (a == req.Repo.Repo) != (b == req.Repo.Repo) {
+			if a == req.Repo.Repo {
+				return 1
+			}
+			return -1
+		}
+		return strings.Compare(a, b)
+	})
+	out := make([]Repo, 0, len(names))
+	for _, name := range names {
+		// The build's own repository is the checkout this build holds: its URL,
+		// its branch and its slug are this command's own and not what the
+		// project's list records, and the project's list need not hold it at all
+		// — a build composes the definition of an entry its own checkout may be
+		// missing from the local config of. It is Baked's last, and this is the
+		// element that makes that a fact rather than a sort's side effect.
+		if name == req.Repo.Repo {
+			out = append(out, req.Repo)
+			continue
+		}
+		// The map is a config value and a published node, so a key is held to
+		// the shape of a repository name before it reaches a line a person reads
+		// or a command they run.
+		if _, err := task.CanonicalRepo(name); err != nil {
+			return nil, fmt.Sprintf("the map names %q, which is not a repository", name)
+		}
+		r, admitted := byName[name]
+		if !admitted {
+			return nil, fmt.Sprintf("the map puts %s on it, which is not a repository this project admits", name)
+		}
+		if _, err := Path(r.Slug); err != nil {
+			return nil, fmt.Sprintf("slug %s is not bakeable: %v", r.Slug, err)
+		}
+		// One credential is for one host (rule 5 of contract-build-token.md), so
+		// a plan that mixed two hosts could not be served by the one credential
+		// this build asks for: a repository of the entry's that clones from
+		// another host is refused by name rather than composed into a stage whose
+		// clone that credential would not reach.
+		if own, host := urlHost(req.Repo.URL), urlHost(r.URL); own == "" || host != own {
+			return nil, fmt.Sprintf("the map puts %s on it, which does not clone from the host this build's one credential is for", name)
+		}
+		out = append(out, r)
+	}
+	return out, ""
+}
+
+// urlHost is the host a clone URL sends its credential to, lower-cased, or ""
+// when the URL is not one — the comparison the one-credential-per-host rule is
+// about. An empty answer leaves the repository's host equal to nothing, so the
+// refusal is what an unparseable URL gets: the direction in which this is wrong
+// is a bake that does not happen, never a credential offered to a host it was
+// not minted for.
+func urlHost(u string) string {
+	parsed, err := url.Parse(u)
+	if err != nil {
+		return ""
+	}
+	return task.ASCIILower(parsed.Host)
 }
 
 // markerPrefix begins the marker line the generated stage carries, so the
@@ -399,7 +445,11 @@ func Path(slug string) (string, error) {
 // or with a capital letter. The guard and the composed spelling are one fold
 // (originID), which is task.CanonicalRepo's: what git and every other reader
 // here call one repository is one answer to this REFUSAL too.
-func Stage(r Repo) (string, error) {
+//
+// covered is the credential's own reach — Plan.Baked of the plan this stage was
+// composed for — and the stage ends with the submodule guard over it
+// (submoduleGuard).
+func Stage(r Repo, covered []Repo) (string, error) {
 	dir, err := Path(r.Slug)
 	if err != nil {
 		return "", err
@@ -411,8 +461,7 @@ func Stage(r Repo) (string, error) {
 	fmt.Fprintf(&b, "%s%s\n", markerPrefix, dir)
 	b.WriteString("# Engine-generated by fugaro image build (the image setup skill's bake step): the checkout of\n")
 	b.WriteString("# the repository this build runs for, at the commit the build recorded, for that repository's\n")
-	b.WriteString("# own jobs. Every other repository this image serves clones at job start: the build's\n")
-	b.WriteString("# credential reaches this repository alone.\n")
+	b.WriteString("# own jobs. The entry's other repositories are baked by the stages beside this one.\n")
 	b.WriteString("ARG REPO_URL\nARG BASE_BRANCH\nARG FUGARO_COMMIT=\"\"\n")
 	fmt.Fprintf(&b, "RUN --mount=type=secret,id=git-credentials,uid=1000,required=false \\\n"+
 		"    case \"$FUGARO_COMMIT\" in *[!0-9a-f]*) echo \"FUGARO_COMMIT is not a commit ID\" >&2; exit 1 ;; esac \\\n"+
@@ -428,9 +477,132 @@ func Stage(r Repo) (string, error) {
 		"           fetch --quiet origin \"$commit\" \\\n"+
 		"      || { echo \"commit $commit is no longer reachable: the branch was force-pushed; re-run the build\" >&2; exit 1; }; } \\\n"+
 		" && git -C %s reset --quiet --hard \"$commit\" \\\n"+
+		" && %s \\\n"+
 		" && /usr/local/lib/fugaro/finalize-checkout %s\n",
-		repoURLGuard(r.URL), Root, dir, dir, dir, dir, dir)
+		repoURLGuard(r.URL), Root, dir, dir, dir, dir, dir, submoduleGuard(dir, covered), dir)
 	return b.String(), nil
+}
+
+// OtherStage is the stage that bakes one of the entry's other repositories: the
+// same clone as Stage, with r's own URL and branch spelled into the definition
+// instead of the build's REPO_URL and BASE_BRANCH arguments, which name another
+// repository.
+//
+// It pins no commit, and that is the one thing it cannot do: the build holds the
+// commit of the repository it runs for and no other, so the clone takes the
+// branch's head at the moment the build runs. A definition composed once and
+// rebuilt later therefore bakes a newer checkout of those repositories than of
+// the build's own, which is what an entry's own Dockerfile that clones by hand
+// has always done — and the reason a repository that wants its image pinned
+// pins it by naming the entry its own workflow runs.
+//
+// The branch and the URL are config values: the branch is held to the shape of a
+// branch name (a definition may not spell arbitrary text) and the URL to the
+// same https-without-credentials rule the build's own is held to, with the
+// repository named in the refusal, since a definition is composed for several of
+// them. The repository's name is held to its canonical form for the same reason
+// a slug is: it is a config value too, and the refusal and the definition's own
+// comment both name it.
+func OtherStage(r Repo, covered []Repo) (string, error) {
+	if _, err := task.CanonicalRepo(r.Repo); err != nil {
+		return "", fmt.Errorf("the repository name %q is not a repository", r.Repo)
+	}
+	dir, err := Path(r.Slug)
+	if err != nil {
+		return "", err
+	}
+	if err := httpsOrigin(r.URL); err != nil {
+		return "", fmt.Errorf("%s: %w", r.Repo, err)
+	}
+	if !branchRE.MatchString(r.Branch) {
+		return "", fmt.Errorf("the branch %q of %s is not a branch name a generated definition may spell", r.Branch, r.Repo)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s%s\n", markerPrefix, dir)
+	fmt.Fprintf(&b, "# Engine-generated by fugaro image build (the image setup skill's bake step): the checkout of\n")
+	fmt.Fprintf(&b, "# %s, one of the repositories the catalog entry's image serves, at the head of %s when this\n",
+		r.Repo, r.Branch)
+	b.WriteString("# build ran. The repository this build runs for is baked by the last stage of this definition.\n")
+	fmt.Fprintf(&b, "RUN --mount=type=secret,id=git-credentials,uid=1000,required=false \\\n"+
+		"    install -d -m 0755 %s \\\n"+
+		" && GIT_TERMINAL_PROMPT=0 git -c credential.helper= \\\n"+
+		"      -c credential.helper='store --file=/run/secrets/git-credentials' \\\n"+
+		"      clone --quiet --branch '%s' --single-branch -- '%s' %s \\\n"+
+		" && %s \\\n"+
+		" && /usr/local/lib/fugaro/finalize-checkout %s\n",
+		Root, r.Branch, r.URL, dir, submoduleGuard(dir, covered), dir)
+	return b.String(), nil
+}
+
+// branchRE is what a branch a generated definition may spell looks like: the
+// characters git's own refname rules allow a branch, starting with one a shell
+// word cannot read as an option. The stage quotes it, so what this closes is not
+// a quoting break but a branch a `git clone --branch` would refuse at build time
+// — an empty one, or one starting with "-".
+var branchRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
+
+// submoduleGuard is the shell a stage runs after its clone: every submodule the
+// checkout declares must be a repository the build's credential covers (covered,
+// the plan's own repositories), and one that is not fails the build naming the
+// repository rather than being fetched.
+//
+// It reads the checkout's .gitmodules with git's own parser — the file is the
+// baked repository's, so a line-oriented read of it here would be a second
+// parser for a format that has one — and what a refusal names is the repository
+// that declaration resolves to, folded the way the covered set is: the host, the
+// owner and the name, lower-cased, with a trailing "/" and ".git" off. Two
+// things follow from that fold and both are the point of it. A URL that carries
+// a credential cannot put it in the build log, because everything before the
+// first "@" is off the text a refusal prints. And a repository on another host
+// is not this build's to fetch whatever its owner and name are: the covered set
+// holds the host, because the credential is for one host (rule 5 of
+// contract-build-token.md) and this stage's clone is the one place a submodule
+// URL would be followed with it.
+//
+// A URL it cannot read as a repository — a relative one, an ssh one in git's
+// scp spelling, one whose path is not owner/name — is refused: a repository the
+// credential does not demonstrably cover is not one this build fetches. The
+// refusal is fail-closed in the direction that matters, since a fold that
+// matched more than the URL really names would fetch source the credential does
+// not cover.
+func submoduleGuard(dir string, covered []Repo) string {
+	folded := make([]string, 0, len(covered))
+	for _, r := range covered {
+		if id := submoduleID(r.URL); id != "" {
+			folded = append(folded, id)
+		}
+	}
+	return "submodules=$(git -C " + dir + " config --file " + dir + "/.gitmodules --get-regexp '^submodule\\..*\\.url$' 2>/dev/null | cut -d' ' -f2- || true)" +
+		" && for url in $submodules; do" +
+		" repo=$(printf '%s' \"$url\" | tr 'A-Z' 'a-z');" +
+		" repo=${repo%/}; repo=${repo%%.git}; repo=${repo#*://}; repo=${repo#*@};" +
+		" case \" " + strings.Join(folded, " ") + " \" in *\" $repo \"*) [ -n \"$repo\" ] && continue ;; esac;" +
+		" echo \"a submodule of this checkout is ${repo:-a repository this build cannot read}, which this build's credential does not cover: it covers the repositories of the entry being built and no others\" >&2; exit 1;" +
+		" done"
+}
+
+// submoduleID is the repository a clone URL names, as submoduleGuard's own
+// shell spells it: the host and the path, lower-cased, with a trailing "/" and
+// ".git" off. Go computes the covered set here and the shell folds the
+// submodule's own URL, so the two spellings have to be one — a stage whose
+// covered set the shell could not match would refuse every submodule of a
+// repository the credential does cover.
+//
+// The path is the escaped one, which is the text a URL really carries: a
+// repository spelled with an escape (repourl.CloneURL's note about
+// https://bitbucket.org/acme/sandb%6fx.git) folds to the bytes the shell sees
+// only this way. An empty answer drops the repository from the covered set
+// rather than adding a name nothing matches: a URL without a host is one this
+// package refused a stage for already (httpsOrigin), and a covered set that lost
+// a member refuses MORE submodules, which is the direction a guard may be wrong
+// in.
+func submoduleID(u string) string {
+	parsed, err := url.Parse(u)
+	if err != nil || parsed.Host == "" {
+		return ""
+	}
+	id := task.ASCIILower(parsed.Host + parsed.EscapedPath())
+	return strings.TrimSuffix(strings.TrimSuffix(id, "/"), ".git")
 }
 
 // repoURLGuardFormat is the shell the generated stage runs to hold a build's
@@ -498,34 +670,57 @@ func httpsOrigin(u string) error {
 	return nil
 }
 
-// Append is the composed definition: the entry's own bytes with the stage that
-// bakes p.Baked on the end, and the bytes unchanged when p bakes nothing. A
+// Append is the composed definition: the entry's own bytes with one stage per
+// repository p bakes on the end, and the bytes unchanged when p bakes nothing. A
 // definition is appended to, never rewritten: the entry's own Dockerfile is
-// what it is, and one RUN at the end of it runs in the image's last stage —
+// what it is, and the stages at the end of it run in the image's last stage —
 // the one every job starts from.
 //
+// The stages are composed in Baked's order, which puts the build's own last: the
+// last stage is the one BakedSlug and the smoke read a definition by, so the
+// checkout a definition is known by is the one the build baked as its own, and a
+// rebuild that appends again lands its own stage where the reader looks (Stage,
+// OtherStage).
+//
 // An entry whose own Dockerfile already clones (the hand-written definitions
-// of D1208, e.g. images/catalog/*/Dockerfile) gets this stage as well, which
-// pays a second clone for a repository the image already holds. Reading a
+// of D1208, e.g. images/catalog/*/Dockerfile) gets these stages as well, which
+// pay a second clone for a repository the image already holds. Reading a
 // Dockerfile to find out whether it clones is not a thing this package can do
 // honestly, and the two checkouts are at different paths, so the entry's own
 // bytes are left alone and the duplicate is a cost the person who wrote them
 // can drop — the skill's generated definitions carry no clone of their own,
-// which is what makes the engine's stage the only one.
+// which is what makes the engine's stages the only ones.
 func Append(definition []byte, p Plan) ([]byte, error) {
-	if p.Baked == nil {
+	if len(p.Baked) == 0 {
 		return definition, nil
 	}
-	stage, err := Stage(*p.Baked)
-	if err != nil {
-		return nil, err
+	covered := p.Baked
+	var stages strings.Builder
+	for i, r := range p.Baked {
+		var (
+			stage string
+			err   error
+		)
+		// The build's own is the last, and the one stage that reads the build's
+		// arguments: every other repository's URL and branch are spelled into the
+		// definition, because the build's arguments name the build's repository.
+		if i == len(p.Baked)-1 {
+			stage, err = Stage(r, covered)
+		} else {
+			stage, err = OtherStage(r, covered)
+		}
+		if err != nil {
+			return nil, err
+		}
+		stages.WriteString(stage)
 	}
-	out := make([]byte, 0, len(definition)+1+len(stage))
+	body := stages.String()
+	out := make([]byte, 0, len(definition)+1+len(body))
 	out = append(out, definition...)
 	if n := len(out); n > 0 && out[n-1] != '\n' {
 		out = append(out, '\n')
 	}
-	return append(out, stage...), nil
+	return append(out, body...), nil
 }
 
 // BakedSlug is the repository slug a composed definition bakes its checkout
