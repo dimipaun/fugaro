@@ -23,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/tier"
 )
 
 // VertexBudgetRefusal is what a Vertex workflow under a budget in enforce
@@ -350,11 +351,61 @@ func (r *run) gatewayOn() bool {
 // gateway is where the agent's model calls go, nil until the gateway runs.
 func (r *run) gateway() *agent.Gateway { return r.gwAgent }
 
+// GatewayStageLimitFunc builds the gateway's per-stage governor for one run
+// (plan T7.2, D331): the governance the run resolved, the tier it was
+// dispatched at and the run's own cap, which is the figure a stage budget is a
+// fraction of. The limits themselves are governance's and live in
+// ee/governance (D527, D530); the gateway knows only the hook.
+type GatewayStageLimitFunc func(g policy.Governance, t tier.Tier, cap pricing.Micros) gateway.StageLimit
+
+// gatewayStageLimitFunc is the installed builder. The core ships none, and a
+// gateway started by an untagged build has no StageLimit at all: it enforces
+// the run's spend cap, the lease's sub-cap and the stage's pinned models and no
+// per-stage budget, exactly as it did before the hook existed (D522, G10).
+var gatewayStageLimitFunc GatewayStageLimitFunc
+
+// SetGatewayStageLimit installs the gateway's stage-limit builder, refusing a
+// second call: the edition of a build is decided once, by ee/register, and a
+// builder that could be replaced after it would be a way to drop a tagged
+// binary's stage budgets. A nil builder is refused for the same reason a nil
+// function is in SetStage: it would silently mean "this build enforces
+// nothing", which is what not calling this at all already says.
+func SetGatewayStageLimit(f GatewayStageLimitFunc) error {
+	if gatewayStageLimitFunc != nil {
+		return errors.New("runner: the gateway stage limit is already set")
+	}
+	if f == nil {
+		return errors.New("runner: the gateway stage limit needs a builder")
+	}
+	gatewayStageLimitFunc = f
+	return nil
+}
+
+// gatewayStageLimit is what startGateway hands the gateway: the governor the
+// run's own governance makes, or nil in a build that carries no builder.
+//
+// It is read once, at start, and never replaced: the limits are the ones the
+// run resolved and the tier it was dispatched at, both of which are settled by
+// then (resolvePolicy runs before the gateway starts), and the cap is the run's
+// own — a stage budget is a fraction of it, so a run whose cap is 0 (observe
+// with no cap at all) has no stage budget to enforce either.
+func (r *run) gatewayStageLimit() gateway.StageLimit {
+	f := gatewayStageLimitFunc
+	if f == nil {
+		return nil
+	}
+	return f(r.policy.Governance, r.spec.Tier, r.spend.Cap)
+}
+
 // startGateway starts the run's gateway and makes the agent's environment
 // point at it. The real credential stays here.
 func (r *run) startGateway(ctx context.Context) error {
 	s := r.spend
 	o := gateway.Options{Prices: s.Prices, Cap: s.Cap, Log: r.d.Log, EndStageWait: r.d.GatewayStageWait}
+	// The run's own governance, resolved a stage before this: the stage
+	// budgets, the review ratio and the fan-out stop the gateway enforces per
+	// stage (T7.2). It is nil in a build that carries no limits.
+	o.StageLimit = r.gatewayStageLimit()
 	o.Mode = gateway.Observe
 	if s.Mode == "enforce" {
 		o.Mode = gateway.Enforce
