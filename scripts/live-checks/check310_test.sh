@@ -218,15 +218,46 @@ def scratch_notes():
     m = re.match(r"^http://([^/]+)/", loopback[0]) if loopback else None
     emu = os.environ.get("STORAGE_EMULATOR_HOST", "")
     emulator = "yes" if (m and emu == m.group(1)) else ("no" if not emu else "elsewhere")
+    # A release build's plugin step runs whatever `claude` PATH's first entry
+    # holds, and reads and writes Claude Code's record under CLAUDE_CONFIG_DIR:
+    # the owner's own claude and the owner's own config both have to be out of
+    # this call's reach, so a call that finds another claude or a config dir
+    # outside the scratch home is one the case fails.
+    # The check's own fake is the `claude` whose directory is the one the fake
+    # `terraform` is in: the forced-failure step puts a directory of the shim's
+    # own in front of the fake bin, so the fake bin is not always PATH's first
+    # entry, and what has to hold is that the first claude found IS the check's
+    # — a real one anywhere behind it is never reached.
+    claude = "none"
+    for d in [x for x in os.environ.get("PATH", "").split(os.pathsep) if x]:
+        c = os.path.join(d, "claude")
+        if os.path.isfile(c) and os.access(c, os.X_OK):
+            claude = "fake" if os.path.isfile(os.path.join(d, "terraform")) else "other"
+            break
+    cfg = os.environ.get("CLAUDE_CONFIG_DIR", "")
+    home = os.environ.get("HOME", "").rstrip("/")
+    claude_config = "inside" if (cfg and home and cfg.startswith(home + "/")) else ("no" if not cfg else "outside")
+    # The record a release build's plugin step reads before it runs anything:
+    # with no install in it the step has the plugin to install, which the loop
+    # applies, and which refuses without a terminal — the check never gives one.
+    # So the run seeds it, and a call that finds it missing is a run of a
+    # release build that would stop at the plugin stage.
+    record = "none"
+    try:
+        with open(os.path.join(cfg, "plugins", "installed_plugins.json")) as fh:
+            got = json.load(fh)["plugins"]["fugaro@fugaro"]
+        record = "seed" if [e for e in got if e.get("scope") == "user" and e.get("version") == "0.9.0"] else "other"
+    except (OSError, ValueError, KeyError, TypeError):
+        record = "other" if cfg else "none"
     tf, plan = terraform_kind()
     with open(path, "a") as fh:
-        fh.write("project=%s config=%s named=%s endpoints=%d loopback=%d no_auth=%s cwd_yaml=%s api=%s emulator=%s terraform=%s plan=%s\n" % (
+        fh.write("project=%s config=%s named=%s endpoints=%d loopback=%d no_auth=%s cwd_yaml=%s api=%s emulator=%s claude=%s claude_config=%s claude_record=%s terraform=%s plan=%s\n" % (
             os.environ.get("FUGARO_PROJECT", "unset"),
             "yes" if text else "no",
             "yes" if ("name: " + SCRATCH_PROJECT) in text else "no",
             len(urls), len(loopback),
             "yes" if "no_auth: true" in text else "no",
-            cwd_yaml, answer, emulator, tf, plan))
+            cwd_yaml, answer, emulator, claude, claude_config, record, tf, plan))
 
 
 # `fugaro version` is the check's first call and the one that carries no
@@ -366,7 +397,11 @@ def status_cell(glyph, word, colour):
 
 
 def version():
-    sys.stdout.write("fugaro 0.9.0-check310\n")
+    # A release's own answer, in the shape the check reads it (the line is
+    # `vX.Y.Z`, which is what makes the scratch Claude Code record below get
+    # seeded at all): a build with no release tag skips its plugin step, and the
+    # record is exactly what a release build's step reads.
+    sys.stdout.write("v0.9.0\n")
     return 0
 
 
@@ -669,12 +704,12 @@ update'
 # test: the run makes 8 calls and the one that carries no installation is
 # `fugaro version`, which answers only which binary is on PATH.
 expect_scratch_seen() { # file what
-  local want="project=chk310-scratch config=yes named=yes endpoints=21 loopback=21 no_auth=yes cwd_yaml=yes api=yes emulator=yes"
+  local want="project=chk310-scratch config=yes named=yes endpoints=21 loopback=21 no_auth=yes cwd_yaml=yes api=yes emulator=yes claude=fake claude_config=inside claude_record=seed"
   local n bad other
   n=$(grep -c . "$1" 2>/dev/null || true)
   [ "$n" = 7 ] || fail "$2: $n call(s) of the run reported their plumbing, wanted the 7 the run makes besides 'fugaro version'"
   bad=$(grep -v "^$want terraform=" "$1" 2>/dev/null || true)
-  [ -z "$bad" ] || fail "$2: a call did not see the check's own installation (every endpoint loopback and answering, no auth, the project selected, a fugaro.yaml in the directory it runs in):
+  [ -z "$bad" ] || fail "$2: a call did not see the check's own installation (every endpoint loopback and answering, no auth, the project selected, a fugaro.yaml in the directory it runs in, the check's own claude first on PATH with its record of the plugin inside the scratch home):
 $bad"
   # endpoints=21: the URL fields of internal/localcfg.Endpoints (22 keys with
   # no_auth). An endpoint left empty is not a mistake the CLI reports — an empty

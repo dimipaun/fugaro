@@ -373,6 +373,8 @@ SCRATCH_CONFIG=""
 SCRATCH_PROJECT_DIR=""
 SCRATCH_BIN=""
 SCRATCH_TMP=""
+SCRATCH_CLAUDE=""
+SCRATCH_PATH=""
 GCP_PORT=""
 # The two files the fake API root leaves for the check: the port the kernel gave
 # it, and its pid, which is what the teardown stops.
@@ -495,6 +497,139 @@ sys.stderr.write("Check 310's fake terraform has nothing to do for %s\n" % " ".j
 sys.exit(0)
 TERRAFORM_EOF
   chmod +x "$SCRATCH_BIN/terraform"
+}
+
+# write_fake_claude: the `claude` a --scratch run must answer for itself.
+# `fugaro update`'s plugin step is the one step of a release build that runs
+# Claude Code — it asks which marketplaces and installs this machine has and
+# declares, refreshes and installs them (internal/claudeplugin) — and it finds
+# the binary on PATH, first entry first. seed_fake_claude below is what leaves
+# the step with nothing to do on a machine this release has already converged;
+# this is the binary the step runs if it ever has something to do, and the one
+# any other call that reaches for `claude` gets. Without it that binary is the
+# owner's own: a GitHub fetch per call, and a record read out of, and written
+# into, whatever CLAUDE_CONFIG_DIR names. It answers the fixed calls the step
+# makes, in the shapes internal/claudeplugin parses, and keeps what they changed
+# here; every other call is a no-op, because a real claude's own work is not
+# this check's to do.
+write_fake_claude() {
+  cat >"$SCRATCH_BIN/claude" <<'CLAUDE_EOF'
+#!/usr/bin/env python3
+"""A fake claude for Check 310's scratch mode.
+
+The two reads answer what the adds and installs recorded, in the shapes
+internal/claudeplugin parses, and the state seed_fake_claude writes is the same
+one: a machine at this release, with the marketplace declared and the plugin
+installed at the tag's version, which is what a real install of it would be.
+"""
+import json
+import os
+import sys
+
+
+def state_path():
+    d = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.environ.get("HOME", ""), ".claude")
+    return os.path.join(d, "fake-claude.state.json")
+
+
+def load():
+    try:
+        with open(state_path()) as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {"market": None, "installs": []}
+
+
+def save(st):
+    path = state_path()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as fh:
+            json.dump(st, fh)
+    except OSError:
+        pass
+
+
+def emit(obj):
+    sys.stdout.write(json.dumps(obj) + "\n")
+
+
+args = sys.argv[1:]
+st = load()
+
+if args[:3] == ["plugin", "marketplace", "list"]:
+    emit([st["market"]] if st["market"] else [])
+    sys.exit(0)
+
+if args[:2] == ["plugin", "list"]:
+    emit(st["installs"])
+    sys.exit(0)
+
+if args[:3] == ["plugin", "marketplace", "add"]:
+    source = args[3] if len(args) > 3 else ""
+    repo, _, ref = source.partition("#")
+    st["market"] = {"name": "fugaro", "source": "github", "repo": repo, "ref": ref}
+    save(st)
+    sys.exit(0)
+
+if args[:2] == ["plugin", "install"]:
+    plugin = args[2] if len(args) > 2 else ""
+    scope = args[args.index("--scope") + 1] if "--scope" in args else "user"
+    ref = (st["market"] or {}).get("ref", "")
+    install = {"id": plugin, "version": ref[1:] if ref[:1] == "v" else ref,
+               "scope": scope, "projectPath": ""}
+    st["installs"] = [i for i in st["installs"] if i.get("id") != plugin] + [install]
+    save(st)
+    sys.exit(0)
+
+sys.exit(0)
+CLAUDE_EOF
+  chmod +x "$SCRATCH_BIN/claude"
+}
+
+# seed_fake_claude VERSION: the state of a machine of this release, which is
+# the state every reading below is taken on. `fugaro update` is a converge of an
+# installation that already exists, and this scratch one has to look like the
+# converged machine the runs are of: a release build's plugin step reads Claude
+# Code's record of installed plugins, and with no install in it has the plugin
+# to install — a step the loop applies, and one that refuses without a terminal,
+# which the check never gives a call (its stdin is /dev/null, on purpose, so
+# that nothing can prompt). So the record says what a machine this release has
+# already converged holds: the marketplace declared at this release's tag and
+# the plugin installed at its version, in the two files the plugin step and the
+# fake claude read of it. A build whose version is not a release declares
+# nothing: its plugin step skips itself, so no state is what a run of it meets.
+seed_fake_claude() { # version
+  local v
+  v=$(printf '%s' "${1:-}" | sed -n 's/^v\{0,1\}\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$/\1/p')
+  python3 - "$SCRATCH_CLAUDE" "$v" <<'SEED_EOF'
+import json
+import os
+import sys
+
+config, version = sys.argv[1], sys.argv[2]
+state = {"market": None, "installs": []}
+if version:
+    state = {
+        "market": {"name": "fugaro", "source": "github", "repo": "dimipaun/fugaro", "ref": "v" + version},
+        "installs": [{"id": "fugaro@fugaro", "version": version, "scope": "user", "projectPath": ""}],
+    }
+    # The second file is the one the CLI reads for itself, and it is why this
+    # seed exists: a release build's plugin step under --check reads Claude
+    # Code's record of installed plugins (pluginwire.DefaultInstalledPlugins,
+    # under CLAUDE_CONFIG_DIR) and, finding no install, has the plugin to
+    # install — a step that would be applied, and so needs a terminal this
+    # check never gives it. The fake claude's own state above is what the step
+    # would read only if it did run, and it is kept in step with this record so
+    # that both answers are the same machine's.
+    plugins = os.path.join(config, "plugins")
+    os.makedirs(plugins, exist_ok=True)
+    with open(os.path.join(plugins, "installed_plugins.json"), "w") as fh:
+        json.dump({"plugins": {"fugaro@fugaro": [
+            {"scope": "user", "version": version, "projectPath": ""}]}}, fh)
+with open(os.path.join(config, "fake-claude.state.json"), "w") as fh:
+    json.dump(state, fh)
+SEED_EOF
 }
 
 # write_fake_gcp: the one API root the config below points every endpoint at. It
@@ -705,14 +840,21 @@ scratch_installation() {
   SCRATCH_PROJECT_DIR="$SCRATCH/project"
   SCRATCH_BIN="$SCRATCH/fake-bin"
   SCRATCH_TMP="$SCRATCH/tmp"
+  SCRATCH_CLAUDE="$SCRATCH_HOME/.claude"
   mkdir -p "$SCRATCH_HOME" "$SCRATCH_STATE" "$SCRATCH_CONFIG/fugaro/projects" \
-    "$SCRATCH_PROJECT_DIR" "$SCRATCH_BIN" "$SCRATCH_TMP"
+    "$SCRATCH_PROJECT_DIR" "$SCRATCH_BIN" "$SCRATCH_TMP" "$SCRATCH_CLAUDE"
   write_fake_terraform
+  write_fake_claude
   IN_PROJECT=(bash -c 'cd "$1" || exit 1; shift; exec "$@"' _ "$SCRATCH_PROJECT_DIR")
   # The installation is the one this run drives, and it is named everywhere a
   # real run would name yours: the guard reads it, FUGARO_PROJECT selects it, and
   # doctor is asked about it — never about whatever your own shell has selected.
   INSTALLATION=$SCRATCH_PROJECT
+  # The PATH every call below carries, and the one the forced-failure step puts
+  # its shim in front of: assigning PATH="$shim:$PATH" in that call would drop
+  # this bin and put the owner's own tools — `claude` among them — back in reach,
+  # which is the one thing the mode exists to avoid.
+  SCRATCH_PATH="$SCRATCH_BIN:$PATH"
   export XDG_STATE_HOME="$SCRATCH_STATE"
   # A dry run runs nothing: it makes no API root and writes no config, and the
   # plan says what a real scratch run would use.
@@ -737,13 +879,18 @@ scratch_installation() {
   # it takes a host:port rather than a URL.
   ENVV=(HOME="$SCRATCH_HOME"
     STORAGE_EMULATOR_HOST="127.0.0.1:$GCP_PORT"
+    # Claude Code's own directory, inside the scratch home: the plugin step and
+    # doctor both read the installed-plugins record out of it, and the answer
+    # has to be this run's own rather than whatever the owner's Claude Code
+    # keeps. The fake claude above is what writes there.
+    CLAUDE_CONFIG_DIR="$SCRATCH_CLAUDE"
     XDG_STATE_HOME="$SCRATCH_STATE"
     XDG_CONFIG_HOME="$SCRATCH_CONFIG"
     TMPDIR="$SCRATCH_TMP"
     FUGARO_CONFIG="$SCRATCH_CONFIG/fugaro/projects/$SCRATCH_PROJECT.yaml"
     FUGARO_PROJECT="$SCRATCH_PROJECT"
-    PATH="$SCRATCH_BIN:$PATH")
-  say "scratch mode: this run drives no installation of yours. It made one of its own in $SCRATCH — project $SCRATCH_PROJECT, every API root of its local config on http://127.0.0.1:$GCP_PORT/ (the check's own fake), and a fake terraform first on PATH — so nothing below reaches a cloud API and nothing real is converged"
+    PATH="$SCRATCH_PATH")
+  say "scratch mode: this run drives no installation of yours. It made one of its own in $SCRATCH — project $SCRATCH_PROJECT, every API root of its local config on http://127.0.0.1:$GCP_PORT/ (the check's own fake), a fake terraform first on PATH, and a fake claude with Claude Code's own directory inside the scratch home — so nothing below reaches a cloud API, runs your claude or reads a config of yours, and nothing real is converged"
 }
 
 # ------------------------------------------------------------------- the guards
@@ -1425,6 +1572,9 @@ step_environment() {
     stop "the fugaro on PATH did not answer 'fugaro version', so this check cannot tell which release it is looking at"
   fi
   fact fugaro PASS "the fugaro on PATH is $(printf '%s' "$VERSION_OUT" | head -1 | cut -c1-120); every reading below is that binary's own output"
+  if [ -n "$SCRATCH_MODE" ]; then
+    seed_fake_claude "$(printf '%s' "$VERSION_OUT" | head -1)"
+  fi
 
   # The one read of this check: a listing, so it files no log at all (G7, the
   # exemptListings table of internal/cli/report_exempt.go). The directory is
@@ -1795,7 +1945,7 @@ exit 1
 SHIM_EOF
   chmod +x "$shim/terraform"
 
-  run_tty failure env ${ENVV[@]+"${ENVV[@]}"} PATH="$shim:$PATH" fugaro update
+  run_tty failure env ${ENVV[@]+"${ENVV[@]}"} PATH="$shim:${SCRATCH_PATH:-$PATH}" fugaro update
   # Taken here, for the same reason as the plan view's: the log this run filed
   # is what the failure's own path has to point at, and it is read from the
   # directory as it stands the moment the run returned.
@@ -2148,7 +2298,7 @@ verdict_from_facts() {
 print_plan() {
   say "dry run: NOTHING below was run. A real run would run, in this order:"
   if [ -n "$SCRATCH_MODE" ]; then
-    say "  [the installation] none of yours: this run makes one of its own in $SCRATCH — the project $SCRATCH_PROJECT, a local config whose every API root is a loopback fake the check starts (no_auth), and a fake terraform first on PATH — so no cloud API is reached and nothing real can be converged. The rows for installation and belong say 'not read in --scratch' rather than passing, because no installation of yours is read or driven"
+    say "  [the installation] none of yours: this run makes one of its own in $SCRATCH — the project $SCRATCH_PROJECT, a local config whose every API root is a loopback fake the check starts (no_auth), a fake terraform first on PATH, and a fake claude with Claude Code's own directory in the scratch home — so no cloud API is reached, no claude of yours is run and nothing real can be converged. The rows for installation and belong say 'not read in --scratch' rather than passing, because no installation of yours is read or driven"
   fi
   say "  [local, reads] fugaro version, and fugaro doctor --json — the binary and the installation in force, and the one read of the run (a read files no log at all, G7)"
   say "  [local, mutating] fugaro update on a real terminal — the default view, the colour, the line in flight, the closing line and the exit status (G1, G3, G4)"
@@ -2378,7 +2528,7 @@ main() {
   guard_belong
   record_belong
   if [ -n "$SCRATCH_MODE" ]; then
-    fact installation INFO "not read in --scratch: this run drives no installation of yours. It made one of its own in $SCRATCH — the project $SCRATCH_PROJECT, its own local config with every API root on http://127.0.0.1:$GCP_PORT/ and no_auth, and a fake terraform first on PATH — so no cloud API is reached and nothing real is converged. Every reading below is the CLI's own output at a terminal, which does not depend on which installation it is"
+    fact installation INFO "not read in --scratch: this run drives no installation of yours. It made one of its own in $SCRATCH — the project $SCRATCH_PROJECT, its own local config with every API root on http://127.0.0.1:$GCP_PORT/ and no_auth, a fake terraform first on PATH, and a fake claude with Claude Code's own directory in the scratch home — so no cloud API is reached, no claude of yours is run and nothing real is converged. Every reading below is the CLI's own output at a terminal, which does not depend on which installation it is"
   else
     fact installation PASS "$INSTALLATION${GCP:+ (GCP $GCP)}${REGION:+, $REGION}: the installation this run drives, and never belong, fugaro-dev or edge-devel-dimi"
   fi
