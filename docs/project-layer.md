@@ -223,7 +223,7 @@ Two exceptions: a workflow that sets `dockerfile:` drops its profile's `image:` 
 
 ## 5. Where each key may be set
 
-Each key may be set only in the layers listed; the project layer refuses the rest, naming the key:
+`fugaro settings` is the table below as a command: it prints one row per key with the value a run gets, the layer that decided it, the built-in default and the state of the read, and `fugaro settings set KEY --layer project` writes one into the project layer's own file rather than by hand. A key may be set only in the layers listed; the project layer refuses the rest, naming the key:
 
 <!-- scope-table:start -->
 | Key | May be set in | Why |
@@ -419,8 +419,14 @@ Its shape is checked strictly, with the shared config's trust rules: one documen
 
 ## 7. Commands
 
+The settings family comes first, because it is the one door over every document this page describes: a project-layer key is read with `fugaro settings` and written with `fugaro settings set --layer project`, and the commands below it are the narrower views and the publishing path.
+
 | Command | What it does |
 |---|---|
+| `fugaro settings [KEY\|GLOB ...] [--repo R \| --all-repos] [--layer L] [--grep RE] [--changed] [--why] [--offline] [--json]` | Every setting as one row per key: the value a run gets, the layer that decided it (`WINS`), the built-in default and the state of the read — `ok`, `unpublished` for a local file that differs from the published object, or `unread: <reason>` for a layer that could not be read, which is never shown as a default. Positional arguments are a key, a prefix or a glob, `--repo owner/name` reads one repository's `fugaro.yaml`, `--changed` keeps the rows a layer decides, and `--why` adds one indented line per layer that sets the key, with the value that layer holds and whether it won or was ignored. It writes nothing anywhere — no file, no cache, no cloud object — so it runs in a coding agent's session too |
+| `fugaro settings get KEY [--repo R] [--json]` | One row of the same read. A key no layer sets prints its default row and exits 0; an unknown key exits non-zero with the nearest registry names |
+| `fugaro settings set KEY VALUE [--layer L] [--repo R] [--add V \| --remove V \| --add-entry F=V \| --remove-entry N] [--ask] [--executable-changes] [--dry-run] [--json]` | Writes one key into the layer's own file — `local` the local project config, `project` the local layer file, `repo` a checkout's `fugaro.yaml`, and `default` is never a target — through the shared comment-preserving editor, with the diff, a backup and an atomic write. `--layer repo` with no `--repo` uses the current checkout and refuses when the directory is not one. A string-list key takes `--add`/`--remove`, a map or an object list `--add-entry`/`--remove-entry`, and a list emptied that way is refused rather than written. A widening — a ceiling raised or removed, a name added to a ceiling or trusted list, a `followup.*` key turned on — is the owner's own step: a coding agent's session is refused it, and so is every write outside a repository. `--ask` puts back the confirmation a project whose marks say it is managed would otherwise skip, and `--executable-changes` is what allows a write that takes a workflow's commands or image steps away, which run as shell in every run of the repositories that take them. `--dry-run` prints what the edit would do and writes nothing, and `--json` prints that document in the shape `schemas/settings-write.schema.json` describes. Every write ends with `next: fugaro update` |
+| `fugaro settings unset KEY [--layer L] [--repo R] [--ask] [--executable-changes] [--dry-run] [--json]` | Removes the key so the layer below decides again, rather than writing a default in its place, which would be indistinguishable from a deliberate pin; a key no layer sets is a sentence and exit 0. Removing a ceiling crosses the same boundary as raising one, and the flags are the set row's, over the same three files. `--json` prints the removal's document with `--dry-run`, which writes nothing |
 | `fugaro config show [--workflow W] [--json] [--project-layer FILE] [--offline]` | The resolved config of the checkout. Every value is printed with its source (`default`, `project`, `profile <name>`, `repo`), the project layer's generation and sha256, and the resolved config's sha256 |
 | `fugaro config layer [--json]` | The published project layer: text, generation, sha256 |
 | `fugaro config publish FILE [--executable-changes]` | Publishes the project layer (below) |
