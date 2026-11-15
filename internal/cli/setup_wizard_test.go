@@ -641,7 +641,7 @@ func convergeLocalConfig(t *testing.T) *localcfg.Config {
 //     means yes, so only a value can say no.
 func TestSetupUpdateConvergesBake(t *testing.T) {
 	t.Run("an installation that never answered the question", func(t *testing.T) {
-		r := newConvergeRig(t, v6Node())
+		r := newConvergeRig(t, v7Node())
 		// The fixture is an installation of the release before this one: neither
 		// the file nor the node names the key, or none of this is about a switch
 		// that did not exist.
@@ -668,7 +668,7 @@ func TestSetupUpdateConvergesBake(t *testing.T) {
 	})
 
 	t.Run("the answer a run gives the question", func(t *testing.T) {
-		r := newConvergeRig(t, v6Node())
+		r := newConvergeRig(t, v7Node())
 		fakeTerminal(t)
 		out, errOut, err := executeStdin(t, "", "setup", "--bake-repos=false")
 		if err != nil {

@@ -162,6 +162,15 @@ func (v licenceSignIn) Verify(ctx context.Context, idToken string) (Caller, erro
 	return Caller{UID: identity.UID, Email: identity.Email}, nil
 }
 
+// RequireSSO is the rule itself and not this double's, which is how
+// keyservice_test.go's spy answers it too: the flows this verifier is wired for
+// reach no route that applies one, and the caller Verify builds here carries no
+// provider — a rule that did reach it would refuse, which is the answer a
+// double that claims no sign-in method owes.
+func (v licenceSignIn) RequireSSO(caller Caller, rule SSORule) error {
+	return ssoRefuses(signInOf(caller), rule)
+}
+
 // signingIn is the fixture with the two doors these routes need wired: the
 // licence project's own verifier behind Deps.SignIn, and a v1 minter behind
 // Deps.MintsV1 — the same minter the fixture signs with, so a key a test reads

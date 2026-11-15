@@ -10,6 +10,10 @@ set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 script=$here/check191.sh
+# The probe: the file the owner copies into the sandbox repository as its own
+# check command, and the one that makes the seven attempts. It is tested here
+# too — the check can only read what it wrote.
+probe=$here/check191-probe.sh
 work=$(mktemp -d)
 kept=()
 cleanup_all() {
@@ -145,8 +149,22 @@ run)
     exit 1
     ;;
   esac
+  # The three runs this check launches, told apart by the recipe the CLI is
+  # given: the working run is launched with --recipe test-and-fix (whose one
+  # check step runs the repository's own commands.test — the probe), the review
+  # probe with --recipe review-only, and the ended-run probe with no recipe at
+  # all. A run launched with a recipe that is neither is not a run this check
+  # would launch, so the fake refuses it rather than reading it as one of them.
   kind=work
-  if has --recipe "$@"; then kind=review; fi
+  case "$(flag --recipe "$@")" in
+  "") ;;
+  test-and-fix) ;;
+  review-only) kind=review ;;
+  *)
+    echo "fugaro run: this fake answers --recipe test-and-fix and --recipe review-only only" >&2
+    exit 1
+    ;;
+  esac
   # The CLI's own rule for a mode: review recipe (internal/recipe's
   # reviewPRCounts, enforced in internal/cli/run.go): review-only reviews
   # exactly one pull request, so a launch that does not name one is refused
@@ -280,17 +298,43 @@ logs)
       echo "fatal: the run has ended: its outcome is written"
     fi
     ;;
-  review) echo "CHK191 attempt=push refused=yes answer=403" ;;
+  review)
+    # A review run's own report. `review-silent` is the state a review run whose
+    # agent made no attempt leaves (nothing POINTS a review run at the service —
+    # the runner gives its agent no git credential and no forwarder rewrite, and
+    # a mode: review recipe runs no repository command — so an empty reading says
+    # the attempt did not reach the service, not that it cannot), `review-served`
+    # is the agent reporting a push the service answered, `review-garbled` is a
+    # line that is not the one the attempt asks for, and the default is a run
+    # that reported a refusal.
+    case "$mode" in
+    review-silent) ;;
+    review-served) echo "CHK191 attempt=push refused=no answer=200" ;;
+    review-garbled) echo "CHK191 attempt=push refused=maybe answer=none" ;;
+    *) echo "CHK191 attempt=push refused=yes answer=403" ;;
+    esac
+    ;;
   *)
-    for attempt in other-repository other-ref tag ref-delete other-pull-request merge workspaces; do
-      refused=yes
-      answer=403
-      if [ "$mode" = unreported ] && [ "$attempt" = tag ]; then
-        refused=no
-        answer=200
-      fi
-      echo "CHK191 attempt=$attempt refused=$refused answer=$answer"
-    done
+    # The probe's own lines, as the run's check step writes them: the container
+    # prints one per attempt. `no-probe` is the repository that carries no
+    # probe at all — its check step ran something else — and `probe-unavailable`
+    # is the probe stopping on one of its own guards, which reports all seven
+    # as attempts it could not make rather than reporting six of seven.
+    if [ "$mode" != no-probe ]; then
+      for attempt in other-repository other-ref tag ref-delete other-pull-request merge workspaces; do
+        refused=yes
+        answer=403
+        if [ "$mode" = probe-unavailable ]; then
+          refused=none
+          answer=no_other_repository_named
+        fi
+        if [ "$mode" = unreported ] && [ "$attempt" = tag ]; then
+          refused=no
+          answer=200
+        fi
+        echo "CHK191 attempt=$attempt refused=$refused answer=$answer"
+      done
+    fi
     ;;
   esac
   ;;
@@ -314,7 +358,7 @@ to a subcommand that is not here, or with a flag that is not in its list, fails
 with exit 2, so an invented or misspelled flag cannot hide in any call — and no
 write subcommand is callable at all.
 """
-import json, os, re, sys
+import json, os, sys
 
 STATE = os.environ["FAKE_GCLOUD_STATE"]
 LOG = os.environ["FAKE_LOG_DIR"]
@@ -452,28 +496,20 @@ elif sub == ("logging", "read"):
     # answers a run's first read with three of its classes and the rest from its
     # second read on, which is what Cloud Logging's ingestion lag looks like to a
     # check that reads a run once and believes the answer.
-    # The classes the real service writes for the working run's seven attempts,
-    # read from what the run's task asked for. Six are fixed by the attempt
-    # alone; the other-pull-request one is not, and that is the rule this fake
-    # exists to hold: gitproxy.Decide refuses a call that names another
-    # repository with other_repository BEFORE the pull-request write rules can
-    # answer other_pull_request (internal/gitproxy/rules.go), so the class
-    # depends on the repository the attempt names — and a task that names no
-    # repository settles neither, so no line is written for that attempt and the
-    # check's row for it cannot be read.
+    # The classes the real service writes for the working run's seven attempts.
+    # They are fixed by the attempt alone, because the PROBE names every target:
+    # the repository it reads and pushes to is the run's own, the two
+    # pull-request attempts name a pull request of the run's own repository (a
+    # call naming another repository is refused for the repository with
+    # other_repository BEFORE the pull-request write rules can answer
+    # other_pull_request — internal/gitproxy/rules.go — so the probe's
+    # other-pull-request attempt is a write to a pull request of this repository
+    # that is not the run's own, and the class it earns is pinned by this test's
+    # own case for the probe), and the last two are paths the proxy does not
+    # name at all.
     def work_classes(rid, repo):
-        task = ""
-        task_path = os.path.join(STATE, "tasks", rid + ".md")
-        if os.path.exists(task_path):
-            task = open(task_path).read()
-        m = re.search(r"comment on pull request (\d+) in (\S+)", task)
-        pr = None
-        if m:
-            pr = "other_pull_request" if m.group(2) == repo else "other_repository"
-        want = ["other_repository", "other_ref", "tag_ref", "ref_delete"]
-        if pr:
-            want.append(pr)
-        return want + ["call_not_allowed", "call_not_allowed"]
+        return ["other_repository", "other_ref", "tag_ref", "ref_delete",
+                "other_pull_request", "call_not_allowed", "call_not_allowed"]
 
     calls = 0
     calls_path = os.path.join(LOG, "logging.calls")
@@ -500,6 +536,12 @@ elif sub == ("logging", "read"):
             # `ended-served` mode is the hole: a line for the ended run is the
             # service having answered it.
             continue
+        if mode == "review-no-served-line" and kind == "review":
+            # A review run whose own agent reported its push SERVED and whose
+            # lines hold nothing at all for it: the sentence has no service line
+            # behind it, which is the reading this row must not take for a
+            # finding about the proxy.
+            continue
         common = {"message": "credsvc: audit", "run": rid,
                   "repository": "bitbucket/workspace-a/repo-a",
                   "job": "fugaro-workspace-a-repo-a-web-0123456789ab",
@@ -519,6 +561,19 @@ elif sub == ("logging", "read"):
             want = ["no_run_branch"]
         if mode == "missing-tag-refusal" and kind == "work":
             want = [c for c in want if c != "tag_ref"]
+        # The class a review identity's push is refused under is the SERVICE's
+        # answer, not this check's expectation: it is read_only when the run is
+        # the installation's review-only job (bitbucketproxy sets the identity
+        # read-only from the JOB's class, and Decide refuses every push of it
+        # before the push rules are read) and no_run_branch when it is not
+        # read-only and carries no fb. `review-not-admitted` is the third answer
+        # an installation can give — the published block's own rule about the
+        # REPOSITORY, decided before any rule about what an identity may write —
+        # which settles nothing about a push and is what this row must fail on.
+        if mode == "review-read-only" and kind == "review":
+            want = ["read_only"]
+        if mode == "review-not-admitted" and kind == "review":
+            want = ["not_admitted"]
         if mode == "no-review-refusal" and kind == "review":
             want = []
         if mode == "lagging-log" and reads == 0:
@@ -619,6 +674,113 @@ esac
 CURL_EOF
   chmod +x "$1/bin/curl"
 }
+
+# ------------------------------------------------------------------ the probe
+# scripts/live-checks/check191-probe.sh is the sandbox repository's own check
+# command — the one file the OWNER copies in as scripts/chk191-probe.sh and names
+# in that repository's fugaro.yaml — so it is where Check 191's seven attempts are
+# really made, and what the check can only ever read is what this file wrote. The
+# fakes below answer it the way a run's container does: `git` asked about its own
+# checkout, and every write refused as the credentials service refuses one.
+write_probe_git() { # dir
+  mkdir -p "$1/bin"
+  cat >"$1/bin/git" <<'GIT_EOF'
+#!/usr/bin/env bash
+# A stand-in for `git`, for scripts/live-checks/check191-probe.sh's own case in
+# this test: the two questions the probe asks its checkout, and the writes it
+# aims at Bitbucket. Each write is refused the way the credentials service
+# refuses one — git's own sentence carrying the status it was answered, and a
+# non-zero exit — and FAKE_PROBE_MODE=served serves them instead, which is the
+# one reading Check 191 exists to find.
+set -euo pipefail
+printf 'git %s\n' "$*" >>"$FAKE_LOG_DIR/git.calls"
+mode=${FAKE_PROBE_MODE:-ok}
+case "${1:-}" in
+remote) printf 'https://bitbucket.org/workspace-a/repo-a.git\n' ;;
+rev-parse) printf 'fb\n' ;;
+tag) exit 0 ;;
+ls-remote)
+  if [ "$mode" = served ]; then exit 0; fi
+  printf "fatal: unable to access '%s': The requested URL returned error: 403\n" "${2:-}" >&2
+  exit 128
+  ;;
+push)
+  if [ "$mode" = served ]; then exit 0; fi
+  printf 'remote: HTTP 403: the credentials service refused this call\n' >&2
+  exit 128
+  ;;
+*) exit 2 ;;
+esac
+GIT_EOF
+  chmod +x "$1/bin/git"
+}
+
+write_probe_curl() { # dir
+  mkdir -p "$1/bin"
+  cat >"$1/bin/curl" <<'CURL_EOF'
+#!/usr/bin/env bash
+# A stand-in for `curl`, for the probe's own case in this test: it records the
+# method and the URL and NOTHING else — never a header, never a body — writes
+# what `-o` names, and prints the code where `-w '%{http_code}'` would.
+set -euo pipefail
+mode=${FAKE_PROBE_MODE:-ok}
+method=GET
+url=""
+out=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+  -X)
+    shift
+    method=${1:-GET}
+    ;;
+  -o)
+    shift
+    out=${1:-}
+    ;;
+  -w | --data | --data-raw) shift ;;
+  http://* | https://*) url=$1 ;;
+  esac
+  shift
+done
+printf 'curl %s %s\n' "$method" "$url" >>"$FAKE_LOG_DIR/curl.calls"
+code=403
+if [ "$mode" = served ]; then code=200; fi
+if [ -n "$out" ]; then printf 'refused\n' >"$out"; fi
+printf '%s' "$code"
+CURL_EOF
+  chmod +x "$1/bin/curl"
+}
+
+# run_probe DIR ENV...: the probe, run against the fakes with the environment a
+# proxied run's repository command is handed — the forwarder rewrite that is the
+# only place the loopback endpoint is written down (internal/runner's
+# credentialVars) — and with CHECK191_PROBE_LOG pointed at a file, which is where
+# the copy for the container's own stdout goes when there is no container. It
+# leaves probe_status, probe_out and probe_err behind.
+run_probe() { # run_probe DIR ENV...
+  local dir=$1
+  shift
+  local args=("$@")
+  mkdir -p "$dir/bin" "$dir/logs" "$dir/tmp"
+  write_probe_git "$dir"
+  write_probe_curl "$dir"
+  : >"$dir/logs/git.calls"
+  : >"$dir/logs/curl.calls"
+  probe_status=0
+  env PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
+    FAKE_LOG_DIR="$dir/logs" CHK191_PROBE_LOG="$dir/run.log" \
+    GIT_CONFIG_COUNT=3 \
+    GIT_CONFIG_KEY_2='url.http://127.0.0.1:41234/v1/bitbucket/proxy/.insteadOf' \
+    GIT_CONFIG_VALUE_2='https://bitbucket.org/' \
+    ${args[@]+"${args[@]}"} \
+    bash "$probe" >"$dir/out" 2>"$dir/err" || probe_status=$?
+  probe_out=$(cat "$dir/out")
+  probe_err=$(cat "$dir/err")
+}
+
+# The seven names, in the order the check prints them, for the cases that hold
+# every line of a probe run against it.
+probe_names=(other-repository other-ref tag ref-delete other-pull-request merge workspaces)
 
 # ------------------------------------------------------------------- the runs
 run_check() { # run_check DIR SCRIPT ENV... -- ARGS...
@@ -1443,9 +1605,12 @@ test_happy_path() {
     expect_contains "$out" "$want" "happy path: $want"
   done
   # The three runs, each launched with the id this check built for it, the
-  # review one as a review-only run.
+  # working one with the recipe whose check step is the probe and the review one
+  # as a review-only run.
   calls=$(cat "$dir/logs/fugaro.calls")
-  expect_contains "$calls" "--run-id $(rid_of "$dir" work)" "happy path: the working run"
+  expect_contains "$(printf '%s\n' "$calls" | sed -n "/--run-id $(rid_of "$dir" work) /p")" \
+    "--recipe test-and-fix" \
+    "happy path: the working run's recipe is the one whose check step runs the probe"
   expect_contains "$calls" "--run-id $(rid_of "$dir" review)" "happy path: the review run"
   expect_contains "$calls" "--recipe review-only" "happy path: the review run is a review-only run"
   expect_contains "$calls" "--run-id $(rid_of "$dir" ended)" "happy path: the probe"
@@ -1454,6 +1619,18 @@ test_happy_path() {
   # leave the runner failing the run ("the agent made no commits") and pushing a
   # draft anyway, so a row that read `pushed=yes` alone would pass over a probe
   # that measured a failure instead of the proxy.
+  #
+  # The attempts are NOT in the task any more: they are made by the repository's
+  # own check command, so a task that asked for them would be the model back in
+  # the measurement (which is what the provider's safeguards refused on
+  # 2026-11-15). This pins the other half of that: the task says so, and it is
+  # the probe's file the repository's fugaro.yaml has to name.
+  expect_contains "$(cat "$dir/state/tasks/$(rid_of "$dir" work).md")" \
+    "scripts/chk191-probe.sh" \
+    "happy path: the working run's task names the probe as its check step"
+  expect_absent "$(cat "$dir/state/tasks/$(rid_of "$dir" work).md")" \
+    "CHK191 attempt=" \
+    "happy path: the task does not ask the agent for an attempt line"
   expect_contains "$(cat "$dir/state/tasks/$(rid_of "$dir" work).md")" \
     "commit it, push your branch and open the pull request" \
     "happy path: the working run's task asks for a real run"
@@ -1539,27 +1716,166 @@ test_a_forbidden_attempt_the_run_did_not_report_is_a_failure() {
   expect_contains "$out" "FACT refusal-tag-ref: FAIL" "an unreported refusal: the fact names the attempt the run reported as served"
 }
 
-# The other-pull-request attempt has to name a pull request of the RUN'S OWN
-# repository. The rules refuse a call that names another repository for the
-# repository before they look at the pull request (internal/gitproxy/rules.go),
-# so an attempt pointed at CHECK191_OTHER_REPO earns other_repository and no
-# other_pull_request line exists for it at all: the row that reads that class is
-# left with nothing, which is a FAIL on a correct installation. The copy below
-# points the attempt at the other repository, and the fake service answers it
-# with the class the real rules would give it.
-test_the_other_pull_request_attempt_is_against_this_repository() {
-  local dir=$work/prrepo copy
+# A repository whose own test command is not the probe reports no CHK191 line at
+# all, and that is ONE fact about the installation rather than seven findings
+# about the proxy: the working run's check step passed, so the run ends with no
+# push and no pull request (internal/runner's endWithoutPR, "every check passed:
+# nothing to fix"), and the run-outcome row would read FAIL for a cause the run
+# did not choose. Every row that needed the attempts is recorded as one this
+# check could not measure, with the step that adds the probe printed for its
+# owner — no model is asked for them, and the check cannot make them itself: a
+# run's identity is sealed to its own execution.
+test_a_repository_with_no_probe_is_refused_rather_than_failed() {
+  local dir=$work/noprobe name
   prepare "$dir"
-  copy=$dir/check191-otherrepo.sh
-  sed 's|comment on pull request \${OTHER_PR} in \${REPO}|comment on pull request ${OTHER_PR} in ${OTHER_REPO}|' "$script" >"$copy" 2>/dev/null || true
-  if [ ! -s "$copy" ] || cmp -s "$script" "$copy"; then
-    fail "the other-pull-request attempt: the copy is the script: the task's own line for the attempt was not found to point at the other repository"
-    return 0
-  fi
-  run_check "$dir" "$copy"
-  expect_status "$status" 1 "the other-pull-request attempt pointed at the other repository"
-  expect_contains "$out" "FACT refusal-other-pull-request: FAIL" "the other-pull-request attempt: the row with no line behind it"
-  expect_contains "$out" "FACT refusal-other-repository: PASS" "the other-pull-request attempt: the repository refusal still holds"
+  run_check "$dir" "$script" FAKE_FUGARO_MODE=no-probe
+  expect_status "$status" 2 "a repository whose test command is not the probe"
+  expect_contains "$out" "FACT run-outcome: FAIL" "no probe: the run-outcome row is reported, never a PASS nobody took"
+  expect_contains "$out" "not Check 191's probe" "no probe: the row names what is missing"
+  for name in refusal-other-repository refusal-ref-delete refusal-workspaces; do
+    expect_contains "$out" "FACT ${name}: FAIL" "no probe: the ${name} row is reported as one that was not measured"
+  done
+  expect_contains "$out" "scripts/chk191-probe.sh" "no probe: the file the owner has to copy in is named"
+  expect_contains "$out" "'The sandbox repository's half'" "no probe: the section of the steps doc is named"
+  expect_contains "$err" "copy scripts/live-checks/check191-probe.sh from Fugaro's repository into workspace-a/repo-a" \
+    "no probe: the owner's own step is printed, with the file and where it goes"
+  # The refusal carries the diff and not a pointer to it: the two lines the
+  # owner has to write are in the message itself.
+  expect_contains "$err" "test: CHK191_PROBE_OTHER_REPO=<workspace>/<another sandbox repo> CHK191_PROBE_OTHER_PR=<n> bash scripts/chk191-probe.sh" \
+    "no probe: the workflow line the owner has to write is in the refusal"
+  expect_contains "$err" "CHECK191_OTHER_REPO and CHECK191_OTHER_PR" \
+    "no probe: the refusal says which two values the probe is given"
+  expect_contains "$err" "this run could NOT measure" "no probe: the check says it could not measure"
+  expect_contains "$out" "CHECK 191 RESULT END (exit 2)" "no probe: the block ends as one that could not measure"
+  # The check stops where it cannot measure: the review run's row reads the
+  # working run's own pull request, which this run never opened.
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "--run-id $run_base-0002" "no probe: no review run is launched on it"
+}
+
+# The probe ran, and one of its own guards stopped an attempt before it made it:
+# the seven lines are all there, one of them saying the attempt was NOT made. A
+# row cannot be read from that — the class it needs is a refusal the service
+# never wrote — so it is recorded as one the check could not measure, with the
+# value the probe was missing named.
+test_an_attempt_the_probe_could_not_make_is_unmeasured() {
+  local dir=$work/probenone
+  prepare "$dir"
+  run_check "$dir" "$script" FAKE_FUGARO_MODE=probe-unavailable
+  expect_status "$status" 2 "an attempt the probe did not make"
+  expect_contains "$out" "FACT refusal-other-repository: FAIL" "an attempt the probe did not make: the row is reported"
+  expect_contains "$out" "the other-repository attempt was NOT made" "an attempt the probe did not make: the row says which attempt it was"
+  expect_contains "$out" "no_other_repository_named" "an attempt the probe did not make: the answer field is carried"
+  expect_contains "$out" "FACT run-outcome: PASS" "an attempt the probe did not make: the run's own half is still measured"
+}
+
+# ------------------------------------------------------------ the probe itself
+# The seven attempts are made by the probe, so this is where the path of each
+# one is pinned: what the check reads is one line per attempt, and every line's
+# worth depends on the call behind it having gone where it says. The
+# other-pull-request attempt is the one that has to name a pull request of the
+# RUN'S OWN repository: internal/gitproxy's Decide refuses a call that names
+# another repository with other_repository BEFORE it reads the pull-request
+# rules, so an attempt pointed at another repository would leave the row that
+# reads other_pull_request with nothing on a correct installation.
+test_the_probe_makes_the_seven_attempts_through_the_forwarder() {
+  local dir=$work/probe name calls
+  run_probe "$dir" CHK191_PROBE_OTHER_REPO=workspace-a/repo-b CHK191_PROBE_OTHER_PR=4
+  # It exits non-zero ON PURPOSE: a run whose check steps all pass ends with no
+  # push and no pull request at all (internal/runner's endWithoutPR), and the
+  # working run's pushed branch and pull request are the other half of what
+  # Check 191 measures.
+  expect_status "$probe_status" 1 "the probe's own exit"
+  for name in "${probe_names[@]}"; do
+    expect_contains "$probe_out" "CHK191 attempt=${name} refused=yes answer=403" "the probe: the ${name} attempt"
+  done
+  # Every line is written twice: to the command's own stdout, and to the
+  # container's own stdout, which is the log `fugaro logs` reads. A repository
+  # command's output reaches neither the run's log nor `fugaro logs` on its own
+  # (internal/verify's Run is called with no Stdout), so a probe that wrote only
+  # to its own stdout would report nothing the check can read.
+  expect_contains "$(cat "$dir/run.log")" "CHK191 attempt=workspaces refused=yes answer=403" \
+    "the probe: the lines are written to the container's own stdout"
+  calls=$(cat "$dir/logs/git.calls")
+  expect_contains "$calls" "git ls-remote https://bitbucket.org/workspace-a/repo-b.git" \
+    "the probe: the other repository is the one it was handed an attempt at"
+  expect_contains "$calls" "git push https://bitbucket.org/workspace-a/repo-a.git HEAD:refs/heads/chk191-other-ref" \
+    "the probe: the other-ref attempt leaves a branch no run owns"
+  expect_contains "$calls" "git push https://bitbucket.org/workspace-a/repo-a.git refs/tags/chk191-probe" \
+    "the probe: the tag attempt"
+  expect_contains "$calls" "git push https://bitbucket.org/workspace-a/repo-a.git :refs/heads/fb" \
+    "the probe: the delete names the run's own branch, the one ref the run pushes again at the end"
+  expect_contains "$calls" "git remote get-url origin" "the probe: this repository is read from the checkout's own origin"
+  calls=$(cat "$dir/logs/curl.calls")
+  expect_contains "$calls" "POST http://127.0.0.1:41234/v1/bitbucket/proxy/2.0/repositories/workspace-a/repo-a/pullrequests/4/comments" \
+    "the probe: the comment names a pull request of THIS repository"
+  expect_contains "$calls" "POST http://127.0.0.1:41234/v1/bitbucket/proxy/2.0/repositories/workspace-a/repo-a/pullrequests/4/merge" \
+    "the probe: the merge attempt"
+  expect_contains "$calls" "GET http://127.0.0.1:41234/v1/bitbucket/proxy/2.0/workspaces" \
+    "the probe: the workspace list"
+  expect_absent "$calls" "repo-b" "the probe: no pull-request attempt names another repository"
+  # Nothing but the method and the URL is ever handed to a call, and nothing of
+  # what came back is written where a reader could pick it up: the check holds no
+  # Bitbucket credential of its own, and the probe holds none at all.
+  expect_absent "$calls" "Authorization" "the probe: no call carries an authorization header"
+  expect_absent "$probe_out$probe_err" "bitbucket.org" "the probe: no URL of the repository reaches its output"
+  expect_absent "$(cat "$dir/run.log")" "/v1/bitbucket/proxy" "the probe: the forwarder's endpoint is not written to the run's log"
+}
+
+# An attempt that would have gone straight to Bitbucket is not made at all: a
+# repository whose runs are not proxied carries no insteadOf rewrite, and the
+# probe's seven lines all say the attempt was not made rather than reporting a
+# call the credentials service never saw. All seven or none — the check reads a
+# report of six as saying nothing about the seventh.
+test_the_probe_makes_no_attempt_without_a_forwarder() {
+  local dir=$work/probenofwd name
+  run_probe "$dir" GIT_CONFIG_KEY_2= GIT_CONFIG_VALUE_2=
+  expect_status "$probe_status" 1 "the probe without a forwarder"
+  for name in "${probe_names[@]}"; do
+    expect_contains "$probe_out" "CHK191 attempt=${name} refused=none answer=no_forwarder_rewrite" \
+      "the probe without a forwarder: the ${name} attempt is not made"
+  done
+  expect_absent "$(cat "$dir/logs/git.calls")" "git push" "the probe without a forwarder: no write was aimed anywhere"
+  expect_absent "$(cat "$dir/logs/curl.calls")" "curl " "the probe without a forwarder: no call was made"
+}
+
+# The two values the probe cannot know by itself, and what it does without them:
+# a probe that guessed at the other repository or at a pull-request number would
+# be pointing a write at something the check never named. The other six attempts
+# are still made — one guard stopping one attempt is not the probe stopping.
+test_the_probe_reports_the_values_it_was_not_given() {
+  local dir=$work/probenoval
+  run_probe "$dir"
+  expect_status "$probe_status" 1 "the probe with no values"
+  expect_contains "$probe_out" "CHK191 attempt=other-repository refused=none answer=no_other_repository_named" \
+    "the probe with no other repository: the read is not aimed at a guess"
+  expect_contains "$probe_out" "CHK191 attempt=other-pull-request refused=none answer=no_other_pull_request_named" \
+    "the probe with no pull request: the comment is not aimed at a guess"
+  expect_contains "$probe_out" "CHK191 attempt=merge refused=none answer=no_other_pull_request_named" \
+    "the probe with no pull request: the merge is not aimed at a guess either"
+  expect_contains "$probe_out" "CHK191 attempt=workspaces refused=yes answer=403" \
+    "the probe with no values: the attempts that name neither are still made"
+  expect_absent "$(cat "$dir/logs/curl.calls")" "pullrequests" "the probe with no pull request: no pull-request call was made"
+  expect_absent "$(cat "$dir/logs/git.calls")" "ls-remote" "the probe with no other repository: no other repository was read"
+}
+
+# The finding Check 191 exists for, at the probe's own level: a call the proxy
+# SERVES is reported as refused=no with the status it was answered with, and the
+# probe does not turn it into a pass. The check's own row for it is pinned in
+# test_a_forbidden_attempt_the_run_did_not_report_is_a_failure.
+test_the_probe_reports_an_attempt_the_proxy_served() {
+  local dir=$work/probeserved name
+  run_probe "$dir" FAKE_PROBE_MODE=served CHK191_PROBE_OTHER_REPO=workspace-a/repo-b CHK191_PROBE_OTHER_PR=4
+  # A git call that is served has no refusal to quote and git prints nothing on
+  # success, so the answer field of a served write is empty — refused=no is the
+  # whole of what it says, and that is the reading the check fails on.
+  for name in other-repository other-ref tag ref-delete; do
+    expect_contains "$probe_out" "CHK191 attempt=${name} refused=no answer=" \
+      "the probe served a write: the ${name} attempt is reported as served"
+  done
+  for name in other-pull-request merge workspaces; do
+    expect_contains "$probe_out" "CHK191 attempt=${name} refused=no answer=200" \
+      "the probe served a call: the ${name} attempt is reported as served with its status"
+  done
 }
 
 # A mode: review recipe is launched with the pull request it reviews, and
@@ -1596,13 +1912,125 @@ test_a_review_probe_launched_without_its_pull_request_is_a_failure() {
   expect_contains "$out" "never launched one" "a review probe with no --pr: the reason is the launch that never happened"
 }
 
-test_the_review_runs_push_refusal_is_asserted() {
+# The review-only run's push, and the class the row accepts. A review identity's
+# push is refused under read_only when the run is the installation's review-only
+# job (internal/credsvc's bucketproxy sets Identity.ReadOnly from the JOB's
+# class, and internal/gitproxy's Decide refuses every push of a read-only
+# identity before it reads the push rules) and under no_run_branch when it is not
+# read-only and carries no fb — the two shapes a review run can be launched in.
+# The row used to pin no_run_branch alone, which fails a correct installation
+# whose review runs are the review-only job; and not_admitted, which an earlier
+# run's log carried, is neither: it is the published block's own rule about the
+# REPOSITORY, decided before any rule about what an identity may write.
+test_the_review_runs_push_is_refused_under_no_run_branch() {
   local dir=$work/review
   prepare "$dir"
-  run_check "$dir" "$script" FAKE_GCLOUD_MODE=no-review-refusal
-  expect_status "$status" 1 "the review run's push"
-  expect_contains "$out" "FACT review-run: FAIL" "the review run's push: the fact"
+  run_check "$dir" "$script"
+  expect_status "$status" 0 "the review run's push"
+  expect_contains "$out" "FACT review-run: PASS" "the review run's push: the fact"
+  expect_contains "$out" "the service's own line carries the class no_run_branch" \
+    "the review run's push: the class the service's line carries is named"
+  expect_contains "$out" "The other of the two classes the rules can answer" \
+    "the review run's push: the class it did NOT read is named too"
   expect_contains "$out" "FACT ended-identity: PASS" "the review run's push: the rows after it were still measured"
+}
+
+test_a_review_run_of_the_review_only_job_is_refused_under_read_only() {
+  local dir=$work/reviewro
+  prepare "$dir"
+  run_check "$dir" "$script" FAKE_GCLOUD_MODE=review-read-only
+  expect_status "$status" 0 "a review run of the installation's review-only job"
+  expect_contains "$out" "FACT review-run: PASS" "the review-only job class: the fact"
+  expect_contains "$out" "the service's own line carries the class read_only" \
+    "the review-only job class: the class is read from the service's line, not pinned by the check"
+}
+
+test_a_review_runs_refusal_under_another_class_is_a_failure() {
+  local dir=$work/reviewclass
+  prepare "$dir"
+  # not_admitted is the answer a call earns before any rule about a push is read:
+  # the repository's own admission, which says nothing about what an identity may
+  # write. A row that took it for the push's class would pass over a run whose
+  # push was refused for a reason that has nothing to do with being review-only.
+  run_check "$dir" "$script" FAKE_GCLOUD_MODE=review-not-admitted
+  expect_status "$status" 1 "a review run refused under not_admitted"
+  expect_contains "$out" "FACT review-run: FAIL" "the wrong class: the fact"
+  expect_contains "$out" "not_admitted is neither" "the wrong class: the row says what the class it read settles"
+  expect_contains "$out" "FACT refusal-other-repository: PASS" "the wrong class: the working run's own rows still hold"
+}
+
+# The state a review run whose agent made no attempt leaves: an empty reading,
+# recorded as NOT MEASURED rather than failed, because a FAIL here would name a
+# hole in an installation that is correct. It is not a claim about the code —
+# the way from inside a run to the service is the runner's own loopback
+# forwarder, which attaches the run's identity to whatever arrives and drops the
+# caller's Authorization (internal/gateway's gitforward), so an agent in that
+# container which finds the port DOES reach it. What nothing does is point a
+# review run at it: the runner gives its agent no git credential and no
+# forwarder rewrite (internal/runner's refreshGitAuth) and a mode: review recipe
+# allows exactly one review step and no repository command (internal/recipe).
+test_a_review_run_that_reached_the_service_for_nothing_is_unmeasured() {
+  local dir=$work/reviewnone
+  prepare "$dir"
+  run_check "$dir" "$script" FAKE_GCLOUD_MODE=no-review-refusal
+  expect_status "$status" 2 "a review run whose push left no line"
+  expect_contains "$out" "FACT review-run: FAIL" "a review run whose push left no line: the row is reported, never a PASS nobody took"
+  expect_contains "$out" "no attempt that reached the service" \
+    "a review run whose push left no line: what is missing is named"
+  expect_contains "$out" "loopback forwarder" \
+    "a review run whose push left no line: the row says a review run does have a way to the service"
+  expect_contains "$out" "FACT ended-identity: PASS" "a review run whose push left no line: the rows after it were still measured"
+}
+
+# A review run's agent reporting a push the service ANSWERED, with the run's own
+# served call behind it in the service's lines: the finding this row exists for,
+# and it is the service's own line that makes it one. The row never prints it on
+# the agent's word alone.
+test_a_review_run_whose_push_was_served_is_a_failure() {
+  local dir=$work/reviewserved
+  prepare "$dir"
+  run_check "$dir" "$script" FAKE_FUGARO_MODE=review-served
+  expect_status "$status" 1 "a review run whose push was served"
+  expect_contains "$out" "FACT review-run: FAIL" "a served review push: the fact"
+  expect_contains "$out" "the review-only run's push was SERVED" "a served review push: the row says what happened"
+  expect_contains "$out" "the service's own lines carry the served call behind it" \
+    "a served review push: the row says what corroborates it"
+}
+
+# The same sentence from the agent with nothing in the service's own lines for
+# that run: uncorroborated, so the row records it as one it could not measure
+# rather than printing the finding on a model's word.
+test_a_review_run_that_says_its_push_was_served_with_no_service_line_is_unmeasured() {
+  local dir=$work/reviewservednone
+  prepare "$dir"
+  run_check "$dir" "$script" FAKE_FUGARO_MODE=review-served FAKE_GCLOUD_MODE=review-no-served-line
+  expect_status "$status" 2 "a served sentence with no service line behind it"
+  expect_contains "$out" "FACT review-run: FAIL" "a served sentence with no line behind it: the row is reported"
+  expect_contains "$out" "no service line behind it" \
+    "a served sentence with no line behind it: the row says what is missing"
+}
+
+test_a_review_run_that_made_no_attempt_is_unmeasured() {
+  local dir=$work/reviewsilent
+  prepare "$dir"
+  run_check "$dir" "$script" FAKE_FUGARO_MODE=review-silent
+  expect_status "$status" 2 "a review run that reported no attempt"
+  expect_contains "$out" "FACT review-run: FAIL" "a review run that reported no attempt: the row is reported"
+  expect_contains "$out" "no line for the push attempt" "a review run that reported no attempt: the row says what it read"
+}
+
+test_a_review_run_whose_line_is_not_the_one_asked_for_is_a_failure() {
+  local dir=$work/reviewgarbled
+  prepare "$dir"
+  # A line that is not the one this attempt asks for is not a reading about the
+  # proxy either way, and taking it for one — reading refused=maybe as the round
+  # below reads refused=no — would call a garbled report a hole in the
+  # installation.
+  run_check "$dir" "$script" FAKE_FUGARO_MODE=review-garbled
+  expect_status "$status" 1 "a review run whose line is not the one asked for"
+  expect_contains "$out" "FACT review-run: FAIL" "a garbled line: the row is reported"
+  expect_contains "$out" "refused=maybe" "a garbled line: the row carries what it read"
+  expect_contains "$out" "which is not the one line this attempt asks for" "a garbled line: the row says what it expected"
 }
 
 test_an_outcome_that_cannot_be_written_stops_the_check() {
@@ -1894,8 +2322,18 @@ t test_a_refusal_the_service_wrote_no_class_line_for_is_a_failure
 t test_a_refusal_that_was_not_audited_is_a_failure
 t test_a_log_that_lags_is_waited_for
 t test_a_forbidden_attempt_the_run_did_not_report_is_a_failure
-t test_the_other_pull_request_attempt_is_against_this_repository
-t test_the_review_runs_push_refusal_is_asserted
+t test_a_repository_with_no_probe_is_refused_rather_than_failed
+t test_an_attempt_the_probe_could_not_make_is_unmeasured
+t test_the_probe_makes_the_seven_attempts_through_the_forwarder
+t test_the_probe_makes_no_attempt_without_a_forwarder
+t test_the_probe_reports_the_values_it_was_not_given
+t test_the_probe_reports_an_attempt_the_proxy_served
+t test_the_review_runs_push_is_refused_under_no_run_branch
+t test_a_review_run_of_the_review_only_job_is_refused_under_read_only
+t test_a_review_runs_refusal_under_another_class_is_a_failure
+t test_a_review_run_that_reached_the_service_for_nothing_is_unmeasured
+t test_a_review_run_that_made_no_attempt_is_unmeasured
+t test_a_review_run_whose_line_is_not_the_one_asked_for_is_a_failure
 t test_the_review_probe_is_launched_with_the_pull_request_it_reviews
 t test_a_review_probe_launched_without_its_pull_request_is_a_failure
 t test_an_outcome_that_cannot_be_written_stops_the_check

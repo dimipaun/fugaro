@@ -28,6 +28,11 @@ package register
 //     pair is repaired rather than abandoned
 //     (TestTheJobCompletesAPairACrashLeftOpen), which is what the order of the
 //     two writes is for (TestAFailedSecretWriteRenewsNothing);
+//   - the key's write failing after the secret landed is a state the job's own
+//     sentence describes without stranding it, and without promising more than
+//     the server's 24-hour handover: the next run completes the pair inside that
+//     window, and `fugaro licence set` is what the person runs before it closes
+//     (TestLicenceRenewJobKeyWriteFailureSaysTheNextRunCompletesThePair);
 //   - the renewal secret goes to the licence server's address and nowhere else,
 //     on the check route as well as the renewal one
 //     (TestLicenceRenewJobRefusesARedirect);
@@ -50,6 +55,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -1225,6 +1232,93 @@ func TestAFailedSecretWriteRenewsNothing(t *testing.T) {
 		t.Errorf("the check record is %+v, want the check this run made", obj.Check)
 	}
 	assertNoKeyMaterial(t, "the job's refusal", out+errOut+err.Error(), key, nextSecret)
+}
+
+// TestLicenceRenewJobKeyWriteFailureSaysTheNextRunCompletesThePair holds the other half
+// of the two writes: the new secret version landed and the key did not. The
+// refusal has to name the half that is missing and the container it is in — a
+// person told only that a write failed would read a licence that cannot renew —
+// and it may not say the pair is stranded, because the run that follows proves
+// itself with the version beside the newest one and completes the pair by
+// itself (licenceJobHalfWritten, and TestTheJobCompletesAPairACrashLeftOpen for
+// the repair itself). It has to say that inside the server's 24-hour handover
+// and not as a standing promise: the job's timer is a day, so the run after
+// this one asks at or past the window's end and is refused, and `fugaro licence
+// set` with the bundle this installation was issued is what keeps the successor
+// — the person's move, and one the refusal has to ask for rather than talk them
+// out of.
+//
+// The object's directory is made read-only rather than the store being stubbed:
+// the bucket driver writes the object through a temporary file in that
+// directory, so the reads the job makes first are unaffected and it is the
+// key's write, and nothing earlier, that fails. The check is not due — the
+// record is planted through the store's own RecordCheck — so the failed write
+// is the pair's rather than the check record's.
+func TestLicenceRenewJobKeyWriteFailureSaysTheNextRunCompletesThePair(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes into a read-only directory, so the store cannot be made to refuse the write")
+	}
+	f := newLicenceFixture(t)
+	key, secret, claims := f.installed(t, shortTerm(f))
+	next, nextSecret, _ := f.successor(t, claims)
+	if err := f.store(t).RecordCheck(context.Background(), f.now, project.CheckOK, claims.KeyID); err != nil {
+		t.Fatalf("planting the check this run is not due for = %v", err)
+	}
+	server := f.serveJobServer(t, func(route string, call keyservice.RenewalCall) (int, string) {
+		if route != keyservice.RouteRenew {
+			t.Errorf("the job called %s, want the renewal alone: its check is not due, so the only write it attempts is the pair's", route)
+		}
+		return licenceAnswerJSON(t, keyservice.Answer{Status: keyservice.StatusOK, Key: next, RenewalSecret: nextSecret})
+	})
+
+	dir := filepath.Join(f.dir, "runs", filepath.Dir(licenceTestObjectPath))
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatalf("making %s read-only = %v", dir, err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(dir, 0o755); err != nil {
+			t.Errorf("restoring %s = %v", dir, err)
+		}
+	})
+
+	out, errOut, err := f.renewJob(t)
+	if err == nil {
+		t.Fatal("a renewal whose key could not be written succeeded")
+	}
+	if code := fcli.ExitCode(err); code != fcli.ExitUserError {
+		t.Errorf("the refusal exited %d, want %d: %v", code, fcli.ExitUserError, err)
+	}
+	if len(server.callsTo(keyservice.RouteRenew)) != 1 {
+		t.Fatalf("the job asked /renew %d times, want once", len(server.callsTo(keyservice.RouteRenew)))
+	}
+	got := err.Error()
+	for _, want := range []string{
+		"the renewal secret is in the container " + f.secretContainer(),
+		"the key it belongs to is not in the project yet",
+		"the next run of the job completes the pair by itself",
+		"proves itself with the version beside the newest one",
+		"inside the licence server's 24-hour handover",
+		"this job runs once a day",
+		"at or past the window's end",
+		"fugaro licence set",
+		"before that window closes",
+		"past it the secret is spent and the successor needs a reissue",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the refusal %q does not say %q", got, want)
+		}
+	}
+	if strings.Contains(got, "nothing can renew") {
+		t.Errorf("the refusal %q says nothing can renew, and the job's next run completes the pair by itself: the sentence for the job is licenceJobHalfWritten's and not licenceHalfWritten's", got)
+	}
+	if got := string(f.secrets.Latest(f.secretContainer())); got != nextSecret {
+		t.Error("the container's newest version is not the secret that landed before the key was attempted: the refusal describes a state, and the state has to be the one it describes")
+	}
+	if obj := f.object(t); len(obj.Keys) != 1 || obj.Keys[0] != key {
+		t.Errorf("the project holds %d keys after a renewal whose key was refused, want the one it had", len(obj.Keys))
+	}
+	assertNoKeyMaterial(t, "the job's refusal", out+errOut+got, key, secret)
+	assertNoKeyMaterial(t, "the job's refusal", out+errOut+got, next, nextSecret)
 }
 
 // TestLicenceRenewJobRefusesARedirect holds the job's own client rule on the
