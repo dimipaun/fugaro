@@ -974,6 +974,7 @@ probe account carries predefined grants only).
 | C0 | The console-coordinator page's reads, timed and sized ([`docs/console-coordinator-v2/`](console-coordinator-v2/implementation-plan.md) §C0, and its [`spec.md`](console-coordinator-v2/spec.md) §2.2, whose `(unmeasured)` cells are what this produces; **C0 is a plan task and not a register number — it claims none and reserves none**): `fugaro runs ls --json --since 24h`, `--since 7d`, `--since 0`, `--since 24h --limit 50` and `--since 24h --limit 20` (both limits, because the plan's own row names 50 while the spec's halted-or-failed-job cell reads 20), `coordinator status --from-store --all --json` **once per installation named** — that document's size is a function of the repository count, so two installations give two points on the curve the spec's `~724 KB` is one of — `plan status --json --all` once per checkout named, and `budget show --json`: each run the way the console spawns it, each timed with bash's own `TIMEFORMAT` and sized by the document's own length on stdout | See "Check C0" below; `bash scripts/live-checks/check-c0.sh --project <name> [--project <name>...] [--checkout <path>...]` is the whole of it — a FACT row per read, a table of bytes and seconds, and one `CELL` line per read in the wording the spec's cells need — and **you** run it, on an installation you name, never `belong` (a project or a checkout naming that installation is refused before any read is made); **no agent runs any step of it** | Nothing billable and no model call. **Every command it runs is a read** — the runs listing, the stored view, the plan walk and the budget document — so there is nothing to tear down and the `restore` row says so; the only thing it removes is its own scratch directory, from its exit trap even on a failed read or a Ctrl-C. `plan status` is the one read that is not a single call: it walks the checkout and asks the forge about the pull requests its tasks carry, one `gh` per joined pull request, at most 32 (`planMaxLookups`). **USER-RUN, NOT RUN.** |
 | 310 | The CLI's default output at a real terminal, on macOS ([`docs/cli-output-console-graph/`](cli-output-console-graph/implementation-plan-output.md), its task **CL12** and the guarantees **G1**–**G8** that plan's **CL5b**, **CL9** and **CL10** were written to, whose own table names the five commands below): `fugaro update` at a real terminal draws the colour and the line in flight and prints one line per step with a closing line and an exit status that agree with it (G1, G3, G4); `fugaro setup --plan-only` prints the plan view, and its log holds the same rows, whole and uncoloured (CL5a); `NO_COLOR=1 fugaro update` and `fugaro update \| cat` print every step with no escape sequence and no carriage return (G1, G4); `fugaro update --json` puts one document on stdout and the account on stderr (G2); a forced failure inside a stage prints the step's name, the last lines of the stage's own output and the log's path, and its log is 0600 inside a 0700 directory and holds what the screen did not (G5, G8); and the retention rule removes the oldest log past 14 days or past the newest 50 per command name and touches nothing else — another command's log, a link, a directory, a name that is not the sink's (G6); `fugaro doctor --json` files no log at all (G7) | See "Check 310" below; `bash scripts/live-checks/check310.sh` is the whole of it — one idempotent script, one `PASS`/`FAIL`/`INFO` line per fact, and `--dry-run` to print what it would run without running any of it — and its sibling test `scripts/live-checks/check310_test.sh` drives it against a fake `fugaro` and a fake `terraform` only; **you** run it, on your own machine and your own terminal, against an installation the check reads from `fugaro doctor --json` or you name with `--installation`, and an installation the register refuses by name — `belong`, `belong-*`, `fugaro-dev`, `fugaro-belong` or `edge-devel-dimi` — or a project naming `belong`, `fugaro-dev` or `edge-devel-dimi`, is refused before the first `fugaro update` and before any call at all when you name it yourself (otherwise `fugaro doctor --json` is the read that names it); **no agent runs any step of it** (a coding agent's session is refused outright) | Four `fugaro update` runs and one `fugaro setup --plan-only`, every one of them a re-converge of an installation that already exists: on a converged one each applies nothing and costs nothing billable, and **no model call is made by any step of this check**. The forced-failure run writes nothing at all — its `terraform` is a fake that answers the version question, refuses the rest, and leaves one marker in the check's own scratch directory and nothing anywhere else. Nothing is created and nothing is granted; the only writes are the log directory and the check's own scratch directory, whose 54 seeded logs are removed again, and any of your own logs the retention rule removes while the check runs are copied aside before its first `fugaro` call and put back byte for byte. **USER-RUN, NOT RUN.** |
 | 311 | The same default output on Windows — Windows Terminal and the legacy console ([`docs/cli-output-console-graph/`](cli-output-console-graph/implementation-plan-output.md), its task **CL12** and its own 311 row; the reconciliation's **T4** and **T4(a)**, **D1355**, and the sentence `internal/report/style.go` carries — the ANSI sixteen are what every terminal draws and what the legacy Windows console draws "once virtual terminal processing is on (Check 311)"): whether both consoles draw the colour and the line in flight the reporter draws at a real terminal, whether `NO_COLOR` set to anything and a pipe turn both off there too with every step still printed, whether `--json`'s stdout is one document a Windows shell parses, and — the reading this check exists for — whether the legacy console draws the escapes or prints them, since **nothing in this tree calls `termenv`'s `EnableVirtualTerminalProcessing`** | See "Check 311" below; the steps are the same commands typed in each console, by **you**, on a Windows machine with the CLI installed, and **no agent runs any step of it** — there is **no script** for this one: it is the procedure below, because the subject is a console on a machine no test in this repository can reach | One installation's own `fugaro update` runs in each console, on an installation that is already converged: each applies nothing and **no model call is made**. Nothing is created, granted or deleted, and the log directory is the only thing written. A legacy console that prints the escape sequences is the finding this check exists to make — and it is a **code** decision (the virtual-terminal call), not a reason to edit this row. **USER-RUN, NOT RUN.** |
+| 211 | The judge's input is blind ([`docs/model-ab-testing/`](model-ab-testing/implementation-plan.md), its **Check 211** and task **A5.3**; **A5.1**'s bundle — `identifierIn` refuses a diff naming a run ID, a branch or the pair ID, `modelRedactor` replaces every model word with one placeholder — and **A5.2**'s judge run, whose own manifest and verdicts are what it is read through): on the sandbox installation whose published project layer names `ab.judge_model`, ONE `fugaro run --recipe ab-judge` over the repository's complete, unjudged pairs of its last fortnight (at least five, or the run is not the reading the plan asks for), and then, at the run's **own** prefix in the runs bucket, the launcher's `ab/manifest.json`, the run's `ab/verdicts.json` and each judged pair's stored judge input at the key its verdict names (`ab/inputs/<sha256(pair ID)[:8] hex>.json`) — **U1**: neither pass's system text nor its prompt names either arm's run ID, either arm's branch, the pair ID, either arm's model (its ID and the words its name is built from) or a run-ID-shaped string, PASS or FAIL — and **not** the judge's own model, which A5.1 is never handed and which the stored input names in its own `judge_model` field (the plan's U1 also names a commit trailer, and the object graded is a **tree** diff, which carries no commit metadata at all — so a trailer-shaped line in one is diff body text and the row does not grade it); and **U2** recorded as a rate and never graded — how often a judge's own answers name a model — with the plan's own question ("which model wrote A?") stated in the row as having **no surface in this release**, since the judge's two calls per pair are fixed, no command asks a chosen model a question and a recipe cannot pin one. The run's own row is read too: a judge run publishes nothing — no pull request, and no branch of its own (an evaluate-mode run's record carries `fugaro/<its own run id>` as the branch lock's key and never pushes it, so the row grades a branch that is anything but that key as a push) | See "Check 211" below; `bash scripts/live-checks/check211.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check211_test.sh` drives it against fake `fugaro` and `gcloud` only (beside a fake `git`, `gh` and `belong` that log any call and fail, since a judge run publishes nothing) and launches nothing, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project, account or region naming that installation is refused by name, and so is a coding agent's session); **no agent runs any step of it** | **ONE judge run**: two model calls per pair it takes on `ab.judge_model` through the project's model credential and budget, up to **twenty-five pairs** (so up to fifty calls), plus the launch's own listing — **billable, and `--yes` is required** before anything is launched. Everything else is a read (the catalog, the layer, `doctor`, the runs list and the run's own objects in the bucket), and a premise row that failed launches **nothing at all**. A judge run leaves no branch and no pull request, so the teardown has one thing to settle: a run that has **not ended** is stopped with `fugaro cancel --now` and read back as ended, and a cancel that answers while the run keeps going is a finding rather than a silence. **Nothing is deleted** — the run's manifest, its verdicts and its stored inputs are what the report reads. **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -15976,6 +15977,135 @@ anywhere but your own notes.
 **Cost.** Two consoles and one page: **no build, no device, no run, no job and no dollar**. It is the
 one check of the three that costs nothing but the reading, and it is the one that decides whether
 what you are about to submit is true.
+
+## Check 211: the judge's input is blind (sandbox project and sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **A5.3** of
+[docs/model-ab-testing/implementation-plan.md](model-ab-testing/implementation-plan.md) — its "A5.3
+Check 211" — and **run by you**: nothing below is a claim that the judge's input is blind. What it
+measures is the object the judge was really handed, read out of the runs bucket of a judge run that
+really ran. The check is `scripts/live-checks/check211.sh` (its sibling test
+`scripts/live-checks/check211_test.sh` drives it against fake `fugaro` and `gcloud` only — plus a fake
+`git`, `gh` and `belong` that log any call and fail, since a judge run publishes nothing — and launches
+nothing), what it starts is **one judge run, which is billable**, and **no agent runs any step of it**:
+a project, account or region naming `belong` is refused by name, and so is a coding agent's session.
+
+**Why it launches at all, and what it may not do.** A5.1's bundle is what keeps an identifier out of the
+judge's input — it refuses a diff that names a run, a branch or the pair ID and redacts every model word
+to one placeholder — and a test of the bundle is a test of the anonymiser, not of the object a judge run
+stored. The plan's own sentence is one `fugaro run --recipe ab-judge`, so the reading is taken from a run
+the launcher made over the repository's **complete, unjudged pairs of its last fortnight** (A5.2,
+**D569**): at least **five** of them, or the run is not the reading the plan asks for and the row says
+which. What it must not do is what a check is usually asked to do with money: a launch is made only
+after the two premise rows hold — the ab-judge recipe this build's own catalog carries, and the
+`ab.judge_model` the published project layer names — and a premise row that failed launches **nothing**,
+because a judge run launched on a premise that does not hold is an owner's spend on a reading nobody
+could grade.
+
+**What it settles.** Every fact at the place it is written, so that no row is the record's own word for
+itself:
+
+- **The release, and the premise.** `fugaro version` at **0.24.0** or later — the release the judge run
+  ships in, `evaluateSince`, `docs/releases/v0.24.0.md` — and the offline probe `fugaro run --help`,
+  whose usage line names the catalog's recipes as this build has them: the ab-judge recipe is registered
+  by the Subscription's `ee/register`, so a core build's line has no such name (**D522**). Then the
+  catalog itself through `fugaro recipes ls --json` — ab-judge, launchable, from the catalog, with the
+  one registered `ab_judge` step (a recipe of that name from the repository or the project **shadows**
+  the catalog's, and a shadow that is not the judge measures something else) — and the **published
+  project layer**, whose `ab:` block is read out of the layer's own text by `fugaro config layer --json`
+  and must name `judge_model` (**D553**): no command in this release resolves the block to a value, so
+  the row says in as many words that it is a text read.
+- **The one run, and its own row.** `fugaro run --repo <the checkout> --recipe ab-judge --json` names the
+  run it started; `fugaro runs ls --repo <the checkout> --json` is read back for that run's **own** row,
+  so the rows below are read at the prefix the release itself named (`run` = `<slug>/<run id>`, **one
+  path segment**) rather than at one this check built. The row must read **ended** — an input read from a
+  run still going is a reading of half a manifest — and must carry **no pull request and no branch of
+  its own**: a mode `evaluate` run's record carries `fugaro/<its own run id>` as the branch **lock's**
+  key and never pushes it (`internal/runner`'s `runEvaluateMode`, whose arm says so, and review mode's is
+  the same), so that key is what a healthy row carries and any other branch is a branch the run pushed.
+  Either is A5.2's `TestJudgeRunPublishesNothing` read from the installation rather than from the test.
+- **The run's own prefix.** `runs/<the slug>/<run>/ab/manifest.json` and `.../ab/verdicts.json` out of the
+  runs bucket (**A5.2**, **D559**): the launcher's manifest — the pairs it took and, per arm, the run, the
+  branch, the model and the patch object — and the verdicts, one entry per manifest pair in the manifest's
+  order, judged by the same `judge_model`, each judged pair naming the key of the stored input it was
+  judged from. A verdict for a pair the manifest does not hold, a pair neither judged nor skipped, a run
+  that skipped **every** pair, or two objects that disagree about which model judged are findings: a
+  reader joining the two by pair ID would read a pair nobody decided (**A5.4**).
+- **U1, over the object the judge was handed.** Each stored judge input at the key its verdict names
+  (`ab/inputs/<sha256(pair ID)[:8] hex>.json`, **A5.3**'s own object), and — of it — each pass's `system`
+  text and its `prompt`: neither may name either arm's **run ID**, either arm's **branch**, the **pair
+  ID**, either arm's **model** (its ID, its name and the words either is built from — the vocabulary
+  A5.1 redacts) or a **run-ID-shaped** string. The **judge's own model is not graded**, and that is the
+  anonymiser's own contract rather than a gap here: `Bundle` is handed the pair's two arms and nothing
+  else (`ee/ab/bundle.go`'s `modelWords(champion.Model, challenger.Model)`), and the stored input names
+  the judge model itself in its top-level `judge_model` field — so a diff that mentions the model judging
+  it tells the judge nothing it does not already have, and a row that failed one would fail a correct
+  release after a billed run and blame A5.1 for something it was never asked to remove. A hit is a **FAIL** and the row names it — the
+  pair, the pass, where it was found and the string itself — because a hit here is the anonymiser not
+  holding on a real pair. The plan's U1 also names a **commit trailer**, and there is none to grade: the
+  object A5.1 anonymises is a **tree** diff, the change between two trees, which carries no commit
+  metadata at all (`ee/ab/bundle.go`'s `Patch.Diff` says so), so a line in one that looks like a trailer
+  is diff body text — 22 tracked files in this repository alone carry "generated with" and 5 carry
+  "noreply@" — and grading it would fail a correct release on a hunk that mentions its own tooling. The
+  answers are read for U2 and are **not** graded.
+- **U2, recorded as a rate and never graded.** How often the judge's own answers name a model, and how
+  its verdicts split across the two arms it was shown blind, and how often its two swapped passes named
+  the same arm. **The plan's own question — "which model wrote A?" — has no surface in this release**, and
+  the row says so rather than inventing one: the judge's two calls per pair are fixed by `ee/ab/judge.go`
+  (two diffs, one closed vocabulary, no question of the check's own), **no command in this release asks a
+  chosen model a question** and a recipe cannot pin one. So the row reports what the judge's own stored
+  answers do support, and the gap is a finding for the owner below rather than a row that pretends to
+  measure it.
+
+**What a run costs.** **ONE judge run**: two model calls per pair it takes on `ab.judge_model` through the
+project's model credential and the project's budget — up to **twenty-five** pairs (`judgeManifestMax`, so
+up to fifty calls) — plus the launch's own listing. **Billable, and the check requires `--yes`**: without
+it the check prints the plan, changes nothing and exits. Every other call is a read (the catalog, the
+layer, `doctor`, the runs list, and the run's own objects in the bucket), and a premise row that failed
+launches nothing. On disk it is one scratch directory, removed at the end. A judge run leaves **no branch
+and no pull request**, so the teardown has one thing to settle: a run that has **not ended** — the case a
+check that gives up early leaves behind, since a run still going writes its verdicts after a teardown that
+read only what it had left so far — is stopped with `fugaro cancel --now` and **read back as ended**,
+where a cancel that answers while the run keeps going, or a launch the runs list does not carry, is a
+finding rather than a silence. **Nothing is deleted**: the run's manifest, its verdicts and its stored
+inputs are what the report reads (**A5.4**), and a check that deleted them would delete the reading.
+
+**Run it:**
+
+```sh
+bash scripts/live-checks/check211.sh --sandbox <a sandbox repository checkout> --dry-run
+bash scripts/live-checks/check211.sh --sandbox <a sandbox repository checkout> --yes
+bash scripts/live-checks/check211.sh --sandbox <a sandbox repository checkout> --yes --min-pairs 5
+```
+
+`--dry-run` prints what would be read and launched, runs nothing and is the way to check the premise
+before spending anything. A value given as a flag wins over the same value in the environment.
+
+Progress goes to stderr and one `CHECK 211 RESULT` block goes to stdout at the end: paste that whole
+block here and nothing else. The block's last line carries the run's status: **`0`** is every criterion
+that was measured holding; **`1`** is a measured criterion that did not hold, or a guard that stopped the
+run — among them a build without the judge recipe, a layer that names no `judge_model`, fewer than five
+pairs in the manifest, verdicts that do not match the manifest, a run that published a branch or a pull
+request, and **a stored judge input that names a run, a branch, a pair, a model or a trailer**; **`2`** is
+the check not being able to measure (a tool missing, the checkout not being one, a `--json` document that
+could not be read, a launch that was refused, or a judge run that had not ended). A key the run never
+reached reads `FAIL — not reached`. The knobs are `CHECK211_DRY_RUN`, `CHECK211_YES`,
+`CHECK211_KEEP_SCRATCH`, `CHECK211_SANDBOX`, `CHECK211_MIN_PAIRS` (5), `CHECK211_RELEASE` (0.24.0),
+`CHECK211_REGION` (us-east5), `CHECK211_RUN_TIMEOUT_SECONDS` (1800), `CHECK211_POLL_SECONDS` (15),
+`CHECK211_CLI_TIMEOUT_SECONDS` (180), `CHECK211_LAUNCH_TIMEOUT_SECONDS` (600),
+`CHECK211_DOCTOR_TIMEOUT_SECONDS` (300) and `CHECK211_CANCEL_TIMEOUT_SECONDS` (300).
+
+**What waits on it.** Nothing merges on it, and one thing in it is a **finding for you rather than a
+verdict**: the plan's U2 asks how often a judge asked *which model wrote A* names it, and **no surface in
+this release can ask that question** — the judge's call is fixed, no command asks a chosen model a
+question, and a recipe cannot pin one — so the row records the rate the release does support (how often
+the judge's own answers name a model, beside how its verdicts split) and states the gap in as many words.
+**The owner's decision this check raises is whether U2 is re-worded to what the release can measure, or
+whether the release grows a surface that asks a model a question.** A failed U1 is a **product** finding
+rather than a task: the bundle is A5.1's, the judge run is A5.2's, and a stored input naming a run ID, a
+branch, a model or a trailer is the plan's own Global-constraints row ("the judge never sees a run ID,
+branch name, model ID or commit metadata") not holding on real pairs — which is exactly what
+`TestBundleCarriesNoIdentifier` cannot see.
 
 ## Check 230: the author, the committer and the trailers, on GitHub and on Bitbucket (two sandbox repositories carrying `git.author: launcher`, a third with no such key, and their forges; never `belong`; run by you; NOT RUN)
 
