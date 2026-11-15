@@ -653,12 +653,16 @@ func (s *computeStage) batchJobImage() (image, why string) {
 		return "", "the batch block was not recorded: this installation's base image " + pluginwire.Printable(pin) + " is under the remote repository " + host + "/" + infra.GhcrRegistry + " without being a base this tool pinned for " + config.BaseKind + ", so what it holds is not your own image; remove the entry (fugaro image refresh writes the pin), then run fugaro setup --provision-batch again"
 	}
 	if _, ok := pinnedVersion(pin, host, config.BaseKind, owner); ok {
-		return "", "the batch block was not recorded: this installation's base image is the release PIN " + pluginwire.Printable(pin) + ", which this installation's registry serves through the remote repository (a pull-through to ghcr.io), and a Batch job may execute only an image of this installation's own STANDARD repository -- localcfg's batch.image grammar, the published block's reader and doctor's batch-job-image all refuse a pull-through path (design compute-backend.md §4.4; §2.1's \"fugaro-base at the installation's pinned version\" is the one reading this disagrees with). Build this installation's own base, push it into " + host + "/" + lc.GCPProject + "/" + infra.BaseRegistry + " (sh images/build-base.sh " + config.BaseKind + " tags it locally; the push is yours), record it with fugaro setup --base-image " + config.BaseKind + "=<the ref you pushed>, then run fugaro setup --provision-batch again -- docs/backends.md, \"The batch block\", walks the whole path"
+		return "", "the batch block was not recorded: this installation's base image is the release PIN " + pluginwire.Printable(pin) + ", which this installation's registry serves through the remote repository (a pull-through to ghcr.io), and a Batch job may execute only an image of this installation's own STANDARD repository -- localcfg's batch.image grammar, the published block's reader and doctor's batch-job-image all refuse a pull-through path (design compute-backend.md §4.4; §2.1's \"fugaro-base at the installation's pinned version\" is the one reading this disagrees with). Build this installation's own base, push it into " + host + "/" + infra.BaseRegistry + " (sh images/build-base.sh " + config.BaseKind + " tags it locally; the push is yours), record it with fugaro setup --base-image " + config.BaseKind + "=<the ref you pushed>, then run fugaro setup --provision-batch again -- docs/backends.md, \"The batch block\", walks the whole path"
 	}
-	if strings.HasPrefix(pin, host+"/"+lc.GCPProject+"/") && localcfg.ValidBatchImage(pin) {
+	// The host is <region>-docker.pkg.dev/<project> and is the WHOLE prefix of
+	// every image of this installation's registries (infra.RegistryHost,
+	// which refuses a host naming another project), so what follows it is a
+	// repository of this project's own and never another project's.
+	if strings.HasPrefix(pin, host+"/") && localcfg.ValidBatchImage(pin) {
 		return pin, ""
 	}
-	return "", "the batch block was not recorded: this installation's base image " + pluginwire.Printable(pin) + " is not an image of this installation's own Artifact Registry (" + host + "/" + lc.GCPProject + "/...), and " + field + " has to be one -- the published block's reader holds it to the installation's own project, and doctor reads the repository it is served from (design compute-backend.md §4.4); point the base at an image of your own in this project (fugaro setup --base-image " + config.BaseKind + "=IMAGE), then run fugaro setup --provision-batch again"
+	return "", "the batch block was not recorded: this installation's base image " + pluginwire.Printable(pin) + " is not an image of this installation's own Artifact Registry (" + host + "/...), and " + field + " has to be one -- the published block's reader holds it to the installation's own project, and doctor reads the repository it is served from (design compute-backend.md §4.4); point the base at an image of your own in this project (fugaro setup --base-image " + config.BaseKind + "=IMAGE), then run fugaro setup --provision-batch again"
 }
 
 // batchBlockAccount is the account the block records as the one a job's VMs run
@@ -746,6 +750,14 @@ func sameBatch(a, b *localcfg.Batch) bool {
 // this stage exists to spare them.
 func (s *computeStage) announceBackend() {
 	if s.e.lc.Backend() == backend.CloudBatch {
+		return
+	}
+	// A config the block is missing from is not one this line may end with:
+	// selecting cloud-batch is refused for it (backendsUseGate), so the
+	// sentence would send the owner to a command that answers with the
+	// provisioning they have just run, and the line above it — the reason the
+	// block was not recorded — is the one to act on.
+	if s.e.lc.Batch == nil {
 		return
 	}
 	fmt.Fprintf(s.e.r.w, "this installation still runs on %s: select the backend with fugaro backends use %s\n", s.e.lc.Backend(), backend.CloudBatch)

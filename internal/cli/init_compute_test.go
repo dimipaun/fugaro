@@ -61,9 +61,22 @@ func computeRig(t *testing.T) *initRig {
 // can have the same extras.
 func computeReady(t *testing.T, r *initRig) {
 	t.Helper()
+	computeReadyWith(t, r, computePin)
+}
+
+// computeReadyWith is computeReady for an installation whose base image is the
+// caller's own: the rig's own pin is the release pin through the remote
+// repository, and a test about the batch block needs a base of the
+// installation's own registry (an empty pin is an installation that has none).
+// The root's outputs follow the pin, since the family is derived from it
+// (infra.PreloadedImage).
+func computeReadyWith(t *testing.T, r *initRig, pin string) {
+	t.Helper()
 	r.stateBucket()
 	// The installation's pin, recorded by the run that pinned it.
-	r.appendConfig(t, "base_images:\n  "+config.BaseKind+": "+computePin+"\n")
+	if pin != "" {
+		r.appendConfig(t, "base_images:\n  "+config.BaseKind+": "+pin+"\n")
+	}
 	// The run-class account a repository root would have created: the only
 	// kind of account the compute root accepts as a run account.
 	r.iam.AddServiceAccount(initProject, "fugaro-acme-web@proj-1234.iam.gserviceaccount.com", "Fugaro job acme/sandbox web")
@@ -79,7 +92,7 @@ func computeReady(t *testing.T, r *initRig) {
 	// The compute root's own outputs. They are scripted for this root alone:
 	// the installation's answer is a different one (a root's name is the
 	// script key's suffix).
-	r.script["output@compute"] = map[string]any{"stdout": computeOutputsJSON(t)}
+	r.script["output@compute"] = map[string]any{"stdout": computeOutputsJSONFor(t, pin)}
 	// The machine's login unit is this release's, so the converge's unit step
 	// (O9) has nothing to do. It is part of the rig rather than of a test: a
 	// plan-only run plans the FIRST stage with something to do, so a rig whose
@@ -94,8 +107,16 @@ func computeReady(t *testing.T, r *initRig) {
 // answers: the image the preload built, and the names the stage reports.
 func computeOutputsJSON(t *testing.T) string {
 	t.Helper()
+	return computeOutputsJSONFor(t, computePin)
+}
+
+// computeOutputsJSONFor is computeOutputsJSON for an installation whose base
+// pin is the caller's: the preloaded family is derived from that pin
+// (infra.PreloadedImage), which is what the module's own local computes.
+func computeOutputsJSONFor(t *testing.T, pin string) string {
+	t.Helper()
 	vals := map[string]string{
-		"preload_image": infra.PreloadedImage(computePin),
+		"preload_image": infra.PreloadedImage(pin),
 		// The label each generation records its socket gid under. A name and
 		// not a value: the gid is read off the builder VM by the build and
 		// written onto the image it makes (preload.sh), so no root output can
