@@ -49,6 +49,7 @@
         "prediction": true,
         "paths": [
           "internal/cli/settings_set.go",
+          "internal/cli/settings_set_test.go",
           "internal/cli/settings_layer_default_test.go"
         ]
       }
@@ -65,7 +66,8 @@
           "internal/settings/registry.go",
           "internal/cli/settings_set.go",
           "internal/cli/settings_stage_test.go",
-          "internal/settings/registry_stage_test.go"
+          "internal/settings/registry_stage_test.go",
+          "schemas/settings.schema.json"
         ]
       }
     },
@@ -101,17 +103,33 @@
     },
     {
       "id": "N1",
-      "title": "local carriers for the node-only blocks and the additive reconcile in buildProjectPolicy",
+      "title": "local carriers for the cascade and the node's model grades",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/localcfg/localcfg.go",
+          "internal/localcfg/cascade_carrier_test.go",
+          "internal/cli/sharedcfg.go",
+          "internal/cli/sharedcfg_test.go"
+        ]
+      }
+    },
+    {
+      "id": "N4",
+      "title": "the additive field-by-field reconcile in buildProjectPolicy, with the grants judged as loosening",
       "run": null,
       "version": null,
       "size": 3,
       "footprint": {
         "prediction": true,
         "paths": [
-          "internal/localcfg/localcfg.go",
-          "internal/localcfg/cascade_carrier_test.go",
           "internal/cli/project_cmd.go",
-          "internal/cli/project_reconcile_test.go"
+          "internal/cli/init_policy_publish.go",
+          "internal/cli/project_reconcile_test.go",
+          "internal/cli/policy_loosening_grants_test.go"
         ]
       }
     },
@@ -171,7 +189,8 @@
           "internal/cli/accounts_craft.go",
           "internal/cli/accounts_craft_test.go",
           "internal/cli/writers_craft_access.go",
-          "internal/cli/accounts.go"
+          "internal/cli/accounts.go",
+          "internal/cli/accounts_rm.go"
         ]
       }
     },
@@ -376,9 +395,14 @@
       "reason": "the refusal prints the writer table T1 fills; a contract would be the table"
     },
     {
-      "task": "N2",
+      "task": "N4",
       "needs": "N1",
-      "reason": "the convergence test runs the reconcile N1 writes"
+      "reason": "N4 reads the carrier fields N1 adds; thirty lines of fields, a contract for them would be N1 itself"
+    },
+    {
+      "task": "N2",
+      "needs": "N4",
+      "reason": "the convergence test runs the reconcile N4 writes"
     },
     {
       "task": "N3",
@@ -457,8 +481,8 @@
     },
     {
       "task": "K2",
-      "needs": "N1",
-      "reason": "same file project_cmd.go and the carrier N1's reconcile publishes"
+      "needs": "N4",
+      "reason": "same file project_cmd.go and the reconcile N4 writes publishes the carrier"
     },
     {
       "task": "L1",
@@ -498,6 +522,11 @@
     {
       "task": "I1",
       "needs": "N1",
+      "reason": "the end-to-end test needs the whole write path in place"
+    },
+    {
+      "task": "I1",
+      "needs": "N4",
       "reason": "the end-to-end test needs the whole write path in place"
     },
     {
@@ -578,6 +607,11 @@
     {
       "task": "D1",
       "needs": "N1",
+      "reason": "the docs and the skill describe the behaviour this task lands"
+    },
+    {
+      "task": "D1",
+      "needs": "N4",
       "reason": "the docs and the skill describe the behaviour this task lands"
     },
     {

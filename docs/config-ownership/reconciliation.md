@@ -4,7 +4,7 @@
 this file wins. Checked against `origin/main` at `eddaa041b` on 2026-11-15 (the audit in `audit.md`
 was taken at `3e1b02570`; every claim cited below was re-read at `eddaa041b`).
 
-**Status: eight decisions answered by the owner on 2026-11-15 (relayed by the coordinator in this conversation); D2608, D2611 and D2612 are NOT answered and stay open with a recommendation; D2613 and D2614 are new and open. The answers approve this reconciliation; the plan beside it approves nothing.**
+**Status: eight decisions answered by the owner on 2026-11-15 (relayed by the coordinator in this conversation); D2608, D2611 and D2612 are NOT answered and stay open with a recommendation; D2613 to D2616 are new and open (D2615 and D2616 were found by the round-1 review). The answers approve this reconciliation; the plan beside it approves nothing.**
 Decisions take **D2600-D2639** (highest in use on `main` and in open pull requests' documents: D2551;
 D2600-D2639 are reserved, used or not). Findings are numbered `F1`... within this document, as every
 earlier reconciliation does. Checks: none reserved yet.
@@ -80,7 +80,7 @@ Class: Wrong, Exists, Gap, Rule, Open.
   owner's 99% case fails today; the four repo-level block rows are listed writable but cannot be
   (D2604).
 - **F2 (Gap, confirmed).** Item 4's pin does not exist. `TestRegistryOwnerNamesACommand` checks that
-  `Owner` is in a list of 13 family names; nothing checks that the family writes the key. The audit counts
+  `Owner` is in a list of 17 tokens; nothing checks that the family writes the key. The audit counts
   114 rows whose owner does not write the key; I confirmed the mechanism (owner is a token, the family map
   names a command family, not a flag) and spot-checked `agent.levels.*.model`, `pools.*.owner`,
   `layer.jobs.reports.paused` (owner `update`, no writer) and `layer.ab.rate` (owner `models`); I did not
@@ -90,11 +90,13 @@ Class: Wrong, Exists, Gap, Rule, Open.
   `credentials.fallback`), but the registry has no `credentials.fallback` row, so the write answers "no
   setting has that name"; and the owner has now ruled `credentials.*` semantic. Consequence: the allowlist
   entry, its test and the §4.4 wording flip; the registry gains rows whose owner is the new command.
-- **F4 (Exists).** The "one write path" is half built: `rigor set`, `rigor floor` call
-  `settingsResolveTarget`/`settingsLayerGate`. `accounts pool add|rm` (`accounts_pool.go`) calls
-  `settingsResolveTarget` and `settingsLayerGate` with a fixed project layer and then parses the
-  local config itself; `models use` writes a repository working tree with its own code. Consequence:
-  item 3 is a refactor of those two, not a new layer; cost is bounded.
+- **F4 (Exists, corrected after review).** The "one write path" is half built. `rigor set` calls
+  `settingsResolveTarget` and `settingsLayerGate`; `rigor floor` calls `settingsResolveTarget`;
+  `accounts pool add|rm` (`accounts_pool.go`) already writes the local document through
+  `applySettingsEdit` (the shared document writer) but calls neither the resolver nor the gate; `models
+  use` writes a repository working tree with its own code. Consequence: item 3 is small for pools (route
+  the layer choice through the resolver) and real for `models use`; the work of the pool task is the
+  owner, the roster and the removal (F22), not the writer.
 - **F5 (Wrong in the doc, confirmed).** `accounts pool` text says pools are created "here or in the
   published node" and that `fugaro update` leaves node pools alone ("MC4's job"). `buildProjectPolicy`
   still does `pol.CraftCredentials = old.CraftCredentials`, `pol.CraftPools = old.CraftPools`,
@@ -131,9 +133,12 @@ Class: Wrong, Exists, Gap, Rule, Open.
   open whether the released runner image carries it: `images/base/Dockerfile` builds `go build -tags ee`
   (the credentials image does not, ee-reorg D524). Consequence: governance reaches runs in the base image;
   `settings` Doc for governance rows should say "enforced by the ee build".
-- **F13 (Gap, confirmed).** Unregistered fields: repo `ab.rate` (the layer row `layer.ab.rate` exists, owner
-  `models`), `workflows.*.needs`, `layer.security.*`, `layer.jobs.*.paused` (rows exist, owner `update`,
-  no writer), repo `planning.decoupling` (the layer row `layer.defaults.planning.decoupling` is writable).
+- **F13 (Gap, corrected after review).** Fields with no row or no writer: repo `ab.rate` (the layer row
+  `layer.ab.rate` exists, owner `models`) and `workflows.*.needs` have no row; `layer.jobs.*.paused`
+  has rows (owner `update`) and no writer; repo `planning.decoupling` (owner `config`),
+  repo `security.patterns` (owner `config`) and `layer.security.patterns.*.*` have rows and no writer
+  (the layer row `layer.defaults.planning.decoupling` is writable). The plan adds rows only where none
+  exists and gives the rest an owner and a writer.
 - **F14 (Rule, composite-commands).** See section 6 for the whole cross-reference: the chain, `--no-apply`,
   the fence on cap raises, and the file overlaps.
 - **F15 (Rule, old package).** config-management D1168 ("a dedicated command exists only where its rules
@@ -151,6 +156,29 @@ Class: Wrong, Exists, Gap, Rule, Open.
 - **F18 (Open, not determined by the audit).** `settings set layer.defaults.agent --add-entry model=X`
   (does it write model keys), per-leaf writers for `batch.*`, `build.*`, `compute_prices.*`, and whether
   `setup` ever writes `endpoints.*` are still unknown; U2.
+- **F19 (Gap, found in review).** `update`'s policy stage publishes the node; the project layer file is
+  published by the separate `layer` stage (`init_layer_stage.go`). D2602 names the policy stage only, so a
+  project-layer write never goes live through the hook (D2615).
+- **F20 (Rule, found in review).** `ValidatePublishedPools` (`internal/config/craft.go`) refuses a pool
+  with no owner and no `legacy_open`, and every local pool is ownerless today (F8). A reconcile that
+  copies local over node would either refuse every installation's first `update` or strip a node pool's
+  owner or marker. The merge is therefore field by field (owner, allowed users and legacy-open come from
+  the node when the local config does not state them), and an ownerless local pool is skipped with a line.
+  Also: `policyMigration.loosening()` (`init_policy_publish.go`) judges ceilings and the account choice
+  only; a grant (new pool, craft access, `fallback` to `auto`, `concurrency_per_token`, binaries, grades
+  access) goes through `confirmStageWrite`, where `--yes` suffices. The reconcile adds these members to
+  `loosening()`, failing closed on any change not shown to narrow.
+- **F21 (Gap, found in review).** The audit's gap 9 (`secret_expires`, `secret_rotation_days`,
+  `batch.secrets`) has no writer in any plan; bitbucket-token-types T11 (`creds set`) writes the
+  `bitbucket_tokens` values only (D2616).
+- **F22 (Gap, found in review).** With "silence keeps the node's value" (D2607) a removal never reaches the
+  node: `accounts pool rm`, `accounts rm` and a craft's removal must write the explicit unset, or a revoked
+  grant stays served. The plan puts the pool and craft removals in A1 and A2; a credential's removal is
+  `accounts_rm.go` (composite AP6's file, D2612).
+- **F23 (Gap, found in review).** The local `credentials:` key is already the list of typed credentials
+  (`localcfg.go`, published as node `craft_credentials`). The cascade carrier takes another key
+  (`credential_cascade`) so the node's `credentials` block and the local list are never confused. New
+  top-level local keys join `sharedForbidden` (`sharedcfg.go`, which AR1 also edits).
 
 ### 3.3 Completeness check
 
@@ -169,7 +197,7 @@ Class: Wrong, Exists, Gap, Rule, Open.
 
 Each carries my recommendation, the alternative and its cost. **Answered 2026-11-15 by the owner:**
 D2601-D2607, D2609, D2610. **Not answered (cell empty, recommendation stands, dependent tasks wait):**
-D2608, D2611, D2612, D2613, D2614. A cell marked `recommended` records that the owner took the
+D2608, D2611, D2612, D2613, D2614, D2615 and D2616. A cell marked `recommended` records that the owner took the
 recommendation; none of the nine answers departs from it.
 
 | # | Question | Recommendation | Alternative and cost | Owner's answer |
@@ -181,13 +209,15 @@ recommendation; none of the nine answers departs from it.
 | **D2605** | Default write target (item 7, F17) | **By merge rule: a Tighten (ceiling) key writes the project layer when one exists (else local); a Replace key keeps the repo default; `--layer` always overrides; a layer the key does not have refuses naming the layers it has.** | Require `--layer` whenever a key has more than one layer: explicit, but breaks every skill and the console row that omit it. Cost of recommendation: a behaviour change for scripts that relied on the repo default of a ceiling key | 2026-11-15: **recommended**: default layer by merge rule (ceilings to the project layer, Replace keys keep the repo default, a wrong layer refuses naming the right ones). Resolves T4 as the owner's choice. |
 | **D2606** | The `--layer project` spelling for the 17 `agent.*`/`git.*` rows (F9) | **Accept `agent.x --layer project` and map it to `layer.defaults.agent.x` in the one resolver; keep the long spelling working; fix `docs/project-layer.md`** | Remove `project` from those rows' Layers and fix the doc: smaller, but the project default for `agent.*` is then only writable by the long spelling, against item 7 | 2026-11-15: **recommended**: `agent.x --layer project` maps to `layer.defaults.agent.x` in the resolver; the long spelling keeps working. |
 | **D2607** | The source of truth for node-only blocks (`credentials.*` cascade, node `model_grades`, and crafts/pools/credentials lists) so that "no stale copy survives" (item 9) | **Add a local carrier for each (as AR1 does for `binaries`), so the local config states what the node should hold; publish and `update` copy local to node: silence keeps the node's value, a written value wins, an explicit unset removes; the first reconcile is additive and never deletes a node member the local config does not state; nothing publishes from an agent session** | Writer edits the node only, local has no copy: no new keys or schema, but `update` cannot reconcile what it does not hold, so item 9's second half is empty for these blocks. A mirror (local authoritative) risks wiping hand-made node entries on the first `update` | 2026-11-15: **recommended**: a local carrier for each node-only block; silence keeps the node value, a written value wins, an explicit unset removes; the first reconcile is additive; nothing publishes from an agent session. |
-| **D2608** | Pool owner, `allowed_users`, `legacy_open` writers (F8) | **`accounts pool add` takes `--owner`, `--allow-user` (repeatable) and `--legacy-open`; an ownerless pool saves locally but refuses to publish with a sentence naming `--owner`** | Default the owner to the signed-in owner: fewer flags, but it grants a spend right by default | |
+| **D2608** | Pool owner, `allowed_users`, `legacy_open` writers (F8) | **`accounts pool add` takes `--owner` and `--allow-user` (repeatable); an ownerless local pool is saved, is not published, and is named in one line at `update` and `project policy publish` (neither fails: `update` must converge, F20). `--legacy-open` is not a creation flag: it is the marker the D1942 migration writes and it serves the pool to everyone, so it is dropped here, or kept only as a widening that a coding agent's session cannot write** | Default the owner to the signed-in owner: fewer flags, but it grants a spend right by default | |
 | **D2609** | How a refusal names the working spelling (item 6) and where the owner lives (item 4) | **Replace the `Owner` token by a typed writer on the row: the command and the argv template (`fugaro accounts pool add NAME ...`), so the refusal prints the line and the conformance test runs it.** Family map stays for the human sentence | Keep tokens and add a golden table `key -> argv` pinned by a test: cheaper, drifts from the registry | 2026-11-15: **recommended** (answered together with D2610): a typed writer (command and argv) on each registry row. |
 | **D2610** | Shape of the first-task conformance test (D2609 decides the source) | **Executing: for every row, a hermetic fake runs its writer's argv and asserts the key changes in the right store; rows whose store is the cloud (budget database, node-only) are asserted through the fakes in `internal/gcpfake`; a row that names no writer must carry a stated reason label (item 8)** | Structural only (command and flag exist): fast, but passes the 114 misattributions that exist today for the wrong reason | 2026-11-15: **recommended** (answered together with D2609): an executing conformance test. |
 | **D2611** | Labels for the no-writer keys (item 8) | **Three labels in the owner vocabulary G12 started: `plumbing` (setup/update write it), `fake-endpoint` (test-only; setup never writes `endpoints.*`, to be verified in F18), `file` (a key in a named file nobody edits; each needs a one-line reason or becomes a settings row)** | One label `manual`: fails item 8's "stated reason" | |
 | **D2612** | Sequencing against open pull requests that touch the same files | **Start with the conformance test and the pure registry/spelling tasks (no overlap); hold node-publish and the `binaries.*` rows until #2782 (AR1) merges; hold writer-family tasks that touch `settings_set.go` or `accounts_rm.go` until composite AP5/AP6 are decided (section 6)** | Build all now and rebase: faster, and each of #2782, #2753, #2732 touches `project_cmd.go` or `localcfg.go` | |
 | **D2613** | Names of the new semantic commands (the owner chose the concepts, not the spellings): crafts' and grades' access, a repository's `claude_accounts`, the credentials cascade, `binaries`, providers and prices, security paths | **Under the families that exist, in the audit's own words: `fugaro accounts craft set NAME --access X`, `fugaro accounts grade set strong\|strongest --access X`, `fugaro accounts repo add REPO ACCOUNT`, `fugaro accounts cascade set [--fallback ...]` (the `credentials.*` block), `fugaro project binaries allow\|deny\|max-bytes` (over binary-allow-rule's carrier), `fugaro models provider set\|rm`, `fugaro models price set`, `fugaro rigor security add\|rm`; `models use` and `rigor set` gain the missing roles and `--layer`** | Fewer, wider commands (`fugaro craft set --model --access`): one name per concept but a command that spans two families and two owners' fences | |
-| **D2614** | The sentence a semantic command prints when its in-process policy stage fails (composite D1563 names `fugaro apply`, which AP3 has not built) | **Name `fugaro update` until AP3 lands, through one sentence helper AP3 later repoints; no other file carries the wording** | Name `fugaro apply` now: a command that does not exist in the sentence the user trusts most | |
+| **D2614** | The sentence a semantic command prints when its in-process policy stage fails. Composite D1563 was confirmed as written and its sentence names `fugaro apply` and never publish or update; `fugaro apply` does not exist until AP3, so the confirmed sentence cannot be printed as is | **Name `fugaro update` until AP3 lands, through one sentence helper AP3 later repoints; no other file carries the wording** | Name `fugaro apply` now: a command that does not exist in the sentence the user trusts most | |
+| **D2615** | Which stages the after-write hook (D2602) runs. D2602 names the `policy` stage; a project-layer write (the layer file, W1, W2, M1, M3, M4) is published by the separate `layer` stage (`init_layer_stage.go`), so a write that stops at `policy` never reaches a run (F19) | **The hook runs the stages the key's store needs, in `stagesNamed` order: `policy` for node members, `layer` for project-layer keys, both for a change that touches both; the `layer` stage keeps its own executable-change gate and agent refusal** | Policy only, as D2602 reads: smaller, but `settings set governance.stage_timeout.implement` saves and never reaches a run, which the owner ruled it must | |
+| **D2616** | Who builds the writers D2603 gives `secrets`: `secret_expires`, `secret_rotation_days`, `batch.secrets`, `bitbucket_api_roots` and the `bitbucket_tokens.*` leaves (no plan writes them: bitbucket-token-types T11 only sets a token's value; F21) | **A task of this plan after the owner answers: `secrets set` takes `--expires` and `--rotation-days`, `bitbucket_api_roots` is a `secrets` flag, the token leaves stay with bitbucket-token-types T11** | Each stays a labelled `file` key until a plan owns it: no scope here, but item 8 then carries a reason for keys the owner meant to write | |
 
 ## 5. Tensions with the nine direction items
 
@@ -255,7 +285,7 @@ D1560-D1577 are answered by the owner on 2026-11-07 (recommended, or confirmed a
 
 | File | Composite task | This work |
 | --- | --- | --- |
-| `internal/cli/settings_set.go`, `internal/settings/steps.go` | AP5 | write path, default layer, spelling, refusal text, allowlist flip (F3) |
+| `internal/cli/settings_set.go`, and AP5's new `internal/settings/steps.go` (not yet on `main`; the merged step table is `internal/apply/steps.go`) | AP5 | write path, default layer, spelling, refusal text, allowlist flip (F3) |
 | `internal/cli/accounts_rm.go`, `project_enroll.go`, `project_cmd.go`, `models_add.go`, `models_rm.go`, `workspace.go` | AP6 | `project_cmd.go` (node publish), `accounts_rm.go` (pool removal), `models_*` (route writers) |
 | `internal/cli/project.go`, `docs_desktop_console_test.go`, `console/src/main/spawn.ts`, `ipc.ts`, `settingsedit.ts`, `confirm.ts` | AP8 | only if the settings default layer or a new writer reaches the console |
 | the F11 file set, `plugin/skills/*`, `CLAUDE.md` | AP7 | the refusal wording and the skill edits (F16) |
@@ -285,7 +315,7 @@ Arrows point one way. Module ids are final. Task ids per module are in `implemen
 
 ## Open items
 
-- D2608, D2611, D2612, D2613, D2614 unanswered (section 4); T3 and T5 open (section 5). The plan marks
+- D2608, D2611, D2612, D2613, D2614, D2615, D2616 unanswered (section 4); T3 and T5 open (section 5). The plan marks
   each task that waits on one.
 - No check is reserved. The reconcile publishes spend grants at `fugaro update`; whether the owner wants a
   live check for it (a number block) is not asked here, because no live action is planned.
