@@ -2053,7 +2053,7 @@ func TestUpdateManagedPolicyStageRefusesTheTypedLoosening(t *testing.T) {
 	if !strings.Contains(line, managedmode.NotConverged) {
 		t.Errorf("the policy step is the user's in a sentence that is not the gate's: %s", line)
 	}
-	if !strings.Contains(line, "the step's confirmation class is Typed, which no plan gate admits (D1026)") {
+	if !strings.Contains(line, "the step is one no plan gate judges, whatever the document says (D1026)") {
 		t.Errorf("the refusal does not name the class rule that refused the node: %s", line)
 	}
 	if strings.Contains(line, initflow.AgentRefusal("CLAUDECODE")) {
@@ -2123,7 +2123,7 @@ func TestUpdateManagedPolicyStageRefusesTheAccountChoiceKeys(t *testing.T) {
 	if !strings.Contains(line, managedmode.NotConverged) {
 		t.Errorf("the policy step is the user's in a sentence that is not the gate's: %s", line)
 	}
-	if !strings.Contains(line, "the step's confirmation class is Typed, which no plan gate admits (D1026)") {
+	if !strings.Contains(line, "the step is one no plan gate judges, whatever the document says (D1026)") {
 		t.Errorf("the refusal does not name the class rule that refused the node: %s", line)
 	}
 	account, stages := accountMembersOn(t, db)
@@ -2291,11 +2291,11 @@ func TestUpdateManagedWorkspaceStageUnderTheGate(t *testing.T) {
 
 // TestWorkspaceMemberPublishRefusesInAnAgentSession is the fence itself, one
 // step below the run that test above drives: a publish that ADMITS something to
-// the group is refused in a coding agent's session whatever the class says of
-// it (D1555, the same fence as D1552's), and what refuses it is the widening
-// (p.widens) read beside the session's own marker rather than the class typed
-// over it. The refusal is classified GateRefusedClass, because the document WAS
-// judged and it is the step's class that no plan gate admits (D1026), and what
+// the group is refused in a coding agent's session whatever the document says
+// of it (D1555, the same fence as D1552's), and what refuses it is the widening
+// (p.widens) read beside the session's own marker rather than any verdict about
+// the node. The refusal is classified GateRefusedUnjudged, because the step is
+// one no plan gate judges whatever the document looks like (D1026), and what
 // stands beside it is the stage's own command (Left) — the one thing an agent's
 // report to its owner can act on.
 //
@@ -2320,14 +2320,14 @@ func TestWorkspaceMemberPublishRefusesInAnAgentSession(t *testing.T) {
 	if !errors.As(err, &ge) {
 		t.Fatalf("the refusal is %v, want the gate's own sentence", err)
 	}
-	if ge.Refusal != initflow.GateRefusedClass {
-		t.Errorf("the refusal is classified %v, want %v: the document was judged and it is the class no plan gate admits, so what is left for the owner is the step's own command and not an issue about a plan", ge.Refusal, initflow.GateRefusedClass)
+	if ge.Refusal != initflow.GateRefusedUnjudged {
+		t.Errorf("the refusal is classified %v, want %v: the step is one no plan gate judges, so what is left for the owner is the step's own command and not an issue about a plan", ge.Refusal, initflow.GateRefusedUnjudged)
 	}
 	if !strings.Contains(ge.Reason, managedmode.NotConverged) {
 		t.Errorf("the refusal does not carry the gate's sentence: %q", ge.Reason)
 	}
-	if !strings.Contains(ge.Reason, "Typed") {
-		t.Errorf("the refusal does not name the class that refused the node: %q", ge.Reason)
+	if !strings.Contains(ge.Reason, "no plan gate judges") {
+		t.Errorf("the refusal does not name what refused the node: %q", ge.Reason)
 	}
 	if got, want := s.Left().Text, selfCommand()+" update"; got != want {
 		t.Errorf("the refusal's own command is %q, want %q: the owner runs this themselves", got, want)
@@ -2341,12 +2341,11 @@ func TestWorkspaceMemberPublishRefusesInAnAgentSession(t *testing.T) {
 
 // And the one write the gate never admits: a publish that puts a project in the
 // group the published node does not carry. The record decides who is in the
-// workspace, so the step is initflow.Typed (D846) and D1026 admits no plan
-// gate's answer for a Typed step, whatever the mark says: the node keeps what
-// it had, nothing is written, and nothing is recorded about it. The session
-// reads the gate's sentence and not the session's own — this step's document
-// WAS admitted by the rules the stage answered, so what refused it is the class
-// and not the fact that a coding agent is running it.
+// workspace, so the step is one no plan gate judges (D846's widening read as
+// D1026's unjudged step, whatever the mark says): the node keeps what it had,
+// nothing is written, and nothing is recorded about it. The session reads the
+// gate's sentence and not the session's own — the step's own widening is what
+// refused it, and not the fact that a coding agent is running it.
 func TestUpdateManagedWorkspaceStageRefusesTheTypedWidening(t *testing.T) {
 	r, db := updateBudgetRig(t)
 	r.managedRuns(t, initProjectName, initProject)
@@ -2376,7 +2375,7 @@ func TestUpdateManagedWorkspaceStageRefusesTheTypedWidening(t *testing.T) {
 	if !strings.Contains(line, managedmode.NotConverged) {
 		t.Errorf("the workspace step is the user's in a sentence that is not the gate's: %s", line)
 	}
-	if !strings.Contains(line, "the step's confirmation class is Typed, which no plan gate admits (D1026)") {
+	if !strings.Contains(line, "the step is one no plan gate judges, whatever the document says (D1026)") {
 		t.Errorf("the refusal does not name the class rule that refused the node: %s", line)
 	}
 	if strings.Contains(line, initflow.AgentRefusal("CLAUDECODE")) {
@@ -2432,7 +2431,7 @@ func TestUpdateManagedRefusesTheFirstWorkspacePublish(t *testing.T) {
 		t.Fatalf("the run did not reach the workspace stage, so nothing here was judged:\n%s", got)
 	}
 	line := stepLineInLog(t, got, head)
-	if !strings.Contains(line, "the step's confirmation class is Typed, which no plan gate admits (D1026)") {
+	if !strings.Contains(line, "the step is one no plan gate judges, whatever the document says (D1026)") {
 		t.Errorf("the refusal does not name the class rule that refused the first record: %s", line)
 	}
 	if v := db.Value(projectpolicy.PathWorkspace(initProjectName)); v != nil {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -790,7 +791,7 @@ func setCatalogConfigWithNoRepos(t *testing.T, f *projectFixture) {
 // write and not one a session makes: no flag stands in for the project's
 // name (T11 removed --yes), and a session with no terminal is refused — the
 // confirmation D846 reserves for the boundary every run is admitted by, and the
-// class a coding agent's session never reaches under the managed gate (D1026).
+// step a coding agent's session never reaches under the managed gate (D1026).
 //
 // A config that lists no repository is the publisher's own warning instead
 // (#1674): that node admits nothing, so every run of the project stops before
@@ -1359,6 +1360,83 @@ func TestUpdateMigrationDerivesTheBitbucketBlockFromLocalConfig(t *testing.T) {
 	}
 	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
 		t.Errorf("the node is version %d, want %d", got, projectpolicy.Version)
+	}
+}
+
+// TestUpdateConvergesALocalConfigThatMountsTheBitbucketToken: the owner's
+// ruling of 2026-11-14 refuses a profile mounting the Bitbucket credential at
+// `fugaro project policy publish`, and it must not reach this stage. The
+// installation this test is handed is the one the ruling left in the field: a
+// local config that mounts the credential in a profile, which this repository
+// published without complaint before the ruling, with a node that has drifted
+// from it. The stage builds its node through the same build the publish command
+// takes (policyNodeForPublish), so a refusal in that build would stop `fugaro
+// update` whole, before the Terraform apply, and leave the operator editing the
+// file by hand — the one step an update must never need (the HARD RULE).
+//
+// What the stage writes is the config's own node, the mount included: taking
+// the entry off the file here would delete a credential from per-repository job
+// configs the operator may need it on (D473), which is a rewrite of their
+// decision and no stage's to make. The publish command and the deployer are
+// where the entry is refused.
+//
+// The budget below is the node's own and the file's is the fixture's 5, which
+// is the drift that takes this run through the publish half
+// (policyConfigDrift → publishPlanFor) rather than through the migration chain
+// alone — the half the reviewer found uncovered.
+func TestUpdateConvergesALocalConfigThatMountsTheBitbucketToken(t *testing.T) {
+	f := newProjectFixture(t, bitbucketTokenConfig)
+	node := v3Node(v3NodeMountingTheBitbucketToken())
+	node["budget"] = map[string]any{"mode": "enforce", "per_run_usd": 9}
+	f.db.Set(projectpolicy.PathShared(), node)
+	h := newMigrationRig(t, f, &initOptions{})
+
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("the update refused a local config whose profile mounts %s, the installation the ruling left in the field: %v\n%s", config.BitbucketSecret, err, out)
+	}
+	p := publishedPolicy(t, f)
+	if p.Budget.PerRunUSD != 5 {
+		t.Errorf("the node's budget is %v, want the file's 5: the stage did not reach the publish half, so this test pins nothing about it\n%s", p.Budget.PerRunUSD, out)
+	}
+	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
+		t.Errorf("the node is version %d, want %d", got, projectpolicy.Version)
+	}
+	pr, ok := p.Profiles[projectpolicy.DefaultProfileName]
+	if !ok {
+		t.Fatalf("profiles = %v, want the config's own", p.ProfileNames())
+	}
+	if !slices.Contains(pr.Secrets, config.BitbucketSecret) {
+		t.Errorf("profiles.%s.secrets = %v: the stage rewrote the operator's profile, whose mount is theirs to take off (D473) — the publish command and the deployer refuse it, and this stage converges the installation instead", projectpolicy.DefaultProfileName, pr.Secrets)
+	}
+}
+
+// TestUpdateFirstPublishesALocalConfigThatMountsTheBitbucketToken is the same
+// convergence at the other door into the publish half: a project that has never
+// published a node and whose config states a member only the node can carry
+// (firstPolicyPublish). The write there is the node the same build makes, so a
+// refusal in the build stops an installation that has nothing published at all
+// from ever publishing, with the same hand edit demanded of the operator.
+func TestUpdateFirstPublishesALocalConfigThatMountsTheBitbucketToken(t *testing.T) {
+	f := newProjectFixture(t, catalogConfigYAML+bitbucketTokenConfig)
+	h := newMigrationRig(t, f, &initOptions{})
+	fakeTerminal(t)
+	h.cmd.SetIn(strings.NewReader("aurora\n"))
+
+	out, err := h.apply(t, false)
+	if err != nil {
+		t.Fatalf("the first publish refused a local config whose profile mounts %s: %v\n%s", config.BitbucketSecret, err, out)
+	}
+	p := publishedPolicy(t, f)
+	if p.ImageCatalog == nil {
+		t.Fatalf("the node carries no catalog, so this run never reached the first publish:\n%s", out)
+	}
+	pr, ok := p.Profiles[projectpolicy.DefaultProfileName]
+	if !ok {
+		t.Fatalf("profiles = %v, want the config's own", p.ProfileNames())
+	}
+	if !slices.Contains(pr.Secrets, config.BitbucketSecret) {
+		t.Errorf("profiles.%s.secrets = %v, want the config's own mount", projectpolicy.DefaultProfileName, pr.Secrets)
 	}
 }
 

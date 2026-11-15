@@ -1520,9 +1520,9 @@ func raisedGuardrailFixture(t *testing.T) *projectFixture {
 // is one decision and not two.
 //
 // Before the fix, the block was a member no rule judged on either door: the
-// stage raised a spawn rate with the ordinary YesOrTyped class, so an agent's
-// session in a managed project published it with nothing asked and no record of
-// anything but a step that passed.
+// stage raised a spawn rate as an ordinary covered step, so an agent's session
+// in a managed project published it with nothing asked and no record of anything
+// but a step that passed.
 func TestUpdatePublishRaisedGuardrailNeedsTheTypedName(t *testing.T) {
 	old := selfCommand
 	selfCommand = func() string { return "fugaro" }
