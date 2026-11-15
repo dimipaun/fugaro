@@ -30,8 +30,8 @@ import (
 //
 //   - Nothing leaves the state, and nothing is deleted, without the project's
 //     name typed at a real terminal -- twice. askTyped is the primitive, and
-//     ask is never used here: --yes satisfies ask, --json, a pipe,
-//     --non-interactive and a coding agent's session satisfy neither.
+//     ask is never used here: an answer a run carries satisfies ask, --json, a
+//     pipe, --non-interactive and a coding agent's session satisfy neither.
 //   - The state removal is the narrow one Removals computes: the protected
 //     addresses the state still holds, and nothing else. An unprotected
 //     address stays in the state for the apply to delete -- taking it out
@@ -499,13 +499,14 @@ func (r *initRun) retireManaged(ctx context.Context, c *infra.Clients, t *tf.TF,
 		r.warn(retireManagedStops(stopped))
 		return false, nil
 	}
-	// D55's one rule, asked with this run's conditions exactly as a gate step
-	// asks it (update_managed.go's gateStep): the verdict a managed project's
-	// gate would stand in for a confirmation here is the one this run's
-	// session can be given it in. It is asked BEFORE the state removal, so a
-	// session that cannot have it is refused with a state that is still whole
-	// -- the same refusal it reads today, and no residue to clean up.
-	if !initflow.ConfirmsByGate(initflow.YesOrTyped, r.conditions(), initflow.Managed{Managed: true, Admitted: true}) {
+	// The owner's own terminal and nobody else's: the automatic path removes
+	// state on this run's own reading of the marks, and a coding agent's
+	// session is never the session that reading is made for (initflow's
+	// PersonAtTheTerminal, the condition half every gate step here is asked
+	// with). It is asked BEFORE the state removal, so a session that is not
+	// this one is refused with a state that is still whole -- the same
+	// refusal it reads today, and no residue to clean up.
+	if !initflow.PersonAtTheTerminal(r.conditions()) {
 		return false, nil
 	}
 	r.retireAuto = true
@@ -573,8 +574,8 @@ func (r *initRun) retireAdmit(ctx context.Context, t *tf.TF, rets []infra.Retire
 		// is the shape gateStep reads as gateUnreadable: nothing is applied.
 		return &initflow.GatedError{Reason: gateUnreadable, Err: err, Refusal: initflow.GateRefusedUnread}
 	}
-	conv := managedmode.ConvergeAdmitted(doc, gateClass(), retireAdmittedRules)
-	m, err := g.g.admit(ctx, gateClass(), conv)
+	conv := managedmode.ConvergeAdmitted(doc, retireAdmittedRules)
+	m, err := g.g.admit(ctx, conv)
 	if err != nil {
 		return err
 	}
@@ -582,7 +583,7 @@ func (r *initRun) retireAdmit(ctx context.Context, t *tf.TF, rets []infra.Retire
 	// managed between the two reads keeps the confirmation it has always had,
 	// and here that is the typed one -- the session this run is in is one that
 	// can be asked (retireManaged said so before the state removal).
-	if !initflow.GateConfirms(gateClass(), r.conditions(), m) {
+	if !initflow.GateStandsIn(r.conditions(), m) {
 		return r.retireConfirm(rets, spec, undone)
 	}
 	fmt.Fprintf(r.w, "  %s\n", r.gateProceeded())
@@ -734,17 +735,17 @@ func (r *initRun) retireLeftover(spec infra.RepoSpec, err error) error {
 }
 
 // retireConfirm is one of the retirement's two confirmations. It is askTyped
-// and never ask: ask is covered by --yes, and a retirement that --yes could
-// confirm is exactly what the design forbids -- the Typed class is what keeps
-// it out. Nothing is typed for it any more (T7, docs/no-prompt-policy): the
+// and never ask: ask is covered by the run's own answer, and a retirement that
+// answer could confirm is exactly what the design forbids -- this step
+// reaching no answer a run carries is what keeps it out. Nothing is typed for it any more (T7, docs/no-prompt-policy): the
 // person at their own terminal is the confirmation, and --ask asks the y/N of
 // the managed project that passed it. reachable=false means the run cannot ask
 // at all (--yes, --non-interactive, --json, a pipe, a coding agent), and then
 // nothing is removed and nothing is deleted.
 //
 // The refusal for that case is the retirement's own, not notConfirmed's
-// (review round 4): askTyped showed no prompt at all -- canConfirmTyped
-// refuses before typed runs -- so a step that was never put to anybody is not
+// (review round 4): askTyped showed no prompt at all -- the rule refuses
+// before a typed confirmation runs -- so a step that was never put to anybody is not
 // a step that was declined, and the ordinary refusal's ", or pass --yes once
 // you have read what it does" names the one flag design §4.2 forbids for a
 // retirement, which would send the reader straight back to the same refusal.

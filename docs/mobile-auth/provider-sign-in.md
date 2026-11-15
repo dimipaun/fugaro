@@ -360,7 +360,7 @@ Named so that a reader sees the blast radius is **decisions, not files**:
   the provider rows'.
 - **A rules generation.** The first rule that **reads** a provider claim opens a family to a session
   the deployed document does not admit under, and that is what `internal/projectpolicy/version.go`'s
-  `RulesVersion` (currently **4**) exists to signal: a generation is a deploy the owner has to run on
+  `RulesVersion` (currently **5**) exists to signal: a generation is a deploy the owner has to run on
   **every installation**, and [reconciliation.md](reconciliation.md) §F29 and the plan's §3 both make
   "a generation" a thing a part stops and asks about rather than quietly adds. The generated document
   is pinned by `internal/budget/rules/testdata/rules.golden.json`, and the denial table by the

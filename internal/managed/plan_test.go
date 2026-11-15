@@ -18,7 +18,6 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -1665,7 +1664,7 @@ func TestOutOfTableGrantAppliesAndIsRecorded(t *testing.T) {
 	for _, ref := range v.Warnings {
 		warnings = append(warnings, ref.Address+": "+ref.Why)
 	}
-	c := ConvergeWarned(doc, initflow.YesOrTyped, []string{"the plan was judged"}, warnings)
+	c := ConvergeWarned(doc, []string{"the plan was judged"}, warnings)
 	if err := c.Refuse(); err != nil {
 		t.Fatalf("a warned step was refused (D1545 lets it proceed): %v", err)
 	}

@@ -29,10 +29,10 @@ import (
 //     only a question about prompts. A step the gate refuses is refused before
 //     any of this runs, in the gate's own sentence.
 //   - What the confirmation is. The flag's only effect on a step is through
-//     initflow.Conditions.Ask, which GateConfirms answers false to: the step
+//     initflow.Conditions.Ask, which GateStandsIn answers false to: the step
 //     falls back to the confirmation the run would have had if the project were
-//     not managed, which is that step's own prompt, its own class and its own
-//     words (the project's name typed, a per-build confirmation, a y/N).
+//     not managed, which is that step's own prompt and its own words (the
+//     project's name typed, a per-build confirmation, a y/N).
 //
 // The refusal is a refusal and not a fallback (initflow.AskRefusal): a managed
 // project's --ask where nobody can answer refuses the run, and it does NOT let
