@@ -24,7 +24,7 @@ Numbers taken: **D2430-D2449** (the highest in use is D2429, in open pull reques
 
 ## Findings
 
-- **F1 (Exists).** `git.pr.labels` and `ApplyReady` already label a ready pull request. The spec's labels are a second, dynamic mechanism and leave `git.pr.labels` alone. *Consequence:* no change to `PRSpec.Labels` or `ApplyReady`; the new capability is separate (C1).
+- **F1 (Exists).** `git.pr.labels` and `ApplyReady` already label a ready pull request. The spec's labels are a second, dynamic mechanism and leave `git.pr.labels` alone. *Consequence:* no change to `PRSpec.Labels` or `ApplyReady`; the new capability is separate (T1).
 - **F2 (Rule).** `docs/git-providers.md` says a draft carries no reviewers and no labels, and a run that ends as a draft notifies nobody. The spec labels a pull request "when it is created". *Consequence:* the status and spec labels are not written through `PRSpec`; the daemon writes them after it sees the pull request, so the draft rule stands (R1).
 - **F3 (Wrong).** The spec says GitHub and GitLab support labels. The code has `github`, `bitbucket` and `fake` providers only; `fugaro exec` refuses "gitlab". *Consequence:* GitHub is the one real adapter (D2431).
 - **F4 (Wrong).** The spec says the orchestrator "opens a PR for a spec". A run opens it (the runner's `EnsurePR`); the daemon learns the number from the run record. *Consequence:* spec labels are applied when the daemon first sees the pull request in a run record (R2).

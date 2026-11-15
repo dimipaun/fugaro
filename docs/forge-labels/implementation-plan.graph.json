@@ -1,0 +1,180 @@
+{
+  "schema_version": 3,
+  "plan": "docs/forge-labels/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "T1",
+      "title": "the GitHub label adapter",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/gitprov/labels.go",
+          "internal/gitprov/labels_test.go",
+          "internal/gitprov/github/labels.go",
+          "internal/gitprov/github/labels_test.go",
+          "internal/gitprov/github/testdata/labels_*.json"
+        ]
+      }
+    },
+    {
+      "id": "T2",
+      "title": "the fake and Bitbucket sides of the capability",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/gitprov/fake/labels.go",
+          "internal/gitprov/fake/labels_test.go",
+          "internal/gitprov/bitbucket/labels.go",
+          "internal/gitprov/bitbucket/labels_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T3",
+      "title": "the credentials service's label mint",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/creds/labelmint.go",
+          "internal/credsvc/labelmint.go",
+          "internal/credsvc/labelmint_test.go",
+          "internal/credsvc/server.go"
+        ]
+      }
+    },
+    {
+      "id": "T4",
+      "title": "the label mint client",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/creds/labelmint_service.go",
+          "internal/creds/labelmint_service_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T5",
+      "title": "the orchestrator's label syncer",
+      "run": null,
+      "version": null,
+      "size": 4,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/orchestrator/labelplan.go",
+          "internal/orchestrator/labelsync.go",
+          "internal/orchestrator/labelsync_test.go",
+          "internal/orchestrator/tick.go"
+        ]
+      }
+    },
+    {
+      "id": "T6",
+      "title": "the documents",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/git-providers.md",
+          "SECURITY.md",
+          "website/content/security.md",
+          "docs/releases/**"
+        ]
+      }
+    },
+    {
+      "id": "T7",
+      "title": "wire the daemon to the real label path and prove it",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/orchestrator_labels.go",
+          "internal/cli/orchestrator_labels_test.go",
+          "internal/cli/orchestrator_run.go"
+        ]
+      }
+    },
+    {
+      "id": "CK",
+      "title": "Check 640",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check640.sh",
+          "docs/gcp-live-checklist.md"
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "task": "T2",
+      "needs": "T1",
+      "reason": "the fake and Bitbucket implement the Labeler interface T1 writes"
+    },
+    {
+      "task": "T5",
+      "needs": "T1",
+      "reason": "the syncer is written against the Labeler interface and OwnedLabel T1 writes"
+    },
+    {
+      "task": "T4",
+      "needs": "T3",
+      "reason": "the client speaks the request and response shape T3 writes"
+    },
+    {
+      "task": "T7",
+      "needs": "T1",
+      "reason": "wires the real adapter"
+    },
+    {
+      "task": "T7",
+      "needs": "T2",
+      "reason": "the end-to-end test uses the fake provider"
+    },
+    {
+      "task": "T7",
+      "needs": "T3",
+      "reason": "wires the real service"
+    },
+    {
+      "task": "T7",
+      "needs": "T4",
+      "reason": "wires the real client"
+    },
+    {
+      "task": "T7",
+      "needs": "T5",
+      "reason": "wires the real syncer into the tick"
+    },
+    {
+      "task": "CK",
+      "needs": "T7",
+      "reason": "the check runs the real path"
+    }
+  ],
+  "decoupling": [],
+  "contract_changes": []
+}
