@@ -36,10 +36,11 @@
 #     second must print `No changes` and exit 0.
 #   - the read-backs the steps state as FACTs, each as its own row: the project
 #     exists and is ACTIVE (step 2), the billing link names the account (step
-#     12), the Firestore database's location is the region (step 3), the runs
-#     bucket and the history job are there (step 4), Artifact Registry holds the
-#     release's history image (step 14), and `fugaro doctor --project fugaro
-#     --all` resolves THIS installation (the block's sixth stop, step 5 on).
+#     12), the Firestore database's location is the CLI's own fixed one and not
+#     the region (step 3), the runs bucket and the history job are there (step
+#     4), Artifact Registry holds the release's history image (step 14), and
+#     `fugaro doctor --project fugaro --all` resolves THIS installation (the
+#     block's sixth stop, step 5 on).
 #   - the Restore, from the exit trap as well: the jobs, the two buckets, the
 #     secrets listed by name as EVIDENCE and never counted, and the project's
 #     own `gcloud projects delete`.
