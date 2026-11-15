@@ -2015,6 +2015,100 @@ func (s *svc) reviewRunTokenOf(slug string, prs ...int) string {
 	)
 }
 
+// proxySharedSvc is the installation under test for a SHARED project job's
+// caller (B5.3): the review fixture's installation — the same repository, the
+// same bundle, the same fake upstream — with the class's own row in both
+// tables and the profile that row serves, so the caller is a coding run of a
+// shared Bitbucket job rather than a review one.
+//
+// The row is what the verifier answers the class by (AuthConfig.SharedJobAccounts)
+// and what the pairing's table holds (Config.SharedAccounts), and a deployment
+// hands both the same rows (SharedJobAccountsFor). The published profile is the
+// fixture's own document plus a profiles block, because a shared caller is
+// bound to its profile's repositories by the project's own answer
+// (projectpolicy.Admits) and the review document defines no profile at all.
+//
+// The repository table holds the fixture's OTHER repository beside the one the
+// caller's identity names, which the review fixture deliberately does not. A
+// shared caller's binding is the identity's own repository resolved through
+// that table, so a test that presents an identity of another repository has to
+// be able to reach the PROFILE's gate: with the table holding one row, every
+// such test would be a test about the table.
+func proxySharedSvc(t *testing.T, mutate ...func(*svc, *Config)) (*svc, *proxyUpstream, string) {
+	t.Helper()
+	sibling := bitbucketSlug(t, proxySiblingRepo)
+	return proxyReviewSvc(t, append([]func(*svc, *Config){
+		func(s *svc, cfg *Config) {
+			cfg.SharedAccounts = []SharedJobAccount{{
+				Email:   testSharedSA,
+				Profile: sharedCodingProfile,
+				Repos:   []string{testCanonical(t, testBitbucketRepo)},
+			}}
+			pol := &fakePolicy{shared: decodeTestPolicy(t, proxySharedCodingPolicyDoc(t)), sharedFound: true}
+			cfg.Policy, s.policy = pol, pol
+			s.policy.admissions = map[string]*projectpolicy.RepoPolicy{
+				s.slug:  decodeTestChild(t, testChildDoc(testReviewAccount)),
+				sibling: decodeTestChild(t, testChildDoc(testReviewAccount)),
+			}
+			cfg.Repos[sibling] = testCanonical(t, proxySiblingRepo)
+		},
+	}, mutate...)...)
+}
+
+// sharedProfileAdmitsTheSibling widens the fixture's shared job to the
+// fixture's other repository, which is the state a shared job exists for: one
+// job serving every repository its profile names (D2302, F40). The project's
+// enrollment and the token's block already name both, so the profile's own list
+// is the only published gate that moves — and it is the gate the pairing reads
+// (projectpolicy.Admits).
+//
+// The class's own row moves with it, and deliberately: the row is the
+// deployment's statement of what the job was deployed for and mirrors the
+// published profile's allow_repos (SharedJobAccountFor), so a deployment that
+// serves both repositories hands both lists the same two. Widening the profile
+// alone would leave the pairing's ROW gate closing first, and the test would be
+// about the row rather than about the profile the acceptance names.
+func sharedProfileAdmitsTheSibling(t *testing.T) func(*svc, *Config) {
+	t.Helper()
+	both := []string{testCanonical(t, testBitbucketRepo), testCanonical(t, proxySiblingRepo)}
+	return func(_ *svc, cfg *Config) {
+		pol := cfg.Policy.(*fakePolicy)
+		pr := pol.shared.Profiles[sharedCodingProfile]
+		pr.AllowRepos = append([]string{}, both...)
+		pol.shared.Profiles[sharedCodingProfile] = pr
+		for i := range cfg.SharedAccounts {
+			if cfg.SharedAccounts[i].Email == testSharedSA {
+				cfg.SharedAccounts[i].Repos = append([]string{}, both...)
+			}
+		}
+	}
+}
+
+// proxySharedCall is one call of this route as the fixture's shared project
+// job: the class's own account (sharedJobToken, review_test.go) beside a run
+// identity of the repository given.
+//
+// The identity is a coding run's — the branch it pushes (fb) and the pull
+// requests it may write (fpr) over the slug claims of the repository it names —
+// because a shared job is a coding job, and the repository is a parameter
+// because the class serves every repository its profile admits: which one the
+// pairing resolves is exactly what the class's tests are about.
+//
+// The job name these calls report is the fixture's per-repository job's
+// (s.job) and deliberately not a shared one. The class comes off the verified
+// email and never off the X-Fugaro-Run-Job header, so a caller that writes the
+// wrong job name must still be answered as what its account is.
+func (s *svc) proxySharedCall(t *testing.T, method, path string, body []byte, slug string, mutate ...func(*http.Request)) (*http.Response, []byte) {
+	t.Helper()
+	claims := append(proxyClaims(s.proxyBranch()),
+		func(c map[string]any) { c["fs"] = slug },
+		func(c map[string]any) { c["sub"] = "r~" + slug + "~" + s.run },
+		func(c map[string]any) { c["user_id"] = "r~" + slug + "~" + s.run },
+	)
+	run := s.sharedRunToken(claims...)
+	return s.proxyCallAs(t, method, path, body, run, s.sharedJobToken(), s.job, mutate...)
+}
+
 // noTokenAnywhere is this route's oldest promise read on the review class's own
 // calls: the bundle's token travels to bitbucket.org and into nothing this
 // service writes or answers (G5, C1.13).
@@ -2315,58 +2409,305 @@ func TestReviewCallerWithoutAPairedIdentityIsRefused(t *testing.T) {
 	}
 }
 
-// TestSharedCodingCallerRefusedOnTheBitbucketRoute: the class is refused at
-// this route until B5.3, and it is refused AT the route. The identity is whole
-// by then — the account is the shared class's, and its run identity is one of
-// the repositories the profile it serves is bound to — so the refusal is the
-// route's own binding question (G21's other half: what this route forwards is a
-// workspace token, and a shared caller's binding for it is the published
-// block's admission of the repository as a proxied one) and not the class's.
+// ---------------------------------------------------------------------------
+// The shared class (B5.3, G21)
+// ---------------------------------------------------------------------------
+
+// TestBitbucketProxyPairsASharedJob is this task's red step, and it is B5.3's
+// "the Bitbucket route serves a shared caller for a profile repository": the
+// class this route refused whole until now is served it, for the repository its
+// run identity names and for no other.
 //
-// It is a verified caller refused at a route, so it is recorded exactly once,
-// and — like every refusal taken above the route's own classification — it
-// names neither a purpose nor a credential.
-func TestSharedCodingCallerRefusedOnTheBitbucketRoute(t *testing.T) {
-	slug := bitbucketSlug(t, testBitbucketRepo)
-	s, up, _ := proxyReviewSvc(t, func(s *svc, cfg *Config) {
-		// The class's table, so the refusal below is the route's and not the
-		// pairing's: the same row the verifier admits the caller by, which is
-		// what a deployment hands both (SharedJobAccountsFor).
-		cfg.SharedAccounts = []SharedJobAccount{{Email: testSharedSA, Profile: sharedCodingProfile, Repos: []string{testCanonical(t, testBitbucketRepo)}}}
-		// And the profile the pairing's verdict reads, which the review
-		// fixture's own document does not define: a shared caller is bound to
-		// its profile's repositories by the project's own answer
-		// (projectpolicy.Admits), so a fixture whose node defines no profile
-		// would refuse the caller at the pairing and never reach this route.
-		pol := &fakePolicy{shared: decodeTestPolicy(t, proxySharedCodingPolicyDoc(t)), sharedFound: true}
-		cfg.Policy, s.policy = pol, pol
-		s.policy.admissions = map[string]*projectpolicy.RepoPolicy{
-			slug: decodeTestChild(t, testChildDoc(testReviewAccount)),
+// The fetch is the call a coding run is built on — the clone, the submodule
+// traffic and the LFS traffic all hang off it — and a shared Bitbucket job's
+// container holds no token at all (D2302), so this route is the only way such a
+// run reaches git. What bitbucket.org is shown is the bundle's token and never
+// the caller's own Google ID token, and the audit line names the run, the
+// repository the pairing resolved and the class's own account.
+//
+// The two cases are the class's two halves. The first is the repository the run
+// identity names, which is what the pairing resolved and what the route holds
+// the request to. The second is the profile's OTHER repository: a shared job is
+// one job serving every repository its profile admits, so the repository a call
+// is served for is the identity's own and never the one the job was deployed
+// over — the account names no repository, and reading one out of it is the
+// mistake F40 exists to prevent.
+//
+// Both calls carry the fixture's per-repository job's name in X-Fugaro-Run-Job
+// and are answered as the shared class all the same: the class is read off the
+// verified email and never off text the caller writes.
+func TestBitbucketProxyPairsASharedJob(t *testing.T) {
+	t.Run("the repository the run identity names", func(t *testing.T) {
+		s, up, token := proxySharedSvc(t)
+		up.answerWith(http.StatusOK, "001e# service=git-upload-pack\n0000")
+
+		resp, ans := s.proxySharedCall(t, http.MethodGet, proxyPath(proxyGitPath("info/refs")+"?service=git-upload-pack"), nil, s.slug)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("the shared caller's fetch answered %d, want 200 (%s)", resp.StatusCode, ans)
 		}
-		if cfg.Repos[slug] != testCanonical(t, testBitbucketRepo) {
-			t.Errorf("the fixture's repository table does not hold the caller's repository: %v", cfg.Repos)
+		if string(ans) != "001e# service=git-upload-pack\n0000" {
+			t.Errorf("the answer = %q, and the upstream's bytes must be relayed unchanged", ans)
+		}
+		got := up.only(t)
+		if got.host != "bitbucket.org" || got.scheme != "https" {
+			t.Errorf("the fetch was addressed to %s://%s, want https://bitbucket.org", got.scheme, got.host)
+		}
+		if want := "/" + proxyGitPath("info/refs"); got.path != want {
+			t.Errorf("the fetch's upstream path = %q, want %q", got.path, want)
+		}
+		if got.query != "service=git-upload-pack" {
+			t.Errorf("the fetch's upstream query = %q, want service=git-upload-pack", got.query)
+		}
+		wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte(bitbucket.GitUsername+":"+token))
+		if got.auth != wantAuth {
+			t.Errorf("the upstream was shown %q as its credential, want the bundle's token as git's own x-token-auth Basic", got.auth)
+		}
+		// The caller's own identity does not travel: the run identity and the
+		// run-job header are this contract's, and the job's Google ID token is
+		// what the Authorization assertion above reads as overwritten.
+		for _, h := range []string{HeaderRunIdentity, HeaderRunJob} {
+			if v := got.header.Get(h); v != "" {
+				t.Errorf("the upstream was shown %s: %q, and this contract's own headers never leave the process", h, v)
+			}
+		}
+
+		line := s.onlyAuditLine(t)
+		if line["purpose"] != PurposeGit || line["credential"] != config.BitbucketSecret || line["status"] != StatusOK {
+			t.Errorf("the audit line = %v, want the git purpose, the bundle's credential and ok", line)
+		}
+		if line["run"] != s.run || line["repository"] != s.slug || line["caller"] != testSharedSA {
+			t.Errorf("the audit line = %v, want the run %q of %q called by %q", line, s.run, s.slug, testSharedSA)
+		}
+		s.noTokenAnywhere(t, token, string(ans))
+	})
+
+	t.Run("the profile's other repository", func(t *testing.T) {
+		s, up, token := proxySharedSvc(t, sharedProfileAdmitsTheSibling(t))
+		up.answerWith(http.StatusOK, "001e# service=git-upload-pack\n0000")
+		sibling := bitbucketSlug(t, proxySiblingRepo)
+
+		resp, ans := s.proxySharedCall(t, http.MethodGet,
+			proxyPath(proxySiblingRepo+".git/info/refs?service=git-upload-pack"), nil, sibling)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("the shared caller's fetch of the profile's other repository answered %d, want 200 (%s)", resp.StatusCode, ans)
+		}
+		if want := "/" + proxySiblingRepo + ".git/info/refs"; up.only(t).path != want {
+			t.Errorf("the fetch's upstream path = %q, want %q", up.only(t).path, want)
+		}
+		line := s.onlyAuditLine(t)
+		if line["repository"] != sibling || line["caller"] != testSharedSA {
+			t.Errorf("the audit line = %v, want the repository %q called by %q", line, sibling, testSharedSA)
+		}
+		s.noTokenAnywhere(t, token, string(ans))
+	})
+}
+
+// TestBitbucketProxyRefusesARepoOutsideTheProfile is B5.3's other two cases
+// read as one table: the class is served one repository — the one its run
+// identity names, resolved through the installation's table and admitted by the
+// calling job's profile — and every other repository is refused, by whichever
+// of the three gates says no.
+//
+//   - a run identity of a repository the calling job's profile does not admit
+//     is refused at the PAIRING, above this route and before the bundle is
+//     read. The row names the repository and the profile does not, which is the
+//     state the project's own verdict exists for: the row is the deployment's
+//     statement and the published profile may be the narrower of the two
+//     (projectpolicy.Admits, B5.1's review finding).
+//   - a request naming another repository than the identity's is refused by the
+//     route's own binding (other_repository), of this workspace or of another.
+//     This is the case the class makes sharp: what the route forwards reaches
+//     the whole workspace, so the ONE repository the pairing fixed is the whole
+//     of what a call may be served for.
+//   - a repository the published block does not list is refused as
+//     not_admitted, and one an installation does not proxy at all as proxy_off.
+//     The two are Decide's own gates (G3, G9) and the reason the profile's list
+//     is not the verdict: a profile may admit a repository the token's block
+//     does not, and the block is what says whether this installation forwards a
+//     token there at all.
+//
+// Every case is asserted to forward no byte, to leave exactly one audit line,
+// and to name the class's own account as the caller: a refused call is a call
+// bitbucket.org never sees, and it is recorded once like every other refusal.
+func TestBitbucketProxyRefusesARepoOutsideTheProfile(t *testing.T) {
+	slug := bitbucketSlug(t, testBitbucketRepo)
+	sibling := bitbucketSlug(t, proxySiblingRepo)
+	siblingCanonical := testCanonical(t, proxySiblingRepo)
+	own := proxyPath(proxyGitPath("info/refs") + "?service=git-upload-pack")
+	siblings := proxyPath(proxySiblingRepo + ".git/info/refs?service=git-upload-pack")
+	for _, tc := range []struct {
+		name   string
+		slug   string
+		path   string
+		asked  string
+		mutate func(*svc, *Config)
+		status int
+		typ    string
+		class  string
+	}{
+		{
+			name: "a run identity of a repository the calling job's profile does not admit",
+			slug: sibling,
+			path: siblings,
+			mutate: func(_ *svc, cfg *Config) {
+				// The row names the repository, so the gate that closes is the
+				// profile's and not the row's.
+				cfg.SharedAccounts = []SharedJobAccount{{
+					Email:   testSharedSA,
+					Profile: sharedCodingProfile,
+					Repos:   []string{testCanonical(t, testBitbucketRepo), siblingCanonical},
+				}}
+			},
+			status: StatusUnverified,
+			typ:    ErrorUnverifiedRunIdentity,
+		},
+		{
+			name:   "a fetch of another repository of the same workspace",
+			slug:   slug,
+			path:   siblings,
+			asked:  proxySiblingRepo,
+			status: StatusRequestRefused,
+			typ:    ErrorRequestRefused,
+			class:  gitproxy.ReasonOtherRepository,
+		},
+		{
+			name:   "a fetch of another workspace's repository",
+			slug:   slug,
+			path:   proxyPath(testElsewhereRepo + ".git/info/refs?service=git-upload-pack"),
+			asked:  testElsewhereRepo,
+			status: StatusRequestRefused,
+			typ:    ErrorRequestRefused,
+			class:  gitproxy.ReasonOtherRepository,
+		},
+		{
+			name: "a repository the published block does not list",
+			slug: slug,
+			path: own,
+			mutate: func(_ *svc, cfg *Config) {
+				pol := cfg.Policy.(*fakePolicy)
+				pol.shared.BitbucketToken.AllowRepos = []string{siblingCanonical}
+			},
+			status: StatusRequestRefused,
+			typ:    ErrorRequestRefused,
+			class:  gitproxy.ReasonNotAdmitted,
+		},
+		{
+			name: "an installation that does not proxy",
+			slug: slug,
+			path: own,
+			mutate: func(_ *svc, cfg *Config) {
+				pol := cfg.Policy.(*fakePolicy)
+				pol.shared.BitbucketToken.Proxy = false
+			},
+			status: StatusRequestRefused,
+			typ:    ErrorRequestRefused,
+			class:  gitproxy.ReasonProxyOff,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var extra []func(*svc, *Config)
+			if tc.mutate != nil {
+				extra = append(extra, tc.mutate)
+			}
+			s, up, _ := proxySharedSvc(t, extra...)
+
+			resp, ans := s.proxySharedCall(t, http.MethodGet, tc.path, nil, tc.slug)
+			if tc.class == "" {
+				if resp.StatusCode != tc.status {
+					t.Fatalf("the call answered %d, want %d (%s)", resp.StatusCode, tc.status, ans)
+				}
+				if got := refusal(t, resp.StatusCode, ans); got.Error != tc.typ {
+					t.Errorf("the refusal is %q, want %q: %s", got.Error, tc.typ, got.Message)
+				}
+			} else {
+				proxyRefused(t, resp, ans, tc.status, tc.typ, tc.class)
+			}
+			if n := up.count(); n != 0 {
+				t.Fatalf("the upstream saw %d calls, and a refused repository forwards nothing: %+v", n, up.calls())
+			}
+			line := s.onlyAuditLine(t)
+			if line["status"] != tc.typ {
+				t.Errorf("the audit line = %v, want the refusal's own wire type %q", line, tc.typ)
+			}
+			// The line names the run and the repository the CALL was made
+			// under — the identity's own — and never the one the request asked
+			// for: a refused call is recorded as the act it was, and the byte
+			// the caller sent is not what an audit line is for.
+			if line["run"] != s.run || line["repository"] != tc.slug {
+				t.Errorf("the audit line = %v, want the run %q of %q", line, s.run, tc.slug)
+			}
+			// A refusal taken above the classification names no purpose and no
+			// credential (routeAct's rule for this route): the service had not
+			// yet decided what the call was.
+			if tc.class == "" && (auditField(line, "purpose") != "" || auditField(line, "credential") != "") {
+				t.Errorf("the audit line = %v, and a refusal taken above the classification names neither a purpose nor a credential", line)
+			}
+			// The class is the only thing that tells a refusal of a repository
+			// from a refusal of a ref, and the operator's own line is the only
+			// place it survives: the refusal's body carries it too, and a git
+			// client shows the status and not the body (refuseProxyReason).
+			if tc.class != "" {
+				if !strings.Contains(s.logs.String(), "class="+tc.class) {
+					t.Errorf("the operator's line for the refusal does not name the class %q: %s", tc.class, s.logs.String())
+				}
+				if tc.asked != "" && strings.Contains(s.logs.String(), tc.asked) {
+					t.Errorf("the operator's line carries %q, a repository the caller asked for and this service never echoes", tc.asked)
+				}
+			}
+			if got := auditField(line, "caller"); got != testSharedSA {
+				t.Errorf("the audit line names the caller %v, want the shared job's own account %q", got, testSharedSA)
+			}
+		})
+	}
+}
+
+// TestBitbucketProxyPerRepoPairingUnchanged: a per-repository job's pairing is
+// its own job account's repository (G3, review finding N1), and this task left
+// it exactly where it was — the pairing is the shared class's binding, and only
+// the shared class's.
+//
+// The installation here is the state that tells the two apart: the published
+// policy admits BOTH of the fixture's repositories, in the token's block, while
+// the calling job's account is bound to one of them. What refuses a call for
+// the other is that binding and nothing about the policy — which is the whole
+// difference between the class a shared job is and the one a per-repository job
+// is, and the property a change to the shared class's pairing is likeliest to
+// move by accident.
+func TestBitbucketProxyPerRepoPairingUnchanged(t *testing.T) {
+	svcWithBothAdmitted := func(t *testing.T) (*svc, *proxyUpstream) {
+		t.Helper()
+		s, up, _ := proxySvc(t, func(s *svc, cfg *Config) {
+			pol := &fakePolicy{shared: decodeTestPolicy(t, proxyReviewPolicyDoc(t)), sharedFound: true}
+			cfg.Policy, s.policy = pol, pol
+			cfg.Repos[bitbucketSlug(t, proxySiblingRepo)] = testCanonical(t, proxySiblingRepo)
+		})
+		return s, up
+	}
+
+	t.Run("the job account's own repository is served", func(t *testing.T) {
+		s, up := svcWithBothAdmitted(t)
+		up.answerWith(http.StatusOK, "001e# service=git-upload-pack\n0000")
+
+		resp, ans := s.proxyCall(t, http.MethodGet, proxyPath(proxyGitPath("info/refs")+"?service=git-upload-pack"), nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("the per-repository caller's fetch answered %d, want 200 (%s)", resp.StatusCode, ans)
+		}
+		if up.count() != 1 {
+			t.Fatalf("the upstream saw %d calls, want the one the fetch makes", up.count())
+		}
+		line := s.onlyAuditLine(t)
+		if line["run"] != s.run || line["repository"] != s.slug || line["caller"] != testJobSA {
+			t.Errorf("the audit line = %v, want the run %q of %q called by %q", line, s.run, s.slug, testJobSA)
 		}
 	})
 
-	resp, ans := s.proxyCallAs(t, http.MethodGet, proxyPath(proxyGitPath("info/refs")+"?service=git-upload-pack"), nil,
-		s.reviewRunToken(), s.jobToken(func(c map[string]any) { c["email"] = testSharedSA }), s.job)
-	if resp.StatusCode != StatusUnverified {
-		t.Fatalf("the shared caller's fetch answered %d, want %d (%s)", resp.StatusCode, StatusUnverified, ans)
-	}
-	if got := refusal(t, resp.StatusCode, ans); got.Error != ErrorUnverifiedRunIdentity {
-		t.Errorf("the refusal is %q, want %q: %s", got.Error, ErrorUnverifiedRunIdentity, got.Message)
-	}
-	if n := up.count(); n != 0 {
-		t.Fatalf("a shared coding caller made %d upstream calls, want none", n)
-	}
-	line := s.onlyAuditLine(t)
-	if line["status"] != ErrorUnverifiedRunIdentity {
-		t.Errorf("the audit line = %v, want the refusal's own wire type", line)
-	}
-	if auditField(line, "purpose") != "" || auditField(line, "credential") != "" {
-		t.Errorf("the audit line = %v, and a refusal taken above the classification names neither", line)
-	}
-	if got := auditField(line, "caller"); got != testSharedSA {
-		t.Errorf("the audit line names the caller %v, want the shared job's own account %q", got, testSharedSA)
-	}
+	t.Run("another repository the policy admits is refused", func(t *testing.T) {
+		s, up := svcWithBothAdmitted(t)
+
+		resp, ans := s.proxyCall(t, http.MethodGet, proxyPath(proxySiblingRepo+".git/info/refs?service=git-upload-pack"), nil)
+		proxyRefused(t, resp, ans, StatusRequestRefused, ErrorRequestRefused, gitproxy.ReasonOtherRepository)
+		if n := up.count(); n != 0 {
+			t.Fatalf("the upstream saw %d calls, and a repository the job account is not bound to forwards nothing: %+v", n, up.calls())
+		}
+	})
 }

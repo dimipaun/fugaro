@@ -562,6 +562,10 @@ func rulesMarkerPrePolicyText(gen int) string {
 // P6.4, D166).
 const rulesDeviceGeneration = 3
 
+// rulesCoordinatorGeneration is the rules generation that added the
+// coordinator's read grant (coordinator plan P3, D194).
+const rulesCoordinatorGeneration = 4
+
 // rulesMarkerOlderText is the sentence for the state between the two
 // generations: at or above PolicyRulesVersion and below RulesVersion. Nothing
 // refuses here — Read reads the policy the marker's rules carry and
@@ -571,10 +575,17 @@ const rulesDeviceGeneration = 3
 // is this release's own document, whose mailbox the mobile app has no grant for
 // until the owner deploys it (mobile plan P2.3).
 //
-// A marker at rulesDeviceGeneration already carries the mailbox and the device
-// binding, so for it the sentence names the one thing generation 4 adds: the
-// coordinator's read grant (coordinator plan P3).
+// Each branch names the one thing the next generation adds, so the sentence
+// never sends the operator after a grant the deployed rules already carry: a
+// marker at rulesDeviceGeneration already has the mailbox and the device
+// binding, and one at rulesCoordinatorGeneration already has the coordinator's
+// read grant, so for it the sentence names the voice policy node (mobile plan
+// task P5.3.1).
 func rulesMarkerOlderText(gen int) string {
+	if gen >= rulesCoordinatorGeneration {
+		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox, the device binding and the coordinator's read grant, so runs, a published policy, the mobile app and the coordinator are unaffected — what they predate is this release's own document, which adds the voice policy node %s/{shared,repos/$slug} (mobile plan task P5.3.1): a run token reads its own project's node there, and no client writes either node; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
+			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, rules.PathVoice, projectpolicy.RulesVersion)
+	}
 	if gen >= rulesDeviceGeneration {
 		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox and the device binding, so runs, a published policy and the mobile app are unaffected — what they predate is this release's own document, which adds the read grant on the coordinator's state (coordinator plan P3): a signed-in reader is refused every read of %s/ until it is deployed; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
 			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, coordpath.PathRoot, projectpolicy.RulesVersion)

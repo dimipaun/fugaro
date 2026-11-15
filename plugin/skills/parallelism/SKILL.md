@@ -113,7 +113,7 @@ When the pieces all land on one integration branch whose own `fugaro.yaml` still
 
 ## Redundant attempts for a hard task
 
-For one hard task where the approach is uncertain, the user may choose two to four runs of the same task (a shared `--batch` name, a distinct `--run-id` each), then once every one has opened a pull request, compare them with `fugaro run --recipe pick --pr A --pr B [--pr C] [--pr D]` and keep the best. It multiplies the cost by the number of runs, so offer it only for work where a wrong first attempt would cost more, and only with the user's go-ahead.
+For one hard task where the approach is uncertain, the user may choose two to four runs of the same task (a shared `--batch` name, a distinct `--run-id` each, and `--allow-duplicate` on every launch after the first when the task is named with `--plan-task`: a plan task a run of it is already going on is refused, and these attempts are deliberate), then once every one has opened a pull request, compare them with `fugaro run --recipe pick --pr A --pr B [--pr C] [--pr D]` and keep the best. It multiplies the cost by the number of runs, so offer it only for work where a wrong first attempt would cost more, and only with the user's go-ahead.
 
 ## Mind the limits
 
