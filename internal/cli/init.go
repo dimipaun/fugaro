@@ -584,6 +584,12 @@ type initRun struct {
 	// (refreshOptions.detail) writes its lines where that converge keeps its
 	// own, instead of onto a screen that run has already accounted for (§9.2).
 	detail io.Writer
+	// cover is the run's own cover (initEngine.cover), set by the one door that
+	// has no review screen: `fugaro apply` converges the installation as it is
+	// and asks nothing, so its steps' plans are judged by the cover the review
+	// would have printed (init_review.go's coverOf). It is nil everywhere else,
+	// where the review's own cover is what the gate reads.
+	cover func() tf.Cover
 	// questions counts the questions in flight (initRun.asking): while one is
 	// open the run's own writer does not put the step's line back between the
 	// lines of the block it prints, so a CONFIRM block and a prompt are shown

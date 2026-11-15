@@ -11,6 +11,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
@@ -834,16 +835,27 @@ func (c stepCover) NotCoveredSplit(p *tf.Plan, imports []tf.ImportKey) (integrit
 	return c.split(p, imports)
 }
 
-// coverOf is the cover of one step of this run, or one that refuses: a run
-// whose review was never built has no cover for any root, and the reasons are
-// empty in that case because there is no plan to ask about — an answer the gate
-// must not read as "nothing to refuse".
+// coverOf is the cover of one step of this run: the review's own where the run
+// has a review, the run's own where the door has no review screen at all
+// (initRun.cover), and one that refuses otherwise.
+//
+// A run whose review was never built has no cover for any root, and the reasons
+// are empty in that case because there is no plan to ask about — an answer the
+// gate must not read as "nothing to refuse". The door with no review screen is
+// the one case that is not a mistake: `fugaro apply` converges the installation
+// as it is and never builds a review (a chain asks nothing), so its steps are
+// judged by the cover the review would have printed — the run's own, the same
+// value the review screen reads — and it is a value the door has, not one it
+// lost.
 //
 // which and the split are taken together, and both off the review's own cover:
 // a constructor that took one without the other is how a step's whole answer
 // and its halves would come to be about different plans.
-func (r *initRun) coverOf(which func(*tf.Plan, []tf.ImportKey) []string) stepCover {
+func (r *initRun) coverOf(which func(*tf.Plan, []tf.ImportKey) []string) managedmode.Cover {
 	if r.review == nil || r.review.cover == nil {
+		if r.cover != nil {
+			return r.cover()
+		}
 		return stepCover{}
 	}
 	return stepCover{notCovered: which, split: r.coverSplit()}

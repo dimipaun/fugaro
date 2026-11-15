@@ -214,7 +214,7 @@ func applyConfigStamp(path string) string {
 // applyRunSteps is the command's run: the owed steps, each once, in the order
 // the record gives them.
 func applyRunSteps(cmd *cobra.Command, lc *localcfg.Config, path string, pending *apply.Pending, recorded bool, o applyOptions) error {
-	if len(pending.Steps) == 0 {
+	if len(pending.Names()) == 0 {
 		return applyNothing(cmd, lc, path, pending, recorded, o)
 	}
 	// The run's account is the reporter's, filed under this command's name
@@ -245,6 +245,20 @@ func applyRunSteps(cmd *cobra.Command, lc *localcfg.Config, path string, pending
 	}
 	old, _ := os.ReadFile(path)
 	e := &initEngine{r: r, lc: lc, spec: spec, path: path, old: old}
+	// The run's own cover, for the gate: this door builds no review (a chain
+	// asks nothing), so the plan of a step it runs is judged by the cover the
+	// review would have printed rather than by a step that had none
+	// (init_review.go's coverOf).
+	r.cover = e.cover
+	// The managed project's read, once for the whole run, and before the first
+	// step: a chain's steps are the same stages under the same gate
+	// (gateable), so a managed project's owner and a coding agent's session
+	// reach them exactly as `fugaro update` does, and each step that writes is
+	// recorded (D1014, D1545). A project that is not managed keeps every
+	// refusal it has, which is what the steps below answer with.
+	if err := e.gateRun(cmd.Context()); err != nil {
+		return err
+	}
 
 	names := pending.Names()
 	var ran, kept []string
@@ -381,8 +395,17 @@ func applyRecordNote(w io.Writer, recorded, current bool) {
 // applyKeptLine is D1563's sentence: the change is saved, it is not live yet,
 // and `fugaro apply` is the command that finishes it. The steps it names are
 // the ones this run could not answer, and the run's own account above says why.
+//
+// A kept redeploy says where to run it: the repository stage's Terraform root
+// is per repository (D1574), so a machine with no checkout of the repository
+// the change was made for cannot run that step, and the answer has to say so
+// rather than send the person to the same machine again.
 func applyKeptLine(w io.Writer, kept []string) {
 	fmt.Fprintf(w, "saved, not live yet: %s still owed\n", strings.Join(kept, ", "))
+	if slices.Contains(kept, initflow.Repository) {
+		fmt.Fprintln(w, "Run `fugaro apply` in a checkout of the repository the change was made for: the redeploy is that repository's own Terraform root, and this machine has none of it.")
+		return
+	}
 	fmt.Fprintln(w, "Run `fugaro apply` again to finish the job: every step checks the state first, so the ones that already ran cost nothing.")
 }
 
@@ -488,7 +511,7 @@ func printApplyStatus(cmd *cobra.Command, lc *localcfg.Config, pending *apply.Pe
 		return nil
 	}
 	w := cmd.OutOrStdout()
-	if len(pending.Steps) == 0 {
+	if len(pending.Names()) == 0 {
 		fmt.Fprintln(w, "Nothing to apply.")
 		applyRecordNote(w, recorded, current)
 		return nil
