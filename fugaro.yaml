@@ -75,10 +75,14 @@ workflows:
       # three shards of its own (scripts-live-0..2, 8 to 9 minutes each under -race), and
       # every live check script has its hermetic test elsewhere in the tree. The rest of
       # ./scripts runs here, so a change to scripts/ still runs its package's tests.
-      # internal/cli is the longest package here (about 16 minutes of sequential tests on
-      # a 4-CPU box), which is more than the one -timeout a single `go test` gives every
-      # package it builds, so it runs the way CI runs it -- its update tests whole, the
-      # rest by name -- with both parts at once. Every test of the package still runs here.
+      # internal/cli is the longest package here: its tests run past the 15m cap one `go test`
+      # puts on every package it builds (about 16 minutes on the container's 4 CPUs), so it
+      # runs as two invocations at once, cut by the first letter of the test name. `^TestU`
+      # is its update and upgrade tests: nine of them wait out a 30s or 60s deadline while
+      # they share a test binary with the rest of the package, and alone they are 41 seconds
+      # of the 11 minutes the package takes on a 5-CPU box. `^Test[^U]` is everything else.
+      # Every test of the package still runs here; CI splits the same package by name too
+      # (cli-update and cli-0..7).
       build: |
         set -e
         go build ./...
@@ -86,18 +90,18 @@ workflows:
         test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       test: |
         rc=0
-        # Three invocations at once: everything else, and internal/cli as the two parts CI
-        # runs (see the comment above). The live-check bash tests are the one thing left
-        # out; the cli pattern is anchored, so internal/clidoc and ee/clidoc stay in.
+        # Three invocations at once: everything else, and internal/cli in the two halves the
+        # comment above describes. The live-check bash tests are the one thing left out; the
+        # cli exclusion is anchored, so internal/clidoc and ee/clidoc stay in.
         go test -timeout 15m -skip '^TestLiveCheckScripts$' $(go list ./... | grep -v -e /internal/runner -e /internal/e2e -e /internal/image -e /fugaro/images -e '/internal/cli$') &
         rest=$!
-        go test -timeout 15m -run '^TestUpdate' ./internal/cli/ &
-        update=$!
-        go test -timeout 15m -skip '^TestUpdate' ./internal/cli/ &
-        cli=$!
+        go test -timeout 15m -run '^TestU' ./internal/cli/ &
+        cliU=$!
+        go test -timeout 15m -run '^Test[^U]' ./internal/cli/ &
+        cliRest=$!
         wait $rest || rc=$?
-        wait $update || rc=$?
-        wait $cli || rc=$?
+        wait $cliU || rc=$?
+        wait $cliRest || rc=$?
         # The container's high-water memory since it started, the agent and the build cache
         # included (Cloud Run keeps the disk in memory): the number to size resources.memory by.
         for f in /sys/fs/cgroup/memory.peak /sys/fs/cgroup/memory/memory.max_usage_in_bytes; do
