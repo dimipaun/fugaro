@@ -464,8 +464,8 @@ type Policy struct {
 	ImageMap ImageMap `json:"image_map,omitempty"`
 
 	// Binaries is the rule that says which paths a run may add a binary at and
-	// how large one may be (D981–D983, AR0): the owner's own grant, on this
-	// node and nowhere else. It travels every member's road — the owner writes
+	// how large one may be (D981–D983, AR0): the owner's own grant, which the
+	// owner's local config states (AR1) and every run reads from this node. It travels every member's road — the owner writes
 	// it and the run fails closed on it — and it is here rather than in a
 	// repository's `fugaro.yaml` for a sharper reason than most: that file
 	// lives in the checkout the run's own agent writes, so a key there would

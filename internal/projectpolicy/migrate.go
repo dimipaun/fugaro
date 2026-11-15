@@ -44,6 +44,7 @@ var migrators = map[int]migrator{
 	4: migrateV4ToV5,
 	5: migrateV5ToV6,
 	6: migrateV6ToV7,
+	7: migrateV7ToV8,
 }
 
 // tooOld names the versions this Fugaro reads but has no migrator for. The
@@ -96,6 +97,10 @@ func Migratable(v int) bool {
 // one too: the `model_grades` member version 7 models is a top-level key no
 // version-6 release wrote either, and a node without it sets no grade, which is
 // what the ladder's rungs read as "leave this rung to the owner" (D2039).
+// Version 7 is the third (AR1): the member version 8 is about arrived at
+// version 6 and this bump carries no member at all — what it marks is that the
+// project's config states the block from this release on, so a version-7 node
+// is already a version-8 node in everything but the number.
 //
 // The counter-examples are version 3 and version 4, and they are why this
 // table is a table and not a rule about numbers. Version 4's step marks every
@@ -107,6 +112,7 @@ func Migratable(v int) bool {
 var shapeFreeSteps = map[int]bool{
 	5: true,
 	6: true,
+	7: true,
 }
 
 // ReadsVersion reports whether a node written in version v is one this reader
@@ -780,6 +786,36 @@ func migrateV6ToV7(raw json.RawMessage) (json.RawMessage, Change, error) {
 		From:    6,
 		To:      7,
 		Changed: "the version field: 6 to 7",
+		Kept:    keptKeys(doc, "version"),
+	}, nil
+}
+
+// migrateV7ToV8 writes the version field version 8 reads, and nothing else.
+//
+// Version 8 does not change the node's shape either, and it adds no member of
+// its own: the `binaries` block it is about arrived at version 6, and what this
+// release adds is where the block is *written* — the project's own config, and
+// the publish that carries it into the node. So a version-7 node is a
+// version-8 node member for member, and the step edits the node's own bytes
+// rather than re-encoding it, exactly as the two shape-free steps before it do.
+//
+// It carries no Note: there is nothing for the operator to republish for, and
+// nothing to republish *with* that the node does not already hold — a project
+// that wants an admission writes the key in its config and publishes, which is
+// the publish door's work and not this step's.
+func migrateV7ToV8(raw json.RawMessage) (json.RawMessage, Change, error) {
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, Change{}, fmt.Errorf("projectpolicy: the version-7 node is not a JSON object: %w", err)
+	}
+	out, err := writeVersionField(raw, 7, 8)
+	if err != nil {
+		return nil, Change{}, err
+	}
+	return out, Change{
+		From:    7,
+		To:      8,
+		Changed: "the version field: 7 to 8",
 		Kept:    keptKeys(doc, "version"),
 	}, nil
 }

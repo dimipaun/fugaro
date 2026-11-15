@@ -31,9 +31,16 @@ import (
 // reading the node would have to interpret. A written *empty* block is still a
 // written block: `{"binaries": {}}` is how an operator takes an admission away
 // on purpose (D987), and the pointer on Policy is what tells it from silence.
+//
+// The yaml tags spell the block the same way the json ones do, because the same
+// block is written in two documents from this release on (AR1): the node the
+// owner publishes and its own local config, which is its carrier. A member
+// named `maxbytes` in the file and `max_bytes` in the node would be two keys a
+// person has to keep in step by hand, and the file's own strict decode would
+// refuse the node's spelling.
 type Binaries struct {
-	Allow    []string `json:"allow,omitempty"`
-	MaxBytes int64    `json:"max_bytes,omitempty"`
+	Allow    []string `json:"allow,omitempty" yaml:"allow,omitempty"`
+	MaxBytes int64    `json:"max_bytes,omitempty" yaml:"max_bytes,omitempty"`
 }
 
 // DefaultBinariesMaxBytes is the cap an admitted binary is held to when the

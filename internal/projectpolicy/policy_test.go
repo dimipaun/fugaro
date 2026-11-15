@@ -217,7 +217,7 @@ func TestDecodeRefusesBadVersion(t *testing.T) {
 	for name, raw := range map[string]string{
 		"no version":     `{"budget": {"mode": "observe"}}`,
 		"version 0":      `{"version": 0}`,
-		"version 8":      `{"version": 8}`,
+		"version 9":      `{"version": 9}`,
 		"a string":       `{"version": "1"}`,
 		"a float":        `{"version": 1.5}`,
 		"a bool":         `{"version": true}`,
@@ -235,8 +235,8 @@ func TestDecodeRefusesBadVersion(t *testing.T) {
 	}
 	// The version message is the shared constant, so the runner and the CLI
 	// print the same sentence.
-	_, _, err := Decode([]byte(`{"version": 8}`))
-	if err == nil || !strings.Contains(err.Error(), "policy is version 8") {
+	_, _, err := Decode([]byte(`{"version": 9}`))
+	if err == nil || !strings.Contains(err.Error(), "policy is version 9") {
 		t.Errorf("the version refusal must use Skew, got %v", err)
 	}
 }
@@ -245,7 +245,7 @@ func TestDecodeRefusesBadVersion(t *testing.T) {
 // a missing json tag: every documented key, field by field.
 func TestDecodeReadsTheDocumentedSnakeCaseKeys(t *testing.T) {
 	p, found, err := Decode([]byte(`{
-		"version": 7,
+		"version": 8,
 		"budget": {"mode": "enforce", "per_run_usd": 12.5, "allowed_models": ["claude-sonnet-5"], "max_run_tokens": 250000},
 		"allow_repos": ["github/acme/*", "bitbucket/acme/app"]
 	}`))
@@ -779,7 +779,7 @@ func TestDecodeRefusesABadPrice(t *testing.T) {
 // rendered message, so the runner (task 1.3) prints RunnerSkew and the CLI
 // (task 1.6) CLISkew from the same error without matching on the text.
 func TestVersionErrorCarriesBothVersions(t *testing.T) {
-	_, found, err := Decode([]byte(`{"version": 8}`))
+	_, found, err := Decode([]byte(`{"version": 9}`))
 	if !found {
 		t.Error("the node exists and cannot be used, so found must be true")
 	}
@@ -787,10 +787,10 @@ func TestVersionErrorCarriesBothVersions(t *testing.T) {
 	if !errors.As(err, &ve) {
 		t.Fatalf("err = %v, want a *VersionError", err)
 	}
-	if ve.Found != 8 || ve.Understood != Version {
-		t.Errorf("VersionError = %+v, want found 8 and understood %d", ve, Version)
+	if ve.Found != 9 || ve.Understood != Version {
+		t.Errorf("VersionError = %+v, want found 9 and understood %d", ve, Version)
 	}
-	if got, want := err.Error(), fmt.Sprintf(Skew, 8, Version); got != want {
+	if got, want := err.Error(), fmt.Sprintf(Skew, 9, Version); got != want {
 		t.Errorf("Error() = %q, want the shared sentence %q", got, want)
 	}
 	if got := fmt.Sprintf(RunnerSkew, ve.Found, ve.Understood); !strings.Contains(got, "runner image") {
@@ -1249,11 +1249,12 @@ func TestImageCatalogIsUnknownToAReaderThatPredatesIt(t *testing.T) {
 // A reader that predates `binaries` tolerates the key — every unknown
 // top-level key is tolerated (P8) — and lists it in UnknownKeys while decoding
 // past it. That is not a refusal, and for this key it must not be the answer a
-// released runner gives: a version-4 image that read a version-5 node carrying
+// released runner gives: a version-5 image that read a version-6 node carrying
 // `binaries` would enforce no rule at all while the owner believed a list was
 // published, and the run would end a draft with nothing saying why. The bump
-// to version 5 is what turns that silence into the documented skew
-// (RunnerSkew), so what this test pins is the state the bump exists to remove:
+// to version 6 — the version the member arrived at (AR0) — is what turned that
+// silence into the documented skew (RunnerSkew), so what this test pins is the
+// state the bump exists to remove:
 // the member is known here, and a reader of the release before it would only
 // list it.
 func TestPolicyUnknownKeysStillListsBinariesForAnOlderReader(t *testing.T) {
@@ -1285,12 +1286,12 @@ func TestPolicyUnknownKeysStillListsBinariesForAnOlderReader(t *testing.T) {
 	if want := []string{"binaries"}; !slices.Equal(q.UnknownKeys, want) {
 		t.Errorf("the reader that predates the key lists UnknownKeys = %v, want %v: that is the node a CLI of that age refuses and a runner of it logs, and the version bump is what makes the runner's answer a skew instead", q.UnknownKeys, want)
 	}
-	// What this model cannot show is the other half — a released version-4
+	// What this model cannot show is the other half — a released version-5
 	// binary has no decode block for the member and would run with no rule at
 	// all while the owner believed a list was published. There is one decode
 	// path in this package, so the deletion above models the listing and not
-	// the ignoring; the ignoring is what D990's bump refuses, and
-	// TestDecodeRefusesAVersion4Node is where that is pinned.
+	// the ignoring, and no fixture here can model a released binary's own
+	// reader; the ignoring is what D990's bump refuses.
 }
 
 // imageMapNode is the published node the image setup skill's map lands in
