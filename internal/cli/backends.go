@@ -297,11 +297,22 @@ func backendsUseAfter(name, project string) string {
 // not passed the Batch half of `fugaro doctor`. It reads the checks themselves
 // (doctorBatchChecks) and not a second derivation of the same facts, at the
 // strictness doctor's own gate fails at -- every failing check counts, warning
-// or not, because this very command is the installation selecting the backend
-// -- plus the one thing doctor answers differently here: a config that carries
-// no batch block at all is refused whatever the checks say, since
-// doctorBatchChecks is silent about a block that is not there and that silence
-// is not a pass.
+// or not, because this very command is the installation selecting the backend.
+//
+// It reads them against the config this write would LEAVE BEHIND and not the
+// one it reads: the checks that answer only for an installation that has
+// selected the backend are exactly the ones this command has to hear, and
+// doctorBatchBudgetSeal is the one that matters -- it returns nothing while the
+// config still names cloud-run, so asking it of the file as it is would pass a
+// minting installation, write the key, and leave every launch of it refused at
+// create (internal/backend/batch's job definition refuses a launch carrying the
+// budget token's seal key, which a Batch job has no carrier for). The
+// selection is what the write does; the checks are the state it produces.
+//
+// A config that carries no batch block at all is refused before any of that, in
+// this command's own words: the finding the checks would answer with says the
+// installation SELECTS cloud-batch, which is not yet true of the file, and what
+// an owner in that state has to do is the provisioning.
 func backendsUseGate(ctx context.Context, lc *localcfg.Config) error {
 	if lc.Batch == nil {
 		return userErr("refusing to select %s: this installation's config carries no batch block, so nothing on this machine knows the machine type, the boot image, the network or the account a run's VMs would be built from, and every launch on it would fail at create. Provision it first: fugaro setup --provision-batch writes the block and applies the compute root, then repeat this command", backend.CloudBatch)
@@ -310,7 +321,12 @@ func backendsUseGate(ctx context.Context, lc *localcfg.Config) error {
 	if err != nil {
 		return remote(err)
 	}
-	fails := doctorRefusals(doctorBatchChecks(ctx, lc, c), true)
+	// A copy, so that evaluating the checks leaves the config this command was
+	// handed exactly as it was: nothing below writes it, and the write that
+	// follows is the command's own.
+	selected := *lc
+	selected.BackendName = backend.CloudBatch
+	fails := doctorRefusals(doctorBatchChecks(ctx, &selected, c), true)
 	if len(fails) == 0 {
 		return nil
 	}

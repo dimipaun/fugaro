@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
@@ -80,6 +81,39 @@ func TestBackendsUseRefusesAnInstallationDoctorRefuses(t *testing.T) {
 	}
 	if after := readFileString(t, r.cfgPath); after != before {
 		t.Errorf("the refused selection wrote the file:\n%s", after)
+	}
+}
+
+// TestBackendsUseRefusesAMintingInstallation: the gate reads the checks against
+// the config the SELECTION would leave behind, not the one it reads. An
+// installation that mints budget tokens cannot launch on this backend at all --
+// every launch carries the budget token's seal key, and a Batch job has no
+// carrier for one (internal/backend/batch's job definition, design §1.6) -- and
+// the check that reads that pair (doctorBatchBudgetSeal) answers only for a
+// config that already selects the backend. Read against the file as it is, it
+// was silent here: the gate passed, the key was written, and every launch of
+// the installation was refused at create afterwards. The write is the whole of
+// the damage, and refusing it is the whole of what this test asserts.
+func TestBackendsUseRefusesAMintingInstallation(t *testing.T) {
+	r, f := newDoctorRig(t), newBatchFakes(t)
+	batchProvisioned(t, r, f)
+	// A mode that mints on what a config alone answers: a database and a
+	// signer, with nothing published for the check's policy arm to read.
+	db := gcpfake.NewRTDB(t)
+	r.withBatch(t, f, batchLists+"budget: { mode: enforce, per_run_usd: 5, firebase_project: proj-1234, rtdb_url: "+db.URL+", token_signer: "+testSigner+" }\n")
+	before := readFileString(t, r.cfgPath)
+	out, err := useBackend(t, r, backend.CloudBatch)
+	if err == nil {
+		t.Fatalf("an installation that mints budget tokens selected the backend, whose every launch is then refused at create:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "batch-budget-seal") {
+		t.Errorf("the refusal does not name the check that refuses the selection: %v", err)
+	}
+	if after := readFileString(t, r.cfgPath); after != before {
+		t.Errorf("the refused selection wrote the file:\n%s", after)
+	}
+	if got := selectedBackend(t, r); got != backend.CloudRun {
+		t.Errorf("the refused selection left the config on %q:\n%s", got, readFileString(t, r.cfgPath))
 	}
 }
 
