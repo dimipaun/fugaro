@@ -63,7 +63,7 @@ The plugin's skills are in `plugin/skills` (`setup`, `working`, `routing`, `para
 
 ### Landing a batch of pull requests
 
-`scripts/land-prs.sh` is the merge helper the owner and the orchestrator session use: it merges ready pull requests in batches, so a landing of many pull requests is one command instead of a merge per pull request with a wait in between.
+`scripts/land-prs.sh` is the merge helper a landing ends with. A person runs it, in their own terminal, for the pull requests they have decided to merge: the merge call is the person's, at their own hands, and the [`landing` skill](plugin/skills/landing/SKILL.md) is what says a pull request is safe to land — an agent never merges for them. It exists so a landing of many pull requests is one command instead of a merge per pull request with a wait in between.
 
 ```sh
 bash scripts/land-prs.sh --repo OWNER/NAME 1234 1235 1236
@@ -71,7 +71,7 @@ bash scripts/land-prs.sh --repo OWNER/NAME 1234 1235 1236
 
 It reads every pull request's mergeable state in one parallel sweep and prints one line per pull request — state, draft or ready, MERGEABLE, CONFLICTING or UNKNOWN, and the title — before it touches anything. `--check-only` stops there and merges nothing. Then it merges the ones that are open and MERGEABLE, back to back and in the order given, marking a draft ready first; one that is CONFLICTING, still UNKNOWN or not open is skipped and named, and a merge that fails is reported while the batch goes on. The exit status is 0 when every pull request ended merged, 1 when any did not, and 2 for a usage error.
 
-It never force-pushes, never rewrites a branch, never runs tests and never decides what is safe to merge: the caller has already decided, and the script only merges and reports. Deciding is the [`landing` skill](plugin/skills/landing/SKILL.md)'s, and its hermetic test is `scripts/land-prs_test.sh`, driven from `scripts/land_prs_test.go`.
+It never force-pushes, never rewrites a branch, never runs tests and never decides what is safe to merge: the caller has already decided, and the script only merges and reports. Its hermetic test is `scripts/land-prs_test.sh`, driven from `scripts/land_prs_test.go`.
 
 ## Licensing of contributions
 

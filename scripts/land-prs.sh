@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
-# scripts/land-prs.sh — merge a batch of ready pull requests.
+# scripts/land-prs.sh — merge a batch of pull requests, one command per batch.
 #
-# The merge helper the owner and the orchestrator session use. Every pull
-# request's state is read in one parallel sweep, the ones that are open and
-# MERGEABLE are merged back to back in the order given, and one line per pull
-# request says what happened. It exists so a landing of many pull requests is
-# one command instead of a merge per pull request with a wait in between.
+# The merge helper a landing ends with, run by a person in their own terminal
+# for the pull requests they have decided to merge. Every pull request's state
+# is read in one parallel sweep, the ones that are open and MERGEABLE are merged
+# back to back in the order given, and one line per pull request says what
+# happened. It exists so a landing of many pull requests is one command instead
+# of a merge per pull request with a wait in between.
 #
-# It never force-pushes, never rewrites a branch, never runs tests and never
-# decides what is safe to merge: the caller has already decided, and the script
-# only merges and reports.
+# The merge call is the person's, at their own hands: this script is how they
+# make it for a batch, and it does nothing else. It never force-pushes, never
+# rewrites a branch, never runs tests and never decides what is safe to merge:
+# the caller has already decided, and the script only merges and reports.
 #
 # Usage: bash scripts/land-prs.sh [--repo OWNER/NAME] [--check-only]
 #                                 [--no-delete-branch] N [N...]
