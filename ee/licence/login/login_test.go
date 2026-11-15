@@ -641,6 +641,53 @@ func TestDevicePollStopsAtExpiry(t *testing.T) {
 	}
 }
 
+// TestDevicePollRefusedAtExpiryIsAnExpiry holds the ending the real site
+// answers, and not the one the test above can stage: K2.4 sweeps a code the
+// moment its window closes, and a poll for a code it is no longer holding gets
+// the uniform refusal it gives every caller it will not serve — a 403 whose
+// sentence is about the request, not about the code. Read as the site's own
+// answer, that sentence says the account was refused when all that happened is
+// that the code ran out, and it hides the one thing a person can act on: that
+// no sign-in was approved and the sign-in can simply be started again. The
+// flow's own deadline is what tells the two apart, so a refusal that arrives at
+// or after it ends the poll as the expiry it is.
+func TestDevicePollRefusedAtExpiryIsAnExpiry(t *testing.T) {
+	s := newSite(t)
+	s.answer(func(_ deviceCall, w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, fmt.Sprintf(`{"device_code":%q,"user_code":%q,"verification_uri":%q,"expires_in":1,"interval":1}`,
+			testDeviceCode, testUserCode, s.ts.URL+keyservice.RouteDeviceApprove))
+	}, nil, func(poll int, w http.ResponseWriter, _ *http.Request) {
+		// The sweep: from the second poll on, the code this poll names is one
+		// the site is not holding any more, which is what a poll at the
+		// deadline always finds. The sentence is K2.4's own for it.
+		if poll > 1 {
+			http.Error(w, "This request cannot be answered.", http.StatusForbidden)
+			return
+		}
+		_, _ = io.WriteString(w, pendingJSON)
+	})
+
+	var out bytes.Buffer
+	c := atSite(Client{Out: &out}, s)
+	bundle, err := c.Device(context.Background())
+	if err == nil {
+		t.Fatalf("a poll the site refused answered a bundle: %+v", bundle)
+	}
+	if !errors.Is(err, ErrExpired) {
+		t.Fatalf("the poll ended with %v, want ErrExpired: the code's window had closed, and the site's refusal is about the code it swept rather than about the account", err)
+	}
+	var refusal *Refusal
+	if errors.As(err, &refusal) {
+		t.Errorf("the expired code ended with the site's own refusal (%v), which is the sentence about a request and not the ending", refusal)
+	}
+	if !strings.Contains(err.Error(), "no sign-in was approved") {
+		t.Errorf("the refusal is %q, which does not name what happened", err.Error())
+	}
+	if polls := len(s.pollCalls()); polls > 3 {
+		t.Errorf("the flow polled %d times for a one-second code, want it to stop at the expiry", polls)
+	}
+}
+
 // TestDevicePollObeysTheSitesOwnRate holds the other half of the same loop: a
 // 429 is the site's own rate for the code, and the wait it asks for is what the
 // poll takes — not the interval the start answer named, which the site has just

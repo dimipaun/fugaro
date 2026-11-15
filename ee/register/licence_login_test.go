@@ -59,9 +59,12 @@ type loginSite struct {
 	ts *httptest.Server
 	// key and secret are what the exchange and the poll answer with.
 	key, secret string
-	// tokenReply replaces the exchange's own answer when set, with the status
-	// it is answered under (0 keeps 200).
+	// tokenReply, startReply and pollReply replace those routes' own answers
+	// when set, with the status each is answered under (0 keeps 200). pollReply
+	// is given the poll's number, counting from one.
 	tokenReply func(body string) (int, string)
+	startReply func(body string) (int, string)
+	pollReply  func(poll int) (int, string)
 
 	mu     sync.Mutex
 	starts []string
@@ -98,10 +101,26 @@ func (f *licenceFixture) serveLoginSite(t *testing.T, key, secret string) *login
 			_, _ = io.WriteString(w, fmt.Sprintf(`{"key":%q,"renewal_secret":%q}`, s.key, s.secret))
 		case keyservice.RouteDeviceStart:
 			s.starts = append(s.starts, string(body))
+			if s.startReply != nil {
+				status, answer := s.startReply(string(body))
+				if status != 0 {
+					w.WriteHeader(status)
+				}
+				_, _ = io.WriteString(w, answer)
+				return
+			}
 			_, _ = io.WriteString(w, fmt.Sprintf(`{"device_code":%q,"user_code":%q,"verification_uri":%q,"expires_in":600,"interval":1}`,
 				loginTestDeviceCode, loginTestUserCode, s.ts.URL+keyservice.RouteDeviceApprove))
 		case keyservice.RouteDevicePoll:
 			s.polls = append(s.polls, string(body))
+			if s.pollReply != nil {
+				status, answer := s.pollReply(len(s.polls))
+				if status != 0 {
+					w.WriteHeader(status)
+				}
+				_, _ = io.WriteString(w, answer)
+				return
+			}
 			_, _ = io.WriteString(w, fmt.Sprintf(`{"status":%q,"key":%q,"renewal_secret":%q}`, keyservice.DeviceOK, s.key, s.secret))
 		default:
 			// A sign-in that reached any other route is one this file knows
@@ -315,6 +334,58 @@ func TestLicenceLoginFallsBackToTheDeviceCodeWithoutABrowser(t *testing.T) {
 	}
 	if !strings.Contains(out, loginTestUserCode) {
 		t.Errorf("the fallback printed no code for a person to type:\n%s", out)
+	}
+}
+
+// TestLicenceLoginTheDeviceSignInThatExpiredSaysSo holds what a person reads at
+// the ordinary end of a device sign-in: nobody approved the code, its window
+// closed, and K2.4 — which sweeps the code at that moment — answers the next
+// poll with the uniform refusal it gives every caller it will not serve. That
+// sentence is about a request, and a person whose code simply ran out must not
+// read it as their account being refused, or as a fault they cannot act on: the
+// sign-in can be started again, and the answer says so. Exit 1, and neither
+// write is touched (the site never handed a bundle back, so there is none to
+// write).
+func TestLicenceLoginTheDeviceSignInThatExpiredSaysSo(t *testing.T) {
+	f := newLicenceFixture(t)
+	key, secret, _ := f.bundle(t)
+	f.seedSecretContainer(nil)
+	s := f.serveLoginSite(t, key, secret)
+	// A code worth a second, which is the only way a test reaches an expiry:
+	// the real site's ten minutes are the same code path.
+	s.startReply = func(string) (int, string) {
+		return 0, fmt.Sprintf(`{"device_code":%q,"user_code":%q,"verification_uri":%q,"expires_in":1,"interval":1}`,
+			loginTestDeviceCode, loginTestUserCode, s.ts.URL+keyservice.RouteDeviceApprove)
+	}
+	// The sweep, and K2.4's own sentence for the poll that meets it.
+	s.pollReply = func(poll int) (int, string) {
+		if poll > 1 {
+			return http.StatusForbidden, "This request cannot be answered."
+		}
+		return 0, fmt.Sprintf(`{"status":%q}`, keyservice.DevicePending)
+	}
+
+	out, errOut, err := f.exec(t, "", "licence", "login", "--device")
+	if err == nil {
+		t.Fatal("a device sign-in whose code expired installed a key")
+	}
+	if got := fcli.ExitCode(err); got != fcli.ExitUserError {
+		t.Errorf("the expiry exited %d, want %d: %v", got, fcli.ExitUserError, err)
+	}
+	if !strings.Contains(err.Error(), "no sign-in was approved") {
+		t.Errorf("the expiry is answered with %q, which does not name what happened", err.Error())
+	}
+	for _, wrong := range []string{"This request cannot be answered", "did not sign this installation in"} {
+		if strings.Contains(err.Error(), wrong) {
+			t.Errorf("the expiry is answered with the site's sentence about the request (%q) rather than the code's own ending: %q", wrong, err.Error())
+		}
+	}
+	assertNoKeyMaterial(t, "the expiry", err.Error()+out+errOut, key, secret)
+	if f.object(t).Present {
+		t.Error("a device sign-in whose code expired installed a key")
+	}
+	if f.secrets.Latest(f.secretContainer()) != nil {
+		t.Error("a device sign-in whose code expired wrote a renewal secret")
 	}
 }
 

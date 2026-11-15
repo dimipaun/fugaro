@@ -278,6 +278,12 @@ func (c *Client) Device(ctx context.Context) (Bundle, error) {
 	interval := pollInterval(start.Interval)
 	fmt.Fprintf(c.out(), "Open this address in a browser, on any machine:\n\n  %s\n\nand type this code when it asks:\n\n  %s\n\nThe code is worth %s. Waiting for the sign-in to be approved.\n", uri, safetext.Field(start.UserCode), ttl)
 	deadline := time.Now().Add(ttl)
+	// expired is the loop's own ending, and it is written once because two
+	// polls reach it: the one that comes back pending at the deadline, and the
+	// one the site refuses because the code it names has just been swept.
+	expired := func() error {
+		return fmt.Errorf("%w: the site's code lived %s and no sign-in was approved for it", ErrExpired, ttl)
+	}
 	for {
 		var answer struct {
 			Status        string `json:"status"`
@@ -306,11 +312,21 @@ func (c *Client) Device(ctx context.Context) (Bundle, error) {
 			if refusal.RetryAfter > 0 {
 				interval = refusal.RetryAfter
 			}
+		case errors.As(err, &refusal) && !time.Now().Before(deadline):
+			// A code at its deadline is swept, and a poll for a code the site
+			// no longer holds is answered with the uniform refusal it gives
+			// every caller it will not serve (K2.4's sweep, and the one
+			// sentence refuseDevicePoll writes). That sentence is not the
+			// ending this loop has reached: nothing about the person's account
+			// is wrong, and the one thing they have to do is start the sign-in
+			// again — so the flow's own deadline is what says which ending this
+			// is, and it is checked before the site's refusal is returned.
+			return Bundle{}, expired()
 		default:
 			return Bundle{}, err
 		}
 		if !time.Now().Before(deadline) {
-			return Bundle{}, fmt.Errorf("%w: the site's code lived %s and no sign-in was approved for it", ErrExpired, ttl)
+			return Bundle{}, expired()
 		}
 		if err := waitContext(ctx, min(interval, time.Until(deadline))); err != nil {
 			return Bundle{}, err
