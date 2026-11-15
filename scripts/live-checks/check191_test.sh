@@ -1728,6 +1728,12 @@ test_a_repository_with_no_probe_is_refused_rather_than_failed() {
   expect_contains "$out" "'The sandbox repository's half'" "no probe: the section of the steps doc is named"
   expect_contains "$err" "copy scripts/live-checks/check191-probe.sh from Fugaro's repository into workspace-a/repo-a" \
     "no probe: the owner's own step is printed, with the file and where it goes"
+  # The refusal carries the diff and not a pointer to it: the two lines the
+  # owner has to write are in the message itself.
+  expect_contains "$err" "test: CHK191_PROBE_OTHER_REPO=<workspace>/<another sandbox repo> CHK191_PROBE_OTHER_PR=<n> bash scripts/chk191-probe.sh" \
+    "no probe: the workflow line the owner has to write is in the refusal"
+  expect_contains "$err" "CHECK191_OTHER_REPO and CHECK191_OTHER_PR" \
+    "no probe: the refusal says which two values the probe is given"
   expect_contains "$err" "this run could NOT measure" "no probe: the check says it could not measure"
   expect_contains "$out" "CHECK 191 RESULT END (exit 2)" "no probe: the block ends as one that could not measure"
   # The check stops where it cannot measure: the review run's row reads the

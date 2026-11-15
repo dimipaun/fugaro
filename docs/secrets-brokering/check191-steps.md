@@ -117,8 +117,10 @@ working run's check step passed, so the run ends with no push and no pull reques
 (`internal/runner`'s `endWithoutPR`, "every check passed: nothing to fix"), and the `run-outcome` row
 would read FAIL for a cause the run did not choose. So every row that needed the attempts — the seven
 and `run-outcome` with them — is recorded as one the check could **not measure** (exit `2`), and the
-owner's step is printed by name, with the probe's own file (`scripts/live-checks/check191-probe.sh` in
-Fugaro's repository) and `docs/secrets-brokering/check191-steps.md`'s "The sandbox repository's half".
+owner's step is printed: the refusal carries the two lines themselves — the `cp` of
+`scripts/live-checks/check191-probe.sh` out of Fugaro's repository into the sandbox repository, and the
+workflow's own `test:` line with the two values it is given — so the step can be taken from the block
+without opening this file. (This file's "The sandbox repository's half" is the same step, written out.)
 A run that reports **six** of the seven lines is a different reading and stays a FAIL: the probe writes
 all seven or none, so a log holding six is a probe that differs from this one, or a check step that was
 cut short.
