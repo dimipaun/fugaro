@@ -86,9 +86,12 @@ jobs:
           - {name: cli-5, pkg: ./internal/cli, index: 5, of: 8, only: other}
           - {name: cli-6, pkg: ./internal/cli, index: 6, of: 8, only: other}
           - {name: cli-7, pkg: ./internal/cli, index: 7, of: 8, only: other}
-          - {name: scripts-live-0, pkg: ./scripts, index: 0, of: 3, only: live}
-          - {name: scripts-live-1, pkg: ./scripts, index: 1, of: 3, only: live}
-          - {name: scripts-live-2, pkg: ./scripts, index: 2, of: 3, only: live}
+          - {name: scripts-live-0, pkg: ./scripts, index: 0, of: 6, only: live}
+          - {name: scripts-live-1, pkg: ./scripts, index: 1, of: 6, only: live}
+          - {name: scripts-live-2, pkg: ./scripts, index: 2, of: 6, only: live}
+          - {name: scripts-live-3, pkg: ./scripts, index: 3, of: 6, only: live}
+          - {name: scripts-live-4, pkg: ./scripts, index: 4, of: 6, only: live}
+          - {name: scripts-live-5, pkg: ./scripts, index: 5, of: 6, only: live}
           - {name: scripts-0, pkg: ./scripts, index: 0, of: 2, only: nonlive}
           - {name: scripts-1, pkg: ./scripts, index: 1, of: 2, only: nonlive}
           - {name: runner-0, pkg: ./internal/runner, index: 0, of: 2}

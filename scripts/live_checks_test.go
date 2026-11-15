@@ -365,7 +365,7 @@ const liveCheckTimeout = 12 * time.Minute
 // into (CHECK_TEST_SHARD=i/n, read by the scripts' own t() helper): every n-th
 // test goes to shard i, each in its own temp dir, so the wall time of the
 // package is about the longest shard instead of the sum.
-const liveCheckShards = 3
+const liveCheckShards = 6
 
 // liveCheckWorkers is how many shards run at once. Splitting a script into
 // shards only shortens the package if the shards really run side by side, and
