@@ -65,7 +65,7 @@ func TestUpdateLeavesARunInFlightRunning(t *testing.T) {
 	// owner's ruling of 2026-11-09, and the reason the policy stage's refusal
 	// is not a thing this door does any more.
 	line := inFlightLine(t, out)
-	if !strings.Contains(line, "1 run(s) are in flight") {
+	if !strings.Contains(line, "1 run in flight") {
 		t.Errorf("the update's line does not say how many runs are running: %q", line)
 	}
 	for _, banned := range []string{"wait for them", "refus", "finish first, then"} {
@@ -78,7 +78,7 @@ func TestUpdateLeavesARunInFlightRunning(t *testing.T) {
 	// NOT claim the runs are unaffected — the budget mode's raise can bind one
 	// at its next lease, and the steps that can are named (the table test
 	// below).
-	for _, want := range []string{"asks no run to finish first", "rewrites nothing a run holds"} {
+	for _, want := range []string{"waits for none", "changes nothing they hold"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("the update's line does not say %q: %q", want, line)
 		}
@@ -176,7 +176,7 @@ func TestUpdateSaysNothingWhenNothingRuns(t *testing.T) {
 
 	out := convergeOn(t, r, []string{"policy-rules-skew", "policy-older-than-binary", "plugin-pin"})
 
-	if strings.Contains(out, "run(s) are in flight") {
+	if strings.Contains(out, "update waits for none") {
 		t.Errorf("the update said runs are in flight over an empty registry:\n%s", out)
 	}
 }
@@ -227,7 +227,7 @@ func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 		{
 			name:    "nothing this update does reaches them",
 			mode:    budget.ModeEnforce,
-			want:    []string{"1 run(s) are in flight", "no step of it can reach them"},
+			want:    []string{"1 run in flight", "no step reaches them"},
 			notWant: []string{"budget mode", "policy this update publishes", "retirement"},
 		},
 		{
@@ -241,7 +241,7 @@ func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 		},
 		{
 			name: "the policy a cascade project re-reads", node: cascade, mode: budget.ModeEnforce,
-			want:    []string{"1 run(s) are in flight", "the policy this update publishes", "routing.claude.via", projectpolicy.RouteCascade},
+			want:    []string{"1 run in flight", "the policy this update publishes", "routing.claude.via", projectpolicy.RouteCascade},
 			notWant: []string{"budget mode", "retirement"},
 		},
 		{
@@ -250,19 +250,19 @@ func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 			// migrated yet. The clause has to be there — the service re-reads
 			// the node per call, and the stage is about to rewrite it — and a
 			// reader that decoded the node with the refusing Read would answer
-			// "no cascade" and print "no step of it can reach them" over it.
+			// "no cascade" and print "no step reaches them" over it.
 			name: "the policy a cascade project re-reads, one version behind", node: behindCascade, mode: budget.ModeEnforce,
-			want:    []string{"1 run(s) are in flight", "the policy this update publishes", "routing.claude.via", projectpolicy.RouteCascade},
-			notWant: []string{"budget mode", "retirement", "no step of it can reach them"},
+			want:    []string{"1 run in flight", "the policy this update publishes", "routing.claude.via", projectpolicy.RouteCascade},
+			notWant: []string{"budget mode", "retirement", "no step reaches them"},
 		},
 		{
 			name: "the retirement a managed project runs", mode: budget.ModeEnforce, managed: true,
-			want:    []string{"1 run(s) are in flight", "the retirement", "orphaned job"},
+			want:    []string{"1 run in flight", "the retirement", "orphaned job"},
 			notWant: []string{"budget mode", "policy this update publishes"},
 		},
 		{
 			name: "the retirement --retire asks for", mode: budget.ModeEnforce, retire: true,
-			want:    []string{"1 run(s) are in flight", "the retirement", "orphaned job"},
+			want:    []string{"1 run in flight", "the retirement", "orphaned job"},
 			notWant: []string{"budget mode", "policy this update publishes"},
 		},
 	} {
@@ -297,7 +297,7 @@ func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 			// never makes: the runs are not "unaffected" — the budget mode's
 			// raise reaches one at its next lease, which is the whole of this
 			// reading.
-			for _, want := range []string{"asks no run to finish first", "rewrites nothing a run holds"} {
+			for _, want := range []string{"waits for none", "changes nothing they hold"} {
 				if !strings.Contains(out, want) {
 					t.Errorf("the line does not state %q:\n%s", want, out)
 				}
@@ -353,7 +353,7 @@ func TestUpdateInFlightLineNamesTheCredentialsServiceWindow(t *testing.T) {
 				t.Errorf("the line does not say %q over a run whose node is raised before the service that reads it is replaced:\n%s", want, got)
 			}
 		}
-		if strings.Contains(got, "no step of it can reach them") {
+		if strings.Contains(got, "no step reaches them") {
 			t.Errorf("the line claims no step can reach a run in flight, over the window this update opens:\n%s", got)
 		}
 	})
@@ -362,7 +362,7 @@ func TestUpdateInFlightLineNamesTheCredentialsServiceWindow(t *testing.T) {
 		if strings.Contains(got, "credentials service") {
 			t.Errorf("the line names the credentials service over a run that raises no node, so no call can meet a service that cannot read it:\n%s", got)
 		}
-		if !strings.Contains(got, "no step of it can reach them") {
+		if !strings.Contains(got, "no step reaches them") {
 			t.Errorf("the line names no step at all over a run this update leaves where it is:\n%s", got)
 		}
 	})
@@ -412,7 +412,7 @@ func TestUpdateInFlightLineNamesTheMarkerConvergence(t *testing.T) {
 				t.Errorf("the line does not say %q over a run whose installation still carries a version-3 creation fact:\n%s", want, got)
 			}
 		}
-		if strings.Contains(got, "no step of it can reach them") {
+		if strings.Contains(got, "no step reaches them") {
 			t.Errorf("the line claims no step can reach a run in flight, over the fact this update rewrites:\n%s", got)
 		}
 	})
@@ -427,7 +427,7 @@ func TestUpdateInFlightLineNamesTheMarkerConvergence(t *testing.T) {
 		if strings.Contains(got, "the creation fact this update rewrites") {
 			t.Errorf("the line names the marker's convergence over an object the managed read does not believe, so the step has nothing to converge:\n%s", got)
 		}
-		if !strings.Contains(got, "no step of it can reach them") {
+		if !strings.Contains(got, "no step reaches them") {
 			t.Errorf("the line names a step over a run this update leaves where it is:\n%s", got)
 		}
 	})
@@ -632,7 +632,7 @@ func inFlightLine(t *testing.T, out string) string {
 	t.Helper()
 	first := func(s string) string {
 		for _, line := range strings.Split(s, "\n") {
-			if strings.Contains(line, "run(s) are in flight") {
+			if strings.Contains(line, "update waits for none") {
 				return line
 			}
 		}
