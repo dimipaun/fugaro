@@ -142,7 +142,7 @@ The verb that makes the empty container visible from the day it lands. It writes
 - **The console.** Two literal `words:` entries in `CONSOLE_OPERATIONS` (`console/src/main/spawn.ts`) — `ls --json` and `status --json` — and nothing else. No console code constructs `add` or `rm`.
 - **The docs.** `docs/project-layer.md` and `docs/checkout.md` stop implying the six-step order, naming the one command that does it; the group's four verbs get their own page or section, whichever the surrounding docs use.
 - **The census pin.** A new `internal/cli/docs_repos_management_test.go`, in the shape of its siblings (it pins this folder's four documents and this spec's status line), and the census row in `docs/rigor-modes/reconciliation.md` **moved from 139 to 140** with its amendment sentence — the six tests that assert the row (F20) are the red step.
-- **`docs/status.md` is not touched.**
+- **`docs/status.md` is no task's file (A8).** RE5's pin reads this spec's row where it stands; the row itself is written in this design's own sweep and moved by whoever merges the spec, and no task of RE0–RE6 writes it.
 - **Red step.** `TestDocsReposManagementCensusRowMovedForItsPin` fails before the row is moved, in the shape of `TestDocsManagedAgentConvergeCensusRowMovedForItsPin`; that is the pin this task exists to add.
 - **Files (≤10).** the new `plugin/skills/working/reference/…md`, `console/src/main/spawn.ts`, `internal/cli/docs_repos_management_test.go` (new), `docs/rigor-modes/reconciliation.md` (the census row), `docs/project-layer.md`, `docs/checkout.md`, and the release-notes file (§7).
 - **Command.** `go test ./internal/cli/ -run Docs -count=1 -timeout 40m && go test ./plugin/ -run 'TestPluginSkillsLintClean|TestSkillFilesQuoteCommands' -count=1`
