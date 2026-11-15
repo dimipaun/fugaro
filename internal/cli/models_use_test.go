@@ -166,7 +166,7 @@ func TestModelsUseEditsOnlyTheRoleLine(t *testing.T) {
 	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseCommentedYAML)
 	before := readFileString(t, path)
 
-	out, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "deepseek/deepseek-v4-pro", "--yes")
+	out, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "deepseek/deepseek-v4-pro")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -219,7 +219,7 @@ func TestModelsUseInsertsAgentModelsWhenAbsent(t *testing.T) {
 	modelsUseHome(t)
 	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseNoModelsYAML)
 
-	out, _, err := execute(t, "models", "use", "owner/repo-a", "reviewer", "deepseek/deepseek-v4-pro", "--yes")
+	out, _, err := execute(t, "models", "use", "owner/repo-a", "reviewer", "deepseek/deepseek-v4-pro")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -242,7 +242,7 @@ func TestModelsUseRefusesAModelNoRouteOpensToTheRepository(t *testing.T) {
 	path := modelsWriteGitCheckout(t, "owner/repo-b", modelsUseCommentedYAML)
 	before := readFileString(t, path)
 
-	_, _, err := execute(t, "models", "use", "owner/repo-b", "coder", "vendor/model-x", "--yes")
+	_, _, err := execute(t, "models", "use", "owner/repo-b", "coder", "vendor/model-x")
 	if err == nil {
 		t.Fatal("a model the route does not open to the repository was accepted")
 	}
@@ -262,7 +262,7 @@ func TestModelsUseRefusesAnUnpricedModel(t *testing.T) {
 	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseCommentedYAML)
 	before := readFileString(t, path)
 
-	_, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "vendor/model-q", "--yes")
+	_, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "vendor/model-q")
 	if err == nil {
 		t.Fatal("an unpriced model was accepted")
 	}
@@ -284,7 +284,7 @@ func TestModelsUseRefusesAModelTheFileItselfDoesNotAllow(t *testing.T) {
 	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseFileAllowedYAML)
 	before := readFileString(t, path)
 
-	_, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "vendor/model-x", "--yes")
+	_, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "vendor/model-x")
 	if err == nil {
 		t.Fatal("a model the file's own allow-list does not name was accepted")
 	}
@@ -303,7 +303,7 @@ func TestModelsUseWritesAModelBothListsAllow(t *testing.T) {
 	modelsUseHome(t)
 	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseFileAllowedYAML)
 
-	out, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "deepseek/deepseek-v4-pro", "--yes")
+	out, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "deepseek/deepseek-v4-pro")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -340,7 +340,7 @@ func TestModelsUseWritesIntoAFileThatAlreadyFailsValidate(t *testing.T) {
 	modelsUseHome(t)
 	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseBrokenReviewerYAML)
 
-	out, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "deepseek/deepseek-v4-pro", "--yes")
+	out, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "deepseek/deepseek-v4-pro")
 	if err != nil {
 		t.Fatalf("the switch was refused over a problem the file already had: %v\n%s", err, out)
 	}
@@ -360,7 +360,7 @@ func TestModelsUseRefusesAProviderModelUnderOAuth(t *testing.T) {
 	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseOAuthYAML)
 	before := readFileString(t, path)
 
-	_, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "deepseek/deepseek-v4-pro", "--yes")
+	_, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "deepseek/deepseek-v4-pro")
 	if err == nil {
 		t.Fatal("a provider model was accepted under oauth")
 	}
@@ -379,7 +379,7 @@ func TestModelsUsePinsTheBackgroundRole(t *testing.T) {
 	modelsUseHome(t)
 	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseCommentedYAML)
 
-	out, _, err := execute(t, "models", "use", "owner/repo-a", "background", "deepseek/deepseek-v4-pro", "--yes")
+	out, _, err := execute(t, "models", "use", "owner/repo-a", "background", "deepseek/deepseek-v4-pro")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -400,7 +400,7 @@ func TestModelsUseJudgesTheBackgroundRoleAsALaunchWould(t *testing.T) {
 	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseOAuthYAML)
 	before := readFileString(t, path)
 
-	_, _, err := execute(t, "models", "use", "owner/repo-a", "background", "deepseek/deepseek-v4-pro", "--yes")
+	_, _, err := execute(t, "models", "use", "owner/repo-a", "background", "deepseek/deepseek-v4-pro")
 	if err == nil {
 		t.Fatal("a provider model was accepted for background under oauth")
 	}
@@ -427,7 +427,7 @@ func TestModelsUseWritesTheVisionSlot(t *testing.T) {
 		t.Fatalf("modelsRoleNames = %v, want %v: the vision slot is one of agent.models' keys, and every surface lists it beside the other three", modelsRoleNames, wantRoles)
 	}
 
-	out, _, err := execute(t, "models", "use", "owner/repo-a", "vision", "deepseek/deepseek-v4-pro", "--yes")
+	out, _, err := execute(t, "models", "use", "owner/repo-a", "vision", "deepseek/deepseek-v4-pro")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -449,7 +449,7 @@ func TestModelsUseRefusesAnUnpricedVisionModel(t *testing.T) {
 	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseCommentedYAML)
 	before := readFileString(t, path)
 
-	_, _, err := execute(t, "models", "use", "owner/repo-a", "vision", "vendor/model-q", "--yes")
+	_, _, err := execute(t, "models", "use", "owner/repo-a", "vision", "vendor/model-q")
 	if err == nil {
 		t.Fatal("an unpriced vision model was accepted")
 	}
@@ -470,7 +470,7 @@ func TestModelsUsePinsAClaudeModelWithNoRoute(t *testing.T) {
 	modelsUseHome(t)
 	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseClaudeCoderYAML)
 
-	out, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "claude-sonnet-5-5", "--yes")
+	out, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "claude-sonnet-5-5")
 	if err != nil {
 		t.Fatalf("a Claude model with no route was refused: %v\n%s", err, out)
 	}
@@ -488,7 +488,7 @@ func TestModelsUseRefusesAClaudeSpellingTheTableDoesNotPrice(t *testing.T) {
 	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseCommentedYAML)
 	before := readFileString(t, path)
 
-	_, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "anthropic/claude-sonnet-5-5", "--yes")
+	_, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "anthropic/claude-sonnet-5-5")
 	if err == nil {
 		t.Fatal("a spelling the price table does not carry was accepted")
 	}
@@ -512,7 +512,7 @@ func TestModelsUseNeverCommits(t *testing.T) {
 	dir := filepath.Dir(path)
 	head := modelsUseGit(t, dir, "rev-parse", "HEAD")
 
-	out, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "deepseek/deepseek-v4-pro", "--yes")
+	out, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "deepseek/deepseek-v4-pro")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -538,7 +538,7 @@ func TestModelsUseRefusesWithoutACheckout(t *testing.T) {
 	testutil.IsolateGit(t)
 	t.Chdir(t.TempDir())
 
-	_, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "deepseek/deepseek-v4-pro", "--yes")
+	_, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "deepseek/deepseek-v4-pro")
 	if err == nil {
 		t.Fatal("a switch with no checkout was accepted")
 	}
@@ -555,7 +555,7 @@ func TestModelsUseRunsInAnAgentSession(t *testing.T) {
 	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseCommentedYAML)
 	t.Setenv("CLAUDECODE", "1")
 
-	out, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "deepseek/deepseek-v4-pro", "--yes")
+	out, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "deepseek/deepseek-v4-pro")
 	if err != nil {
 		t.Fatalf("a repository's own file was refused in a coding agent's session: %v\n%s", err, out)
 	}

@@ -71,19 +71,19 @@ writers known not to ask yet:
   caller those commands refuse still reaches both writes by running it, under whatever cloud
   permissions that caller holds. That is the boundary the settings design leaves in place for a file
   the user owns (SD18): the file is local, and the enforcement is the cloud IAM at publish.
-- the published policy node, beside that stage: `fugaro project repos add|rm` and `fugaro project
-  sync` edit `allow_repos` through the same ETag-guarded write `project policy publish` uses and ask
-  no role, so a caller the publish refuses can still widen the list of repositories the project
-  admits (`fugaro project repos add '*'`). Widening that list is what the gate on `project policy
-  publish` exists to stop, so these two commands are the gap in it that is worth closing first; until
-  they are gated (Slice D: every management command asks the resolver) the only bound on the write is
-  the cloud permission the node itself needs.
 - the project layer file, which `settings set --layer project` writes: `fugaro rigor set`.
 - a repository's `fugaro.yaml`, which `settings set --layer repo` writes: `fugaro workflow add|rm`
   and `fugaro models use`.
 - this machine's own project config, which `settings set --layer local` writes: `project repos set`,
   `project routing set`, `project profile set|add|rm`, and the other families whose keys live in that
   file (`models add|rm`, `rigor floor`, `accounts …`, `secrets …`, `workspace`, `project clone-url`).
+
+The published policy node's `allow_repos` is no longer one of these gaps: `fugaro project repos
+add|rm` and `fugaro project sync` write it through the same ETag-guarded write `project policy
+publish` uses, and RS6c put the same project-scope admin in front of both (F19), so a caller the
+publish refuses is refused there too and cannot widen the list of repositories the project admits
+(`fugaro project repos add '*'`). What a caller the gate refuses still reaches is the node itself,
+through `fugaro update`'s own publish stage, under whatever cloud permission that caller holds.
 
 **A `--layer local` write is not judged at all**, by design: it edits this machine's own config file,
 and SD18 answers that question as "anyone may edit their own file; the boundary stays IAM at

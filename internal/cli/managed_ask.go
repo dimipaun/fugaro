@@ -40,23 +40,11 @@ import (
 // contradiction — the owner asked to be asked — and it would be the one path in
 // this program where a flag silently proceeds.
 
-// askFlags is one command's two flags as they reach the gate: --ask and --yes.
-// They are read together because they are one decision, and they are never
-// equal (see askConflict).
+// askFlags is one command's --ask as it reaches the gate. It is a struct rather
+// than a bool because the two callers below take the same shape, and because a
+// second word beside it — the --yes T11 removed — would be read with it.
 type askFlags struct {
-	ask, yes bool
-}
-
-// askConflict refuses the two flags together, before anything is read: they say
-// opposite things about the same confirmations, and a run that silently
-// honoured one would be a run whose owner cannot tell which. It is a usage
-// refusal and not a decision about a project, which is why it is made here and
-// not by initflow.AskDecision (that one needs the marks).
-func askConflict(f askFlags) error {
-	if f.ask && f.yes {
-		return userErr("%s", initflow.AskAndYes())
-	}
-	return nil
+	ask bool
 }
 
 // askDecide is the whole of what --ask does once the marks have been read: the
@@ -98,10 +86,7 @@ func askDecide(out io.Writer, f askFlags, managed bool, c initflow.Conditions) e
 // sentence that follows it. The question is printed as it is given, so it ends
 // in its own "?" and carries no "[y/N]" of the caller's.
 func askConfirm(cmd *cobra.Command, question string) (bool, error) {
-	f := askFlags{ask: boolFlag(cmd, "ask"), yes: boolFlag(cmd, "yes")}
-	if err := askConflict(f); err != nil {
-		return false, err
-	}
+	f := askFlags{ask: boolFlag(cmd, "ask")}
 	if !f.ask {
 		return true, nil
 	}

@@ -219,7 +219,7 @@ container: a secretVersionAdder on it is the ability to read every credential
 in the bundle at once.
 
 It is refused from a coding agent's session and from a run's process, before
-anything is read, and it is never covered by --yes: there is no non-interactive
+anything is read, and no flag covers it: there is no non-interactive
 form.`,
 		Args: func(_ *cobra.Command, args []string) error {
 			switch {
