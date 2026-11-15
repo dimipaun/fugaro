@@ -2173,12 +2173,12 @@ func isNamedAddition(p string) bool {
 
 // isNewVoicePath reports whether p is one of the four locations the voice
 // policy node adds (mobile plan task P5.3.1, the voice-evaluation switch
-// design §4.3): the subtree's own node, its two children,
-// and one project's child. All four are equalities and not prefixes, for
-// isNewCredsPath's reason — the whole subtree is what this task adds, so a path
-// *under* a project's node is a change to what it contains, which is the shape
-// a grant hidden one level down takes, and it belongs here as a diff a reviewer
-// reads rather than as a match this function waves through.
+// design §4.3): the subtree's own node, its two children, and one project's
+// child. All four are equalities and not prefixes, for isNewCredsPath's reason
+// — the whole subtree is what this task adds, so a path *under* a project's
+// node is a change to what it contains, which is the shape a grant hidden one
+// level down takes, and it belongs here as a diff a reviewer reads rather than
+// as a match this function waves through.
 //
 // The parent, PathVoice, is in the list because the template spells it: it
 // carries no grant of its own — the grants are per child, and a read on the
