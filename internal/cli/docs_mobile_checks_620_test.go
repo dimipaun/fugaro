@@ -34,6 +34,8 @@ package cli
 // owner less than it did.
 
 import (
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -193,9 +195,13 @@ func mobileAuth620Set() map[string]bool {
 }
 
 // mobileAuth620Predecessor is the number of the section the register writes
-// immediately above Check 620: Check 235, the last of the forge, authorship and
-// change-set block, which was the work appended before this one.
-const mobileAuth620Predecessor = "235"
+// immediately above Check 620: Check 441, the console's live tab beside
+// `fugaro watch` and the two live goldens re-recorded, the last section appended
+// above this block. Check 235 was what the register wrote above the block when
+// this file was written; Checks 440 and 441 (short-run-ids SR13) were appended
+// between 235 and this block afterwards, so what this constant names moves
+// whenever a work's sections land there.
+const mobileAuth620Predecessor = "441"
 
 // TestDocsMobileChecks620AreAppended: the register appends a work's sections
 // where its written sections end, and in ascending order within a block, so a
@@ -302,21 +308,42 @@ func TestDocsMobileChecks620NameWhatTheCodeDoes(t *testing.T) {
 	}
 }
 
+// censusPinRowRE reads the rigor-modes census row of the `internal/cli` docs
+// pins out of the flattened document, capturing its count: the label, the
+// number, and the row's own `ls internal/cli/docs_*_test.go | wc -l` command.
+// The count is read and not matched as text, so the assertion below can hold it
+// to a floor rather than to one value.
+var censusPinRowRE = regexp.MustCompile("\\| Docs folders that ship their own `internal/cli/docs_\\*_test\\.go` pin \\| ([0-9]+) \\| `ls internal/cli/docs_\\*_test\\.go \\\\?\\| wc -l` \\|")
+
 // TestDocsMobileChecks620MovesTheCensusRow: this file is one more
 // `internal/cli/docs_*_test.go` pin, so it moved the running total of them in
 // `docs/rigor-modes/reconciliation.md`, whose own rule is that the folder which
 // writes one moves the row in the same commit and names itself in the sentence
 // beside it -- a row that moved without a sentence is the merge that row calls
 // the one that did not.
+//
+// The count is read as "at least 140" and not pinned to a value: the row is a
+// running total of other folders' guards, so every folder that adds one moves it,
+// and an equality here goes stale on the next such merge -- which is what
+// happened to this assertion, when `internal/cli/docs_check311_test.go` (#2731)
+// moved the row from 140 to 141. What is pinned is the row's own shape: its
+// label, a count no lower than the 140 this file's commit moved it to, and the
+// command that prints that count. The count is not computed here -- running `ls`
+// would make this test not hermetic -- because the row's own command is the
+// check the owner runs.
 func TestDocsMobileChecks620MovesTheCensusRow(t *testing.T) {
 	const recon = "docs/rigor-modes/reconciliation.md"
 	census := flattenDoc(readDoc(t, recon))
-	for _, want := range []string{
-		"| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 140 |",
-		"Amended 2026-11-14: `internal/cli/docs_mobile_checks_620_test.go`, the pin over the mobile-auth work's owner Checks 620 to 627 in the register",
-	} {
-		if !strings.Contains(census, want) {
-			t.Errorf("%s does not carry %q: the row is a running total of other folders' guards, and the folder that adds one is the folder that moves it", recon, want)
-		}
+
+	row := censusPinRowRE.FindStringSubmatch(census)
+	if row == nil {
+		t.Fatalf("%s carries no `Docs folders that ship their own `internal/cli/docs_*_test.go` pin` row with a count in it and the `ls internal/cli/docs_*_test.go | wc -l` command beside it: the row is a running total of other folders' guards, and the folder that adds one is the folder that moves it", recon)
+	}
+	count, err := strconv.Atoi(row[1])
+	if err != nil || count < 140 {
+		t.Errorf("%s's `Docs folders that ship their own `internal/cli/docs_*_test.go` pin` row reads %q, want a number at least 140: the row moved to 140 with this file's commit, the running total never falls, and a row below it is a total that lost the guards of a folder it counted", recon, row[1])
+	}
+	if !strings.Contains(census, "Amended 2026-11-14: `internal/cli/docs_mobile_checks_620_test.go`, the pin over the mobile-auth work's owner Checks 620 to 627 in the register") {
+		t.Errorf("%s does not carry %q: the row is a running total of other folders' guards, and the folder that adds one is the folder that moves it", recon, "Amended 2026-11-14: `internal/cli/docs_mobile_checks_620_test.go`, the pin over the mobile-auth work's owner Checks 620 to 627 in the register")
 	}
 }
