@@ -1350,6 +1350,25 @@ test_a_vars_env_recording_only_the_root_is_accepted() {
   expect_contains "$(fact_line config-root)" "PASS" "the config-root row"
 }
 
+test_a_run_records_its_project_and_the_next_one_refuses_another() {
+  setup_case root-project-roundtrip
+  # The guard above is armed by the run's OWN write, and no case that hands the
+  # file a project can see that: this one runs the whole check once and then
+  # runs it again, against another throwaway, in the same directory. A write
+  # that went missing (or wrote a name the guard does not read) leaves the
+  # second run with nothing to refuse and it converges over the first root.
+  run27_default
+  expect_status "$status" 0 "the first run"
+  expect_contains "$(cat "$dir/root/vars.env")" "CHK27_PROJECT=$PROJECT" "the project the run recorded in vars.env"
+  : >"$dir/state/calls.gcloud"
+  : >"$dir/state/calls.fugaro"
+  run27 --project fugaro-live-chk27-b --billing-account "$ACCOUNT" --repo "$REPO"
+  expect_status "$status" 2 "a second run against another throwaway in the same directory"
+  expect_contains "$out" "records CHK27_PROJECT=$PROJECT" "the row names the project the first run recorded"
+  expect_contains "$out" "delete $dir/root" "the row says to start again"
+  expect_no_calls "the second run makes no tool call"
+}
+
 test_the_negative_uses_a_config_root_of_its_own() {
   setup_case neg-root
   run27_default
@@ -1489,6 +1508,7 @@ t test_a_vars_env_naming_another_root_is_refused
 t test_a_vars_env_recording_the_same_project_is_accepted
 t test_a_vars_env_naming_another_project_is_refused
 t test_a_vars_env_recording_only_the_root_is_accepted
+t test_a_run_records_its_project_and_the_next_one_refuses_another
 t test_the_negative_uses_a_config_root_of_its_own
 t test_usage_and_arguments
 t test_a_region_that_is_not_one_is_refused
