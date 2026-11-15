@@ -8,10 +8,16 @@
 # happened. It exists so a landing of many pull requests is one command instead
 # of a merge per pull request with a wait in between.
 #
-# The merge call is the person's, at their own hands: this script is how they
-# make it for a batch, and it does nothing else. It never force-pushes, never
-# rewrites a branch, never runs tests and never decides what is safe to merge:
-# the caller has already decided, and the script only merges and reports.
+# The merge call is the person's, at their own hands, in the provider's own
+# interface: this is the person's own command for making it for a batch -- their
+# own gh, the provider's own CLI, under their own credential -- and it does
+# nothing else. It never force-pushes, never rewrites a branch, never runs tests
+# and never decides what is safe to merge: the caller has already decided, and
+# the script only merges and reports.
+#
+# A coding agent's session is refused before any call is made, because a merge is
+# never an agent's. The markers are internal/agentenv's, the same ones every
+# owner-run check refuses on.
 #
 # Usage: bash scripts/land-prs.sh [--repo OWNER/NAME] [--check-only]
 #                                 [--no-delete-branch] N [N...]
@@ -45,7 +51,8 @@
 #      `merged X of Y`.
 #
 # Exit: 0 when every pull request ended merged, 1 when any did not (the summary
-# lines say which), 2 for a usage error or a tool that is not on PATH.
+# lines say which), 2 for a usage error, for a coding agent's session or for a
+# tool that is not on PATH.
 #
 # Environment: LAND_PRS_POLL_SLEEP_SECONDS (default 3) is the pause before a
 # poll and LAND_PRS_POLLS (default 3) is how many polls an UNKNOWN gets.
@@ -73,6 +80,28 @@ die_usage() {
   printf '%s: %s\n' "$PROG" "$*" >&2
   usage
   exit 2
+}
+
+# guard_agent refuses a coding agent's session, before any call is made: a merge
+# is the person's to make and never an agent's, and this script is written to be
+# run by the person. The rule is internal/agentenv's Session -- an agent-set
+# marker whatever the terminal, because an agent's own processes set it and its
+# tool calls inherit it, and the IDE extension's marker, which a person's own
+# integrated terminal sets too, only where no real terminal is attached.
+guard_agent() {
+  local marker="" name
+  for name in CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_REMOTE CURSOR_AGENT AI_AGENT; do
+    if [ -n "$(printenv "$name" 2>/dev/null || true)" ]; then
+      marker=$name
+      break
+    fi
+  done
+  if [ -z "$marker" ] && [ -n "$(printenv CLAUDE_CODE_SSE_PORT 2>/dev/null || true)" ] && [ ! -t 0 ]; then
+    marker=CLAUDE_CODE_SSE_PORT
+  fi
+  if [ -n "$marker" ]; then
+    die "$marker says this shell is a coding agent's session, and a merge is a person's to make: run $PROG in your own terminal window, or make the merge in the provider's own interface"
+  fi
 }
 
 REPO=""
@@ -114,6 +143,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$PRS" ] || die_usage "give at least one pull request number"
+
+guard_agent
 
 # gh is the only thing this script drives, and python3 is how the JSON it
 # answers with is read: without either, every read would come back as a pull

@@ -10,7 +10,8 @@
 # CONFLICTING pull request among mergeable ones, an UNKNOWN that settles, an
 # UNKNOWN that does not, a draft, a merge gh refuses, a closed pull request, and
 # a pull request that only becomes mergeable once the merges before it moved the
-# base branch.
+# base branch. One more is the session the script refuses: a coding agent's
+# markers make it exit 2 without calling gh, since a merge is a person's to make.
 #
 # Usage: bash scripts/land-prs_test.sh
 set -Eeuo pipefail
@@ -135,10 +136,29 @@ views_before_first_merge() {
 
 OUT=""
 RC=0
+# The script refuses a coding agent's session, and this suite is usually run from
+# one: `go test` under a coding agent inherits CLAUDECODE and AI_AGENT, and an
+# IDE window sets CLAUDE_CODE_SSE_PORT. Every case but the refusal's drops those
+# markers first, so what a case measures is the script and not the session the
+# test was started in. Stdin is /dev/null for the same reason: the IDE marker is
+# a refusal only where there is no terminal on the input, and whether this suite
+# was started from a terminal must not decide a case.
+unset_markers=""
+for marker in CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_REMOTE CURSOR_AGENT AI_AGENT CLAUDE_CODE_SSE_PORT; do
+  unset_markers="$unset_markers -u $marker"
+done
+
 land() { # land ARGS...
-  OUT=$(env PATH="$bin:$PATH" FAKE_GH_DIR="$case_dir" \
+  OUT=$(env $unset_markers PATH="$bin:$PATH" FAKE_GH_DIR="$case_dir" \
     LAND_PRS_POLL_SLEEP_SECONDS="${LAND_PRS_TEST_POLL_SLEEP:-0}" \
-    "$script" "$@" 2>&1) && RC=0 || RC=$?
+    "$script" "$@" 2>&1 </dev/null) && RC=0 || RC=$?
+}
+agent_land() { # agent_land MARKER ARGS...
+  local marker=$1
+  shift
+  OUT=$(env $unset_markers "$marker=1" PATH="$bin:$PATH" FAKE_GH_DIR="$case_dir" \
+    LAND_PRS_POLL_SLEEP_SECONDS="${LAND_PRS_TEST_POLL_SLEEP:-0}" \
+    "$script" "$@" 2>&1 </dev/null) && RC=0 || RC=$?
 }
 
 # ------------------------------------------------------------- all mergeable
@@ -254,6 +274,47 @@ land 8x
 expect_status "$RC" 2 "a number that is not a number is a usage error"
 land --repo
 expect_status "$RC" 2 "--repo without a value is a usage error"
+
+# ------------------------------------------------- a coding agent's session
+# A merge is a person's to make, and the script refuses an agent's session before
+# it calls gh at all: no read, no merge, nothing.
+new_case agent
+view 101 OPEN false MERGEABLE "the one an agent must not merge"
+view 102 OPEN true MERGEABLE "the draft an agent must not merge either"
+agent_land CLAUDECODE 101 102
+expect_status "$RC" 2 "a coding agent's session is refused"
+expect_contains "$OUT" "CLAUDECODE" "the refusal names the marker that says so"
+expect_contains "$OUT" "a merge is a person's to make" "the refusal says whose the merge is"
+expect_absent "$(calls)" "pr view" "an agent's session reads nothing"
+expect_absent "$(calls)" "pr merge" "an agent's session merges nothing"
+expect_absent "$(calls)" "pr ready" "an agent's session marks nothing ready"
+
+new_case agent-check-only
+view 103 OPEN false MERGEABLE "the one an agent must not read"
+agent_land AI_AGENT --check-only 103
+expect_status "$RC" 2 "a coding agent's session is refused under --check-only too"
+expect_absent "$(calls)" "pr view" "the refusal comes before even a read-only sweep"
+
+new_case agent-ide
+view 104 OPEN false MERGEABLE "the one the IDE marker alone must not merge"
+agent_land CLAUDE_CODE_SSE_PORT 104
+expect_status "$RC" 2 "the IDE extension's marker with no terminal is refused"
+expect_absent "$(calls)" "pr view" "the IDE marker with no terminal reads nothing"
+
+# The IDE marker is a person's own integrated terminal, and a person typing there
+# is not an agent: with a terminal on the input the script runs as it always did.
+new_case agent-ide-terminal
+view 105 OPEN false MERGEABLE "the one a person in their IDE terminal lands"
+if [ -t 0 ]; then
+  OUT=$(env $unset_markers CLAUDE_CODE_SSE_PORT=1 PATH="$bin:$PATH" FAKE_GH_DIR="$case_dir" \
+    LAND_PRS_POLL_SLEEP_SECONDS=0 "$script" 105 2>&1) && RC=0 || RC=$?
+  expect_status "$RC" 0 "a person's own IDE terminal is not an agent's session"
+  expect_contains "$OUT" "105: MERGED" "a person's own IDE terminal lands the batch"
+else
+  # Without a terminal on the input there is nothing to tell a person's IDE
+  # terminal from an agent's tool call, so the case can only be run where one is.
+  printf 'note: no terminal on stdin, the IDE-terminal case is skipped\n' >&2
+fi
 
 # ---------------------------------------------------------------- not open
 new_case closed
