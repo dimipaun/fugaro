@@ -923,6 +923,13 @@ var ErrNotLoggedIn = errors.New("the diagnosis agent is not logged in")
 // hint beside them: the hint is also what an invalid API key is reported with
 // ("Invalid API key · Please run /login"), and that is a credential this
 // process handed the child rather than one the person can log in to.
+//
+// There is no cheaper question to ask first: this tree runs no auth-status
+// subcommand of the client anywhere, and the pinned client's own `--help` is
+// not something a diagnosis reads, so a subcommand it may not have would be a
+// guess — and claude reads an unknown word as the prompt it was given. The
+// result text is therefore the earliest point at which a machine with no login
+// is known, and it is early enough: the client answers it before any call.
 func notLoggedIn(text string) bool {
 	return strings.Contains(strings.ToLower(text), "not logged in")
 }
