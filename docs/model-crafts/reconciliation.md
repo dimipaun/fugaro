@@ -1,7 +1,7 @@
 # Model crafts and credentials: reconciliation
 
 **Spec:** [spec.md](spec.md) (received verbatim; owner Dimi Paun). **Checked against** `origin/main` at `1ad2d3143` on **2026-11-07**.
-**Numbers:** this work holds **D1620–D1639** and **Checks 420–429** (none appears anywhere under `docs/` on `main` or in the open pull requests' diffs when read; siblings hold D1540–D1619 and Checks 380–419). The activation plan (§3b) holds **D1660–D1679** (D1660–D1672 written, D1673–D1679 reserved) and **Checks 620–629** (620–624 written), written 2026-11-15 against `main` at `46c68a91`.
+**Numbers:** this work holds **D1620–D1639** and **Checks 420–429** (none appears anywhere under `docs/` on `main` or in the open pull requests' diffs when read; siblings hold D1540–D1619 and Checks 380–419). The activation plan (§3b) holds **D1660–D1679** (D1660–D1672 written, D1673–D1679 reserved) and **Checks 628–637** (628–632 written), written 2026-11-15 against `main` at `46c68a91` and re-read the same day against `main` at `732b098e`, which writes **620–627** (the mobile-auth work's owner-run checks): per the register's own rule, the number free past every claim is **628**, so the plan takes **628–637** — **628** the model half, **629** the publish, **630** the crossing, **631** the key credential, **632** the convergence and the run in flight, **633–637** reserved and unused.
 **Where this file disagrees with `spec.md`, this file wins.** Nothing is implemented; no task is approved. **F26 and D1638 are added 2026-11-10** on the owner's ruling of that date and are read against `docs/api-key-review`'s own files and the merge of its AK6a, not against a fresh reading of the whole tree.
 
 ## 0. The word: **craft**

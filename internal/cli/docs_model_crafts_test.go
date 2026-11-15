@@ -41,7 +41,7 @@ func TestDocsModelCrafts(t *testing.T) {
 }
 
 // TestDocsModelCraftsActivation pins the folder's second plan the same way the
-// first is pinned: the numbers it reserves (D1660–D1679, Checks 620–629), the
+// first is pinned: the numbers it reserves (D1660–D1679, Checks 628–637), the
 // fact that nothing of it is implemented and no task is approved, the four
 // halves 0.24.0's known limits name and the owner's own order over them, and
 // the pointer from the folder's README. What it does not pin is the tasks'
@@ -53,7 +53,7 @@ func TestDocsModelCraftsActivation(t *testing.T) {
 	for _, want := range []string{
 		"[activation-plan.md](activation-plan.md)",
 		"D1620–D1639 and D1660–D1679",
-		"Checks 420–429 and 620–629",
+		"Checks 420–429 and 628–637",
 	} {
 		if !strings.Contains(readme, want) {
 			t.Errorf("%sREADME.md does not point at the activation plan's numbers: %q", modelCraftsDir, want)
@@ -63,7 +63,7 @@ func TestDocsModelCraftsActivation(t *testing.T) {
 	for _, want := range []string{
 		"Status as of 2026-11-15: plan only; nothing of this plan is implemented, no task is approved",
 		"D1660–D1679",
-		"Checks 620–629",
+		"Checks 628–637",
 		// The four halves, in the owner's order of 2026-11-15, each by the
 		// sentence 0.24.0's known limits left behind.
 		"the model half",
