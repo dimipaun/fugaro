@@ -43,7 +43,7 @@ The commit X1's sibling task is written against — the plan's own **Commit** li
 
 The tree says the same thing in its own words, so this is not a reading of commit subjects alone:
 `docs/mobile/implementation-plan.md`'s status paragraph of 2026-11-14 records "the owner's ruling of
-2026-10-30 (D731, which supersedes D255) is **unlanded** — Firebase Analytics dropped from the app,
+2026-10-30 (D731) is **unlanded** — Firebase Analytics dropped from the app,
 crash reports on by default and opt-out, amended by **T0.1**, built by **T3.1**", and the
 reconciliation's **F27** says the §7.4 scan and the opt-out build are T0.1's and T3.1's and have not
 landed. The plan itself orders X1 behind T3.1: T3.1 is level 2 and X1 is level 6.
