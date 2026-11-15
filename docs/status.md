@@ -50,6 +50,7 @@ As of 2026-11-14, read from `main`, the open pull requests and each plan's task 
 | outer-loop-escalation | 11/18 | E6 (live, follow-up run on draft #2498), E10a (live, draft #2609), E10b, E12 to E14; D2046 ruled 2026-11-13: `escalation.ready_drafts` is on by default; owner Checks 540 to 542 |
 | periodic-reviews | 7/14 | R7 to R12; owner Check 136; owner Check 340 ran a third time on 2026-11-13 and exited 1 (the reports job needs only slug-level listings); the revised Check is merged (#2524) and the owner runs it again |
 | portal | 11/42 | owner P0.1 to P0.6; live (batch jm60): P1.8 (draft #2601), P2.3 (#2603), P3.4 (#2605), P6.4 (#2598), P9.2 (#2610); P2.1 (live, follow-up run on draft #2569); not started: P1.7, P2.2, P2.4, P3.1 to P3.3, P3.5, P3.6 (the renew entitlement gate), P4.1 to P4.3, P5.1, P5.2, P6.1 to P6.3, P7.1, P9.3, P9.4 |
+| repos-management | 0/7 | RE3 (stalled, draft #2690, adopted); RE0–RE2, RE4, RE5 not started, all waiting on D2400–D2417; RE6 owner-run (Check 620) |
 | review-job | 3/10 | RJ3 (live, run 20261114-130709-a709); RJ2 and RJ8 approved (owner 2026-11-14); RJ4, RJ5 not started and not approved; owner Checks 610 and 611 |
 | review-levels-ab-jobmax | about 26/40 | A/B reviewer slot, `auto_launch` |
 | rigor-command | 3/10 | R6 (docs), R7 (the hotfix gate; stalled, draft #2538), W (`setup` asks the rigor mode; live, follow-up run on draft #2576); R2 to R5 closed 2026-11-10 as duplicates of settings-commands and config-management, so the spec is mostly superseded but not wholly |
@@ -63,7 +64,6 @@ As of 2026-11-14, read from `main`, the open pull requests and each plan's task 
 | Spec | State |
 | --- | --- |
 | repo-image-removal | parked by the owner: 2/11 merged, R2 to R10 deferred by the image setup skill (D1900), not scheduled in any release and not cancelled; no run or pull request open |
-| repos-management | plan only, 0/7 merged; nothing is implemented; D2400–D2417 wait on the owner's answer and RE0–RE6 are approved nowhere; no run is going and the design's own pull request is the only one open |
 | voice-module, collateral, backlog, plans | no plan or not a spec |
 
 ## Done
