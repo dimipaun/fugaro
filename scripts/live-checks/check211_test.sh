@@ -735,7 +735,7 @@ test_happy_path() {
   assert_scratch_removed "$dir" "happy path"
   # The commands the reading is made of: the launch from the checkout, the
   # objects out of the bucket at the run's OWN prefix, and nothing else.
-  expect_contains "$calls" "run --repo $dir/sandbox --recipe ab-judge --json (in $dir/sandbox)" "happy path: the launch command"
+  expect_contains "$calls" "run --repo $dir/sandbox --recipe ab-judge --json Judge the unjudged A/B pairs of this repository; the ab-judge recipe reads its own manifest and this text only names the launch. (in $dir/sandbox)" "happy path: the launch command"
   expect_contains "$calls" "recipes ls --json" "happy path: the catalog"
   expect_contains "$calls" "config layer --json" "happy path: the layer"
   expect_contains "$calls" "runs ls --repo $dir/sandbox --json --limit 50" "happy path: the runs list"
