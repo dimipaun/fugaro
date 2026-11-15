@@ -217,21 +217,57 @@ func TestRunnerPassesTheIdentitySetToTheAdapter(t *testing.T) {
 		), nil)
 		wantsOwn(t, r, map[string]bool{selfUUID: true, otherUUID: true, plantedUUID: false}, false)
 	})
+
+	// The legacy untyped record is the third shape of an incomplete set, and
+	// the one no entry of the key carries: it is never a bitbucket_tokens
+	// entry (contract, R5/R14) and its identity is on no node, so an
+	// installation that holds typed records *and* the old block -- the state
+	// R3's migration leaves behind, where the selector ranks the legacy record
+	// after the typed ones and may serve a call with it -- cannot claim to know
+	// every account it writes as. Reading the key alone would call this set
+	// complete, and the run's own comment written through the legacy token then
+	// reads as an outsider's (the stale-follow-up hazard T13's test names).
+	t.Run("a legacy record beside them", func(t *testing.T) {
+		r := identitiesRun(t, node(
+			named("bitbucket-token--a", selfUUID),
+			named("bitbucket-token--b", otherUUID),
+		), legacyBlock())
+		wantsOwn(t, r, map[string]bool{selfUUID: true, otherUUID: true, plantedUUID: false}, false)
+	})
+}
+
+// legacyBlock is the node's legacy untyped record, as an edit of the run's
+// pre-filled policy read: the block an installation that has not moved to typed
+// tokens holds, which the run's own admission is read from (proxiedBitbucket)
+// and which the credentials service forwards for the repositories it lists.
+func legacyBlock() func(*run) {
+	return func(r *run) {
+		r.projPolicy.policy.BitbucketToken = &projectpolicy.BitbucketToken{
+			Proxy:      true,
+			AllowRepos: []string{"bitbucket/acme/*"},
+		}
+	}
 }
 
 // TestRunnerWithoutTheTokensKeyKeepsToday: an installation that has published
 // no key leaves the run exactly as it was -- the account GET /user answers for
-// the token that served the read, and that one alone. Both shapes of "no set"
-// are asked: a node of this release without the key, which is what an
-// installation holding no typed token has, and no published node at all, which
-// is what a project that never published one has.
+// the token that served the read, and that one alone. Every shape of "no set"
+// is asked: a node of this release without the key, the same node with the
+// legacy record (the only token the service can serve such an installation
+// with, and so the one GET /user names), and no published node at all, which is
+// what a project that never published one has.
 func TestRunnerWithoutTheTokensKeyKeepsToday(t *testing.T) {
-	for name, node := range map[string]string{
-		"a node without the key": noTokensNode,
-		"no published node":      "",
+	for _, tc := range []struct {
+		name   string
+		node   string
+		legacy func(*run)
+	}{
+		{name: "a node without the key", node: noTokensNode},
+		{name: "a node without the key but with the legacy record", node: noTokensNode, legacy: legacyBlock()},
+		{name: "no published node", node: ""},
 	} {
-		t.Run(name, func(t *testing.T) {
-			r := identitiesRun(t, node, nil)
+		t.Run(tc.name, func(t *testing.T) {
+			r := identitiesRun(t, tc.node, tc.legacy)
 			wantsOwn(t, r, map[string]bool{selfUUID: true, otherUUID: false, plantedUUID: false}, true)
 		})
 	}
