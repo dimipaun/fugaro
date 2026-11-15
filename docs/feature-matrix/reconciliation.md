@@ -2,7 +2,7 @@
 
 The amended spec. **Where this document disagrees with [spec.md](spec.md), this document wins.**
 Checked against `origin/main` at `3e1b02570` on 2026-11-15. Decisions **D2440–D2447** were answered
-by the owner on 2026-11-15; D2448–D2459 stay reserved for this folder. No check number is taken.
+by the owner on 2026-11-15, and D2448–D2449 after the third review round the same day; D2450–D2459 stay reserved for this folder. No check number is taken.
 
 ## Assumptions
 
@@ -48,8 +48,9 @@ code. The column layout was the owner's (D2440).
 
 **F3 — Rule: the site already has an edition vocabulary.** The compatibility page labels rows
 "Core (MIT)" and "Subscription" and never uses "CE" or "EE" (D1522). The feature matrix uses plan
-names (D2440), so the site has two vocabularies for one split. Both pages carry a sentence relating
-them (T4, I1).
+names (D2440), so the site has two vocabularies for one split. The two pages link to each other
+(T4a, T7). A sentence relating the vocabularies is wording about plans, so it waits on the owner's
+read (O1).
 
 **F4 — Gap: status.md's sections do not map one-to-one onto the spec's states.** The tables are
 "Nearly There (NT)", "Work in progress (WIP)", "To do or parked" and "Done". "To do or parked" mixes
@@ -114,7 +115,10 @@ when the generator writes, not in `npm run check`.
    in progress"), a task id, a date or a price.
 4. FEATURES.md's `as_of` stamp names an existing `docs/releases/vX.Y.Z.md` that is not behind the
    newest notes file at or below the stream's `current`. It may be one release ahead, because the
-   notes PR stamps the version before `scripts/release.sh` moves `current`.
+   notes PR stamps the version before `scripts/release.sh` moves `current`. Because notes are
+   written ahead of their release (`docs/releases/v0.25.0.md` is on `main` while `current` is
+   0.24.0), the stamp alone does not prove a refresh. `scripts/release.sh` also demands a commit to
+   FEATURES.md since the previous release tag (D2449).
 5. An Available row never turns back to Coming soon because a spec was added to it.
 
 **F14 — Gap: per-spec progress is in the repository already.** The mapping file names specs and
@@ -132,7 +136,9 @@ and FEATURES.md, so neither shows a spec name or a count (F13 criterion 3).
 | **D2444** | When a feature is Available (F5) | Available when every contributing spec is in Done. Owner live checks do not block. A mapping entry can carry `hold: coming-soon` with a `reason` for built but unshipped features (the mobile app, a switch still off), and that hold wins | Also require every owner live check run; or Done alone | **2026-11-15: as recommended.** |
 | **D2445** | A spec that extends an Available feature (F7) | It gets its own row when it is user-visible, and is excluded otherwise. The generator refuses to write when the previous FEATURES.md showed a row Available and the new snapshot shows it Coming soon or Planned, naming the row and the spec that caused it. A `hold` added in the mapping is the deliberate exception | The literal rule: the row drops back until every extension is Done | **2026-11-15: as recommended.** |
 | **D2446** | Where the markdown lives and how the page is built (F12) | `FEATURES.md` at the repository root, written by `website/bin/feature-matrix.mjs` (path corrected after review; the answer is unchanged). The page renders the same snapshot model through a loader in `content.ts`, without parsing markdown. The snapshot the page renders is the one frozen at release (D2447), read from FEATURES.md's embedded data block | The page parses the markdown table; or the file inside the spec folder | **2026-11-15: as recommended.** |
-| **D2447** | Enforcing refresh on release (F10, F11) | The CLI release notes PR runs the generator, which writes FEATURES.md stamped `as_of: vX.Y.Z`, alongside the compatibility stamp. `website/test/feature-matrix-stamp.mjs` refuses a stamp behind the newest released notes file (F13 criterion 4). `scripts/release.sh` refuses a `main` whose FEATURES.md does not carry the version's stamp, on the ordinary release path only: a hotfix branch may commit nothing but the notes, the summary line and the stream file (`scripts/hotfix-commits.sh`), so a hotfix leaves the matrix to the next ordinary release (this hotfix clause was **amended after review**, round 1: `scripts/hotfix-commits.sh` admits no FEATURES.md commit on a release branch; O4 asks the owner to confirm it) | The page reads status.md live at every build: always current, but a website-only deploy shows main's unreleased state | **2026-11-15: as recommended.** |
+| **D2447** | Enforcing refresh on release (F10, F11) | The CLI release notes PR runs the generator, which writes FEATURES.md stamped `as_of: vX.Y.Z`, alongside the compatibility stamp. `website/test/feature-matrix-stamp.mjs` refuses a stamp behind the newest released notes file (F13 criterion 4). `scripts/release.sh` refuses a `main` whose FEATURES.md does not carry the version's stamp, on the ordinary release path only: a hotfix branch may commit nothing but the notes, the summary line and the stream file (`scripts/hotfix-commits.sh`), so a hotfix leaves the matrix to the next ordinary release (this hotfix clause was **amended after review**, round 1: `scripts/hotfix-commits.sh` admits no FEATURES.md commit on a release branch; O4 asks the owner to confirm it). **Strengthened by D2449** after round 3: a stamp alone does not prove a refresh, because notes are written ahead | The page reads status.md live at every build: always current, but a website-only deploy shows main's unreleased state | **2026-11-15: as recommended.** |
+| **D2448** | The site's 250-word whole-page ceiling (D188, `docs/website/redesign/reconciliation.md`), raised by round-3 review | Exempt `/features/` from the whole-page ceiling, as `/compatibility/` was on 2026-11-10: it renders a data table. The 40-word lead ceiling still applies | Names and statuses only, with explanations in FEATURES.md; or a ceiling derived from the page's own count | **2026-11-15: as recommended.** T4c records the amendment in D188's table, `website/test/lib/exempt.mjs` and `website/README.md` |
+| **D2449** | Proving a refresh at release (F13 criterion 4), raised by round-3 review: notes are written ahead, so a stamp written mid-cycle would pass | `scripts/release.sh` refuses unless `origin/main`'s FEATURES.md says `as_of: vX.Y.Z` **and** carries a commit to FEATURES.md since the previous release tag (git only, no `node`). I1 stamps the released `current`, never an unshipped version | The stamp alone (D2447 as first answered); or `release.sh` running the generator itself | **2026-11-15: as recommended.** Amends D2447's mechanism; D2447's intent is unchanged |
 
 ### Resolutions (one defensible answer, not asked)
 
@@ -172,23 +178,23 @@ None.
 - **O1.** The Community column. The Community Plan includes development and testing use of every
   feature (Terms §4.2), so a bare empty Community cell can mislead. Any sentence explaining this is
   legal wording, and the page carries none without the owner's words (A5, compatibility D1539's
-  precedent). T4 ships the column with no footnote, and the owner's read (T6) decides whether to
+  precedent). T4a ships the column with no footnote, and the owner's read (T6) decides whether to
   add one, in the owner's own words.
 - **O2.** The rule comment at the top of status.md does not mention that the generator reads it.
   Adding that is a status.md edit, so it belongs to the merger's sweep, not to a task (F8).
 - **O3.** The nav approval is recorded in `.claude/rules/website.md`, beside the 2026-10-23 and
   2026-11-10 approvals. That file is a `.claude/**` path, so the merger records D2442 there, not a
-  task. T4 records it in the comments of `Base.astro` and `base-styles.mjs`, as the compatibility
+  task. T4b records it in the comments of `Base.astro` and `base-styles.mjs`, as the compatibility
   entry did.
 
 - **O4.** Confirm D2447 as amended after review: `scripts/release.sh` checks the stamp on the
   ordinary release path only, and a hotfix release leaves the matrix as it was.
-- **O5.** If the page exceeds the site's word or byte budgets (U2), raising them is an amendment to
-  the website plan's D188 and is the owner's decision. T4a reports it rather than changing a budget.
+- **O5.** Settled by D2448 (2026-11-15).
 
 ## UNVERIFIED
 
 - **U1.** The exact number of features the mapping will hold. The plan estimates 20–30 rows from
   status.md's 79 names. T2 settles it.
 - **U2.** Whether the site's per-page byte budget (`website/test/budget.mjs`) has room for a
-  30-row table with three checkmark columns. T4's run of `npm run check` settles it.
+  30-row table with three checkmark columns (the word ceiling is settled by D2448). T4a's run
+  of `npm run check` settles it.

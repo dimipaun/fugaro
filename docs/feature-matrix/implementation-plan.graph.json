@@ -67,8 +67,22 @@
           "website/src/lib/feature-matrix-markdown.mjs",
           "website/bin/feature-matrix.mjs",
           "website/package.json",
-          "website/README.md",
           "website/test/feature-matrix-markdown.mjs"
+        ]
+      }
+    },
+    {
+      "id": "T4c",
+      "title": "the word-ceiling exemption (D2448)",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/website/redesign/reconciliation.md",
+          "website/test/lib/exempt.mjs",
+          "website/README.md"
         ]
       }
     },
@@ -84,8 +98,7 @@
           "website/src/pages/features.astro",
           "website/src/content.ts",
           "website/test/features-page.mjs",
-          "website/test/home.mjs",
-          "website/test/lib/exempt.mjs"
+          "website/test/home.mjs"
         ]
       }
     },
@@ -177,7 +190,9 @@
         "prediction": true,
         "paths": [
           "docs/feature-matrix/contract.md",
-          "website/src/lib/feature-matrix-model.mjs"
+          "website/src/lib/feature-matrix-model.mjs",
+          "website/test/feature-matrix-model.mjs",
+          "website/test/fixtures/feature-matrix/snapshot.json"
         ]
       },
       "kind": "contract_change"
@@ -243,6 +258,11 @@
       "task": "T4b",
       "needs": "T4a",
       "reason": "behaviour: the menu's link checks need the /features/ page to exist"
+    },
+    {
+      "task": "T4a",
+      "needs": "T4c",
+      "reason": "behaviour: the page's budget gate passes only with the exemption"
     }
   ],
   "decoupling": [
