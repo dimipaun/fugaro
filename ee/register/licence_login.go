@@ -55,6 +55,16 @@ func init() {
 	addLicenceSubcommand("login", newLicenceLoginCmd)
 }
 
+// licenceLoginBrowser is what the browser flow hands its address to, and nil is
+// ee/licence/login's own opener. It is a variable for the same reason
+// licenceServerURL is one: this flow cannot be driven from a test without
+// something playing the browser — the command is waiting on a listener of its
+// own — so a test plays the browser here, and the test that holds the
+// no-browser fallback plays an opener that fails. The production value is nil,
+// which is the package's own opener (it has no name to keep in step with: a
+// build that set one would be a build with a second browser policy).
+var licenceLoginBrowser func(address string) error
+
 // licenceLoginOptions is `fugaro licence login`'s own two settings: the cloud
 // flags every command that talks to the project shares, and --device.
 type licenceLoginOptions struct {
@@ -134,6 +144,7 @@ func licenceLogin(cmd *cobra.Command, o *licenceLoginOptions) error {
 		ServerURL:       licenceServerURL,
 		FirebaseProject: firebaseProject,
 		Out:             cmd.OutOrStdout(),
+		OpenURL:         licenceLoginBrowser,
 	}
 	bundle, err := licenceSignIn(cmd, client, o.device)
 	if err != nil {
