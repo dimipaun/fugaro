@@ -239,6 +239,9 @@ run "blocked comes only from an answer the hop gave, and from its own two halves
 run "the direction map is read for the direction being asked about" \
   "  if (status.direction[direction] !== true || status.providers.length === 0) {" \
   "  if (status.direction.stt !== true || status.providers.length === 0) {"
+run "an answer that names no direction admits nothing: the default is deny" \
+  "  const both = { [DIRECTION.STT]: false, [DIRECTION.TTS]: false };" \
+  "  const both = { [DIRECTION.STT]: true, [DIRECTION.TTS]: true };"
 run "an answer with no reason of its own is no-admission, the default deny" \
   "    return blocked(status.reason === null ? POLICY_REASON.NO_ADMISSION : status.reason);" \
   "    return blocked(POLICY_REASON.FORCE_LOCAL);"

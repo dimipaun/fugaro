@@ -203,6 +203,20 @@
       }
     },
     {
+      "name": "an answer that admits a name but names no direction admits nothing, so the direction is blocked",
+      "input": {
+        "direction": "stt",
+        "settings": { "stt": "remote" },
+        "consent": [{ "provider": "deepgram", "at": 1700000000000 }],
+        "status": { "ok": true, "providers": ["deepgram"] }
+      },
+      "expect": {
+        "ok": true, "direction": "stt", "engine": "local", "provider": null,
+        "state": "blocked", "inFlight": false, "reason": "no-admission",
+        "text": "blocked by project policy"
+      }
+    },
+    {
       "name": "a direction the project does not admit is blocked while the other direction is not",
       "input": {
         "direction": "stt",

@@ -56,10 +56,11 @@ one case in `vectors.json`.
 | 7 | no admitted name has a consent | `local` | `local` | `no-consent` |
 | 8 | otherwise | `remote` | `remote (<the first admitted name consented to>)` | `null` |
 
-**Steps 3, 4 and 7 run before 5 and 6, and that order is this module's reading of the plan's
-state table.** When the device's own half already answers local — the switch is off, or no
-consent exists — local is a fact about the device rather than a guess about the project, so it is
-neither `checking` (there is nothing to wait for) nor `blocked` (the device is what refused).
+**Steps 3 and 4 run before 5 and 6, and step 7 follows them, and that order is this module's
+reading of the plan's state table.** When the device's own half already answers local — the switch
+is off, or no consent exists — local is a fact about the device rather than a guess about the
+project, so it is neither `checking` (there is nothing to wait for) nor `blocked` (the device is
+what refused).
 `checking` is therefore reached only when the device's half asks for remote and the project's
 half is what is missing. A project that forces local is reported as `blocked` while the switch is
 on, which is the moment the user is asking for remote and the refusal is what they need to see;
@@ -70,7 +71,7 @@ the switch now says: a switch turned off mid-call must not make the indicator sa
 the audio is still going out — that is the one lie the badge exists to prevent. A failed call is
 §4.5's fallback: the app answers from the local engine and the badge says `local`.
 
-## The two triples, and the one case where they differ
+## The two triples, and the two cases where they differ
 
 | The question | The fields |
 |---|---|
@@ -81,11 +82,16 @@ The egress triple holds a **fixed invariant in every answer**: `engine` is `remo
 `provider` is a name and `reason` is `null`. A caller that reads those three before sending is
 never told remote by anything but a live, admissible decision.
 
-They differ in exactly one reachable case, and they differ in the safe direction: **a remote call
-in flight whose switch (or project) has since stopped admitting it**. There the badge says
-`remote (<name>) — in flight`, because that is what is happening, while `engine` is `local` and
-`provider` is `null`, because nothing new may be sent. `inFlight` is what tells the caller not to
-start a second call at all (P5.3.7's egress path).
+They differ only while a call is in flight, in the two cases the vectors name, and they differ in
+the safe direction. The first is **a remote call in flight whose switch (or project) has since
+stopped admitting it**: the badge says `remote (<name>) — in flight`, because that is what is
+happening, while `engine` is `local` and `provider` is `null`, because nothing new may be sent. The
+second is **a local call in flight over a decision that admits remote** (the vectors' "a local call
+in flight shows local in flight and leaves the decision alone"): the badge says
+`local — in flight`, because that is where the audio went, while `engine` is still `remote` and
+`reason` is `null`, because the project and the device both still admit one. `inFlight` is what
+tells the caller not to start a second call at all (P5.3.7's egress path), and the egress triple is
+the one a caller reads before sending.
 
 ## The badge's words
 
@@ -179,8 +185,8 @@ register names (§7) are lowercase and fit.
 ## Evidence, and how to reproduce it
 
 ```sh
-cd shared && npm test                       # 511 tests in the package, 511 pass, 0 fail (Node 22)
-shared/voice-switch/mutation-proof.sh       # 44 guards: 44 killed, 0 survived, 0 not applied
+cd shared && npm test                       # 513 tests in the package, 513 pass, 0 fail (Node 22)
+shared/voice-switch/mutation-proof.sh       # 45 guards: 45 killed, 0 survived, 0 not applied
 ```
 
 The suite pins the plan's verification list, each item as its own test: the state table walks the
@@ -200,17 +206,18 @@ flight**, the one way the indicator can be made to say `local` while audio leave
 it refuses to report anything unless the pristine suite passes with tests actually run and a
 `refuse()` that always succeeds is caught first.
 
-`vectors.json` carries the state table **as data** (`cases: [{ name, input, expect }]`, 27 accepts
-and 7 refusals) and the suite replays it verbatim, so a row that stops being the rule is a
-failure rather than a table nobody re-reads. The counts are pinned in the test: deleting a case
+`vectors.json` carries the state table **as data** (`cases: [{ name, input, expect }]`, 35 cases:
+28 accepts and 7 refusals) and the suite replays it verbatim, so a row that stops being the rule is
+a failure rather than a table nobody re-reads. The counts are pinned in the test: deleting a case
 is a failure too. It is the only reader of that file today; a later task's tests that want the
 table should read this file rather than copy it.
 
 ## Honest limits
 
-- **The badge and the egress decision can disagree, by design, in one case** (a remote call in
-  flight that is no longer admissible). Both fields are right about their own question, and a
-  caller that reads only `state` will believe a call is remote while `engine` says local. Reading
+- **The badge and the egress decision can disagree, by design, while a call is in flight** — in the
+  two cases the vectors name: a remote call that is no longer admissible, and a local call over a
+  decision that still admits remote. Both fields are right about their own question, and a caller
+  that reads only `state` will believe the wrong thing about where a *new* utterance goes. Reading
   `engine` before sending, and `inFlight` before starting anything, is what the split is for.
 - **A refusal is not an answer, and the fallback is the caller's.** This module refuses rather
   than guess, so an app handed a bug in its own settings must still draw a badge:

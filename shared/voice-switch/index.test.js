@@ -50,6 +50,10 @@ import {
   STATUS_FAILURE,
   indicator,
 } from './index.js';
+// The time bound the module reads a consent's date with, from the module it
+// reads it from: the probe past the bound has to be past *that* bound, or a
+// widened one would leave the test asserting yesterday's number.
+import { MAX_TIMESTAMP } from '../lease/index.js';
 
 const vectors = JSON.parse(readFileSync(new URL('./vectors.json', import.meta.url), 'utf8'));
 
@@ -171,8 +175,8 @@ test('the vectors file replays exactly: every state and every refusal', () => {
   }
   // The counts are pinned so that a case deleted from the table is a failure
   // rather than a smaller table nobody notices.
-  assert.equal(vectors.cases.length, 34);
-  assert.equal(accepts, 27);
+  assert.equal(vectors.cases.length, 35);
+  assert.equal(accepts, 28);
   assert.equal(refusals, 7);
   assert.equal(vectors.cases.length, accepts + refusals);
 });
@@ -261,7 +265,10 @@ test('the state table walks the four inputs the app actually holds', () => {
       }
     }
   }
-  assert.ok(probes >= 500, `the walk is ${probes} probes`);
+  // The walk's size is pinned exactly, not loosely: the README states the number,
+  // and a factor quietly dropped here (a call route, a consent state) would
+  // otherwise shrink the walk with nothing to say so.
+  assert.equal(probes, 3360, `the walk is ${probes} probes`);
   assert.deepEqual([...states].sort(), Object.values(STATE).sort());
   for (const reason of [
     REASON.SWITCH_LOCAL,
@@ -396,6 +403,29 @@ test('blocked by project policy comes from the hop\'s answer, never from a polic
   });
   assert.equal(off.state, STATE.LOCAL);
   assert.equal(off.reason, REASON.SWITCH_LOCAL);
+});
+
+test('an answer that names no direction admits neither: a name alone is no admission', () => {
+  // §4.3's default deny, at the one place it is reachable: an answer that carries
+  // admitted names and no `direction` map. The device's half is permissive here --
+  // the switch asks for remote and the consent names the provider the answer
+  // admits -- so the absent direction map is the only thing refusing, and it must
+  // refuse. A default of "admitted" would answer `remote (deepgram)` on the
+  // strength of a policy the app never read; mutation-proof.sh turns this
+  // default and this test is what kills it.
+  for (const direction of Object.values(DIRECTION)) {
+    const result = indicator({
+      direction,
+      settings: { [direction]: ENGINE.REMOTE },
+      consent: PERMISSIVE.consent,
+      status: { ok: true, providers: ['deepgram'] },
+    });
+    assert.equal(result.state, STATE.BLOCKED, direction);
+    assert.equal(result.reason, POLICY_REASON.NO_ADMISSION, direction);
+    assert.equal(result.text, 'blocked by project policy', direction);
+    assert.equal(result.engine, ENGINE.LOCAL, direction);
+    assert.equal(result.provider, null, direction);
+  }
 });
 
 test('every failure input lands on local, which is the one direction the whole table fails in', () => {
@@ -616,6 +646,35 @@ function throwingInput() {
 }
 
 /**
+ * An array that is not a plain array. A subclass passes `Array.isArray`, so the
+ * reader's second half (`getPrototypeOf` is `Array.prototype`) is the only thing
+ * between it and being read as the app's own storage.
+ */
+function arraySubclass(items) {
+  const Sub = class extends Array {};
+  const value = new Sub();
+  for (const item of items) value.push(item);
+  return value;
+}
+
+/**
+ * A plain array whose only element sits behind a getter that throws. Reading it
+ * would be an `internal-error`; the probe below expects `invalid-providers`, so a
+ * reader that called the getter on its way to the element fails the table -- the
+ * getter is the proof that it was never read, not a comment claiming so.
+ */
+function providersBehindAGetter() {
+  const value = [];
+  Object.defineProperty(value, '0', {
+    enumerable: true,
+    get() {
+      throw new Error('readProviders must not call a getter');
+    },
+  });
+  return value;
+}
+
+/**
  * One probe per refusal code. The point of the table is that **every code is
  * reached**: a guard nothing exercises is a guard nothing defends, and the count
  * assert below fails the day a code is added to `REFUSAL` without a probe here.
@@ -633,6 +692,7 @@ const REFUSALS = [
   ['a switch is neither local nor remote', { direction: DIRECTION.STT, settings: { stt: 'REMOTE' } }, REFUSAL.UNKNOWN_ENGINE, 'settings.stt'],
   ['a switch is not a string at all', { direction: DIRECTION.TTS, settings: { tts: 1 } }, REFUSAL.UNKNOWN_ENGINE, 'settings.tts'],
   ['the consent is not an array', { direction: DIRECTION.STT, consent: { deepgram: true } }, REFUSAL.INVALID_CONSENT, 'consent'],
+  ['the consent is an array subclass, which is not a plain array', { direction: DIRECTION.STT, consent: arraySubclass([{ provider: 'deepgram', at: AT }]) }, REFUSAL.INVALID_CONSENT, 'consent'],
   ['the consent carries a field this module does not name', { direction: DIRECTION.STT, consent: [{ provider: 'deepgram', at: AT, name: 'x' }] }, REFUSAL.UNKNOWN_FIELD, 'consent'],
   ['a consent names no provider', { direction: DIRECTION.STT, consent: [{ at: AT }] }, REFUSAL.MISSING_FIELD, 'consent.provider'],
   ['a consent is undated', { direction: DIRECTION.STT, consent: [{ provider: 'deepgram' }] }, REFUSAL.MISSING_FIELD, 'consent.at'],
@@ -643,6 +703,8 @@ const REFUSALS = [
   ['a consent time is the shape of an unset counter', { direction: DIRECTION.STT, consent: [{ provider: 'deepgram', at: 0 }] }, REFUSAL.INVALID_AT, 'consent.at'],
   ['a consent time is negative zero', { direction: DIRECTION.STT, consent: [{ provider: 'deepgram', at: -0 }] }, REFUSAL.INVALID_AT, 'consent.at'],
   ['a consent time is a string', { direction: DIRECTION.STT, consent: [{ provider: 'deepgram', at: String(AT) }] }, REFUSAL.INVALID_AT, 'consent.at'],
+  ['a consent time is a fraction of a millisecond', { direction: DIRECTION.STT, consent: [{ provider: 'deepgram', at: 1.5 }] }, REFUSAL.INVALID_AT, 'consent.at'],
+  ['a consent time is past the bound the package reads a time with', { direction: DIRECTION.STT, consent: [{ provider: 'deepgram', at: MAX_TIMESTAMP + 1 }] }, REFUSAL.INVALID_AT, 'consent.at'],
   ['one name carries two consents', { direction: DIRECTION.STT, consent: [{ provider: 'deepgram', at: AT }, { provider: 'deepgram', at: AT + 1 }] }, REFUSAL.DUPLICATE_CONSENT, 'consent.provider'],
   ['the status carries no ok at all', { direction: DIRECTION.STT, status: { providers: ['deepgram'] } }, REFUSAL.MISSING_FIELD, 'status.ok'],
   ['the status ok is not a boolean', { direction: DIRECTION.STT, status: { ok: 'true' } }, REFUSAL.WRONG_TYPE, 'status.ok'],
@@ -651,6 +713,8 @@ const REFUSALS = [
   ['a failed status names a code outside the set', { direction: DIRECTION.STT, status: { ok: false, code: 'timeout' } }, REFUSAL.UNKNOWN_CODE, 'status.code'],
   ['an answer carries a field of the failed shape', { direction: DIRECTION.STT, status: { ok: true, code: 'unreachable' } }, REFUSAL.UNKNOWN_FIELD, 'status'],
   ['the admitted names are not an array', { direction: DIRECTION.STT, status: { ok: true, providers: 'deepgram' } }, REFUSAL.INVALID_PROVIDERS, 'status.providers'],
+  ['the admitted names are an array subclass, which is not a plain array', { direction: DIRECTION.STT, status: { ok: true, providers: arraySubclass(['deepgram']) } }, REFUSAL.INVALID_PROVIDERS, 'status.providers'],
+  ['an admitted name sits behind a getter, which is never called', { direction: DIRECTION.STT, status: { ok: true, providers: providersBehindAGetter() } }, REFUSAL.INVALID_PROVIDERS, 'status.providers'],
   ['an admitted name is not a name', { direction: DIRECTION.STT, status: { ok: true, providers: ['https://stt.example.com'] } }, REFUSAL.BAD_PROVIDER, 'status.providers'],
   ['one admitted name appears twice', { direction: DIRECTION.STT, status: { ok: true, providers: ['deepgram', 'deepgram'] } }, REFUSAL.DUPLICATE_PROVIDER, 'status.providers'],
   ['the direction map is not an object', { direction: DIRECTION.STT, status: { ok: true, direction: [true] } }, REFUSAL.NOT_AN_OBJECT, 'status.direction'],
