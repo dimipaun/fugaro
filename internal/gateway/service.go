@@ -136,6 +136,18 @@ const (
 	// fail-closed rather than pinning no model. A refusal, so the run halts
 	// (D143), and the halt's detail names what to look at.
 	ErrorRequestRefused = "request_refused"
+	// ErrorNoCandidateCredentials is a call the service had no credential to
+	// serve: every credential the policy offered this repository was dropped
+	// before the selection was made, so there was nothing to select from,
+	// nothing to wait for and no other tier to reach. That is not
+	// ErrorStateUnavailable, whose name would send the operator to the
+	// database: the service read the state, and what it read is that this
+	// repository's admission covers none of the project's model credentials.
+	// A refusal, so the run halts (D143). The names the service considered
+	// reach this job's log and the service's own line, and never the halt's
+	// detail, which the agent reads: the set of the project's credentials is
+	// not the agent's business (D143).
+	ErrorNoCandidateCredentials = "no_candidate_credentials"
 )
 
 // Why a credential was not used, in a refusal's tried list
@@ -823,6 +835,17 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 		return http.StatusServiceUnavailable, true, "", nil
 	case ErrorStateUnavailable:
 		return s.haltService(w, refusalDetail(e.Error)), true, "", nil
+	case ErrorNoCandidateCredentials:
+		// The one refusal whose detail is built from the answer rather than
+		// from the type alone (noCredentialDetail): which of the filters
+		// removed the candidates is the whole diagnosis, and a run told only
+		// "no credential" is a run whose operator greps a log with nothing in
+		// it. The names stay out of the detail and go to this job's own log
+		// (triedLog), which is where the run's operator reads them and where
+		// the agent cannot.
+		s.log.Warn("budget: the credentials service had no credential to offer a call",
+			"stage", s.stageName(), "tried", triedLog(e.Tried))
+		return s.haltService(w, noCredentialDetail(e.Tried)), true, "", nil
 	case ErrorRequestRefused:
 		// The service's request check refused the call itself, and the one
 		// cause a forwarded call can really have is a project that publishes
@@ -893,6 +916,83 @@ func refusalDetail(typ string) string {
 		return "the credentials service refused this request (request_refused: check the project's published budget.allowed_models and this call's model, tools and max_tokens)"
 	}
 	return stateDetailUnreadable
+}
+
+// noCredentialDetail is the detail for a call the service had no credential to
+// offer. Unlike every other detail here it is built from the answer, because
+// the cause IS the answer: which filter removed the credentials is what tells
+// the operator whether to look at the project's published policy, the
+// installation's bundle or the repository's own local config, and a run told
+// only that no credential existed is a run whose operator greps a log that
+// says nothing.
+//
+// What is built from the answer is only the set of reasons, and each one is
+// rendered by noCredentialCause, whose every sentence is a constant of this
+// package: no free text, no credential NAME and nothing else the service sent
+// reaches a Detail, which the agent is shown and the run's record keeps (D143).
+// The names are in this job's own log instead (triedLog), which the agent
+// never reads.
+func noCredentialDetail(tried []serviceTried) string {
+	if len(tried) == 0 {
+		// Nothing was dropped because nothing was there: the bundle the
+		// service loads holds no model credential at all, which is a fact
+		// about the installation and not about the policy.
+		return "the credentials service had no credential to offer this call (no_candidate_credentials): the installation's bundle holds no model credential, so there was nothing this policy could admit (check the bundle with the credentials service's own log line for this run)"
+	}
+	causes := noCredentialCauses(tried)
+	return "the credentials service had no credential to offer this call (no_candidate_credentials): " +
+		strings.Join(causes, "; ") +
+		" — check the project policy's credentials.accounts, each account's allow_repos and this repository's own claude_accounts, and the credentials service's own log line for this run, which names every credential it considered"
+}
+
+// noCredentialCause is one tried reason as a sentence of this package's own.
+// Every value it answers is a constant here, and the reason reaches it only
+// after validTriedList held the body to the contract's own closed set: a reason
+// this release does not carry is a detail that says the answer could not be
+// read rather than a word the service chose.
+func noCredentialCause(reason string) string {
+	switch reason {
+	case ReasonNotAdmitted:
+		return "not one of the credentials this repository's policy admits to it (not_admitted)"
+	case ReasonExhausted:
+		return "the credentials it may use are all marked exhausted (exhausted)"
+	case ReasonBroken:
+		return "the credentials it may use are all marked broken (broken)"
+	case ReasonStopped:
+		return "the credentials it may use are stopped by an operator's switch (stopped)"
+	}
+	return stateDetailUnreadable
+}
+
+// noCredentialCauses is the distinct reasons a tried list carries, rendered in
+// this package's own order and never in the order the answer happened to list
+// them, so the same refusal is the same detail whatever order it was built in.
+func noCredentialCauses(tried []serviceTried) []string {
+	present := make(map[string]bool, len(tried))
+	for _, tr := range tried {
+		present[tr.Reason] = true
+	}
+	out := make([]string, 0, len(present))
+	for _, r := range []string{ReasonNotAdmitted, ReasonExhausted, ReasonBroken, ReasonStopped} {
+		if present[r] {
+			out = append(out, noCredentialCause(r))
+		}
+	}
+	return out
+}
+
+// triedLog renders a refusal's tried list for this job's own log: the names the
+// service considered and the reason each was not used, one line. It is the
+// diagnosis that stays out of the halt's detail (noCredentialDetail) because
+// the Detail is displayed to the agent, and it is what an operator greps the
+// run's log for — the service's own line for the same refusal carries the same
+// list, so the two can be read against each other.
+func triedLog(tried []serviceTried) string {
+	parts := make([]string, 0, len(tried))
+	for _, tr := range tried {
+		parts = append(parts, logValue(tr.Name)+" ("+tr.Reason+")")
+	}
+	return strings.Join(parts, ", ")
 }
 
 // haltService records a halt the service's own answer forces, writes the

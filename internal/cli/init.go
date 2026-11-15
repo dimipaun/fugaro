@@ -5530,9 +5530,9 @@ func (r *initRun) writeRepoConfig(ctx context.Context, lc *localcfg.Config, spec
 	// it would drop it, erasing in silence the only admission a
 	// per-repository job can state (a Bitbucket repository, or any repository
 	// no workflow sends to a shared job, has no profile to name one in). The
-	// runs would then be answered 503 state_unavailable by the credentials
-	// service while the node this publish writes still carries the admission,
-	// which is the state this key exists to end.
+	// runs would then be answered 503 no_candidate_credentials by the
+	// credentials service while the node this publish writes still carries the
+	// admission, which is the state this key exists to end.
 	var ready *bool
 	var accounts []string
 	if entry, ok := lc.Repos[key]; ok {
