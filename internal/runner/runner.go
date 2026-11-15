@@ -327,7 +327,14 @@ type run struct {
 	// governance block it ignores has been written: the line is about the
 	// build, so a run says it once however many stages it has (guarded by mu).
 	ignoredGovernanceSaid bool
-	stageExtra            func(stage string) (violations []string, tokens int64)
+	// checkpointCall is whether the halt this run ended on left a checkpoint
+	// report for the stopping agent to answer, which is what the checkpoint
+	// stage runs for (governance_hook.go, checkpoint_stage.go, T7.3). It is
+	// set only by a stage hook's own decision, so a stop no checkpoint call
+	// may follow — a stage's own timeout, a cap, the review-scope stop —
+	// leaves it false (guarded by mu).
+	checkpointCall bool
+	stageExtra     func(stage string) (violations []string, tokens int64)
 	// sess is the run's session with the budget backend; nil when the run
 	// has none. frozen is set when the agent loop is over, after which a
 	// halt from the backend changes nothing. Both guarded by mu.
@@ -812,6 +819,14 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 	default:
 		r.runAgentLoop(runCtx)
 	}
+	// The stop's own last call, before anything that cannot make one: a
+	// governance halt asks the stopping agent for the three fields of its
+	// checkpoint report, from a fresh session, and the answers go into the
+	// report the halt left (checkpoint_stage.go, T7.3). It runs after the mode
+	// loop, which is the moment the stopped stage's agent process is gone, and
+	// before freezeHalts and closeGateway, which it needs a live gateway to
+	// make its call through.
+	r.checkpointStage(runCtx)
 	// From here nothing the backend says can stop a stage.
 	r.freezeHalts()
 	// Finalize makes no model calls: the gateway is closed first, and the
@@ -3709,6 +3724,12 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 			r.timeStop()
 			return false
 		}
+		// The review-scope stop is asked before the round's call and never
+		// after it (T7.3): a reviewer about to be handed a range covering files
+		// this run never changed is a round the run must not buy at all.
+		if !r.beforeReview(ctx, "review") {
+			return false
+		}
 		// The loop counts the review rounds it starts, across every enabled
 		// level: it is what the time half of the stop rule asks before it
 		// fires (stopNow), so a run whose first stage ate its budget still
@@ -3857,6 +3878,11 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 	for round := 1; ; round++ {
 		if r.stopNow() {
 			r.timeStop()
+			return false
+		}
+		// Asked exactly as seniorLoop asks it, and for the same reason: level
+		// 3's round reads the same range, so a moved one stops it here (T7.3).
+		if !r.beforeReview(ctx, stageAdversarial) {
 			return false
 		}
 		// Counted exactly as seniorLoop counts it, and never per level: the
@@ -4185,6 +4211,12 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 			// whose clock ran out starts no round of it either (item 6b — the
 			// stop is the run's, not one level's).
 			return r.firstLineStop(sessionID)
+		}
+		// The review-scope stop, asked before the round's call like the two
+		// outer loops' (T7.3). It is not the stop rule's time half, so it is
+		// not firstLineStop: a governance stop has already recorded itself.
+		if !r.beforeReview(ctx, "review_first") {
+			return sessionID, false
 		}
 		// Counted as seniorLoop counts its rounds: the stop's guard and its
 		// time half read the run's review rounds, never one level's.
@@ -4880,7 +4912,7 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		r.beginGatewayStage(name)
 		done := make(chan struct{})
 		watching.Add(1)
-		go func() { defer watching.Done(); r.watchHalt(stageCtx, done) }()
+		go func() { defer watching.Done(); r.watchHalt(stageCtx, done, name) }()
 		if p := r.sidecarProc(); p != nil {
 			// The sidecar is watched with the same shape and for the same
 			// reason, and it can only be here with the gateway: a sidecar
@@ -4959,7 +4991,7 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		r.mu.Unlock()
 	}
 	if r.gw != nil && !direct {
-		r.recordGatewayStageCost(name, res.CostUSD, stageCtx.Err() != nil || r.haltValue() != nil)
+		r.recordGatewayStageCost(ctx, name, res.CostUSD, stageCtx.Err() != nil || r.haltValue() != nil)
 	} else if direct {
 		r.recordAccountStageCost(name, res.CostUSD)
 	} else {

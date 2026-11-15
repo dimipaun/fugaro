@@ -328,6 +328,44 @@ type ownRange struct {
 	Why    string
 }
 
+// reviewScopeNow is the review-scope comparison as it stands before a review
+// round, which is what the review-scope stop reads (governance_hook.go,
+// StageView.ReviewScope, T7.3): the record's own while the range that round
+// reads still starts at the commit the run's own commits do, and the same
+// comparison read again when it does not.
+//
+// The record's comparison is taken once, after implement (narrowReviewRange),
+// and it is a statement about the range that run had. A fix round can move the
+// branch off the commit the range was narrowed to (reviewRev), and the round
+// that follows then reads the recorded range instead — the drift reviewRev
+// names in the prompt (narrowLeftNote) and internal/digest flags. Read over
+// the commit the range was narrowed to rather than over the commit the run's
+// own commits now start after, that comparison is the drift itself:
+// reviewRev answers the recorded range, Applicable is false, and the reason is
+// runstore.ReviewScopeRangeMoved — the range is not the run's own commits any
+// more. The record keeps it, so the record and the stop cannot disagree about
+// what a reviewer was handed.
+//
+// A comparison that cannot be read hands nothing to the stop and leaves the
+// record alone: an absent comparison is never an empty one (G5), and the
+// record's own describes a range the round is not reading.
+func (r *run) reviewScopeNow(ctx context.Context, nb, rev string) *runstore.ReviewScope {
+	if r.rec == nil {
+		return nil
+	}
+	if nb == "" || rev == nb || r.rec.ReviewScope == nil {
+		return r.rec.ReviewScope
+	}
+	now := r.readReviewScope(ctx, ownRange{Base: nb, Narrow: true})
+	if now.WhyNot == runstore.ReviewScopeReadFailed {
+		return nil
+	}
+	r.rec.ReviewScope = now
+	r.d.Log.Warn("the commit the run's review range was narrowed to no longer leads to HEAD; the record carries the comparison of the range the next review round reads",
+		"narrowed", nb, "range", r.redact(rev)+"...HEAD")
+	return now
+}
+
 // ownRangeBase reads the run's own commits and counts the two ranges: the
 // decision narrowReviewRange and the review-scope comparison are both taken
 // from it, once, so the range that is narrowed and the range that is

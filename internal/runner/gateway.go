@@ -867,7 +867,7 @@ func (r *run) stageSpec(name string) gateway.Stage {
 		Model:           r.stageModel(name),
 		Background:      r.backgroundModel(),
 		Vision:          r.cfg.Agent.VisionModel(),
-		MaxOutputTokens: r.cfg.Agent.MaxOutputFor(stageRole(name)),
+		MaxOutputTokens: r.stageMaxOutput(name),
 	}
 }
 
@@ -938,8 +938,8 @@ func (r *run) lastWaited() int {
 // stage would erase the figure from the run's own record (P11). Nothing of
 // this stage is asked of the gateway, which is why runner.go does not call
 // this for one.
-func (r *run) recordGatewayStageCost(stage string, claudeUSD float64, stopped bool) {
-	r.drainHalt()
+func (r *run) recordGatewayStageCost(ctx context.Context, stage string, claudeUSD float64, stopped bool) {
+	r.drainHalt(ctx, stage)
 	r.crossCheckCost(stage, claudeUSD, stopped)
 	r.mu.Lock()
 	r.rec.CostUSD = (r.gwUsed + r.gwNotional + r.direct).USD()
@@ -980,15 +980,26 @@ func abs(f float64) float64 {
 // watchHalt waits for the gateway's halt while a stage runs. On a halt it
 // records it at once, then gives the agent haltGrace to exit by itself
 // (done closes) before stopping the stage.
-func (r *run) watchHalt(stageCtx context.Context, done <-chan struct{}) {
+//
+// What it records is the halt the stage hook made of the stop when the hook
+// leaves one — the gateway's stage budgets, the review ratio and the fan-out
+// are governance stops, and they leave the checkpoint report a governance stop
+// leaves (T7.3) — and the gateway's own halt otherwise (gatewayStop). It is
+// called on a goroutine of its own, which governanceHalt allows because the
+// stage's own stopWatch joins this one before the stage's spend and history
+// are written (halt.go).
+func (r *run) watchHalt(stageCtx context.Context, done <-chan struct{}, stage string) {
 	select {
 	case gh, ok := <-r.gw.Halted():
 		if !ok || gh.Reason == "" {
 			return // delivered before
 		}
-		h := gatewayHalt(gh)
-		if !r.haltNow(h) {
+		if !r.gatewayStop(stageCtx, stage, gh) {
 			return // a cancel came first, and stops the stage itself
+		}
+		h := r.haltValue()
+		if h == nil {
+			return
 		}
 		t := time.NewTimer(haltGrace)
 		defer t.Stop()
@@ -996,7 +1007,7 @@ func (r *run) watchHalt(stageCtx context.Context, done <-chan struct{}) {
 		case <-done:
 		case <-stageCtx.Done():
 		case <-t.C:
-			r.cancelHaltedStage(h)
+			r.cancelHaltedStage(*h)
 		}
 	case <-done:
 	case <-stageCtx.Done():
@@ -1005,11 +1016,11 @@ func (r *run) watchHalt(stageCtx context.Context, done <-chan struct{}) {
 
 // drainHalt records a halt the watcher did not get to, once the stage's
 // agent has returned.
-func (r *run) drainHalt() {
+func (r *run) drainHalt(ctx context.Context, stage string) {
 	select {
 	case gh, ok := <-r.gw.Halted():
 		if ok && gh.Reason != "" {
-			r.haltNow(gatewayHalt(gh))
+			r.gatewayStop(ctx, stage, gh)
 		}
 	default:
 	}

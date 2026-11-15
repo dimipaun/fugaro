@@ -75,7 +75,7 @@ func (r *run) DirectCall(ctx context.Context, req StepCall) (StepAnswer, error) 
 	// a stage that was stopped leaves it out, rather than warning about a
 	// figure nobody counted. The stage's own report — the gateway's — is what
 	// this call's money and tokens are accounted from.
-	r.recordGatewayStageCost(evaluateStage, 0, true)
+	r.recordGatewayStageCost(ctx, evaluateStage, 0, true)
 	r.updateCost()
 	if err != nil {
 		return StepAnswer{}, err
