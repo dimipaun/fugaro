@@ -60,8 +60,11 @@ func TestUpdatePinsTheCatalogBaseAndDeploysTheCheckJob(t *testing.T) {
 	}
 	r.script["show@installation"] = map[string]any{"stdout": planJSON(t, change("module.installation.google_cloud_run_v2_job.catalog_check", "create"))}
 	r.save(t)
+	// The owner's own terminal, which is what confirms the steps the run asks
+	// about now the flag that stood in for it is gone (T11).
+	fakeTerminal(t)
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("a project with an image catalog and no base image does not reach this release with `fugaro update` alone (exit %d):\n%s\n%s", ExitCode(err), out, errOut)
 	}
@@ -135,7 +138,8 @@ func TestUpdatePinsTheCatalogBaseAndDeploysTheCheckJob(t *testing.T) {
 // catalog's.
 func TestUpdatePinsTheCatalogBaseForAPlainRunWithNoCheckout(t *testing.T) {
 	r := catalogUpdateRig(t)
-	if _, _, err := executeStdin(t, "", "update", "--yes"); err != nil {
+	fakeTerminal(t)
+	if _, _, err := executeStdin(t, "", "update"); err != nil {
 		t.Fatalf("fugaro update refused a catalog whose base image it is about to pin: %v", err)
 	}
 	if got, want := r.localConfig(t).BaseImage(config.BaseKind), r.pinnedBase(config.BaseKind, convergeRelease); got != want {
@@ -152,7 +156,8 @@ func TestUpdateLeavesAnInstallationWithACurrentCatalogBaseAlone(t *testing.T) {
 	r := catalogUpdateRig(t)
 	r.appendConfig(t, "image_source: ghcr.io/dimipaun\nbase_images: {base: "+r.pinnedBase(config.BaseKind, convergeRelease)+"}\n")
 	r.save(t)
-	if _, _, err := executeStdin(t, "", "update", "--yes"); err != nil {
+	fakeTerminal(t)
+	if _, _, err := executeStdin(t, "", "update"); err != nil {
 		t.Fatalf("fugaro update refused an installation whose catalog base image is current: %v", err)
 	}
 	// One plan pass and no more: a second one is the run re-applying an
@@ -207,7 +212,7 @@ func TestUpdatePreviewNamesTheCatalogArmsSecondApply(t *testing.T) {
 			if !strings.Contains(out, "Review: project "+initProjectName) {
 				t.Fatalf("the run showed no review screen to read:\n%s", out)
 			}
-			if row := planRowOf(out, "installation-2"); !strings.Contains(row, "will do") {
+			if row := planRowOf(out+newestLog(t, "update"), "installation-2"); !strings.Contains(row, "will do") {
 				t.Errorf("the preview does not report installation-2 as work this run will do (its row is %q), so the second apply that deploys the catalog check job is not the one the user's confirmation covers:\n%s", row, out)
 			}
 			if !strings.Contains(out, "  installation-2: Terraform apply of the installation root again") {
@@ -249,7 +254,7 @@ func TestUpdateDeploysTheCatalogCheckJobFromAFlaggedBase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a catalog project whose base image the run names itself does not converge with `fugaro update` alone (exit %d):\n%s\n%s", ExitCode(err), out, errOut)
 	}
-	if row := planRowOf(out, "installation-2"); !strings.Contains(row, "will do") {
+	if row := planRowOf(out+newestLog(t, "update"), "installation-2"); !strings.Contains(row, "will do") {
 		t.Errorf("the preview reports installation-2 as skipped (its row is %q), though the run records the flag's base image after the first apply and applies the root again with it:\n%s", row, out)
 	}
 	if !strings.Contains(out, "  installation-2: Terraform apply of the installation root again") {
@@ -275,7 +280,8 @@ func TestUpdateDeploysTheCatalogCheckJobFromAFlaggedBase(t *testing.T) {
 // about the base image would be an update that exits 0 in the issue's state.
 func TestUpdateSaysWhenItCannotPinTheCatalogBase(t *testing.T) {
 	r := catalogUpdateRigAt(t, "dev")
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("a development build's run: %v\n%s\n%s", err, out, errOut)
 	}

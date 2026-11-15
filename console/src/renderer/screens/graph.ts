@@ -82,6 +82,8 @@ import type {
   StateWord,
 } from '../graph/model'
 import type { ScopeBox, ScopeLane, ScopeModel, ScopeNeed, ScopeNode, ScopeRelease, ScopeSource } from '../graph/model'
+import { MOVE_OPEN_CLASS, MOVE_OPEN_LABEL, moveSheet } from '../graph/move'
+import type { MoveSheet, MoveTarget } from '../graph/move'
 import { disabledWrite } from '../writes'
 
 // ---------------------------------------------------------------------------
@@ -528,6 +530,13 @@ export interface GraphState {
   readonly selected: string | null
   readonly expanded: readonly string[]
   readonly zoom: number
+  /** `move` is the confirmation a drag, a drop or the row's own button put up
+   * (GV3.2), or `null` while no move is in hand. It is the screen's own state
+   * like the other five -- the sheet is part of the drawing and not a window of
+   * its own, so it is redrawn with everything else and a state change cannot
+   * draw one scope's sheet over the other's -- and it is deliberately **not**
+   * part of the layout's key: a sheet changes no structure. */
+  readonly move: MoveSheet | null
   /** `scope` is which read is drawn (CG10). It is the screen's own state like
    * the other five, and a drawing is a function of it: the coordinator scope has
    * no positions, no canvas and no legend, and the plan scope has no source
@@ -545,6 +554,7 @@ export const GRAPH_INITIAL_STATE: GraphState = Object.freeze({
   selected: null,
   expanded: Object.freeze([]),
   zoom: 1,
+  move: null,
   scope: GRAPH_SCOPE_PLAN,
 })
 
@@ -2150,6 +2160,13 @@ export function renderScopeGraph(factory: ScreenFactory, picture: ScopePicture, 
   // `renderGraph`'s reason: the scope control starts a read of its own.
   cell(root, factory, 'div', BUSY_SLOT_CLASS)
   root.append(scopeHeader(factory, picture))
+  // The confirmation goes **under the header and over everything else**: it is
+  // the one thing on this screen a person has to answer before anything else
+  // they do here means what it says, and a sheet below the lanes would be below
+  // the fold on a project with three streams.
+  if (picture.state.move !== null) {
+    root.append(moveSheet(factory, picture.state.move, moveTargets(picture.model)))
+  }
   const tabs = scopeTabs(factory, picture)
   if (tabs !== null) root.append(tabs)
   const sources = scopeSources(factory, picture.model)
@@ -2168,6 +2185,26 @@ export function renderScopeGraph(factory: ScreenFactory, picture: ScopePicture, 
     literal(cell(root, factory, 'p', 'graph-not-shown'), notShownNote(picture.model.notShown))
   }
   return root
+}
+
+/**
+ * moveTargets is every box a task of this drawing can be moved to: the lanes'
+ * own boxes, in the order the drawing puts them, with the record's key for each
+ * and the name its heading is drawn by.
+ *
+ * **It is the drawn lanes and not the document's releases**, because it is the
+ * list the keyboard picks a drop target from: a box under a stream tab the
+ * operator has filtered away is a box they cannot drop onto with a pointer
+ * either, and a select offering it would be a second, better drawing. The
+ * unassign is not in this list -- it is the select's last option and not a
+ * record's box -- so nothing here carries the empty key a release never has.
+ */
+function moveTargets(model: ScopeModel): readonly MoveTarget[] {
+  const targets: MoveTarget[] = []
+  for (const lane of model.lanes) {
+    for (const box of lane.boxes) targets.push({ key: box.key, name: box.heading })
+  }
+  return targets
 }
 
 /**
@@ -2378,6 +2415,13 @@ function scopeNeed(factory: ScreenFactory, picture: ScopePicture, node: ScopeNod
  * one's. `data-kept` is the hook the words come with, in the same two-channel
  * shape every state in this console has (H10).
  *
+ * **A record task's row is the one thing here that is a gesture** (GV3.2): it is
+ * `draggable`, and it carries the console's own "Move…" button, which is the same
+ * move for a keyboard and a screen reader. What the two name is the key above --
+ * `data-key` on the row and on the button -- and never a word of the command
+ * line: the entry reads the key and a box's `data-release`, and the main process
+ * is what turns the two into an argv.
+ *
  * **A record task's three own members are drawn beside the same title** (GV4.1):
  * the record's `dangling` mark, the plan's own `version` with the console's
  * "from the plan" beside it, and one marker per dependency. Each is a word and
@@ -2388,6 +2432,14 @@ function scopeNode(factory: ScreenFactory, picture: ScopePicture, node: ScopeNod
   const row = make(factory, 'li', 'graph-scope-node')
   row.setAttribute('role', 'listitem')
   row.setAttribute('data-key', node.key)
+  // **A task of the record is the one thing on this screen that can be moved**
+  // (GV3.2): `plan` is the record's own mark for it (GV4.1), and a node the
+  // stored view drew names no plan and no release box of the record, so neither
+  // the drag nor the button is drawn on it. What the drag carries is the key
+  // above and never a word of a command line: the entry reads it off this
+  // element and the main process is what spells the positional.
+  const movable = node.plan !== ''
+  if (movable) row.setAttribute('draggable', 'true')
   row.setAttribute('data-source', node.source.ok ? node.source.text : '')
   row.setAttribute('data-state', node.state.ok ? node.state.text : '')
   if (node.kept !== null) row.setAttribute('data-kept', 'true')
@@ -2412,6 +2464,16 @@ function scopeNode(factory: ScreenFactory, picture: ScopePicture, node: ScopeNod
   }
   stateWord(row, factory, node.state, 'graph-word')
   for (const need of node.needs) row.append(scopeNeed(factory, picture, node, need))
+  if (movable) {
+    // **The keyboard's and the screen reader's way into a move.** A drag is a
+    // pointer's gesture and nothing else, so the row carries a button that opens
+    // the sheet on the list of boxes (design section 4.3): one control, the same
+    // sheet and the same fence, and a route to a move that does not need a
+    // mouse. It carries the key it is about, exactly as the row above it does.
+    const open = literal(cell(row, factory, 'button', MOVE_OPEN_CLASS), MOVE_OPEN_LABEL)
+    open.setAttribute('type', 'button')
+    open.setAttribute('data-key', node.key)
+  }
   return row
 }
 

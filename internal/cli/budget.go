@@ -76,7 +76,7 @@ func newBudgetCmd() *cobra.Command {
 			"which a plain project Viewer cannot (see docs/gcp-setup.md).",
 	}
 	cmd.AddCommand(newBudgetShowCmd(), newBudgetSetCmd(), newBudgetKillCmd(true), newBudgetKillCmd(false),
-		newBudgetPreviewCmd(), newBudgetPricesCmd(), newBudgetHistoryCmd())
+		newBudgetPreviewCmd(), newBudgetChainCmd(), newBudgetPricesCmd(), newBudgetHistoryCmd())
 	return cmd
 }
 
@@ -226,11 +226,11 @@ func confirmTyped(cmd *cobra.Command, in *bufio.Reader, lc *localcfg.Config, yes
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "⚠ CONFIRM (project %s): %s\n", lc.Name, what)
 	if yes {
-		fmt.Fprintln(out, "  confirmed by --yes")
+		fmt.Fprintln(out, "  confirmed by this run's own answer")
 		return nil
 	}
 	if !stdinIsTerminal(cmd.InOrStdin()) {
-		return userErr("%s, or pass --yes once you have read what it does", initflow.NeedsTerminal("the typed confirmation of this step"))
+		return userErr("%s", initflow.NeedsTerminal("the typed confirmation of this step"))
 	}
 	fmt.Fprintf(out, "Type %s to confirm: ", lc.Name)
 	line, err := in.ReadString('\n')
@@ -296,9 +296,10 @@ func raiseOwnerOnly(cmd *cobra.Command, what, command string) error {
 }
 
 // ownerRaiseCommand is the invocation this run is, as the owner would type it:
-// the program, the command path, and the flags this run set, each with its
-// value quoted as one shell word. A flag that is not printed is one this run
-// did not set, which the command's own defaults answer for.
+// the program, the command path, the words this run was handed that are not
+// flags, and the flags this run set, each quoted as one shell word. A flag that
+// is not printed is one this run did not set, which the command's own defaults
+// answer for.
 //
 // --repo is printed as the repository this run resolved it to and never as the
 // value that was typed: a bare --repo and a path both mean the checkout the
@@ -315,6 +316,12 @@ func raiseOwnerOnly(cmd *cobra.Command, what, command string) error {
 // The name is a project's, so it is quoted like any other value.
 func ownerRaiseCommand(cmd *cobra.Command, repo, project string) string {
 	words := append([]string{selfCommand()}, strings.Fields(cmd.CommandPath())[1:]...)
+	// What the command was asked to act on, before its flags: `budget chain
+	// raise` names a run on the command line, and a refusal that handed its
+	// owner a command without it would hand back one they cannot run.
+	for _, arg := range cmd.Flags().Args() {
+		words = append(words, quoteWord(arg))
+	}
 	cmd.Flags().Visit(func(f *pflag.Flag) {
 		if f.Name == "project" {
 			return // printed once below, from this run's own project
@@ -1057,7 +1064,6 @@ func newBudgetSetCmd() *cobra.Command {
 	f.Float64Var(&o.reserve, "max-reserve", 0, "the largest single lease, in US dollars (with --global)")
 	f.StringVar(&o.mode, "mode", "", "observe or enforce (with --global)")
 	f.BoolVar(&o.clear, "clear", false, "remove the scope's caps")
-	f.BoolVar(&o.yes, "yes", false, "accepted and ignored: this command asks nothing")
 	f.BoolVar(&o.ask, "ask", false, "ask before a raise, at a terminal that can answer")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
@@ -1627,7 +1633,6 @@ func newBudgetKillCmd(kill bool) *cobra.Command {
 	f.StringVar(&o.repo, "repo", "", "one repository, given as owner/name or a path inside its checkout (no value: this checkout's origin)")
 	f.StringVar(&o.workspace, "workspace", "", "one workspace, named as its own project is; its own service's stop flag, in the workspace's own database, so the project it names has to declare one (workspace_members)")
 	f.StringVar(&o.reason, "reason", "", "why (recorded, shown by budget show and watch)")
-	f.BoolVar(&o.yes, "yes", false, "accepted and ignored: this command asks nothing")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }

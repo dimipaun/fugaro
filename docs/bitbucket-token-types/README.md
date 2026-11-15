@@ -1,7 +1,16 @@
 # Bitbucket token types in the credential proxy
 
-**Status: plan only; nothing is implemented; no task approved.** Owner: the project owner (the spec names none).
-Date: 2026-11-13. Checked against `origin/main` at `abd0a60af`.
+**Status (2026-11-14): C1, the token-store contract, is written and merged on `main` (PR #2590) — the four files its Files
+line names (`internal/bbtokens/bbtokens.go`, `stub.go`, `bbtokens_test.go` and `stub_test.go`) with
+`internal/projectpolicy/tokens_shape.go` and `docs/bitbucket-token-types/contract.md` besides — and T1 (#2591), T2 (#2594),
+T6 (#2589) and T15 (#2592) have merged beside it; every other task of the plan is plan only, decoupled into being written
+by runs launched beside this one.** C1 is the contract T3, T4, T8, T13 and T16 are written against
+(implementation-plan.md). The plan and the reconciliation still say that no task is approved, and this line is not an
+approval: whoever records one writes it here. Owner: the project owner (the spec names none). Date: 2026-11-14. Checked
+against `origin/main` at `6eda5ddf`.
+
+*The status as first written, kept:* **Status: plan only; nothing is implemented; no task approved.** Owner: the project
+owner (the spec names none). Date: 2026-11-13. Checked against `origin/main` at `abd0a60af`.
 
 The spec: the credential service's Bitbucket proxy accepts any mix of repository, project and workspace access tokens,
 records each token's coverage, picks the narrowest covering token per request, checks a token when it is added, and
@@ -13,6 +22,7 @@ backs off on rate limits.
 | [reconciliation.md](reconciliation.md) | The spec against the code and against `docs/bitbucket-credentials`, `docs/bitbucket-workspace-token` and `docs/secrets-brokering`: assumptions, findings F1–F23, decisions D2350–D2356 with the owner's answers, resolutions R1–R14, open items O1–O7, UNVERIFIED U1–U8 |
 | [implementation-plan.md](implementation-plan.md) | Five slices, 19 tasks (one contract, one integration task) and one anticipated change request, levels, critical path, shared-files table. Nothing in it is approved |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's tasks as the graph `fugaro plan graph` reads |
+| [contract.md](contract.md) | The token-store contract C1 states: what each side owes, the record, the status, the snapshot, the refusals and the node's key |
 
 ## Number blocks taken
 

@@ -173,7 +173,7 @@ func TestAccessSettingsRepoAdminCannotChangeProjectGuardrails(t *testing.T) {
 	userPairAs(t, settingsAccessRepoUser)
 
 	t.Run("the project layer's guardrails", func(t *testing.T) {
-		_, _, err := execute(t, "settings", "set", "layer.default_profile", "svc", "--layer", "project", "--yes")
+		_, _, err := execute(t, "settings", "set", "layer.default_profile", "svc", "--layer", "project")
 		if err == nil {
 			t.Fatal("a repository-scoped admin made a project-level write")
 		}
@@ -195,7 +195,7 @@ func TestAccessSettingsRepoAdminCannotChangeProjectGuardrails(t *testing.T) {
 	})
 
 	t.Run("this machine's own project config", func(t *testing.T) {
-		out, _, err := execute(t, "settings", "set", "max_parallel", "5", "--layer", "local", "--yes")
+		out, _, err := execute(t, "settings", "set", "max_parallel", "5", "--layer", "local")
 		if err != nil {
 			t.Fatalf("a repository-scoped admin was refused their own machine's config file: %v\n%s", err, out)
 		}
@@ -220,7 +220,7 @@ func TestAccessSettingsRepoAdminChangesRepoSettingWithinGuardrail(t *testing.T) 
 	otherBefore := readFileString(t, other)
 	userPairAs(t, settingsAccessRepoUser)
 
-	out, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--repo", "acme/sandbox", "--yes")
+	out, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--repo", "acme/sandbox")
 	if err != nil {
 		t.Fatalf("a repository's own admin was refused its own repository's settings: %v\n%s", err, out)
 	}
@@ -228,7 +228,7 @@ func TestAccessSettingsRepoAdminChangesRepoSettingWithinGuardrail(t *testing.T) 
 		t.Errorf("the repository the caller is admin of does not carry the write:\n%s", got)
 	}
 
-	_, _, err = execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--repo", "acme/other", "--yes")
+	_, _, err = execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--repo", "acme/other")
 	if err == nil {
 		t.Fatal("a repository-scoped admin changed a repository their scope does not cover")
 	}
@@ -249,7 +249,7 @@ func TestAccessSettingsRepoAdminChangesRepoSettingWithinGuardrail(t *testing.T) 
 	// origin: TestAccessSettingsInstallationWithoutRolesIsUnchanged.)
 	anon := settingsWriteCheckout(t, settingsRepoYAML(""))
 	anonBefore := readFileString(t, anon)
-	_, _, err = execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--yes")
+	_, _, err = execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo")
 	if err == nil {
 		t.Fatal("a repository-level write landed in a checkout whose repository cannot be told")
 	}
@@ -285,7 +285,7 @@ func TestAccessSettingsUnlistedCheckoutIsJudgedFromItsOrigin(t *testing.T) {
 	// does not list it: a caller whose scope covers another repository is
 	// refused by that name, and the file does not move.
 	userPairAs(t, settingsAccessRepoUser)
-	_, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--yes")
+	_, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo")
 	if err == nil {
 		t.Fatal("a repository-scoped admin wrote a repository their scope does not cover")
 	}
@@ -297,7 +297,7 @@ func TestAccessSettingsUnlistedCheckoutIsJudgedFromItsOrigin(t *testing.T) {
 	}
 
 	userPairAs(t, settingsAccessEveryUser)
-	if out, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--yes"); err != nil {
+	if out, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo"); err != nil {
 		t.Fatalf("an all-repos admin was refused a checkout this machine's config does not list: %v\n%s", err, out)
 	}
 	if got := readFileString(t, file); !strings.Contains(got, "base_branch: develop") {
@@ -309,7 +309,7 @@ func TestAccessSettingsUnlistedCheckoutIsJudgedFromItsOrigin(t *testing.T) {
 	// command can take: settingsRepoFile takes owner/name and refuses the
 	// canonical form, so canonicalRepoArg's own advice would lead nowhere here.
 	settingsCheckout(t, t.TempDir(), "acme/elsewhere", settingsRepoYAML(""))
-	_, _, err = execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--repo", "acme/elsewhere", "--yes")
+	_, _, err = execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--repo", "acme/elsewhere")
 	if err == nil {
 		t.Fatal("a --repo naming a repository this machine's config does not list was written")
 	}
@@ -318,6 +318,47 @@ func TestAccessSettingsUnlistedCheckoutIsJudgedFromItsOrigin(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "name it canonically") {
 		t.Errorf("the refusal advises a --repo value this command refuses: %v", err)
+	}
+}
+
+// TestAccessSettingsRewrittenOriginIsJudgedByNobody: the checkout route of a
+// --layer repo write takes the repository, and so the role the write needs,
+// from the checkout's own origin. A checkout can ship its own .git/config, and
+// url.<base>.insteadOf there makes the name git resolves a line the directory's
+// author chose rather than a fact about the repository — so the repository
+// cannot be told, and the write is refused rather than judged against a name
+// that would let a rewritten origin borrow another repository's admin.
+//
+// Mutation (run, restore): change `if ok && !oi.Rewritten` to `if ok` in
+// settingsAccessOriginRepo (settings_access.go) and this fails with the write
+// landing in the checkout.
+func TestAccessSettingsRewrittenOriginIsJudgedByNobody(t *testing.T) {
+	settingsAccessRig(t, userStored(t, settingsAccessRepoUser, accesslib.RoleAdmin, "github/acme/app"))
+	file := settingsWriteCheckout(t, settingsRepoYAML(""))
+	// The raw origin is the gh: shorthand and the rewrite resolves it to the
+	// repository the caller is admin of: with the guard gone the write would be
+	// allowed, so this isolates the guard and not the role.
+	testutil.Git(t, filepath.Dir(file), "remote", "add", "origin", "gh:acme/app.git")
+	testutil.Git(t, filepath.Dir(file), "config", "--local", "--add",
+		"url.https://github.com/acme/app.git.insteadOf", "gh:acme/app.git")
+	if oi, ok := readOrigin(context.Background(), filepath.Dir(file)); !ok || !oi.Rewritten {
+		t.Fatalf("the fixture did not produce a rewritten origin: %+v ok=%v", oi, ok)
+	}
+	before := readFileString(t, file)
+
+	userPairAs(t, settingsAccessRepoUser)
+	_, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo")
+	if err == nil {
+		t.Fatal("a repository-level write was judged against an origin the checkout's own git config rewrites")
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want %d (a user error: nothing was attempted)", ExitCode(err), ExitUserError)
+	}
+	if !strings.Contains(err.Error(), "cannot be told from its origin") {
+		t.Errorf("the refusal does not say the repository cannot be told: %v", err)
+	}
+	if readFileString(t, file) != before {
+		t.Error("the refused write changed the checkout's file")
 	}
 }
 
@@ -361,12 +402,12 @@ func TestAccessSettingsProjectAdminMakesBothWrites(t *testing.T) {
 	layer := settingsAccessLayerFile(t, settingsAccessLayerProfile)
 
 	userPairAs(t, settingsAccessProjectUser)
-	if out, _, err := execute(t, "settings", "set", "layer.default_profile", "svc", "--layer", "project", "--yes"); err != nil {
+	if out, _, err := execute(t, "settings", "set", "layer.default_profile", "svc", "--layer", "project"); err != nil {
 		t.Fatalf("the project's own admin was refused the project layer: %v\n%s", err, out)
 	} else if !strings.Contains(readFileString(t, layer), "default_profile: svc") {
 		t.Error("the layer file does not carry the project admin's write")
 	}
-	if out, _, err := execute(t, "settings", "set", "max_parallel", "5", "--layer", "local", "--yes"); err != nil {
+	if out, _, err := execute(t, "settings", "set", "max_parallel", "5", "--layer", "local"); err != nil {
 		t.Fatalf("the project's own admin was refused the project config: %v\n%s", err, out)
 	} else if !strings.Contains(readFileString(t, r.cfg), "max_parallel: 5") {
 		t.Error("the project config does not carry the project admin's write")
@@ -378,7 +419,7 @@ func TestAccessSettingsProjectAdminMakesBothWrites(t *testing.T) {
 	// "already reads what was asked for" that needs no role at all.
 	userPairAs(t, settingsAccessEveryUser)
 	layerBefore, localBefore := readFileString(t, layer), readFileString(t, r.cfg)
-	if _, _, err := execute(t, "settings", "set", "layer.default_profile", "web", "--layer", "project", "--yes"); err == nil {
+	if _, _, err := execute(t, "settings", "set", "layer.default_profile", "web", "--layer", "project"); err == nil {
 		t.Fatal("an all-repos admin made a project-level write")
 	} else if !strings.Contains(err.Error(), "admin at project scope") {
 		t.Errorf("the refusal does not name the role and the scope the write needs: %v", err)
@@ -387,7 +428,7 @@ func TestAccessSettingsProjectAdminMakesBothWrites(t *testing.T) {
 		t.Error("the refused write changed the project layer file")
 	}
 
-	if out, _, err := execute(t, "settings", "set", "max_parallel", "4", "--layer", "local", "--yes"); err != nil {
+	if out, _, err := execute(t, "settings", "set", "max_parallel", "4", "--layer", "local"); err != nil {
 		t.Fatalf("an all-repos admin was refused their own machine's config file: %v\n%s", err, out)
 	}
 	if readFileString(t, r.cfg) == localBefore {
@@ -411,7 +452,7 @@ func TestAccessSettingsUnsetAsksTheSameQuestion(t *testing.T) {
 	before := readFileString(t, layer)
 
 	userPairAs(t, settingsAccessRepoUser)
-	_, _, err := execute(t, "settings", "unset", "layer.default_profile", "--layer", "project", "--yes")
+	_, _, err := execute(t, "settings", "unset", "layer.default_profile", "--layer", "project")
 	if err == nil {
 		t.Fatal("a repository-scoped admin unset a project-layer key")
 	}
@@ -423,7 +464,7 @@ func TestAccessSettingsUnsetAsksTheSameQuestion(t *testing.T) {
 	}
 
 	userPairAs(t, settingsAccessProjectUser)
-	if out, _, err := execute(t, "settings", "unset", "layer.default_profile", "--layer", "project", "--yes"); err != nil {
+	if out, _, err := execute(t, "settings", "unset", "layer.default_profile", "--layer", "project"); err != nil {
 		t.Fatalf("the project's own admin was refused the unset: %v\n%s", err, out)
 	}
 	if strings.Contains(readFileString(t, layer), "default_profile") {
@@ -445,7 +486,7 @@ func TestAccessSettingsUnplacedCallerIsTheImplicitAdmin(t *testing.T) {
 	layer := settingsAccessLayerFile(t, settingsAccessLayerProfile)
 	userPairAs(t, settingsAccessOwnerUser)
 
-	out, _, err := execute(t, "settings", "set", "layer.default_profile", "svc", "--layer", "project", "--yes")
+	out, _, err := execute(t, "settings", "set", "layer.default_profile", "svc", "--layer", "project")
 	if err != nil {
 		t.Fatalf("a caller the node names nowhere was refused the project's own layer: %v\n%s", err, out)
 	}
@@ -503,7 +544,7 @@ func TestAccessSettingsServiceAccountKeepsThePublishDoorsWorking(t *testing.T) {
 		layer := settingsAccessLayerFile(t, settingsAccessLayerProfile)
 		settingsAccessServiceAccount(t)
 
-		if out, _, err := execute(t, "settings", "set", "layer.default_profile", "svc", "--layer", "project", "--yes"); err != nil {
+		if out, _, err := execute(t, "settings", "set", "layer.default_profile", "svc", "--layer", "project"); err != nil {
 			t.Fatalf("a service account's credential was refused the project layer: %v\n%s", err, out)
 		}
 		if !strings.Contains(readFileString(t, layer), "default_profile: svc") {
@@ -532,7 +573,7 @@ func TestAccessSettingsUnreadableCallerIsRefused(t *testing.T) {
 		before := readFileString(t, layer)
 		settingsAccessCallerIs(t, errors.New("context deadline exceeded"))
 
-		out, _, err := execute(t, "settings", "set", "layer.default_profile", "svc", "--layer", "project", "--yes")
+		out, _, err := execute(t, "settings", "set", "layer.default_profile", "svc", "--layer", "project")
 		if err == nil {
 			t.Fatalf("a caller the CLI could not read made a project-level write:\n%s", out)
 		}
@@ -590,7 +631,7 @@ func TestAccessSettingsUnreachableDatabaseIsNotJudged(t *testing.T) {
 		db.Refuse(503, "UNAVAILABLE", "", "down")
 
 		userPairAs(t, settingsAccessRepoUser)
-		out, _, err := execute(t, "settings", "set", "layer.default_profile", "svc", "--layer", "project", "--yes")
+		out, _, err := execute(t, "settings", "set", "layer.default_profile", "svc", "--layer", "project")
 		if err != nil {
 			t.Fatalf("a database that is down refused a write to a file on this machine: %v\n%s", err, out)
 		}
@@ -606,7 +647,7 @@ func TestAccessSettingsUnreachableDatabaseIsNotJudged(t *testing.T) {
 		db.Refuse(503, "UNAVAILABLE", "", "down")
 
 		userPairAs(t, settingsAccessRepoUser)
-		out, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--repo", "acme/sandbox", "--yes")
+		out, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--repo", "acme/sandbox")
 		if err != nil {
 			t.Fatalf("a database that is down refused a write to a checkout's own file: %v\n%s", err, out)
 		}
@@ -626,7 +667,7 @@ func TestAccessSettingsInstallationWithoutRolesIsUnchanged(t *testing.T) {
 	_, localPath := settingsWriteHome(t)
 	settingsAccessCallerFails(t)
 
-	out, _, err := execute(t, "settings", "set", "max_parallel", "5", "--layer", "local", "--yes")
+	out, _, err := execute(t, "settings", "set", "max_parallel", "5", "--layer", "local")
 	if err != nil {
 		t.Fatalf("an installation with no roles refused its own settings write: %v\n%s", err, out)
 	}

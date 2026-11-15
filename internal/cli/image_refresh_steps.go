@@ -50,7 +50,10 @@ func (r *initRun) refreshBase(ctx context.Context, e *initEngine, kinds []string
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(r.stageDetail(), "  base: %s\n", out.Detail)
+	// No "base:" label: the detail names what it did already ("base images
+	// pinned by digest …"), and the step's own line has just said which step
+	// this is.
+	fmt.Fprintf(r.stageDetail(), "  %s\n", out.Detail)
 	return nil
 }
 
@@ -233,15 +236,15 @@ func builtSoFar(err error, built []string) error {
 // refusal is what that leaves.
 func (r *initRun) announceBuild(what string, g initflow.Managed) error {
 	if marker := agentMarker(os.Getenv, r.stdinTerminal()); marker != "" {
-		if !initflow.CanConfirmManaged(initflow.YesOrTyped, initflow.Conditions{Agent: marker}, g) {
+		if !g.Removes() {
 			return &initflow.AgentError{Marker: marker}
 		}
-		fmt.Fprintf(r.w, "fugaro: %s\n  %s\n", what, initflow.AgentProceeded(marker))
+		fmt.Fprintf(r.stageDetail(), "fugaro: %s\n  %s\n", what, initflow.AgentProceeded(marker))
 		return nil
 	}
-	fmt.Fprintf(r.w, "fugaro: %s\n", what)
-	if initflow.ConfirmsByGate(initflow.YesOrTyped, r.conditions(), g) {
-		fmt.Fprintf(r.w, "  %s\n", initflow.GateProceeded())
+	fmt.Fprintf(r.stageDetail(), "fugaro: %s\n", what)
+	if initflow.PersonAtTheTerminal(r.conditions()) && g.Removes() {
+		fmt.Fprintf(r.stageDetail(), "  %s\n", initflow.GateProceeded())
 	}
 	return nil
 }

@@ -128,13 +128,18 @@ func TestServiceUpstreamSendsIDTokenAndRunIdentity(t *testing.T) {
 
 	// The agent sends its own credential and its own identity headers: none
 	// of them may travel on, and none may become something the service reads
-	// as its own answer to us.
+	// as its own answer to us. The slip's two headers are among them, and
+	// this run holds no slip (the stub's Service carries no claim), which is
+	// the case where nothing is set over them: a call that presented the
+	// agent's slip to the service would be a claim the run never took.
 	resp, body := h.post(msg(sonnet, 1000),
 		"authorization", "Bearer sk-ant-the-agent-sent-this",
 		"x-fugaro-run-identity", "an-agent-written-identity",
 		"x-fugaro-tier", "A",
 		"x-fugaro-credential", "a-credential-the-agent-invented",
-		"x-fugaro-switch", `{"from":"x","to":"y","reason":"exhausted"}`)
+		"x-fugaro-switch", `{"from":"x","to":"y","reason":"exhausted"}`,
+		"x-fugaro-slip", "a-slip-the-agent-invented",
+		"x-fugaro-slip-claim", "a-claim-the-agent-invented")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("the call: %d %s", resp.StatusCode, body)
 	}
@@ -158,7 +163,7 @@ func TestServiceUpstreamSendsIDTokenAndRunIdentity(t *testing.T) {
 	if got := up.Header.Get("x-api-key"); got != "" {
 		t.Errorf("the gateway token travelled to the service in x-api-key")
 	}
-	for _, k := range []string{HeaderTier, HeaderCredential, HeaderSwitch} {
+	for _, k := range []string{HeaderTier, HeaderCredential, HeaderSwitch, HeaderSlip, HeaderSlipClaim} {
 		if got := up.Header.Values(k); len(got) > 0 {
 			t.Errorf("the agent's %s reached the service as %q", k, got)
 		}
@@ -402,6 +407,11 @@ func TestNoInJobFallback(t *testing.T) {
 			{"no identity at all", func(u *Upstream) { u.Service = nil }, "no identity"},
 			{"no job identity", func(u *Upstream) { u.Service.IDToken = nil }, "job identity"},
 			{"no run identity", func(u *Upstream) { u.Service.RunIDToken = nil }, "run identity"},
+			// The claim is all or nothing (credsvc.verifyCallSlip): a run
+			// holding half of one would be refused on every call for a shape
+			// this gateway let through, so it is refused here, where the
+			// mistake is.
+			{"half a slip", func(u *Upstream) { u.Service.SlipID, u.Service.SlipClaim = "a-slip-id", "" }, "half a slip"},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				o := Options{

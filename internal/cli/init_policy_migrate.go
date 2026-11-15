@@ -498,7 +498,7 @@ func policyMigrationRefusal(err error) error {
 //
 // managed is whether the project's marks say it is managed, and it is the
 // reading the rest of init makes for that question (initGate.underway, the same
-// answer askBuild's ConfirmsByGate and the gate's own stages take). It changes
+// answer the gate's own stages take in initflow.GateStandsIn). It changes
 // the confirmations of the owner's own session: a person at a real terminal is
 // not asked to type the project's name to publish the node, so the typed
 // confirmation below is replaced by a note of what is written — for a node that
@@ -612,7 +612,7 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 		// (confirmEmptyAllowList, #1674).
 		//
 		// The condition is the gate's own reading of who is there
-		// (initflow.PersonAtTheTerminal, ConfirmsByGate's condition half): a
+		// (initflow.PersonAtTheTerminal, GateStandsIn's condition half): a
 		// real terminal, no marker, and none of --ask, --non-interactive and
 		// --json. The terminal is the load-bearing half, because a pipe and a
 		// coding agent's tool call carry no marker and a managed project is
@@ -763,7 +763,7 @@ func (m *policyMigration) refuseRunsInFlight(ctx context.Context, yes bool, answ
 	if yes {
 		return nil
 	}
-	return userErr("%d run(s) are in flight: a run that is mid-flight read the policy this migration would rewrite, so it is refused without --yes; wait for them (fugaro runs ls), or pass --yes once you have read what it does", inflight)
+	return userErr("%d run(s) are in flight: a run that is mid-flight read the policy this migration would rewrite, so it is refused while they run; wait for them (fugaro runs ls), then repeat it", inflight)
 }
 
 // writesNode is whether this run's confirmation ends in a write to the published

@@ -11,15 +11,19 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/mobileauth"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -366,7 +370,7 @@ func TestProjectPolicyPublishRefusesAVersionItCannotWrite(t *testing.T) {
 func TestProjectPolicyPublishDeleteRefusesANewerNode(t *testing.T) {
 	f := newProjectFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), map[string]any{"version": projectpolicy.Version + 1, "allow_repos": []string{"github/acme/app"}})
-	_, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
+	_, _, err := execute(t, "project", "policy", "publish", "--delete")
 	if err == nil {
 		t.Fatal("deleting a policy written by a newer Fugaro was allowed")
 	}
@@ -1031,7 +1035,8 @@ func TestProjectPolicyDeleteDeletesUnderTheETagItValidated(t *testing.T) {
 	budgetTransport = &policyChangedDuringDelete{rt: http.DefaultTransport, db: f.db, val: other}
 	t.Cleanup(func() { budgetTransport = nil })
 
-	out, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, "aurora\n", "project", "policy", "publish", "--delete")
 	if err == nil {
 		t.Fatalf("a publish that landed while the deletion was being confirmed was deleted unconfirmed:\n%s", out)
 	}
@@ -1053,7 +1058,7 @@ func TestProjectPolicyDeleteRefusesWithoutTheRulesMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.db.Set(projectpolicy.PathRulesMarker(), nil)
-	_, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
+	_, _, err := execute(t, "project", "policy", "publish", "--delete")
 	if err == nil {
 		t.Fatal("--delete without the rules marker was allowed")
 	}
@@ -1090,7 +1095,8 @@ func TestProjectPolicyDeleteRemovesChildrenThenTheSharedNode(t *testing.T) {
 	child := projectpolicy.PathRepo(slug)
 	f.db.Set(child, map[string]any{"allow_repos": []string{"github/acme/app"}})
 
-	out, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, "aurora\n", "project", "policy", "publish", "--delete")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1128,7 +1134,8 @@ func TestProjectPolicyDeleteRemovesChildrenBeforeTheSharedNode(t *testing.T) {
 	f.db.Set(child, map[string]any{"allow_repos": []string{"github/acme/app"}})
 	f.db.Deny(projectpolicy.PathShared())
 
-	out, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, "aurora\n", "project", "policy", "publish", "--delete")
 	if err == nil {
 		t.Fatalf("a refused delete of the shared node was reported as a success:\n%s", out)
 	}
@@ -1143,9 +1150,14 @@ func TestProjectPolicyDeleteRemovesChildrenBeforeTheSharedNode(t *testing.T) {
 	}
 }
 
-// TestProjectPolicyDeleteRefusesWithoutYesWhileARunIsInFlight: a repository
-// that is mid-run keeps the policy until it finishes (B5).
-func TestProjectPolicyDeleteRefusesWithoutYesWhileARunIsInFlight(t *testing.T) {
+// TestProjectPolicyDeleteRefusesWhileARunIsInFlight: a repository that is
+// mid-run keeps the policy until it finishes (B5). The gate is about the runs
+// and not about the session, so nothing gets past it: with a pipe for stdin the
+// `--delete` is refused in the sentence that names the runs and the wait, and
+// the policy stays. There is no second half any more — T11 of
+// docs/no-prompt-policy removed the flag that used to override the gate, so no
+// word of a run's own deletes a policy a run still holds.
+func TestProjectPolicyDeleteRefusesWhileARunIsInFlight(t *testing.T) {
 	f := newProjectFixture(t, "")
 	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
 		t.Fatal(err)
@@ -1158,31 +1170,26 @@ func TestProjectPolicyDeleteRefusesWithoutYesWhileARunIsInFlight(t *testing.T) {
 
 	_, _, err = execute(t, "project", "policy", "publish", "--delete")
 	if err == nil {
-		t.Fatal("--delete without --yes was allowed while a run is in flight")
+		t.Fatal("--delete was allowed while a run is in flight")
 	}
-	if !strings.Contains(err.Error(), "--yes") {
-		t.Errorf("the refusal does not name --yes: %v", err)
+	if !strings.Contains(err.Error(), "in flight") || !strings.Contains(err.Error(), "wait for them") {
+		t.Errorf("the refusal does not say the runs hold the policy and that waiting is the way through: %v", err)
+	}
+	if strings.Contains(err.Error(), "--yes") {
+		t.Errorf("the refusal names --yes, which no longer exists and would not get past the gate: %v", err)
 	}
 	if f.db.Value(projectpolicy.PathShared()) == nil {
-		t.Fatal("the policy was removed anyway")
-	}
-	if _, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes"); err != nil {
-		t.Fatalf("--yes must delete while a run is in flight: %v", err)
-	}
-	if f.db.Value(projectpolicy.PathShared()) != nil {
-		t.Fatal("--yes did not delete the policy")
+		t.Fatal("the policy was removed although a run is in flight")
 	}
 }
 
 // TestProjectPolicyDeleteRefusesTheTypedNameWhileARunIsInFlight is the same
-// gate at a terminal, which is where it can actually be walked past: with a
-// terminal, typing the project's name is what every other confirmation here
-// accepts, and --delete must still refuse while a run is in flight — a run
-// mid-flight keeps the policy until it finishes (B5). The test above cannot
-// see this: with stdin that is not a terminal, confirmRemovalStrict refuses
-// for its own reason, so deleting the in-flight gate there would pass it.
-// --yes is the way through, because the gate is about the runs, not about
-// whether the operator was asked.
+// gate at a terminal, the one session every other confirmation here is answered
+// at: typing the project's name is what confirmRemoval takes, and `--delete`
+// still refuses while a run is in flight — a run mid-flight keeps the policy
+// until it finishes (B5). No flag stands in for the wait either (T11 of
+// docs/no-prompt-policy), so this test and the one above say it between them:
+// nothing deletes the policy while a run is in flight.
 func TestProjectPolicyDeleteRefusesTheTypedNameWhileARunIsInFlight(t *testing.T) {
 	f := newProjectFixture(t, "")
 	typed(t)
@@ -1199,17 +1206,14 @@ func TestProjectPolicyDeleteRefusesTheTypedNameWhileARunIsInFlight(t *testing.T)
 	if err == nil {
 		t.Fatalf("--delete was allowed with the project's name typed while a run is in flight:\n%s", out)
 	}
-	if !strings.Contains(err.Error(), "--yes") {
-		t.Errorf("the refusal does not name --yes: %v", err)
+	if !strings.Contains(err.Error(), "in flight") || !strings.Contains(err.Error(), "wait for them") {
+		t.Errorf("the refusal does not say the runs hold the policy and that waiting is the way through: %v", err)
+	}
+	if strings.Contains(err.Error(), "--yes") {
+		t.Errorf("the refusal names --yes, which no longer exists and would not get past the gate: %v", err)
 	}
 	if f.db.Value(projectpolicy.PathShared()) == nil {
-		t.Fatal("the policy was removed anyway")
-	}
-	if _, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes"); err != nil {
-		t.Fatalf("--yes must delete while a run is in flight: %v", err)
-	}
-	if f.db.Value(projectpolicy.PathShared()) != nil {
-		t.Fatal("--yes did not delete the policy")
+		t.Fatal("the policy was removed although a run is in flight")
 	}
 }
 
@@ -1219,7 +1223,7 @@ func TestProjectPolicyDeleteRefusesTheTypedNameWhileARunIsInFlight(t *testing.T)
 func TestProjectPolicyDeleteRefusesANewerPolicy(t *testing.T) {
 	f := newProjectFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), map[string]any{"version": projectpolicy.Version + 1, "allow_repos": []string{"github/acme/app"}})
-	_, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
+	_, _, err := execute(t, "project", "policy", "publish", "--delete")
 	if err == nil {
 		t.Fatal("deleting a newer policy was allowed")
 	}
@@ -1327,7 +1331,8 @@ func TestProjectShowDoesNotCallAPatternEntryIdleWhileItsRepositoriesRun(t *testi
 	if _, _, err := execute(t, "project", "repos", "add", "github/acme/*"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := execute(t, "project", "repos", "rm", "github/acme/app", "--yes"); err != nil {
+	fakeTerminal(t)
+	if _, _, err := executeStdin(t, "aurora\n", "project", "repos", "rm", "github/acme/app"); err != nil {
 		t.Fatal(err)
 	}
 	// The pattern admits github/acme/app, and a run of it is in flight.
@@ -1416,7 +1421,8 @@ func TestProjectShowEnrolledIsTheAllowListNotTheSeed(t *testing.T) {
 	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := execute(t, "project", "repos", "rm", "bitbucket/acme/other", "--yes"); err != nil {
+	fakeTerminal(t)
+	if _, _, err := executeStdin(t, "aurora\n", "project", "repos", "rm", "bitbucket/acme/other"); err != nil {
 		t.Fatal(err)
 	}
 	js, _, err := execute(t, "project", "show", "--json")
@@ -1724,7 +1730,7 @@ func TestProjectReposEditOnlyTheAllowList(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.db.Set(budget.PathAgent(slug, "20261015-120000-aaaa"), map[string]any{"run_id": "20261015-120000-aaaa"})
-	_, _, err = execute(t, "project", "repos", "rm", "github/acme/new", "--yes")
+	_, _, err = execute(t, "project", "repos", "rm", "github/acme/new")
 	if err == nil {
 		t.Fatal("--yes removed an allowed repository while a run of it is in flight")
 	}
@@ -2981,7 +2987,8 @@ func TestProjectPolicyPublishRefusesAnOlderNodeWithAWorkingRemedy(t *testing.T) 
 				t.Fatal("the node was removed by a refused publish")
 			}
 			// And the remedy it names works.
-			if _, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes"); err != nil {
+			fakeTerminal(t)
+			if _, _, err := executeStdin(t, "aurora\n", "project", "policy", "publish", "--delete"); err != nil {
 				t.Fatalf("the remedy the refusal names does not work: %v", err)
 			}
 			if f.db.Value(projectpolicy.PathShared()) != nil {
@@ -3460,7 +3467,7 @@ func TestPolicyRefusalsEscapeTheNodesKeyNames(t *testing.T) {
 		wantIn string
 	}{
 		{"policy show, which refuses the node it cannot read whole", []string{"project", "policy", "show"}, "never takes effect"},
-		{"the publish, which refuses to drop the keys it does not know", []string{"project", "policy", "publish", "--yes"}, "publishing would drop them"},
+		{"the publish, which refuses to drop the keys it does not know", []string{"project", "policy", "publish"}, "publishing would drop them"},
 	} {
 		t.Run(tc.what, func(t *testing.T) {
 			_, _, err := execute(t, tc.args...)
@@ -4081,6 +4088,217 @@ func TestSharedConfigRefusesTheVerifierList(t *testing.T) {
 		t.Fatal("a published shared config carrying verifier_accounts: was accepted")
 	}
 	for _, want := range []string{"verifier_accounts", "never published", "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+}
+
+// declaredMobileAllow is the declaration the seeding tests publish from: one
+// administered address and one domain, which is the one list D231 has an
+// operator write. The uids are the pairing's own (a device node is keyed by
+// one), and the second entry's role is the domain's.
+const declaredMobileAllow = "mobile_allow:\n" +
+	"  - uid: m~7f3a2b9c\n" +
+	"    address: dimi@example.com\n" +
+	"    role: admin\n" +
+	"  - uid: m~1c4e9d02\n" +
+	"    address: lattica.com\n" +
+	"    role: viewer\n"
+
+// devicesOf is the project's device node as the entries it carries, decoded the
+// way a reader of the node would.
+func devicesOf(t *testing.T, f *projectFixture) map[string]pairDeviceNode {
+	t.Helper()
+	v := f.db.Value(rules.PathDevices)
+	if v == nil {
+		return nil
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]pairDeviceNode{}
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatalf("the device node is not the shape pairDeviceNode writes: %v", err)
+	}
+	return out
+}
+
+// allowlistOf reads the device node the way the commands that admit a person
+// read it (pairAllowlistEntries), so a test can ask who the node admits
+// instead of asserting that a value is present.
+func allowlistOf(t *testing.T, f *projectFixture) ([]mobileauth.Entry, []mobileauth.Entry) {
+	t.Helper()
+	lc, err := localcfg.Load(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := rtdb.New(f.db.URL, rtdb.Auth{IDToken: func() string { return "" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	exact, domains, unreadable, err := pairAllowlistEntries(context.Background(), lc, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(unreadable) > 0 {
+		t.Fatalf("the node carries entries no reader can read: %v", unreadable)
+	}
+	return exact, domains
+}
+
+// TestProjectPolicyPublishSeedsTheDeclaredAllowlist: a project whose device
+// node is not there is seeded from the declaration, one node per declared
+// entry, in the shape `fugaro pair` writes and with the publish's own clock as
+// the record of when it was written. A domain entry is the same node shape
+// (D222: the entry IS the device node) and the resolver reads it back as the
+// domain grant it is.
+func TestProjectPolicyPublishSeedsTheDeclaredAllowlist(t *testing.T) {
+	f := newProjectFixture(t, declaredMobileAllow)
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := devicesOf(t, f)
+	if len(got) != 2 {
+		t.Fatalf("the device node carries %d entries, want the two the declaration names: %+v", len(got), got)
+	}
+	for _, tc := range []struct{ uid, email, role string }{
+		{"m~7f3a2b9c", "dimi@example.com", "admin"},
+		{"m~1c4e9d02", "lattica.com", "viewer"},
+	} {
+		d, ok := got[tc.uid]
+		if !ok {
+			t.Errorf("%s is not on the node", tc.uid)
+			continue
+		}
+		if d.Email != tc.email || d.Role != tc.role {
+			t.Errorf("%s carries %q/%q, want the declared %q/%q", tc.uid, d.Email, d.Role, tc.email, tc.role)
+		}
+		if _, err := time.Parse(time.RFC3339, d.At); err != nil {
+			t.Errorf("%s carries at=%q, which is not the publish's clock: %v", tc.uid, d.At, err)
+		}
+	}
+	if !strings.Contains(out, rules.PathDevices) {
+		t.Errorf("the publish does not name the node it seeded:\n%s", out)
+	}
+	exact, domains := allowlistOf(t, f)
+	if len(exact) != 1 || len(domains) != 1 {
+		t.Fatalf("the node reads back as %d exact and %d domain entries, want one of each", len(exact), len(domains))
+	}
+	role, err := mobileauth.Resolve(exact, domains, "ana@lattica.com")
+	if err != nil || role != mobileauth.RoleViewer {
+		t.Errorf("the seeded domain entry resolves ana@lattica.com to %v (%v), want the declared viewer", role, err)
+	}
+}
+
+// TestProjectPolicyPublishNeverReAddsADeviceAnOperatorRemoved is the rule
+// publishAllowRepos carries applied to people: a removal is one `revoke`, and
+// no later publish puts the person back, however the file still reads. The
+// second publish also runs against an EDITED declaration — the removed person
+// still in it, the paired one under another role — because the node, not the
+// file, is what admits a phone (D231): the node's role is the resolved role
+// (D224) and a file's later opinion is not a re-role.
+func TestProjectPolicyPublishNeverReAddsADeviceAnOperatorRemoved(t *testing.T) {
+	f := newProjectFixture(t, declaredMobileAllow)
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	// The operator's writes since: the person who left is revoked (one deleted
+	// child, D229) and the phone that joined is paired.
+	f.db.Set(rules.PathDevices+"/m~7f3a2b9c", nil)
+	f.db.Set(rules.PathDevices+"/m~9b2e04c1", pairDeviceNode{Name: "phone", Email: "ana@example.com", Role: "viewer", At: "2026-11-14T00:00:00Z"})
+	rewriteProjectConfig(t, f, "mobile_allow:\n"+
+		"  - uid: m~7f3a2b9c\n"+
+		"    address: dimi@example.com\n"+
+		"    role: admin\n"+
+		"  - uid: m~1c4e9d02\n"+
+		"    address: lattica.com\n"+
+		"    role: admin\n"+
+		"  - uid: m~9b2e04c1\n"+
+		"    address: ana@example.com\n"+
+		"    role: admin\n")
+
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := devicesOf(t, f)
+	if d, back := got["m~7f3a2b9c"]; back {
+		t.Errorf("the second publish re-added the device an operator removed: %+v", d)
+	}
+	if d, kept := got["m~9b2e04c1"]; !kept || d.Email != "ana@example.com" || d.Role != "viewer" {
+		t.Errorf("the paired device reads back as %+v (present=%v), want the entry the pairing wrote and not the file's role", d, kept)
+	}
+	if d := got["m~1c4e9d02"]; d.Role != "viewer" || d.Email != "lattica.com" {
+		t.Errorf("the seeded domain entry reads back as %+v, want the role it was seeded with rather than the file's later admin", d)
+	}
+	if !strings.Contains(out, "kept the device node") {
+		t.Errorf("the publish does not say what it did with the node it found:\n%s", out)
+	}
+	exact, domains := allowlistOf(t, f)
+	if role, err := mobileauth.Resolve(exact, domains, "dimi@example.com"); err == nil {
+		t.Errorf("the removed person still resolves to %s: the declaration is a seed, and the node is what admits a phone", role)
+	}
+}
+
+// TestProjectPolicyPublishSeedsNoDeviceForADeclarationThatNamesNobody: an entry
+// with no uid names no device, and a device node is keyed by the uid a pairing
+// minted — so it seeds nothing, and the publish says so rather than writing a
+// node under a key nobody holds. The declared address is not admitted either:
+// the node is what every reader reads.
+func TestProjectPolicyPublishSeedsNoDeviceForADeclarationThatNamesNobody(t *testing.T) {
+	f := newProjectFixture(t, "mobile_allow:\n  - address: dimi@example.com\n    role: admin\n")
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := f.db.Value(rules.PathDevices); v != nil {
+		t.Errorf("a declaration that names no uid wrote %v: a device node is keyed by the uid a pairing minted", v)
+	}
+	if !strings.Contains(out, "names no uid") {
+		t.Errorf("the publish does not say why it wrote no device node:\n%s", out)
+	}
+	exact, domains := allowlistOf(t, f)
+	if role, err := mobileauth.Resolve(exact, domains, "dimi@example.com"); err == nil {
+		t.Errorf("a person the node does not carry resolves to %s: being in the file is not being admitted", role)
+	}
+}
+
+// TestProjectPolicyPublishWithoutADeclarationWritesNoDeviceNode: a project
+// whose config declares nobody is a publish that touches no device node and
+// says nothing about one — the allowlist of such a project is its pairings.
+func TestProjectPolicyPublishWithoutADeclarationWritesNoDeviceNode(t *testing.T) {
+	f := newProjectFixture(t, "")
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := f.db.Value(rules.PathDevices); v != nil {
+		t.Errorf("a publish from a config that declares nobody wrote %v", v)
+	}
+	if strings.Contains(out, rules.PathDevices) {
+		t.Errorf("the publish says something about a device node it did not touch:\n%s", out)
+	}
+}
+
+// TestSharedConfigRefusesTheDeclaredAllowlist: the declaration is the owner's
+// own file and the published shared config is the document any launcher with
+// objectAdmin on the runs bucket can write — a launcher who could write this
+// block would name itself an admin on the next publish. It is refused by name,
+// before the file is parsed, the way verifier_accounts and bitbucket_api_roots
+// are.
+func TestSharedConfigRefusesTheDeclaredAllowlist(t *testing.T) {
+	if !slices.Contains(sharedForbidden, "mobile_allow") {
+		t.Fatal("sharedForbidden does not name mobile_allow, so a published declaration would be read")
+	}
+	data := validShared() + "mobile_allow: [{address: dimi@example.com, role: admin}]\n"
+	_, err := ParseShared([]byte(data), sharedAnchor)
+	if err == nil {
+		t.Fatal("a published shared config carrying mobile_allow: was accepted")
+	}
+	for _, want := range []string{"mobile_allow", "never published"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %q: %v", want, err)
 		}

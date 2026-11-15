@@ -1,6 +1,12 @@
 # Pending workflow changes
 
-**No files are pending.** `images.yml` (the images workflow with
+**Two files are pending: `portal-tests.yml` (the portal's own tests in CI -- the
+SPA's vitest suite, the key service's Go suite with the deploy script's test, and
+the document store's Firestore suite against the emulator -- staged on
+**2026-11-14** by the portal plan's P9.2) and `website-preview.yml` (the website's
+preview workflow with the F40 gate added: a `firebase.json` naming a
+`.hosting.site` or a `.hosting.target` is refused as well as one naming another
+public dir or a lifecycle hook, staged the same day).** `images.yml` (the images workflow with
 the nightly's republish of an unchanged base skipped, 2026-11-05, issue #1745)
 and `ci.yml` (the Terraform job's root loop with `workspace` added and the
 longer test timeout) were copied in on 2026-11-11 and their staged copies
@@ -9,7 +15,7 @@ The console's Windows installer pack,
 `console-windows.yml`, was copied in on **2026-11-10** and its staged copy
 removed; it was a release-time job rather than a pull-request check (see
 `## console-windows.yml` below, which is the record of that change).
-**Four further files here are not workflows at all: `website-promote-comments.md`, `mobile-release-comments.md`, `console-release-comments.md` and `console-linux-comments.md`** — comment-only corrections. The first three were staged on **2026-11-07**, for three workflow files whose comments still say a reviewer approves a release; the fourth on **2026-11-09**, for a comment of `.github/workflows/console-linux.yml` whose count of pinned Electron hashes went stale when the `win32-x64` hash landed. They are `.md` on purpose: they are not pending workflows, they are not enumerated as such by the docs tests or by `website/test/readme.mjs`, and neither count above moves. See `## The comment-only fragments` below.
+**Five further files here are not workflows at all: `website-promote-comments.md`, `mobile-release-comments.md`, `console-release-comments.md`, `console-linux-comments.md` and `ci-hygiene.yml.snippet`.** The first four are comment-only corrections: the first three were staged on **2026-11-07**, for three workflow files whose comments still say a reviewer approves a release; the fourth on **2026-11-09**, for a comment of `.github/workflows/console-linux.yml` whose count of pinned Electron hashes went stale when the `win32-x64` hash landed. The fifth, `ci-hygiene.yml.snippet`, is the `hygiene` step for the `check` job of `.github/workflows/ci.yml`. The four are `.md` and the fifth is a `.yml.snippet` for the same reason: none of the five is a pending workflow, none is enumerated as such by the docs tests or by `website/test/readme.mjs` (both walk this directory for `.ya?ml` alone), and neither count above moves. See `## The comment-only fragments` below — which maintains the four remaining names in the list above, and only those — and `## ci-hygiene.yml.snippet` for the fifth.
 **Two other files stay staged here by design: `console-tests.yml` and `console-release.yml`.** Both were copied into `.github/workflows/` by the owner, and unlike every other file here their staged copies are kept, because their tests assert the copy under `.github/workflows/` is byte-identical to the staged one (see their sections below). Nothing else is pending: the shared package's test job, `shared-tests.yml` (mobile plan Task P4.3), was copied into `.github/workflows/` by the owner on 2026-10-22 (its staged copy is removed; see `## shared-tests.yml` below); Dependabot's watch over `console/`'s npm dependencies, `dependabot-console.yml`, was copied over `.github/dependabot.yml` on the owner's approval of 2026-10-23 (its staged copy is removed; see `## dependabot-console.yml` below); the mobile app's release workflow, `mobile-release.yml`, was copied into `.github/workflows/` on the owner's approval of 2026-10-23 (its staged copy is removed; see `## mobile-release.yml` below); the website's two manual deploy workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the owner (their staged copies are removed); `ci.yml` was copied in on 2026-10-17 (#504, staged copy removed in #508) and staged
 again on 2026-11-08 for the workspaces work's `workspace` root and the longer test timeout,
 which entered the tree after that copy; that staging was copied in on **2026-11-11** (#2350) and
@@ -156,8 +162,104 @@ on its own, so a copy that dropped `compute` (or a later deletion of it)
 fails that test rather than leaving the root untested.
 `internal/cli/docs_website_deploy_test.go`, the checker for the two website
 files below, is written the same way: it reads a staged copy **while it
-exists**, falls back to the real `.github/workflows/website-*.yml` once it is
-gone, and fails if both copies exist at once.
+exists** and falls back to the real `.github/workflows/website-*.yml` once it is
+gone. (It used to fail when both existed, on the assumption that a copy-in is
+one commit that adds the real file and removes the staged one. The F40 staging
+below is the case where that assumption does not hold: `website-preview.yml`
+already runs, and what is staged is the change to it, so both files are in the
+tree at once and the staged one is the file under review.)
+
+## `portal-tests.yml`
+
+**Status: `portal-tests.yml` is staged and pending (2026-11-14, portal plan P9.2).**
+It is the portal's own tests in CI, and none of the three runs anywhere today:
+`ee/portal/` is an npm package outside the Go module, so no job in `ci.yml`
+reaches the SPA at all, and `ee/keyservice/docstore/firestore_test.go` is a
+`//go:build firestore` file that skips without `FIRESTORE_EMULATOR_HOST`, which
+no workflow provides. Its only trigger is `workflow_dispatch`, like every other
+workflow here that used to run on push (the owner's ruling of 2026-11-07).
+
+Three jobs, none of which holds a secret or authenticates to anything:
+
+- **`portal`** — the SPA: `npm ci` from `ee/portal/package-lock.json`, npm
+  pinned to 11.19.0 (the version that wrote that lockfile, as `ci.yml`'s rules
+  job and `website-preview.yml` pin it), and `npx vitest run` over the whole
+  suite. `ee/portal/test/hosting.test.ts` is the file that makes the portal's
+  hosting configuration load-bearing: it reads `ee/portal/firebase.json`
+  directive by directive and holds its rewrite to the service P1.7's Terraform
+  deploys and to the region `scripts/deploy-portal.sh` deploys it to. The
+  script reads that configuration too — it is the file it deploys — so what
+  this suite is alone in holding is the file's own shape, directive by
+  directive, rather than the agreement between it and the two files it has to
+  match.
+- **`keyservice`** — `go test ./ee/keyservice/...`, and
+  `bash scripts/deploy-portal_test.sh`, which runs the owner-run deploy script
+  with node, npm, gcloud, firebase, git and go stubbed on PATH: it builds
+  nothing, deploys nothing and reaches no network. **The Terraform-tagged suite
+  is deliberately not run here** — it needs the `terraform` tag, and the job
+  that hands the go tool that tag is the change the `## ci.yml` section below
+  writes down for the owner to apply by hand; no `ci.yml` is staged in this
+  directory.
+- **`firestore`** — Java 21, the `firebase-tools` pinned in
+  `internal/budget/rules/emulator/package.json`, installed **from that tree**
+  rather than by version, exactly as `ci.yml`'s rules job installs it: the
+  emulator runs the version that tree pins — the rules tests' own — rather than
+  a second one named in this job. (The website's two workflows do install
+  `firebase-tools@15.19.0` by version, so the tree does hold a second one; this
+  job is not the place to unify them.) The emulator jar is cached under this
+  job's **own** key,
+  `firebase-emulators-firestore-${{ hashFiles('internal/budget/rules/emulator/package-lock.json') }}`
+  — not `ci.yml`'s, which caches the Realtime Database emulator's jar: a
+  different jar under the same key would be a key one job saves and the other
+  then restores or, on an exact hit, never saves at all, so each job downloads
+  its own jar on every run. The job runs
+  `firebase emulators:exec --only firestore --project fugaro-portal-test
+  --config ee/portal/firebase.json`, which exports `FIRESTORE_EMULATOR_HOST` to
+  the child and runs `go test -tags firestore ./ee/keyservice/docstore/...`
+  under it.
+
+  **What that does and does not test.** It tests the **store backend**: the same
+  conformance suite the in-memory store passes, run against Firestore, so the
+  two answers are the same answers. It does **not** test
+  `ee/portal/firestore.rules`. The suite builds its client with
+  `firestore.NewClient` — the server SDK, which reaches the emulator as an owner
+  and is not subject to rules at all — and against the project
+  `fugaro-portal-test`, which is the `(default)` database, while the rules in
+  `ee/portal/firebase.json` belong to the named database `portal`. So the denial
+  the deploy uploads is never evaluated by this job. What holds it today is
+  static: `TestFirestoreRulesDenyClients` (P1.5) reads the file and refuses
+  anything but the denial, and it runs under the `terraform` tag. A test that
+  really exercises the rules — a client SDK, or the emulator's REST API, against
+  the `portal` database — is owed a task of its own; until then the denial's
+  shape is checked and its behaviour is not.
+
+It deploys nothing and runs no Fugaro command: the portal's deploy is
+`scripts/deploy-portal.sh`, which is OWNER-RUN and refuses a coding agent's
+session (R5 as amended by D440).
+
+**The copy-in, from the repository root:**
+
+```sh
+cp docs/pending-workflows/portal-tests.yml .github/workflows/portal-tests.yml
+git rm docs/pending-workflows/portal-tests.yml
+git commit -m "ci: the portal's own tests (P9.2)"
+```
+
+**The two sentences that same commit writes**, which say what the directory is
+left holding once this file is applied — `website-preview.yml` alone, unless it
+has been applied first, in which case **that** copy-in's pair is the one to
+write, and it is printed in `## website-preview.yml and website-promote.yml`
+below. The first goes in this file's opening line, in place of the one naming
+`portal-tests.yml`; the second replaces the sentence at the end of
+`website/README.md` that counts the same files:
+
+```text
+**One file is pending: `website-preview.yml` (the website's preview workflow with the F40 gate).**
+```
+
+```text
+`docs/pending-workflows/` now holds one pending workflow, `docs/pending-workflows/website-preview.yml`.
+```
 
 ## `shared-tests.yml`
 
@@ -2411,6 +2513,54 @@ that the service reads it.
 
 ## `website-preview.yml` and `website-promote.yml`
 
+**Status: `website-preview.yml` is staged and pending (2026-11-14, the F40 gate,
+portal plan P9.2); `website-promote.yml` is applied, not pending.** The two were
+staged together by the run that wrote the website's deploy path (website plan
+Task W2.1, D91, D109, F14), the owner copied both into `.github/workflows/`, and
+both run today. `website-preview.yml` is staged again with **one change**: its
+deploy job's `firebase.json` vetting also refuses a Hosting `.hosting.site` or
+`.hosting.target`. The portal has a Firebase configuration and a Hosting site of
+its own (`ee/portal/firebase.json`, `fugaro-portal`, F40), and a site or a
+target is a destination the CLI resolves from the file rather than from the
+command line — so a build carrying the portal's configuration (a copy of it, a
+merge, a ref that moved it to the root) would publish the SPA's bytes onto the
+website's domain, or the website's onto the portal's, with nothing on the
+command line to see it on. The public dir and the lifecycle hooks are checked
+for the same reason and stay checked.
+
+The staged file is the running one plus that change and its own header, so a
+copy-in keeps every other property the checker below holds it to. It carries its
+copy-in in its own header as well, because a reader who opens the file rather
+than this README is the likelier one:
+
+```sh
+cp docs/pending-workflows/website-preview.yml .github/workflows/website-preview.yml
+git rm docs/pending-workflows/website-preview.yml
+git commit -m "ci: the preview workflow refuses a firebase.json naming a site (F40)"
+```
+
+While that staged copy exists it is the file
+`internal/cli/docs_website_deploy_test.go` reads, and the two files are
+deliberately **not** byte-identical — the staged one is the change. So the
+copy-in's `git rm` is what makes the real file the file under test, and a
+copy-in that left the staged copy behind would leave the checks reading a file
+that is no longer the one that runs.
+
+**The two sentences that copy-in writes**, for the order in which this file is
+applied first and `portal-tests.yml` is still staged: the first goes in this
+document's opening line, in place of the one naming `website-preview.yml`, and
+the second replaces the sentence at the end of `website/README.md` that counts
+the same files. `## portal-tests.yml` above carries the pair for the other
+order.
+
+```text
+**One file is pending: `portal-tests.yml` (the portal's own tests: the SPA's vitest suite, the key service's Go suite with the deploy script's own test, and the document store's Firestore suite against the emulator).**
+```
+
+```text
+`docs/pending-workflows/` now holds one pending workflow, `docs/pending-workflows/portal-tests.yml`.
+```
+
 Two **new** workflows, both `workflow_dispatch`-only, staged by the run that
 wrote the website's deploy path (website plan Task W2.1, D91, D109, F14). They
 replace nothing: `.github/workflows/` holds `ci.yml`, `images.yml` and
@@ -3200,11 +3350,13 @@ fragment's own `git rm` line exactly as written lands that commit. Three edits
 go with it, and each of the 2026-11-07 fragments repeats them in its own "How to
 apply" so the two halves of the procedure cannot part:
 
-1. **The opening line's second sentence shrinks, and then goes.** That is the
-   one beginning *Four further files here are not workflows at all*. While one
-   fragment is still here, drop the names that are gone from its list; when the
-   **last** of them is applied, delete the sentence outright, so the opening
-   states the two pending files and the two files kept by design and names
+1. **The opening line's second sentence is this directory's list of the files
+   that are not workflows, and a copy-in drops the name it applied.** That is the
+   one beginning *Five further files here are not workflows at all*: applying a
+   fragment — its `git rm` and all — takes that fragment's name out of the list,
+   and once the four comment-only ones are gone the sentence keeps
+   `ci-hygiene.yml.snippet` and drops the rest, so the opening states the two
+   pending files, the two files kept by design and that snippet, and names
    nothing that is no longer in this directory.
 2. **This whole section goes with the fragment applied last**, whichever of the
    four it is — `## The comment-only fragments`, down to the line before
@@ -3248,3 +3400,166 @@ editing a workflow will meet it.
 **Two comments in the applied console workflows spell the Linux artifacts `linux-x64`, and the correction is yours to make at a copy-in.** A published release showed what `electron-builder` actually writes — the target's own word for the architecture, so `Fugaro.Console-X.Y.Z-linux-x86_64.AppImage` and `Fugaro.Console-X.Y.Z-linux-amd64.deb` — and that release corrected `docs/design/desktop-console.md` §7.6, `docs/release.md` and `console/README.md` on 2026-10-24. `.github/workflows/console-release.yml` and `.github/workflows/console-linux.yml` still carry a comment saying `linux-x64` — one line each, and the first of the two is duplicated in the staged copy here, since the two are byte-identical — and no agent run may edit `.github/workflows/` — GitHub refuses the push — so it waits for you: when you next copy `console-release.yml` in, write the two real names into **both** copies in the same commit, the staged one here and the applied one, because `TestDocsConsoleReleaseWorkflowIsStagedAndPinned` requires the two to be byte-identical, and correct `console-linux.yml`'s comment in that same commit.
 
 Dependabot does not watch this directory, and `next` can lag `main`'s Dependabot bumps of the workflow files, so a staged file's pins can differ from the ones `main` has moved to. `TestActionPinsAreFullSHAs` requires every `uses:` **here** to be a full commit SHA; once a staged file is copied in and gone from here, the same test also requires its pins to agree with the other workflows' — `images.yml` is that test's subject, so that comparison is live for it. `TestSharedTestsWorkflowIsStagedAndPinned` requires the same of the pending `shared-tests.yml` (full SHAs, each with its `# vX.Y.Z` beside it). Before copying, compare `grep -h 'uses:' .github/workflows/*.yml docs/pending-workflows/*.yml | sort -u` and keep the NEWER SHA for each action (verify it against the upstream tag with `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`), so the copy never downgrades a pin.
+
+## `ci-hygiene.yml.snippet`
+
+**Status: the snippet is staged and pending.** It is not a workflow of its own
+and never becomes one: `ci-hygiene.yml.snippet` holds the two lines of a step,
+`- name: hygiene` / `run: scripts/ci-hygiene.sh`, that go into
+`.github/workflows/ci.yml`'s `check` job immediately after its last step
+(`- run: go vet -tags firebase ./...`). It was staged on **2026-11-13**, by the
+run that added `scripts/ci-hygiene.sh`, because no agent run may push a
+`.github/workflows/**` change and GitHub refuses the push — the same reason
+every other file here is staged.
+
+**What the step runs.** `scripts/ci-hygiene.sh`, one bash script run from the
+repository root with nothing but git and awk behind it, over the three
+mechanical hazards that took `main`'s CI red over 2026-11-10..13:
+
+- **Rule 1 fails the job** on a tracked file whose name ends in `-E`, `.orig`,
+  `.bak`, `.rej` or `~`, read out of `git ls-files` so it is exactly what a
+  commit would carry. Those are `sed -i`'s and every patch tool's leftovers: a
+  pull request committed two of them in the week of 2026-11-10, they carry no
+  licence notice, and `TestEEFilesCarryTheNotice` and `TestDocsEELicensed`
+  failed `main` for files nobody meant to commit. The tree this check was first
+  run on had one too — `internal/credsvc/slip_pool_test.go-E`, a copy of an
+  older revision of the test beside it, committed by `0518e343` — and it was
+  removed in the same branch as the check.
+- **Rule 2 reports and does not fail** on a `_test.go` literal-year
+  `time.Date(20NN, …)` inside a function that also reaches the process clock —
+  through `time.Now()` in the same function, or through a fixture built with
+  nothing but the test (`newX(t)`), which is how the clock gets chosen for it.
+  The window is the enclosing function, 40 lines either side of the instant:
+  the failure it is modeled on is `TestRotateReturnsAFreshPair`, which minted
+  and rotated at a fixed `2026-11-06` instant while its store read the process
+  clock, and which stopped passing on **2026-11-13** once the family's 7-day
+  idle bound had passed for real (`11fb8575`).
+- **Rule 3 reports and does not fail** on a `_test.go` assertion that bounds
+  `time.Since(...)` by a literal duration under 60s. Every Go package of this
+  module runs under `-race` in the `shard` job, and a bound tight enough to
+  mean something on an idle machine is tight enough to miss on a shared runner:
+  `TestRedactPassesAreBounded` failed for exactly that, and its fix was to
+  compare the cost of a log against the cost of one a quarter its size rather
+  than against a number of seconds.
+
+Rules 2 and 3 report rather than fail because most of what they find is not a
+bug: a fixture that pins its own clock a line later looks the same to a shell
+script as one that never did. The script prints one `warn:` line per hit and
+says so in its summary; promoting either rule to a failure is the one-line
+change its own header describes, once the tree it reports on is clean.
+
+**The counts, so that whether a rule is promoted is a decision a reader makes
+from this page rather than from a pull request's list.** Staged against
+the tree of **2026-11-13**, the script printed **80** rule 2 warnings and **32**
+rule 3 ones, and exited 0 with `ci-hygiene: clean (112 report-only warning(s))`.
+The 80 split by which signal fired: **13** where the window holds `time.Now()`
+and **67** where it holds a fixture built with no clock (`newX(t)`), which is the
+noisy half of the heuristic. The line numbers below are a snapshot of that day,
+and they move with the code under them: `bash scripts/ci-hygiene.sh` prints the
+current list, and it is the one to read before promoting a rule.
+
+Rule 2, the 13 hits whose window holds `time.Now()`:
+
+`ee/graph/source_orchestrator_test.go:825`;
+`internal/cli/doctor_brokering_test.go:1706,1724,2318,2324`;
+`internal/cli/managed_status_test.go:399`; `internal/cli/runs_test.go:2453`;
+`internal/cli/stats_test.go:737`; `internal/rtdb/clock_test.go:28,29,46,61,81`.
+
+Rule 2, the 67 hits whose window holds `newX(t)`:
+
+`ee/coordinator/mcpauth/tool_state_test.go:295,390`;
+`ee/graph/cli/graph_test.go:611,722,776,908`;
+`ee/report/cli/report_test.go:228,913,981`; `ee/report/cli/runid_test.go:43`;
+`internal/budget/rollover_test.go:202,207,213,838`;
+`internal/budget/session_test.go:458,508`; `internal/cli/api_test.go:412`;
+`internal/cli/cloudrun_golden_test.go:43`;
+`internal/cli/diagnose_test.go:659,706,882`;
+`internal/cli/doctor_brokering_test.go:1748,1774,1800`;
+`internal/cli/estimate_test.go:297`;
+`internal/cli/issue_mine_test.go:237,242,248,255,757`;
+`internal/cli/runs_digest_test.go:103,197,255,272,273,320,321,373,448,511,512,513,557,558,560,821,827,831,943,959,1155,1199,1234`;
+`internal/cli/runs_group_test.go:272`;
+`internal/cli/shortid_sweep_test.go:216`;
+`internal/creds/mergemint_test.go:140,186,232,287,321,340`;
+`internal/runner/mutation_test.go:742`;
+`internal/runner/reviewartifact_test.go:218`;
+`internal/runstore/runstore_test.go:349,1035,1230,1359`.
+
+Rule 3, the 32 hits, each with the bound its assertion uses:
+
+`internal/agent/agent_test.go:145` (5*time.Second);
+`internal/budget/session_test.go:947` (400*time.Millisecond);
+`internal/claudeplugin/claudeplugin_test.go:143` (10*time.Second);
+`internal/cli/cancel_test.go:546` (300*time.Millisecond);
+`internal/cli/layer_resolve_test.go:163` (2*time.Second);
+`internal/cli/propagation_retry_test.go:630` (30*time.Second);
+`internal/cli/run_test.go:717` (4*time.Second);
+`internal/cli/updatewarn_test.go:622` (500*time.Millisecond);
+`internal/cli/watch_queued_scan_test.go:184` (2*time.Second);
+`internal/cli/watch_queued_test.go:494` (5*time.Second);
+`internal/e2e/budget_test.go:276` (40*time.Second);
+`internal/gateway/gateway_test.go:581` (5*time.Second);
+`internal/gateway/lease_test.go:530` (2*time.Second);
+`internal/gateway/oauth_test.go:438` (5*time.Second);
+`internal/gateway/retry_test.go:688` (5*time.Second);
+`internal/gateway/route_test.go:300` (2*time.Second);
+`internal/headroomproc/headroomproc_test.go:217` (5*time.Second);
+`internal/infra/workdirlock_test.go:206` (2*time.Second);
+`internal/mirror/mirror_test.go:727,777` (5*time.Second, 10*time.Second);
+`internal/procgroup/procgroup_test.go:47,64,102` (5*time.Second);
+`internal/projectpolicy/match_test.go:334` (100*time.Millisecond);
+`internal/runner/artifact_test.go:3244,3493` (20*time.Second, 1*time.Second);
+`internal/runner/backend_run_test.go:389` (500*time.Millisecond);
+`internal/runner/mutation_test.go:397` (20*time.Second);
+`internal/verify/verify_test.go:292` (10*time.Second);
+`internal/watch/prstate_query_test.go:88` (10*time.Second);
+`scripts/release_test.go:1625,1667` (30*time.Second).
+
+**Most of the `newX(t)` half is not a bug**: a fixture whose clock is pinned a
+line later, a test that only marshals a record or an instant handed to the
+fixture as an argument is indistinguishable, to a shell script, from a store
+that never chose its clock. If the owner would rather not read that noise, the
+two ways to cut it are both in the one branch: drop the `newX(t)` signal (13
+hits left), or require the fixture's variable to appear in a call beside the
+instant.
+
+**To copy it in**, from the repository root — copy the two lines into the
+`check` job of `.github/workflows/ci.yml`, after its last step, and then:
+
+```sh
+git rm docs/pending-workflows/ci-hygiene.yml.snippet
+git add .github/workflows/ci.yml
+git commit -m "ci: run the hygiene check in the check job"
+```
+
+**That commit owes this page two edits and nothing else.** Unlike every other
+staged file here, this one is not a `.ya?ml` name, so it is not counted as a
+pending workflow: no pending-workflow count — not this page's, not
+`website/README.md`'s, not `internal/cli`'s docs tests', not
+`website/test/readme.mjs`' — moves when it is copied in, because all of them read
+only `.ya?ml` files in this directory. What moves is the status line above,
+which becomes **"`ci-hygiene.yml.snippet` is applied, not pending."**, and the
+opening line's second sentence, which lists the files here that are not
+workflows: with this one gone from the directory its name goes with it, and that
+sentence becomes *Four further files here are not workflows at all* with the four
+comment-only fragments (the procedure under `## The comment-only fragments` says
+the same from the other direction). This section stays as the record of what the
+step does.
+There is no byte-identity clause for it either: the snippet is a fragment, not
+a copy of the file it goes into.
+
+**The check already runs in CI's shard job today**, before the copy-in:
+`scripts/ci_hygiene_test.go` runs `scripts/ci-hygiene.sh` against this tree and
+fails on a rule 1 violation, and runs `scripts/ci-hygiene_test.sh`, which drives
+the script in fixture repositories in a temp git repo, under `timeout`, with a
+mutation check per rule. The step staged here is what puts the check in the
+`check` job beside gofmt and the vet passes — a second, plugin- and
+workflow-wide place to see it fail, where a stray file is reported as a
+`check`-job failure rather than as a package's test — and what a branch that
+never runs the Go tests (a docs-only change skips `check` and `shard` alike)
+does not get either way.
+
+**Not verified.** The two lines have never run in the workflow: what is
+verified offline is the script and its test, in fixture repositories and
+against this tree. That the step runs in the `check` job is what the first
+dispatch after the copy-in shows.

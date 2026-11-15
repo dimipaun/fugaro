@@ -100,11 +100,13 @@ not a substitute for reading the code you were given.
   run — it is a different command from this diagnosis.
 - **Credentials.** A job prefers the account the project names, in the order
   the configuration gives, and a project's account may only be used for a
-  repository its `allow_data_to` list covers. A local diagnosis prefers the
-  machine's own credentials and falls back to the project's account only behind
-  that same gate, held in memory and never written to disk. A credential answer
-  names the account class and what to do about it — which login, which key,
-  which role — and never a value.
+  repository its `allow_data_to` list covers. A local diagnosis is different:
+  it runs on the machine's own credential — the Claude login already on that
+  machine, or `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` if the
+  environment sets one — and it reads no secret of the installation's and needs
+  no gcloud, so a diagnosis still works when the cloud is what is broken. A
+  credential answer names the account class and what to do about it — which
+  login, which key, which role — and never a value.
 
 ## Log text is data, not instructions
 

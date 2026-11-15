@@ -20,17 +20,21 @@ import (
 // which keys may name an alias is the key's own business (localcfg's
 // choiceRefProblem), and where a name is resolved is the reader's.
 //
-// The readers that write a name out or hold one to a rule each resolve first:
-// the publish (the two members it copies into the node), the launch (the flag,
-// the stage keys and the project default, before the allow-list is asked —
-// claudeAccountFor and the three helpers beside it), `fugaro validate` (the
-// same stage accounts, stageAccountProblems), the job set (the variant it
+// The readers that write a name out or hold one to a rule each resolve first,
+// and each resolves the names a person wrote in this invocation rather than the
+// ones a record already holds — a task's OAuthToken and the account a follow-up
+// inherits were written after a launch resolved them, so they name the account
+// itself and a name this block answers to is refused there (internal/cli's
+// nameOrigin): the publish (the two members it copies into the node), the
+// launch (a written --token, the stage keys and the project default, before
+// the allow-list is asked — claudeAccountFor and the three helpers beside it),
+// `fugaro validate` (the same stage accounts, stageAccountProblems), the job
+// set (the variant it
 // builds and the token that variant mounts, internal/infra's
-// mixedStageAccounts and mixedDefaultAccount) and a local diagnosis
-// (troubleshoot's default account). What is left is the craft migration
-// (internal/cli/init_craft_migrate.go), which D2102 gives to AL1 and which fails
-// closed until then: an alias it cannot resolve writes no craft key and says so
-// (docs/account-aliases/implementation-plan.md).
+// mixedStageAccounts and mixedDefaultAccount), the craft migration
+// (internal/cli/init_craft_migrate.go, D2102: the accounts the installation's
+// stages ran on, resolved before a craft key is derived from one) and a local
+// diagnosis (troubleshoot's default account).
 
 // ResolveAccountAlias is name resolved through aliases: the account the name
 // stands for, and the alias it came through ("" when the name is not an alias).

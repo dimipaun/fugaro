@@ -52,6 +52,9 @@ const convergeNoise = "TERRAFORM-PROGRESS-NOISE"
 // run has both a step that applies and a stream that says so.
 func applyingRig(t *testing.T) *initRig {
 	t.Helper()
+	// The run this rig is for is the one a person is at: their being there is
+	// what confirms the stages it applies, now that no flag does (T11).
+	fakeTerminal(t)
 	r := updateRig(t)
 	r.setPlan(t, change("module.installation.google_storage_bucket.runs", "create"))
 	r.script["plan"] = map[string]any{"exit": 2, "stdout": convergeNoise + "\n"}
@@ -126,6 +129,52 @@ func logDir(t *testing.T) string {
 	return filepath.Join(base, "fugaro", "logs")
 }
 
+// logNames is the logs of cmdName the state directory holds now, for a test that
+// wants to read what its own runs add to it and not what earlier tests left
+// (logsAdded). Every test in this package writes into one state directory.
+func logNames(t *testing.T, cmdName string) map[string]bool {
+	t.Helper()
+	entries, err := os.ReadDir(logDir(t))
+	if err != nil {
+		return nil
+	}
+	re := regexp.MustCompile("^" + regexp.QuoteMeta(cmdName) + `-\d{14}-\d+\.log$`)
+	names := make(map[string]bool)
+	for _, e := range entries {
+		if re.MatchString(e.Name()) {
+			names[e.Name()] = true
+		}
+	}
+	return names
+}
+
+// logsAdded is the account of the runs a test made itself: the logs of cmdName
+// that were not there when before was taken, joined, and empty when there are
+// none. A test that reads a run's account beside the screen cannot assume the
+// run kept a log — two runs of one command in the same second in one process are
+// one file name (report.logName is the command, the second and the pid), the
+// second of them is refused the name it would share, keeps no log and falls back
+// to the screen (G5) — and which of the two a test lands in is the clock's
+// business rather than the test's. Reading every log in the directory instead
+// would answer with an earlier test's run, which is not this test's to report:
+// an assertion that read them would pass with this run printing nothing.
+func logsAdded(t *testing.T, before map[string]bool, cmdName string) string {
+	t.Helper()
+	var all strings.Builder
+	dir := logDir(t)
+	for name := range logNames(t, cmdName) {
+		if before[name] {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		all.Write(b)
+	}
+	return all.String()
+}
+
 // onlyLog reads back the one log a run of cmdName left. One run, one log: a
 // second file under this command's name is a bug, and a run that left none
 // kept nothing for the failure it may print a path to.
@@ -161,7 +210,7 @@ func onlyLog(t *testing.T, cmdName string) (string, string) {
 // first step line on is the account.
 func TestUpdateDefaultOutputIsShort(t *testing.T) {
 	applyingRig(t)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
@@ -310,7 +359,7 @@ func noLogStateDir(t *testing.T) string {
 func TestUpdateWithoutALogKeepsItsWholeAccount(t *testing.T) {
 	applyingRig(t)
 	noLogStateDir(t)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
@@ -335,7 +384,7 @@ func TestUpdateFailurePrintsContextAndLogPath(t *testing.T) {
 	r := applyingRig(t)
 	r.script["apply"] = map[string]any{"exit": 1, "stderr": "Error: quota exceeded\n  with google_project_service.quota\n"}
 	r.save(t)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err == nil {
 		t.Fatalf("the apply failed, yet the run succeeded:\n%s", out)
 	}
@@ -369,7 +418,7 @@ func TestUpdateFailurePrintsContextAndLogPath(t *testing.T) {
 func TestUpdateWithoutALogKeepsTheStreamOnScreen(t *testing.T) {
 	applyingRig(t)
 	elsewhere := noLogStateDir(t)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
@@ -402,7 +451,7 @@ func TestUpdateWithoutALogKeepsTheStreamOnScreen(t *testing.T) {
 // screen as well as in the log, which is what it always was (G10).
 func TestUpdateVerboseStreamsTerraform(t *testing.T) {
 	applyingRig(t)
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "-v")
+	out, errOut, err := executeStdin(t, "", "update", "-v")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
@@ -422,7 +471,7 @@ func TestUpdateLogHoldsTheFullTerraformOutput(t *testing.T) {
 	r := applyingRig(t)
 	r.script["apply"] = map[string]any{"exit": 0, "stderr": "STDERR-NOISE\n"}
 	r.save(t)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
@@ -461,7 +510,7 @@ func TestUpdateLogRedactsHeldSecretsInTheTerraformStream(t *testing.T) {
 	r := applyingRig(t)
 	r.script["apply"] = map[string]any{"exit": 0, "stdout": "applying with " + held + " in the line\n"}
 	r.save(t)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
@@ -545,9 +594,23 @@ func TestUpdateLogRedactsAValueAStageHoldsMidRun(t *testing.T) {
 // TestUpdateJSONUnchanged: --json is a contract (F8). stdout is one document
 // and nothing else — no step line, no ANSI, no carriage return — and the
 // human account goes to stderr, where the converge's own writer already went.
+//
+// --json confirms no step (T7, docs/no-prompt-policy): a run that has one to
+// take is refused rather than applied under it, so the run read here is one
+// with nothing to confirm — an installation that already matches. That state
+// is the first run's: it is the person's own, at this terminal, and it writes
+// the local config the rig's fixture only approximates. The --json run that
+// follows it is the one read here, and the plan still runs on it: its output is
+// what the log has to hold.
 func TestUpdateJSONUnchanged(t *testing.T) {
-	applyingRig(t)
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	r := updateRig(t)
+	r.script["plan"] = map[string]any{"exit": 0, "stdout": convergeNoise + "\n"}
+	r.save(t)
+	fakeTerminal(t)
+	if out, errOut, err := executeStdin(t, "", "update"); err != nil {
+		t.Fatalf("the person's own run before the --json one failed: %v\n%s%s", err, out, errOut)
+	}
+	out, errOut, err := executeStdin(t, "", "update", "--json")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
@@ -564,7 +627,7 @@ func TestUpdateJSONUnchanged(t *testing.T) {
 	if !strings.Contains(errOut, markDone+" installation") {
 		t.Errorf("the account is not on stderr under --json:\n%s", errOut)
 	}
-	if _, log := onlyLog(t, "update"); !strings.Contains(log, convergeNoise) {
+	if log := newestLog(t, "update"); !strings.Contains(log, convergeNoise) {
 		t.Errorf("a --json run of a mutating command kept no log of its output")
 	}
 }
@@ -937,7 +1000,7 @@ func planRowOf(out, stage string) string {
 func TestUpdateUnderAgentMarkerPrintsTheSameSteps(t *testing.T) {
 	clearAgentMarkers(t)
 	person := applyingRig(t)
-	outPerson, _, errPerson := executeStdin(t, "", "update", "--yes")
+	outPerson, _, errPerson := executeStdin(t, "", "update")
 	if errPerson != nil {
 		t.Fatalf("the person's run: %v\n%s", errPerson, outPerson)
 	}
@@ -947,7 +1010,7 @@ func TestUpdateUnderAgentMarkerPrintsTheSameSteps(t *testing.T) {
 
 	t.Setenv("CLAUDECODE", "1")
 	agent := applyingRig(t)
-	outAgent, errAgentOut, errAgent := executeStdin(t, "", "update", "--yes")
+	outAgent, errAgentOut, errAgent := executeStdin(t, "", "update")
 
 	// The marker changes what the run may do, not which stages it reached: every
 	// stage the agent's account names is one the person's names, in the same

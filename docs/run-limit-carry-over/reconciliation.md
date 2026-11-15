@@ -210,8 +210,11 @@ per-run and daily caps, which are the database's rules (spec §4, §9, T2/T4/T5;
 Every cap in the system today is either the
 owner's (the database, `fugaro budget set`) or the launcher's (a launch argument), and a chain limit is a
 **launcher's** number (D1045). Because that number lives in the **root launch's `task.json`** (D1046), raising
-an exhausted chain is a **rewrite of that stored task**, carrying the reason for the raise — no new command,
-no new node and no operator-only write path. *What that costs, said plainly because the alternative is a claim
+an exhausted chain is a **rewrite of that stored task**, carrying the reason for the raise — no new node and
+no operator-only write path, plus the one command L9 shipped, `fugaro budget chain raise`, which is that
+rewrite's supported path (2026-11-13, at implementation: the "no new command" this row first said was the
+plan's prose, while its own file list asked for the subcommand — the D1061 row below carries the same
+correction). *What that costs, said plainly because the alternative is a claim
 the tree does not support:* the launcher holds `objectUser` on the `runs/` and `tokens/` prefixes (F21) and
 can rewrite that task exactly as an operator can, so this is a **convention the installation states**, not a
 bound the platform enforces —
@@ -284,7 +287,7 @@ in [README.md](README.md) §"Numbers this work holds"; the open pull requests' n
 | **D1058** | The cloud senior reviewer | **A review job on PR N joins the PR's chain by its PR link, and the chain's `--max-review-rounds` counts senior-review iterations** — it is what bounds that design's review-fix loop. It does not open a chain of its own. | Folding the reviewer into the coding chain by *budget merge* rather than by link: it is a different job on a different account, and the link is what the chain already means (F16) |
 | **D1059** | The gateway's lease and the daily caps | **Nothing changes: the chain hands the gateway a smaller cap and the database's day caps keep binding.** | Teaching the gateway the chain puts a second budget in the enforcement path, in the one component the whole spend story rests on (F6, F14) |
 | **D1060** | Clock skew in the chain's time read | **Take the larger of the record's elapsed time and the sum of its stages' `duration_s`.** | Trusting `started_at` alone lets a record whose start is moved forward report less elapsed time |
-| **D1061** | How does an exhausted chain get raised? | **By rewriting the root launch's `task.json` `overrides`, with the reason for the raise recorded** — the limit lives in that record (D1046), so no new command, no new node and no operator-only write path is needed. **Stated with it, because it is the honest reading: a launcher can do the same.** | Calling it operator-only would be a claim the platform does not enforce: a launcher holds `objectUser` on the `runs/` and `tokens/` prefixes (F21) and can rewrite the task itself, so the rule is a **convention the installation states** — an honest launcher raises through that path and records why, and the per-run and daily caps stay hard either way (F22, spec §4, §6) |
+| **D1061** | How does an exhausted chain get raised? | **By rewriting the root launch's `task.json` `overrides`, with the reason for the raise recorded** — the limit lives in that record (D1046), so the rewrite needs no new node and no operator-only write path. **2026-11-13, at implementation: the rewrite ships as the one command `fugaro budget chain raise`, and the raise is kept on the root run's record as `chain_raises` (L9, spec §7)** — the "no new command" this row first carried was the plan's prose, while its own file list asked for the subcommand. **Stated with it, because it is the honest reading: a launcher can do the same.** | Calling it operator-only would be a claim the platform does not enforce: a launcher holds `objectUser` on the `runs/` and `tokens/` prefixes (F21) and can rewrite the task itself, so the rule is a **convention the installation states** — an honest launcher raises through that path and records why, and the per-run and daily caps stay hard either way (F22, spec §4, §6) |
 
 ## 4. Open items this work found and did not decide
 

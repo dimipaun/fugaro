@@ -398,19 +398,19 @@ func TestARefusedCommandKeepsNoLog(t *testing.T) {
 		{"a budget set whose GODEBUG leaks credentials", func(t *testing.T) error {
 			newBudgetFixture(t, "")
 			t.Setenv("GODEBUG", "http2debug=1")
-			_, _, err := execute(t, "budget", "set", "--global", "--daily", "60", "--yes")
+			_, _, err := execute(t, "budget", "set", "--global", "--daily", "60")
 			return err
 		}},
 		{"a budget kill whose GODEBUG leaks credentials", func(t *testing.T) error {
 			newBudgetFixture(t, "")
 			t.Setenv("GODEBUG", "http2debug=1")
-			_, _, err := execute(t, "budget", "kill", "--all", "--yes")
+			_, _, err := execute(t, "budget", "kill", "--all")
 			return err
 		}},
 		{"a budget resume whose GODEBUG leaks credentials", func(t *testing.T) error {
 			newBudgetFixture(t, "")
 			t.Setenv("GODEBUG", "http2debug=1")
-			_, _, err := execute(t, "budget", "resume", "--all", "--yes")
+			_, _, err := execute(t, "budget", "resume", "--all")
 			return err
 		}},
 		{"a publish whose GODEBUG leaks credentials", func(t *testing.T) error {

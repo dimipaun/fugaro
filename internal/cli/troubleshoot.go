@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/pflag"
 	"gopkg.in/yaml.v3"
 
+	"github.com/dimipaun/fugaro/internal/claudeplugin"
 	"github.com/dimipaun/fugaro/internal/cmdlog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/diagnoseagent"
@@ -38,12 +39,14 @@ import (
 //     "changes since your version" file (D1602, D1610, D1611);
 //   - troubleshootRun, the read-only agent (D1602, D1613);
 //   - troubleshootDoctor, `fugaro doctor`, whose output is one of the four
-//     evidence files;
-//   - readSecretValue, the project's account read out of Secret Manager with
-//     the person's own gcloud login (D1601) — an existing seam, reused rather
-//     than a second one beside it.
+//     evidence files.
 //
 // This is the shape the package already uses for layerRead and getenvOS.
+//
+// It reads no secret of the installation's and needs no gcloud login: the
+// credential is this machine's own — a value in the environment, or the login
+// claude already holds here (D1601 as the owner's report of 2026-11-13 fixed
+// it), and claude itself is found through the package's own claudeLookPath.
 
 const (
 	// troubleshootReportName is D1605's report file, written into the evidence
@@ -107,7 +110,13 @@ type troubleshootDoc struct {
 	Offline bool     `json:"offline,omitempty"`
 	Reason  string   `json:"reason,omitempty"`
 	LogTail []string `json:"log_tail,omitempty"`
-	Doctor  string   `json:"doctor,omitempty"`
+	// logTailSkipped is how many lines the tail left out as Terraform refresh
+	// noise. It is not part of the document — the tail is — and it is here
+	// rather than recomputed by the printer so that the header says refresh
+	// lines were left out only where they were: a log that is nothing but
+	// refresh lines is printed whole under a header claiming nothing.
+	logTailSkipped int
+	Doctor         string `json:"doctor,omitempty"`
 }
 
 // troubleshootFix is one fix command D1614's check reached a verdict on: what
@@ -140,10 +149,17 @@ and file names, so a command the answer prints is checked against this CLI's
 own command tree before it is shown as runnable, and anything else is marked
 as unchecked.
 
+It runs on your own Claude credential and reads no secret: CLAUDE_CODE_OAUTH_TOKEN
+or ANTHROPIC_API_KEY if either is set in this environment, and otherwise the
+logged-in claude on this machine, which is run as it is and needs no gcloud. It
+never reads the project's account out of Secret Manager.
+
 The command reads no stdin. Typing it is the consent: one line says which
 provider and what class of data the redacted evidence goes to, and then the
-diagnosis runs. With no credential, or with the source at this version out of
-reach, it prints the evidence where it is and exits non-zero instead.`,
+diagnosis runs. With no credential at all, or with the source at this version
+out of reach, it prints the evidence where it is and exits non-zero instead: a
+machine with no credential is told to log in with the claude CLI, or to set one
+of the two variables, and to run the command again.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var ref string
@@ -171,19 +187,13 @@ func runTroubleshoot(cmd *cobra.Command, o *troubleshootOptions, ref string) err
 	// The configuration is read before anything else is collected: it is both
 	// one of the four evidence files and where D1607's model comes from.
 	res := readTroubleshootResolution(ctx)
-	// The credential is resolved before the evidence is collected, and not
-	// because collecting needs one: whatever credential the diagnosis may use
-	// has to be in the redaction list the evidence files are written through
-	// (F4, spec.md), and the project account's token is a value this machine's
-	// logs may hold — a command that printed it, an API body that carried it.
-	// Its failure is reported later, where it was reported before: after the
-	// source fetch, so that D1608's answer about the machine is the one the
-	// person reads.
-	handle, credErr := troubleshootCredential(ctx, res)
-	secrets := cliSecrets(getenvOS)
-	if credErr == nil {
-		secrets = append(secrets, handle.Secret())
-	}
+	// The credential is resolved before the evidence is collected: it decides
+	// which claude the diagnosis runs, and its refusal is one of the reasons
+	// D1608's offline path answers instead. Every value it can resolve is this
+	// machine's own — a variable of the environment, which cliSecrets already
+	// holds, or no value at all — so the evidence files' redaction list needs
+	// nothing from it (F4, spec.md).
+	cred, credErr := troubleshootCredential()
 	ev, err := diagnoseagent.Collect(ctx, id, diagnoseagent.Options{
 		Version: Version,
 		Commit:  Commit,
@@ -191,7 +201,7 @@ func runTroubleshoot(cmd *cobra.Command, o *troubleshootOptions, ref string) err
 		GOOS:    runtime.GOOS,
 		Doctor:  troubleshootDoctor,
 		Config:  func(context.Context) ([]byte, error) { return res.text() },
-		Secrets: secrets,
+		Secrets: cliSecrets(getenvOS),
 	})
 	if err != nil {
 		return userErr("%v", err)
@@ -224,9 +234,10 @@ func runTroubleshoot(cmd *cobra.Command, o *troubleshootOptions, ref string) err
 		return troubleshootOffline(cmd, o, ev, d, credErr)
 	}
 	ev.Nonce = diagnoseagent.NewNonce()
-	troubleshootEgress(cmd, o, d.Model, handle)
+	troubleshootEgress(cmd, o, d.Model, cred.handle)
 	diag, err := troubleshootRun(ctx, diagnoseagent.Request{
-		Handle:      handle,
+		Handle:      cred.handle,
+		Bin:         cred.bin,
 		Prompt:      diagnoseagent.Prompt(ev),
 		Nonce:       ev.Nonce,
 		Model:       d.Model,
@@ -296,11 +307,6 @@ func troubleshootID(getenv func(string) string, ref string) (cmdlog.ID, error) {
 // contradicts what Fugaro expects is a large share of what this command
 // exists to explain (F23), and the agent can say so from the log alone.
 type troubleshootResolution struct {
-	// lc is the selected project config, the same read the credential step
-	// uses: the account names and the layer file are both in it, and reading
-	// it twice would let two steps of one diagnosis disagree about which
-	// project it is about.
-	lc    *localcfg.Config
 	cfg   *config.Config
 	layer *config.ProjectLayer
 	notes []string
@@ -357,7 +363,6 @@ func (r troubleshootResolution) text() ([]byte, error) {
 func readTroubleshootResolution(ctx context.Context) troubleshootResolution {
 	var r troubleshootResolution
 	lc := selectedProjectConfigReadOnly(ctx)
-	r.lc = lc
 	// The checkout is resolved without recording it: this command explains a
 	// failure and changes nothing on the machine, and remembering a checkout
 	// is a write.
@@ -425,41 +430,44 @@ func problemText(p config.Problem) string {
 	return p.Path + ": " + p.Message
 }
 
-// troubleshootCredential resolves the credential the diagnosis may use
-// (D1601): this machine's own first, then the project's account over the
-// person's own gcloud login, in memory and behind its allow_data_to.
-func troubleshootCredential(ctx context.Context, res troubleshootResolution) (diagnoseagent.Handle, error) {
-	accounts := diagnoseagent.Accounts{Repo: troubleshootRepo(ctx)}
-	var read diagnoseagent.SecretReader
-	if lc := res.lc; lc != nil {
-		accounts.Block = lc.ClaudeAccounts
-		// The key resolves before the diagnosis asks the block for the account
-		// (localcfg.Config.ResolveAccount, D2091): diagnoseagent reads the name
-		// against claude_accounts, and an alias held back would be refused there
-		// as an account this file does not define — a sentence sending the
-		// person to define an entry their own alias block forbids (D2092's one
-		// namespace).
-		accounts.Default, _ = lc.ResolveAccount(lc.DefaultClaudeAccount)
-		// The stages are left out: a local diagnosis stands for no stage of a
-		// run, so every per-stage choice is about some other command's work.
-		read = func(name string) (string, error) {
-			b, err := readSecretValue(ctx, lc, name)
-			return string(b), err
-		}
-	}
-	return diagnoseagent.Resolve(os.Environ(), accounts, read)
+// troubleshootCred is what one diagnosis runs on: the credential, and the
+// claude binary that holds it when the credential is this machine's own login.
+type troubleshootCred struct {
+	handle diagnoseagent.Handle
+	// bin is claude's absolute path, set only for the machine's own login: that
+	// login lives in claude's own store under this user's home, so the
+	// diagnosis has to run the binary that reads it. A credential from the
+	// environment is handed to `claude` on PATH, as it always was, and bin is
+	// then empty.
+	bin string
 }
 
-// troubleshootRepo is this checkout's repository (owner/name), "" outside one.
-// The account's allow_data_to is a per-repository list, and a command with no
-// repository is refused the project's account rather than guessed at (F22).
-func troubleshootRepo(ctx context.Context) string {
-	if co, err := resolveCheckout(ctx, ""); err == nil && co != nil {
-		if _, repo := checkoutOriginAt(co.Root); repo != "" {
-			return repo
-		}
+// troubleshootCredential resolves what the diagnosis may run on, in the order
+// the owner's report of 2026-11-13 fixed (D1601 as amended):
+//
+//  1. CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in this environment, if
+//     either is set;
+//  2. otherwise claude on PATH, run on the login this machine already holds:
+//     the diagnosis then injects no credential at all;
+//  3. otherwise an error, which the caller prints as D1608's offline path.
+//
+// It reads no Secret Manager secret and needs no gcloud login. The project's
+// account is not a fallback here at all: troubleshoot explains a command that
+// failed on this machine, the machine's own login is the credential a person
+// who has one really holds, and a cloud read is the thing that failed for the
+// owner who reported this. The refusal of a value too short to redact is kept
+// rather than stepped over: a variable is set, and the answer to a broken value
+// is not a different credential.
+func troubleshootCredential() (troubleshootCred, error) {
+	if h, ok, err := diagnoseagent.Own(os.Environ()); ok || err != nil {
+		return troubleshootCred{handle: h}, err
 	}
-	return ""
+	bin, err := claudeplugin.Find(claudeLookPath)
+	if err != nil {
+		return troubleshootCred{}, fmt.Errorf("no Claude credential is available for this diagnosis: neither %s nor %s is set in this environment, and this machine has no logged-in claude to run it on either (%v). Log in with `claude`, or set one of the two variables, and run this again",
+			config.ReservedSecrets[config.ClaudeOAuthToken], config.ReservedSecrets[config.AnthropicSecret], err)
+	}
+	return troubleshootCred{handle: diagnoseagent.LocalHandle(), bin: bin}, nil
 }
 
 // troubleshootSourceNote is what the person is told about the tree the agent
@@ -478,10 +486,19 @@ func troubleshootSourceNote(rec srctree.Record) string {
 //
 // In --json mode it goes to stderr, so that the document on stdout stays one
 // document; the same sentence is what a person reads either way.
+//
+// The credential is always this machine's own — a variable of the environment,
+// or the login claude already holds here — because this command reads no
+// project account. The one that is the machine's own login says so in as many
+// words, and says that Fugaro sends no token with it: what goes to the provider
+// there is the login the person already has, and nothing of Fugaro's.
 func troubleshootEgress(cmd *cobra.Command, o *troubleshootOptions, model string, h diagnoseagent.Handle) {
-	account := "the project's Claude account " + h.Account()
-	if h.Own() {
-		account = "your own Claude login"
+	account := "your own Claude login"
+	switch {
+	case h.Local():
+		account += " on this machine, the one claude already holds here, and Fugaro sends no token with it"
+	case !h.Own():
+		account = "the project's Claude account " + h.Account()
 	}
 	line := fmt.Sprintf("Sending to Anthropic on %s: the redacted log, fugaro doctor's output, the effective configuration and the Fugaro source at this version, read by the model %s.\n", account, oneLine(model))
 	if o.asJSON {
@@ -532,7 +549,7 @@ func troubleshootWriteReport(ev diagnoseagent.Evidence, d troubleshootDoc) (stri
 // rather than a failure line and nothing else.
 func troubleshootOffline(cmd *cobra.Command, o *troubleshootOptions, ev diagnoseagent.Evidence, d troubleshootDoc, reason error) error {
 	d.Offline, d.Reason = true, oneLine(reason.Error())
-	d.LogTail = troubleshootLogTail(ev)
+	d.LogTail, d.logTailSkipped = troubleshootLogTail(ev)
 	d.Doctor = troubleshootEvidenceFile(ev, "doctor.txt")
 	// The model is printed with the rest of the header and no answer is: no
 	// agent ran, so there is none to print.
@@ -542,18 +559,44 @@ func troubleshootOffline(cmd *cobra.Command, o *troubleshootOptions, ev diagnose
 	return &ExitError{Code: ExitUserError, Err: errors.New(d.Reason)}
 }
 
+// troubleshootRefreshLine is Terraform's per-resource refresh line, which
+// `fugaro update` prints one of per resource before it does anything: on a
+// project of any size it is the whole of what the last forty lines hold, and
+// what the person needs is the failure under it.
+const troubleshootRefreshLine = "Refreshing state"
+
 // troubleshootLogTail is the end of the redacted log the collector wrote, in
-// the shape the offline path and the document print it.
-func troubleshootLogTail(ev diagnoseagent.Evidence) []string {
+// the shape the offline path and the document print it: the last
+// troubleshootLogLines lines that are not Terraform's refresh noise (the
+// owner's report of 2026-11-13 — forty lines of it said nothing). The order of
+// the log is kept, and a log that is nothing but refresh lines falls back to
+// its own end rather than printing none of it.
+//
+// The second answer is how many lines that left out, so that the header under
+// which the tail is printed can say what really happened: a fallback that
+// dropped nothing must not be described as a tail refresh lines were removed
+// from.
+func troubleshootLogTail(ev diagnoseagent.Evidence) (lines []string, skipped int) {
 	text := troubleshootEvidenceFile(ev, ev.RunID+".log")
 	if text == "" {
-		return nil
+		return nil, 0
 	}
-	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
-	if len(lines) > troubleshootLogLines {
-		lines = lines[len(lines)-troubleshootLogLines:]
+	lines = strings.Split(strings.TrimRight(text, "\n"), "\n")
+	kept := make([]string, 0, len(lines))
+	for _, l := range lines {
+		if strings.Contains(l, troubleshootRefreshLine) {
+			continue
+		}
+		kept = append(kept, l)
 	}
-	return lines
+	skipped = len(lines) - len(kept)
+	if len(kept) == 0 {
+		kept, skipped = lines, 0
+	}
+	if len(kept) > troubleshootLogLines {
+		kept = kept[len(kept)-troubleshootLogLines:]
+	}
+	return kept, skipped
 }
 
 // troubleshootEvidenceFile reads one file of the evidence folder, "" when it
@@ -582,12 +625,19 @@ func troubleshootEvidenceFile(ev diagnoseagent.Evidence, name string) string {
 // machine whose command just failed: that is not a failure to run doctor, so
 // the text is kept and the exit is swallowed. Nothing printed at all is the one
 // case with nothing to keep, and the collector writes that down as such.
+//
+// The empty argument list is not the same as no argument list, and that is the
+// whole of the owner's report of 2026-11-13: cobra falls back on os.Args when
+// the args were never set, so doctor was run as `fugaro doctor troubleshoot
+// <run ID>` and what the evidence folder kept was `unknown command
+// "troubleshoot" for "doctor"` rather than doctor's own output. SetArgs with an
+// empty, non-nil slice is what says "this command and no arguments".
 var troubleshootDoctor = func(ctx context.Context) ([]byte, error) {
 	cmd := newDoctorCmd()
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs(nil)
+	cmd.SetArgs([]string{})
 	cmd.SetContext(ctx)
 	if err := cmd.Execute(); err != nil && buf.Len() == 0 {
 		return nil, err
@@ -752,7 +802,15 @@ func printTroubleshoot(w io.Writer, d troubleshootDoc, asJSON bool) error {
 		fmt.Fprintf(&b, "\nEvidence   %s\n", oneLine(d.EvidenceDir))
 		fmt.Fprintf(&b, "Guide      %s\n", oneLine(d.Guide))
 		if len(d.LogTail) > 0 {
-			fmt.Fprintf(&b, "\nThe last %d lines of the log\n%s\n", len(d.LogTail), indent(multiLine(strings.Join(d.LogTail, "\n"))))
+			// What the tail is only where it was cut: a log of nothing but
+			// refresh lines is printed whole, and a header saying they were
+			// left out over the lines themselves would be the one line a
+			// person checks the tail against, contradicting it.
+			cut := ""
+			if d.logTailSkipped > 0 {
+				cut = fmt.Sprintf(", %d `%s` lines left out", d.logTailSkipped, troubleshootRefreshLine)
+			}
+			fmt.Fprintf(&b, "\nThe end of the log (%d lines%s)\n%s\n", len(d.LogTail), cut, indent(multiLine(strings.Join(d.LogTail, "\n"))))
 		}
 		if d.Doctor != "" {
 			fmt.Fprintf(&b, "\nfugaro doctor said\n%s\n", indent(multiLine(strings.TrimRight(d.Doctor, "\n"))))

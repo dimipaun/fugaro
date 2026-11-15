@@ -291,6 +291,35 @@
         }
       }
     },
+    "chain_raises": {
+      "type": "array",
+      "description": "The raises a launcher made on this run's chain (docs/run-limit-carry-over L9, D1061): one entry per `fugaro budget chain raise`, each of which rewrote the stored task of the run that began the chain, where the chain's limit lives. The root run's record is the one that carries them. A launcher writes it and no merge reads it: the chain limit is a convention the installation states and not a bound the platform enforces, so who and why is what tells a raise from a rewritten limit. Absent for a chain nobody raised, and in records written before this field existed.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["by", "at", "reason", "limits"],
+        "properties": {
+          "by": { "type": "string", "minLength": 1, "description": "Who made the raise, as the launcher states itself (localcfg.Config.Me): a person's own account, never the run's." },
+          "at": { "type": "string", "format": "date-time", "description": "When the raise was made." },
+          "reason": { "type": "string", "minLength": 1, "description": "Why, in the launcher's own words; never empty, because the reason is what the raise is recorded for." },
+          "limits": {
+            "type": "array",
+            "minItems": 1,
+            "description": "The dimensions the raise moved, in the order every message about them reads: dollars, tokens, wall time, review rounds.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["dimension", "from", "to"],
+              "properties": {
+                "dimension": { "enum": ["usd", "tokens", "time", "review_rounds"] },
+                "from": { "type": "number", "minimum": 0, "description": "The chain's limit as the launch that began it stored it, in the dimension's own unit: micro-dollars, whole tokens, seconds, a count." },
+                "to": { "type": "number", "minimum": 0, "description": "The figure the raise wrote, in the same unit, above from." }
+              }
+            }
+          }
+        }
+      }
+    },
     "budget": {
       "type": "object",
       "additionalProperties": false,

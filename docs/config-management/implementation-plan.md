@@ -225,10 +225,10 @@ landed.
 ## G7. `fugaro rigor floor`, with the typed project name (D1170). **SEC**
 
 - **Interface.** The floor's removal and lowering go through `confirmTypedStrict`
-  (`internal/cli/budget.go:250`) with **no `--yes`** standing in (D846, SD10), and the agent-session
+  (`internal/cli/budget.go:250`) with **no flag** standing in (D846, SD10), and the agent-session
   fence comes first — so a managed project's gate never sees the step (D1026).
-- **Red step.** `TestRigorFloorRemovalTakesTheProjectNameTyped` — a `--yes` on a removal is **refused**
-  with the typed prompt, which fails today because the command does not exist — then
+- **Red step.** `TestRigorFloorRemovalTakesTheProjectNameTyped` — a removal without the typed project
+  name is **refused** with the typed prompt, which fails today because the command does not exist — then
   `TestRigorFloorRefusesAnAgentSession` and `TestRigorFloorAddsAnEntryWithoutTheTypedForm`.
 - **Files (≤6).** `internal/cli/rigor.go` (the group of G6 above: whichever of G6 and this task lands
   first creates it; **G7 and the settings design's S7 were the same command**, `fugaro rigor floor`,

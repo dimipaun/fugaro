@@ -35,11 +35,6 @@ import (
 // shaped like a real one and is long enough for the handle's own check.
 const tsCredentials = "test-credential-value-000000000000"
 
-// tsAccountToken is the project's Claude account in the world that has one: a
-// value that reaches the process from nowhere in its environment, which is what
-// makes it the one the redaction list has to be told about.
-const tsAccountToken = "test-account-token-value-000000000000"
-
 // tsWorld is one hermetic run of the command: the fixture's installation, the
 // log a failed command left, and the seams.
 type tsWorld struct {
@@ -84,6 +79,11 @@ func tsSetup(t *testing.T) *tsWorld {
 	x.doctor = []byte("check 410: the runs bucket answers\n")
 	t.Setenv("ANTHROPIC_API_KEY", tsCredentials)
 	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
+	// No claude is on PATH in this world unless a test puts one there
+	// (tsClaudeOnPath): the machine's own login is the fallback credential, and
+	// a developer's own claude deciding a test's answer is the one thing this
+	// must not do.
+	t.Setenv("PATH", t.TempDir())
 
 	wasSource, wasChanges, wasRun, wasDoctor, wasRead := troubleshootSource, troubleshootChanges, troubleshootRun, troubleshootDoctor, readSecretValue
 	t.Cleanup(func() {
@@ -105,12 +105,31 @@ func tsSetup(t *testing.T) *tsWorld {
 		return x.diag, x.runErr
 	}
 	troubleshootDoctor = func(context.Context) ([]byte, error) { return x.doctor, nil }
-	// The project's account is never read from the world's Secret Manager: a
-	// test that wants the fallback replaces this itself.
+	// This command reads no secret of the installation's at all (the owner's
+	// report of 2026-11-13), so the reader is armed rather than replaced: a run
+	// that reached Secret Manager, with the person's own gcloud login or
+	// otherwise, fails here instead of quietly falling back.
 	readSecretValue = func(context.Context, *localcfg.Config, string) ([]byte, error) {
-		return nil, errors.New("this world has no Secret Manager")
+		t.Error("troubleshoot read a Secret Manager secret: it runs on this machine's own credential and needs no gcloud")
+		return nil, errors.New("no Secret Manager in this world")
 	}
 	return x
+}
+
+// tsClaudeOnPath writes an executable claude into a directory of its own and
+// puts that directory first on PATH: the command finds it the way every other
+// command finds claude (claudeplugin.Find over claudeLookPath), and this one is
+// never run — the read-only agent itself is seamed (troubleshootRun). It
+// returns the absolute path, which is what the request has to carry.
+func tsClaudeOnPath(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "claude")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho this claude is never started\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return bin
 }
 
 // tsFailedLog writes the log a failed `fugaro update` left, through the writer
@@ -340,7 +359,9 @@ func TestTroubleshootPrintsTheEgressLineBeforeTheCall(t *testing.T) {
 // TestTroubleshootWithoutACredentialPrintsTheEvidence is D1608: no credential
 // is not a failure with a sentence, it is the evidence printed where it is and
 // a non-zero exit. The person gets the log's end, doctor's output, the version
-// and the two paths to keep working with.
+// and the two paths to keep working with. This world has no claude on PATH
+// either (tsSetup), so it is the third case of the order the owner's report of
+// 2026-11-13 fixed: nothing in the environment and no login to fall back on.
 func TestTroubleshootWithoutACredentialPrintsTheEvidence(t *testing.T) {
 	x := tsSetup(t)
 	t.Setenv("ANTHROPIC_API_KEY", "")
@@ -369,51 +390,173 @@ func TestTroubleshootWithoutACredentialPrintsTheEvidence(t *testing.T) {
 	if d.EvidenceDir == "" || !strings.HasPrefix(d.Guide, x.sourceDir) {
 		t.Errorf("the offline path named no evidence folder or guide: %+v", d)
 	}
-	// The reason is a credential refusal rather than a bare "not here":
-	// resolver's own sentence names both variables that would work, which is
-	// what the person can act on (F13).
-	for _, want := range []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"} {
+	// The reason is a credential refusal rather than a bare "not here": it names
+	// both variables that would work and the login that would, which is what the
+	// person can act on (F13) — with neither variable set the way out is to log
+	// in with claude.
+	for _, want := range []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "Log in with"} {
 		if !strings.Contains(d.Reason, want) {
-			t.Errorf("the reason does not name %s, so it says what is missing without the way out: %q", want, d.Reason)
+			t.Errorf("the reason does not name %q, so it says what is missing without the way out: %q", want, d.Reason)
 		}
 	}
 }
 
-// TestTroubleshootRedactsTheCredentialItResolved is F4 and F20 in the one place
-// the credential is not already redacted: the project's account, whose token no
-// environment list holds. It is a value this machine's log may carry, and the
-// evidence folder is what the model reads, so the token the command resolved
-// has to be in the list the evidence files are written through — which is why
-// the credential is resolved before the collector runs rather than after it.
-func TestTroubleshootRedactsTheCredentialItResolved(t *testing.T) {
+// TestTroubleshootLogTailSkipsTerraformRefreshNoise is the other half of the
+// owner's report of 2026-11-13: the end of a failed `fugaro update`'s log is
+// forty `Refreshing state` lines, and none of them says why anything failed.
+// The tail keeps the log's order and its failure, and a log that is nothing but
+// refresh lines still prints its own end rather than nothing.
+func TestTroubleshootLogTailSkipsTerraformRefreshNoise(t *testing.T) {
 	x := tsSetup(t)
-	// This machine's own credential is cleared: an own credential is in the
-	// environment's list already, and the case here is the account's token.
 	t.Setenv("ANTHROPIC_API_KEY", "")
-	// The command falls back to the project's account only inside a checkout
-	// of a repository the account's allow_data_to covers (F22, D1601), so the
-	// world gets one: a git checkout whose origin is the enrolled acme/app.
-	checkoutsAt(t, ".", "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: github, base_branch: main }\n", "https://github.com/acme/app.git")
-	readSecretValue = func(context.Context, *localcfg.Config, string) ([]byte, error) {
-		return []byte(tsAccountToken), nil
+	lines := make([]string, 0, 60)
+	for i := 0; i < 50; i++ {
+		lines = append(lines, fmt.Sprintf("Refreshing state... [id=google_project_iam_member.member_%d]", i))
 	}
-	x.id = tsFailedLog(t, time.Now().UTC(), "error: the token "+tsAccountToken+" was refused", "Failed in 3.1s")
-	// The premise the redaction is for: the log the command reads holds the
-	// value, so a copy that passed through no list would carry it.
-	data, err := os.ReadFile(filepath.Join(logDir(t), x.id.String()+".log"))
-	if err != nil {
+	// The failure the person needs, under the refresh pass: `Failed in` is the
+	// line every logged command that failed ends with, which is what makes this
+	// log the one the offline path answers for.
+	lines = append(lines, "Applying: the policy could not be written", "Failed in 12.4s")
+	x.id = tsFailedLog(t, time.Now().UTC(), lines...)
+	out, _, err := tsRun(t, x, "--json")
+	var exit *ExitError
+	if !errors.As(err, &exit) {
+		t.Fatalf("the offline path returned %v, want a non-zero exit", err)
+	}
+	var d troubleshootDoc
+	if err := json.Unmarshal([]byte(out), &d); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if len(d.LogTail) != 2 {
+		t.Fatalf("the tail is %d lines, want the two that are not refresh noise: %q", len(d.LogTail), d.LogTail)
+	}
+	if !strings.Contains(d.LogTail[0], "Applying: the policy could not be written") || !strings.Contains(d.LogTail[1], "Failed in 12.4s") {
+		t.Errorf("the tail does not keep the log's own end: %q", d.LogTail)
+	}
+	for _, l := range d.LogTail {
+		if strings.Contains(l, troubleshootRefreshLine) {
+			t.Errorf("the tail still carries Terraform's refresh noise: %q", l)
+		}
+	}
+	// The same run as a person reads it: the tail is printed under what it is,
+	// so a reader is not left wondering where the refresh pass went.
+	// The offline path's exit is the answer here, not a failure of the run.
+	text, _, _ := tsRun(t, x)
+	if !strings.Contains(text, "The end of the log (2 lines, 50 `"+troubleshootRefreshLine+"` lines left out)") {
+		t.Errorf("what the tail is printed under does not say what was left out:\n%s", text)
+	}
+}
+
+// TestTroubleshootLogTailFallsBackToTheEnd: a log that is nothing but refresh
+// lines has no other end to print, and printing none of it says less than the
+// log does. Nothing was left out on that path, which the count says, so the
+// header under it claims no omission over the refresh lines it prints. It is
+// read from the file rather than through a run, because a log that ends on a
+// refresh line is not one Latest takes for a failed command.
+func TestTroubleshootLogTailFallsBackToTheEnd(t *testing.T) {
+	dir := t.TempDir()
+	const runID = "update-20261107183012-48213"
+	body := "Refreshing state... [id=a]\nRefreshing state... [id=b]\n"
+	if err := os.WriteFile(filepath.Join(dir, runID+".log"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), tsAccountToken) {
-		t.Fatalf("the fixture's log does not carry the token, so nothing here is evidence:\n%s", data)
+	tail, skipped := troubleshootLogTail(diagnoseagent.Evidence{EvidenceDir: dir, RunID: runID})
+	if len(tail) != 2 {
+		t.Errorf("a log of refresh lines alone prints %d lines, want its own end: %q", len(tail), tail)
 	}
-	x.diag = diagnoseagent.Diagnosis{Outcome: diagnoseagent.OutcomeConfiguration, Signature: "update configuration", Text: "nothing to do"}
-	out, _, err := tsRun(t, x, "--json")
+	if skipped != 0 {
+		t.Errorf("the fallback reports %d lines left out, and it left none out: %q", skipped, tail)
+	}
+	// The header a person reads is built from that count, so a log cut nowhere
+	// is not described as one refresh lines were taken out of.
+	var b strings.Builder
+	printTroubleshoot(&b, troubleshootDoc{Version: "1", Model: "m", Offline: true, Reason: "r", LogTail: tail, logTailSkipped: skipped}, false)
+	if strings.Contains(b.String(), "left out") {
+		t.Errorf("the header claims lines were left out under a tail that dropped none:\n%s", b.String())
+	}
+}
+
+// TestTroubleshootDoctorRunsFugaroDoctorItself is the last sentence of the
+// owner's report of 2026-11-13: the evidence folder said `fugaro doctor said
+// Error: unknown command "troubleshoot" for "doctor"`, because cobra reads
+// os.Args when a command's own args were never set and this one was run as
+// `fugaro doctor troubleshoot <run ID>`. The os.Args below is that command
+// line, and the world has no installation configured, so doctor answers from
+// this machine and makes no cloud call — which is what keeps this hermetic.
+func TestTroubleshootDoctorRunsFugaroDoctorItself(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("FUGARO_CONFIG", "")
+	wasArgs := os.Args
+	os.Args = []string{"fugaro", "troubleshoot", "update-20261107183012-48213"}
+	t.Cleanup(func() { os.Args = wasArgs })
+
+	out, err := troubleshootDoctor(context.Background())
+	if err != nil {
+		t.Fatalf("doctor could not be run: %v", err)
+	}
+	text := string(out)
+	if strings.Contains(text, "unknown command") || strings.Contains(text, "troubleshoot") {
+		t.Errorf("doctor was run with this command's own arguments, so what it said is not doctor's output:\n%s", text)
+	}
+	if !strings.Contains(text, "no Fugaro installation is configured") {
+		t.Errorf("doctor did not answer for this machine:\n%s", text)
+	}
+}
+
+// TestTroubleshootUsesTheMachinesOwnClaudeLogin is the owner's report of
+// 2026-11-13: with neither credential variable set, the diagnosis runs on the
+// logged-in claude this machine already has — found on PATH as every other
+// command finds claude, and handed the read-only agent as its binary — and
+// nothing is read from Secret Manager, so a machine with no gcloud login and
+// nothing stored still gets an answer. The egress line says which login pays
+// and that Fugaro sends no token with it.
+func TestTroubleshootUsesTheMachinesOwnClaudeLogin(t *testing.T) {
+	x := tsSetup(t)
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	bin := tsClaudeOnPath(t)
+	x.id = tsFailedLog(t, time.Now().UTC(), "error: the layer could not be read", "Failed in 3.1s")
+	x.diag = diagnoseagent.Diagnosis{Outcome: diagnoseagent.OutcomeConfiguration, Text: "the answer"}
+	out, _, err := tsRun(t, x)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(x.reqs) != 1 {
-		t.Fatalf("the agent was called %d times, want once: the account's credential is what this test is about", len(x.reqs))
+		t.Fatalf("the agent was called %d times, want once", len(x.reqs))
+	}
+	if x.reqs[0].Bin != bin {
+		t.Errorf("the diagnosis runs %q, want this machine's own claude at %q", x.reqs[0].Bin, bin)
+	}
+	h := x.reqs[0].Handle
+	if !h.Own() || !h.Local() || h.Secret() != "" || len(h.Env()) != 0 {
+		t.Errorf("the credential is %v, want this machine's own login: the person's own, a local login, and no value this process holds", h)
+	}
+	for _, want := range []string{"your own Claude login", "Fugaro sends no token"} {
+		if !strings.Contains(x.outAtRun, want) {
+			t.Errorf("what had been printed when the agent was called does not say %q:\n%s", want, x.outAtRun)
+		}
+	}
+	if !strings.Contains(out, "the answer") {
+		t.Errorf("the diagnosis did not run on the machine's own login:\n%s", out)
+	}
+}
+
+// TestTroubleshootKeepsTheReadSecretOutOfTheEvidence is F4 and F20 for the one
+// credential this command holds a value of: the environment's own, which
+// cliSecrets is what tells the collector about. The doctor output is the file
+// that proves it — it is text this machine's own doctor wrote, so a token a
+// failing command printed there would otherwise be copied into the folder the
+// model reads.
+func TestTroubleshootKeepsTheReadSecretOutOfTheEvidence(t *testing.T) {
+	x := tsSetup(t)
+	x.doctor = []byte("check 410: the runs bucket refused the token " + tsCredentials + "\n")
+	x.id = tsFailedLog(t, time.Now().UTC(), "error: refusing", "Failed in 1.0s")
+	x.diag = diagnoseagent.Diagnosis{Outcome: diagnoseagent.OutcomeConfiguration, Text: "the answer"}
+	out, _, err := tsRun(t, x, "--json")
+	if err != nil {
+		t.Fatal(err)
 	}
 	var d troubleshootDoc
 	if err := json.Unmarshal([]byte(out), &d); err != nil {
@@ -431,12 +574,36 @@ func TestTroubleshootRedactsTheCredentialItResolved(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(string(b), tsAccountToken) {
-			t.Errorf("%s in the evidence folder carries the project account's token: the credentials the command resolved have to be in the list the evidence is written through", e.Name())
+		if strings.Contains(string(b), tsCredentials) {
+			t.Errorf("%s in the evidence folder carries the credential this diagnosis runs on: the values it holds have to be in the list the evidence is written through", e.Name())
 		}
 	}
-	if strings.Contains(out, tsAccountToken) {
-		t.Error("the document printed the project account's token")
+	if strings.Contains(out, tsCredentials) {
+		t.Error("the document printed the credential")
+	}
+}
+
+// TestTroubleshootRefusesAPlaceholderCredential: an environment credential
+// shorter than four bytes cannot be redacted, so it is refused rather than
+// used — and the refusal says what such a value usually is, which is the
+// owner's report of 2026-11-13's own second half: a placeholder left in the
+// environment is a far likelier thing to find there than a credential.
+func TestTroubleshootRefusesAPlaceholderCredential(t *testing.T) {
+	x := tsSetup(t)
+	t.Setenv("ANTHROPIC_API_KEY", "x")
+	x.id = tsFailedLog(t, time.Now().UTC(), "error: refusing", "Failed in 1.0s")
+	out, _, err := tsRun(t, x)
+	var exit *ExitError
+	if !errors.As(err, &exit) || exit.Code != ExitUserError {
+		t.Fatalf("a placeholder credential answered %v, want D1608's offline path", err)
+	}
+	if len(x.reqs) != 0 {
+		t.Error("a credential too short to redact still started the agent")
+	}
+	for _, want := range []string{"shorter than 4 bytes", "placeholder", "ANTHROPIC_API_KEY"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the refusal does not say %q:\n%s", want, out)
+		}
 	}
 }
 

@@ -466,7 +466,7 @@ writes the record; W3's root of the workspace's own project and W6's service car
 **The table has no writer in the tree yet, and the region is the one value of it no command
 records** — stated rather than implied. `workspace member add` takes the member's job accounts, its
 Firebase project, its `fp` and its exchange URL, `--repo` (a repository the member contributes,
-repeatable) and `--yes` — the first four are the values this table holds, `--repo` is the member's
+repeatable) — the first four are the values this table holds, `--repo` is the member's
 contribution to the workspace, and the **region** is in none of them (§6) — and the per-member
 credentials node itself has no writer at all:
 `WorkspaceCredentials`'s own comment says so

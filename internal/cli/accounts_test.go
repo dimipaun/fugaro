@@ -584,7 +584,7 @@ func TestAccountsClearOnlyNamedAccount(t *testing.T) {
 	// would otherwise report is "no mark to clear" — and no node appears for
 	// it, which is the whole point of the check.
 	noTerminal(t)
-	if _, _, err := execute(t, "accounts", "clear", "acme-other", "--yes"); err == nil || ExitCode(err) != ExitUserError ||
+	if _, _, err := execute(t, "accounts", "clear", "acme-other"); err == nil || ExitCode(err) != ExitUserError ||
 		!strings.Contains(err.Error(), "claude_accounts") {
 		t.Fatalf("err = %v, want a user error naming the name the installation does not know", err)
 	}
@@ -603,14 +603,14 @@ func TestAccountsClearOnlyNamedAccount(t *testing.T) {
 	// has to, because `fugaro doctor` names exactly such marks and prescribes
 	// this command as the fix (TestDoctorBrokenMarkFixRuns).
 	f.db.Set(credsMarkPath("team-shared"), map[string]any{"state": "broken", "since": since})
-	if _, _, err := execute(t, "accounts", "clear", "team-shared", "--yes"); err != nil {
+	if _, _, err := execute(t, "accounts", "clear", "team-shared"); err != nil {
 		t.Fatalf("a mark for a name this config does not list was refused: %v", err)
 	}
 	if m, _ := f.db.Value(credsMarkPath("team-shared")).(map[string]any); m["state"] != "available" {
 		t.Fatalf("the mark of a name no claude_accounts entry carries was not cleared: %v", m)
 	}
 
-	if _, _, err := execute(t, "accounts", "clear", "acme-personal", "--yes"); err != nil {
+	if _, _, err := execute(t, "accounts", "clear", "acme-personal"); err != nil {
 		t.Fatal(err)
 	}
 	if m, _ := f.db.Value(credsMarkPath("acme-personal")).(map[string]any); m["state"] != "available" {
@@ -639,7 +639,7 @@ func TestAccountsClearRefusesStatesItMustNotClear(t *testing.T) {
 		"quota_hold": "does not know",
 	} {
 		f.db.Set(credsMarkPath("acme-personal"), map[string]any{"state": state})
-		_, _, err := execute(t, "accounts", "clear", "acme-personal", "--yes")
+		_, _, err := execute(t, "accounts", "clear", "acme-personal")
 		if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), want) {
 			t.Errorf("state %s: err = %v, want a user error naming %q", state, err, want)
 		}
@@ -659,7 +659,7 @@ func TestAccountsClearNeverPrintsAValue(t *testing.T) {
 	f.db.Set(credsMarkPath("acme-personal"), map[string]any{
 		"state": "broken", "since": time.Now().UTC().Truncate(time.Second).Format(time.RFC3339Nano)})
 	noTerminal(t)
-	out, errOut, err := execute(t, "accounts", "clear", "acme-personal", "--yes")
+	out, errOut, err := execute(t, "accounts", "clear", "acme-personal")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -703,7 +703,7 @@ func TestAccountsRefuseAnotherProjectsDatabase(t *testing.T) {
 
 	// The write: refused, and the mark is untouched.
 	noTerminal(t)
-	if _, _, err := execute(t, "accounts", "clear", "acme-personal", "--yes"); err == nil || ExitCode(err) != ExitUserError {
+	if _, _, err := execute(t, "accounts", "clear", "acme-personal"); err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want a user error for another project's database", err)
 	}
 	if m, _ := f.db.Value(credsMarkPath("acme-personal")).(map[string]any); m["state"] != "broken" {
@@ -736,7 +736,7 @@ func TestAccountsRefuseHTTP2DebugBeforeOpening(t *testing.T) {
 		t.Fatalf("accounts ls printed %q before refusing", out)
 	}
 
-	if _, _, err := execute(t, "accounts", "clear", "acme-personal", "--yes"); err == nil || ExitCode(err) != ExitUserError ||
+	if _, _, err := execute(t, "accounts", "clear", "acme-personal"); err == nil || ExitCode(err) != ExitUserError ||
 		!strings.Contains(err.Error(), "http2debug") {
 		t.Fatalf("accounts clear: err = %v, want the GODEBUG refusal", err)
 	}
@@ -764,7 +764,7 @@ func TestAccountsClearRefusesNoAgentsSession(t *testing.T) {
 	noTerminal(t)
 	t.Setenv("CLAUDECODE", "1") // a coding agent's session
 
-	if _, _, err := execute(t, "accounts", "clear", "acme-personal", "--yes"); err != nil {
+	if _, _, err := execute(t, "accounts", "clear", "acme-personal"); err != nil {
 		t.Fatalf("a coding agent's session was refused: %v (the decision is that it is not, like fugaro budget set and kill)", err)
 	}
 	if m, _ := f.db.Value(credsMarkPath("acme-personal")).(map[string]any); m["state"] != "available" {

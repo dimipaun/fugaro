@@ -53,7 +53,6 @@ func newModelsAddCmd() *cobra.Command {
 	f.StringVar(&o.route, "route", "", "the route that claims the model (default: the route that claims it already, or the only one)")
 	f.Float64Var(&o.priceIn, "price-in", 0, "input price, dollars per million tokens (required for a model the catalog does not price)")
 	f.Float64Var(&o.priceOut, "price-out", 0, "output price, dollars per million tokens (required for a model the catalog does not price)")
-	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
 	return cmd
 }
 

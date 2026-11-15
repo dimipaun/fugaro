@@ -77,11 +77,13 @@ func (r *initRun) ctx() context.Context {
 // this step and every one after it.
 //
 // In a managed project the confirmation is the gate's read of the two marks
-// (the ruling of 2026-11-01): the review screen is still printed — the owner's
-// own account of what is about to happen, which is what the screen is for —
-// and the ordinary steps go through, exactly as they do in a coding agent's
-// session the gate admitted. The screen is printed ONCE, as the question the
-// person answered was asked once.
+// (the ruling of 2026-11-01): the ordinary steps go through, exactly as they do
+// in a coding agent's session the gate admitted, and nobody is asked anything —
+// so the review is the run's own account of itself rather than something a
+// person reads before answering, and it goes to the log with the rest of that
+// account, coming back on the terminal under --verbose (reviewScreen). The
+// review is printed ONCE either way, as the question the person answered was
+// asked once.
 func (r *initRun) runCovers() (bool, error) {
 	rv := r.review
 	if rv == nil || r.o.planOnly || agentMarker(os.Getenv, r.stdinTerminal()) != "" || !initflow.CanConfirmRun(r.conditions()) {
@@ -207,15 +209,18 @@ func (r *initRun) askOrdinary(what, notCovered string) (bool, error) {
 		if covered {
 			r.willDo(what)
 			if r.gateStandsIn() {
-				fmt.Fprintf(r.w, "  %s\n", initflow.GateOrdinary())
+				fmt.Fprintf(r.stageDetail(), "  %s\n", initflow.GateOrdinary())
 			} else {
+				// The covered step's own note for the run whose confirmation is
+				// a person's answer: it is what they read as the step goes, and
+				// only the gate's sentence above it is the run's account.
 				fmt.Fprintln(r.w, "  covered by the run confirmation (the review's own question, at this run's terminal)")
 			}
 			return true, nil
 		}
 		if r.gateStandsIn() && initflow.PersonAtTheTerminal(r.conditions()) {
 			r.willDo(what)
-			fmt.Fprintf(r.w, "  %s\n", initflow.OwnerProceeded())
+			fmt.Fprintf(r.stageDetail(), "  %s\n", initflow.OwnerProceeded())
 			return true, nil
 		}
 	}
@@ -516,6 +521,14 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 	w := r.w
 	todo := e.todo()
 	managed := r.gateStandsIn()
+	if managed && !o.planOnly {
+		// Under the gate nobody is asked anything, so this screen is the run's
+		// own account of what it does and not a thing a person has to read
+		// before answering: it goes where the rest of the account does, and -v
+		// brings it back. A project whose gate does not stand in keeps it on
+		// screen, because there it IS what the confirmation below is about.
+		w = r.stageDetail()
+	}
 	if managed {
 		fmt.Fprintf(w, "\nReview: project %s (GCP %s) is a managed project, so its steps take no confirmation: the deterministic gate judges each document before it writes.\n",
 			pluginwire.Printable(r.projectName), pluginwire.Printable(r.gcpProject))
@@ -626,7 +639,7 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 			sep = append(sep, "the plugin wiring (its own y/N)")
 		}
 		if e.previewState(initflow.Checkout) == initflow.Todo {
-			sep = append(sep, "the checkout's own steps, run by fugaro update as they are here: the plugin pin and the plugin wiring ask nothing of their own (the pin prints its diff, and is reviewed with git diff after), while the image refresh asks at each step of its own that changes something — the base image it pins by digest, the daily image check job's config, and the billable build of the checkout's job images, one confirmation per build — confirmed by the person at the terminal it runs at, or by --yes")
+			sep = append(sep, "the checkout's own steps, run by fugaro update as they are here: the plugin pin and the plugin wiring ask nothing of their own (the pin prints its diff, and is reviewed with git diff after), while the image refresh asks at each step of its own that changes something — the base image it pins by digest, the daily image check job's config, and the billable build of the checkout's job images, one confirmation per build — confirmed by the person at the terminal it runs at")
 		}
 		if e.previewState(initflow.Policy) == initflow.Todo {
 			sep = append(sep, "migrating the published policy node in place (the project's name is asked for a widening in it)")
@@ -641,10 +654,10 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 			sep = append(sep, "the checkout's image refresh, which asks nothing here either: the base image it pins by digest, the daily image check job's config and the checkout: clone workflow's job move are answered by the gate's own read of the marks (each still prints its diff), and each billable build of the checkout's job images goes through the gate's own per-build verdict, with the build's estimated cost reserved against the project's budget before Cloud Build is asked for it (D1543), instead of a confirmation of its own")
 		}
 		if e.previewState(initflow.Policy) == initflow.Todo {
-			sep = append(sep, "migrating the published policy node in place when the migration loosens a ceiling, which takes the project's name: a Typed step is money or permanence, and no plan gate admits one (D1026)")
+			sep = append(sep, "migrating the published policy node in place when the migration loosens a ceiling, which takes the project's name: money or permanence, and no plan gate admits one (D1026)")
 		}
 		if e.previewState(initflow.Workspace) == initflow.Todo {
-			sep = append(sep, "publishing the workspace record when it admits the group's first one or more than the published record does, which takes the project's name: the first record, a member, a repository, or a record that drops the ceiling the published one states, is a Typed step, and no plan gate admits one (D1026)")
+			sep = append(sep, "publishing the workspace record when it admits the group's first one or more than the published record does, which takes the project's name: the first record, a member, a repository, or a record that drops the ceiling the published one states, is money or permanence, and no plan gate admits one (D1026)")
 		}
 	}
 	if len(sep) == 0 {
@@ -672,7 +685,7 @@ func (e *initEngine) planOnlyReview(ctx context.Context, stages []initflow.Stage
 	// is why --plan-only reads no mark (gateRun: a run that cannot act on the
 	// answer pays for none): a managed project asks nothing at all, and this
 	// is the screen that explains the run either way.
-	fmt.Fprint(e.r.w, "A run without --plan-only asks once at a terminal, with nothing typed: the person reading this screen is the whole of the answer — and in a managed project it asks nothing at all, because the deterministic gate judges each document as it writes. --plan-only never takes --yes or it.\n")
+	fmt.Fprint(e.r.w, "A run without --plan-only asks once at a terminal, with nothing typed: the person reading this screen is the whole of the answer — and in a managed project it asks nothing at all, because the deterministic gate judges each document as it writes. --plan-only never takes it.\n")
 }
 
 // alertEmail is the alert email in effect and where it comes from.
