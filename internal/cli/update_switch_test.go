@@ -351,7 +351,7 @@ func TestTheInstallationDoorRecordsNoRepositoryItDoesNotApply(t *testing.T) {
 	addSwitchRepo(t, r.initRig, "acme/other")
 	putSwitchBundle(t, r.initRig, []byte(config.AnthropicSecret+": "+credsValue(t, "model")+"\n"))
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("an ordinary update failed: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
 	}
@@ -447,7 +447,7 @@ func TestAnOptedInInstallationConvergesWithOneUpdate(t *testing.T) {
 		t.Fatalf("this machine holds a workdir for %s, so the test is not the state the review's fourth round found: the upgrade has to converge from the installation's own state, without a document this machine happens to have written", slug)
 	}
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("an ordinary update failed: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
 	}
@@ -502,7 +502,7 @@ func TestAStaleFalseIsCorrectedByTheInstallationsState(t *testing.T) {
 	markSwitchRepoRecord(t, r.initRig, "acme/sandbox", false)
 	seedRepoStateGrant(t, r.initRig, slug)
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("an ordinary update failed: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
 	}
@@ -566,7 +566,7 @@ func TestAStaleTrueIsCorrectedByTheInstallationsState(t *testing.T) {
 			markSwitchRepoRecord(t, r.initRig, "acme/sandbox", true)
 			seed(t, r.initRig, slug)
 
-			out, errOut, err := executeStdin(t, "", "update", "--yes")
+			out, errOut, err := executeStdin(t, "", "update")
 			if err != nil {
 				t.Fatalf("an ordinary update failed: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
 			}
@@ -1216,6 +1216,11 @@ func TestTheBundleIsNeverOpenedInAnAgentsSessionOrARunsProcess(t *testing.T) {
 	for _, marker := range markers {
 		t.Run(marker, func(t *testing.T) {
 			r := credentialsRig(t)
+			// The IDE marker (CLAUDE_CODE_SSE_PORT) is an agent's session only
+			// where the run has no terminal of its own: with one, the run is a
+			// person's own IDE terminal and the fence does not fire, so the
+			// terminal the rig installs is taken back here.
+			noTerminal(t)
 			r.repoReady(t)
 			r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
 			credentialsOutputs(t, r)
@@ -1339,7 +1344,7 @@ func TestTheBackfillIsNotWrittenInAnAgentsSessionOrARunsProcess(t *testing.T) {
 			seedRepoRootCredentialsService(t, slug)
 
 			t.Setenv(marker, "1")
-			out, errOut, err := executeStdin(t, "", "update", "--yes")
+			out, errOut, err := executeStdin(t, "", "update")
 			if err != nil {
 				t.Fatalf("the run failed: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
 			}

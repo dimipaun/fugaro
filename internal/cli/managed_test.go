@@ -910,7 +910,7 @@ var propertyAgentSites = map[string]string{
 	"init_stages.go fillCredentialsAudience": "TestUpdateInAnAgentSessionPinsNoCredentialsImage (under a marker) and TestUpdateSetsCredentialsServiceOnEveryInstallation (with none)",
 	// The layer stage refuses a marker itself for the same reason: it is
 	// SelfConfirming, so the loop would call it.
-	"init_layer_stage.go Apply": "TestUpdateLayerStageAppliesNothingInAnAgentSessionEvenWithYes",
+	"init_layer_stage.go Apply": "TestUpdateLayerStageAppliesNothingInAnAgentSession",
 	// The switch's record is the same shape: credentialsBundleReady opens the
 	// credentials service's bundle with the identity of whoever runs the
 	// update, so a coding agent's session reads nothing there and says so,
@@ -1027,12 +1027,12 @@ func TestManagedAgentMarkersAreTheExpectedSix(t *testing.T) {
 // TestManagedEveryInitFlagHasACase: a new flag is a new condition until
 // someone writes down what it does to a confirmation.
 var initFlagCases = map[string]string{
-	// The table's dimensions (confirmTable).
-	"yes":             "dimension: confirms YesOrTyped (ask), never Typed; refused under a marker",
-	"non-interactive": "dimension: never prompts, so nothing typed confirms",
-	"json":            "dimension: never takes a Typed confirmation",
-	"plan-only":       "dimension: folded into Yes=false by initRun.conditions; never takes --yes",
-	"ask":             "dimension: takes the gate out of the question (initflow.Conditions.Ask makes GateConfirms false), so every step falls back to the confirmation it would have had in a project that is not managed — the same decision the --ask half of every row already records. It never weakens the gate: the read and the admit are made before it is consulted. In a session that cannot answer it refuses (managed_ask.go), and `fugaro setup` refuses the flag by name: the gate is `fugaro update`'s",
+	// The table's dimensions (confirmTable). --yes and --non-interactive
+	// were two of them until T11 removed the flags everywhere: the
+	// conditions remain, but no flag declares them any more.
+	"json":      "dimension: never takes a Typed confirmation",
+	"plan-only": "dimension: folded into Yes=false by initRun.conditions; never takes --yes",
+	"ask":       "dimension: takes the gate out of the question (initflow.Conditions.Ask makes GateConfirms false), so every step falls back to the confirmation it would have had in a project that is not managed — the same decision the --ask half of every row already records. It never weakens the gate: the read and the admit are made before it is consulted. In a session that cannot answer it refuses (managed_ask.go), and `fugaro setup` refuses the flag by name: the gate is `fugaro update`'s",
 	// Flags whose steps confirm through the paths the property drives.
 	"create-project":   "its creation confirms through the Typed class (askTyped/canType, both covered)",
 	"managed":          "OUTSIDE the property: with --create-project it requires the budget amount (D64) and records it in the creation fact (Task 4.2); it adds a guard, so the creation still confirms through the Typed class (covered)",
@@ -1083,9 +1083,16 @@ func TestManagedEveryInitFlagHasACase(t *testing.T) {
 			t.Errorf("initFlagCases names --%s, which fugaro setup does not declare", name)
 		}
 	}
-	for _, d := range []string{"yes", "non-interactive", "json", "plan-only", "ask"} {
+	for _, d := range []string{"json", "plan-only", "ask"} {
 		if !strings.HasPrefix(initFlagCases[d], "dimension:") {
 			t.Errorf("--%s is one of the table's dimensions", d)
+		}
+	}
+	// --yes and --non-interactive are gone from the product (T11): a run
+	// confirms by a person at a real terminal, and no flag stands in for them.
+	for _, gone := range []string{"yes", "non-interactive"} {
+		if f := newSetupCmd().Flags().Lookup(gone); f != nil {
+			t.Errorf("fugaro setup still declares --%s: the flag is gone (T11)", gone)
 		}
 	}
 }

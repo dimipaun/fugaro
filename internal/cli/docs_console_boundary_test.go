@@ -272,13 +272,16 @@ var consoleBoundaryAllowList = []string{
 // indirect entry with it, so the require line below is the whole of what the
 // module graph gained, and it is not here for the console's sake either.
 //
-// The seventh is not a decision of this repository's at all: Dependabot's
-// grouped bump of the go_modules group (PR #2677) moved the five otel indirect
-// entries from 1.46.0 and 1.44.0 to 1.47.0 and brought
-// `go.opentelemetry.io/otel/log` with them, and the bump edited go.mod without
-// this baseline, which left this test and the website's red on `main`. The
-// versions are recorded here because go.mod carries them; the console
-// contributes nothing to any of the six.
+// The seventh is nobody's dependency at all: it is the version of the graph
+// already there, moved by the dependabot `go_modules` group bump (#2677), which
+// took `go.opentelemetry.io/otel` and `/metric` to v1.47.0, `/trace`, `/sdk`
+// and `/sdk/metric` with them, and brought `go.opentelemetry.io/otel/log` into
+// the graph at the same version. A bot cannot make the deliberate edit this
+// slice asks for, so the bump landed without one and this test has been red on
+// `main` since; the six lines move here instead. Nothing under console/ or
+// website/ imports any of them, they carry the Apache-2.0 the module's licence
+// table already cleared, and the console still contributes nothing to this
+// module.
 var consoleGoModRequireBaseline = []string{
 	"cel.dev/expr v0.25.2 // indirect",
 	"cloud.google.com/go v0.123.0 // indirect",

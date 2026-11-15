@@ -80,6 +80,8 @@ doctor)
     exit "$(cat "$FAKE303_DIR/doctor.status")"
   fi
   cat "$FAKE303_DIR/doctor.json"
+  # exits 1 with its document, as the real doctor does when a check is a warning
+  [ ! -f "$FAKE303_DIR/doctor.exit" ] || exit "$(cat "$FAKE303_DIR/doctor.exit")"
   ;;
 version)
   printf '%s\n' "fugaro 0.24.0 (Uakari)"
@@ -282,6 +284,14 @@ expect_daemon_runs() { # want what
 }
 
 # --------------------------------------------------------------- the healthy run
+case_doctor_exit_1() {
+  setup_case doctor-exit-1
+  printf '1\n' >"$dir/state/doctor.exit"
+  run303 --installation "$INSTALLATION" --yes --window 3s --interval 1s --breaker-seconds 3 --repo "$dir/repo" --usd-per-call 0.30
+  expect_status "$status" 0 "doctor exit 1: the document it printed is the answer"
+  expect_fact installation PASS "doctor exit 1"
+}
+
 case_healthy() {
   setup_case healthy
   run303 --installation "$INSTALLATION" --yes --window 3s --interval 1s --breaker-seconds 3 --repo "$dir/repo" --usd-per-call 0.30
@@ -391,7 +401,7 @@ case_name_mismatch() {
 
 case_doctor_refused() {
   setup_case doctorrefused
-  printf '1\n' >"$dir/state/doctor.status"
+  printf '2\n' >"$dir/state/doctor.status"
   run303 --installation "$INSTALLATION" --yes --window 3s
   expect_status "$status" 2 "doctorrefused: doctor could not answer"
   expect_contains "$out" "FACT installation: FAIL" "doctorrefused: the run stops before it can tell which installation it is on"
@@ -591,6 +601,7 @@ t() {
 }
 
 t case_healthy
+t case_doctor_exit_1
 t case_not_paused
 t case_paused_before
 t case_no_decide

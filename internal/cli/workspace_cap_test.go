@@ -25,7 +25,7 @@ import (
 func TestWorkspaceCapSetWritesTheLocalConfigOnly(t *testing.T) {
 	_, aurora, owner := workspaceOwnerHome(t)
 	auroraBefore := readFileString(t, aurora)
-	out, _, err := execute(t, "workspace", "cap", "set", "--workspace", "workspace-alpha", "--monthly", "50", "--yes")
+	out, _, err := execute(t, "workspace", "cap", "set", "--workspace", "workspace-alpha", "--monthly", "50")
 	if err != nil {
 		t.Fatalf("workspace cap set: %v\n%s", err, out)
 	}
@@ -61,8 +61,8 @@ func TestWorkspaceCapIsNeverSpelledGlobal(t *testing.T) {
 	// Left out, and stated empty: neither is a scope. The refusal is the same
 	// one, and it says why a workspace is the only way to state this cap.
 	for _, args := range [][]string{
-		{"workspace", "cap", "set", "--monthly", "50", "--yes"},
-		{"workspace", "cap", "set", "--workspace", "", "--monthly", "50", "--yes"},
+		{"workspace", "cap", "set", "--monthly", "50"},
+		{"workspace", "cap", "set", "--workspace", "", "--monthly", "50"},
 	} {
 		if _, _, err := execute(t, args...); err == nil || !strings.Contains(err.Error(), "never spelled globally") {
 			t.Errorf("%v: %v, want the refusal that a cap belongs to one workspace", args, err)
@@ -71,7 +71,7 @@ func TestWorkspaceCapIsNeverSpelledGlobal(t *testing.T) {
 	// The words the other two scopes are spelled with are unknown here rather
 	// than read as one of them.
 	for _, word := range []string{"--global", "--all", "--defaults"} {
-		if _, _, err := execute(t, "workspace", "cap", "set", "--workspace", "workspace-alpha", "--monthly", "50", word, "--yes"); err == nil ||
+		if _, _, err := execute(t, "workspace", "cap", "set", "--workspace", "workspace-alpha", "--monthly", "50", word); err == nil ||
 			!strings.Contains(err.Error(), "unknown flag") {
 			t.Errorf("workspace cap set %s: %v, want an unknown flag: this command has no scope but the named workspace", word, err)
 		}
@@ -85,7 +85,7 @@ func TestWorkspaceCapIsNeverSpelledGlobal(t *testing.T) {
 	// workspace cap from it.
 	db := h.project(t, "workspace-alpha").db
 	db.Set(budget.PathProject, "workspace-alpha")
-	if _, _, err := execute(t, "budget", "set", "--global", "--daily", "5", "--yes"); err != nil {
+	if _, _, err := execute(t, "budget", "set", "--global", "--daily", "5"); err != nil {
 		t.Fatalf("budget set --global: %v", err)
 	}
 	if db.Value(budget.PathCapsGlobal) == nil {
