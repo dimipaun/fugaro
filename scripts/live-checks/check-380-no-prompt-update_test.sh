@@ -97,7 +97,12 @@ update)
     rc=$?
     if [ "$rc" -gt 128 ]; then kind=open; fi
   fi
-  printf 'fugaro %s (stdin=%s)\n' "$*" "$kind" >>"$dir/calls"
+  # The editor extension's marker is logged beside the stdin, because the check
+  # drops it from its own environment: every child here has no terminal, and
+  # agentenv.Session reads that marker, in a run with no terminal, as a coding
+  # agent's session -- `fugaro update` would then take its agent-refusal path
+  # while the check read the transcript as the release's answer.
+  printf 'fugaro %s (stdin=%s, ide-marker=%s)\n' "$*" "$kind" "${CLAUDE_CODE_SSE_PORT:-none}" >>"$dir/calls"
   mode=$(mode_of update)
   case "$mode" in
   ok)
@@ -271,7 +276,7 @@ test_a_run_that_ends_and_asks_nothing_passes() {
   expect_contains "$(fact_line teardown)" "PASS" "the run ends and asks nothing: teardown"
   expect_call "the run ends and asks nothing: doctor was asked" "fugaro doctor --json"
   expect_call "the run ends and asks nothing: the project travelled on" "--project sbx"
-  expect_call "the run ends and asks nothing: the run's stdin was closed" "(stdin=closed)"
+  expect_call "the run ends and asks nothing: the run's stdin was closed" "(stdin=closed, ide-marker=none)"
   expect_call_count "the run ends and asks nothing: two calls" 2
   assert_scratch_removed "" "the run ends and asks nothing"
 }
@@ -406,6 +411,25 @@ test_a_coding_agents_session_is_refused() {
   expect_contains "$(fact_line agent-session)" "CLAUDECODE is set" "a coding agent's session: the marker named"
   expect_contains "$(fact_line agent-session)" "Check 380 is yours to run" "a coding agent's session: the refusal"
   expect_no_calls "a coding agent's session: nothing was called"
+}
+
+# The editor extension's own marker is not a coding agent's: it says this shell
+# sits in an editor's terminal, where the owner is still the one typing, so the
+# guard does not refuse it. It must not reach the child either -- the child has no
+# terminal, and in a run with no terminal agentenv.Session reads that marker as a
+# coding agent's session, so `fugaro update` would take its agent-refusal path and
+# this check would read that transcript as the release's answer.
+test_an_editors_own_marker_is_dropped_not_refused() {
+  setup_case editor-marker
+  RUN380_ENV=(CLAUDE_CODE_SSE_PORT=12345)
+  run380_default
+  expect_status "$status" 0 "an editor's own marker: the run is the ordinary one"
+  expect_contains "$(fact_line agent-session)" "PASS" "an editor's own marker: the owner's own session, not refused"
+  expect_contains "$(fact_line agent-session)" "CLAUDE_CODE_SSE_PORT" "an editor's own marker: the row says what it did with it"
+  expect_contains "$(fact_line noprompt)" "T7 HOLDS" "an editor's own marker: the reading is the check's own"
+  expect_absent "$(calls)" "ide-marker=12345" "an editor's own marker: no call saw it"
+  expect_call "an editor's own marker: the call read none" "ide-marker=none"
+  expect_call "an editor's own marker: the run's stdin was still closed" "(stdin=closed"
 }
 
 test_a_shell_that_arrived_tracing_is_refused() {
@@ -589,6 +613,7 @@ t test_a_silent_run_is_not_measured
 t test_a_cloud_failure_is_a_fail
 t test_an_unexpected_exit_status_is_a_fail
 t test_a_coding_agents_session_is_refused
+t test_an_editors_own_marker_is_dropped_not_refused
 t test_a_shell_that_arrived_tracing_is_refused
 t test_belong_is_refused_in_what_you_typed
 t test_belong_is_refused_in_what_doctor_answers

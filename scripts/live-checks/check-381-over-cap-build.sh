@@ -272,6 +272,13 @@ guard_xtrace() {
 # agent's session must not make. Refusing here rather than letting `budget set`
 # refuse the agent's way is what makes the block say why: a session that ran this
 # far would report an agent's own refusal as a finding about the release.
+#
+# The loop is the five markers that say an agent, and not a person, is driving
+# this shell: agentenv.AgentMarkers. agentenv.Markers holds a sixth,
+# CLAUDE_CODE_SSE_PORT, and it is not one of those -- it says this shell sits in
+# an editor's terminal, where the person is still the one typing, so refusing on
+# it would lock you out of this check in your own editor. It is DROPPED from this
+# script's environment instead, for the reason the row below gives.
 guard_agent_session() {
   local marker="" name
   for name in CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_REMOTE CURSOR_AGENT AI_AGENT; do
@@ -281,7 +288,8 @@ guard_agent_session() {
     fact agent-session FAIL "$marker is set, so this is a coding agent's session: Check 381 lowers a real cap on a real project and is yours to run at your own terminal, on the sandbox installation. No agent runs any step of it"
     stop "$marker is set, so this is a coding agent's session: Check 381 lowers a real cap on a real project and is yours to run at your own terminal, on the sandbox installation. No agent runs any step of it"
   fi
-  fact agent-session PASS "no coding agent's marker is set (CLAUDECODE and the like): this is your own session, which is the one this check is written for — the cap it lowers is yours to lower"
+  unset CLAUDE_CODE_SSE_PORT
+  fact agent-session PASS "no coding agent's marker is set (CLAUDECODE and the like): this is your own session, which is the one this check is written for — the cap it lowers is yours to lower. The editor extension's own marker (CLAUDE_CODE_SSE_PORT) is dropped from this script's environment rather than refused: it says this shell sits in an editor's terminal, not that an agent is driving it, and every child below has no terminal, where fugaro image build would read it as an agent's own session and refuse the build for a reason that has nothing to do with the cap"
 }
 
 # is_belong NAME: the installation named `belong` is the owner's own. A substring
@@ -660,13 +668,17 @@ step_write() {
   if [ ${#FUGARO_FLAGS[@]} -gt 0 ]; then args+=("${FUGARO_FLAGS[@]}"); fi
   if [ -n "$PROJECT" ]; then args+=(--project "$PROJECT"); fi
   say "lowering $REPO_NAME's own caps to \$0.00 for the build below: ${FUGARO_BIN} ${args[*]}"
+  # A write is ATTEMPTED from here on, failed or not: a `budget set` that exited
+  # non-zero may still have applied part of what it was handed, so the putting
+  # back runs either way. WRITE_DONE is set BEFORE the call and not after it,
+  # because the call runs in this shell's own foreground process group: a Ctrl-C
+  # reaches the child as well as this script, and a trap that read WRITE_DONE=no
+  # would put nothing back and report a project this check had blocked at $0.00
+  # as untouched. WRITE_LANDED is separate, because a putting back that then
+  # fails has to say whether there was anything to put back.
+  WRITE_DONE=yes
   local status=0
   "$FUGARO_BIN" "${args[@]}" >"$SCRATCH/set.out" 2>"$SCRATCH/set.err" || status=$?
-  # A write was ATTEMPTED from here on, failed or not: a `budget set` that exited
-  # non-zero may still have applied part of what it was handed, so the putting
-  # back runs either way. WRITE_LANDED is separate, because a putting back that
-  # then fails has to say whether there was anything to put back.
-  WRITE_DONE=yes
   if [ "$status" -ne 0 ]; then
     unmeasured write "fugaro budget set --repo $REPO_NAME ${WRITE_ARGS[*]} exited $status: $(last_line "$SCRATCH/set.err"). The over-cap state this check measures was not made, so no build was run. The lowering may still have applied part of what it was handed, so the exit trap tries to put the caps back anyway and the teardown row says what that did"
     stop "the lowering write exited $status"

@@ -75,7 +75,12 @@ set -euo pipefail
 dir=${FAKE381_DIR:?FAKE381_DIR is not set}
 knob() { if [ -f "$dir/$1" ]; then cat "$dir/$1"; else printf '%s' "$2"; fi; }
 put() { printf '%s' "$1" >"$dir/$2"; }
-log() { printf 'fugaro %s\n' "$*" >>"$dir/calls"; }
+# The editor extension's marker is logged beside the argv, because the check drops
+# it from its own environment: every child here has no terminal, and
+# agentenv.Session reads that marker, in a run with no terminal, as a coding
+# agent's session -- `fugaro image build` would then refuse the build for a reason
+# that has nothing to do with the cap this check is about.
+log() { printf 'fugaro %s (ide-marker=%s)\n' "$*" "${CLAUDE_CODE_SSE_PORT:-none}" >>"$dir/calls"; }
 
 # The refusal, in the words BuildOverCapError.Error prints: the estimate and where
 # its price came from, the predicate's own detail for the cap that was met, the
@@ -698,6 +703,26 @@ test_a_coding_agents_session_is_refused() {
   expect_no_calls "a coding agent's session: not even doctor was asked"
 }
 
+# The editor extension's own marker is not a coding agent's: it says this shell
+# sits in an editor's terminal, where the owner is still the one typing, so the
+# guard does not refuse it. It must not reach a child either -- every child here has
+# no terminal, where `fugaro image build` reads that marker as a coding agent's
+# session and refuses the build for a reason that has nothing to do with the cap
+# this check is about.
+test_an_editors_own_marker_is_dropped_not_refused() {
+  setup_case editor-marker
+  mode build refuse-daily
+  RUN381_ENV=(CLAUDE_CODE_SSE_PORT=12345)
+  run381_default
+  expect_status "$status" 0 "an editor's own marker"
+  expect_contains "$(fact_line agent-session)" "PASS" "an editor's own marker: the owner's own session, not refused"
+  expect_contains "$(fact_line agent-session)" "CLAUDE_CODE_SSE_PORT" "an editor's own marker: the row says what it did with it"
+  expect_contains "$(fact_line overcap)" "HOLDS" "an editor's own marker: the reading is the check's own"
+  expect_absent "$(calls)" "ide-marker=12345" "an editor's own marker: no call saw it"
+  expect_call "an editor's own marker: the build ran" "image build --no-wait"
+  expect_call "an editor's own marker: every call read none" "ide-marker=none"
+}
+
 test_a_shell_that_arrived_tracing_is_refused() {
   setup_case tracing
   RUN381_BASH=(bash -x)
@@ -906,6 +931,7 @@ t test_a_lowering_that_fails_stops
 t test_a_putting_back_that_fails_is_a_finding
 t test_a_caps_document_without_a_row_is_not_measured
 t test_a_coding_agents_session_is_refused
+t test_an_editors_own_marker_is_dropped_not_refused
 t test_a_shell_that_arrived_tracing_is_refused
 t test_belong_is_refused_in_what_you_typed
 t test_belong_is_refused_in_what_doctor_answers

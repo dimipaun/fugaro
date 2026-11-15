@@ -82,7 +82,11 @@ set -euo pipefail
 dir=${FAKE382_DIR:?FAKE382_DIR is not set}
 knob() { if [ -f "$dir/$1" ]; then cat "$dir/$1"; else printf '%s' "$2"; fi; }
 put() { printf '%s' "$1" >"$dir/$2"; }
-log() { printf 'fugaro %s\n' "$*" >>"$dir/calls"; }
+# The editor extension's marker is logged beside the argv, because the check drops
+# it from its own environment: the raise below has no terminal, and the marker the
+# fence must read is the one the check puts on that command line, never one this
+# shell walked in with.
+log() { printf 'fugaro %s (ide-marker=%s)\n' "$*" "${CLAUDE_CODE_SSE_PORT:-none}" >>"$dir/calls"; }
 
 # agentMarker's own list, read out of THIS process's environment: the check sets
 # the marker on the raise's own command line, so a marker here is one the check
@@ -893,6 +897,24 @@ test_a_coding_agents_session_is_refused() {
   expect_no_calls "a coding agent's session: not even doctor was asked"
 }
 
+# The editor extension's own marker is not a coding agent's: it says this shell
+# sits in an editor's terminal, where the owner is still the one typing, so the
+# guard does not refuse it. It must not reach the raise either -- that child has no
+# terminal, and the marker the fence has to read is the one this check puts on its
+# command line, never one the check's own shell walked in with.
+test_an_editors_own_marker_is_dropped_not_refused() {
+  setup_case editor-marker
+  RUN382_ENV=(CLAUDE_CODE_SSE_PORT=12345)
+  run382_default
+  expect_status "$status" 0 "an editor's own marker"
+  expect_contains "$(fact_line agent-session)" "PASS" "an editor's own marker: the owner's own session, not refused"
+  expect_contains "$(fact_line agent-session)" "CLAUDE_CODE_SSE_PORT" "an editor's own marker: the row says what it did with it"
+  expect_contains "$(fact_line fence)" "HOLDS" "an editor's own marker: the reading is the check's own"
+  expect_absent "$(calls)" "ide-marker=12345" "an editor's own marker: no call saw it"
+  expect_call "an editor's own marker: the raise still carried the check's own marker" "(marker=CLAUDECODE)"
+  expect_call "an editor's own marker: and no other" "ide-marker=none"
+}
+
 test_a_shell_that_arrived_tracing_is_refused() {
   setup_case tracing
   RUN382_BASH=(bash -x)
@@ -1110,6 +1132,7 @@ t test_a_node_the_check_cannot_match_stops
 t test_a_read_back_that_fails_puts_the_caps_back_and_stops
 t test_a_putting_back_that_fails_is_a_finding
 t test_a_coding_agents_session_is_refused
+t test_an_editors_own_marker_is_dropped_not_refused
 t test_a_shell_that_arrived_tracing_is_refused
 t test_belong_is_refused_in_what_you_typed
 t test_belong_is_refused_in_what_doctor_answers

@@ -267,6 +267,17 @@ guard_xtrace() {
 # letting the run refuse the agent's way is what makes the block say why: a
 # session that ran this far would report an agent's refusal as a finding about
 # the release.
+#
+# The loop is the five markers that say an agent, and not a person, is driving
+# this shell: agentenv.AgentMarkers. agentenv.Markers holds a sixth,
+# CLAUDE_CODE_SSE_PORT, and it is not one of those -- it says this shell sits in
+# an editor's terminal, where the person is still the one typing, so refusing on
+# it would lock you out of this check in your own editor. It is DROPPED from this
+# script's environment instead: every child below has no terminal (its stdin is
+# on /dev/null), and in a run with no terminal agentenv.Session reads that marker
+# as a coding agent's session -- `fugaro update` would take the agent-refusal
+# path this check is not measuring, and the transcript would be read as the
+# release's answer.
 guard_agent_session() {
   local marker="" name
   for name in CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_REMOTE CURSOR_AGENT AI_AGENT; do
@@ -276,7 +287,8 @@ guard_agent_session() {
     fact agent-session FAIL "${marker} is set, so this is a coding agent's session: Check 380 is yours to run at your own terminal, on the sandbox installation, and no agent runs any step of it"
     stop "${marker} is set, so this is a coding agent's session: Check 380 is yours to run at your own terminal, on the sandbox installation, and no agent runs any step of it"
   fi
-  fact agent-session PASS "no coding agent's marker is set (CLAUDECODE and the like): this is your own session, which is the one this check is written for — the run below is the run you would have typed"
+  unset CLAUDE_CODE_SSE_PORT
+  fact agent-session PASS "no coding agent's marker is set (CLAUDECODE and the like): this is your own session, which is the one this check is written for — the run below is the run you would have typed. The editor extension's own marker (CLAUDE_CODE_SSE_PORT) is dropped from this script's environment rather than refused: it says this shell sits in an editor's terminal, not that an agent is driving it, and the run below has no terminal, where the CLI would read it as an agent's own session"
 }
 
 # is_belong NAME: the installation named `belong` is the owner's own. A substring

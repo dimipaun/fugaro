@@ -261,6 +261,16 @@ guard_xtrace() {
 # session that ran it would have CLAUDECODE set in its own environment, and the
 # child below would then refuse because of the session rather than because of the
 # marker the check put there -- the reading would be of nothing.
+#
+# The loop is the five markers that say an agent, and not a person, is driving
+# this shell: agentenv.AgentMarkers. agentenv.Markers holds a sixth,
+# CLAUDE_CODE_SSE_PORT, and it is not one of those -- it says this shell sits in
+# an editor's terminal, where the person is still the one typing, so refusing on
+# it would lock you out of this check in your own editor. It is DROPPED from this
+# script's environment instead: the child below has no terminal (its stdin is on
+# /dev/null), and the marker the fence has to read is the one this check puts on
+# that child's command line, `${MARKER}` in the loop's own order, never a marker
+# this shell walked in with.
 guard_agent_session() {
   local marker="" name
   for name in CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_REMOTE CURSOR_AGENT AI_AGENT; do
@@ -270,7 +280,8 @@ guard_agent_session() {
     fact agent-session FAIL "$marker is set, so this is a coding agent's session: this check raises a real cap to read the fence, and it has to set the marker itself for its own child to be a reading of anything. Check 382 is yours to run at your own terminal, on the sandbox installation. No agent runs any step of it"
     stop "$marker is set, so this is a coding agent's session: this check raises a real cap to read the fence, and it has to set the marker itself for its own child to be a reading of anything. Check 382 is yours to run at your own terminal, on the sandbox installation. No agent runs any step of it"
   fi
-  fact agent-session PASS "no coding agent's marker is set in THIS check's environment (CLAUDECODE and the like), so the marker the raise below carries is the one this check put there and nothing else: the refusal it reads is the fence's, not this session's"
+  unset CLAUDE_CODE_SSE_PORT
+  fact agent-session PASS "no coding agent's marker is set in THIS check's environment (CLAUDECODE and the like), so the marker the raise below carries is the one this check put there and nothing else: the refusal it reads is the fence's, not this session's. The editor extension's own marker (CLAUDE_CODE_SSE_PORT) is dropped from this script's environment rather than refused: it says this shell sits in an editor's terminal, not that an agent is driving it, and the child below has no terminal, where it would be read as this session's own marker"
 }
 
 # is_belong NAME: the installation named `belong` is the owner's own. A substring
@@ -697,6 +708,12 @@ RAISE_SECONDS=0
 run_raise() { # run_raise SECONDS
   local secs=$1
   RAISE_TIMED_OUT=no
+  # The raise is ATTEMPTED from here on. Whether it landed is not known until
+  # step_unchanged reads the caps back, and a run that ends in between (a Ctrl-C
+  # during the child, a stop in a step after it) never learns: RAISE_ATTEMPTED is
+  # what tells the exit trap to read them back itself instead of reporting a
+  # raise that was refused.
+  RAISE_ATTEMPTED=yes
   local started=$SECONDS
   : >"$SCRATCH/raise.out"
   : >"$SCRATCH/raise.err"
@@ -893,6 +910,7 @@ step_unchanged() {
   fi
   AFTER_DAILY=$RC_DAILY
   AFTER_PERRUN=$RC_PERRUN
+  CAPS_READ_AFTER=yes
   if [ "$AFTER_DAILY" = "$BEFORE_DAILY" ] && [ "$AFTER_PERRUN" = "$BEFORE_PERRUN" ]; then
     fact unchanged PASS "the caps read back exactly as they were before the raise: daily \$$BEFORE_DAILY and per-run \$$BEFORE_PERRUN then, daily \$$AFTER_DAILY and per-run \$$AFTER_PERRUN now (fugaro budget show --json --repo $REPO_NAME). Nothing of your project was changed, which is what the refusal's own 'nothing was changed' claims"
     return 0
@@ -909,9 +927,23 @@ step_unchanged() {
 # write that never happened.
 RESTORED=no
 RESTORE_NEEDED=no
+# RAISE_ATTEMPTED is set before the raise runs and CAPS_READ_AFTER when its
+# read-back has happened (step_unchanged), and the two together are what a run
+# that ended in between -- a Ctrl-C during the raise, a stop in a step after it --
+# is caught by: the trap reads the caps back itself, because a raise that landed
+# and was never read is the one thing this check must not leave behind.
+RAISE_ATTEMPTED=no
+CAPS_READ_AFTER=no
 restore_caps() {
   [ "$RESTORED" = yes ] && return 0
   RESTORED=yes
+  if [ "$RESTORE_NEEDED" != yes ] && [ "$RAISE_ATTEMPTED" = yes ] && [ "$CAPS_READ_AFTER" != yes ]; then
+    if read_caps_state trapped && [ "$RC_DAILY" = "$BEFORE_DAILY" ] && [ "$RC_PERRUN" = "$BEFORE_PERRUN" ]; then
+      fact teardown PASS "nothing of your project was changed and nothing was put back: the run ended after the raise and before the row that grades it, so this trap read the caps back itself and they are exactly what they were, daily \$$RC_DAILY and per-run \$$RC_PERRUN (fugaro budget show --json --repo $REPO_NAME) — the raise was refused before it was applied, and only a read-back that said they MOVED would have been written back"
+      return 0
+    fi
+    RESTORE_NEEDED=yes
+  fi
   if [ "$RESTORE_NEEDED" != yes ]; then
     fact teardown PASS "nothing of your project was changed and nothing was put back: the raise was refused before it was applied, and the unchanged row's own read-back says the caps are exactly what they were"
     return 0
