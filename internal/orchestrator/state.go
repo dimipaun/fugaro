@@ -39,7 +39,14 @@ import (
 // SchemaVersion is the state schema this release writes. A node carrying an
 // older one is raised by Migrate before it is used; one carrying a newer one
 // is refused, because this release cannot know what a later one meant by it.
-const SchemaVersion = 2
+//
+// It goes up whenever a field is added, and not only whenever one changes
+// meaning: this document is closed — the schema says so, and the decoder
+// refuses a field it does not model — so an older reader meets a field it
+// cannot see as an unknown one rather than as an addition it may ignore, and
+// the version is what tells it to stop instead (F20 of docs/outer-loop-
+// escalation, where the ladder's ledger bought the same bump).
+const SchemaVersion = 3
 
 // ApprovalAttempts is what one approval covers: the attempt the person
 // approved and at most one automatic retry of that same spec (the owner's
@@ -627,6 +634,17 @@ var bookkeepingFields = []string{"phase", "run_id", "spent_approval_at", "attemp
 // function, so what the person was shown and what is about to start cannot
 // drift apart.
 func SpecDigest(w WorkItem) Digest {
+	return specDigestSkipping(w, "")
+}
+
+// specDigestSkipping is SpecDigest's walk with one field left out beside the
+// bookkeeping list: the digest a release that did not model that field
+// computed. Migrate's 2 -> 3 step is its only caller, and it computes the
+// digest release 2 stored for an item — its WorkItem carried no `spec`, so
+// its walk skipped one field fewer than this one's. It has to keep answering
+// what that release answered for as long as a node from it may still be read,
+// which is the whole of what a migration is.
+func specDigestSkipping(w WorkItem, skip string) Digest {
 	// Over the item as it is written, so that the empty case has one spelling:
 	// an item built in Go carries a nil slice where the document carries [].
 	// A digest that read those as two specs would revoke an approval by
@@ -641,7 +659,7 @@ func SpecDigest(w WorkItem) Digest {
 		if tag := f.Tag.Get("json"); tag != "" {
 			name = strings.Split(tag, ",")[0]
 		}
-		if name == "" || name == "-" || isBookkeeping(name) {
+		if name == "" || name == "-" || name == skip || isBookkeeping(name) {
 			continue
 		}
 		raw, err := json.Marshal(v.Field(i).Interface())
@@ -688,6 +706,13 @@ var digestRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 //     optional — an item the ladder has not acted on carries none, and a rung
 //     is what a ledger is for — so the stamp is the whole step here too, and
 //     the daemon's next tick writes the first transition of an item it acts on.
+//   - 2 is the node from before a work item carried a spec, which SpecDigest
+//     covers. This is the one step that rewrites something a person wrote:
+//     the walk sees one field more, so every digest stored under the old walk
+//     is a digest the item no longer digests to, and a standing approval left
+//     that way is an approval that never launches again (nextAttempt refuses
+//     it, recovery abandons the intent as an edited spec, and the ladder has
+//     nothing to stand on). redigestV2 rewrites exactly those and nothing else.
 //
 // A state newer than this release is left exactly as it is and reported as
 // unchanged: the caller's validator refuses it, which is the fail-closed
@@ -700,6 +725,9 @@ func Migrate(s State) (State, bool) {
 			s.SchemaVersion = 1
 		case 1:
 			s.SchemaVersion = 2
+		case 2:
+			s.SchemaVersion = 3
+			redigestV2(&s)
 		default:
 			// A version with no step of its own is one this release cannot
 			// place — the chain has a hole in it, which is a bug here rather
@@ -710,6 +738,43 @@ func Migrate(s State) (State, bool) {
 		changed = true
 	}
 	return s, changed
+}
+
+// redigestV2 rewrites the digests a schema version 2 document stored, so that
+// an approval a person gave before `spec` joined the walk is still the item's
+// own after it.
+//
+// Only a digest that equals what the old walk answers for its own item is
+// touched. That is what makes the step exact: a stored digest that was the
+// item's is rewritten to the digest the item has now, and one that was not —
+// an approval an edit has since moved past, an intent left behind by that edit
+// — is left as it is, because there is no spec it ever matched and rewriting
+// it would be this release approving something nobody read. Rewriting only the
+// values equal to the old walk's answer also keeps every agreement between
+// them: two digests that were equal to it were equal to each other, and two
+// that were not stay as unequal as they were (approvalCovers, normalRunsUnder).
+//
+// An intent whose item the node no longer carries is left alone: the item was
+// archived out, there is nothing to compute a digest from, and no plan reaches
+// an archived item.
+func redigestV2(s *State) {
+	items := make(map[string]WorkItem, len(s.WorkItems))
+	for _, w := range s.WorkItems {
+		items[w.ID] = w
+	}
+	for i := range s.WorkItems {
+		w := &s.WorkItems[i]
+		if w.Approved != nil && w.Approved.SpecDigest == specDigestSkipping(*w, "spec") {
+			w.Approved.SpecDigest = SpecDigest(*w)
+		}
+	}
+	for i := range s.Intents {
+		w, ok := items[IntentItem(s.Intents[i].ID)]
+		if !ok || s.Intents[i].SpecDigest != specDigestSkipping(w, "spec") {
+			continue
+		}
+		s.Intents[i].SpecDigest = SpecDigest(w)
+	}
 }
 
 // OverCap reports whether the node is over its size target. The daemon fails

@@ -400,6 +400,29 @@ func TestApproveShowsTheSpecItDigests(t *testing.T) {
 		t.Errorf("the approval that landed is %+v, and it is the rewritten spec's", w.Approved)
 	}
 
+	// A spec the item carries is one more field the digest covers, and it is
+	// the one nothing else on the screen implies: a session writes it in the
+	// upsert that declares the item (T8, docs/forge-labels), the daemon turns
+	// it into a label name on the pull request, and a person shown every other
+	// field has still approved a name they never read.
+	carried := storedOrchestratorState(t, f)
+	named := orchestrator.Op{Op: orchestrator.OpWorkItemUpsert, WorkItem: &orchestrator.WorkItemOp{
+		ID: "web-fix", Spec: strPtr("forge-labels"),
+	}}
+	digest = digestAfter(t, carried, named, "web-fix")
+	path = patchFile(t, patchDoc(t, carried.Rev, named, orchestrator.Op{Op: orchestrator.OpWorkItemApprove,
+		Approve: &orchestrator.ApproveOp{ID: "web-fix", SpecDigest: digest}}))
+	out, _, err = runOrchestrator(t, orchestratorTestID+"\n", "orchestrator", "patch", "-f", path)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "spec forge-labels") {
+		t.Errorf("the confirmation does not show the spec the digest binds:\n%s", out)
+	}
+	if w, _ := storedOrchestratorState(t, f).Item("web-fix"); w.Spec != "forge-labels" || w.Approved == nil || w.Approved.SpecDigest != digest {
+		t.Errorf("the item came back as %+v, and it is the labelled spec under the person's own approval", w)
+	}
+
 	// A digest that is not the item's is refused, and the person is not asked
 	// to confirm a spec that is not the one stored.
 	cur := storedOrchestratorState(t, f)

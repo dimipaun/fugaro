@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"slices"
@@ -270,6 +271,129 @@ func TestMigrateFromThePreviousSchemaVersion(t *testing.T) {
 	}
 }
 
+// TestStateV2ApprovalStillLaunches is what a schema bump owes the work already
+// in a node (the HARD RULE: `fugaro update` is the whole upgrade, and it is
+// safe while runs are in flight). `spec` is digested, so the walk this release
+// runs answers something else for an item than the walk of the release that
+// wrote version 2 did — and a standing approval whose digest is no longer the
+// item's is an approval the launcher refuses, an intent recovery abandons as an
+// edited spec, and a ladder with nothing to stand on. A person who approved
+// work would come back from an update to work that never starts.
+//
+// The fix is the migration: a version 2 node's stored digests are rewritten to
+// the ones this release computes, and only where they were what the old walk
+// answered for that item. The control at the end is the same document read
+// without the migration, which is what makes this test measure the step rather
+// than the digest.
+//
+// Mutation: drop redigestV2 from Migrate's 2 -> 3 step and the first two plans
+// below read the control's answer — the item is abandoned rather than re-issued
+// or launched.
+func TestStateV2ApprovalStillLaunches(t *testing.T) {
+	// What version 2's walk stored for this fixture's item, which is the value
+	// a node written before `spec` existed really carries.
+	const digestV2 = orchestrator.Digest("sha256:54c955b7e8d5f1cd02c485fdf7678deb469bc171b6694aa2170e44a0adbd5471")
+
+	// The fixture as a version 2 document: the version, and the digest both the
+	// approval and the intent under it carry. Nothing else about it is older —
+	// the item itself is the one these digests were computed for.
+	version2 := func(t *testing.T, mutate func(map[string]any)) []byte {
+		t.Helper()
+		doc := document(t, readFixture(t))
+		doc["schema_version"] = 2
+		workItemAt(t, doc, 0)["approved"].(map[string]any)["spec_digest"] = string(digestV2)
+		listAt(t, doc, "intents")[0].(map[string]any)["spec_digest"] = string(digestV2)
+		if mutate != nil {
+			mutate(doc)
+		}
+		return remarshal(t, doc)
+	}
+	planOne := func(t *testing.T, s orchestrator.State) orchestrator.Action {
+		t.Helper()
+		got := orchestrator.Plan(s, orchestrator.RunView{}, o6Caps(), o6Now())
+		if len(got) != 1 {
+			t.Fatalf("the plan carries %d action(s), want one: %+v", len(got), got)
+		}
+		return got[0]
+	}
+	readsAsTheItem := func(t *testing.T, s orchestrator.State) {
+		t.Helper()
+		item, ok := s.Item("wi-1")
+		if !ok {
+			t.Fatal("the migrated node carries no wi-1")
+		}
+		digest := orchestrator.SpecDigest(item)
+		if item.Approved == nil || item.Approved.SpecDigest != digest {
+			t.Fatalf("the approval carries %+v, and the item digests to %s", item.Approved, digest)
+		}
+		for _, it := range s.Intents {
+			if it.SpecDigest != digest {
+				t.Errorf("the intent %q carries %s and the item digests to %s", it.ID, it.SpecDigest, digest)
+			}
+		}
+	}
+
+	// The fixture's own shape: an item running with the attempt committed under
+	// its approval, so what the plan carries is that attempt re-issued. Both
+	// digests have to move together, or recovery reads the pair as a spec edited
+	// since the attempt was committed and abandons it.
+	previous := version2(t, nil)
+	migrated, err := orchestrator.DecodeState(previous)
+	if err != nil {
+		t.Fatalf("a version 2 node did not decode: %v", err)
+	}
+	if migrated.SchemaVersion != orchestrator.SchemaVersion {
+		t.Fatalf("the node came back at schema version %d, want %d", migrated.SchemaVersion, orchestrator.SchemaVersion)
+	}
+	readsAsTheItem(t, migrated)
+	if a := planOne(t, migrated); a.Kind != orchestrator.ActionReissue {
+		t.Fatalf("the migrated approval plans %q, want the re-issue of the attempt it covers", a.Kind)
+	}
+
+	// An item approved and never started: the plan has to be its first attempt,
+	// which is the launch a person's update would otherwise have cost them.
+	launchable, err := orchestrator.DecodeState(version2(t, func(doc map[string]any) {
+		workItemAt(t, doc, 0)["phase"] = "queued"
+		doc["intents"] = []any{}
+	}))
+	if err != nil {
+		t.Fatalf("a version 2 node with no attempt did not decode: %v", err)
+	}
+	readsAsTheItem(t, launchable)
+	if a := planOne(t, launchable); a.Kind != orchestrator.ActionLaunch {
+		t.Fatalf("the migrated approval plans %q, want the first attempt", a.Kind)
+	}
+
+	// The control: the same bytes read as they are, which is the node a release
+	// that stamped the version without migrating would plan over.
+	if a := planOne(t, mustDecode(t, previous, false)); a.Kind != orchestrator.ActionAbandon {
+		t.Fatalf("an unmigrated node plans %q, and it is the abandonment the migration exists to prevent", a.Kind)
+	}
+
+	// And the step is exact: a digest that was never this item's is left where
+	// it is. Rewriting it would be this release handing the launcher an
+	// approval of a spec nobody read, which is the one thing an approval may
+	// not become — so an item whose approval was replaced and whose intent
+	// lagged behind stays refused rather than being blessed.
+	elsewhere := version2(t, func(doc map[string]any) {
+		workItemAt(t, doc, 0)["approved"].(map[string]any)["spec_digest"] =
+			string(orchestrator.SpecDigest(orchestrator.WorkItem{ID: "another-spec"}))
+	})
+	foreign, err := orchestrator.DecodeState(elsewhere)
+	if err != nil {
+		t.Fatalf("a version 2 node carrying another spec's digest did not decode: %v", err)
+	}
+	item, ok := foreign.Item("wi-1")
+	if !ok || item.Approved == nil || item.Approved.SpecDigest == orchestrator.SpecDigest(item) {
+		t.Fatalf("the migration blessed an approval of a spec nobody read: %+v", item.Approved)
+	}
+	for _, a := range orchestrator.Plan(foreign, orchestrator.RunView{}, o6Caps(), o6Now()) {
+		if a.Kind != orchestrator.ActionAbandon {
+			t.Fatalf("the plan carries %+v over an approval that is not the item's", a)
+		}
+	}
+}
+
 // TestSpentApprovalAtIsBookkeepingAndSurvivesMigrate pins the one field whose
 // loss would be expensive out of proportion to its size. SpentApprovalAt is
 // what says the retry an approval covered is spent; it moves no digest, since
@@ -298,7 +422,7 @@ func TestSpentApprovalAtIsBookkeepingAndSurvivesMigrate(t *testing.T) {
 		t.Fatalf("the spent approval marker came back as %v", back.WorkItems[0].SpentApprovalAt)
 	}
 
-	previous := bytes.Replace(raw, []byte(`"schema_version":2`), []byte(`"schema_version":0`), 1)
+	previous := bytes.Replace(raw, []byte(fmt.Sprintf(`"schema_version":%d`, orchestrator.SchemaVersion)), []byte(`"schema_version":0`), 1)
 	raised, err := orchestrator.DecodeState(previous)
 	if err != nil {
 		t.Fatalf("a document from the previous schema version carrying a spent approval did not decode: %v", err)

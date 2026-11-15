@@ -20,8 +20,8 @@
   "additionalProperties": false,
   "properties": {
     "schema_version": {
-      "const": 2,
-      "$comment": "orchestrator.SchemaVersion. Migrate raises a document written by an earlier release (0, or 1) to this value, one version at a time: 0 is the node from before the schema carried a version, and 1 the node from before the ladder kept its ledger on an item."
+      "const": 3,
+      "$comment": "orchestrator.SchemaVersion. Migrate raises a document written by an earlier release (0, 1 or 2) to this value, one version at a time: 0 is the node from before the schema carried a version, 1 the node from before the ladder kept its ledger on an item, and 2 the node from before a work item carried a spec — the one step that also rewrites stored digests, because `spec` is digested and an approval stored under the old walk would never launch again."
     },
     "rev": {
       "type": "integer",
