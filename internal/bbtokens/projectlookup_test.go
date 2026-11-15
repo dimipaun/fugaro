@@ -47,10 +47,13 @@ func (t testTokens) Value(name Name) (string, bool) {
 	return value, ok
 }
 
-// projectRecord is one project token's record: its type and the project UUID
-// the operator stated for it.
+// projectRecord is one project token's record: its type, the workspace it
+// covers in the node's provider-qualified spelling, and the project UUID the
+// operator stated for it. A uuid of "" is a record Record.Validate refuses,
+// built here because the contract's own reading of an empty UUID (R2) has to
+// hold for a record that reached the lookup anyway.
 func projectRecord(name Name, uuid string) Record {
-	return Record{Name: name, Type: TypeProject, Coverage: []string{"acme"}, ProjectUUID: uuid}
+	return Record{Name: name, Type: TypeProject, Coverage: []string{"bitbucket/acme/*"}, ProjectUUID: uuid}
 }
 
 // ---------------------------------------------------------------------------
@@ -281,12 +284,15 @@ func TestProjectOfUsesTheCandidateProjectToken(t *testing.T) {
 	records := []Record{
 		projectRecord(tokCI, projectUUID),
 		projectRecord("bitbucket-token--other", otherUUID),
-		// These three state a project UUID of their own, as a record of any
-		// kind may: the TYPE is the only thing that keeps a workspace, a
-		// repository or the untyped legacy key off this lookup (R2).
-		{Name: "bitbucket-token--all", Type: TypeWorkspace, Coverage: []string{"acme/*"}, ProjectUUID: projectUUID},
-		{Name: "bitbucket-token--one", Type: TypeRepo, Coverage: []string{"acme/app"}, ProjectUUID: projectUUID},
-		{Name: "bitbucket-token", Coverage: []string{"acme/app"}, ProjectUUID: projectUUID},
+		// These three are records Record.Validate refuses — a workspace, a
+		// repository and the untyped legacy key each naming a project UUID,
+		// which only a project token has — and they are built that way on
+		// purpose: a record a writer got wrong must still keep none of this
+		// lookup's spending, so the TYPE is the only thing that keeps a
+		// workspace, a repository or the untyped legacy key off it (R2).
+		{Name: "bitbucket-token--all", Type: TypeWorkspace, Coverage: []string{"bitbucket/acme/*"}, ProjectUUID: projectUUID},
+		{Name: "bitbucket-token--one", Type: TypeRepo, Coverage: []string{"bitbucket/acme/app"}, ProjectUUID: projectUUID},
+		{Name: "bitbucket-token", Coverage: []string{"bitbucket/acme/app"}, ProjectUUID: projectUUID},
 	}
 	tokens := testTokens{
 		tokCI:                    "ci-value",
