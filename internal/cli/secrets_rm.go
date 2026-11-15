@@ -110,6 +110,36 @@ func secretsRmCommand(name string) string {
 	return selfCommand() + " secrets rm " + quoteWord(name)
 }
 
+// platformSecretName reports whether name belongs to a block this command does
+// not remove, over and above the two it does: a model provider's own key
+// (config.ProviderBySecret), a provider's conventional name
+// (config.ReservedProviderSecret — `<provider>-api-key`, reserved for that
+// provider whatever its .secret is written as) and a Claude account's token
+// (config.ClaudeAccountBySecret).
+//
+// It is what tells D2313's repository-level name from those: both are names
+// this local config holds in neither project_secrets nor workflow_secrets, and
+// only the first is the disabled feature's. A provider's key and an account's
+// token are live repository-scope credentials, so their refusal below stands as
+// it is — reading them as the disabled feature would tell a person the name is
+// ignored when a job of that repository really mounts it.
+//
+// The bare claude-oauth-token and the credentials service's bundle are reserved
+// names and never reach here (secretsRm's first check), and the two are read
+// before this one for that reason.
+func platformSecretName(lc *localcfg.Config, name string) bool {
+	if _, ok := config.ProviderBySecret(lc.Providers, name); ok {
+		return true
+	}
+	if _, ok := config.ReservedProviderSecret(lc.Providers, name); ok {
+		return true
+	}
+	if _, ok := config.ClaudeAccountBySecret(lc.ClaudeAccounts, name); ok {
+		return true
+	}
+	return false
+}
+
 func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 	if _, reserved := config.ReservedSecrets[name]; !reserved && !config.SecretNameRE.MatchString(name) {
 		// The name is not quoted: a value typed in its place must not be echoed.
@@ -153,6 +183,22 @@ func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 	if _, workflow := lc.WorkflowSecrets[name]; workflow {
 		block = secretsBlockWorkflow
 	} else if _, reserved := config.ReservedSecrets[name]; !reserved {
+		// A repository-level secret is D2313's case, and this is its answer:
+		// the feature is disabled for now, so there is no entry of it to remove
+		// and the command changes nothing (exit 0), in the shape the repository's
+		// own image is answered with (`fugaro image`, image.go). It is answered
+		// here, where the command already knows the name belongs to no block,
+		// and before the container lookup below: nothing is read and nothing is
+		// deleted for a value this installation no longer mounts.
+		//
+		// The names that are not this case keep the refusal below, which is
+		// why it is asked first: a provider's key, a provider's conventional
+		// name and a Claude account's token share this block's derived ID and
+		// belong to another block that this command does not remove, and a
+		// name no block holds at all is a typo rather than a disabled feature.
+		if config.RepoSecretsOff && config.RepoLevelSecret(name) && !platformSecretName(lc, name) {
+			return repoSecretsDisabled(cmd.OutOrStdout())
+		}
 		// project_secrets holds only the reserved names. Any other name sharing
 		// the derived ID and labels (a provider's key, a named Claude account's
 		// token, a workflow secret this config does not list) belongs to another

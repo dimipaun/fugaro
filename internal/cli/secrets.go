@@ -556,6 +556,17 @@ func declares(cfg *config.Config, name string) bool {
 	return false
 }
 
+// repoSecretsDisabled is D2313's answer to a secrets command whose subject is
+// a repository-level secret (config.RepoLevelSecret): the notice, printed, so
+// the command changes nothing and exits 0. It is the shape
+// repoImagesDisabled answers a repository's own image with (image.go) — the
+// ruling the owner modelled this one on — and the sentence itself is
+// config.RepoSecretsDisabledNotice, where the ruling lives.
+func repoSecretsDisabled(w io.Writer) error {
+	fmt.Fprintln(w, config.RepoSecretsDisabledNotice)
+	return nil
+}
+
 func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 	if _, reserved := config.ReservedSecrets[name]; !reserved && !config.SecretNameRE.MatchString(name) {
 		// The name is not quoted: a value typed in its place must not be echoed.
@@ -739,6 +750,21 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 		if !declares(cfg, name) {
 			return userErr("no workflow in this checkout's fugaro.yaml declares that secret NAME; add it under a workflow's secrets: first")
 		}
+	}
+	if config.RepoSecretsOff && config.RepoLevelSecret(name) {
+		// D2313: a repository-level secret is disabled for now, and everything
+		// below this line is a write into one repository's own container — the
+		// store, the notes about which copy wins and the step that files a log.
+		// So the command answers the notice instead and writes nothing.
+		//
+		// The check sits after the name checks above and not at the command's
+		// door: a name a provider claims, or one no workflow of the checkout
+		// declares, is refused in the words it was refused in before this
+		// ruling, and a name that is none of those is the repository-level one
+		// this ruling is about (config.RepoLevelSecret; a reserved name's
+		// repository copy is the platform's own, and doctor's
+		// secret-scope-shadowed is what speaks about it).
+		return repoSecretsDisabled(cmd.OutOrStdout())
 	}
 	if repo != "" && projectScopeName(env.lc, name, "") {
 		// The name has a project-wide meaning that does not reach this
