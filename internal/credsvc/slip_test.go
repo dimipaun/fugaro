@@ -1292,6 +1292,7 @@ func TestServedRoutesAreExactly(t *testing.T) {
 		{http.MethodPost, VerifyPath},
 		{http.MethodPost, BitbucketReadPath},
 		{http.MethodPost, GitHubReadPath},
+		{http.MethodPost, LabelPath},
 		{http.MethodPost, SlipPath},
 		{http.MethodPost, SlipClaimPath},
 		{http.MethodPost, WorkflowSecretsPath},
@@ -1322,6 +1323,9 @@ func TestServedRoutesAreExactly(t *testing.T) {
 		{http.MethodPost, SlipPath + "/other"},
 		{http.MethodPost, SlipClaimPath + "/other"},
 		{http.MethodPost, WorkflowSecretsPath + "/other"},
+		{http.MethodGet, LabelPath},
+		{http.MethodPost, LabelPath + "/"},
+		{http.MethodPost, LabelPath + "/other"},
 		{http.MethodPost, "/v1/slips"},
 		{http.MethodPost, "/v1/slip/claim/../claim"},
 		{http.MethodGet, MessagesPath},
@@ -1343,11 +1347,105 @@ func TestServedRoutesAreExactly(t *testing.T) {
 			if e.Error != "not_found" {
 				t.Errorf("the refusal is %q, want not_found", e.Error)
 			}
-			for _, p := range []string{MessagesPath, CountTokensPath, MintPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, SlipPath, SlipClaimPath, WorkflowSecretsPath} {
+			for _, p := range []string{MessagesPath, CountTokensPath, MintPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, LabelPath, SlipPath, SlipClaimPath, WorkflowSecretsPath} {
 				if !strings.Contains(e.Message, p) {
 					t.Errorf("the 404's sentence does not name the route %q: %s", p, e.Message)
 				}
 			}
 		})
 	}
+}
+
+// servedRouteRow is one route of the census: the method it is reached by and
+// the path it is reached on.
+type servedRouteRow struct{ method, path string }
+
+// TestServedRoutesCensus is the census of the routes this service serves: one
+// list holding every one of them, read against the two facts that make a route
+// real.
+//
+// The first is that the route IS served — the gate admits it and a handler
+// answers it, rather than the 404 (D143's "no admin surface" is kept by
+// nothing being reachable, so a path the gate admits and no handler answers is
+// a route this service does not have).
+//
+// The second is the 404's own sentence, which is the service's statement of
+// what it is and what an operator reads to find out: the paths it names are
+// exactly this list and no other. That is the half a route added to the service
+// without being named here fails — the sentence is updated with every route
+// (CLAUDE.md's rule), and the census is what holds the two to each other — and
+// the half a path named in the sentence that the service does not serve fails
+// from the other side.
+//
+// TestServedRoutesAreExactly is the census's other half: the near misses (a
+// trailing slash, a longer path, another method) that must reach nothing.
+func TestServedRoutesCensus(t *testing.T) {
+	s := newSlips(t, testLauncherAccount)
+
+	census := []servedRouteRow{
+		{http.MethodPost, MessagesPath},
+		{http.MethodPost, CountTokensPath},
+		{http.MethodPost, MintPath},
+		{http.MethodPost, SignPath},
+		{http.MethodPost, VerifyPath},
+		{http.MethodPost, BitbucketReadPath},
+		{http.MethodPost, GitHubReadPath},
+		{http.MethodPost, MergeMintPath},
+		{http.MethodPost, LabelPath},
+		{http.MethodPost, SlipPath},
+		{http.MethodPost, SlipClaimPath},
+		{http.MethodPost, WorkflowSecretsPath},
+		{http.MethodGet, BitbucketProxyPrefix + "acme/aurora.git/info/refs"},
+		{http.MethodPost, BitbucketProxyPrefix + "acme/aurora.git/git-receive-pack"},
+		{http.MethodPut, BitbucketProxyPrefix + "acme/aurora.git/lfs/objects/batch"},
+	}
+	for _, row := range census {
+		t.Run(row.method+" "+row.path, func(t *testing.T) {
+			resp, body := s.postRaw(t, row.method, row.path)
+			if resp.StatusCode == http.StatusNotFound {
+				t.Fatalf("%s %s is in the census and answered 404: %s", row.method, row.path, body)
+			}
+		})
+	}
+
+	_, body := s.postRaw(t, http.MethodPost, "/v1/not-a-route")
+	e := refusal(t, http.StatusNotFound, body)
+	named, want := sentencePaths(e.Message), censusPaths(census)
+	slices.Sort(named)
+	slices.Sort(want)
+	if !slices.Equal(named, want) {
+		t.Errorf("the 404's sentence names %v, and the census holds %v: a route is served without being named in the sentence, or the sentence names a path this service does not serve", named, want)
+	}
+}
+
+// sentencePaths is the paths the 404's sentence names, in the order it names
+// them: the sentence is a list of paths written into a sentence, so a field of
+// it that starts with "/" is one of them, with the punctuation the sentence
+// writes around it taken off.
+func sentencePaths(message string) []string {
+	var out []string
+	for _, field := range strings.Fields(message) {
+		if field = strings.TrimRight(field, ",."); strings.HasPrefix(field, "/") {
+			out = append(out, field)
+		}
+	}
+	return out
+}
+
+// censusPaths is the census as the sentence spells it: each route's own path,
+// and the run's Bitbucket traffic as the ONE prefix the sentence names for it —
+// the three methods under it are one family of calls and one gate, which is
+// what the sentence says about them.
+func censusPaths(census []servedRouteRow) []string {
+	var out []string
+	for _, row := range census {
+		path := row.path
+		if strings.HasPrefix(path, BitbucketProxyPrefix) {
+			path = BitbucketProxyPrefix
+		}
+		if !slices.Contains(out, path) {
+			out = append(out, path)
+		}
+	}
+	return out
 }
