@@ -137,6 +137,8 @@ if [ "${FAKE330_JUNK:-}" = "$verb" ]; then
   exit 0
 fi
 cat "$dir/$verb.json"
+  # exits 1 with its document, as the real doctor does when a check is a warning
+if [ "$verb" = doctor ] && [ -n "${FAKE330_DOCTOR_EXIT:-}" ]; then exit "$FAKE330_DOCTOR_EXIT"; fi
 FUGARO_EOF
   cat >"$1/bin/gcloud" <<'GCLOUD_EOF'
 #!/usr/bin/env bash
@@ -609,6 +611,15 @@ expect_log_scopes() { # want what — every log read's own scope, deduplicated
 # The pair as the plan's §5 wants it: the coder's calls carry the provider's
 # route and the review's carry none, the review's dollars are the gateway's own,
 # the split is the coder's stages', and the contrast's review is account-served.
+test_doctor_exit_1_is_an_answer() {
+  prepare "$work/doctor-exit-1"
+  RUN330_ENV=(FAKE330_DOCTOR_EXIT=1)
+  run330_default
+  expect_status "$status" 0 "doctor exits 1: the document it printed is the answer"
+  expect_block_keys "doctor exits 1"
+  expect_absent "$out$err" "fugaro doctor --json failed" "doctor exits 1: it did answer"
+}
+
 test_the_pair_reads_as_pass() {
   prepare "$work/pass"
   run330_default
@@ -1367,6 +1378,7 @@ t() {
 }
 
 t test_the_pair_reads_as_pass
+t test_doctor_exit_1_is_an_answer
 t test_a_coder_with_no_route_is_a_fail
 t test_a_review_on_a_route_is_a_fail
 t test_a_review_served_by_a_non_claude_model_is_a_fail

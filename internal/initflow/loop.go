@@ -793,7 +793,7 @@ func (l *loop) agentApplied(ctx context.Context, s Stage) (done bool, err error)
 	case errors.As(err, &ge):
 		// The gate's sentence is the detail, and what stands beside it is the
 		// refusal's own answer about who this step is for: the stage's Left
-		// only when the step IS the owner's (the class refusal, D1026), and a
+		// only when the step IS the owner's (no plan gate may judge it, D1026), and a
 		// commandless refusal otherwise — a plan the cover would not admit is
 		// nobody's to type past (CV1), and the stage's own prompt asks this
 		// reader to do the one thing the gate exists to make impossible.

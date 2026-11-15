@@ -136,6 +136,34 @@ import (
 // and the fake `git` and `gh` really delete a branch and really move a pull
 // request from OPEN to CLOSED, so the teardown's own read-backs are readings of
 // state that changed.
+// Check 211's fakes are a fake `fugaro`, a fake `gcloud` and a fake `belong`:
+// the fake `gcloud` serves the run's own objects at its own prefix in the runs
+// bucket out of the case's own directory and refuses every other bucket and
+// every other prefix, so the case bends the stored judge input one needle at a
+// time (a run ID, a branch, the pair ID, an arm's model word, a run-ID-shaped
+// string) and says the row FAILs and names the hit -- and a case per string the
+// vocabulary deliberately leaves (the judge's own model, a word after a model's
+// version, a line that looks like a commit trailer) says it does not, since a
+// false FAIL there is a correct release exiting 1 after a billed judge run; the
+// fake launcher is a counter, so the run ID is the case's own, and a
+// case that rewrites a copy of the script with the U1 row's own test removed
+// proves that row is what the FAIL elsewhere is read from. The fake `belong`
+// logs any call and fails, so a case says the check never reached that
+// installation.
+// Check 212's are the same four, down to the counter and the
+// real deletion and close, with the documents a pair, a judge run and its
+// verdict are read through served out of the case's own directory and a mode for
+// each state a case bends (a build without the command, a catalog without the
+// judge recipe, a layer that samples nothing, a challenger on the direct or an
+// unadmitted route, no pair within the bound, a shadow that published, a judge
+// that published, a verdict that is missing, skipped, one-pass or another pair's,
+// and a report that already draws a conclusion).
+// Check 550's fakes are the
+// same two, with the alias the installation holds kept in a file the fake
+// `fugaro` reads and writes, so a case can say what a repoint moved and what the
+// move back put back: its two runs' records are served from the case's own
+// directory, and a case bends the review stage's account in one of them to show
+// the check's claim failing in either direction.
 // Check 301's fakes are a fake `fugaro`, a fake launchd and a fake systemd
 // whose boot id and unit files the test writes, so a reboot, a second
 // instance's refusal and T7's re-render are all readings of files the test
@@ -162,6 +190,51 @@ import (
 // call with the directory it was made in and the FUGARO_PROJECT it carried, so
 // a case says both where each read ran and that a dry run or a refused name
 // makes no call at all.
+// Checks 420 to 422 are the model-crafts owner-run checks: 420 and 421 drive a
+// fake `fugaro` whose `craft ls --json`, `accounts pool ls --json`, `runs ls
+// --json` and `run` answer out of the case's own files and whose `creds ls`
+// names the credentials the check reads, over a fake `gcloud` and a fake
+// credentials service behind a fake `curl`, and 422 drives a fake `fugaro`
+// whose converge REALLY migrates the case's own local config the way the
+// release does, a fake `gcloud` that prints an access token and a fake `curl`
+// that serves the published policy node before and after it, with a mode for
+// each state a case bends: a build without the crafts, another installation's
+// config, a converge that fails or leaves a step, one that migrates nothing,
+// an account left unconverted with and without the note it is owed, a second
+// converge that moves the keys, and a node that moved, went or cannot be read.
+// Checks 380 to 382 drive a
+// fake `fugaro` over the no-prompt policy's three readings, each fake holding
+// what its check can tell apart: 380's `update` plays the transcript a real run
+// would print (a step left for the owner, a `[y/N]` question, a question left
+// open, an enter-prompt, a cloud failure, an empty transcript, a run that never
+// ends) and records what its own stdin turned out to be, so a case says the
+// check really closed it; 381's holds the repository's caps node, the effective
+// caps, a `budget set` that REALLY applies what it is handed -- so the check's
+// read-back of its own lowering and of its own putting back are readings of
+// state that changed -- and an `image build` that plays the refusal in each
+// shape a case bends (another cap, a lost part, an empty transcript, a build
+// that was not refused, an odd status, one that never ends); 382's refuses on
+// the marker set in ITS OWN environment (agentMarker's list) and can be told to
+// bend the sentence a raise prints (a missing part, the command naming another
+// repository, another value, another project, an invented flag, another
+// program), so a check that forgot to set the marker is caught by the caps
+// moving rather than by a log line. 381's and 382's checkouts are real git work
+// trees with an origin remote, because the repository whose caps are lowered or
+// raised is the one that remote names. 139 drives a fake `fugaro` that serves
+// the runs list and one run's record out of the case's own files and a fake
+// `gcloud` that serves that run's `model call` entries, with a mode for each
+// state a case bends: a listing whose only settled runs are oauth, one whose
+// gateway runs carry no sub-agent, no entry at all, a stage name carrying two
+// sessions (not a finding: the runner reuses stage names across sessions), a
+// sub-agent id spanning two sessions or sharing a session with an entry whose
+// agent_id is empty (in another stage: the comparison is run-wide), an id seen
+// only on refused entries, a background model that carries an id, a background
+// model the run never called, a background model that is also a stage's own
+// model (the run's effective background, which the row refuses to count), an
+// account, a run or a log view naming belong, a read that fails, hangs or
+// answers something that is not a document, a record naming no execution, a
+// record and a listing that disagree about the execution, a doctor that exits 1
+// (an answer, #2719) and one that does not answer at all.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -171,6 +244,8 @@ var liveCheckScripts = []struct {
 	{"check91.sh", "check91_test.sh"},
 	{"check111.sh", "check111_test.sh"},
 	{"check210.sh", "check210_test.sh"},
+	{"check211.sh", "check211_test.sh"},
+	{"check212.sh", "check212_test.sh"},
 	{"check130.sh", "check130_test.sh"},
 	{"check145.sh", "check145_test.sh"},
 	{"check146.sh", "check146_test.sh"},
@@ -204,6 +279,9 @@ var liveCheckScripts = []struct {
 	{"check511.sh", "check511_test.sh"},
 	{"check520.sh", "check520_test.sh"},
 	{"check521.sh", "check521_test.sh"},
+	{"check420.sh", "check420_test.sh"},
+	{"check421.sh", "check421_test.sh"},
+	{"check422.sh", "check422_test.sh"},
 	{"check490.sh", "check490_test.sh"},
 	{"check491.sh", "check491_test.sh"},
 	{"check492.sh", "check492_test.sh"},
@@ -213,6 +291,11 @@ var liveCheckScripts = []struct {
 	{"check119.sh", "check119_test.sh"},
 	{"check57b.sh", "check57b_test.sh"},
 	{"check124.sh", "check124_test.sh"},
+	{"check-380-no-prompt-update.sh", "check-380-no-prompt-update_test.sh"},
+	{"check-381-over-cap-build.sh", "check-381-over-cap-build_test.sh"},
+	{"check-382-agent-cannot-raise-a-cap.sh", "check-382-agent-cannot-raise-a-cap_test.sh"},
+	{"check550.sh", "check550_test.sh"},
+	{"check139.sh", "check139_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
@@ -236,6 +319,20 @@ const liveCheckTimeout = 12 * time.Minute
 // test goes to shard i, each in its own temp dir, so the wall time of the
 // package is about the longest shard instead of the sum.
 const liveCheckShards = 3
+
+// liveCheckWorkers is how many shards run at once. Splitting a script into
+// shards only shortens the package if the shards really run side by side, and
+// subtests under t.Parallel() are capped at -parallel, which defaults to
+// GOMAXPROCS -- five on the machine this comment was written on. A shard spends
+// most of its life waiting on the child processes it starts rather than on a
+// CPU, so that cap left the machine half idle and the package ran to 848s: no
+// room against the `go test -timeout 15m` of this repository's verify command,
+// and three more scripts of the model-crafts plan (Checks 420 to 422, MC10)
+// took it past the deadline. The same package with -parallel 20 ran in 573s, so
+// what the cap limited was the shards and not the work. The pool below is that
+// without the flag: the checks are independent programs that share nothing but
+// this test, and each one still gets its own deadline and its own temp dir.
+const liveCheckWorkers = 8
 
 // syncBuffer collects a command's output and can be read while a copy
 // goroutine may still be writing to it. procgroup.Run gives up on its drain
@@ -261,50 +358,95 @@ func (b *syncBuffer) String() string {
 }
 
 // TestLiveCheckScripts runs the bash test of each live check.
+//
+// The shards go through liveCheckWorkers goroutines rather than through
+// t.Parallel() subtests, so that how much of the package runs at once is this
+// file's decision and not -parallel's: see the comment on that constant.
 func TestLiveCheckScripts(t *testing.T) {
 	for _, tool := range []string{"bash", "python3"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skipf("%s is not installed", tool)
 		}
 	}
+	type shard struct {
+		test string
+		n    int
+	}
+	var shards []shard
 	for _, c := range liveCheckScripts {
-		for shard := 0; shard < liveCheckShards; shard++ {
-			shardEnv := fmt.Sprintf("CHECK_TEST_SHARD=%d/%d", shard, liveCheckShards)
-			t.Run(fmt.Sprintf("%s/shard%d", c.name, shard), func(t *testing.T) {
-				t.Parallel()
-				ctx, cancel := context.WithTimeout(context.Background(), liveCheckTimeout)
-				defer cancel()
-				path := filepath.Join(testutil.ModuleRoot(), "scripts", "live-checks", c.test)
-				// procgroup, not exec.CommandContext: both suites deliberately leave
-				// background processes holding the output pipe (Check 90's proxy and
-				// upstream, Check 91's sleeping fake gcloud and its interrupt tests),
-				// and a context kill reaches the direct child only -- bash -- so
-				// CombinedOutput would keep reading a pipe its grandchild still holds
-				// and block past the deadline: the hang would then surface as Go's own
-				// package timeout, a panic naming the package, which is the one thing
-				// the deadline above exists to avoid. procgroup.Run puts the run in
-				// its own process group, SIGTERMs the whole group when the deadline
-				// fires (the scripts trap it and clean up after themselves), SIGKILLs
-				// whatever is left once the grace period is over, bounds its own drain
-				// -- so this returns, by script name, however the child misbehaves.
-				var out syncBuffer
-				code, err := procgroup.Run(ctx, procgroup.Cmd{
-					Name:   "bash",
-					Args:   []string{path},
-					Env:    append(os.Environ(), shardEnv),
-					Stdout: &out,
-					Stderr: &out,
-				})
-				if ctx.Err() != nil {
-					t.Fatalf("%s did not finish within %s and was killed:\n%s", c.test, liveCheckTimeout, out.String())
-				}
-				if err != nil {
-					t.Fatalf("%s: %v\n%s", c.test, err, out.String())
-				}
-				if code != 0 {
-					t.Fatalf("%s exited %d:\n%s", c.test, code, out.String())
-				}
-			})
+		for i := 0; i < liveCheckShards; i++ {
+			shards = append(shards, shard{c.test, i})
 		}
 	}
+	queue := make(chan shard)
+	var (
+		mu       sync.Mutex
+		failures []string
+		wg       sync.WaitGroup
+	)
+	for i := 0; i < liveCheckWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for s := range queue {
+				// One failure must not end the package: the message is kept and
+				// the rest of the shards still run, so one run says what every
+				// live check did rather than what the first failure hid.
+				if msg := runLiveCheckShard(s.test, s.n); msg != "" {
+					mu.Lock()
+					failures = append(failures, msg)
+					mu.Unlock()
+				}
+			}
+		}()
+	}
+	for _, s := range shards {
+		queue <- s
+	}
+	close(queue)
+	wg.Wait()
+	for _, msg := range failures {
+		t.Error(msg)
+	}
+}
+
+// runLiveCheckShard runs one shard of one live check's bash test and returns
+// the message to report, or "" when it passed. The shard's name is in every
+// message: the -run filter no longer reaches into a subtest, so the name is
+// what says which check a hang or a failure is about.
+func runLiveCheckShard(test string, shard int) string {
+	name := fmt.Sprintf("%s/shard%d", test, shard)
+	ctx, cancel := context.WithTimeout(context.Background(), liveCheckTimeout)
+	defer cancel()
+	path := filepath.Join(testutil.ModuleRoot(), "scripts", "live-checks", test)
+	// procgroup, not exec.CommandContext: both suites deliberately leave
+	// background processes holding the output pipe (Check 90's proxy and
+	// upstream, Check 91's sleeping fake gcloud and its interrupt tests),
+	// and a context kill reaches the direct child only -- bash -- so
+	// CombinedOutput would keep reading a pipe its grandchild still holds
+	// and block past the deadline: the hang would then surface as Go's own
+	// package timeout, a panic naming the package, which is the one thing
+	// the deadline above exists to avoid. procgroup.Run puts the run in
+	// its own process group, SIGTERMs the whole group when the deadline
+	// fires (the scripts trap it and clean up after themselves), SIGKILLs
+	// whatever is left once the grace period is over, bounds its own drain
+	// -- so this returns, by script name, however the child misbehaves.
+	var out syncBuffer
+	code, err := procgroup.Run(ctx, procgroup.Cmd{
+		Name:   "bash",
+		Args:   []string{path},
+		Env:    append(os.Environ(), fmt.Sprintf("CHECK_TEST_SHARD=%d/%d", shard, liveCheckShards)),
+		Stdout: &out,
+		Stderr: &out,
+	})
+	if ctx.Err() != nil {
+		return fmt.Sprintf("%s did not finish within %s and was killed:\n%s", name, liveCheckTimeout, out.String())
+	}
+	if err != nil {
+		return fmt.Sprintf("%s: %v\n%s", name, err, out.String())
+	}
+	if code != 0 {
+		return fmt.Sprintf("%s exited %d:\n%s", name, code, out.String())
+	}
+	return ""
 }

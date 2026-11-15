@@ -12,7 +12,6 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -308,10 +307,10 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	// which is the write the refusal is about and the change the sentence names.
 	// A session writes nothing, --yes included (spec §2.4), and the marker fence
 	// comes first, as it does in applySettingsEdit — the same rule, lifted by
-	// the same answer and for the same class, so a session the gate admitted to
+	// the same answer and for the same step, so a session the gate admitted to
 	// the declaration is not refused the step it declared.
 	if !changed {
-		if marker := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); marker != "" && !initflow.CanConfirmManaged(initflow.YesOrTyped, initflow.Conditions{Agent: marker}, m) {
+		if marker := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); marker != "" && !m.Removes() {
 			return userErr("refusing to write %s in a coding agent's session (%s is set): %s; run this yourself at your own terminal: %s; nothing was written",
 				sel.Path, marker, what, command)
 		}

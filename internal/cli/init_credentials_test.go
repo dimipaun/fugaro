@@ -2174,7 +2174,6 @@ func TestCredentialsServiceKeepsTheOwnersVerifierList(t *testing.T) {
 			if row.config != "" {
 				r.appendConfig(t, row.config)
 			}
-			typedThroughYes(t)
 			fakeTerminal(t)
 			if out, errOut, err := executeStdin(t, initProjectName+"\n", "setup"); err != nil {
 				t.Fatalf("%v\n%s%s", err, out, errOut)

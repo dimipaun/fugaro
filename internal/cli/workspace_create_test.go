@@ -83,7 +83,6 @@ func newWSCreateRig(t *testing.T, stdin, extra string) *wsCreateRig {
 	old := selfCommand
 	selfCommand = func() string { return "fugaro" }
 	t.Cleanup(func() { selfCommand = old })
-	canConfirmTyped = initflow.CanConfirm
 	out := &syncBuf{}
 	cmd := NewRootCmd()
 	cmd.SetOut(out)
