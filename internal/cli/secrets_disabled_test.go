@@ -145,10 +145,10 @@ func TestValidateWarnsThatRepoSecretsAreIgnored(t *testing.T) {
 			t.Errorf("the warning does not say %q:\n%s", want, errOut)
 		}
 	}
-	// The value a run reads is the project's, which is the whole of what the
+	// What replaces the value is the project's, which is the whole of what the
 	// ruling asks a person to do about it.
-	if !strings.Contains(errOut, "the value a run reads is the project's") {
-		t.Errorf("the warning does not say what a run reads instead:\n%s", errOut)
+	if !strings.Contains(errOut, "a shared job mounts only the project's secrets") {
+		t.Errorf("the warning does not say what a run mounts instead:\n%s", errOut)
 	}
 }
 

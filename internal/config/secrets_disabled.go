@@ -127,6 +127,6 @@ func RepoSecretsWarnings(c *Config) []Problem {
 		printable = append(printable, pluginwire.Printable(name))
 	}
 	return []Problem{{Path: "workflows." + where + ".secrets", Message: fmt.Sprintf(
-		"repository-level secrets (%s) are disabled for now and ignored, as a repository's own image is: no job mounts this file's secrets:, so the value a run reads is the project's — store it once for the project instead (project_secrets.NAME, or a workflow_secrets entry allow-listing the repositories it serves) (D2313)",
+		"repository-level secrets (%s) are disabled for now and ignored, as a repository's own image is: a shared job mounts only the project's secrets, so store the value once for the project instead (project_secrets.NAME, or a workflow_secrets entry allow-listing the repositories it serves) (D2313)",
 		strings.Join(printable, ", "))}}
 }
