@@ -1910,7 +1910,17 @@ test_a_machine_without_gh_still_deletes_the_branches() {
   local dir=$work/nogh
   prepare "$dir"
   rm -f "$dir/bin/gh"
-  run_check "$dir" PATH="$dir/bin:/usr/bin:/bin"
+  # A runner image has the real gh in /usr/bin, so the system directories are
+  # mirrored without it rather than named on PATH.
+  mkdir -p "$dir/sys"
+  local d f
+  for d in /usr/bin /bin; do
+    for f in "$d"/*; do
+      [[ ${f##*/} == gh || -d $f ]] && continue
+      ln -sfn "$f" "$dir/sys/${f##*/}"
+    done
+  done
+  run_check "$dir" PATH="$dir/bin:$dir/sys"
   expect_status "$status" 1 "a machine without gh"
   expect_contains "$out" "FACT restore: FAIL" "a machine without gh: the row"
   expect_contains "$out" "is not on PATH" "a machine without gh: the row names the tool"

@@ -568,6 +568,27 @@ func TestServiceRefusalIsNeverRelayed(t *testing.T) {
 			want: http.StatusForbidden, halt: true, detail: refusalDetail(ErrorRequestRefused),
 		},
 		{
+			// A call the service had no credential to offer, and the one
+			// detail built from the answer rather than from the type alone:
+			// the reasons are what tell the operator which filter removed the
+			// candidates, and the names stay in the job's own log
+			// (TestServiceNoCandidateCredentialsDetailNamesTheFilter).
+			name: "no_candidate_credentials", status: http.StatusServiceUnavailable,
+			body: `{"error":"no_candidate_credentials","message":"` + serviceSaid + `","tried":[{"name":"cred-a","tier":"A","reason":"not_admitted"}]}`,
+			want: http.StatusForbidden, halt: true,
+			detail: noCredentialDetail([]serviceTried{{Name: "cred-a", Tier: TierA, Reason: ReasonNotAdmitted}}),
+		},
+		{
+			// The same refusal with nothing behind it: no credential was
+			// dropped because the bundle holds none, and the detail says that
+			// rather than sending the operator to a policy that decided
+			// nothing.
+			name: "no_candidate_credentials with an empty bundle", status: http.StatusServiceUnavailable,
+			body: `{"error":"no_candidate_credentials","message":"` + serviceSaid + `"}`,
+			want: http.StatusForbidden, halt: true,
+			detail: noCredentialDetail(nil),
+		},
+		{
 			// A type this release does not know: the service's own text, and
 			// not one this gateway can account a call by.
 			name: "a type this release does not know", status: http.StatusForbidden,
@@ -754,6 +775,64 @@ func TestServiceRequestRefusedDetailNamesTheWayOut(t *testing.T) {
 		t.Errorf("the halt's detail carries the service's own sentence: %q", halt.Detail)
 	}
 	assertNoSecret(t, "the halt's detail", halt.Detail, secrets(h, t))
+}
+
+// TestServiceNoCandidateCredentialsDetailNamesTheFilter: a call the service had
+// no credential to offer is the one refusal whose detail is built from the
+// answer, because which filter removed the candidates IS the diagnosis — the
+// repository's own node, the account's allow_repos, the project's allow_repos
+// or the repository's recorded auth — and the service's own sentence never
+// reaches the agent (D143).
+//
+// What is built from the answer is the reasons and nothing else: each one is
+// rendered as this package's own sentence, and the credential NAMES the service
+// considered stay out of the detail, which the agent is shown and the run's
+// record keeps. They go to the job's own log (triedLog) instead, which is where
+// the run's operator reads them.
+func TestServiceNoCandidateCredentialsDetailNamesTheFilter(t *testing.T) {
+	const serviceSaid = "no credential is offered to this call, and the state was read; considered and dropped: cred-a (not_admitted), cred-b (broken)"
+	h, _ := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
+		return anthropicfake.Reply{Status: http.StatusServiceUnavailable,
+			Body: `{"error":"no_candidate_credentials","message":"` + serviceSaid + `","tried":[` +
+				`{"name":"cred-a","tier":"A","reason":"not_admitted"},` +
+				`{"name":"cred-b","tier":"B","reason":"broken"}]}`,
+			Header: http.Header{"Content-Type": []string{"application/json"}}}
+	}, nil)
+
+	resp, body := h.post(msg(sonnet, 1000))
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("the agent's answer: %d %s, want 403", resp.StatusCode, body)
+	}
+	if strings.Contains(body, serviceSaid) {
+		t.Errorf("the service's own sentence reached the agent: %s", body)
+	}
+	halt := haltOf(t, h)
+	if halt.Reason != ReasonBudgetUnavailable {
+		t.Errorf("the halt is %q, want %q", halt.Reason, ReasonBudgetUnavailable)
+	}
+	for _, want := range []string{
+		ErrorNoCandidateCredentials,
+		// The filters, each as this package's own sentence, and the documents
+		// that decide the admission.
+		"not_admitted", "broken",
+		"credentials.accounts", "allow_repos", "claude_accounts",
+	} {
+		if !strings.Contains(halt.Detail, want) {
+			t.Errorf("the halt's detail is %q, and it must name %q", halt.Detail, want)
+		}
+	}
+	for _, name := range []string{"cred-a", "cred-b"} {
+		if strings.Contains(halt.Detail, name) {
+			t.Errorf("the halt's detail names a credential the service considered (%q): the agent has no "+
+				"business seeing the set of them (D143), and the run's own log is where they belong", name)
+		}
+	}
+	if logged := h.logs.String(); !strings.Contains(logged, "cred-a (not_admitted)") ||
+		!strings.Contains(logged, "cred-b (broken)") {
+		t.Errorf("the job's own log does not name what the service considered: %s", logged)
+	}
+	assertNoSecret(t, "the halt's detail", halt.Detail, secrets(h, t))
+	assertNoSecret(t, "the job's log", h.logs.String(), secrets(h, t))
 }
 
 func ptrTime(t time.Time) *time.Time { return &t }

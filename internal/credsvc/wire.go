@@ -120,6 +120,66 @@ const (
 // in this package can pin a spelling that does not exist yet.
 const BitbucketProxyPrefix = "/v1/bitbucket/proxy/"
 
+// WorkflowSecretsPath is the path a run's own job asks this service for one of
+// its workflow's secrets on (B3.2, G19): a workflow secret the job does not
+// mount is fetched from here at bootstrap, one variable per call, and the value
+// is the answer's own field.
+//
+// The path, the request and the answer are here rather than beside the route
+// because the caller is another package — the runner's fetch (B3.4) goes
+// through internal/gateway's service client, which spells this contract the way
+// it spells the model path's — and a contract two packages spell is written
+// down once, in this file, for the reason this file's own header gives. Which
+// workflow a call may be served is decided from the VERIFIED job account and
+// never from anything the call carries (G19): the request names one variable of
+// the caller's own workflow and nothing else, so there is no field in which a
+// caller could name another workflow, another repository or another job's
+// secret.
+const WorkflowSecretsPath = "/v1/workflow-secrets"
+
+// maxWorkflowSecretsRequestBytes bounds a workflow-secrets call's body. The
+// whole request is one small field ({"env":"NAME"}), so the bound is the mint's
+// and small on purpose: a body larger than this is not one of these calls, and
+// it is refused before it is decoded.
+const maxWorkflowSecretsRequestBytes = 4 << 10
+
+// WorkflowSecretsRequest is what such a call carries: the environment variable
+// the job's own mount would have named, and the name the record
+// (creds/workflowsecrets/<slug>, B3.1) is read by. It is the CALLER's text and
+// is therefore trusted for nothing — the record decides whether the calling
+// job's workflow has a secret under it, and a name the record does not hold is
+// refused with a typed refusal rather than being looked up anywhere else.
+//
+// There is no field for the repository, the workflow or the run: the first two
+// are the verified job account's (JobAccount.Slug, JobAccount.Workflow) and the
+// third is the verified run identity's, and a contract that let a caller name
+// any of them would be a contract whose service decided from what the call
+// said about itself.
+type WorkflowSecretsRequest struct {
+	// Env is the variable's name, held to config.EnvNameRE — the shape the
+	// workflow-secret check itself uses (D1372), so a name no job could have
+	// mounted under is refused as a request this route does not read rather
+	// than searched for.
+	Env string `json:"env"`
+}
+
+// WorkflowSecretsResponse is the answer: the variable that was asked for, and
+// the value the record's container holds for it. It is ONE value and not the
+// workflow's whole set, which is what keeps every line this act writes naming
+// exactly one container (audit.go) and keeps what a caller is served to what it
+// named — a job is served the variable it asked for and no other.
+//
+// The value is a credential and this answer is the only place it appears: it is
+// written no-store (writeReadAnswer), no header of the answer carries it, and
+// neither the audit line nor any refusal of this route can hold it (G18).
+type WorkflowSecretsResponse struct {
+	// Env is the variable the value is for, echoed so an answer can never be
+	// read as another variable's.
+	Env string `json:"env"`
+	// Value is the credential's value.
+	Value string `json:"value"`
+}
+
 // The response headers.
 const (
 	// HeaderTier is the credential tier that answered: TierA, TierB or
@@ -224,7 +284,7 @@ func ValidAuthAccount(s string) bool {
 }
 
 // The error types of the refusal body. The runner switches on these, not on
-// a status: two of them share one status.
+// a status: three of them share one status.
 const (
 	// ErrorExhaustedUntil is the typed answer of C1.11: no credential is
 	// usable now, and the earliest reset is ResetAt. The runner waits for it
@@ -248,6 +308,22 @@ const (
 	// The message is the gateway's own sentence and it says that nothing was
 	// read; no credential value is in it, because none was touched.
 	ErrorRequestRefused = "request_refused"
+	// ErrorNoCandidateCredentials is a call the cascade was asked for and could
+	// hand no credential to: the narrowing this service applies — the crafts
+	// where the installation publishes them, O4's tier-A admission, the
+	// repository's recorded auth and the slip fence a per-user or project
+	// credential needs — left the list the selector is given empty, so there was
+	// nothing to select from, nothing to wait for and no other tier to reach. The
+	// state WAS read: it is what the service read that empties this call's list,
+	// and the tried list beside this type names every credential that was
+	// considered and the one reason each was dropped. It is deliberately not
+	// ErrorStateUnavailable, whose name sends the operator to the database: this
+	// is a policy and bundle question, and the sentence and the list say which (a
+	// bundle that holds no model credential, an account the repository's own
+	// admission does not cover, a credential the call carries no slip for). Like
+	// every refusal but ErrorExhaustedUntil it halts the run (D143), and no
+	// credential value is in it, because none was used.
+	ErrorNoCandidateCredentials = "no_candidate_credentials"
 )
 
 // The statuses. An unverified caller is 403; everything the service cannot
@@ -320,6 +396,19 @@ func ValidReason(reason string) bool {
 		return true
 	}
 	return false
+}
+
+// triedLine renders a tried list as one line: name (reason), name (reason), in
+// the order the list holds. It is the rendering a refusal's own sentence and
+// the operator's refusal line both use, so the run and the operator read one
+// list and not two — and it names credentials and never a value, since a name
+// is one of the bundle's keys and a reason is one of the four constants below.
+func triedLine(tried []Tried) string {
+	parts := make([]string, 0, len(tried))
+	for _, tr := range tried {
+		parts = append(parts, tr.Name+" ("+tr.Reason+")")
+	}
+	return strings.Join(parts, ", ")
 }
 
 // ValidCredentialName reports whether name may be a credential's name: one
