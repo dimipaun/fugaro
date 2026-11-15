@@ -14,6 +14,7 @@ package governance_test
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strconv"
 	"strings"
 	"testing"
@@ -21,7 +22,9 @@ import (
 	"github.com/dimipaun/fugaro/ee/governance"
 	_ "github.com/dimipaun/fugaro/ee/register"
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/runner/runnertest"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -758,5 +761,169 @@ func TestRunRecordIgnoresALooserTierInTheRepository(t *testing.T) {
 	got := h.Log.String()
 	if !strings.Contains(got, "a looser value in fugaro.yaml was ignored") || !strings.Contains(got, "governance.tiers.small.expected_usd") {
 		t.Errorf("the run log does not warn about the dropped tier figure:\n%s", got)
+	}
+}
+
+// The stops that become checkpoints (plan T7.3, G7). What the tests below
+// drive is the pair the core and ee/ own between them: the gateway's own stop
+// (T7.2), the halt ee/governance's Stopped and Before make of it, and the one
+// call the runner then makes to the stopping agent for the report's three
+// model-written fields (checkpoint_stage.go). They run through
+// internal/runner/runnertest's gateway frame, which is the least of the core
+// harness a package outside internal/runner can reach.
+
+// sonnet and haiku are the models these tests pin the run's roles to: the
+// embedded price table prices both, and a run with a cap of its own has to
+// name the models its calls are priced at (bootstrap refuses one that does
+// not). The call a stage makes is posted as sonnet whatever the stage's own
+// model is, since no stage here is about which model it runs.
+const (
+	sonnet = "claude-sonnet-5-5"
+	haiku  = "claude-haiku-4-5"
+)
+
+// gatewayCfg is the fixture repository's file with the roles pinned: what a
+// run whose budget is enforced is admitted with.
+func gatewayCfg(t *testing.T) string {
+	t.Helper()
+	cfg := testutil.FixtureFiles(t)["fugaro.yaml"]
+	out := strings.Replace(cfg, "  review_rounds: 2\n", `  review_rounds: 2
+  model: `+sonnet+`
+  models: { coder: `+sonnet+`, reviewer: `+sonnet+`, background: `+haiku+` }
+  max_output_tokens: { coder: 4096, reviewer: 4096 }
+`, 1)
+	if out == cfg {
+		t.Fatal("fixture has no review_rounds line")
+	}
+	return out
+}
+
+// stageCap is the run cap these tests enforce: implement's own share of it is
+// 0.7 of $0.02, and the call below reserves about $0.048 of input and output
+// together, which is what the stage's budget cannot hold.
+const stageCap = "0.02"
+
+// aCall is the reply the fake upstream answers every call of a run with: a
+// usage of one token each way, since nothing below is about what a call costs
+// rather than about whether it was admitted.
+func aCall() anthropicfake.Reply {
+	return anthropicfake.MessageOK(sonnet, pricing.Usage{Input: 1, Output: 1})
+}
+
+// implementOverItsBudget is the implement stage of a run whose own share of
+// the cap is smaller than the call it makes: the call's worst case is a
+// hundred thousand output tokens, and the gateway stops the stage rather than
+// send it (T7.2). It answers the refusal the way a real agent's client does —
+// the call returns, the stage does not — which is the shape the runner has to
+// turn into a halt and a checkpoint.
+func implementOverItsBudget(t *testing.T, _ context.Context, req agent.Request) (agent.Result, error) {
+	t.Helper()
+	if code, body := runnertest.Post(t, req, sonnet, 4000); code != http.StatusForbidden {
+		t.Fatalf("the call was answered %d, want the stage budget's 403: %s", code, body)
+	}
+	return agent.Result{CostUSD: 0.1}, nil
+}
+
+// answersTheCheckpoint is the checkpoint stage's work: one call, admitted by
+// the one allowance the checkpoint stage has (gateway.CheckpointStage), whose
+// answer is the three labelled lines the report is filled from.
+func answersTheCheckpoint(t *testing.T, _ context.Context, req agent.Request) (agent.Result, error) {
+	t.Helper()
+	if code, body := runnertest.Post(t, req, sonnet, 100); code != http.StatusOK {
+		t.Fatalf("the checkpoint call was answered %d, want 200: %s", code, body)
+	}
+	return agent.Result{Text: "done: the feature is committed\nnext: nothing\nhard instructions: none"}, nil
+}
+
+// TestGatewayStageHaltBecomesCheckpoint: a stage the gateway's own limit stops
+// is a governance halt with a checkpoint report, and the report's three
+// model-written fields are answered by the stopping agent in a fresh session
+// (T7.3, T7.2, G7). The stop is not a failed stage and not a silent kill: the
+// run halts, the draft pull request carries the report, and the one call that
+// follows is the checkpoint stage's — a stage of its own, whose name is the
+// one the gateway admits exactly one call for.
+func TestGatewayStageHaltBecomesCheckpoint(t *testing.T) {
+	h := runnertest.New(t, gatewayCfg(t), nil)
+	h.Gateway(t, "enforce", stageCap, aCall())
+	rec, err := h.Run(t, implementOverItsBudget, answersTheCheckpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Halt == nil {
+		t.Fatalf("record = %+v, halt = %+v: a gateway stop did not halt the run", rec, rec.Halt)
+	}
+	if rec.Halt.Reason != runstore.HaltStageBudget {
+		t.Fatalf("halt = %+v, want the stage budget's own reason", rec.Halt)
+	}
+	if !strings.Contains(rec.Halt.Detail, "implement stage budget") {
+		t.Errorf("halt detail = %q, want the gateway's own sentence about the stage it stopped", rec.Halt.Detail)
+	}
+	cp := rec.Checkpoint
+	if cp == nil {
+		t.Fatal("a governance halt left no checkpoint report")
+	}
+	if cp.Trigger != string(runstore.HaltStageBudget) || cp.WhyOver == "" {
+		t.Errorf("checkpoint = %+v, want the stage budget's trigger and the runner's own account of it", cp)
+	}
+	if cp.Done != "the feature is committed" || cp.Next != "nothing" || cp.HardInstructions != "none" {
+		t.Errorf("checkpoint = %+v, want the three fields the stopping agent answered", cp)
+	}
+	// The call is the checkpoint stage's, made after the stop: the stopped
+	// stage's own process is gone by then, which is what keeps the allowance
+	// the gateway admits from being spendable by the caller that was stopped.
+	calls := h.Calls()
+	if len(calls) != 2 {
+		t.Fatalf("%d stages ran, want implement and the checkpoint stage", len(calls))
+	}
+	if got := calls[1].Prompt; !strings.Contains(got, "Your task was:") || !strings.Contains(got, "Add a feature") ||
+		!strings.Contains(got, "run stopped in stage implement") {
+		t.Errorf("the checkpoint prompt does not carry the task and the stop:\n%s", got)
+	}
+	// A fresh session, not the stopped stage's: the agent that was stopped is
+	// the one thing this call must not reach.
+	if calls[1].SessionID == calls[0].SessionID {
+		t.Errorf("the checkpoint call resumed the stopped stage's session %q", calls[0].SessionID)
+	}
+	// The draft is where a person reads the report; finalize must not have
+	// turned the halted run into a ready pull request.
+	if pr := h.PR(t); !pr.Draft {
+		t.Errorf("pull request = %+v, want the draft a governance halt leaves", pr)
+	}
+}
+
+// TestCheckpointCallFailureStillHalts: the checkpoint call is best-effort and
+// the halt is not. An agent that fails the call leaves the report with the
+// runner's own fields alone — the trigger, why the run is over and what it had
+// spent — and the run still ends halted with its draft pull request (T7.3,
+// D329). Nothing about the report may turn a governance stop into a failure or
+// un-halt a run.
+func TestCheckpointCallFailureStillHalts(t *testing.T) {
+	h := runnertest.New(t, gatewayCfg(t), nil)
+	h.Gateway(t, "enforce", stageCap, aCall())
+	failedCheckpoint := func(_ *testing.T, _ context.Context, _ agent.Request) (agent.Result, error) {
+		return agent.Result{}, errors.New("the checkpoint agent gave up")
+	}
+	rec, err := h.Run(t, implementOverItsBudget, failedCheckpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Halt == nil || rec.Halt.Reason != runstore.HaltStageBudget {
+		t.Fatalf("record = %+v, halt = %+v: a failed checkpoint call un-halted the run", rec, rec.Halt)
+	}
+	cp := rec.Checkpoint
+	if cp == nil {
+		t.Fatal("a governance halt left no checkpoint report")
+	}
+	if cp.Trigger != string(runstore.HaltStageBudget) || cp.WhyOver == "" {
+		t.Errorf("checkpoint = %+v, want the runner's own fields kept", cp)
+	}
+	if cp.Done != "" || cp.Next != "" || cp.HardInstructions != "" {
+		t.Errorf("checkpoint = %+v, want the three model-written fields left empty", cp)
+	}
+	if got := h.Log.String(); !strings.Contains(got, "the checkpoint call failed") {
+		t.Errorf("the run log does not say the checkpoint call failed:\n%s", got)
+	}
+	if pr := h.PR(t); !pr.Draft {
+		t.Errorf("pull request = %+v, want the draft a governance halt leaves", pr)
 	}
 }

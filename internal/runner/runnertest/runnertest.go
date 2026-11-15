@@ -103,16 +103,15 @@ func Blocked(costUSD float64) Step {
 	}
 }
 
-// Shell is a stage that does nothing but run script in its own checkout, as
-// the agent's own commands do, and answers no cost. It is how a test moves a
-// branch under the runner — the fix round that leaves the commit the review
-// range was narrowed to behind, say (T7.3) — without any of Implement's work.
-func Shell(script string) Step {
-	return func(t *testing.T, _ context.Context, req agent.Request) (agent.Result, error) {
-		t.Helper()
-		shell(t, req, script)
-		return agent.Result{}, nil
-	}
+// Script runs a shell script in the stage's own checkout, as the agent's own
+// commands run, and fails the test when it fails: the script is the test's own
+// setup and never the stage's work. It is how a step moves the branch under
+// the runner — the fix round that leaves the commit the review range was
+// narrowed to behind, say (T7.3) — and it is what a step of a test's own is
+// built from.
+func Script(t *testing.T, req agent.Request, script string) {
+	t.Helper()
+	shell(t, req, script)
 }
 
 // Implement is the implement stage's work: a commit, the workflow's verify
