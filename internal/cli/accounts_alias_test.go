@@ -99,8 +99,8 @@ repos:
 func TestAccountsAliasSetWritesAndConverges(t *testing.T) {
 	r := newAddRigWith(t, aliasRigLocal)
 	node := addPolicyNode()
-	node["default_claude_account"] = "team-a"
-	node["claude_account_stages"] = map[string]any{"review": "team-a"}
+	node["default_claude_account"] = "team-b"
+	node["claude_account_stages"] = map[string]any{"review": "team-b"}
 	r.db.Set(projectpolicy.PathShared(), node)
 
 	out, _, err := execute(t, "accounts", "alias", "set", "reviewer", "team-b", "--yes")
@@ -301,7 +301,7 @@ func TestAccountsRmRefusesAnAliasTarget(t *testing.T) {
 	aliasFixture(t, "")
 	before := aliasConfig(t)
 
-	out, errOut, err := execute(t, "accounts", "rm", "team-a", "--yes")
+	out, errOut, err := execute(t, "accounts", "rm", "team-a")
 	if err == nil {
 		t.Fatalf("the target of an alias was removed:\n%s\n%s", out, errOut)
 	}
