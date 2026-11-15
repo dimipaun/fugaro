@@ -1878,13 +1878,18 @@ func TestProjectJobDeletesAreRefusedUntilRetirementExists(t *testing.T) {
 // TestProjectAccountMountIsTheOneSeam: the Claude token reaches a shared job
 // through projectAccountMount and nowhere else in the deployer (design §4.6:
 // the security service replaces that one function). No other function of
-// projectjobs.go may name an account's secret or the token's variable, and
-// ProjectJobs must call it: a mount written anywhere else is a second carrier
-// the swap would leave behind.
+// projectjobs.go may name an account's secret or the token's variable, and the
+// function that composes the jobs must call it: a mount written anywhere else is
+// a second carrier the swap would leave behind.
 //
-// Mutation (run, restore): inline the mount in ProjectJobs' loop (the same
+// That function is projectJobs, which is where the composition lives and what
+// the exported ProjectJobs delegates to (it is the form that carries a
+// profile's job, init_policy_migrate.go's installSpec): the seam is the
+// composition, not the name of the wrapper around it.
+//
+// Mutation (run, restore): inline the mount in projectJobs' loop (the same
 // secret_env, by another path) — every behavioural test still passes, and this
-// one fails naming ProjectJobs.
+// one fails naming projectJobs.
 func TestProjectAccountMountIsTheOneSeam(t *testing.T) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "projectjobs.go", nil, 0)
@@ -1905,7 +1910,7 @@ func TestProjectAccountMountIsTheOneSeam(t *testing.T) {
 					t.Errorf("%s: %s names config.%s: the Claude token's mount belongs to projectAccountMount alone", fset.Position(x.Pos()), fn.Name.Name, x.Sel.Name)
 				}
 			case *ast.CallExpr:
-				if id, ok := x.Fun.(*ast.Ident); ok && id.Name == "projectAccountMount" && fn.Name.Name == "ProjectJobs" {
+				if id, ok := x.Fun.(*ast.Ident); ok && id.Name == "projectAccountMount" && fn.Name.Name == "projectJobs" {
 					calls = true
 				}
 			}
@@ -1913,7 +1918,7 @@ func TestProjectAccountMountIsTheOneSeam(t *testing.T) {
 		})
 	}
 	if !calls {
-		t.Error("ProjectJobs does not call projectAccountMount: the account jobs' token reaches them by some other path")
+		t.Error("projectJobs does not call projectAccountMount: the account jobs' token reaches them by some other path")
 	}
 }
 
