@@ -1809,9 +1809,67 @@ func TestAPIDeviceIsTheFlowTheSPAsPageDrives(t *testing.T) {
 	if spy.minted() != 1 {
 		t.Errorf("the approved code minted %d key(s), want 1", spy.minted())
 	}
-	// The code is spent: the same page cannot hand the same code over again.
+	// The code is spent by the terminal's poll: the same page cannot hand the
+	// same code over again.
 	second := f.apiAs(token, RouteAPIDevice, map[string]any{"user_code": ask.UserCode, "confirm": true})
 	readAPIRefusal(t, second, http.StatusForbidden, deviceRefusedCode)
+}
+
+// TestAPIDeviceAnswersARepeatedConfirmFromTheSameApprover: the SPA's page
+// confirms the code and then binds the licence, and a binding that failed leaves
+// the person on the page with the button still there (`device.tsx`'s `approve`,
+// which says the click retries the binding). A page cannot tell a network
+// failure after the service acted from a refusal, so what that click sends is
+// the confirm again — and the same approver's second confirm is answered as the
+// first was rather than as a code this service is not holding, because a
+// refusal there would leave the binding never retried.
+//
+// Who may repeat it is only the approver: an account whose licence is another's
+// asks about a code that already carries one and is refused as an unknown code,
+// one person's approval never being overwritten by another's. And the repeat
+// outlives nothing — the terminal's poll takes the approved code out in the read
+// that finds it, so one approval still answers one key.
+func TestAPIDeviceAnswersARepeatedConfirmFromTheSameApprover(t *testing.T) {
+	f, spy := subscribed(t)
+	f.purchase("evt-other", "other.example", 5, 365)
+	start := f.startDevice(t, "acme-laptop")
+	token := f.acceptedToken(t)
+
+	read := f.apiAs(token, RouteAPIDevice, map[string]string{"user_code": typedCode(start.UserCode)})
+	if read.Code != http.StatusOK {
+		t.Fatalf("reading the code back answered %d, want %d: %s", read.Code, http.StatusOK, read.Body.String())
+	}
+	var ask DeviceAsk
+	if err := json.Unmarshal(read.Body.Bytes(), &ask); err != nil {
+		t.Fatalf("reading the answer %q: %v", read.Body.String(), err)
+	}
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		confirm := f.apiAs(token, RouteAPIDevice, map[string]any{"user_code": ask.UserCode, "confirm": true})
+		if confirm.Code != http.StatusNoContent {
+			t.Fatalf("confirm %d answered %d, want %d: clicking again is the page's retry and not a refusal: %s", attempt, confirm.Code, http.StatusNoContent, confirm.Body.String())
+		}
+	}
+
+	// The other account holds a licence of its own — the second purchase above
+	// — so what refuses it is the code's own approver and not a missing
+	// subscription: the refusal is the one a code this service is not holding
+	// gets, and the code stays the first account's.
+	other := f.tokenWith(t, "email", buyerAddress("other.example"))
+	readAPIRefusal(t,
+		f.apiAs(other, RouteAPIDevice, map[string]any{"user_code": ask.UserCode, "confirm": true}),
+		http.StatusForbidden, deviceRefusedCode)
+
+	// And the repeat outlived nothing: the terminal's poll collects the one key
+	// its person approved, and the code is gone with it.
+	f.pollBundle(t, start.DeviceCode)
+	f.advance(devicePollInterval)
+	if again := f.pollDevice(t, start.DeviceCode); again.Code != http.StatusForbidden {
+		t.Errorf("a second poll of the answered code answered %d, want %d: %s", again.Code, http.StatusForbidden, again.Body.String())
+	}
+	if spy.minted() != 1 {
+		t.Errorf("one approval minted %d key(s), want one", spy.minted())
+	}
 }
 
 // TestAPIDeviceRefusesWhatItWillNotApprove: the device step's refusals on the
