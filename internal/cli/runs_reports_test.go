@@ -79,12 +79,21 @@ func (f *reportsJob) setSpec(t *testing.T, doc infra.ReportsJobDoc) {
 // own slug prefix.
 func (f *reportsJob) seed(t *testing.T, repo, id string, fin time.Time) {
 	t.Helper()
+	f.seedUnder(t, repo, repo, id, fin)
+}
+
+// seedUnder writes one finished run under prefix's own slug whose record names
+// repo, which may be another repository or none at all: a record's repo field is
+// a word the record chose, and G2 is exactly that only the records deriving the
+// slug whose prefix they were found under are that repository's.
+func (f *reportsJob) seedUnder(t *testing.T, prefix, repo, id string, fin time.Time) {
+	t.Helper()
 	rec := &runstore.Record{
 		Version: 1, RunID: id, Repo: repo, Workflow: "web",
 		Status:    runstore.StatusSucceeded,
 		StartedAt: fin.Add(-time.Hour), FinishedAt: &fin,
 	}
-	if err := runstore.Open(f.gcs.Bucket(t, reportsBucket).Bucket, f.slugs[repo], id).WriteRecord(context.Background(), rec); err != nil {
+	if err := runstore.Open(f.gcs.Bucket(t, reportsBucket).Bucket, f.slugs[prefix], id).WriteRecord(context.Background(), rec); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -337,6 +346,109 @@ func TestRunsReportsRefusesToRunOutsideItsJob(t *testing.T) {
 	_, _, err = execute(t, "runs", "reports")
 	if err == nil || !strings.Contains(err.Error(), "runs digest") {
 		t.Errorf("fugaro runs reports without --job: err = %v, want a refusal naming runs digest", err)
+	}
+}
+
+// TestRunsReportsCountsOnlyTheRepositorysOwnRecords: a report is built from the
+// records that are the repository's own, and which records those are is decided
+// by the slug they were found under rather than by the word a record chose for
+// itself (G2). A record under a repository's prefix that names another
+// repository, or none at all, is in no report of that prefix -- and the
+// repository it does name still gets its own, since the guard drops records and
+// not repositories.
+func TestRunsReportsCountsOnlyTheRepositorysOwnRecords(t *testing.T) {
+	f := newReportsJob(t, []string{"acme/app", "acme/other"}, string(digest.ByDay))
+	digestClock(t, "2026-11-02")
+	f.seed(t, "acme/app", "20261101-090000-aaaa", time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC))
+	// Both of these sit under acme/app's own prefix and are not acme/app's: one
+	// names another repository, the other names no repository at all.
+	f.seedUnder(t, "acme/app", "acme/other", "20261101-100000-bbbb", time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC))
+	f.seedUnder(t, "acme/app", "", "20261101-110000-cccc", time.Date(2026, 11, 1, 11, 0, 0, 0, time.UTC))
+	// The repository the foreign record names has its own prefix and its own
+	// record: the guard drops records, and does not leave a repository out.
+	f.seed(t, "acme/other", "20261101-120000-dddd", time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC))
+
+	out, errOut, err := execute(t, "runs", "reports", "--job")
+	if err != nil {
+		t.Fatalf("fugaro runs reports --job: %v\nstderr: %s", err, errOut)
+	}
+	for repo, want := range map[string]int{"acme/app": 1, "acme/other": 1} {
+		key := f.reportKey(repo, "2026-11-01")
+		data, _, ok := f.object(t, key)
+		if !ok {
+			t.Fatalf("the run wrote no report at %s: %q", key, out)
+		}
+		summary, err := digest.ReadSummary(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if summary.Runs != want {
+			t.Errorf("%s counts %d runs, want %d: only the records deriving the slug they were found under are the repository's", key, summary.Runs, want)
+		}
+	}
+}
+
+// TestRunsReportsRefusesASpecItCannotActOn: the document is the whole
+// assignment, so every way it can fail to be one is a refusal that writes
+// nothing -- a document that does not decode, one that is incomplete, a bucket
+// name the URL this run opens cannot carry, a repository entry that is not one
+// path segment (the one piece of it that becomes a key), and a period kind this
+// build does not know. A refusal is the user error with the fix named in it, not
+// a run that reports some of what the document asked for.
+func TestRunsReportsRefusesASpecItCannotActOn(t *testing.T) {
+	valid := func() infra.ReportsJobDoc {
+		return infra.ReportsJobDoc{
+			Version: infra.ReportsJobDocVersion, Project: "proj-1234", Bucket: reportsBucket,
+			Repositories: []string{mustSlug("github", "acme/app")},
+			Periods:      []string{string(digest.ByDay)},
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		doc  func(*infra.ReportsJobDoc)
+		raw  string
+		want string
+	}{
+		{name: "a document that does not decode", raw: "{not json at all", want: "FUGARO_REPORTS_JOB_SPEC"},
+		{name: "no version", doc: func(d *infra.ReportsJobDoc) { d.Version = 0 }, want: "incomplete"},
+		{name: "no project", doc: func(d *infra.ReportsJobDoc) { d.Project = "" }, want: "incomplete"},
+		{name: "no bucket", doc: func(d *infra.ReportsJobDoc) { d.Bucket = "" }, want: "incomplete"},
+		{name: "no repository", doc: func(d *infra.ReportsJobDoc) { d.Repositories = nil }, want: "incomplete"},
+		{name: "no period kind", doc: func(d *infra.ReportsJobDoc) { d.Periods = nil }, want: "incomplete"},
+		{name: "a bucket name that is not one", doc: func(d *infra.ReportsJobDoc) { d.Bucket = "NOT A BUCKET" }, want: "NOT A BUCKET"},
+		{name: "an empty repository entry", doc: func(d *infra.ReportsJobDoc) { d.Repositories = append(d.Repositories, "") }, want: "not one repository's prefix"},
+		{name: "a repository entry that is a path", doc: func(d *infra.ReportsJobDoc) { d.Repositories = []string{"acme/app"} }, want: "not one repository's prefix"},
+		{name: "a repository entry that climbs", doc: func(d *infra.ReportsJobDoc) { d.Repositories = []string{".."} }, want: "not one repository's prefix"},
+		{name: "a repository entry carrying a backslash", doc: func(d *infra.ReportsJobDoc) { d.Repositories = []string{`acme\app`} }, want: "not one repository's prefix"},
+		{name: "a period kind this build does not know", doc: func(d *infra.ReportsJobDoc) { d.Periods = []string{"fortnight"} }, want: "fortnight"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newReportsJob(t, []string{"acme/app"}, string(digest.ByDay))
+			digestClock(t, "2026-11-02")
+			doc := valid()
+			if tc.doc != nil {
+				tc.doc(&doc)
+			}
+			if tc.raw != "" {
+				t.Setenv(reportsJobSpecEnv, tc.raw)
+			} else {
+				f.setSpec(t, doc)
+			}
+
+			out, _, err := execute(t, "runs", "reports", "--job")
+			if err == nil {
+				t.Fatalf("the run accepted a document it cannot act on and printed %q", out)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("the refusal is exit %d, want the user error %d: %v", ExitCode(err), ExitUserError, err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("the refusal does not say %q: %v", tc.want, err)
+			}
+			if _, _, ok := f.object(t, f.reportKey("acme/app", "2026-11-01")); ok {
+				t.Error("the refused run wrote a report")
+			}
+		})
 	}
 }
 
