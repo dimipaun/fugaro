@@ -124,6 +124,15 @@ func TestUpdateLeavesARunInFlightRunning(t *testing.T) {
 		t.Errorf("the policy reads as found=%v version=%d after the update, want version %d", found, p.Version, projectpolicy.Version)
 	}
 
+	// The default profile this update writes is a local-config write (S5, R1):
+	// it reaches no run, and the run above keeps its record, its ledger and its
+	// counters (laterWrites below) while the file the next run of this machine
+	// reads carries the profile the policy this same run published names.
+	if pr := updatedConfig(t).Profiles[projectpolicy.DefaultProfileName]; pr.Provider != "github" {
+		t.Errorf("the update wrote profiles.%s = %+v while a run was in flight, want the default profile of the project's github repositories",
+			projectpolicy.DefaultProfileName, pr)
+	}
+
 	run.laterWrites(t, r)
 }
 
