@@ -346,6 +346,16 @@ models)
   cat "$FAKE_JSON_DIR/models.json"
   ;;
 doctor)
+  case "$mode" in
+  doctor-fails)
+    printf 'fugaro: doctor could not read the installation\n' >&2
+    exit 7
+    ;;
+  doctor-exit1)
+    cat "$FAKE_JSON_DIR/doctor.json"
+    exit 1
+    ;;
+  esac
   cat "$FAKE_JSON_DIR/doctor.json"
   ;;
 config)
@@ -990,6 +1000,22 @@ test_dry_run() {
   expect_absent "$gitcalls" "ls-remote" "dry run: the remote is not read"
   assert_no_run "$dir" "dry run"
   assert_scratch_removed "$dir" "dry run"
+}
+
+test_a_doctor_that_exits_1_with_its_document_is_an_answer() {
+  local dir=$work/doctorexit1
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=doctor-exit1
+  expect_status "$status" 0 "a doctor that exits 1 with its document"
+  expect_contains "$out" "belongs to ${project}, and its origin is acme/sandbox" "a doctor that exits 1 with its document: the project it read"
+}
+
+test_a_doctor_that_does_not_answer_is_not_measured() {
+  local dir=$work/doctorfail
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=doctor-fails
+  expect_status "$status" 2 "a doctor that does not answer"
+  expect_contains "$out" "FACT sandbox: FAIL" "a doctor that does not answer: the row"
 }
 
 test_happy_path() {
@@ -1953,6 +1979,8 @@ t() {
 t test_help
 t test_dry_run
 t test_happy_path
+t test_a_doctor_that_exits_1_with_its_document_is_an_answer
+t test_a_doctor_that_does_not_answer_is_not_measured
 t test_a_launch_loop_reaches_the_pair_after_its_first_samples
 t test_the_teardown_closes_the_pull_request_and_deletes_the_branch
 t test_a_missing_sandbox_is_refused

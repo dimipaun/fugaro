@@ -851,7 +851,8 @@ step_release() {
   local v feature=no
   v=$("$FUGARO_BIN" version 2>/dev/null | head -n 1 || true)
   fact "fugaro-version" PASS "${v:-fugaro version printed nothing}"
-  if "$FUGARO_BIN" ab --help 2>/dev/null | grep -q -- '--since'; then feature=yes; fi
+  ab_help=$("$FUGARO_BIN" ab --help 2>/dev/null || true)
+  if printf '%s' "$ab_help" | grep -q -- '--since'; then feature=yes; fi
   if [ "$feature" = no ]; then
     fact release FAIL "this fugaro carries no A/B: 'fugaro ab --help' does not name the command's own --since flag, so this build is either older than release ${RELEASE} — the release the pair launch and the judge ship in — or a core build, whose 'ab' is the D522 stub rather than the command. Check 212 needs release ${RELEASE} (docs/releases/v0.24.0.md) or later, built with the features it ships. Run 'fugaro update' at your terminal — that one command is the whole upgrade — and run this check again on the build it leaves you"
     stop "the installed fugaro carries no A/B: this check needs release ${RELEASE}"
@@ -895,7 +896,7 @@ step_sandbox() {
   fi
   say "reading the installation: fugaro doctor --json, in ${SANDBOX}"
   run_bounded "$DOCTOR_TIMEOUT" doctor "$SANDBOX" "$FUGARO_BIN" doctor --json
-  if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
+  if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ] && [ "$BOUNDED_STATUS" != 1 ]; then
     unmeasured sandbox "fugaro doctor --json did not answer in ${SANDBOX} (exit ${BOUNDED_STATUS}): this check cannot read the project this checkout belongs to, and every row below is about that project. Its output is in $SCRATCH/doctor.out and $SCRATCH/doctor.err"
     return 0
   fi
