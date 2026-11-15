@@ -1044,6 +1044,14 @@ func runInit(r *initRun) error {
 				if data, err = infra.CarriedProjectReviewJobs(data, prev); err != nil {
 					return err
 				}
+				// And the shared jobs of the default profiles this config can
+				// no longer compose, which installSpec decided from this same
+				// record and for the same reason.
+				if len(spec.CarriedProjectJobs) > 0 {
+					if data, err = infra.CarriedProjectJobs(data, prev, spec.CarriedProjectJobs); err != nil {
+						return err
+					}
+				}
 			}
 		}
 		// Printed without a cloud call, so without discovery: stdout stays
