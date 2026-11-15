@@ -24,7 +24,7 @@ package credsvc
 //   - a craft this path cannot serve (an inert pool, an OpenRouter access) is
 //     skipped rather than refusing the whole call, because the union is what
 //     every call of every craft is offered and one craft's refusal would take
-//     the other three down with it. A narrowing that leaves NOTHING is the
+//     the other four down with it. A narrowing that leaves NOTHING is the
 //     other case and it is refused, naming every access that contributed
 //     nothing (poolRefusal below);
 //   - the list is narrower than the bundle for every caller, including a shared
