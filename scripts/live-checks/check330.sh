@@ -681,7 +681,9 @@ step_project() {
   if [ "$BOUNDED_TIMED_OUT" = yes ]; then
     stop "fugaro doctor --json did not answer within ${TIMEOUT}s in $SANDBOX"
   fi
-  if [ "$BOUNDED_STATUS" -ne 0 ]; then
+  # doctor exits 1 whenever any of its checks is not ok, warnings included, and
+  # still prints its document; only a timeout or another status is no answer.
+  if [ "$BOUNDED_STATUS" -ne 0 ] && [ "$BOUNDED_STATUS" -ne 1 ]; then
     stop "fugaro doctor --json failed in $SANDBOX (exit $BOUNDED_STATUS): $(said doctor) — the check cannot say which project the sandbox belongs to, and every row below is about that project's runs. Is $SANDBOX the sandbox repository's checkout, with the installed fugaro on PATH?"
   fi
   if ! read_json doctor "$SCRATCH/doctor.out" "$SCRATCH/doctor.txt"; then

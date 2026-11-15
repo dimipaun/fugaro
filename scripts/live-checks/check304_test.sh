@@ -89,6 +89,8 @@ doctor)
     exit "$(cat "$FAKE304_DIR/doctor.status")"
   fi
   cat "$FAKE304_DIR/doctor.json"
+  # exits 1 with its document, as the real doctor does when a check is a warning
+  [ ! -f "$FAKE304_DIR/doctor.exit" ] || exit "$(cat "$FAKE304_DIR/doctor.exit")"
   ;;
 version)
   printf 'fugaro 0.24.0 (Uakari)\n'
@@ -344,6 +346,14 @@ expect_no_fugaro() { # what
 }
 
 # ------------------------------------------------------- the first person's phase
+case_doctor_exit_1() {
+  setup_case doctor-exit-1
+  printf '1\n' >"$dir/state/doctor.exit"
+  run304 first-person --installation "$INSTALLATION" --from "$FIRST" --to "$SECOND"
+  expect_status "$status" 0 "doctor exit 1: the document it printed is the answer"
+  expect_fact installation PASS "doctor exit 1"
+}
+
 case_first_person() {
   setup_case first
   run304 first-person --installation "$INSTALLATION" --from "$FIRST" --to "$SECOND"
@@ -585,7 +595,7 @@ case_name_mismatch() {
 
 case_doctor_refused() {
   setup_case doctorrefused
-  printf '1\n' >"$dir/state/doctor.status"
+  printf '2\n' >"$dir/state/doctor.status"
   run304 first-person --installation "$INSTALLATION" --from "$FIRST" --to "$SECOND"
   expect_status "$status" 2 "doctorrefused: doctor did not answer"
   expect_contains "$out" "doctor --json did not answer" "doctorrefused: the row says so"
@@ -739,6 +749,7 @@ t() {
 }
 
 t case_first_person
+t case_doctor_exit_1
 t case_first_person_verb_spelling
 t case_first_person_named_agent
 t case_second_person
