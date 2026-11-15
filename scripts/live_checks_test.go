@@ -220,7 +220,21 @@ import (
 // program), so a check that forgot to set the marker is caught by the caps
 // moving rather than by a log line. 381's and 382's checkouts are real git work
 // trees with an origin remote, because the repository whose caps are lowered or
-// raised is the one that remote names.
+// raised is the one that remote names. 139 drives a fake `fugaro` that serves
+// the runs list and one run's record out of the case's own files and a fake
+// `gcloud` that serves that run's `model call` entries, with a mode for each
+// state a case bends: a listing whose only settled runs are oauth, one whose
+// gateway runs carry no sub-agent, no entry at all, a stage name carrying two
+// sessions (not a finding: the runner reuses stage names across sessions), a
+// sub-agent id spanning two sessions or sharing a session with an entry whose
+// agent_id is empty (in another stage: the comparison is run-wide), an id seen
+// only on refused entries, a background model that carries an id, a background
+// model the run never called, a background model that is also a stage's own
+// model (the run's effective background, which the row refuses to count), an
+// account, a run or a log view naming belong, a read that fails, hangs or
+// answers something that is not a document, a record naming no execution, a
+// record and a listing that disagree about the execution, a doctor that exits 1
+// (an answer, #2719) and one that does not answer at all.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -281,6 +295,7 @@ var liveCheckScripts = []struct {
 	{"check-381-over-cap-build.sh", "check-381-over-cap-build_test.sh"},
 	{"check-382-agent-cannot-raise-a-cap.sh", "check-382-agent-cannot-raise-a-cap_test.sh"},
 	{"check550.sh", "check550_test.sh"},
+	{"check139.sh", "check139_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
