@@ -9,8 +9,9 @@
 //     whose tables print `website/data/compatibility.yaml`: the 46 rows of names, notes,
 //     statuses and editions that file alone carries (D1537), so the words a reader reads there
 //     are the matrix's own and not a page's prose, and — since 2026-11-15 — `/features/`, whose
-//     one table prints the feature matrix: a row per feature with its name, its status and the
-//     lowest plan it is in (D2448), so the words a reader reads there are the table's and not a
+//     one table prints the feature matrix: a row per feature with its name, what it does in a
+//     sentence or two, its status and a checkmark under each of the three plans (D2440, D2448),
+//     so the words a reader reads there, the explanations included, are the table's and not a
 //     page's prose either. The pages' tasks are each plan's own — the compatibility matrix's
 //     implementation plan (CM2, the task that adds that page and names this file) and the feature
 //     matrix's (T4c, the exemption's own task, which names it too) — and the ceiling itself is

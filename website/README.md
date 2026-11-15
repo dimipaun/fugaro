@@ -1354,8 +1354,10 @@ added or removed without this sentence moving fails there:
     words** on the build of 2026-11-10 — so the words a reader reads there are the matrix's
     own and not a page's prose. `/features/` is the sixth, added on 2026-11-15, before the
     page itself (the feature matrix's plan, Task T4c, which names `test/lib/exempt.mjs`): its
-    one table prints the feature matrix — a row per feature with its name, its status and the
-    lowest plan it is in (D2448) — so the words a reader reads there are the table's and not a
+    one table prints the feature matrix — a row per feature with its name, what it does in a
+    sentence or two, its status, and a checkmark under each of the three plans, since every
+    higher plan than the one a feature is mapped to includes it (D2440 and D2448) — so the words
+    a reader reads there, the explanations included, are the table's and not a
     page's prose either, and the page's lead is still held to the 40-word lead ceiling like
     every other page's. Neither addition moved anything else: D188's own number is untouched and
     the pages that are the site's are the pages it still holds. `/security/` is the one of the
