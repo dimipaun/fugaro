@@ -129,7 +129,132 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 		}
 		out = append(out, c)
 	}
-	return out, strategy, skipped, nil
+	// What the repository's OWN configuration says its runs go out on narrows
+	// the admission once more, and it is read from the record `fugaro update`
+	// wrote rather than from what this call declares (creds/repoauth, D2070 (a),
+	// R7): the declaration is checked against the record and never trusted, and
+	// a repository whose record says something this call does not declare is
+	// refused rather than served the cascade (G16).
+	rec, found, err := s.cfg.State.RepoAuth(ctx, id.Slug)
+	if err != nil {
+		return nil, creds.StrategyFailover, nil, err
+	}
+	var record *creds.RepoAuth
+	if found {
+		record = &rec
+	}
+	out, dropped, err := narrowToRepoAuth(out, record, id.AuthMode, id.AuthAccount)
+	if err != nil {
+		return nil, creds.StrategyFailover, nil, err
+	}
+	return out, strategy, append(skipped, dropped...), nil
+}
+
+// The two auths a non-cascade record may name that this service can serve a
+// call by, spelled as config.AgentAuths spells them.
+const (
+	authModeOAuth  = "oauth"
+	authModeAPIKey = "api-key"
+)
+
+// narrowToRepoAuth narrows a call's admission to what its repository's own
+// recorded auth says it goes out on, and it is the whole of B2.1's boundary.
+//
+// A nil record is a repository no update has recorded, and a `cascade` one is a
+// repository whose runs are the cascade: both keep today's list, because an
+// installation this release has not written, and a repository that asks for the
+// cascade, are served exactly as they were before this narrowing existed.
+//
+// Every other record serves the call only what it names:
+//
+//   - `oauth` keeps the ONE tier-A credential of the declared account, and the
+//     record has to name that account. A record that names none of its own
+//     workflows' accounts is one nothing can be decided from, and a call that
+//     declares an account its repository does not use is refused rather than
+//     served — the paid key beside that subscription is not this repository's.
+//   - `api-key` keeps tier B alone, and no account may be declared beside it: an
+//     account names a subscription, and a call that declares both has declared
+//     two contradictory things.
+//   - any other recorded auth (`vertex`) is refused. The service holds no
+//     credential of that kind — the built-in Vertex credential's calls are the
+//     project's own GCP service and are made where the run authenticates as
+//     vertex — so a repository whose record says so is served nothing here.
+//
+// The mode is checked against the record and not the other way round: a call
+// that declares nothing where its record says `oauth` is refused, which is the
+// case the boundary exists for — the agent holds the run identity, so "I
+// declared nothing" must not be a way to the whole cascade.
+//
+// The list it answers is a narrowing of the admission this function is handed
+// and never a widening of it: the declared account's credential has to be in
+// the list already, so a record can only ever take away from what O4's
+// admission, the crafts and the bundle allowed (G16's direction).
+//
+// A declared account is normalized the way the record's own writer normalizes
+// one (config.ReviewVariantAccount), so the unsuffixed default account may be
+// declared as the empty string or by its name and means the same credential.
+// That is not a hole: the record still has to name the account, so a call that
+// declares none is served the default account only where its repository's own
+// configuration names that account.
+func narrowToRepoAuth(cands []creds.Credential, rec *creds.RepoAuth, mode, account string) ([]creds.Credential, []Tried, error) {
+	if rec == nil || rec.Auth == config.AuthCascade {
+		return cands, nil, nil
+	}
+	if mode != rec.Auth {
+		return nil, nil, &poolRefusal{message: fmt.Sprintf("this repository's recorded auth is %s, and this call %s: the credentials service serves a repository only the auth its own configuration records, and never the cascade (docs/secrets-brokering, D2070)", rec.Auth, declaredAuthText(mode))}
+	}
+	if account != "" && rec.Auth != authModeOAuth {
+		return nil, nil, &poolRefusal{message: fmt.Sprintf("this repository's recorded auth is %s, and this call declares the account %q beside it: an account names a subscription, and the credentials service serves a repository only the auth its own configuration records (docs/secrets-brokering, D2070)", rec.Auth, account)}
+	}
+	switch rec.Auth {
+	case authModeOAuth:
+		account = config.ReviewVariantAccount(account)
+		if !rec.NamesAccount(account) {
+			return nil, nil, &poolRefusal{message: fmt.Sprintf("this repository's recorded auth is oauth, and this call declares the account %q, which its record does not name (it names %s): the credentials service serves a repository only the accounts its own configuration records (docs/secrets-brokering, D2070)", account, rec.AccountText())}
+		}
+		out, dropped := keepCandidates(cands, func(c creds.Credential) bool {
+			return c.Tier == creds.TierA && c.Name == account
+		})
+		if len(out) == 0 {
+			return nil, dropped, &poolRefusal{message: fmt.Sprintf("this repository's recorded auth is oauth and its record names the account %q, and no credential this call may be served by is that account's: the account is not in this service's bundle, or the repository is not admitted to it (docs/secrets-brokering, D2070)", account)}
+		}
+		return out, dropped, nil
+	case authModeAPIKey:
+		out, dropped := keepCandidates(cands, func(c creds.Credential) bool { return c.Tier == creds.TierB })
+		if len(out) == 0 {
+			return nil, dropped, &poolRefusal{message: "this repository's recorded auth is api-key, and this service's bundle holds no paid key to serve it by (docs/secrets-brokering, D2070)"}
+		}
+		return out, dropped, nil
+	}
+	return nil, nil, &poolRefusal{message: fmt.Sprintf("this repository's recorded auth is %s, which the credentials service does not serve a call by: only a repository whose auth is cascade, oauth or api-key is served here (docs/secrets-brokering, D2070)", rec.Auth)}
+}
+
+// declaredAuthText is what a call declared, as one clause of a refusal: the
+// auth by name, or the fact that it declared none. The name is a value of
+// config.AgentAuths and the clause is never the caller's own text.
+func declaredAuthText(mode string) string {
+	if mode == "" {
+		return "declares no auth"
+	}
+	return fmt.Sprintf("declares the auth %q", mode)
+}
+
+// keepCandidates splits a list by one rule, reporting what it dropped as the
+// credentials this call may not be served by (ReasonNotAdmitted, the reason a
+// review caller's list is built by and the reason the crafts' own narrowing
+// reports). The reason set is closed, so a credential a repository's own
+// configuration leaves out is "not admitted" and not a fifth reason.
+func keepCandidates(cands []creds.Credential, keep func(creds.Credential) bool) ([]creds.Credential, []Tried) {
+	out := make([]creds.Credential, 0, len(cands))
+	var dropped []Tried
+	for _, c := range cands {
+		if keep(c) {
+			out = append(out, c)
+			continue
+		}
+		dropped = append(dropped, Tried{Name: c.Name, Tier: wireTier(c.Tier), Reason: ReasonNotAdmitted})
+	}
+	return out, dropped
 }
 
 // reviewOfferings is the set a review caller is offered FROM: the bundle's
@@ -547,7 +672,10 @@ func (s *Server) refuseCallCause(ctx context.Context, w http.ResponseWriter, id 
 	if err := s.auditCall(ctx, id, purpose, credential, tier, typ); err != nil {
 		s.log.Error("credsvc: a refused call could not be audited", "error", err)
 	}
-	s.logRefusal(ctx, id, typ, status, message, cause)
+	// No selection was walked on this path — the refusal is about the call
+	// itself, or about the one credential it named — so the line's tried field
+	// is empty and says nothing about a list there was none of.
+	s.logRefusal(ctx, id, typ, status, message, cause, nil)
 	s.refuse(w, status, typ, message)
 }
 
@@ -730,6 +858,47 @@ const markRefusal = "the credential's state could not be recorded"
 // read it is written beside says in its own word — the selector's marks, the
 // leases or the run's placement — and claims nothing about which.
 const selectionUnreadable = "the credential's state could not be read"
+
+// noCandidatesHead is what a call with nothing to select from is refused with,
+// and it says the fact the old class hid: the state was read, and what it says
+// is that the selection was handed an empty list. It names no credential — no
+// value is ever named in a sentence — and it sends the operator to the list
+// below and to the documents that decide it rather than to the database, which
+// is where `state_unavailable` sent them.
+//
+// It does not say WHICH filter emptied the list, because the reasons on the
+// list say that one credential at a time and a sentence that guessed would be
+// wrong where the list is not: the same class answers a repository its
+// admission leaves nothing, a per-user or project credential a call carries no
+// slip for, and a bundle that holds no model credential at all.
+const noCandidatesHead = "no credential is offered to this call, and the state was read: the list the selection was given was empty"
+
+// noCandidatesMessage is the sentence a call with no candidate is refused with,
+// on the wire and on the operator's own line: the cause, then every credential
+// that was considered with the one reason it was dropped, in the order the
+// candidate list was walked.
+//
+// The list is never clipped: a refusal may name maxTriedEntries credentials and
+// the bundle may hold no more than that (MaxBundleCredentials), every entry
+// here comes from a distinct credential of that bundle, and an account's name is
+// at most config.MaxClaudeAccountNameLen bytes — so a list this service can
+// build is a list the writer will write, and a refusal that fell back to
+// state_unavailable over its own length cannot arise from this path.
+//
+// An empty list is answered as its own sentence rather than as a head with
+// nothing after it: nothing could be considered at all, which is a different
+// failure from every credential this call could be served by having been
+// dropped, and an operator acts on the two differently.
+func noCandidatesMessage(tried []Tried) string {
+	if len(tried) == 0 {
+		// Nothing was dropped because nothing was there to drop, and the only
+		// way to an empty list without a drop is a bundle whose model
+		// credentials are empty: every other filter reports what it removed
+		// (candidates, the slip fence, narrowToRepoAuth).
+		return noCandidatesHead + ": this installation's bundle holds no model credential at all"
+	}
+	return noCandidatesHead + "; considered and dropped: " + triedLine(tried)
+}
 
 // answer writes the upstream's answer to the client, with the headers of this
 // contract on it: the tier, the credential's name, and the switch when this
@@ -920,9 +1089,13 @@ const waitFloor = 15 * time.Second
 
 // refuseSelection turns creds.Select's answer into the client's, and records
 // it (C1.13): one line per refused call, with the refusal's own error type as
-// its status and no credential named, because no single credential was chosen —
-// what was considered, and why each one was skipped, is the run's own answer
-// (the tried list) and not this line's.
+// its status, no credential VALUE (no value is ever named in a line) and the
+// credentials' names and the reason each was skipped beside them, on the
+// service's own line as well as in the run's answer: what was considered is
+// what the operator has to read to see why a repository was served nothing,
+// and the run's line alone would put it where only the run's own reader looks
+// (the WARN line is the operator's, and it is what a repository with no
+// candidate is diagnosed from).
 //
 // The typed answer is the one case the runner acts on rather than halts for:
 // nothing is usable now and something becomes usable at an instant, so the run
@@ -930,6 +1103,11 @@ const waitFloor = 15 * time.Second
 // could not be read, every candidate is broken or held with no time to wait
 // for, or the only credentials that could serve the call are of a tier this
 // policy does not admit (D152, which only a written `fallback: auto` changes).
+//
+// A selection with nothing to select from is refused as what it is
+// (ErrorNoCandidateCredentials) rather than as an unreadable state: the state
+// was read, and what it says is that this repository is admitted no credential
+// at all.
 //
 // The tried list is carried on every refusal this path writes, so the run's
 // halt message names what was considered and why each one was skipped. The
@@ -956,8 +1134,48 @@ func (s *Server) refuseSelection(ctx context.Context, w http.ResponseWriter, id 
 		// same diagnosis (logRefusal). The message is read off the very struct
 		// the answer is written from, so the run and the operator read one
 		// refusal and not two renderings of it.
-		s.logRefusal(ctx, id, ErrorExhaustedUntil, StatusExhaustedUntil, ans.Error(), err)
+		s.logRefusal(ctx, id, ErrorExhaustedUntil, StatusExhaustedUntil, ans.Error(), err, tried)
 		WriteExhaustedUntil(w, ans, now)
+		return
+	}
+	// Nothing to select from is its own refusal, and it is deliberately not
+	// ErrorStateUnavailable: the state WAS read, and what the service read is
+	// that the candidate list this call would be served from is empty.
+	// Answering the "could not be read" class sent the operator to the database
+	// (the owner's installation of 2026-11-14, and Check 191 before it) when the
+	// answer was in the project's policy and the installation's bundle — and it
+	// left the run's answer with an empty tried list, so neither the run nor its
+	// report could say which credential was dropped or why.
+	//
+	// The label is what keeps the two apart, and it is the reason the class is
+	// claimed only where `readOf` is empty: creds.Select answers this error bare
+	// (checkCandidates builds it with errors.New, internal/creds/errors.go), and
+	// every list this service can empty on a FAILED read is refused before the
+	// selector is reached — the bundle load and the candidates build each answer
+	// with their own sentence and their own label (server.go's cascade step). A
+	// policy refusal and a store that could not be read are not the same answer
+	// to an operator, so a labelled error that somehow arrived here keeps the
+	// state_unavailable class below.
+	if errors.Is(err, creds.ErrNoCandidates) && readOf(err) == "" {
+		msg := noCandidatesMessage(tried)
+		if aerr := s.auditCall(ctx, id, PurposeForward, "", "", ErrorNoCandidateCredentials); aerr != nil {
+			s.log.Error("credsvc: a refused call could not be audited", "error", aerr)
+		}
+		// The run and the operator are sent one rendering and not two: a
+		// sentence over the contract's own bound would be a body the writer
+		// refuses, and its fallback is the state_unavailable mis-diagnosis this
+		// branch exists to end — but this list cannot reach that bound. A tried
+		// entry is one credential of a bundle, the bundle holds at most
+		// maxTriedEntries of them (MaxBundleCredentials), an account's name is
+		// at most config.MaxClaudeAccountNameLen bytes, and the longest reason
+		// is a dozen more, so the whole rendering stays far inside it. A test
+		// holds the two bounds to each other (TestCascadeNoCandidatesAtTheListBound).
+		s.logRefusal(ctx, id, ErrorNoCandidateCredentials, StatusUnavailable, msg, err, tried)
+		WriteWireError(w, StatusUnavailable, WireError{
+			Error:   ErrorNoCandidateCredentials,
+			Message: msg,
+			Tried:   tried,
+		})
 		return
 	}
 	if aerr := s.auditCall(ctx, id, PurposeForward, "", "", ErrorStateUnavailable); aerr != nil {
@@ -974,7 +1192,7 @@ func (s *Server) refuseSelection(ctx context.Context, w http.ResponseWriter, id 
 	if readOf(err) != "" {
 		msg = selectionUnreadable
 	}
-	s.logRefusal(ctx, id, ErrorStateUnavailable, StatusUnavailable, msg, err)
+	s.logRefusal(ctx, id, ErrorStateUnavailable, StatusUnavailable, msg, err, tried)
 	WriteWireError(w, StatusUnavailable, WireError{
 		Error:   ErrorStateUnavailable,
 		Message: err.Error(),

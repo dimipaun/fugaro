@@ -39,7 +39,7 @@ func TestUpdateSkill(t *testing.T) {
 	if n := strings.Count(skill, "```bash user-runs"); n != 1 {
 		t.Errorf("SKILL.md hands the user %d commands, want exactly one", n)
 	}
-	for _, bad := range []string{"claude plugin install", "claude plugin update", "claude plugin marketplace", "image refresh --yes", "--dangerously", "allowed-tools"} {
+	for _, bad := range []string{"claude plugin install", "claude plugin update", "claude plugin marketplace", "--dangerously", "allowed-tools"} {
 		if strings.Contains(skill+states, bad) {
 			t.Errorf("the skill names %q", bad)
 		}

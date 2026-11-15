@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -69,6 +70,12 @@ type Tick struct {
 	// cycle triages nothing at all, which is the direction a daemon that was
 	// given no host, no run storage and no log fails in.
 	Triage TriageSeams
+	// Decide is what this cycle reaches the decision agent through (O13): the
+	// agent itself and the log the fence is read from. Left unset the cycle
+	// judges nothing, which is where a daemon that was not started with
+	// `--decide` stands: the flag is off by default, and a daemon without it
+	// makes no model call however many judgement cases its node carries.
+	Decide DecideSeams
 	// Now is the database server's clock (rtdb.ServerNow). Every stamp a cycle
 	// writes comes from it, and a cycle that cannot read it refuses rather
 	// than stamping anything with this machine's clock (D1230).
@@ -89,6 +96,18 @@ type Report struct {
 	// under the threshold — is not counted, and neither is one whose line the
 	// log already carries.
 	Triaged int
+	// Decided is how many judgements the cycle made: the cases it handed the
+	// decision agent and had answered. It is one a cycle at most (the decide
+	// step is one call per cycle by design).
+	Decided int
+	// DecideOutcome is how the call this cycle made reads for the breaker —
+	// O12's own reading of it (G10) — and empty for a cycle that made none.
+	DecideOutcome CycleOutcome
+	// DecideErr is that call's own failure. It never fails the cycle: the fold,
+	// the carry and the triage that came before it stand, and what a judgement
+	// the agent could not make costs is the cycle's own outcome, which the
+	// breaker counts.
+	DecideErr error
 	// NotifyErr is a notification a sink would not take. It never fails the
 	// cycle: what a cycle must not lose is the write behind the notification.
 	NotifyErr error
@@ -173,6 +192,9 @@ func (c *cycle) run(ctx context.Context) error {
 	if err := c.triage(ctx); err != nil {
 		return err
 	}
+	if err := c.decide(ctx, viewOf(reports)); err != nil {
+		return err
+	}
 	c.rep.Outcome = c.outcome()
 	return nil
 }
@@ -222,10 +244,18 @@ func (c *cycle) carry(ctx context.Context, view RunView) error {
 // or carried something moved the work, a cycle with an attempt that has not
 // reported is waiting on a run — never a failure, however many ticks of one run
 // go by (D1228) — and anything else did nothing at all.
+//
+// A judgement counts as work when it landed — Decided is the case the agent
+// answered and the patch it landed is committed — and a cycle whose only news
+// is a call is read by what the call came to: a call that failed or answered
+// nothing is what the breaker counts (G10), and a cycle that also folded a run
+// is progress whatever the call beside it came to.
 func (c *cycle) outcome() CycleOutcome {
 	switch {
-	case c.rep.Folded > 0 || c.rep.Carried > 0 || c.rep.Triaged > 0:
+	case c.rep.Folded > 0 || c.rep.Carried > 0 || c.rep.Triaged > 0 || c.rep.Decided > 0:
 		return CycleProgress
+	case c.rep.DecideOutcome != "":
+		return c.rep.DecideOutcome
 	case hasOpenIntent(c.state):
 		return CycleInFlight
 	}
@@ -674,4 +704,325 @@ func mergeRefusedQuestion(target TriageTarget, code string) string {
 		return "The triage will not land the pull request of run " + target.RunID + " by itself: the changed paths it judged are the run's own account of its diff, and no host read of the judged head corroborates them (" + code + "). Read the diff and land it yourself, or close it."
 	}
 	return "The triage could not land the pull request of run " + target.RunID + " (" + code + "). Decide what happens to it."
+}
+
+// DecideSeams is what one cycle reaches the decision agent through (O13): the
+// agent itself and the log the fence is read from. Both or neither — a Tick
+// built with neither judges nothing, which is where a daemon that was not
+// started with `--decide` stands.
+//
+// The agent is an interface here and an implementation in internal/cli, the way
+// the triage's actor is: the package that makes a decision call (O12's
+// internal/orchestrator/decide) imports this one, so the seam has to be named
+// on this side of that import.
+type DecideSeams struct {
+	Agent Decider
+	Log   DecideLog
+}
+
+// Set reports whether every seam is there.
+func (s DecideSeams) Set() bool { return s.Agent != nil && s.Log != nil }
+
+// WakeReason is why a cycle woke the decision agent: one of the three cases the
+// spec's own table hands the LLM rather than code ("When to wake the LLM",
+// spec.md). Every other row of that table is code and never reaches this file's
+// list of cases — a heartbeat and a progress ping are the run view's own
+// readings, a completed task is a fold, and a task that failed for the first
+// time is the retry a person's approval already covers (O6) — which is the
+// whole of what keeps a daemon from re-creating the sweep's cost at a smaller
+// constant (D1221).
+type WakeReason string
+
+const (
+	// WakeRetriesExhausted is the spec's "task failed, retries exhausted": an
+	// item whose phase is failed, whose approval is spent, and whose newest
+	// attempt under that approval ended failed. Nothing in this package moves
+	// such an item — another attempt needs a person's approval (D1226), and
+	// recovery has nothing to re-issue because the attempt reported.
+	WakeRetriesExhausted WakeReason = "retries-exhausted"
+	// WakeStuck is the spec's "task stuck past timeout": an attempt that has
+	// not reported, whose run never started, older than the window its claim is
+	// good for (ClaimTTL). Recovery re-issues it, which is the deterministic
+	// half (D1231); the judgement is what is left for an attempt that is still
+	// not going.
+	//
+	// A run that started and has not reported is the other row of that table —
+	// a heartbeat, which is code's, however long it goes — and a run past the
+	// ladder's own ceiling is the long-run triage's (O14b, code by D1244).
+	WakeStuck WakeReason = "stuck"
+	// WakeAmbiguousResult is the spec's "ambiguous review result": an item in a
+	// phase an attempt is still expected from, whose newest attempt reported an
+	// outcome that phase has no move for (state.go's CanMoveTo), so the fold
+	// recorded the ending and left the phase where it stood (foldOps). The
+	// run's result is on the node, and nothing reads it as a phase of the item.
+	WakeAmbiguousResult WakeReason = "ambiguous-result"
+)
+
+// DecideCase is one judgement a cycle hands the decision agent: the item the
+// spec's table names a wake for, why code will not decide it, and the attempt
+// the case is about. Every case is about one attempt, so the id its fence
+// derives is that attempt's own and a later attempt is a case of its own.
+type DecideCase struct {
+	ItemID  string
+	Reason  WakeReason
+	Attempt Intent
+}
+
+// Decider is the decision agent as one cycle reaches it (O12). It is handed the
+// state the cycle read — never a state to write — and answers what to commit.
+type Decider interface {
+	// Decide makes one judgement about one case.
+	//
+	// The error is the call's own failure, and a caller reports it on the cycle
+	// rather than raising it out of one: the fold, the carry and the triage that
+	// came before this step stand, and what a judgement the agent could not make
+	// costs is the cycle's outcome, which the breaker counts (G10, D1228).
+	Decide(ctx context.Context, state State, c DecideCase) (DecideResult, error)
+}
+
+// DecideResult is what one wake came to.
+type DecideResult struct {
+	// Next is the state to commit — O12's record of the call and the patch it
+	// judged — or the zero State for a call that was never made: the caps
+	// refused it, the state carried no such item, or the call's own record had
+	// no room in it. Nothing else here is read from a zero one.
+	Next State
+	// Outcome is how the cycle reads the wake, in the breaker's vocabulary,
+	// and empty for a call that was never made. A refusal is not a cycle that
+	// achieved nothing, and counting one would stop the loop over a bound that
+	// is doing its job (O12's own reading).
+	Outcome CycleOutcome
+	// Answered reports whether the agent answered the case: a call was made and
+	// an answer was read, whatever that answer asked for — an answer that asks
+	// for no change is a judgement, "there is nothing to do about this item"
+	// being the answer to the question.
+	//
+	// An answered case is fenced: the log's line is written and it is never
+	// judged again. A case the agent did not answer is left for the next cycle,
+	// which is what lets a call that keeps failing reach the caps and the
+	// breaker instead of being asked once and forgotten.
+	Answered bool
+	// Text is the judgement for the log's line: the class and the model it ran
+	// as with what the model reasoned.
+	Text string
+}
+
+// Called reports whether the wake made a call at all: whether there is a state
+// to commit — O12's record of it — and whether an answer could have been read.
+// The runner answers the zero State for a call it never made, and no state this
+// package validates carries an empty agent id (validate.go).
+func (r DecideResult) Called() bool { return r.Next.AgentID != "" }
+
+// DecideLog is O3's audit log as the decide step writes it: Judged answers
+// whether a case's line is already there, which is the whole of the
+// idempotence — a repeated cycle judges one attempt once, and the line it wrote
+// is the evidence of what was judged — and Append writes one line under the id
+// the case derives.
+//
+// The line is evidence and not a lock (audit.go). What it fences is the wake,
+// which is money and a model call; what it does not fence is the answer, whose
+// ops go through Apply under the DecisionAgent class and are refused there
+// however an answer words them (G1, F20).
+type DecideLog interface {
+	Judged(ctx context.Context, id string) (bool, error)
+	Append(ctx context.Context, entry Entry) error
+}
+
+// decideTransition is the transition of the line a case's fence is read by: the
+// reason and the attempt's own number, so one attempt is judged once and a
+// later attempt of the same item is a case of its own. It is spelled in the
+// log's own alphabet — a transition is a lowercase name (audit.go) — and the
+// reasons above are lowercase names joined with hyphens already.
+func decideTransition(c DecideCase) string {
+	return "decide-" + string(c.Reason) + "-" + strconv.Itoa(IntentAttempt(c.Attempt.ID))
+}
+
+// DecideAuditID is the derived id of a case's own line (EntryID): what the
+// cycle reads before it wakes the agent, and the write that fences the case.
+func DecideAuditID(c DecideCase) string { return EntryID(c.ItemID, decideTransition(c)) }
+
+// judgementCases is the cycle's list of the judgements the spec's table hands
+// the LLM, in the order that table states them and never in the order the node
+// happens to carry its items: the cases are tried in the order below, so the
+// one call a cycle may make goes to the case the table puts first.
+//
+// A case is one attempt of one item, and the three readers below are disjoint:
+// a failed item with nothing left has no open attempt and no active phase, an
+// attempt that never started has not reported, and an attempt that reported is
+// not one the claim window is about.
+func judgementCases(s State, view RunView, now time.Time) []DecideCase {
+	var out []DecideCase
+	for _, w := range s.WorkItems {
+		if it, ok := retriesExhausted(s, w); ok {
+			out = append(out, DecideCase{ItemID: w.ID, Reason: WakeRetriesExhausted, Attempt: it})
+		}
+	}
+	for _, w := range s.WorkItems {
+		if it, ok := stuckAttempt(s, view, w, now); ok {
+			out = append(out, DecideCase{ItemID: w.ID, Reason: WakeStuck, Attempt: it})
+		}
+	}
+	for _, w := range s.WorkItems {
+		if it, ok := ambiguousResult(s, w); ok {
+			out = append(out, DecideCase{ItemID: w.ID, Reason: WakeAmbiguousResult, Attempt: it})
+		}
+	}
+	return out
+}
+
+// retriesExhausted is the spec's "task failed, retries exhausted" read at this
+// release's state: the item's phase is failed, no approval stands over it, and
+// the newest attempt the approval it spent ended failed.
+//
+// The spent marker is what makes the case the daemon's own: an item a person or
+// a session moved to failed writes none, and the daemon asks no model about a
+// judgement somebody already made about the item.
+func retriesExhausted(s State, w WorkItem) (Intent, bool) {
+	if w.Phase != PhaseFailed || w.Approved != nil || w.SpentApprovalAt == nil {
+		return Intent{}, false
+	}
+	_, covered, ok := approvalAttempts(s, w.ID, *w.SpentApprovalAt)
+	if !ok {
+		return Intent{}, false
+	}
+	newest, ok := newestUnder(s, w.ID, *w.SpentApprovalAt, covered)
+	if !ok || newest.Outcome != OutcomeFailed {
+		return Intent{}, false
+	}
+	return newest, true
+}
+
+// stuckAttempt is the spec's "task stuck past timeout" read at this release's
+// state: an attempt that has not reported, whose run never started, older than
+// the window a claim is good for (ClaimTTL) — this release's timeout for a task
+// that was on its way and has not arrived.
+//
+// The run id is read in the view the cycle already has and never asked for
+// again: a run the view says nothing about is one that never started, which is
+// the same answer recovery acts on.
+func stuckAttempt(s State, view RunView, w WorkItem, now time.Time) (Intent, bool) {
+	it, ok := openIntentOf(s, w.ID)
+	if !ok || view.Run(it.RunID).Started {
+		return Intent{}, false
+	}
+	if now.Sub(it.At) < ClaimTTL {
+		return Intent{}, false
+	}
+	return it, true
+}
+
+// ambiguousResult is the spec's "ambiguous review result" read at this
+// release's state: an item an attempt of which reported an outcome the item's
+// own phase table has no move for, so the fold recorded the ending and left the
+// phase where it stood — the run's result is on the node and nothing reads it
+// as a phase.
+//
+// Only the item's newest attempt is read, whatever approval or recipe it ran
+// under: it is the item's last word. And only while the item stands in a phase
+// an attempt is still expected from (queued, running, review): the four phases
+// outside those are a person's or a session's own word about the item — done,
+// failed, blocked, cancelled — and the daemon asks no model to overrule one.
+func ambiguousResult(s State, w WorkItem) (Intent, bool) {
+	if !w.Phase.active() {
+		return Intent{}, false
+	}
+	newest, ok := newestAttempt(s, w.ID)
+	if !ok || newest.Outcome == "" {
+		return Intent{}, false
+	}
+	phase, known := foldPhase(newest.Outcome)
+	if !known || w.Phase.CanMoveTo(phase) {
+		return Intent{}, false
+	}
+	return newest, true
+}
+
+// newestAttempt is the newest attempt recorded for one item, whatever approval
+// or recipe it ran under, and false when the item has none. It is the reader
+// for a question about the item itself; newestUnder is the narrower one a plan
+// reads, because what an approval covers is not everything an item ran.
+func newestAttempt(s State, itemID string) (Intent, bool) {
+	newest, found := Intent{}, false
+	for _, it := range s.Intents {
+		if IntentItem(it.ID) != itemID {
+			continue
+		}
+		if !found || IntentAttempt(it.ID) > IntentAttempt(newest.ID) {
+			newest, found = it, true
+		}
+	}
+	return newest, found
+}
+
+// decide is one cycle's turn at the decision agent (O13): the judgement cases
+// the spec's table names, and at most one call a cycle.
+//
+// One call and not one per case, because every call is a fresh child on the
+// person's own login: a node with six stuck items is six judgements, and the
+// caps would let one tick spend the hour's whole allowance. The cases are tried
+// in the table's own order (judgementCases), the first one the log does not
+// already carry is the one this cycle spends on, and the rest are left for the
+// cycles after it — each of which re-derives them from the node it reads
+// (D1229).
+//
+// A paused daemon judges nothing: the breaker's question stands unanswered on
+// the node and the pause is a person's (D1228). A daemon that may not spend does
+// not judge either — the kill switch is the person's stop, and a model call is
+// money — and neither does one whose node is no longer this cycle's to write,
+// because the ops an answer asks for are committed against that node.
+func (c *cycle) decide(ctx context.Context, view RunView) error {
+	if !c.tick.Decide.Set() || !c.fresh || c.tick.Caps.KillSwitch || BreakerOpen(c.state) {
+		return nil
+	}
+	for _, k := range judgementCases(c.state, view, c.now) {
+		judged, err := c.tick.Decide.Log.Judged(ctx, DecideAuditID(k))
+		if err != nil {
+			return err
+		}
+		if judged {
+			continue
+		}
+		return c.judge(ctx, k)
+	}
+	return nil
+}
+
+// judge hands one case to the agent, commits what it answered and writes the
+// line that fences it.
+//
+// The order is the rule's, and it is the triage's own: the state first — O12's
+// record of the call is on the node before the answer is read, which is what
+// makes the caps count a call whose answer was refused — and the line last, so
+// a cycle that died in the call leaves the case unfenced and the next one
+// reaches it again. A line is therefore only ever written for a judgement that
+// happened, and a lost write fails in the direction of judging again rather
+// than of never judging at all.
+func (c *cycle) judge(ctx context.Context, k DecideCase) error {
+	res, err := c.tick.Decide.Agent.Decide(ctx, c.state, k)
+	if err != nil {
+		c.rep.DecideErr = errors.Join(c.rep.DecideErr, err)
+	}
+	if res.Outcome != "" {
+		c.rep.DecideOutcome = res.Outcome
+	}
+	if res.Called() {
+		// The call's own record is committed whatever became of the answer: the
+		// call was made and the money is spent, and the caps count the state's
+		// decisions rather than the model's replies (O12).
+		if err := c.commit(ctx, res.Next); err != nil {
+			return err
+		}
+	}
+	if !res.Answered {
+		return nil
+	}
+	if err := c.tick.Decide.Log.Append(ctx, Entry{
+		Subject:    k.ItemID,
+		Transition: decideTransition(k),
+		Text:       res.Text,
+	}); err != nil {
+		return err
+	}
+	c.rep.Decided++
+	return nil
 }

@@ -112,7 +112,7 @@ Run it as an operator, with your own credentials. A coding agent's session is
 refused, and so is a Fugaro run's process. The permission you give is the
 PROJECT_ID argument itself: naming the exact GCP project ID on the command line
 is the declaration that this project is managed (design D1541), and nothing is
-typed at a prompt — this command registers no --yes and no --non-interactive,
+typed at a prompt — this command takes no flag at all,
 so no flag stands in for naming the project either.
 
 PROJECT_ID must be the exact GCP project ID of the installation selected by

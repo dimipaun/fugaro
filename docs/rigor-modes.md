@@ -254,8 +254,8 @@ terminal, and no flag changes its answer. At that terminal, adding a mode the
 file does not carry, or a level a mode's floor does not carry, is the ordinary
 write — it can only require more review, and it prints the sentence naming the
 change. Dropping a level, or removing a mode's entry, is a whole project
-reviewing less: it prints what it widens, and it asks nothing either, as
-`--yes` says on both subcommands.
+reviewing less: it prints what it widens, and it asks nothing either, on either
+subcommand.
 
 **The floor is outside every layer and only tightens.** `poc`, `startup`, `pro`,
 `critical` and `hotfix` are all under it: a floor of `l2` on `poc` runs the senior

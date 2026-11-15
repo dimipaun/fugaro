@@ -334,6 +334,13 @@ func (c cliResult) String() string {
 // checkout, with no terminal on stdin.
 func (r *initRepoRig) fugaroInit(t *testing.T, args ...string) cliResult {
 	t.Helper()
+	return r.fugaroInitTyped(t, "", args...)
+}
+
+// fugaroInitNoTerminal is fugaro update with nobody at a terminal: what a
+// coding agent's session or a pipe has, where no step is confirmed.
+func (r *initRepoRig) fugaroInitNoTerminal(t *testing.T, args ...string) cliResult {
+	t.Helper()
 	return r.fugaroInitIn(t, nil, args...)
 }
 
@@ -610,7 +617,7 @@ func (r *initRepoRig) localConfig(t *testing.T) *localcfg.Config {
 func TestUpdateAdoptsBootstrapResources(t *testing.T) {
 	r := sandboxRig(t)
 	r.bootstrap(t)
-	res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build")
+	res := r.fugaroInit(t, "--repo", r.checkout, "--no-build")
 	if res.code != 0 {
 		t.Fatal(res)
 	}
@@ -671,7 +678,7 @@ func TestUpdateAdoptsBootstrapResources(t *testing.T) {
 
 func TestUpdateFreshPrintsSecrets(t *testing.T) {
 	r := sandboxRig(t)
-	res := r.fugaroInit(t, "--repo", r.checkout, "--yes")
+	res := r.fugaroInit(t, "--repo", r.checkout)
 	if res.code != 0 {
 		t.Fatal(res)
 	}
@@ -759,7 +766,7 @@ func TestUpdateRecordsVertex(t *testing.T) {
 	r := newInitRepoRig(t, "acme/sandbox", "https://bitbucket.org/acme/sandbox.git", func(y string) string {
 		return strings.Replace(y, "auth: oauth", "auth: vertex", 1)
 	})
-	res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build")
+	res := r.fugaroInit(t, "--repo", r.checkout, "--no-build")
 	if res.code != 0 {
 		t.Fatal(res)
 	}
@@ -770,13 +777,13 @@ func TestUpdateRecordsVertex(t *testing.T) {
 		t.Errorf("no warning to enable the Vertex AI API:\n%s", res)
 	}
 	// Recorded, it isn't repeated.
-	res = r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build")
+	res = r.fugaroInit(t, "--repo", r.checkout, "--no-build")
 	if res.code != 0 || strings.Contains(res.stdout, "Vertex AI API") {
 		t.Errorf("the second run:\n%s", res)
 	}
 	// An oauth repository records nothing.
 	r = sandboxRig(t)
-	if res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build"); res.code != 0 || r.localConfig(t).Repos["acme/sandbox"].Vertex || strings.Contains(res.stdout, "Vertex AI API") {
+	if res := r.fugaroInit(t, "--repo", r.checkout, "--no-build"); res.code != 0 || r.localConfig(t).Repos["acme/sandbox"].Vertex || strings.Contains(res.stdout, "Vertex AI API") {
 		t.Errorf("an oauth repository:\n%s", res)
 	}
 }
@@ -790,7 +797,7 @@ func TestUpdateWarnsBaseImageOutsideBaseRegistry(t *testing.T) {
 	if err := os.WriteFile(r.cfg, []byte(strings.Replace(r.cfgText, initRepoBaseImage, legacy, 1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build")
+	res := r.fugaroInit(t, "--repo", r.checkout, "--no-build")
 	if res.code != 0 {
 		t.Fatal(res)
 	}
@@ -799,7 +806,7 @@ func TestUpdateWarnsBaseImageOutsideBaseRegistry(t *testing.T) {
 	}
 	// The one in the base registry passes silently.
 	r = sandboxRig(t)
-	if res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build"); res.code != 0 || strings.Contains(res.stdout, "base registry") {
+	if res := r.fugaroInit(t, "--repo", r.checkout, "--no-build"); res.code != 0 || strings.Contains(res.stdout, "base registry") {
 		t.Errorf("a base image in the base registry:\n%s", res)
 	}
 }
@@ -819,7 +826,7 @@ func TestUpdateLeavesInstallationWorkdir(t *testing.T) {
 		t.Fatal(err)
 	}
 	testutil.WriteFiles(t, root, files)
-	res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build")
+	res := r.fugaroInit(t, "--repo", r.checkout, "--no-build")
 	if res.code != 0 {
 		t.Fatal(res)
 	}
@@ -901,7 +908,7 @@ func TestUpdateRefusesForeign(t *testing.T) {
 	r := sandboxRig(t)
 	id := r.spec.Secrets["bitbucket-token"]
 	r.sm.Seed(id, withLabels(managedLabels, gcp.LabelRepo, "someone-else", gcp.LabelSecret, "bitbucket-token"), []byte("v"))
-	res := r.fugaroInit(t, "--repo", r.checkout, "--yes")
+	res := r.fugaroInit(t, "--repo", r.checkout)
 	if res.code != 1 {
 		t.Fatalf("want exit 1:\n%s", res)
 	}
@@ -934,7 +941,7 @@ func TestUpdateIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	first := r.fugaroInit(t, "--repo", r.checkout, "--yes")
+	first := r.fugaroInit(t, "--repo", r.checkout)
 	if first.code != 0 {
 		t.Fatal(first)
 	}
@@ -970,7 +977,7 @@ func TestUpdateGitHubNeedsAppID(t *testing.T) {
 		return strings.Replace(y, "provider: bitbucket, base_branch: master", "provider: github, base_branch: main", 1)
 	})
 	before := r.requests()
-	res := r.fugaroInit(t, "--repo", r.checkout, "--yes")
+	res := r.fugaroInit(t, "--repo", r.checkout)
 	if res.code != 1 || !strings.Contains(res.stderr, "--github-app-id") {
 		t.Fatalf("want exit 1 naming --github-app-id:\n%s", res)
 	}
@@ -1080,7 +1087,7 @@ func exists(t *testing.T, b *blobx.Bucket, key string) bool {
 func TestUpdateRefusesForgottenInstallation(t *testing.T) {
 	r := sandboxRig(t)
 	r.script(t, "installation", -1, map[string]any{"output": map[string]any{"stdout": installationOutputs(t)}, "show": map[string]any{"stdout": stateEmpty}})
-	res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build")
+	res := r.fugaroInit(t, "--repo", r.checkout, "--no-build")
 	if res.code != 1 || !strings.Contains(res.stderr, "run fugaro setup first") || !strings.Contains(res.stderr, "forgotten") {
 		t.Fatalf("fugaro update --repo on a forgotten installation:\n%s", res)
 	}
@@ -1104,7 +1111,7 @@ func TestUpdateRefusesInstallationWithoutTagMover(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.script(t, "installation", -1, map[string]any{"output": map[string]any{"stdout": string(b)}, "show": map[string]any{"stdout": installationStateManaged}})
-	res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build")
+	res := r.fugaroInit(t, "--repo", r.checkout, "--no-build")
 	if res.code != 1 || !strings.Contains(res.stderr, "run fugaro setup first") || !strings.Contains(res.stderr, "tag_mover") {
 		t.Fatalf("fugaro update --repo on an installation without the tag mover role:\n%s", res)
 	}
@@ -1127,7 +1134,7 @@ func TestUpdateRefusesUnnamedInstallation(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.script(t, "installation", -1, map[string]any{"output": map[string]any{"stdout": string(b)}, "show": map[string]any{"stdout": installationStateManaged}})
-	res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build")
+	res := r.fugaroInit(t, "--repo", r.checkout, "--no-build")
 	if res.code != 1 || !strings.Contains(res.stderr, "the installation has no project name") || !strings.Contains(res.stderr, "fugaro setup --name "+initRepoProjectName) {
 		t.Fatalf("fugaro update --repo on an unnamed installation:\n%s", res)
 	}
@@ -1138,12 +1145,12 @@ func TestUpdateRefusesUnnamedInstallation(t *testing.T) {
 
 func TestUpdateForget(t *testing.T) {
 	r, state, key := forgetRig(t)
-	// Without a confirmation, nothing is forgotten.
-	res := r.fugaroInit(t, "--repo", r.checkout, "--forget")
+	// Without a terminal, nothing is forgotten.
+	res := r.fugaroInitNoTerminal(t, "--repo", r.checkout, "--forget")
 	if res.code != 1 || count(r.calls(t), "repo state rm module.repo") != 0 || !exists(t, state, key) {
 		t.Fatalf("forgot without a confirmation:\n%s\n%q", res, r.calls(t))
 	}
-	res = r.fugaroInit(t, "--repo", r.checkout, "--forget", "--yes")
+	res = r.fugaroInit(t, "--repo", r.checkout, "--forget")
 	if res.code != 0 {
 		t.Fatal(res)
 	}
@@ -1189,10 +1196,10 @@ func TestUpdateForgetThenReinitImports(t *testing.T) {
 	r.logs.AddBucket(initRepoProject, "global", infra.LogBucket, "DELETE_REQUESTED", infra.LogBucketDescription)
 
 	// The rollback: the repository, then the installation.
-	if res := r.fugaroInit(t, "--repo", r.checkout, "--forget", "--yes"); res.code != 0 {
+	if res := r.fugaroInit(t, "--repo", r.checkout, "--forget"); res.code != 0 {
 		t.Fatal(res)
 	}
-	if res := r.fugaroInit(t, "--forget", "--yes"); res.code != 0 {
+	if res := r.fugaroInit(t, "--forget"); res.code != 0 {
 		t.Fatal(res)
 	}
 	if calls := r.calls(t); count(calls, "repo state rm module.repo") != 1 || count(calls, "installation state rm module.installation") != 1 {
@@ -1202,8 +1209,8 @@ func TestUpdateForgetThenReinitImports(t *testing.T) {
 	// A retry before the undelete is refused, naming the undelete, and
 	// plans nothing.
 	plans := count(r.calls(t), "installation plan")
-	res := r.fugaroInit(t, "--yes")
-	if res.code != 1 || !strings.Contains(res.stderr, infra.LogBucketUndelete(initRepoProject)) {
+	res := r.fugaroInit(t)
+	if res.code != 1 || !strings.Contains(res.stdout+res.stderr+logNamedIn(t, res.stdout), infra.LogBucketUndelete(initRepoProject)) {
 		t.Fatalf("a retry with the log bucket pending deletion:\n%s", res)
 	}
 	if count(r.calls(t), "installation plan") != plans {
@@ -1212,7 +1219,7 @@ func TestUpdateForgetThenReinitImports(t *testing.T) {
 
 	// Once undeleted, the retry imports every installation resource.
 	r.logs.AddBucket(initRepoProject, "global", infra.LogBucket, "ACTIVE", infra.LogBucketDescription)
-	if res := r.fugaroInit(t, "--yes"); res.code != 0 {
+	if res := r.fugaroInit(t); res.code != 0 {
 		t.Fatal(res)
 	}
 	p := "projects/" + initRepoProject + "/"
@@ -1231,7 +1238,7 @@ func TestUpdateForgetThenReinitImports(t *testing.T) {
 
 	// And fugaro update --repo imports the Scheduler job, in the scheduler region,
 	// with the rest of the repository.
-	if res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build"); res.code != 0 {
+	if res := r.fugaroInit(t, "--repo", r.checkout, "--no-build"); res.code != 0 {
 		t.Fatal(res)
 	}
 	web := spec.Workflows["web"]
@@ -1257,7 +1264,7 @@ func TestUpdateForgetThenReinitImports(t *testing.T) {
 func TestUpdateForgetResumesAfterPartialFailure(t *testing.T) {
 	r, state, key := forgetRig(t)
 	r.gcs.FailObjectDeletes(1)
-	res := r.fugaroInit(t, "--repo", r.checkout, "--forget", "--yes")
+	res := r.fugaroInit(t, "--repo", r.checkout, "--forget")
 	if res.code != 2 || !strings.Contains(res.stderr, "rerun fugaro update --repo --forget") {
 		t.Fatalf("want exit 2 asking for a rerun:\n%s", res)
 	}
@@ -1269,7 +1276,7 @@ func TestUpdateForgetResumesAfterPartialFailure(t *testing.T) {
 		"show":     map[string]any{"stdout": stateEmpty},
 		"state rm": map[string]any{"exit": 1, "stderr": "Invalid target address: No matching objects found"},
 	})
-	res = r.fugaroInit(t, "--repo", r.checkout, "--forget", "--yes")
+	res = r.fugaroInit(t, "--repo", r.checkout, "--forget")
 	if res.code != 0 {
 		t.Fatal(res)
 	}
@@ -1283,7 +1290,7 @@ func TestUpdateForgetResumesAfterPartialFailure(t *testing.T) {
 		t.Errorf("the state object is still there")
 	}
 	// And then there is nothing left to forget.
-	res = r.fugaroInit(t, "--repo", r.checkout, "--forget", "--yes")
+	res = r.fugaroInit(t, "--repo", r.checkout, "--forget")
 	if res.code != 1 || !strings.Contains(res.stderr, "nothing to forget") {
 		t.Errorf("a third run:\n%s", res)
 	}
@@ -1295,7 +1302,7 @@ func TestUpdateForgetStateRmFailsKeepsObject(t *testing.T) {
 		"show":     map[string]any{"stdout": stateManaged},
 		"state rm": map[string]any{"exit": 1, "stderr": "Error acquiring the state lock"},
 	})
-	res := r.fugaroInit(t, "--repo", r.checkout, "--forget", "--yes")
+	res := r.fugaroInit(t, "--repo", r.checkout, "--forget")
 	if res.code != 2 {
 		t.Fatalf("want exit 2:\n%s", res)
 	}
@@ -1307,7 +1314,7 @@ func TestUpdateForgetStateRmFailsKeepsObject(t *testing.T) {
 func TestUpdateForgetRefusesUnversionedStateBucket(t *testing.T) {
 	r, state, key := forgetRig(t)
 	r.gcs.SetVersioning(initRepoStateBucket, false)
-	res := r.fugaroInit(t, "--repo", r.checkout, "--forget", "--yes")
+	res := r.fugaroInit(t, "--repo", r.checkout, "--forget")
 	if res.code != 1 || !strings.Contains(res.stderr, "no object versioning") {
 		t.Fatalf("want exit 1 about versioning:\n%s", res)
 	}
@@ -1321,7 +1328,7 @@ func TestUpdateNeedsInstallation(t *testing.T) {
 	if err := r.gcs.Bucket(t, initRepoStateBucket).Delete(context.Background(), infra.StatePrefixInstallation+"/default.tfstate"); err != nil {
 		t.Fatal(err)
 	}
-	res := r.fugaroInit(t, "--repo", r.checkout, "--yes")
+	res := r.fugaroInit(t, "--repo", r.checkout)
 	if res.code != 1 || !strings.Contains(res.stderr, "run fugaro setup first") {
 		t.Fatalf("want exit 1 with run fugaro setup first:\n%s", res)
 	}
@@ -1330,7 +1337,7 @@ func TestUpdateNeedsInstallation(t *testing.T) {
 func TestUpdateNeedsFugaroYAML(t *testing.T) {
 	r := sandboxRig(t)
 	testutil.Git(t, r.checkout, "rm", "-q", "fugaro.yaml")
-	res := r.fugaroInit(t, "--repo", r.checkout, "--yes")
+	res := r.fugaroInit(t, "--repo", r.checkout)
 	if res.code != 1 || !strings.Contains(res.stderr, "/fugaro:setup") || !strings.Contains(res.stderr, "fugaro config example") {
 		t.Fatalf("want exit 1 pointing at /fugaro:setup:\n%s", res)
 	}
@@ -1366,12 +1373,12 @@ func TestUpdateBuildNeedsConfirmation(t *testing.T) {
 	r := sandboxRig(t)
 	r.storedSecrets()
 	// A first run records the repository without building.
-	if res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build"); res.code != 0 {
+	if res := r.fugaroInit(t, "--repo", r.checkout, "--no-build"); res.code != 0 {
 		t.Fatal(res)
 	}
 	r.script(t, "repo", -1, map[string]any{"plan": map[string]any{"exit": 0}})
 	for _, args := range [][]string{{"--repo", r.checkout}, {"--repo", r.checkout, "--json"}} {
-		res := r.fugaroInit(t, args...)
+		res := r.fugaroInitNoTerminal(t, args...)
 		if res.code != 1 {
 			t.Fatalf("%v: want exit 1, the build left for the user:\n%s", args, res)
 		}
@@ -1396,16 +1403,16 @@ func TestUpdateBuildNeedsConfirmation(t *testing.T) {
 			t.Errorf("%v: Cloud Build was called: %d request(s)", args, len(r.build.Requests()))
 		}
 	}
-	// --yes covers it: the build is submitted and the run converges.
-	res := r.fugaroInit(t, "--repo", r.checkout, "--yes")
+	// The person at a terminal covers it: the build is submitted and the run converges.
+	res := r.fugaroInit(t, "--repo", r.checkout)
 	if res.code != 0 {
-		t.Fatalf("--yes: want exit 0, the build covered:\n%s", res)
+		t.Fatalf("at a terminal: want exit 0, the build covered:\n%s", res)
 	}
-	if !strings.Contains(res.stdout+res.stderr, "confirmed by --yes") {
-		t.Errorf("--yes: the build is not shown as confirmed by --yes:\n%s", res)
+	if !strings.Contains(res.stdout+res.stderr, "built acme/sandbox/web") {
+		t.Errorf("at a terminal: the build is not reported:\n%s", res)
 	}
 	if n := r.builds.Load(); n != 1 {
-		t.Errorf("--yes: builds = %d, want 1", n)
+		t.Errorf("at a terminal: builds = %d, want 1", n)
 	}
 }
 
@@ -1423,8 +1430,8 @@ func TestUpdateEnablesResourceManager(t *testing.T) {
 	r.su.Disable(infra.ServiceResourceManager, r.crm.Server)
 	r.su.Disable("cloudscheduler.googleapis.com", r.sched.Server)
 
-	// No terminal, no --yes: exit 1 with the command, nothing enabled.
-	res := r.fugaroInit(t, "--repo", r.checkout, "--plan-only")
+	// No terminal: exit 1 with the command, nothing enabled.
+	res := r.fugaroInitNoTerminal(t, "--repo", r.checkout, "--plan-only")
 	if res.code != 1 || !strings.Contains(res.stderr, "gcloud services enable cloudresourcemanager.googleapis.com --project "+initRepoProject) {
 		t.Fatalf("want exit 1 with the gcloud command:\n%s", res)
 	}
@@ -1432,10 +1439,10 @@ func TestUpdateEnablesResourceManager(t *testing.T) {
 		t.Fatalf("enables %q, terraform calls %q", r.su.Enables(), r.calls(t))
 	}
 
-	// --plan-only never takes --yes: nothing is enabled on its word.
-	res = r.fugaroInit(t, "--repo", r.checkout, "--plan-only", "--yes")
+	// --plan-only run again with nobody at a terminal still enables nothing.
+	res = r.fugaroInitNoTerminal(t, "--repo", r.checkout, "--plan-only")
 	if res.code != 1 || len(r.su.Enables()) != 0 || len(r.calls(t)) != 0 {
-		t.Fatalf("--plan-only --yes: exit %d, enables %q, terraform calls %q\n%s", res.code, r.su.Enables(), r.calls(t), res)
+		t.Fatalf("--plan-only without a terminal: exit %d, enables %q, terraform calls %q\n%s", res.code, r.su.Enables(), r.calls(t), res)
 	}
 
 	// The project's name typed at a terminal confirms it.
@@ -1465,11 +1472,27 @@ func TestUpdateEnablesResourceManager(t *testing.T) {
 func TestUpdateStorageDisabledIsRemote(t *testing.T) {
 	r := sandboxRig(t)
 	r.su.Disable("storage.googleapis.com", r.gcs.Server)
-	res := r.fugaroInit(t, "--repo", r.checkout, "--plan-only", "--yes")
+	res := r.fugaroInit(t, "--repo", r.checkout, "--plan-only")
 	if res.code != 2 || !strings.Contains(res.stderr, "state bucket") || strings.Contains(res.stderr, "run fugaro setup first") {
 		t.Fatalf("want exit 2 at the state bucket:\n%s", res)
 	}
 	if len(r.calls(t)) != 0 {
 		t.Fatalf("terraform calls %q", r.calls(t))
 	}
+}
+
+// logNamedIn reads the run log a stage's failure names ("full output: PATH")
+// when the terminal shows only its first line.
+func logNamedIn(t *testing.T, stdout string) string {
+	t.Helper()
+	_, rest, ok := strings.Cut(stdout, "full output: ")
+	if !ok {
+		return ""
+	}
+	path, _, _ := strings.Cut(rest, "\n")
+	b, err := os.ReadFile(strings.TrimSpace(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }

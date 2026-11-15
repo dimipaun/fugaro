@@ -143,6 +143,15 @@ func (c *Config) Shared() *Config {
 	// on). Dropping them here keeps the shared file to what it was before
 	// phase 3 added profiles.
 	s.Profiles = nil
+	// MobileAllow is the owner's own for clone_urls' reason and one of its own:
+	// the block is who may use the project from a phone, with the role each
+	// entry carries, so a launcher who could write it into the runs bucket's
+	// shared file would be admitting itself to every teammate's runs with
+	// whatever role it named. It travels to the node through `fugaro project
+	// policy publish`, which is the write the deployed rules read, and it is
+	// dropped here besides so that a published file never carries it at all:
+	// internal/cli's ParseShared refuses the key by name.
+	s.MobileAllow = nil
 	s.UpdateCheck = nil
 	// Issues is local-only for update_check's reason: the nudge is a line the
 	// section prints on the machine reading it, and no other machine acts on

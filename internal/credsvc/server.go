@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/bbtokens"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
@@ -385,6 +386,17 @@ type Config struct {
 	// Policy reads the published policy: the shared node and a repository's
 	// own (C1.2).
 	Policy PolicyReader
+	// Selector chooses the Bitbucket token one proxied call is served with
+	// (T8, D2355). It is the contract's Selector (internal/bbtokens), and the
+	// proxy asks it only after Decide admitted the call and with the one
+	// policy-and-bundle snapshot the decision itself used.
+	//
+	// nil is a service whose token store is not wired: every proxied call is
+	// served with the bundle's legacy bitbucket-token entry, which is the
+	// release behind's behaviour and the state of an installation between this
+	// field and the store's wiring (I1). It is a field of the deployment and
+	// not of the request: no caller, no record and no policy can set it.
+	Selector bbtokens.Selector
 	// State is the cascade's shared state under creds/.
 	State creds.Store
 	// Kills reads the operator's two stop switches.
@@ -1120,28 +1132,28 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, BitbucketProxyPrefix) {
 		// The Bitbucket proxy route (B1.5). Everything above it is its
 		// admission and nothing below it is: the two identities have been
-		// verified, the pairing has fixed the repository the run's own job
-		// account is (canonical, G3), and the operator's stop flag has been
-		// read, so a stopped service proxies nothing. It reads the project's
-		// published block itself — which is what admits the repository, and
-		// whether the installation proxies it at all (G9) — and the bundle,
-		// for the one token it forwards with; and it consults no cascade,
-		// because a Bitbucket token is not a model credential and no tier,
-		// admission or budget has anything to say about it.
-		if id.JobClass == ClassShared {
-			// A shared caller IS paired by now (the identity's repository is
-			// one its profile is bound to), and the route is still refused:
-			// what it forwards is a workspace token, and the class's binding
-			// for it is the published block's own admission of that repository
-			// as a proxied one (G21's other half, B5.3). Until that check
-			// exists, proxying a shared caller would forward a credential
-			// whose reach is the whole workspace on a binding this route never
-			// made. The refusal is a verified caller refused at a route, and
-			// so it is recorded once like every other one.
-			s.refuseCall(ctx, w, id, purpose, credential, "", StatusUnverified, ErrorUnverifiedRunIdentity,
-				"the Bitbucket proxy is not served to a shared project job's account")
-			return
-		}
+		// verified, the pairing has fixed the repository this call is served
+		// for (canonical, G3) — the run's own job account's repository for a
+		// per-repository caller, and the run identity's own repository,
+		// resolved through the installation's table and admitted by the
+		// calling job's profile, for a review caller and for a shared project
+		// job's caller (pairShared, G21) — and the operator's stop flag has
+		// been read, so a stopped service proxies nothing. It reads the
+		// project's published block itself — which is what admits the
+		// repository, and whether the installation proxies it at all (G9) —
+		// and the bundle, for the one token it forwards with; and it consults
+		// no cascade, because a Bitbucket token is not a model credential and
+		// no tier, admission or budget has anything to say about it.
+		//
+		// The shared class is served here (B5.3), and what binds its call is
+		// the same three facts a per-repository caller's is, read over the
+		// profile rather than over one row: the repository the request names
+		// must be the identity's own, which the pairing answered with, and
+		// that repository must be one the published block lists and one this
+		// installation proxies (gitproxy.Decide, G3 and G9). The pairing is
+		// what keeps the block's workspace-wide reach off every other
+		// repository of the profile: a call the rules are handed is a call for
+		// the identity's repository or for none at all.
 		s.bitbucketProxy(ctx, w, r, id, canonical)
 		return
 	}

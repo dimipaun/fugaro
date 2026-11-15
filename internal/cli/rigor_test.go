@@ -23,11 +23,11 @@ import (
 // one of them is a refusal a later change could quietly drop:
 //
 //   - the rank rule (D832): a mode below what this project resolves to today is
-//     the sensitive direction, so it is the `Typed` step — refused in a coding
+//     the sensitive direction, so it is the widening step — refused in a coding
 //     agent's session with nothing written, and written at the owner's own
 //     terminal with the sentence saying what it lowers (D1180, D1552). The plan
 //     names this test's answer "refuses a mode below the resolved one" for the
-//     session half, which is what a session's fence does with a Typed step;
+//     session half, which is what a session's fence does with a widening step;
 //   - D834: `hotfix` is not a mode any layer sets, in either form, and the
 //     refusal names `fugaro run --mode hotfix`;
 //   - D838: `--area` addresses a rule by its glob, so a layer that carries one
@@ -82,7 +82,7 @@ func rigorModeSet(t *testing.T, text, mode string) string {
 // says, with the diff and the command a person runs themselves, and nothing is
 // written (SD9). The second half is the door it does have: at the owner's own
 // terminal the same write lands, with the sentence saying what it lowers printed
-// beside the diff (D1552: a Typed step asks nothing, and a session is the fence
+// beside the diff (D1552: a widening step asks nothing, and a session is the fence
 // it keeps).
 //
 // The baseline is a RESOLUTION and not the key the file happens to hold — the
@@ -95,7 +95,7 @@ func TestRigorSetRefusesAModeBelowTheResolvedOne(t *testing.T) {
 	before := readFileString(t, path)
 
 	agentSession(t)
-	out, _, err := execute(t, "rigor", "set", "startup", "--yes")
+	out, _, err := execute(t, "rigor", "set", "startup")
 	if err == nil {
 		t.Fatalf("a coding agent's session lowered the project's rigor mode:\n%s", out)
 	}
@@ -179,7 +179,7 @@ func TestRigorSetRefusesARaisingWriteInAnAgentSession(t *testing.T) {
 
 	for _, args := range [][]string{
 		{"rigor", "set", "critical"},
-		{"rigor", "set", "critical", "--yes"},
+		{"rigor", "set", "critical"},
 		{"rigor", "set", "critical", "--area", "docs/**", "--name", "docs"},
 	} {
 		out, _, err := execute(t, args...)
@@ -565,7 +565,7 @@ func TestRigorSetAreaLowersABraceGlobRuleTheResolutionCannotSee(t *testing.T) {
 		t.Errorf("the write added a second rule for one glob:\n%s", got)
 	}
 
-	// And the same edit in a coding agent's session: the Typed class is what
+	// And the same edit in a coding agent's session: the widening form is what
 	// refuses it, so a session reading the glob as a path would have written it.
 	path = settingsManagedLayerFile(t, seeded)
 	agentSession(t)

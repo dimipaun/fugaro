@@ -1515,7 +1515,7 @@ describe('the confirm channels', () => {
 //   - a flow that **let a frame other than the window's own top frame answer**
 //     fails the sender case -- the gate `confirm.ts` holds for the launch,
 //     driven for the second view;
-//   - a flow that **passed `--yes` from a rule of its own** fails the widening
+//   - a flow that **gave a write the dry run’s words** fails the widening
 //     case, and the argv it asserts is the one the **real** `argvFor` builds;
 //   - a flow that **wrote after the installation moved** fails both cancel
 //     cases, one with a window open and one while the dry run is in flight;
@@ -1615,7 +1615,7 @@ describe('the settings edit behind the same window', () => {
     expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run', 'narrowing'])
   })
 
-  it('carries --yes for a widening and not before the tick, and for a narrowing the moment it is answered', async () => {
+  it('shows no phase flag for a widening or for a narrowing, and writes only after the tick for a widening', async () => {
     const clock = aClock()
     const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
     const source = settingsEditSource({
@@ -1631,7 +1631,7 @@ describe('the settings edit behind the same window', () => {
     expect(shown.widening).toBe(true)
     expect(shown.confirmNeedsTick).toBe(true)
     expect(shown.argv).toStrictEqual(settingsArgv('widening', set))
-    expect(shown.argv).toContain('--yes')
+    expect(shown.argv).not.toContain('--dry-run')
 
     ready(window, clock)
     // A yes without the tick is refused by the **main process** as well as
@@ -1653,11 +1653,10 @@ describe('the settings edit behind the same window', () => {
     expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run', 'widening'])
     expect(source.spawns[1]?.shown).toStrictEqual(shown.argv)
 
-    // The same argv again for a narrowing: `--yes` is on the write whatever the
-    // dry run's `widening` field said. The field decides the console's own
+    // The same argv again for a narrowing: the write carries no flag whatever
+    // the dry run's `widening` field said. The field decides the console's own
     // question -- the tick, which gates Confirm above -- and not a word of what
-    // the child is spawned with, because the child has no terminal to answer the
-    // CLI's ordinary y/N with.
+    // the child is spawned with.
     const narrow = settingsEditSource()
     const narrowing = createSettingsEdit({ ...narrow.deps, confirmer })
     const lowered = narrowing.edit({ op: 'set', key: SETTINGS_KEY, value: '30' })
@@ -1672,7 +1671,7 @@ describe('the settings edit behind the same window', () => {
     })
     expect(await lowered).toStrictEqual({ ok: true, sentence: SETTINGS_WRITE_TEXT })
     expect(narrow.spawns.map((call) => call.phase)).toStrictEqual(['dry-run', 'narrowing'])
-    expect(narrow.spawns[1]?.shown).toContain('--yes')
+    expect(narrow.spawns[1]?.shown).not.toContain('--dry-run')
   })
 
   it('cancels the edit, and closes no other project’s window, when the installation moves', async () => {

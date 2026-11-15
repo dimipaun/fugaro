@@ -399,6 +399,19 @@ type Store interface {
 	// breaking a tie at once get two different values rather than one value
 	// twice.
 	RoundRobin(ctx context.Context) (int64, error)
+	// RepoAuth reads one repository's auth record — what its own fugaro.yaml
+	// says its runs go out on (creds/repoauth/<slug>, B2.1). It is a read of
+	// the record and not of the selection's state, and it belongs here because
+	// the narrowing it feeds is the last step of the ADMISSION a selection is
+	// made from: the service decides a non-cascade repository's reach from this
+	// record rather than from what the caller declares (D2070 (a), G16), and
+	// the store a selection reads its state through is the one handle that
+	// reaches it.
+	//
+	// found=false is a repository no update has recorded, which the caller
+	// reads as "nothing is narrowed" (an installation this release has not
+	// written). An unreadable record is an error and never an empty answer.
+	RepoAuth(ctx context.Context, slug string) (RepoAuth, bool, error)
 }
 
 // TokenStatusStore is a Bitbucket token's shared state as the proxy, the

@@ -33,7 +33,7 @@ func TestSettingsSetSubscriptionSpreadWritesTheSwitchAndItsSentence(t *testing.T
 		t.Errorf("the row is %+v, want a default sentence and the generic path as its owner", row)
 	}
 
-	out, _, err := execute(t, "settings", "set", "subscription_spread", "true", "--layer", "local", "--yes")
+	out, _, err := execute(t, "settings", "set", "subscription_spread", "true", "--layer", "local")
 	if err != nil {
 		t.Fatalf("--yes did not confirm the switch's typed form: %v\n%s", err, out)
 	}
@@ -62,7 +62,7 @@ func TestSettingsSetSubscriptionSpreadRefusedInAgentSession(t *testing.T) {
 			before := readFileString(t, localPath)
 			t.Setenv(marker, "1")
 
-			out, _, err := execute(t, "settings", "set", "subscription_spread", "true", "--layer", "local", "--yes")
+			out, _, err := execute(t, "settings", "set", "subscription_spread", "true", "--layer", "local")
 			if err == nil {
 				t.Fatalf("the switch was turned on in a coding agent's session:\n%s", out)
 			}

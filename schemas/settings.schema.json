@@ -481,6 +481,9 @@
         "claude_account_aliases": {
           "default": "unset = none: no alias is defined, and every choice key names an account of claude_accounts directly"
         },
+        "claude_account_aliases.*": {
+          "default": "unset = required: the one account the alias stands for, an account of claude_accounts or default"
+        },
         "claude_account_auto": {
           "default": "unset = false: nothing chooses an account for the owner"
         },
@@ -1157,6 +1160,15 @@
         "max_parallel": {
           "$comment": "localcfg.DefaultMaxParallel",
           "default": "20"
+        },
+        "mobile_allow.*.uid": {
+          "default": "unset = no uid: an entry that names one seeds no device node, and the node is what admits a phone (D231)"
+        },
+        "mobile_allow.*.address": {
+          "default": "unset = required: the administered email or the domain the entry admits"
+        },
+        "mobile_allow.*.role": {
+          "default": "unset = required: an entry with no role is refused rather than given one"
         },
         "model_grades.strong.access": {
           "default": "unset = the project's default credential"

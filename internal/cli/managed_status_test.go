@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 )
@@ -75,7 +74,7 @@ func decodeManagedStatus(t *testing.T, out string) managedStatusDoc {
 // one a test hand-wrote.
 func (r *managedAuditRig) fileWithArgv(t *testing.T, argv []string) managedmode.AuditRecord {
 	t.Helper()
-	conv := managedmode.ConvergeAdmitted([]byte(`{"version":1,"keys":{"rigor":"standard"}}`), initflow.YesOrTyped, []string{"every key is in the registry"})
+	conv := managedmode.ConvergeAdmitted([]byte(`{"version":1,"keys":{"rigor":"standard"}}`), []string{"every key is in the registry"})
 	rec := managedmode.AuditRecordFor(managedmode.AuditFacts{
 		Command: "fugaro update", Argv: argv, Project: "aurora", GCPProject: "proj-1234",
 		Identity: "user:owner@example.com", MarkerVersion: 1, At: managedAuditTestNow.Add(-time.Hour),

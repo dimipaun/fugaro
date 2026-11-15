@@ -44,6 +44,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/logtail"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -1242,14 +1243,15 @@ func (r *run) openProvider(ctx context.Context, kind, from string) error {
 	}
 	// A proxied Bitbucket run opens a tokenless provider whose requests go to
 	// the forwarder (B1.7, G1): the job holds no token to give it, and the
-	// service puts one on the wire. The opener is built here rather than taken
-	// from Deps because the endpoint it carries is this run's own loopback
-	// listener -- the run started it, and no launch-time wiring could know its
-	// port. providers.Proxied refuses every kind but Bitbucket, so a proxied
-	// run cannot open another provider by asking for one.
+	// service puts one on the wire. The opener is proxiedOpener's rather than
+	// Deps' because the endpoint it carries is this run's own loopback listener
+	// -- the run started it, and no launch-time wiring could know its port --
+	// and because it carries the identity set the published node names (T16).
+	// providers.Proxied refuses every kind but Bitbucket, so a proxied run
+	// cannot open another provider by asking for one.
 	open := r.d.OpenProvider
 	if r.proxied {
-		open = providers.Proxied(r.d.Env, r.forward.URL(), nil, func(msg string) { r.d.Log.Warn(r.redact(msg)) })
+		open = r.proxiedOpener(ctx)
 	}
 	p, secrets, err := open(ctx, kind, r.spec.Repo)
 	for _, s := range secrets {
@@ -1629,9 +1631,10 @@ func (r *run) branchClaim() string {
 
 // startProxiedGit starts the loopback forwarder this run's git and Bitbucket
 // API calls go through (B1.7, D495), and refuses the run before it starts when
-// the identity it was handed could not push through it.
+// the identity it was handed could not push through it, or when the run is in
+// a shared Bitbucket job the proxy does not serve.
 //
-// The refusal is the branch claim (fb). The credentials service admits a push
+// The branch-claim refusal is the first. The credentials service admits a push
 // only for the branch the run's identity names (G6), so a run that pushes --
 // a first run or a follow-up; a review run, an artifact run, an evaluate run
 // and a challenger arm push nothing and are not judged -- cannot do its work
@@ -1648,7 +1651,13 @@ func (r *run) branchClaim() string {
 // redacted.
 func (r *run) startProxiedGit(ctx context.Context) error {
 	if !r.proxied {
-		return nil
+		// Not proxied is the ordinary state of a per-repository job whose
+		// published block does not admit its repository -- it carries its own
+		// mounted token, and nothing about it changed (G9) -- and of every
+		// repository of a provider this rule is not about. For a shared
+		// Bitbucket job it is fatal, because that job mounts no token at all,
+		// and sharedJobNeedsTheProxy is what says so in one clear sentence.
+		return r.sharedJobNeedsTheProxy(ctx)
 	}
 	service := envLookup(r.d.Env, providers.EnvCredentialsServiceURL)
 	if service == "" {
@@ -1685,6 +1694,66 @@ func (r *run) startProxiedGit(ctx context.Context) error {
 	}
 	r.forward = f
 	return nil
+}
+
+// sharedJobNeedsTheProxy is the halt a run in a shared Bitbucket job reaches
+// when the installation's credential proxy does not serve its repository, and
+// nil for every other run.
+//
+// The job mounts no Bitbucket token at all (D2302: internal/infra deploys a
+// Bitbucket profile no mount, and refuses a profile that carries one), so the
+// proxy is the only thing that can carry this run's git, REST, submodule and
+// LFS traffic to bitbucket.org. Where the published block does not serve the
+// repository, nothing of this run could reach it, and the run says so before
+// any git credential exists: without this it would go on to clone with no
+// credential and stop at git's own "could not read Username for
+// 'https://bitbucket.org'", which names neither the repository, nor the switch
+// that is off, nor the list that is short.
+//
+// Nothing here decides a repository's admission: proxiedBitbucket already
+// answered, from the same two facts the credentials service reads (the node's
+// block, and the service's URL in the job), which is what stops this sentence
+// from becoming a second verdict. The four ways that answer is no are told
+// apart because each has its own fix, and each names the repository the run is
+// for -- the one an operator edits the profile or the block for. A repository
+// the proxy refuses is a policy edit and never a retry (contract.md, "A
+// refusal as retryable").
+func (r *run) sharedJobNeedsTheProxy(ctx context.Context) error {
+	job, project := r.projectJob()
+	if !project || job.Provider != gitprov.KindBitbucket {
+		// A per-repository job holds its own mounted token, so a repository
+		// the block does not admit is exactly the run B1.7 left unproxied; a
+		// project job of another provider is not this rule's at all.
+		return nil
+	}
+	canonical, err := projectpolicy.Canonical(job.Provider, r.spec.Repo)
+	if err != nil {
+		// admissionCheck canonicalises the repository before it reaches the
+		// project branch, so this is unreachable; refusing rather than
+		// reporting an unpinned repository keeps a halt out of a message.
+		return fmt.Errorf("the repository this run is for cannot be named in the project's policy: %w", err)
+	}
+	p, found, err := r.projectPolicy(ctx)
+	if err != nil {
+		return err
+	}
+	what := fmt.Sprintf("this run is in the shared Bitbucket job %s, which mounts no Bitbucket token: its git, REST, submodule and LFS traffic reaches bitbucket.org only through the installation's credentials service, and that service does not serve %s", gcp.ProjectJobName(job.Profile, job.Provider, job.Account), canonical)
+	var why string
+	switch {
+	case !found || p == nil || p.BitbucketToken == nil:
+		why = fmt.Sprintf("This project has published no policy, or one whose bitbucket_token block is absent: the block is derived at publish time from project_secrets.%s.allow_data_to, which holds no repository today. Add it with 'fugaro secrets allow %s %s', then run 'fugaro update', which publishes the block and hands this job the service's URL",
+			config.BitbucketSecret, config.BitbucketSecret, r.spec.Repo)
+	case !p.BitbucketToken.Proxy:
+		why = fmt.Sprintf("The published policy's bitbucket_token block carries proxy: false, so the credentials service forwards nothing for it. Turn the switch on with 'fugaro secrets allow %s --proxy=true', then run 'fugaro update', which publishes it",
+			config.BitbucketSecret)
+	case envLookup(r.d.Env, providers.EnvCredentialsServiceURL) == "":
+		why = fmt.Sprintf("This job names no credentials service (%s is not set), so it has nothing to forward through. Run 'fugaro update' with the current Fugaro: it turns the proxy on for this project and hands its jobs the service's URL",
+			providers.EnvCredentialsServiceURL)
+	default:
+		why = fmt.Sprintf("The published policy's bitbucket_token.allow_repos (%s) does not cover it. Add the repository with 'fugaro secrets allow %s %s', then run 'fugaro update', which publishes the widened list",
+			strings.Join(p.BitbucketToken.AllowRepos, ", "), config.BitbucketSecret, r.spec.Repo)
+	}
+	return fmt.Errorf("%s. %s. The run stops before any git credential is requested and before anything is cloned", what, why)
 }
 
 // closeForward stops the forwarder, once, when the run is over. It is called
@@ -2711,6 +2780,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 		r.d.Log.Info("agent.models.coder ignored: recipe maps coder to reviewer", "recipe", rrec.Name, "coder", cfg.Agent.Models.Coder)
 	}
 	ApplyRoles(&cfg.Agent, rcp)
+	// The recipe's own output bound, beside the role mapping and for the same
+	// reason: resolvePolicy reads the run's per-call limits off this
+	// configuration into the file layer it merges, so a bound written after it
+	// would move the pin without the record or the policy ever seeing it.
+	if applyRecipeOutputLimit(&cfg.Agent, rcp) {
+		r.d.Log.Info("agent.max_output_tokens.reviewer capped: the run-digest review reserves at the recipe's bound",
+			"reviewer", cfg.Agent.MaxOutputTokens.Reviewer)
+	}
 	r.cfg, r.wf, r.rec.Workflow, r.rec.BaseBranch = cfg, wf, name, cfg.Git.BaseBranch
 	// The arm's coder model, after the recipe's own role mapping and before
 	// anything reads a model: the routing switch and the pins resolvePolicy

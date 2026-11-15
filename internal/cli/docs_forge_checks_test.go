@@ -249,20 +249,25 @@ func TestDocsForgeChecksWritten(t *testing.T) {
 		t.Errorf("%s carries a `## Check 233:` section: 233 was withdrawn in review round 1 and is reserved and unused", liveChecksDoc)
 	}
 
-	// Appended, not inserted: the five come after the register's OLDER sections
-	// and in their own ascending order. A block written in the middle of older
-	// ones is how a reader loses track of which numbers are live. "Older" is
-	// read as the sections numbered below this block's lowest, 230, rather than
-	// as everything that is not one of the five: the register keeps being
-	// appended to below this block (Checks 440 and 441 are the newest), so the
-	// file's last heading is not the last one that was written before it.
-	lastOld := -1
-	for _, m := range forgeCheckHeadingRE.FindAllStringSubmatchIndex(register, -1) {
-		number := register[m[2]:m[3]]
-		if slices.Contains(forgeCheckNumbers, number) {
-			continue
+	// Appended, not inserted: the five come after every section that was already
+	// in the register and in their own ascending order. A block written in the
+	// middle of older ones is how a reader loses track of which numbers are live.
+	// The sections that were already there are read from the text before this
+	// block's own first section: a check registered later is appended at the same
+	// end this block was, and reading it as an older section would fail this one
+	// for the block that followed it rather than for anything about its own place.
+	firstAt := len(register)
+	for _, number := range forgeCheckNumbers {
+		if at := strings.Index(register, "\n## Check "+number+":"); at >= 0 && at < firstAt {
+			firstAt = at
 		}
-		if n, err := strconv.Atoi(strings.TrimRight(number, "abcdef")); err == nil && n < 230 {
+	}
+	if firstAt == len(register) {
+		t.Fatalf("%s carries none of these five sections: this assertion would otherwise pass whatever the register holds", liveChecksDoc)
+	}
+	lastOld := -1
+	for _, m := range forgeCheckHeadingRE.FindAllStringSubmatchIndex(register[:firstAt], -1) {
+		if !slices.Contains(forgeCheckNumbers, register[m[2]:m[3]]) {
 			lastOld = m[0]
 		}
 	}

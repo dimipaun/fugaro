@@ -18,7 +18,7 @@ KEPT — Fugaro never deletes a secret or a secret version:
 
 Order of operations:
   1. remove 2 addresses from Terraform's state without destroying them: the addresses no apply can delete (a secret container's prevent_destroy, a job whose deletion_protection the state says is on). Nothing in the cloud is deleted by this step.
-  2. plan, show the plan's own counts and its full delete list, and ask again — answered by the person at a real terminal, never by --yes.
+  2. plan, show the plan's own counts and its full delete list, and ask again — answered by the person at a real terminal.
   3. apply, then delete the 1 orphaned Cloud Run job through the API.
 
 Next command:
