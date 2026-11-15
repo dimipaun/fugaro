@@ -6,7 +6,7 @@ The Fugaro console ships files that are not ours: the elkjs layout worker; the s
 Instrument Sans and IBM Plex Mono, both under the SIL Open Font License 1.1 (their versions and
 digests are `src/renderer/fonts/README.md`); and the two runtime dependencies the main process
 runs, `electron-updater` 6.8.11 with the fifteen packages of its tree, and `@sentry/electron`
-8.3.0 with the fourteen packages of its. Every licence text is in this file, one section each:
+8.4.0 with the fourteen packages of its. Every licence text is in this file, one section each:
 elkjs's first, then the two fonts', then the update client's and its tree's, then the crash
 reporter's and its tree's.
 
@@ -66,16 +66,18 @@ here where the two paragraphs above cite it. Run on Linux against `electron-buil
 The one thing the probe does *not* say is what the vendored code inside the two Sentry packages
 does, and that is the section at the end of this file.
 
-The elkjs worker is `dist/bundle/elk-worker.min.js`, the layout worker of **elkjs 0.11.0**, copied
+The elkjs worker is `dist/bundle/elk-worker.min.js`, the layout worker of **elkjs 0.12.1**, copied
 verbatim by `npm run build` from `node_modules/elkjs/lib/elk-worker.min.js`.
 
-elkjs is licensed under the Eclipse Public License 2.0. Its source is the
-`elkjs@0.11.0` package from the npm registry
-(https://registry.npmjs.org/elkjs/-/elkjs-0.11.0.tgz), whose repository is
+elkjs is licensed under the Eclipse Public License 2.0, or, at the user's choice, the GNU General
+Public License v3.0 or later (its `package.json` says `EPL-2.0 OR GPL-3.0-or-later`; the Secondary
+License line at the end of the text below names the latter). Its source is the
+`elkjs@0.12.1` package from the npm registry
+(https://registry.npmjs.org/elkjs/-/elkjs-0.12.1.tgz), whose repository is
 https://github.com/kieler/elkjs.git. The licence text below is copied verbatim from that package's
 `LICENSE.md`.
 
-## elkjs 0.11.0 -- Eclipse Public License 2.0
+## elkjs 0.12.1 -- Eclipse Public License 2.0
 
 # Eclipse Public License - v 2.0
 
@@ -329,8 +331,7 @@ No third-party beneficiary rights are created under this Agreement.
 
 “This Source Code may also be made available under the following
 Secondary Licenses when the conditions for such availability set forth
-in the Eclipse Public License, v. 2.0 are satisfied: {name license(s),
-version(s), and exceptions or additional permissions here}.”
+in the Eclipse Public License, v. 2.0 are satisfied: GNU General Public License v3.0 or later”
 
 > Simply including a copy of this Agreement, including this Exhibit A is
 > not sufficient to license the Source Code under Secondary Licenses.
@@ -1359,7 +1360,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## @sentry/electron 8.3.0 -- MIT License
+## @sentry/electron 8.4.0 -- MIT License
 
 The crash reporter the console's main process starts behind a per-user switch that is off by default
 (the owner's rulings D733 and D734 of 2026-10-30), and one of the two runtime dependencies `package.json`
@@ -1369,8 +1370,8 @@ it -- and the fourteen packages of its tree are packed beside it. Its bundler su
 build-time tree that subpath carried, are not: the paragraph above names what fix round A took
 out and why.
 
-Its source is the `@sentry/electron@8.3.0` package from the npm registry
-(https://registry.npmjs.org/@sentry/electron/-/electron-8.3.0.tgz), whose repository is
+Its source is the `@sentry/electron@8.4.0` package from the npm registry
+(https://registry.npmjs.org/@sentry/electron/-/electron-8.4.0.tgz), whose repository is
 https://github.com/getsentry/sentry-electron.git.
 
 The licence text below is copied verbatim from that package's `LICENSE`.
@@ -1400,13 +1401,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## @sentry/browser 11.8.0 -- MIT License
+## @sentry/browser 11.10.0 -- MIT License
 
-One of the fourteen packages in `@sentry/electron` 8.3.0's tree, pinned in `package-lock.json`
+One of the fourteen packages in `@sentry/electron` 8.4.0's tree, pinned in `package-lock.json`
 and packed beside it.
 
-Its source is the `@sentry/browser@11.8.0` package from the npm registry
-(https://registry.npmjs.org/@sentry/browser/-/browser-11.8.0.tgz), whose repository is
+Its source is the `@sentry/browser@11.10.0` package from the npm registry
+(https://registry.npmjs.org/@sentry/browser/-/browser-11.10.0.tgz), whose repository is
 https://github.com/getsentry/sentry-javascript.git.
 
 The licence text below is copied verbatim from that package's `LICENSE`.
@@ -1435,13 +1436,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## @sentry/browser-utils 11.8.0 -- MIT License
+## @sentry/browser-utils 11.10.0 -- MIT License
 
-One of the fourteen packages in `@sentry/electron` 8.3.0's tree, pinned in `package-lock.json`
+One of the fourteen packages in `@sentry/electron` 8.4.0's tree, pinned in `package-lock.json`
 and packed beside it.
 
-Its source is the `@sentry/browser-utils@11.8.0` package from the npm registry
-(https://registry.npmjs.org/@sentry/browser-utils/-/browser-utils-11.8.0.tgz), whose repository is
+Its source is the `@sentry/browser-utils@11.10.0` package from the npm registry
+(https://registry.npmjs.org/@sentry/browser-utils/-/browser-utils-11.10.0.tgz), whose repository is
 https://github.com/getsentry/sentry-javascript.git.
 
 The licence text below is copied verbatim from that package's `LICENSE`.
@@ -1472,7 +1473,7 @@ SOFTWARE.
 
 ## web-vitals 6.2.3 -- Apache License 2.0
 
-One of the fourteen packages in `@sentry/electron` 8.3.0's tree, pinned in `package-lock.json`
+One of the fourteen packages in `@sentry/electron` 8.4.0's tree, pinned in `package-lock.json`
 and packed beside it.
 
 Its source is the `web-vitals@6.2.3` package from the npm registry
@@ -1686,13 +1687,13 @@ The licence text below is copied verbatim from that package's `LICENSE`.
    limitations under the License.
 ```
 
-## @sentry/feedback 11.8.0 -- MIT License
+## @sentry/feedback 11.10.0 -- MIT License
 
-One of the fourteen packages in `@sentry/electron` 8.3.0's tree, pinned in `package-lock.json`
+One of the fourteen packages in `@sentry/electron` 8.4.0's tree, pinned in `package-lock.json`
 and packed beside it.
 
-Its source is the `@sentry/feedback@11.8.0` package from the npm registry
-(https://registry.npmjs.org/@sentry/feedback/-/feedback-11.8.0.tgz), whose repository is
+Its source is the `@sentry/feedback@11.10.0` package from the npm registry
+(https://registry.npmjs.org/@sentry/feedback/-/feedback-11.10.0.tgz), whose repository is
 https://github.com/getsentry/sentry-javascript.git.
 
 The licence text below is copied verbatim from that package's `LICENSE`.
@@ -1721,13 +1722,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## @sentry/replay-canvas 11.8.0 -- MIT License
+## @sentry/replay-canvas 11.10.0 -- MIT License
 
-One of the fourteen packages in `@sentry/electron` 8.3.0's tree, pinned in `package-lock.json`
+One of the fourteen packages in `@sentry/electron` 8.4.0's tree, pinned in `package-lock.json`
 and packed beside it.
 
-Its source is the `@sentry/replay-canvas@11.8.0` package from the npm registry
-(https://registry.npmjs.org/@sentry/replay-canvas/-/replay-canvas-11.8.0.tgz), whose repository is
+Its source is the `@sentry/replay-canvas@11.10.0` package from the npm registry
+(https://registry.npmjs.org/@sentry/replay-canvas/-/replay-canvas-11.10.0.tgz), whose repository is
 https://github.com/getsentry/sentry-javascript.git.
 
 The licence text below is copied verbatim from that package's `LICENSE`.
@@ -1756,13 +1757,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## @sentry/replay 11.8.0 -- MIT License
+## @sentry/replay 11.10.0 -- MIT License
 
-One of the fourteen packages in `@sentry/electron` 8.3.0's tree, pinned in `package-lock.json`
+One of the fourteen packages in `@sentry/electron` 8.4.0's tree, pinned in `package-lock.json`
 and packed beside it.
 
-Its source is the `@sentry/replay@11.8.0` package from the npm registry
-(https://registry.npmjs.org/@sentry/replay/-/replay-11.8.0.tgz), whose repository is
+Its source is the `@sentry/replay@11.10.0` package from the npm registry
+(https://registry.npmjs.org/@sentry/replay/-/replay-11.10.0.tgz), whose repository is
 https://github.com/getsentry/sentry-javascript.git.
 
 The licence text below is copied verbatim from that package's `LICENSE`.
@@ -1791,13 +1792,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## @sentry/conventions 0.27.0 -- MIT License
+## @sentry/conventions 0.29.0 -- MIT License
 
-One of the fourteen packages in `@sentry/electron` 8.3.0's tree, pinned in `package-lock.json`
+One of the fourteen packages in `@sentry/electron` 8.4.0's tree, pinned in `package-lock.json`
 and packed beside it.
 
-Its source is the `@sentry/conventions@0.27.0` package from the npm registry
-(https://registry.npmjs.org/@sentry/conventions/-/conventions-0.27.0.tgz), whose repository is
+Its source is the `@sentry/conventions@0.29.0` package from the npm registry
+(https://registry.npmjs.org/@sentry/conventions/-/conventions-0.29.0.tgz), whose repository is
 https://github.com/getsentry/sentry-conventions.git.
 
 The licence text below is copied verbatim from that package's `LICENSE`.
@@ -1826,13 +1827,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## @sentry/core 11.8.0 -- MIT License
+## @sentry/core 11.10.0 -- MIT License
 
-One of the fourteen packages in `@sentry/electron` 8.3.0's tree, pinned in `package-lock.json`
+One of the fourteen packages in `@sentry/electron` 8.4.0's tree, pinned in `package-lock.json`
 and packed beside it.
 
-Its source is the `@sentry/core@11.8.0` package from the npm registry
-(https://registry.npmjs.org/@sentry/core/-/core-11.8.0.tgz), whose repository is
+Its source is the `@sentry/core@11.10.0` package from the npm registry
+(https://registry.npmjs.org/@sentry/core/-/core-11.10.0.tgz), whose repository is
 https://github.com/getsentry/sentry-javascript.git.
 
 The licence text below is copied verbatim from that package's `LICENSE`.
@@ -1861,13 +1862,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## @sentry/node 11.8.0 -- MIT License
+## @sentry/node 11.10.0 -- MIT License
 
-One of the fourteen packages in `@sentry/electron` 8.3.0's tree, pinned in `package-lock.json`
+One of the fourteen packages in `@sentry/electron` 8.4.0's tree, pinned in `package-lock.json`
 and packed beside it.
 
-Its source is the `@sentry/node@11.8.0` package from the npm registry
-(https://registry.npmjs.org/@sentry/node/-/node-11.8.0.tgz), whose repository is
+Its source is the `@sentry/node@11.10.0` package from the npm registry
+(https://registry.npmjs.org/@sentry/node/-/node-11.10.0.tgz), whose repository is
 https://github.com/getsentry/sentry-javascript.git.
 
 The licence text below is copied verbatim from that package's `LICENSE`.
@@ -1894,11 +1895,20 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+Third-Party Dependency Notice
+
+The MIT License above applies to the code in this package. This package has
+the Sentry CLI (the `sentry` package on npm, https://github.com/getsentry/cli)
+as a direct or transitive dependency. The Sentry CLI is not part of this package
+and is not covered by the MIT License above. It is licensed under the
+Functional Source License, Version 1.1, Apache 2.0 Future License
+(FSL-1.1-Apache-2.0): https://github.com/getsentry/cli/blob/main/LICENSE.md
 ```
 
 ## @opentelemetry/api 1.10.0 -- Apache License 2.0
 
-One of the fourteen packages in `@sentry/electron` 8.3.0's tree, pinned in `package-lock.json`
+One of the fourteen packages in `@sentry/electron` 8.4.0's tree, pinned in `package-lock.json`
 and packed beside it.
 
 Its source is the `@opentelemetry/api@1.10.0` package from the npm registry
@@ -2111,13 +2121,13 @@ The licence text below is copied verbatim from that package's `LICENSE`.
    limitations under the License.
 ```
 
-## @sentry/opentelemetry 11.8.0 -- MIT License
+## @sentry/opentelemetry 11.10.0 -- MIT License
 
-One of the fourteen packages in `@sentry/electron` 8.3.0's tree, pinned in `package-lock.json`
+One of the fourteen packages in `@sentry/electron` 8.4.0's tree, pinned in `package-lock.json`
 and packed beside it.
 
-Its source is the `@sentry/opentelemetry@11.8.0` package from the npm registry
-(https://registry.npmjs.org/@sentry/opentelemetry/-/opentelemetry-11.8.0.tgz), whose repository is
+Its source is the `@sentry/opentelemetry@11.10.0` package from the npm registry
+(https://registry.npmjs.org/@sentry/opentelemetry/-/opentelemetry-11.10.0.tgz), whose repository is
 https://github.com/getsentry/sentry-javascript.git.
 
 The licence text below is copied verbatim from that package's `LICENSE`.
@@ -2146,13 +2156,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## @sentry/server-runtime-injection 11.8.0 -- MIT License
+## @sentry/server-runtime-injection 11.10.0 -- MIT License
 
-One of the fourteen packages in `@sentry/electron` 8.3.0's tree, pinned in `package-lock.json`
+One of the fourteen packages in `@sentry/electron` 8.4.0's tree, pinned in `package-lock.json`
 and packed beside it.
 
-Its source is the `@sentry/server-runtime-injection@11.8.0` package from the npm registry
-(https://registry.npmjs.org/@sentry/server-runtime-injection/-/server-runtime-injection-11.8.0.tgz), whose repository is
+Its source is the `@sentry/server-runtime-injection@11.10.0` package from the npm registry
+(https://registry.npmjs.org/@sentry/server-runtime-injection/-/server-runtime-injection-11.10.0.tgz), whose repository is
 https://github.com/getsentry/sentry-javascript.git.
 
 **That package ships no licence file**: its `package.json` declares `"license": "MIT"` and
@@ -2160,13 +2170,13 @@ nothing more, so there is no text to reproduce there.
 
 **And it carries other projects' code besides.** See the section at the end of this file.
 
-## @sentry/server-utils 11.8.0 -- MIT License
+## @sentry/server-utils 11.10.0 -- MIT License
 
-One of the fourteen packages in `@sentry/electron` 8.3.0's tree, pinned in `package-lock.json`
+One of the fourteen packages in `@sentry/electron` 8.4.0's tree, pinned in `package-lock.json`
 and packed beside it.
 
-Its source is the `@sentry/server-utils@11.8.0` package from the npm registry
-(https://registry.npmjs.org/@sentry/server-utils/-/server-utils-11.8.0.tgz), whose repository is
+Its source is the `@sentry/server-utils@11.10.0` package from the npm registry
+(https://registry.npmjs.org/@sentry/server-utils/-/server-utils-11.10.0.tgz), whose repository is
 https://github.com/getsentry/sentry-javascript.git.
 
 **That package ships no licence file**: its `package.json` declares `"license": "MIT"` and
