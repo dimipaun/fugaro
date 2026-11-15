@@ -328,6 +328,8 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 
 - **Files:** `ee/ab/` (the launch files A3.3 creates), and their tests.
 - **Interfaces:** A3.3 launches a coder pair's two arms at one moment (D571). A reviewer-slot challenger needs the champion's patch, which exists only once the champion has finished, so it is launched afterwards, by the same `ee/ab` code, at the champion's recorded start commit. It sets `ab.slot` and `ab.champion_run`. D571's one-commit rule holds, and its same-moment launch does not apply to reviewer slots.
+- **Owner ruling (2026-11-15, O12): the coder rule.** A reviewer-slot challenger is admitted with `Admit` against `cfg.Agent.ModelFor(RoleCoder)`, exactly as a coder pair's challenger is; `Admit`'s baseline is unchanged and no slot-level admit is added. The arm's model is therefore not an argument to the launch, which is why `ReviewerArm` takes none.
+- **Not in this task: the launch entry point.** The helper answers the arm; the call into it, once a champion's patch exists, is `fugaro run`'s own launch (`freshLaunchGates`, `createTask`, `launchRun`) and no seam an `ee/` package can reach exports those, so nothing in the tree calls `ReviewerArm` yet. That entry point is a separate decision and is not built here.
 - **Tests:** `TestABReviewerArmLaunchesAfterChampionPatch`, `TestABReviewerArmUsesChampionStartSHA`.
 - **Command:** `GOFLAGS=-p=2 go test -tags ee ./ee/ab/... -count=1 && GOFLAGS=-p=2 go test ./internal/eeboundary/ -count=1`.
 - **Depends on:** B1.1, A3.3.
