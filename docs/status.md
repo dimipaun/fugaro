@@ -24,7 +24,6 @@ As of 2026-11-15, read from `main`, the open pull requests and each plan's task 
 | go-to-market | 9/12 | owner G2.5, and two more |
 | licensing | 21/23 | owner-run only: L0.2's allow-list and status, the Terms publication's L4.3, L5.1 T3(c) |
 | mobile | about 44/58 | P5.1 (split into tasks in drafts #2701 and #2703), P5.2 (design, draft #2687), P5.3.1 to P5.3.7 (approved 2026-11-14, not started), P5.4 (unscheduled); owner P2.3 and P4.4 |
-| model-ab-testing | 16/18 | owner Checks 210 to 212 |
 | no-prompt-policy | 14/17 | T12 (stalled, draft #2708), T13 (live, draft #2707), T14 (live, draft #2709), the T11 follow-up (stalled, draft #2706); owner Checks 380 to 382 once T14 lands |
 | stateless-orchestrator | 18/20 | O13 (stalled, draft #2696), O19 (approved, blocked: a run the workspace refused is not distinguishable in the run record, so it waits on a W-side record change; U12 resolved NO 2026-11-13); owner Checks 301 to 304 and 305 (O16b) |
 | task-governance | 25/31 | 6 left: T3.4 (docs; stalled, drafts #2699 and #2702, held until the outer-loop-escalation E6 pull request #2498 merges), and the rest in `ee/governance` |
@@ -71,7 +70,7 @@ As of 2026-11-15, read from `main`, the open pull requests and each plan's task 
 | central-orchestrator | superseded by stateless-orchestrator |
 | cloud-senior-review | CSR1 to CSR16 done; CSR17 and CSR18 moved to api-key-review |
 | compatibility-matrix | owner CM4 (the read of the copy) |
-| compute-backend | declared operational by the owner 2026-11-15; owner Checks 57b and 124, not yet run (Task 13 was dropped) |
+| compute-backend | declared operational by the owner 2026-11-15; owner Checks 57b (its stranded-job submission fixed) and 124, not yet run (Task 13 was dropped) |
 | config-management | none |
 | console-coordinator-v2 | owner Check C0 (profiling) |
 | console-managed-screens | none (console 0.121.0) |
@@ -90,7 +89,8 @@ As of 2026-11-15, read from `main`, the open pull requests and each plan's task 
 | issues-resolved-on-update | none |
 | managed-agent-converge | none |
 | mcp-server | M9 parked (D936, the fence declined, no release schedules it); M11 declined (2026-11-09) |
-| mobile-auth | owner live checks, not numbered on main (draft #2700 numbers them 601 to 608 and draft #2710 620 to 627); P5's D231 gap is a follow-up awaiting the owner's decision — revoking the last device empties the node, so the next publish re-seeds the revoked entry |
+| mobile-auth | owner live checks, numbered Checks 620 to 627 on main (draft #2700's 601 to 608 was closed); P5's D231 gap is a follow-up awaiting the owner's decision — revoking the last device empties the node, so the next publish re-seeds the revoked entry |
+| model-ab-testing | owner Checks 210 to 212 (written on main, not run; drafts #2634 and #2637 were closed as superseded) |
 | model-crafts | owner Checks 420 to 422 (written as one script each; not run) |
 | models-commands | none |
 | plugin-user-scope | E1, the release itself (rides the next CLI release; no operator step) |
