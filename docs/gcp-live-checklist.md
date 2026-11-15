@@ -16012,7 +16012,6 @@ anywhere but your own notes.
 one check of the three that costs nothing but the reading, and it is the one that decides whether
 what you are about to submit is true.
 
-<<<<<<< HEAD
 ## Check 380: `fugaro update` with stdin closed finishes without a prompt (the sandbox installation only, never `belong`; one script you run; NOT RUN)
 
 **NOT RUN.** Written by task **T14** of
@@ -16294,8 +16293,6 @@ not a word the fake was told to say.
 refusal's sentence and the command it printed; nothing in it is a secret, and the block is what says whether the
 fence is there on your installation.
 
-||||||| bb5e5f7f8
-=======
 ## Check 211: the judge's input is blind (sandbox project and sandbox repository only, never `belong`; run by you; NOT RUN)
 
 **NOT RUN.** Written by task **A5.3** of
@@ -16550,7 +16547,6 @@ above the cap the record carries is the boundary of **D554**, **D567** or **A5.2
 task that owns that boundary is where it is fixed. Check 210 is the same pair read for the publishing
 boundary alone, and it exists so that a shadow that pushed is found without spending a judge run on it.
 
->>>>>>> origin/main
 ## Check 230: the author, the committer and the trailers, on GitHub and on Bitbucket (two sandbox repositories carrying `git.author: launcher`, a third with no such key, and their forges; never `belong`; run by you; NOT RUN)
 
 **NOT RUN.** Written by task **X1** of
