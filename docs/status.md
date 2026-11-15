@@ -18,7 +18,6 @@ As of 2026-11-15, read from `main`, the open pull requests and each plan's task 
 
 | Spec | Merged | Left |
 | --- | --- | --- |
-| bitbucket-credentials | 11/12 | owner Check 149; 148's read half parked by the owner 2026-11-14 until the coordinator job is deployed (`fugaro update --firebase-project <id> --coordinator`) (Check 145 ran 2026-11-14: U3 shows the read token reaches past its workspace; the owner accepted the reach, D360 and D361 stand) (S2, D1961); T3.3's trust paths (S3 is otherwise superseded by the secrets-brokering proxy chain, 2026-11-10) |
 | cli-output-console-graph | 30/32 | owner CL12 (Checks 310 and 311) and CG12 (Checks 313 and 314; Check 312 passed 2026-11-13) |
 | console-dependency-graph | 15/17 | GV3.2 (stalled, draft #2501) |
 | credentials-service | about 32/36 | owner checks; Check 96 holds C2.3; the cascade's empty candidate list answered as `state_unavailable` (stalled, draft #2713) |
@@ -27,7 +26,6 @@ As of 2026-11-15, read from `main`, the open pull requests and each plan's task 
 | mobile | about 44/58 | P5.1 (split into tasks in drafts #2701 and #2703), P5.2 (design, draft #2687), P5.3.1 to P5.3.7 (approved 2026-11-14, not started), P5.4 (unscheduled); owner P2.3 and P4.4 |
 | model-ab-testing | 16/18 | owner Checks 210 to 212 |
 | no-prompt-policy | 14/17 | T12 (stalled, draft #2708), T13 (live, draft #2707), T14 (live, draft #2709), the T11 follow-up (stalled, draft #2706); owner Checks 380 to 382 once T14 lands |
-| run-limit-carry-over | 9/10 | L8 (docs; stalled, draft #2679) |
 | stateless-orchestrator | 18/20 | O13 (stalled, draft #2696), O19 (approved, blocked: a run the workspace refused is not distinguishable in the run record, so it waits on a W-side record change; U12 resolved NO 2026-11-13); owner Checks 301 to 304 and 305 (O16b) |
 | task-governance | 25/31 | 6 left: T3.4 (docs; stalled, drafts #2699 and #2702, held until the outer-loop-escalation E6 pull request #2498 merges), and the rest in `ee/governance` |
 | vision-model | 8/9 | V8 not started; owner Checks 520 and 521 not run |
@@ -67,6 +65,7 @@ As of 2026-11-15, read from `main`, the open pull requests and each plan's task 
 | --- | --- |
 | accounts-add | owner checks LC1 to LC4 |
 | api-key-review | owner Check 330 (AK8); AK9 and AK10 are folded into model-crafts MC6 (F26, D1638) |
+| bitbucket-credentials | owner Check 149; 148's read half parked by the owner 2026-11-14 until the coordinator job is deployed (`fugaro update --firebase-project <id> --coordinator`) (Check 145 ran 2026-11-14: U3 shows the read token reaches past its workspace; the owner accepted the reach, D360 and D361 stand) (S2, D1961); T3.3's trust paths (S3 is otherwise superseded by the secrets-brokering proxy chain, 2026-11-10) |
 | c39-review-identity | owner live check |
 | catalog-build-context | none |
 | central-orchestrator | superseded by stateless-orchestrator |
@@ -99,6 +98,7 @@ As of 2026-11-15, read from `main`, the open pull requests and each plan's task 
 | project-image-catalog | none |
 | project-workflow-secrets | none |
 | roles-scopes | owner live check that a viewer cannot launch or cancel (not yet run) |
+| run-limit-carry-over | owner-run live check (named, not numbered: a chain that halts at its dollar cap, continued with `--continues`, reports a smaller remaining than it started with) |
 | run-without-checkout | no live check covers a launch from outside a checkout |
 | security-classification | none |
 | settings-commands | none |
