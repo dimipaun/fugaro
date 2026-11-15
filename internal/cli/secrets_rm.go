@@ -110,36 +110,6 @@ func secretsRmCommand(name string) string {
 	return selfCommand() + " secrets rm " + quoteWord(name)
 }
 
-// platformSecretName reports whether name belongs to a block this command does
-// not remove, over and above the two it does: a model provider's own key
-// (config.ProviderBySecret), a provider's conventional name
-// (config.ReservedProviderSecret — `<provider>-api-key`, reserved for that
-// provider whatever its .secret is written as) and a Claude account's token
-// (config.ClaudeAccountBySecret).
-//
-// It is what tells D2313's repository-level name from those: both are names
-// this local config holds in neither project_secrets nor workflow_secrets, and
-// only the first is the disabled feature's. A provider's key and an account's
-// token are live repository-scope credentials, so their refusal below stands as
-// it is — reading them as the disabled feature would tell a person the name is
-// ignored when a job of that repository really mounts it.
-//
-// The bare claude-oauth-token and the credentials service's bundle are reserved
-// names and never reach here (secretsRm's first check), and the two are read
-// before this one for that reason.
-func platformSecretName(lc *localcfg.Config, name string) bool {
-	if _, ok := config.ProviderBySecret(lc.Providers, name); ok {
-		return true
-	}
-	if _, ok := config.ReservedProviderSecret(lc.Providers, name); ok {
-		return true
-	}
-	if _, ok := config.ClaudeAccountBySecret(lc.ClaudeAccounts, name); ok {
-		return true
-	}
-	return false
-}
-
 func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 	if _, reserved := config.ReservedSecrets[name]; !reserved && !config.SecretNameRE.MatchString(name) {
 		// The name is not quoted: a value typed in its place must not be echoed.
