@@ -39,11 +39,12 @@ const (
 
 // Supported implements gitprov.Labeler: GitHub has pull request labels.
 //
-// What it does not report is whether this installation's token may write one.
-// A label write needs the App's "Issues: write" and its "Pull requests:
-// write", and an installation granted neither answers 403 at the write; the
-// caller reads that refusal rather than a capability, which is the same
-// fail-closed direction every other write here fails in (U1).
+// What it does not report is whether this installation's token may write one:
+// a label belongs to the issue endpoints, so the write needs a permission the
+// App may or may not hold, and an installation without it answers 403 at the
+// write rather than here. That is the answer a caller gets instead of a
+// capability, which is the same fail-closed direction every other write in
+// this package fails in (U1, U2).
 func (p *Provider) Supported() bool { return true }
 
 // EnsureLabel implements gitprov.Labeler: it creates the label, and a label
