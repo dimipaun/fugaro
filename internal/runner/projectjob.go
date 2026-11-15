@@ -49,6 +49,18 @@ type jobTriple struct {
 	Provider string
 	Account  string
 	Class    jobClass
+	// Implicit marks the one project job that is the installation's own rather
+	// than a published policy profile's: the implicit default review-only job
+	// (implicitReviewCandidate), the review job a project has whether or not it
+	// declares a profile. The profile name its own name spells is the default
+	// one, which a policy with no profiles block does not define, so the two
+	// readers that look a profile up — the admission and the job's timeout
+	// class — have nothing to read for it: a review on that job is admitted by
+	// the project's own allow_repos, and it is bounded by the job the
+	// installation deployed rather than by a class no policy states. The
+	// credential check needs it too, for the same reason and one step earlier
+	// (checkProjectJobAccount).
+	Implicit bool
 }
 
 // jobClass is which of the two jobs of one (profile, provider, account) axis a
@@ -141,12 +153,21 @@ func reviewVariantAccount(account string) string {
 // keeps the axis's empty account (config.ProjectJobAccounts), so such a
 // profile's variant of that account IS this candidate — the set holds one
 // entry for the one name, and the triple is the same either way.
+//
+// Implicit is set here and nowhere else, and it is what the readers of the
+// placement do with the one candidate that may have no profile behind it: the
+// admission admits its repositories by the project's own allow_repos, the
+// credential check answers it without reading a policy for the profile its name
+// spells, and the run's clock is left to the job the installation deployed
+// (clampTotalToJob), because a policy that declares no profile states none of
+// these for it.
 func implicitReviewCandidate() jobTriple {
 	return jobTriple{
 		Profile:  projectpolicy.DefaultProfileName,
 		Provider: gitprov.KindGitHub,
 		Account:  reviewVariantAccount(""),
 		Class:    classReview,
+		Implicit: true,
 	}
 }
 
@@ -198,6 +219,18 @@ func (r *run) clampTotalToJob(ctx context.Context, wf *config.Workflow) error {
 		return nil
 	}
 	if r.spec.Overrides.TotalTimeout != "" {
+		return nil
+	}
+	if job.Implicit {
+		// The installation's implicit default review-only job has no class to
+		// clamp to: the deployment sized it at the total a repository workflow
+		// that names none is given (internal/infra's implicitReviewJobTimeout,
+		// the job the launcher resolved this review onto), and no published
+		// profile states a timeout_class for it. Clamping to a profile the
+		// policy happens to define under the same name — a project whose
+		// default profile pins another provider, where the two are different
+		// jobs — would bound the run by a class its own job was not deployed
+		// with, and it is the platform that holds this run to the job it is in.
 		return nil
 	}
 	p, found, err := r.projectPolicy(ctx)
@@ -358,9 +391,11 @@ func (r *run) jobName() (string, error) {
 // job of (slug, workflow, token) (project = false), or a halt.
 //
 // The order is the plan's: the computed project names first, because that match
-// carries an identity; then the run's own per-repository job name, recomputed
-// with gcp.WorkflowVariant so a named OAuth run matches the job it was launched
-// as (B2 — the deployed job of a named run is JobName(slug,
+// carries an identity — the installation's implicit review-only job among them,
+// for a policy that has no profile to derive it from (implicitReviewCandidate);
+// then the run's own per-repository job name, recomputed with
+// gcp.WorkflowVariant so a named OAuth run matches the job it was launched as
+// (B2 — the deployed job of a named run is JobName(slug,
 // WorkflowVariant(wf, token)), and comparing against the plain workflow would
 // refuse every one of its own executions, which is the bug internal/cli's
 // cloud.go:271-300 documents for --run-id repeats, ls, logs, diagnose and
@@ -454,6 +489,12 @@ func projectJobCandidates(p *projectpolicy.Policy) []jobTriple {
 // job, another installation's, or one a policy no longer describes. p may be
 // nil, which is a project that has published no policy and so defines no
 // project job.
+//
+// The installation's implicit review-only job is here like any other candidate,
+// and it is the one row that may name a profile the policy does not define
+// (implicitReviewCandidate): a reader that reads the profile's own fields out of
+// the policy for it reads the zero value, which is why the runner holds such a
+// run's admission and its clock to the project and to the deployed job instead.
 func ProjectJobOfPolicy(p *projectpolicy.Policy, job string) (profile, provider, account string, ok bool) {
 	if p == nil || job == "" {
 		return "", "", "", false
@@ -464,6 +505,79 @@ func ProjectJobOfPolicy(p *projectpolicy.Policy, job string) (profile, provider,
 		}
 	}
 	return "", "", "", false
+}
+
+// ProjectJobDefaultProfile is the profile a workflow that names no job profile
+// runs on, for a job serving provider, and "" when the policy defines none for
+// that provider.
+//
+// It is the provider-default rule of D2310 and R8: a project that mixes
+// providers has one default profile per provider, the project's own default
+// (`standard`) for the first of them and `standard-<provider>` for another, so
+// a workflow's silence resolves against the provider of the repository it is
+// written in and not against one profile every repository would land on. The
+// provider is read on both sides of the rule rather than trusted from the
+// name: a profile called `standard-bitbucket` whose provider is github is not
+// the Bitbucket default, and a policy that defines one is a policy whose
+// repository the launch keeps on its per-repository job.
+//
+// It is exported because the launcher and the runner's candidate logic answer
+// the same question over the same policy and must agree (contract.md: they
+// answer `JobChoice` "name for name"). internal/cli's launchProjectJobFor
+// calls it for a workflow that names no profile and computes the job's name
+// from the profile it returns, and this package's candidate set
+// (projectJobCandidates) is the set of names that answer holds over, so the
+// launcher can only compute a name the runner places. A return of "" is the
+// choice of no profile: the policy defines no profile for the repository's
+// provider at all, and the launch keeps the per-repository job it has always
+// had.
+//
+// p may be nil, which is a project that has published no policy and so has no
+// default for any provider.
+func ProjectJobDefaultProfile(p *projectpolicy.Policy, provider string) string {
+	if p == nil || provider == "" {
+		return ""
+	}
+	if pr, err := p.ProfileFor(projectpolicy.DefaultProfileName); err == nil && pr.Provider == provider {
+		return projectpolicy.DefaultProfileName
+	}
+	named := projectpolicy.DefaultProfileName + "-" + provider
+	if pr, err := p.ProfileFor(named); err == nil && pr.Provider == provider {
+		return named
+	}
+	return ""
+}
+
+// ProjectJobIsImplicitReviewJob is whether job is the installation's implicit
+// default review-only job as *this* policy defines it, rather than a job of one
+// of its profiles — the flag matchJobName places the run by (jobTriple.Implicit,
+// which the admission and the clock read), asked by name so a reader outside
+// this package can place the same name the same way without computing the
+// candidate set itself.
+//
+// The distinction is not readable off the name: a policy whose default github
+// profile already derives that name holds ONE entry for it, under the profile's
+// own triple, and the run in it is admitted by that profile rather than by the
+// project's allow_repos (projectJobCandidates adds the implicit candidate only
+// for a name the policy does not derive itself). A launcher that read such a
+// name back as the implicit job would check the project's list where the run
+// checks the profile's — or the reverse — and the launch and the run would
+// disagree about the repositories the job serves, and about which side refuses
+// a repository neither admits.
+//
+// false answers for a name no candidate computes as well as for a profile's job:
+// both are names the implicit entry does not carry, and a caller that needs the
+// difference asks ProjectJobOfPolicy for it.
+func ProjectJobIsImplicitReviewJob(p *projectpolicy.Policy, job string) bool {
+	if p == nil || job == "" {
+		return false
+	}
+	for _, c := range projectJobCandidates(p) {
+		if gcp.ProjectJobName(c.Profile, c.Provider, c.Account) == job {
+			return c.Implicit
+		}
+	}
+	return false
 }
 
 // legacyVariant is gcp.WorkflowVariant(workflow, token) for the workflow the
@@ -660,19 +774,34 @@ func (r *run) cloneURL(ctx context.Context) (string, error) {
 // A run in a per-repository job is not this check's business: there the account
 // is part of the job's own name (gcp.WorkflowVariant), the job mounts exactly
 // the selected account's token, and the per-repository rules hold unchanged.
+//
+// A run in a review-only variant is the review arm's
+// (checkProjectReviewJobAccount), and it is asked before the published policy is
+// read at all: the variant holds no token whose account the policy could bound,
+// and the job it is in may be the installation's implicit default review-only
+// job, whose profile no policy need define.
 func (r *run) checkProjectJobAccount(ctx context.Context, auth string) error {
 	job, project := r.projectJob()
 	if !project {
 		return nil
+	}
+	if job.Class == classReview {
+		// The review arm is asked before the policy is, because nothing it
+		// decides is the policy's: what a review container holds is its
+		// class's and never a profile's token, and the job may be the
+		// installation's implicit default review-only job, whose profile no
+		// policy with a profiles block of its own need define
+		// (implicitReviewCandidate).
+		return r.checkProjectReviewJobAccount(job)
 	}
 	p, found, err := r.projectPolicy(ctx)
 	if err != nil {
 		return err
 	}
 	if !found || p == nil {
-		// Unreachable: jobIdentity only adopts a project job's identity by
-		// matching the published policy's own names, so a run with an identity
-		// has read a policy. Kept as the halt it would be — a token is not
+		// Unreachable: jobIdentity only adopts a coding project job's identity
+		// by matching the published policy's own names, so a run with one has
+		// read a policy. Kept as the halt it would be — a token is not
 		// allowed to ride on an identity nothing describes.
 		return fmt.Errorf("this run is in the project job %s, and this project has published no policy to read its account from: the run stops rather than holding a credential no policy bounds",
 			gcp.ProjectJobName(job.Profile, job.Provider, job.Account))
@@ -680,9 +809,6 @@ func (r *run) checkProjectJobAccount(ctx context.Context, auth string) error {
 	pr, err := p.ProfileFor(job.Profile)
 	if err != nil {
 		return fmt.Errorf("this run is in the project job %s: %w", gcp.ProjectJobName(job.Profile, job.Provider, job.Account), err)
-	}
-	if job.Class == classReview {
-		return r.checkProjectReviewJobAccount(job)
 	}
 	account, oauth := "", auth == "oauth"
 	if oauth {
