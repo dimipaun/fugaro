@@ -382,6 +382,19 @@ func (e *initEngine) converge(ctx context.Context) error {
 	if err := e.gateRun(ctx); err != nil {
 		return err
 	}
+	// The door's progress line, note and courtesy question about the runs that
+	// are running while it converges, and the last thing before anything is
+	// written at all: a person deciding whether it is safe to update now reads
+	// it before the update starts rather than after, and an answer of "stop"
+	// leaves the installation exactly as it was (update_in_flight.go). It is
+	// before syncAccess, not after it, for that reason alone: the roles step is
+	// the first write of this run (the grants node it reconciles), so a note
+	// that promised "nothing was written" after it would be false.
+	if stop, err := e.announceRunsInFlight(ctx); err != nil {
+		return err
+	} else if stop {
+		return nil
+	}
 	// The roles step, once for the whole run and before the first stage plans
 	// (update_access.go, RS3): the installation's member lists and the grants
 	// node are reconciled here, and the spec every stage below builds carries
@@ -392,12 +405,6 @@ func (e *initEngine) converge(ctx context.Context) error {
 	if err := e.syncAccess(ctx); err != nil {
 		return err
 	}
-	// The door's one line about the runs that are running while it converges,
-	// and the last thing before the first stage writes anything: a person
-	// deciding whether it is safe to update now reads it before the update
-	// starts rather than after. It asks nothing and it refuses nothing, and it
-	// is silent when there is nothing running (update_in_flight.go).
-	e.announceRunsInFlight(ctx)
 	res, err := initflow.Run(ctx, stages, e.options())
 	if err == nil && res != nil && e.r.o.planOnly && res.Failed == nil {
 		e.planOnlyReview(ctx, res.Stages)

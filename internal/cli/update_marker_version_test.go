@@ -107,11 +107,11 @@ func TestPreviousMarkerVersionConvergesOnUpdate(t *testing.T) {
 		t.Errorf("the fact reads as managed %v version %d after the update, want the managed version-%d fact the run wrote",
 			after.Managed, after.Version, managed.MarkerVersionNoBuilds)
 	}
-	// The line the door printed says which step did it: a person who sees a run
+	// The note the door printed says which step did it: a person who sees a run
 	// in flight stop taking the gate has the step named for them rather than
-	// having to find it (update_in_flight.go; the clause's own test is
+	// having to find it (update_in_flight.go; the line's own test is
 	// TestUpdateInFlightLineNamesTheMarkerConvergence).
-	if line := inFlightLine(t, out); !strings.Contains(line, "the creation fact this update rewrites") {
+	if line := inFlightNoteOf(t, out); !strings.Contains(line, "creation fact: a run of the release behind") {
 		t.Errorf("the update's line does not name the marker's convergence over a run in flight:\n%s", line)
 	}
 

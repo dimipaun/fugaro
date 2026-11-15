@@ -194,7 +194,7 @@ func TestUpdateAsksNoRunToFinish(t *testing.T) {
 
 	out := convergeOn(t, r, []string{"policy-older-than-binary", "policy-rules-skew", "plugin-pin"})
 
-	line := inFlightLine(t, out)
+	line := inFlightNoteOf(t, out)
 	if !strings.Contains(line, "asks no run to finish first") {
 		t.Errorf("the update does not say it asks no run to finish first: %q", line)
 	}

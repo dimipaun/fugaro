@@ -201,14 +201,36 @@ told the operator to wait (`refuseRunsInFlight`). The owner's requirement of
 2026-11-09 makes that unacceptable — a team of ten or twenty always has runs in
 flight — so the update door no longer refuses, and it announces the runs once
 instead (`announceRunsInFlight`, `internal/cli/update_in_flight.go`, called from
-the converge before the first stage). The line is one sentence, it is not a
-question, and it never asks anybody to wait. What it claims is what holds
-whatever this update turns out to do — the update asks no run to finish first
-and rewrites nothing a run holds — and never the flat "the runs are unaffected",
-which the budget-mode raise below makes false; what it can still reach is named
-instead. It is absent when nothing runs, under `--json` and `--print-vars`
-(whose stdout is a document), and under `--plan-only` (which applies nothing).
-The refusal stays where it is not the update door's: `fugaro project policy publish --delete` /
+the converge before anything is written at all: before the roles step
+`syncAccess`, whose grants-node write is the first write of the run). The note is
+short (`inFlightNote`): the count and the two facts that hold whatever this
+update turns out to do, then one short line per step that can still reach a run,
+naming the step. It is not a question by default, and it never asks anybody to
+wait. What it claims is what holds whatever this update turns out to do — the
+update asks no run to finish first and rewrites nothing a run holds — and never
+the flat "the runs are unaffected", which the budget-mode raise below makes
+false; what it can still reach is named instead, one step per line, rather than
+either claimed safe or dropped. It is absent when nothing runs, under `--json`
+and `--print-vars` (whose stdout is a document), and under `--plan-only` (which
+applies nothing).
+
+The count is a read of the budget database over the network, and the owner's
+feedback of 2026-11-15 asked for it to be watched rather than waited on: the
+door opens the CLI's own step for it (`report.Step`, the spinner and the step
+line every other step of this update is drawn on, so the run's own progress rules
+decide colour, a pipe and `--verbose`), names what it does ("Checking for runs in
+flight"), and closes it before the note is printed. The courtesy that follows the
+note is the same day's second ask: at a real terminal, and only where `--ask`
+puts the door's questions back (`initRun.asksBack`, the one condition the
+update's own confirmations are asked under), the person who just read the note
+may stop the update there — `stop here, before anything is written?`, whose Enter
+key means go on, because an update must never refuse over a run and a courtesy
+that stopped the upgrade by default would be exactly that refusal wearing a
+prompt's clothes. A "stop" exits 0 with the installation exactly as it was. Where
+the no-prompt policy applies — a managed project without the flag, a coding
+agent's session, a pipe, `--json` — no prompt is asked and the update proceeds as
+it did, printing the note only (`docs/no-prompt-policy/spec.md`). The refusal
+stays where it is not the update door's: `fugaro project policy publish --delete` /
 `fugaro project repos rm`, which are not the whole upgrade and are their own
 commands. The other two doors that reach this stage through `initStages` —
 `fugaro setup`, and `fugaro accounts add` / `accounts rm` — are not the update
@@ -216,22 +238,27 @@ door either, so they keep the answer they had before this ruling, which is the
 ruling of 2026-11-06: a managed project's own session is told the count as a note
 and writes, and every other session is refused
 (`inflightManaged`, `policyMigrateStage.inflightAnswer`, which reads the answer
-off the door rather than taking it as a parameter). The one line above is the
-update door's and is not printed by those doors.
+off the door rather than taking it as a parameter). The note above is the update
+door's and is not printed by those doors.
 
-The rows that are not simply safe are the ones the line has to own, and they are
-three (`inFlightSteps`, `internal/cli/update_in_flight.go`): the budget-mode
+The rows that are not simply safe are the ones the note has to own, and they are
+five (`inFlightSteps`, `internal/cli/update_in_flight.go`): the budget-mode
 raise, which can bound a run that bootstrapped under `observe` from its next
 lease and is the operator's own caps becoming effective rather than the update
 stopping a run — recorded here rather than deferred, the alternative being the
 update asking a person to stop work for it; the published policy, which a
-cascade project's every model call re-reads; and a retirement, which deletes an
-orphaned job and takes the executions running on it. Each clause is the question
-its own step is gated on rather than the whole of its decision
-(`budgetModeBindsRuns`, `policyReadsLive`, `retireTakesExecutions`), so the line
-errs towards naming a step that may not end up doing anything over claiming the
-update cannot reach a run when it can; the budget raise's shape for the owner is
-in the pull request.
+cascade project's every model call re-reads; the credentials service's own
+replacement, the window between the node's raise and the service that reads that
+node per call, which a call landing between the two meets as a binary that cannot
+read the node; the installation's creation fact, which this release converges
+into a version a run of the release behind refuses, so a command of it keeps the
+typed confirmation instead of applying under the gate; and a retirement, which
+deletes an orphaned job and takes the executions running on it. Each line is the
+question its own step is gated on rather than the whole of its decision
+(`budgetModeBindsRuns`, `policyReadsLive`, `credentialsWindowOpens`,
+`markerConverges`, `retireTakesExecutions`), so the note errs towards naming a
+step that may not end up doing anything over claiming the update cannot reach a
+run when it can; the budget raise's shape for the owner is in the pull request.
 
 The tests are `TestUpdateLeavesARunInFlightRunning` and its siblings
 (`internal/cli/update_in_flight_test.go`): an installation one release behind
@@ -239,9 +266,10 @@ converges under `fugaro update` while a run of its own repository is in flight,
 and that run's later writes — its lease, the ledger and the counters the report
 settles, the outcome it ends with, its record and its review session — still
 land under the new rules and the migrated policy.
-`TestUpdateInFlightLineNamesEveryStepThatCanReachARun` turns each of the three
-steps on alone and asserts the clause is there and the others are not, so a step
-that can reach a run and is not named fails the suite.
+`TestUpdateInFlightLineNamesEveryStepThatCanReachARun` turns each step on alone
+and asserts its line is there and the others are not, so a step that can reach a
+run and is not named fails the suite, and it holds the note's shape — a count
+line and one indented line per step, none of them a paragraph.
 `TestTheRefusingInflightAnswerStopsTheWrite` and
 `TestSetupPolicyStepKeepsTheRunsInFlightAnswer`
 (`internal/cli/init_policy_migrate_test.go`) pin the refusal where it is kept —

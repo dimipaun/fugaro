@@ -7,7 +7,9 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
@@ -29,107 +31,152 @@ import (
 // internal/budget/rules); and no step of the update writes a run's registry
 // entry, its ledger, its day counters or its record.
 //
-// Four steps can still reach one, and the line names every one of them that
-// this run can take — naming a step and why, rather than either claiming a
-// safety that is not there or dropping the claim: the budget mode's raise to
-// enforce, which a session re-reads on every lease and every report while the
-// policy node is read once (`Session.readConfig`); the policy node itself, which
-// a project routed through the credentials cascade re-reads on EVERY model call
-// (`internal/credsvc`), so a run in flight is held to the node this update
-// publishes from its next call; the window between that write and the
-// credentials service's own replacement, which is the release before this one's
-// service meeting a node it cannot read for the length of one apply; and a
-// retirement, which deletes an orphaned Cloud Run job and takes the executions
-// running on it with it (`deleteOrphanedJob`, init_retire.go). None of the four
-// is the update stopping a run, and none of them is asked to wait.
+// Five steps can still reach one, and the note names every one of them that
+// this run can take — naming the step and what it does to a run, rather than
+// either claiming a safety that is not there or dropping the claim: the budget
+// mode's raise to enforce, which a session re-reads on every lease and every
+// report while the policy node is read once (`Session.readConfig`); the policy
+// node itself, which a project routed through the credentials cascade re-reads
+// on EVERY model call (`internal/credsvc`), so a run in flight is held to the
+// node this update publishes from its next call; the window between that write
+// and the credentials service's own replacement, which is the release before
+// this one's service meeting a node it cannot read for the length of one apply;
+// the installation's creation fact, which this release converges into a version
+// the run in flight REFUSES to read, so a command of it keeps the typed
+// confirmation instead of applying under the gate (update_marker_version.go);
+// and a retirement, which deletes an orphaned Cloud Run job and takes the
+// executions running on it with it (`deleteOrphanedJob`, init_retire.go). None
+// of the five is the update stopping a run, and none of them is asked to wait.
 
-// announceRunsInFlight prints the update door's one line about the runs in
-// flight, and nothing at all when there are none (an installation with an empty
-// registry gets the update's ordinary transcript).
+// announceRunsInFlight counts the runs in flight while the CLI's own progress
+// line says what it is doing, prints the door's short note about them, and —
+// where the person asked to be asked — lets them stop before the first stage
+// writes anything. It answers whether the run must stop, which is the one
+// answer that changes nothing.
 //
-// It is one line, and it is not a question: no prompt, no refusal, and never a
-// request to wait. It says nothing with --json (stdout is one object) or
-// --print-vars (stdout is the variables alone), the two modes whose stdout is a
-// document rather than a transcript, and nothing with --plan-only, which applies
-// nothing and so has no run to leave running. Every door but the update's is
-// silent too: `fugaro setup` shows a plan, and the runs in flight are the
-// update's fact.
+// The progress line is the CLI's own step (report.Step, the spinner and the
+// step line every other step of this update is drawn on), because the count is
+// a read of the budget database over the network and the owner's feedback of
+// 2026-11-15 asked for it to be watched rather than waited on. It is opened and
+// ended before the note, so the note is read under a finished step and never
+// under a frame, and it is drawn exactly where every other line of this run is:
+// a spinner at a terminal with colour, the step line alone on a pipe, and
+// nothing at all under --json, --print-vars and --plan-only, which return above
+// it. Every door but the update's is silent too: `fugaro setup` shows a plan,
+// and the runs in flight are the update's fact.
 //
-// A count that could not be read is silence and not an error. The line is
+// The note is short (inFlightNote): the count and the two facts that hold
+// whatever this update does, then one short line per step that can still reach
+// a run. It is never a request to wait, and it is not a question unless --ask
+// asks for one.
+//
+// A count that could not be read is silence and not an error. The note is
 // information, and the writes it is about are guarded where they are made: an
 // update that could not reach the budget database says so in the stages that
-// need it, and a door that failed here over a line would invent a new way for
+// need it, and a door that failed here over a note would invent a new way for
 // the one command the upgrade is to stop.
-func (e *initEngine) announceRunsInFlight(ctx context.Context) {
+func (e *initEngine) announceRunsInFlight(ctx context.Context) (bool, error) {
 	r, o := e.r, e.r.o
 	if o.doorName() != updateDoor.name || o.asJSON || o.printVars || o.planOnly {
-		return
+		return false, nil
 	}
 	if e.lc == nil {
-		return
+		return false, nil
+	}
+	var check *report.Step
+	if r.rep != nil {
+		check = r.rep.Step("Checking for runs in flight")
 	}
 	lc, db, err := budgetDBFor(ctx, e.lc)
-	if err != nil {
-		return
+	var n int
+	var steps []inFlightStep
+	if err == nil {
+		n, err = runsInFlight(ctx, db, lc)
 	}
-	n, err := runsInFlight(ctx, db, lc)
+	if err == nil && n > 0 {
+		steps = e.inFlightSteps(ctx, db)
+	}
+	if check != nil {
+		check.Done("")
+	}
 	if err != nil || n == 0 {
-		return
+		return false, nil
 	}
-	if steps := e.inFlightSteps(ctx, db); len(steps) > 0 {
-		// The step names are the screen's line, and the clause that says why
-		// each one can reach a run is the run's own account (stageDetail: the
-		// log always, the terminal under -v). A run with no log has nowhere
-		// else to put them, so there the whole clause stands where it always
-		// did (G5).
-		if r.repLog == nil {
-			fmt.Fprintf(r.w, "%s%d run(s) are in flight: fugaro update asks no run to finish first and rewrites nothing a run holds, but these steps can still reach them — %s\n",
-				o.programPrefix(), n, inFlightWhy(steps))
-			return
-		}
-		fmt.Fprintf(r.stageDetail(), "%s%d run(s) are in flight: fugaro update asks no run to finish first and rewrites nothing a run holds, but these steps can still reach them — %s\n",
-			o.programPrefix(), n, inFlightWhy(steps))
-		fmt.Fprintf(r.w, "%s%d run(s) are in flight: fugaro update asks no run to finish first and rewrites nothing a run holds; it can still reach them at %s\n",
-			o.programPrefix(), n, strings.Join(inFlightNames(steps), ", "))
-		return
+	w := loggedOut(r.w, r.repLog)
+	fmt.Fprintln(w, inFlightNote(o.programPrefix(), n, steps))
+	stop, err := r.stopOverRunsInFlight()
+	if err != nil {
+		return false, err
 	}
-	fmt.Fprintf(r.w, "%s%d run(s) are in flight: fugaro update asks no run to finish first and rewrites nothing a run holds, and no step of it can reach them\n",
-		o.programPrefix(), n)
+	if !stop {
+		return false, nil
+	}
+	fmt.Fprintf(w, "%sstopped at your answer: nothing was written\n", o.programPrefix())
+	return true, nil
 }
 
-// inFlightStep is one step of this update that can reach a run in flight: the
-// name the door's own line carries, and the clause that says why — the step and
-// the reason, in the words a person reads, which is what the log gets whole.
+// stopOverRunsInFlight is the courtesy the owner asked for on 2026-11-15: the
+// person who just read the note may stop the update there, before any stage has
+// written anything, and exit 0 with the installation exactly as it was. A run
+// that was not asked answers false and goes on.
+//
+// It is asked only where --ask puts the door's questions back (asksBack: the
+// flag, and the gate the flag has something to restore for), which is the
+// condition the update's own confirmations are asked under (confirmNow) and the
+// reason it does not break docs/no-prompt-policy: a managed project asks nothing
+// by default, a coding agent's session, a pipe, --json and --non-interactive are
+// answered without a prompt, and the flag is the policy's one sanctioned
+// exemption, refused where nobody can answer it (askAtTerminal's own session
+// check, which is the package's one read of a y/N — managed_ask.go).
+//
+// The question is phrased as the STOP and not as the continue, so the default
+// an empty line gives is to go on. That is not a detail of wording: an update
+// must never refuse over a run in flight (CLAUDE.md's HARD RULE), and a
+// courtesy whose Enter key stopped the upgrade would be exactly that refusal
+// wearing a prompt's clothes. A yes is the only answer that stops anything.
+func (r *initRun) stopOverRunsInFlight() (bool, error) {
+	if !r.asksBack() {
+		return false, nil
+	}
+	return askAtTerminal(r.cmd, "stop here, before anything is written?", initflow.AskRefusal)
+}
+
+// inFlightNote is the door's short note: the count and the two facts that hold
+// whatever this update does, then one short line per step that can still reach
+// a run, each naming the step and what it does to a run in flight. An update
+// that can reach none says so on the count's own line.
+//
+// The steps are the whole of what the note says about them, and the note is the
+// same on the screen and in the log, so a person reading either reads one line
+// per step rather than a paragraph of reasons.
+func inFlightNote(prefix string, n int, steps []inFlightStep) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s%d run(s) are in flight: it asks no run to finish first and rewrites nothing a run holds", prefix, n)
+	if len(steps) == 0 {
+		b.WriteString(", and no step of it can reach them")
+		return b.String()
+	}
+	b.WriteString(", and these steps can still reach them:")
+	for _, s := range steps {
+		b.WriteString("\n  " + s.line)
+	}
+	return b.String()
+}
+
+// inFlightStep is one step of this update that can reach a run in flight, as
+// the one short line the note carries it on: the step's own name, and what it
+// does to a run that is running. An empty list is the update that leaves every
+// run in flight exactly where it is, and it is the ordinary case.
 type inFlightStep struct {
-	name string
-	why  string
-}
-
-// inFlightWhy is the steps as the one clause each that explains them, for the
-// line that has room for the whole account.
-func inFlightWhy(steps []inFlightStep) string {
-	whys := make([]string, len(steps))
-	for i, s := range steps {
-		whys[i] = s.why
-	}
-	return strings.Join(whys, "; ")
-}
-
-// inFlightNames is the steps as the short names the screen's one line carries:
-// they are what CLAUDE.md's rule is about — the steps that can still reach a
-// run are named there rather than denied.
-func inFlightNames(steps []inFlightStep) []string {
-	names := make([]string, len(steps))
-	for i, s := range steps {
-		names[i] = s.name
-	}
-	return names
+	line string
 }
 
 // inFlightSteps is the steps of THIS update that can reach a run in flight, one
-// entry each: the name the screen's line carries and the clause that says why,
-// in the words a person reads. An empty result is the update that leaves every
-// run in flight exactly where it is, and it is the ordinary case.
+// short line each. The line names the step rather than denying it, which is
+// what CLAUDE.md's HARD RULE asks the note for, and it is short enough to be
+// read while the update goes past: the account of WHY each step can reach a run
+// is the step's own, in docs/design/update-in-flight.md and in the tests that
+// turn each one on alone.
 //
 // Every clause is deliberately the question the step itself is gated on rather
 // than the whole of its decision (see budgetModeBindsRuns): the line errs
@@ -137,33 +184,26 @@ func inFlightNames(steps []inFlightStep) []string {
 // update cannot reach a run when it can.
 func (e *initEngine) inFlightSteps(ctx context.Context, db *rtdb.Client) []inFlightStep {
 	var steps []inFlightStep
-	// isManaged rather than managed: the package of the same name is read below,
-	// for the two versions the creation fact's step names.
 	isManaged := e.managedProjectRead(ctx)
 	if e.budgetModeBindsRuns(ctx, db, isManaged) {
-		steps = append(steps, inFlightStep{
-			name: fmt.Sprintf("the budget mode's raise to %s", budget.ModeEnforce),
-			why:  fmt.Sprintf("the budget mode's raise to %s, which a run in flight meets at its next lease and which is your own caps taking effect", budget.ModeEnforce)})
+		steps = append(steps, inFlightStep{line: fmt.Sprintf(
+			"budget mode: a run meets the raise to %s at its next lease", budget.ModeEnforce)})
 	}
 	if e.policyReadsLive(ctx, db) {
 		steps = append(steps, inFlightStep{
-			name: "the policy this update publishes",
-			why:  fmt.Sprintf("the policy this update publishes, which every model call of this project's runs re-reads (%s: %s), so a run in flight is held to the new node from its next call", "routing.claude.via", projectpolicy.RouteCascade)})
+			line: "policy: runs in flight pick up the new policy at their next model call"})
 	}
 	if e.credentialsWindowOpens(ctx, db) {
 		steps = append(steps, inFlightStep{
-			name: "the credentials service this update replaces",
-			why:  "the credentials service this update replaces, which reads the published node on every call it serves: this run raises the node's version in one stage and moves the service in the next, and a call landing between the two meets the previous release's service with a node its own binary does not understand"})
+			line: "credentials service: a call landing mid-update meets a service that cannot read the node"})
 	}
 	if e.markerConverges(ctx) {
 		steps = append(steps, inFlightStep{
-			name: "the creation fact this update rewrites",
-			why:  fmt.Sprintf("the creation fact this update rewrites from version %d to version %d, which a run in flight re-reads per command: that run is the release behind, whose reader refuses a version it does not know, so its own apply keeps the typed confirmation instead of applying under the gate — nothing of the run is rewritten, and no record, ledger or counter of it is touched", managed.MarkerVersionBuilds, managed.MarkerVersionNoBuilds)})
+			line: "creation fact: a run of the release behind keeps its typed confirmation"})
 	}
 	if e.retireTakesExecutions(isManaged) {
 		steps = append(steps, inFlightStep{
-			name: "the retirement this update runs",
-			why:  "the retirement this update runs, which deletes an orphaned job and takes the executions still running on it"})
+			line: "retirement: deletes an orphaned job and the executions on it"})
 	}
 	return steps
 }
