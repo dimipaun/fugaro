@@ -1126,10 +1126,10 @@ func TestCatalogCheckJobNeedsItsSpec(t *testing.T) {
 func TestCatalogCheckJobSmokesABakedDefinitionWhereTheImagePutIt(t *testing.T) {
 	f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("runtime")))
 	slug := f.slugs["acme/other"]
-	baked, err := imagebake.Append([]byte(catalogCheckOtherDef), imagebake.Plan{Baked: &imagebake.Repo{
+	baked, err := imagebake.Append([]byte(catalogCheckOtherDef), imagebake.Plan{Baked: []imagebake.Repo{{
 		Repo: "acme/other", Slug: slug,
 		URL: "https://bitbucket.org/acme/other.git", Branch: "main",
-	}})
+	}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1175,10 +1175,10 @@ func TestCatalogCheckJobRefusesADefinitionBakedForAnotherRepository(t *testing.T
 	// and paid for. Here the check refuses it first, and the fix it names is the
 	// one the assignment is made from.
 	appSlug := mustSlug("bitbucket", "acme/app")
-	baked, err := imagebake.Append([]byte(catalogCheckOtherDef), imagebake.Plan{Baked: &imagebake.Repo{
+	baked, err := imagebake.Append([]byte(catalogCheckOtherDef), imagebake.Plan{Baked: []imagebake.Repo{{
 		Repo: "acme/app", Slug: appSlug,
 		URL: "https://bitbucket.org/acme/app.git", Branch: "main",
-	}})
+	}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1242,9 +1242,9 @@ func TestCatalogCheckJobRebuildsADefinitionComposedFromANonCanonicalOrigin(t *te
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("tools")))
-			baked, err := imagebake.Append([]byte(catalogCheckAppDef), imagebake.Plan{Baked: &imagebake.Repo{
+			baked, err := imagebake.Append([]byte(catalogCheckAppDef), imagebake.Plan{Baked: []imagebake.Repo{{
 				Repo: "acme/app", Slug: f.slugs["acme/app"], URL: origin, Branch: "main",
-			}})
+			}}})
 			if err != nil {
 				t.Fatal(err)
 			}

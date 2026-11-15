@@ -52,8 +52,8 @@ type gitCredentialOptions struct {
 // is the project's build identity's and it reaches exactly the entry's
 // repositories, which is not something this process can mint for itself.
 //
-// A test installs buildtoken.Stub here to pin what the build asks for; nothing
-// that ships ever sets it.
+// A test installs a client that records the request here, so what the build asks
+// for is pinned rather than assumed; nothing that ships ever sets it.
 var gitCredBuildToken func(cmd *cobra.Command) (buildtoken.Client, error)
 
 // newImageGitCredentialCmd is `fugaro image git-credential`, the image
