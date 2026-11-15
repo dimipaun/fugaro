@@ -679,8 +679,12 @@ func TestUpdateKeepsTheVarsFileWhereTheAudiencePlanReadsIt(t *testing.T) {
 		t.Fatalf("the run did not fill the service's audience, so this test is not arranged as the report is: want %q in\n%s", want, s)
 	}
 	dirs := planDirs(t, r.log)
-	if len(dirs) != 2 {
-		t.Fatalf("the installation step planned %d times, want 2 (the apply that creates the service, then the audience): %v\n%s", len(dirs), dirs, s)
+	// Three plans of the root: the installation step's two (the apply that
+	// creates the service, then the audience), and installation-2's, the stage
+	// that applies the root again for the scheduled jobs (R7) because this
+	// rig records no base image for the images stage to leave alone.
+	if len(dirs) != 3 {
+		t.Fatalf("the installation root planned %d times, want 3 (the apply that creates the service, the audience, then installation-2's): %v\n%s", len(dirs), dirs, s)
 	}
 	// Both sides resolved, as computeCalls' comparison is: the fake records
 	// os.Getwd(), which answers a path with every symlink followed, while the
@@ -1009,11 +1013,14 @@ func TestUpdateCarriesTheVerifierAccount(t *testing.T) {
 		}
 	}
 
-	// And with nothing anywhere naming a verifier, the block carries no member
-	// at all: that is the state the module's own default is for — the address of
-	// the verifier account the same apply creates (verifier.tf) — which is a
-	// service account too, and the run records it in the config so the next
-	// update's block names it.
+	// And with nothing anywhere naming a verifier, the block names the verifier
+	// account the same apply creates and nothing else. The run records the
+	// address in the config after the first apply, and installation-2 — the
+	// stage that applies the root again for the scheduled jobs (R7) — reads the
+	// spec from the config it then holds, so this run's LAST block is the one
+	// the next update would have written anyway: the module's own default for
+	// the variable is that same address (verifier.tf), so which of the two
+	// spellings the apply carries changes nothing in the plan.
 	plain := credentialsRig(t)
 	plain.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
 	credentialsOutputs(t, plain)
@@ -1022,8 +1029,9 @@ func TestUpdateCarriesTheVerifierAccount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("an ordinary update of an installation with no verifier named failed: %v\n%s", err, s)
 	}
-	if got, ok := credentialsServiceEntry(t, plain)["verifier_accounts"]; ok {
-		t.Errorf("credentials_service.verifier_accounts = %v on an installation whose config and node both name nobody, want the member absent: an absent member is the module's variable null, which is the state its default — the verifier account this apply creates — is for\n%s", got, s)
+	listed, _ := credentialsServiceEntry(t, plain)["verifier_accounts"].([]any)
+	if len(listed) != 1 || listed[0] != verifierServiceAccount() {
+		t.Errorf("credentials_service.verifier_accounts = %v on an installation whose config and node both name nobody, want exactly [%s]: the account the module's default is for, and never a person's address\n%s", listed, verifierServiceAccount(), s)
 	}
 	if got := verifierListOf(localConfigOf(t, plain)); !sameList(got, []string{verifierServiceAccount()}) {
 		t.Errorf("the local config names verifier_accounts = %v, want [%s]: the address is a fact of the configuration (infra.VerifierAccountID), which is what lets one update create the account and name it\n%s", got, verifierServiceAccount(), s)
@@ -1107,8 +1115,11 @@ func TestUpdatePinsTheServiceImageByDigest(t *testing.T) {
 	// exist until that apply returns — and fillCredentialsAudience's, which puts
 	// the module's own output on it. Both happen before the stage reports done,
 	// so an installation this run calls converged is one that serves.
-	if apps := r.ran(t, "apply"); len(apps) != 2 {
-		t.Errorf("applies = %v, want the installation root twice (the installation stage's, and the audience's)", apps)
+	// And installation-2's, the third: the stage that applies the root again
+	// once the images stage has pinned the base image the scheduled jobs run
+	// FROM (R7), which this rig has none of until that stage runs.
+	if apps := r.ran(t, "apply"); len(apps) != 3 {
+		t.Errorf("applies = %v, want the installation root three times (the installation stage's, the audience's, and installation-2's)", apps)
 	}
 
 	// A development build has no released image, so there is nothing to resolve
@@ -1444,20 +1455,22 @@ func TestUpdateRepinsTheCredentialsImageOnAnOrdinaryUpdate(t *testing.T) {
 			t.Errorf("credentials_service.%s = %v, want %v: the re-pin rewrote a fact of the service it does not own", k, svc[k], want)
 		}
 	}
-	// Three applies: the installation root's own, the audience fill's — the
+	// Four applies: the installation root's own, the audience fill's — the
 	// second apply inside the installation stage, which writes the credentials
 	// service's URL and the secrets intake's back from the root's outputs, and
 	// which this run makes because it also deploys the intake (DS4.1: the
 	// installation at the previous version has none, so the block this run
 	// writes is the one whose URL the apply after it carries onto the
-	// revision) — and the credentials-service stage's. That last one is the
-	// root once more, whose one change is the moved image; it is what the
-	// reorder costs (the owner's ruling of 2026-11-10): the service may not be
-	// replaced before the node it reads per call is one its own binary
-	// understands, so its apply is the stage after the policy migration rather
-	// than part of the installation stage's.
-	if apps := r.ran(t, "apply"); len(apps) != 3 {
-		t.Errorf("applies = %v, want the installation root's, the audience fill's own and the credentials-service stage's", apps)
+	// revision) — installation-2's, the stage that applies the root again for
+	// the scheduled jobs the images stage has just pinned a base image for
+	// (R7) — and the credentials-service stage's. That last one is the root
+	// once more, whose one change is the moved image; it is what the reorder
+	// costs (the owner's ruling of 2026-11-10): the service may not be replaced
+	// before the node it reads per call is one its own binary understands, so
+	// its apply is the stage after the policy migration rather than part of the
+	// installation stage's.
+	if apps := r.ran(t, "apply"); len(apps) != 4 {
+		t.Errorf("applies = %v, want the installation root's, the audience fill's own, installation-2's and the credentials-service stage's", apps)
 	}
 
 	// The next ordinary update is the converged one, and it asks the registry
@@ -2056,9 +2069,16 @@ func TestOrdinaryUpdateAdmitsTheVerifierAccountInOneRun(t *testing.T) {
 		t.Fatalf("one ordinary update from the previous release failed: %v\n%s", err, s)
 	}
 
-	svc := credentialsServiceEntry(t, r)
-	if got, ok := svc["verifier_accounts"]; ok {
-		t.Errorf("credentials_service.verifier_accounts = %v after one ordinary update, want no member at all: the member's absence is the state the module's default is for, and the default is the account this apply creates\n%s", got, s)
+	// The block names the account, and it is the same address the module's own
+	// default is for: the run records it in the config at the installation
+	// stage, and installation-2 — the stage that applies the root again for the
+	// scheduled jobs (R7) — builds the spec from the config it then holds, so
+	// the member this run's last apply carries is the one the next update would
+	// have written anyway. What the test is about is the node: the publish
+	// below still has to name the account in the same run.
+	mem, _ := credentialsServiceEntry(t, r)["verifier_accounts"].([]any)
+	if len(mem) != 1 || mem[0] != want {
+		t.Errorf("credentials_service.verifier_accounts = %v after one ordinary update, want exactly [%s]: the account the module's default is for, named by the last apply this run makes\n%s", mem, want, s)
 	}
 
 	node, _ := r.db.Value(projectpolicy.PathShared()).(map[string]any)

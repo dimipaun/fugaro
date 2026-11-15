@@ -1262,8 +1262,8 @@ func checkImageSinceDev(ctx context.Context, env *cloudEnv, slug string, spec *t
 	}
 	refuse := func(why string) error {
 		return userErr("%s needs a job image whose runner knows %s (fugaro %s or later), but the job image of %s workflow %s %s. "+
-			"Run fugaro update in its checkout, in your own terminal window (never in a coding agent's session; its images stage verifies %s, pins it by digest through the installation's remote repository and rebuilds the workflow's image)%s",
-			subject, knows, since, spec.Repo, spec.Workflow, why, base, alt)
+			"Run fugaro update in its checkout, in your own terminal window (never in a coding agent's session; its images stage verifies %s, pins it by digest through the installation's remote repository and rebuilds the workflow's image)%s%s",
+			subject, knows, since, spec.Repo, spec.Workflow, why, base, alt, causeMarkerJobImage)
 	}
 	b, err := env.recordBucket(ctx)
 	if err != nil {

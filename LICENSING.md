@@ -15,9 +15,9 @@ identifier resolves to is [`LICENSES/LicenseRef-Fugaro-Subscription.txt`](LICENS
 a byte-for-byte copy of [`ee/LICENSE`](ee/LICENSE). **It names two documents**: the Subscription Terms (published at https://fugaro.dev/legal/subscription-terms), and the contributor licence agreement, published at https://gist.githubusercontent.com/dimipaun/d5bb5db937f973b25be5778ce14ec8dd/raw/64918c7fc0f782327db82e7e790db53c3d47d09f/fugaro-cla.md (a raw Gist link pinned to a revision, so a later edit to the Gist does not change it). The licence allows copying and modifying for development and testing,
 and needs a subscription for the correct number of user seats (one seat per person who uses it)
 for production use, under those Subscription Terms.
-A first draft of the Subscription Terms, written for counsel, is at
-[`docs/licensing/subscription-terms.md`](docs/licensing/subscription-terms.md): it is **not in force**
-until counsel has reviewed it and the owner has published it.
+The Subscription Terms are published at https://fugaro.dev/legal/subscription-terms (live on 2026-11-11), and
+their source is [`docs/licensing/subscription-terms.md`](docs/licensing/subscription-terms.md). A Customer is bound
+by them once it accepts them under section 1.2 of the Terms.
 
 ## The desktop console, `console/`
 

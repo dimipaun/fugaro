@@ -62,5 +62,25 @@ export interface OrganisationCreate {
   name: string
 }
 
+/**
+ * One person's organisations: what `GET /api/orgs` answers, and what the
+ * switcher renders. An object rather than a bare array, because an answer is an
+ * object everywhere else in this API and a list that grows a field is then not
+ * a new shape.
+ */
+export interface OrganisationList {
+  organisations: Organisation[]
+}
+
+/** One organisation's members: what `GET /api/orgs/{id}/members` answers. */
+export interface OrganisationMembers {
+  members: Membership[]
+}
+
 /** Everything `orgs.schema.json` describes. */
-export type Orgs = Organisation | Membership | OrganisationCreate
+export type Orgs =
+  | Organisation
+  | Membership
+  | OrganisationCreate
+  | OrganisationList
+  | OrganisationMembers

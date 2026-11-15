@@ -3133,7 +3133,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 		}
 	}
 	env, secrets, err := agent.BuildEnv(r.d.Env, agent.EnvSpec{
-		Auth: r.modelAuth(), Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend,
+		Auth: r.servedAuth(), Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend,
 		// The operator's own catalog image's variables, for a job whose image
 		// the catalog chose (agentenv.go's imageEnv): nil for every other job,
 		// whatever its environment holds.
