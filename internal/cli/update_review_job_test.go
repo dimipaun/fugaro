@@ -132,14 +132,15 @@ func TestUpdateAddsTheImplicitReviewJobAndLeavesARunInFlightRunning(t *testing.T
 	//
 	// What the second run does move is the entry's own image and its
 	// environment, and that is the update's ordinary catch-up rather than a
-	// second job: the installation stage composes the root before the images
-	// stage has pinned this release's base image, and before this run's
-	// writeConfig records the credentials service the first run deployed, so the
-	// job the first run created carries the release behind's base image and no
-	// service address. The run that follows is the one that catches it up
-	// (CarriedProjectReviewJobs' comment states the same rule for the carried
-	// job), and the update AFTER that hands terraform the entry byte for byte:
-	// the installation has reached its fixed point.
+	// second job. The image: the installation stage composes this root before
+	// the images stage has pinned this release's base image, the lag every job
+	// of the root has. The environment: the job carries the credentials
+	// service's address, which the run that DEPLOYED the service records — this
+	// first run, after the apply — so the apply after that one is the first to
+	// hand it over, the rule internal/infra/projectjobs_test.go pins for every
+	// shared project job. The update after the second is the one that hands
+	// terraform the entry byte for byte: the installation has reached its fixed
+	// point.
 	if so, se, err := executeStdin(t, "", "update"); err != nil {
 		t.Fatalf("the second fugaro update was refused: %v\n%s\n%s", err, so, se)
 	}
