@@ -135,6 +135,13 @@ func (s *Server) reserve(ctx context.Context, st *stageState, w pricing.Micros) 
 // second delivery, from a later run-wide halt, would panic on the closed
 // channel (deliverLocked).
 //
+// In observe mode the stop is counted and logged instead, exactly as the cap's
+// would-halt is: observe is the mode a repository runs under to see what
+// enforcing would do to it, so a limit that refused there would be enforcing in
+// the one mode that promises it never does. Nothing is stopped, nothing is
+// delivered, and st.rep.WouldHalt is the figure a reader of the stage's report
+// counts those calls by (the cap's would-halts are in the same field).
+//
 // The caller holds s.mu.
 func (s *Server) stageLimitLocked(st *stageState, w pricing.Micros) (string, int) {
 	l := s.o.StageLimit
@@ -155,6 +162,12 @@ func (s *Server) stageLimitLocked(st *stageState, w pricing.Micros) (string, int
 		Needed: w,
 	})
 	if dec.Reason == "" {
+		return "", 0
+	}
+	if s.o.Mode == Observe {
+		st.rep.WouldHalt++
+		s.log.Warn("budget: stage would stop (observe)", "stage", st.st.Name,
+			"reason", logValue(dec.Reason), "detail", logValue(dec.Detail))
 		return "", 0
 	}
 	h := Halt{Reason: dec.Reason, Scope: "run", Detail: dec.Detail, At: time.Now().UTC()}

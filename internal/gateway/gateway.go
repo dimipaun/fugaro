@@ -238,12 +238,14 @@ type StageLimit interface {
 	// to another, and the stage it reads — implement — is in Ended.
 	Begin(v StageLimitView)
 	// Stop is the decision before a call that reserves up to Needed. A Reason
-	// stops the stage: the call is refused with 403 and every later call of
-	// that stage is refused with it. The run's own cap is unaffected, and the
-	// next stage the run opens is admitted as any stage is — a governance stop
-	// is scoped to the stage it stopped, because the runner opens one more
-	// stage after it (T7.2's checkpoint call). An empty Reason admits the
-	// call, and the cap decides as it always did.
+	// stops the stage: in enforce mode the call is refused with 403 and every
+	// later call of that stage is refused with it, and in observe mode the call
+	// is admitted and the stop is counted in the stage's report and logged, as
+	// the cap's own would-halt is (observe never refuses). The run's own cap is
+	// unaffected, and the next stage the run opens is admitted as any stage is —
+	// a governance stop is scoped to the stage it stopped, because the runner
+	// opens one more stage after it (T7.2's checkpoint call). An empty Reason
+	// admits the call, and the cap decides as it always did.
 	Stop(v StageLimitView) StageStop
 }
 

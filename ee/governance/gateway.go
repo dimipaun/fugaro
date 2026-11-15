@@ -52,11 +52,18 @@ const checkpointCalls = 1
 // maximum, 3 on trivial and small and the untiered default elsewhere (T8.1,
 // D332). A run that carries no tier is bounded by the governance block alone.
 //
-// cap is the run's own per-run cap, which every stage budget is a fraction of.
-// A cap of 0 — a gateway accounting only, with nothing to stop at — bounds no
-// stage either: a fraction of nothing is not a budget, and the gateway's own
-// rules are all that apply.
+// cap is the run's own per-run cap: the ceiling every stage bound here sits
+// under, and the figure the stage budgets are fractions of. A cap of 0 is a run
+// with no ceiling at all — a gateway accounting only, with nothing to stop at —
+// and a stage bound under no ceiling is no bound either, so such a run is
+// handed **no limit at all**: a fraction of nothing is not a budget, and the
+// gateway's own rules are all that apply. A session run whose own cap is 0 is
+// the same case: the lease is the judge, and there is no per-run ceiling over
+// the stage for a bound to sit under.
 func StageLimit(g policy.Governance, t tier.Tier, cap pricing.Micros) gateway.StageLimit {
+	if cap <= 0 {
+		return nil
+	}
 	return &stageLimit{g: g, cap: cap, maxAgents: fanoutMax(g, t)}
 }
 
@@ -275,12 +282,15 @@ func ratioStop(g policy.Governance, v gateway.StageLimitView, calls int64) gatew
 // sub-agents than it may stops (spec §5, T7.2).
 //
 // The count is the gateway's own — the distinct non-empty agent IDs the
-// stage's calls carried — and it is deliberately not a session count: Check
-// 139 found that a sub-agent's calls carry their stage's `session_id`, so a
-// session cannot tell a sub-agent from the main session, while the agent ID
-// does (an empty one is the main session and is never a sub-agent, and each
-// sub-agent carries a distinct one). The count therefore grows by one per
-// sub-agent the gateway admitted a call from, whatever session it claimed.
+// stage's calls carried — and it is deliberately not a session count: the agent
+// ID is the field that names the caller (an empty one is the main session and
+// is never a sub-agent, and each sub-agent carries a distinct one), while
+// `session_id` names the stage's session and is read nowhere here. That a live
+// run's ID really does distinguish every sub-agent from the main session is
+// what Check 139 reads, and that check is owner-run and **has not run**: the
+// stop spends the count the gateway keeps, and what the gateway counts is
+// non-empty agent IDs and nothing else. The count grows by one per sub-agent
+// the gateway admitted a call from, whatever session it claimed.
 //
 // It is read off the stage's settled calls, so the sub-agent that crosses the
 // maximum is admitted its first call and the stage stops on the next one: the

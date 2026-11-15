@@ -47,9 +47,10 @@ const gatewayKey = "sk-ant-api03-TESTKEY-0123456789abcdefghijklmnopqrstuvwxyz"
 // below read as the amounts a repository writes.
 const dollar = pricing.Micros(1_000_000)
 
-// mainSession is the session ID the main agent's calls carry. Check 139 found
-// that a sub-agent's calls carry their stage's own session ID, so nothing here
-// distinguishes the two by session — which is the point of the fan-out test.
+// mainSession is the session ID the main agent's calls carry, and the one the
+// fan-out test gives a sub-agent as well: the count reads no session, so what a
+// live sub-agent's own session ID turns out to be — which is what Check 139
+// reads, owner-run and not run — cannot change it.
 const mainSession = "sess-main"
 
 // charged is what one call that reports a million input tokens and one output
@@ -70,21 +71,43 @@ type limitRun struct {
 	haltRead  bool
 }
 
-// newLimitRun starts a gateway enforcing g at cap for a run dispatched at tr,
-// with the embedded price table and a log that is discarded, which is the run's
-// own gateway in everything but the upstream it forwards to. Its upstream
-// answers every call cheaply until the test says otherwise.
+// newLimitRun starts a gateway enforcing g at cap for a run dispatched at tr:
+// newLimitRunMode at the mode a run with its budget in enforce mode gets.
 func newLimitRun(t *testing.T, g policy.Governance, tr tier.Tier, cap pricing.Micros) *limitRun {
 	t.Helper()
+	return newLimitRunMode(t, g, tr, cap, gateway.Enforce)
+}
+
+// newLimitRunMode is that gateway at the run's own mode: enforce, or observe,
+// which refuses nothing and counts what enforcing would have refused.
+func newLimitRunMode(t *testing.T, g policy.Governance, tr tier.Tier, cap pricing.Micros, mode gateway.Mode) *limitRun {
+	t.Helper()
+	return newLimitRunAt(t, gateway.Options{Mode: mode, Cap: cap}, g, tr)
+}
+
+// newLimitRunLease is the same gateway for a session run: the lease is the
+// judge, and the run's own cap is 0 — the one shape a gateway runs in enforce
+// mode with cap 0, since Options.validate refuses that mode with no cap and no
+// lease. The stage limit it installs is the limit ee builds for a run with no
+// cap of its own.
+func newLimitRunLease(t *testing.T, g policy.Governance, tr tier.Tier) *limitRun {
+	t.Helper()
+	return newLimitRunAt(t, gateway.Options{Mode: gateway.Enforce, Lease: grantAllLease{}}, g, tr)
+}
+
+// newLimitRunAt is the frame's one gateway: the run's own in everything but the
+// upstream it forwards to — the embedded price table, a log that is discarded,
+// and this file's limit installed as the runner installs it — with the options
+// a test shapes further. Its upstream answers every call cheaply until the test
+// says otherwise.
+func newLimitRunAt(t *testing.T, o gateway.Options, g policy.Governance, tr tier.Tier) *limitRun {
+	t.Helper()
 	fake, up := anthropicfake.New(t)
-	gw, err := gateway.Start(context.Background(), gateway.Options{
-		Upstream:   gateway.Upstream{Kind: "anthropic", BaseURL: up.URL, APIKey: gatewayKey},
-		Prices:     pricing.Embedded(),
-		Mode:       gateway.Enforce,
-		Cap:        cap,
-		Log:        slog.New(slog.DiscardHandler),
-		StageLimit: StageLimit(g, tr, cap),
-	})
+	o.Upstream = gateway.Upstream{Kind: "anthropic", BaseURL: up.URL, APIKey: gatewayKey}
+	o.Prices = pricing.Embedded()
+	o.Log = slog.New(slog.DiscardHandler)
+	o.StageLimit = StageLimit(g, tr, o.Cap)
+	gw, err := gateway.Start(context.Background(), o)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -305,12 +328,13 @@ func TestFanoutHalts(t *testing.T) {
 }
 
 // TestFanoutCountsAgentIDsNotSessions: the fan-out count is of distinct
-// non-empty agent IDs and never of sessions (Check 139's answer, U4). The
-// owner's live run found that a sub-agent's calls carry their stage's own
-// session ID, so a session cannot tell a sub-agent from the main session — two
-// sub-agents in one session, and the main session beside them, are three
-// different things — while an agent ID can: an empty one is the main session
-// and never a sub-agent, and each sub-agent carries one of its own.
+// non-empty agent IDs and never of sessions. Two sub-agents in one session, and
+// the main session beside them, are three different things to the count, and
+// whether a sub-agent's own session ID turns out to be its stage's main
+// session's — the question Check 139 reads, owner-run and not run — cannot
+// change it, because the count reads no session at all: an empty agent ID is
+// the main session and never a sub-agent, and each sub-agent carries one of its
+// own.
 func TestFanoutCountsAgentIDsNotSessions(t *testing.T) {
 	g := policy.Governance{MaxSubagents: 1}
 	r := newLimitRun(t, g, tier.Tier(""), 50*dollar)
@@ -532,4 +556,71 @@ func TestReviewBudgetIsPerPass(t *testing.T) {
 		}
 		r.noHalt()
 	})
+}
+
+// TestStageLimitNeverRefusesInObserve: observe is the mode that refuses
+// nothing, and a stage limit is no exception to it (T7.2). A stage that has
+// spent its budget under observe keeps being served, every call the limit would
+// have stopped is counted in the stage's report's would-halts, and no halt
+// reaches the runner. It is the same limit the enforce tests install: what
+// changes here is the mode.
+func TestStageLimitNeverRefusesInObserve(t *testing.T) {
+	// 0.1 of a $20 cap is $2.00, and one call reporting a million input tokens
+	// spends it: the first call is admitted on a stage that has spent nothing,
+	// and the two after it are the ones enforcing would refuse.
+	g := policy.Governance{StageBudget: policy.StageBudget{Implement: 0.1}}
+	r := newLimitRunMode(t, g, tier.Small, 20*dollar, gateway.Observe)
+	r.answer(pricing.Usage{Input: 1_000_000, Output: 1})
+	r.stage("implement")
+	for i := 0; i < 3; i++ {
+		r.ok("", mainSession)
+	}
+	r.noHalt()
+	if rep := r.end(); rep.Calls != 3 || rep.WouldHalt != 2 {
+		t.Errorf("the stage's report is %d calls and %d would-halts, want the 3 over-budget calls served and 2 of them counted", rep.Calls, rep.WouldHalt)
+	}
+}
+
+// grantAllLease is a lease that grants every call what it needs and so refuses
+// nothing: the budget it draws on is the project's, and this run is under it.
+type grantAllLease struct{}
+
+func (grantAllLease) Grant(_ context.Context, need pricing.Micros) (pricing.Micros, error) {
+	return need, nil
+}
+
+func (grantAllLease) Report(context.Context, gateway.StageReport) error { return nil }
+
+func (grantAllLease) Release(context.Context, pricing.Micros) error { return nil }
+
+// TestNoStageLimitWithoutARunCap: a run with no cap of its own is a gateway
+// accounting only, and a stage bound sits under the run's own ceiling, so there
+// is nothing for it to bound (T7.2; the sentence StageLimit's own doc carries).
+// StageLimit hands such a run no limit at all, and every rule the governance
+// block sets — money, token ceiling, review ratio, fan-out — refuses nothing.
+// The session run is the shape that reaches enforce mode with cap 0 (a lease is
+// its judge), so the second half of the test runs there.
+func TestNoStageLimitWithoutARunCap(t *testing.T) {
+	g := policy.Governance{
+		StageBudget:  policy.StageBudget{Implement: 0.1},
+		StageTokens:  policy.StageTokens{Implement: 1},
+		MaxSubagents: 1,
+	}
+	if got := StageLimit(g, tier.Small, 0); got != nil {
+		t.Errorf("a run with no cap was handed %#v, want no limit at all: a stage bound sits under the run's own ceiling", got)
+	}
+	r := newLimitRunLease(t, g, tier.Small)
+	r.answer(pricing.Usage{Input: 1_000_000, Output: 1})
+	r.stage("implement")
+	// By the second call the block is long past: the token ceiling of 1 and the
+	// maximum of one sub-agent are the two that would stop this stage (the money
+	// is a fraction of nothing either way), and a session beside them makes no
+	// difference.
+	for _, agent := range []string{"", "sub-1", "sub-2", "sub-3"} {
+		r.ok(agent, mainSession)
+	}
+	r.noHalt()
+	if rep := r.end(); rep.Calls != 4 || rep.Agents != 3 {
+		t.Errorf("the stage's report is %d calls and %d sub-agents, want all 4 calls served and the 3 sub-agents counted", rep.Calls, rep.Agents)
+	}
 }
