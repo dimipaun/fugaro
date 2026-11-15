@@ -953,7 +953,7 @@ because a Firebase project adopted with a **regional** database is named
 `<firebase_project>-default-rtdb.<region>.firebasedatabase.app` and not the legacy default host. No
 command records the value: the four values `workspace member add` writes for this table are the
 member's job accounts, its Firebase project, its `fp` and its exchange URL, with `--repo` beside them
-naming a repository the member contributes and `--yes` confirming the write
+naming a repository the member contributes
 (`internal/cli/workspace.go`:422-429, `--repo` at `:480`),
 `localcfg.WorkspaceMember` has no field for a region (`internal/localcfg/localcfg.go`:541-567), and
 **the node itself has no writer anywhere in the tree** — its own comment says so

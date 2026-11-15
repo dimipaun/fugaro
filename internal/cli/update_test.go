@@ -17,7 +17,7 @@ import (
 
 // update_test.go is `fugaro update`'s own behaviour: the door that re-converges
 // what exists, creates nothing, and — D12's answer of 2026-10-20 — covers every
-// step it owns under --yes. The stage-level rows are setup_refusals_test.go's;
+// step it owns. The stage-level rows are setup_refusals_test.go's;
 // the four call sites D12 moves are asserted here, at the functions that take
 // the steps.
 
@@ -49,7 +49,7 @@ func TestUpdateRefusesCreateProjectAndLinkBilling(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := updateRig(t)
-			out, errOut, err := executeStdin(t, "", "update", tc.arg, "--yes")
+			out, errOut, err := executeStdin(t, "", "update", tc.arg)
 			if err == nil {
 				t.Fatalf("fugaro update %s exited 0:\n%s", tc.flag, out)
 			}
@@ -83,7 +83,8 @@ func TestUpdateWithoutAnInstallationNamesSetup(t *testing.T) {
 	releaseBuild(t, "0.2.0")
 	r := newInitRig(t) // no state bucket: nothing was ever installed here
 	t.Chdir(t.TempDir())
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update")
 	if err == nil {
 		t.Fatalf("fugaro update without an installation exited 0:\n%s", out)
 	}
@@ -118,9 +119,9 @@ func TestUpdateWithoutAnInstallationNamesSetup(t *testing.T) {
 // reaches only at that stage — the second half of this test, over the stages
 // themselves, pins that line, because an apply that stops at the installation
 // prints no left-for-you at all (report.Brief keeps one clause of a step's
-// reason; the whole of it is in the log the run names). --yes is a different
-// matter, and TestUpdateAppliesTheFourStepsItOwns pins it: D12 makes the step
-// a covered one, which is why the sentence above says "by asking".
+// reason; the whole of it is in the log the run names). The covered step is a
+// different matter, and TestUpdateAppliesTheFourStepsItOwns pins it: D12 makes
+// the step a covered one, which is why the sentence above says "by asking".
 func TestUpdateLeavesAnUnenrolledRepositoryAloneAndExitsOne(t *testing.T) {
 	// The rig of an installation that converges with nothing to do, not a bare
 	// one: this test has to reach the stages that work on the checkout for its
@@ -172,7 +173,8 @@ func TestUpdateLeavesAnUnenrolledRepositoryAloneAndExitsOne(t *testing.T) {
 	//
 	// A plan-only run is the one that reaches every stage of the list (a
 	// needs-you stage blocks the ones behind it otherwise), and it confirms
-	// nothing: conditions() reads --yes as false under --plan-only.
+	// nothing: conditions() reads the run's own answer as false under
+	// --plan-only.
 	e, _ := stageEngine(t, "", &initOptions{door: updateDoor.name, planOnly: true})
 	unknownRepo(e)
 	rs := newRepositoryStage(e)
@@ -215,13 +217,14 @@ func stageDetailOf(res *initflow.Result, name string) string {
 	return ""
 }
 
-// TestUpdateUnderYesCoversEveryStageItOwns: `update --yes` is total over its
-// own stage set (D12): every stage it registers is planned and applied or
-// skipped with no typed confirmation, nothing is left for the user and the run
-// exits 0. The project stage is not in it, and neither is the Batch backend's.
-func TestUpdateUnderYesCoversEveryStageItOwns(t *testing.T) {
+// TestUpdateIsTotalOverItsOwnStageSet: `update` is total over its own stage set
+// (D12): at the owner's own terminal every stage it registers is planned and
+// applied or skipped, nothing is left for the user and the run exits 0. The
+// project stage is not in it, and neither is the Batch backend's.
+func TestUpdateIsTotalOverItsOwnStageSet(t *testing.T) {
 	r := updateRig(t)
-	out, _, err := executeStdin(t, "", "update", "--yes", "--json")
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, "", "update", "--json")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -234,11 +237,11 @@ func TestUpdateUnderYesCoversEveryStageItOwns(t *testing.T) {
 		names = append(names, st.Name)
 		switch st.State {
 		case "needs-you", "blocked", "failed":
-			t.Errorf("%s is %s under --yes: %s", st.Name, st.State, st.Detail)
+			t.Errorf("%s is %s at the terminal: %s", st.Name, st.State, st.Detail)
 		}
 	}
 	if len(res.Left) != 0 {
-		t.Errorf("--yes left something for the user: %+v", res.Left)
+		t.Errorf("the run left something for the user: %+v", res.Left)
 	}
 	for _, want := range []string{initflow.Preflight, initflow.Installation, initflow.Firebase, initflow.Images,
 		initflow.Installation2, initflow.Secrets, initflow.Plugin, initflow.Repository} {
@@ -266,7 +269,7 @@ func contains(list []string, want string) bool {
 }
 
 // TestUpdateAppliesTheFourStepsItOwns is D12's call-site half, at the four
-// functions that take the steps. `update --yes` covers all four: the Firestore
+// functions that take the steps. `update` covers all four: the Firestore
 // database's location, a billable first image build, replacing a registry tag
 // and onboarding an unlisted repository. `setup` keeps exactly one of them —
 // the location, the door that asks for it as a first-time question — and the
@@ -287,25 +290,25 @@ func TestUpdateAppliesTheFourStepsItOwns(t *testing.T) {
 				e, out := stageEngine(t, infra.FirestoreLocation+"\n", &initOptions{door: tc.door, yes: true, firebase: "aurora-fp"})
 				err := e.r.confirmLocation()
 				if !tc.covered {
-					// The class is Typed for `setup`, so --yes confirms nothing
-					// here and the run leaves the permanent location for the
-					// user: T7, nothing is typed at it, and the banner below is
-					// the note, which names the location.
+					// The class is Typed for `setup`, so the run's own answer
+					// confirms nothing here and the run leaves the permanent
+					// location for the user: T7, nothing is typed at it, and the
+					// banner below is the note, which names the location.
 					if err == nil || !strings.Contains(err.Error(), "the Firestore database's permanent location") {
 						t.Fatalf("setup confirmed the permanent location: %v\n%s", err, out)
 					}
 					if !strings.Contains(out.String(), infra.FirestoreLocation) {
 						t.Errorf("the setup banner does not name the location it leaves:\n%s", out)
 					}
-					if strings.Contains(out.String(), "confirmed by --yes") {
-						t.Errorf("setup --yes confirmed the location:\n%s", out)
+					if strings.Contains(out.String(), "confirmed by this run's own answer") {
+						t.Errorf("setup's own answer confirmed the location:\n%s", out)
 					}
 					return
 				}
 				if err != nil {
-					t.Fatalf("update --yes did not cover the location: %v\n%s", err, out)
+					t.Fatalf("update did not cover the location: %v\n%s", err, out)
 				}
-				if !strings.Contains(out.String(), "confirmed by --yes") {
+				if !strings.Contains(out.String(), "confirmed by this run's own answer") {
 					t.Errorf("the covered step does not say how it was confirmed:\n%s", out)
 				}
 			})
@@ -322,16 +325,16 @@ func TestUpdateAppliesTheFourStepsItOwns(t *testing.T) {
 		// both front doors"), so the arm that plants the bug is the one that
 		// leaves it Typed.
 		for _, door := range []string{setupDoor.name, updateDoor.name} {
-			t.Run(door+" --yes", func(t *testing.T) {
+			t.Run(door+" own answer", func(t *testing.T) {
 				fb := useFakeBuilder(t)
 				fakeTerminal(t)
 				e, out := stageEngine(t, initProjectName+"\n", &initOptions{door: door, yes: true})
 				e.r.setProject(lc)
 				built, err := e.r.buildImages(t.Context(), lc, cfg, spec, []string{"app"})
 				if err != nil || built != 1 || len(fb.specs) != 1 {
-					t.Fatalf("%s --yes did not build: built %d, err %v\n%s", door, built, err, out)
+					t.Fatalf("%s's own answer did not build: built %d, err %v\n%s", door, built, err, out)
 				}
-				if !strings.Contains(out.String(), "confirmed by --yes") {
+				if !strings.Contains(out.String(), "confirmed by this run's own answer") {
 					t.Errorf("the covered build does not say how it was confirmed:\n%s", out)
 				}
 				if len(e.r.buildsLeft) != 0 {
@@ -339,20 +342,21 @@ func TestUpdateAppliesTheFourStepsItOwns(t *testing.T) {
 				}
 			})
 		}
-		// A terminal with no --yes types it, in either door.
+		// A terminal with no answer of its own confirms it by being there, in
+		// either door.
 		for _, door := range []string{setupDoor.name, updateDoor.name} {
 			fb := useFakeBuilder(t)
 			fakeTerminal(t)
 			e, out := stageEngine(t, initProjectName+"\n", &initOptions{door: door})
 			e.r.setProject(lc)
 			built, err := e.r.buildImages(t.Context(), lc, cfg, spec, []string{"app"})
-			if err != nil || built != 1 || len(fb.specs) != 1 || strings.Contains(out.String(), "confirmed by --yes") {
+			if err != nil || built != 1 || len(fb.specs) != 1 || strings.Contains(out.String(), "confirmed by this run's own answer") {
 				t.Errorf("%s at a terminal: built %d, err %v\n%s", door, built, err, out)
 			}
 		}
-		// A run that cannot take it — no terminal and no --yes — leaves the
-		// build, in either door, and the warning names --yes as the way to
-		// give it (it is one now).
+		// A run that cannot take it — no terminal, no flag — leaves the build,
+		// in either door, and the warning names the person at a real terminal
+		// rather than a flag.
 		for _, door := range []string{setupDoor.name, updateDoor.name} {
 			t.Run(door+" with no terminal", func(t *testing.T) {
 				noTerminal(t)
@@ -361,19 +365,19 @@ func TestUpdateAppliesTheFourStepsItOwns(t *testing.T) {
 				e.r.setProject(lc)
 				built, err := e.r.buildImages(t.Context(), lc, cfg, spec, []string{"app"})
 				if err != nil || built != 0 || len(fb.specs) != 0 {
-					t.Fatalf("%s with no terminal and no --yes built: built %d, err %v\n%s", door, built, err, out)
+					t.Fatalf("%s with no terminal built: built %d, err %v\n%s", door, built, err, out)
 				}
-				if len(e.r.buildsLeft) != 1 || !strings.Contains(out.String(), "is billable and was not confirmed") || !strings.Contains(out.String(), "and --yes does") {
-					t.Errorf("the run does not leave the build, saying --yes gives it: %v\n%s", e.r.buildsLeft, out)
+				if len(e.r.buildsLeft) != 1 || !strings.Contains(out.String(), "is billable and was not confirmed") || !strings.Contains(out.String(), "needs the person at a real terminal") {
+					t.Errorf("the run does not leave the build, sending the user to a real terminal: %v\n%s", e.r.buildsLeft, out)
 				}
 			})
 		}
 		// Except a coding agent's session, which reaches this warning in a
 		// --repo run (nothing gates the build in front of it there) and whose
-		// own session refuses --yes: naming it would be a recipe for getting
-		// past the check, in text the agent reads (AgentAdvice). The clause is
-		// chosen by the marker, as convergeOptIn's is.
-		t.Run("a coding agent's session is not handed --yes", func(t *testing.T) {
+		// own session refuses to confirm: naming a flag would be a recipe for
+		// getting past the check, in text the agent reads (AgentAdvice). So the
+		// clause names the terminal alone, the same one for every session.
+		t.Run("a coding agent's session is left the build and handed no flag", func(t *testing.T) {
 			noTerminal(t)
 			fb := useFakeBuilder(t)
 			e, out := stageEngine(t, initProjectName+"\n", &initOptions{door: setupDoor.name})
@@ -389,7 +393,7 @@ func TestUpdateAppliesTheFourStepsItOwns(t *testing.T) {
 				t.Fatalf("the run does not leave the build:\n%s", out)
 			}
 			if strings.Contains(out.String(), "--yes") {
-				t.Errorf("the agent's session is handed --yes, which its own session refuses:\n%s", out)
+				t.Errorf("the warning hands the agent's session a flag, which its own session refuses:\n%s", out)
 			}
 		})
 	})
@@ -399,13 +403,13 @@ func TestUpdateAppliesTheFourStepsItOwns(t *testing.T) {
 			plan: &mirror.Plan{Digest: "sha256:" + strings.Repeat("d", 64), DestDigest: "sha256:" + strings.Repeat("e", 64)}}}
 		// Covered in BOTH front doors, as the build is.
 		for _, door := range []string{setupDoor.name, updateDoor.name} {
-			t.Run(door+" --yes", func(t *testing.T) {
+			t.Run(door+" own answer", func(t *testing.T) {
 				e, out := stageEngine(t, initProjectName+"\n", &initOptions{door: door, yes: true})
 				st := &imagesStage{e: e}
 				if err := st.confirmReplace(pl); err != nil {
-					t.Fatalf("%s --yes did not cover the replacement: %v\n%s", door, err, out)
+					t.Fatalf("%s's own answer did not cover the replacement: %v\n%s", door, err, out)
 				}
-				if !strings.Contains(out.String(), "confirmed by --yes") {
+				if !strings.Contains(out.String(), "confirmed by this run's own answer") {
 					t.Errorf("the covered replacement does not say how it was confirmed:\n%s", out)
 				}
 			})
@@ -426,7 +430,7 @@ func TestUpdateAppliesTheFourStepsItOwns(t *testing.T) {
 	t.Run("onboarding an unlisted repository", func(t *testing.T) {
 		dir := repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", initProjectName, ""))
 		for _, door := range []string{setupDoor.name, updateDoor.name} {
-			t.Run(door+" --yes", func(t *testing.T) {
+			t.Run(door+" own answer", func(t *testing.T) {
 				t.Chdir(dir)
 				fakeTerminal(t)
 				e, out := stageEngine(t, "", &initOptions{door: door, yes: true, githubAppID: "12345"})
@@ -436,16 +440,16 @@ func TestUpdateAppliesTheFourStepsItOwns(t *testing.T) {
 				rs.engineStage.run = func(context.Context) error { ran = true; return nil }
 				res, err := initflow.Run(t.Context(), []initflow.Stage{rs}, e.options())
 				if err != nil || !ran || stateOf(res, "repository") != initflow.Done {
-					t.Fatalf("%s --yes did not onboard an unlisted repository: %v ran %v %+v\n%s", door, err, ran, res.Stages, out)
+					t.Fatalf("%s's own answer did not onboard an unlisted repository: %v ran %v %+v\n%s", door, err, ran, res.Stages, out)
 				}
 				if strings.Contains(out.String(), "Type acme/app") {
-					t.Errorf("%s --yes asked the typed question:\n%s", door, out)
+					t.Errorf("%s's own answer asked the typed question:\n%s", door, out)
 				}
 			})
 		}
 		// The covered case is an origin whose identity is unambiguous: a host
-		// that is not a provider's is the gate's own question, and --yes cannot
-		// answer it.
+		// that is not a provider's is the gate's own question, and no flag
+		// answers it.
 		t.Chdir(repoCheckout(t, "https://evil.example/acme/app.git", checkoutYAML("github", "oauth", initProjectName, "")))
 		e, _ := stageEngine(t, "", &initOptions{yes: true, githubAppID: "12345"})
 		rs := newRepositoryStage(e)
@@ -457,13 +461,14 @@ func TestUpdateAppliesTheFourStepsItOwns(t *testing.T) {
 	})
 }
 
-// TestUpdateNonInteractiveWithoutYesPlansOnly: `update --non-interactive`
-// without --yes checks and plans every stage and applies nothing — the rule the
-// loop has always had, and the mode a CI job reads before it decides to pass
-// --yes.
-func TestUpdateNonInteractiveWithoutYesPlansOnly(t *testing.T) {
+// TestUpdatePlanOnlyPlansEveryStageAndAppliesNothing: `update --plan-only`
+// checks and plans every stage and applies nothing — the mode a CI job reads
+// before it decides to run the applying command, and the surviving route of the
+// flag T11 removed, which forced this by never prompting.
+func TestUpdatePlanOnlyPlansEveryStageAndAppliesNothing(t *testing.T) {
 	r := updateRig(t)
-	out, _, err := executeStdin(t, "", "update", "--non-interactive", "--json")
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, "", "update", "--plan-only", "--json")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -472,7 +477,7 @@ func TestUpdateNonInteractiveWithoutYesPlansOnly(t *testing.T) {
 		t.Fatalf("%v:\n%s", err, out)
 	}
 	if res.Applied || len(r.ran(t, "apply")) != 0 {
-		t.Errorf("--non-interactive without --yes applied something: %+v, calls %q", res, r.calls(t))
+		t.Errorf("a plan-only run applied something: %+v, calls %q", res, r.calls(t))
 	}
 	for _, st := range res.Stages {
 		switch st.State {
@@ -488,8 +493,9 @@ func TestUpdateNonInteractiveWithoutYesPlansOnly(t *testing.T) {
 // is the first one's own state, not a weaker check.
 func TestUpdateConvergesTwiceAndSaysNoChanges(t *testing.T) {
 	r := updateRig(t)
+	fakeTerminal(t)
 	for i := 1; i <= 2; i++ {
-		out, _, err := executeStdin(t, "", "update", "--yes")
+		out, _, err := executeStdin(t, "", "update")
 		if err != nil {
 			t.Fatalf("run %d: %v\n%s", i, err, out)
 		}
@@ -514,8 +520,9 @@ func TestUpdateConvergesTwiceAndSaysNoChanges(t *testing.T) {
 // called, and no project appears in the project it was pointed at.
 func TestUpdateNeverCreatesAnything(t *testing.T) {
 	r := updateRig(t)
+	fakeTerminal(t)
 	before := len(r.crm.Requests())
-	if out, _, err := executeStdin(t, "", "update", "--yes"); err != nil {
+	if out, _, err := executeStdin(t, "", "update"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	for _, rq := range r.crm.Requests()[before:] {
@@ -546,8 +553,9 @@ func TestUpdateNeverCreatesAnything(t *testing.T) {
 // and cannot take back — the endpoint is public the moment the binding lands.
 func TestUpdateConvergesAnInstallationAtThePreviousRelease(t *testing.T) {
 	r, _ := updateBudgetRig(t)
+	fakeTerminal(t)
 	vars := filepath.Join(r.root(), infra.VarsFile)
-	out, _, err := executeStdin(t, "", "update", "--yes")
+	out, _, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("one fugaro update did not converge an installation at the previous release: %v\n%s", err, out)
 	}

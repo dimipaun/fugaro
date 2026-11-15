@@ -100,7 +100,7 @@ and this command then stores the token itself, so in a project whose marks say
 it is managed the token is written for YOU and nobody else: before the token
 prompt it prints the repositories the token may be used by and says that a job
 on those repositories can read it. Nothing is asked — the terminal is what makes
-a run yours, and --yes does not stand in for one — so a pipe and a run with no
+a run yours, and no flag stands in for one — so a pipe and a run with no
 terminal are refused before a byte is written.
 
 A coding agent's session may still declare a bounded account: the repositories
@@ -117,8 +117,7 @@ step no plan admits.`,
 	f.StringVar(&o.profile, "profile", "", "the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one)")
 	f.BoolVar(&o.claude, "claude", false, "run Anthropic's own claude setup-token login on this terminal first, then paste the token at the hidden prompt")
 	f.StringVar(&o.typ, "type", "", "declare the name as a typed credential too, so a craft or a pool may spend it: claude-oauth, the one type this command's token step serves (without it, the name is declared in claude_accounts alone, as it always was)")
-	f.BoolVar(&o.yes, "yes", false, "confirm the run without a prompt: it answers the converge's own questions and never makes a run the owner at their own terminal on a managed project")
-	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmation this declaration would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed; refused beside --yes")
+	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmation this declaration would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed")
 	return cmd
 }
 
@@ -126,9 +125,6 @@ step no plan admits.`,
 // does, and the subset rule is applied to the bytes this would write, before
 // the file is read for the write at all.
 func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error {
-	if err := askConflict(askFlags{ask: o.ask, yes: o.yes}); err != nil {
-		return err
-	}
 	// The name is a DEFINITION and not a reference: the definition's rule is
 	// ValidateClaudeAccounts', whose sentences are the ones the loader prints
 	// for the same name in the file, so the two cannot part company. It is the
@@ -258,7 +254,7 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	// run or written: the line it prints, or the refusal that stops this
 	// command where nobody could answer the question it restores
 	// (managed_ask.go). A gate refusal above is still the gate's own sentence.
-	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask, yes: o.yes}, m.Managed, askConditions(cmd, false, false)); err != nil {
+	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask}, m.Managed, askConditions(cmd, false, false)); err != nil {
 		return err
 	}
 

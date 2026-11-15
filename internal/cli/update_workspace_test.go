@@ -485,7 +485,8 @@ func TestUpdateWithACapAndNoMemberRunsOn(t *testing.T) {
 	r, db := updateBudgetRig(t)
 	r.appendConfig(t, wsOwnerCap)
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update", "--json")
 	var res convergeJSON
 	if uerr := json.Unmarshal([]byte(out), &res); uerr != nil {
 		t.Fatalf("%v:\n%s\n%s", uerr, out, errOut)
@@ -979,9 +980,9 @@ func TestUpdateTheCeilingIsTheDirectionTheWideningIs(t *testing.T) {
 // published record is the whole membership chosen where none was, so the write
 // is the widening the whole classifier is about — every member it names is
 // admitted by it, and from the moment it lands every run of every member reads
-// it. --yes does not stand in, the write happens in the owner's own session at
-// a real terminal, and the refusal says what was chosen rather than naming a
-// comparison that does not exist yet.
+// it. No flag stands in (the run's own answer included), the write happens in
+// the owner's own session at a real terminal, and the refusal says what was
+// chosen rather than naming a comparison that does not exist yet.
 //
 // The state it closes is the one a hand edit reaches: `workspace_members` in
 // the YAML is a document this stage builds a node from, so a session that
@@ -1002,8 +1003,8 @@ func TestUpdateTheFirstRecordTakesTheOwnersOwnSession(t *testing.T) {
 	if !strings.Contains(err.Error(), "the whole group: the member list, the repositories each member contributes and the workspace's own ceiling are chosen here for the first time") {
 		t.Errorf("the refusal does not say what this write chooses: %v\n%s", err, out)
 	}
-	if !strings.Contains(err.Error(), "does not stand in") {
-		t.Errorf("the refusal does not tell the operator that --yes was not the answer: %v\n%s", err, out)
+	if !strings.Contains(err.Error(), "no flag stands in for it") {
+		t.Errorf("the refusal does not tell the operator that a flag was not the answer: %v\n%s", err, out)
 	}
 	if p.db.Value(projectpolicy.PathWorkspace("workspace-alpha")) != nil {
 		t.Error("the refused first record was published anyway")
@@ -1283,7 +1284,8 @@ func TestUpdateSkipsAWorkspaceDatabaseThisInstallationDoesNotOwn(t *testing.T) {
 	db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": "workspace-a", "gcp_project": "proj-9999", "version": 1})
 	r.appendConfig(t, wsOwnerTable+wsOwnerCap)
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update", "--json")
 	if err != nil {
 		t.Fatalf("another installation's database stopped the whole update: %v\n%s%s", err, out, errOut)
 	}
@@ -1330,11 +1332,10 @@ func TestUpdatePublishesTheWorkspaceRecordInTheRunThatNamesTheBackend(t *testing
 	r.appendConfig(t, wsOwnerTable+wsOwnerCap)
 	r.save(t)
 	fakeTerminal(t)
-	// The one thing --yes does not stand in for: the group's first record is
-	// published in the owner's own session, at this terminal, and --yes is
-	// passed only because the other stages of this run take it. The empty stdin
-	// is what says so: a step that asked would read nothing here.
-	out, errOut, err := executeStdin(t, "", "update", "--firebase-project", fpID, "--budget-mode", "observe", "--yes")
+	// The one confirmation no flag stands in for: the group's first record is
+	// published in the owner's own session, here at this terminal, and the empty
+	// stdin is what says so: a step that asked would read nothing here.
+	out, errOut, err := executeStdin(t, "", "update", "--firebase-project", fpID, "--budget-mode", "observe")
 	s := out + errOut
 	if err != nil {
 		t.Fatalf("update --firebase-project failed: %v\n%s", err, s)
@@ -1376,7 +1377,7 @@ func TestUpdatePublishesIntoTheDatabaseTheRunHasJustPointedAt(t *testing.T) {
 	r.appendConfig(t, wsOwnerTable+wsOwnerCap)
 	r.save(t)
 	fakeTerminal(t)
-	out, errOut, err := executeStdin(t, "", "update", "--firebase-project", fpID, "--budget-mode", "observe", "--yes")
+	out, errOut, err := executeStdin(t, "", "update", "--firebase-project", fpID, "--budget-mode", "observe")
 	s := out + errOut
 	if err != nil {
 		t.Fatalf("update --firebase-project failed: %v\n%s", err, s)

@@ -347,7 +347,7 @@ step_role() {
   python3 - "$SCRATCH/role.json" <<'PY' >"$SCRATCH/role.fields"
 import json, sys
 d = json.load(open(sys.argv[1]))
-perms = sorted(d.get("permissions") or [])
+perms = sorted(d.get("includedPermissions") or [])
 print("name|" + str(d.get("name") or ""))
 print("title|" + str(d.get("title") or ""))
 print("perms|" + " ".join(perms))
