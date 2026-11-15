@@ -804,7 +804,7 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 	}
 	up, sent, resp, err, lost := s.sendRetryingOnce(ctx, first, firstSent, func() (*http.Request, *atomic.Bool, error) {
 		return s.upstreamRequest(ctx, r, rt, body)
-	}, p.model)
+	}, p.model, rt.provider != nil)
 	if err != nil {
 		if rt.provider == nil && s.o.Upstream.Kind == KindService && s.serviceUnreachable(w, s.base, r.Context()) {
 			// C1.15 (service.go), D143: an unreachable credentials service
@@ -995,10 +995,15 @@ var upstreamRetryDelay = 250 * time.Millisecond
 // settles once, from the attempt that answered -- or at the reservation an
 // attempt that never answered leaves standing (the last value below).
 //
-// A service upstream (C1.15, KindService) is not retried here: the service
-// retries its own calls across the credentials it holds, inside the one
-// answer it gives this gateway, and D143 makes an unreachable service a halt
-// rather than a call this gateway sends again.
+// A call a service upstream answers (C1.15, KindService) is not retried here:
+// the service retries its own calls across the credentials it holds, inside
+// the one answer it gives this gateway, and D143 makes an unreachable service
+// a halt rather than a call this gateway sends again. That is the service's
+// calls and not the upstream's kind: a switched api-key run's provider routes
+// sit beside the same service upstream (R6, D1634), a routed call is the
+// provider's own and no one else's, and it is retried here exactly as it is
+// beside the Anthropic upstream — routed says which of the two this call is,
+// because only the caller holds the route.
 //
 // What the narrow form costs, stated: the first attempt may have reached an
 // upstream that then generated and answered nothing, and this gateway read no
@@ -1030,10 +1035,10 @@ var upstreamRetryDelay = 250 * time.Millisecond
 // `granted` with nothing to show for it. A first attempt that answered a
 // status is not this: the upstream refused that call or asked for it later,
 // and generated nothing this gateway has to account for.
-func (s *Server) sendRetryingOnce(ctx context.Context, up *http.Request, sent *atomic.Bool, next func() (*http.Request, *atomic.Bool, error), model string) (*http.Request, *atomic.Bool, *http.Response, error, bool) {
+func (s *Server) sendRetryingOnce(ctx context.Context, up *http.Request, sent *atomic.Bool, next func() (*http.Request, *atomic.Bool, error), model string, routed bool) (*http.Request, *atomic.Bool, *http.Response, error, bool) {
 	resp, err := s.client.Do(up)
 	reason, status := upstreamRetryReason(resp, err)
-	if reason == "" || s.o.Upstream.Kind == KindService || ctx.Err() != nil {
+	if reason == "" || (s.o.Upstream.Kind == KindService && !routed) || ctx.Err() != nil {
 		return up, sent, resp, err, false
 	}
 	lost := reason == "transport" && sent.Load()
