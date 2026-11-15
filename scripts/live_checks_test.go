@@ -50,7 +50,14 @@ import (
 // `fugaro`, a fake `gcloud` and a fake front door on a loopback port that mints
 // the check's tokens and serves the state group's own documents, with a fake
 // browser that opens the authorization URL the check prints and follows it to
-// the check's own loopback, so both sign-ins run with no network. Check 361's
+// the check's own loopback, so both sign-ins run with no network. Check 330's
+// are a fake `fugaro` answering the three installation reads it makes and a fake
+// `gcloud` whose runs bucket, per-execution gateway logs and job descriptions
+// are files of the case's own, both logging every call with the directory it was
+// made in: a case says what the check read off the run record and the gateway log
+// of the pair -- and which of the two review variants, which env entries and
+// which credential a run's review was served by -- as well as that it read the
+// installation from the sandbox and nowhere else. Check 361's
 // are a fake `gcloud` that mints a token sentinel and a fake
 // `curl` that answers the check's one read from files the test writes and
 // records the request -- the URL, the headers, and the Authorization header
@@ -135,13 +142,26 @@ import (
 // owns; Check 302's are a fake `fugaro`, a real `uname` and a real terminal
 // (a pty its helper types the phase's one confirmation into), and it rewrites
 // a copy of its own script to prove the case that expects a quiet daemon log
-// to be a finding is not vacuous. Check 350's are a fake `gcloud` and a fake
+// to be a finding is not vacuous. Check 310's fake is a fake `fugaro` that
+// answers the four commands the check drives in the shapes internal/report and
+// internal/initflow print them -- the line in flight, the step lines, the
+// closing line, the plan view, the `--json` document on stdout and the account
+// on stderr -- files a log with the sink's own name shape, mode and retention
+// rule, and fails exactly when the check's own fake `terraform` is first on
+// PATH, so the forced failure is the check's own shim end to end and a case
+// bends the one thing it judges. Check 350's are a fake `gcloud` and a fake
 // `fugaro` beside a REAL local checkout and its bare origin -- git stays on this
 // machine -- with one shared call log for both fakes, so a case says what the
 // check read AND in what order: the hash of the old record is taken before the
 // first CLI read of the window, which is half of what step 4 is about, and a
 // case that rewrites a copy of the script with the comparison removed proves
 // the FAIL it reads elsewhere is the comparison's.
+// Check C0's fake is a fake `fugaro` alone, serving each read out of a document
+// the test writes -- so a case knows the document's exact length and can hold
+// the byte count in the readings table against the file -- and recording every
+// call with the directory it was made in and the FUGARO_PROJECT it carried, so
+// a case says both where each read ran and that a dry run or a refused name
+// makes no call at all.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -166,8 +186,10 @@ var liveCheckScripts = []struct {
 	{"check303.sh", "check303_test.sh"},
 	{"check304.sh", "check304_test.sh"},
 	{"check305.sh", "check305_test.sh"},
+	{"check310.sh", "check310_test.sh"},
 	{"check313.sh", "check313_test.sh"},
 	{"check314.sh", "check314_test.sh"},
+	{"check330.sh", "check330_test.sh"},
 	{"check340.sh", "check340_test.sh"},
 	{"check96.sh", "check96_test.sh"},
 	{"check361.sh", "check361_test.sh"},
@@ -177,6 +199,7 @@ var liveCheckScripts = []struct {
 	{"check-501.sh", "check-501_test.sh"},
 	{"check-411.sh", "check-411_test.sh"},
 	{"check-412.sh", "check-412_test.sh"},
+	{"check-c0.sh", "check-c0_test.sh"},
 	{"check510.sh", "check510_test.sh"},
 	{"check511.sh", "check511_test.sh"},
 	{"check520.sh", "check520_test.sh"},

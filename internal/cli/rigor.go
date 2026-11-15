@@ -142,7 +142,7 @@ rule, and two rules matching one path leave only the strictest of them deciding.
 
 A mode below what this project resolves to today is the sensitive direction: a
 coding agent's session is refused it with the diff and the command to run at
-your own terminal, ` + "`--yes`" + ` included, and your own terminal writes it and asks
+your own terminal, and your own terminal writes it and asks
 nothing. ` + "`hotfix`" + ` is refused in either form, naming ` + "`fugaro run --mode hotfix`" + `.
 
 The command prints the review floor beside the write, and it cannot lower it:
@@ -165,8 +165,7 @@ whose Layer stage seeds the file from that layer.`,
 	settingsAimFlags(cmd, &o.project, &o.config)
 	f.StringVar(&o.area, "area", "", "write this glob's rule in defaults.rigor.areas instead of the layer's default (e.g. docs/**)")
 	f.StringVar(&o.name, "name", "", "the rule's name; required for a glob the layer does not carry yet, and a rename for one it does")
-	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
-	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmation this write would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes")
+	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmation this write would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed")
 	return cmd
 }
 
@@ -184,9 +183,6 @@ const (
 // D834's refusal, the target, the old document, the edit, the loader's read of
 // it, the rank rule, and then the one write path with the gate beside it.
 func runRigorSet(cmd *cobra.Command, name string, o rigorOptions) error {
-	if err := askConflict(askFlags{ask: o.ask, yes: o.yes}); err != nil {
-		return err
-	}
 	mode := rigor.Mode(name)
 	// §3 step 1: the vocabulary. The design asks for the list in the message "as
 	// `fugaro run --mode` refuses it" — that refusal and not its words: run's
@@ -369,7 +365,7 @@ func runRigorSet(cmd *cobra.Command, name string, o rigorOptions) error {
 	if err := settingsLayerGate(cmd, target, settingsWriteOptions{layer: settingsLayerProject}, key, old, next); err != nil {
 		return err
 	}
-	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask, yes: o.yes}, managed.Managed, settingsEditConditions(cmd, edit)); err != nil {
+	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask}, managed.Managed, settingsEditConditions(cmd, edit)); err != nil {
 		return err
 	}
 	edit.Managed = managed

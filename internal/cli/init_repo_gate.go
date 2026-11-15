@@ -360,13 +360,13 @@ func unknownBecause(project string, o originInfo, optIn string) string {
 func convergeOptIn(lc *localcfg.Config, o originInfo) string {
 	switch {
 	case o.Rewritten || !o.standardHost():
-		return ", and --yes does not give it for an origin whose identity is not the one it claims: the gate's note, read at your own terminal, is what confirms it"
+		return ", and no flag gives it for an origin whose identity is not the one it claims: the gate's note, read at your own terminal, is what confirms it"
 	case repoNameListed(lc, o):
-		return ", and --yes does not give it here: the project's config knows this name at another host, so the origin is this gate's own step, confirmed at your terminal"
+		return ", and no flag gives it here: the project's config knows this name at another host, so the origin is this gate's own step, confirmed at your terminal"
 	case agentMarker(os.Getenv, processTerminal()) != "":
-		return " (a coding agent's session confirms nothing, --yes included): your own terminal window is where it is confirmed"
+		return " (a coding agent's session confirms nothing): your own terminal window is where it is confirmed"
 	}
-	return " — --yes covers it, or a person at your own terminal does, with nothing typed"
+	return " — a person at your own terminal covers it, with nothing typed"
 }
 
 // enrolLeft is what a door that does not enrol a repository by asking leaves
