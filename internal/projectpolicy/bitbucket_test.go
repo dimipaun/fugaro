@@ -1,6 +1,8 @@
 package projectpolicy
 
 import (
+	"encoding/json"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -332,5 +334,317 @@ func TestPolicyCarriesBitbucketAPIRoots(t *testing.T) {
 	}
 	if len(p.BitbucketAPIRoots) != 0 {
 		t.Errorf("bitbucket_api_roots = %v, want none", p.BitbucketAPIRoots)
+	}
+}
+
+// typedTokenRecords are the three records a project holding one token of each
+// type states, in the local config's own spelling: a repository token whose
+// repository is written in another case, a workspace token, and a project
+// token whose coverage is its workspace slug alone beside the project's UUID.
+func typedTokenRecords() []config.BitbucketToken {
+	return []config.BitbucketToken{
+		{Name: "repo-a", Type: config.BitbucketTokenTypeRepo, Coverage: []string{"Workspace-A/Repo-A"}},
+		{Name: "ws-a", Type: config.BitbucketTokenTypeWorkspace, Coverage: []string{"Workspace-A/*"}},
+		{Name: "proj-a", Type: config.BitbucketTokenTypeProject, Coverage: []string{"Workspace-A"}, ProjectUUID: "proj-uuid", ProjectKey: "PROJ"},
+	}
+}
+
+// TestDeriveBitbucketTokensKey is R5's derivation: one entry per typed record,
+// carrying the record's own type and its coverage in the node's
+// provider-qualified spelling, plus the identity and the project UUID the node
+// needs to serve it — and nothing a caller could take a token with.
+//
+// The entry is named by the record's DOCUMENT KEY (config.BitbucketTokenKey)
+// and never by the bare suffix, so no name can collide with a model account's
+// or with the legacy key. The coverage is translated and not copied, because
+// the service reads only the node: the operator's two-segment slug and its
+// workspace-only project spelling are this package's, and the node — the
+// spelling MatchRepo compares — is the derivation's (R5). The identity is the
+// state store's, keyed by the same document key.
+//
+// The mutation is a derivation that publishes the suffix as a name, that
+// copies the local config's spelling into the node, or that drops the UUID a
+// project token is matched by.
+func TestDeriveBitbucketTokensKey(t *testing.T) {
+	identities := map[string]string{config.BitbucketTokenKey("ws-a"): "uuid-ws"}
+	key, err := DeriveBitbucketTokens(typedTokenRecords(), identities)
+	if err != nil {
+		t.Fatalf("DeriveBitbucketTokens = %v", err)
+	}
+	if key == nil {
+		t.Fatal("a project naming three typed tokens published no key")
+	}
+	want := []BitbucketTokenNode{
+		{Name: "bitbucket-token--repo-a", Type: "repo", Coverage: []string{"bitbucket/workspace-a/repo-a"}},
+		{Name: "bitbucket-token--ws-a", Type: "workspace", Coverage: []string{"bitbucket/workspace-a/*"}, Identity: "uuid-ws"},
+		{Name: "bitbucket-token--proj-a", Type: "project", Coverage: []string{"bitbucket/workspace-a/*"}, ProjectUUID: "proj-uuid"},
+	}
+	if len(key.Entries) != len(want) {
+		t.Fatalf("the key holds %d entries, want %d: %+v", len(key.Entries), len(want), key.Entries)
+	}
+	for i, w := range want {
+		if !reflect.DeepEqual(key.Entries[i], w) {
+			t.Errorf("entries[%d] = %+v, want %+v", i, key.Entries[i], w)
+		}
+	}
+	// The identity is the store's and only the store's: a token the state store
+	// recorded nothing for carries none, which is a token whose account is
+	// unknown rather than an account named by an empty string.
+	if key.Entries[0].Identity != "" || key.Entries[2].Identity != "" {
+		t.Errorf("identities = %q and %q, want none: only the token the store named has one", key.Entries[0].Identity, key.Entries[2].Identity)
+	}
+	// The coverage the node carries is the one a canonical repository is
+	// matched against, so the record read off the node reaches exactly the
+	// repository its operator named, and no other.
+	if !AdmitRepo(key.Entries[0].Coverage, "bitbucket/workspace-a/repo-a") {
+		t.Error("the derived entry does not admit the repository its own record names")
+	}
+	if AdmitRepo(key.Entries[0].Coverage, "bitbucket/workspace-a/repo-b") {
+		t.Error("the derived entry admits a repository its record does not name")
+	}
+
+	// The key is the node's: a policy carrying it marshals the member, and this
+	// reader reads it back whole — the round trip a publish takes, since the
+	// node the publisher writes is the one the next run decodes.
+	raw, err := json.Marshal(&Policy{Version: Version, Budget: Budget{Mode: "enforce"}, BitbucketTokens: key})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"`+BitbucketTokensKey+`"`) {
+		t.Fatalf("a policy carrying the key marshals no member:\n%s", raw)
+	}
+	back, found, err := Decode(raw)
+	if err != nil || !found {
+		t.Fatalf("the node the derivation published does not read back: (%v, %v, %v)", back, found, err)
+	}
+	if len(back.UnknownKeys) != 0 {
+		t.Errorf("UnknownKeys = %v, want none: the key is this Fugaro's own", back.UnknownKeys)
+	}
+	if back.BitbucketTokens == nil || !reflect.DeepEqual(back.BitbucketTokens.Entries, key.Entries) {
+		t.Errorf("the key read back as %+v, want %+v", back.BitbucketTokens, key.Entries)
+	}
+
+	// A project that names no typed token publishes no key at all, so the node
+	// of such a project — every installation that never stored one — is what it
+	// was before this key existed.
+	for _, records := range [][]config.BitbucketToken{nil, {}} {
+		none, err := DeriveBitbucketTokens(records, nil)
+		if err != nil {
+			t.Fatalf("DeriveBitbucketTokens(%v) = %v", records, err)
+		}
+		if none != nil {
+			t.Errorf("a project naming no typed token derived %+v, want no key", none)
+		}
+		raw, err := json.Marshal(&Policy{Version: Version, Budget: Budget{Mode: "enforce"}, BitbucketTokens: none})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), BitbucketTokensKey) {
+			t.Errorf("a project naming no typed token publishes the member:\n%s", raw)
+		}
+	}
+
+	// A record whose coverage the node cannot carry is refused here, where the
+	// sentence names the operator's own entry, rather than published as a node
+	// this binary — and every run of the project — then refuses: the config's
+	// alphabet admits a ".git" suffix and a segment longer than the node reads,
+	// and the node's rule does not.
+	_, err = DeriveBitbucketTokens([]config.BitbucketToken{
+		{Name: "repo-a", Type: config.BitbucketTokenTypeRepo, Coverage: []string{"Workspace-A/Repo-A.git"}},
+	}, nil)
+	if err == nil {
+		t.Fatal("a coverage the node refuses derived a key")
+	}
+	if !strings.Contains(err.Error(), "bitbucket_tokens.repo-a") {
+		t.Errorf("the refusal does not name the operator's record: %v", err)
+	}
+	// A record the config's own rules refuse is refused before anything is
+	// derived from it: the halves of a record state one fact (R1), and a node
+	// derived from halves that disagree would be a token served as the wrong
+	// type.
+	if _, err := DeriveBitbucketTokens([]config.BitbucketToken{
+		{Name: "ws-a", Type: config.BitbucketTokenTypeRepo, Coverage: []string{"Workspace-A/*"}},
+	}, nil); err == nil {
+		t.Error("a record whose type and coverage disagree derived a key")
+	}
+}
+
+// TestNodeWithoutTokensKeyReadsAsBefore: the key is additive, and a node that
+// carries none reads exactly as it did. An absent member, a written null and a
+// written empty block are one node — the publisher writes nothing for a project
+// that names no typed token — and a policy carrying no key marshals none, which
+// is what keeps such a project's bytes what they were (D1156's rule for the
+// key beside this one). Version does not move (R5): the key is a top-level
+// member, no value a reader enforces changes with it, and an entry is read by
+// the service, which re-reads the node per request.
+func TestNodeWithoutTokensKeyReadsAsBefore(t *testing.T) {
+	for _, raw := range []string{
+		`{"version": ` + itoa(Version) + `}`,
+		`{"version": ` + itoa(Version) + `, "bitbucket_tokens": null}`,
+		`{"version": ` + itoa(Version) + `, "bitbucket_tokens": {"entries": []}}`,
+	} {
+		p, found, err := Decode([]byte(raw))
+		if err != nil || !found {
+			t.Fatalf("Decode(%s) = (%v, %v, %v), want the node read", raw, p, found, err)
+		}
+		if p.BitbucketTokens != nil {
+			t.Errorf("Decode(%s).BitbucketTokens = %+v, want none: an absent, null and empty key are one node", raw, p.BitbucketTokens)
+		}
+		if len(p.UnknownKeys) != 0 {
+			t.Errorf("Decode(%s).UnknownKeys = %v, want none", raw, p.UnknownKeys)
+		}
+		if p.Version != Version {
+			t.Errorf("Decode(%s).Version = %d, want %d", raw, p.Version, Version)
+		}
+		b, err := json.Marshal(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(b), BitbucketTokensKey) {
+			t.Errorf("a policy carrying no key marshals one:\n%s", b)
+		}
+	}
+	if Version != 7 {
+		t.Errorf("Version = %d, want 7: this key moves no version (R5)", Version)
+	}
+	// The block beside the key is untouched by it: bitbucket_token reads the
+	// same members, with the same meanings, in a node that carries the key and
+	// in one that does not.
+	p, err := decodeBitbucketNode(t, `"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":true}`)
+	if err != nil {
+		t.Fatalf("a node without the key was refused: %v", err)
+	}
+	if !slices.Equal(p.BitbucketToken.AllowRepos, []string{"bitbucket/workspace-a/repo-a"}) || !p.BitbucketToken.Proxy {
+		t.Errorf("bitbucket_token = %+v, want the block it was", p.BitbucketToken)
+	}
+	if p.BitbucketTokens != nil {
+		t.Errorf("BitbucketTokens = %+v, want none", p.BitbucketTokens)
+	}
+}
+
+// TestNodeTokensKeyCarriesNoValue: R5's "never a value, no secret name and no
+// secret version". The node is readable by every run token of the job, so a
+// hostile agent that reads this key learns which repositories a token reaches
+// and nothing it could present as the credential (F21).
+//
+// The members are read off the two types rather than listed, so a field added
+// to either is judged by this test without a second list: what an entry holds
+// is the shape's own fields, and what the derivation is given is the record's —
+// neither carries a value, and neither can gain one without failing here.
+func TestNodeTokensKeyCarriesNoValue(t *testing.T) {
+	key, err := DeriveBitbucketTokens(typedTokenRecords(), map[string]string{config.BitbucketTokenKey("ws-a"): "uuid-ws"})
+	if err != nil {
+		t.Fatalf("DeriveBitbucketTokens = %v", err)
+	}
+	raw, err := json.Marshal(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var written struct {
+		Entries []map[string]json.RawMessage `json:"entries"`
+	}
+	if err := json.Unmarshal(raw, &written); err != nil {
+		t.Fatal(err)
+	}
+	if len(written.Entries) != len(key.Entries) {
+		t.Fatalf("the key marshals %d entries, want %d", len(written.Entries), len(key.Entries))
+	}
+	want := carrierMembers(reflect.TypeOf(BitbucketTokenNode{}))
+	slices.Sort(want)
+	// Every member an entry writes is one of the shape's — and, across the
+	// three entries, every member of the shape is written, so a member added to
+	// it is judged here rather than passing unnoticed.
+	union := map[string]bool{}
+	for i, entry := range written.Entries {
+		for name := range entry {
+			if !slices.Contains(want, name) {
+				t.Errorf("entries[%d] carries %q, which is not a member of the entry's shape", i, name)
+			}
+			union[name] = true
+		}
+	}
+	var got []string
+	for name := range union {
+		got = append(got, name)
+	}
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Errorf("the key's entries carry %v, want the entry's own members %v", got, want)
+	}
+	for _, name := range want {
+		if strings.Contains(name, "value") || strings.Contains(name, "secret") || strings.Contains(name, "version") {
+			t.Errorf("the node's entry carries the member %q: the node is readable by every run token of the job", name)
+		}
+	}
+	// The record the derivation is given is the operator's own statement, and
+	// it carries no value either: the value is the bundle's, found by the
+	// document key this key carries (T1).
+	for _, name := range carrierMembers(reflect.TypeOf(config.BitbucketToken{})) {
+		if strings.Contains(name, "value") || strings.Contains(name, "secret") {
+			t.Errorf("the record carries the member %q: a local config file cannot state a token's value", name)
+		}
+	}
+}
+
+// TestOldRunnerReaderToleratesTheTokensKey is the runner's half of the skew R5
+// states, the pair the image_catalog key set has: a runner of the release
+// behind reads a node carrying this key, lists it as a key it does not know and
+// enforces every value it does understand, which is P8 — an unknown TOP-LEVEL
+// key is a newer Fugaro's, never a node to halt on. The older reader is not
+// reached by spelling a key this package does not model, because
+// knownTopLevelKeys holds this one: the same node is decoded twice, once under
+// this key set and once under a copy of the list as it stood before the key.
+//
+// The key is at the top level for exactly this: every unknown member INSIDE a
+// block this package decodes is refused, so a token's facts carried in the
+// bitbucket_token block would make a runner of the release behind refuse the
+// whole node.
+func TestOldRunnerReaderToleratesTheTokensKey(t *testing.T) {
+	node := `{"version": ` + itoa(Version) + `,` +
+		` "bitbucket_token": {"allow_repos": ["bitbucket/workspace-a/repo-a"]},` +
+		` "bitbucket_tokens": {"entries": [{"name": "bitbucket-token--ws-a", "type": "workspace",` +
+		` "coverage": ["bitbucket/workspace-a/*"], "identity": "uuid-ws"}]}}`
+	p, found, err := Decode([]byte(node))
+	if err != nil || !found {
+		t.Fatalf("Decode = (%v, %v, %v), want the node read", p, found, err)
+	}
+	if len(p.UnknownKeys) != 0 {
+		t.Errorf("UnknownKeys = %v, want none: %s is a key this Fugaro reads", p.UnknownKeys, BitbucketTokensKey)
+	}
+	if p.BitbucketTokens == nil || len(p.BitbucketTokens.Entries) != 1 {
+		t.Fatalf("BitbucketTokens = %+v, want the node's one entry", p.BitbucketTokens)
+	}
+	if got := p.BitbucketTokens.Entries[0]; got.Name != "bitbucket-token--ws-a" || got.Identity != "uuid-ws" {
+		t.Errorf("the entry read as %+v, want the name and the identity it carries", got)
+	}
+
+	preKey := make(map[string]bool, len(knownTopLevelKeys))
+	for k, v := range knownTopLevelKeys {
+		preKey[k] = v
+	}
+	delete(preKey, BitbucketTokensKey)
+	q, found, err := decodeWithKeys([]byte(node), preKey)
+	if err != nil || !found {
+		t.Fatalf("the reader that predates the key refused the node: (%v, %v, %v)", q, found, err)
+	}
+	if want := []string{BitbucketTokensKey}; !slices.Equal(q.UnknownKeys, want) {
+		t.Errorf("the reader that predates the key lists UnknownKeys = %v, want %v: that is the node a CLI of that age refuses and a runner of it logs", q.UnknownKeys, want)
+	}
+	// What the older reader knows of the key is that it is there and that it
+	// reads nothing of it: the key set is the whole of the difference this
+	// fixture can state (that reader's struct predates the field, which no
+	// fixture here can be), and it is the difference the skew is about — the
+	// node is read, the key is listed, and nothing halts.
+	//
+	// Everything it does understand is read whole, which is what "tolerated"
+	// means for a runner: the token block it enforces, and the rest of the node
+	// beside it. A run that bootstrapped under the release behind therefore
+	// keeps the credential its own job was deployed with — the fallback R5
+	// states, and never a node it halts on.
+	if q.BitbucketToken == nil || !slices.Equal(q.BitbucketToken.AllowRepos, []string{"bitbucket/workspace-a/repo-a"}) {
+		t.Errorf("the reader that predates the key read bitbucket_token as %+v, want the block it enforces", q.BitbucketToken)
+	}
+	if q.Version != Version {
+		t.Errorf("the reader that predates the key read Version = %d, want %d", q.Version, Version)
 	}
 }
