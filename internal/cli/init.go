@@ -4351,9 +4351,9 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	}
 	// The run's own reading of the installation's spec, not installOptions: a
 	// config that can no longer compose the job of the default profile this
-	// update wrote — its last GitHub repository moved to Bitbucket, or spread
-	// over two Apps — is refused by that function, and the repository stage is
-	// where every later update of such an installation would stop
+	// update wrote — its last GitHub repository moved to Bitbucket, or one
+	// added on a second App — is refused by that function, and the repository
+	// stage is where every later update of such an installation would stop
 	// (installSpec).
 	inst, err := installSpec(o, lc, r.warn)
 	if err != nil {

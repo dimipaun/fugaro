@@ -68,9 +68,21 @@ func TestUpdateDeploysTheDefaultProfilesJobInTheSameUpdate(t *testing.T) {
 		t.Errorf("the local config carries %+v under %s, want the profile the job above was deployed from",
 			lc.Profiles[projectpolicy.DefaultProfileName], projectpolicy.DefaultProfileName)
 	}
-	if _, ok := convergeNode(t, r).Profiles[projectpolicy.DefaultProfileName]; !ok {
+	// The node's profile is the config's, field for field: a run reads the
+	// profile's own shape out of the policy (cpu, memory, the timeout class and
+	// the admissions), so a node that names the profile and states something
+	// else is a node whose job the run would not be launched onto — the name
+	// alone says the profile exists, not what it is.
+	node, ok := convergeNode(t, r).Profiles[projectpolicy.DefaultProfileName]
+	if !ok {
 		t.Errorf("the policy this update published defines no %s profile, so the job it deployed and the node a run reads disagree:\n%s",
 			projectpolicy.DefaultProfileName, out)
+	} else if written := updatedConfig(t).Profiles[projectpolicy.DefaultProfileName]; node.Provider != written.Provider ||
+		node.CPU != written.CPU || node.Memory != written.Memory || node.TimeoutClass != written.TimeoutClass ||
+		!slices.Equal(node.AllowRepos, written.AllowRepos) || !slices.Equal(node.Secrets, written.Secrets) ||
+		!slices.Equal(node.ClaudeAccounts, written.ClaudeAccounts) {
+		t.Errorf("the node's profiles.%s is\n%+v\nwant the profile this same run wrote to the local config, field for field:\n%+v\n%s",
+			projectpolicy.DefaultProfileName, node.JobProfile, written, out)
 	}
 }
 
@@ -160,14 +172,20 @@ func TestUpdateDefaultProfileIsIdempotent(t *testing.T) {
 	first := convergeOn(t, r, []string{"policy-vs-jobs"})
 	before := updatedConfig(t).Profiles
 
-	// The door's second run on this rig leaves the repository stage for the
-	// operator — this fixture's checkout is not on its default branch, which is
-	// the checkout's own state and nothing this write does — so the outcome is
-	// read for what this test is about: the profiles the file carries and the
-	// line about them.
+	// The checkout the first run wrote its pin removal into is committed first,
+	// the way the person's own step after an update leaves it: the repository
+	// stage reads the working tree and refuses a `fugaro.yaml` that is not the
+	// default branch's, and a second run that stopped there would not reach the
+	// stages this test is about — the whole door has to exit clean, write
+	// nothing and still converge.
+	testutil.Git(t, r.root, "commit", "-qam", "the first run's own change to the checkout")
+	fetched(t, r.root)
 	out, errOut, err := executeStdin(t, "", "update")
-	if err != nil && !strings.Contains(err.Error(), "left for you") {
-		t.Fatalf("the second update failed: %v\n%s\n%s", err, out, errOut)
+	if err != nil {
+		t.Fatalf("the second update did not converge: %v\n%s\n%s", err, out, errOut)
+	}
+	if !strings.Contains(out+errOut, "✔ repository") {
+		t.Errorf("the second update's account says nothing about the repository stage having run, so this test may not have run the door whole:\n%s%s", out, errOut)
 	}
 	if after := updatedConfig(t).Profiles; !reflect.DeepEqual(before, after) {
 		t.Errorf("the second update changed the profiles the file carries:\n--- before\n%+v\n--- after\n%+v", before, after)

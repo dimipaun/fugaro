@@ -67,8 +67,8 @@ type refreshOptions struct {
 	// onPlan, when set, sees the plan once preflight is done, before
 	// anything changes. It is READ-ONLY and gets a copy (refreshPlan.snapshot):
 	// changing it changes nothing about the run (the caller only needs
-	// current()). It fires BEFORE installOptions, which can still fail at
-	// step 1, so a caller must take the final state from the error runImageRefresh
+	// current()). It fires BEFORE the spec is built (installSpec), which can
+	// still fail at step 1, so a caller must take the final state from the error runImageRefresh
 	// returns, never from the hook alone.
 	onPlan func(*refreshPlan)
 	// managed is the gate this run is under: the value openRefreshManaged
@@ -645,7 +645,7 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 	if err != nil {
 		return refreshStopped(1, nil, o, err)
 	}
-	// The hook fires before installOptions, which can still fail at step 1:
+	// The hook fires before the spec is built, which can still fail at step 1:
 	// a caller takes the final state from the returned error, not the hook.
 	if o.onPlan != nil {
 		o.onPlan(p.snapshot())
