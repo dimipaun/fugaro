@@ -128,6 +128,15 @@ func routeAct(path string) (purpose, credential string) {
 		// tier — and naming one would be recording a fact the route does not
 		// have.
 		return PurposeSlipClaim, ""
+	case WorkflowSecretsPath:
+		// The workflow-secrets route's credential is the CONTAINER the value
+		// was read from, and THAT NAME IS NOT IN THE PATH: it is the record's
+		// answer for the variable the call names (workflowsecrets.go), which
+		// the route reads once the record is in hand — so the route names the
+		// purpose and leaves the credential to the handler, exactly as the sign
+		// route leaves its account's key. A refusal answered before the record
+		// was read has no container to name and so carries none.
+		return PurposeWorkflowSecret, ""
 	case SignPath:
 		// The sign route's credential is the account's review-signing key
 		// (verdict.go), and THAT NAME IS NOT IN THE PATH: it is the caller's
@@ -191,7 +200,7 @@ func servedRoute(r *http.Request) bool {
 		return false
 	}
 	switch r.URL.Path {
-	case MessagesPath, CountTokensPath, MintPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, SlipPath, SlipClaimPath:
+	case MessagesPath, CountTokensPath, MintPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, SlipPath, SlipClaimPath, WorkflowSecretsPath:
 		return true
 	}
 	return false
@@ -211,6 +220,18 @@ type JobAccount struct {
 	Email string
 	Slug  string
 	Repo  string
+	// Workflow is the workflow whose job runs as this account, as the
+	// deployment spells it (RepoJob.Workflow). It is what the workflow-secrets
+	// route serves a call by (B3.2, G19): one repository has one job account
+	// per workflow, the account is the job (nothing about the caller decides
+	// its class), and the account is therefore the only thing that can say
+	// WHICH workflow's secrets a call is served — never X-Fugaro-Run-Job, which
+	// is text the caller writes. A row with no workflow is a row this build
+	// cannot derive (JobAccountsFor refuses one) and is served no workflow
+	// secret at all: the record holds no empty workflow name (creds.
+	// PutWorkflowSecrets refuses one), so such a row is refused by the record
+	// rather than by a check here.
+	Workflow string
 }
 
 // SharedJobAccount is one shared project job's service account and the profile
@@ -280,9 +301,10 @@ func JobAccountsFor(fugaroProject, gcpProject, provider string, jobs []RepoJob) 
 			return nil, fmt.Errorf("credsvc: job accounts for %q: %w", j.Repo, err)
 		}
 		out = append(out, JobAccount{
-			Email: serviceAccountEmail(gcp.ServiceAccountID(slug, j.Workflow), gcpProject),
-			Slug:  slug,
-			Repo:  canonical,
+			Email:    serviceAccountEmail(gcp.ServiceAccountID(slug, j.Workflow), gcpProject),
+			Slug:     slug,
+			Repo:     canonical,
+			Workflow: j.Workflow,
 		})
 	}
 	return out, nil
@@ -431,6 +453,19 @@ type Config struct {
 	// review job signs nothing and is a service this build starts.
 	// *rtdb.Client is one.
 	Signs SignMarks
+	// WorkflowSecrets reads the record `fugaro update` writes for a
+	// repository's jobs (B3.1, B3.2): the workflow-secrets route serves a call
+	// out of it and out of nothing else, so a service with no reader serves no
+	// workflow secret at all (the route refuses rather than answering an empty
+	// value) and *RTDBWorkflowSecrets is the implementation a deployment wires
+	// (internal/cli/credentials_serve.go).
+	//
+	// It may be nil, and nil is the state of an installation whose database
+	// client is not wired for this node: the route refuses, which is why this
+	// is not required at construction the way Slips is — an installation that
+	// predates this release has no record to read and is a service this build
+	// still starts.
+	WorkflowSecrets WorkflowSecretRecords
 	// AuditLog is where the service's audited acts are written (C1.13): every
 	// line this service writes, the mint's (C2.1) and the probe's (C1.12)
 	// included. There is one writer and one handler — Server.audit is the ONLY
@@ -881,7 +916,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// "no admin endpoint" is kept by there being nothing to reach rather
 		// than by a check inside a handler.
 		s.refuse(w, http.StatusNotFound, "not_found",
-			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+SlipPath+" and "+SlipClaimPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
+			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+SlipPath+", "+SlipClaimPath+" and "+WorkflowSecretsPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
 		return
 	}
 	if r.URL.Path == VerifyPath {
@@ -1112,6 +1147,23 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// of any other shape, so a coding run launched into the review job never
 		// reaches a mint at all.
 		s.mint(ctx, w, r, id, ja)
+		return
+	}
+	if r.URL.Path == WorkflowSecretsPath {
+		// The workflow-secrets route (B3.2, G19). Everything above it is its
+		// admission and nothing below it is: the two identities have been
+		// verified, the pairing has fixed the repository the calling job's
+		// account is bound to, and the operator's stop switches have been read,
+		// so a stopped service serves no workflow secret. It reads no policy
+		// and consults no cascade and no budget: what it serves is not a model
+		// credential and was chosen at no tier, and the one gate its own class
+		// needs — that the caller IS a per-repository job of a workflow — is the
+		// route's own (workflowsecrets.go), because it is a fact about the
+		// ACCOUNT the pairing has just resolved. What it reads is the record
+		// `fugaro update` wrote for the caller's repository and the one
+		// container that record names, and nothing a caller sends can reach
+		// either beyond the variable's name.
+		s.workflowSecrets(ctx, w, r, id, ja)
 		return
 	}
 	if r.URL.Path == SignPath {
