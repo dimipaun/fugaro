@@ -7,21 +7,26 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
-// TestHooksDefaultToTheUntaggedBuild: the stage hook's default pair is the one
+// TestHooksDefaultToTheUntaggedBuild: the stage hook's default set is the one
 // an untagged build runs with — no bound of its own and no halt — so the core
-// bounds no stage by governance whatever its layers wrote (D522, G10). The
-// pair is read the way the stage loop reads it, and it is the real default and
-// not a probe: a test that installed the off-switch itself could not tell it
-// from a core that had quietly kept a stage bound.
+// bounds no stage by governance whatever its layers wrote (D522, G10). The set
+// is read the way the stage loop reads it, and it is the real default and not a
+// probe: a test that installed the off-switch itself could not tell it from a
+// core that had quietly kept a stage bound.
+//
+// All four functions are the default's, the two stops T7.3 added included: a
+// core that answered a gateway stop or a moved review range would halt a run
+// for a tripwire no untagged build carries.
 func TestHooksDefaultToTheUntaggedBuild(t *testing.T) {
 	f := runner.StageHook()
-	if f.Timeout == nil || f.TimedOut == nil {
-		t.Fatalf("the default pair is %+v, want both functions", f)
+	if f.Timeout == nil || f.TimedOut == nil || f.Stopped == nil || f.Before == nil {
+		t.Fatalf("the default set is %+v, want all four functions", f)
 	}
 	g := policy.Governance{StageTimeout: policy.StageTimeout{
 		Implement: time.Minute, Review: 2 * time.Minute, Fix: 3 * time.Minute}}
@@ -31,8 +36,17 @@ func TestHooksDefaultToTheUntaggedBuild(t *testing.T) {
 			t.Errorf("Timeout(%q) = %v, want no bound: this build applies none", stage, got)
 		}
 	}
-	if d := f.TimedOut(runner.StageView{Stage: "implement", Governance: g}); d.Halt {
+	v := runner.StageView{Stage: "implement", Governance: g}
+	if d := f.TimedOut(v); d.Halt {
 		t.Errorf("TimedOut = %+v, want no stop", d)
+	}
+	v.Stop = gateway.StageStop{Reason: string(runstore.HaltStageBudget), Detail: "implement stage budget"}
+	if d := f.Stopped(v); d.Halt {
+		t.Errorf("Stopped = %+v, want no stop: this build records the gateway's own halt", d)
+	}
+	v.ReviewScope = runstore.NewReviewScope(false, runstore.ReviewScopeRangeMoved, []string{"a.go"}, []string{"a.go", "b.go"})
+	if d := f.Before(v); d.Halt {
+		t.Errorf("Before = %+v, want no stop: this build reads no review scope", d)
 	}
 }
 
@@ -155,22 +169,29 @@ func TestStageBoundAskedIsAboutTheBlocksNotTheMerge(t *testing.T) {
 
 // TestLateOrDuplicateStageHookIsRefused: the stage hook is installed once, by
 // ee/register, so a second SetStage — the way a tagged binary's enforcement
-// would be halved after it was set — is refused, and so is a pair the stage
-// loop would call into and panic on. The refusals leave the installed pair
-// exactly as it was (design §5.5).
+// would be halved after it was set — is refused, and so is a set the stage
+// loop would call into and panic on. Every one of the four is required: the
+// loop calls each of them at the stage it belongs to, so a set missing any of
+// them is a nil dereference rather than a decision (T7.3). The refusals leave
+// the installed set exactly as it was (design §5.5).
 func TestLateOrDuplicateStageHookIsRefused(t *testing.T) {
 	runner.ResetStageHook(t)
+	no := func(runner.StageView) runner.StageDecision { return runner.StageDecision{} }
 	real := runner.StageFuncs{
 		Timeout:  func(runner.StageView) time.Duration { return 0 },
-		TimedOut: func(runner.StageView) runner.StageDecision { return runner.StageDecision{} },
+		TimedOut: no,
+		Stopped:  no,
+		Before:   no,
 	}
 	for _, tc := range []struct {
 		name string
 		f    runner.StageFuncs
 	}{
-		{"no Timeout", runner.StageFuncs{TimedOut: real.TimedOut}},
-		{"no TimedOut", runner.StageFuncs{Timeout: real.Timeout}},
-		{"neither", runner.StageFuncs{}},
+		{"no Timeout", runner.StageFuncs{TimedOut: no, Stopped: no, Before: no}},
+		{"no TimedOut", runner.StageFuncs{Timeout: real.Timeout, Stopped: no, Before: no}},
+		{"no Stopped", runner.StageFuncs{Timeout: real.Timeout, TimedOut: no, Before: no}},
+		{"no Before", runner.StageFuncs{Timeout: real.Timeout, TimedOut: no, Stopped: no}},
+		{"none of them", runner.StageFuncs{}},
 	} {
 		if err := runner.SetStageHook(tc.f); err == nil {
 			t.Errorf("a hook with %s was accepted", tc.name)
@@ -182,8 +203,8 @@ func TestLateOrDuplicateStageHookIsRefused(t *testing.T) {
 	if err := runner.SetStageHook(real); err == nil {
 		t.Error("a second SetStage was accepted, so a tagged build's enforcement can be replaced")
 	}
-	if got := runner.StageHook(); got.Timeout == nil || got.TimedOut == nil {
-		t.Errorf("a refused call changed the installed pair: %+v", got)
+	if got := runner.StageHook(); got.Timeout == nil || got.TimedOut == nil || got.Stopped == nil || got.Before == nil {
+		t.Errorf("a refused call changed the installed set: %+v", got)
 	}
 }
 
@@ -201,11 +222,14 @@ func TestAStageHookCannotLeaveAHaltReasonTheRunnerCannotRecord(t *testing.T) {
 		"timeouts: { total: 5m, stage: 300ms, verify: 5s, finalize_reserve: 2m }", "")
 	h := newHarness(t, cfg, nil)
 	runner.ResetStageHook(t)
+	no := func(runner.StageView) runner.StageDecision { return runner.StageDecision{} }
 	if err := runner.SetStageHook(runner.StageFuncs{
 		Timeout: func(runner.StageView) time.Duration { return 200 * time.Millisecond },
 		TimedOut: func(runner.StageView) runner.StageDecision {
 			return runner.StageDecision{Halt: true, Reason: runstore.HaltReason("invented_stop"), Detail: "time"}
 		},
+		Stopped: no,
+		Before:  no,
 	}); err != nil {
 		t.Fatal(err)
 	}
