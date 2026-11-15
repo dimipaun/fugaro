@@ -304,6 +304,22 @@
       }
     },
     {
+      "id": "S1",
+      "title": "the secrets writers",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/secrets.go",
+          "internal/cli/secrets_expiry.go",
+          "internal/cli/secrets_expiry_test.go",
+          "internal/cli/writers_secrets.go"
+        ]
+      }
+    },
+    {
       "id": "I1",
       "title": "integration: the stub deleted, the conformance test strict, the end-to-end test",
       "run": null,
@@ -678,6 +694,21 @@
       "task": "D1",
       "needs": "K2",
       "reason": "the docs and the skill describe the behaviour this task lands"
+    },
+    {
+      "task": "S1",
+      "needs": "C1",
+      "reason": "registers writers through the contract"
+    },
+    {
+      "task": "I1",
+      "needs": "S1",
+      "reason": "the secrets writers are integrated here"
+    },
+    {
+      "task": "D1",
+      "needs": "S1",
+      "reason": "the secrets writers are named in the docs"
     }
   ],
   "decoupling": [
@@ -851,6 +882,15 @@
       },
       "integration": "I1",
       "reason": "N3's test publishes a member the node already carries and needed only the carrier field names, not the reconcile N4 writes"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "S1",
+        "needs": "T1"
+      },
+      "integration": "I1",
+      "reason": "needed the writer registry's shape, not the conformance harness"
     }
   ],
   "contract_changes": [
@@ -868,7 +908,8 @@
         "M4",
         "K1",
         "K2",
-        "L1"
+        "L1",
+        "S1"
       ]
     },
     {
@@ -884,7 +925,8 @@
         "M3",
         "M4",
         "K1",
-        "K2"
+        "K2",
+        "S1"
       ]
     }
   ]
