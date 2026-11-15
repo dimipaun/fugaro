@@ -56,11 +56,11 @@
 #             awk/sed/grep/cut/tr/head.
 # Where:      the SANDBOX installation ONLY: Fugaro project `fugaro` on GCP
 #             project `fugaro-dev`, both hard-coded in this file (never
-#             `gcloud config get-value project`). The account, the project and
-#             the run are refused by name when any of them names belong,
-#             EdgeWeb or EdgeServer — Check 130's rule, applied to every name
-#             this check has. No other installation is accepted and no flag can
-#             name one.
+#             `gcloud config get-value project`). The account, the project, the
+#             run and the log view the entries are read from are refused by name
+#             when any of them names belong, EdgeWeb or EdgeServer — Check 130's
+#             rule, applied to every name this check has, and judged before
+#             anything is read. No other installation is accepted.
 # Creates:    nothing: no job, no run, no build, no object, no binding, no
 #             account and no policy.
 # Costs:      nothing but wall clock. No model call, no run, no dollar.
@@ -84,11 +84,14 @@
 # Code puts in them — and the counts are what U4's answer needs. The one
 # sentence the block ends with is what the owner pastes back.
 #
-# Knobs (all CHECK139_*): RUN (the run to read, as --run), BG_MODEL (the stage's
-# background model, the repository's fugaro.yaml `agent.models.background`,
-# which has no fallback; left empty its count is not taken and the `models:`
-# line is where its name is read), DRY_RUN, KEEP_SCRATCH, SCAN (how many rows
-# the listing is asked for, 50 by default), SINCE (the listing's window, 30d),
+# Knobs (all CHECK139_*): RUN (the run to read, as --run), BG_MODEL (the run's
+# EFFECTIVE background model — the repository's `agent.models.background`, else
+# the coder's own model when a provider serves the coder
+# (config.EffectiveBackground, design/v1.md §6.1); left empty its count is not
+# taken and the `models:` line is where its name is read, and a name that is
+# also a stage's own model is refused rather than counted), DRY_RUN,
+# KEEP_SCRATCH, SCAN (how many rows the listing is asked for, 50 by default),
+# SINCE (the listing's window, 30d),
 # MAX_CANDIDATES (how many rows are read while looking for one with a
 # sub-agent, 6), LIMIT (entries per log read, 5000), FRESHNESS (30d), LOG_VIEW
 # (the view's full resource name, read from the project config by default),
@@ -326,10 +329,10 @@ diag   argv: `fugaro diagnose --json`'s document. Prints the row's run id, its
        the relay's count of sub-agent tool calls: a DIFFERENT figure from the
        log's distinct agent ids, printed to be recorded beside it and never to
        be compared with it.
-calls  argv: the log entries' JSON, and the background model's name when one
-       was named. Prints the counts every row of the block is read from, the
-       per-stage main-session counts, the models the entries name, and one
-       `off=` line per offending entry — its stage and model, never an id.
+calls  argv: the log entries' JSON, and the run's effective background model
+       when one was named. Prints the counts every row of the block is read
+       from, the per-stage main-session counts, the models the entries name, and
+       one `off=` line per offending entry — its stage and model, never an id.
 
 Nothing here prints an agent ID or a session ID: they are Claude Code's own
 opaque claims, and the counts are what U4's answer needs.
@@ -543,20 +546,31 @@ guard_agent_session() {
   fact agent-session PASS "no coding agent's marker is set (CLAUDECODE and the like): this is your own session, which is the one this check is written for"
 }
 
-# guard_belong: `belong`, EdgeWeb and EdgeServer are the owner's own
-# installations, and Check 130's rule — applied to every name this check has —
-# is that a name of theirs is refused rather than read. Check 139 has three: the
-# account it runs as, the GCP project (hard-coded below), and the run it was
-# asked to read.
-guard_belong() {
-  local names
-  names=$(printf '%s %s %s %s' "${ACCOUNT:-}" "$P" "$INSTALLATION" "${RUN:-}" | tr '[:upper:]' '[:lower:]')
-  case "$names" in
-  *belong* | *edgeweb* | *edgeserver*)
-    stop "the account, project or run this check would read names belong, EdgeWeb or EdgeServer: Check 139 is never run there — it reads the sandbox installation only (Fugaro project ${INSTALLATION} on GCP project ${P}) and names no other"
-    ;;
+# is_owners_name NAME...: `belong`, EdgeWeb and EdgeServer are the owner's own
+# installations, and Check 130's rule — a substring test on the lowercased name,
+# so a name that merely contains one is refused too — is that a name of theirs is
+# refused rather than read.
+is_owners_name() {
+  case "$(printf '%s' "$*" | tr '[:upper:]' '[:lower:]')" in
+  *belong* | *edgeweb* | *edgeserver*) return 0 ;;
   esac
-  fact belong PASS "nothing this check names is belong, EdgeWeb or EdgeServer: it reads the sandbox installation only (Fugaro project ${INSTALLATION} on GCP project ${P}, both hard-coded in this file) and no flag can name another"
+  return 1
+}
+
+# guard_belong: Check 130's rule, applied to EVERY name this check has — the
+# account it runs as, the GCP project and the Fugaro project (hard-coded below),
+# the run it was asked to read, and the log view its entries are read from, which
+# CHECK139_LOG_VIEW or the project config can name. All of them are judged here,
+# before guard_project reads anything of the installation, so a name of the
+# owner's own is the reason the run ended rather than a stop another guard's
+# message could hide behind. The log view is resolved before this guard for
+# exactly that reason (resolve_log_view): a view is a name this check reads with,
+# and it is refused like the other four.
+guard_belong() {
+  if is_owners_name "${ACCOUNT:-}" "$P" "$INSTALLATION" "${RUN:-}" "${LOG_VIEW:-}"; then
+    stop "the account, project, run or log view this check would read names belong, EdgeWeb or EdgeServer: Check 139 is never run there — it reads the sandbox installation only (Fugaro project ${INSTALLATION} on GCP project ${P}) and names no other. A view named by CHECK139_LOG_VIEW or by the project config is refused here too, before a single read"
+  fi
+  fact belong PASS "nothing this check names is belong, EdgeWeb or EdgeServer: the account, the Fugaro project and the GCP project (both hard-coded in this file), the run, and the log view the entries are read from — every name this check has, each judged here before anything is read"
 }
 
 guard_project() {
@@ -582,15 +596,20 @@ guard_project() {
   read_log_view
 }
 
-# read_log_view: the view a run's entries live in, when the installation
+# resolve_log_view: the view a run's entries live in, when the installation
 # isolates its logs. It is the project config's `log_view` line
 # (internal/localcfg), and the project config is read from the file rather than
 # through a command because no command prints that line. Left empty, gcloud
 # reads the project's default, which is where an installation without isolation
-# writes.
-read_log_view() {
+# writes. Resolved BEFORE guard_belong — it is a local file read and nothing
+# else — so the view is judged by the same rule as the account, the project and
+# the run: a view of the owner's own installations is refused rather than read,
+# and it is refused before the guard's own row is recorded.
+resolve_log_view() {
+  LOG_VIEW_SRC=""
+  LOG_VIEW_CFG=""
   if [ -n "$LOG_VIEW" ]; then
-    fact log-view PASS "CHECK139_LOG_VIEW names the view's full resource name (${LOG_VIEW}), so the read below is scoped to it"
+    LOG_VIEW_SRC=flag
     return 0
   fi
   local file cfg=""
@@ -599,17 +618,33 @@ read_log_view() {
     if [ -f "$file" ]; then cfg=$file; break; fi
   done
   if [ -z "$cfg" ]; then
-    fact log-view INFO "no project config for ${INSTALLATION} was found (looked at \$FUGARO_CONFIG, \$XDG_CONFIG_HOME/fugaro/projects/${INSTALLATION}.yaml and \$HOME/.config/fugaro/projects/${INSTALLATION}.yaml), so no log_view was read and the read below is scoped to the project itself. Set CHECK139_LOG_VIEW to the view's full resource name (projects/<project>/locations/<location>/buckets/<bucket>/views/<view>) if this installation isolates its logs"
+    LOG_VIEW_SRC=no-config
     return 0
   fi
+  LOG_VIEW_SRC=config
+  LOG_VIEW_CFG=$cfg
   LOG_VIEW=$(sed -n 's/^log_view:[[:space:]]*//p' "$cfg" | head -n 1 || true)
   LOG_VIEW=${LOG_VIEW%\"}
   LOG_VIEW=${LOG_VIEW#\"}
-  if [ -z "$LOG_VIEW" ]; then
-    fact log-view INFO "${cfg} carries no log_view line, so this installation does not isolate its logs and the read below is scoped to the project itself"
-  else
-    fact log-view PASS "the project config ${cfg} names the view ${LOG_VIEW}: the read below is scoped to it with --resource-names, which is the only way gcloud takes a full resource name (--view is refused without --bucket and --location)"
-  fi
+}
+
+# read_log_view: the row, recorded once the guards have run.
+read_log_view() {
+  case "$LOG_VIEW_SRC" in
+  flag)
+    fact log-view PASS "CHECK139_LOG_VIEW names the view's full resource name (${LOG_VIEW}), so the read below is scoped to it"
+    ;;
+  no-config)
+    fact log-view INFO "no project config for ${INSTALLATION} was found (looked at \$FUGARO_CONFIG, \$XDG_CONFIG_HOME/fugaro/projects/${INSTALLATION}.yaml and \$HOME/.config/fugaro/projects/${INSTALLATION}.yaml), so no log_view was read and the read below is scoped to the project itself. Set CHECK139_LOG_VIEW to the view's full resource name (projects/<project>/locations/<location>/buckets/<bucket>/views/<view>) if this installation isolates its logs"
+    ;;
+  *)
+    if [ -z "$LOG_VIEW" ]; then
+      fact log-view INFO "${LOG_VIEW_CFG} carries no log_view line, so this installation does not isolate its logs and the read below is scoped to the project itself"
+    else
+      fact log-view PASS "the project config ${LOG_VIEW_CFG} names the view ${LOG_VIEW}: the read below is scoped to it with --resource-names, which is the only way gcloud takes a full resource name (--view is refused without --bucket and --location)"
+    fi
+    ;;
+  esac
 }
 
 # -------------------------------------------------------------------- the run
@@ -847,16 +882,28 @@ step_verdict() {
     fact "subagents-distinct" FAIL "${distinct} distinct non-empty agent ids are in the entries, and ${multi} of them span more than one session while ${shared} name a session their stage's main session also used: an id that outlives its session is a rename rather than a sub-agent, and a sub-agent whose session is the main session's is the main session relabelled. The offending entries, by stage/model: $(offenders multi_session)$(offenders shared_main)$(offenders_more)"
   fi
 
-  # 3. The background model's calls carry none. The name comes from the
-  # repository's fugaro.yaml (agent.models.background, which has no fallback) and
-  # is read off the models: line when it is not named.
-  local models
+  # 3. The background model's calls carry none. The model is the run's EFFECTIVE
+  # background — config.EffectiveBackground: the file's agent.models.background,
+  # else the model the provider serves the coder with (design/v1.md §6.1), which
+  # the run fills before its pins are judged — and it is read off the models:
+  # line when it is not named. So the name can ALSO be a stage's own model, and
+  # then every call of that stage matches it: the record's stage models are what
+  # says so, and the row is not taken when one of them is the name, because
+  # counting the stage's calls as background calls would FAIL it on the very
+  # sub-agents it counts.
+  local models bg_stage=""
   models=$(field_of models "$CALLS")
+  if [ -n "$BG_MODEL" ]; then
+    bg_stage=$(printf '%s\n' "$DIAG" | sed -n 's/^stage=//p' | awk -F'|' -v m="$BG_MODEL" '$3 == m { printf "%s%s", (n++ ? ", " : ""), $1 }')
+  fi
   if [ "$bg_named" = no ]; then
     v_bg=INFO
-    fact "background-none" INFO "not taken: no background model was named, and the repository's agent.models.background — which has no fallback — is the name to give with --bg-model (or CHECK139_BG_MODEL). The models the entries name are ${models:-none}, and that line is where the name is read: with it named, this row counts that model's entries and how many of them carry an agent_id, and a background call that carried one would be counted as a sub-agent and would make the count wrong"
+    fact "background-none" INFO "not taken: no background model was named. It is the run's EFFECTIVE background — the repository's agent.models.background, else the coder's own model when a provider serves the coder (config.EffectiveBackground, design/v1.md §6.1) — and that is the name to give with --bg-model (or CHECK139_BG_MODEL). The models the entries name are ${models:-none}, and that line is where the name is read: with it named, this row counts that model's entries and how many of them carry an agent_id, and a background call that carried one would be counted as a sub-agent and would make the count wrong"
+  elif [ -n "$bg_stage" ]; then
+    v_bg=UNMEASURED
+    unmeasured "background-none" "the model named (${BG_MODEL}) is also a stage's own model — ${bg_stage} ran on it — so the name cannot tell a background call from that stage's calls: every call of the stage matches, its sub-agents' included, and counting them as background calls would make this row FAIL on the sub-agents it counts. The background model is the run's EFFECTIVE one (config.EffectiveBackground: the file's agent.models.background, else the coder's own model when a provider serves the coder, design/v1.md §6.1), so a repository that names none has its coder's model for a background and this is the row that meets it. This row is not taken: give the repository a background of its own — agent.models.background, a model no stage runs — and read a gateway run of it, where every entry that model names is a background call and nothing else. The models the entries name are ${models:-none}"
   elif [ "${bg:-0}" -eq 0 ]; then
-    unmeasured "background-none" "no entry of ${RUN} names the background model ${BG_MODEL}, so this row was not taken: either the run never called it (a short run may not), or ${BG_MODEL} is not this repository's background model. The models the entries name are ${models:-none}. Name the right one with --bg-model and run the check again"
+    unmeasured "background-none" "no entry of ${RUN} names the background model ${BG_MODEL}, so this row was not taken: either the run never called it (a short run may not), or ${BG_MODEL} is not this run's background model. The models the entries name are ${models:-none}. Name the right one with --bg-model and run the check again"
     v_bg=UNMEASURED
   elif [ "${bg_with_id:-0}" -gt 0 ]; then
     v_bg=FAIL
@@ -897,18 +944,18 @@ step_verdict() {
     fact u4 FAIL "a distinct-agent count is NOT a sub-agent count for ${RUN}: ${why}. This is a finding for T7.2 and not something this check fixes: the plan makes T7.2 wait for this answer, so what the fan-out stop counts — or whether it counts at all — is the owner's decision before T7.2 merges"
   elif [ "$v_bg" = UNMEASURED ]; then
     verdict=UNMEASURED
-    unmeasured u4 "U4's first two parts hold for ${RUN} — every entry with an empty agent_id is its stage's main session's, and the ${distinct} distinct non-empty ids are sub-agents — but the background model's row could not be taken, so U4 is not answered whole. Name this repository's agent.models.background with --bg-model and run the check again"
+    unmeasured u4 "U4's first two parts hold for ${RUN} — every entry with an empty agent_id is its stage's main session's, and the ${distinct} distinct non-empty ids are sub-agents — but the background model's row could not be taken, so U4 is not answered whole. The background-none row above says why, and what makes it measurable: a background of the repository's own (agent.models.background, a model no stage runs) is the one that separates a background call from a stage's"
   else
     verdict=PASS
     fact u4 PASS "a distinct-agent count IS a sub-agent count for ${RUN}: the main session's entries carry an empty agent_id and each belongs to its stage's own session, the ${distinct} distinct non-empty ids are one sub-agent each (no id spans two sessions and no sub-agent shares its stage's main session's), $(if [ "$v_bg" = PASS ]; then echo "the background model ${BG_MODEL}'s ${bg} call(s) carry none"; else echo "the background model was not named so its row was not taken (the models: line above is where its name is read)"; fi), and no agent id appears on refused entries alone. T7.2's fan-out stop rests on the reading it was written against"
   fi
 
   local bg_sentence rec_sentence u4_sentence
-  if [ "$bg_named" = no ]; then
-    bg_sentence="the background model not named, so its count was not taken (the models: line is where its name is read)"
-  else
-    bg_sentence="${bg} background-model entr$([ "${bg:-0}" = 1 ] && echo y || echo ies), ${bg_with_id} carrying an id"
-  fi
+  case "$v_bg" in
+  INFO) bg_sentence="the background model not named, so its count was not taken (the models: line is where its name is read)" ;;
+  UNMEASURED) bg_sentence="the background model named (${BG_MODEL}) not counted, so its row was not taken (the background-none row above says why)" ;;
+  *) bg_sentence="${bg} background-model entr$([ "${bg:-0}" = 1 ] && echo y || echo ies), ${bg_with_id} carrying an id" ;;
+  esac
   if [ "${rec_n:-0}" -eq 0 ]; then rec_sentence="the record's own stage agents read none"; else rec_sentence="the record's own stage agents read ${rec}"; fi
   case "$verdict" in
   PASS) u4_sentence="a distinct-agent count IS a sub-agent count" ;;
@@ -1028,6 +1075,8 @@ MAX_CANDIDATES=${CHECK139_MAX_CANDIDATES:-6}
 LIMIT=${CHECK139_LIMIT:-5000}
 FRESHNESS=${CHECK139_FRESHNESS:-30d}
 LOG_VIEW=${CHECK139_LOG_VIEW:-}
+LOG_VIEW_SRC=""
+LOG_VIEW_CFG=""
 DOCTOR_TIMEOUT=${CHECK139_DOCTOR_TIMEOUT_SECONDS:-60}
 CLI_TIMEOUT=${CHECK139_CLI_TIMEOUT_SECONDS:-120}
 LOG_TIMEOUT=${CHECK139_LOG_TIMEOUT_SECONDS:-120}
@@ -1064,6 +1113,7 @@ main() {
   trap on_error ERR
   guard_xtrace
   guard_agent_session
+  resolve_log_view
   guard_belong
   guard_project
   FUGARO_VERSION=$(fugaro version 2>/dev/null | head -n 1 || true)

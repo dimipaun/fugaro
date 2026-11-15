@@ -227,7 +227,10 @@ import (
 // gateway runs carry no sub-agent, no entry at all, a main session that moved
 // between entries, a sub-agent id spanning two sessions or sharing its stage's
 // main session, an id seen only on refused entries, a background model that
-// carries an id, a background model the run never called, a read that fails,
+// carries an id, a background model the run never called, a background model
+// that is also a stage's own model (the run's effective background, which the
+// row refuses to count), an account, a run or a log view naming belong, a read
+// that fails,
 // hangs or answers something that is not a document, a record naming no
 // execution, a record and a listing that disagree about the execution, a doctor
 // that exits 1 (an answer, #2719) and one that does not answer at all.

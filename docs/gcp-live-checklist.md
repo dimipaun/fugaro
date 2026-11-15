@@ -11039,8 +11039,10 @@ takes only as `--resource-names`, because `--view` is refused without `--bucket`
 **Run it:** `bash scripts/live-checks/check139.sh` — **you** run it, at your own terminal, and its
 sibling test `scripts/live-checks/check139_test.sh` drives it against fake `fugaro` and `gcloud` only,
 launching nothing. The Fugaro project (`fugaro`) and the GCP project (`fugaro-dev`) are hard-coded in
-the script, which never names another: a run id, a project or an account naming `belong` is refused by
-name, and so is a coding agent's session. **No agent runs any step of it.**
+the script, which never names another: a run id, a project, an account or a log view naming `belong` is
+refused by name, and so is a coding agent's session. The log view is one of those names: whether
+`CHECK139_LOG_VIEW` or the project config's own `log_view` line carries it, it is judged before a
+single read. **No agent runs any step of it.**
 
 ```sh
 bash scripts/live-checks/check139.sh                  # find a run, then read it
@@ -11088,10 +11090,15 @@ script and each is the row it names.
    of sub-agent ids sharing their stage's main session is **0**), so a sub-agent is not the main session
    relabelled.
 
-3. **The background model's calls carry none.** The background model is the stage's
-   `agent.models.background` in the repository's `fugaro.yaml` (it has no fallback, so it is set
-   explicitly), and the gateway logs it in `model`. Name it with `--bg-model` (or `CHECK139_BG_MODEL`) —
-   the `models:` line is where the name is read, and it is printed whether or not one is named.
+3. **The background model's calls carry none.** The background model is the run's **effective** one —
+   the repository's `agent.models.background`, else the model the provider serves the coder with
+   (`config.EffectiveBackground`, [design/v1.md](design/v1.md) §6.1), which the run fills before its
+   pins are judged — and the gateway logs it in `model`. Name it with `--bg-model` (or
+   `CHECK139_BG_MODEL`) — the `models:` line is where the name is read, and it is printed whether or not
+   one is named. A name that is **also a stage's own model** — the coder's, in a repository whose
+   effective background is the coder — cannot tell a background call from that stage's calls, so the
+   row is **not taken** and says so; to take it, give the repository a background of its own
+   (`agent.models.background`, a model no stage runs) and read a gateway run of it.
    **FACT:** the `background-none` row — the model name, its entry count, and how many of them carry an
    `agent_id`, which is **0** (a background call that carried one would be counted as a sub-agent and
    would make the count wrong) — and, when no model is named, that row reads **INFO** with the count not
@@ -11141,8 +11148,9 @@ scratch directory, which the script removes itself.
 - **Never touch `belong`, EdgeWeb or EdgeServer**: the check names the sandbox repository's runs, the
   script is hard-coded to the sandbox installation (the Fugaro project `fugaro` on GCP project
   `fugaro-dev`) and it stops unless `fugaro doctor --project fugaro --all` names that project, so a run
-  id, an account or a project naming another installation is refused before a single read — no step of
-  this check can be pointed at another installation.
+  id, an account, a project or a log view naming another installation is refused before a single read —
+  the log view is the fifth name, judged whether `CHECK139_LOG_VIEW` or the project config's `log_view`
+  line carries it — and no step of this check can be pointed at another installation.
 
 ## Check 145: the Bitbucket read consumer's facts — its lifetime, its reach, the plan, the seats, the scopes and the creator's rights, and the gate on the read mint (sandbox workspaces only, never `belong`; run by you; NOT RUN)
 

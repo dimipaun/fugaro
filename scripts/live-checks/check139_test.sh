@@ -14,9 +14,11 @@
 # sub-agent, no entry at all, a main session that moved between entries, a
 # sub-agent id spanning two sessions, a sub-agent sharing its stage's main
 # session, an id seen only on refused entries, a background model that carries an
-# id, a background model the run never called, a read that fails, hangs or
-# answers something that is not a document, a record naming no execution, a
-# record and a listing that disagree about the execution, a doctor that exits 1
+# id, a background model the run never called, a background model that is also a
+# stage's own model (the run's effective background: the row is not taken rather
+# than counted), an account, a run or a log view naming belong, a read that fails,
+# hangs or answers something that is not a document, a record naming no execution,
+# a record and a listing that disagree about the execution, a doctor that exits 1
 # (an answer) and one that does not answer at all.
 #
 # Every command is bounded (see `bounded` below): a check that hangs fails here
@@ -924,6 +926,82 @@ test_a_run_naming_belong_is_refused() {
   assert_no_reads "$dir" "a run naming belong"
 }
 
+# The log view is a name this check reads with, so it is judged by the same rule
+# as the account, the project and the run — and judged BEFORE the guard's own row
+# is recorded, so the block's belong row is the refusal and not a PASS the stop
+# came after.
+test_a_log_view_naming_belong_is_refused() {
+  local dir=$work/belong-view
+  prepare "$dir"
+  run_check "$dir" CHECK139_LOG_VIEW=projects/belong-dev/locations/global/buckets/belong-logs/views/_Default -- --run "$run_id"
+  expect_status "$status" 1 "a log view naming belong"
+  expect_contains "$out" "FACT belong: FAIL" "a log view naming belong: the row"
+  expect_contains "$out" "Check 139 is never run there" "a log view naming belong: the refusal"
+  expect_contains "$out" "log view this check would read names belong" "a log view naming belong: which name it was"
+  expect_absent "$out" "FACT belong: PASS" "a log view naming belong: the guard does not pass it and stop after"
+  assert_no_reads "$dir" "a log view naming belong"
+}
+
+# The same name can come from the project config, which no flag of this check
+# wrote: the config's own log_view line is refused by the same rule.
+test_a_project_config_naming_belongs_log_view_is_refused() {
+  local dir=$work/belong-view-config
+  prepare "$dir"
+  mkdir -p "$dir/xdg/fugaro/projects"
+  printf 'project: fugaro\nlog_view: projects/edgeweb/locations/global/buckets/logs/views/_Default\n' \
+    >"$dir/xdg/fugaro/projects/fugaro.yaml"
+  run_check "$dir" -- --run "$run_id"
+  expect_status "$status" 1 "a project config naming EdgeWeb's log view"
+  expect_contains "$out" "FACT belong: FAIL" "a project config naming EdgeWeb's log view: the row"
+  expect_contains "$out" "Check 139 is never run there" "a project config naming EdgeWeb's log view: the refusal"
+  expect_absent "$out" "FACT log-view: PASS" "a project config naming EdgeWeb's log view: no view row is recorded"
+  assert_no_reads "$dir" "a project config naming EdgeWeb's log view"
+}
+
+# The background model is the run's EFFECTIVE one (config.EffectiveBackground),
+# so a repository that names none has its coder's own model for a background. A
+# name that is also a stage's model cannot tell a background call from that
+# stage's calls, so the row is NOT taken: counting them would FAIL it on the
+# sub-agents it counts, which is the false finding this case holds out.
+test_a_background_model_that_is_a_stage_model_is_not_counted() {
+  local dir=$work/background-stage-model
+  prepare "$dir"
+  run_check "$dir" -- --run "$run_id" --bg-model opus
+  expect_status "$status" 2 "a background model that is also a stage's model"
+  expect_contains "$out" "FACT background-none: FAIL — the model named (opus) is also a stage's own model" "a background model that is also a stage's model: the row"
+  expect_contains "$out" "implement ran on it" "a background model that is also a stage's model: which stage"
+  expect_contains "$out" "every call of the stage matches, its sub-agents' included" "a background model that is also a stage's model: why the name cannot separate them"
+  expect_contains "$out" "config.EffectiveBackground" "a background model that is also a stage's model: the premise, named"
+  expect_contains "$out" "a model no stage runs" "a background model that is also a stage's model: what makes it measurable"
+  # The false finding: opus's entries DO carry ids (two sub-agents), and a row
+  # that counted them would read FAIL and gate T7.2 on its own mistake.
+  expect_absent "$out" "FACT background-none: FAIL — the background model opus made" "a background model that is also a stage's model: no call count is taken"
+  expect_absent "$out" "carry an agent_id" "a background model that is also a stage's model: no id is counted against the stage"
+  expect_contains "$out" "FACT u4: FAIL — U4's first two parts hold" "a background model that is also a stage's model: U4 is not answered whole"
+  expect_contains "$err" "could NOT measure background-none" "a background model that is also a stage's model: the notice"
+  expect_contains "$out" "the background model named (opus) not counted" "a background model that is also a stage's model: the paste-back sentence"
+  assert_read_only "$dir" "a background model that is also a stage's model"
+}
+
+# The branch above is the fix for a name that is also a stage's model: a copy
+# that never takes it counts the stage's calls as background calls and reads the
+# false FAIL the real script must not read.
+test_the_stage_model_collision_row_is_load_bearing() {
+  local dir=$work/background-stage-model-mutation
+  prepare "$dir"
+  local copy=$dir/check139-mutated.sh
+  sed 's/elif \[ -n "$bg_stage" \]; then/elif [ -z "$bg_stage" ]; then/' "$script" >"$copy"
+  grep -q 'elif \[ -z "$bg_stage" \]; then' "$copy" || fail "the mutation: the copy was not bent (the line moved)"
+  run_copy "$dir" "$copy" -- --run "$run_id" --bg-model opus
+  expect_status "$status" 1 "the mutation: the bent copy reads the false FAIL"
+  expect_contains "$out" "FACT background-none: FAIL — the background model opus made 3 call(s) and 2 of them carry an agent_id" "the mutation: the bent copy counts the stage's calls"
+  expect_contains "$out" "FACT u4: FAIL — a distinct-agent count is NOT a sub-agent count" "the mutation: the bent copy gates T7.2 on it"
+  # And the real script, on the same fixture, takes the row instead.
+  run_check "$dir" -- --run "$run_id" --bg-model opus
+  expect_status "$status" 2 "the real script: the row is not taken"
+  expect_absent "$out" "FACT u4: FAIL — a distinct-agent count is NOT" "the real script: no false finding"
+}
+
 test_a_kept_scratch_directory_is_reported() {
   local dir=$work/kept
   prepare "$dir"
@@ -1006,6 +1084,10 @@ t test_a_coding_agents_session_is_refused
 t test_xtrace_refused
 t test_an_account_naming_belong_is_refused
 t test_a_run_naming_belong_is_refused
+t test_a_log_view_naming_belong_is_refused
+t test_a_project_config_naming_belongs_log_view_is_refused
+t test_a_background_model_that_is_a_stage_model_is_not_counted
+t test_the_stage_model_collision_row_is_load_bearing
 t test_a_kept_scratch_directory_is_reported
 t test_an_unknown_argument_is_refused
 t test_a_candidate_count_of_zero_is_refused
