@@ -660,15 +660,84 @@ func convergeOn(t *testing.T, r *convergeRig, stale []string) string {
 	return out
 }
 
+// TestInstallationAtPolicyVersion7ConvergesBinaries is this task's red step,
+// and the state every installation of the release behind is in: its published
+// node is version 7 and carries the binaries block it has carried since version
+// 6, and `fugaro update` must end with a version-8 node that still carries that
+// block.
+//
+// Both halves of the step are the assertions below, and each of them fails on
+// its own without this task. The number: the chain has no step from 7 to 8
+// until this release adds one, so the run stops at the policy stage and the
+// installation is left needing a second command — the HARD RULE's one failure.
+// The block: the drift between the owner's config and the node plans a publish,
+// and that publish rebuilds the node from the config, which states no binaries
+// block here (the key's carrier in the project layer is new with the same
+// release, AR1, D987, so a machine nobody has edited says nothing about it).
+// What leaves the block standing is the keep the publish reads the config
+// through (BinariesEffective): silence is not a request to withdraw a grant,
+// and the owner who wants one withdrawn writes the empty block. The step itself
+// moves the number and nothing else (migrateV7ToV8), so nothing here is what
+// puts the member back.
+func TestInstallationAtPolicyVersion7ConvergesBinaries(t *testing.T) {
+	node := v7Node()
+	node["binaries"] = map[string]any{"allow": []string{"brand/*.png"}, "max_bytes": 1048576}
+	r := newConvergeRig(t, node)
+	if v := nodeVersionOn(t, r.db); v != 7 {
+		t.Fatalf("the fixture's published node is version %d, want 7: the red step is about the node the release behind leaves", v)
+	}
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	if v, want := nodeVersionOn(t, r.db), projectpolicy.Version; v != want {
+		t.Errorf("after one fugaro update, the published node is version %d, want %d", v, want)
+	}
+	p := convergeNode(t, r)
+	if want := []string{"brand/*.png"}; !slices.Equal(p.BinariesAllow(), want) {
+		t.Errorf("after one fugaro update, the node's binaries.allow = %v, want %v: the step to version 8 dropped the owner's grant", p.BinariesAllow(), want)
+	}
+	if got := p.BinariesMaxBytes(); got != 1048576 {
+		t.Errorf("after one fugaro update, the node's binaries.max_bytes = %d, want 1048576: the step to version 8 put the cap back at the ceiling it had been lowered from", got)
+	}
+}
+
+// TestUpdatePolicyStagePublishesTheBinariesBlock is the other half of the same
+// command: the owner's own config states a block — the key the project layer
+// gained with this release (AR1) — and `fugaro update` is what carries it onto
+// the node. No second command, which is the HARD RULE's whole point here: an
+// operator who edits `binaries:` in the project layer and runs `fugaro update`
+// has published it, and one who never edits it never sees the member move.
+//
+// The fixture's node is this binary's own version (v8Node), because what this
+// test is about is the editor's path and not the migration: nothing about the
+// node is stale but the rules generation and the plugin, so the only reason the
+// policy stage has anything to publish is the drift between this config's block
+// and the node's — the binaries row policyConfigDrift gained with this release,
+// without which the edit would sit in the file and never reach a run.
+func TestUpdatePolicyStagePublishesTheBinariesBlock(t *testing.T) {
+	r := newConvergeRig(t, v8Node())
+	r.appendConfig(t, "binaries:\n  allow:\n    - website/public/**\n    - brand/*.png\n  max_bytes: 1048576\n")
+	registerInstallation(t, r.initRig)
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	p := convergeNode(t, r)
+	if want := []string{"website/public/**", "brand/*.png"}; !slices.Equal(p.BinariesAllow(), want) {
+		t.Errorf("after one fugaro update, the node's binaries.allow = %v, want %v: the policy stage did not carry the owner's block onto the node", p.BinariesAllow(), want)
+	}
+	if got := p.BinariesMaxBytes(); got != 1048576 {
+		t.Errorf("after one fugaro update, the node's binaries.max_bytes = %d, want 1048576: the policy stage did not carry the cap the owner set", got)
+	}
+}
+
 // TestUpdateKeepsAHandWrittenBinariesBlock is the update door's half of the
 // review finding AR0's keep exists for, and the door the probe that found it
-// ran: this release models `binaries` and no key of the operator's config
-// states it (D986), so the policy stage's publish has to carry the node's block
-// over rather than rewrite the node without it — a rewrite that takes the
-// owner's grant away in silence (the list gone, and max_bytes back at the
-// ceiling it was lowered from), where the same node was *refused* while the key
-// was unmodelled ("publishing would drop them"). Both doors build the node
-// through policyNodeForPublish, so this is the same keep the explicit door's
+// ran: the policy stage's publish has to carry the node's block over rather
+// than rewrite the node without it — a rewrite that takes the owner's grant
+// away in silence (the list gone, and max_bytes back at the ceiling it was
+// lowered from), where the same node was *refused* while the key was unmodelled
+// ("publishing would drop them"). The state it pins is the one this release
+// leaves an installation in: the owner's config states no binaries block (its
+// key arrived with this same release, AR1, so a file nothing was written into
+// says nothing about it), and the node's own block is what every run of the
+// project must go on reading. Both doors build the node through
+// policyNodeForPublish, so this is the same keep the explicit door's
 // TestPublishKeepsTheBinariesListWhenTheLocalFileSaysNothing pins, reached
 // through the one command the HARD RULE says the whole upgrade is.
 func TestUpdateKeepsAHandWrittenBinariesBlock(t *testing.T) {
