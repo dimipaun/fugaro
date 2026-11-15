@@ -29,8 +29,9 @@ package register
 //     (TestTheJobCompletesAPairACrashLeftOpen), which is what the order of the
 //     two writes is for (TestAFailedSecretWriteRenewsNothing);
 //   - the key's write failing after the secret landed is a state the job's own
-//     sentence describes without stranding it: the next run completes the pair,
-//     and `fugaro licence set` is what does it sooner
+//     sentence describes without stranding it, and without promising more than
+//     the server's 24-hour handover: the next run completes the pair inside that
+//     window, and `fugaro licence set` is what the person runs before it closes
 //     (TestLicenceRenewJobKeyWriteFailureSaysTheNextRunCompletesThePair);
 //   - the renewal secret goes to the licence server's address and nowhere else,
 //     on the check route as well as the renewal one
@@ -1237,12 +1238,15 @@ func TestAFailedSecretWriteRenewsNothing(t *testing.T) {
 // of the two writes: the new secret version landed and the key did not. The
 // refusal has to name the half that is missing and the container it is in — a
 // person told only that a write failed would read a licence that cannot renew —
-// and it may not say the pair is stranded, because for the job it is not: the
-// run that follows proves itself with the version beside the newest one and
-// completes the pair by itself (licenceJobHalfWritten, and
-// TestTheJobCompletesAPairACrashLeftOpen for the repair itself). What it names
-// besides is `fugaro licence set`, which does it sooner and is the only thing
-// that does where the job cannot run.
+// and it may not say the pair is stranded, because the run that follows proves
+// itself with the version beside the newest one and completes the pair by
+// itself (licenceJobHalfWritten, and TestTheJobCompletesAPairACrashLeftOpen for
+// the repair itself). It has to say that inside the server's 24-hour handover
+// and not as a standing promise: the job's timer is a day, so the run after
+// this one asks at or past the window's end and is refused, and `fugaro licence
+// set` with the bundle this installation was issued is what keeps the successor
+// — the person's move, and one the refusal has to ask for rather than talk them
+// out of.
 //
 // The object's directory is made read-only rather than the store being stubbed:
 // the bucket driver writes the object through a temporary file in that
@@ -1293,7 +1297,12 @@ func TestLicenceRenewJobKeyWriteFailureSaysTheNextRunCompletesThePair(t *testing
 		"the key it belongs to is not in the project yet",
 		"the next run of the job completes the pair by itself",
 		"proves itself with the version beside the newest one",
+		"inside the licence server's 24-hour handover",
+		"this job runs once a day",
+		"at or past the window's end",
 		"fugaro licence set",
+		"before that window closes",
+		"past it the secret is spent and the successor needs a reissue",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the refusal %q does not say %q", got, want)

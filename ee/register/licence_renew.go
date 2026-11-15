@@ -423,7 +423,7 @@ func licenceRenew(cmd *cobra.Command, o *licenceRenewOptions) error {
 	if err := store.Install(ctx, []byte(answer.Key)); err != nil {
 		if added {
 			return fcli.UserErr("%s. The project write failed with: %s",
-				licenceJobHalfWritten(lc, "run `fugaro licence set` with the key and the renewal secret this installation was issued, which is the bundle that last worked, to complete the pair sooner, or where the job cannot run"),
+				licenceJobHalfWritten(lc, "run `fugaro licence set` with the key and the renewal secret this installation was issued, which is the bundle that last worked, before that window closes, so that the pair is completed by the run that follows, because past it the secret is spent and the successor needs a reissue from the licence server"),
 				licenceRedact(err.Error(), answer.Key, answer.RenewalSecret, string(proof)))
 		}
 		return licenceObjectErr(err, answer.Key)
@@ -438,13 +438,17 @@ func licenceRenew(cmd *cobra.Command, o *licenceRenewOptions) error {
 }
 
 // licenceJobHalfWritten is licenceHalfWritten's state reached by the job, and
-// the job is not stranded in it: its next run proves itself with the version
-// beside the newest one (renewalProof), so the pair the server already minted
-// is completed by the job itself rather than by a person. The manual command is
-// still named, since it is what completes the pair sooner — and the only thing
-// that does where the job cannot run at all.
+// what completes the pair is the run that follows: it proves itself with the
+// version beside the newest one (renewalProof) and so lands the pair the server
+// already minted. That is a promise with a deadline rather than a standing one.
+// The server honours the secret that earned the rotation for 24 hours only
+// (K2.3's handover, D2135), and the job runs once a day, so the run after this
+// one reaches /renew at or past the window's end and is refused
+// (licenceRenewRequest) — which is why the manual command is the remedy here
+// and not merely the quicker way, and why it is the person's to run inside that
+// window.
 func licenceJobHalfWritten(lc *localcfg.Config, remedy string) string {
-	return fmt.Sprintf("%s yet, and the next run of the job completes the pair by itself, because it proves itself with the version beside the newest one and so lands the pair the server already minted: %s",
+	return fmt.Sprintf("%s yet, and the next run of the job completes the pair by itself — it proves itself with the version beside the newest one and so lands the pair the server already minted — but only inside the licence server's 24-hour handover, which is how long the secret that earned the rotation still fetches it, and this job runs once a day, so the run that follows reaches /renew at or past the window's end: %s",
 		licencePairApart(lc), remedy)
 }
 
