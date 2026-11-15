@@ -97,9 +97,11 @@
 # KEEP_SCRATCH, SCAN (how many rows the listing is asked for, 50 by default),
 # SINCE (the listing's window, 30d),
 # MAX_CANDIDATES (how many rows are read while looking for one with a
-# sub-agent, 6), LIMIT (entries per log read, 5000), FRESHNESS (30d), LOG_VIEW
-# (the view's full resource name, read from the project config by default),
-# DOCTOR_TIMEOUT_SECONDS, CLI_TIMEOUT_SECONDS, LOG_TIMEOUT_SECONDS.
+# sub-agent, 6), LIMIT (entries per log read, 5000; a read that comes back at the
+# limit is refused rather than counted, because gcloud answers with the newest
+# entries first and the rest of the run would be missing), FRESHNESS (30d),
+# LOG_VIEW (the view's full resource name, read from the project config by
+# default), DOCTOR_TIMEOUT_SECONDS, CLI_TIMEOUT_SECONDS, LOG_TIMEOUT_SECONDS.
 set -Eeuo pipefail
 
 # No xtrace, whatever the shell it was started from had: the commands below read
@@ -842,6 +844,16 @@ step_calls() {
   MODELS=$(field_of models "$CALLS")
   if [ "${ENTRIES:-0}" -eq 0 ]; then
     unmeasured entries "no model call entry of ${RUN} is in the window: the run did not go through the gateway (an oauth run makes none, and the budget must be on — api-key or vertex), or its entries have aged out (--freshness=${FRESHNESS}, or the view's own retention), or the view this check read is not the one this installation writes to (log-view row above). Pick a gateway run whose entries are still readable, or name the view with CHECK139_LOG_VIEW"
+    STOP=yes
+    return 0
+  fi
+  # The read is bounded by --limit, and gcloud answers with the NEWEST entries
+  # first: a reading that came back at the limit may be missing older ones, and
+  # every count below is a count of what came back. A partial reading can read a
+  # FAIL the whole run does not have (an id whose other session is in the part
+  # that was cut) as easily as it can read a PASS, so it is not taken at all.
+  if [ "${ENTRIES:-0}" -ge "$LIMIT" ]; then
+    unmeasured entries "${ENTRIES} model call entries were read for ${EXEC}, which is the whole of --limit=${LIMIT} (CHECK139_LIMIT), so the reading may be missing older entries: gcloud answers with the newest first and stops at the limit. Every row below is a count over what came back — the empty-agent_id count, the distinct agent ids, the ids seen only on refused entries — and a run whose calls reach the limit can read a finding it does not have (an id whose second session is in the part that was cut) as easily as it can read a clean one. So no row below is taken. Raise CHECK139_LIMIT above the run's own call count and run the check again, or read a shorter run: the entries of one run are what this check is about, and part of them is not the run"
     STOP=yes
     return 0
   fi

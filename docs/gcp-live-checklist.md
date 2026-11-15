@@ -11066,8 +11066,10 @@ stdout: paste that whole block — and the one sentence its `paste-back` row car
 else. **Exit `0`** is U4 answered and holding; **`1`** is a measured row that did not hold (the count
 is not a sub-agent count, which is a finding for T7.2), no run to read, or a guard that stopped the
 run; **`2`** is the check not being able to measure (a tool missing, a listing, record or log read
-that did not answer, or a row with no reading). A row the run never reached reads `FAIL — not
-reached`. The knobs are `CHECK139_RUN`, `CHECK139_BG_MODEL`, `CHECK139_DRY_RUN`,
+that did not answer, a row with no reading, or a log read that came back at `CHECK139_LIMIT`, which
+gcloud answers with the newest entries first, so the rest of the run may be missing). A row the run
+never reached reads `FAIL — not reached`. The knobs are `CHECK139_RUN`, `CHECK139_BG_MODEL`,
+`CHECK139_DRY_RUN`,
 `CHECK139_KEEP_SCRATCH`, `CHECK139_SCAN` (50), `CHECK139_SINCE` (30d), `CHECK139_MAX_CANDIDATES` (6),
 `CHECK139_LIMIT` (5000), `CHECK139_FRESHNESS` (30d), `CHECK139_LOG_VIEW`,
 `CHECK139_DOCTOR_TIMEOUT_SECONDS` (60), `CHECK139_CLI_TIMEOUT_SECONDS` (120) and

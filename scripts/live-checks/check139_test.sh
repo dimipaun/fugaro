@@ -11,8 +11,10 @@
 # writes, so a case reads the counts the check took rather than a script's own
 # echo. The cases that matter are the ones where that model is bent: a listing
 # whose only settled runs are oauth, a listing whose gateway runs carry no
-# sub-agent, no entry at all, a stage name carrying two sessions (which is not a
-# finding: the runner reuses stage names across sessions by design), a sub-agent
+# sub-agent, no entry at all, a read that comes back at the limit (gcloud answers
+# newest first, so the run may be longer than what came back), a stage name
+# carrying two sessions (which is not a finding: the runner reuses stage names
+# across sessions by design), a sub-agent
 # id spanning two sessions, a sub-agent sharing a session with an entry whose
 # agent_id is empty (in another stage: the comparison is run-wide), an id seen
 # only on refused entries, a background model that carries an id, a background
@@ -579,6 +581,35 @@ test_no_entry_at_all_is_not_measured() {
   assert_scratch_removed "no entry at all"
 }
 
+# The read is bounded by --limit and gcloud answers with the newest entries
+# first, so a reading that came back AT the limit is part of the run: every count
+# below it would be a count of that part, and a partial reading can show a
+# finding the whole run does not have. It is refused rather than counted — and
+# one entry below the limit still reads.
+test_a_read_at_the_limit_is_not_measured() {
+  local dir=$work/at-limit
+  prepare "$dir"
+  # The fixture is five entries: a limit of five is a read that came back at the
+  # limit, and a limit of six is one that did not.
+  run_check "$dir" CHECK139_LIMIT=5 -- --run "$run_id" --bg-model haiku
+  expect_status "$status" 2 "a read at the limit"
+  expect_contains "$out" "FACT entries: FAIL — 5 model call entries were read" "a read at the limit: the row"
+  expect_contains "$out" "which is the whole of --limit=5" "a read at the limit: why it stops"
+  expect_contains "$out" "Raise CHECK139_LIMIT" "a read at the limit: what to do about it"
+  expect_absent "$out" "distinct non-empty agent ids are in them" "a read at the limit: the counts are not taken"
+  expect_absent "$out" "FACT u4: PASS" "a read at the limit: no verdict is taken"
+  expect_contains "$err" "could NOT measure entries" "a read at the limit: the notice"
+  expect_contains "$out" "CHECK 139 RESULT END (exit 2)" "a read at the limit: the exit"
+  assert_scratch_removed "a read at the limit"
+
+  local under=$work/under-limit
+  prepare "$under"
+  run_check "$under" CHECK139_LIMIT=6 -- --run "$run_id" --bg-model haiku
+  expect_status "$status" 0 "a read under the limit"
+  expect_contains "$out" "FACT entries: PASS — 5 model call entries" "a read under the limit: the row"
+  expect_contains "$out" "FACT u4: PASS" "a read under the limit: the verdict"
+}
+
 test_a_run_with_no_subagent_is_not_measured() {
   local dir=$work/no-subagent
   prepare "$dir"
@@ -1115,6 +1146,7 @@ t test_a_listing_whose_gateway_runs_carry_no_subagent_is_no_run_to_read
 t test_a_listing_that_cannot_be_read_is_not_measured
 t test_a_listing_that_is_not_a_document_is_not_measured
 t test_no_entry_at_all_is_not_measured
+t test_a_read_at_the_limit_is_not_measured
 t test_a_run_with_no_subagent_is_not_measured
 t test_a_logging_read_that_fails_is_not_measured
 t test_a_logging_read_that_never_answers_is_not_measured
