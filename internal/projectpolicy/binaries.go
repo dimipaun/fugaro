@@ -14,10 +14,13 @@ import (
 )
 
 // Binaries is the binaries block of a policy (D981–D983): the paths a run may
-// add a binary at, and how large one may be. It is the owner's grant on this
-// node and nowhere else — `fugaro.yaml` has no such key (D986), because that
-// file is in the checkout the run's own agent writes, and a key there would
-// let the coder admit the very payload the rule refuses.
+// add a binary at, and how large one may be. It is the owner's grant, read by
+// a run off this node and nowhere else — no job's environment carries it — and
+// stated in the owner's own local config from AR1 on (the node is where a run
+// reads it, and the publish is what carries it there). `fugaro.yaml` has no
+// such key (D986), because that file is in the checkout the run's own agent
+// writes, and a key there would let the coder admit the very payload the rule
+// refuses.
 //
 // The block is read as *data* and not as a decision: what a run does with it
 // (an added binary under an admitted pattern, within the cap, is committed

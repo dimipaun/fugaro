@@ -303,14 +303,13 @@ type SharedAnchor struct {
 // besides: design compute-backend.md §4.4 and docs/design/shared-config.md §4.
 //
 // binaries is a grant of the same kind one step further out (binary-allow-rule,
-// plan task AR1; D986, F11), and localcfg.Config.Shared nils it for that
-// reason: the block names the paths a
-// run may add a binary at and the cap the file is held to, so a launcher who
-// could write it into the runs bucket's shared file would be admitting its own
-// payload to every teammate's runs — the rule reading itself out of the way,
-// from the one file a launcher can write. It is published through the policy
-// node instead, which the owner writes and the runner fails closed on, and
-// localcfg.Config.Shared nils it besides.
+// plan task AR1; D986, F11): the block names the paths a run may add a binary
+// at and the cap it is held to, so a launcher who could write it into the runs
+// bucket's shared file would be admitting its own payload to every teammate's
+// runs — the rule reading itself out of the way, from the one file a launcher
+// can write. It is published through the policy node instead, which the owner
+// writes and the runner fails closed on, and localcfg.Config.Shared nils it for
+// that reason.
 //
 // workspace, workspace_pin, workspace_members and workspace_cap are the
 // workspace keys, and workspace_pin is the sharpest of them: the pin is the
