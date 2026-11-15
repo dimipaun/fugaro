@@ -902,6 +902,24 @@ func TestARefusalBelowTheMintBranchCarriesTheRoutesPurpose(t *testing.T) {
 	}
 }
 
+// labelSvc is one installation whose daemon class is configured: the gate is
+// everything this build's label route does, so every test of it needs the same
+// service — the fixture's own bundle and audit buffer, with OrchestratorAccounts
+// set to the account the fixture mints a daemon token for. It is the label
+// route's counterpart of mergeMintSvc.
+func labelSvc(t *testing.T) (*svc, *logBuf) {
+	t.Helper()
+	return auditSvc(t, func(sv *svc, cfg *Config) {
+		ac := sv.auth.cfg
+		ac.OrchestratorAccounts = []string{testOrchestratorSA}
+		a, err := NewAuthenticator(ac)
+		if err != nil {
+			t.Fatalf("the daemon class cannot be configured: %v", err)
+		}
+		cfg.Auth, sv.auth = a, a
+	})
+}
+
 // TestAuditPurposeLabel: the label route's purpose is a member of the line's
 // closed set, and a line of that purpose has the shape the route's caller gives
 // it (D2439, F5, F19, F26).
@@ -944,15 +962,7 @@ func TestAuditPurposeLabel(t *testing.T) {
 	// The route's own line: the daemon is the one class the gate admits, and
 	// the call it makes is refused by this build, because the act itself is
 	// T3's. The refusal is recorded once, in the shape above.
-	s, auditLog := auditSvc(t, func(sv *svc, cfg *Config) {
-		ac := sv.auth.cfg
-		ac.OrchestratorAccounts = []string{testOrchestratorSA}
-		a, err := NewAuthenticator(ac)
-		if err != nil {
-			t.Fatalf("the daemon class cannot be configured: %v", err)
-		}
-		cfg.Auth, sv.auth = a, a
-	})
+	s, auditLog := labelSvc(t)
 	resp, body := s.postRaw(t, http.MethodPost, LabelPath, func(r *http.Request) {
 		r.Header.Set("Authorization", "Bearer "+s.orchestratorToken())
 	})
@@ -995,6 +1005,63 @@ func TestAuditPurposeLabel(t *testing.T) {
 	}
 	if n := len(auditLines(t, auditLog)); n != 1 {
 		t.Errorf("a refusal taken before the caller was verified wrote a line: %d lines, want the daemon's refusal alone", n)
+	}
+}
+
+// TestLabelRouteTakesNoRunIdentity: the label route's caller class is the
+// daemon's, and the daemon holds no run identity — so a call that presents one
+// is a call of a shape this route does not have, and it is refused by name
+// before anything else of it is read.
+//
+// It is TestMergeMintTakesNoRunIdentity word for word, and for the merge mint's
+// reason: both routes are answered ahead of the shared parse, which is the one
+// thing that would otherwise refuse these headers — a route behind the parse
+// gets this refusal for free, and these two would silently take a run identity
+// as far as the handler without their own guard.
+//
+// Mutation (run, restore): delete either branch from labelRoute. The call falls
+// through to the route's default refusal, so this test is red on the status, on
+// the error and on the line's status at once.
+func TestLabelRouteTakesNoRunIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*http.Request)
+	}{
+		{"presents a run identity", func(r *http.Request) { r.Header.Set(HeaderRunIdentity, "a-run-identity-token") }},
+		{"names a job", func(r *http.Request) { r.Header.Set(HeaderRunJob, "fugaro-a-job") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, auditLog := labelSvc(t)
+			resp, body := s.postRaw(t, http.MethodPost, LabelPath, func(r *http.Request) {
+				r.Header.Set("Authorization", "Bearer "+s.orchestratorToken())
+				tc.mutate(r)
+			})
+			if resp.StatusCode != StatusUnverified {
+				t.Fatalf("the label route answered a call carrying a run identity: HTTP %d %s", resp.StatusCode, body)
+			}
+			if e := refusal(t, resp.StatusCode, body); e.Error != ErrorUnverifiedRunIdentity {
+				t.Errorf("the refusal is %q, want %q: %s", e.Error, ErrorUnverifiedRunIdentity, e.Message)
+			}
+			// The caller IS verified here, so the refusal is recorded — once,
+			// naming the daemon, the route's purpose and no repository: the call
+			// was refused before it was read, so there is none to name.
+			lines := auditLines(t, auditLog)
+			if len(lines) != 1 {
+				t.Fatalf("the refused label call wrote %d audit lines, want exactly 1: %v", len(lines), lines)
+			}
+			line := lines[0]
+			checkAuditShape(t, line)
+			for field, want := range map[string]string{
+				"caller":     testOrchestratorSA,
+				"purpose":    PurposeLabel,
+				"status":     ErrorUnverifiedRunIdentity,
+				"repository": "",
+			} {
+				if got := line[field]; got != want {
+					t.Errorf("the label route's line: %s = %v, want %q", field, got, want)
+				}
+			}
+		})
 	}
 }
 
