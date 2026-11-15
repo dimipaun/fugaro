@@ -256,13 +256,16 @@ func checkReviewJobAdmitted() error {
 // provider and account the job belongs to.
 //
 // A launch that resolved no shared project job has that variant to derive
-// nothing from: a baked workflow keeps its per-repository job, and a project
-// that published no profiles has no project jobs at all (a repository the
-// profile does not admit is refused long before this). It is the installation's
-// implicit default review-only job a review of such a repository runs on
-// instead (implicitReviewJobFor, the owner's requirement of 2026-11-13, option
-// C), and starting the repository's own coding job in its place is the one
-// thing this command exists not to do.
+// nothing from: a repository the published policy serves no profile for keeps
+// the per-repository job it has always had — a project that published no
+// profiles at all publishes no job either — as does a `checkout: baked`
+// workflow while a shared job does not carry the image it needs
+// (sharedJobBaked, project_job.go); a repository the profile does not admit is
+// refused long before this. It is the installation's implicit default
+// review-only job a review of such a repository runs on instead
+// (implicitReviewJobFor, the owner's requirement of 2026-11-13, option C), and
+// starting the repository's own coding job in its place is the one thing this
+// command exists not to do.
 func (e *cloudEnv) reviewJobFor(ctx context.Context, coding *launchProjectJob, spec *task.Spec, slug string) (*launchProjectJob, error) {
 	if coding == nil {
 		return e.implicitReviewJobFor(ctx, spec, slug)

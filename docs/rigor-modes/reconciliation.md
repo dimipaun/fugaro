@@ -896,11 +896,15 @@ owner-run Checks 301 and 302 in the register, moved the table's row from 136 to
 issues-resolved-on-update folder's pin over its resolved-on-update page and the
 one-line link to it from `docs/issues.md`, moved the table's row from 137 to
 138. Amended 2026-11-14: `internal/cli/docs_check600_test.go`, the pin over the
-accounts-add owner Check 600 in the register, moved the table's row from 138 to
-139. Amended 2026-11-14: `internal/cli/docs_mobile_checks_620_test.go`, the pin
-over the mobile-auth work's owner Checks 620 to 627 in the register — each of the
-eight with a row and a section, none of them run — moved the table's row from 139
-to 140.) They
+accounts-add owner Check 600 and its four parts 600a–600d in the register, moved
+the table's row from 138 to 139, which is what the row's own command prints — the
+row had been left at 138 over a tree that already held **139**, so that pin is
+the one that arrived without it; and `internal/cli/docs_mobile_telemetry_test.go`,
+the telemetry plan's pin over its own blocks and the register's Checks 120–122,
+is one of the 139 already and moved nothing. Amended 2026-11-14:
+`internal/cli/docs_mobile_checks_620_test.go`, the pin over the mobile-auth work's
+owner Checks 620 to 627 in the register — each of the eight with a row and a
+section, none of them run — moved the table's row from 139 to 140.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.

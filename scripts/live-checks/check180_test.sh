@@ -105,10 +105,12 @@ state=${FAKE180_STATE:-/tmp}
 printf '%s\n' "$*" >>"$log"
 case "${1:-}" in
 doctor)
-  [ "$mode" = doctor-fails ] && { echo "doctor: no usable credentials on this machine" >&2; exit 1; }
+  [ "$mode" = doctor-fails ] && { echo "doctor: no usable credentials on this machine" >&2; exit 2; }
   name=sandbox
   [ "$mode" = doctor-wrong-name ] && name=otherproject
   printf '{"ok":true,"project":{"name":"%s","gcp_project":"sandbox-p","region":"us-east5"}}\n' "$name"
+  # exits 1 with its document, as the real doctor does when a check is a warning
+  [ "$mode" = doctor-warns ] && exit 1
   exit 0
   ;;
 secrets)
@@ -1257,6 +1259,14 @@ test_hostile_endpoint_prints_nothing_it_was_given() {
   expect_absent "$out" '"echo"' "hostile: no response field reached the block"
 }
 
+test_doctor_exit_1_is_an_answer() {
+  RUN180_MODE=doctor-warns
+  RUN180_ARGS=(--merge --new-token-file "$work/doctor-warns/token2" --gcloud-config "$work/doctor-warns/gcloudconfig")
+  run180 doctor-warns
+  expect_status "$status" 0 "doctor exits 1: the document it printed is the answer"
+  expect_contains "$out" "FACT installation: PASS — " "doctor exits 1: the installation is read"
+}
+
 test_installation_mismatch_and_doctor_failure() {
   RUN180_MODE=doctor-wrong-name
   run180 doctor-wrong-name
@@ -1372,6 +1382,7 @@ t() {
 }
 
 t test_happy_path
+t test_doctor_exit_1_is_an_answer
 t test_unmeasured_criteria_are_not_a_pass
 t test_dry_run_touches_nothing
 t test_the_plan_and_the_usage_need_no_cloud_tools

@@ -272,7 +272,11 @@ GCLOUD_EOF
 set -euo pipefail
 printf 'fugaro %s\n' "$*" >>"$FAKE96_DIR/calls"
 case "${1:-}" in
-doctor) cat "$FAKE96_DIR/doctor.json" ;;
+doctor)
+  cat "$FAKE96_DIR/doctor.json"
+  # exits 1 with its document, as the real doctor does when a check is a warning
+  [ ! -f "$FAKE96_DIR/doctor.exit" ] || exit "$(cat "$FAKE96_DIR/doctor.exit")"
+  ;;
 budget) cat "$FAKE96_DIR/budget.json" ;;
 *)
   printf 'fake fugaro: unexpected %s\n' "${1:-}" >&2
@@ -749,6 +753,14 @@ expect_no_credential_anywhere() { # dir what
 }
 
 # ------------------------------------------------------------------- the tests
+test_doctor_exit_1_is_an_answer() {
+  setup_case doctor-exit-1
+  printf '1\n' >"$dir/state/doctor.exit"
+  run96
+  expect_status "$status" 0 "doctor exit 1: the document it printed is the answer"
+  expect_contains "$out" "FACT installation: PASS — " "doctor exit 1: the installation is read"
+}
+
 test_happy_path() {
   setup_case happy
   run96
@@ -1650,6 +1662,7 @@ t() {
 }
 
 t test_happy_path
+t test_doctor_exit_1_is_an_answer
 t test_dry_run_runs_nothing_that_writes
 t test_a_named_repository_is_the_one_checked_and_a_lone_one_needs_no_name
 t test_belong_is_refused
