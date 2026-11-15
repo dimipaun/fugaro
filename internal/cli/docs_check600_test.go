@@ -283,12 +283,14 @@ func TestDocsCheck600IsThePlansNumber(t *testing.T) {
 		}
 	}
 	// The census of the register's highest written section is a reading of the
-	// register, and this work is what moved it: the row periodic-reviews owns
-	// has to carry the same number the register does, or a reader of that
-	// design's row takes a stale figure for the register's progress.
+	// register, and it has to carry the same number the register does, or a
+	// reader of that design's row takes a stale figure for the register's
+	// progress. 600's four sections were the highest when this work landed; the
+	// highest since is the mobile-auth allocation of 2026-11-14 (Checks 620 to
+	// 627), so the row reads 627 and this assertion moves with the register.
 	census := readDoc(t, "docs/periodic-reviews/README.md")
-	if !strings.Contains(census, "The register's highest **written** `## Check` section is **600**") {
-		t.Errorf("docs/periodic-reviews/README.md's Checks 340–349 row does not read the register's highest written `## Check` section as 600: Check %s's four sections are the highest written, and that row is the reading other designs take the register's progress from", check600Number)
+	if !strings.Contains(census, "The register's highest **written** `## Check` section is **627**") {
+		t.Errorf("docs/periodic-reviews/README.md's Checks 340–349 row does not read the register's highest written `## Check` section as 627: Checks 620 to 627 (the mobile-auth allocation of 2026-11-14) are the highest written, and that row is the reading other designs take the register's progress from")
 	}
 }
 

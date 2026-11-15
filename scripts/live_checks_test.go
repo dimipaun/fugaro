@@ -135,7 +135,22 @@ import (
 // fake `gh`: the fake launcher is a counter, so the run IDs are the case's own,
 // and the fake `git` and `gh` really delete a branch and really move a pull
 // request from OPEN to CLOSED, so the teardown's own read-backs are readings of
-// state that changed. Check 212's are the same four, down to the counter and the
+// state that changed.
+// Check 211's fakes are a fake `fugaro`, a fake `gcloud` and a fake `belong`:
+// the fake `gcloud` serves the run's own objects at its own prefix in the runs
+// bucket out of the case's own directory and refuses every other bucket and
+// every other prefix, so the case bends the stored judge input one needle at a
+// time (a run ID, a branch, the pair ID, an arm's model word, a run-ID-shaped
+// string) and says the row FAILs and names the hit -- and a case per string the
+// vocabulary deliberately leaves (the judge's own model, a word after a model's
+// version, a line that looks like a commit trailer) says it does not, since a
+// false FAIL there is a correct release exiting 1 after a billed judge run; the
+// fake launcher is a counter, so the run ID is the case's own, and a
+// case that rewrites a copy of the script with the U1 row's own test removed
+// proves that row is what the FAIL elsewhere is read from. The fake `belong`
+// logs any call and fails, so a case says the check never reached that
+// installation.
+// Check 212's are the same four, down to the counter and the
 // real deletion and close, with the documents a pair, a judge run and its
 // verdict are read through served out of the case's own directory and a mode for
 // each state a case bends (a build without the command, a catalog without the
@@ -190,6 +205,7 @@ var liveCheckScripts = []struct {
 	{"check91.sh", "check91_test.sh"},
 	{"check111.sh", "check111_test.sh"},
 	{"check210.sh", "check210_test.sh"},
+	{"check211.sh", "check211_test.sh"},
 	{"check212.sh", "check212_test.sh"},
 	{"check130.sh", "check130_test.sh"},
 	{"check145.sh", "check145_test.sh"},
