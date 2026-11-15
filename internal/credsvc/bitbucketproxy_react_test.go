@@ -20,11 +20,13 @@ package credsvc
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/bbtokens"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // reactConfirmPath is the path of the read this route owes a 401: the
@@ -267,7 +269,8 @@ func TestProxy429MarksThrottledWithRetryAfter(t *testing.T) {
 		}
 	})
 
-	t.Run("a 429 that named none backs the token off", func(t *testing.T) {
+	t.Run("a 429 that named none backs the token off until this side's own wait", func(t *testing.T) {
+		canonical := testCanonical(t, testBitbucketRepo)
 		s, up, stub, _ := proxyReactSvc(t)
 		reactAnswerEveryWay(up, proxyAnswer{status: http.StatusTooManyRequests})
 
@@ -275,9 +278,24 @@ func TestProxy429MarksThrottledWithRetryAfter(t *testing.T) {
 		if resp.StatusCode != http.StatusTooManyRequests {
 			t.Fatalf("the call answered %d, want the upstream's own 429 (%s)", resp.StatusCode, ans)
 		}
+		// The policy the fixture publishes writes no backoff block, so the wait
+		// this side answers with is the default one (projectpolicy).
+		wait := projectpolicy.DefaultBackoffInitial
 		mark := stub.Marks[proxyNamedToken]
-		if mark.State != bbtokens.StateBackedOff || !mark.Until.IsZero() {
-			t.Errorf("the token's status is %+v, want backed off with no end of its own: the wait of a 429 that named no Retry-After is this side's (StateBackedOff)", mark)
+		if mark.State != bbtokens.StateBackedOff || !mark.Until.Equal(s.now.Add(wait)) {
+			t.Fatalf("the token's status is %+v, want backed off until %v: a hold of this side's own carries an end like any other, and a hold with no end never lapses (the zero Until is a broken token's, bbtokens.Status.Until)", mark, s.now.Add(wait))
+		}
+
+		// The end is what the hold is worth: the next request, which the
+		// selection refuses because the only token covering it is held, is
+		// answered with 429 and the wait this reaction wrote — and not with no
+		// Retry-After at all, which is what a hold with no end leaves T9's own
+		// throttledHold stating.
+		stub.Err = &bbtokens.Refusal{Class: bbtokens.ClassThrottled, Repo: canonical}
+		resp, ans = s.proxyCall(t, http.MethodGet, reactFetchPath(), nil)
+		proxyRefused(t, resp, ans, http.StatusTooManyRequests, ErrorExhaustedUntil, "throttled")
+		if got := resp.Header.Get("Retry-After"); got != strconv.Itoa(int(wait.Seconds())) {
+			t.Errorf("the refusal's Retry-After is %q, want the hold's own end (%d)", got, int(wait.Seconds()))
 		}
 	})
 

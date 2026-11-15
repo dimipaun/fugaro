@@ -553,7 +553,7 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 			}
 		}
 	}
-	s.forwardBitbucket(ctx, w, r, req, id, purpose, name, token, canonical, body, contentLength)
+	s.forwardBitbucket(ctx, w, r, req, id, purpose, snap, name, token, canonical, body, contentLength)
 }
 
 // classifyProxy reads one call of the proxy route: the path is the caller's
@@ -709,7 +709,7 @@ func (s *Server) readPRFacts(ctx context.Context, req gitproxy.Request, token st
 //     copyAnswerHeaders' rule — the hop-by-hop ones and Set-Cookie dropped, and
 //     the token redacted out of whatever is left, so an upstream that echoed it
 //     back cannot have it echoed on.
-func (s *Server) forwardBitbucket(ctx context.Context, w http.ResponseWriter, r *http.Request, req gitproxy.Request, id Identity, purpose string, name bbtokens.Name, token, canonical string, body io.Reader, contentLength int64) {
+func (s *Server) forwardBitbucket(ctx context.Context, w http.ResponseWriter, r *http.Request, req gitproxy.Request, id Identity, purpose string, snap bbtokens.Snapshot, name bbtokens.Name, token, canonical string, body io.Reader, contentLength int64) {
 	// The credential every line of this function names: the DOCUMENT KEY of the
 	// token the request was served with (R9) and never its value.
 	credential := string(name)
@@ -749,7 +749,7 @@ func (s *Server) forwardBitbucket(ctx context.Context, w http.ResponseWriter, r 
 	// The reaction this answer earns is taken BEFORE the line and applied after
 	// it: the line is what records it (R14), and a mark a line could not record
 	// is not written (D143, the model probe's own order — probe.go).
-	react := s.reactToBitbucket(ctx, resp, req, name, canonical, token)
+	react := s.reactToBitbucket(ctx, resp, req, snap, name, canonical, token)
 	if err := s.auditCall(ctx, id, purpose, credential, "", react.status); err != nil {
 		// The act this line records is the forwarding of the call, and an act
 		// this service cannot record is not made (D143): the answer is dropped
@@ -851,9 +851,9 @@ type bitbucketReaction struct {
 //     and a working token taken out of service costs every run it serves until
 //     an operator clears it (D139's own rule for Anthropic's 403).
 //   - 429: the token is held until the reset the answer named, and — when it
-//     named none — backed off, which is the store's own wait. This is the one
-//     mark D2356 writes from the upstream's own answer, and the hold is what the
-//     next request's selection skips the token on.
+//     named none — backed off for the policy's own initial wait, DATED HERE.
+//     This is the one mark D2356 writes from the upstream's own answer, and the
+//     hold is what the next request's selection skips the token on.
 //   - 403 and 404: the resolver's cached match for this repository is dropped
 //     (R2, R4) and nothing is marked. The two say the same thing about the
 //     cache — wherever it placed this repository, or whatever it said about the
@@ -870,7 +870,7 @@ type bitbucketReaction struct {
 // second one or a changed status (R14): the caller of this function is the
 // route's forward, which writes one line and takes what is answered here as its
 // status.
-func (s *Server) reactToBitbucket(ctx context.Context, resp *http.Response, req gitproxy.Request, name bbtokens.Name, canonical, token string) bitbucketReaction {
+func (s *Server) reactToBitbucket(ctx context.Context, resp *http.Response, req gitproxy.Request, snap bbtokens.Snapshot, name bbtokens.Name, canonical, token string) bitbucketReaction {
 	st, ok := s.reactionStore()
 	if !ok {
 		return bitbucketReaction{status: StatusOK}
@@ -883,15 +883,32 @@ func (s *Server) reactToBitbucket(ctx context.Context, resp *http.Response, req 
 		return bitbucketReaction{status: ReasonBroken, mark: s.heldStatus(ctx, st, name, bbtokens.StateBroken, time.Time{})}
 	case http.StatusTooManyRequests:
 		// A reset the answer named is a time, and one it did not is this side's
-		// own wait (the contract's StateBackedOff with no Until, which the store
-		// dates): the two are the same hold, and which of them it is, is what
-		// the store needs to know to double a wait that has happened before
-		// (creds' TokenThrottled, D153).
-		reset := usageLimitReset(resp.Header, s.now())
+		// own wait (the contract's StateBackedOff). BOTH are dated here, and a
+		// hold is never written with no end: the zero Until is the contract's
+		// "no end" and is a broken token's alone (bbtokens.Status.Until), so a
+		// backed-off mark left dateless would never lapse (select.go's lapsed)
+		// — one transient 429 would take the token out of service until an
+		// operator cleared it, and the next request with no usable token would
+		// be answered with no Retry-After at all, since nothing states a wait
+		// (throttledHold). No sentence of the contract puts the dating on the
+		// StatusStore either, and the sibling path dates the same answer where
+		// it reads it (probeBitbucketToken computes the mark and the store
+		// persists it, probe.go).
+		//
+		// The wait is the policy's own initial backoff, which is the wait the
+		// model path gives the identical answer for a Bitbucket token: T6's
+		// probe reacts to a 429 through creds.TokenThrottled, whose no-reset
+		// branch is Exhaust's backoff and starts at this same setting (D153).
+		// The contract's Status carries no backoff of its own, so a repeat 429
+		// restarts that wait rather than doubling it: the doubling is the model
+		// store's mark (creds.Mark.Backoff) and has nowhere to live in this one.
+		now := s.now()
+		reset := usageLimitReset(resp.Header, now)
+		state := bbtokens.StateExhausted
 		if reset.IsZero() {
-			return bitbucketReaction{status: ReasonExhausted, mark: s.heldStatus(ctx, st, name, bbtokens.StateBackedOff, time.Time{})}
+			reset, state = now.Add(settingsOf(snap.Policy).BackoffInitial), bbtokens.StateBackedOff
 		}
-		return bitbucketReaction{status: ReasonExhausted, mark: s.heldStatus(ctx, st, name, bbtokens.StateExhausted, reset)}
+		return bitbucketReaction{status: ReasonExhausted, mark: s.heldStatus(ctx, st, name, state, reset)}
 	case http.StatusForbidden, http.StatusNotFound:
 		react := bitbucketReaction{status: StatusOK, evict: true}
 		if resp.StatusCode == http.StatusForbidden && proxyWrite(req) {
