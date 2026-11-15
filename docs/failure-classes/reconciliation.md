@@ -625,7 +625,11 @@ reserves 351–359 for a second owner-run check if a task needs one. Neither cla
 with it: 350 is neither 330 nor 360, and the register's rule renumbers the later of two **colliding**
 claims, which this is not. The register's own summary row and `## Check 350` section are written by the
 task that implements the check, under the number free **at that merge** — the register's rule, and not
-this folder's choice.
+this folder's choice. **Written 2026-11-14 and NOT RUN**: that task wrote `## Check 350` and its summary
+row in `docs/gcp-live-checklist.md`, and the check itself as one script the owner runs —
+`scripts/live-checks/check350.sh` with `scripts/live-checks/check350_test.sh` — so this block's number is
+spent, the register's own reading above is what it was on 2026-11-07, and nothing here is a reading about
+the classes.
 
 ---
 

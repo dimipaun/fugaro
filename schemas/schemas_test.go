@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/digest"
 	"github.com/dimipaun/fugaro/internal/failure"
+	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/imagesurvey"
 	"github.com/dimipaun/fugaro/internal/orchestrator/sensitivity"
@@ -2480,6 +2481,65 @@ func TestResultSchemaHaltReasonsAgreeWithGo(t *testing.T) {
 	}
 	if !sameStrings(got, want) {
 		t.Errorf("result.schema.json halt.reason = %v, internal/runstore's HaltReason constants = %v", got, want)
+	}
+}
+
+// TestResultSchemaWorkspaceRefusalsAgreeWithGo pins result.schema.json's
+// halt.workspace_refusal enum to gateway.WorkspaceRefusals(), which is the one
+// place the vocabulary is written: the marker a workspace's credentials service
+// puts on a refusal, the value the gateway copies onto the halt and the enum a
+// consumer validates the record against are the same three words, so a value
+// one side spells differently is a result.json the consumer refuses — which is
+// the whole failure this field exists to prevent, a record read by someone who
+// cannot tell a workspace's refusal from an ordinary outage.
+//
+// The order is compared, like the failure-class pin's and unlike the halt
+// reason's: the three are the order the design's sections name them, so a
+// reader comparing the two renderings by eye sees the same list.
+//
+// The field is also held out of the schema's required list here, for the reason
+// failure_class is: a run no workspace refused carries no marker, and a record
+// without one is valid.
+//
+// Mutation (run, restored): drop a value from WorkspaceRefusals(), add one to
+// the enum, or list the field as required, and this names the side that has it.
+func TestResultSchemaWorkspaceRefusalsAgreeWithGo(t *testing.T) {
+	want := gateway.WorkspaceRefusals()
+	if len(want) == 0 {
+		t.Fatal("gateway.WorkspaceRefusals() is empty: this test would pass against any enum, including no enum")
+	}
+	data, err := os.ReadFile("result.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	props, _ := doc["properties"].(map[string]any)
+	halt, _ := props["halt"].(map[string]any)
+	haltProps, _ := halt["properties"].(map[string]any)
+	node, ok := haltProps["workspace_refusal"].(map[string]any)
+	if !ok {
+		t.Fatal(`result.schema.json: halt.workspace_refusal is not a property`)
+	}
+	raw, ok := node["enum"].([]any)
+	if !ok {
+		t.Fatal(`result.schema.json: halt.workspace_refusal has no enum`)
+	}
+	var got []string
+	for _, v := range raw {
+		s, ok := v.(string)
+		if !ok {
+			t.Fatalf("result.schema.json: halt.workspace_refusal enum entry %v is not a string", v)
+		}
+		got = append(got, s)
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("result.schema.json halt.workspace_refusal = %v, gateway.WorkspaceRefusals() = %v", got, want)
+	}
+	if req, _ := halt["required"].([]any); slices.Contains(req, "workspace_refusal") {
+		t.Error("result.schema.json lists halt.workspace_refusal as required: a run no workspace refused carries no marker, and its record must validate")
 	}
 }
 

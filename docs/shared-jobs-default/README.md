@@ -6,6 +6,15 @@ Date: 2026-11-13. Checked against `origin/main` at `a2e77dc3a`.
 The spec: every project, GitHub or Bitbucket, runs on shared project jobs; images are project-level caches; access is
 decided per job by the credential service; `fugaro update` migrates existing projects and retires the per-repository jobs.
 
+**Amended 2026-11-13 (the token-types plan, T15): R7 and F15 are read as "any mix within one workspace".**
+[docs/bitbucket-token-types](../bitbucket-token-types/README.md) rules — its D2350 and D2355 answered 2026-11-13 as
+recommended — that the credentials bundle holds any mix of repository, project and workspace Bitbucket tokens, several
+at once, and that the proxy serves each request with the narrowest covering one. R7's "the one workspace token in the
+credentials bundle" and F15's "one workspace token per project" therefore read as one workspace, any mix of tokens
+within it, and S6's step — `update` asking once for the one workspace token — now points at
+`fugaro creds set bitbucket-token--<name>`. D2314's one-workspace-per-project limit is not lifted, and nothing here is
+approved by that plan: S2 and S6 read the token store through the interface its contract C1 defines.
+
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The spec as received, byte for byte (no typo was fixed). **Where [reconciliation.md](reconciliation.md) disagrees with it, the reconciliation wins** |

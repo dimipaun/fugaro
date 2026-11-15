@@ -1,0 +1,130 @@
+/* SPDX-License-Identifier: LicenseRef-Fugaro-Subscription */
+/* See ee/LICENSE for the terms. */
+/*
+ * The portal's stylesheet (portal plan P1.4; F19). It imports the website's
+ * token layer and paints with it, so the portal and the marketing site are one
+ * product: a spacing step, a radius, a type size or a colour written here as a
+ * literal would be a value the site's own contrast and palette tests cannot see
+ * (the tokens are the vocabulary both sides share, and the palette is the one
+ * file either side reads a colour from).
+ *
+ * **Mobile-first, and the media query is the only breakpoint.** Every rule
+ * below is written for a phone and stacked: the portal is read on one, and the
+ * owner's requirement is that it works well there rather than decently. The
+ * single query widens the two blocks that need it. Widths come from the token
+ * layer's measure and page maximum, never from a number chosen here.
+ */
+
+@import "../../../website/src/styles/tokens.css";
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-base);
+  line-height: var(--leading-normal);
+}
+
+h1 {
+  font-size: var(--font-size-2xl);
+  line-height: var(--leading-tight);
+  margin: 0 0 var(--space-lg);
+}
+
+a {
+  color: var(--accent);
+}
+
+button {
+  font: inherit;
+  padding: var(--space-sm) var(--space-md);
+  border: var(--border-width) solid var(--accent);
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: var(--surface);
+  cursor: pointer;
+}
+
+button.secondary {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text);
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+button:focus-visible,
+input:focus-visible,
+a:focus-visible {
+  outline: var(--focus-ring-width) solid var(--accent);
+  outline-offset: var(--focus-ring-offset);
+}
+
+input {
+  font: inherit;
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+}
+
+[role="alert"] {
+  color: var(--warn);
+}
+
+/* The sign-in screen: one column, and the same column on a wide window. */
+.signin {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: var(--space-xl) var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.signin__methods,
+.signin__email {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.consent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  background: var(--panel);
+  border-bottom: var(--border-width) solid var(--border);
+}
+
+.consent__text {
+  margin: 0;
+  max-width: var(--measure);
+}
+
+.consent__choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+@media (min-width: 48rem) {
+  .consent {
+    align-items: center;
+    flex-direction: row;
+    justify-content: space-between;
+  }
+}

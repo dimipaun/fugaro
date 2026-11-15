@@ -243,6 +243,23 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 		reaches: "remove pools.claude-pool",
 		seed:    closedStdinPoolSeed,
 	},
+	// The two alias writes are one edit of the block and one converge, and the
+	// sentence each fixture reads is the diff line of the entry that moved: the
+	// set's is the new target, the rm's the entry on its way out. Both need the
+	// seed for the reason the pool writes do — an alias stood for by no account
+	// is the resolve's refusal, and one no document defines is the rm's own —
+	// and neither writes a key, which is what keeps the rm off its
+	// "a key still names it" refusal.
+	"fugaro accounts alias set": {
+		args:    []string{"reviewer", "team-b"},
+		reaches: "reviewer: team-b",
+		seed:    closedStdinAccountAliasSeed,
+	},
+	"fugaro accounts alias rm": {
+		args:    []string{"reviewer"},
+		reaches: "reviewer: team-a",
+		seed:    closedStdinAccountAliasSeed,
+	},
 	// The settings write used to ask for the project's name over the document it
 	// edits, and what it edits here is the world's own project config. It asks
 	// nothing now (D1540), and the sentence naming the change is the proof this
@@ -423,6 +440,7 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 var closedStdinNoFixture = map[string]string{
 	"fugaro ab":                "refuses: the edition is not in this build",
 	"fugaro accounts":          "is a name for its four subcommands: a bare run prints its own usage and returns",
+	"fugaro accounts alias":    "is a name for set and rm: a bare run prints its own usage and returns",
 	"fugaro accounts ls":       "selects no project and names the two ways to (--repo, an origin remote)",
 	"fugaro accounts pool":     "is a name for ls, add and rm: a bare run prints its own usage and returns",
 	"fugaro accounts pool ls":  "reads the selected project's own config, which this world's has no pools in, and prints that none are defined",
@@ -773,6 +791,17 @@ func closedStdinPoolSeed(t *testing.T, f *budgetFixture) {
 func closedStdinAccountAllowListSeed(t *testing.T, f *budgetFixture) {
 	t.Helper()
 	f.appendConfig(t, "claude_accounts:\n  team-a:\n    allow_data_to:\n      - acme/web\n")
+}
+
+// closedStdinAccountAliasSeed gives the world the two halves an alias write
+// needs: the accounts an alias may stand for, and an alias already declared, so
+// the set's fixture moves an entry rather than declaring one and the rm's has
+// one to take away. No choice key names the alias — a key naming it is exactly
+// what the rm refuses — and the set's target is the second account rather than
+// the one the alias already holds, so the diff it reaches is a move.
+func closedStdinAccountAliasSeed(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	f.appendConfig(t, "claude_accounts:\n  team-a: {}\n  team-b: {}\nclaude_account_aliases:\n  reviewer: team-a\n")
 }
 
 // closedStdinProjectSecretAllowListSeed is the same for the project secret's

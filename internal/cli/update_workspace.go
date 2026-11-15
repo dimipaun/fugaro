@@ -419,8 +419,8 @@ func workspacePublicationIn(ctx context.Context, lc *localcfg.Config, db *rtdb.C
 // ordinary y/N (workspaceRemovals, and the branch confirm takes at the empty
 // list).
 //
-// That is what keeps the group's first record out of a coding agent's reach: the
-// class is Typed, and D1026 admits no plan gate's answer for a Typed step. A
+// That is what keeps the group's first record out of a coding agent's reach: it
+// is money or permanent, and D1026 admits no plan gate's answer for one. A
 // hand edit of `workspace_members` in the YAML — past the fenced `fugaro
 // workspace member add` — is a document this stage would otherwise publish
 // behind a mark, and the node is the group's whole membership.
@@ -594,9 +594,9 @@ func workspaceRefusal(path string, err error) error {
 // with a step for the owner. What the gate may NOT admit are the writes this
 // stage is watched for: a publish that admits something the node does not carry
 // — and the workspace's first record, which admits the whole membership — is
-// initflow.Typed (D846, M3), and D1026 admits no plan gate's answer for a Typed
-// step — so a member is still admitted by the owner's own word and never by a
-// mark (SEC, rule 1). It is not in runCovered, for the
+// money or permanent (D846, M3), and D1026 admits no plan gate's answer for one
+// — so a member is still admitted by the owner's own word and never by a mark
+// (SEC, rule 1). It is not in runCovered, for the
 // policy stage's reason: it takes its own confirmation where the gate does not
 // stand in for one.
 type workspaceStage struct {
@@ -903,7 +903,7 @@ func confirmWidening(cmd *cobra.Command, lc *localcfg.Config, c initflow.Conditi
 // answer.
 func (p *workspacePublication) wideningWhy() string {
 	if !p.found {
-		return fmt.Sprintf("the workspace %s has no published record at %s, and this writes the one every run of its members reads — %s. It is the owner's own step: --yes does not stand in for it and nothing is typed at you, so run it yourself at your own terminal: %s",
+		return fmt.Sprintf("the workspace %s has no published record at %s, and this writes the one every run of its members reads — %s. It is the owner's own step: no flag stands in for it and nothing is typed at you, so run it yourself at your own terminal: %s",
 			p.record.Name, p.path, strings.Join(p.widens, "; "), selfCommand()+" update")
 	}
 	return fmt.Sprintf("this admits more to the workspace %s than the published record does: %s; every run of a member project reads the record, and what it admits is paid for by the workspace's own credentials", p.record.Name, strings.Join(p.widens, "; "))

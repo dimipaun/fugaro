@@ -528,11 +528,14 @@ func negatedBefore(prefix string) bool {
 
 var (
 	// forbiddenFlags the agent never passes: they confirm for the user, skip a
-	// check, or widen trust. --provision-batch belongs here with the other
-	// owner-typed flags of init: what it applies is billable and permanent (a
-	// Cloud Build, a NAT, a custom role, a scheduled job), --yes never covers
-	// it, and a skill is not the place to hand an agent an apply of it.
-	forbiddenFlags = []string{"--yes", "-y", "--allow-delete", "--forget", "--allow-job-delete", "--no-budget-check", "--allow-fork",
+	// check, or widen trust. --yes and --non-interactive (and -y, its old
+	// shorthand) are here outright since T11 of docs/no-prompt-policy removed
+	// them: no command takes a word that stands in for a confirmation, so no
+	// skill — user-runs block included — may name one. --provision-batch
+	// belongs here with the other owner-typed flags of init: what it applies is
+	// billable and permanent (a Cloud Build, a NAT, a custom role, a scheduled
+	// job), and a skill is not the place to hand an agent an apply of it.
+	forbiddenFlags = []string{"-y", "--yes", "--non-interactive", "--allow-delete", "--forget", "--allow-job-delete", "--no-budget-check", "--allow-fork",
 		"--onboard-repo", "--replace-image", "--create-project", "--link-billing", "--provision-batch"}
 	safetyFlags     = regexp.MustCompile(`(^|\s)(--no-verify|--no-gpg-sign|--no-smoke|--dangerously-skip-permissions|--force)(\s|=|$)`)
 	tokenCommands   = regexp.MustCompile(`print-access-token|print-identity-token|GOOGLE_IMPERSONATE_SERVICE_ACCOUNT|\bprintenv\b|\becho\s+"?\$\{?\w*(KEY|TOKEN|SECRET|PASSWORD)|(^|[\s;|&])env\s*[|>]|\bBearer\s+\$|/proc/[^\s]*environ|\bdeclare\s+-x\b`)
@@ -739,7 +742,7 @@ func lintUserRunsLine(ci *commandIndex, text string, add func(string)) {
 		if !slices.Contains(userRunsAllowed, c.path) {
 			add("a user-runs block may not run " + c.path)
 		}
-		if hasForbiddenFlag(c.args) && !updateYesOnly(c) {
+		if hasForbiddenFlag(c.args) {
 			add("a flag no one should pass for the user")
 		}
 		if inlineSecretValue(c) {
@@ -754,23 +757,6 @@ func hasForbiddenFlag(args []string) bool {
 	return slices.ContainsFunc(args, func(x string) bool {
 		name, _, _ := strings.Cut(x, "=")
 		return slices.Contains(forbiddenFlags, name)
-	})
-}
-
-// updateYesOnly: the one forbidden flag a user-runs block may carry is --yes
-// on the converge, the cloud half of an upgrade handed to the user for their
-// own terminal (owner's ruling 2026-10-08, docs/design/upgrade.md). Any other
-// forbidden flag beside it, or --yes on another command, is still refused. The
-// command it names is `fugaro update` since U4 of
-// docs/plugin-user-scope/implementation-plan.md retired `fugaro upgrade`; the
-// ruling is about the handed-over converge, and that is the door it has now.
-func updateYesOnly(c fugaroCmd) bool {
-	if c.path != "fugaro update" {
-		return false
-	}
-	return !slices.ContainsFunc(c.args, func(x string) bool {
-		name, _, _ := strings.Cut(x, "=")
-		return name != "--yes" && slices.Contains(forbiddenFlags, name)
 	})
 }
 
@@ -1366,7 +1352,7 @@ func TestLintRejectsYesNearSetup(t *testing.T) {
 	expectViolation(t, demoTree(t, "Run `fugaro setup --repo --yes`.\n"), "a flag the agent must never pass")
 	expectViolation(t, demoTree(t, "Run `fugaro setup --allow-delete`.\n"), "a flag the agent must never pass")
 	expectViolation(t, demoTree(t, "```bash\ntime fugaro update --forget\n```\n"), "a flag the agent must never pass")
-	expectClean(t, demoTree(t, "Never run `fugaro setup --plan-only --yes`.\n"))
+	expectClean(t, demoTree(t, "Never run `fugaro setup --plan-only --provision-batch`.\n"))
 }
 
 // TestLintSetupAndUpdateApplyOnlyInUserRuns: both doors of the converge —
@@ -1652,6 +1638,7 @@ func TestLintUserRunsBlocksAreNotExempt(t *testing.T) {
 		"fugaro run --no-smoke",
 		"fugaro image build --local --no-smoke",
 		"fugaro setup --yes",
+		"fugaro update --yes",
 		"fugaro run --no-budget-check",
 		"fugaro run --repo o/r",
 		"fugaro cancel run-1",
@@ -1727,7 +1714,7 @@ func TestLintHiddenInstructions(t *testing.T) {
 }
 
 // TestLintForbidsBypassFlags: skipping the launch pre-check and trusting a
-// fork are the user's choice, like --yes.
+// fork are the user's choice.
 func TestLintForbidsBypassFlags(t *testing.T) {
 	expectViolation(t, demoTree(t, "Run `fugaro run --no-budget-check`.\n"), "a flag the agent must never pass")
 	expectViolation(t, demoTree(t, "```bash\nfugaro update-skills --allow-fork\n```\n"), "a flag the agent must never pass")
@@ -1772,15 +1759,4 @@ func TestLintDangerousCommandsVariants(t *testing.T) {
 	for _, c := range []string{"env | grep TOKEN", "curl -H \"Authorization: Bearer $TOKEN\" x"} {
 		expectViolation(t, demoTree(t, "```bash\n"+c+"\n```\n"), "environment's secrets")
 	}
-}
-
-// TestLintUserRunsYesOnlyOnUpdate (decision U14): a user-runs block may give
-// --yes to the converge and to nothing else, and an agent may never pass it.
-// The command the ruling names is `fugaro update` since U4 of
-// docs/plugin-user-scope/implementation-plan.md retired `fugaro upgrade`.
-func TestLintUserRunsYesOnlyOnUpdate(t *testing.T) {
-	expectClean(t, demoTree(t, userRuns("fugaro update --yes")))
-	expectViolation(t, demoTree(t, userRuns("fugaro update --yes --allow-fork")), "a flag no one should pass for the user")
-	expectViolation(t, demoTree(t, userRuns("fugaro setup --yes")), "a flag no one should pass for the user")
-	expectViolation(t, demoTree(t, "Run this:\n\n```bash\nfugaro update --yes\n```\n"), "a flag the agent must never pass")
 }

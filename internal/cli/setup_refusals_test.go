@@ -375,33 +375,20 @@ func (c coversIn) in(door string) bool {
 	return false
 }
 
-// class is the confirmation class the step's call site gives it at this door:
-// what init.go's askClass is handed, askCovered (YesOrTyped) or askTyped
-// (Typed). It is the whole of what D12 moves — the door is the only input, and
-// the three rows that never move are Typed here for both of them.
-func (c coversIn) class(door string) initflow.ConfirmClass {
-	if c.in(door) {
-		return initflow.YesOrTyped
+// canConfirmStep is the call site's own rule as a yes-or-no, written out here
+// from the facts the run carries rather than asked of the run: a run that
+// carries its own answer gives a step D12's answer of 2026-10-20 reaches at
+// this door (initRun.stepConfirmation's stepByYes) and no other — a step only
+// the person's own answer confirms is left by that run even at a terminal — and
+// a step that answer does not reach waits for a person at this run's own real
+// terminal: no marker, no --json, no --non-interactive, and a terminal on the
+// input. Nothing else gives it: a pipe and a coding agent's session confirm
+// neither a covered step nor the person's own.
+func canConfirmStep(covered bool, o initOptions, c initflow.Conditions) bool {
+	if o.yes && !o.planOnly {
+		return covered && c.Agent == ""
 	}
-	return initflow.Typed
-}
-
-// canConfirmStep is the call site's own rule for a step of this class — what
-// init.go's askClass is: the typed route of a real terminal (a person typing
-// the project's name, with none of --yes, --non-interactive and --json), or,
-// for a step D12 covers, --yes and nothing else. A covered step is not confirmable
-// by a pipe, --json, --non-interactive or a coding agent's session: those confirm
-// it no more than they do a Typed one, and the difference between the two classes
-// is exactly --yes.
-func canConfirmStep(class initflow.ConfirmClass, c initflow.Conditions) bool {
-	if canConfirmTyped(initflow.Typed, c) {
-		return true
-	}
-	if class != initflow.YesOrTyped {
-		return false
-	}
-	c.Terminal, c.NonInteractive, c.JSON = false, false, false
-	return canConfirmTyped(initflow.YesOrTyped, c)
+	return c.Agent == "" && c.Terminal && !c.JSON && !o.nonInteractive
 }
 
 // typedStep is one thing that is money or permanent, and the stage that owns
@@ -512,7 +499,6 @@ func noTypedTerminal(t *testing.T) {
 	old := stdinIsTerminal
 	stdinIsTerminal = func(io.Reader) bool { return false }
 	t.Cleanup(func() { stdinIsTerminal = old })
-	canConfirmTyped = initflow.CanConfirm
 }
 
 // firestoreLocationLeft is the Firestore location's own refusal, from the
@@ -589,19 +575,20 @@ func TestTheTypedStepsLeaveTheirOwnRefusal(t *testing.T) {
 	}
 }
 
-// TestRefusalMatrixTheTypedRuleRefusesEveryMode pins the rule itself and not
-// only the state the loop reaches: initflow.CanConfirm(Typed, ...) — what
-// init's askTyped and the project stage's canType consult — is false in every
-// mode but the control. It is the same columns as the matrix, so a branch that
-// lets --yes, --json or a coding agent's marker give a Typed confirmation fails
-// here even where the loop's own path would have refused the stage first.
-func TestRefusalMatrixTheTypedRuleRefusesEveryMode(t *testing.T) {
+// TestRefusalMatrixTheMoneyRuleRefusesEveryMode pins the rule itself and not
+// only the state the loop reaches: the call site's own answer for a step the
+// run's own answer does not reach — what init's askTyped and the project
+// stage's confirm consult — is false in every mode but the control. It is the
+// same columns as the matrix, so a branch that lets a run's own answer, --json
+// or a coding agent's marker give such a step a confirmation fails here even
+// where the loop's own path would have refused the stage first.
+func TestRefusalMatrixTheMoneyRuleRefusesEveryMode(t *testing.T) {
 	for _, m := range refusalModes() {
 		t.Run(m.name, func(t *testing.T) {
 			run, _, _ := m.condition.run(t, "")
 			c := run.conditions()
-			if got := canConfirmTyped(initflow.Typed, c); got != m.control {
-				t.Errorf("CanConfirm(Typed, %+v) = %v, want %v: the step is money or permanent, and only a person at a real terminal confirms it", c, got, m.control)
+			if got := canConfirmStep(false, m.opts, c); got != m.control {
+				t.Errorf("a step the run's own answer does not reach under %+v answers %v, want %v: the step is money or permanent, and only a person at a real terminal confirms it", c, got, m.control)
 			}
 		})
 	}
@@ -609,54 +596,58 @@ func TestRefusalMatrixTheTypedRuleRefusesEveryMode(t *testing.T) {
 
 // refusalMode is one column of the matrix: the CLI's own reading of a run's
 // flags and environment (init_confirm_test.go's condition harness), whether
-// the loop turns it into a plan-only run (--non-interactive without --yes),
-// and whether it is the control.
+// the loop turns it into a plan-only run (a run that never prompts and carries
+// no answer of its own), and whether it is the control.
 type refusalMode struct {
 	condition
 	planOnly bool
 	control  bool
 }
 
-// refusalModes are the plan's five modes, with the --yes variants the seed and
-// the loop's own mode table carry, and the control. The wider table of
-// conditions init_confirm_test.go drives (--yes through a pipe, and the rest of
-// the product) is covered there by its own TestTypedOnly... matrices.
+// refusalModes are the plan's five modes, with the runs that carry their own
+// answer or never prompt — the shapes an internal door builds for itself since
+// T11 removed the two flags that used to ask for them (docs/no-prompt-policy) —
+// and the control. The wider table of conditions init_confirm_test.go drives
+// (a pipe, and the rest of the product) is covered there by its own
+// TestTypedOnly... matrices.
 func refusalModes() []refusalMode {
 	return []refusalMode{
-		{condition: condition{"--yes at a terminal", initOptions{yes: true}, true, ""}},
-		{condition: condition{"--non-interactive --yes", initOptions{yes: true, nonInteractive: true}, true, ""}},
-		{condition: condition{"--non-interactive", initOptions{nonInteractive: true}, true, ""}, planOnly: true},
+		{condition: condition{"a run that carries its own answer", initOptions{yes: true}, true, ""}},
+		{condition: condition{"a run that carries its own answer and never prompts", initOptions{yes: true, nonInteractive: true}, true, ""}},
+		{condition: condition{"a run that never prompts", initOptions{nonInteractive: true}, true, ""}, planOnly: true},
 		{condition: condition{"--json at a terminal", initOptions{asJSON: true}, true, ""}},
-		{condition: condition{"--yes --json at a terminal", initOptions{yes: true, asJSON: true}, true, ""}},
+		{condition: condition{"a run that carries its own answer, --json", initOptions{yes: true, asJSON: true}, true, ""}},
 		{condition: condition{"no terminal", initOptions{}, false, ""}},
-		{condition: condition{"no terminal --yes", initOptions{yes: true}, false, ""}},
+		{condition: condition{"no terminal, a run that carries its own answer", initOptions{yes: true}, false, ""}},
 		{condition: condition{"a coding agent's session", initOptions{}, true, "CLAUDECODE"}},
-		{condition: condition{"a coding agent's session --yes", initOptions{yes: true}, true, "CURSOR_AGENT"}},
+		{condition: condition{"a coding agent's session, a run that carries its own answer", initOptions{yes: true}, true, "CURSOR_AGENT"}},
 		{condition: condition{"a person at a terminal (the control)", initOptions{}, true, ""}, control: true},
 	}
 }
 
-// loopOptions is the loop's Options for this mode, built from the CLI's own
-// reading of the run (initRun.conditions, init.go) rather than from the flags
-// again, so a change to conditions() shows up here. Yes is the flag and not the
-// derived field: the two agree in every mode of this table, because a run that
-// only plans is the loop's own decision for --non-interactive without --yes.
+// loopOptions is the loop's Options for this mode, built the way the engine
+// builds them for a real run (initEngine.options, init_stages.go): the session
+// out of initRun.conditions, and the two options no condition carries out of
+// the run's own flags. Yes is the option and not a derived field: the two agree
+// in every mode of this table, because a run that only plans is the loop's own
+// decision for a run that never prompts and carries no answer of its own.
 func (m refusalMode) loopOptions(c initflow.Conditions) initflow.Options {
 	return initflow.Options{
-		Yes: m.opts.yes, NonInteractive: c.NonInteractive, JSON: c.JSON,
+		Yes: m.opts.yes, NonInteractive: m.opts.nonInteractive, JSON: c.JSON,
 		Terminal: c.Terminal, Agent: c.Agent, Out: io.Discard,
 	}
 }
 
 // runRefusal runs the step's stage through the loop in this mode, at this door,
 // on the harness init_confirm_test.go already has: a terminal swapped in, the
-// agent's marker set, and canConfirmTyped the real rule. The conditions it read
+// agent's marker set, and canConfirmStep the real rule. The conditions it read
 // come back too, so the test can ask the same rule what this mode can confirm.
 func (m refusalMode) runRefusal(t *testing.T, s typedStep, door string) (*initflow.Result, error, *refusalStage, initflow.Conditions) {
 	t.Helper()
 	run, _, _ := m.condition.withDoor(door).run(t, "")
 	conds := run.conditions()
-	st := &refusalStage{step: s, left: s.left(t, door), conds: conds, door: door}
+	st := &refusalStage{step: s, left: s.left(t, door), conds: conds, door: door,
+		mayConfirm: canConfirmStep(s.covers.in(door), m.opts, conds)}
 	var stage initflow.Stage = st
 	if s.self {
 		stage = &refusalEngineStage{refusalStage: st}
@@ -667,16 +658,18 @@ func (m refusalMode) runRefusal(t *testing.T, s typedStep, door string) (*initfl
 
 // refusalStage is one of the CLI's stages with no cloud behind it: it plans
 // when applied (as every engine stage does) and its apply is the step the row
-// names. The apply consults the real rule — initflow.CanConfirm of the class
-// the row gives the step at this door, which is what init's askClass (init.go)
-// and the project stage's canType (init_project.go) consult — so a run that
-// cannot confirm the step leaves it, exactly as the engines do, and nothing
-// else about the stage decides.
+// names. The apply consults the call site's own rule (canConfirmStep, the same
+// one init's askClass (init.go) and the project stage's canType (init_project.go)
+// are) so a run that cannot confirm the step leaves it, exactly as the engines
+// do, and nothing else about the stage decides.
 type refusalStage struct {
 	step  typedStep
 	left  initflow.Left
 	conds initflow.Conditions
 	door  string
+	// mayConfirm is the rule above, decided by the harness from the mode's own
+	// facts before the loop runs.
+	mayConfirm bool
 
 	applied bool
 	gotEnv  *initflow.Env
@@ -691,7 +684,7 @@ func (s *refusalStage) Plan(context.Context, initflow.Env) (initflow.Plan, error
 }
 func (s *refusalStage) Apply(_ context.Context, env initflow.Env) (initflow.Outcome, error) {
 	s.gotEnv = &env
-	if !canConfirmStep(s.step.covers.class(s.door), s.conds) {
+	if !s.mayConfirm {
 		return initflow.Outcome{}, &initflow.NeedsYouError{Left: s.left}
 	}
 	s.applied = true
@@ -726,10 +719,9 @@ func TestRefusalMatrixNeverConfirmsWhatIsMoneyOrPermanent(t *testing.T) {
 			for _, m := range refusalModes() {
 				t.Run(door+"/"+s.what+"/"+m.name, func(t *testing.T) {
 					res, err, st, conds := m.runRefusal(t, s, door)
-					class := s.covers.class(door)
-					wantApplied := canConfirmStep(class, conds)
+					wantApplied := canConfirmStep(s.covers.in(door), m.opts, conds)
 					if st.applied != wantApplied {
-						t.Fatalf("applied = %v, want %v: %s at fugaro %s is %s here (err %v, result %+v)", st.applied, wantApplied, s.what, door, classWord(class), err, res)
+						t.Fatalf("applied = %v, want %v: %s at fugaro %s is %s here (err %v, result %+v)", st.applied, wantApplied, s.what, door, coveredWord(s.covers.in(door)), err, res)
 					}
 					if got := initflow.YesCovers(s.stage); got != s.yesCovers {
 						t.Errorf("YesCovers(%s) = %v, and the row says %v: --yes reaches the stage the plan's list says it must not", s.stage, got, s.yesCovers)
@@ -794,13 +786,13 @@ func TestRefusalMatrixNeverConfirmsWhatIsMoneyOrPermanent(t *testing.T) {
 	}
 }
 
-// classWord names a confirmation class the way the call sites do, for the
+// coveredWord names D12's row for a step the way the call sites do, for the
 // matrix's failures.
-func classWord(class initflow.ConfirmClass) string {
-	if class == initflow.YesOrTyped {
-		return "covered by the run's own confirmation"
+func coveredWord(covered bool) string {
+	if covered {
+		return "covered by the run's own answer"
 	}
-	return "Typed: only a person at a real terminal gives it"
+	return "the person's own: only a real terminal gives it"
 }
 
 func leftOf(res *initflow.Result, stage string) (initflow.Left, bool) {

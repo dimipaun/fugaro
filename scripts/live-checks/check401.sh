@@ -577,7 +577,11 @@ node_read() {
 
 # ------------------------------------------------------------------ the steps
 step_installation() {
-  if ! run_capture "$SCRATCH/doctor.json" fugaro doctor --json; then
+  # doctor exits 1 whenever any of its checks is not ok, warnings included, and
+  # still prints its document; only a timeout or another status is no answer.
+  local doctor_status=0
+  run_capture "$SCRATCH/doctor.json" fugaro doctor --json || doctor_status=$?
+  if [ "$doctor_status" != 0 ] && [ "$doctor_status" != 1 ]; then
     stop "fugaro doctor --json did not answer, so this run cannot tell which installation it is looking at. Run it yourself and fix what it reports: the check needs your own credentials and a local config for the installation"
   fi
   local answer name project region

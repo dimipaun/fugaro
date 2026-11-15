@@ -264,6 +264,56 @@ func TestAppIDAskedOnceAndStored(t *testing.T) {
 	}
 }
 
+// A repository's own account list lives in its repos entry and in no document
+// an update reads, so the write that rebuilds that entry — `fugaro update
+// --repo .`, the documented onboarding and the whole upgrade — must carry it
+// over. Dropping it would erase in silence the only admission a
+// per-repository job can state: the node the publish writes would keep the
+// account while the config that asked for it stopped saying so, and that
+// repository's runs would be answered 503 state_unavailable.
+//
+// The mutation is the missing ClaudeAccounts in writeRepoConfig's own literal:
+// the list comes back empty out of the file this writes.
+func TestUpdateRepoKeepsTheRepositorysOwnAccountList(t *testing.T) {
+	e, _ := stageEngine(t, "", &initOptions{yes: true})
+	path := filepath.Join(t.TempDir(), "aurora.yaml")
+	e.lc = &localcfg.Config{
+		Version: 1, Name: "aurora", GCPProject: initProject, Region: "us-east5", RunsBucket: initRunsBucket,
+		Repos: map[string]localcfg.Repo{"acme/app": {
+			Provider: "github", BaseBranch: "trunk", ClaudeAccounts: []string{"ops"},
+			CredentialsServiceReady: localcfg.RecordSwitch(true),
+		}},
+	}
+	cfg, problems := config.Parse([]byte(checkoutYAML("github", "oauth", "aurora", "")))
+	if cfg == nil {
+		t.Fatal(problems)
+	}
+	e.r.cmd.SetErr(io.Discard)
+	if err := e.r.writeRepoConfig(t.Context(), e.lc, infra.RepoSpec{Name: "acme/app", Provider: "github", BaseBranch: "main", GitHubAppID: "12345"}, cfg, path, nil); err != nil {
+		t.Fatal(err)
+	}
+	lc, err := localcfg.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := lc.Repos["acme/app"]
+	if !ok {
+		t.Fatalf("the repository's entry is gone from %s", path)
+	}
+	if got := entry.ClaudeAccounts; len(got) != 1 || got[0] != "ops" {
+		t.Fatalf("the entry's claude_accounts = %v, want [ops]: the write rebuilt the entry without the repository's own admission", got)
+	}
+	// Everything else is the spec's, as before: the account list and the
+	// switch record are the entry's two fields this write is not the author
+	// of (the record is the test above).
+	if entry.Provider != "github" || entry.BaseBranch != "main" || entry.GitHubAppID != "12345" || len(entry.Workflows) == 0 {
+		t.Errorf("the entry is not the one the spec describes: %+v", entry)
+	}
+	if !entry.CredentialsServiceOn() {
+		t.Errorf("the switch record did not survive the write either: %+v", entry.CredentialsServiceReady)
+	}
+}
+
 // update --repo is the engine unchanged: its flag checks, its --print-vars
 // output (the variables alone on stdout, no result), and the embedded run's
 // refusal of an installation of another project, with the same words.
@@ -748,15 +798,19 @@ func rigEngine(t *testing.T, r *initRig, o *initOptions) *initEngine {
 	return &initEngine{r: run, lc: lc, spec: spec, path: r.cfg, old: old}
 }
 
-// With every input given, the repository stage's own Missing makes
-// --non-interactive name the GitHub App's ID before any stage runs.
-func TestNonInteractiveNamesAppIDFromTheStage(t *testing.T) {
+// With every input given, the repository stage's own Missing makes a run that
+// never prompts name the GitHub App's ID before any stage runs. The flag that
+// said so on the command line is gone (T11, docs/no-prompt-policy), so it is
+// the run itself that carries the shape now, and the stage is driven on its own
+// as the other one-stage tests drive theirs.
+func TestARunThatNeverPromptsNamesAppIDFromTheStage(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
 	root := repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", ""))
 	t.Chdir(root)
-	_, _, err := executeStdin(t, "", "setup", "--non-interactive", "--yes", "--onboard-repo", "acme/app")
-	if err == nil || !strings.Contains(err.Error(), "--non-interactive: missing") || !strings.Contains(err.Error(), "--github-app-id") {
+	e := rigEngine(t, r, &initOptions{door: setupDoor.name, nonInteractive: true, onboardRepo: "acme/app"})
+	if _, err := initflow.Run(t.Context(), []initflow.Stage{newRepositoryStage(e)}, e.options()); err == nil ||
+		!strings.Contains(err.Error(), "never prompts") || !strings.Contains(err.Error(), "missing --github-app-id") {
 		t.Fatalf("%v", err)
 	}
 	if len(r.ran(t, "apply")) != 0 {

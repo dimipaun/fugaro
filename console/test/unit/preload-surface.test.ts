@@ -6,7 +6,7 @@
 // **Why this file is about the build rather than about the source.**
 // `test/unit/ipc.test.ts` already holds the *source* surface to its promises: it
 // imports `src/preload/index.ts`, builds the bridge over a recording
-// `ipcRenderer`, and pins the thirty-nine methods, the frozen object, the key, and
+// `ipcRenderer`, and pins the forty methods, the frozen object, the key, and
 // the reply envelope. All of that runs under `vitest`'s Node environment, where
 // `hasRendererContext` is false and the file's guarded block does nothing.
 //
@@ -387,8 +387,8 @@ describe('the confirmation window’s built preload', () => {
   it('is a third surface: the dashboard’s names no confirm channel anywhere', () => {
     // The mutation this catches: a `confirm:` row added to the dashboard's
     // operation table, or a dashboard method that reaches this window's
-    // channels. The dashboard's surface is thirty-nine rows.
-    expect(EXPOSED_OPERATIONS).toHaveLength(39)
+    // channels. The dashboard's surface is forty rows.
+    expect(EXPOSED_OPERATIONS).toHaveLength(40)
     for (const [name, method] of [...EXPOSED_OPERATIONS, ...CONSOLE_OPERATIONS.map((row) => [row.name, row.method] as const)]) {
       expect(name, `${method} is on the confirm prefix`).not.toContain('confirm:')
       expect(method).not.toBe('fields')

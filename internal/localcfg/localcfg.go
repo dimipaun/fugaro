@@ -30,9 +30,11 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/mailbox/keychain"
 	"github.com/dimipaun/fugaro/internal/mirror"
+	"github.com/dimipaun/fugaro/internal/mobileauth"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -283,6 +285,24 @@ type Config struct {
 	// is what makes the value mountable, and a launcher who could publish one
 	// would be widening the grant.
 	WorkflowSecrets map[string]config.ProjectSecret `yaml:"workflow_secrets,omitempty"`
+	// BitbucketTokens are the typed Bitbucket access tokens the credentials
+	// service's proxy may serve, one record per token (spec §"Token record",
+	// D2350, D2351, R1): the name, type, coverage and expiry the operator
+	// states, with each token's value in the service's bundle and nowhere
+	// else. Only the owner sets them, here, never in fugaro.yaml: coverage is
+	// what decides which requests a token may carry, so a block a reviewed
+	// repository could write would be a reach the operator never gave.
+	// ValidateBitbucketTokens holds type and coverage to R1's agreement, which
+	// is asked at load and therefore by `fugaro validate`, before anything
+	// derives a node or writes a bundle entry from the records.
+	//
+	// Identity and verified_at are deliberately not members (R12): they are
+	// written by `fugaro creds set` into the creds state store, so a
+	// hand-edited config cannot state an identity a run would trust, and
+	// `expires` is the one expiry source a typed token has (R6) — the legacy
+	// bitbucket-token keeps its secret_expires entry, and no secret_expires
+	// entry is read for a record here.
+	BitbucketTokens []config.BitbucketToken `yaml:"bitbucket_tokens,omitempty"`
 	// BitbucketAPIRoots are the Bitbucket API roots the owner allow-lists
 	// (D474), for an installation that sends its Bitbucket token to a root of
 	// its own rather than to Bitbucket's: a cloud run refuses any
@@ -323,6 +343,29 @@ type Config struct {
 	// project gives no repository a URL, which is how a published block is
 	// taken away on purpose.
 	CloneURLs map[string]string `yaml:"clone_urls,omitempty"`
+	// MobileAllow is the DECLARED mobile allowlist (docs/mobile-auth, D231):
+	// the people and domains this project admits from a phone, each with the
+	// uid its device node is keyed by and the role it grants. It is the seed
+	// `fugaro project policy publish` writes into config/admin/devices and the
+	// record of what that node carries, and the node is what the deployed rules
+	// read: an entry declared here and not on the node admits nobody, because a
+	// publish seeds a project whose device node is not there yet and never
+	// re-adds what `fugaro pair revoke` removed.
+	//
+	// Only the owner sets it, here or in the published node, and that is the
+	// security half of the block rather than its convenience: the role it names
+	// is an authority over every run's messages and spending, and every other
+	// store is one a run or a teammate can write — a repository's own
+	// fugaro.yaml travels with the checkout a run is handed, so a declaration
+	// there would be a way for a pull request to add an admin, and the shared
+	// config in the runs bucket is writable by any launcher, so Shared drops
+	// the block and internal/cli's ParseShared refuses the key.
+	//
+	// A slice and not a pointer, like bitbucket_tokens: nil is "this file
+	// declares nothing", and an empty written block declares nothing either,
+	// because a declaration is a list of people rather than a switch with an
+	// empty state of its own.
+	MobileAllow []mobileauth.Declared `yaml:"mobile_allow,omitempty"`
 	// VerifierAccounts are the identities that may ask the installation's
 	// credentials service whether a verdict's signature is its own (C3.9g3,
 	// D1068, D1075): the coordinator's own account once it exists, and the
@@ -589,7 +632,42 @@ type Config struct {
 	// two spellings are told apart here (a written empty object is a non-nil
 	// empty map, an absent key a nil one) and mean the same floor, none.
 	ReviewFloor map[string][]string `yaml:"review_floor,omitempty"`
-	Repos       map[string]Repo     `yaml:"repos"`
+	// Binaries is the owner's grant of the paths a run may add a binary at,
+	// and the cap it is held to (D981–D983; binary-allow-rule, plan task
+	// AR1): `binaries.allow` is a list of doublestar path globs relative to
+	// the repository root, and `binaries.max_bytes` the size an admitted one
+	// must not exceed, 2 MiB unless the project lowers it.
+	//
+	// It travels the way ReviewFloor does, and the reason is the same one:
+	// `fugaro project policy publish` copies it into the policy node, which
+	// only the owner writes and the runner fails closed on, and the block
+	// never enters the shared config a launcher can write (Shared drops it,
+	// and ParseShared refuses the key besides). The rule this key states is
+	// about the bytes a run's own agent may add, so a file the subject of the
+	// rule can write must not carry it: a repository's committed `fugaro.yaml`
+	// has no such key at all (D986) — the run's own agent writes that file —
+	// and this one is the installation's own config, which no launcher can
+	// reach.
+	//
+	// It is projectpolicy's type, the way Orchestrator is policy's, because
+	// the file's key and the node's member are one block: a person reading the
+	// published node reads the key they wrote, and the pattern rule cannot be
+	// applied one way to a file and another to the node
+	// (projectpolicy.ValidBinariesAllow is called here and by that package's
+	// decode of the node).
+	//
+	// A publish keeps the node's block when this file states none, and a
+	// written empty block takes it away (BinariesEffective, D987): silence is
+	// not a request to remove an admission the owner published — a second
+	// machine whose config predates the key, or an owner who declined to set
+	// one, would otherwise widen the project's own rule by omission — while
+	// taking it away on purpose is written, and the strictest spelling of it
+	// is `binaries: {allow: []}`. The database keeps no member for an empty
+	// list, so what the written-empty spelling publishes is a node with no
+	// block at all: the same node a project that never set one has, and one
+	// that admits nothing either way.
+	Binaries *projectpolicy.Binaries `yaml:"binaries,omitempty"`
+	Repos    map[string]Repo         `yaml:"repos"`
 	// Workspace is the membership: the name of the workspace this project
 	// belongs to, and nothing else (D1291, docs/workspaces/spec.md §2). It is
 	// a scalar and not a list, because a project is in at most one workspace —
@@ -1549,6 +1627,30 @@ type Repo struct {
 	// where the spec is built, and the repository's agent.auth is read there
 	// too, live from the fugaro.yaml the runs read.
 	CredentialsServiceReady *bool `yaml:"credentials_service_ready,omitempty"`
+	// ClaudeAccounts are the accounts this repository's OWN runs may be served
+	// by, and they are the repository's own statement because a profile is not
+	// the only kind of job its runs land on: a per-repository job — every
+	// Bitbucket repository, and every repository no workflow sends to a shared
+	// one — has no profile to name its accounts in, and while the published
+	// accounts block was derived from the profiles alone such a repository
+	// could be admitted to no account at all (the credentials service's
+	// intersection came out empty and its runs were answered 503
+	// state_unavailable).
+	//
+	// An entry here adds this repository's canonical name to each account it
+	// names (projectpolicy.DeriveAccounts), which is the same admission a
+	// profile naming the account gives the repositories of ITS allow_repos:
+	// the account's own list is the bound, and this entry is refused at publish
+	// when it does not cover the repository. A profile and this key may both
+	// name one account; the union applies, and nothing already admitted is
+	// narrowed.
+	//
+	// It is operator-only local config, like claude_accounts and
+	// project_secrets themselves: never fugaro.yaml, never the project layer,
+	// never published as written. Provider must be set on an entry that names
+	// accounts, because the published entry is provider-qualified and this
+	// entry is the only place a per-repository job's provider is stated.
+	ClaudeAccounts []string `yaml:"claude_accounts,omitempty"`
 }
 
 // CredentialsServiceOn is the record as every reader of the switch judges it:
@@ -1566,6 +1668,31 @@ func (r Repo) CredentialsServiceOn() bool {
 // to its own copy of on, so two entries never share one record — the field is a
 // pointer only so that "no record at all" is a document a config can hold.
 func RecordSwitch(on bool) *bool { return &on }
+
+// PolicyRepoAccounts is the repositories whose own entries name Claude
+// accounts, as the published accounts block's derivation reads them
+// (projectpolicy.DeriveAccounts): keyed by the repository as this file spells
+// it (owner/name), each with the provider that qualifies it and the accounts it
+// names, in file order.
+//
+// The entry's provider is the one the repository was onboarded with, and it is
+// what turns owner/name into the canonical provider/owner/name an allow_repos
+// entry is written in. A repository entry naming accounts without one is
+// refused by validate (and again by the derivation), so the empty provider here
+// reaches no publish.
+func (c *Config) PolicyRepoAccounts() map[string]projectpolicy.RepoAccount {
+	if len(c.Repos) == 0 {
+		return nil
+	}
+	out := map[string]projectpolicy.RepoAccount{}
+	for repo, r := range c.Repos {
+		if len(r.ClaudeAccounts) == 0 {
+			continue
+		}
+		out[repo] = projectpolicy.RepoAccount{Provider: r.Provider, Accounts: r.ClaudeAccounts}
+	}
+	return out
+}
 
 // UsesVertex reports whether any repository the config records uses
 // Vertex AI.
@@ -1982,6 +2109,16 @@ func Parse(data []byte) (*Config, error) {
 	if c.Build.MachineType == "" {
 		c.Build.MachineType = DefaultBuildMachineType
 	}
+	// A written `max_bytes: 0` (and a written `max_bytes:` with nothing under
+	// it) is refused while the decoded block cannot tell it from the absent
+	// member: absent means the 2 MiB default, so the zero a decode leaves is
+	// this block's one *wider* answer and a file that wrote it would silently
+	// raise the cap to its ceiling. The node's decode reads the same member off
+	// its own document for the same reason (decodeBinaries), and the two
+	// spellings are told apart the same way there.
+	if blk, ok := top["binaries"]; ok && c.Binaries != nil && c.Binaries.MaxBytes == 0 && mappingValue(&blk, "max_bytes") != nil {
+		return nil, fmt.Errorf("local config: %v", projectpolicy.ValidBinariesMaxBytes(c.Binaries.MaxBytes))
+	}
 	if err := c.validate(); err != nil {
 		return &c, err
 	}
@@ -2114,6 +2251,32 @@ func (c *Config) CloneURLsEffective(published map[string]string) map[string]stri
 		return nil
 	}
 	return effective
+}
+
+// BinariesEffective is the keep rule for the binaries block (AR1, D987): the
+// block this file states when it writes one, and the published node's when it
+// says nothing. The second half is what leaves a machine whose config predates
+// the key — a teammate's, a CI box's, an operator's second laptop — publishing
+// the node's own grant rather than a node that admits nothing and holds every
+// admitted binary to the ceiling again: the block is the owner's own word about
+// the bytes a run may add, and a publish must not widen the project's other
+// machines by saying nothing.
+//
+// A written block that states no member is the other direction, and it is the
+// one spelling that takes a published grant away on purpose (D987): nil, so
+// the publisher writes a node with no block at all — which is what the
+// database would keep of an empty list anyway, so the written-empty spelling
+// is this file's and never the node's, and the node it leaves is the node a
+// project that never set one has. A written block with a member in it (the
+// globs, a lowered cap) is published as it stands.
+func (c *Config) BinariesEffective(published *projectpolicy.Binaries) *projectpolicy.Binaries {
+	if c.Binaries == nil {
+		return published
+	}
+	if len(c.Binaries.Allow) == 0 && c.Binaries.MaxBytes == 0 {
+		return nil
+	}
+	return c.Binaries
 }
 
 // BakeReposEffective is the keep rule for the bake switch (D1901): this file's
@@ -2336,6 +2499,7 @@ func (c *Config) validate() error {
 	}
 	c.validateBudget(bad)
 	c.validateEscalation(bad)
+	c.validateMobileAllow(bad)
 	for _, p := range config.ValidateModelProviders(c.Providers) {
 		bad("%s: %s", p.Path, p.Message)
 	}
@@ -2418,6 +2582,23 @@ func (c *Config) validate() error {
 	}
 	for _, p := range config.ValidateProjectSecrets(c.ProjectSecrets) {
 		bad("%s: %s", p.Path, p.Message)
+	}
+	// bitbucket_tokens' form rules are config.ValidateBitbucketTokens'
+	// (R1's agreement of type and coverage); the date is checked here, beside
+	// secret_expires', because the layout an operator writes is this file's
+	// (SecretExpiryLayout) and config cannot reach it. Both are asked at load
+	// rather than at the first proxied call: a record whose halves disagree
+	// would otherwise be probed as one type and selected as another.
+	for _, p := range config.ValidateBitbucketTokens(c.BitbucketTokens) {
+		bad("%s: %s", p.Path, p.Message)
+	}
+	for i := range c.BitbucketTokens {
+		if c.BitbucketTokens[i].Expires == "" {
+			continue
+		}
+		if _, err := time.Parse(SecretExpiryLayout, c.BitbucketTokens[i].Expires); err != nil {
+			bad("%s.expires %q is not a date (YYYY-MM-DD)", config.BitbucketTokenPath(c.BitbucketTokens, i), c.BitbucketTokens[i].Expires)
+		}
 	}
 	// workflow_secrets' name-only rules are config.ValidateWorkflowSecrets';
 	// the two that read the operator's providers can only be asked here, where
@@ -2603,6 +2784,34 @@ func (c *Config) validate() error {
 	if err := policy.ValidOrchestrator(c.Orchestrator); err != nil {
 		bad("%v", err)
 	}
+	// The binaries block is held to the node's own rules here, the way the
+	// floor, the verifier list, the catalog and the orchestrator block are: it
+	// is copied into the policy node, and a pattern this file accepted while the
+	// node refused it — or the one the node accepted and this file refused —
+	// would be an admission whose meaning depended on which door it came
+	// through. projectpolicy.ValidBinariesAllow and ValidBinariesMaxBytes are
+	// those two rules, the same functions the node's own decode applies. The
+	// pattern rule is the one that has to be asked here rather than at
+	// admission: a misspelt glob is a lock that is not there, and it reads
+	// exactly like the silence of a project that admitted nothing.
+	//
+	// The cap is judged only when it is written, because this document cannot
+	// tell a written blank from the absent member: a YAML `max_bytes:` with
+	// nothing under it decodes to the zero an absent key has, and the zero is
+	// read as the shipped 2 MiB — the widest cap this block may hold, so the
+	// reading is the strict one, and a written 0 or null is refused where it
+	// can be told apart (the node's own decode reads the member off the
+	// document).
+	if c.Binaries != nil {
+		if err := projectpolicy.ValidBinariesAllow(c.Binaries.Allow); err != nil {
+			bad("%v", err)
+		}
+		if c.Binaries.MaxBytes != 0 {
+			if err := projectpolicy.ValidBinariesMaxBytes(c.Binaries.MaxBytes); err != nil {
+				bad("%v", err)
+			}
+		}
+	}
 	for repo, r := range c.Repos {
 		if !repoRE.MatchString(repo) {
 			bad("repos: %q must look like owner/name", repo)
@@ -2620,6 +2829,14 @@ func (c *Config) validate() error {
 			if !config.WorkflowNameRE.MatchString(w) {
 				bad("repos.%s: workflow %q is not a workflow name", repo, w)
 			}
+		}
+		for _, name := range r.ClaudeAccounts {
+			if msg := config.ValidClaudeAccountRef(name); msg != "" {
+				bad("repos.%s.claude_accounts: %s", repo, msg)
+			}
+		}
+		if len(r.ClaudeAccounts) > 0 && r.Provider == "" {
+			bad("repos.%s.claude_accounts: this repository names accounts and no provider, and a published account entry is provider-qualified (owner/name is published as provider/owner/name): write the repository's provider here, which is the only place a per-repository job's provider is stated", repo)
 		}
 	}
 	validateWorkspace(c, bad)

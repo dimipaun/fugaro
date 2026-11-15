@@ -113,7 +113,7 @@ func newOrchestratorCmd() *cobra.Command {
 			"log. patch applies one document from -f, and the ops only a person may\n" +
 			"land (approving a work item, setting the goal, closing a decision that\n" +
 			"waits on a person) are confirmed at a real terminal with the project's\n" +
-			"name typed, never by --yes: a session that has none writes nothing.\n" +
+			"name typed: a session that has none writes nothing.\n" +
 			"import loads the one-time session dump, validated as a patch and refused\n" +
 			"the person's own ops: no dump approves work.\n\n" +
 			"run is the daemon itself, in the foreground. install, uninstall and\n" +

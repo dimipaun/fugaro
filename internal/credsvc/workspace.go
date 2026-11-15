@@ -400,12 +400,12 @@ func NewWorkspace(cfg WorkspaceConfig) (*Workspace, error) {
 //
 // **The verifier is built from the OWNER's table alone, so two account classes
 // the installing member decides from its own published policy are not asked.**
-// The installation refuses a shared project job whole until the phase-3 rules
-// land (Global Constraint 6, verifyJob) and admits a review job for its own
-// account's pairing alone (pairReview, offeredToReview); an account this table
-// names is a per-repository job here whatever the member's own service would
-// call it, and it is served the pool on every repository the member's own lists
-// name. That is stated beside the repository pairing in
+// The member's own service answers a shared project job for the repositories
+// its profile is bound to (verifyJob, C3.9's coding half) and admits a review
+// job for its own account's pairing alone (pairReview, offeredToReview); an
+// account this table names is a per-repository job here whatever the member's
+// own service would call it, and it is served the pool on every repository the
+// member's own lists name. That is stated beside the repository pairing in
 // docs/workspaces/spec.md §8's residual risk 7 and pinned by
 // TestWorkspaceAdmitsEveryAccountInTheOwnersTableAsAPerRepositoryJob. It is not
 // an oversight of the constructor: the owner's table IS this deployment's whole

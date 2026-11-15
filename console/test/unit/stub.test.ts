@@ -54,6 +54,12 @@ describe('the stub’s command keys', () => {
       // word, so `--watch` is what tells the two apart -- and a key shared with
       // the read above would leave this row's scenarios answered by `default`.
       'graph --watch',
+      // The dependency-graph plan's GV3.2 (`roadmap.move` /
+      // `moveRoadmapTask`): `coordinator roadmap move`, the console's third
+      // write and the one this table's group prefix narrows -- the key is the
+      // command's three words, because the task, `--to` and `--expect` are the
+      // row's own arguments and never words of the key.
+      'coordinator roadmap move',
       'diagnose',
       'logs',
       'logs --url',
@@ -153,7 +159,7 @@ describe('the stub’s command keys', () => {
       commandKey(['settings', 'set', 'budget.cap_usd', '--layer', 'local', '--dry-run', '--json', '--project', 'fugaro']),
     ).toBe('settings edit')
     expect(
-      commandKey(['settings', 'unset', 'budget.cap_usd', '--layer', 'local', '--yes', '--project', 'fugaro', '--config', '/tmp/config.toml']),
+      commandKey(['settings', 'unset', 'budget.cap_usd', '--layer', 'local', '--project', 'fugaro', '--config', '/tmp/config.toml']),
     ).toBe('settings edit')
     // ...and the read keeps its own key, which is the key the row's words
     // produce and the one every settings section's fixture already uses.

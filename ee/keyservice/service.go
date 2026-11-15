@@ -56,6 +56,10 @@ const (
 	// what they carry is a key's secret rather than an applicant's address.
 	RouteRenew  = "/renew"
 	RouteStatus = "/status"
+	// §11's two sign-in flows are the CLI's and not the site's either: the
+	// person reaches them through the licence site's page (K5.1) and what they
+	// hand back is a key, and the routes themselves are named in signin.go
+	// beside the rules that answer them.
 )
 
 func init() {
@@ -168,6 +172,13 @@ type Config struct {
 	// because the deploy names its own collections, and the lists themselves are
 	// data an operations owner sets.
 	TenantsCollection string
+	// TermsVersion is the version of the terms of service this deployment
+	// serves, and it is what a sign-up records as the wording the person
+	// accepted (D2199, plan P2.1). It is configuration for the plans' own
+	// reason: the deployment serves the text, two deployments can be serving
+	// different wordings at once, and a record naming one figure for both would
+	// state the wrong one of them.
+	TermsVersion string
 }
 
 // Deps is everything the intake reaches. There is no signer here and there is
@@ -206,7 +217,17 @@ type Deps struct {
 	// The seams the portal's API reaches (P1.0). Each may be nil: a deployment
 	// that mounts no route reaching one has no business holding it, and New
 	// refuses a missing seam only when a mounted route declares it (api.go).
-	Docs      Docs
+	Docs Docs
+	// SignIn is **one** verifier of the licence project's own ID tokens: the
+	// portal's API reaches it (P1.0, P1.3) and so do §11.3's and §11.4's sign-in
+	// flows (signin.go, D2144, TN3). The two share the seam rather than holding
+	// one each, because a deployment that verified a token one way for the SPA
+	// and another for the CLI would be two answers about whose account it is.
+	//
+	// The two read a nil differently on purpose: the API refuses the start when
+	// a mounted route declares it (api.go), and the sign-in flows refuse every
+	// caller of theirs, at the request, with the sign-in's own uniform sentence
+	// rather than a key nothing checked.
 	SignIn    SignInVerifier
 	Paddle    Paddle
 	Scheduler Scheduler
@@ -231,6 +252,46 @@ type Service struct {
 	auditor    Auditor
 	now        func() time.Time
 	limiter    *throttle
+	// pollLimiter is the device poll's own rate, per address, and it is a bucket
+	// of its own rather than the intake's: one sign-in is up to 120 polls, four
+	// times the intake's whole hourly budget for one address (devicePoll).
+	pollLimiter *throttle
+	// signIn is §11's verifier of the licence project's own ID tokens, and codes
+	// is what the two sign-in flows are holding: an authorize code between its
+	// sign-in and its exchange, and a device code between the CLI's start and
+	// its poll. Both are this process's and both belong to signin.go, which
+	// states what that costs a deployment of more than one instance.
+	signIn SignInVerifier
+	codes  *signInCodes
+	// The seams the portal's API reaches besides signIn (plan P1.0). They are
+	// held here rather than read out of Deps, because Deps is the deployment's
+	// whole shape and an area's route has no business holding the minter, the
+	// mail path and the code host to reach the document store.
+	//
+	// signIn is the sign-in seam above and is not repeated: §11's flows and the
+	// portal's API verify with one verifier rather than one each (Deps.SignIn's
+	// own comment).
+	//
+	// P1.0 declared these on Deps and left Service without them, so every
+	// area's task would have had to edit this file to reach its own — the first
+	// area paid that once (the plan's shared-files table names it a writer of
+	// this file for doing so) and no area after it does. What an area reaches,
+	// it states on its routes (api.go's reaching), and a deployment that mounts
+	// no route of an area holds none of that area's seams.
+	docs      Docs
+	paddle    Paddle
+	scheduler Scheduler
+	sealer    Sealer
+	// signUpMu is one sign-up at a time in this process. F35's day's count is a
+	// read of the memberships an account owns and then a write of one more, and
+	// two sign-ups in flight together would each read a count that does not hold
+	// the other's membership yet — the limit passed by racing it. The count
+	// belongs inside the sign-up's own transaction, and this is where it is not:
+	// api.go's Tx reads and writes by id and holds no query. It is this
+	// process's, like pageMu and for the same reason — what a second process
+	// does is the store's to hold, and when the store can count inside a
+	// transaction the lock is what goes.
+	signUpMu sync.Mutex
 	// renewMu is one renewal at a time in this process. A renewal reads the key's
 	// state, mints and then writes what records the rotation, and two of them in
 	// flight together would both read "no successor yet" and both mint — of which
@@ -338,6 +399,9 @@ func New(cfg Config, deps Deps) (*Service, error) {
 			return nil, fmt.Errorf("the mint cap for %q is %d mint(s) per %s: a cap the deploy names, and a cap of none is not a limit", tier, cap.Requests, cap.Window)
 		}
 	}
+	if strings.TrimSpace(cfg.TermsVersion) == "" {
+		return nil, errors.New("the portal records the terms of service a sign-up accepted and this deployment names no version, so every organisation it created would record an acceptance that names no wording (D2199)")
+	}
 	switch {
 	case deps.Store == nil:
 		return nil, errors.New("the intake has no store, so it can neither remember a mint nor tell a redelivery from a first one")
@@ -363,23 +427,37 @@ func New(cfg Config, deps Deps) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The poll's rate is this package's and not the deploy's (devicePollLimits),
+	// so this cannot fail while that constant is a rate — and it is checked
+	// rather than assumed because the constant is a line somebody can edit.
+	pollLimiter, err := newThrottle(devicePollLimits, now)
+	if err != nil {
+		return nil, fmt.Errorf("the device poll's rate is %d request(s) per %s: a poll with no rate is one a stranger sets", devicePollLimits.Requests, devicePollLimits.Window)
+	}
 	cfg.FreeMailDomains = lowerAll(cfg.FreeMailDomains)
 	return &Service{
-		cfg:        cfg,
-		freeSeat:   *cfg.FreeSeat,
-		openSource: *cfg.OpenSource,
-		store:      deps.Store,
-		mints:      deps.Mints,
-		mintsV1:    deps.MintsV1,
-		mail:       deps.Mailer,
-		host:       deps.CodeHost,
-		proofs:     deps.Proofs,
-		signedIn:   deps.Owner,
-		stepUp:     deps.StepUp,
-		alerts:     deps.Notifier,
-		auditor:    deps.Auditor,
-		now:        now,
-		limiter:    limiter,
+		cfg:         cfg,
+		freeSeat:    *cfg.FreeSeat,
+		openSource:  *cfg.OpenSource,
+		store:       deps.Store,
+		mints:       deps.Mints,
+		mintsV1:     deps.MintsV1,
+		mail:        deps.Mailer,
+		host:        deps.CodeHost,
+		proofs:      deps.Proofs,
+		signedIn:    deps.Owner,
+		stepUp:      deps.StepUp,
+		alerts:      deps.Notifier,
+		auditor:     deps.Auditor,
+		now:         now,
+		limiter:     limiter,
+		pollLimiter: pollLimiter,
+		signIn:      deps.SignIn,
+		codes:       newSignInCodes(),
+		docs:        deps.Docs,
+		paddle:      deps.Paddle,
+		scheduler:   deps.Scheduler,
+		sealer:      deps.Sealer,
 	}, nil
 }
 
@@ -406,7 +484,19 @@ func (s *Service) Handler() http.Handler {
 	// (adminSurface).
 	mux.HandleFunc(RouteAdmin, s.adminSurface)
 	mux.HandleFunc(RouteAdmin+"/", s.adminSurface)
+	// §11.3's and §11.4's two flows (signin.go). The two browser steps carry
+	// their method in the pattern, so the mux answers a method nothing serves
+	// with its own refusal rather than with a handler's.
+	mux.HandleFunc("GET "+RouteAuthorize, s.authorize)
+	mux.HandleFunc("POST "+RouteAuthorize, s.authorize)
+	mux.HandleFunc("POST "+RouteToken, s.token)
+	mux.HandleFunc("POST "+RouteDeviceStart, s.deviceStart)
+	mux.HandleFunc("POST "+RouteDevicePoll, s.devicePoll)
+	mux.HandleFunc("GET "+RouteDeviceApprove, s.deviceApprove)
+	mux.HandleFunc("POST "+RouteDeviceApprove, s.deviceApprove)
 	// Every door of the portal's API, from the table the areas register into.
+	// The two sets do not overlap: the API's are all under the subtree Hosting
+	// rewrites to this service (api.go's apiPrefix) and these are the CLI's own.
 	apiRoutes.mount(mux, s)
 	return mux
 }

@@ -62,6 +62,14 @@ type Options struct {
 	// Out receives the human-readable account (the plan view and the
 	// closing lines); with --json the CLI points it at stderr.
 	Out io.Writer
+	// Detail, when the caller has one, is where an applying run's plan view
+	// goes instead of Out: the run's reporter stream, which is the log always
+	// and the terminal under -v (D1352, D1354). The table is the run's own
+	// account of what it is about to do, and the run's steps are the default
+	// view; a plan-only run keeps the table on screen, because there it IS the
+	// output and changes nothing (the loop asks PlanOnly below), and so does a
+	// caller with no reporter at all, which has nowhere else to put it.
+	Detail io.Writer
 	// Report, when the caller has one, is the reporter the run's account is
 	// printed through: one step per stage, with the marker its state earns,
 	// and the closing line. The plan view is not a run and keeps its own
@@ -189,9 +197,9 @@ func Run(ctx context.Context, stages []Stage, o Options) (*Result, error) {
 			return nil, &MissingInputsError{Flags: l.redactAll(missing)}
 		}
 		if !o.Yes && !o.PlanOnly {
-			// An apply needs --yes; without it the run is --plan-only.
+			// A run nobody answers applies nothing: it is --plan-only.
 			l.o.PlanOnly = true
-			l.res.Note = "--non-interactive without --yes only plans; pass --yes to apply"
+			l.res.Note = "a run that never prompts and carries no answer of its own only plans; the owner's own run is what applies"
 		}
 	}
 	l.res.PlanOnly = l.o.PlanOnly
@@ -648,7 +656,7 @@ func (l *loop) converge(ctx context.Context, stages []Stage) error {
 		}
 		if !YesCovers(name) && (!l.interactive || l.o.JSON) {
 			// Never auto-confirmed, never prompted: left for the user.
-			l.needsYou(name, "needs your own confirmation, which --yes does not give", s.Left())
+			l.needsYou(name, "needs your own confirmation, which no flag gives", s.Left())
 			stops = append(stops, stop{name: name, yours: true})
 			continue
 		}
@@ -785,7 +793,7 @@ func (l *loop) agentApplied(ctx context.Context, s Stage) (done bool, err error)
 	case errors.As(err, &ge):
 		// The gate's sentence is the detail, and what stands beside it is the
 		// refusal's own answer about who this step is for: the stage's Left
-		// only when the step IS the owner's (the class refusal, D1026), and a
+		// only when the step IS the owner's (no plan gate may judge it, D1026), and a
 		// commandless refusal otherwise — a plan the cover would not admit is
 		// nobody's to type past (CV1), and the stage's own prompt asks this
 		// reader to do the one thing the gate exists to make impossible.
@@ -954,6 +962,18 @@ const statusWidth = 14
 // all prints the plain text it printed before — and there the reason is never
 // cut, because that run has no log to keep the rest of it.
 func (l *loop) view(rs []StageResult) {
+	if l.o.Detail != nil && !l.o.PlanOnly {
+		// The row written here is the log's, whole reason and plain status,
+		// which is exactly what logRow puts there: routing the table to the
+		// stream takes that write's place rather than adding to it.
+		if l.o.Project != "" {
+			fmt.Fprintf(l.o.Detail, "%s: project %s (GCP %s, %s)\n", l.program(), l.o.Project, l.o.GCPProject, l.o.Region)
+		}
+		for _, r := range rs {
+			fmt.Fprintln(l.o.Detail, l.row(r, r.Detail, true))
+		}
+		return
+	}
 	if l.o.Project != "" {
 		fmt.Fprintf(l.o.Out, "%s: project %s (GCP %s, %s)\n", l.program(), l.o.Project, l.o.GCPProject, l.o.Region)
 	}
