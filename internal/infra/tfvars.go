@@ -211,6 +211,13 @@ type InstallationSpec struct {
 	// an installation whose local config names no profile, so the plan of
 	// one that had none is unchanged (infra.ProjectJobs).
 	ProjectJobs map[string]ProjectJob `json:"project_jobs,omitempty"`
+	// CarriedProjectJobs names the profiles whose shared job this spec does not
+	// compose, because the local config cannot compose one for them right now,
+	// while the installation already holds the job an earlier run deployed:
+	// prepare keeps each of them, whole, from the installation's own tfvars
+	// (infra.CarriedProjectJobs). It is a working note of the run and not a
+	// variable — the root has no such input — so it never reaches the document.
+	CarriedProjectJobs []string `json:"-"`
 	// ProjectReviewJobs are the review-only variants of those jobs, by job
 	// name: one per (profile, provider, account) the coding set deploys, with
 	// an empty secret_env, deployed by the root as a module instance of its own
@@ -1347,6 +1354,126 @@ func CarriedProjectReviewJobs(vars, prev []byte) ([]byte, error) {
 	}
 	jobs[ImplicitReviewJobName()] = job
 	doc[ProjectReviewJobsKey] = jobs
+	return sortedJSON(doc)
+}
+
+// ProjectJobsKey is the module's own variable name for the installation's
+// shared project jobs, the key CarriedProjectJobs reads and writes
+// (InstallationSpec's field spells it in its own tag).
+const ProjectJobsKey = "project_jobs"
+
+// ProjectJobProfilesOf is the profile names of the shared project jobs the
+// tfvars document vars carries: what the installation holds, asked by the run
+// that has to decide whether a profile the local config cannot compose is one
+// whose job a carry may keep (internal/cli's heldDefaultProfiles).
+//
+// A job the document carries without a profile name is not a shared project
+// job of a profile and is not named: nothing composes one, so no profile can be
+// answered for by it.
+func ProjectJobProfilesOf(vars []byte) (map[string]bool, error) {
+	if vars == nil {
+		return nil, nil
+	}
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	jobs, _ := doc[ProjectJobsKey].(map[string]any)
+	out := make(map[string]bool, len(jobs))
+	for _, job := range jobs {
+		m, ok := job.(map[string]any)
+		if !ok {
+			continue
+		}
+		if profile, ok := m["profile"].(string); ok && profile != "" {
+			out[profile] = true
+		}
+	}
+	return out, nil
+}
+
+// CarriedProjectJobs returns vars with every shared job of the named profiles
+// that the document prev carries and vars lack, taken whole from prev — the
+// coding job of each (ProjectJobsKey) and every review-only variant of it
+// (ProjectReviewJobsKey), by job name.
+//
+// It is the carry for the profile `fugaro update` writes itself (S5 of
+// docs/shared-jobs-default), and it is the same carry as the one above for the
+// same reason. The default profile of a provider the project's repositories use
+// is a document the update PUT into the local config (R1), and the job it
+// deploys is composed from a fact that config can lose afterwards: the one
+// GitHub App ID its github repositories record (projectJobGitHubAppID). A
+// project whose last GitHub repository moves to Bitbucket, or one that adds a
+// repository on a second App, records no single ID any more — so no reader
+// composes a job for the profile, while the installation holds the one it
+// deployed, and the plan of every later run is that job's destruction:
+// RefuseProjectJobDeletes stops the whole update on it, with "restore the
+// profile as it was" as its only remedy — which is not a remedy for a profile
+// the update wrote and the operator never touched. The jobs are kept, whole,
+// exactly as the implicit review job is, so that a job the installation holds
+// is never the reason an update that converges today stops converging.
+//
+// The review variants are carried with the coding job and never instead of it:
+// ProjectReviewJobs derives one per (profile, provider, account) of the coding
+// set, so a pruned coding job takes its own variants with it, and a document
+// that holds the coding job alone is still a plan that destroys them.
+//
+// The caller names the profiles, and it names only the ones the config cannot
+// compose now AND whose job the installation holds (internal/cli's
+// heldDefaultProfiles). Nothing else is carried: a profile the config no longer
+// declares, and one the installation never deployed a job for, is a fact of the
+// config, and the refusal RefuseProjectJobDeletes prints for it is that fact's
+// remedy — as is the refusal installOptions raises for a config that declares a
+// github profile and records no App ID at all before any job is deployed.
+func CarriedProjectJobs(vars, prev []byte, profiles []string) ([]byte, error) {
+	if prev == nil || len(profiles) == 0 {
+		return vars, nil // nothing held, or nothing to carry
+	}
+	want := make(map[string]bool, len(profiles))
+	for _, p := range profiles {
+		want[p] = true
+	}
+	previous, err := varsDoc(prev)
+	if err != nil {
+		// A tfvars that cannot be read is not a reason to write a plan that
+		// deletes the job: fail rather than carry nothing forward.
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	added := false
+	for _, key := range []string{ProjectJobsKey, ProjectReviewJobsKey} {
+		carried, _ := previous[key].(map[string]any)
+		if len(carried) == 0 {
+			continue
+		}
+		jobs, _ := doc[key].(map[string]any)
+		for name, job := range carried {
+			m, ok := job.(map[string]any)
+			if !ok {
+				continue
+			}
+			if profile, _ := m["profile"].(string); !want[profile] {
+				continue
+			}
+			if _, ok := jobs[name]; ok {
+				continue // the spec composes this job itself: its own answer stands
+			}
+			if jobs == nil {
+				jobs = make(map[string]any, 1)
+			}
+			jobs[name] = job
+			added = true
+		}
+		if jobs != nil {
+			doc[key] = jobs
+		}
+	}
+	if !added {
+		return vars, nil
+	}
 	return sortedJSON(doc)
 }
 

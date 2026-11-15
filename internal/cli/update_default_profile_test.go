@@ -200,3 +200,65 @@ func TestUpdatePreviousVersionConverges(t *testing.T) {
 		}
 	}
 }
+
+// TestUpdateKeepsTheDefaultProfilesJobWhenTheConfigCannotComposeIt: the job the
+// write deployed is the installation's, and the update goes on converging when
+// the config loses the fact that job is composed from.
+//
+// The default profile of a GitHub project is composed into a job from the one
+// App ID its GitHub repositories record (infra.projectJobGitHubAppID), and that
+// is a fact the local config can lose afterwards: the repository moves to
+// Bitbucket and the config records no ID at all, or a repository on a second App
+// is added and records a second one. Either way the spec composes no job for the
+// profile while the state holds the job the update deployed, so the plan of
+// every later run is that job's destruction — RefuseProjectJobDeletes stops the
+// whole update on it, with "restore the profile as it was" as its only remedy, a
+// remedy for a profile the update wrote and the operator never touched, so the
+// installation stops converging for good (CLAUDE.md's HARD RULE).
+//
+// What converges it is the carry: the installed job set the workdir holds is put
+// back into the document the plan is made from, whole (infra.CarriedProjectJobs,
+// init.go's prepare), so the plan proposes no change to it. The tfvars every
+// stage of the run rewrites from the spec are what terraform is handed, so what
+// is asserted is what the plan is made from.
+//
+// Mutation (run, restore): drop the carry from prepare and the second update is
+// refused at the door, with projectJobGitHubAppID's sentence about an App ID the
+// project no longer has.
+func TestUpdateKeepsTheDefaultProfilesJobWhenTheConfigCannotComposeIt(t *testing.T) {
+	r := credentialsRig(t)
+	credentialsGitHubRepo(t, r)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	credentialsOutputs(t, r)
+	if _, errOut, err := executeStdin(t, "", "update"); err != nil {
+		t.Fatalf("the run that wrote the default profile and deployed its job failed: %v\n%s", err, errOut)
+	}
+	name := gcp.ProjectJobName(projectpolicy.DefaultProfileName, "github", "")
+	deployed, _ := r.tfvars(t)["project_jobs"].(map[string]any)[name].(map[string]any)
+	if deployed == nil {
+		t.Fatalf("the update that wrote profiles.%s deployed no %s job: %v",
+			projectpolicy.DefaultProfileName, name, r.tfvars(t)["project_jobs"])
+	}
+	// The repository moves to Bitbucket and the config records no App ID at
+	// all, which is one of the two ordinary acts that leave the profile with
+	// nothing to compose its job from.
+	rewriteRigConfig(t, r, func(lc *localcfg.Config) {
+		repo := lc.Repos[credentialsRigRepo]
+		repo.Provider, repo.GitHubAppID = "bitbucket", ""
+		lc.Repos[credentialsRigRepo] = repo
+	})
+	out, errOut, err := executeStdin(t, "", "update")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("the update was refused, so this installation needs a second command: %v\n%s", err, s)
+	}
+	kept, _ := r.tfvars(t)["project_jobs"].(map[string]any)[name].(map[string]any)
+	if !reflect.DeepEqual(kept, deployed) {
+		t.Errorf("the job the installation holds is\n%v\nwant it unchanged from\n%v\nthe job the record holds is the job the state holds, and a document that rewrites it is a plan that replaces it\n%s",
+			kept, deployed, s)
+	}
+	if pr, ok := localConfigOf(t, r).Profiles[projectpolicy.DefaultProfileName]; !ok || pr.Provider != "github" {
+		t.Errorf("the update dropped profiles.%s from the local config: %+v. The profile is the operator's file's, and the job it deployed is kept, so the file keeps both",
+			projectpolicy.DefaultProfileName, pr)
+	}
+}

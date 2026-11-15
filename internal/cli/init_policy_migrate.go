@@ -1614,6 +1614,118 @@ func defaultProfileNames(defaults []defaultProfile) string {
 	return strings.Join(names, ", ")
 }
 
+// installSpec is the installation spec a run plans from, with the one
+// fallback the profiles `fugaro update` writes for itself need.
+//
+// installOptions refuses a local config that declares a github job profile and
+// records no single GitHub App ID (projectJobGitHubAppID), and the default
+// profile this step wrote is a github one for every github project (R1): a
+// project whose last GitHub repository moves to Bitbucket, or that adds a
+// repository on a second App, records no single ID any more, so the door has
+// refused every update of that installation whole — with a message that asks
+// for an App ID the project no longer has, on a profile the update wrote and the
+// operator never touched. That is a failure of a HARD RULE (CLAUDE.md: `fugaro
+// update` is the whole upgrade, and it works perfectly).
+//
+// The job that profile deployed is the installation's own record, and it is
+// kept from it (infra.CarriedProjectJobs, prepare): what this composes is the
+// spec of the config WITHOUT that profile, and the carry puts the deployed job
+// back into the document the plan is made from, so the plan proposes no change
+// to it and the run converges. The config keeps the profile: only the spec this
+// run plans from is composed without it.
+//
+// The fallback is exactly this narrow: a default-named profile, of a provider a
+// shared job serves, whose job the installation's own tfvars hold (and this
+// run's spec does not). Every other refusal stays installOptions', whole: a
+// config that declares a github profile and has never deployed its job has
+// nothing to carry and is asked for the App ID, as it is today, and a profile
+// the operator renamed or deleted is the config's fact with the remedy
+// RefuseProjectJobDeletes prints for it.
+func installSpec(o *initOptions, lc *localcfg.Config, warn func(string)) (infra.InstallationSpec, error) {
+	spec, err := installOptions(o, lc)
+	if err == nil {
+		return spec, nil
+	}
+	held := heldDefaultProfiles(o, lc)
+	// The profile whose absence from the spec is what the refusal is about, and
+	// only it: the spec is composed once without each held profile in turn, and
+	// the first composition that succeeds names it. A profile the config can
+	// still compose is never pruned — its job follows the config, as an edit of
+	// it means it to — and a refusal two of them together explain is not a
+	// refusal this carries: installOptions' own message names that reason, and
+	// it stands.
+	for _, name := range held {
+		pruned := *lc
+		pruned.Profiles = maps.Clone(lc.Profiles)
+		delete(pruned.Profiles, name)
+		kept, kerr := installOptions(o, &pruned)
+		if kerr != nil {
+			continue
+		}
+		kept.CarriedProjectJobs = []string{name}
+		warn(fmt.Sprintf("kept the shared job of %s as the installation holds it: this local config cannot compose it now (%s). This update converges with the job kept, and a later %s composes one from the config again once that is fixed",
+			defaultProfileNameList([]string{name}), oneLineCLI(err.Error()), selfCommand()+" update"))
+		return kept, nil
+	}
+	return infra.InstallationSpec{}, err
+}
+
+// heldDefaultProfiles is the default profiles whose shared job the
+// installation already holds, which is what installSpec carries: the profiles
+// of the config the run cannot compose a job for, named by the installation's
+// own tfvars.
+//
+// It answers for the update door's converge alone, and for a real run: this is
+// the write createDefaultProfiles makes, and it is excluded where that step is
+// — `fugaro setup` composes what it plans before anything exists, and a
+// --plan-only run stops before the write — and a run with no local config has
+// no profile to ask about. A workdir that holds no tfvars — a machine whose
+// installation this run has not planned yet — holds no job either: the config is
+// the only thing that says what those profiles are, and installOptions' refusal
+// is the answer.
+func heldDefaultProfiles(o *initOptions, lc *localcfg.Config) []string {
+	if lc == nil || o.doorName() != updateDoor.name || o.planOnly {
+		return nil
+	}
+	dir, err := infra.InstallationWorkdir(os.Getenv, lc.GCPProject)
+	if err != nil {
+		return nil
+	}
+	prev, err := infra.ReadWorkdirVars(dir, "installation")
+	if err != nil {
+		return nil
+	}
+	deployed, err := infra.ProjectJobProfilesOf(prev)
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, name := range slices.Sorted(maps.Keys(lc.Profiles)) {
+		pr := lc.Profiles[name]
+		if !infra.SharedJobProvider(pr.Provider) || !deployed[name] {
+			continue
+		}
+		// The default names alone, as this step writes them (D2310, R8): the
+		// name is the profile's, and a name the update would never write is the
+		// operator's own profile, kept as the config states it.
+		if name != projectpolicy.DefaultProfileNameFor(pr.Provider, true) && name != projectpolicy.DefaultProfileNameFor(pr.Provider, false) {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names
+}
+
+// defaultProfileNameList spells a held set as defaultProfileNames spells a
+// written one, from the names the installation answered for.
+func defaultProfileNameList(names []string) string {
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = "profiles." + n
+	}
+	return strings.Join(out, ", ")
+}
+
 // createDefaultProfiles writes the default profile of every provider this
 // project's repositories use and whose default profile the config does not
 // define yet, so that the installation stage — the one that turns profiles into
@@ -1654,7 +1766,7 @@ func (e *initEngine) createDefaultProfiles() {
 	// that case — the file keeps what the operator had, those repositories keep
 	// the per-repository jobs they run today, and the line says why, so the
 	// next update writes the profile once the reason is fixed.
-	spec, err := installOptions(o, e.lc)
+	spec, err := installSpec(o, e.lc, r.warn)
 	if err != nil {
 		for _, d := range created {
 			delete(e.lc.Profiles, d.Name)

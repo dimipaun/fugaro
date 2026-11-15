@@ -1006,7 +1006,7 @@ func runInit(r *initRun) error {
 		fmt.Fprintf(r.stageDetail(), "published the shared config to %s/%s\n", lc.BucketURL(), infra.SharedConfigObject)
 		return r.printResult()
 	}
-	spec, err := installOptions(o, lc)
+	spec, err := installSpec(o, lc, r.warn)
 	if err != nil {
 		return err
 	}
@@ -2745,6 +2745,26 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 	for _, prev := range documents {
 		if vars, err = infra.CarriedProjectReviewJobs(vars, prev); err != nil {
 			return nil, userErr("reading the installation's tfvars: %v", err)
+		}
+	}
+	// And the shared job of a default profile this run could not compose,
+	// which is the same case one step further on: the profile is one the
+	// update itself wrote into the local config (createDefaultProfiles, S5 of
+	// docs/shared-jobs-default), and the fact that composed its job — the one
+	// GitHub App ID the github repositories record — is one that config can
+	// lose afterwards. CarriedProjectJobs keeps the job, whole, from the
+	// record the run that deployed it left, so that a project whose last
+	// github repository moves to Bitbucket, or that adds a repository on a
+	// second App, keeps converging instead of stopping on a job's deletion it
+	// cannot undo ("retiring a project job is not supported yet",
+	// RefuseProjectJobDeletes). The names are the ones heldDefaultProfiles
+	// decided from the same documents, and they are empty on every run that
+	// composes its jobs itself.
+	if len(spec.CarriedProjectJobs) > 0 {
+		for _, prev := range documents {
+			if vars, err = infra.CarriedProjectJobs(vars, prev, spec.CarriedProjectJobs); err != nil {
+				return nil, userErr("reading the installation's tfvars: %v", err)
+			}
 		}
 	}
 	// The other key this spec never carries, and for a sharper reason than the
