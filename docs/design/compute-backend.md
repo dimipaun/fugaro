@@ -4189,8 +4189,8 @@ senior reviewer before merge, not just the normal one.
    name's derivation, the two retries), and the stage is
    `internal/cli/init_compute.go`, registered by
    `internal/cli/init_stages.go` only when `--provision-batch` is given and
-   registered `noYes` in `internal/initflow/stage.go`, so `--yes` never
-   covers it: it is confirmed by the project's name typed at a real terminal,
+   registered `noYes` in `internal/initflow/stage.go`, so no flag stands in for
+   it: it is confirmed by the project's name typed at a real terminal,
    like the project's creation and the secrets. Its `var.launchers` is the
    derived launcher list whole — this machine's `terraform.operators` with the
    admins, because an admin operates too, the union the installation and

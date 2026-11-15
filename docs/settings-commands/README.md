@@ -1,6 +1,6 @@
 # `fugaro settings`: one command to see and change every setting, with `fugaro update` publishing what it changes
 
-**Status as of 2026-11-10: in progress — S0, S1, S3 and S5 merged, S2 and S4 not on `main`, and S7 closed as a duplicate of config-management's G7; see [docs/status.md](../status.md) for the current table.** SD1–SD18 were
+**Status as of 2026-11-14: in progress — S0–S6, S8 and S9 merged, S7 closed as a duplicate of config-management's G7, S10 the documentation, skill and release-notes sweep, and S11 not built; see [docs/status.md](../status.md) for the current table.** SD1–SD18 were
 answered by the owner on 2026-10-31 (SD1–SD5 with named answers, the rest as recommended); the
 answers are in [reconciliation.md](reconciliation.md) §3, and the plan is written to them. The
 design's own decisions — everything the audit left open that is not one of its SDs — are
@@ -14,12 +14,15 @@ command as a task of [docs/config-management](../config-management/implementatio
 (`fugaro rigor floor`) is config-management's **G7**, and the owner ruled on 2026-11-10 that
 **config-management wins** and S7 is closed as G7's duplicate. S7 keeps its section in
 [implementation-plan.md](implementation-plan.md) as the record of what was designed — G7 re-reads that
-record, as G6 re-reads the `rigor` design's — and keeps its number, which is never reused. **S0, S1,
-S3 and S5 are merged and stay exactly as they are, S2 and S4 are not on `main`, and S6 and S8–S11
-stay open**; the behaviour G7 does not carry is listed under *behaviour not covered by the winners*
-in the pull request that carries this ruling. **S11 is held behind S2 and S4** — the loop it tests
-is the read's half as much as the stage's, and neither `settings_cloud.go` nor `settings_layer.go`
-exists (its own section in [implementation-plan.md](implementation-plan.md) has the evidence).
+record, as G6 re-reads the `rigor` design's — and keeps its number, which is never reused. **S0–S6,
+S8 and S9 are merged and stay exactly as they are, S10 is the sweep of documentation, skills and
+release notes, and S11 is not built**; the behaviour G7 does not carry is listed under *behaviour
+not covered by the winners* in the pull request that carries this ruling. **S11 is no longer held
+behind S2 and S4**: both are merged, so the two halves it converges — the read's
+(`settings_cloud.go`) and the project layer's (`settings_layer.go`) — are on `main`, and the
+end-to-end test is the work that is left (its own section in
+[implementation-plan.md](implementation-plan.md) carries the design, whose *NOT BUILT* note and
+whose status header are now stale).
 
 **Asked by:** the owner, 2026-10-31: "for project level and repo level settings, in fact for ALL
 the settings, you should not expect people to edit the text file directly, but have Fugaro commands
@@ -109,8 +112,8 @@ G7, which build them) and models.**
 - **One sentence for the repository with no checkout**: `unknown (no checkout on this machine)`
   (the `rigor` design's D839), everywhere it is printed.
 - **One write path.** The diff, the confirmation, the backup and the atomic write are the same five
-  helpers everywhere; the sensitive directions ask for the typed project name, `set` and `unset` take `--yes` for it
-  outside a coding agent's session (D1107), and in a coding agent's session a write outside a repository prints the command and writes
+  helpers everywhere; the sensitive directions ask for the typed project name, which the owner types at their own real
+  terminal (a coding agent's session is refused), and in a coding agent's session a write outside a repository prints the command and writes
   nothing (SD9, D846).
 
 ## How this was reconciled

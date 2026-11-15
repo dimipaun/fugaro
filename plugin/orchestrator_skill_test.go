@@ -228,11 +228,10 @@ func TestSessionStartPrintFencesStoredText(t *testing.T) {
 var convergeRE = regexp.MustCompile(`fugaro (update|setup|upgrade)\b`)
 
 // printGatedRE is what a print that runs at the start of every session must
-// never name at all: the converge class above, a confirmation flag, and the
-// one write door this skill teaches. The print reads; the writing is the
-// session's own decision later in the session, never something the print
-// does unasked.
-var printGatedRE = regexp.MustCompile(`fugaro (update|setup|upgrade)\b|fugaro orchestrator patch|--yes\b`)
+// never name at all: the converge class above and the one write door this
+// skill teaches. The print reads; the writing is the session's own decision
+// later in the session, never something the print does unasked.
+var printGatedRE = regexp.MustCompile(`fugaro (update|setup|upgrade)\b|fugaro orchestrator patch`)
 
 // TestHookNeverRunsAGatedCommand: the session-start print runs no gated
 // command — it reads, and nothing else — and no part of this skill runs a
