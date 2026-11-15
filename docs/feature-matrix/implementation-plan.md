@@ -1,8 +1,8 @@
 # Implementation plan: the feature matrix
 
 Builds [spec.md](spec.md) **as amended by [reconciliation.md](reconciliation.md)**. **Status:
-plan only; nothing is implemented; no task is approved.** Each task needs the owner's explicit go,
-and an answer to a decision is not that go.
+plan only; nothing is implemented yet; the owner approved all tasks on 2026-11-15.** T6 is
+owner-run and never dispatched; CR1 is raised only if T6 raises it.
 
 The owner's answers that shaped the plan (2026-11-15):
 - **D2440** (not the recommendation): three plan columns, Community, Team and Enterprise.

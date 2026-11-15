@@ -1,6 +1,6 @@
 # Feature matrix
 
-**Status: plan only; nothing is implemented; no task approved.** See [docs/status.md](../status.md)
+**Status: plan only; nothing is implemented yet; the owner approved all tasks on 2026-11-15 (T6 is owner-run and never dispatched; CR1 is raised only if T6 raises it).** See [docs/status.md](../status.md)
 for the current table once the merger's sweep adds this spec's row. Spec owner: Dimi Paun. Date:
 2026-11-15 (checked against `origin/main` at `3e1b02570`).
 
