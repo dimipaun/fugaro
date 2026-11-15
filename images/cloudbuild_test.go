@@ -550,26 +550,47 @@ var ciShardMatrixRows = []string{
 	"          - {name: rest-plugin, pkg: ./plugin, index: 0, of: 1}",
 }
 
-// ciShardStagedLines are the lines the staged `shard` job carries and the real
-// one does not, one per change: the live checks split by a variable, the race
-// build at the listing step, and the three packages that leave the rest hash
-// for a runner of their own.
-var ciShardStagedLines = []struct{ what, line string }{
-	{"the live runner's shard, which its -run pattern cannot express", `LIVE_CHECK_SHARD="$INDEX/$OF" \`},
-	{"the live runner's own name in that pattern", `-run '^TestLiveCheckScripts$'`},
-	{"the race build at the listing step, so the run below it compiles nothing", `go test -race -list '.*' "$PKG"`},
-	{"the three packages with a runner of their own, left out of the rest hash", `|internal/backend/gcp|images|plugin)$'`},
+// ciShardEdits are the lines of the `shard` job this staging takes, each with
+// the real line it replaces. The comparisons that use them are multiset ones
+// over the job's code, so a line of that job changed on main and not picked up
+// here is a failure and not something the owner's `cp` would quietly revert; one
+// real line may be replaced by several staged ones, as the live runner's is.
+var ciShardEdits = []struct {
+	what   string
+	real   []string
+	staged []string
+}{
+	{
+		"the live runner's shard, which its -run pattern cannot express",
+		[]string{`            go test -race -timeout 40m -json -run "^TestLiveCheckScripts\$/^[^/]+\$/^shard${INDEX}\$" "$PKG" | tee test.json | jq -rj 'select(.Action=="output").Output'`},
+		[]string{
+			`            LIVE_CHECK_SHARD="$INDEX/$OF" \`,
+			`              go test -race -timeout 40m -json -run '^TestLiveCheckScripts$' "$PKG" | tee test.json | jq -rj 'select(.Action=="output").Output'`,
+		},
+	},
+	{
+		"the race build at the listing step, so the run below it compiles nothing",
+		[]string{`          go test -list '.*' "$PKG" | grep -E '^(Test|Example|Fuzz)' | sort > all.txt`},
+		[]string{`          go test -race -list '.*' "$PKG" | grep -E '^(Test|Example|Fuzz)' | sort > all.txt`},
+	},
+	{
+		"the three packages with a runner of their own, left out of the rest hash",
+		[]string{`            go list ./... | grep -vE '/(internal/cli|scripts|internal/runner|internal/issues)$' | while read -r p; do`},
+		[]string{`            go list ./... | grep -vE '/(internal/cli|scripts|internal/runner|internal/issues|internal/backend/gcp|images|plugin)$' | while read -r p; do`},
+	},
 }
 
 // TestStagedCIWorkflowIsTheRealOnePlusTheShardTimings pins the staged copy to
 // the real workflow: the two may differ only inside the `shard` job, and what
-// differs there is the list above — the matrix rows, and the four lines the
-// step changes add. It was rewritten on 2026-11-15, when the copy staged for
-// the shard timings became the first one to differ on more than the Terraform
-// root loop the test used to pin: it held the two files to exactly one differing
-// line, so any change that was not that one failed it by construction. What it
-// holds now is the same fact with the change named rather than counted, and the
-// next staging of this file rewrites the two lists rather than the rule.
+// differs there is exactly the matrix rows above and the lines `ciShardEdits`
+// lists — every other line of that job is compared, so a main edit inside it
+// that this copy did not pick up fails here instead of being copied over. It
+// was rewritten on 2026-11-15, when the copy staged for the shard timings became
+// the first one to differ on more than the Terraform root loop the test used to
+// pin: it held the two files to exactly one differing line, so any change that
+// was not that one failed it by construction. What it holds now is the same fact
+// with the change named rather than counted, and the next staging of this file
+// rewrites the two lists rather than the rule.
 //
 // The staged file is a snapshot of a file a run may not push, and a stale
 // snapshot is worse than a missing one: the README tells the owner to `cp` it
@@ -615,14 +636,68 @@ func TestStagedCIWorkflowIsTheRealOnePlusTheShardTimings(t *testing.T) {
 	if !slices.Equal(rows, ciShardMatrixRows) {
 		t.Errorf("the staged `shard` matrix is\n%s\nand the staging's own matrix is\n%s\n: every runner's name, package, index and shard count is a decision the timings behind this change were read for, so a matrix that is not this one is a copy of another state (docs/pending-workflows/README.md, `## ci.yml`)", strings.Join(rows, "\n"), strings.Join(ciShardMatrixRows, "\n"))
 	}
-	for _, want := range ciShardStagedLines {
-		if !strings.Contains(job, want.line) {
-			t.Errorf("the staged `shard` job does not carry %s (%q): the staged file is the change and not a copy of what runs today, so each of its lines has to be there — re-stage it from .github/workflows/ci.yml and apply the change the README's `## ci.yml` section writes down", want.what, want.line)
-		}
+	var wantReal, wantStaged []string
+	for _, e := range ciShardEdits {
+		wantReal = append(wantReal, e.real...)
+		wantStaged = append(wantStaged, e.staged...)
+	}
+	realOnly, stagedOnly := ciShardJobDiff(string(real[rs:re]), job)
+	if dropped := onlyLines(realOnly, wantReal); len(dropped) > 0 {
+		t.Errorf("these lines of the real `shard` job are not in the staged one, and this staging is not about them:\n%s\nThe staged copy is a snapshot a person copies over .github/workflows/ci.yml, so a line of that job main changed since it was staged — a bound, a step, a runner's own line — would be reverted by that copy. Re-stage it from the real file and apply the change the README's `## ci.yml` section writes down", strings.Join(dropped, "\n"))
+	}
+	if added := onlyLines(stagedOnly, wantStaged); len(added) > 0 {
+		t.Errorf("these lines of the staged `shard` job are not in the real one, and this staging is not about them:\n%s\nEither the change is wider than the one this staging was reviewed as — the README's `## ci.yml` section lists it line by line — or the copy has drifted from the file it was taken from", strings.Join(added, "\n"))
+	}
+	if unapplied := onlyLines(wantReal, realOnly); len(unapplied) > 0 {
+		t.Errorf("the staged `shard` job still carries these lines, which this staging replaces:\n%s\nA copy that carries both the line and its replacement is neither the change nor what runs today", strings.Join(unapplied, "\n"))
 	}
 	if strings.Contains(job, `^TestLiveCheckScripts\$/^[^/]+\$/^shard`) {
 		t.Errorf("the staged `shard` job still filters the live checks with `-run \"^TestLiveCheckScripts$/^[^/]+$/^shard${INDEX}$\"`, which matches no subtest of that test and so runs every check on every runner: that pattern is the fault this staging exists to fix")
 	}
+}
+
+// ciShardJobDiff returns the lines of two `shard` jobs that are not in both, one
+// list per side. It is a multiset comparison, so the order of the two files does
+// not enter into it and a line that one side carries twice is not matched by a
+// single copy on the other.
+func ciShardJobDiff(realJob, stagedJob string) (realOnly, stagedOnly []string) {
+	real, staged := ciShardCodeLines(realJob), ciShardCodeLines(stagedJob)
+	return onlyLines(real, staged), onlyLines(staged, real)
+}
+
+// ciShardCodeLines is a `shard` job's lines with the blank ones, the
+// comment-only ones and the matrix rows taken out: what is left is the job's
+// behaviour, and that is what the two files are held to. The comment block above
+// the job is prose rewritten with the matrix the row list pins, and the blocks
+// inside the steps say why a line is what it is.
+func ciShardCodeLines(job string) []string {
+	var lines []string
+	for _, line := range strings.Split(job, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "- {name:") {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+// onlyLines is the difference of two lines' multisets: the lines of a whose
+// copies b does not have, in a's order.
+func onlyLines(a, b []string) []string {
+	have := map[string]int{}
+	for _, line := range b {
+		have[line]++
+	}
+	var out []string
+	for _, line := range a {
+		if have[line] > 0 {
+			have[line]--
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
 }
 
 // shardJobSpan returns the byte range of a ci.yml's `shard` job — its own
