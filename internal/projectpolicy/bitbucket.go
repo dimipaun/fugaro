@@ -252,3 +252,194 @@ func ValidBitbucketAPIRoots(roots []string) error {
 	}
 	return nil
 }
+
+// bitbucketTokenNodeMembers are the member names one entry of the node's
+// bitbucket_tokens key is read with, taken from the shape's own json tags the
+// way bitbucketTokenMembers is (carrierMembers), so a field the shape gains is
+// judged by the reader without a second list.
+var bitbucketTokenNodeMembers = carrierMembers(reflect.TypeOf(BitbucketTokenNode{}))
+
+// DeriveBitbucketTokens is the node's bitbucket_tokens key (R5), derived from
+// the operator's typed token records and the identities the creds state store
+// recorded for them: the one anchor for the key, one edit rule, as
+// DeriveBitbucketToken is for the block beside it.
+//
+// identities maps a token's DOCUMENT KEY — config.BitbucketTokenKey's answer,
+// which is also the key the state store writes a token's status under (T6), so
+// the caller hands the store's own map over without re-keying it — to the
+// account UUID GET /2.0/user answered for that token. A name the map does not
+// hold, and one it maps to the empty string, leave the entry's identity empty:
+// an absent identity is a token whose account is unknown, which is what a
+// repository token has and all it has (R14), never a value to be guessed.
+//
+// The coverage is translated and not copied, which is the whole of the work,
+// and it is DeriveBitbucketToken's one edit rule for the same reason: the
+// operator's local config spells what a token reaches its own way — a
+// two-segment slug, or a workspace slug alone for a project token — and the
+// node spells it provider-qualified, because the credentials service reads only
+// the node and matches a canonical repository against it with MatchRepo. Both
+// segments are lower-cased on the way for the matcher's own reason: a canonical
+// repository is lower-case and MatchRepo compares a segment with a segment, so
+// an operator who wrote "Workspace-A/API-*" means "bitbucket/workspace-a/api-*".
+// A project token's workspace slug becomes the whole of that workspace, which
+// is the only coverage form a project token has (R1): it is the UUID beside it
+// that says which project, and the lookup that answers the repository's.
+//
+// A project that names no typed token derives NO key: nil, and never an empty
+// one, so the node of such a project — every installation that never stored a
+// typed token — stays byte for byte what it was. Every derived pattern is held
+// to ValidBitbucketTokenCoverage, the rule this package decodes the node with,
+// so a record whose coverage the node cannot read back is refused here, where
+// the sentence names the operator's own entry, rather than published as a node
+// every run of the project then refuses. The entry's name is held to the same
+// rule, by config.BitbucketTokenKey: the key it answers is what the node's
+// reader judges that name with.
+func DeriveBitbucketTokens(records []config.BitbucketToken, identities map[string]string) (*BitbucketTokens, error) {
+	if len(records) == 0 {
+		return nil, nil
+	}
+	// The config's own rules first — the name, and R1's agreement of type and
+	// coverage — so the node is derived from records the operator's file could
+	// hold at all, and the refusal names the record rather than the node.
+	if ps := config.ValidateBitbucketTokens(records); len(ps) > 0 {
+		return nil, fmt.Errorf("projectpolicy: %s", ps[0].String())
+	}
+	entries := make([]BitbucketTokenNode, 0, len(records))
+	for i, rec := range records {
+		coverage := make([]string, 0, len(rec.Coverage))
+		for _, pattern := range rec.Coverage {
+			qualified := qualifyBitbucketTokenCoverage(pattern)
+			if err := ValidBitbucketTokenCoverage(qualified); err != nil {
+				return nil, fmt.Errorf("projectpolicy: %s.coverage holds %q, which the node cannot carry (%v): an entry is qualified with the provider here, so the node's rule has the last word over a spelling the config's own alphabet admits", config.BitbucketTokenPath(records, i), pattern, err)
+			}
+			coverage = append(coverage, qualified)
+		}
+		// The name is the other half of that guard, and it is asked here because
+		// the rule the config judges a record's name by is not the whole of
+		// this one: config's name rule reads the account-name regex, whose
+		// repetitions bound CHARACTER PAIRS and so admit a name longer than
+		// MaxClaudeAccountNameLen, which BitbucketTokenKey also demands. A name
+		// past that bound answers "" — an entry with no name, which this
+		// package's own reader refuses and every run of the project would then
+		// refuse, and an identity looked up under the empty key. So the record
+		// is refused here, where the sentence names the operator's own entry.
+		name := config.BitbucketTokenKey(rec.Name)
+		if name == "" {
+			return nil, fmt.Errorf("projectpolicy: %s.name %q is not a name a typed Bitbucket token may have (%s, and at most %d characters): an entry is spoken of by the document key bitbucket-token--<name> (R5), and a name that key cannot spell would publish an entry every reader of the node refuses", config.BitbucketTokenPath(records, i), rec.Name, config.ClaudeAccountNameRE, config.MaxClaudeAccountNameLen)
+		}
+		entries = append(entries, BitbucketTokenNode{
+			Name:        name,
+			Type:        rec.Type,
+			Coverage:    coverage,
+			ProjectUUID: rec.ProjectUUID,
+			Identity:    identities[name],
+		})
+	}
+	return &BitbucketTokens{Entries: entries}, nil
+}
+
+// qualifyBitbucketTokenCoverage spells one of the operator's coverage entries
+// the way the node carries it: the provider prefix, both segments lower-cased,
+// and a project token's workspace slug widened to the whole of that workspace.
+//
+// The two branches are the two spellings R1 pairs with a type
+// (config.bitbucketCoverageForm reads the same entry the other way round): an
+// entry with a separator names a repository or a workspace, and one without
+// names the workspace a project token is scoped to, whose coverage on the node
+// is that workspace's repositories.
+func qualifyBitbucketTokenCoverage(entry string) string {
+	if !strings.Contains(entry, "/") {
+		return "bitbucket/" + strings.ToLower(entry) + "/*"
+	}
+	return "bitbucket/" + strings.ToLower(entry)
+}
+
+// decodeBitbucketTokens reads the node's bitbucket_tokens key (R5), strict
+// inside the way the block beside it and the image catalog are, and nil for a
+// key that holds no entry — the written empty key and the absent member are one
+// node, which is what the publisher's own omission needs to hold at both ends.
+//
+// The line this function draws is between the node's own SPELLING and a
+// record's halves. Judged here: a member this reader does not model (a member
+// dropped silently could be a token's coverage or its project, and a call would
+// then be served under a reach the node states differently), a name that is not
+// the typed family's document key, a type that is not one of the three, and a
+// coverage pattern the node's own rule refuses. Left to the reader of a record
+// is R1's agreement of a type with its coverage: the node is written by the
+// publisher from records the config's own rules already judged, and what the
+// service builds from an entry is a record, which it refuses and skips (fail
+// closed, R14). Refusing the whole node over one entry's halves would halt
+// every run of the project over one token's.
+func decodeBitbucketTokens(raw json.RawMessage) (*BitbucketTokens, error) {
+	names, err := objectMemberNames(raw)
+	if err != nil {
+		return nil, fmt.Errorf("projectpolicy: %s: %w", BitbucketTokensKey, err)
+	}
+	if err := checkMemberNames(BitbucketTokensKey, names, []string{"entries"}); err != nil {
+		return nil, fmt.Errorf("projectpolicy: %w", err)
+	}
+	var written struct {
+		Entries []json.RawMessage `json:"entries"`
+	}
+	if err := json.Unmarshal(raw, &written); err != nil {
+		return nil, fmt.Errorf("projectpolicy: %s: %w", BitbucketTokensKey, err)
+	}
+	// The entries' member names are held to the shape's spelling before the
+	// decoder has folded them, which is the only order that works: after it,
+	// two spellings of one member are one value (the catalog's own rule).
+	for i, eraw := range written.Entries {
+		prefix := fmt.Sprintf("%s.entries[%d]", BitbucketTokensKey, i)
+		mnames, err := objectMemberNames(eraw)
+		if err != nil {
+			return nil, fmt.Errorf("projectpolicy: %s: %w", prefix, err)
+		}
+		if err := checkMemberNames(prefix, mnames, bitbucketTokenNodeMembers); err != nil {
+			return nil, fmt.Errorf("projectpolicy: %w", err)
+		}
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	var key BitbucketTokens
+	if err := dec.Decode(&key); err != nil {
+		return nil, fmt.Errorf("projectpolicy: %s: %w", BitbucketTokensKey, err)
+	}
+	for i, entry := range key.Entries {
+		if err := validBitbucketTokenNode(fmt.Sprintf("%s.entries[%d]", BitbucketTokensKey, i), entry); err != nil {
+			return nil, err
+		}
+	}
+	if len(key.Entries) == 0 {
+		return nil, nil
+	}
+	return &key, nil
+}
+
+// validBitbucketTokenNode holds one entry of the key to the node's own spelling
+// for it: the name is a typed token's document key, the type is one of the
+// three, and every coverage pattern is a reach the node states for one
+// Bitbucket credential.
+//
+// The name rule is the one that keeps the key's contract with the rest of the
+// platform: an entry is spoken of by its document key everywhere (R5), the
+// legacy key is the untyped record's own name and never an entry of this key
+// (R14), and an entry named outside the family is a name a model account could
+// also hold. The type rule is what stops the hole C1 closes on the record side:
+// an entry with no type would read as the untyped record, and its coverage
+// would then be judged as the legacy key's list rather than against a type.
+func validBitbucketTokenNode(at string, entry BitbucketTokenNode) error {
+	if _, ok := config.BitbucketTokenAccount(entry.Name); !ok {
+		return fmt.Errorf("projectpolicy: %s.name %q is not a typed Bitbucket token's document key: a typed token is named %s<name> (R5), and %s is the legacy key, which is the untyped record's own name and never an entry of this key (R14)", at, entry.Name, config.BitbucketTokenPrefix, config.BitbucketSecret)
+	}
+	if !slices.Contains(config.BitbucketTokenTypes, entry.Type) {
+		return fmt.Errorf("projectpolicy: %s.type %q is not one of %s: an entry that states no type would read as the untyped legacy record, and its coverage would then be judged by nothing at all (R1)", at+".type", entry.Type, strings.Join(config.BitbucketTokenTypes, ", "))
+	}
+	if len(entry.Coverage) == 0 {
+		return fmt.Errorf("projectpolicy: %s.coverage names nothing, and a token with no coverage is one the node can serve no request with (R1)", at+".coverage")
+	}
+	for i, pattern := range entry.Coverage {
+		if err := ValidBitbucketTokenCoverage(pattern); err != nil {
+			return fmt.Errorf("projectpolicy: %s.coverage[%d]: %w", at, i, err)
+		}
+	}
+	return nil
+}

@@ -217,6 +217,22 @@ const (
 	// orchestrator daemon, which holds no run identity and is not a job of this
 	// installation (callerWithoutJobPurpose, repositoryOnlyPurpose).
 	PurposeMergeMint = "merge_mint"
+	// PurposeWorkflowSecret is one of a repository's workflow secrets served to
+	// the job of the workflow that declares it (B3.2, G19): the act the
+	// workflow-secrets route answers when the job's own mount has been taken
+	// away (B3.8, F33) and the runner fetches the value at bootstrap (B3.4).
+	//
+	// The credential its line names is the CONTAINER the value was read from —
+	// the record's own answer for the variable the call named
+	// (creds.WorkflowSecret.ID), which is the only fact that says where a run's
+	// value came from, and a name and never a value. It is not a model
+	// credential of the cascade and was selected at no tier, so a line for it
+	// names a credential and no tier (see credentialWithoutTier).
+	//
+	// Its caller is a run's own job, so the line carries the run, its
+	// repository, the job the run reported and the verified account like every
+	// other job-class line: nothing here is a person's act.
+	PurposeWorkflowSecret = "workflow-secret"
 )
 
 // ValidPurpose reports whether purpose is one this service issues a credential
@@ -224,7 +240,7 @@ const (
 func ValidPurpose(purpose string) bool {
 	switch purpose {
 	case PurposeForward, PurposeProbe, PurposeMint, PurposeReviewSign, PurposeReviewVerify, PurposeBitbucketRead, PurposeGitHubRead,
-		PurposeGit, PurposeBitbucketAPI, PurposeSlipGrant, PurposeSlipClaim, PurposeMergeMint:
+		PurposeGit, PurposeBitbucketAPI, PurposeSlipGrant, PurposeSlipClaim, PurposeMergeMint, PurposeWorkflowSecret:
 		return true
 	}
 	return false
@@ -233,11 +249,13 @@ func ValidPurpose(purpose string) bool {
 // credentialWithoutTier reports whether a purpose's credential is one the
 // cascade never had: the App key a mint signs a JWT with, the review-signing key
 // a sign line or a verify line names, the read consumer a read mint exchanges
-// for a Bitbucket token, and the bundle's Bitbucket token a git or a
-// Bitbucket-API line names (B1.5). None is a model credential, none is spent on
-// a call, and none therefore has a tier — so a line of one of these purposes
-// names a credential and NO tier, and a tier on it is a tier this service never
-// assigned.
+// for a Bitbucket token, the bundle's Bitbucket token a git or a
+// Bitbucket-API line names (B1.5), and the container a workflow-secrets line
+// names (B3.2) — the Secret Manager entry a workflow secret's value stands in,
+// which the cascade never selected and which is therefore at no tier. None is a
+// model credential, none is spent on a call, and none therefore has a tier — so
+// a line of one of these purposes names a credential and NO tier, and a tier on
+// it is a tier this service never assigned.
 //
 // It is one function because the two rules that read it (the tier refusal and
 // the both-or-neither rule, checked) have to agree about who the exemption
@@ -247,7 +265,8 @@ func credentialWithoutTier(purpose string) bool {
 	return purpose == PurposeMint || purpose == PurposeReviewSign ||
 		purpose == PurposeReviewVerify || purpose == PurposeBitbucketRead ||
 		purpose == PurposeGitHubRead || purpose == PurposeGit ||
-		purpose == PurposeBitbucketAPI || purpose == PurposeMergeMint
+		purpose == PurposeBitbucketAPI || purpose == PurposeMergeMint ||
+		purpose == PurposeWorkflowSecret
 }
 
 // callerWithoutJobPurpose reports whether a line records a caller's act rather
@@ -289,19 +308,20 @@ const StatusOK = "ok"
 // cannot reach. The contract's reasons say why a credential was not used
 // (exhausted, broken, not_admitted, stopped) and its error types say why the
 // call itself was refused (exhausted_until, unverified_run_identity,
-// unverified_job_identity, state_unavailable, request_refused).
+// unverified_job_identity, state_unavailable, request_refused,
+// no_candidate_credentials).
 func ValidStatus(status string) bool {
 	return status == StatusOK || ValidReason(status) || validErrorType(status)
 }
 
 // validErrorType reports whether s is one of the refusal body's error types
 // (wire.go). It is the reader's half of a closed set the writer already owns —
-// all five of them, the request-shape refusal included: the answer path
+// all six of them, the request-shape refusal included: the answer path
 // records that refusal like the rest (server.go), so this set is the wire's own
 // vocabulary and not a subset of what this service happens to answer today.
 func validErrorType(s string) bool {
 	switch s {
-	case ErrorExhaustedUntil, ErrorUnverifiedRunIdentity, ErrorUnverifiedJobIdentity, ErrorStateUnavailable, ErrorRequestRefused:
+	case ErrorExhaustedUntil, ErrorUnverifiedRunIdentity, ErrorUnverifiedJobIdentity, ErrorStateUnavailable, ErrorRequestRefused, ErrorNoCandidateCredentials:
 		return true
 	}
 	return false

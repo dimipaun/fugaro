@@ -73,6 +73,9 @@ var copyleftPattern = regexp.MustCompile(`\b(?:A?GPL|LGPL|SSPL)(?:-?v?\d+(?:\.\d
 // reads to tell a justified exception from a package that slipped in: an entry
 // here without a reason is the rule switched off for one name.
 var copyleftAllowed = map[string]map[string]string{
+	consoleDirName: {
+		"elkjs": "elkjs 0.12.1 declares \"EPL-2.0 OR GPL-3.0-or-later\", a choice between two licences. The owner reviewed the expression and accepted it on 2026-11-15; the console takes the EPL-2.0 arm it already shipped elkjs under, and the GPL arm is never exercised. Recorded here so the identifier is visible in the diff that changes it.",
+	},
 	mobileDirName: {
 		"node-forge": "(BSD-3-Clause OR GPL-2.0) is a choice between two licences, and the audit reads the mobile app as taking BSD-3-Clause; the GPL arm is never exercised. Recorded here rather than excluded by a smarter expression parser, so the fact that a copyleft identifier appears at all is visible in the diff that changes it.",
 	},

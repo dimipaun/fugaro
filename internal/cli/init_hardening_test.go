@@ -194,8 +194,11 @@ func TestInstallationAtThePreviousVersionConvergesIssuesGrant(t *testing.T) {
 			if !strings.Contains(all, "bucket access (0.22.0)") || !strings.Contains(all, "  "+a+"\n") {
 				t.Errorf("the update does not name the launcher whose grant it replaces:\n%s", all)
 			}
-			if len(r.ran(t, "apply")) != 1 {
-				t.Fatalf("applies = %d, want the one the converge makes\n%s%s", len(r.ran(t, "apply")), out, errOut)
+			// Two applies: the converge's own, and installation-2's, which
+			// re-applies the root because this rig records no base image and
+			// the scheduled jobs run FROM the one the images stage pins (R7).
+			if len(r.ran(t, "apply")) != 2 {
+				t.Fatalf("applies = %d, want the converge's own and installation-2's\n%s%s", len(r.ran(t, "apply")), out, errOut)
 			}
 			// The state the run wrote is the current condition, which is what
 			// the apply above makes real: the installation holds the issues/

@@ -161,6 +161,7 @@ Flags:
 Subcommands:
 
 - `fugaro accounts add` -- Declare a named Claude account and the repositories its token may be used by
+- `fugaro accounts alias` -- Point a name at one named Claude account, so the keys naming it choose that account
 - `fugaro accounts allow` -- Add repositories to a named Claude account's allow-list (claude_accounts.NAME.allow_data_to)
 - `fugaro accounts clear` -- Clear one account's broken or exhausted credential mark, after replacing its token
 - `fugaro accounts deny` -- Remove repositories from a named Claude account's allow-list
@@ -234,6 +235,106 @@ Flags:
 | `--profile` | string | "" | no | the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one) |
 | `--repos` | string | "" | no | the repositories the token may be used by, as owner/name,owner/name (default: this checkout's origin) |
 | `--type` | string | "" | no | declare the name as a typed credential too, so a craft or a pool may spend it: claude-oauth, the one type this command's token step serves (without it, the name is declared in claude_accounts alone, as it always was) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro accounts alias`
+
+Point a name at one named Claude account, so the keys naming it choose that account
+
+Manage this machine's claude_account_aliases block: the names the account-choice
+keys may hold instead of an account.
+
+A key that names an alias — default_claude_account, and each
+stages.<stage>.claude_account — keeps the alias as written, and whoever reads it
+resolves the alias before it asks anything else, the account's own
+allow_data_to included. So moving every stage that names one is one edit here,
+and an alias never reaches the policy node, a task, a run record or a job
+image under its own name.
+
+The block is the owner's own and is never published (D2090): it is stated in
+this machine's config, and the read of it is local.
+
+Run these at your own terminal: a repoint decides which credential this
+project's stages spend, so a coding agent's session is refused, --yes
+included.
+
+Usage: `fugaro accounts alias`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for alias |
+
+Subcommands:
+
+- `fugaro accounts alias rm` -- Drop an alias no account-choice key names any more
+- `fugaro accounts alias set` -- Point ALIAS at ACCOUNT, so every key naming the alias chooses it
+
+## `fugaro accounts alias rm`
+
+Drop an alias no account-choice key names any more
+
+Drop one alias from this machine's claude_account_aliases block.
+
+An alias a choice key still names is refused, naming every key: the key would
+resolve to a name this config no longer defines, which is the file the loader
+refuses. Point those keys at the account they should choose instead
+(fugaro accounts alias set ALIAS ACCOUNT), or change them, and remove the alias
+once nothing names it.
+
+Then it converges, as fugaro accounts alias set does: the block is local and
+never published, so the node, the job set and this checkout's repository root
+are converged on the config this wrote and nothing is deleted.
+
+Usage: `fugaro accounts alias rm ALIAS`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--yes` | bool | `false` | no | confirm the removal without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro accounts alias set`
+
+Point ALIAS at ACCOUNT, so every key naming the alias chooses it
+
+Point an alias at one named Claude account, and converge this installation on
+the repoint.
+
+The alias stands for exactly one account of this config's claude_accounts
+block, or for "default" (the unsuffixed claude-oauth-token secret). It never
+stands for another alias, a pool or a credential: a chain would need a cycle
+check and a reader that prints the path a name came through, and a pool is
+walked inside a run — its members are chosen there, at the stage boundary —
+which is the re-resolution a repoint must not cause.
+
+Then it converges, in the same command and after the write: the policy node
+with the account the keys now resolve to, the job set and this checkout's
+repository root, through the stages fugaro update runs. The new target's job is
+added; the old target's job is never deleted (D2095), because the account may
+still be served by another profile or named by another alias.
+
+A run already in flight keeps the account its launch resolved: nothing here
+rewrites a record, a ledger or a counter (docs/design/update-in-flight.md), and
+a stage already going spends the credential it started with.
+
+Usage: `fugaro accounts alias set ALIAS ACCOUNT`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--yes` | bool | `false` | no | confirm the repoint without a prompt |
 
 Subcommands:
 
@@ -3920,9 +4021,62 @@ Flags:
 
 Subcommands:
 
+- `fugaro licence login` -- Sign in to the licence site and install the key it issues (Subscription Edition)
 - `fugaro licence refresh` -- Ask the licence server for the next key now (Subscription Edition)
+- `fugaro licence renew` -- Run the installation's licence check and renewal, as its job does (Subscription Edition)
 - `fugaro licence set` -- Install the installation's licence key (Subscription Edition)
 - `fugaro licence status` -- Show the installation's licence: tier, seats, expiry, state and last check
+
+## `fugaro licence login`
+
+Sign in to the licence site and install the key it issues (Subscription Edition)
+
+Sign this installation in to the licence site and install the key the sign-in
+issues.
+
+Without a flag the command opens the licence site in this machine's browser: a
+listener on 127.0.0.1 takes the one callback the sign-in comes back on, the
+address carries the state the callback is checked against, and the one-time
+code is exchanged for a key with a PKCE verifier that never leaves the process.
+The listener holds five minutes and takes one request; a machine with no browser
+falls back to the code below, and so does `--device`.
+
+With `--device` the command prints an address and a short code: open the address
+on any machine with a browser, sign in, and type the code there. The code is
+worth ten minutes, and the command polls until it is approved or the code
+expires.
+
+The sign-in carries this installation's Firebase project id, and the site binds
+the licence picked on its own page to that id: the id is untrusted text there,
+and nothing proves it. The key that comes back is verified before anything is
+written — against this Fugaro's signing keys and against that same Firebase
+project id, which the key's `workspace_id` must be — so a key bound to another
+workspace, or one this build does not accept, is refused instead of installed.
+
+The key is then written to the project's own store (the runs bucket), so every
+member is upgraded at once, and the renewal secret to the installation's Secret
+Manager container `fugaro update` creates. Nothing here creates it, and after
+it lands, the next `fugaro update` applies the installation's renewal job.
+
+It is refused inside a coding agent's session, before anything is sent, as every
+cloud write is. No line of its output carries the key or the renewal secret.
+
+Usage: `fugaro licence login`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--device` | bool | `false` | no | print a code to type at the licence site on another machine instead of opening a browser here |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for login |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
 
 ## `fugaro licence refresh`
 
@@ -3959,6 +4113,57 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for refresh |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro licence renew`
+
+Run the installation's licence check and renewal, as its job does (Subscription Edition)
+
+Run the installation's licence check and renewal.
+
+This is the command K4.2's Scheduler job runs on the installation's timer, and
+`--job` is what says so: it is the job's own verb, and running it by hand is
+not what a person means — `fugaro licence refresh` renews the key they are
+watching, now.
+
+What the job does, in the order it does it: it reads the project's key and the
+renewal secret that renews it, asks the licence server's status route once the
+key's own `check_interval` has passed, asks its renewal route from
+`renew_before_days`, and writes the next key beside the old one (the new secret
+version first, then the key). It records the check — the answer, whether it
+reached the server, and how many checks in a row have not — and warns after
+thirty days without an answer, because that is how long an installation may be
+unable to verify a revocation at all (D2140).
+
+It renews an auto key and only an auto key (spec section 7): a key whose
+`renewal_mode` is `manual` is checked and never renewed — the check is what
+tells the installation whether the key is still good — and its next term is
+fetched by a person running `fugaro licence refresh`. A key whose mode is
+`none` contacts nothing at all.
+
+It never revokes: only an explicit answer from the licence server does, so a
+server that cannot be reached leaves the key exactly as it was. An offline key
+contacts nothing at all, an installation with no key does nothing, and a key the
+server answers revoked is recorded and left in place — nothing is deleted.
+
+It is refused inside a coding agent's session, before anything is read, as every
+cloud write is. No line of its output carries the key or the renewal secret.
+
+Usage: `fugaro licence renew`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for renew |
+| `--job` | bool | `false` | no | run as the installation's renewal job, which is the only way this verb runs |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
@@ -4815,6 +5020,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--binary` | string | "" | no | the stable path of the fugaro binary the login unit names: the daemon exits cleanly when the version there differs from this process |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--decide` | bool | `false` | no | wake the decision agent on the judgement cases code cannot decide (a run out of retries, an attempt that never started, a result no phase reads): each judgement is a model call on your own Claude login |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for run |
 | `--interval` | duration | `30s` | no | how long to wait between cycles when the node says nothing moved |
@@ -6585,6 +6791,16 @@ as the plan's own graph spells them, at most 128 bytes; what the run does is
 unchanged by it. A follow-up (--pr) records one only when it is given, and
 --retry takes none (the stored task keeps its own).
 
+A plan task already being worked on is a refusal: while a run of it is in
+flight, or a run of it left a pull request behind, the launch stops before
+anything is pushed or started and names what holds the task and the ways out
+(--pr, --retry, --continues). --allow-duplicate launches anyway, for a second
+attempt that is deliberate, such as the redundant attempts of one hard task.
+The check reads the run records and never the code host, so a pull request a
+run left is still refused once it has been merged; a read that cannot be made
+is skipped with one warning, and the launch goes ahead: it never blocks on its
+own failure.
+
 --no-compression turns the repository's agent.compression off for this run only,
 overriding its fugaro.yaml. There is no --compression flag: turning compression
 on is a reviewed fugaro.yaml change. A follow-up (--pr) keeps its run's choice,
@@ -6608,6 +6824,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--allow-duplicate` | bool | `false` | no | launch even though the plan task named by --plan-task is already being worked on: a run of it in flight, or a pull request a run of it left behind. It turns that one refusal off, for a second attempt that is deliberate (the redundant attempts of a hard task); it records nothing, and with no --plan-task there is nothing to duplicate and it changes nothing |
 | `--attach` | stringArray | `[]` | no | attach a file to the run: repeatable, uploaded to the run's own inputs/ and downloaded by a mode: artifact run into the checkout's inputs/ (needs a mode: artifact recipe; refused on a run ID that already has a task) |
 | `--attempts` | int | `0` | no | launch N (2 to 4) independent runs of the same task, workflow, ref and recipe as a best-of-N batch (bestof-<first run id> unless --batch is given); refused with --pr, --run-id, --retry or a review-mode recipe |
 | `--batch` | string | "" | no | batch label, to group runs in fugaro runs ls |
@@ -6625,7 +6842,7 @@ Flags:
 | `--no-compression` | bool | `false` | no | turn agent.compression off for this run only, overriding fugaro.yaml; there is no flag to turn it on, which is a reviewed fugaro.yaml change |
 | `--owner-ruled` | string | "" | no | the repository owner's ruling on the findings a run on this PR left for them (OD1): either the text itself, a file, or - for stdin. A follow-up on a pull request whose last run stopped waiting on owner decisions is refused without it, and one whose last run left no such decisions is refused with it: the ruling answers what that run left, and nothing else; it is appended to this run's brief verbatim and recorded in the run |
 | `--path` | stringArray | `[]` | no | declare a path this run will touch, matched against the rigor.areas rules in effect (the repository's, and the project layer's beside them): repeatable; a run that declares none matches no area rule |
-| `--plan-task` | string | "" | no | record the plan task this run works on, as <plan>/<task> (for example setup-wizard/W1.3): the id the console's graph joins this run to a node by; it changes nothing about what the run does, and a follow-up (--pr) records one only when given |
+| `--plan-task` | string | "" | no | record the plan task this run works on, as <plan>/<task> (for example setup-wizard/W1.3): the id the console's graph joins this run to a node by; it changes nothing about what the run does, and a follow-up (--pr) records one only when given. A plan task that a run in flight, or a pull request a run of it left behind, already holds is refused (--allow-duplicate launches it anyway) |
 | `--pr` | intSlice | `[]` | no | continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions); with a mode: review --recipe, review PR N instead (repeatable, 1 to 4, any open PR) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--recipe` | string | "" | no | the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's (ab-judge, default, escalate, lint-fix, pick, premium, rebase, review-only, run-digest, solo, standard, test-and-fix); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's |
@@ -8502,6 +8719,11 @@ one the failed command printed (update-20261107183012-48213), which is also
 the name of its log. A cloud run's <repo-slug>/<run-id> is a different thing
 and is refused here: fugaro diagnose explains those.
 
+A failure this CLI recognises in the log is answered from the log alone, with
+no model call and nothing sent anywhere: the cause and the one command that
+fixes it are printed, and the exit is zero because it explained something. The
+diagnosis runs when the log holds no cause the CLI knows.
+
 Log text is data: it holds Terraform and gcloud error bodies, API responses
 and file names, so a command the answer prints is checked against this CLI's
 own command tree before it is shown as runnable, and anything else is marked
@@ -8517,7 +8739,9 @@ provider and what class of data the redacted evidence goes to, and then the
 diagnosis runs. With no credential at all, or with the source at this version
 out of reach, it prints the evidence where it is and exits non-zero instead: a
 machine with no credential is told to log in with the claude CLI, or to set one
-of the two variables, and to run the command again.
+of the two variables, and to run the command again, and a claude that is there
+but not logged in is refused in one sentence naming the login, with no evidence
+printed and the same non-zero exit.
 
 Usage: `fugaro troubleshoot [RUN ID]`
 

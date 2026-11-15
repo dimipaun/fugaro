@@ -23,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/tier"
 )
 
 // VertexBudgetRefusal is what a Vertex workflow under a budget in enforce
@@ -343,18 +344,131 @@ func (r *run) reviewClassRun() bool {
 // rules all ask one function, so no reader can answer it differently. The auth
 // it asks about is the run's model path's (modelAuth), never the file's own:
 // the class is what decides where a review container's calls go.
+//
+// An api-key or oauth run on the switch is the one addition (B2.2, F30):
+// GatewayOn cannot answer for it — an oauth auth is not one the gateway ever
+// carried, and an api-key auth is carried for a run that holds the key, which
+// this one does not — so the run's own switch is asked beside it, and only in
+// the modes that start a gateway at all. A run whose mode is off is refused in
+// bootstrap rather than left with no gateway and no credential (D2071,
+// applyRouting), so this arm is never the one that decides such a run's fate.
 func (r *run) gatewayOn() bool {
-	return GatewayOn(r.modelAuth(), r.spend.Mode)
+	return GatewayOn(r.modelAuth(), r.spend.Mode) || (r.serviceSwitched() && r.spend.On())
+}
+
+// serviceSwitched reports whether this run's model calls go through the
+// installation's credentials service because its repository is on the switch
+// (B2.2, F30): its auth is one the service serves (ServiceSwitchedAuth) and
+// this job's environment carries the service's URL
+// (credentialsServiceURLEnv). The URL is the whole of it — it is what the
+// installation's own root hands a switched repository's job (B2.3, D2072), and
+// the flip list (config.ServiceServedAuths) is not read here on purpose: it is
+// empty until B2.7 fills it, and a run keyed on it would ignore the URL that
+// arrived first, which is exactly the rollout D2072 orders.
+//
+// A local run is never switched (D149, as for cascade): `fugaro exec` runs on
+// the developer's own credentials, has no installation identity and no path to
+// a private service, so a developer whose environment happens to carry the
+// variable is not sent through one.
+func (r *run) serviceSwitched() bool {
+	return !r.d.Local && ServiceSwitchedAuth(r.modelAuth()) && envLookup(r.d.Env, credentialsServiceURLEnv) != ""
+}
+
+// servedAuth is the auth this run's model path is spelled as for the arms that
+// know the four auths and nothing about the switch: agent.BuildEnv and
+// agent.GatewayVars build the agent's environment from it, and the record's
+// per-stage ServedBy is named from it.
+//
+// A switched run is spelled cascade, for the reason a review class run is
+// (modelAuth): every arm the switch needs already exists for that auth — no
+// credential of the job's is mounted or handed over, the gateway holds the
+// per-run token Claude Code presents, and the upstream is the credentials
+// service — and the auths it is switched *from* name the opposite in
+// internal/agent: an oauth auth with a gateway is refused there
+// ("auth: oauth never goes through the gateway"), and an api-key auth with a
+// gateway keeps ANTHROPIC_API_KEY's mount as the credential the agent's calls
+// are made with, which is the one thing a switched run does not have. So
+// internal/agent keeps every refusal and fence it has, and the switch is
+// spelled where the run's own auth is read for the environment, exactly as the
+// class is.
+func (r *run) servedAuth() string {
+	if r.serviceSwitched() {
+		return config.AuthCascade
+	}
+	return r.modelAuth()
+}
+
+// serviceSwitchModeRefusal is D2071's refusal of a switched repository whose
+// installation has the budget off: the mode is the switch's own condition,
+// because the gateway is what reaches the service and the gateway exists only
+// in observe and enforce. The remedy is the operator's, either way: raise the
+// mode, or take the repository off the switch from its own checkout.
+func (r *run) serviceSwitchModeRefusal() error {
+	mode := r.spend.Mode
+	if mode == "" {
+		mode = policy.ModeOff
+	}
+	return fmt.Errorf("agent.auth is %s and this job carries the credentials service's URL (%s), so this repository is on the switch, and this installation's budget mode is %s: the service is reached through the gateway, which only budget.mode %s or %s starts, so this run has no way to the credential the installation serves it and does not fall back to one of its own (D2071, D143) — set budget.mode to %s or %s in the project policy and publish it (fugaro project policy publish), or take this repository off the switch (fugaro update --repo) and its runs keep their own credential", r.modelAuth(), credentialsServiceURLEnv, mode, policy.ModeObserve, policy.ModeEnforce, policy.ModeObserve, policy.ModeEnforce)
 }
 
 // gateway is where the agent's model calls go, nil until the gateway runs.
 func (r *run) gateway() *agent.Gateway { return r.gwAgent }
+
+// GatewayStageLimitFunc builds the gateway's per-stage governor for one run
+// (plan T7.2, D331): the governance the run resolved, the tier it was
+// dispatched at and the run's own cap, which is the figure a stage budget is a
+// fraction of. The limits themselves are governance's and live in
+// ee/governance (D527, D530); the gateway knows only the hook.
+type GatewayStageLimitFunc func(g policy.Governance, t tier.Tier, cap pricing.Micros) gateway.StageLimit
+
+// gatewayStageLimitFunc is the installed builder. The core ships none, and a
+// gateway started by an untagged build has no StageLimit at all: it enforces
+// the run's spend cap, the lease's sub-cap and the stage's pinned models and no
+// per-stage budget, exactly as it did before the hook existed (D522, G10).
+var gatewayStageLimitFunc GatewayStageLimitFunc
+
+// SetGatewayStageLimit installs the gateway's stage-limit builder, refusing a
+// second call: the edition of a build is decided once, by ee/register, and a
+// builder that could be replaced after it would be a way to drop a tagged
+// binary's stage budgets. A nil builder is refused for the same reason a nil
+// function is in SetStage: it would silently mean "this build enforces
+// nothing", which is what not calling this at all already says.
+func SetGatewayStageLimit(f GatewayStageLimitFunc) error {
+	if gatewayStageLimitFunc != nil {
+		return errors.New("runner: the gateway stage limit is already set")
+	}
+	if f == nil {
+		return errors.New("runner: the gateway stage limit needs a builder")
+	}
+	gatewayStageLimitFunc = f
+	return nil
+}
+
+// gatewayStageLimit is what startGateway hands the gateway: the governor the
+// run's own governance makes, or nil in a build that carries no builder.
+//
+// It is read once, at start, and never replaced: the limits are the ones the
+// run resolved and the tier it was dispatched at, both of which are settled by
+// then (resolvePolicy runs before the gateway starts), and the cap is the run's
+// own — a stage budget is a fraction of it, so a run whose cap is 0 (observe
+// with no cap at all) has no stage budget to enforce either.
+func (r *run) gatewayStageLimit() gateway.StageLimit {
+	f := gatewayStageLimitFunc
+	if f == nil {
+		return nil
+	}
+	return f(r.policy.Governance, r.spec.Tier, r.spend.Cap)
+}
 
 // startGateway starts the run's gateway and makes the agent's environment
 // point at it. The real credential stays here.
 func (r *run) startGateway(ctx context.Context) error {
 	s := r.spend
 	o := gateway.Options{Prices: s.Prices, Cap: s.Cap, Log: r.d.Log, EndStageWait: r.d.GatewayStageWait}
+	// The run's own governance, resolved a stage before this: the stage
+	// budgets, the review ratio and the fan-out stop the gateway enforces per
+	// stage (T7.2). It is nil in a build that carries no limits.
+	o.StageLimit = r.gatewayStageLimit()
 	o.Mode = gateway.Observe
 	if s.Mode == "enforce" {
 		o.Mode = gateway.Enforce
@@ -424,7 +538,18 @@ func (r *run) startGateway(ctx context.Context) error {
 // service's review class's and the job holds none, so an upstream built from
 // the review job's own file — oauth, whose arm is refused here — is exactly
 // what must not happen.
+//
+// An api-key or oauth run on the switch is the service arm too, and it is
+// asked first (B2.2, F30): the switch replaces this run's own credential with
+// the service's, so the api-key arm below — which is the mounted key, the very
+// credential the switch takes the repository off (F31, D2072) — must not be
+// reached for it. What is left of the run's own auth is the declaration
+// serviceUpstream makes, which is the whole reason the auth is still read
+// here.
 func (r *run) gatewayUpstream(ctx context.Context) (gateway.Upstream, error) {
+	if r.serviceSwitched() {
+		return r.serviceUpstream()
+	}
 	up := gateway.Upstream{BaseURL: r.d.GatewayUpstream}
 	switch r.modelAuth() {
 	case "api-key":
@@ -474,12 +599,21 @@ func cascadeLocalRefusal() error {
 	return fmt.Errorf("agent.auth is %s and this is a local run: %s runs on the developer's own credentials and never through the credentials service (D149). Use agent.auth api-key or oauth locally", config.AuthCascade, execName)
 }
 
-// serviceUpstream is the credentials service's upstream for a cascade run
-// (C1.15, D135): the service's URL from the job's environment, and the two
-// identities every call carries -- the job's Google ID token, minted from
-// the metadata server for the service's own URL, and the run's own Firebase
-// ID token. No credential of the job's is anywhere in it: the whole point of
-// the cascade is that the job holds none (D143).
+// serviceUpstream is the credentials service's upstream (C1.15, D135): the
+// service's URL from the job's environment, and the two identities every call
+// carries -- the job's Google ID token, minted from the metadata server for the
+// service's own URL, and the run's own Firebase ID token. No credential of the
+// job's is anywhere in it: the whole point of the cascade is that the job holds
+// none (D143).
+//
+// Two runs reach it: a cascade run (and, through the same arm, a review class
+// run, whose model path is spelled cascade), and an api-key or oauth run whose
+// repository is on the switch (B2.2, F30). The second declares what it is —
+// its auth, and for oauth the account it was launched on — because the service
+// holds the call to the record `fugaro update` wrote for that repository and
+// refuses a declaration the record does not name (D2070 (a), B2.1). The
+// declaration is a statement and never evidence, and it is the runner's: the
+// gateway drops any the agent sent (service.go's serviceUpstream).
 //
 // Everything it refuses, it refuses before a call is made, because each of
 // these is a run that cannot be served at all:
@@ -488,16 +622,18 @@ func cascadeLocalRefusal() error {
 //     the developer's own environment, has no installation identity and no
 //     network path to a private service, and gains nothing by being routed
 //     through one. A cascade auth locally is a mistake in the file, said so
-//     rather than reached for.
+//     rather than reached for, and a switched run is not a local one at all
+//     (serviceSwitched).
 //   - a job with no credentials service. The installation has not opted in
 //     (D147), so there is no service to call and no credential anywhere this
 //     run may use.
 //   - a run with no budget identity. The run's own token is what the service
 //     verifies the run with (C1.10); without it the service can only refuse,
-//     and a cascade run is always admitted by the budget backend (C1.19), so
-//     this is a fact about how the run was started and not about the service.
+//     and a run on this upstream is always admitted by the budget backend
+//     (C1.19), so this is a fact about how the run was started and not about
+//     the service.
 //   - a test upstream. Deps.GatewayUpstream redirects the api-key and vertex
-//     kinds to a stand-in; a cascade run's destination is the installation's
+//     kinds to a stand-in; this upstream's destination is the installation's
 //     own service and nothing else, so a test that set both is told rather
 //     than silently sent to the service.
 //
@@ -514,16 +650,16 @@ func (r *run) serviceUpstream() (gateway.Upstream, error) {
 	}
 	url := envLookup(r.d.Env, credentialsServiceURLEnv)
 	if url == "" {
-		return gateway.Upstream{}, fmt.Errorf("starting the gateway: agent.auth is %s and this job has no credentials service: %s is not set, so the installation has not opted into one (D147) and this run has no credential of its own to fall back to (D143)", config.AuthCascade, credentialsServiceURLEnv)
+		return gateway.Upstream{}, fmt.Errorf("starting the gateway: agent.auth is %s and this job has no credentials service: %s is not set, so the installation has not opted into one (D147) and this run has no credential of its own to fall back to (D143)", r.modelAuth(), credentialsServiceURLEnv)
 	}
 	if r.d.GatewayUpstream != "" {
-		return gateway.Upstream{}, fmt.Errorf("starting the gateway: a cascade run's upstream is the installation's own credentials service (%s), not a test upstream", credentialsServiceURLEnv)
+		return gateway.Upstream{}, fmt.Errorf("starting the gateway: a run whose auth is %s has the installation's own credentials service (%s) as its upstream, not a test upstream", r.modelAuth(), credentialsServiceURLEnv)
 	}
 	r.mu.Lock()
 	sess := r.sess
 	r.mu.Unlock()
 	if sess == nil {
-		return gateway.Upstream{}, errors.New("starting the gateway: a cascade run has no run identity: the budget backend is what admitted it, and the credentials service verifies the run by the identity that admitted it")
+		return gateway.Upstream{}, fmt.Errorf("starting the gateway: a run whose auth is %s has no run identity: the budget backend is what admitted it, and the credentials service verifies the run by the identity that admitted it", r.modelAuth())
 	}
 	job, err := r.jobName()
 	if err != nil {
@@ -535,7 +671,7 @@ func (r *run) serviceUpstream() (gateway.Upstream, error) {
 		// above -- but an upstream that reports no job is one the gateway
 		// refuses anyway (validate), and a run that got here with none
 		// should stop where the reason is known rather than there.
-		return gateway.Upstream{}, errors.New("starting the gateway: a cascade run has no Cloud Run job name to report")
+		return gateway.Upstream{}, fmt.Errorf("starting the gateway: a run whose auth is %s has no Cloud Run job name to report", r.modelAuth())
 	}
 	svc := &gateway.Service{
 		Job:        job,
@@ -550,7 +686,25 @@ func (r *run) serviceUpstream() (gateway.Upstream, error) {
 	if hold := r.slipHold(); hold != nil {
 		svc.SlipID, svc.SlipClaim = hold.id, hold.secret
 	}
-	return gateway.Upstream{Kind: gateway.KindService, BaseURL: url, Service: svc}, nil
+	up := gateway.Upstream{Kind: gateway.KindService, BaseURL: url, Service: svc}
+	if auth := r.modelAuth(); ServiceSwitchedAuth(auth) {
+		// What this run's own repository goes out on, declared so the service
+		// can hold the call to that repository's record (D2070 (a), B2.1). A
+		// cascade run declares nothing: the record the service narrows it to
+		// is its own repository's already, and "" is the contract's "no
+		// declaration" (credsvc.RequestFromHTTP).
+		up.AuthMode = auth
+		if auth == "oauth" {
+			// The account this run was launched on, spelled as a message
+			// spells one: the run's own selection, "" being the account a run
+			// that named none uses (config.DefaultClaudeAccount). It is what
+			// the service reads the repository's accounts against, so a run
+			// launched on an account that repository's record does not name is
+			// refused rather than served another's.
+			up.Account = selectedName(r.launchAccount())
+		}
+	}
+	return up, nil
 }
 
 // execName is what a local invocation is called, for the sentences that have
@@ -866,7 +1020,14 @@ func gatewayHalt(gh gateway.Halt) runstore.Halt {
 	if scope == "" {
 		scope = "run"
 	}
-	return runstore.Halt{Reason: runstore.HaltReason(gh.Reason), Scope: scope, At: gh.At.UTC(), Detail: gh.Detail}
+	return runstore.Halt{Reason: runstore.HaltReason(gh.Reason), Scope: scope, At: gh.At.UTC(), Detail: gh.Detail,
+		// The workspace's own marker travels with the halt and nowhere else
+		// (gateway.Halt.WorkspaceRefusal): the gateway read it off the
+		// refusal the workspace's credentials service answered, so this is
+		// the service's statement about itself and not something the run
+		// inferred. It is carried into the record verbatim, and the runner
+		// decides nothing with it.
+		WorkspaceRefusal: gh.WorkspaceRefusal}
 }
 
 // closeGateway stops the gateway, once, and takes the run's model cost from

@@ -5,7 +5,9 @@ O5 (#2043), O6 (#1950), O7 (#2040), O8 (#2064), O10 (#2191), O17 (#2024) and O18
 started: O11, O13, O14 (it follows #2193 and #2207), and the three this revision writes — **O16 is now two tasks**: **O16a** (the state scopes,
 the catalogue rows and the read handlers, dormant; **approved and launchable**, after the open #1994) and **O16b** (serving them; approved,
 waits on the MCP folder's wiring task), and **O19** (a workspace's refusal pauses the queue; approved, its gate W7 #2275 merged and **the reading of
-2026-11-13 found the run record does not mark the refusal, so it is blocked on a W-side record change** — U12 resolved NO). **The owner answered
+2026-11-13 found the run record does not mark the refusal, so it was blocked on a W-side record change** — U12 resolved NO, and that change is now
+in a draft pull request: `halt.workspace_refusal` on the halt, 2026-11-15, while the marker names a refusal without authenticating one, so O19
+still owes U12's bound on the pause or a source a run cannot write). **The owner answered
 D2020-D2022 as recommended and approved all tasks on 2026-11-10** (reconciliation section 8). The paragraph below is the status of 2026-11-08, kept.
 
 **Status (2026-11-08): six tasks of this plan are built, all merged on `main`.** **Task O0, the state schema, the typed patch and the validator, is merged on `main`** on
@@ -35,7 +37,9 @@ which amends Q2: `fugaro update` re-renders an installed unit when the rendered 
 installs one** — O9, G11, and reconciliation section 6), and
 **D1243** (the session-start print reads a local cache the daemon writes: O8 gains the cache writer and O10 moves to level 4). D1241 lifts O2's gate,
 D1242 gates nothing, **Q1** rules that the rollback is manual with the old scripts kept 14 days and no command built for it (O11, Check 302), Q3 names
-the notification channel, and Q4 gates slice 2 on a measured 14-day run of slice 1.
+the notification channel, and Q4 gates slice 2 on a measured 14-day run of slice 1 — **a gate the owner waived on 2026-11-14: slice 2 is approved now,
+without the 14 days and without waiting for Check 303, whose number is still measured but gates nothing, and the 14 days stays only as Q1's rollback
+window for the old scripts, which gates nothing**.
 
 ## 1. Opening and status
 
@@ -75,7 +79,7 @@ Findings are cited as F#, decisions as D#, open tensions as T# (reconciliation s
 | Q2 (**the owner's answer, 2026-11-04 — a different answer from the one this PR first recorded, which is superseded**) | **`fugaro setup` installs the unit** as one of its listed steps (real terminal only, refused under a coding agent's marker, and in a managed project no extra confirmation: the plan line names the unit and its path), **upgrades move to `fugaro orchestrator install`**, and **`fugaro update` never touches the unit** — **amended 2026-11-05 by T7: `update` never *installs* a unit, and it does re-render and reload one already installed**; the HARD RULE carve-out it left is **T7**, now ruled | O8, O9, G11 |
 | **T7 (2026-11-05, not the recommendation; amends Q2)** | **`fugaro update` re-renders the daemon's unit when the rendered template changed, so the HARD RULE is literally true**: it only ever re-renders and reloads a unit that is **already installed** (never installs one, never creates one for a project that did not choose it), behind the same plan-and-confirm rules as every other `update` step (a managed project's gate stays, a terminal asks for the step's class); `fugaro setup` still installs the first one (Q2); `fugaro orchestrator install` stays the explicit command but no release's `### For operators` ever needs it; the daemon's self-restart and its start-up `Migrate` stay | O8, O9, G11 |
 | Q3 | The macOS notification plus the owner's existing mobile push; Linux falls back to the desktop notifier. What the tree actually carries is U9: no push implementation, and the mailbox is a foreground channel | O7, O9 |
-| Q4 | Slice 2 (O12, O13) is approved only after slice 1 has run 14 days and Check 303 measured the cycle cost | O12, O13, D1228 |
+| Q4 | Slice 2 (O12, O13) is approved only after slice 1 has run 14 days and Check 303 measured the cycle cost — **waived by the owner on 2026-11-14: slice 2 is approved now, without the 14 days and without waiting for Check 303, whose number is still measured but gates nothing; the 14 days stays only as Q1's rollback window for the old scripts and gates nothing** | O12, O13, D1228 |
 | **D2020-D2022 (2026-11-10, all the recommendation)** | Asked when O16 and O19 were made tasks: the front door reads the node through a read-only custom role (D2020 (a)), `apply_patch` is not served in this plan (D2021 (a)), O19 is a workspace's refusal pausing the queue (D2022 (a)). Each answer is what O16a, O16b and O19 are written to; reconciliation section 8 | O16a (D2021), O16b (D2020), O19 (D2022) |
 
 **Tensions** (reconciliation section 6): the ones the plan must not resolve are T2 (the launch in v1 is the local `fugaro run` path, never an MCP
@@ -609,13 +613,16 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   `TestModelComesFromTheClassifierNotTheOutput`, `TestDecisionCannotSpawnAnUnapprovedItem`, `TestOutputTokenPinIsPassed`, `TestCountersSurviveARestart`.
 - **Command:** `go test ./internal/orchestrator/decide/ -count=1`
 - **Depends on:** O0, O1, O3, O4, O6. **Level 2.** Not started before the owner approves slice 2 by name, and **Q4 adds a gate under that go
-  (answered 2026-11-04, the recommendation): slice 2 is approved only after slice 1 has run 14 days and Check 303 has measured the cycle cost. The
+  (answered 2026-11-04, the recommendation): slice 2 is approved only after slice 1 has run 14 days and Check 303 has measured the cycle cost —
+  waived by the owner on 2026-11-14, so slice 2 is approved now, without the 14 days and without waiting for the check, whose number is still
+  measured but gates nothing, the 14 days staying only as Q1's rollback window for the old scripts. The
   bounds D1228 proposes (6 calls per hour, 40 per day, a breaker at 3) stay proposals until Check 303's number confirms or replaces them.**
 - **Commit:** `feat(orchestrator): the bounded decision agent (O12)`
 - **Red step:** `TestDecisionAgentRunsWithTheAgentDenyRules` fails to build, then fails when the runner omits the deny rules.
 - **OWNER-RUN, Check 303 (text written by O2):** with the owner's own Claude login: one real decision call, the count caps and the breaker proved, the cost of a cycle
   measured (this is what turns U4 from a target into a number). **It is also Q4's gate:** slice 2's approval waits for this number and for slice 1's 14 days, so
-  the check is run before O12 is started, not after.
+  the check is run before O12 is started, not after — **and the owner waived that gate on 2026-11-14: slice 2 is approved without it, the number is still
+  measured and gates nothing, and what the check is now is an owner-run measurement rather than a gate O12 waits behind**.
 - **Reviewer:** security (prompts and the agent environment).
 
 ### O13. The decision agent in the tick (slice 2)
@@ -628,7 +635,8 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
 - **Tests:** `TestTickWakesTheAgentOnlyForJudgementCases`, `TestHeartbeatsNeverWakeTheAgent`, `TestBreakerPausesTheDaemon`, `TestDecideIsOffByDefault`.
 - **Command:** `go test ./internal/orchestrator/ ./internal/cli/ -run 'Decide|WakesTheAgent|Heartbeats|BreakerPauses' -count=1`
 - **Depends on:** O8, O12, O11 (both regenerate `cli-reference.md`, so they are chained), and **Q4's gate, which it shares with O12** (slice 1 run
-  14 days, Check 303's cost measured). **Level 6.**
+  14 days, Check 303's cost measured) — **waived by the owner on 2026-11-14: slice 2 is approved without it, so the 14 days is only Q1's rollback
+  window for the old scripts and Check 303's number is still measured but gates nothing**. **Level 6.**
 - **Commit:** `feat(orchestrator): wake the decision agent for judgement cases only (O13)`
 - **Red step:** `TestHeartbeatsNeverWakeTheAgent` fails to build, then fails when a heartbeat triggers a call.
 - **Reviewer:** security.
@@ -861,7 +869,7 @@ either half (D2021, answered (a) on 2026-11-10).
 - **Depends on:** O17. **Level 3.** **Commit:** `feat(ee): batch approval for orchestrator work items (O18)`. **Red step:** `TestBatchDefaultIsTenAndOnlyAPersonRaisesIt`.
   **Reviewer:** security.
 
-### O19. `ee/`: a workspace's refusal pauses the queue (slice 3; approved 2026-11-10; BLOCKED 2026-11-13 on a W-side record change — U12 resolved NO)
+### O19. `ee/`: a workspace's refusal pauses the queue (slice 3; approved 2026-11-10; BLOCKED 2026-11-13 on a W-side record change — U12 resolved NO; **the W-side change landed 2026-11-15 as `halt.workspace_refusal`, and O19 itself is still its own task**)
 
 **What "workspace caps" can mean, read against `main` on 2026-11-10** (reconciliation section 8, F29). D1222 put "workspace caps" in `ee/`
 and said nothing more. The workspaces work is now mostly on `main`: W0-W6 and W8 are merged and **W7 — the cap's meter, its alarm and the
@@ -879,7 +887,7 @@ such cycles (`internal/orchestrator/breaker.go`, `BreakerThreshold`). **D2022** 
 - **Files (13):** `internal/orchestrator/hooks.go` (edit: a `WorkspaceFuncs` seam, `Refused func(RunReport) bool`, set once by
   `ee/register`; **the core default answers false**, so an untagged build behaves exactly as today), `internal/orchestrator/hooks_test.go`
   (edit), `internal/orchestrator/runview.go` (edit: `RunReport` carries the refusal's source as the run record states it — **the field's name
-  and spelling would be W7's, and #2275 merged without writing one**), `internal/cli/orchestrator_run.go` (edit: the reader fills that field from the run
+  and spelling were W7's to set, and #2275 merged without writing one — it is `halt.workspace_refusal` as of 2026-11-15, below**), `internal/cli/orchestrator_run.go` (edit: the reader fills that field from the run
   record) with `internal/cli/orchestrator_run_test.go` (edit), `internal/orchestrator/breaker.go` (edit: a trip at once, which raises the **same** `breaker-tripped` decision with the
   workspace's reason, so the pause is the one `Plan` already refuses over through `BreakerOpen`, `breaker.go:126`, and no new pause
   mechanism or decision kind exists), `internal/orchestrator/breaker_test.go` (edit), `internal/orchestrator/tick.go` (edit: the fold asks
@@ -902,8 +910,11 @@ such cycles (`internal/orchestrator/breaker.go`, `BreakerThreshold`). **D2022** 
 - **Command:** `go test ./internal/orchestrator/ -run 'Workspace|Breaker|Tick' -count=1 && go test ./internal/cli/ -run TestRunViewCarriesTheWorkspaceRefusal -count=1 && go test ./ee/orchestrator/ ./ee/register/ -run 'Workspace|Orchestrator' -count=1 && go test ./internal/eeboundary/ -count=1`
 - **Depends on:** O6, O7, O8 and O18 (merged), **O14** (it writes `tick.go` at level 7), and externally **D2022 answered (a)** (done
   2026-11-10) and **W7** (#2275, merged 2026-11-11 as `d3b7613f`). **Serializes after** the open #2207 (`internal/cli/orchestrator_run.go`) and #2202 (`internal/cli/orchestrator_run_test.go`), and after O13 and O14 (`tick.go`,
-  `orchestrator_run.go`). **Level 8**, and both external triggers have fired — **which does not make it launchable: the reading below blocks it,
-  and what unblocks it is a W-side change that puts the refusal's source in the run record, not W7's merge.**
+  `orchestrator_run.go`). **Level 8**, and both external triggers have fired — **which did not make it launchable: the reading below blocked it,
+  and what unblocks it is a W-side change that puts the refusal's source in the run record, not W7's merge. That change landed 2026-11-15
+  (`halt.workspace_refusal`, the third reading below) — **and it does not make O19 launchable on its own: the marker names a refusal without
+  authenticating one, so the bound U12 asked for is still O19's to write**, which the third reading below states; scheduling O19 after the
+  record change is the plan's to do, and nothing in this task is done here.**
 - **What waits, exactly, and the trigger:** the `RunReport` field and the reader's mapping waited for **W7's merge** — the trigger, #2275, which
   landed 2026-11-11 — and the first act was reading how a call the workspace refused (its stop, its cap or a failed settle) reaches the run
   record — where the plan already stated the stand: **if it does not reach it distinguishably, O19 cannot be built as written and is reported to
@@ -913,6 +924,17 @@ such cycles (`internal/orchestrator/breaker.go`, `BreakerThreshold`). **D2022** 
   the same `budget_unavailable`/`run` halt a member's own service outage writes, and the cap's refusal is on no call path at all, so O19 is
   blocked and no task of this plan implements it until a W-side change puts the refusal's source in the record — the reading, with its
   citations, is `docs/stateless-orchestrator/reconciliation.md` **U12 (resolved NO)**.
+  Read 2026-11-15 (**the W-side change U12 asked for has landed, and it is not this task's**): a run a workspace refused can say so in its own
+  record — `halt.workspace_refusal` (`runstore.Halt.WorkspaceRefusal`), one of `stop`, `cap` or `settle`, absent for every run no workspace
+  refused. The member's gateway reads the marker off a refusal onto the halt (`gateway.WorkspaceRefusalHeader`, `internal/gateway/service.go`'s
+  `serviceAnswer`) and the runner copies it into the record (`internal/runner/gateway.go`'s `gatewayHalt`); `credsvc.SetWorkspaceRefusal` is
+  the writer and has no caller yet, so no refusal of this release carries it; the halt's `reason`, `scope` and `detail` are what they always
+  were. So the field `RunReport` waits for is named and on `main`, and **O19 is a task of its own that reads it** — the seam, the trip at once
+  and the tests are still O19's to write. **The field does not meet U12's consideration, and O19 must not read it as if it did:** the record is
+  the run's own write, so a run can put the marker in its own record — its job account writes `result.json`, and a hostile run reads that
+  account's token from the metadata server (`SECURITY.md`, "Runs of one repository can see each other") — and O19 therefore still owes a bound
+  on the pause, or a source a run cannot write, before it stops a queue on a claimed refusal. The field names the refusal; it does not
+  authenticate it.
 - **Commit:** `feat(ee): a workspace's refusal pauses the orchestrator's queue (O19)`
 - **Red step:** `TestAWorkspaceRefusalPausesTheQueueAtOnce` fails to build (no seam), then fails while a refused run is folded as an ordinary
   refusal and the next approved item is launched into the same stop.
@@ -947,7 +969,8 @@ it: the refusal is unmarked in the run record, so O19 waits on a W-side record c
 
 **Critical path:** O0 -> O3 -> O5 -> O8 -> O9 -> O11, six levels, unchanged by D1243 (O10's own path is O0 -> O3 -> O5 -> O8 -> O10, five). Slice 1
 (O0-O11 minus O12/O13) completes at level 5; slice 2 adds O12 at level 2 and O13 at level 6 (after O11, because both regenerate `cli-reference.md`),
-one level beyond slice 1 once approved **and once Q4's gate is met**; slice 3's `ee/` tasks run beside slice 1, its MCP task waits. **BF2's O14 is the
+one level beyond slice 1 once approved **and once Q4's gate is met — a gate the owner waived on 2026-11-14, so what slice 2 waits for is the
+owner's own go by name**; slice 3's `ee/` tasks run beside slice 1, its MCP task waits. **BF2's O14 is the
 deepest task in the plan at level 7 and it is not a critical-path step**: its rule needs nothing past level 3, and the chain that reaches it is the
 generated `cli-reference.md` alone (O9 -> O11 -> O13 -> O14), so the daemon's triage behaviour is ready with slice 1 and only its read-only command,
 which regenerates that file, lands last.
@@ -1032,7 +1055,8 @@ a second instance, **the upgrade half — a brew-style upgrade on a throwaway ma
 binary and hand over to it with no command typed — and T7's own half, a release that changes the unit's template converging under `fugaro update`
 alone, with a second `update` writing nothing**), 302 (O11: the cutover on the owner's own installation **and, inside the 14 days, the manual rollback** — stop the daemon with
 `fugaro orchestrator uninstall`, re-arm the sweep, the watcher and the queue scripts, and see one launch through them), 303 (O12: one real decision
-call and the measured cost, **which is Q4's gate for slice 2 together with slice 1's 14 days**), 304 (O17:
+call and the measured cost, **which was Q4's gate for slice 2 together with slice 1's 14 days — waived by the owner on 2026-11-14: the number is
+still measured and gates nothing, as the 14 days, which stays only as Q1's rollback window for the old scripts**), 304 (O17:
 a two-person handoff), 305 (**O16b**: the MCP state group, served — O16b writes its text; O16a serves nothing and claims none). 306-309 are reserved. **BF2's O14 claims none of them**: its merge and cancel
 paths are exercised against the fake provider and the fake backend, and the first real automatic merge happens on the owner's own installation, which is
 where a Check would go if the owner wants one. No agent performs any of them. **Check 300 is the one of these that has run — PASSED
@@ -1068,8 +1092,10 @@ follows the ruling through O9, G11 and the conventions above.
 - **Q3 (P2): answered.** The macOS OS notification, plus the owner's existing mobile push as the second channel; Linux falls back to the desktop
   notifier. **What the tree actually carries is U9** (reconciliation section 5): no push implementation exists in it, so the mobile half is UNVERIFIED
   against `main` and slice 1 ships the OS notification.
-- **Q4: answered.** Slice 2 (O12, O13) is approved only after slice 1 has **run 14 days** and **Check 303 has measured the cycle cost**, which is also
-  what turns D1228's proposed bounds (6 per hour, 40 per day, the breaker at 3) from proposals into numbers. The gate sits on O12 and on O13.
+- **Q4: answered, and waived on 2026-11-14.** Slice 2 (O12, O13) is approved only after slice 1 has **run 14 days** and **Check 303 has measured the cycle cost**, which is also
+  what turns D1228's proposed bounds (6 per hour, 40 per day, the breaker at 3) from proposals into numbers. The gate sits on O12 and on O13 — **and the
+  owner waived it on 2026-11-14: slice 2 is approved now, without slice 1's 14 days and without waiting for Check 303, whose number is still measured but
+  gates nothing; the 14 days stays only as Q1's rollback window for the old scripts, and it gates nothing either.**
 - **Open items (round 3): two of the three are now ruled.** (1) **D1242 is answered and gates nothing**: the terminal Typed confirmation stands, the
   paired-device channel comes later, and the later channel may reshape O0's `Approval` without any task or test here depending on that shape. (2) **The
   retry rule is answered, not the recommendation: the spec's "Task failed, first time: Code retries" row stands.** One approval covers the first attempt

@@ -253,8 +253,13 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
   of the renewal secret, and a service account that reads and writes the key object and nothing else; where the condition holds it is **always applied** (the core
   never reads a key, D524) and its command no-ops with no key or an offline key. On a managed project it is
   applied without a prompt; elsewhere `update` asks as for any new resource. It also creates the empty Secret
-  Manager secret for the renewal secret and grants the job's account `secretmanager.versions.add` on that one
-  secret only. Tests:
+  Manager secret for the renewal secret and grants the job's account, on that one secret only, all four of the
+  calls K4.1 makes on it: `secretmanager.secrets.get` (the container's own metadata),
+  `secretmanager.versions.list` (the versions a key proves itself with), `secretmanager.versions.access` (the
+  payload of one of them) and `secretmanager.versions.add` (the version a renewal writes). **Amended
+  2026-11-14 by K4.1:** this line named `secretmanager.versions.add` alone, which under-provisions the account
+  — the job reads the container's metadata and lists its versions before it writes anything, so it would fail
+  at its first exchange with the very grant this task applies. Tests:
   `TestUpdateAddsTheRenewalJobAndLeavesARunInFlightRunning`, `TestRunImagesCarryNoKey`,
   `TestRenewalServiceAccountReadsOnlyTheKeyObject` (terraform tag). Command: `go test -tags terraform ./internal/infra/... -run Licence -count=1`
   and `go test ./internal/cli/ -run 'TestUpdateAdds' -count=1` and `go test ./images/ -run TestRunImagesCarryNoKey -count=1`. Depends on: K4.1.

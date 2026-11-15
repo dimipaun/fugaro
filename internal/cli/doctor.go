@@ -3101,9 +3101,14 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) 
 		// mailbox grant — the state the operator's app meets — unexplained.
 		// The fix names what the redeploy adds over the deployed generation, as
 		// rulesMarkerOlderText does: a device-generation marker already has the
-		// mailbox, and only the coordinator's read grant is new to it.
+		// mailbox and only the coordinator's read grant is new to it, and a
+		// coordinator-generation marker already has that grant too and only the
+		// voice policy node is new to it.
 		adds := "the mailbox, the device binding and the coordinator's read grant"
-		if gen >= rulesDeviceGeneration {
+		switch {
+		case gen >= rulesCoordinatorGeneration:
+			adds = "the voice policy node"
+		case gen >= rulesDeviceGeneration:
 			adds = "the coordinator's read grant"
 		}
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",

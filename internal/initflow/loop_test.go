@@ -1155,8 +1155,8 @@ func TestAgentErrorFromAStageIsNeedsYou(t *testing.T) {
 // stopped in the gate's sentence — is the one thing it must not print (the
 // deadlock CV1 is about: every new repository of the project blocked behind a
 // confirmation nobody can answer). A step the gate never reached a verdict on
-// says so rather than blaming a cover that read nothing. And a step whose
-// CLASS no plan gate covers (D1026) is the OWNER's own to run: that one keeps
+// says so rather than blaming a cover that read nothing. And a step no plan
+// gate judges at all (D1026) is the OWNER's own to run: that one keeps
 // the stage's Left, because "the one command the owner runs themselves" is
 // what spec §4.3 requires of a refusal and the whole of what an agent's report
 // to its owner is for.
@@ -1198,10 +1198,10 @@ func TestARefusedStepIsNeverTheStagesOwnPrompt(t *testing.T) {
 			notText: []string{"type the project's name", "fugaro update"},
 		},
 		{
-			what: "a step whose confirmation class no plan gate covers", refusal: GateRefusedClass, left: commandLeft,
+			what: "a step no plan gate may judge", refusal: GateRefusedUnjudged, left: commandLeft,
 			wantKind: LeftCommand,
 			wantText: []string{"fugaro update"},
-			// The class refusal is NOT a plan outside the cover (D1026 refused
+			// The D1026 refusal is NOT a plan outside the cover (it refused
 			// the step, not the document), and it must not be told to file an
 			// issue: the owner runs this one themselves (spec §4.3), which is
 			// the whole of what an agent's report to them is for.
@@ -1262,7 +1262,7 @@ func TestARefusedStepIsNeverTheStagesOwnPrompt(t *testing.T) {
 				if strings.Contains(out.String(), "left for you ("+Installation+", prompt)") {
 					t.Errorf("the refused step printed the stage's own prompt:\n%s", out.String())
 				}
-				if sh.refusal != GateRefusedClass {
+				if sh.refusal != GateRefusedUnjudged {
 					if cmds := lf.PrintedCommands(); len(cmds) != 0 {
 						t.Errorf("the refused step printed the commands %q: no command helps, so listing one is the same mistake as the prompt", cmds)
 					}
@@ -1383,50 +1383,29 @@ func TestNoTerminalErrorSaysATerminalAndNeverAFlag(t *testing.T) {
 	}
 }
 
-// The zero value of ConfirmClass is Typed, the strictest: a caller that names
-// no class — a zero value, a field nobody set, a class left out of a table —
-// refuses a confirmation rather than giving one, the direction every mistake in
-// this package falls (as with Managed's zero value, and Covers and Removes
-// being methods rather than fields). --yes at a real terminal is the sharpest
-// way to say it: the permissive class takes it, the strictest does not.
-func TestZeroConfirmClassIsTheStrictest(t *testing.T) {
-	if ConfirmClass(0) != Typed {
-		t.Fatalf("the zero ConfirmClass is %d, want Typed (%d): a caller that names no class must not be handed the permissive one", ConfirmClass(0), Typed)
-	}
-	all := Conditions{Yes: true, Terminal: true}
-	if got, want := CanConfirm(ConfirmClass(0), all), CanConfirm(Typed, all); got != want || got {
-		t.Errorf("CanConfirm(zero class, --yes at a terminal) = %v, want %v (the Typed rule)", got, want)
-	}
-	if !CanConfirm(YesOrTyped, all) {
-		t.Error("YesOrTyped no longer takes --yes at a terminal")
-	}
-	if YesOrTyped == Typed {
-		t.Error("the two classes are no longer distinct")
-	}
-}
-
-func TestCanConfirm(t *testing.T) {
-	type c = Conditions
-	term := c{Terminal: true}
+// CanConfirmRun is the run's own one confirmation — the step the run announces
+// and then applies, at the person's own answer — and it is the whole rule of
+// who may give a money-or-permanent one: a person at a real terminal, and a
+// coding agent's session, a pipe, --json and a run that never prompts never.
+// There is no class to pick a permissive answer from any more (T12), so the
+// rule is one predicate and the caller's own questions (--ask, --plan-only) are
+// read where they belong.
+func TestCanConfirmRun(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		class ConfirmClass
-		cond  Conditions
-		want  bool
+		name string
+		cond Conditions
+		want bool
 	}{
-		{"typed at a terminal", Typed, term, true},
-		{"typed, --yes", Typed, c{Terminal: true, Yes: true}, false},
-		{"typed, --non-interactive", Typed, c{Terminal: true, NonInteractive: true}, false},
-		{"typed, --json", Typed, c{Terminal: true, JSON: true}, false},
-		{"typed, no terminal", Typed, c{}, false},
-		{"typed, agent", Typed, c{Terminal: true, Agent: "CLAUDECODE"}, false},
-		{"yes covers", YesOrTyped, c{Yes: true}, true},
-		{"yes is not enough for an agent", YesOrTyped, c{Yes: true, Terminal: true, Agent: "AI_AGENT"}, false},
-		{"typed route for the covered class", YesOrTyped, term, true},
-		{"covered class, nothing", YesOrTyped, c{}, false},
+		{"a person at a real terminal", Conditions{Terminal: true}, true},
+		{"--json", Conditions{Terminal: true, JSON: true}, false},
+		{"no terminal", Conditions{}, false},
+		{"a run that carries its own answer", Conditions{Terminal: true, Yes: true}, false},
+		{"a run that never prompts", Conditions{Terminal: true, NonInteractive: true}, false},
+		{"a coding agent's session", Conditions{Terminal: true, Agent: "CLAUDECODE"}, false},
+		{"a coding agent's session, no terminal", Conditions{Agent: "AI_AGENT"}, false},
 	} {
-		if got := CanConfirm(tc.class, tc.cond); got != tc.want {
-			t.Errorf("%s: CanConfirm = %v, want %v", tc.name, got, tc.want)
+		if got := CanConfirmRun(tc.cond); got != tc.want {
+			t.Errorf("%s: CanConfirmRun = %v, want %v", tc.name, got, tc.want)
 		}
 	}
 }
@@ -1536,8 +1515,14 @@ func TestYesCoversOnlyDeclaredStages(t *testing.T) {
 	}
 }
 
-// Over every mode: the one confirmation is taken by a person at a real
-// terminal and by nothing else, exactly like a Typed step.
+// Over every mode the loop can be run in: the one confirmation is taken by a
+// person at a real terminal and by nothing else. It is the rule the run reads
+// when it decides whether its own announced step is answered, so a mode that
+// reached it without a person — a pipe, --json, a coding agent's session, a run
+// that carries an answer of its own, a run that never prompts — is a
+// confirmation nobody gave. The rows are the loop's own options rather than a
+// table written here: a run whose options say nobody can answer, and whose
+// predicate answered true anyway, would be the whole bug this test is for.
 func TestCanConfirmRunMatrix(t *testing.T) {
 	for _, m := range modes() {
 		t.Run(m.name, func(t *testing.T) {
@@ -1545,9 +1530,6 @@ func TestCanConfirmRunMatrix(t *testing.T) {
 			want := c.Terminal && !c.Yes && !c.NonInteractive && !c.JSON && c.Agent == ""
 			if got := CanConfirmRun(c); got != want {
 				t.Errorf("CanConfirmRun(%+v) = %v, want %v", c, got, want)
-			}
-			if CanConfirmRun(c) != CanConfirm(Typed, c) {
-				t.Errorf("the run confirmation is not the Typed rule")
 			}
 		})
 	}

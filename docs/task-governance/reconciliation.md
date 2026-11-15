@@ -424,7 +424,10 @@ data every later governance step (G§7.3–7.9) and self-calibration read. G§7.
 - **U3** — Whether Claude Code's `result` line reports a call or sub-agent count usable for oauth
   runs (R1's oauth half).
 - **U4** — That `x-claude-code-agent-id` distinguishes every sub-agent from the main session
-  reliably (F12).
+  reliably (F12). **Open, and it gates T7.2:** the owner's ruling of 2026-11-15 records that Check
+  139 — the read-only look at one sandbox gateway run's `model call` entries, which is what answers
+  this — has not been run over any run, so nothing on the record answers U4 and T7.2 does not merge
+  until something does (`docs/gcp-live-checklist.md`, Check 139, **USER-RUN, NOT RUN**).
 - **U5** — The Cloud Run job's maximum task timeout, which bounds D329's alternative.
 - **U6** — Whether a required checkbox on an issue form is a sufficient licence grant (D328): the
   owner's, and counsel's, to confirm.

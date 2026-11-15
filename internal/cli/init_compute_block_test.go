@@ -43,10 +43,11 @@ func computeBlockRig(t *testing.T) *initRig {
 
 // provisionBatch runs the converge the way the owner does: --provision-batch, a
 // terminal, and the project's name on stdin (the typed-only confirmation of a
-// step that applies billable infrastructure).
+// step that applies billable infrastructure). Nothing stands in for the
+// terminal: no flag confirms this stage (T11), so the fake one is the whole of
+// the confirmation.
 func provisionBatch(t *testing.T, r *initRig) (string, error) {
 	t.Helper()
-	typedThroughYes(t)
 	fakeTerminal(t)
 	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--provision-batch")
 	return out, err
