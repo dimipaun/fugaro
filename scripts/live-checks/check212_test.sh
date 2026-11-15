@@ -1917,7 +1917,7 @@ test_a_machine_without_gh_still_deletes_the_branches() {
   for d in /usr/bin /bin; do
     for f in "$d"/*; do
       [[ ${f##*/} == gh ]] && continue
-      [[ -e $dir/sys/${f##*/} ]] || ln -s "$f" "$dir/sys/${f##*/}"
+      ln -sf "$f" "$dir/sys/${f##*/}"
     done
   done
   run_check "$dir" PATH="$dir/bin:$dir/sys"

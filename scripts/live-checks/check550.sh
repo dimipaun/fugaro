@@ -332,7 +332,9 @@ account_names() { # account_names FILE
 }
 
 has_account() { # has_account FILE NAME
-  account_names "$1" | grep -qx -- "$2"
+  # Read to the end rather than let grep -q close the pipe: under pipefail an
+  # early close fails the pipeline of a producer that is still writing.
+  account_names "$1" | grep -x -- "$2" >/dev/null
 }
 
 # pick_target FILE — the account to repoint onto: the first admitted account
@@ -487,7 +489,9 @@ step_release() {
   local v feature=no
   v=$(fugaro version 2>/dev/null | head -n 1 || true)
   fact "fugaro-version" PASS "${v:-fugaro version printed nothing}"
-  if "$FUGARO_BIN" accounts alias --help 2>/dev/null | grep -q 'set'; then feature=yes; fi
+  local usage
+  usage=$("$FUGARO_BIN" accounts alias --help 2>/dev/null || true)
+  case "$usage" in *set*) feature=yes ;; esac
   if [ "$feature" = no ]; then
     fact release FAIL "this fugaro has no 'accounts alias' command: 'fugaro accounts alias --help' does not name 'set', so neither the command nor the resolver the two runs below are a reading of is in this build. Check 550 needs release ${RELEASE} (the account-aliases work) or later. Run 'fugaro update' at your terminal — that one command is the whole upgrade — and run this check again on the build it leaves you"
     stop "the installed fugaro has no 'accounts alias': this check needs release ${RELEASE}"
