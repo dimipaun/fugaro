@@ -270,7 +270,7 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 			// as it was read, and a coding agent's session reads why with the
 			// record of that refusal behind it. In every other session the zero
 			// gate answers here and the deletion proceeds exactly as it did.
-			m, gerr := gate.admit(ctx, policyPublishClass, policyDeleteVerdict(raw))
+			m, gerr := gate.admit(ctx, policyDeleteVerdict(raw))
 			if gerr != nil {
 				return gerr
 			}
@@ -329,7 +329,7 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		// failure re-reads the marks and re-judges the node it would now write
 		// (D1024). A refusal is the gate's own sentence and the record of it is
 		// written before this returns.
-		m, err := gate.admit(ctx, policyPublishClass, policyPublishVerdict(old, pol, body, o.seedRepos, o.removeRouting))
+		m, err := gate.admit(ctx, policyPublishVerdict(old, pol, body, o.seedRepos, o.removeRouting))
 		if err != nil {
 			return err
 		}
