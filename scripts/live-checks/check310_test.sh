@@ -210,15 +210,23 @@ def scratch_notes():
             cwd_yaml = "yes" if SCRATCH_PROJECT in fh.read() else "elsewhere"
     except OSError:
         cwd_yaml = "no"
+    # The runs bucket a doctor read opens goes through gocloud's own gs://
+    # opener, which reads neither the config's storage endpoint nor its
+    # no_auth: only this variable keeps that read on the check's loopback, so a
+    # call that carries none of it reaches a real GCS and the case has to say
+    # so rather than read a pass out of the three fields beside it.
+    m = re.match(r"^http://([^/]+)/", loopback[0]) if loopback else None
+    emu = os.environ.get("STORAGE_EMULATOR_HOST", "")
+    emulator = "yes" if (m and emu == m.group(1)) else ("no" if not emu else "elsewhere")
     tf, plan = terraform_kind()
     with open(path, "a") as fh:
-        fh.write("project=%s config=%s named=%s endpoints=%d loopback=%d no_auth=%s cwd_yaml=%s api=%s terraform=%s plan=%s\n" % (
+        fh.write("project=%s config=%s named=%s endpoints=%d loopback=%d no_auth=%s cwd_yaml=%s api=%s emulator=%s terraform=%s plan=%s\n" % (
             os.environ.get("FUGARO_PROJECT", "unset"),
             "yes" if text else "no",
             "yes" if ("name: " + SCRATCH_PROJECT) in text else "no",
             len(urls), len(loopback),
             "yes" if "no_auth: true" in text else "no",
-            cwd_yaml, answer, tf, plan))
+            cwd_yaml, answer, emulator, tf, plan))
 
 
 # `fugaro version` is the check's first call and the one that carries no
@@ -661,7 +669,7 @@ update'
 # test: the run makes 8 calls and the one that carries no installation is
 # `fugaro version`, which answers only which binary is on PATH.
 expect_scratch_seen() { # file what
-  local want="project=chk310-scratch config=yes named=yes endpoints=21 loopback=21 no_auth=yes cwd_yaml=yes api=yes"
+  local want="project=chk310-scratch config=yes named=yes endpoints=21 loopback=21 no_auth=yes cwd_yaml=yes api=yes emulator=yes"
   local n bad other
   n=$(grep -c . "$1" 2>/dev/null || true)
   [ "$n" = 7 ] || fail "$2: $n call(s) of the run reported their plumbing, wanted the 7 the run makes besides 'fugaro version'"

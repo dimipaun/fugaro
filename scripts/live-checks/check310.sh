@@ -727,7 +727,16 @@ scratch_installation() {
     stop "the fake API root a --scratch run needs did not start (python3 never wrote its port to $GCP_PORT_FILE): $(first_line "$SCRATCH/fake-gcp.log")"
   fi
   write_scratch_config
+  # The config's `storage` endpoint and `no_auth` are read by the CLI's own JSON
+  # calls, but the runs bucket a `doctor` read opens goes through gocloud's
+  # `gs://` opener, which reads neither of them: without the emulator variable it
+  # loads whatever default credentials the machine has, asks the metadata server
+  # for the rest, and prints the failure on stdout ahead of the document — so the
+  # one JSON read this run makes never arrives, and a credential of yours is the
+  # one a real GCS would be asked with. It is the door that opener does read, and
+  # it takes a host:port rather than a URL.
   ENVV=(HOME="$SCRATCH_HOME"
+    STORAGE_EMULATOR_HOST="127.0.0.1:$GCP_PORT"
     XDG_STATE_HOME="$SCRATCH_STATE"
     XDG_CONFIG_HOME="$SCRATCH_CONFIG"
     TMPDIR="$SCRATCH_TMP"
