@@ -694,10 +694,10 @@ func (l *loopbackListener) Close() error { return l.srv.Close() }
 // anything: what the browser shows is a constant, so no value a request carried
 // can reach a page, and there is no escaping to get wrong.
 const (
-	loopbackCSP          = "default-src 'none'; base-uri 'none'; frame-ancestors 'none'"
-	loopbackDonePage     = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Fugaro</title></head><body><h1>Signed in</h1><p>The terminal has the sign-in. You can close this window and go back to it.</p></body></html>`
-	loopbackRefusedPage  = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Fugaro</title></head><body><h1>This is not the sign-in's own callback</h1><p>Nothing was changed, and the terminal that started the sign-in is still waiting for it.</p></body></html>`
-	loopbackMissPage     = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Fugaro</title></head><body><h1>Nothing is here</h1><p>Nothing was changed.</p></body></html>`
+	loopbackCSP         = "default-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+	loopbackDonePage    = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Fugaro</title></head><body><h1>Signed in</h1><p>The terminal has the sign-in. You can close this window and go back to it.</p></body></html>`
+	loopbackRefusedPage = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Fugaro</title></head><body><h1>This is not the sign-in's own callback</h1><p>Nothing was changed, and the terminal that started the sign-in is still waiting for it.</p></body></html>`
+	loopbackMissPage    = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Fugaro</title></head><body><h1>Nothing is here</h1><p>Nothing was changed.</p></body></html>`
 )
 
 // open is the browser step: this package's own opener unless the caller brought
