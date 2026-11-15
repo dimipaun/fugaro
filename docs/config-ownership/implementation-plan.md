@@ -4,7 +4,7 @@ Builds `spec.md` as amended by `reconciliation.md` (checked against `origin/main
 2026-11-15). **Nothing here is implemented, and no task is approved: each needs the owner's explicit go.**
 The owner's answers of 2026-11-15 shaped it: D2601 (seven modules), D2602 (semantic commands run the
 `policy` stage in-process, composite D1563 on failure), D2603, D2604, D2605, D2606, D2607, D2609 and D2610.
-Unanswered, and marked on each task that waits on them: D2608, D2611, D2612, D2613, D2614, D2615, D2616 (and
+Unanswered, and marked on each task that waits on them: D2608, D2611, D2612, D2613, D2614, D2615, D2616, D2617 (and
 the open tensions T3 and T5). The first task of the plan is the conformance test, as the spec rules.
 
 ## 1. Conventions
@@ -91,7 +91,7 @@ accounts, `K` cascade, `M` models, `L` labels, `I` integration, `D` documents.
 - Files: `internal/cli/write_publish.go` (new), `internal/cli/write_publish_test.go` (new). A package `init` sets `runAfterWrite = publishAfterWrite`; it sorts after the stub's, so the real one wins until I1 deletes the stub.
 - Interfaces: implements C1's `afterWriteFunc`; consumes `stagesNamed` (merged, #2757).
 - Tests: `TestAfterWritePublishesThePolicyStage`, `TestAfterWriteFailureKeepsTheLocalChange`, `TestAfterWriteUnderTheAgentMarkerPublishesNothing` (run against a repo-layer write and against a write a managed gate admits: an unmanaged project refuses every agent layer write for another reason and proves nothing), `TestAfterWriteSentenceIsOneHelper`, `TestAfterWriteRunsTheLayerStageForAProjectLayerKey`. Command: `GOFLAGS=-p=1 go test ./internal/cli -run 'TestAfterWrite' -count=1`.
-- Red step: remove the agent refusal in the subset path; `TestAfterWriteUnderTheAgentMarkerPublishesNothing` fails (mutation check).
+- Red step: remove the agent refusal in `policyMigrateStage.Apply` (`init_policy_migrate.go`); `TestAfterWriteUnderTheAgentMarkerPublishesNothing` fails (mutation check).
 - Depends on: C1 (implements its signature).
 - Commit: `cli: a semantic command runs the policy stage after its write (N3)`.
 - Reviewer tier: opus with a mandatory independent review (policy publish, agent refusal).
@@ -110,14 +110,14 @@ accounts, `K` cascade, `M` models, `L` labels, `I` integration, `D` documents.
 - Acceptance: with no `--layer`, a Tighten key writes the project layer when one exists (else local), a Replace key keeps the repo default; `--layer` overrides; a layer the key does not have refuses naming the layers it has; `agent.x --layer project` and `layer.defaults.agent.x --layer project` write the same bytes and the file reads back; no key is written to a place the layer refuses at re-read. **WAITS ON D2612** (composite AP5 owns `settings_set.go`).
 - Files: `internal/cli/settings_set.go`, `internal/cli/settings_set_test.go`, `internal/cli/settings_layer_default_test.go` (new).
 - Interfaces: changes `settingsResolveTarget`'s default; every caller (`rigor`, `rigor_floor`, `accounts pool`) is covered by the existing tests.
-- Tests: `TestSettingsDefaultLayerByMergeRule`, `TestSettingsAgentKeyProjectSpelling`, `TestSettingsWrongLayerRefusesNamingTheRight`, `TestSettingsRowsNeverWriteWhereTheLayerRefusesAtReread`. Command: `GOFLAGS=-p=1 go test ./internal/cli -run 'TestSettingsDefaultLayer|TestSettingsAgentKey|TestSettingsWrongLayer|TestSettingsRowsNever|TestConsole|TestSettingsSet' -count=1`.
+- Tests: `TestSettingsDefaultLayerByMergeRule`, `TestSettingsAgentKeyProjectSpelling`, `TestSettingsWrongLayerRefusesNamingTheRight`, `TestSettingsRowsNeverWriteWhereTheLayerRefusesAtReread`, `TestAgentCeilingRaiseThroughTheProjectSpellingIsRefused` (a raise of `agent.max_budget_usd --layer project` in an agent session is refused with the old value read at the mapped `layer.defaults` path, under a managed gate that admits the write). Command: `GOFLAGS=-p=1 go test ./internal/cli -run 'TestSettingsDefaultLayer|TestSettingsAgentKey|TestSettingsWrongLayer|TestSettingsRowsNever|TestConsole|TestSettingsSet' -count=1`.
 - Red step: `TestSettingsAgentKeyProjectSpelling` fails today with "agent: is not a project layer key" (the audit's probe).
 - Depends on: none.
 - Commit: `settings: a ceiling defaults to the project layer, and the agent keys take --layer project (W1)`.
-- Reviewer tier: standard (the project layer's loosening judgement is untouched; the reviewer confirms it).
+- Reviewer tier: opus with a mandatory independent review (a new spelling in front of a ceiling's fence).
 
 ### W2: per-stage governance rows, the project default and the agent fence (cm-write-path)
-- Acceptance: `governance.stage_timeout.<stage>`, `stage_budget.<stage>`, `stage_tokens.<stage>` and `tiers.<name>` have concrete rows at the repo and project layers; the four broken block rows are gone; `settings set governance.stage_timeout.implement 1h` writes the project layer and reaches a run's resolution; a repo write needs `--layer repo` and may only tighten (a looser value refuses); a project-layer raise is refused in a coding agent's session, with the same sentence the other raises print (the fence is `settingsCeilingKey` and `settingsLoosens`, which already cover the unprefixed `governance.*` and fail closed on durations; `TypedWhy` is not it); the four block rows stay as read rows that no longer list themselves writable, so `settings --json`'s keyDefaults loses no member (a field never changes meaning). That the write reaches a run depends on the layer stage (F19). **WAITS ON D2612 and D2615.**
+- Acceptance: `governance.stage_timeout.<stage>`, `stage_budget.<stage>`, `stage_tokens.<stage>` and `tiers.<name>` have concrete rows at the repo and project layers; the four broken block rows are gone; `settings set governance.stage_timeout.implement 1h` writes the project layer and reaches a run's resolution; a repo write needs `--layer repo` and may only tighten (a looser value refuses); a project-layer raise is refused in a coding agent's session, with the same sentence the other raises print (the fence is `settingsCeilingKey` and `settingsLoosens`, which already cover the unprefixed `governance.*` and fail closed on durations; `TypedWhy` is not it); the four block rows stay as read rows that no longer list themselves writable, so `settings --json`'s keyDefaults loses no member (a field never changes meaning). The governance rows' Doc says they are enforced by the ee build (F12). That the write reaches a run depends on the layer stage (F19). **WAITS ON D2612 and D2615.**
 - Files: `internal/settings/registry.go`, `internal/cli/settings_set.go`, `internal/cli/settings_stage_test.go` (new), `internal/settings/registry_stage_test.go` (new), `schemas/settings.schema.json` (`schemas_test.go` pins keyDefaults to every registry row).
 - Interfaces: consumes W1's resolver and the existing ceiling fence.
 - Tests: `TestStageTimeoutProjectDefaultReachesTheRun`, `TestStageTimeoutRepoMayOnlyTighten`, `TestStageTimeoutRaiseRefusedInAnAgentSession` (under a managed gate that admits the write, so the refusal is the fence's and not the unmanaged project's blanket one), `TestNoBlockRowIsListedWritableThatCannotBeWritten`. Command: `GOFLAGS=-p=1 go test ./internal/settings ./internal/cli ./schemas -run 'TestStageTimeout|TestNoBlockRow|KeyDefaults' -count=1`.
@@ -147,22 +147,22 @@ accounts, `K` cascade, `M` models, `L` labels, `I` integration, `D` documents.
 - Reviewer tier: standard.
 
 ### N1: local carriers for the node-only blocks (cm-node-publish)
-- Acceptance: the local config carries the cascade block under its own key `credential_cascade` (`fallback`, `wait_threshold`, `backoff.*`, `stop_after_exhaustion_per_window`, `concurrency_per_token`; not `credentials`, which is already the list of typed credentials, F23) and node `model_grades`, validated at load (a misspelt `fallback` is a refusal); both are added to `sharedForbidden` in `sharedcfg.go`; the stale "MC4" comment in `project_cmd.go` is N4's. **WAITS ON D2612** (#2782 and #2732 edit `localcfg.go`; #2782 edits `sharedcfg.go`).
+- Acceptance: the local config carries the cascade block under its own key `credential_cascade` (`fallback`, `wait_threshold`, `backoff.*`, `stop_after_exhaustion_per_window`, `concurrency_per_token`; not `credentials`, which is already the list of typed credentials, F23) and node `model_grades`, validated at load (a misspelt `fallback` is a refusal); an explicit-unset record `node_removals` (names removed, per block: `pools`, `crafts`, `craft_credentials`, `credentials`) is the shape D2607's "explicit unset" takes, cleared by N4 once the node no longer holds the name; all three keys are added to `sharedForbidden` in `sharedcfg.go`; the stale "MC4" comment in `project_cmd.go` is N4's. **WAITS ON D2612** (#2782 and #2732 edit `localcfg.go`; #2782 edits `sharedcfg.go`).
 - Files: `internal/localcfg/localcfg.go`, `internal/localcfg/cascade_carrier_test.go` (new), `internal/cli/sharedcfg.go`, `internal/cli/sharedcfg_test.go`.
 - Interfaces: produces the carrier fields K1 and N4 use.
-- Tests: `TestCascadeCarrierValidatesAtLoad`, `TestCascadeCarrierIsNeverSharedConfig`, `TestCredentialsKeyStillMeansTheTypedList`. Command: `go test ./internal/localcfg ./internal/cli -run 'TestCascadeCarrier|TestCredentialsKeyStill' -count=1`.
+- Tests: `TestCascadeCarrierValidatesAtLoad`, `TestCascadeCarrierIsNeverSharedConfig`, `TestCredentialsKeyStillMeansTheTypedList`, `TestNodeRemovalsRecordNamesNotValues`. Command: `go test ./internal/localcfg ./internal/cli -run 'TestCascadeCarrier|TestCredentialsKeyStill' -count=1`.
 - Red step: `TestCascadeCarrierValidatesAtLoad` fails with the carrier unknown (strict decode refuses it today).
 - Depends on: none.
 - Commit: `localcfg: carriers for the cascade and the node's model grades (N1)`.
 - Reviewer tier: standard.
 
 ### N4: the additive, field-by-field reconcile in buildProjectPolicy (cm-node-publish)
-- Acceptance: `buildProjectPolicy` (the one node build `project policy publish` and `update` share) copies local to node for the cascade, `model_grades`, `crafts`, `craft_credentials` and `craft_pools`: silence keeps the node's value, a written value wins field by field (a pool's owner, allowed users and legacy-open come from the node when the local config does not state them), an explicit unset removes, the first reconcile never deletes a node member the local config does not state; an ownerless local pool that the node lacks is skipped and named in one line, and neither door fails on it (`update` must converge; `ValidatePublishedPools` never sees it); the new members are added to `policyMigration.loosening()` and fail closed on any change not shown to narrow, so `update --yes` cannot publish an unjudged grant; nothing publishes from an agent session; the diff lines of the other operator-written blocks appear for these; the stale "MC4" comment is replaced by what is true. **WAITS ON D2612** (#2782 and #2753 edit `project_cmd.go`) **and D2608** (the ownerless-pool rule).
+- Acceptance: `buildProjectPolicy` (the one node build `project policy publish` and `update` share) copies local to node for the cascade, `model_grades`, `crafts`, `craft_credentials` and `craft_pools`: silence keeps the node's value, a written value wins field by field (a pool's owner, allowed users and legacy-open come from the node when the local config does not state them), an explicit unset (a name in `node_removals`) removes, the first reconcile never deletes a node member the local config does not state; an ownerless local pool that the node lacks is skipped and named in one line, and neither door fails on it (`update` must converge; `ValidatePublishedPools` never sees it); the grant members are judged on the gate's side (`loosening()` fails closed on any change not shown to narrow, so an agent session and `update --yes` in a managed project are refused) and publish at the owner's own terminal with the diff shown and no typed name (the D1542/D1552 shape: `update` asks nothing, F24); nothing publishes from an agent session; the diff lines of the other operator-written blocks appear for these; the stale "MC4" comment is replaced by what is true. **WAITS ON D2612** (#2782 and #2753 edit `project_cmd.go`) **and D2608** (the ownerless-pool rule).
 - Files: `internal/cli/project_cmd.go`, `internal/cli/init_policy_publish.go`, `internal/cli/project_reconcile_test.go` (new), `internal/cli/policy_loosening_grants_test.go` (new).
 - Interfaces: consumes N1's carriers and the existing stage refusals.
-- Tests: `TestReconcileSilenceKeepsTheNode`, `TestReconcileWrittenValueWinsFieldByField`, `TestReconcileExplicitUnsetRemoves`, `TestReconcileFirstRunNeverDeletes`, `TestReconcileRefusesInAnAgentSession`, `TestOwnerlessLocalPoolIsSkippedNotRefused`, `TestGrantMembersAreLoosening`, `TestPolicyPublishAndUpdateReconcileTheSameNode`. Command: `GOFLAGS=-p=1 go test ./internal/cli -run 'TestReconcile|TestOwnerlessLocalPool|TestGrantMembers' -count=1`.
+- Tests: `TestReconcileSilenceKeepsTheNode`, `TestReconcileWrittenValueWinsFieldByField`, `TestReconcileExplicitUnsetRemoves`, `TestReconcileFirstRunNeverDeletes`, `TestReconcileRefusesInAnAgentSession` (under a managed gate that admits the write, so the refusal is the reconcile's), `TestUpdatePublishesAnOwnedLocalPoolAskingNothing` (unmanaged project, stdin closed), `TestOwnerlessLocalPoolIsSkippedNotRefused`, `TestGrantMembersAreLoosening`, `TestPolicyPublishAndUpdateReconcileTheSameNode`. Command: `GOFLAGS=-p=1 go test ./internal/cli -run 'TestReconcile|TestOwnerlessLocalPool|TestGrantMembers' -count=1`.
 - Red step: `TestPolicyPublishAndUpdateReconcileTheSameNode` fails today: both still assign `old.CraftPools` (F5). Mutation check: drop a member from `loosening()`; `TestGrantMembersAreLoosening` must fail.
-- Depends on: N1 (reads the carrier fields; thirty lines of fields, so a contract would be N1 itself).
+- Depends on: N1 (reads the carrier fields; thirty lines of fields, so a contract would be N1 itself), A1 and A2 (behaviour: N4 publishes local pools and crafts, so the removals those tasks write must exist first, or a revoked grant stays served).
 - Commit: `policy: publish and update reconcile the operator's crafts, pools and cascade into the node (N4)`.
 - Reviewer tier: opus with a mandatory independent review (spend grants, policy publish, loosening).
 
@@ -177,7 +177,7 @@ accounts, `K` cascade, `M` models, `L` labels, `I` integration, `D` documents.
 - Reviewer tier: standard plus the converge test (HARD RULE).
 
 ### A1: pool owner, allowed users and legacy-open, and `accounts pool` on the shared path (cm-accounts)
-- Acceptance: `accounts pool add NAME --owner EMAIL --allow-user U...` writes those members (`--legacy-open` per D2608's answer: not a creation flag); the command picks its layer through `settingsResolveTarget` and `settingsLayerGate` (it already writes through `applySettingsEdit`, F4); `accounts pool rm` writes the explicit unset so the node's copy is removed at the next reconcile (F22); `--layer` is accepted and a layer the pool lacks refuses naming local and project (T3); it ends with the after-write hook; the help text no longer says nodes and local are separate stories (F5); its writers are registered. **WAITS ON D2608** (the flags) and on open tension T3 (the refusal text).
+- Acceptance: `accounts pool add NAME --owner EMAIL --allow-user U...` writes those members (`--legacy-open` per D2608's answer: not a creation flag); the command picks its layer through `settingsResolveTarget` and `settingsLayerGate` (it already writes through `applySettingsEdit`, F4); `accounts pool rm` records the name in `node_removals` so the node's copy is removed at the next reconcile (F22); a widening write is `Typed` and refused in an agent session whatever the gate says (D2617); `--layer` is accepted and a layer the pool lacks refuses naming local and project (T3); it ends with the after-write hook; the help text no longer says nodes and local are separate stories (F5); its writers are registered. **WAITS ON D2608** (the flags), D2617 and open tension T3 (the refusal text).
 - Files: `internal/cli/accounts_pool.go`, `internal/cli/accounts_pool_test.go`, `internal/cli/accounts_pool_owner_test.go` (new), `internal/cli/writers_pools.go` (new).
 - Interfaces: consumes C1 (`RegisterWriter`, `runAfterWrite`); settles nothing for others.
 - Tests: `TestPoolAddWritesOwnerAndAllowedUsers`, `TestPoolRmWritesTheExplicitUnset`, `TestPoolAddUsesTheResolverAndTheGate`, `TestPoolAddRefusesAForeignLayerNamingTheRight`, `TestPoolAddEndsWithTheAfterWriteHook`, `TestPoolAddReadsNoStdin`. Command: `go test ./internal/cli -run 'TestPool' -count=1`.
@@ -187,7 +187,7 @@ accounts, `K` cascade, `M` models, `L` labels, `I` integration, `D` documents.
 - Reviewer tier: opus with a mandatory independent review (a pool is a spending and data-egress grant).
 
 ### A2: crafts and grades access, and a repository's claude accounts (cm-accounts)
-- Acceptance: the commands D2613 names write `crafts.<name>.access`, `model_grades.strong|strongest.access` and `repos.<repo>.claude_accounts` (add), at the layers the keys have, through the shared writer, ending with the hook, with writers registered; removing a credential or a craft writes the explicit unset. **WAITS ON D2613** (names), D2612 (`accounts_rm.go` is composite AP6's) and T3.
+- Acceptance: the commands D2613 names write `crafts.<name>.access`, `model_grades.strong|strongest.access` and `repos.<repo>.claude_accounts` (add), at the layers the keys have, through the shared writer, ending with the hook, with writers registered; removing a credential or a craft records the name in `node_removals`; a widening write is `Typed` and refused in an agent session whatever the gate says (D2617). **WAITS ON D2613** (names), D2612 (`accounts_rm.go` is composite AP6's), D2617 and T3.
 - Files: `internal/cli/accounts_craft.go` (new), `internal/cli/accounts_craft_test.go` (new), `internal/cli/writers_craft_access.go` (new), `internal/cli/accounts.go`, `internal/cli/accounts_rm.go` (a credential's or craft's removal writes the explicit unset, F22; composite AP6 owns this file too, D2612).
 - Interfaces: consumes C1.
 - Tests: `TestCraftAccessWritesTheKey`, `TestGradeAccessWritesTheKey`, `TestRepoClaudeAccountsAdd`, `TestCraftAccessRefusesAnUnknownCredentialNamingTheKnown`, `TestAccountsCraftReadsNoStdin`, `TestCredentialRmWritesTheExplicitUnset`. Command: `go test ./internal/cli -run 'TestCraftAccess|TestGradeAccess|TestRepoClaudeAccounts|TestAccountsCraft' -count=1`.
@@ -197,7 +197,7 @@ accounts, `K` cascade, `M` models, `L` labels, `I` integration, `D` documents.
 - Reviewer tier: opus with a mandatory independent review (access names a credential).
 
 ### K1: the credentials cascade writer and the generic allowlist flip (cm-cascade)
-- Acceptance: the cascade command D2613 names writes the cascade leaves into the local carrier `credential_cascade` (N1), validates `fallback` as `auto` or `oauth-only`, prints that `auto` spends paid tiers, ends with the hook, registers its writers; `settings set credentials.fallback` now refuses naming that command (item 5), `TestSettingsGenericKeyIsSpec44sAllowlist` loses `credentials.fallback`. **WAITS ON D2613 and D2612.**
+- Acceptance: the cascade command D2613 names writes the cascade leaves into the local carrier `credential_cascade` (N1), validates `fallback` as `auto` or `oauth-only`, prints that `auto` spends paid tiers, ends with the hook, registers its writers; `settings set credentials.fallback` now refuses naming that command (item 5), `TestSettingsGenericKeyIsSpec44sAllowlist` loses `credentials.fallback`. **WAITS ON D2613, D2612, D2617 and T3.** A widening write (`fallback auto`) is `Typed` and refused in an agent session whatever the gate says (D2617).
 - Files: `internal/cli/accounts_cascade.go` (new), `internal/cli/accounts_cascade_test.go` (new), `internal/cli/settings_set.go`, `internal/cli/settings_set_test.go`, `internal/cli/accounts.go`.
 - Interfaces: consumes C1, the carrier N1 adds and the rows R1 registers.
 - Tests: `TestCascadeSetWritesTheCarrier`, `TestCascadeFallbackRejectsAnUnknownValue`, `TestSettingsSetCredentialsRefusesNamingTheCascadeCommand`, `TestSettingsGenericKeyIsSpec44sAllowlist`. Command: `GOFLAGS=-p=1 go test ./internal/cli -run 'TestCascade|TestSettingsSetCredentials|TestSettingsGenericKey' -count=1`.
@@ -207,7 +207,7 @@ accounts, `K` cascade, `M` models, `L` labels, `I` integration, `D` documents.
 - Reviewer tier: opus with a mandatory independent review (the cascade spends paid tiers).
 
 ### K2: the binaries writer over the allow rule's carrier (cm-cascade)
-- Acceptance: the command D2613 names writes `binaries.allow` and `binaries.max_bytes` into the carrier binary-allow-rule AR1 adds, validates a pattern at write (a misspelt pattern refuses), ends with the hook, registers its writers. If AR1 already adds settings rows the task reduces to writers and the refusal text (U3). **WAITS ON D2613 and D2612** (it starts only after #2782 merges).
+- Acceptance: the command D2613 names writes `binaries.allow` and `binaries.max_bytes` into the carrier binary-allow-rule AR1 adds, validates a pattern at write (a misspelt pattern refuses), ends with the hook, registers its writers. If AR1 already adds settings rows the task reduces to writers and the refusal text (U3). **WAITS ON D2613, D2612 and D2617** (it starts only after #2782 merges). A widening write (an allow pattern) is `Typed` and refused in an agent session whatever the gate says (D2617).
 - Files: `internal/cli/project_binaries.go` (new), `internal/cli/project_binaries_test.go` (new), `internal/cli/project_cmd.go`.
 - Interfaces: consumes C1 and AR1's `localcfg.BinariesAllow/BinariesMaxBytes`.
 - Tests: `TestBinariesAllowWritesTheCarrier`, `TestBinariesAllowRefusesAMisspeltPattern`, `TestBinariesMaxBytesWrites`. Command: `go test ./internal/cli -run 'TestBinaries' -count=1`.
@@ -217,17 +217,17 @@ accounts, `K` cascade, `M` models, `L` labels, `I` integration, `D` documents.
 - Reviewer tier: opus with a mandatory independent review (what a run may add to the repository).
 
 ### M1: `models use` writes every role and every layer (cm-models)
-- Acceptance: `models use` accepts `diagnose`, `agent.model`, `agent.recipe`, `agent.levels.<l>.model|effort`, and `--layer repo|project|local` (today it writes a repository working tree only); `layer.defaults.agent.models.*` and `layer.claude_models` are reachable; writers registered; ends with the hook for the project layer.
+- Acceptance: `models use` accepts `diagnose`, `agent.model`, `agent.recipe`, `agent.levels.<l>.model|effort`, and `--layer repo|project|local` (today it writes a repository working tree only), choosing its layer through `settingsResolveTarget` and `settingsLayerGate`; `layer.defaults.agent.models.*` and `layer.claude_models` are reachable, and `layer.claude_models` (which models accounts may serve) is a widening, `Typed` and refused in an agent session whatever the gate says (D2617); writers registered; ends with the hook for the project layer. **WAITS ON D2617.**
 - Files: `internal/cli/models_use.go`, `internal/cli/models_use_test.go`, `internal/cli/models_use_roles_test.go` (new), `internal/cli/writers_models_use.go` (new).
 - Interfaces: consumes C1.
-- Tests: `TestModelsUseWritesEveryRole`, `TestModelsUseLayerFlag`, `TestModelsUseDiagnoseRole`, `TestModelsUseReadsNoStdin`. Command: `go test ./internal/cli -run 'TestModelsUse' -count=1`.
+- Tests: `TestModelsUseWritesEveryRole`, `TestModelsUseLayerFlag`, `TestModelsUseDiagnoseRole`, `TestClaudeModelsWideningRefusedInAnAgentSession`, `TestModelsUseReadsNoStdin`. Command: `go test ./internal/cli -run 'TestModelsUse' -count=1`.
 - Red step: `TestModelsUseDiagnoseRole` fails today (`models use` accepts coder, reviewer, background, vision only).
 - Depends on: C1.
 - Commit: `models use: every role, every layer (M1)`.
-- Reviewer tier: standard.
+- Reviewer tier: opus with a mandatory independent review (a widening write path).
 
 ### M2: `models provider` and price writers (cm-models)
-- Acceptance: the commands D2613 names set and remove `providers.<name>.*` (kind, base_url, auth, price_policy, require_zdr, route_fee_pct, allow_data_to) and the other `model_prices` leaves; `providers.*.secret` is set by naming a stored secret, never by value; a value that looks like a secret on argv refuses; writers registered; ends with the hook. **WAITS ON D2613.**
+- Acceptance: the commands D2613 names set and remove `providers.<name>.*` (kind, base_url, auth, price_policy, require_zdr, route_fee_pct, allow_data_to) and the other `model_prices` leaves; `providers.*.secret` is set by naming a stored secret, never by value; a value that looks like a secret on argv refuses; writers registered; ends with the hook. **WAITS ON D2613 and D2617.** `base_url`, `allow_data_to`, `require_zdr` and `route_fee_pct` writes are `Typed` and refused in an agent session whatever the gate says (D2617).
 - Files: `internal/cli/models_provider.go` (new), `internal/cli/models_provider_test.go` (new), `internal/cli/writers_providers.go` (new), `internal/cli/models.go`.
 - Interfaces: consumes C1.
 - Tests: `TestProviderSetWritesEveryLeaf`, `TestProviderSecretIsAReferenceNeverAValue`, `TestPriceSetWritesTheLeaves`, `TestProviderReadsNoStdin`. Command: `go test ./internal/cli -run 'TestProvider|TestPriceSet' -count=1`.
@@ -237,7 +237,7 @@ accounts, `K` cascade, `M` models, `L` labels, `I` integration, `D` documents.
 - Reviewer tier: opus with a mandatory independent review (credential-bearing fields).
 
 ### M3: `rigor set` reaches the repository layer (cm-models)
-- Acceptance: `rigor set` takes `--layer` and `--repo`; repo `rigor.default` and `rigor.areas` are written to the checkout's `fugaro.yaml` (live when merged; nothing committed, composite D1564); `settings` refuses them naming that command with the working line; writers registered. **WAITS ON D2612** (#2576 and #2538 edit rigor files) and T3.
+- Acceptance: `rigor set` takes `--layer` and `--repo`; repo `rigor.default` and `rigor.areas` are written to the checkout's `fugaro.yaml` (live when merged; nothing committed, composite D1564); `settings` refuses them naming that command with the working line; writers registered. **WAITS ON D2612** (#2576 and #2538 edit rigor files), D2617 and T3. A widening rigor write is `Typed` and refused in an agent session whatever the gate says (D2617).
 - Files: `internal/cli/rigor.go`, `internal/cli/rigor_repo_layer_test.go` (new), `internal/cli/writers_rigor.go` (new).
 - Interfaces: consumes C1.
 - Tests: `TestRigorSetRepoLayerWritesTheCheckout`, `TestRigorSetRepoDefaultCannotLoosen`, `TestRigorSetLayerFlag`. Command: `go test ./internal/cli -run 'TestRigorSet' -count=1`.
@@ -247,7 +247,7 @@ accounts, `K` cascade, `M` models, `L` labels, `I` integration, `D` documents.
 - Reviewer tier: opus with a mandatory independent review (rigor decides review depth).
 
 ### M4: the security paths writer (cm-models)
-- Acceptance: the command D2613 names adds and removes `layer.security.*` and repo `security.patterns` entries by their key field (config-management D1163), at the layers they have, with the project-layer loosening judged as every other raise; writers registered. **WAITS ON D2613 and D2612.**
+- Acceptance: the command D2613 names adds and removes `layer.security.*` and repo `security.patterns` entries by their key field (config-management D1163), at the layers they have, with the project-layer loosening judged as every other raise; writers registered. **WAITS ON D2613, D2612 and D2617.** A removal of a security path is `Typed` and refused in an agent session whatever the gate says (D2617).
 - Files: `internal/cli/rigor_security.go` (new), `internal/cli/rigor_security_test.go` (new), `internal/cli/writers_security.go` (new), `internal/cli/rigor.go`.
 - Interfaces: consumes C1 and R1's rows.
 - Tests: `TestSecurityPathAddAndRemoveByName`, `TestSecurityPathRemovalIsAProjectLoosening`. Command: `go test ./internal/cli -run 'TestSecurityPath' -count=1`.
@@ -283,12 +283,12 @@ Levels, from `fugaro plan graph`:
 | Level | Tasks (run at once) |
 | --- | --- |
 | 0 | C1, W1, R1, N1 |
-| 1 | T1, N3, L1, W2, N4, A1, A2, M1, M2, M3 |
-| 2 | W3, M4, N2, K2 |
-| 3 | K1 |
+| 1 | T1, N3, L1, W2, A1, A2, M1, M2, M3 |
+| 2 | W3, M4, N4 (CR1, if raised) |
+| 3 | K1, K2, N2 (CR2, if raised) |
 | 4 | I1, D1 |
 
-Critical path (5 tasks): **C1 → T1 → W3 → K1 → D1**. What must be sequential: `settings_set.go` is written by
+Critical path (5 tasks): **C1 → A1 → N4 → K2 → D1**. What must be sequential: `settings_set.go` is written by
 W1, W2, W3, K1 in four levels (one file, one change split in four); `registry.go` by R1 then W2; `rigor.go` by
 M3 then M4; `accounts.go` by A2 then K1; `project_cmd.go` by N4 then K2.
 
@@ -299,7 +299,7 @@ M3 then M4; `accounts.go` by A2 then K1; `project_cmd.go` by N4 then K2.
   registry's shape and not the conformance harness; every family no longer waits on N3, because they needed
   the after-write signature and not the stage wiring; T1 does not wait on N3 and N3 does not wait on N1, for
   the same reason. 19 edges broken, 4 tasks added (C1, I1, CR1, CR2).
-- **The gain the read reports:** before the pass 6 tasks on the path, weight 13.5; after, 5 tasks, weight 9.
+- **The gain the read reports:** before the pass 7 tasks on the path, weight 15; after, 5 tasks, weight 9.5.
 - **Edges kept, with the reason a contract would not do:**
   - W2 after W1, W3 after W2, K1 after W3: one file, `settings_set.go`; the later change reads the earlier's
     resolver and rows. W3 after T1: the refusal prints the table T1 fills (data, not a signature).
@@ -326,7 +326,7 @@ M3 then M4; `accounts.go` by A2 then K1; `project_cmd.go` by N4 then K2.
 | `internal/settings/registry.go` | R1 (0), W2 (1) |
 | `internal/cli/rigor.go` | M3 (1), M4 (2) |
 | `internal/cli/accounts.go` | A2 (1), K1 (3) |
-| `internal/cli/project_cmd.go`, `init_policy_publish.go` | N4 (1), K2 (2) (`init_policy_publish.go`: N4 only) |
+| `internal/cli/project_cmd.go`, `init_policy_publish.go` | N4 (2), K2 (3) (`init_policy_publish.go`: N4 only) |
 | `internal/cli/accounts_rm.go` | A2 (1) only |
 | `internal/cli/sharedcfg.go`, `internal/localcfg/localcfg.go` | N1 (0) only |
 | `internal/cli/models.go` | M2 (1) only |
@@ -339,8 +339,8 @@ M3 then M4; `accounts.go` by A2 then K1; `project_cmd.go` by N4 then K2.
 
 | Collides with | Files | Tasks held (WAITS ON D2612) |
 | --- | --- | --- |
-| #2782 (AR1) | `project_cmd.go`, `localcfg.go`, `sharedcfg.go`, `policy.go`, `registry.go` | N1, N4, K2, R1 |
-| #2753 (S5) | `project_cmd.go` | N4 |
+| #2782 (AR1) | `project_cmd.go`, `init_policy_publish.go`, `localcfg.go`, `sharedcfg.go`, `sharedcfg_test.go`, `policy.go`, `registry.go`, `schemas/settings.schema.json`, `docs/project-layer.md` | N1, N4, K2, R1, W2, D1 |
+| #2753 (S5) | `project_cmd.go`, `init_policy_publish.go` | N4 |
 | #2732 | `localcfg.go` | N1 |
 | #2498 (E6) | `policy.go`, `registry.go` | R1 |
 | #2576, #2538 (rigor) | `rigor.go`, `internal/runner/rigor.go` | M3, M4 |
@@ -349,7 +349,7 @@ M3 then M4; `accounts.go` by A2 then K1; `project_cmd.go` by N4 then K2.
 | composite AP7 (not started) | refusal wording, `plugin/skills` | W3, D1 |
 | composite AP8 (not started) | console spawn files | W1, only if the argv of `settings.edit` changes |
 
-Ready to start the moment the owner says go (no unanswered decision gates them): C1, then T1 and M1. W1 and R1 are level 0 but wait on D2612. L1 waits on D2611; A1 and N4 on D2608; A2, K1, K2, M2, M4 on D2613; N3 on D2614 and D2615; W2 on D2615.
+Ready to start the moment the owner says go (no unanswered decision gates them): C1, then T1. W1 and R1 are level 0 but wait on D2612. L1 waits on D2611; A1 and N4 on D2608; A1, A2, K1, K2, M1, M2, M3, M4 on D2617; N1, N4, M3, M4, K1 also on D2612; A2, K1, K2, M2, M4 on D2613; N3 on D2614 and D2615; W2 on D2615.
 
 ## 5. Coverage: every decision and finding lands in a task
 
@@ -361,7 +361,7 @@ Ready to start the moment the owner says go (no unanswered decision gates them):
 | D2604, F1 | W2 |
 | D2605, F17, T4 | W1 |
 | D2606, F9 | W1, D1 (the doc) |
-| D2607, F5, F7 | N1, N2, N3 |
+| D2607, F5, F7 | N1, N2, N3, N4 |
 | D2608, F8 | A1 (waits) |
 | D2609, D2610, F2 | C1, T1, I1 |
 | D2611, T5, F18 | L1 (waits) |
@@ -371,14 +371,15 @@ Ready to start the moment the owner says go (no unanswered decision gates them):
 | D2615, F19 | N3, W2 (wait) |
 | D2616, F21 | no task until answered (open item) |
 | F20 | N4, N2 |
-| F22 | A1, A2 |
+| F22 | N1 (the record), A1, A2 (write it), N4 (consume) |
+| D2617, F24 | A1, A2, K1, K2, M1, M2, M3, M4 (wait); N4 for the owner-terminal side |
 | F23 | N1 |
 | F3 | K1 |
 | F4 | A1 (pools onto the shared writer), M1 (models use) |
 | F6 | K2, K1 |
 | F10 | M3 |
 | F11 | L1 (labels), the owner vocabulary G12 started |
-| F12 | D1 (the doc note on governance rows: "enforced by the ee build") |
+| F12 | W2 (the governance rows' Doc note: "enforced by the ee build") |
 | F13 | R1 |
 | F14, F15 | the sequencing table above |
 | F16 | D1 |

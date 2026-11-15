@@ -400,6 +400,31 @@
       "reason": "N4 reads the carrier fields N1 adds; thirty lines of fields, a contract for them would be N1 itself"
     },
     {
+      "task": "N4",
+      "needs": "A1",
+      "reason": "behaviour: N4 publishes local pools, so the removal A1 records must exist first or a revoked grant stays served"
+    },
+    {
+      "task": "N4",
+      "needs": "A2",
+      "reason": "behaviour: N4 publishes local crafts and credentials, so the removals A2 records must exist first"
+    },
+    {
+      "task": "CR1",
+      "needs": "T1",
+      "reason": "raised by T1; the amendment waits for the task that found the contract wrong"
+    },
+    {
+      "task": "CR2",
+      "needs": "N3",
+      "reason": "raised by N3; the amendment waits for the task that found the contract wrong"
+    },
+    {
+      "task": "CR2",
+      "needs": "CR1",
+      "reason": "same contract document: amendments land in order"
+    },
+    {
       "task": "N2",
       "needs": "N4",
       "reason": "the convergence test runs the reconcile N4 writes"

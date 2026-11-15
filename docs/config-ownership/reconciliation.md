@@ -4,7 +4,7 @@
 this file wins. Checked against `origin/main` at `eddaa041b` on 2026-11-15 (the audit in `audit.md`
 was taken at `3e1b02570`; every claim cited below was re-read at `eddaa041b`).
 
-**Status: eight decisions answered by the owner on 2026-11-15 (relayed by the coordinator in this conversation); D2608, D2611 and D2612 are NOT answered and stay open with a recommendation; D2613 to D2616 are new and open (D2615 and D2616 were found by the round-1 review). The answers approve this reconciliation; the plan beside it approves nothing.**
+**Status: nine decisions answered by the owner on 2026-11-15 (relayed by the coordinator in this conversation); D2608, D2611 and D2612 are NOT answered and stay open with a recommendation; D2613 to D2617 are new and open (D2615 to D2617 were found by review). The answers approve this reconciliation; the plan beside it approves nothing.**
 Decisions take **D2600-D2639** (highest in use on `main` and in open pull requests' documents: D2551;
 D2600-D2639 are reserved, used or not). Findings are numbered `F1`... within this document, as every
 earlier reconciliation does. Checks: none reserved yet.
@@ -176,9 +176,17 @@ Class: Wrong, Exists, Gap, Rule, Open.
   grant stays served. The plan puts the pool and craft removals in A1 and A2; a credential's removal is
   `accounts_rm.go` (composite AP6's file, D2612).
 - **F23 (Gap, found in review).** The local `credentials:` key is already the list of typed credentials
-  (`localcfg.go`, published as node `craft_credentials`). The cascade carrier takes another key
+  (`localcfg.go`; the node's `craft_credentials` is what N4 will publish it into). The cascade carrier takes another key
   (`credential_cascade`) so the node's `credentials` block and the local list are never confused. New
   top-level local keys join `sharedForbidden` (`sharedcfg.go`, which AR1 also edits).
+- **F24 (Gap, found in review).** `applySettingsEdit` refuses an agent's write only when the edit is
+  marked widening (`Typed`) or no managed gate stands in; with a gate it writes the file, and the owner's
+  next `update` publishes it with a note (`init_policy_migrate.go`). The reconcile makes the local file a
+  path to the node for grants, so the fence has to be on the write too (D2617). The typed-name confirmation
+  `confirmTypedStrict` on the update door is the other thing review found: adding grant members to
+  `loosening()` would put it in front of every installation's first `update`; N4 judges grants on the
+  gate's side (an agent session is refused) and publishes at the owner's own terminal with the diff and no
+  typed name, the shape of D1542/D1552, so `update` asks nothing.
 
 ### 3.3 Completeness check
 
@@ -197,7 +205,7 @@ Class: Wrong, Exists, Gap, Rule, Open.
 
 Each carries my recommendation, the alternative and its cost. **Answered 2026-11-15 by the owner:**
 D2601-D2607, D2609, D2610. **Not answered (cell empty, recommendation stands, dependent tasks wait):**
-D2608, D2611, D2612, D2613, D2614, D2615 and D2616. A cell marked `recommended` records that the owner took the
+D2608, D2611, D2612, D2613, D2614, D2615, D2616 and D2617. A cell marked `recommended` records that the owner took the
 recommendation; none of the nine answers departs from it.
 
 | # | Question | Recommendation | Alternative and cost | Owner's answer |
@@ -218,6 +226,7 @@ recommendation; none of the nine answers departs from it.
 | **D2614** | The sentence a semantic command prints when its in-process policy stage fails. Composite D1563 was confirmed as written and its sentence names `fugaro apply` and never publish or update; `fugaro apply` does not exist until AP3, so the confirmed sentence cannot be printed as is | **Name `fugaro update` until AP3 lands, through one sentence helper AP3 later repoints; no other file carries the wording** | Name `fugaro apply` now: a command that does not exist in the sentence the user trusts most | |
 | **D2615** | Which stages the after-write hook (D2602) runs. D2602 names the `policy` stage; a project-layer write (the layer file, W1, W2, M1, M3, M4) is published by the separate `layer` stage (`init_layer_stage.go`), so a write that stops at `policy` never reaches a run (F19) | **The hook runs the stages the key's store needs, in `stagesNamed` order: `policy` for node members, `layer` for project-layer keys, both for a change that touches both; the `layer` stage keeps its own executable-change gate and agent refusal** | Policy only, as D2602 reads: smaller, but `settings set governance.stage_timeout.implement` saves and never reaches a run, which the owner ruled it must | |
 | **D2616** | Who builds the writers D2603 gives `secrets`: `secret_expires`, `secret_rotation_days`, `batch.secrets`, `bitbucket_api_roots` and the `bitbucket_tokens.*` leaves (no plan writes them: bitbucket-token-types T11 only sets a token's value; F21) | **A task of this plan after the owner answers: `secrets set` takes `--expires` and `--rotation-days`, `bitbucket_api_roots` is a `secrets` flag, the token leaves stay with bitbucket-token-types T11** | Each stays a labelled `file` key until a plan owns it: no scope here, but item 8 then carries a reason for keys the owner meant to write | |
+| **D2617** | A grant an agent queues locally. A coding agent's session can write the local file for a grant (crafts' and grades' access, `fallback auto`, binaries, `layer.claude_models`, a provider's `base_url`/`allow_data_to`/`require_zdr`/`route_fee_pct`, a security path) when a managed gate stands in, and the owner's next `update` publishes it with a note (F24). Composite D1576 closes exactly this for caps; no decision asks it for grants | **Every widening write by a semantic command is `Typed` and refused in a coding agent's session whatever the gate says, tested under a managed gate that admits the write; the same extension of D1576 the reconciliation flagged in section 6** | Fence only the publish (what the plan does without this answer): an agent can queue a grant that the owner's later `update` publishes unseen | |
 
 ## 5. Tensions with the nine direction items
 
@@ -273,7 +282,7 @@ D1560-D1577 are answered by the owner on 2026-11-07 (recommended, or confirmed a
 
 1. **Amendment to composite D1566 (owner, 2026-11-15, through D2602).** Composite names
    `accounts pool`, `models use`, `rigor set` and `rigor floor` nowhere. D1566's in-set list gains them,
-   and every command this work adds (D2613) joins it: their follow-up is the `policy` stage, run
+   and, once D2613 names them, every command this work adds joins it: their follow-up is the `policy` stage, run
    in-process, and on failure the change is kept and the command says it is not yet live (D1563). This is
    an amendment of the list, not a re-decision of D1566, D1561 or D1563. It is recorded here, not in
    composite-commands' own folder (this work edits no document of another package).
@@ -315,7 +324,7 @@ Arrows point one way. Module ids are final. Task ids per module are in `implemen
 
 ## Open items
 
-- D2608, D2611, D2612, D2613, D2614, D2615, D2616 unanswered (section 4); T3 and T5 open (section 5). The plan marks
+- D2608, D2611, D2612, D2613, D2614, D2615, D2616, D2617 unanswered (section 4); T3 and T5 open (section 5). The plan marks
   each task that waits on one.
 - No check is reserved. The reconcile publishes spend grants at `fugaro update`; whether the owner wants a
   live check for it (a number block) is not asked here, because no live action is planned.
