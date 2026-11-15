@@ -18,6 +18,86 @@ func TestPaths(t *testing.T) {
 	if got, want := PathRepo("acme-app-0123456789abcdef"), "config/policy/repos/acme-app-0123456789abcdef"; got != want {
 		t.Errorf("PathRepo() = %q, want %q", got, want)
 	}
+	if got, want := PathVoiceShared(), "config/policy/voice/shared"; got != want {
+		t.Errorf("PathVoiceShared() = %q, want %q", got, want)
+	}
+	if got, want := PathVoiceRepo("acme-app-0123456789abcdef"), "config/policy/voice/repos/acme-app-0123456789abcdef"; got != want {
+		t.Errorf("PathVoiceRepo() = %q, want %q", got, want)
+	}
+	if got, want := PathVoiceRepos(), "config/policy/voice/repos"; got != want {
+		t.Errorf("PathVoiceRepos() = %q, want %q", got, want)
+	}
+	// The voice nodes sit under the policy's own node, which is
+	// internal/budget/rules' PathVoice — the path the template spells — and
+	// never beside it: a subtree that drifted out of config/policy would be a
+	// grant the check that reads the policy tree does not see.
+	for _, p := range []string{PathVoiceShared(), PathVoiceRepo("x"), PathVoiceRepos()} {
+		if p != "config/policy/voice" && !strings.HasPrefix(p, "config/policy/voice/") {
+			t.Errorf("%s is not under config/policy/voice", p)
+		}
+	}
+}
+
+// TestVoicePathsAreReadableByARunTokenAndNobodyElse: the grants the voice
+// subtree carries are PathShared's and PathRepo's, copied field for field
+// (the voice-evaluation switch design §4.3), so the two properties
+// the app's whole design rests on are read off the template here rather than
+// restated: a run token reads them, and a signed-in user reads nothing under
+// them — the phone holds no read of config/policy/**, which is why the
+// switch's project-policy state is the hop's answer and not a read.
+func TestVoicePathsAreReadableByARunTokenAndNobodyElse(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "budget", "rules", "rules.json.tmpl"))
+	if err != nil {
+		t.Fatalf("the rules template: %v", err)
+	}
+	// The template's actions all sit inside JSON string literals, so the file is
+	// JSON as it stands and needs no rendering to have its tree read.
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("the rules template is not JSON: %v", err)
+	}
+	node, _ := doc["rules"].(map[string]any)
+	if node == nil {
+		t.Fatal("the template has no rules object")
+	}
+	// The parent the three functions name carries no grant: a read on it would
+	// cascade to every project's node.
+	for _, seg := range strings.Split("config/policy/voice", "/") {
+		child, ok := node[seg].(map[string]any)
+		if !ok {
+			t.Fatalf("the template's rules object has no %s node", seg)
+		}
+		node = child
+	}
+	if len(node) != 2 {
+		t.Errorf("the template's config/policy/voice carries %d keys, want the two children and no grant of its own: %v", len(node), node)
+	}
+	shared, _ := node["shared"].(map[string]any)
+	repos, _ := node["repos"].(map[string]any)
+	if shared == nil || repos == nil {
+		t.Fatalf("the template's config/policy/voice has no shared/repos children: %v", node)
+	}
+	if got := shared[".read"]; got != "TOKEN" {
+		t.Errorf("config/policy/voice/shared .read = %v, want TOKEN (PathShared's own grant)", got)
+	}
+	if got := shared[".write"]; got != false {
+		t.Errorf("config/policy/voice/shared .write = %v, want false: only an operator's IAM credential writes it", got)
+	}
+	repo, _ := repos["$slug"].(map[string]any)
+	if repo == nil {
+		t.Fatalf("the template's config/policy/voice/repos has no $slug child: %v", repos)
+	}
+	if got := repo[".read"]; got != "TOKEN && auth.token.fs == $slug" {
+		t.Errorf("config/policy/voice/repos/$slug .read = %v, want TOKEN && auth.token.fs == $slug (PathRepo's own grant)", got)
+	}
+	if got := repo[".write"]; got != false {
+		t.Errorf("config/policy/voice/repos/$slug .write = %v, want false", got)
+	}
+	for _, n := range []map[string]any{shared, repo} {
+		if r, _ := n[".read"].(string); strings.Contains(r, "mu") || strings.Contains(r, "mc") || strings.Contains(r, "pu") {
+			t.Errorf("a voice node's .read = %q names a user, consumer or pairing claim: no device, no phone and no pairing session reads the policy tree", r)
+		}
+	}
 }
 
 // The escaping itself (that a slug is keyed exactly as budget.Key keys it) is
