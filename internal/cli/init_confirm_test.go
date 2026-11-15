@@ -196,8 +196,8 @@ func TestTypedOnlyFirestoreLocationMatrix(t *testing.T) {
 					if spy.read {
 						t.Fatalf("stdin was read: nothing is typed at a confirmation any more (T7)")
 					}
-					if c.opts.yes && !strings.Contains(out.String(), "confirmed by --yes") {
-						t.Errorf("update --yes confirmed the location without saying so:\n%s", out)
+					if c.opts.yes && !strings.Contains(out.String(), "confirmed by this run's own answer") {
+						t.Errorf("the run's own answer confirmed the location without saying so:\n%s", out)
 					}
 					return
 				}
@@ -273,8 +273,8 @@ func TestTypedOnlyImageBuildMatrix(t *testing.T) {
 				if spy.read {
 					t.Fatalf("stdin was read: nothing is typed at a confirmation any more (T7)")
 				}
-				if c.opts.yes && !strings.Contains(out.String(), "confirmed by --yes") {
-					t.Errorf("--yes confirmed the build without saying so:\n%s", out)
+				if c.opts.yes && !strings.Contains(out.String(), "confirmed by this run's own answer") {
+					t.Errorf("the run's own answer confirmed the build without saying so:\n%s", out)
 				}
 				return
 			}
@@ -332,14 +332,12 @@ func asAgent(err error, target **initflow.AgentError) bool {
 	return false
 }
 
-// Through the command: a coding agent's session applies nothing, with --yes
-// or without, whichever stage it reaches; the plan still runs.
+// Through the command: a coding agent's session applies nothing, whichever
+// stage it reaches; the plan still runs.
 func TestInitInAnAgentSessionAppliesNothing(t *testing.T) {
 	for name, args := range map[string][]string{
-		"--yes":                   {"setup", "--yes", "--json"},
-		"--yes --non-interactive": {"setup", "--yes", "--non-interactive", "--json"},
-		"no flags":                {"setup", "--json"},
-		"--config-only --yes":     {"setup", "--config-only", "--yes", "--json"},
+		"--json":        {"setup", "--json"},
+		"--config-only": {"setup", "--config-only", "--json"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newInitRig(t)

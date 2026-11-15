@@ -689,6 +689,7 @@ can reach.
   before T2.3 (the read mint) merges, and before T3.1 if S3 returns. If it shows that a `client_credentials` token reaches beyond its workspace
   (U3), the owner rules again on D360 and D361, the read consumer's reach, before T2.3 merges.
   This was amended on 2026-10-26: with D363 reversed, the read mint is the only mint U3 bears on.
+  **Check 145's U3 ran 2026-11-14 and shows the token reaches past its workspace; the owner ruled the same day: accept the reach, D360 and D361 stand as answered (the per-repository check is the only bound, and the reach is stated in SECURITY.md per T2.11).**
   **Answered 2026-11-01: yes (B3).** Check 145 is a precondition before the first read mint, and the
   mint it gates is now BB4's, not T2.3's. The plan is written to it.
 - **O5, recorded.** D362's answer was relayed to this document as "recommended", but it is

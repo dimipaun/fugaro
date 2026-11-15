@@ -219,7 +219,7 @@ func (e *initEngine) gateRun(ctx context.Context) error {
 	// The refusal is the user's to read and the run's to stop: it is returned
 	// whole (a user error, exit 1), and nothing after it runs — no stage, no
 	// write, no record.
-	return askDecide(r.w, askFlags{ask: r.o.ask, yes: r.o.yes}, r.gateUnderway(), r.conditions())
+	return askDecide(r.w, askFlags{ask: r.o.ask}, r.gateUnderway(), r.conditions())
 }
 
 // gateable is whether this door has a gate for this run at all. A run whose own

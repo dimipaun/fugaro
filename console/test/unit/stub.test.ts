@@ -159,7 +159,7 @@ describe('the stub’s command keys', () => {
       commandKey(['settings', 'set', 'budget.cap_usd', '--layer', 'local', '--dry-run', '--json', '--project', 'fugaro']),
     ).toBe('settings edit')
     expect(
-      commandKey(['settings', 'unset', 'budget.cap_usd', '--layer', 'local', '--yes', '--project', 'fugaro', '--config', '/tmp/config.toml']),
+      commandKey(['settings', 'unset', 'budget.cap_usd', '--layer', 'local', '--project', 'fugaro', '--config', '/tmp/config.toml']),
     ).toBe('settings edit')
     // ...and the read keeps its own key, which is the key the row's words
     // produce and the one every settings section's fixture already uses.
