@@ -4,7 +4,9 @@ package e2e
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"os"
 	"os/exec"
@@ -13,11 +15,54 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
+
+// buildImage builds dir's workflow image with the local Docker daemon and
+// fails the test unless the build and its smoke test passed.
+//
+// The build is the derived-image machinery `fugaro image build --local` runs,
+// driven in process. D1900 disabled that command (repo-level images are
+// disabled and the code is kept) behind a door internal/cli's own TestMain
+// clears, and a test that runs the shipped binary cannot clear it: the binary a
+// user has ships with the door shut. The derived build is the machinery the
+// ruling keeps -- `fugaro update` still runs it, for a repository whose project
+// names no catalog image -- so the test calls the entry point the command's own
+// arm calls, with the checkout loaded the way that arm loads it.
+func buildImage(t *testing.T, dir, base, tag string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, "fugaro.yaml"))
+	if err != nil {
+		t.Fatalf("reading the checkout's fugaro.yaml: %v", err)
+	}
+	cfg, problems := config.Parse(data)
+	if len(problems) > 0 {
+		t.Fatalf("fugaro.yaml: %v", problems)
+	}
+	workflow, _, err := cfg.SelectWorkflow("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var log bytes.Buffer
+	res, buildErr := image.BuildLocal(context.Background(), image.LocalOptions{
+		Root: dir, Config: cfg, Workflow: workflow, Base: base, Tag: tag,
+		Platform: testutil.DockerPlatform(t), Version: "dev", Smoke: true,
+		Env: os.Environ(), Log: &log,
+	})
+	t.Cleanup(func() { _ = exec.Command("docker", "image", "rm", "--force", tag).Run() })
+	// A smoke test that did not pass is an error for the command as well,
+	// after it has printed the report.
+	if buildErr == nil && (res.Smoke == nil || !res.Smoke.Passed) {
+		buildErr = fmt.Errorf("%s built, but its smoke test did not pass", tag)
+	}
+	if buildErr != nil {
+		t.Fatalf("image build: %v\nlog:\n%s", buildErr, testutil.Tail(log.String()))
+	}
+}
 
 // implementWarm commits a copy of build/warm-marker, which the image's setup
 // step wrote. git ignores build/, so the file only survives if bootstrap
@@ -38,17 +83,7 @@ func TestExecInDerivedImage(t *testing.T) {
 	checkout := filepath.Join(t.TempDir(), "app")
 	testutil.Git(t, filepath.Dir(checkout), "clone", "--quiet", remote, checkout)
 	const tag = "fugaro-e2e-app:test"
-	build := exec.Command(testutil.BuildFugaro(t), "image", "build", "--local", "--json",
-		"--base", base, "--tag", tag, "--platform", testutil.DockerPlatform(t))
-	build.Dir = checkout
-	var stdout, stderr bytes.Buffer
-	build.Stdout, build.Stderr = &stdout, &stderr
-	buildErr := build.Run()
-	t.Cleanup(func() { _ = exec.Command("docker", "image", "rm", "--force", tag).Run() })
-	var built image.LocalResult
-	if err := json.Unmarshal(stdout.Bytes(), &built); err != nil || buildErr != nil || built.Smoke == nil || !built.Smoke.Passed {
-		t.Fatalf("image build: %v, %v\n%s\n%s", buildErr, err, stdout.String(), testutil.Tail(stderr.String()))
-	}
+	buildImage(t, checkout, base, tag)
 
 	// A commit that lands after the image was built: the run must fetch it.
 	delta := filepath.Join(t.TempDir(), "delta")
