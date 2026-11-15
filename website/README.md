@@ -1342,8 +1342,8 @@ added or removed without this sentence moving fails there:
     `hidden` elements, the skip link and the consent banner, sit outside it — so that rule
     is what stops a page that starts hiding a control from being counted for words nobody
     sees. `/docs/`, `/security/`,
-    `/changelog/`, `/legal/subscription-terms/` and `/compatibility/` are exempt, which is
-    D188's own list: `/docs/` and `/changelog/` render a
+    `/changelog/`, `/legal/subscription-terms/`, `/compatibility/` and `/features/` are exempt,
+    which is D188's own list: `/docs/` and `/changelog/` render a
     document of this repository, `/security/` renders two sections of the policy document
     and links to the rest of it, and `/legal/subscription-terms/` renders the agreement text
     of a document of this repository, so those carry text the repository wrote rather
@@ -1352,9 +1352,14 @@ added or removed without this sentence moving fails there:
     Task CM2, which names `test/lib/exempt.mjs`): its tables print
     `data/compatibility.yaml` — 46 rows of names, notes, statuses and editions, **1037
     words** on the build of 2026-11-10 — so the words a reader reads there are the matrix's
-    own and not a page's prose. It moved nothing else: D188's own number is untouched and
+    own and not a page's prose. `/features/` is the sixth, added on 2026-11-15, before the
+    page itself (the feature matrix's plan, Task T4a, which names `test/lib/exempt.mjs`): its
+    one table prints the feature matrix — a row per feature with its name, its status and the
+    lowest plan it is in (D2448) — so the words a reader reads there are the table's and not a
+    page's prose either, and the page's lead is still held to the 40-word lead ceiling like
+    every other page's. Neither addition moved anything else: D188's own number is untouched and
     the pages that are the site's are the pages it still holds. `/security/` is the one of the
-    five a reader might question — much shorter than the document it used to render whole, and
+    six a reader might question — much shorter than the document it used to render whole, and
     still well over this ceiling — so it stays on the list, and `test/security.mjs` holds it to
     a ceiling of its own. How many words a page carries is
     `budget.mjs`'s own reader's to say, over the built artifact; this list does not keep the
