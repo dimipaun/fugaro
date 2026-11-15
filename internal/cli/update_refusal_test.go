@@ -44,9 +44,12 @@ func TestARefusalAfterAFailureStillSaysHowToUnblockIt(t *testing.T) {
 	if !strings.Contains(line, "needs a real terminal") || !strings.Contains(line, "run it in your own terminal window") {
 		t.Errorf("the top-level line does not carry the refusal's advice on how to unblock the run: %q", line)
 	}
-	// What the log holds is the failure the account printed — the log is what
-	// `fugaro troubleshoot` opens — and the refusal is in it nowhere: main's own
-	// line is the only place it is said, which is what this test is for.
+	// What the log holds — it is what `fugaro troubleshoot` opens — is the
+	// account's own row for the stage that failed, "the confirmation of this step
+	// needs a real terminal", while the refusal the run returns names the stage
+	// the loop reached after it ("typing the confirmation for plugin"): the
+	// failure is in the log and the refusal is not, which is why main's own line
+	// is the only place the refusal is said.
 	if !strings.Contains(newestLog(t, "update"), "needs a real terminal") {
 		t.Errorf("the run's log lost the failure it printed:\n%s", newestLog(t, "update"))
 	}
