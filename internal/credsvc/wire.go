@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -78,6 +79,21 @@ const (
 	// header's value is registered with the call's scrub like the two identity
 	// tokens are, and why no line this service writes may carry it.
 	HeaderSlipClaim = "X-Fugaro-Slip-Claim"
+	// HeaderAuthMode is the auth the run's own repository goes out on, as the
+	// run declares it: a value of config.AgentAuths (ValidAuthMode). It is the
+	// caller's STATEMENT and never evidence (G16, R7): the agent holds the run
+	// identity and the job's ID token, so it can send whatever it likes here,
+	// and a repository's reach decided from what the caller says about itself
+	// would be no boundary at all. The service decides from the record `fugaro
+	// update` wrote (creds/repoauth/<slug>, B2.1) and reads this header only to
+	// check it against that record: a call whose declaration disagrees with its
+	// repository's own configuration is refused, never served.
+	HeaderAuthMode = "X-Fugaro-Auth-Mode"
+	// HeaderAuthAccount names the Claude account an oauth run goes out on,
+	// spelled as config.ClaudeAccountNameRE spells one (config.DefaultClaudeAccount
+	// for the unsuffixed account). It is the caller's statement too, and it is
+	// read for one thing only: whether the repository's record names it.
+	HeaderAuthAccount = "X-Fugaro-Auth-Account"
 )
 
 // BitbucketProxyPrefix is the path prefix under which this service serves one
@@ -103,6 +119,66 @@ const (
 // together (TestGitForwardMirrorsCredsvc, the plan's own name for it). Nothing
 // in this package can pin a spelling that does not exist yet.
 const BitbucketProxyPrefix = "/v1/bitbucket/proxy/"
+
+// WorkflowSecretsPath is the path a run's own job asks this service for one of
+// its workflow's secrets on (B3.2, G19): a workflow secret the job does not
+// mount is fetched from here at bootstrap, one variable per call, and the value
+// is the answer's own field.
+//
+// The path, the request and the answer are here rather than beside the route
+// because the caller is another package — the runner's fetch (B3.4) goes
+// through internal/gateway's service client, which spells this contract the way
+// it spells the model path's — and a contract two packages spell is written
+// down once, in this file, for the reason this file's own header gives. Which
+// workflow a call may be served is decided from the VERIFIED job account and
+// never from anything the call carries (G19): the request names one variable of
+// the caller's own workflow and nothing else, so there is no field in which a
+// caller could name another workflow, another repository or another job's
+// secret.
+const WorkflowSecretsPath = "/v1/workflow-secrets"
+
+// maxWorkflowSecretsRequestBytes bounds a workflow-secrets call's body. The
+// whole request is one small field ({"env":"NAME"}), so the bound is the mint's
+// and small on purpose: a body larger than this is not one of these calls, and
+// it is refused before it is decoded.
+const maxWorkflowSecretsRequestBytes = 4 << 10
+
+// WorkflowSecretsRequest is what such a call carries: the environment variable
+// the job's own mount would have named, and the name the record
+// (creds/workflowsecrets/<slug>, B3.1) is read by. It is the CALLER's text and
+// is therefore trusted for nothing — the record decides whether the calling
+// job's workflow has a secret under it, and a name the record does not hold is
+// refused with a typed refusal rather than being looked up anywhere else.
+//
+// There is no field for the repository, the workflow or the run: the first two
+// are the verified job account's (JobAccount.Slug, JobAccount.Workflow) and the
+// third is the verified run identity's, and a contract that let a caller name
+// any of them would be a contract whose service decided from what the call
+// said about itself.
+type WorkflowSecretsRequest struct {
+	// Env is the variable's name, held to config.EnvNameRE — the shape the
+	// workflow-secret check itself uses (D1372), so a name no job could have
+	// mounted under is refused as a request this route does not read rather
+	// than searched for.
+	Env string `json:"env"`
+}
+
+// WorkflowSecretsResponse is the answer: the variable that was asked for, and
+// the value the record's container holds for it. It is ONE value and not the
+// workflow's whole set, which is what keeps every line this act writes naming
+// exactly one container (audit.go) and keeps what a caller is served to what it
+// named — a job is served the variable it asked for and no other.
+//
+// The value is a credential and this answer is the only place it appears: it is
+// written no-store (writeReadAnswer), no header of the answer carries it, and
+// neither the audit line nor any refusal of this route can hold it (G18).
+type WorkflowSecretsResponse struct {
+	// Env is the variable the value is for, echoed so an answer can never be
+	// read as another variable's.
+	Env string `json:"env"`
+	// Value is the credential's value.
+	Value string `json:"value"`
+}
 
 // The response headers.
 const (
@@ -182,8 +258,33 @@ func ValidJobName(s string) bool {
 	return len(s) <= maxJobNameBytes && jobNameRE.MatchString(s)
 }
 
+// ValidAuthMode reports whether s may be the auth a call declares
+// (HeaderAuthMode): one of config.AgentAuths, the same closed set the
+// repository's own fugaro.yaml is held to. It is the same list rather than a
+// second one, because the value a run declares has to be comparable with the
+// value `fugaro update` recorded for that repository, and two spellings of the
+// set is how a repository whose record says `oauth` meets a declaration this
+// service refuses as unknown.
+func ValidAuthMode(s string) bool {
+	return config.KnownAgentAuth(s)
+}
+
+// ValidAuthAccount reports whether s may be the Claude account a call declares
+// (HeaderAuthAccount). It is config's own rule for an account's name, which is
+// the rule the record's accounts are held to as well: the header is only ever
+// compared against that list, and a value the list could not hold is refused
+// here rather than compared and found unequal — a refusal that says "not this
+// repository's account" about a value that could not be an account at all would
+// send an operator looking in the wrong document.
+func ValidAuthAccount(s string) bool {
+	if s == config.DefaultClaudeAccount {
+		return true
+	}
+	return len(s) <= config.MaxClaudeAccountNameLen && config.ClaudeAccountNameRE.MatchString(s)
+}
+
 // The error types of the refusal body. The runner switches on these, not on
-// a status: two of them share one status.
+// a status: three of them share one status.
 const (
 	// ErrorExhaustedUntil is the typed answer of C1.11: no credential is
 	// usable now, and the earliest reset is ResetAt. The runner waits for it
@@ -207,6 +308,22 @@ const (
 	// The message is the gateway's own sentence and it says that nothing was
 	// read; no credential value is in it, because none was touched.
 	ErrorRequestRefused = "request_refused"
+	// ErrorNoCandidateCredentials is a call the cascade was asked for and could
+	// hand no credential to: the narrowing this service applies — the crafts
+	// where the installation publishes them, O4's tier-A admission, the
+	// repository's recorded auth and the slip fence a per-user or project
+	// credential needs — left the list the selector is given empty, so there was
+	// nothing to select from, nothing to wait for and no other tier to reach. The
+	// state WAS read: it is what the service read that empties this call's list,
+	// and the tried list beside this type names every credential that was
+	// considered and the one reason each was dropped. It is deliberately not
+	// ErrorStateUnavailable, whose name sends the operator to the database: this
+	// is a policy and bundle question, and the sentence and the list say which (a
+	// bundle that holds no model credential, an account the repository's own
+	// admission does not cover, a credential the call carries no slip for). Like
+	// every refusal but ErrorExhaustedUntil it halts the run (D143), and no
+	// credential value is in it, because none was used.
+	ErrorNoCandidateCredentials = "no_candidate_credentials"
 )
 
 // The statuses. An unverified caller is 403; everything the service cannot
@@ -279,6 +396,19 @@ func ValidReason(reason string) bool {
 		return true
 	}
 	return false
+}
+
+// triedLine renders a tried list as one line: name (reason), name (reason), in
+// the order the list holds. It is the rendering a refusal's own sentence and
+// the operator's refusal line both use, so the run and the operator read one
+// list and not two — and it names credentials and never a value, since a name
+// is one of the bundle's keys and a reason is one of the four constants below.
+func triedLine(tried []Tried) string {
+	parts := make([]string, 0, len(tried))
+	for _, tr := range tried {
+		parts = append(parts, tr.Name+" ("+tr.Reason+")")
+	}
+	return strings.Join(parts, ", ")
 }
 
 // ValidCredentialName reports whether name may be a credential's name: one
@@ -900,7 +1030,47 @@ func RequestFromHTTP(r *http.Request) (Request, error) {
 	if !ValidJobName(job) {
 		return Request{}, fmt.Errorf("credsvc: the %s header is not a Cloud Run job name", HeaderRunJob)
 	}
-	return Request{RunIDToken: run, JobIDToken: bearer, Job: job}, nil
+	mode, _, err := optionalHeader(r, HeaderAuthMode)
+	if err != nil {
+		return Request{}, err
+	}
+	account, _, err := optionalHeader(r, HeaderAuthAccount)
+	if err != nil {
+		return Request{}, err
+	}
+	if mode != "" && !ValidAuthMode(mode) {
+		return Request{}, fmt.Errorf("credsvc: the %s header is not one of the agent auths", HeaderAuthMode)
+	}
+	if account != "" && !ValidAuthAccount(account) {
+		return Request{}, fmt.Errorf("credsvc: the %s header is not a Claude account name", HeaderAuthAccount)
+	}
+	return Request{RunIDToken: run, JobIDToken: bearer, Job: job, AuthMode: mode, AuthAccount: account}, nil
+}
+
+// optionalHeader returns the single value of a request header the call may
+// leave out, and it holds the one rule oneHeader holds that matters for an
+// absent header: a call that sent it twice is refused rather than answered from
+// whichever value the map happened to keep. An auth declaration is exactly the
+// kind of header a caller would try to send twice — the boundary is decided
+// from it, so a call carrying two of them is a call trying to have both
+// answers, and the refusal names the header and never a value.
+//
+// An empty value is refused rather than read as absent: a caller that sent the
+// header has declared something, and "" is not a value either of these headers
+// can carry — reading it as "declared nothing" would answer a call that asked
+// two contradictory things with the one reading that suits it.
+func optionalHeader(r *http.Request, name string) (value string, present bool, err error) {
+	values := r.Header.Values(name)
+	switch len(values) {
+	case 0:
+		return "", false, nil
+	case 1:
+		if values[0] == "" {
+			return "", false, fmt.Errorf("credsvc: the call carries an empty %s header", name)
+		}
+		return values[0], true, nil
+	}
+	return "", false, fmt.Errorf("credsvc: the call carries the %s header more than once", name)
 }
 
 // bearerFromHTTP reads the one bearer token a call presents in Authorization,

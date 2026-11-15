@@ -48,21 +48,14 @@ import (
 // member nobody wrote a rule for is then a member an agent's session may move.
 //
 // What this file does NOT do is decide whether the session may go on. That is
-// initflow's own rule — CanConfirmManaged, asked with the answer these rules
-// produced — because a command that restated D55's rule would be a second copy
+// initflow's own rule — whether the managed case removes this step's
+// confirmation, asked with the answer these rules produced — because a command
+// that restated D55's rule would be a second copy
 // of it to drift from, and the second copy is the one that would widen a
 // confirmation instead of narrowing it (D1026). Nor does it read the marks:
 // that is the one helper every command in the set calls (managed_gate.go,
 // M6, D1015/D1017/D1024/D1025), and a command that re-implemented it would be
 // the drift that helper exists to prevent.
-
-// policyPublishClass is the class this step's confirmation is. It is
-// YesOrTyped and not Typed: a Typed step is money or permanent, neither of
-// which a policy node is — the deletion is --yes-coverable and the publish
-// itself asks nothing at all — and a Typed class is one no plan gate may admit
-// (D1026). It is one constant for both doors of this command so the class
-// cannot differ between a publish and a deletion.
-const policyPublishClass = initflow.YesOrTyped
 
 // The rules, in the words the refusal and the audit record carry. Each is a
 // constant because the two readers grep for the same text: the session reads
@@ -161,9 +154,9 @@ func policyPublishVerdict(old, pol *projectpolicy.Policy, body []byte, seedRepos
 		refused = append(refused, ruleSaid(policyRoutingFlagRule, "the flag drops the published routing block, and that block is where a project's Claude calls are sent"))
 	}
 	if len(refused) > 0 {
-		return managedmode.ConvergeRefused(body, policyPublishClass, refused)
+		return managedmode.ConvergeRefused(body, refused)
 	}
-	return managedmode.ConvergeAdmitted(body, policyPublishClass, passed)
+	return managedmode.ConvergeAdmitted(body, passed)
 }
 
 // policyDeleteVerdict is the gate's verdict over a removal. It is refused by
@@ -173,7 +166,7 @@ func policyPublishVerdict(old, pol *projectpolicy.Policy, body []byte, seedRepos
 // remove — because that is the document an owner comparing a record against
 // the database is looking at (D1022's digest is over the bytes the gate read).
 func policyDeleteVerdict(raw []byte) managedmode.Converge {
-	return managedmode.ConvergeRefused(raw, policyPublishClass, []string{
+	return managedmode.ConvergeRefused(raw, []string{
 		ruleSaid(policyDeleteRule, "the published node is what every run of the project is admitted by, so removing it is the owner's own decision and not one a plan can stand in for"),
 	})
 }
@@ -548,14 +541,15 @@ func publishAgentRefusal(agent string) error {
 }
 
 // policyPublishProceed is whether the session may go on and what it reads
-// about it: initflow's own class rule, asked with the gate's answer, and
-// initflow's own sentence for the one case in which a step in a coding agent's
-// session proceeds. A person's session is touched by neither.
+// about it: initflow's own rule — does the managed case remove this step's
+// confirmation — asked with the gate's answer, and initflow's own sentence for
+// the one case in which a step in a coding agent's session proceeds. A person's
+// session is touched by neither.
 func policyPublishProceed(agent string, out io.Writer, m initflow.Managed) error {
 	if agent == "" {
 		return nil
 	}
-	if !initflow.CanConfirmManaged(policyPublishClass, initflow.Conditions{Agent: agent}, m) {
+	if !m.Removes() {
 		return publishAgentRefusal(agent)
 	}
 	fmt.Fprintln(out, initflow.AgentProceeded(agent))

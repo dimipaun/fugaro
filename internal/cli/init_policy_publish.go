@@ -682,8 +682,9 @@ func policyAccountValues(p *projectpolicy.Policy) map[string]string {
 // the node itself — looseningWhy words the first publish as the widening of the
 // whole node, so it never prints the two empty values.
 //
-// It is what gives a first publish the Typed class: the typed name rather than
-// --yes, and a coding agent's session refused by the gate's own D1026 rule
+// It is what makes a first publish the owner's own step: the person's own
+// answer rather than one a run carries, and a coding agent's session refused by
+// the gate's own D1026 rule
 // rather than admitted to the boundary every later run of the project is
 // admitted by.
 func (m *policyMigration) loosening() []policyCeiling {
@@ -700,6 +701,26 @@ func (m *policyMigration) loosening() []policyCeiling {
 	return append(policyLoosening(m.node, m.pub.pol), policyAccountWidening(m.node, m.pub.pol)...)
 }
 
+// accountChoiceOnly is whether the whole of this publish's loosening is the
+// account-choice members — which account the project's stages go out on — and
+// nothing else: no ceiling is raised, none is removed and the model list is not
+// widened. It is asked where the typed name is about to be, and its one caller
+// is the door whose own command the owner typed at their own terminal (D2097):
+// for that door the account choice is the decision it was run to make, while a
+// ceiling raised in the same publish is the separate one D846 reserves for the
+// project's own hand and keeps its typed name.
+//
+// A project's FIRST node is never this, whatever it carries: the node it writes
+// is the whole of the project's policy, which is what the first publish's own
+// sentence says and what its Typed class is about. So is a run with no node to
+// compare against, which is the same case read from the other side.
+func (m *policyMigration) accountChoiceOnly(loosening []policyCeiling) bool {
+	if m.firstPublish || m.pub == nil || len(loosening) == 0 {
+		return false
+	}
+	return len(policyLoosening(m.node, m.pub.pol)) == 0
+}
+
 // looseningWhy is the sentence the typed confirmation shows and the refusal
 // gives: which member loosens, from what to what, and the command that reaches
 // the same publish at the operator's own terminal. --yes is named as the thing
@@ -713,7 +734,7 @@ func (m *policyMigration) loosening() []policyCeiling {
 // written now is the one every run of the project is admitted by from here on.
 func (m *policyMigration) looseningWhy(loosening []policyCeiling) string {
 	if m.firstPublish {
-		return fmt.Sprintf("the project has no published policy node at %s, and this run writes the one every run of the project is admitted by — its allow-list, its ceilings and its catalog are chosen here for the first time. The project's own name is what confirms it and --yes does not stand in; run this yourself at your own terminal: %s",
+		return fmt.Sprintf("the project has no published policy node at %s, and this run writes the one every run of the project is admitted by — its allow-list, its ceilings and its catalog are chosen here for the first time. The project's own name is what confirms it, and no flag stands in; run this yourself at your own terminal: %s",
 			projectpolicy.PathShared(), selfCommand()+" update")
 	}
 	var b strings.Builder
@@ -724,7 +745,7 @@ func (m *policyMigration) looseningWhy(loosening []policyCeiling) string {
 		}
 		fmt.Fprintf(&b, "%s %s -> %s", c.Member, c.Was, c.Now)
 	}
-	fmt.Fprintf(&b, ". The project's own name is what confirms it and --yes does not stand in; run this yourself at your own terminal: %s", selfCommand()+" update")
+	fmt.Fprintf(&b, ". The project's own name is what confirms it, and no flag stands in; run this yourself at your own terminal: %s", selfCommand()+" update")
 	return b.String()
 }
 

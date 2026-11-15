@@ -24,6 +24,28 @@ accepted **as recommended**; the **tasks** are approved only where the ruling sa
 proposed and unapproved**, and **"plan only" still describes the tree**: no code, no rules document,
 no Firebase configuration, nothing built.
 
+**Amended 2026-11-14 — P5 is merged, and a review of it at `main` left one gap open.** P5 is in the
+tree (`ce24f96f`, PR #2614): the declared list is read from the machine's own config and
+`fugaro project policy publish` seeds `config/admin/devices` from it when that node is not there.
+The review upheld what this folder's P5 says a review of it must cover — the write is ETag-guarded
+and gated on the node's absence, a declared entry the node does not carry admits nobody, a role is
+refused rather than defaulted, the block is local-only, so neither a launcher of the runs bucket nor
+a run's own session can declare an admin, and every other writer of the device node adds or deletes
+one child — with **one gap left open, reported rather than fixed**: the rule that a publish never
+re-adds an entry an operator removed holds only while the node exists, because revoking the **last**
+device empties the node it was on, the database prunes a node its last child has left (which
+`internal/gcpfake/rtdb.go` models as the real database does), and the read the seed's gate rests on —
+`GetETag` in `internal/rtdb/client.go` — reports a node the database answers with a null body as one
+that is not there; so the next publish re-seeds every declared entry, the person just revoked among
+them whenever the declaration still names them. Closing that needs a record that a seed has happened, which P5 does
+not have: it is a decision, not a repair. The review found the folder's own text wider than the tree
+on a second point, and this note is where that is said: P5's scope sentence and **D231** put the
+declared list in the **checkout's** `fugaro.yaml`, validated by `schemas/fugaro.schema.json`, while
+the change reads it from the machine's own config (`internal/localcfg`, with the rows the settings
+schema pins) — deliberately, for the reason the field's own comment gives: a repository's
+`fugaro.yaml` travels with the checkout a run is handed, so a declaration there would be a way for a
+pull request to add an admin. The plan's sentence is what disagrees with the tree.
+
 The spec is one page of prose and a flow: sign in with an account already on the phone, scan a
 project QR, let the project's allowlist check the verified email. What the repository holds today is
 the **other** half of that — an allowlist that is a **device node keyed by Firebase Auth uid**, an
@@ -37,7 +59,7 @@ approved and unbuilt. [Reconciliation.md](reconciliation.md) works through the d
 | --- | --- |
 | [spec.md](spec.md) | **The owner's spec, verbatim** — the text as it was written, alone, with nothing of ours in it. It is not edited, not annotated and not reconciled in place; the document that disagrees with it says so. |
 | [reconciliation.md](reconciliation.md) | What the repository has, what the spec asks for, and where they differ: findings **F1–F29** classified *Wrong / Exists / Gap / Rule / Open*, the provider path written out in full, the decisions **D221–D236** (recommendation first, alternative and cost after — D235, which scopes v1 rather than choosing between two things, states none — each carrying the owner's answer of 2026-10-22 under it), what could not be verified, a glossary — and an "Open for the owner" section of things that are **not** decisions. **Where it disagrees with spec.md, it wins.** |
-| [implementation-plan.md](implementation-plan.md) | The parts **P0–P6**: each independently mergeable, each with its scope, files, **red step**, verification, dependencies, reviewer tier and commit. It carries what an **independent opus review** must cover for each security-sensitive part, and the owner-run live checks **proposed by name and not numbered**. |
+| [implementation-plan.md](implementation-plan.md) | The parts **P0–P6**: each independently mergeable, each with its scope, files, **red step**, verification, dependencies, reviewer tier and commit. It carries what an **independent opus review** must cover for each security-sensitive part, and the owner-run live checks **proposed by name** — numbered **620–627** in the register on 2026-11-14, once the parts that ship them had merged. |
 | [provider-sign-in.md](provider-sign-in.md) | **The path not taken, written out and refused (P6).** D221's alternative discharged as documentation and **not built**: the configuration delta per project, the narrower refusal `refusePublicSignUp` would have to become, the attack surface, the per-provider verified-email question, the loss of immediate revocation, and the checks that would have to pass before a line of it is written. It is the folder's one document that describes a path the tree does not take, and it says of itself what it is: **refused, and not a plan, a design or an approval**. Its purpose is the one [../pending-workflows/](../pending-workflows/) has — the next person who wants this should read a document, not re-derive a decision. |
 | [README.md](README.md) | This index. |
 
@@ -57,7 +79,7 @@ section is marked *"for example"* and is a command this repository does not have
 | Numbers | What | Why these |
 | --- | --- | --- |
 | **D221–D236** | this work's decisions | Taken from **above every written number**: the highest written decision under `docs/` at the base commit is **D220** (the voice-session work's, `docs/mobile/voice-session/`), the coordinator holds D193–D197, and D198–D200 are free but **D200 is recorded as possibly held by the owner's notes**. Each decision is written in [reconciliation.md](reconciliation.md) §4, **recommendation first**. |
-| **none** | check numbers | The register's rule is that **the phase that ships a check writes it**. The parts here ship none, and the numbers above 111 are proposals and unmerged claims (§9 of the plan): this work proposes its owner-run checks **by name** and claims no number. |
+| **620–627** | check numbers (the register's: [`../gcp-live-checklist.md`](../gcp-live-checklist.md)) | The register's rule is that **the phase that ships a check writes it**, so this work claimed none and §9 of the plan proposes its owner-run checks **by name**. The parts have merged (**P0 to P6**), and the rule for a work that reserved none is the number free at its merge: the highest **written** `## Check` section is **600**, `docs/review-job` reserves **610–619**, and that number is **620** — so the eight owner-run checks hold **620–627**, each written in the register as a summary row and a `## Check` section, **owner-run**, **never `belong`** and **NOT RUN**. The two rows of §9 marked **runner** hold none: one is the app's own CI job, the other a rule read on a real run's declaration. |
 
 ## What this work collides with, in one paragraph
 

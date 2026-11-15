@@ -718,6 +718,44 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		}
 	})
 
+	t.Run("a marker of the coordinator generation, below the voice node's", func(t *testing.T) {
+		// Generation 4 already carries the coordinator's read grant, so the
+		// sentence for it must not send the operator after a grant the deployed
+		// rules already hold: what 5 adds is the voice policy node, and that is
+		// what it names. Generation 4 is the marker every installation on the
+		// release behind this one reports, so this is the state the sentence is
+		// read in.
+		if rulesCoordinatorGeneration >= projectpolicy.RulesVersion {
+			t.Fatalf("rulesCoordinatorGeneration = %d and RulesVersion = %d: this case is about a marker between them", rulesCoordinatorGeneration, projectpolicy.RulesVersion)
+		}
+		_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+		db.Set(projectpolicy.PathRulesMarker(), rulesCoordinatorGeneration)
+		db.SetRules([]byte(`{"rules":{".read":false,".write":false}}`))
+		c, ok := doctorChecksByID(t)["policy-rules-skew"]
+		if !ok || c.Severity != "warning" {
+			t.Fatalf("policy-rules-skew = %+v (present %v), want a warning", c, ok)
+		}
+		if c.Problem != rulesMarkerOlderText(rulesCoordinatorGeneration) {
+			t.Errorf("the body is not rulesMarkerOlderText:\n got %q\nwant %q", c.Problem, rulesMarkerOlderText(rulesCoordinatorGeneration))
+		}
+		for _, want := range []string{fmt.Sprintf("generation %d", rulesCoordinatorGeneration), rules.PathVoice, fmt.Sprintf("generation %d or newer", projectpolicy.RulesVersion)} {
+			if !strings.Contains(c.Problem, want) {
+				t.Errorf("the body does not carry %q: %q", want, c.Problem)
+			}
+		}
+		for _, bad := range []string{"fugaro pair", "by hand", "no run reads a published policy", coordpath.PathRoot + "/"} {
+			if strings.Contains(c.Problem, bad) {
+				t.Errorf("the body for a generation-%d marker carries %q, which is about rules it already has: %q", rulesCoordinatorGeneration, bad, c.Problem)
+			}
+		}
+		if !strings.Contains(c.Fix, "fugaro update") || strings.Contains(c.Fix, "--firebase-project") {
+			t.Errorf("the check does not name the owner's fix: %+v", c)
+		}
+		if !strings.Contains(c.Fix, "voice") || strings.Contains(c.Fix, "coordinator") {
+			t.Errorf("the fix for a generation-%d marker does not name what the redeploy adds (the voice policy node): %q", rulesCoordinatorGeneration, c.Fix)
+		}
+	})
+
 	t.Run("a marker that is a negative generation", func(t *testing.T) {
 		// A negative marker is an integer, so this check's gen < RulesVersion
 		// branch took it as an old deployment and printed
@@ -1701,7 +1739,7 @@ func TestDoctorBrokenMarkFixRuns(t *testing.T) {
 	// The prescribed command, on the same installation: the name is not in
 	// this machine's claude_accounts (the rig's config has none), and the mark
 	// is what makes it one this installation has.
-	if _, _, err := execute(t, "accounts", "clear", "team-shared", "--yes"); err != nil {
+	if _, _, err := execute(t, "accounts", "clear", "team-shared"); err != nil {
 		t.Fatalf("the fix doctor printed does not run: %v", err)
 	}
 	if m, _ := db.Value(credsMarkPath("team-shared")).(map[string]any); m["state"] != "available" {

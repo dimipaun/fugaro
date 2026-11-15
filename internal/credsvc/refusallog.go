@@ -15,9 +15,11 @@ package credsvc
 // failure an operator cannot diagnose is a product defect, so the refusals of a
 // model call whose run identity this service verified write this line: the
 // refusal's type and status, the run and the repository it was about, the
-// sentence the run is sent, and the two facts only the service has — which read
-// failed, and the Go type of the error it failed with. That sentence is this
-// service's own class-only one everywhere but in the one place where the run is
+// sentence the run is sent, the credentials the selection considered and the
+// reason each was not used (tried), and the two facts only the service has —
+// which read failed, and the Go type of the error it failed with. That
+// sentence is this service's own class-only one everywhere but in the one place
+// where the run is
 // sent another system's text instead — a selection that failed on the state,
 // which the run is told in the store's own words (refuseSelection) — and there
 // the line carries this service's sentence for it (selectionUnreadable), so the
@@ -116,6 +118,13 @@ const (
 	readSelectorMarks   = "selector_marks"
 	readSelectorLeases  = "selector_leases"
 	readSelectorCurrent = "selector_current"
+	// readRepoAuth is the repository auth record (creds.RepoAuth), read on
+	// every call before the admission is narrowed to it (B2.1). It is a read of
+	// its own rather than one of the selector's three: it is the repository's
+	// own configuration and not the cascade's shared state, and a call refused
+	// on a record that could not be read is a different incident from one
+	// refused on the marks.
+	readRepoAuth = "repo_auth"
 	// stateWrite is the state a selection WRITES rather than reads: the mark a
 	// 401 or a usage limit leaves, the run's own placement, and the round-robin
 	// counter a rotation advances. It is labelled for the reason the three reads
@@ -237,6 +246,11 @@ func (r *stateReads) Current(ctx context.Context, run creds.Run) (string, bool, 
 	return name, found, labelRead(readSelectorCurrent, err)
 }
 
+func (r *stateReads) RepoAuth(ctx context.Context, slug string) (creds.RepoAuth, bool, error) {
+	rec, found, err := r.Store.RepoAuth(ctx, slug)
+	return rec, found, labelRead(readRepoAuth, err)
+}
+
 func (r *stateReads) UpdateMark(ctx context.Context, name string, f func(creds.Mark, bool) (creds.Mark, error)) (creds.Mark, error) {
 	m, err := r.Store.UpdateMark(ctx, name, f)
 	return m, labelRead(stateWrite, err)
@@ -259,13 +273,30 @@ func (r *stateReads) RoundRobin(ctx context.Context) (int64, error) {
 // cause writes an empty read and an empty error_class rather than omitting the
 // fields, so the line's shape is one shape and a reader does not have to tell
 // "not known" from "not there" (the rule the audit line keeps).
-func (s *Server) logRefusal(ctx context.Context, id Identity, typ string, status int, message string, cause error) {
+//
+// tried is the selection's own list — the credentials this call considered and
+// the reason each was not used — and it is written here because a refusal with
+// nothing to offer is diagnosed from exactly that: the run's answer carries the
+// list, and the run's reader is the run, while the operator reads this line
+// (the reason the file exists at all). It is the same rendering the refusal's
+// sentence uses (triedLine), so the line's message and its tried field cannot
+// disagree, and it is written as an empty field where a refusal has no
+// selection behind it (the mint, the pairing, the request check), which is the
+// same one-shape rule.
+//
+// The names are the bundle's own keys and the reasons are the contract's four
+// constants, so nothing here is a value (the rule at the top of this file). The
+// sentence is clipped where it goes on the wire and not here
+// (clipRefusalMessage, refuseSelection), so this line keeps the whole list
+// whatever the run's own body could carry.
+func (s *Server) logRefusal(ctx context.Context, id Identity, typ string, status int, message string, cause error, tried []Tried) {
 	s.log.WarnContext(ctx, refusedMessage,
 		slog.String("type", safetext.OneLine(typ)),
 		slog.Int("status", status),
 		slog.String("repository", safetext.OneLine(id.Slug)),
 		slog.String("run", safetext.OneLine(id.Run)),
 		slog.String("message", safetext.OneLine(message)),
+		slog.String("tried", safetext.OneLine(triedLine(tried))),
 		slog.String("read", readOf(cause)),
 		slog.String("error_class", errorClass(cause)),
 	)
