@@ -15,7 +15,13 @@
 #
 # The check reads ONE LINE PER ATTEMPT, out of the run's own log (fugaro logs):
 #
-#   CHK191 attempt=<name> refused=<yes|no> answer=<the HTTP status, or the refusal's words>
+#   CHK191 attempt=<name> refused=<yes|no|none> answer=<the HTTP status, or the refusal's words>
+#
+# refused=yes is the service refusing the call, refused=no is the finding this
+# check exists for (the call was SERVED), and refused=none is an attempt that
+# was not made at all — this command's own guard stopped it, and the answer
+# field names which one. All seven lines are written or none: a report of six
+# would say nothing about the seventh.
 #
 # A repository command's output does not reach that log: the runner captures it
 # for the model prompt and the verify tail alone (internal/verify's Run is
@@ -76,6 +82,20 @@ report() { # report NAME REFUSED ANSWER
 
 note() { printf '%s\n' "$*" >&2; }
 
+# The seven names the check reads, in the order it prints them.
+NAMES=(other-repository other-ref tag ref-delete other-pull-request merge workspaces)
+
+# none: every attempt reported as one that was NOT made, with the one answer
+# that says why. The check reads all seven lines or none — a report of six tells
+# it nothing about the seventh — so a guard that stops this command before any
+# attempt reports all seven and then stops.
+none() { # none ANSWER
+  local name
+  for name in "${NAMES[@]}"; do
+    report "$name" none "$1"
+  done
+}
+
 # words_of TEXT: the answer field for an attempt, as ONE token — the HTTP status
 # the text carries when it carries one, and otherwise the text itself reduced to
 # plain words. A URL in it is replaced (a git command quotes the URL it opened,
@@ -93,7 +113,7 @@ words_of() {
 }
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/chk191-probe.XXXXXXXX") || {
-  report unavailable no no-scratch-directory
+  none no_scratch_directory
   note "chk191-probe: no scratch directory, so no attempt could be made"
   exit 1
 }
@@ -104,7 +124,7 @@ trap 'rm -rf "$WORK"' EXIT
 # the endpoint is written down (internal/runner's credentialVars).
 forwarder=$(printf '%s' "${GIT_CONFIG_KEY_2:-}" | sed -n 's|^url\.\(.*\)\.insteadOf$|\1|p')
 if [ -z "$forwarder" ]; then
-  report unavailable no no_forwarder_rewrite
+  none no_forwarder_rewrite
   note "chk191-probe: this run's environment carries no Bitbucket forwarder rewrite (GIT_CONFIG_KEY_2), so this repository's runs are not proxied and an attempt made here would go straight to Bitbucket rather than to the credentials service"
   note "chk191-probe: this check command exits 1 on purpose — a green check would end the run with no pull request (docs/secrets-brokering/check191-steps.md)"
   exit 1
@@ -121,7 +141,7 @@ origin=$(git remote get-url origin 2>/dev/null || true)
 self=$(printf '%s' "$origin" | sed -n 's|^.*bitbucket\.org/||; s|\.git$||' | head -n 1)
 branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
 if [ -z "$self" ] || [ -z "$branch" ] || [ "$branch" = HEAD ]; then
-  report unavailable no no_own_repository_or_branch
+  none no_own_repository_or_branch
   note "chk191-probe: this command is not running in a checkout of the run's own repository on the run's own branch (origin='${origin:+named}', branch='${branch:-none}'), so the attempts below could not be aimed at it"
   note "chk191-probe: this check command exits 1 on purpose — a green check would end the run with no pull request (docs/secrets-brokering/check191-steps.md)"
   exit 1
@@ -176,7 +196,7 @@ note "chk191-probe: making Check 191's seven attempts through the credentials se
 if [ -n "$OTHER_REPO" ]; then
   attempt_git other-repository ls-remote "https://bitbucket.org/${OTHER_REPO}.git"
 else
-  report other-repository no no_other_repository_named
+  report other-repository none no_other_repository_named
 fi
 
 # 2. other-ref: an update of a ref that is not fb. The branch it creates is one
@@ -206,7 +226,7 @@ if [ -n "$OTHER_PR" ]; then
     "2.0/repositories/${self}/pullrequests/${OTHER_PR}/comments" \
     '{"content":{"raw":"Check 191 probe (Fugaro): the credentials service must refuse this comment."}}'
 else
-  report other-pull-request no no_other_pull_request_named
+  report other-pull-request none no_other_pull_request_named
 fi
 
 # 6. merge: a path the proxy does not name at all, so the classification refuses
@@ -214,7 +234,7 @@ fi
 if [ -n "$OTHER_PR" ]; then
   attempt_rest merge POST "2.0/repositories/${self}/pullrequests/${OTHER_PR}/merge"
 else
-  report merge no no_other_pull_request_named
+  report merge none no_other_pull_request_named
 fi
 
 # 7. workspaces: the workspace list, one of the calls outside the repository's
