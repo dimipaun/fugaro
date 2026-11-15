@@ -1,16 +1,21 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"slices"
+	"strings"
 
 	"github.com/spf13/cobra"
+	crm "google.golang.org/api/cloudresourcemanager/v1"
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/yamledit"
 )
 
 // newBackendsCmd is `fugaro backends`: which compute backend an installation
@@ -33,10 +38,10 @@ func newBackendsCmd() *cobra.Command {
 			if len(args) == 0 {
 				return cmd.Help()
 			}
-			return userErr("unknown backends subcommand; want ls (see fugaro backends --help)")
+			return userErr("unknown backends subcommand; want ls or use (see fugaro backends --help)")
 		},
 	}
-	cmd.AddCommand(newBackendsLsCmd())
+	cmd.AddCommand(newBackendsLsCmd(), newBackendsUseCmd())
 	return cmd
 }
 
@@ -126,6 +131,181 @@ and the name its config selects.`,
 	}
 	o.addFlags(cmd)
 	return cmd
+}
+
+// newBackendsUseCmd is `fugaro backends use <name>`: the command that selects
+// the backend, and the one line `fugaro setup --provision-batch` ends with
+// points here. The stage writes the batch block and applies the compute root
+// and does NOT select the backend -- every launch of the installation would
+// move onto VMs, and the reaper deletes there -- so selecting it is this
+// command, at the owner's own hands.
+//
+// The write is one key of the local project config, through the same door
+// `project routing` writes through (yamledit, then projectConfigEditLocal:
+// every comment and every other byte of the file is kept, the write is atomic
+// and the file is backed up first), and it asks nothing (the no-prompt policy:
+// no y/N, no --yes).
+//
+// What fences it, and what does not:
+//
+//   - selecting cloud-batch is refused until the installation has passed the
+//     Batch half of `fugaro doctor` -- the same checks, read here, and the
+//     block's own absence with them (backendsUseGate). Without that refusal
+//     this command would be a way to put every launch of an installation onto
+//     VMs that no compute root provisioned, which is the state the gate exists
+//     to close (design compute-backend.md §4.4, §8.1 task 9).
+//   - selecting it is a WIDENING of this installation (a run's job gets a VM,
+//     and on that VM a Docker daemon, which the design's §1 says is root on its
+//     host), so it is the coding-agent refusal's class (settingsEdit.Typed):
+//     no coding agent's session writes it, and the owner's own terminal reads
+//     what it widens and writes it. Selecting cloud-run is a narrowing and is
+//     the ordinary write.
+//   - neither the gate nor the widening holds a LAUNCH back: `fugaro run` reads
+//     no doctor check, so an installation whose selection and provisioning have
+//     drifted apart elsewhere still launches. This command cannot drift: the
+//     selection it writes is one the checks passed for.
+func newBackendsUseCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "use <cloud-run|cloud-batch>",
+		Short: "Select the compute backend this project runs its jobs on",
+		Long: `Select the backend this project's runs are launched on, by writing the
+backend: key of the selected project's own config:
+
+  cloud-run    Cloud Run jobs (the default, and the one every installation
+               runs on today)
+  cloud-batch  Cloud Batch jobs, one VM per run (the VM backend)
+
+The installation must already be provisioned for cloud-batch: its config has to
+carry a batch block -- the block fugaro setup --provision-batch writes, which
+names the machine type, the boot image, the network, the subnetwork and the
+account a run's VMs are built from -- and fugaro doctor's Batch checks have to
+pass. Selecting the name before either is refused, because a launch on an
+installation that is not provisioned there fails at create: nothing was
+written, and the refusal names what doctor reports and what fixes it.
+
+Selecting cloud-run is never refused: it is the default, and it is the
+direction back.
+
+The switch is one key of one file: every comment and every other byte of the
+project config is kept, the old file is backed up, and the write is atomic.
+Nothing is asked and nothing confirmed -- the checks above are what stands in
+front of the change -- and a coding agent's session does not write cloud-batch
+at all (run it yourself; it is the same fence the provisioning step carries).
+
+The change reaches the next run at once, and every launch of the installation
+follows it: on cloud-batch a run's job is a VM with a Docker daemon, so a
+workflow that needs Docker can run, and that VM and its job are the reaper's to
+sweep.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error { return runBackendsUse(cmd, args[0]) },
+	}
+	return cmd
+}
+
+func runBackendsUse(cmd *cobra.Command, name string) error {
+	if !slices.Contains(selectableBackends, name) {
+		return userErr("backend %s: this installation may run on %s, and nothing else (fugaro backends ls lists them)", pluginwire.Printable(name), strings.Join(selectableBackends, " or "))
+	}
+	sel, lc, err := settingsLocalFile("fugaro backends use")
+	if err != nil {
+		return err
+	}
+	// A selection the config already makes is not written again: the effective
+	// name is what a launch reads (a config that names none runs on cloud-run),
+	// so the answer here is that there is nothing to select -- and no redundant
+	// key is written into the file to say it.
+	if lc.Backend() == name {
+		fmt.Fprintf(cmd.OutOrStdout(), "this installation already runs on %s: %s is unchanged\n", name, sel.Path)
+		return nil
+	}
+	if name == backend.CloudBatch {
+		if err := backendsUseGate(cmd.Context(), lc); err != nil {
+			return err
+		}
+	}
+	old, err := settingsReadDocument(settingsTarget{kind: settingsDocLocal, path: sel.Path})
+	if err != nil {
+		return err
+	}
+	next, err := yamledit.SetScalar(old, []string{"backend"}, name)
+	if next, err = workspaceEditResult(sel.Path, next, err); err != nil {
+		return err
+	}
+	e := settingsEdit{
+		Old:     old,
+		New:     next,
+		What:    backendsUseWhat(sel.Path, name),
+		Command: "fugaro backends use " + name,
+	}
+	if name == backend.CloudBatch {
+		// The widening: a run's job is a VM of its own with a Docker daemon on
+		// it, which the design's §1 is about (that daemon is root on the host
+		// running this installation's code), and this selection is what moves
+		// every launch of the installation onto it.
+		e.Typed = true
+		e.TypedWhy = fmt.Sprintf("this moves every launch of %s onto Cloud Batch: a run's job is a Compute Engine VM, one per run, with the Docker daemon of a Container-Optimized OS boot image available to it through a bind-mounted socket -- so a run that asks for Docker gets root on the host that runs this installation's code (design compute-backend.md §1) -- and the reaper is what sweeps the VMs and jobs this installation leaves behind (nothing else does)", lc.Name)
+	}
+	if err := projectConfigEditLocal(cmd, lc, sel, e); err != nil {
+		return err
+	}
+	if yamledit.Changed(old, next) {
+		fmt.Fprintf(cmd.OutOrStdout(), "%s\n", backendsUseAfter(name, lc.Name))
+	}
+	return nil
+}
+
+// backendsUseWhat is the sentence the write prints before it writes. It names
+// the file and the backend, and not the effective "from": a config that carries
+// no backend: key runs on cloud-run, and printing that as the value the file
+// held would be a value the file never carried.
+func backendsUseWhat(path, to string) string {
+	return fmt.Sprintf("point %s at %s: its runs are launched on %s from the next run on", path, to, to)
+}
+
+// backendsUseAfter is what the owner reads once the selection is written: where
+// every run of the installation goes from now on, and the command that puts it
+// back.
+func backendsUseAfter(name, project string) string {
+	if name == backend.CloudRun {
+		return fmt.Sprintf("every run of %s is launched on Cloud Run from now on (fugaro backends use %s moves it back to Cloud Batch)", project, backend.CloudBatch)
+	}
+	return fmt.Sprintf("every run of %s is launched on Cloud Batch from now on: one VM per run, with a Docker daemon, and that VM and its job are the reaper's to sweep (fugaro backends use %s moves it back to Cloud Run)", project, backend.CloudRun)
+}
+
+// backendsUseGate refuses selecting cloud-batch for an installation that has
+// not passed the Batch half of `fugaro doctor`. It reads the checks themselves
+// (doctorBatchChecks) and not a second derivation of the same facts, at the
+// strictness doctor's own gate fails at -- every failing check counts, warning
+// or not, because this very command is the installation selecting the backend
+// -- plus the one thing doctor answers differently here: a config that carries
+// no batch block at all is refused whatever the checks say, since
+// doctorBatchChecks is silent about a block that is not there and that silence
+// is not a pass.
+func backendsUseGate(ctx context.Context, lc *localcfg.Config) error {
+	if lc.Batch == nil {
+		return userErr("refusing to select %s: this installation's config carries no batch block, so nothing on this machine knows the machine type, the boot image, the network or the account a run's VMs would be built from, and every launch on it would fail at create. Provision it first: fugaro setup --provision-batch writes the block and applies the compute root, then repeat this command", backend.CloudBatch)
+	}
+	c, err := crm.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.ResourceManager)...)
+	if err != nil {
+		return remote(err)
+	}
+	fails := doctorRefusals(doctorBatchChecks(ctx, lc, c), true)
+	if len(fails) == 0 {
+		return nil
+	}
+	// The first few, in doctor's own words and with each one's own fix: a
+	// refusal carrying fifteen paragraphs is unreadable, and the command that
+	// prints them all is one line for the owner to run.
+	const shown = 3
+	named := make([]string, 0, shown)
+	for _, f := range fails[:min(shown, len(fails))] {
+		named = append(named, f.ID+": "+f.Problem+" (fix: "+f.Fix+")")
+	}
+	more := ""
+	if len(fails) > shown {
+		more = fmt.Sprintf(", and %d more", len(fails)-shown)
+	}
+	return userErr("refusing to select %s: %d of fugaro doctor's Batch checks do not pass for this installation -- %s%s. Selecting the backend before they pass would move every launch onto VMs nothing provisioned for it, so nothing was written. Run fugaro doctor to see every one of them, fix what each one names, and repeat this command", backend.CloudBatch, len(fails), strings.Join(named, "; "), more)
 }
 
 // backendsConfig is the project config selected for fugaro backends ls, nil

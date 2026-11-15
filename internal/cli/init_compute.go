@@ -15,7 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
-	"github.com/dimipaun/fugaro/internal/mirror"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
 // The compute stage: the Batch backend's installation-level provisioning
@@ -548,9 +548,9 @@ func (s *computeStage) recordBatchBlock(ctx context.Context) error {
 // refuses: localcfg refuses a batch block with an empty image, and that
 // refusal is not this stage's to drop.
 func (s *computeStage) batchBlock() (*localcfg.Batch, string) {
-	image := s.batchJobImage()
+	image, why := s.batchJobImage()
 	if image == "" {
-		return nil, "the batch block was not recorded: this installation's config names no base image (base_images." + config.BaseKind + ") this stage can record as the image a run's job runs (batch.image), which is the one field of the block no root output answers; set batch.image to the image your runs may execute, or record the installation's base with fugaro setup (the images stage pins it), then run fugaro setup --provision-batch again"
+		return nil, why
 	}
 	network, subnetwork := s.outs.Network, s.outs.Subnetwork
 	if network == "" {
@@ -588,29 +588,47 @@ func (s *computeStage) batchBlock() (*localcfg.Batch, string) {
 	}, why
 }
 
-// batchJobImage is the container image the block records: the installation's
-// own base image at the version it pins, as the installation's OWN standard
-// repository serves it.
+// batchJobImage is the container image the block records, and the line saying
+// why no image can be recorded when there is none.
 //
-// Why not the pin itself. The block's image is what a run's VMs execute, and a
-// reference served from a repository that is not a STANDARD_REPOSITORY is
-// refused by name -- doctor's batch-job-image (Task 10's disposition, design
-// compute-backend.md §4.4) and, for the published block, the shared config's
-// own reader (sharedcfg.go's ParseShared, which refuses a fugaro-ghcr path
-// outright). Since the mirror design the pin IS a fugaro-ghcr path (a
-// pull-through repository), so a block the pin named could neither be
-// published nor read: what is recorded instead is the same base image at the
-// same version in the installation's own `fugaro-base` repository, the shape
-// internal/mirror's Dest builds and the pre-migration job image had.
+// What is recorded is the installation's base image AS THIS INSTALLATION'S OWN
+// REGISTRY SERVES IT, named by the config's own base_images entry: either a
+// copy in the installation's own base repository (the shape every release
+// before the remote-repository migration put there) or an image the operator
+// built and pushed into that repository themselves (docs/backends.md, "The
+// batch block"). Anything else is refused, with the reason, rather than written
+// into a block:
 //
-// A base the installation points at itself is kept exactly as it is: it is
-// already that installation's own answer, and whether its repository is one a
-// run may execute from is the job-image check's to judge, never this stage's.
-func (s *computeStage) batchJobImage() string {
+//   - the release pin is a path through the installation's REMOTE repository
+//     (fugaro-ghcr, a pull-through to ghcr.io) since the remote-repository
+//     migration, and an image served from there is refused by the block's own
+//     grammar in localcfg (baseImageRE takes a tag OR a digest, and a pin
+//     carries both), by the shared config's reader (ParseShared refuses that
+//     repository outright, sharedcfg.go) and by doctor's batch-job-image (a
+//     repository that is not a STANDARD_REPOSITORY is refused there, and the
+//     design's §4.4 says the same in as many words). The design's §2.1 wants
+//     "fugaro-base at the installation's pinned version" and this is the one
+//     place the two disagree: the pin changed shape under the block, and a
+//     stage that wrote it would write a block nothing can read.
+//   - another project's registry is refused for a reason of the same kind and
+//     one more: ParseShared holds batch.image to the anchor's own project, so a
+//     value from elsewhere cannot be published at all -- it would be a local
+//     block the runs bucket's reader then refuses.
+//
+// So an installation whose base is the release pin gets NO block from this
+// stage and one line saying what to do: build the base and push it into this
+// installation's own registry, and point the config at it with --base-image
+// (the images stage's own documented path for a base this tool does not
+// publish), after which this stage records the whole block. That is a
+// deliberate refusal rather than a guess: the alternative is a block naming an
+// image nothing has pushed, which doctor passes (the repository is there and is
+// standard) and the first run's pull fails on.
+func (s *computeStage) batchJobImage() (image, why string) {
 	lc := s.e.lc
+	const field = "batch.image"
 	pin := lc.BaseImage(config.BaseKind)
 	if pin == "" {
-		return ""
+		return "", "the batch block was not recorded: this installation's config names no base image (base_images." + config.BaseKind + "), and the image a run's job runs is the one field of the block no root output answers; record the installation's base first (fugaro setup's images stage pins it, or fugaro setup --base-image " + config.BaseKind + "=IMAGE records one of your own), then run fugaro setup --provision-batch again"
 	}
 	// The registry host is the installation's own, from the config or from the
 	// region and project this run already holds: whether the pin is this tool's
@@ -618,43 +636,25 @@ func (s *computeStage) batchJobImage() string {
 	// string the images stage compares with.
 	host, err := infra.RegistryHost(lc)
 	if err != nil {
-		return ""
+		return "", "the batch block was not recorded: this installation's registry host cannot be read (" + err.Error() + "), and " + field + " has to be an image of this installation's own Artifact Registry for a run's VMs to execute it"
 	}
 	owner := baseOwner(lc)
-	// Is the recorded base a base this tool put in place for the kind? That is
-	// exactly what managedVersion answers, in the same grammar the images stage
-	// moves a pin on by -- so the version this block names is the version the
-	// pin names, read by the code that owns that spelling rather than by a
-	// second parser here that could come apart from it.
-	if v, ok := managedVersion(pin, host, config.BaseKind, owner); ok {
-		dst, err := mirror.Dest(host, lc.GCPProject, "fugaro-"+config.BaseKind, v)
-		if err != nil {
-			return ""
-		}
-		// The installation's own STANDARD repository, and the same image at
-		// the same version: what a run's VMs execute, in the one repository of
-		// this project the job-image check accepts (see this function's comment).
-		return dst.String()
-	}
-	// Anything ELSE under this installation's remote repository is not a base
-	// of this installation: the proxy serves all of ghcr.io, so a path there
-	// belongs to whoever wrote it, and the images stage refuses one outright
-	// for that reason (foreignProxyRef). A job image is the worse place to
-	// carry it -- it is what the run's VMs execute, as the run account, so it
-	// would not merely be a base that is not ours but a stranger's code running
-	// with this installation's grants -- so no block is written from it either.
+	// Anything under REMOTE repository that is not a base this tool put there:
+	// the proxy serves all of ghcr.io, so a path there belongs to whoever wrote
+	// it, and the images stage refuses one outright for that reason
+	// (foreignProxyRef). A job image is the worse place to carry it -- it is
+	// what the run's VMs execute, as the run account -- so no block is written
+	// from it either.
 	if foreignProxyRef(pin, host, config.BaseKind, owner) {
-		return ""
+		return "", "the batch block was not recorded: this installation's base image " + pluginwire.Printable(pin) + " is under the remote repository " + host + "/" + infra.GhcrRegistry + " without being a base this tool pinned for " + config.BaseKind + ", so what it holds is not your own image; remove the entry (fugaro image refresh writes the pin), then run fugaro setup --provision-batch again"
 	}
-	// Everything else is a base the owner points at themselves -- another
-	// registry of their own, a digest they built, a dev tag -- and it is kept
-	// exactly as recorded: whether the repository it names is one a run may
-	// execute from is the job-image check's to judge, and a stage that
-	// second-guessed it would overwrite the owner's own answer.
-	if localcfg.ValidBatchImage(pin) {
-		return pin
+	if _, ok := pinnedVersion(pin, host, config.BaseKind, owner); ok {
+		return "", "the batch block was not recorded: this installation's base image is the release PIN " + pluginwire.Printable(pin) + ", which this installation's registry serves through the remote repository (a pull-through to ghcr.io), and a Batch job may execute only an image of this installation's own STANDARD repository -- localcfg's batch.image grammar, the published block's reader and doctor's batch-job-image all refuse a pull-through path (design compute-backend.md §4.4; §2.1's \"fugaro-base at the installation's pinned version\" is the one reading this disagrees with). Build this installation's own base, push it into " + host + "/" + lc.GCPProject + "/" + infra.BaseRegistry + " (sh images/build-base.sh " + config.BaseKind + " tags it locally; the push is yours), record it with fugaro setup --base-image " + config.BaseKind + "=<the ref you pushed>, then run fugaro setup --provision-batch again -- docs/backends.md, \"The batch block\", walks the whole path"
 	}
-	return ""
+	if strings.HasPrefix(pin, host+"/"+lc.GCPProject+"/") && localcfg.ValidBatchImage(pin) {
+		return pin, ""
+	}
+	return "", "the batch block was not recorded: this installation's base image " + pluginwire.Printable(pin) + " is not an image of this installation's own Artifact Registry (" + host + "/" + lc.GCPProject + "/...), and " + field + " has to be one -- the published block's reader holds it to the installation's own project, and doctor reads the repository it is served from (design compute-backend.md §4.4); point the base at an image of your own in this project (fugaro setup --base-image " + config.BaseKind + "=IMAGE), then run fugaro setup --provision-batch again"
 }
 
 // batchBlockAccount is the account the block records as the one a job's VMs run

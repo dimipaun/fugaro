@@ -2189,8 +2189,19 @@ func pluginStateProblem(id string, s pluginwire.State, r pluginwire.Report) stri
 
 // checksFail reports whether checks should fail doctor's exit code: any
 // ordinary check (Severity "") that isn't ok fails it; a "warning" one only
-// with strict; an "info" one never does.
+// with strict; an "info" one never does. It reads the list doctorRefusals
+// builds rather than walking the checks a second time.
 func checksFail(checks []doctorCheck, strict bool) bool {
+	return len(doctorRefusals(checks, strict)) > 0
+}
+
+// doctorRefusals is checksFail as the list rather than the verdict: the checks
+// that fail at this strictness, which a caller that REFUSES something on
+// doctor's behalf has to name (backendsUseGate is what does). It is the one
+// place the rule lives, and checksFail reads it, so a verdict and the list
+// under it cannot disagree about which checks count.
+func doctorRefusals(checks []doctorCheck, strict bool) []doctorCheck {
+	var out []doctorCheck
 	for _, c := range checks {
 		if c.OK {
 			continue
@@ -2198,14 +2209,15 @@ func checksFail(checks []doctorCheck, strict bool) bool {
 		switch c.Severity {
 		case "info":
 		case "warning":
-			if strict {
-				return true
+			if !strict {
+				continue
 			}
+			out = append(out, c)
 		default:
-			return true
+			out = append(out, c)
 		}
 	}
-	return false
+	return out
 }
 
 // printDoctorChecks prints one line per check doctor means to show (its

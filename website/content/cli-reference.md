@@ -851,6 +851,7 @@ Flags:
 Subcommands:
 
 - `fugaro backends ls` -- List the compute backends this fugaro knows and which one the project uses
+- `fugaro backends use` -- Select the compute backend this project runs its jobs on
 
 ## `fugaro backends ls`
 
@@ -892,6 +893,51 @@ Flags:
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro backends use`
+
+Select the compute backend this project runs its jobs on
+
+Select the backend this project's runs are launched on, by writing the
+backend: key of the selected project's own config:
+
+  cloud-run    Cloud Run jobs (the default, and the one every installation
+               runs on today)
+  cloud-batch  Cloud Batch jobs, one VM per run (the VM backend)
+
+The installation must already be provisioned for cloud-batch: its config has to
+carry a batch block -- the block fugaro setup --provision-batch writes, which
+names the machine type, the boot image, the network, the subnetwork and the
+account a run's VMs are built from -- and fugaro doctor's Batch checks have to
+pass. Selecting the name before either is refused, because a launch on an
+installation that is not provisioned there fails at create: nothing was
+written, and the refusal names what doctor reports and what fixes it.
+
+Selecting cloud-run is never refused: it is the default, and it is the
+direction back.
+
+The switch is one key of one file: every comment and every other byte of the
+project config is kept, the old file is backed up, and the write is atomic.
+Nothing is asked and nothing confirmed -- the checks above are what stands in
+front of the change -- and a coding agent's session does not write cloud-batch
+at all (run it yourself; it is the same fence the provisioning step carries).
+
+The change reaches the next run at once, and every launch of the installation
+follows it: on cloud-batch a run's job is a VM with a Docker daemon, so a
+workflow that needs Docker can run, and that VM and its job are the reaper's to
+sweep.
+
+Usage: `fugaro backends use <cloud-run|cloud-batch>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for use |
 
 Subcommands:
 

@@ -347,7 +347,7 @@ func doctorBatchJobDefinition(lc *localcfg.Config) doctorCheck {
 	if err := batch.CheckOptions(&o); err != nil {
 		return batchProblem(lc, "batch-job-definition",
 			"a Batch run's job definition is one this build refuses, so no run on this installation can start: "+oneLineCLI(err.Error()),
-			"fix the batch block of this installation's local config (fugaro update writes it; the fields are documented in docs/gcp-setup.md)")
+			"fix the batch block of this installation's local config (fugaro setup --provision-batch wrote it from the compute root's own outputs, and its fields are documented in docs/backends.md; a field edited by hand is the one a rerun keeps)")
 	}
 	return doctorCheck{ID: "batch-job-definition", OK: true}
 }
@@ -1023,7 +1023,7 @@ func doctorBatchJobImage(ctx context.Context, lc *localcfg.Config) doctorCheck {
 	}
 	return batchProblem(lc, id,
 		fmt.Sprintf("the batch block's image %s is served from %s, whose mode is %s: a repository that is not a STANDARD_REPOSITORY serves content this project's own builds did not push -- a REMOTE_REPOSITORY is a pull-through cache of another registry, and a VIRTUAL_REPOSITORY resolves through a priority list that may name one -- so the job's VMs would run whatever its upstream's owner published, as this installation's own run account, with that account's grants on the project (design compute-backend.md §3.2, §4.4)", lc.Batch.Image, repo, oneLineCLI(r.Mode)),
-		"push the installation's image into a STANDARD_REPOSITORY of this project and point batch.image at it (the repository the installation's pin names is the one fugaro update builds into); a pull-through repository is for pulling other people's images, never for the image a run executes")
+		"push the installation's image into a STANDARD_REPOSITORY of this project and point batch.image at it (the installation's own fugaro-base repository is the one fugaro update builds into, and the one fugaro setup --provision-batch records); a pull-through repository is for pulling other people's images, never for the image a run executes")
 }
 
 // doctorBatchSecrets reads the Secret Manager secrets the batch block names
