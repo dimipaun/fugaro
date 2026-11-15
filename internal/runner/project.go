@@ -546,6 +546,25 @@ func (r *run) proxiedBitbucket(p *projectpolicy.Policy, found, project bool, kin
 	return projectpolicy.AdmitRepo(p.BitbucketToken.AllowRepos, canonical)
 }
 
+// proxiedOpener builds the opener a proxied run opens its Bitbucket provider
+// with (B1.7, G1): providers.Proxied pointed at this execution's own loopback
+// forwarder, and handed the identity set the project's published node carries
+// (T16, F20).
+//
+// The two belong together because they are the same fact seen twice: the
+// credentials service serves one run with several of the node's tokens in turn
+// (D2355), so the accounts a comment may be written as are the node's set and
+// not the single account GET /user answers for whichever token served this
+// call. Neither value comes from anything a task, a job's environment or a
+// checkout could carry: an identity planted in one of the three would make its
+// author's comments read as the run's own, and that decision is the node
+// writer's alone (F21).
+func (r *run) proxiedOpener(ctx context.Context) gitprov.Opener {
+	own, partial := r.bitbucketOwnIdentities(ctx)
+	return providers.Proxied(r.d.Env, r.forward.URL(), nil,
+		func(msg string) { r.d.Log.Warn(r.redact(msg)) }, own, partial)
+}
+
 // remoteAdmissionRefusal refuses a remote that is not exactly the repository
 // this run is for, cloned from exactly the endpoint the launcher writes: the
 // half of admissionCheck that reads the job's own environment (Deps.Remote,

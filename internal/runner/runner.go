@@ -1242,14 +1242,15 @@ func (r *run) openProvider(ctx context.Context, kind, from string) error {
 	}
 	// A proxied Bitbucket run opens a tokenless provider whose requests go to
 	// the forwarder (B1.7, G1): the job holds no token to give it, and the
-	// service puts one on the wire. The opener is built here rather than taken
-	// from Deps because the endpoint it carries is this run's own loopback
-	// listener -- the run started it, and no launch-time wiring could know its
-	// port. providers.Proxied refuses every kind but Bitbucket, so a proxied
-	// run cannot open another provider by asking for one.
+	// service puts one on the wire. The opener is proxiedOpener's rather than
+	// Deps' because the endpoint it carries is this run's own loopback listener
+	// -- the run started it, and no launch-time wiring could know its port --
+	// and because it carries the identity set the published node names (T16).
+	// providers.Proxied refuses every kind but Bitbucket, so a proxied run
+	// cannot open another provider by asking for one.
 	open := r.d.OpenProvider
 	if r.proxied {
-		open = providers.Proxied(r.d.Env, r.forward.URL(), nil, func(msg string) { r.d.Log.Warn(r.redact(msg)) })
+		open = r.proxiedOpener(ctx)
 	}
 	p, secrets, err := open(ctx, kind, r.spec.Repo)
 	for _, s := range secrets {

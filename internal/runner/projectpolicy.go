@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -131,6 +132,78 @@ func (r *run) projectPolicy(ctx context.Context) (*projectpolicy.Policy, bool, e
 	}
 	p.policy, p.found = pp, found
 	return pp, found, nil
+}
+
+// bitbucketOwnIdentities is the set of account UUIDs Fugaro's own Bitbucket
+// tokens have on this project, and whether that set is known to be missing an
+// account this run may write as (T16, F20, R12, R14).
+//
+// It is the node's own bitbucket_tokens key, read raw for accountAuto's reason:
+// the key is a top-level one the policy reader of this release does not know
+// yet, and P8 tolerates an unknown top-level key, so a node carrying it is
+// readable here (its reader lists the key in UnknownKeys) while a decoded
+// Policy carries no member for it.
+//
+// The read is the run's own: the database client is the one bootstrap already
+// built (budgetClient, memoized, the same identity the policy read used), so a
+// run pays no second exchange for it. Nothing else can reach this value -- not
+// the task, not the job's environment, not the checkout the agent works in --
+// because an identity planted in any of the three would let its author's
+// comments pass as the run's own (F21 trusts the set at the node writer's
+// level, and nowhere below it).
+//
+// partial is true when the node holds a token whose identity it could not read
+// (a repository access token's: GET /user answers it 403, R14), because the
+// credentials service may serve this run with that token, and GET /user naming
+// an account of Fugaro's then no longer says the run can tell its own comments
+// apart.
+//
+// Every other answer -- no policy, no key, a key this run cannot read -- is
+// today's behaviour: the empty set, and a run that tells its own comments apart
+// by GET /user alone. That fallback is the narrower one (a comment this run did
+// write reads as somebody else's, which the markers-from-anyone rule already
+// answers), and a set nobody could read is not one to widen trust by.
+func (r *run) bitbucketOwnIdentities(ctx context.Context) (projectpolicy.BitbucketTokenIdentities, bool) {
+	if _, found, err := r.projectPolicy(ctx); err != nil || !found {
+		return nil, false
+	}
+	db, err := r.budgetClient(ctx)
+	if err != nil || db == nil {
+		return nil, false
+	}
+	var node map[string]json.RawMessage
+	if _, err := db.Get(ctx, projectpolicy.PathShared(), &node); err != nil {
+		r.d.Log.Warn("policy: the Bitbucket token identities could not be read; this run tells its own comments apart by its own token alone",
+			"node", projectpolicy.PathShared(), "key", projectpolicy.BitbucketTokensKey)
+		return nil, false
+	}
+	raw, ok := node[projectpolicy.BitbucketTokensKey]
+	if !ok || projectpolicy.IsNull(raw) {
+		return nil, false
+	}
+	var tokens projectpolicy.BitbucketTokens
+	if err := json.Unmarshal(raw, &tokens); err != nil {
+		// The value itself is never echoed: what a node holds is nobody's to
+		// read out of a log line, and the key's name is enough to find it.
+		r.d.Log.Warn("policy: the Bitbucket tokens key could not be read; this run tells its own comments apart by its own token alone",
+			"node", projectpolicy.PathShared(), "key", projectpolicy.BitbucketTokensKey)
+		return nil, false
+	}
+	var own projectpolicy.BitbucketTokenIdentities
+	seen := make(map[string]bool, len(tokens.Entries))
+	partial := false
+	for _, e := range tokens.Entries {
+		if e.Identity == "" {
+			partial = true
+			continue
+		}
+		if seen[e.Identity] {
+			continue
+		}
+		seen[e.Identity] = true
+		own = append(own, e.Identity)
+	}
+	return own, partial
 }
 
 // readPolicy reads the project's policy through db, retrying a database that
