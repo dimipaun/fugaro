@@ -40,11 +40,18 @@ const (
 )
 
 // The runs bucket's lifecycle, in days: the rules the bootstrap set, so an
-// adopted bucket's lifecycle doesn't change.
+// adopted bucket's lifecycle doesn't change, and the one the stored reports
+// get (R12's fifth rule, E3).
 const (
 	runsDays            = 90
 	cacheCustomTimeDays = 30
 	cacheAgeDays        = 180
+	// reportsDays is 18 months in whole days, as the other members are: it is
+	// the retention of reports/ and it is the Go half of the module's own rule
+	// (bucket.tf), which is why an installation's plan holds both. runs/ keeps
+	// its 90 (F24, untouched): a yearly report rolls the twelve stored monthly
+	// ones up, so the reports have to outlive the records by more than a year.
+	reportsDays = 548
 )
 
 // InstallOptions are the installation's inputs that come from flags.
@@ -239,6 +246,17 @@ type InstallationSpec struct {
 	// that writes this, so leaving it out plans exactly what the installation
 	// planned before the job existed.
 	CatalogCheck *CatalogCheckSpec `json:"catalog_check,omitempty"`
+	// Reports is the project's reports job (E4), left out on an installation
+	// this run cannot deploy it for: one that records no base image for the
+	// job to run FROM. The module creates the job, its account, its two
+	// preconditioned grants and its schedule for an installation that writes
+	// this — paused, unless the layer's jobs.reports.paused says otherwise —
+	// so leaving it out plans exactly what the installation planned before
+	// the job existed. It is deliberately NOT gated on the project's catalog
+	// or on any repository: the job reports every repository of the project
+	// into the project's own bucket, and its assignment travels in
+	// ReportsJobDocEnv.
+	Reports *ReportsJobSpec `json:"reports,omitempty"`
 }
 
 // CredentialsServiceSpec is the installation root's var.credentials_service
@@ -1498,6 +1516,12 @@ type BucketLifecycle struct {
 	RunsDays            int `json:"runs_days"`
 	CacheCustomTimeDays int `json:"cache_custom_time_days"`
 	CacheAgeDays        int `json:"cache_age_days"`
+	// ReportsDays is the stored reports' own rule (R12's fifth, E3): reports/
+	// is deleted this many days after an object is created, which is 18
+	// months. It is written for every installation rather than left to the
+	// module's default, so the member and the rule it is about are one value
+	// in the plan a review reads.
+	ReportsDays int `json:"reports_days"`
 }
 
 // RegistryCleanup switches Artifact Registry cleanup, and its dry run.
@@ -1537,7 +1561,7 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 			RoleIDs:                   InstallationRoleIDs{Launcher: RoleLauncher, JobRunner: RoleJobRunner, BuildSubmitter: RoleBuildSubmitter, TagMover: RoleTagMover},
 			Log:                       LogNames{Bucket: LogBucket, View: LogView, Sink: LogSink, Exclusion: LogExclusion},
 		},
-		BucketLifecycle: BucketLifecycle{RunsDays: runsDays, CacheCustomTimeDays: cacheCustomTimeDays, CacheAgeDays: cacheAgeDays},
+		BucketLifecycle: BucketLifecycle{RunsDays: runsDays, CacheCustomTimeDays: cacheCustomTimeDays, CacheAgeDays: cacheAgeDays, ReportsDays: reportsDays},
 		EnableVertex:    o.EnableVertex || lc.UsesVertex(),
 		ManageAPIs:      !o.SkipAPIs,
 		Launchers:       members(o.Launchers, lc.Terraform.Operators),
@@ -1568,6 +1592,11 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 		return InstallationSpec{}, err
 	}
 	s.CatalogCheck = cc
+	rj, err := ReportsJob(lc, bucket, jobPaused(o.ReportsPaused))
+	if err != nil {
+		return InstallationSpec{}, err
+	}
+	s.Reports = rj
 	// CredentialsService is deliberately NOT set from the options: the block
 	// is the deploy's own (init_stages.go's ensureCredentialsService), and the
 	// deploy never comes through here — it read-modify-writes the one key of the document the

@@ -152,11 +152,12 @@ func openRefreshManaged(ctx context.Context, cmd *cobra.Command, o refreshOption
 // the three ways a run cannot be asked at all — --non-interactive, --json and
 // a pipe — because a step nobody can confirm is not a step this replaces.
 //
-// What is NOT here is any verdict about a document: the class rule is
-// untouched (these are the ordinary YesOrTyped steps of their own command),
-// and no admission is invented for a step the gate never judged.
-func (m *refreshManaged) asksNothing(c initflow.Conditions) bool {
-	return m != nil && c.Agent == "" && c.Terminal && !c.Yes && !c.NonInteractive && !c.JSON && !c.Ask
+// What is NOT here is any verdict about a document: the gate's own narrowing
+// rule is untouched (these are the ordinary steps of their own command, and
+// none of them is money or permanent), and no admission is invented for a step
+// the gate never judged.
+func (m *refreshManaged) asksNothing(r *initRun) bool {
+	return m != nil && r.stepConfirmation(false) == stepTyped && !r.o.ask
 }
 
 // refreshGateFacts is this command's own facts about itself, as M6's helper
@@ -234,11 +235,10 @@ func refreshBuildDocBytes(t *refreshTarget, build, kind string, planBuilds []str
 // read the switch once would keep spending on a project that has just been told
 // to stop.
 //
-// The class is YesOrTyped because that is the class this command's build
-// confirmation already is (the owner's 2026-10-08 decision);
-// the gate's own class rule is what keeps a Typed step — money or permanent,
-// in initflow's own words — out of an agent's session whatever the verdict
-// says.
+// This is the step this command's build confirmation already was (the owner's
+// 2026-10-08 decision); the gate's own narrowing rule is what keeps a step no
+// plan gate may judge — money or permanent, in initflow's own words — out of an
+// agent's session whatever the verdict says.
 func (m *refreshManaged) admitBuild(ctx context.Context, p *refreshPlan, t *refreshTarget, build, host string) (initflow.Managed, error) {
 	killed, killRule := m.killSwitch(ctx, t.spec.Slug)
 	kind := t.cfg.Workflows[build].BaseKind()
@@ -247,11 +247,11 @@ func (m *refreshManaged) admitBuild(ctx context.Context, p *refreshPlan, t *refr
 		return initflow.Managed{}, err
 	}
 	rules, refused := refreshBuildRules(t, p, build, kind, host, killRule)
-	conv := managedmode.ConvergeAdmitted(doc, initflow.YesOrTyped, rules)
+	conv := managedmode.ConvergeAdmitted(doc, rules)
 	if len(refused) > 0 {
-		conv = managedmode.ConvergeRefused(doc, initflow.YesOrTyped, refused)
+		conv = managedmode.ConvergeRefused(doc, refused)
 	}
-	return m.gate.admit(ctx, initflow.YesOrTyped, conv)
+	return m.gate.admit(ctx, conv)
 }
 
 // refreshBuildRules is the plan's M4 entry as rules over this one build: each

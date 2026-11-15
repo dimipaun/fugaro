@@ -1492,14 +1492,14 @@ func TestDocsCheck81GrantListNamesTheTemplatesOwnPredicates(t *testing.T) {
 		pred string
 	}{
 		{16, `"TOKEN || USER"`}, {17, `"TOKEN || USER"`},
-		{27, `"TOKEN || USER"`}, {101, `"TOKEN || USER"`},
+		{31, `"TOKEN || USER"`}, {105, `"TOKEN || USER"`},
 		{18, `(TOKEN && auth.token.fs == $slug) || USER`},
-		{28, `(TOKEN && auth.token.fs == $slug) || USER`},
-		{130, `(TOKEN && auth.token.fs == $slug) || USER`},
-		{186, `"RUN || USER"`},
-		{57, `"RUN"`}, {216, `"RUN"`},
-		{302, `"MAILBOX"`}, {346, `"MAILBOX"`},
-		{49, `"PAIRING"`},
+		{32, `(TOKEN && auth.token.fs == $slug) || USER`},
+		{134, `(TOKEN && auth.token.fs == $slug) || USER`},
+		{190, `"RUN || USER"`},
+		{61, `"RUN"`}, {220, `"RUN"`},
+		{306, `"MAILBOX"`}, {350, `"MAILBOX"`},
+		{53, `"PAIRING"`},
 		{11, `".read": "USER"`},
 	} {
 		if want.n < 1 || want.n > len(lines) {
@@ -1510,10 +1510,10 @@ func TestDocsCheck81GrantListNamesTheTemplatesOwnPredicates(t *testing.T) {
 		}
 	}
 	if !strings.Contains(para, "`RUN || USER`") {
-		t.Errorf("## Check 81: the paragraph listing D112's grants does not name `RUN || USER` for the day's per-run node (rules.json.tmpl line 186): a mu token reads it because USER is in that disjunction, and a citation that says `TOKEN || USER` there is not what the template says")
+		t.Errorf("## Check 81: the paragraph listing D112's grants does not name `RUN || USER` for the day's per-run node (rules.json.tmpl line 190): a mu token reads it because USER is in that disjunction, and a citation that says `TOKEN || USER` there is not what the template says")
 	}
 	if !strings.Contains(para, "`RUN`") {
-		t.Errorf("## Check 81: the paragraph does not file runs/** and agents/** under `RUN`: the template gates both with it (lines 57 and 216), and calling them `TOKEN` names a predicate a mu token fails for another reason than the one the sentence is making")
+		t.Errorf("## Check 81: the paragraph does not file runs/** and agents/** under `RUN`: the template gates both with it (lines 61 and 220), and calling them `TOKEN` names a predicate a mu token fails for another reason than the one the sentence is making")
 	}
 }
 

@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -131,6 +132,125 @@ func (r *run) projectPolicy(ctx context.Context) (*projectpolicy.Policy, bool, e
 	}
 	p.policy, p.found = pp, found
 	return pp, found, nil
+}
+
+// bitbucketOwnIdentities is the set of account UUIDs Fugaro's own Bitbucket
+// tokens have on this project, and whether that set is known to be missing an
+// account this run may write as (T16, F20, R12, R14).
+//
+// It is the node's own bitbucket_tokens key, read raw for accountAuto's reason:
+// the key is a top-level one the policy reader of this release does not know
+// yet, and P8 tolerates an unknown top-level key, so a node carrying it is
+// readable here (its reader lists the key in UnknownKeys) while a decoded
+// Policy carries no member for it.
+//
+// The read is the run's own: the database client is the one bootstrap already
+// built (budgetClient, memoized, the same identity the policy read used), so a
+// run pays no second exchange for it. Nothing else can reach this value -- not
+// the task, not the job's environment, not the checkout the agent works in --
+// because an identity planted in any of the three would let its author's
+// comments pass as the run's own (F21 trusts the set at the node writer's
+// level, and nowhere below it).
+//
+// partial is true when the run cannot name every account it may write as, which
+// is either a set the node names incompletely or a set this run could not read
+// at all.
+//
+// A set the node names incompletely has two shapes. One is an entry whose
+// identity the node could not carry: a repository access token's, which
+// GET /user answers 403 (R14).
+// The other is the node's legacy untyped record beside typed ones (R3): the
+// selector ranks it after every typed record and may serve a call with it, and
+// its identity is on no node at all -- the legacy record is never an entry of
+// this key (contract, R5/R14), and R12 keeps an identity per token name in the
+// creds state store, which this key carries for the typed records alone. With
+// no typed record it is the only candidate and GET /user names it, which is
+// what R3's "the proxy behaves exactly as today" leaves the installation.
+//
+// In both GET /user naming an account of Fugaro's no longer says the run can
+// tell its own comments apart: an account outside the set may still be one of
+// this run's, and claiming otherwise is what shuts the markers-from-anyone
+// fallback the follow-up trust rules rest on.
+//
+// A set this run could not read at all is not an empty set but an unknown one,
+// and it is partial too: a node whose read failed, or a key that will not
+// decode. A run that could not say which accounts are Fugaro's must not answer
+// that it can tell its own comments apart -- the claim is what the adapter's
+// SelfKnown carries -- and calling a set complete because it was unreadable is
+// the false claim this read exists to stop making, from the other side. What
+// the run falls back to there is GET /user's own account, the narrower answer,
+// with the markers still read from anyone.
+//
+// What is left -- no published node, a node without the key -- is today's
+// behaviour: the empty set (or the legacy record's single token, which GET
+// /user answers for), and a run that tells its own comments apart by that
+// answer alone. That fallback is the narrower one: a comment this run did write
+// reads as somebody else's, which the markers-from-anyone rule already answers.
+func (r *run) bitbucketOwnIdentities(ctx context.Context) (projectpolicy.BitbucketTokenIdentities, bool) {
+	pp, found, err := r.projectPolicy(ctx)
+	if err != nil {
+		return nil, true
+	}
+	if !found {
+		return nil, false
+	}
+	db, err := r.budgetClient(ctx)
+	if err != nil || db == nil {
+		return nil, true
+	}
+	var node map[string]json.RawMessage
+	if _, err := db.Get(ctx, projectpolicy.PathShared(), &node); err != nil {
+		r.d.Log.Warn("policy: the Bitbucket token identities could not be read; this run tells its own comments apart by its own token alone",
+			"node", projectpolicy.PathShared(), "key", projectpolicy.BitbucketTokensKey)
+		return nil, true
+	}
+	raw, ok := node[projectpolicy.BitbucketTokensKey]
+	if !ok || projectpolicy.IsNull(raw) {
+		return nil, false
+	}
+	var tokens projectpolicy.BitbucketTokens
+	if err := json.Unmarshal(raw, &tokens); err != nil {
+		// The value itself is never echoed: what a node holds is nobody's to
+		// read out of a log line, and the key's name is enough to find it.
+		r.d.Log.Warn("policy: the Bitbucket tokens key could not be read; this run tells its own comments apart by its own token alone",
+			"node", projectpolicy.PathShared(), "key", projectpolicy.BitbucketTokensKey)
+		return nil, true
+	}
+	var own projectpolicy.BitbucketTokenIdentities
+	seen := make(map[string]bool, len(tokens.Entries))
+	// The legacy record makes the set partial only beside typed records: with
+	// none, it is the selector's only candidate and GET /user names it, so the
+	// set is complete as it stands.
+	partial := len(tokens.Entries) > 0 && legacyRecordServes(pp)
+	for _, e := range tokens.Entries {
+		if e.Identity == "" {
+			partial = true
+			continue
+		}
+		if seen[e.Identity] {
+			continue
+		}
+		seen[e.Identity] = true
+		own = append(own, e.Identity)
+	}
+	return own, partial
+}
+
+// legacyRecordServes reports whether the node's legacy untyped record is one
+// the credentials service may serve this run's calls with (R3): the block an
+// installation that has not moved to typed tokens holds, which the service
+// forwards for the repositories it lists. The two conditions are
+// proxiedBitbucket's own: the block says the service forwards this token rather
+// than mounting it on the installation's jobs (D493, G3), and a block that
+// lists no repository reaches none of them.
+//
+// It is read off the decoded policy and not the raw node because this release
+// knows the block: its reader validates it, and the run's own admission already
+// decides on it, so the two readers cannot disagree about which installation
+// has a live legacy token.
+func legacyRecordServes(pp *projectpolicy.Policy) bool {
+	return pp != nil && pp.BitbucketToken != nil &&
+		pp.BitbucketToken.Proxy && len(pp.BitbucketToken.AllowRepos) > 0
 }
 
 // readPolicy reads the project's policy through db, retrying a database that

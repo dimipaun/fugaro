@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 
@@ -352,6 +353,55 @@ func initStages(e *initEngine) []initflow.Stage {
 		stages = append(stages, newProjectStage(e))
 	}
 	return stages
+}
+
+// stagesNamed is the named subset of the registered stages: the stages a
+// command runs for the change it made, in place of the whole list `fugaro
+// update` runs (spec §2.5 rule 2, D1561). accountsAddStages names its three
+// through it, and `fugaro apply` runs the stages a pending entry names.
+//
+// The answer is in initflow's order and not the caller's — initflow.Names,
+// which is the linear extension of initflow.Needs — so a stage of the subset is
+// never handed to the loop before one it needs that is also in the subset.
+// Getting that from the caller's own slice is the mistake this exists to make
+// impossible: a subset is not a shorter update, it is a slice of one, and
+// initflow.Run's Validate sorts and checks it either way, but a caller that
+// built its own slice could hand the loop one it cannot order.
+//
+// unanswered is the names this door registered no stage under, and they come
+// back rather than being dropped, for the reason apply.Order keeps the names it
+// cannot place: a run that quietly did fewer steps than it was asked for is the
+// one thing neither may do. Two kinds of name land there and they are one fact
+// to a caller — a stage of initflow's this door did not register (the services
+// slot, which no door fills; the Batch backend's compute and the project stage,
+// which a door registers behind a flag or on the first run of setup) and a name
+// that is no stage at all (apply.CatalogBuild, which is a step of the change
+// table and not one of initflow's). A caller that names stages it knows are
+// registered ignores it; a caller whose names come from a file it did not write
+// reads it and says what it could not run. A name leaves `want` only when a
+// stage really answered it, so "not a stage of this door" and "not a stage"
+// are both answered here, and neither is lost.
+func stagesNamed(e *initEngine, names ...string) (stages []initflow.Stage, unanswered []string) {
+	want := make(map[string]bool, len(names))
+	for _, n := range names {
+		want[n] = true
+	}
+	byName := map[string]initflow.Stage{}
+	for _, st := range initStages(e) {
+		byName[st.Name()] = st
+	}
+	for _, name := range initflow.Names() {
+		if !want[name] {
+			continue
+		}
+		st, ok := byName[name]
+		if !ok {
+			continue
+		}
+		delete(want, name)
+		stages = append(stages, st)
+	}
+	return stages, slices.Sorted(maps.Keys(want))
 }
 
 // converge runs the converge's default and --firebase-project modes through the
@@ -1555,18 +1605,19 @@ func newFirebaseStage(e *initEngine) *engineStage {
 
 // newInstallation2Stage is stage 6: the installation root once more, deploying
 // what only the images stage's own work makes deployable — the history job,
-// whose image that stage mirrors, and the catalog check job, which runs FROM
-// the base image it pins (#1843).
+// whose image that stage mirrors, and the installation's two scheduled jobs,
+// which run FROM the base image it pins: the catalog check job (#1843) and the
+// reports job (R7).
 func newInstallation2Stage(e *initEngine) *engineStage {
 	return &engineStage{e: e, name: initflow.Installation2, isolate: true,
 		skip: func() string {
 			switch {
-			case e.r.o.firebase != "", e.catalogJobAwaitsItsBase():
+			case e.r.o.firebase != "", e.catalogJobAwaitsItsBase(), e.reportsJobAwaitsItsBase():
 				return ""
 			case e.catalogBaseIsMissing():
 				return "no --firebase-project given, and the project's image catalog builds its entries FROM base_images." + config.BaseKind + ", which this run does not pin: the catalog check job runs FROM that image and nothing else deploys it, so the catalog's entries are checked by nothing until a run that pins it is through"
 			case infra.CatalogBuilds(e.lc):
-				return "no --firebase-project given, and the first apply already deployed the catalog check job from the recorded base image: this stage has nothing of its own"
+				return "no --firebase-project given, and the first apply already deployed the scheduled jobs from the recorded base image: this stage has nothing of its own"
 			}
 			return "no --firebase-project given: nothing to deploy the history job with"
 		},
@@ -1575,13 +1626,16 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 				return err
 			}
 			// The installation's spec is read the run's own way again: it was
-			// built before the images stage, and the catalog check job's image
-			// is one of the things that stage moves.
+			// built before the images stage, and the base image both scheduled
+			// jobs run FROM is one of the things that stage moves — a job this
+			// apply left at the image the run started with would lag an entire
+			// `fugaro update` behind.
 			next, err := installOptions(e.r.o, e.lc)
 			if err != nil {
 				return err
 			}
 			e.spec.CatalogCheck = next.CatalogCheck
+			e.spec.Reports = next.Reports
 			if e.r.o.firebase != "" {
 				return e.r.firebaseHistory(ctx, e.c, e.t, e.wd, e.lc, e.spec)
 			}
@@ -1591,7 +1645,7 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 			if e.r.o.firebase != "" {
 				return promptLeft(initflow.Installation2, "run the command below: it asks you nothing and applies the history job", e.r.o.doorName(), "--firebase-project", e.firebaseProjectWord())
 			}
-			return promptLeft(initflow.Installation2, "run the command below: it asks you nothing and applies the catalog check job", e.r.o.doorName())
+			return promptLeft(initflow.Installation2, "run the command below: it asks you nothing and applies the scheduled jobs", e.r.o.doorName())
 		},
 	}
 }
@@ -1670,7 +1724,7 @@ func newCredentialsStage(e *initEngine) *engineStage {
 // it and the converge all ask this one function, so the second apply the user's
 // confirmation covers is the one the preview said would happen. The second arm
 // reads the base image the config will hold by the time this stage's apply
-// happens (catalogBaseImage), not the one the preview read: a run whose own
+// happens (installBaseImage), not the one the preview read: a run whose own
 // --base-image names base records it between the two applies.
 func (e *initEngine) catalogJobAwaitsItsBase() bool {
 	if !infra.CatalogBuilds(e.lc) {
@@ -1679,18 +1733,34 @@ func (e *initEngine) catalogJobAwaitsItsBase() bool {
 	if e.images != nil && e.images.pinsBase() {
 		return true
 	}
-	img := e.catalogBaseImage()
+	img := e.installBaseImage()
 	return img != "" && (e.spec.CatalogCheck == nil || e.spec.CatalogCheck.Image != img)
 }
 
-// catalogBaseImage is the base image the catalog check job runs FROM by the
-// time the second apply happens: this run's own --base-image value for base
-// when it names one, else what the local config records. The flag is what
-// initRun.writeConfig writes into the config after the first apply (the
+// reportsJobAwaitsItsBase reports whether the reports job is what this stage's
+// apply is for: the images stage is about to move the base image the job runs
+// FROM, or this run has moved it already and the installation root the run
+// planned carries no job from it — or one whose image is not that base, which
+// is the whole of the lag R7 exists to avoid. It is catalogJobAwaitsItsBase's
+// question without the catalog, the reports job running FROM the base image and
+// from nothing else, and the two are asked apart because either job can be the
+// only reason this stage has anything to do.
+func (e *initEngine) reportsJobAwaitsItsBase() bool {
+	if e.images != nil && e.images.pinsBase() {
+		return true
+	}
+	img := e.installBaseImage()
+	return img != "" && (e.spec.Reports == nil || e.spec.Reports.Image != img)
+}
+
+// installBaseImage is the base image the installation's two scheduled jobs run
+// FROM by the time the second apply happens: this run's own --base-image value
+// for base when it names one, else what the local config records. The flag is
+// what initRun.writeConfig writes into the config after the first apply (the
 // flag wins there), so it is the only way a decision made before any apply —
 // the preview and the review screen built from it — can see the base image
 // that apply is about to give the project.
-func (e *initEngine) catalogBaseImage() string {
+func (e *initEngine) installBaseImage() string {
 	for _, v := range e.r.o.baseImages {
 		if kind, ref, err := localcfg.ParseBaseImageFlag(v); err == nil && kind == config.BaseKind {
 			return ref
@@ -1707,15 +1777,26 @@ func (e *initEngine) catalogBaseImage() string {
 // catalog's entries until a run that pins the base image is through, and the
 // stage that would deploy it says so rather than reporting the run converged.
 func (e *initEngine) catalogBaseIsMissing() bool {
-	return infra.CatalogBuilds(e.lc) && e.catalogBaseImage() == ""
+	return infra.CatalogBuilds(e.lc) && e.installBaseImage() == ""
 }
 
-// installCatalogCheck applies the installation root again with the catalog
-// check job the local config now names: the run that pinned the project's base
-// image deploys the job from it in the same run, so the catalog's entries are
-// built without a second command from the user.
+// installCatalogCheck applies the installation root again with the scheduled
+// jobs the local config now names: the run that pinned the project's base
+// image deploys them from it in the same run, so the catalog's entries are
+// built — and the project's reports written — without a second command from
+// the user.
 func (r *initRun) installCatalogCheck(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, lc *localcfg.Config, spec infra.InstallationSpec) error {
-	r.installLabel = " (the catalog check job and its schedule)"
+	// The apply writes the whole installation root, and what that root holds is
+	// what the label names: the catalog check job's own is named next to the
+	// reports job's wherever the spec carries both (R7), and the confirmation a
+	// run puts to the user is about the apply it is asking for. The catalog
+	// check's job is the one that may be absent — a catalog built by nothing has
+	// no job — and a label promising one the apply does not write is a
+	// confirmation about another apply.
+	r.installLabel = " (the reports job and its schedule)"
+	if spec.CatalogCheck != nil {
+		r.installLabel = " (the scheduled jobs and their schedules)"
+	}
 	_, stop, err := r.installRoot(ctx, c, t, wd, lc, spec)
 	if err != nil || stop {
 		return err

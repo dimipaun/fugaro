@@ -911,11 +911,10 @@ func TestReviewScreenPrintsOnlySafeText(t *testing.T) {
 }
 
 // The first Cloud Build's confirmation is never on the ordinary covered path:
-// the function that offers it uses the confirmation of the step it is
-// (askCovered, which W5.1 makes YesOrTyped: D12's answer of 2026-10-20 covers a
-// billable first image build in BOTH front doors, and in neither of them does
-// the run's own --yes/terminal decision stand in for it), and never the run
-// confirmation.
+// the function that offers it uses the step's own confirmation (askCovered:
+// D12's answer of 2026-10-20 covers a billable first image build in BOTH front
+// doors, and in neither of them does the run's own answer stand in for it), and
+// never the run confirmation.
 func TestCloudBuildConfirmationStaysOutsideTheCoveredPath(t *testing.T) {
 	b, err := os.ReadFile("init.go")
 	if err != nil {

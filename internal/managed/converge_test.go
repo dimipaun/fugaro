@@ -7,66 +7,65 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // The whole point of Converge's shape (D1021): a caller that read nothing
-// refuses, whatever the step's class is. Both halves of the rule fall the same
-// way here — the type was never built, and the class the zero value carries is
-// initflow.Typed, which no plan gate admits (D1026).
+// refuses. The type was never built, so there is no verdict to read and no
+// document to hash.
 func TestConvergeZeroValueRefuses(t *testing.T) {
-	for _, class := range []initflow.ConfirmClass{initflow.Typed, initflow.YesOrTyped} {
-		c := Converge{class: class}
-		err := c.Refuse()
-		if err == nil {
-			t.Fatalf("a Converge nobody built admits a %v step", class)
-		}
-		if !errors.Is(err, ErrNotConverged) {
-			t.Errorf("the refusal of a %v step does not carry ErrNotConverged: %v", class, err)
-		}
-		if !strings.Contains(err.Error(), NotConverged) {
-			t.Errorf("the refusal of a %v step does not say %q: %v", class, NotConverged, err)
-		}
-		if c.Digest() != "" {
-			t.Errorf("a Converge nobody built carries the digest %q, want none", c.Digest())
-		}
-		if got := c.Rules(); len(got) != 0 {
-			t.Errorf("a Converge nobody built carries the rules %v, want none", got)
-		}
+	c := Converge{}
+	err := c.Refuse()
+	if err == nil {
+		t.Fatal("a Converge nobody built admits the step")
+	}
+	if !errors.Is(err, ErrNotConverged) {
+		t.Errorf("the refusal of an unbuilt Converge does not carry ErrNotConverged: %v", err)
+	}
+	if !strings.Contains(err.Error(), NotConverged) {
+		t.Errorf("the refusal of an unbuilt Converge does not say %q: %v", NotConverged, err)
+	}
+	if c.Digest() != "" {
+		t.Errorf("a Converge nobody built carries the digest %q, want none", c.Digest())
+	}
+	if got := c.Rules(); len(got) != 0 {
+		t.Errorf("a Converge nobody built carries the rules %v, want none", got)
+	}
+	if c.Unjudged() {
+		t.Error("a Converge nobody built says the step is one no plan gate may judge")
 	}
 }
 
 // D1026's half that lives inside the type: the gate can only narrow, so a clean
-// verdict over a class the stage table gives no --yes for is still refused —
-// and no caller can forget the check, because it is not the caller's.
-func TestConvergeRefusesATypedClass(t *testing.T) {
+// verdict over a step no plan gate may judge is still refused — and no caller
+// can forget the check, because it is not the caller's. The same document and
+// the same rules over a step the gate does judge are admitted, so it is the
+// unjudged fact alone that refused, and an unjudged step is refused whether a
+// verdict was built beside it or not.
+func TestConvergeRefusesAnUnjudgedStep(t *testing.T) {
 	doc := []byte(`{"the":"document the rules read"}`)
 	rules := []string{"a rule that fired"}
-	c := ConvergeAdmitted(doc, initflow.Typed, rules)
+	c := ConvergeUnjudged(doc, rules)
 	if err := c.Refuse(); err == nil {
-		t.Fatal("a clean verdict admits a Typed step: the gate widened instead of narrowing (D1026)")
+		t.Fatal("a step no plan gate may judge is admitted: the gate widened instead of narrowing (D1026)")
+	}
+	if !c.Unjudged() {
+		t.Error("the Converge built for a step no plan gate may judge does not report it")
 	}
 	if c.Digest() == "" {
-		t.Error("the refusal of a Typed step carries no digest of the document that was judged")
+		t.Error("the refusal of an unjudged step carries no digest of the document that was read")
 	}
-	// The same document and the same rules over the class the gate judges: the
-	// class is the only thing that differs, so the class is what refused.
-	if err := ConvergeAdmitted(doc, initflow.YesOrTyped, rules).Refuse(); err != nil {
-		t.Errorf("an admitted YesOrTyped step is refused: %v", err)
+	if err := c.Refuse(); strings.HasSuffix(err.Error(), "— ") {
+		t.Errorf("the refusal of an unjudged step ends in a bare dash: %v", err)
 	}
-	if err := ConvergeRefused(doc, initflow.YesOrTyped, rules).Refuse(); err == nil {
+	if err := ConvergeAdmitted(doc, rules).Refuse(); err != nil {
+		t.Errorf("an admitted step the gate may judge is refused: %v", err)
+	}
+	if err := ConvergeRefused(doc, rules).Refuse(); err == nil {
 		t.Error("a refused verdict admits the step")
 	}
-	// The gate admits the one class it judges and nothing else: a value outside
-	// the declared classes, or a class added later, is refused by default.
-	for _, class := range []initflow.ConfirmClass{2, -1} {
-		err := ConvergeAdmitted(doc, class, rules).Refuse()
-		if err == nil {
-			t.Errorf("an admitted step of unknown class %d is let through: the class rule fails open", class)
-		} else if strings.HasSuffix(err.Error(), "— ") || strings.HasSuffix(err.Error(), "—") {
-			t.Errorf("the refusal of class %d ends in a bare dash: %v", class, err)
-		}
+	if err := ConvergeWarned(doc, rules, []string{"a finding"}).Refuse(); err != nil {
+		t.Errorf("a warned step the gate may judge is refused: %v", err)
 	}
 }
 
@@ -78,15 +77,15 @@ func TestConvergeRefusesATypedClass(t *testing.T) {
 func TestConvergeDigestIsOfTheBytesRead(t *testing.T) {
 	a := []byte(`{"repos":["one"]}`)
 	b := []byte(`{"repos":["two"]}`)
-	admitted := ConvergeAdmitted(a, initflow.YesOrTyped, nil)
-	if admitted.Digest() == ConvergeAdmitted(b, initflow.YesOrTyped, nil).Digest() {
+	admitted := ConvergeAdmitted(a, nil)
+	if admitted.Digest() == ConvergeAdmitted(b, nil).Digest() {
 		t.Fatal("two documents that differ have the same digest")
 	}
 	sum := sha256.Sum256(a)
 	if want := hex.EncodeToString(sum[:]); admitted.Digest() != want {
 		t.Errorf("the digest is %q, want the sha256 of the bytes the rules read (%q)", admitted.Digest(), want)
 	}
-	refused := ConvergeRefused(a, initflow.YesOrTyped, []string{"a rule that fired"})
+	refused := ConvergeRefused(a, []string{"a rule that fired"})
 	if refused.Digest() != admitted.Digest() {
 		t.Errorf("the refusal's digest is %q, want the judged document's %q", refused.Digest(), admitted.Digest())
 	}
@@ -96,7 +95,7 @@ func TestConvergeDigestIsOfTheBytesRead(t *testing.T) {
 	// What a caller reads is its own: nothing a caller does to the rules it
 	// handed in, or to the copy it read back, changes the verdict it holds.
 	handed := []string{"a rule that fired"}
-	held := ConvergeRefused(a, initflow.YesOrTyped, handed)
+	held := ConvergeRefused(a, handed)
 	handed[0] = "another rule"
 	if got := held.Rules(); len(got) != 1 || got[0] != "a rule that fired" {
 		t.Errorf("the rules the refusal holds moved with the caller's slice: %v", got)
@@ -120,7 +119,7 @@ func TestConvergeRefusedWithWarningsStillRefuses(t *testing.T) {
 	doc := []byte(`{"the":"document the rules read"}`)
 	const rule = "the plan removes a bucket that holds state"
 	const finding = "the plan sets a cost attribute the tables do not carry"
-	c := ConvergeRefusedWithWarnings(doc, initflow.YesOrTyped, []string{rule}, []string{finding})
+	c := ConvergeRefusedWithWarnings(doc, []string{rule}, []string{finding})
 
 	err := c.Refuse()
 	if err == nil {
@@ -149,13 +148,12 @@ func TestConvergeRefusedWithWarningsStillRefuses(t *testing.T) {
 		t.Errorf("the refusal prints the findings beside the rules, which the record holds and this sentence does not:\n%q", err.Error())
 	}
 
-	// The class rule is not weakened by the findings: a Typed step is refused
-	// with them exactly as without them (D1026), and a plainly refused Converge
-	// with no findings is the same verdict.
-	if err := ConvergeRefusedWithWarnings(doc, initflow.Typed, []string{rule}, []string{finding}).Refuse(); err == nil {
-		t.Error("a refusal that carries findings admits a Typed step")
+	// The unjudged rule is not weakened by the findings either: a step no plan
+	// gate may judge is refused whether or not a verdict was built beside it.
+	if err := ConvergeUnjudged(doc, []string{rule}).Refuse(); err == nil {
+		t.Error("a step no plan gate may judge is admitted by a Converge built for it")
 	}
-	plain := ConvergeRefused(doc, initflow.YesOrTyped, []string{rule})
+	plain := ConvergeRefused(doc, []string{rule})
 	if plain.Warned() || len(plain.Warnings()) != 0 {
 		t.Errorf("a plainly refused Converge reports Warned %v with findings %q, want neither", plain.Warned(), plain.Warnings())
 	}
@@ -171,7 +169,7 @@ func TestConvergeRefusedWithWarningsStillRefuses(t *testing.T) {
 func TestConvergeBoundsTheRulesItPrints(t *testing.T) {
 	doc := []byte(`{"the":"document the rules read"}`)
 	for name, v := range hostileValues() {
-		err := ConvergeRefused(doc, initflow.YesOrTyped, []string{v, v}).Refuse()
+		err := ConvergeRefused(doc, []string{v, v}).Refuse()
 		if err == nil {
 			t.Fatalf("%s: a refused verdict admitted the step", name)
 		}
@@ -181,7 +179,7 @@ func TestConvergeBoundsTheRulesItPrints(t *testing.T) {
 		for i := range many {
 			many[i] = v
 		}
-		long := ConvergeRefused(doc, initflow.YesOrTyped, many).Refuse().Error()
+		long := ConvergeRefused(doc, many).Refuse().Error()
 		if note := safetext.FieldListNote(len(many) - safetext.FieldListMax); !strings.Contains(long, note) {
 			t.Errorf("%s: a listing past the cap does not say %q:\n%q", name, note, long)
 		}

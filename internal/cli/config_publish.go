@@ -158,11 +158,11 @@ func newConfigPublishCmd() *cobra.Command {
 				// record's agent_marker are one value.
 				var conv managedmode.Converge
 				conv, at = configPublishConverge(ctx, env, data, rec.lc != nil, gate.facts.AgentMarker)
-				m, aerr := gate.admit(ctx, initflow.YesOrTyped, conv)
+				m, aerr := gate.admit(ctx, conv)
 				if aerr != nil {
 					return aerr
 				}
-				if !initflow.CanConfirmManaged(initflow.YesOrTyped, initflow.Conditions{Agent: marker}, m) {
+				if !m.Removes() {
 					return refuseAgent()
 				}
 				fmt.Fprintln(cmd.OutOrStdout(), initflow.AgentProceeded(marker))

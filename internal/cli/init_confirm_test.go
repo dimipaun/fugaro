@@ -49,7 +49,6 @@ func (c condition) withDoor(door string) condition {
 
 func (c condition) run(t *testing.T, stdin string) (*initRun, *readSpy, *strings.Builder) {
 	t.Helper()
-	canConfirmTyped = initflow.CanConfirm // the real rule, whatever a rig set
 	old := stdinIsTerminal
 	stdinIsTerminal = func(io.Reader) bool { return c.terminal }
 	t.Cleanup(func() { stdinIsTerminal = old })
@@ -168,13 +167,14 @@ func TestInitAsksNoConfirmation(t *testing.T) {
 
 // TestTypedOnlyFirestoreLocationMatrix: the Firestore location is permanent,
 // and it is the ONE step W5.1 changes in a single door (D12's answer of
-// 2026-10-20): `setup` keeps it Typed — where only a person at a real
-// terminal may confirm it, and since T7 their being there IS the
-// confirmation, with nothing typed — and `update --yes` covers it, because a
-// re-converge of a database that already exists is not a first-time decision.
-// The three steps the answer never relaxes, in either door, are creating the
-// project and linking the billing account (which `update` refuses by flag, so
-// they cannot arise here at all) and this location in `setup`.
+// 2026-10-20): in `setup` it is the person's alone — only a run that reaches
+// their own real terminal gives it, and since T7 their being there IS the
+// confirmation, with nothing typed — and in `update` it is covered by the
+// run's own answer, because a re-converge of a database that already exists is
+// not a first-time decision. The three steps the answer never relaxes, in
+// either door, are creating the project and linking the billing account (which
+// `update` refuses by flag, so they cannot arise here at all) and this
+// location in `setup`.
 func TestTypedOnlyFirestoreLocationMatrix(t *testing.T) {
 	for _, door := range []string{setupDoor.name, updateDoor.name} {
 		for _, c := range conditions() {
@@ -182,13 +182,9 @@ func TestTypedOnlyFirestoreLocationMatrix(t *testing.T) {
 				c := c.withDoor(door)
 				r, spy, out := c.run(t, infra.FirestoreLocation+"\n")
 				err := r.confirmLocation()
-				// Typed in setup, and the ordinary covered class in update: the
-				// same call site, and the class is the door's (D12).
-				class := initflow.Typed
-				if door == updateDoor.name {
-					class = initflow.YesOrTyped
-				}
-				can := canConfirmStep(class, r.conditions())
+				// The person's own in setup, and covered by the run's own answer
+				// in update: the same call site, and the door decides (D12).
+				can := canConfirmStep(door == updateDoor.name, *r.o, r.conditions())
 				if can {
 					if err != nil {
 						t.Fatalf("the location was not confirmed: %v", err)
@@ -232,10 +228,10 @@ func asNeedsYou(err error, target **initflow.NeedsYouError) bool {
 }
 
 // TestTypedOnlyImageBuildMatrix: the billable first image build under every
-// condition. W5.1 moves it out of the Typed class — D12's answer of 2026-10-20
-// makes it an ordinary covered row of BOTH front doors, so `--yes` takes it
-// here and in `setup` alike — and the name stays the one the image-refresh plan
-// records for this matrix. What does not change is the direction of the
+// condition. W5.1 makes the run's own answer cover it — D12's answer of
+// 2026-10-20 gives it to that answer in BOTH front doors, so a run opened on
+// one takes it here and in `setup` alike — and the name stays the one the
+// image-refresh plan records for this matrix. What does not change is the direction of the
 // mistake: a coding agent's environment, --json, --non-interactive and a run
 // with no terminal at all never confirm it, and a run that cannot take it
 // leaves the build (and is needs-you at the end), never builds.
@@ -250,11 +246,11 @@ func TestTypedOnlyImageBuildMatrix(t *testing.T) {
 			cfg := &config.Config{Workflows: map[string]config.Workflow{"app": {}}}
 			spec := infra.RepoSpec{Name: initProjectName, BuildServiceAccountEmail: "b@x.iam", RegistryPath: "r"}
 			built, err := r.buildImages(t.Context(), lc, cfg, spec, []string{"app"})
-			// YesOrTyped, exactly: --yes takes it, a real terminal takes it
-			// with no --non-interactive and no --json (the person being there
-			// is the confirmation, since T7), and a coding agent's environment
-			// takes it from neither.
-			can := canConfirmStep(initflow.YesOrTyped, r.conditions())
+			// The run's own answer takes it, a real terminal takes it with no
+			// --json and no --non-interactive (the person being there is the
+			// confirmation, since T7), and a coding agent's environment takes it
+			// from neither.
+			can := canConfirmStep(true, *r.o, r.conditions())
 			for _, rq := range fb.Requests() {
 				if rq.Method == "POST" {
 					t.Fatalf("a build was submitted without a confirmation: %s", rq.Path)
@@ -342,7 +338,6 @@ func TestInitInAnAgentSessionAppliesNothing(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			r := newInitRig(t)
 			r.stateBucket()
-			canConfirmTyped = initflow.CanConfirm
 			t.Setenv("CLAUDECODE", "1")
 			out, errOut, err := executeStdin(t, "", args...)
 			if err == nil {
