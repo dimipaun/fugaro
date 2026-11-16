@@ -91,7 +91,7 @@ update atomically, so the whole stage report fails. **Consequence:** the new lea
 whose installation has deployed rules that carry them. That needs either a generation bump (the
 `projectpolicy.RulesVersion` route `fugaro update` already deploys and `update_converge_test.go` covers) or a writer
 that checks the deployed generation. A run in flight under the old rules keeps writing the old leaves
-(`docs/design/update-in-flight.md`). The contract task C2 settles which.
+(`docs/design/update-in-flight.md`). The plan's task SA5.0 settles which (it takes the generation bump).
 
 **F11 (Gap).** The catalog was checked on 2026-10-23, and `catalog.StaleAfter` is 30 days, so from 2026-11-22 every
 catalog-priced row charges its tier's maximum whatever `price_policy` says (provider-price-catalog D10). A release
@@ -149,8 +149,8 @@ without a console change is U7.
   (`internal/cli/docs_providers_test.go`) holds to `catalogShipped`. This is a bug fix and does not
   depend on D2644.
 - **RS2.** A partial call settles as today and is marked estimated (F13).
-- **RS3.** An override below the catalog's tier minimum gets a warning in `validate`, `update` and `doctor`, never a
-  refusal or a prompt (spec R4; the no-prompt policy).
+- **RS3.** An override below the catalog's tier minimum gets a warning in `validate` and `update` (the two the spec
+  names), never a refusal or a prompt (spec R4; the no-prompt policy).
 - **RS4.** Each call's log line gains `priced_as: reported`, and an estimated call keeps today's `priced_as` (table,
   max, tier or surprise).
 
