@@ -140,12 +140,6 @@ var (
 	// not hand a run a credential it could not write a line for (D143's
 	// fail-closed rule), and a token cannot be unminted.
 	ErrMintUnaudited = errors.New("credsvc: the mint could not be audited, so no installation token was issued")
-	// ErrContextRepo is a context mint call naming a repository this run may not
-	// read: one the run identity's claim does not name (C5a), or one the
-	// project's published allow_repos no longer admits. It is the request itself
-	// refused — the caller can fix it, or it is an agent reaching past its
-	// launch — and the sentence beside it says which half refused it.
-	ErrContextRepo = errors.New("credsvc: the call names a context repository this run may not read")
 	// ErrContextGitHub is GitHub refusing a context mint, or the call to it
 	// failing. A run halts on it, exactly as it does on ErrMintGitHub (D143):
 	// the job holds no App key to fall back to.
@@ -679,7 +673,13 @@ func (s *Server) contextTokens(ctx context.Context, w http.ResponseWriter, r *ht
 			s.refuseContextTokens(ctx, w, id, refused.status, refused.typ, refused.message)
 			return
 		}
-		s.refuseContextTokens(ctx, w, id, StatusUnavailable, ErrorStateUnavailable, ErrContextRepo.Error())
+		// Unreachable through this route — admitContextRepos answers its
+		// refusals as contextAdmission and nothing else — and kept rather than
+		// assumed, the shape the build route's own narrowing keeps: answering
+		// is what a call that got here needs, and a panic inside the one act
+		// that hands out a credential is the one thing not to do.
+		s.refuseContextTokens(ctx, w, id, StatusUnavailable, ErrorStateUnavailable,
+			"the call's context repositories could not be read")
 		return
 	}
 	b, err := s.cfg.Bundles.Load(ctx)
