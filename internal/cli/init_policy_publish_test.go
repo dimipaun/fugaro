@@ -2848,6 +2848,10 @@ const craftLoosePoolYAML = "credentials:\n" +
 	"  coder: { model: claude-opus-5-5, access: acme-pool }\n" +
 	"  security-review: { access: acme-main }\n"
 
+// craftMemberKeys is the three members of a node a craft family writes: the
+// crafts, their credentials and their pools.
+var craftMemberKeys = []string{"crafts", "craft_credentials", "craft_pools"}
+
 // craftMembersOf is the three members of a node as the document they are, for a
 // comparison that is about them and nothing else. A test that wants "the
 // publish left them alone" compares two of these rather than two whole nodes:
@@ -2859,12 +2863,28 @@ func craftMembersOf(t *testing.T, f *projectFixture) map[string]any {
 		t.Fatal(err)
 	}
 	out := map[string]any{}
-	for _, k := range []string{"crafts", "craft_credentials", "craft_pools"} {
+	for _, k := range craftMemberKeys {
 		if v, ok := doc[k]; ok {
 			out[k] = v
 		}
 	}
 	return out
+}
+
+// nodeMembersExcept is the whole node without the members named, which is the
+// other half of "these members and nothing else moved": craftMembersOf returns
+// those three and nothing else, so a comparison that deleted them from its
+// answer would compare {} with {} whatever the publish did.
+func nodeMembersExcept(t *testing.T, f *projectFixture, except ...string) map[string]any {
+	t.Helper()
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(nodeJSON(t, f, projectpolicy.PathShared())), &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range except {
+		delete(doc, k)
+	}
+	return doc
 }
 
 // membersText is a map of node members as one comparable string: encoding/json
@@ -3072,6 +3092,36 @@ func TestPublishDiffNamesTheCraftLines(t *testing.T) {
 		if pool.Name == "acme-loose" {
 			t.Errorf("the publish wrote the ownerless pool: %+v", pool)
 		}
+	}
+}
+
+// TestUpdateNamesThePoolTheNodeCannotCarry: D2608's answer is one line at both
+// doors — an ownerless local pool is saved, is not published, and is named, and
+// neither door fails on it — and the update door's diff is not the explicit
+// door's: it is built from the drift, and a pool that can never reach the node
+// is deliberately no drift row (a row reporting it would fire on every run and
+// never converge, the HARD RULE's own loss). So the line is printed beside that
+// diff from the publisher's own function, and an operator whose update carries
+// such a pool reads what happened to it instead of finding a pool in the file
+// and nothing anywhere saying why no run serves it.
+//
+// The pool is the only craft member the file states, and its member is the
+// built-in vertex, so the publish adds no grant the gate would ask a name for:
+// what this test is about is the line, not the widening.
+func TestUpdateNamesThePoolTheNodeCannotCarry(t *testing.T) {
+	f := newProjectFixture(t, "pools:\n  - { name: acme-loose, members: [vertex] }\n")
+	f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
+	h := newMigrationRig(t, f, &initOptions{})
+
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("a config holding an ownerless pool failed the update: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "craft_pools acme-loose not published: owner is required") {
+		t.Errorf("the update's diff does not name the pool the node cannot carry:\n%s", out)
+	}
+	if got := publishedPolicy(t, f).CraftPools; len(got) != 0 {
+		t.Errorf("the update wrote the ownerless pool: %+v", got)
 	}
 }
 
@@ -3308,11 +3358,7 @@ func TestNoPublishedCraftTurnsLevelThreeOn(t *testing.T) {
 	}
 	// Everything but the three members is the same node: the craft key added no
 	// member beside itself, and the floor is one of them.
-	withCrafts, withoutCrafts := craftMembersOf(t, f), craftMembersOf(t, g)
-	for _, k := range []string{"crafts", "craft_credentials", "craft_pools"} {
-		delete(withCrafts, k)
-	}
-	if got, want := membersText(t, withCrafts), membersText(t, withoutCrafts); got != want {
+	if got, want := membersText(t, nodeMembersExcept(t, f, craftMemberKeys...)), membersText(t, nodeMembersExcept(t, g, craftMemberKeys...)); got != want {
 		t.Errorf("the craft members moved another member of the node:\n got %s\nwant %s", got, want)
 	}
 	floorNow, ok := nodeAt(f.db.Value(projectpolicy.PathShared()), "review_floor")

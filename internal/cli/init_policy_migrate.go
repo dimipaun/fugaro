@@ -310,13 +310,18 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 // (SetsNothing). The publish would create a policy that admits nothing and
 // carry none of them with it.
 //
-// The rule is the publisher's own rows, one member at a time: whatever
-// policyNodeForPublish would put in the node because the file states it is a
-// reason to create the node, and that is `lc.X != nil` where the publisher's
-// guard is (the bake switch and the triage switch among them:
-// BakeReposEffective and TriageEffective hand back a written answer whatever it
-// is, and the rows that compare them are reached by `lc.BakeRepos != nil` and
-// `lc.Triage != nil`).
+// The rule is a member only the node can carry, listed here one at a time
+// rather than derived from the publisher's rows: `lc.X != nil` where the
+// publisher's guard for that member is (the bake switch and the triage switch
+// among them: BakeReposEffective and TriageEffective hand back a written answer
+// whatever it is, and the rows that compare them are reached by
+// `lc.BakeRepos != nil` and `lc.Triage != nil`). Being a publisher's row is not
+// by itself what puts a member in this list. The craft family is one — the
+// crafts, their credentials and their pools (MC18) — and it is not here, so a
+// config holding crafts and pools and nothing else is published by a first
+// publish with no typed confirmation to answer. Which members ask for that
+// confirmation is a product decision, so this list keeps the members it had
+// rather than growing by what the publish happens to write.
 func firstPublishNodeOnlyMembers(lc *localcfg.Config) []string {
 	var out []string
 	if lc.ImageCatalogEffective(nil) != nil {
@@ -1103,6 +1108,19 @@ func (m *policyMigration) print(w io.Writer) {
 			printFirstPublishDiff(w, m.pub.drift, m.pub.sources)
 		} else {
 			printPolicyPublishDiff(w, m.pub.drift, m.pub.sources)
+		}
+		// A pool this file states that the node cannot carry is neither written
+		// nor dropped in silence (D2608): the line names it and says what it
+		// needs, asked of the publisher's own function so the line and the
+		// omission cannot part company — the call the explicit door's own diff
+		// makes (printPolicyDiff). It is printed here rather than carried as a
+		// drift row because such a pool can never reach the node: a row that
+		// reported it would fire on every run of `fugaro update` and never
+		// converge, which is the second command the HARD RULE forbids.
+		if _, lines := publishedCraftPools(m.lc, m.node, m.pub.pol.CraftCredentials); len(lines) > 0 {
+			for _, line := range lines {
+				fmt.Fprintln(w, line)
+			}
 		}
 		if m.pub.adopted {
 			// D854's other half: an installation that records no generation has
