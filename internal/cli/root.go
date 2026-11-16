@@ -259,6 +259,11 @@ func newCoreRoot() *cobra.Command {
 		// service's container sets no command and the image's CMD is what
 		// names `fugaro intake serve` (intake_serve.go).
 		newIntakeCmd(),
+		// The voice hop's own entry point (P5.3.3): hidden for the same reason
+		// and registered for the same reason, because a Cloud Run service's
+		// container sets no command and the image's CMD is what names
+		// `fugaro voice serve` (voice_serve.go).
+		newVoiceCmd(),
 		// The local diagnosis of a command that failed on this machine: its
 		// log, this machine's configuration and the source at this version,
 		// read by a read-only agent (docs/diagnose-agent, D1604). Beside

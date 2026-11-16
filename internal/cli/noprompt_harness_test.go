@@ -571,6 +571,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro user ls":       "prints the no-project-config refusal",
 	"fugaro validate":      "refuses with no fugaro.yaml in the world",
 	"fugaro version":       "prints the version",
+	"fugaro voice serve":   "refuses without FUGARO_FIREBASE_PROJECT in its own environment",
 	"fugaro workspace ls":  "prints that no config on this machine names a workspace",
 }
 
