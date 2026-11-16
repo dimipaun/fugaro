@@ -876,6 +876,31 @@ const chainLimitsSubject = "a chain limit (--max-usd, --max-tokens, --max-time, 
 // where the image cannot be brought forward.
 const chainLimitsAlt = "; or drop the chain limits from the launch, which needs a job image whose runner knows them before it can carry one"
 
+// contextReposSince is the release whose runner reads a task's read-only
+// context repositories (task.Spec.ContextRepos, fugaro run --context, plan
+// task C5a). task.Parse decodes with DisallowUnknownFields, so a runner older
+// than this refuses the whole task at bootstrap: the run would die over a
+// field it cannot read, and the launch is gated here instead of being started
+// on such a job.
+//
+// It gates the field and never the flag, exactly as launchLimitsSince does: a
+// launch that names no context repository writes none (the field is omitempty,
+// so the spec is byte-identical to what the previous release wrote) and is
+// never gated, while a --retry of a task that carries one is gated the same
+// way the launch that wrote it was.
+const contextReposSince = "0.26.0"
+
+// contextReposKnows is what such a runner knows, as the gate names it.
+const contextReposKnows = "the read-only context repositories its task carries (context_repos)"
+
+// contextReposSubject is what the gate says the launch carries: the flag, and
+// the stored task a --retry replays the field from.
+const contextReposSubject = "read-only context repositories (--context, kept by --retry and by a stored task)"
+
+// contextReposAlt is the gate's other cure: the launch can name none, where
+// the image cannot be brought forward.
+const contextReposAlt = "; or drop --context, which needs a job image whose runner reads the field before it can carry one"
+
 // authorSince is the first fugaro release whose runner reads a task's author
 // field (task.Spec.Author, the launcher's identity a launch records for the
 // repositories that opted in, D604/D606): an older runner refuses the field

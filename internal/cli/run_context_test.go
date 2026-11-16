@@ -1,0 +1,275 @@
+package cli
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"strings"
+	"testing"
+
+	"github.com/dimipaun/fugaro/internal/budget/token"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/task"
+)
+
+// contextRepos are the repositories these launches read: two names, so a test
+// that reads a list back has an order and a length to check.
+var contextRepos = []string{"acme/lib", "acme/other"}
+
+// contextLaunchFixture is a launch fixture of an installation whose
+// credentials service serves its repository: the block `fugaro update` writes
+// where it deploys one, and the repository's own record — the half its root's
+// apply writes (markRepoCredentialsServiceReady, infra.CredentialsServiceServes).
+// The service is what reads a context repository for a run, so a launch that
+// cannot reach it is refused (contextReposRefusal).
+func contextLaunchFixture(t *testing.T) *launchBudgetFixture {
+	t.Helper()
+	f := newLaunchBudget(t, "enforce")
+	f.appendConfig(t, "credentials_service:\n  url: "+launchCredsURL+"\n")
+	markRepoCredentialsServiceReady(t, f.cloudFixture)
+	return f
+}
+
+// publishAllowOnly publishes a policy whose allow_repos is exactly allow. It
+// is the node this Fugaro writes — the version it reads, the budget mode the
+// fixture's database carries — so the only thing a test varies is the list.
+func publishAllowOnly(t *testing.T, f *launchBudgetFixture, allow ...string) {
+	t.Helper()
+	list, err := json.Marshal(allow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publishPolicy(t, f, `{"version":`+jsonInt(projectpolicy.Version)+`,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":`+string(list)+`}`)
+}
+
+func jsonInt(n int) string {
+	b, _ := json.Marshal(n)
+	return string(b)
+}
+
+// contextRun runs the fixture's launch with the context repositories named,
+// the way a person would type them.
+func contextRun(t *testing.T, f *launchBudgetFixture, repos ...string) (string, string, error) {
+	t.Helper()
+	args := []string{"--context", repos[0]}
+	for _, repo := range repos[1:] {
+		args = append(args, "--context", repo)
+	}
+	return runBudget(t, args...)
+}
+
+// TestRunContextReposMustBeAdmitted: every context repository a launch names
+// is admitted by the project's published allow_repos, exactly as the run's own
+// repository is (C5a, D613): allow_repos is what decides which repositories a
+// run may touch, and a run that may read one is a wider grant than one that
+// only pushes its own. The refusal is the policy's own, worded once
+// (projectpolicy.NotAdmitted), and it prints the command that fixes it.
+func TestRunContextReposMustBeAdmitted(t *testing.T) {
+	f := contextLaunchFixture(t)
+	publishAllowOnly(t, f, "github/acme/app")
+	wantRefused(t, f.cloudFixture, "fugaro project repos add github/acme/lib",
+		"run", "--repo", "acme/app", "--run-id", budgetRun, "--context", "acme/lib", "Add a feature")
+
+	// The same launch with a list that admits both is not refused, so the
+	// refusal above is the allow-list's and nothing else about this launch.
+	admits := contextLaunchFixture(t)
+	publishAllowOnly(t, admits, "github/acme/app", "github/acme/lib")
+	if _, _, err := contextRun(t, admits, "acme/lib"); err != nil {
+		t.Fatalf("a context repository the allow-list admits was refused: %v", err)
+	}
+}
+
+// TestRunContextReposCappedAtFive: a run reads a handful of repositories at
+// most (task.MaxContextRepos), and the sixth is refused by the launcher before
+// the launch reaches the cloud at all — the flag is judged before openCloud,
+// so this costs no call and starts no execution.
+func TestRunContextReposCappedAtFive(t *testing.T) {
+	f := contextLaunchFixture(t)
+	args := []string{"run", "--repo", "acme/app", "--run-id", budgetRun}
+	for i := 0; i < task.MaxContextRepos+1; i++ {
+		args = append(args, "--context", "acme/lib"+string(rune('a'+i)))
+	}
+	args = append(args, "Add a feature")
+	wantRefused(t, f.cloudFixture, "at most 5", args...)
+}
+
+// TestRunContextRefusedOnBitbucket: a context repository is read through the
+// credentials service, whose fetch is brokered against the task's own
+// repository and its installation (secrets-brokering D496), and that path
+// serves GitHub alone. A Bitbucket run is refused rather than launched with a
+// repository nothing can fetch for it.
+func TestRunContextRefusedOnBitbucket(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	env := memEnv(t, f.cloudFixture)
+	slug := mustSlug("bitbucket", proxiedRepo)
+	spec := &task.Spec{Version: 1, RunID: budgetRun, Repo: proxiedRepo, Ref: "main", Workflow: "app",
+		Task: "Read the graph", ContextRepos: []string{"workspace-a/lib"}}
+	err := contextReposRefusal(context.Background(), env, slug, spec, io.Discard)
+	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "is on bitbucket") {
+		t.Fatalf("a context repository on a Bitbucket run = %v, want a refusal naming the provider", err)
+	}
+	// A launch naming no context repository is refused by nothing here, so the
+	// refusal above is the list's and not the provider's.
+	if err := contextReposRefusal(context.Background(), env, slug,
+		&task.Spec{Version: 1, RunID: budgetRun, Repo: proxiedRepo, Ref: "main", Workflow: "app", Task: "x"}, io.Discard); err != nil {
+		t.Fatalf("a Bitbucket launch naming no context repository = %v, want no refusal", err)
+	}
+}
+
+// TestRunContextRefusedWithoutService: the address a launch hands a job is
+// what makes the credentials service reachable at all, and the in-job mint
+// path is deliberately not extended to context repositories (C5a) — a run on
+// it holds a token for its own repository and nothing else. So a launch of a
+// repository the service does not serve is refused, in the operator's own
+// words, rather than recorded a list the run could never read.
+func TestRunContextRefusedWithoutService(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	_, _, err := contextRun(t, f, "acme/lib")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("a context repository on an installation with no credentials service = %v, want a user refusal", err)
+	}
+	for _, want := range []string{"credentials service", selfCommand() + " update", "agent.auth: cascade", "drop --context"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if launchedAny(f) {
+		t.Fatal("a refused launch started an execution")
+	}
+	// The same repository with the service installed and its record on is
+	// launched, so the refusal above is the service's and not --context's.
+	served := contextLaunchFixture(t)
+	publishAllowOnly(t, served, "github/acme/*")
+	if _, _, err := contextRun(t, served, "acme/lib"); err != nil {
+		t.Fatalf("a context repository on a served repository was refused: %v", err)
+	}
+	if !launchedAny(served) {
+		t.Fatal("the launch that was not refused started no execution")
+	}
+}
+
+// TestTokenContextClaimMatchesTask: the list a launch records on the task and
+// the list it mints into the run's identity are the same list (D613). The
+// runner reads the task and the credentials service can read nothing but the
+// claim, so a pair that disagreed would let a run read a repository its
+// identity does not name — or name one it was never admitted for.
+func TestTokenContextClaimMatchesTask(t *testing.T) {
+	f := contextLaunchFixture(t)
+	publishAllowOnly(t, f, "github/acme/*")
+	var env map[string]string
+	f.run.OnRun = func(c gcpfake.RunCall) { env = c.Env }
+	if _, _, err := contextRun(t, f, contextRepos...); err != nil {
+		t.Fatal(err)
+	}
+	spec := readSpec(t, f.cloudFixture, budgetRun)
+	if len(spec.ContextRepos) != len(contextRepos) {
+		t.Fatalf("the stored task names %v, want %v", spec.ContextRepos, contextRepos)
+	}
+	for i, want := range contextRepos {
+		if spec.ContextRepos[i] != want {
+			t.Fatalf("the stored task names %v, want %v", spec.ContextRepos, contextRepos)
+		}
+	}
+	claims := claimsOf(t, f, unsealed(t, markerKey(t, env), []byte(readToken(t, f.cloudFixture, budgetRun)), budgetRun))
+	repos, ok := claims[token.ClaimContextRepos].([]any)
+	if !ok || len(repos) != len(spec.ContextRepos) {
+		t.Fatalf("the identity's %s = %v, want the task's %v", token.ClaimContextRepos, claims[token.ClaimContextRepos], spec.ContextRepos)
+	}
+	for i, want := range spec.ContextRepos {
+		if repos[i] != want {
+			t.Fatalf("the identity's %s = %v, want the task's %v", token.ClaimContextRepos, claims[token.ClaimContextRepos], spec.ContextRepos)
+		}
+	}
+	// A launch that names none mints exactly the claim set every earlier
+	// release minted: the claim is written only when the run has it.
+	plain := contextLaunchFixture(t)
+	publishAllowOnly(t, plain, "github/acme/*")
+	var plainEnv map[string]string
+	plain.run.OnRun = func(c gcpfake.RunCall) { plainEnv = c.Env }
+	if _, _, err := runBudget(t); err != nil {
+		t.Fatal(err)
+	}
+	without := claimsOf(t, plain, unsealed(t, markerKey(t, plainEnv), []byte(readToken(t, plain.cloudFixture, budgetRun)), budgetRun))
+	if v, ok := without[token.ClaimContextRepos]; ok {
+		t.Fatalf("a launch naming no context repository minted %s = %v", token.ClaimContextRepos, v)
+	}
+}
+
+// TestRunContextRefusedOverTheClaimBound: the identity provider refuses a
+// custom token whose claims pass the bound the token package carries
+// (token.MaxClaimsBytes), and it refuses it at the exchange — inside the run,
+// long after this launcher was told the launch had succeeded. So a launch
+// whose context repositories would pass the bound is refused here, before a
+// signature is asked for and before an execution exists.
+func TestRunContextRefusedOverTheClaimBound(t *testing.T) {
+	f := contextLaunchFixture(t)
+	publishAllowOnly(t, f, "github/acme/*")
+	long := make([]string, 0, task.MaxContextRepos)
+	for i := 0; i < task.MaxContextRepos; i++ {
+		long = append(long, "acme/"+strings.Repeat("r", 180)+string(rune('a'+i)))
+	}
+	wantRefused(t, f.cloudFixture, "custom token may carry",
+		append([]string{"run", "--repo", "acme/app", "--run-id", budgetRun}, contextArgs(long)...)...)
+	if n := len(f.iam.SignCalls()); n != 0 {
+		t.Fatalf("%d claim sets were signed for a refused launch", n)
+	}
+	if tok := readToken(t, f.cloudFixture, budgetRun); tok != "" {
+		t.Error("the refused launch left a budget token in the bucket")
+	}
+}
+
+func contextArgs(repos []string) []string {
+	var args []string
+	for _, repo := range repos {
+		args = append(args, "--context", repo)
+	}
+	return append(args, "Add a feature")
+}
+
+// TestRunContextReposGateTheJobImage: the field is one an older runner
+// refuses outright (task.Parse decodes with DisallowUnknownFields), so a
+// launch whose job image predates the release that reads it is refused here
+// rather than started on a job that dies at bootstrap (contextReposSince). The
+// gate is the field's and never the flag's: a launch that names none is
+// launched onto any image at all, which is what keeps today's launches
+// byte-identical.
+func TestRunContextReposGateTheJobImage(t *testing.T) {
+	f := contextLaunchFixture(t)
+	publishAllowOnly(t, f, "github/acme/*")
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, contextReposSince, -1))
+	wantRefused(t, f.cloudFixture, "read-only context repositories",
+		"run", "--repo", "acme/app", "--run-id", budgetRun, "--context", "acme/lib", "Add a feature")
+
+	plain := contextLaunchFixture(t)
+	writeBuildRecord(t, plain.cloudFixture, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, contextReposSince, -1))
+	if _, _, err := runBudget(t); err != nil {
+		t.Fatalf("a launch naming no context repository was gated on the image: %v", err)
+	}
+}
+
+// TestRunContextNotClonedYetIsSaid: the runner does not clone a context
+// repository yet (plan tasks C5b and C5c are what read the list), and a flag
+// that only records one is a gap a person has to hear about rather than one
+// this command leaves them to discover. The line is the field's: a launch that
+// names none says nothing.
+func TestRunContextNotClonedYetIsSaid(t *testing.T) {
+	f := contextLaunchFixture(t)
+	publishAllowOnly(t, f, "github/acme/*")
+	_, errOut, err := contextRun(t, f, "acme/lib")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errOut, "does not clone them yet") || !strings.Contains(errOut, "acme/lib") {
+		t.Fatalf("a launch carrying --context said nothing about the repository not being read yet:\n%s", errOut)
+	}
+	plain := contextLaunchFixture(t)
+	publishAllowOnly(t, plain, "github/acme/*")
+	_, quiet, err := runBudget(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(quiet, "does not clone") {
+		t.Fatalf("a launch naming no context repository printed the context line:\n%s", quiet)
+	}
+}
