@@ -96,7 +96,9 @@ It answers the four commands the check runs, in the shapes the real one prints
 them (internal/report, internal/initflow), and files a log the way
 internal/report/logsink does — name shape, mode, and the retention rule. Every
 call is appended to $CHECK310_TEST_CALLS. CHECK310_TEST_MODE bends one thing at
-a time, which is what the cases assert against.
+a time, which is what the cases assert against; MODE=scratch is a --scratch run
+of the check, where the project it answers with is the check's own made-up one
+and every call records the plumbing it was handed (scratch_notes).
 """
 import calendar
 import json
@@ -106,12 +108,18 @@ import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 import time
+import urllib.request
 
 MODE = os.environ.get("CHECK310_TEST_MODE", "happy")
 CALLS = os.environ["CHECK310_TEST_CALLS"]
 INSTALLATION = os.environ.get("CHECK310_TEST_INSTALLATION", "check310demo")
-GCP = "check310-gcp"
+# MODE=scratch is a --scratch run of the check: it drives its own installation,
+# so the project this fake answers with is the check's made-up one.
+SCRATCH_PROJECT = "chk310-scratch"
+PROJECT = SCRATCH_PROJECT if MODE == "scratch" else INSTALLATION
+GCP = SCRATCH_PROJECT if MODE == "scratch" else "check310-gcp"
 REGION = "europe-west1"
 STAGES = ["installation", "bootstrap", "images", "converge", "gateway"]
 REASONS = {
@@ -132,6 +140,131 @@ with open(CALLS, "a") as fh:
     if sys.argv[1:2] == ["doctor"] and os.environ.get("FUGARO_PROJECT"):
         line += " [FUGARO_PROJECT=%s]" % os.environ["FUGARO_PROJECT"]
     fh.write(line + "\n")
+
+
+def terraform_kind():
+    """The terraform first on PATH, as this call sees it: the check's own fake,
+    or the shim it puts there for the one forced failure."""
+    tf = shutil.which("terraform")
+    if not tf:
+        return "none", "none"
+    try:
+        r = subprocess.run([tf, "version", "-json"], capture_output=True, text=True, timeout=30)
+    except Exception:  # noqa: BLE001
+        return "unrunnable", "none"
+    if "check310" in r.stdout:
+        # The shim: its plan IS the forced failure, and running it here would
+        # write the marker the check reads its 'the shim ran' off.
+        return "shim", "shim"
+    if r.returncode != 0 or "terraform_version" not in r.stdout:
+        return "other", "none"
+    fd, out = tempfile.mkstemp(prefix="chk310-plan-")
+    os.close(fd)
+    try:
+        p = subprocess.run([tf, "plan", "-no-color", "-out=" + out], capture_output=True, text=True, timeout=60)
+        return "fake", str(p.returncode)
+    except Exception:  # noqa: BLE001
+        return "fake", "unrunnable"
+    finally:
+        try:
+            os.remove(out)
+        except OSError:
+            pass
+
+
+def scratch_notes():
+    """What a --scratch run's own installation looks like, read from inside the
+    call: the project the CLI was pointed at, the config it was handed, the
+    directory it runs in, and the terraform first on PATH.
+
+    The endpoints are checked by asking one of them: the check's own fake API
+    root is the only thing that can answer a project read, and a config naming
+    the real Google roots would leave every URL in it non-loopback. A missing
+    endpoint is worse than a wrong one — an empty field IS the real endpoint —
+    so the case pins the count against the URL fields of localcfg.Endpoints.
+
+    The file is $CHECK310_TEST_SCRATCH, one line per call, and only the cases
+    that set it read it.
+    """
+    path = os.environ.get("CHECK310_TEST_SCRATCH", "")
+    if not path:
+        return
+    cfg = os.environ.get("FUGARO_CONFIG", "")
+    try:
+        with open(cfg) as fh:
+            text = fh.read()
+    except OSError:
+        text = ""
+    urls = re.findall(r"^    [a-z_]+: (http\S+)$", text, re.M)
+    loopback = [u for u in urls if u.startswith("http://127.0.0.1:")]
+    answer = "no"
+    if loopback:
+        try:
+            with urllib.request.urlopen(loopback[0].rstrip("/") + "/v1/projects/" + SCRATCH_PROJECT, timeout=30) as r:
+                answer = "yes" if r.status == 200 else str(r.status)
+        except Exception:  # noqa: BLE001
+            answer = "no"
+    cwd_yaml = "no"
+    try:
+        with open("fugaro.yaml") as fh:
+            cwd_yaml = "yes" if SCRATCH_PROJECT in fh.read() else "elsewhere"
+    except OSError:
+        cwd_yaml = "no"
+    # The runs bucket a doctor read opens goes through gocloud's own gs://
+    # opener, which reads neither the config's storage endpoint nor its
+    # no_auth: only this variable keeps that read on the check's loopback, so a
+    # call that carries none of it reaches a real GCS and the case has to say
+    # so rather than read a pass out of the three fields beside it.
+    m = re.match(r"^http://([^/]+)/", loopback[0]) if loopback else None
+    emu = os.environ.get("STORAGE_EMULATOR_HOST", "")
+    emulator = "yes" if (m and emu == m.group(1)) else ("no" if not emu else "elsewhere")
+    # A release build's plugin step runs whatever `claude` PATH's first entry
+    # holds, and reads and writes Claude Code's record under CLAUDE_CONFIG_DIR:
+    # the owner's own claude and the owner's own config both have to be out of
+    # this call's reach, so a call that finds another claude or a config dir
+    # outside the scratch home is one the case fails.
+    # The check's own fake is the `claude` whose directory is the one the fake
+    # `terraform` is in: the forced-failure step puts a directory of the shim's
+    # own in front of the fake bin, so the fake bin is not always PATH's first
+    # entry, and what has to hold is that the first claude found IS the check's
+    # — a real one anywhere behind it is never reached.
+    claude = "none"
+    for d in [x for x in os.environ.get("PATH", "").split(os.pathsep) if x]:
+        c = os.path.join(d, "claude")
+        if os.path.isfile(c) and os.access(c, os.X_OK):
+            claude = "fake" if os.path.isfile(os.path.join(d, "terraform")) else "other"
+            break
+    cfg = os.environ.get("CLAUDE_CONFIG_DIR", "")
+    home = os.environ.get("HOME", "").rstrip("/")
+    claude_config = "inside" if (cfg and home and cfg.startswith(home + "/")) else ("no" if not cfg else "outside")
+    # The record a release build's plugin step reads before it runs anything:
+    # with no install in it the step has the plugin to install, which the loop
+    # applies, and which refuses without a terminal — the check never gives one.
+    # So the run seeds it, and a call that finds it missing is a run of a
+    # release build that would stop at the plugin stage.
+    record = "none"
+    try:
+        with open(os.path.join(cfg, "plugins", "installed_plugins.json")) as fh:
+            got = json.load(fh)["plugins"]["fugaro@fugaro"]
+        record = "seed" if [e for e in got if e.get("scope") == "user" and e.get("version") == "0.9.0"] else "other"
+    except (OSError, ValueError, KeyError, TypeError):
+        record = "other" if cfg else "none"
+    tf, plan = terraform_kind()
+    with open(path, "a") as fh:
+        fh.write("project=%s config=%s named=%s endpoints=%d loopback=%d no_auth=%s cwd_yaml=%s api=%s emulator=%s claude=%s claude_config=%s claude_record=%s terraform=%s plan=%s\n" % (
+            os.environ.get("FUGARO_PROJECT", "unset"),
+            "yes" if text else "no",
+            "yes" if ("name: " + SCRATCH_PROJECT) in text else "no",
+            len(urls), len(loopback),
+            "yes" if "no_auth: true" in text else "no",
+            cwd_yaml, answer, emulator, claude, claude_config, record, tf, plan))
+
+
+# `fugaro version` is the check's first call and the one that carries no
+# installation: it asks which binary is on PATH, before anything is selected, so
+# there is no plumbing to read on it.
+if MODE == "scratch" and sys.argv[1:2] != ["version"]:
+    scratch_notes()
 
 
 def state_dir():
@@ -264,7 +397,11 @@ def status_cell(glyph, word, colour):
 
 
 def version():
-    sys.stdout.write("fugaro 0.9.0-check310\n")
+    # A release's own answer, in the shape the check reads it (the line is
+    # `vX.Y.Z`, which is what makes the scratch Claude Code record below get
+    # seeded at all): a build with no release tag skips its plugin step, and the
+    # record is exactly what a release build's step reads.
+    sys.stdout.write("v0.9.0\n")
     return 0
 
 
@@ -273,7 +410,7 @@ def doctor():
         _, _, log = open_log("doctor")
         log.write("the doctor read\n")
         log.close()
-    name, gcp = INSTALLATION, GCP
+    name, gcp = PROJECT, GCP
     if MODE == "doctor-other-project":
         # A checkout whose fugaro.yaml names another project: the read is the
         # one the check asked for (FUGARO_PROJECT) and answers with another name.
@@ -290,7 +427,7 @@ def doctor():
 def plan_only():
     name, path, log = open_log("setup")
     if MODE != "plan-no-rows":
-        sys.stdout.write("fugaro setup: project %s (GCP %s, %s)\n" % (INSTALLATION, GCP, REGION))
+        sys.stdout.write("fugaro setup: project %s (GCP %s, %s)\n" % (PROJECT, GCP, REGION))
         colour = colour_on(sys.stdout, False)
         for s in STAGES:
             row = "  " + status_cell("✔", "done", colour) + " " + "%-16s" % s + " " + REASONS[s]
@@ -378,7 +515,7 @@ def update(argv):
     if json_mode:
         # The document's own outcome is the run's own: a run that left a step
         # for you says so, and a run whose stage failed names it (G3).
-        doc = {"project": INSTALLATION, "plan_only": False,
+        doc = {"project": PROJECT, "plan_only": False,
                "stages": [{"name": s, "state": "done"} for s in STAGES],
                "left_for_you": ["gateway"] if MODE == "left" else [],
                "failed": {"stage": "converge"} if failing else None,
@@ -453,6 +590,10 @@ PY
 CASE_MODE=happy
 CASE_ARGS=()
 CASE_ENV=()
+# The installation the fake `fugaro` answers with: a case that needs a refused
+# name read out of doctor — the default mode's guard — bends this rather than
+# passing --installation, which is the other path to the same guard.
+CASE_INSTALLATION=$INSTALLATION
 # The flags bash itself is started with: the guard over a traced shell is only
 # read with -x really passed, which no argument or variable of the check can do.
 CASE_BASH=()
@@ -462,6 +603,7 @@ setup_case() { # name mode
   CASE_MODE=$2
   CASE_ARGS=()
   CASE_ENV=()
+  CASE_INSTALLATION=$INSTALLATION
   CASE_BASH=()
   case_dir="$work/$1"
   rm -rf "$case_dir"
@@ -487,7 +629,7 @@ run310() {
     TERM="${CASE_TERM:-xterm-256color}" \
     CHECK310_TEST_MODE="$CASE_MODE" \
     CHECK310_TEST_CALLS="$case_dir/calls" \
-    CHECK310_TEST_INSTALLATION="$INSTALLATION" \
+    CHECK310_TEST_INSTALLATION="$CASE_INSTALLATION" \
     CHECK310_RUN_TIMEOUT=60 \
     bash ${CASE_BASH[@]+"${CASE_BASH[@]}"} "$script" ${CASE_ARGS[@]+"${CASE_ARGS[@]}"} \
     >"$case_dir/stdout" 2>"$case_dir/stderr"
@@ -543,6 +685,41 @@ update
 update
 update --json
 update'
+
+# A --scratch run makes the same calls as the happy one; the project it reads is
+# the installation the check made itself.
+THE_CALLS_SCRATCH='version
+doctor --json [FUGARO_PROJECT=chk310-scratch]
+update
+setup --plan-only
+update
+update
+update --json
+update'
+
+# expect_scratch_seen FILE WHAT: every call of a --scratch run that carries an
+# installation was made against the one the check built, and none against an
+# installation of yours. The plumbing is read from inside the fake's own calls
+# rather than from the block, because the block is written by the thing under
+# test: the run makes 8 calls and the one that carries no installation is
+# `fugaro version`, which answers only which binary is on PATH.
+expect_scratch_seen() { # file what
+  local want="project=chk310-scratch config=yes named=yes endpoints=21 loopback=21 no_auth=yes cwd_yaml=yes api=yes emulator=yes claude=fake claude_config=inside claude_record=seed"
+  local n bad other
+  n=$(grep -c . "$1" 2>/dev/null || true)
+  [ "$n" = 7 ] || fail "$2: $n call(s) of the run reported their plumbing, wanted the 7 the run makes besides 'fugaro version'"
+  bad=$(grep -v "^$want terraform=" "$1" 2>/dev/null || true)
+  [ -z "$bad" ] || fail "$2: a call did not see the check's own installation (every endpoint loopback and answering, no auth, the project selected, a fugaro.yaml in the directory it runs in, the check's own claude first on PATH with its record of the plugin inside the scratch home):
+$bad"
+  # endpoints=21: the URL fields of internal/localcfg.Endpoints (22 keys with
+  # no_auth). An endpoint left empty is not a mistake the CLI reports — an empty
+  # field IS the real Google root — so the count is pinned here.
+  other=$(grep -v 'terraform=fake plan=0$' "$1" 2>/dev/null | grep -vc 'terraform=shim plan=shim$' || true)
+  [ "$other" = 0 ] || fail "$2: a call found a terraform on PATH that is neither the check's fake (which plans cleanly) nor the shim of the forced failure:
+$(grep -v 'terraform=fake plan=0$' "$1")"
+  grep -q 'terraform=shim plan=shim$' "$1" 2>/dev/null \
+    || fail "$2: no call of the run saw the shim the forced failure puts first on PATH"
+}
 
 # ------------------------------------------------------------------- the cases
 case_happy() {
@@ -992,6 +1169,100 @@ case_dry_run() {
   [ -z "$(calls)" ] || fail "a dry run of a named installation made a fugaro call: $(calls)"
 }
 
+# A --scratch run drives no installation of yours: the check makes one of its
+# own — a fugaro.yaml and a local config naming chk310-scratch, every API root of
+# that config on the loopback fake the check starts, a fake terraform first on
+# PATH — and the readings are the CLI's own output all the same. The two facts
+# that are about an installation of yours say 'not read in --scratch' rather than
+# passing on the check's own, and nothing of the owner's is read: this case's own
+# log directory holds exactly the two logs it was seeded with, and the block
+# never names it.
+case_scratch() {
+  setup_case scratch scratch
+  CASE_ARGS=(--scratch)
+  CASE_ENV=(CHECK310_TEST_SCRATCH="$case_dir/scratch-seen")
+  run310
+  local out left want
+  out=$(block)
+  expect_status "$status" 0 "a --scratch run"
+  expect_no_fail "$out" "a --scratch run"
+  expect_fact "$out" installation INFO "a --scratch run"
+  expect_fact "$out" belong INFO "a --scratch run"
+  expect_fact "$out" update-tty PASS "a --scratch run"
+  expect_fact "$out" tty-colour PASS "a --scratch run"
+  expect_fact "$out" scratch PASS "a --scratch run"
+  expect_contains "$out" "not read in --scratch" "a --scratch run"
+  expect_absent "$out" "$case_dir/state" "a --scratch run: the block names no directory of yours"
+  expect_contains "$out" "no installation of yours" "a --scratch run"
+  expect_calls "$case_dir/calls" "$THE_CALLS_SCRATCH"
+  expect_scratch_seen "$case_dir/scratch-seen" "a --scratch run"
+
+  # The log directory this case seeded is the owner's here: the scratch run has
+  # a directory of its own, so the seeds and the pruning below are never in this
+  # one.
+  left=$(ls -A "$case_dir/state/fugaro/logs" 2>/dev/null | sort)
+  want=$(sort "$case_dir/ownerlogs")
+  [ "$left" = "$want" ] || fail "a --scratch run changed the log directory of this case: it holds
+$left
+wanted
+$want"
+  no_seeds_left
+  owner_logs_kept
+  [ -z "$(find "$case_dir/tmp" -mindepth 1 -maxdepth 1 -name 'chk310.*' 2>/dev/null)" ] \
+    || fail "a --scratch run left its scratch directory behind"
+}
+
+# The two are the same question asked twice — one drives an installation of
+# yours and the other drives none — so a run given both refuses before it makes
+# anything: no scratch directory, no API root, no fugaro call.
+case_scratch_conflict() {
+  setup_case scratch_conflict scratch
+  CASE_ARGS=(--scratch --installation fugaro-dev)
+  run310
+  local out
+  out=$(block)
+  expect_status "$status" 2 "a run given --scratch and --installation"
+  expect_contains "$(errout)" "give one or the other" "a run given --scratch and --installation: the refusal says why"
+  [ -z "$(calls)" ] || fail "a run given --scratch and --installation made a fugaro call: $(calls)"
+  [ -z "$(find "$case_dir/tmp" -mindepth 1 -maxdepth 1 -name 'chk310.*' 2>/dev/null)" ] \
+    || fail "a run given --scratch and --installation made a scratch directory"
+}
+
+# A dry run of a --scratch run: the plan only, and the rows for the installation
+# and the register say what a scratch run cannot read rather than passing.
+case_scratch_dry_run() {
+  setup_case scratch_dry_run happy
+  CASE_ARGS=(--dry-run --scratch)
+  run310
+  local out
+  out=$(block)
+  expect_status "$status" 0 "a --scratch dry run"
+  expect_fact "$out" dry-run PASS "a --scratch dry run"
+  expect_fact "$out" installation INFO "a --scratch dry run"
+  expect_fact "$out" belong INFO "a --scratch dry run"
+  expect_contains "$out" "not read in --scratch" "a --scratch dry run"
+  [ -z "$(calls)" ] || fail "a --scratch dry run made a fugaro call: $(calls)"
+  expect_absent "$out" "FACT update-tty: PASS" "a --scratch dry run"
+}
+
+# The guard over the register's names reads the installation in force, so the
+# default mode — the one that asks doctor and converges what it names — refuses
+# one of them before any converge. A --scratch run never reaches this read: it
+# drives an installation of the check's own, and the row says so.
+case_default_refused() {
+  setup_case default_refused happy
+  CASE_INSTALLATION=fugaro-dev
+  run310
+  local out
+  out=$(block)
+  expect_status "$status" 2 "the default mode with a refused installation selected"
+  expect_fact "$out" belong FAIL "the default mode with a refused installation selected"
+  expect_contains "$(errout)" "never runs against 'belong'" "the default mode's refusal"
+  expect_calls "$case_dir/calls" 'version
+doctor --json'
+  expect_contains "$out" "FACT update-tty: FAIL — not reached" "the default mode's refusal: no converge ran"
+}
+
 case_help() {
   setup_case help happy
   CASE_ARGS=(--help)
@@ -1042,6 +1313,10 @@ tests=(
   gcp_refused
   project_mismatch
   named_installation
+  scratch
+  scratch_conflict
+  scratch_dry_run
+  default_refused
   xtrace
   work_tree
   agent

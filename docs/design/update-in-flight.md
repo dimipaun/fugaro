@@ -44,11 +44,14 @@ document, and it is exhaustive in the other direction too.
 ## One row per step
 
 The steps are `initStages` (`internal/cli/init_stages.go`), in the order the
-update door runs them. "Exposure" is what a run bootstrapped under the previous
+update door runs them, plus the steps `converge` takes before the first stage
+plans — they change what that run's own applies carry, which is why they run
+before the loop. "Exposure" is what a run bootstrapped under the previous
 release could observe or lose.
 
 | Step | What it changes | Exposure for a run in flight | Verdict | Evidence |
 | --- | --- | --- | --- | --- |
+| default profiles | Writes the default job profile of every provider the project's repositories use into the local config, before the first stage plans, so that the installation stage deploys its job in this same update (S5, R1, D2310); a config that can no longer compose the job of one of those profiles — the last GitHub repository moved to Bitbucket, or a repository on a second App added — is planned from the installation's own record of that job instead, which the plan then leaves alone (`installSpec`, `infra.CarriedProjectJobs`) | None. The file is this machine's and no run reads it: the profile reaches a run through the policy stage's node and the shared job the installation stage deploys, and both are this run's own writes (the rows below). The carry changes no job either: it puts back the job the installation already holds, whole, so the plan proposes no change to it | Safe | `createDefaultProfiles`, `installSpec`, `internal/cli/init_policy_migrate.go`, `CarriedProjectJobs`, `internal/infra/tfvars.go` |
 | preflight | Reads the environment and the local config; no cloud write | None | Safe | `preflightStage` |
 | installation | Terraform root `installation`: the GCS bucket, the Artifact Registry, the credential containers, the history/coordinator/catalog-check jobs, the shared project jobs, the credentials service's own block (its image is moved by the credentials-service row below) | A create or an update, never a replace: `google_storage_bucket.runs`, the registries and the secret containers carry `prevent_destroy` (`deploy/terraform/gcp/modules/installation/bucket.tf`, `registry.tf`, `secrets.tf`, `credentials.tf`). A job whose *name* would change is ForceNew and is destroyed — see the job row below | Safe, with the job-name caveat | `newInstallationStage`, `deploy/terraform/gcp/roots/installation/main.tf` |
 | Firebase | The Realtime Database instance, the web API key, the token-signing service account | The run reaches the database with an ID token exchanged from a custom token minted by its own launcher: `token.Exchange`, `internal/budget/token/exchange.go`; the database identity is not an IAM identity (`deploy/terraform/gcp/modules/firebase/iam.tf`). A re-apply of the instance's own fields does not invalidate it | Safe | `newFirebaseStage`, `deploy/terraform/gcp/modules/firebase/firebase.tf` |
@@ -59,6 +62,7 @@ release could observe or lose.
 | repository | Terraform root `repo` for the checkout's repository: the workflow jobs, the job service accounts, the mounts, the check job | A job whose name changes (a workflow added, removed or renamed in `fugaro.yaml`) is ForceNew: Terraform destroys the old job and creates a new one. Whether that reaches a *running* execution of the old job is a property of the platform, not of this repository — **UNVERIFIED** | Needs care, guarded | `newRepositoryStage`, `deploy/terraform/gcp/modules/repo/workflows.tf`, `deletion_protection` in `modules/workflow/job.tf` |
 | rules | Generates this release's rules document and deploys it, then writes `config/limits/policyRules`, `…/credsRules`, `…/orchestratorRules` | The generator may only **add**: `TestRulesPreexistingPathsUnchanged` diffs the frozen generation-3 document and fails on any pre-existing rule that changed, and `TestRunTokenWritesSurviveThePolicyEdit` fails when any run-writable location loses its grant. A rule that only adds a deny for a path the old runner never writes is therefore compatible by construction | Safe | `newRulesStage`, `internal/cli/init_rules_stage.go`; `infra.DB.Plan`/`Apply`, `internal/infra/firebasedb.go`; `rules.Generate`, `internal/budget/rules/rules.go` |
 | policy | Migrates and/or publishes `config/policy/shared` in place, from the local config, under the ETag it read | The node is memoized once by the runner, so a non-cascade run keeps the ceiling it bootstrapped with. A **cascade** call does re-read it: the credentials service reads the policy per call (`internal/credsvc/cascade.go`, `bitbucketproxy.go`), so a run of a cascade project is held to the node from its next call. A migration preserves the values it carries, so a plain upgrade changes no run's ceiling; a config the operator changed is the operator's own publish | Safe by intent, named in the line | `newPolicyMigrateStage`, `internal/cli/init_policy_migrate.go`; `policyRead`, `internal/runner/projectpolicy.go` |
+| policy, the `bitbucket_tokens` half | The same stage publishes the typed Bitbucket tokens the local config records, each with the coverage it reaches and the identity the creds state store proved (R5, R12). A project naming no record derives no key at all, so an installation holding the legacy `bitbucket-token` alone converges with no step and no read of the store (R3) | A **proxied** call re-reads the node on every request it serves (`bitbucketproxy.go`: the selection is made from the node's coverage), so the first call after the publish may be served by a different token than the call before it — a record the operator added takes over a repository it covers, and one they narrowed stops serving it, which is their own records taking effect. A run of the release behind meets the key too and does not refuse it: its runner tolerates an unknown top-level key and falls back to its single `GET /user` identity (R5). Nothing of the run is rewritten, and no run is asked to finish first | Safe, named in the line | `buildProjectPolicy`, `policyConfigDrift`, `internal/cli/init_policy_publish.go`; `bitbucketTokenIdentities`, `internal/cli/project_cmd.go`; `tokensPublishReachesRuns`, `internal/cli/update_in_flight.go` |
 | credentials-service | Moves the installation's recorded credentials image onto this release's, then applies the installation root with it | The service reads the published node once per cascade and Bitbucket-proxied call and refuses a node its own binary does not understand, so this apply may not run before the policy stage's migration; it follows it in the stage immediately after, with nothing between the two, and it is an apply of tfvars alone — every image it needs was published by the images stage. What the order cannot reach is the release behind's own service, which refuses the migrated node until this apply lands: the window is that one apply, and the binary that reads it was released. A run that replaces no service raises no node either: the policy stage holds its write at the version it found — a coding agent's session and a development build both replace nothing, and the image the move would pin is resolved **before** that write, so a resolve this run cannot make fails with the node exactly where it was | Safe by intent, named in the line: the policy clause names the cascade read, and this row's window is named when the same run raises the node's version and moves the service | `newCredentialsStage`, `moveCredentialsImage`, `credentialsMoveHeld`, `credentialsResolveBeforeRaise`, `internal/cli/init_stages.go`; `credentialsWindowOpens`, `internal/cli/update_in_flight.go` |
 | workspace | Migrates and/or publishes the workspace record `workspaces/<name>` in the workspace's own database | No run reads the workspace record: it is the workspace owner's document (`docs/workspaces/spec.md`). A member's run makes no request for it at all | Safe | `newWorkspaceStage`, `internal/cli/update_workspace.go` |
 | layer | Publishes the project layer object and seeds/re-seeds the local file | A run's layer travels with its task and is parsed at bootstrap (`resolveConfig`, `internal/runner/runner.go`); there is no mid-run re-read | Safe | `newLayerStage`, `internal/cli/init_layer_stage.go` |
@@ -203,10 +207,10 @@ flight — so the update door no longer refuses, and it announces the runs once
 instead (`announceRunsInFlight`, `internal/cli/update_in_flight.go`, called from
 the converge before the first stage). The line is one sentence, it is not a
 question, and it never asks anybody to wait. What it claims is what holds
-whatever this update turns out to do — the update asks no run to finish first
-and rewrites nothing a run holds — and never the flat "the runs are unaffected",
-which the budget-mode raise below makes false; what it can still reach is named
-instead. It is absent when nothing runs, under `--json` and `--print-vars`
+whatever this update turns out to do — the update waits for no run and changes
+nothing a run holds — and never the flat "the runs are unaffected",
+which the budget-mode raise below makes false; that a step can still reach a
+run is said instead, and the update log names each step. It is absent when nothing runs, under `--json` and `--print-vars`
 (whose stdout is a document), and under `--plan-only` (which applies nothing).
 The refusal stays where it is not the update door's: `fugaro project policy publish --delete` /
 `fugaro project repos rm`, which are not the whole upgrade and are their own
@@ -220,18 +224,26 @@ off the door rather than taking it as a parameter). The one line above is the
 update door's and is not printed by those doors.
 
 The rows that are not simply safe are the ones the line has to own, and they are
-three (`inFlightSteps`, `internal/cli/update_in_flight.go`): the budget-mode
+six (`inFlightSteps`, `internal/cli/update_in_flight.go`): the budget-mode
 raise, which can bound a run that bootstrapped under `observe` from its next
 lease and is the operator's own caps becoming effective rather than the update
 stopping a run — recorded here rather than deferred, the alternative being the
 update asking a person to stop work for it; the published policy, which a
-cascade project's every model call re-reads; and a retirement, which deletes an
-orphaned job and takes the executions running on it. Each clause is the question
-its own step is gated on rather than the whole of its decision
-(`budgetModeBindsRuns`, `policyReadsLive`, `retireTakesExecutions`), so the line
-errs towards naming a step that may not end up doing anything over claiming the
-update cannot reach a run when it can; the budget raise's shape for the owner is
-in the pull request.
+cascade project's every model call re-reads; the window between that write and
+the credentials service's own replacement, which is the release behind's service
+meeting a node its own binary does not understand; the Bitbucket tokens that same
+write carries, which a proxied call re-reads per request, so the call after the
+publish may be served by a different token than the call before it; the creation
+fact, which a run of the release behind re-reads per command and refuses once it
+is rewritten, so that run keeps the typed confirmation it would have applied
+without; and a retirement, which deletes an orphaned job and takes the executions
+running on it.
+Each clause is the question its own step is gated on rather than the whole of its
+decision (`budgetModeBindsRuns`, `policyReadsLive`, `credentialsWindowOpens`,
+`tokensPublishReachesRuns`, `markerConverges`, `retireTakesExecutions`), so the
+line errs towards naming a step that may not end up doing anything over claiming
+the update cannot reach a run when it can; the budget raise's shape for the owner
+is in the pull request.
 
 The tests are `TestUpdateLeavesARunInFlightRunning` and its siblings
 (`internal/cli/update_in_flight_test.go`): an installation one release behind
@@ -239,9 +251,11 @@ converges under `fugaro update` while a run of its own repository is in flight,
 and that run's later writes — its lease, the ledger and the counters the report
 settles, the outcome it ends with, its record and its review session — still
 land under the new rules and the migrated policy.
-`TestUpdateInFlightLineNamesEveryStepThatCanReachARun` turns each of the three
-steps on alone and asserts the clause is there and the others are not, so a step
-that can reach a run and is not named fails the suite.
+`TestUpdateInFlightLineNamesEveryStepThatCanReachARun` turns each step on alone
+and asserts the clause is there and the others are not, so a step
+that can reach a run and is not named fails the suite;
+`TestUpdateInFlightLineNamesTheBitbucketTokensPublish` does the same for the
+typed tokens a proxied call re-reads.
 `TestTheRefusingInflightAnswerStopsTheWrite` and
 `TestSetupPolicyStepKeepsTheRunsInFlightAnswer`
 (`internal/cli/init_policy_migrate_test.go`) pin the refusal where it is kept —

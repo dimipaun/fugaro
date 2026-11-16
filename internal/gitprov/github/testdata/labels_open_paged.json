@@ -1,0 +1,6 @@
+[
+  {"method": "GET", "path": "/repos/acme/web/installation", "status": 200, "response": {"id": 777}},
+  {"method": "POST", "path": "/app/installations/777/access_tokens", "status": 201, "response": {"token": "ghs_fixture_token_1", "expires_at": "2026-09-27T11:00:00Z"}},
+  {"method": "GET", "path": "/repos/acme/web/pulls?per_page=100&state=open", "auth": "Bearer ghs_fixture_token_1", "status": 200, "header": {"Link": "<{{server}}/repos/acme/web/pulls?per_page=100&state=open&page=2>; rel=\"next\", <{{server}}/repos/acme/web/pulls?per_page=100&state=open&page=2>; rel=\"last\""}, "response": [{"number": 12, "labels": [{"name": "fugaro:running"}, {"name": "spec:forge-labels"}]}, {"number": 9, "labels": []}]},
+  {"method": "GET", "path": "/repos/acme/web/pulls?per_page=100&state=open&page=2", "auth": "Bearer ghs_fixture_token_1", "status": 200, "response": [{"number": 7, "labels": [{"name": "bug"}]}]}
+]

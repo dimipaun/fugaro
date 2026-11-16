@@ -221,6 +221,7 @@ func TestTheCoveredFieldSetIsTheSameInBothDirections(t *testing.T) {
 		"the prompt with options":  vectorCase(t, "prompt with options"),
 		"the answer with reply_to": vectorCase(t, "answer"),
 		"the merge action":         vectorCase(t, "action: merge a pull request"),
+		"the registration":         vectorCase(t, "registration"),
 	}
 	seen := map[string]bool{}
 	covered := map[string]map[string]bool{}

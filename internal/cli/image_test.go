@@ -136,6 +136,48 @@ func TestImageSelftestCommand(t *testing.T) {
 	t.Fatalf("want a failed checkout check, got %+v", rep)
 }
 
+// TestImageBuildLocalPrintsJSON pins the JSON contract of
+// `image build --local --json`: the field names and the smoke report a reader
+// outside this binary consumes. The docker-tagged tests used to pin it by
+// running the command and unmarshalling its stdout; they drive the machinery in
+// process now (the command's --local arm is behind the door D1900 shut), so the
+// printing is pinned here, without Docker.
+func TestImageBuildLocalPrintsJSON(t *testing.T) {
+	res := &image.LocalResult{Image: "app:local", Base: "fugaro-base:1.2.3", Dockerfile: "generated",
+		Commit: "c0ffee", Origin: "https://github.com/acme/app.git",
+		Smoke: &image.Report{Passed: true, Checks: []image.Check{{Name: "checkout", OK: true}}}}
+	var out bytes.Buffer
+	if err := printImageResult(&out, res, true); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, out.String())
+	}
+	for _, key := range []string{"image", "base", "dockerfile", "commit", "origin", "smoke"} {
+		if _, ok := got[key]; !ok {
+			t.Errorf("JSON lacks %q:\n%s", key, out.String())
+		}
+	}
+	if _, ok := got["error"]; ok {
+		t.Errorf("a successful build prints an empty error:\n%s", out.String())
+	}
+	var smoke image.Report
+	if err := json.Unmarshal(got["smoke"], &smoke); err != nil || !smoke.Passed || len(smoke.Checks) != 1 || smoke.Checks[0].Name != "checkout" {
+		t.Errorf("smoke = %s, %v", got["smoke"], err)
+	}
+
+	// A build that failed carries the error for the reader, on the same object.
+	res.Error = "docker build failed (its output is above)"
+	out.Reset()
+	if err := printImageResult(&out, res, true); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"error": "docker build failed (its output is above)"`) {
+		t.Errorf("json = %s", out.String())
+	}
+}
+
 func TestImageBuildLocalRejectsRepo(t *testing.T) {
 	_, _, err := execute(t, "image", "build", "--local", "--repo", "acme/app")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--repo applies to Cloud Build") {

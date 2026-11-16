@@ -50,6 +50,21 @@ var planTaskReaders = map[string]string{
 	// Only the version floor's comment names the field: the constant beside
 	// this file's allow-list value is what a launch is gated on.
 	"internal/cli/recipes_skew.go": "planTaskSince, the release floor the launcher's gate judges an image by",
+	// The duplicate guard (fugaro run --plan-task): it matches the id a
+	// launch is about to claim against the ids the runs of one repository
+	// already carry, and does exactly one thing with a match -- declines to
+	// start a second run of that task while a run of it is going or a run of
+	// it left a pull request behind (run_duplicate.go). It is on this list
+	// deliberately and with that reasoning: the id is untrusted for anyone
+	// who can write a launch.json, and the guard is written so that the worst
+	// a forged id can do is make a NEW launch refuse, which is the direction
+	// the display-only rule cares about. It admits no run, budgets nothing,
+	// grants nothing, reads no code host (the rows it was handed are the whole
+	// of its evidence), fails open (a read it cannot make warns and launches)
+	// and is escaped by --allow-duplicate, and no state a claimed id could
+	// reach is a state a reader acts on -- the refusal is the whole of it and
+	// nothing is written back.
+	"internal/cli/run_duplicate.go": "the launch-time duplicate guard: it refuses to launch a plan task while a run of it is going or a run of it left a pull request behind",
 	// The documents that show it, and the reads that feed them.
 	"internal/runview/runview.go":  "the runs ls / diagnose row's own field, sanitised from the launch record",
 	"internal/watch/build.go":      "the watch row's own field",

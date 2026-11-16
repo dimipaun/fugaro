@@ -383,3 +383,18 @@ func ResetStageHook(t *testing.T) {
 // install one of the two halves at a time, the policy half's off-switch being
 // unimportable from this package's tests.
 func StageBoundAsked(layers []policy.Layer, stage string) bool { return stageBoundAsked(layers, stage) }
+
+// SetGatewayStageLimitHook is SetGatewayStageLimit, so a test can exercise the
+// refusals that keep a tagged binary's stage limits from being replaced, and
+// install a builder of its own for the wiring test (§5.5, T7.2).
+var SetGatewayStageLimitHook = SetGatewayStageLimit
+
+// ResetGatewayStageLimitHook puts the gateway stage-limit builder back to the
+// core default — none — before and after t: SetGatewayStageLimit refuses a
+// second call for the life of the process, so a test that installed one would
+// otherwise leave the whole package with a builder installed.
+func ResetGatewayStageLimitHook(t *testing.T) {
+	t.Helper()
+	gatewayStageLimitFunc = nil
+	t.Cleanup(func() { gatewayStageLimitFunc = nil })
+}

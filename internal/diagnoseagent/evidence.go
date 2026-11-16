@@ -411,7 +411,7 @@ func (o Options) doctorText(ctx context.Context) string {
 	}
 	switch {
 	case errors.Is(err, context.DeadlineExceeded) || errors.Is(dctx.Err(), context.DeadlineExceeded):
-		return fmt.Sprintf("%s did not finish within %s and was abandoned: it makes cloud calls, and a cloud that does not answer is one of the things this diagnosis exists to explain. Nothing it printed is here.\n", what, doctorTimeout)
+		return fmt.Sprintf("%s makes cloud calls and did not answer in %s: the cloud reads may be slow or offline; run %s yourself.\n", what, doctorTimeout, what)
 	case err != nil:
 		return fmt.Sprintf("%s failed: %v\n", what, err)
 	}

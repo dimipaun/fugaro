@@ -1006,7 +1006,7 @@ func runInit(r *initRun) error {
 		fmt.Fprintf(r.stageDetail(), "published the shared config to %s/%s\n", lc.BucketURL(), infra.SharedConfigObject)
 		return r.printResult()
 	}
-	spec, err := installOptions(o, lc)
+	spec, err := installSpec(o, lc, r.warn)
 	if err != nil {
 		return err
 	}
@@ -1043,6 +1043,14 @@ func runInit(r *initRun) error {
 				// be a reading the owner cannot trust.
 				if data, err = infra.CarriedProjectReviewJobs(data, prev); err != nil {
 					return err
+				}
+				// And the shared jobs of the default profiles this config can
+				// no longer compose, which installSpec decided from this same
+				// record and for the same reason.
+				if len(spec.CarriedProjectJobs) > 0 {
+					if data, err = infra.CarriedProjectJobs(data, prev, spec.CarriedProjectJobs); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -1921,11 +1929,21 @@ func newProjectConfig(name, gcpProject, region string) (*localcfg.Config, error)
 // installOptions is the installation's spec from the local config and the
 // flags. Discovery sets whether the legacy registry is adopted.
 func installOptions(o *initOptions, lc *localcfg.Config) (infra.InstallationSpec, error) {
+	return installOptionsCarrying(o, lc, nil)
+}
+
+// installOptionsCarrying is installOptions with the named profiles' shared jobs
+// left to the installation's own document: the spec composes no job for them
+// (infra.InstallOptions.CarriedJobProfiles), and the carry puts the deployed job
+// back into the document the plan is made from. installSpec is the one caller
+// that passes any.
+func installOptionsCarrying(o *initOptions, lc *localcfg.Config, carried []string) (infra.InstallationSpec, error) {
 	opts := infra.InstallOptions{
-		StateBucket:     o.stateBucket,
-		AlertEmail:      o.alertEmail,
-		RegistryCleanup: cmp.Or(o.registryCleanup, lc.Terraform.RegistryCleanup),
-		NoLogIsolation:  o.noLogIsolation || lc.Terraform.NoLogIsolation,
+		CarriedJobProfiles: carried,
+		StateBucket:        o.stateBucket,
+		AlertEmail:         o.alertEmail,
+		RegistryCleanup:    cmp.Or(o.registryCleanup, lc.Terraform.RegistryCleanup),
+		NoLogIsolation:     o.noLogIsolation || lc.Terraform.NoLogIsolation,
 	}
 	if o.operatorsChanged {
 		opts.Launchers = append([]string{}, o.operators...)
@@ -2014,11 +2032,16 @@ func jobsPaused(lc *localcfg.Config) (*bool, *bool) {
 // settles the question by itself, whatever it says: silence in the file the
 // stage publishes is its answer, and nothing the published object says may
 // overrule it. A bucket that cannot be read, a layer this CLI does not read and
-// a spec that carries no catalog check all leave the spec exactly as
-// installOptions built it: paused, which is also what the module defaults the
-// value to, and the layer stage names the read that failed a moment later.
+// a spec that carries neither of the scheduled jobs all leave the spec exactly
+// as installOptions built it: paused, which is also what each module defaults
+// its own value to, and the layer stage names the read that failed a moment
+// later.
+//
+// Both jobs are corrected together, and the read is one: jobs.catalog_check and
+// jobs.reports are two keys of one object, so a run that has to ask the bucket
+// asks it once and takes both answers from the same document.
 func (r *initRun) publishedJobsPaused(ctx context.Context, lc *localcfg.Config, spec infra.InstallationSpec) infra.InstallationSpec {
-	if spec.CatalogCheck == nil {
+	if spec.CatalogCheck == nil && spec.Reports == nil {
 		return spec
 	}
 	p, err := layerPlanFor(ctx, lc)
@@ -2029,7 +2052,12 @@ func (r *initRun) publishedJobsPaused(ctx context.Context, lc *localcfg.Config, 
 	if len(ps) > 0 || l == nil {
 		return spec
 	}
-	spec.CatalogCheck.Paused = l.CatalogCheckPaused()
+	if spec.CatalogCheck != nil {
+		spec.CatalogCheck.Paused = l.CatalogCheckPaused()
+	}
+	if spec.Reports != nil {
+		spec.Reports.Paused = l.ReportsPaused()
+	}
 	return spec
 }
 
@@ -2745,6 +2773,26 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 	for _, prev := range documents {
 		if vars, err = infra.CarriedProjectReviewJobs(vars, prev); err != nil {
 			return nil, userErr("reading the installation's tfvars: %v", err)
+		}
+	}
+	// And the shared job of a default profile this run could not compose,
+	// which is the same case one step further on: the profile is one the
+	// update itself wrote into the local config (createDefaultProfiles, S5 of
+	// docs/shared-jobs-default), and the fact that composed its job — the one
+	// GitHub App ID the github repositories record — is one that config can
+	// lose afterwards. CarriedProjectJobs keeps the job, whole, from the
+	// record the run that deployed it left, so that a project whose last
+	// github repository moves to Bitbucket, or that adds a repository on a
+	// second App, keeps converging instead of stopping on a job's deletion it
+	// cannot undo ("retiring a project job is not supported yet",
+	// RefuseProjectJobDeletes). The names are the ones heldDefaultProfiles
+	// decided from the same documents, and they are empty on every run that
+	// composes its jobs itself.
+	if len(spec.CarriedProjectJobs) > 0 {
+		for _, prev := range documents {
+			if vars, err = infra.CarriedProjectJobs(vars, prev, spec.CarriedProjectJobs); err != nil {
+				return nil, userErr("reading the installation's tfvars: %v", err)
+			}
 		}
 	}
 	// The other key this spec never carries, and for a sharper reason than the
@@ -4311,7 +4359,13 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 			return err
 		}
 	}
-	inst, err := installOptions(o, lc)
+	// The run's own reading of the installation's spec, not installOptions: a
+	// config that can no longer compose the job of the default profile this
+	// update wrote — its last GitHub repository moved to Bitbucket, or one
+	// added on a second App — is refused by that function, and the repository
+	// stage is where every later update of such an installation would stop
+	// (installSpec).
+	inst, err := installSpec(o, lc, r.warn)
 	if err != nil {
 		return err
 	}
@@ -5530,9 +5584,9 @@ func (r *initRun) writeRepoConfig(ctx context.Context, lc *localcfg.Config, spec
 	// it would drop it, erasing in silence the only admission a
 	// per-repository job can state (a Bitbucket repository, or any repository
 	// no workflow sends to a shared job, has no profile to name one in). The
-	// runs would then be answered 503 state_unavailable by the credentials
-	// service while the node this publish writes still carries the admission,
-	// which is the state this key exists to end.
+	// runs would then be answered 503 no_candidate_credentials by the
+	// credentials service while the node this publish writes still carries the
+	// admission, which is the state this key exists to end.
 	var ready *bool
 	var accounts []string
 	if entry, ok := lc.Repos[key]; ok {

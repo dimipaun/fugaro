@@ -50,29 +50,29 @@ func MintAt(ctx context.Context, signer Signer, c Claims, now time.Time) (string
 	if err := c.validate(now); err != nil {
 		return "", err
 	}
+	// The identity provider refuses a custom token whose claims are over the
+	// bound, and it refuses it at the exchange — in the run, long after this
+	// launcher was told the launch succeeded. So the set is measured here,
+	// before a signature is asked for: the launcher refuses such a launch on
+	// the same figure and in the person's own words (internal/cli's
+	// mintBudgetToken), and this is the backstop for every other caller.
+	if n := ClaimsSize(c); n > MaxClaimsBytes {
+		return "", fmt.Errorf("budget token: the identity's claims are %d bytes, over the %d Firebase allows", n, MaxClaimsBytes)
+	}
 	email := signer.Email()
 	if email == "" {
 		return "", errors.New("budget token: no signer")
 	}
-	// fb and fpr are written only when the run has them. A run that pushes
-	// carries fb (the branch it creates or continues) and a follow-up and a
-	// review run carry fpr; a run that neither pushes nor writes a pull
-	// request — an artifact run — mints exactly the claim set every earlier
-	// release minted.
-	extra := map[string]any{
-		"fs": c.Slug, "fr": c.Run, "fx": c.FX.UnixMilli(), "fp": c.FP, "rb": c.RB,
-	}
-	if c.Branch != "" {
-		extra[ClaimBranch] = c.Branch
-	}
-	if len(c.PRs) > 0 {
-		extra[ClaimPRs] = c.PRs
-	}
+	// fb, fpr and fcr are written only when the run has them: a run that
+	// pushes carries fb (the branch it creates or continues), a follow-up and
+	// a review run carry fpr, a launch with --context carries fcr, and a run
+	// with none of them — an artifact run, or any launch that names no context
+	// repository — mints exactly the claim set every earlier release minted.
 	payload, err := json.Marshal(map[string]any{
 		"iss": email, "sub": email, "aud": Audience,
 		"iat": now.Unix(), "exp": now.Add(Lifetime).Unix(),
 		"uid":    c.UID(),
-		"claims": extra,
+		"claims": c.claimSet(),
 	})
 	if err != nil {
 		return "", err

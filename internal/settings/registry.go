@@ -503,6 +503,23 @@ const (
 	// of the stage's own would take the row over.
 	docTriage    = "docs/post-review-triage/implementation-plan.md"
 	docCloneURLs = "docs/project-claude-accounts.md"
+	// docBinaryAllow is the design of the binary allow rule (D981–D983,
+	// binary-allow-rule plan task AR1): it states the two members — the globs a
+	// run may add a binary at and the cap one is held to — and what a file that
+	// states neither is read as, which is the whole of the DEFAULT column for
+	// the two rows below. Unlike docTriage and the other plan documents, the
+	// spec is where the rule itself lives, so the rows point there rather than
+	// at the plan.
+	docBinaryAllow = "docs/binary-allow-rule/spec.md"
+	// docConfigOwnership is the config-ownership work's plan, which is where
+	// the node-only blocks' local carriers are named (plan task N1): the
+	// cascade's own key and its members, and the `node_removals` record with
+	// the three blocks it names. The folder's spec lists the concept — the
+	// cascade's `fallback` and the node's `model_grades` among the
+	// semantic-command fields — and leaves the local key names to the plan, so
+	// the rows point at the plan for docOrchestrator's reason: a document of
+	// the carriers' own would take the rows over.
+	docConfigOwnership = "docs/config-ownership/implementation-plan.md"
 	// docAccounts is the account document, which states the repository-level
 	// source beside the block and the profiles' lists it unions with.
 	docAccounts = "docs/project-claude-accounts.md"
@@ -1081,6 +1098,63 @@ var localRows = []Row{
 	// into the shared file would be choosing the code every teammate's runs
 	// execute.
 	locLocal("clone_urls", "none: a run clones from its provider's own URL for its repository (https://github.com/owner/name.git)", "project clone-url", docCloneURLs),
+
+	// The binaries block is the owner's grant of the paths a run may add a
+	// binary at and of the cap a run is held to (D981–D983; binary-allow-rule,
+	// plan task AR1), and one row per member for the catalog's reason: a
+	// settings read names the leaf a value came from, and the two members are
+	// what the rule's two inputs are. Both rows are local-only, like the clone
+	// URLs above and for a reason one step out: the block is read by the
+	// project's runs as the rule they are held to, so a launcher who could
+	// write it into the runs bucket's shared file would be admitting its own
+	// payload to every teammate's runs (D986; Shared nils it besides, and
+	// sharedForbidden refuses the key).
+	//
+	// The owner is the project family because `fugaro project policy publish`
+	// is the door that carries the block onto the node — the run reads it
+	// there and nowhere else — and because no generic write reaches these
+	// leaves: an entry is a doublestar path glob held to the node's own rule
+	// (projectpolicy.ValidBinariesAllow) and the cap to its ceiling, which are
+	// checks no scalar write can make.
+	locLocal("binaries.allow", "none: no path is admitted, so a run that adds a binary anywhere fails finalize and the person reads the reason there", "project", docBinaryAllow),
+	locLocal("binaries.max_bytes", "2097152 (2 MiB): the largest a single added file may be, and a project may lower it", "project", docBinaryAllow),
+
+	// The node-only blocks' local carriers (config-ownership plan task N1,
+	// D2607, F22, F23): the cascade, and the record that states an explicit
+	// unset. One row per member for the catalog's reason — a settings read
+	// names the leaf a value came from, and each member is one input of the
+	// cascade's own rule. Both blocks are local-only for the binaries block's
+	// reason one step out: each is carried onto the policy node, which is what
+	// a run reads, so a launcher who could write a carrier into the runs
+	// bucket's shared file would be stating the rule its own teammates' runs
+	// are held to — and the record is the destructive half of that, since a
+	// removal deletes a pool, a credential or a craft of the project's node
+	// (localcfg's Shared nils both, and sharedForbidden refuses the keys
+	// besides).
+	//
+	// The owner is the accounts family: the local config's `credentials` key is
+	// the list of typed credentials and the cascade takes a name of its own
+	// (F23), which is why the leaves are `credential_cascade.*` rather than
+	// `credentials.*` — the node's own member is the cascade, and one key may
+	// not mean two things in two documents (D2607, D2613). No generic write
+	// reaches any of the nine: `fallback` is a word with two answers whose
+	// second one spends the project's money, and a removal is a name held to
+	// the rule of the block it names.
+	//
+	// The defaults are the node's own (projectpolicy's), because a file that
+	// states nothing keeps what the node holds and the node is what a run reads
+	// (D2607's silence rule): the figures below are what a cascade with no
+	// member written already means there, so a reader of this table is not told
+	// that a key means nothing when it means 15m.
+	locLocal("credential_cascade.fallback", "oauth-only: a run waits for the shared token's reset and never falls over to the paid tiers, and the written auto is the value that does — the node refuses it unless the budget block enforces a per-run ceiling above zero (D152)", "accounts", docConfigOwnership),
+	locLocal("credential_cascade.wait_threshold", "15m: how long a run waits for an exhausted credential's reset before it fails over to the next tier (projectpolicy.DefaultWaitThreshold); under oauth-only there is no tier to fail over to, so the run waits for the earliest reset whatever the threshold says", "accounts", docConfigOwnership),
+	locLocal("credential_cascade.backoff.initial", "15m: the first wait a credential is held for when its exhaustion reported no reset time, doubling from there (projectpolicy.DefaultBackoffInitial)", "accounts", docConfigOwnership),
+	locLocal("credential_cascade.backoff.cap", "5h: the longest that wait doubles to (projectpolicy.DefaultBackoffCap); a cap below the initial wait is refused, because a probe schedule that never doubles retries a credential with no reset time for ever (D153)", "accounts", docConfigOwnership),
+	locLocal("credential_cascade.stop_after_exhaustion_per_window", "true: a run stops rather than spending the project's money on a credential that has exhausted its window, and only the written false opts out (D142)", "accounts", docConfigOwnership),
+	locLocal("credential_cascade.concurrency_per_token", "1: one run at a time may hold a shared credential, and the written 0 is no cap at all (projectpolicy.DefaultConcurrencyPerToken, D142)", "accounts", docConfigOwnership),
+	locLocal("node_removals.pools", "none: silence in this file keeps the node's pools, so a pool is removed by naming it here (D2607, F22)", "accounts", docConfigOwnership),
+	locLocal("node_removals.crafts", "none: silence in this file keeps the node's crafts, so a craft is removed by naming it here (D2607, F22)", "accounts", docConfigOwnership),
+	locLocal("node_removals.craft_credentials", "none: silence in this file keeps the node's credentials, so a credential is removed by naming it here (D2607, F22); the name stays recorded until the node no longer holds it", "accounts", docConfigOwnership),
 
 	// The orchestrator daemon's own guardrails (D1239, D1234) are the owner's
 	// policy like the catalog above, and one row per member for the catalog's

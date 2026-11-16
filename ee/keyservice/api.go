@@ -11,7 +11,9 @@ package keyservice
 // The table is a package-level registry rather than a list in Handler because
 // the portal is built by one task per area (the plan's slices): an area file
 // registers its own routes from its init, so adding a door edits no file another
-// area holds. service.go has two writers in the plan and no area may be a third.
+// area holds. This file and service.go are the two the first area had to write
+// anyway — the seams a route is written against, and the ones Service holds —
+// and the plan's shared-files table names every task that writes either.
 //
 // A deployment that mounts no route is one this file does nothing for: P1.0 is
 // inert alone, and every seam below is a shape a later area fills.
@@ -35,6 +37,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -230,14 +233,26 @@ func (rg *apiRegistry) paths() []string {
 
 // missing refuses a deployment that holds no seam one of the mounted routes
 // reaches. It is asked at New, and only about the routes this deployment mounts.
+//
+// Every route reaching the seam is named and not the first one found: a
+// deployment that holds none holds it for all of them, and an operator who
+// supplied the seam one name asked for would meet the next name at the start
+// after it.
 func (rg *apiRegistry) missing(deps Deps) error {
 	rg.mu.Lock()
 	defer rg.mu.Unlock()
 	for _, route := range rg.routes {
 		for _, need := range route.needs {
-			if !need.held(deps) {
-				return fmt.Errorf("the API mounts %s %s, which reaches %s, and this deployment has none: the route would answer every request with a failure of its own (plan P1.0)", route.method, route.path, need)
+			if need.held(deps) {
+				continue
 			}
+			var mounts []string
+			for _, other := range rg.routes {
+				if slices.Contains(other.needs, need) {
+					mounts = append(mounts, other.method+" "+other.path)
+				}
+			}
+			return fmt.Errorf("the API mounts %s, which reach %s, and this deployment has none: each of them would answer every request with a failure of its own (plan P1.0)", strings.Join(mounts, ", "), need)
 		}
 	}
 	return nil
@@ -354,6 +369,17 @@ func refuseAPI(w http.ResponseWriter, status int, code, message string) {
 // It is a seam here and an implementation there because the API's areas ask
 // about records — organisations, workspaces, entitlements, keys, sales events —
 // and never about Firestore, which is the deploy's choice and P1.2's to make.
+//
+// An id an area reads is the request's, and a store has names it cannot file a
+// document under at all (docstore's ErrUnstorableName: one carrying a slash or a
+// control character, "." or "..", the database's reserved __…__ form). A Get of
+// one is answered as a document that is not there — ErrNoDocument, which is what
+// an id that was minted and never written answers — and never as a failure: a
+// store's refusal read as this service's failure is a 500 that tells a stranger
+// the name they guessed reached the store, where every route here answers one
+// refusal for everything the caller may not have. The deploy's store keeps the
+// mapping itself (firestore_store.go's one), and getRecord answers it as well so
+// that the reading side does not depend on an implementation remembering to.
 type Docs interface {
 	Get(ctx context.Context, collection, id string) (Doc, error)
 	Put(ctx context.Context, collection, id string, doc Doc) error
@@ -375,10 +401,41 @@ type Where struct {
 
 // Tx is the reads and the writes one transaction makes together (plan P1.2):
 // what it writes is committed with what it read, or the store runs it again.
+//
+// A Query is one of those reads and not a listing beside them: the documents it
+// answers are part of what the transaction read, so a writer that puts one into
+// that collection is a conflict — the transaction runs again on the state that
+// includes it — rather than a document it never saw. That is what makes a check
+// about a collection hold inside the transaction that writes one (P3.1's one
+// project id bound once), and it is why a check made outside one holds nothing.
+//
+// The one write here that is not a document of the portal's own is a
+// withdrawal: the key store keeps its records in the same document store this
+// seam is (firestore_store.go's NewDocStore is handed the database the deploy
+// hands the portal), and a withdrawal a binding makes has to land with the
+// binding or not at all (P3.1's rebind), which is why it is made here rather
+// than through the store's own interface.
 type Tx interface {
 	Get(ctx context.Context, collection, id string) (Doc, error)
+	Query(ctx context.Context, collection string, where Where) ([]Doc, error)
 	Put(ctx context.Context, collection, id string, doc Doc) error
 	Delete(ctx context.Context, collection, id string) error
+	// Revoke withdraws keys the way the store's own Revoke does (store.go):
+	// the records go into the store this transaction runs in, under its rule
+	// for a key already withdrawn — the first entry a key is given stands, and a
+	// later one leaves the reason and the instant it holds. What it is not is a
+	// call to that store's Revoke, which opens a transaction of its own: the
+	// store would be asked to run one inside this, which the backend refuses
+	// (docstore's errNestedTransaction), and on a deployment that reached the
+	// two seams over two stores it would commit the withdrawal even when the
+	// binding that made it never landed.
+	//
+	// The whole list is one call because a transaction reads before it writes
+	// (docstore's ErrReadAfterWrite): what is already withdrawn is read first,
+	// so a caller makes this call before the transaction writes anything else —
+	// which is where a binding's withdrawal belongs, ahead of the records it is
+	// committed with.
+	Revoke(ctx context.Context, revocations []Revocation) error
 }
 
 // ErrNoDocument is what a read of a document that is not there answers, so a
@@ -409,10 +466,21 @@ type Caller struct {
 // directory — is P1.3's, on the sign-in it answers.
 //
 // The name is a verifier's and not SignIn's because P1.3's own type is the
-// verified sign-in itself (portalauth.go's SignIn): the two are one concept at
-// two stages, and a package cannot hold one identifier for both.
+// verified sign-in itself (portalauth.go's VerifiedSignIn): the two are one
+// concept at two stages, and a package cannot hold one identifier for both.
+//
+// The rule is asked through this seam rather than applied beside it, for the
+// reason the verification is: a rule about a sign-in belongs to whatever holds
+// the sign-in, and a second copy of it in an area is the one thing D2207 has
+// exactly one implementation to avoid.
 type SignInVerifier interface {
 	Verify(ctx context.Context, idToken string) (Caller, error)
+	// RequireSSO refuses a caller whose sign-in the rule does not admit (D2207,
+	// F10). The rule is the caller's to build from the organisation's own record
+	// (P1.3's SSORule) and it follows the membership a request USES and not the
+	// organisation the request is about, so an area passes the membership's own
+	// organisation.
+	RequireSSO(caller Caller, rule SSORule) error
 }
 
 // Paddle is the merchant of record as the portal reaches it. Every method is one

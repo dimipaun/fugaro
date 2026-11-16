@@ -11,7 +11,7 @@ package credsvc
 // is what decides whether the request may reach Bitbucket and forwards it with
 // the token it chooses for that one request out of the installation's store.
 //
-// Seven things are the whole of its design.
+// Eight things are the whole of its design.
 //
 //   - It shares the admission every other run route has and adds nothing to it.
 //     RequestFromHTTP reads the two identity headers, Authenticator.Verify
@@ -58,11 +58,22 @@ package credsvc
 //     (G7, C1.13): its purpose is git or bitbucket-api, its credential is the
 //     DOCUMENT KEY of the token the request was served with (R9) — the legacy
 //     bitbucket-token for an installation that stored no named one — and its
-//     status is StatusOK for a forwarded call and the refusal's own type
-//     otherwise. A line carries names — the run, the repository, the job, the
-//     account, the credential, the purpose — and never a ref, a header, a body
-//     or a token: the refusal's CLASS is what the service's own log line
-//     carries, and the caller's text is in neither.
+//     status is StatusOK for a forwarded call nothing had to be done about, the
+//     reason of the mark a reaction left (broken, exhausted) for one the
+//     upstream's own answer earned, and the refusal's own type otherwise. A line
+//     carries names — the run, the repository, the job, the account, the
+//     credential, the purpose — and never a ref, a header, a body or a token:
+//     the refusal's CLASS is what the service's own log line carries, and the
+//     caller's text is in neither.
+//   - What bitbucket.org ANSWERS is reacted to, and the answer itself is passed
+//     through unchanged with its status (T9, R4, R14): a 401 is confirmed with a
+//     read of a repository the token covers before the token is marked broken, a
+//     429 marks it held until the reset the answer named, a 403 or 404 drops the
+//     cached project match for the repository and marks nothing, and everything
+//     else — a 404 included, which is an ordinary answer — is nothing. The
+//     reaction is recorded on the request's own single audit line, and the
+//     selection that follows it serves the next request with the narrowest token
+//     that is not held.
 //
 // An owner-listed API root is not served here (O4, and the plan's own default):
 // the two upstream hosts are the adapter's own constants
@@ -80,15 +91,19 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/bbtokens"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/gitproxy"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // gitUpstreamTimeout bounds one proxied git call, headers and body. It is
@@ -157,6 +172,88 @@ func gitproxyAct(kind gitproxy.Kind) (purpose, credential string) {
 	return PurposeGit, config.BitbucketSecret
 }
 
+// buildGitproxyAct is gitproxyAct for a BUILD's call (B1, rule 9): the same two
+// kinds and the same credential — the installation's own Bitbucket token, which
+// is what this route forwards with for a build exactly as it does for a run —
+// under the build's own two purposes, so an operator reads a build's calls
+// apart from a run's without a second field. Which of the two a call asked for
+// is the classification's answer and nothing else, here as there.
+func buildGitproxyAct(kind gitproxy.Kind) (purpose, credential string) {
+	if kind == gitproxy.KindREST {
+		return PurposeBuildBitbucket, config.BitbucketSecret
+	}
+	return PurposeBuildGit, config.BitbucketSecret
+}
+
+// buildCall reports whether an identity is a BUILD's rather than a run's
+// (Identity.BuildID): the two halves of this route differ in what admits them —
+// a run's identity headers against a build's ID token and its pairing — and in
+// what their lines name, and every place that asks asks this one question.
+func buildCall(id Identity) bool { return id.BuildID != "" }
+
+// The classes the build half's OWN refusals carry, in the vocabulary this route
+// already uses for what the classification did not say: each is what the
+// service's own log line carries (logProxyRefusal), because a git client reports
+// the status of an answer and not its body — and the caller's answer is the
+// wire's own type either way.
+const (
+	// refusalBuildRunIdentity is a call that presented a run identity: this half
+	// takes none, exactly as the build route takes none.
+	refusalBuildRunIdentity = "run_identity"
+	// refusalBuildID is a call that named no build id of the shape one has: the
+	// id is the second half of the key a pairing is stored under, and a key is a
+	// path (buildIDRE).
+	refusalBuildID = "build_id"
+	// refusalBuildPairing is a pairing that is not there, has ended, or could not
+	// be read: the build has nothing this route may serve, and the cause names
+	// which of the three it was.
+	refusalBuildPairing = "build_pairing"
+	// refusalBuildStopped is a call of this half taken while the operator's stop
+	// switches are on, or while they could not be read — which is one refusal to
+	// the caller and two incidents to the operator, exactly as it is on the run's
+	// half (the two are told apart by the cause on the service's own line). It is
+	// a class of its own and not one of the pairing's three: a stopped service
+	// serves nothing at all, whatever a build's pairing says, so an operator who
+	// greps this class is reading the operator's own act and not a build's.
+	refusalBuildStopped = "stopped"
+)
+
+// pairingCovers reports whether a build's pairing reaches the repository a
+// classified call names, and answers the installation's own key for it when it
+// does.
+//
+// The two spellings are the two the repository already has everywhere else: the
+// record holds the names the grant answered and the published image map keys a
+// repository by (task.CanonicalRepo, "acme/app"), while the classification names
+// one canonically and provider-qualified (projectpolicy.Canonical,
+// gitproxy.Request.Repo). The comparison is made with the one function that
+// relates the two rather than with a second spelling of it here, and the slug
+// comes out of the installation's own table — the relation buildEntryRepos
+// checked when it wrote the pairing, read again from the table rather than
+// stored beside it.
+//
+// Anything the comparison cannot make is false and not an error: a record this
+// release cannot read is one no call is served for (fail closed), and the caller
+// is answered the rules' own class either way.
+func (s *Server) pairingCovers(repos []string, repo string) (string, bool) {
+	if repo == "" {
+		return "", false
+	}
+	for _, name := range repos {
+		canonical, err := projectpolicy.Canonical(gitprov.KindBitbucket, name)
+		if err != nil || canonical != repo {
+			continue
+		}
+		for slug, held := range s.cfg.Repos {
+			if held == repo {
+				return slug, true
+			}
+		}
+		return "", false
+	}
+	return "", false
+}
+
 // proxyIdentity is what the rules are told about the run asking: B1.4's own
 // Identity, filled from the verified identity's claims and from the class of
 // the job it called from, and from nothing the request carries.
@@ -175,8 +272,15 @@ func proxyIdentity(id Identity) gitproxy.Identity {
 		PRs:    id.PRs,
 		// The review class is F16's read-only job: it is served a read-only
 		// credential on every other route (mintPermissions, D1065), so a
-		// write of it here would be reach that set exists to not have.
-		ReadOnly: id.JobClass == ClassReview,
+		// write of it here would be reach that set exists to not have. A
+		// build is read-only for the same reason and one more of its own
+		// (rule 1): its credential is read-only wherever the provider can say
+		// so, and here the provider cannot — the token is the
+		// installation's, and what keeps a build from writing with it is
+		// this line. A build has no branch and no pull request either, so its
+		// push is refused on the ref as well; the read-only answer is the one
+		// that says why without reading a pack.
+		ReadOnly: id.JobClass == ClassReview || buildCall(id),
 	}
 }
 
@@ -362,6 +466,141 @@ func (b bundleTokens) LogValue() slog.Value { return slog.StringValue(b.String()
 //     service will not record is not made (C1.13, D143), and what "not made"
 //     means here is that the answer reaches nobody — the upstream's bytes are
 //     dropped rather than relayed.
+//
+// buildProxy serves one Bitbucket call of a project's BUILD identity (B1, rule
+// 9): the data plane of the pairing the build route's grant recorded, and the
+// second of the two routes of this service a build reaches (ServeHTTP's branch
+// ahead of the shared parse is what sends a call here).
+//
+// It is this route's admission with the shared parse taken out of it, and what
+// stands where the run identity stands is the pairing:
+//
+//   - the caller proves itself with the build identity's own ID token
+//     (VerifyBuildCaller, the contract's own answer to "what does a build's git
+//     present": the grant is not a secret, and the token reaches the generated
+//     clone step alone). It is the same class list the build route admits, so
+//     what a build's git holds buys nothing on any other route of this service;
+//   - the build id the call names (HeaderBuild) is held to the shape a build id
+//     has, because it is the second half of the key the pairing is stored under
+//     and a key is a path (B1's own buildIDRE, the one the grant route checks
+//     its request against);
+//   - the pairing is read for that identity and that id, and a pairing that is
+//     absent, ended or unreadable refuses the call: a build with no live pairing
+//     reaches no forge, which is what a grant that could not be recorded leaves
+//     it with, and what a build that outlived its credential gets;
+//   - and the repositories the pairing holds are the fence around everything
+//     that follows (pairingCovers, inside bitbucketProxy, and gitproxy.Decide
+//     after it): the repository the call names must be one of them, and the
+//     class the call is served as is read-only.
+//
+// The run identity headers are refused BY NAME, as the build route refuses them:
+// a build holds no run identity, so a call presenting one is a call of a shape
+// this route does not have. The order is the build route's own — the headers
+// before the call's own fields — and the refusals before the pairing is read are
+// the ones a verified caller is answered without the service having read
+// anything of its own.
+func (s *Server) buildProxy(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	tok, err := bearerFromHTTP(r)
+	if err != nil {
+		// No line: the call is refused before its caller was verified, which is
+		// the one refusal of this route with nothing to name.
+		s.refuse(w, StatusUnverified, ErrorUnverifiedJobIdentity, err.Error())
+		return
+	}
+	caller, err := s.cfg.Auth.VerifyBuildCaller(ctx, tok)
+	if err != nil {
+		// The class's own refusal, answered the way the build route answers it:
+		// a typed refusal and no line, because nothing is verified yet.
+		s.refuseVerifier(w, err)
+		return
+	}
+	id := Identity{JobAccount: caller, BuildID: r.Header.Get(HeaderBuild)}
+	if r.Header.Get(HeaderRunIdentity) != "" {
+		s.refuseBuildProxy(ctx, w, id, refusalBuildRunIdentity, StatusUnverified, ErrorUnverifiedRunIdentity,
+			"this route takes no run identity: it serves the git of a project's build, which holds none, and a caller presenting a run is a call of a shape it does not have", nil)
+		return
+	}
+	if r.Header.Get(HeaderRunJob) != "" {
+		s.refuseBuildProxy(ctx, w, id, refusalBuildRunIdentity, StatusUnverified, ErrorUnverifiedRunIdentity,
+			"this route takes no run identity: it serves the git of a project's build, which holds none, and a caller naming a job is a call of a shape it does not have", nil)
+		return
+	}
+	if !buildIDRE.MatchString(id.BuildID) {
+		s.refuseBuildProxy(ctx, w, id, refusalBuildID, StatusRequestRefused, ErrorRequestRefused,
+			requestRefused+"the call names no build id of the shape a build has, and the repositories a build may reach are recorded under the build id that asked for them", nil)
+		return
+	}
+	// The operator's stop switches, read here as every other route of this
+	// service reads them and at the build route's own point: after the call's
+	// shape is settled and before anything this service holds is read (there the
+	// policy, here the pairing). A build's git is traffic this service forwards
+	// with the installation's own Bitbucket token, so a stopped service forwards
+	// none of it — not even for a build holding a live pairing, which is the
+	// state a switch turned on after a grant leaves it in.
+	//
+	// The scope is the global one, which is the build route's: a build names no
+	// repository of its own, and the repository this call is about is the
+	// pairing's answer, read after this.
+	on, which, err := s.cfg.Kills.Stop(ctx, "")
+	if err != nil {
+		// An unreadable switch is not an off switch (budget's own rule), so the
+		// call is refused rather than served. The cause reaches the service's own
+		// log line and nothing else.
+		s.refuseBuildProxy(ctx, w, id, refusalBuildStopped, StatusUnavailable, ErrorStateUnavailable,
+			"the operator's stop switches could not be read", err)
+		return
+	}
+	if on {
+		s.refuseBuildProxy(ctx, w, id, refusalBuildStopped, StatusUnavailable, ErrorStateUnavailable,
+			"the credentials service is stopped by the "+which+" kill switch", nil)
+		return
+	}
+	if s.cfg.BuildPairs == nil {
+		s.refuseBuildProxy(ctx, w, id, refusalBuildPairing, StatusUnavailable, ErrorStateUnavailable,
+			"this installation's credentials service cannot read the pairing a build's grant records", nil)
+		return
+	}
+	pair, found, err := s.cfg.BuildPairs.BuildPair(ctx, caller, id.BuildID)
+	if err != nil {
+		// The cause reaches the service's own log line and nothing else: an
+		// unreadable record is not the caller's refusal, and nothing is served
+		// out of a pairing this service could not read.
+		s.refuseBuildProxy(ctx, w, id, refusalBuildPairing, StatusUnavailable, ErrorStateUnavailable,
+			"the build's pairing could not be read, so this service does not know what this build's git may reach", err)
+		return
+	}
+	if !found {
+		s.refuseBuildProxy(ctx, w, id, refusalBuildPairing, StatusRequestRefused, ErrorRequestRefused,
+			requestRefused+"no pairing is recorded for this build: a build's git reaches what the credential it asked for recorded, and this build is paired by none", nil)
+		return
+	}
+	if !pair.Live(s.now()) {
+		s.refuseBuildProxy(ctx, w, id, refusalBuildPairing, StatusRequestRefused, ErrorRequestRefused,
+			requestRefused+"the build's pairing has ended: a build's credential is short-lived, and a build that needs it longer asks for another", nil)
+		return
+	}
+	// The pairing is what the call is served against, and the story of where the
+	// repository comes from ends here: the binding inside bitbucketProxy holds
+	// the request to these repositories and to no other.
+	id.BuildRepositories = pair.Repositories
+	s.bitbucketProxy(ctx, w, r, id, "")
+}
+
+// refuseBuildProxy answers one refusal the build half takes before the call was
+// classified, and records it in the form this route uses for every refusal: the
+// class on the service's own log line (logProxyRefusal) and the build route's
+// own audited line (refuseBuild), because a verified caller's refusal that wrote
+// no line would be a call this service answered without saying so.
+//
+// The purpose is the one a build's unclassifiable call carries
+// (PurposeBuildProxy) and the credential is empty: no kind was named, so no
+// credential's name can be either — the two travel together on a line, and a
+// credential is not something a call gets to name for itself.
+func (s *Server) refuseBuildProxy(ctx context.Context, w http.ResponseWriter, id Identity, class string, status int, typ, message string, cause error) {
+	s.logProxyRefusal(id, PurposeBuildProxy, class, cause)
+	s.refuseBuild(ctx, w, id.JobAccount, PurposeBuildProxy, "", status, typ, message)
+}
+
 func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *http.Request, id Identity, canonical string) {
 	req, err := classifyProxy(r)
 	if err != nil {
@@ -390,11 +629,53 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 		// line names their class. It carries no cause, because the class IS
 		// the cause's whole content here (the refusal's error is the rule's
 		// name and nothing else).
-		s.logProxyRefusal(id, "", reason, nil)
-		s.refuseCall(ctx, w, id, "", "", "", StatusRequestRefused, ErrorRequestRefused, requestRefused+reason)
+		//
+		// The empty purpose is the RUN half's answer, and a build's is
+		// different for a reason of its own: a run's line has the run and the
+		// job to name, while a build's has a verified CALLER and no job at all
+		// — and a line naming one without the other is admitted only for a
+		// purpose that carries no job (callerWithoutJobPurpose), which the
+		// empty purpose does not. So a build's unclassifiable call is recorded
+		// under the purpose that says what it was rather than under a kind the
+		// classification never answered (PurposeBuildProxy).
+		linePurpose := ""
+		if buildCall(id) {
+			linePurpose = PurposeBuildProxy
+		}
+		s.logProxyRefusal(id, linePurpose, reason, nil)
+		s.refuseCall(ctx, w, id, linePurpose, "", "", StatusRequestRefused, ErrorRequestRefused, requestRefused+reason)
 		return
 	}
 	purpose, credential := gitproxyAct(req.Kind)
+	if buildCall(id) {
+		purpose, credential = buildGitproxyAct(req.Kind)
+		// A build's own binding (B1, rule 9), in the one place the run's is
+		// made and standing where the job account's repository stands for a
+		// per-repository caller: the repository this call names must be one the
+		// pairing recorded for this build id. A call that names none — a REST
+		// call outside a repository, GET /user included — is refused here for
+		// the same reason and not admitted as a run's is: a run's identity may
+		// ask who the token is, and a build's pairing is a fence around
+		// repositories, so a call about none of them is about something this
+		// build was never paired for. The class is the rules' own
+		// (gitproxy.ReasonOtherRepository), which is what Decide answers the
+		// same request with for a run.
+		slug, paired := s.pairingCovers(id.BuildRepositories, req.Repo)
+		if !paired {
+			s.refuseProxy(ctx, w, id, purpose, credential, gitproxy.ReasonOtherRepository)
+			return
+		}
+		// The repository a build's line names is the INSTALLATION's key for the
+		// repository this call was served for, which is the one spelling an
+		// audit line carries (checked) and the one every other line of this
+		// log is grepped by. A build's identity has no slug claim and no run
+		// for one to come from, so the admission fills it here.
+		id.Slug = slug
+		// The repository the call is served for is then the pairing's own
+		// answer for it, and Decide still holds the request to it and to the
+		// published block below (G3, G9): a build widens nothing here.
+		canonical = req.Repo
+	}
 
 	// A push's update request, read in front of the pack and bounded (B1.3):
 	// everything the rules decide on is in it, and what was read is forwarded
@@ -432,6 +713,21 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 		s.refuseUnavailable(ctx, w, id, purpose, credential, "the project's policy could not be read")
 		return
 	}
+	// The binding, and the one place it is made (G3, G21). canonical is the
+	// repository this call is served for, and Decide holds the request to it:
+	// the classified repository must be that one and no other. It is the job
+	// account's own repository for a per-repository caller, and the pairing's
+	// answer — the run identity's repository, resolved through the
+	// installation's table and admitted by the calling job's profile — for a
+	// review caller and for a shared project job's caller, whose account names
+	// no repository of its own. Decide's two other gates are the published
+	// block's and are read here rather than in the pairing because they are
+	// the same question for both classes: the repository must be one the
+	// node's allow_repos covers, and the node must proxy at all (G9). A shared
+	// caller is why the comparison belongs to Decide and not to the job
+	// account: what this route forwards reaches the whole workspace, so the
+	// repository a call is served for is fixed before the rules see it and is
+	// never widened by anything the request names.
 	if verdict := gitproxy.Decide(req, proxyIdentity(id), canonical, shared.BitbucketToken); !verdict.Allow {
 		s.refuseProxy(ctx, w, id, purpose, credential, verdict.Reason)
 		return
@@ -498,6 +794,16 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 			// it is about and never a token, and the caller is told the class
 			// alone — the refusal's own sentence, which names the repository, is
 			// what the operator's line carries as the cause.
+			//
+			// A hold is the one class that is answered with a status of its own:
+			// a token held with no usable alternative leaves a caller that may
+			// make the call again once one comes back, and R14 answers it HTTP
+			// 429 with Retry-After rather than with the 400 every other refusal
+			// of this route is.
+			if refusal.Class == bbtokens.ClassThrottled {
+				s.refuseThrottled(ctx, w, id, purpose, credential, snap, refusal)
+				return
+			}
 			s.refuseProxyReason(ctx, w, id, purpose, credential, string(refusal.Class), refusal)
 			return
 		}
@@ -530,7 +836,7 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 			}
 		}
 	}
-	s.forwardBitbucket(ctx, w, r, req, id, purpose, credential, token, body, contentLength)
+	s.forwardBitbucket(ctx, w, r, req, id, purpose, snap, name, token, canonical, body, contentLength)
 }
 
 // classifyProxy reads one call of the proxy route: the path is the caller's
@@ -686,7 +992,10 @@ func (s *Server) readPRFacts(ctx context.Context, req gitproxy.Request, token st
 //     copyAnswerHeaders' rule — the hop-by-hop ones and Set-Cookie dropped, and
 //     the token redacted out of whatever is left, so an upstream that echoed it
 //     back cannot have it echoed on.
-func (s *Server) forwardBitbucket(ctx context.Context, w http.ResponseWriter, r *http.Request, req gitproxy.Request, id Identity, purpose, credential, token string, body io.Reader, contentLength int64) {
+func (s *Server) forwardBitbucket(ctx context.Context, w http.ResponseWriter, r *http.Request, req gitproxy.Request, id Identity, purpose string, snap bbtokens.Snapshot, name bbtokens.Name, token, canonical string, body io.Reader, contentLength int64) {
+	// The credential every line of this function names: the DOCUMENT KEY of the
+	// token the request was served with (R9) and never its value.
+	credential := string(name)
 	target, err := upstreamURL(req)
 	if err != nil {
 		s.refuseUnavailable(ctx, w, id, purpose, credential, "the Bitbucket call could not be addressed")
@@ -720,7 +1029,11 @@ func (s *Server) forwardBitbucket(ctx context.Context, w http.ResponseWriter, r 
 	}
 	defer resp.Body.Close()
 	stripRedirect(resp)
-	if err := s.auditCall(ctx, id, purpose, credential, "", StatusOK); err != nil {
+	// The reaction this answer earns is taken BEFORE the line and applied after
+	// it: the line is what records it (R14), and a mark a line could not record
+	// is not written (D143, the model probe's own order — probe.go).
+	react := s.reactToBitbucket(ctx, resp, req, snap, name, canonical, token)
+	if err := s.auditCall(ctx, id, purpose, credential, "", react.status); err != nil {
 		// The act this line records is the forwarding of the call, and an act
 		// this service cannot record is not made (D143): the answer is dropped
 		// rather than relayed.
@@ -735,9 +1048,393 @@ func (s *Server) forwardBitbucket(ctx context.Context, w http.ResponseWriter, r 
 		s.refuseCall(ctx, w, id, purpose, credential, "", StatusUnavailable, ErrorStateUnavailable, proxyUnaudited)
 		return
 	}
+	s.applyBitbucketReaction(ctx, react, id, purpose, name, canonical)
 	copyAnswerHeaders(w.Header(), resp.Header, token)
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
+	s.countBitbucketRequest(ctx, name)
+}
+
+// reactions is what this route takes the reactions of a proxied call through:
+// the two side handles the contract defines beside the selection (C1) — the
+// status store a token's mark is read and written in, and the resolver whose
+// cached project match can be dropped (R2, R4). Neither is on Selector, and
+// deliberately: a selection answers which token serves one call, and a route
+// that reacted through the selection it made would be asking the store a
+// question it does not answer.
+type reactions interface {
+	bbtokens.ProjectResolver
+	bbtokens.StatusStore
+}
+
+// reactionStore answers the store this route's reactions are taken through, and
+// false for a service that has none.
+//
+// The Selector is the one value this service holds that answers the contract:
+// the contract's own stub answers all three interfaces (T9's tests are written
+// against it), and I1 wires the real selector, resolver and status store behind
+// one value. Asking it for the two side handles is therefore the seam this task
+// can build against without a Config field of its own — a field would be a
+// second place a deployment wires a store into, and the two could then disagree
+// about which tokens exist, which is the one thing a reaction must not do.
+//
+// false is the state of a service whose store is not wired: the legacy
+// single-token installation, whose Selector is nil (Config.Selector), or one
+// between this task and I1. Such a service reacts to nothing — what it answers
+// is what it answered before this task, passed through with its status, and each
+// request still writes its own one line.
+func (s *Server) reactionStore() (reactions, bool) {
+	r, ok := s.cfg.Selector.(reactions)
+	return r, ok
+}
+
+// bitbucketReaction is what one upstream answer earns: the status the request's
+// own audit line carries, and the one thing to do about the answer.
+//
+// It is a value rather than an immediate write because the LINE comes first
+// (D143): what is decided from an answer and what is done about it are separated
+// by the request's single audit line, and nothing else.
+type bitbucketReaction struct {
+	// status is what the request's audit line records, in the vocabulary that
+	// file's ValidStatus holds: StatusOK for an answer nothing had to be done
+	// about, ReasonBroken for a token a read of a repository it covers confirmed
+	// dead, and ReasonExhausted for a token Bitbucket held (D2356). The pair is
+	// probeStatus's own (probe.go), and for the same reason: a line whose
+	// credential was not the one that served the call says what the reaction
+	// left, and both are reasons the credential did not serve it.
+	status string
+	// mark is the status to write for the token this request was served with,
+	// and nil when nothing is marked. The facts beside the state — the identity
+	// the add-time check proved (R12), the count of the window (D2356) — are
+	// carried over from the status the store holds (heldStatus), so a reaction
+	// cannot drop what a listing shows.
+	mark *bbtokens.Status
+	// evict is whether the resolver's cached project match for the pairing's
+	// repository is dropped: Bitbucket answered 403 or 404 for a call the
+	// admission allowed, so whatever the cache held about this repository is not
+	// true (R2, R4).
+	evict bool
+	// class is the class this route's own log line carries for the answer, and
+	// "" when there is none: a 403 answering a WRITE whose write scope was never
+	// verified (D2353).
+	class string
+}
+
+// reactToBitbucket decides what this route does about the answer it has just
+// taken from bitbucket.org, and answers the status the request's own line
+// carries for it (T9, R4, R14).
+//
+// The answer itself is not touched: it and its status are passed through
+// unchanged, whatever they are — a 404 is an ordinary answer — and nothing here
+// refuses, rewrites or delays one. What is decided is the REACTION:
+//
+//   - 401: the token is confirmed dead with a read of a repository it covers
+//     (confirmBitbucket401), and only a confirmed refusal marks it broken. An
+//     unconfirmed 401 marks nothing: it is the CALLER's call that was refused,
+//     and a working token taken out of service costs every run it serves until
+//     an operator clears it (D139's own rule for Anthropic's 403).
+//   - 429: the token is held until the reset the answer named, and — when it
+//     named none — backed off for the policy's own initial wait, DATED HERE.
+//     This is the one mark D2356 writes from the upstream's own answer, and the
+//     hold is what the next request's selection skips the token on.
+//   - 403 and 404: the resolver's cached match for this repository is dropped
+//     (R2, R4) and nothing is marked. The two say the same thing about the
+//     cache — wherever it placed this repository, or whatever it said about the
+//     token reaching it, is not true — and the next call looks it up again. A
+//     403 answering a WRITE is Bitbucket refusing a scope the token never proved
+//     (D2353), and that class goes on this route's own log line: the audit
+//     line's status is the wire's own closed vocabulary and carries no class of
+//     the token store's, and the run's answer is still bitbucket.org's own (git
+//     reports a status and not a body), so the operator's line is where it is
+//     read.
+//   - anything else, a 2xx included: nothing.
+//
+// Every reaction is recorded on the request's SINGLE audit line and never as a
+// second one or a changed status (R14): the caller of this function is the
+// route's forward, which writes one line and takes what is answered here as its
+// status.
+func (s *Server) reactToBitbucket(ctx context.Context, resp *http.Response, req gitproxy.Request, snap bbtokens.Snapshot, name bbtokens.Name, canonical, token string) bitbucketReaction {
+	if _, ok := s.reactionStore(); !ok {
+		return bitbucketReaction{status: StatusOK}
+	}
+	switch resp.StatusCode {
+	case http.StatusUnauthorized:
+		if !marksItsToken(name) {
+			return bitbucketReaction{status: StatusOK}
+		}
+		if !s.confirmBitbucket401(ctx, canonical, token) {
+			return bitbucketReaction{status: StatusOK}
+		}
+		return bitbucketReaction{status: ReasonBroken, mark: heldStatus(bbtokens.StateBroken, time.Time{})}
+	case http.StatusTooManyRequests:
+		if !marksItsToken(name) {
+			return bitbucketReaction{status: StatusOK}
+		}
+		// A reset the answer named is a time, and one it did not is this side's
+		// own wait (the contract's StateBackedOff). BOTH are dated here, and a
+		// hold is never written with no end: the zero Until is the contract's
+		// "no end" and is a broken token's alone (bbtokens.Status.Until), so a
+		// backed-off mark left dateless would never lapse (select.go's lapsed)
+		// — one transient 429 would take the token out of service until an
+		// operator cleared it, and the next request with no usable token would
+		// be answered with no Retry-After at all, since nothing states a wait
+		// (throttledHold). No sentence of the contract puts the dating on the
+		// StatusStore either, and the sibling path dates the same answer where
+		// it reads it (probeBitbucketToken computes the mark and the store
+		// persists it, probe.go).
+		//
+		// The wait is the policy's own initial backoff, which is the wait the
+		// model path gives the identical answer for a Bitbucket token: T6's
+		// probe reacts to a 429 through creds.TokenThrottled, whose no-reset
+		// branch is Exhaust's backoff and starts at this same setting (D153).
+		// The contract's Status carries no backoff of its own, so a repeat 429
+		// restarts that wait rather than doubling it: the doubling is the model
+		// store's mark (creds.Mark.Backoff) and has nowhere to live in this one.
+		now := s.now()
+		reset := usageLimitReset(resp.Header, now)
+		state := bbtokens.StateExhausted
+		if reset.IsZero() {
+			reset, state = now.Add(settingsOf(snap.Policy).BackoffInitial), bbtokens.StateBackedOff
+		}
+		return bitbucketReaction{status: ReasonExhausted, mark: heldStatus(state, reset)}
+	case http.StatusForbidden, http.StatusNotFound:
+		react := bitbucketReaction{status: StatusOK, evict: true}
+		if resp.StatusCode == http.StatusForbidden && proxyWrite(req) {
+			react.class = string(bbtokens.ClassWriteScopeMissing)
+		}
+		return react
+	}
+	return bitbucketReaction{status: StatusOK}
+}
+
+// confirmBitbucket401 asks Bitbucket whether the token that has just answered
+// 401 is dead, with a read of a repository it covers, and answers whether the
+// refusal is confirmed (R4, R14, O7).
+//
+// The read is a repository the token covers and NEVER `GET /2.0/user`: /user is
+// the call every run's own selfUser makes, and the answer a repository token
+// gets for it is a 403 "not accessible by this authentication mechanism" — so a
+// token's death read off that call would be read off an ordinary authentication
+// answer, and an ordinary 401 on the run's own user call would take a working
+// token out of service. bitbucketProbeURL builds the target, and it is the fence
+// that keeps this a read of THIS repository: the canonical is split into two
+// halves and both have to be literal path segments, so no half of a pairing can
+// carry a wildcard, a dot segment or a slash into the path this confirmation
+// builds — the /user path included.
+//
+// classifyProbe is the probe's own classification, verbatim (T6): a 401 is the
+// token dead, and everything else — a 200 (the token works, so it was the
+// caller's call that was refused), a 403 for a repository the record claimed, a
+// 5xx, a connection that never reached Bitbucket — is unproven and confirms
+// nothing. Nothing is the fail-closed direction HERE, and it is the opposite of
+// the direction the forward path takes: a token marked broken is out of service
+// until an operator clears it (C1.21), and an inconclusive read that took a
+// working token out of service would stop every run that token serves, while a
+// dead token left in is refused by Bitbucket on every call it is spent on —
+// which is exactly the state this route was in before it had a store at all.
+//
+// The call is made with the service's own client, over the probe's detached and
+// bounded budget (probeCallContext), and for the probe's reason: the fact is
+// about a credential and not about the run that happened to ask, so a caller
+// that hangs up must not discard it. The token reaches the header of this one
+// call and nowhere else — it is never logged, never audited and never returned,
+// and this request's line names the token's document key alone (R9).
+func (s *Server) confirmBitbucket401(ctx context.Context, canonical, token string) bool {
+	target, ok := bitbucketProbeURL(canonical)
+	if !ok {
+		return false
+	}
+	callCtx, callDone := probeCallContext(ctx)
+	defer callDone()
+	req, err := http.NewRequestWithContext(callCtx, http.MethodGet, target, nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := s.cfg.Client.Do(req)
+	if err != nil || resp == nil {
+		return false
+	}
+	defer resp.Body.Close()
+	outcome, _ := classifyProbe(resp, nil, s.now())
+	return outcome == probeRefused
+}
+
+// marksItsToken reports whether a reaction to bitbucket.org's answer may mark
+// the token a call was served with: false for the legacy untyped record alone
+// (R3), and nothing here reads the upstream to confirm it either.
+//
+// A mark is a state this release has nothing to clear with: `creds set` writes
+// an added token's identity and verification time and never its state, and
+// `accounts clear` touches the model credentials' marks alone, so a token
+// marked broken is out of service until an operator edits the state store by
+// hand (C1.21, R4). For every other record the plan takes that price knowingly
+// (R12), and an operator has a way around it: the mark is keyed by the token's
+// name, so a token stored under another name serves what the broken one
+// covered.
+//
+// The legacy record is the one an installation may not be asked to route
+// around, because R3 promises that an installation holding only it keeps
+// working with NO STEP — the same promise T8's acceptance keeps ("with only the
+// legacy bitbucket-token ... the behaviour is today's exactly"), and today that
+// record is not marked and not refused for a status: it had no store at all.
+// It is also the record nothing takes out of the way: it is IMPLICIT (R3), so
+// its allow_repos list alone makes it a candidate for every repository the node
+// admits, whatever is published over it. So a legacy token bitbucket.org
+// refuses is left answering every call with bitbucket.org's own 401 — which is
+// what the release behind did with it — rather than taken out of service for
+// good by the first one.
+//
+// The count is not a mark and is still written (D2356), and the eviction a 403
+// or a 404 earns is still taken: it is the project lookup's cache, not a
+// token's state, and a stale match is a wrong answer with or without a mark.
+func marksItsToken(name bbtokens.Name) bool { return name != bbtokens.LegacyName }
+
+// heldStatus is the status one reaction writes: the state and the hold it
+// decided, and nothing else.
+//
+// This route writes a MARK, and the fields beside it — the identity and the
+// verification time the add-time check proved (R12) and the count of the window
+// (D2356) — belong to the writers that own them, which is what the write keeps
+// them for (tokenStatuses.Write). So a mark built here states nothing about
+// them, and its empty Identity is "not this route's to say" rather than "this
+// token has none": a token whose identity the store holds keeps it, and one
+// whose node another writer left unreadable does not lose it here.
+func heldStatus(state bbtokens.State, until time.Time) *bbtokens.Status {
+	return &bbtokens.Status{State: state, Until: until}
+}
+
+// applyBitbucketReaction does what one reaction decided: the mark, the dropped
+// cache entry, this route's own line for a write Bitbucket refused, and the
+// count of the request just served (D2356).
+//
+// It runs after the request's audit line, which is D143's order for the reason
+// the model probe keeps it: a mark a line could not record is a mark not
+// written. It runs before the answer is relayed, so the state the next request
+// is served from is the state this one left. A store that fails here is logged
+// and nothing else: bitbucket.org's answer is already taken and is on its way to
+// the run, and a bookkeeping write is not a reason to refuse a call the upstream
+// served.
+//
+// The write runs on probeRecordContext, the bounded and detached context the
+// contract reserves for a mark (probe.go) rather than the caller's, and the
+// order above is what makes it matter: the line has already recorded the mark as
+// taken (R14), so a caller hanging up between the two must not leave the token
+// in service — it is dead, it keeps answering 401, and the audit trail would say
+// broken while the store, and every listing read off it, said available. The
+// eviction beside it takes no context at all.
+func (s *Server) applyBitbucketReaction(ctx context.Context, react bitbucketReaction, id Identity, purpose string, name bbtokens.Name, canonical string) {
+	st, ok := s.reactionStore()
+	if !ok {
+		return
+	}
+	if react.mark != nil {
+		writeCtx, writeDone := probeRecordContext(ctx)
+		err := st.Write(writeCtx, name, *react.mark)
+		writeDone()
+		if err != nil {
+			s.log.Warn("credsvc: a Bitbucket token's status could not be recorded", "token", name, "error", err)
+		}
+	}
+	if react.evict {
+		st.Evict(canonical)
+	}
+	if react.class != "" {
+		// The operator's own line is the only place this class is written down:
+		// the alarm is about a credential and not about the request, and the
+		// caller is passed bitbucket.org's own answer and never this sentence
+		// (an answer to git is a status and not a body). It is written here
+		// rather than through logProxyRefusal because this call was NOT refused
+		// by this route — bitbucket.org refused the write, and the run is told
+		// so by that answer itself.
+		s.log.Warn("credsvc: a proxied Bitbucket write was refused for its scope",
+			"purpose", purpose, "run", id.Run, "repository", id.Slug, "class", react.class)
+	}
+}
+
+// countBitbucketRequest counts one served request against the token's window
+// through the contract's own CountRequest (D2356).
+//
+// It is called after the answer is the caller's, and that is the whole of the
+// rule: the count is advisory, nothing selects or refuses on it, and a write
+// that fails or is slow is logged and dropped rather than delaying or failing a
+// call bitbucket.org already served. The write is still detached and bounded
+// (bitbucketCountBudget, T6's own budget for it), so an unreachable database
+// cannot hold this goroutine.
+func (s *Server) countBitbucketRequest(ctx context.Context, name bbtokens.Name) {
+	st, ok := s.reactionStore()
+	if !ok {
+		return
+	}
+	countCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bitbucketCountBudget)
+	defer cancel()
+	if err := st.CountRequest(countCtx, name); err != nil {
+		s.log.Warn("credsvc: a Bitbucket token's request count could not be recorded", "token", name, "error", err)
+	}
+}
+
+// refuseThrottled answers a request no covering token can serve because every
+// one of them is held (R14): HTTP 429 and Retry-After, which is the one refusal
+// of this route that tells the caller to come back rather than that something is
+// wrong with what it sent.
+//
+// The wait is the store's own answer about the tokens this installation holds:
+// the EARLIEST end among the holds that have one, which is the reading the model
+// path's exhausted answer makes of the same fact (C1.11's ResetAt is the
+// earliest reset of the credentials tried, and the run waits for the first one
+// that comes back). The bundle is the whole of what this route could serve the
+// request with and the covers are the selection's, so a hold belonging to a
+// token that does not cover this repository can only make the wait shorter — and
+// a caller served too early asks again, which is what a request that is not
+// served costs. The mark itself is unaffected: the selector skips a held token
+// by its own status, and the header decides nothing.
+//
+// A store that states no hold at all — nothing is marked, or the marks cannot be
+// read — is answered WITHOUT the header: a Retry-After is this service's word
+// about when bitbucket.org will serve the token again, and a number nothing
+// supports would be a promise made on the upstream's behalf.
+func (s *Server) refuseThrottled(ctx context.Context, w http.ResponseWriter, id Identity, purpose, credential string, snap bbtokens.Snapshot, refusal *bbtokens.Refusal) {
+	if hold, ok := s.throttledHold(ctx, snap); ok {
+		w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(hold.Seconds()))))
+	}
+	s.refuseCall(ctx, w, id, purpose, credential, "", http.StatusTooManyRequests, ErrorExhaustedUntil, refusal.Error())
+}
+
+// throttledHold is how long the tokens this installation holds are held for:
+// the earliest end, from now, among the bundle's tokens whose status is a hold
+// of Bitbucket's own — StateExhausted, or StateBackedOff — and whose end is in
+// the future.
+//
+// A bundle entry with no status, a status the store cannot answer, a hold that
+// has already lapsed and a token that is simply available all contribute
+// nothing: only a hold that is still on says anything about when the next
+// request may be served.
+func (s *Server) throttledHold(ctx context.Context, snap bbtokens.Snapshot) (time.Duration, bool) {
+	st, ok := s.reactionStore()
+	if !ok || snap.Bundle == nil {
+		return 0, false
+	}
+	now := s.now()
+	var (
+		hold  time.Duration
+		found bool
+	)
+	for _, n := range snap.Bundle.Names() {
+		tok, err := st.Read(ctx, n)
+		if err != nil || !tok.Until.After(now) {
+			continue
+		}
+		switch tok.State {
+		case bbtokens.StateExhausted, bbtokens.StateBackedOff:
+		default:
+			continue
+		}
+		if d := tok.Until.Sub(now); !found || d < hold {
+			hold, found = d, true
+		}
+	}
+	return hold, found
 }
 
 // bitbucketClient is the client the proxy route makes its upstream calls with:

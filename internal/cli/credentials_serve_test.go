@@ -574,10 +574,15 @@ func TestCredentialsServiceConfigBuildsFromAFullEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("credentialsServiceConfig: %v", err)
 	}
+	// The workflow the row names ("api", credentialsServeEnv's own entry) is
+	// pinned with the rest of the row: it is what the workflow-secrets route
+	// serves a call of this job by (B3.2), so a table that lost it would leave
+	// that route unable to say which workflow's secrets a call is for.
 	want := []credsvc.JobAccount{{
-		Email: "fugaro-acme-webapp-ap-7daad322@proj-1234.iam.gserviceaccount.com",
-		Slug:  "acme-webapp-cf67624405f4121a",
-		Repo:  "github/acme/webapp",
+		Email:    "fugaro-acme-webapp-ap-7daad322@proj-1234.iam.gserviceaccount.com",
+		Slug:     "acme-webapp-cf67624405f4121a",
+		Repo:     "github/acme/webapp",
+		Workflow: "api",
 	}}
 	if len(cfg.JobAccounts) != 1 || cfg.JobAccounts[0] != want[0] {
 		t.Fatalf("job accounts = %+v, want %+v", cfg.JobAccounts, want)

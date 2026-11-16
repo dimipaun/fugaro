@@ -109,6 +109,20 @@ func (c *Config) Shared() *Config {
 	s.Credentials = nil
 	s.Pools = nil
 	s.Crafts = config.Crafts{}
+	// The cascade, the grades and the removals travel the three blocks above
+	// into the policy node, and every one of them is dropped here for the
+	// reason they are, each with its own edge. The cascade's fallback decides
+	// whether a run may spend the project's money at all (D152), so a launcher
+	// who could publish it would be choosing every teammate's spending; a grade
+	// names the model a rung of the ladder runs and the credential or pool its
+	// calls go out on, which is the grant the pool and craft blocks are dropped
+	// for one step further out; and the removals are the one block here whose
+	// publication would be destructive rather than a widened grant — a launcher
+	// who could write them would be deleting pools, credentials and crafts of
+	// the project's node from the file it can write (D2607, F23, F22).
+	s.CredentialCascade = nil
+	s.ModelGrades = nil
+	s.NodeRemovals = nil
 	s.ProjectSecrets = nil
 	s.WorkflowSecrets = nil
 	// BitbucketAPIRoots is the owner's policy as well, and it travels the same
@@ -205,6 +219,14 @@ func (c *Config) Shared() *Config {
 	// besides, because a shared config carrying it was not written by the
 	// converge.
 	s.VerifierAccounts = nil
+	// Binaries is the owner's policy as well, and it travels the floor's way,
+	// into the policy node — and it is dropped here for a sharper reason than
+	// the floor's: the block is the grant that decides which bytes a run may
+	// add, so a launcher who could write it into the runs bucket's shared file
+	// would be admitting its own payload to every teammate's runs, which is the
+	// rule reading itself out of the way. ParseShared refuses the key besides,
+	// because a shared config carrying it was not written by the converge.
+	s.Binaries = nil
 	// ImageCatalog travels the verifier list's way and is dropped here for a
 	// sharper reason than the floor's: the catalog decides which image a run's
 	// job executes in and which Dockerfile is fetched to build it, so a

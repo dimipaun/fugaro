@@ -1099,19 +1099,31 @@ func TestReviewRunIsStillHeldToTheAllowList(t *testing.T) {
 // than an accessor — the oauth case alone moves (its gateway would come on, and
 // its agent's environment would be the cascade's), and so do the record's
 // basis and the account walk with it.
+//
+// What the rows measure is a run that is not a review AND not on the switch
+// (B2.2): a job carrying the credentials service's URL puts an api-key or
+// oauth run on the switch, so those two rows take the URL out
+// (withoutCredentialsService) and the switched side of the same two runs is
+// pinned below. The cascade and vertex rows keep it — a cascade run is served
+// by the service on every installation that has one (its upstream is the
+// service, so it needs the URL), and a vertex run is not switched at all.
 func TestCodingRunKeepsItsOwnModelPath(t *testing.T) {
 	for _, tc := range []struct {
-		auth          string
-		wantGatewayOn bool
-		wantUpstream  string
+		auth              string
+		wantGatewayOn     bool
+		wantUpstream      string
+		carriesServiceURL bool
 	}{
-		{"oauth", false, ""},
-		{"api-key", true, "anthropic"},
-		{"vertex", true, "vertex"},
-		{config.AuthCascade, true, gateway.KindService},
+		{"oauth", false, "", false},
+		{"api-key", true, "anthropic", false},
+		{"vertex", true, "vertex", true},
+		{config.AuthCascade, true, gateway.KindService, true},
 	} {
 		t.Run(tc.auth, func(t *testing.T) {
 			r := codingRun(t, tc.auth, policy.ModeEnforce)
+			if !tc.carriesServiceURL {
+				r = withoutCredentialsService(r)
+			}
 			if got := r.modelAuth(); got != tc.auth {
 				t.Fatalf("modelAuth() = %q, want the configuration's own %q", got, tc.auth)
 			}
@@ -1128,6 +1140,40 @@ func TestCodingRunKeepsItsOwnModelPath(t *testing.T) {
 			}
 			if up.Kind != tc.wantUpstream {
 				t.Errorf("upstream kind = %q, want %q", up.Kind, tc.wantUpstream)
+			}
+		})
+	}
+
+	// The other side of the same two runs, from this same rig (B2.2): with the
+	// URL left in their job they are on the switch, and the service — not the
+	// job's own mount — is what serves them. The behaviour itself is pinned
+	// where the switch's own tests are (service_auth_test.go's
+	// TestSwitchedAPIKeyRunGoesThroughTheService and
+	// TestSwitchedOAuthRunStartsTheGateway, on svcRun's bare rig); what this
+	// adds is the same answer for the coding run's own job, spec and mode,
+	// which are the facts the class is keyed on.
+	for _, auth := range []string{"oauth", "api-key"} {
+		t.Run(auth+" on the switch", func(t *testing.T) {
+			r := codingRun(t, auth, policy.ModeEnforce)
+			if !r.serviceSwitched() {
+				t.Fatalf("a coding %s run whose job carries %s is not on the switch", auth, credentialsServiceURLEnv)
+			}
+			if !r.gatewayOn() {
+				t.Errorf("gatewayOn() = false for a switched coding %s run in enforce", auth)
+			}
+			if got := r.servedAuth(); got != config.AuthCascade {
+				t.Errorf("servedAuth() = %q, want %s: the switch hands the agent no credential of the job's", got, config.AuthCascade)
+			}
+			r.sess = svcSession(t)
+			up, err := r.gatewayUpstream(context.Background())
+			if err != nil {
+				t.Fatalf("gatewayUpstream: %v", err)
+			}
+			if up.Kind != gateway.KindService {
+				t.Errorf("upstream kind = %q, want %q", up.Kind, gateway.KindService)
+			}
+			if up.AuthMode != auth {
+				t.Errorf("the run declares the auth %q, want its own %q, never another class's", up.AuthMode, auth)
 			}
 		})
 	}
@@ -1287,6 +1333,12 @@ func TestReviewRunUpstreamRefusesWithoutAService(t *testing.T) {
 //     configuration's auth (and with agent.auth: cascade O2's arm then refuses
 //     it, TestReviewRunSkipsTheCodingCascadeSwitch's third case).
 //
+// The last two runs are also measured with the credentials service's URL left
+// in their job (B2.2): the URL puts an oauth run on the switch, and what the
+// switch serves it is its own repository's credential — the auth and the
+// account it declares are its own configuration's, never the class's. So the
+// switch gives neither the marker nor the mode a path to the class's token.
+//
 // Mutation (run, restored): key the class on the marker instead of the run's
 // mode and the job — the third direction is given the class, and a container
 // that writes one variable trades the App key and the Claude token it holds for
@@ -1316,8 +1368,11 @@ func TestReviewJobModelPathIsKeyedOnTheRunClass(t *testing.T) {
 	if got := notReview.modelAuth(); got != "oauth" {
 		t.Errorf("a run the class check refuses: modelAuth() = %q, want its own configuration's auth", got)
 	}
-	// The spoof: a coding-mode run in the shared job carrying the marker.
-	spoof := codingRun(t, "oauth", policy.ModeEnforce)
+	// The spoof: a coding-mode run in the shared job carrying the marker. The
+	// service's URL is taken out of its job so that the gateway's answer is
+	// the class's alone (B2.2: with the URL in it the run is on the switch and
+	// has a gateway for that reason, which the with-URL cases below measure).
+	spoof := withoutCredentialsService(codingRun(t, "oauth", policy.ModeEnforce))
 	spoof.d.Env = append(spoof.d.Env, EnvReviewJob+"=1")
 	if got := spoof.modelAuth(); got != "oauth" {
 		t.Errorf("a coding run carrying %s: modelAuth() = %q, want its own configuration's auth", EnvReviewJob, got)
@@ -1329,13 +1384,61 @@ func TestReviewJobModelPathIsKeyedOnTheRunClass(t *testing.T) {
 	// no class check ran: the class is the task's mode AND the admitted job,
 	// and without the job half this run would take the cascade without the
 	// operator's consent to it.
-	perRepo := reviewClassRun(t, "oauth", policy.ModeEnforce)
+	perRepo := withoutCredentialsService(reviewClassRun(t, "oauth", policy.ModeEnforce))
 	perRepo.job = jobTriple{}
 	if got := perRepo.modelAuth(); got != "oauth" {
 		t.Errorf("a review-mode run with no admitted job: modelAuth() = %q, want its own configuration's auth", got)
 	}
 	if perRepo.gatewayOn() {
 		t.Error("a review-mode run with no admitted job was given a gateway: the mode alone bought it the class")
+	}
+	// The with-URL side of both runs above (B2.2): a job carrying the
+	// credentials service's URL puts an oauth run on the switch, and the
+	// switch serves it its OWN repository's credential. What it declares is
+	// the auth and the account of its own configuration — never the class's,
+	// which is reached only through reviewClassRun() and needs the run's mode
+	// AND the admitted job. Neither the marker nor the mode is read for
+	// either, so neither can buy the class a second way.
+	for _, tc := range []struct {
+		name   string
+		marker bool
+	}{
+		{"the marker with the service URL", true},
+		{"the mode with the service URL", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var r *run
+			if tc.marker {
+				r = codingRun(t, "oauth", policy.ModeEnforce)
+				r.d.Env = append(r.d.Env, EnvReviewJob+"=1")
+			} else {
+				r = reviewClassRun(t, "oauth", policy.ModeEnforce)
+				r.job = jobTriple{}
+			}
+			if got := r.modelAuth(); got != "oauth" {
+				t.Fatalf("modelAuth() = %q, want its own configuration's auth", got)
+			}
+			if !r.serviceSwitched() {
+				t.Fatalf("a run whose job carries %s is not on the switch", credentialsServiceURLEnv)
+			}
+			if got := r.servedAuth(); got != config.AuthCascade {
+				t.Errorf("servedAuth() = %q, want %s: the switch hands the agent no credential of the job's", got, config.AuthCascade)
+			}
+			r.sess = svcSession(t)
+			up, err := r.gatewayUpstream(context.Background())
+			if err != nil {
+				t.Fatalf("gatewayUpstream: %v", err)
+			}
+			if up.Kind != gateway.KindService {
+				t.Fatalf("upstream kind = %q, want %q", up.Kind, gateway.KindService)
+			}
+			if up.AuthMode != "oauth" {
+				t.Errorf("the run declares the auth %q, want its own %q, never the class's", up.AuthMode, "oauth")
+			}
+			if up.Account != config.DefaultClaudeAccount {
+				t.Errorf("the run declares the account %q, want its own %q, never the class's", up.Account, config.DefaultClaudeAccount)
+			}
+		})
 	}
 }
 

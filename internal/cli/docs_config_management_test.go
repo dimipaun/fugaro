@@ -208,8 +208,30 @@ const (
 // local-only and stripped from the shared copy of the map, and its owner is the
 // accounts family, whose `accounts rm` clears a name with the declaration it
 // names -- the generic path writes neither half.
+//
+// AR1 of docs/binary-allow-rule/ is the last mover, by two rows and by none:
+// the local project config gains the `binaries` block, whose two members are
+// the paths a run may add a binary at and the cap one is held to (D981-D983),
+// and both rows belong to the `project` family, because `fugaro project policy
+// publish` is the door that carries the block onto the node the run reads it
+// from. The generic path reaches neither: a path is a doublestar glob held to
+// the node's own rule and the cap to its ceiling, which are checks no scalar
+// write makes -- and both are local-only, because a launcher who could write
+// the block into the shared file would be admitting its own payload to every
+// teammate's runs (D986).
+//
+// N1 of docs/config-ownership/ is the last mover, by nine rows and by none: the
+// local config gains the carriers of the two node-only blocks — the cascade's
+// six leaves under `credential_cascade` (F23: the node's `credentials` member
+// is the cascade, while this file's `credentials` is already the list of typed
+// credentials) and the `node_removals` record's three lists, which is the shape
+// an explicit unset takes (F22, D2607). All nine name the `accounts` family,
+// which is where `fugaro accounts` writes the cascade and records a removal
+// (D2613), so the generic path carries none of them: the fallback is a word
+// whose second answer spends the project's money, and a removal is a name held
+// to the rule of the block it names.
 const (
-	cfmRegistryRows   = 447
+	cfmRegistryRows   = 458
 	cfmAllowlistNamed = 105
 )
 

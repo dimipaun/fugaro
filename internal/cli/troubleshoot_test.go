@@ -770,3 +770,199 @@ func TestTroubleshootRefusesARunIDOfTheWrongShape(t *testing.T) {
 		t.Fatalf("a bad run ID answered %v", err)
 	}
 }
+
+// tsClaudeThatAnswers writes a claude on PATH that records that it ran and then
+// answers with one result event, the way the client answers when the call it
+// makes fails. The record file is what a test reads to see whether the child ran
+// at all.
+//
+// The real runner is what starts it (troubleshootRun = diagnoseagent.Run), so
+// the answer has to be the client's own stream rather than a Diagnosis: this is
+// the one path in this file that exercises the command against the child it
+// would really run.
+func tsClaudeThatAnswers(t *testing.T, result JSONText) (record string) {
+	t.Helper()
+	dir, record := t.TempDir(), filepath.Join(t.TempDir(), "claude-ran")
+	bin := filepath.Join(dir, "claude")
+	script := "#!/bin/sh\n" +
+		"printf 'ran\\n' >> " + tsShellWord(record) + "\n" +
+		"printf '%s\\n' " + tsShellWord(string(result)) + "\n" +
+		"exit 1\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return record
+}
+
+// JSONText is one result event of the client's stream, spelled out by the test
+// so that the shape the runner parses is visible where it is used.
+type JSONText string
+
+// tsResultEvent is a result event carrying text, of the subtype and with the
+// is_error flag the case is about: a failed call is subtype "success" with
+// is_error set, which is the client's own spelling (run.go).
+func tsResultEvent(subtype, text string, isErr bool) JSONText {
+	quoted, err := json.Marshal(text)
+	if err != nil {
+		panic(err)
+	}
+	return JSONText(fmt.Sprintf(`{"type":"result","subtype":%q,"is_error":%t,"total_cost_usd":0.02,"session_id":"s1","result":%s}`, subtype, isErr, quoted))
+}
+
+// tsShellWord is s as one single-quoted shell word, so a temp path or a result
+// event reaches the fake child whole.
+func tsShellWord(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// tsRunCtx is tsRun with the command's own context: it is how a case makes a
+// call inside the command meet a deadline without waiting out the real one.
+func tsRunCtx(t *testing.T, ctx context.Context, x *tsWorld, args ...string) (string, string, error) {
+	t.Helper()
+	root := NewRootCmd()
+	var out, errOut bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errOut)
+	root.SetArgs(NormalizeArgs(append([]string{"troubleshoot"}, args...)))
+	x.out = &out
+	defer func() { x.out = nil }()
+	err := root.ExecuteContext(ctx)
+	return out.String(), errOut.String(), err
+}
+
+// tsImageGateLog is the log a launch refused over an old job image leaves: the
+// refusal checkImageSinceDev writes, marker and all, as the failed command
+// printed it. It is built here rather than read from the log a real run would
+// have left, because a case below is about what the command does with it.
+func tsImageGateLog() string {
+	return "error: fugaro acme/app needs a job image whose runner knows fugaro 0.23.0 (fugaro 0.23.0 or later), but the job image of acme/app workflow deploy was built from base image " +
+		"eu.gcr.io/acme/fugaro-runner:0.22.1, release 0.22.1. Run fugaro update in its checkout, in your own terminal window (never in a coding agent's session; its images stage verifies " +
+		"this release's runner base image, pins it by digest through the installation's remote repository and rebuilds the workflow's image)" + causeMarkerJobImage
+}
+
+// TestTroubleshootAnswersACauseTheLogNamesWithoutAModel is the owner's report of
+// 2026-11-15: the end of the log already said why the launch was refused and
+// which command moves the image, and the command sent that text to a model that
+// could not be reached. A cause the CLI knows is now answered from the log, with
+// no model call, and the exit is zero because it explained something.
+func TestTroubleshootAnswersACauseTheLogNamesWithoutAModel(t *testing.T) {
+	x := tsSetup(t)
+	started := tsClaudeThatAnswers(t, tsResultEvent("success", "Not logged in · Please run /login", true))
+	// The real runner, so what the case checks is that it is never reached: this
+	// world has a credential and a claude, and a command that went on would run
+	// both.
+	troubleshootRun = diagnoseagent.Run
+	x.id = tsFailedLog(t, time.Now().UTC(), "Refreshing state... [id=google_project.this]", tsImageGateLog(), "Failed in 12.3s")
+
+	out, _, err := tsRun(t, x)
+	if err != nil {
+		t.Fatalf("a log that names its own cause answered %v", err)
+	}
+	if _, err := os.Stat(started); err == nil {
+		t.Error("the command started claude for a cause its own log names")
+	}
+	for _, want := range []string{"Cause:", "Fix:", "fugaro update", "release 0.22.1", x.id.String()} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the answer does not carry %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Model:") || strings.Contains(out, "Outcome:") {
+		t.Errorf("the answer names a model or an outcome no model produced:\n%s", out)
+	}
+
+	// The same answer as data: the three fields are the cause, the one command
+	// that fixes it and the line of the log they were read from, and the
+	// document is not the offline one, because nothing failed.
+	raw, _, err := tsRun(t, x, "--json")
+	if err != nil {
+		t.Fatalf("the same cause as --json answered %v", err)
+	}
+	var d troubleshootDoc
+	if err := json.Unmarshal([]byte(raw), &d); err != nil {
+		t.Fatalf("%v: %s", err, raw)
+	}
+	if d.Cause == "" || d.Fix == "" || d.LogLine == "" {
+		t.Errorf("the document does not carry the cause it answered: %+v", d)
+	}
+	if d.Offline || d.Reason != "" {
+		t.Errorf("a cause the log named is reported as the offline path: %+v", d)
+	}
+	if !strings.Contains(d.LogLine, causeMarkerJobImage) {
+		t.Errorf("the document's log line is not the refusal it was read from: %q", d.LogLine)
+	}
+}
+
+// TestTroubleshootTellsAMachineWithNoLoginToLogIn is the other half of the same
+// report: the diagnosis could not run at all, because this machine's claude is
+// installed and not logged in, and what the person got was a sentence about its
+// own error. The refusal is now the one sentence that says which login is
+// missing and how to get it, it exits non-zero, it prints no evidence, and the
+// word success is nowhere in it.
+func TestTroubleshootTellsAMachineWithNoLoginToLogIn(t *testing.T) {
+	x := tsSetup(t)
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	tsClaudeThatAnswers(t, tsResultEvent("success", "Not logged in · Please run /login", true))
+	troubleshootRun = diagnoseagent.Run
+	x.id = tsFailedLog(t, time.Now().UTC(), "error: the layer could not be read", "Failed in 4.2s")
+
+	out, _, err := tsRun(t, x)
+	var exit *ExitError
+	if !errors.As(err, &exit) || exit.Code != ExitUserError {
+		t.Fatalf("a machine with no login answered %v, want a non-zero exit", err)
+	}
+	msg := err.Error()
+	for _, want := range []string{"claude", "/login", "not logged in"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the refusal does not name %q, so it does not name the fix: %q", want, msg)
+		}
+	}
+	if strings.Contains(msg, "success") || strings.Contains(msg, "answered nothing") {
+		t.Errorf("the refusal is the agent's own error text: %q", msg)
+	}
+	if strings.Contains(msg, ". ") {
+		t.Errorf("the refusal is more than one sentence: %q", msg)
+	}
+	if strings.Contains(out, "Evidence") || strings.Contains(out, "Outcome:") {
+		t.Errorf("the refusal printed the evidence the diagnosis never read:\n%s", out)
+	}
+}
+
+// TestTroubleshootPrintsTheCauseTheDoctorCannotHide is the third part of the
+// report: `fugaro doctor` makes cloud calls and did not answer, and the note it
+// left said "Nothing it printed is here" — which hid the one thing the log
+// already said. The bound stays (the doctor's call is still abandoned), the note
+// now says what it means and hands the person the command, and the cause the log
+// names is printed above it rather than behind it.
+func TestTroubleshootPrintsTheCauseTheDoctorCannotHide(t *testing.T) {
+	x := tsSetup(t)
+	// A context that is already at its deadline is how the collector's own bound
+	// is reached without waiting the 20s it really is: the note names the bound
+	// it was given, and what this case is about is that the note is no longer
+	// the whole of the answer.
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	troubleshootDoctor = func(ctx context.Context) ([]byte, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	x.id = tsFailedLog(t, time.Now().UTC(), tsImageGateLog(), "Failed in 12.3s")
+
+	out, _, err := tsRunCtx(t, ctx, x)
+	if err != nil {
+		t.Fatalf("a cause with a silent doctor answered %v", err)
+	}
+	at, doctor := strings.Index(out, "Cause:"), strings.Index(out, "fugaro doctor said")
+	if at < 0 || doctor < 0 {
+		t.Fatalf("the answer carries no cause (%d) or no doctor note (%d):\n%s", at, doctor, out)
+	}
+	if at > doctor {
+		t.Errorf("the doctor's note comes before the cause the log names:\n%s", out)
+	}
+	for _, want := range []string{"makes cloud calls and did not answer in", "run fugaro doctor yourself"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the doctor's note does not carry %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Nothing it printed is here") {
+		t.Errorf("the doctor's note still says the doctor's output is nowhere:\n%s", out)
+	}
+}

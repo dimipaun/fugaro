@@ -1,7 +1,6 @@
 package buildtoken
 
 import (
-	"context"
 	"encoding/json"
 	"reflect"
 	"slices"
@@ -32,14 +31,15 @@ func jsonKeys(t *testing.T, v any) []string {
 	return keys
 }
 
-// TestBuildTokenStubShape: C2 is a contract and nothing else, so what it has to
-// hold is that the stub returns the declared shape — either of the two answers,
-// unchanged — and reaches nothing to do it. Both answers are checked, because
-// which one a build gets is the service's decision (R6) and the caller has to
-// read either. The two sides of this contract are different build steps, so the
-// wire names are part of the shape: a field renamed on one side alone is a
-// change to this contract, not a change to that side's own code.
-func TestBuildTokenStubShape(t *testing.T) {
+// TestBuildTokenWireShape: C2 is a contract and nothing else, so what this
+// package has to hold is the encoded shape of both answers. Which one a build
+// gets is the service's decision (R6) and a caller has to read either, and the
+// two sides of this contract are different build steps, so the wire names are
+// part of the shape: a field renamed on one side alone is a change to this
+// contract, not a change to that side's own code. What each side does with the
+// shape is that side's own test — the service's is internal/credsvc's, and the
+// client that calls it is internal/cli's.
+func TestBuildTokenWireShape(t *testing.T) {
 	req := Request{
 		Entry:        "app",
 		BuildID:      "8f3c1a2b-0000-4000-8000-000000000001",
@@ -53,29 +53,11 @@ func TestBuildTokenStubShape(t *testing.T) {
 		Host:      "github.com",
 		ExpiresAt: time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC),
 	}}
-	got, err := Stub{Answer: token}.Mint(context.Background(), req)
-	if err != nil {
-		t.Fatalf("the stub refused the request: %v", err)
-	}
-	if !reflect.DeepEqual(got, token) {
-		t.Errorf("the stub answered %+v, want the token it was made with", got)
-	}
 	grant := Response{Proxy: &ProxyGrant{
 		URL:          "https://creds.example/git/",
 		Repositories: []string{"acme/app", "acme/lib"},
 		ExpiresAt:    time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC),
 	}}
-	got, err = Stub{Answer: grant}.Mint(context.Background(), req)
-	if err != nil {
-		t.Fatalf("the stub refused the request: %v", err)
-	}
-	if !reflect.DeepEqual(got, grant) {
-		t.Errorf("the stub answered %+v, want the proxy grant it was made with", got)
-	}
-	var client Client = Stub{}
-	if _, err := client.Mint(context.Background(), Request{}); err != nil {
-		t.Errorf("a zero stub refused: %v", err)
-	}
 	if want := []string{"build_id", "entry", "provider", "repositories", "ttl_seconds"}; !reflect.DeepEqual(jsonKeys(t, req), want) {
 		t.Errorf("the request encodes as %v, want %v", jsonKeys(t, req), want)
 	}

@@ -6,10 +6,13 @@ package runner
 // Bitbucket has to go through the credentials service's proxy, which holds the
 // bundle's bitbucket-token server-side. One thing in the way was the runner's
 // own decision: proxiedBitbucket refused every project job (D505), and the
-// review variant is a project job. These tests pin the class rule that
-// replaced that refusal, the bootstrap the per-repository path already had --
-// the forwarder, the credential URL and the git environment built from them --
-// and the two things the review job must never carry: a token and a push.
+// review variant is a project job. The class rule that replaced that refusal
+// stood alone here until S3, which found that the shared coding job of a
+// Bitbucket profile mounts no token either (S1's deployer, D2302) and made the
+// job model decide nothing at all; these tests pin the review variant's own
+// half -- the bootstrap the per-repository path already had, the forwarder,
+// the credential URL and the git environment built from them -- and the two
+// things the review job must never carry: a token and a push.
 //
 // The rule is the runner's half alone, and no run reaches it end to end yet:
 // internal/infra's ProjectJobs deploys no job for a Bitbucket profile, so no
@@ -133,7 +136,7 @@ func admitProjectProxyRun(t *testing.T, r *run, wantAccount string) *run {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.proxied = r.proxiedBitbucket(p, found, true, provider, r.spec.Repo)
+	r.proxied = r.proxiedBitbucket(p, found, provider, r.spec.Repo)
 	return r
 }
 
@@ -195,22 +198,23 @@ func proxyEnvSet(env []string, key, value string) []string {
 }
 
 // TestReviewVariantOnAProjectJobBootstrapsTheBitbucketProxy is the decision
-// this task changed: a review run in the review-only variant of a Bitbucket
+// that task changed: a review run in the review-only variant of a Bitbucket
 // profile's project job opens its repository through the credentials
 // service's proxy, with the same bootstrap a per-repository proxied run has --
 // the forwarder, the credential URL scoped to it, the tokenless provider and
 // the git environment built from the two.
 //
-// The class is what admits it and nothing else: the job is one the published
-// policy computes, the run's own marker says review, and checkJobClass is the
-// door that held the two to each other before this decision was made (a
-// coding run in the same job, or a review run in the shared one, halts in
-// jobIdentity and never reaches the proxy).
+// The class is what admitted it and nothing else until S3: the job is one the
+// published policy computes, the run's own marker says review, and checkJobClass
+// is the door that holds the two to each other (a review run in the shared job
+// halts in jobIdentity and never reaches the proxy). Since S3 the shared coding
+// job of a Bitbucket profile is proxied on its own account -- it mounts no
+// token either -- and what separates the two jobs is checkJobClass' door and
+// the account each one's name pins, never whether the proxy is on.
 //
-// Mutation (run, restored): drop the reviewClassRun clause in proxiedBitbucket
-// and let every project job through. This test still passes and
-// TestCodingRunOnAProjectJobIsNotProxied fails -- the class rule is the whole
-// of what separates the two.
+// Mutation (run, restored): require the review class in proxiedBitbucket, and
+// TestSharedBitbucketJobUsesTheForwarder (shared_bitbucket_test.go) fails: the
+// coding run of a shared Bitbucket job is left with a token it does not have.
 func TestReviewVariantOnAProjectJobBootstrapsTheBitbucketProxy(t *testing.T) {
 	r := admitProjectProxyRun(t, reviewProxyRun(t, recipe.ModeReview, reviewProxyJob()), reviewVariantAccount(""))
 	if !r.proxied {
@@ -246,27 +250,26 @@ func TestReviewVariantOnAProjectJobBootstrapsTheBitbucketProxy(t *testing.T) {
 	}
 }
 
-// TestCodingRunOnAProjectJobIsNotProxied is the boundary this task did not
-// cross: a shared coding run on a project job keeps today's answer (D505's
-// sentence -- a project job serves every repository of its profile and holds
-// its own token, so a proxied repository is never launched onto one, and the
-// service admitting a shared coding caller is B5.3). The same policy, the same
-// repository, the same installation: only the class differs.
+// TestSharedCodingJobIsProxiedForTheSamePolicy is the boundary S3 moved, and
+// it moved it for the shared job's own reason rather than the review variant's:
+// a coding run in the shared job of a Bitbucket profile is proxied too, on the
+// same policy, the same repository and the same installation as the review
+// variant above. The two differ only in the job they are in and the class that
+// job pins, and both hold no Bitbucket token -- which is why the decision no
+// longer reads the class at all. What each one carries past that point is
+// pinned where it is built: the review variant by the tests here, which read
+// no token and push nothing, and the shared job by
+// shared_bitbucket_test.go, whose run's own account is the one the service
+// admits and whose pushes the branch claim bounds.
 //
-// Mutation (run, restored): drop the reviewClassRun clause in proxiedBitbucket
-// (or invert it), and this test fails: the coding run is proxied and starts a
-// forwarder it must not have.
-func TestCodingRunOnAProjectJobIsNotProxied(t *testing.T) {
+// Mutation (run, restored): require the review class in proxiedBitbucket, and
+// this test fails: the coding run is left unproxied with no token to fall back
+// to.
+func TestSharedCodingJobIsProxiedForTheSamePolicy(t *testing.T) {
 	job := gcp.ProjectJobName(projectpolicy.DefaultProfileName, gitprov.KindBitbucket, "")
 	r := admitProjectProxyRun(t, reviewProxyRun(t, "", job), "")
-	if r.proxied {
-		t.Fatal("a shared coding run on a project job was proxied: the proxy serving a shared job is B5.3, and today's answer is that a project job holds its own token")
-	}
-	if err := r.startProxiedGit(context.Background()); err != nil {
-		t.Fatalf("a run that is not proxied refused to start: %v", err)
-	}
-	if r.forward != nil {
-		t.Fatal("a coding run on a project job started a Bitbucket forwarder")
+	if !r.proxied {
+		t.Fatal("a shared coding run on a Bitbucket project job was not proxied: the job mounts no Bitbucket token (D2302), so the service's proxy is the only thing it can clone with")
 	}
 }
 

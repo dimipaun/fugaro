@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -59,6 +61,14 @@ type policyMigration struct {
 	moved   []byte // the node as it will be written: Migrate's output, plus what was derived
 	changes []projectpolicy.Change
 	derived []string // the top-level members derived from the local config, sorted
+
+	// identities is what the creds state store holds for the project's typed
+	// Bitbucket tokens, keyed by each token's document key (R12). It is read
+	// once, from the same database this plan's node came from, because three
+	// readers of one plan need it — the migration's derived members, the drift
+	// comparison and the write's own verification — and a second read of a
+	// store the plan already had in hand would be a second state.
+	identities map[string]string
 
 	// node is the node as it stands: the migrated document when there is a
 	// migration, the published one otherwise. It is what the publish and the
@@ -186,6 +196,15 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 	if err != nil {
 		return nil, false, err
 	}
+	// The identities the node's bitbucket_tokens key carries (R12) are read
+	// from this same database, once, before anything is derived from them: a
+	// project that names no typed token answers nil without a read at all, so
+	// the installation holding the legacy bitbucket-token alone converges with
+	// no step (R3).
+	identities, err := bitbucketTokenIdentities(ctx, db, lc)
+	if err != nil {
+		return nil, false, err
+	}
 	if !found {
 		// #1656: a project that has never published a node is not always a
 		// project with nothing to do. The local config can state something only
@@ -198,9 +217,9 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 		if !firstPublishCarriesANodeOnlyMember(lc) {
 			return nil, false, nil
 		}
-		return firstPolicyPublish(ctx, db, lc, etag, configPath)
+		return firstPolicyPublish(ctx, db, lc, etag, configPath, identities)
 	}
-	node, derr := withDerivedMembers(raw, lc)
+	node, derr := withDerivedMembers(raw, lc, identities)
 	moved, changes, err := projectpolicy.Migrate(node)
 	switch {
 	case err == nil && len(changes) == 0:
@@ -238,7 +257,7 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 	_ = json.Unmarshal(raw, &head)
 	m = &policyMigration{lc: lc, db: db, etag: etag, moved: moved, changes: changes,
 		from: head.Version, path: configPath, recorded: lc.PolicyGeneration,
-		derived: derivedMembers(base, raw)}
+		derived: derivedMembers(base, raw), identities: identities}
 	// The publish half reads the same node, through the same ownership gate and
 	// the same ETag: the stage is one writer, and a publish that opened a second
 	// read path would be the second writer — with its own, weaker gate — that
@@ -254,7 +273,7 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 	}
 	m.node = old
 	m.importCloneURLs = cloneURLsToImport(lc, old, configPath)
-	m.drift = policyConfigDrift(lc, old)
+	m.drift = policyConfigDrift(lc, old, identities)
 	if len(m.drift) > 0 {
 		if err := publishPlanFor(ctx, db, lc, m, base, old); err != nil {
 			return nil, true, err
@@ -405,14 +424,14 @@ func firstPublishCarriesANodeOnlyMember(lc *localcfg.Config) bool {
 // config states is a member the node does not carry yet — which is what the
 // operator's diff is a diff OF. policyConfigDrift reads a nil node as "nothing
 // to differ from" and would print no diff at all.
-func firstPolicyPublish(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, etag, configPath string) (*policyMigration, bool, error) {
-	body, pol, sources, err := policyNodeForPublish(ctx, lc, nil, nil, false, false, false)
+func firstPolicyPublish(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, etag, configPath string, identities map[string]string) (*policyMigration, bool, error) {
+	body, pol, sources, err := policyNodeForPublish(ctx, lc, nil, nil, false, false, false, identities)
 	if err != nil {
 		return nil, false, err
 	}
 	m := &policyMigration{lc: lc, db: db, etag: etag, path: configPath,
-		recorded: lc.PolicyGeneration, firstPublish: true}
-	m.drift = policyConfigDrift(lc, &projectpolicy.Policy{})
+		recorded: lc.PolicyGeneration, firstPublish: true, identities: identities}
+	m.drift = policyConfigDrift(lc, &projectpolicy.Policy{}, identities)
 	m.pub = &policyPublish{body: body, pol: pol, drift: m.drift, sources: sources,
 		adopted: lc.PolicyGeneration == ""}
 	if err := requirePolicyRules(ctx, db, lc); err != nil {
@@ -445,7 +464,7 @@ func publishPlanFor(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, m
 		m.generations = &policyGenerationState{recorded: lc.PolicyGeneration, published: m.etag}
 		return nil
 	}
-	body, pol, sources, err := policyNodeForPublish(ctx, lc, old, base, true, false, false)
+	body, pol, sources, err := policyNodeForPublish(ctx, lc, old, base, true, false, false, m.identities)
 	if err != nil {
 		return err
 	}
@@ -514,7 +533,9 @@ func policyMigrationRefusal(err error) error {
 // (inflightAnswer): the update door passes inflightQuiet, because the owner's
 // ruling of 2026-11-09 is that `fugaro update` is safe while runs are in flight
 // and never tells anybody to wait, the doors that reach the stage without being
-// the update door (`fugaro setup`, `fugaro accounts add`) pass inflightManaged
+// the update door (`fugaro setup`, and the composite doors running a named
+// subset of the stages: `fugaro accounts add`, `accounts rm`, `accounts alias`)
+// pass inflightManaged
 // and keep the answer of 2026-11-06. It is a parameter and not a field of the
 // migration for
 // the reason the paragraph above gives for admitted: a door is a fact of the
@@ -716,7 +737,7 @@ const (
 	// refusal (refuseRunsInFlight), because every ruling widens the person's
 	// session and never a marker's. And it is `fugaro update`'s alone, which is
 	// why it is not what every door into the stage passes (inflightManaged):
-	// `fugaro setup` and `fugaro accounts add` reach this stage too, and the
+	// `fugaro setup` and the composite doors reach this stage too, and the
 	// ruling is about the one command the whole upgrade is.
 	inflightQuiet
 	// inflightManaged is the answer the doors that are not `fugaro update` had
@@ -728,9 +749,10 @@ const (
 	// a project that is not managed and a coding agent's session included, is
 	// refused without --yes.
 	//
-	// It is `fugaro setup`'s and `fugaro accounts add`'s: those doors converge
-	// the same stages (initStages) and neither is the update door, so neither
-	// gets the update door's answer, and the update door's own line
+	// It is `fugaro setup`'s and the composite doors' — `fugaro accounts add`,
+	// `accounts rm` and `accounts alias` converge the same stages through
+	// stagesNamed (spec §2.5 rule 2) and none of them is the update door, so
+	// none gets the update door's answer, and the update door's own line
 	// (announceRunsInFlight) is not one of theirs. What they keep is what they
 	// had, which is this.
 	inflightManaged
@@ -939,7 +961,7 @@ func (m *policyMigration) printGenerationState(w io.Writer) {
 // adds members too (the version) and the diff has to say which is which.
 func derivedMembers(moved, raw []byte) []string {
 	var out []string
-	for _, key := range []string{bitbucketTokenKey, bitbucketAPIRootsKey, verifierAccountsKey} {
+	for _, key := range []string{bitbucketTokenKey, projectpolicy.BitbucketTokensKey, bitbucketAPIRootsKey, verifierAccountsKey} {
 		before, was, err := jsonMember(raw, key)
 		if err == nil && was && !projectpolicy.IsNull(before) {
 			continue
@@ -965,11 +987,12 @@ const (
 
 // withDerivedMembers patches into the node the members a publish would have
 // derived from the project's local config and the node cannot state — the
-// bitbucket_token block, the bitbucket_api_roots allow-list and the
-// verifier_accounts list — using the publisher's own functions
-// (DeriveBitbucketToken, and the config's bitbucket_api_roots and
-// verifier_accounts, which the publisher copies). The returned node is the
-// input byte for byte when there was nothing to add.
+// bitbucket_token block, the typed bitbucket_tokens key, the
+// bitbucket_api_roots allow-list and the verifier_accounts list — using the
+// publisher's own functions (DeriveBitbucketToken, DeriveBitbucketTokens, and
+// the config's bitbucket_api_roots and verifier_accounts, which the publisher
+// copies). The returned node is the input byte for byte when there was nothing
+// to add.
 //
 // It runs whether or not the migration would have refused, and before it: a
 // version-3 node whose profile mounts the project's Bitbucket credential is
@@ -986,7 +1009,11 @@ const (
 // entry), and it is the caller's to place: only a write that would carry the
 // block — a pending migration — is stopped by it, because a node that is not
 // migrated derives nothing and so needs nothing.
-func withDerivedMembers(raw []byte, lc *localcfg.Config) ([]byte, error) {
+//
+// identities is the half of the typed tokens the file does not state (R12), and
+// it is read by the caller from the creds state store rather than here, because
+// the same read answers the drift comparison and the write's verification too.
+func withDerivedMembers(raw []byte, lc *localcfg.Config, identities map[string]string) ([]byte, error) {
 	carries := func(key string) bool {
 		before, was, err := jsonMember(raw, key)
 		return err == nil && was && !projectpolicy.IsNull(before)
@@ -1000,6 +1027,21 @@ func withDerivedMembers(raw []byte, lc *localcfg.Config) ([]byte, error) {
 		if token != nil {
 			if node, err = patchPolicyJSON(node, bitbucketTokenKey, token); err != nil {
 				return raw, userErr("deriving the policy's %s block from %s: %v", bitbucketTokenKey, lc.Name, err)
+			}
+		}
+	}
+	// The typed tokens are the other half of the same file and travel the same
+	// way (R5): the records are in the config and the identities are in the
+	// creds state store, and a node the migration rewrote without the key is a
+	// node whose runs cannot tell one token's coverage from another's.
+	if !carries(projectpolicy.BitbucketTokensKey) {
+		tokens, err := projectpolicy.DeriveBitbucketTokens(lc.BitbucketTokens, identities)
+		if err != nil {
+			return raw, userErr("%v", err)
+		}
+		if tokens != nil {
+			if node, err = patchPolicyJSON(node, projectpolicy.BitbucketTokensKey, tokens); err != nil {
+				return raw, userErr("deriving the policy's %s key from %s: %v", projectpolicy.BitbucketTokensKey, lc.Name, err)
 			}
 		}
 	}
@@ -1290,7 +1332,8 @@ func (m *policyMigration) planDetail() string {
 // (inflightAnswer, refuseRunsInFlight): `fugaro update` implies no refusal and
 // no request to wait at all — the owner's ruling of 2026-11-09, the whole
 // upgrade being this command — the doors that reach this stage without being
-// the update door (`fugaro setup`, `fugaro accounts add`) keep the answer of
+// the update door (`fugaro setup`, and the composite doors naming a subset of
+// the stages) keep the answer of
 // 2026-11-06 they had before it. The refusal --yes is the way past is
 // `fugaro project policy publish --delete`'s, the same reading
 // (internal/cli/project_cmd.go).
@@ -1373,8 +1416,9 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 // `fugaro update`'s answer is the owner's ruling of 2026-11-09 (inflightQuiet):
 // the whole upgrade is that command, it is safe while runs are in flight, and
 // it never asks anybody to wait. That ruling is that door's, and the doors that
-// reach this stage without being it — `fugaro setup`, and `fugaro accounts
-// add` / `accounts rm`, whose stage list is built from initStages too — keep
+// reach this stage without being it — `fugaro setup`, and the composite doors
+// (`fugaro accounts add`, `accounts rm`, `accounts alias`), whose stage list is
+// built from initStages through stagesNamed too — keep
 // the answer they had before it (inflightManaged), which is the ruling of
 // 2026-11-06 those doors' own users were given: a managed project's own session
 // writes and is told the count, every other session is refused without --yes.
@@ -1436,9 +1480,367 @@ func (s *policyMigrateStage) Verify(ctx context.Context) error {
 		// A publish that landed is a node the config states what it says: the
 		// write is the whole of the fix, and a node that still differs is a
 		// publish this Fugaro would make again on every run.
-		if drift := policyConfigDrift(s.m.lc, p); len(drift) > 0 {
+		if drift := policyConfigDrift(s.m.lc, p, s.m.identities); len(drift) > 0 {
 			return fmt.Errorf("the published policy was written but still does not carry what the local config states (%s)", memberListText(drift))
 		}
 	}
 	return nil
+}
+
+// defaultProfileTimeoutClass is the task timeout class a written default
+// profile states. A profile must state one — projectpolicy.validProfiles holds
+// every profile to Cloud Run's own reading, and a profile that left the class
+// out would make the publish refuse the config this step just wrote — and six
+// hours is the class the docs, the fixtures and every profile an operator has
+// today carry.
+const defaultProfileTimeoutClass = "6h"
+
+// defaultProfile is one default profile `fugaro update` writes: the provider it
+// serves, the name it is written under, and the canonical repositories of that
+// provider this project enrols.
+type defaultProfile struct {
+	Provider string
+	Name     string
+	Repos    []string
+}
+
+// jobProfile is the profile as it is written: the provider, the resources every
+// profile must state, and the repositories the provider's runs are held to
+// (R1). It carries no image field, because config.JobProfile has none (R1) —
+// the job's image is the installation's — and no claude_accounts, which R1
+// leaves "to the project's default account": the job a profile listing no
+// account deploys is the profile's own default one.
+func (d defaultProfile) jobProfile() config.JobProfile {
+	return config.JobProfile{
+		Provider:     d.Provider,
+		CPU:          config.DefaultCPU,
+		Memory:       config.DefaultMemory,
+		TimeoutClass: defaultProfileTimeoutClass,
+		AllowRepos:   d.Repos,
+	}
+}
+
+// usedProviders is the providers this project's repositories use, in
+// config.Providers order, with each provider's repositories as canonical names
+// (R1: the default profile is the provider's, and allow_repos is derived from
+// the repositories the project enrols, which is how a run of one of them is
+// admitted).
+//
+// A repos: entry that records no provider is left out rather than guessed: the
+// checkout's fugaro.yaml decides which provider that repository is on
+// (localcfg accepts such an entry, allowSourcesOf skips it for the same
+// reason), so this config does not say which default would serve it. A
+// provider outside config.Providers is left out too: no policy may define a
+// profile for it (projectpolicy.validProfiles), so writing one would make the
+// publish refuse the config the update had just written.
+func usedProviders(lc *localcfg.Config) ([]string, map[string][]string) {
+	repos := map[string][]string{}
+	for _, name := range slices.Sorted(maps.Keys(lc.Repos)) {
+		r := lc.Repos[name]
+		if r.Provider == "" {
+			continue
+		}
+		c, err := projectpolicy.Canonical(r.Provider, name)
+		if err != nil {
+			continue
+		}
+		repos[r.Provider] = append(repos[r.Provider], c)
+	}
+	var order []string
+	for _, p := range config.Providers {
+		if _, ok := repos[p]; ok {
+			order = append(order, p)
+		}
+	}
+	return order, repos
+}
+
+// servedProviders is the providers the config's profiles block serves, in
+// config.Providers order: every provider some profile in the block pins. It is
+// the second half of the providers a default profile is written for (below) and
+// the set the publisher asks its own rule over, so that the block `fugaro
+// update` writes and the block `fugaro project policy publish` accepts cannot
+// disagree about which defaults a block must define.
+func servedProviders(lc *localcfg.Config) []string {
+	served := map[string]bool{}
+	for _, pr := range lc.Profiles {
+		if pr.Provider != "" {
+			served[pr.Provider] = true
+		}
+	}
+	var order []string
+	for _, p := range config.Providers {
+		if served[p] {
+			order = append(order, p)
+		}
+	}
+	return order
+}
+
+// defaultProfileProviders is the providers this step writes a default profile
+// for, in config.Providers order: the ones the project's repositories use (R1)
+// and the ones the block already serves.
+//
+// The second half is what keeps the update converging. The publisher requires a
+// default for every provider the block serves, so a config that pins, say, a
+// Bitbucket profile with no Bitbucket repository enrolled would be refused —
+// and refused by the policy stage of this very `fugaro update`, which is the
+// one thing an update must never do (CLAUDE.md). Its default is written with
+// no allow_repos at all: a provider with no repository of its own in this
+// project falls back to the project's own list, which is the only list that
+// could admit anything.
+func defaultProfileProviders(used, served []string) []string {
+	write := map[string]bool{}
+	for _, p := range used {
+		write[p] = true
+	}
+	for _, p := range served {
+		write[p] = true
+	}
+	var order []string
+	for _, p := range config.Providers {
+		if write[p] {
+			order = append(order, p)
+		}
+	}
+	return order
+}
+
+// firstDefaultProvider is the provider whose default profile carries the name
+// DefaultProfileName: the first of providers, unless the config already writes
+// a profile under that name, which is the provider that profile serves.
+//
+// R8 keeps `standard` where it is — "standard stays the first provider's
+// profile" — so a config whose standard profile is Bitbucket's gets its GitHub
+// default written beside it as standard-github and never on top of it, and an
+// operator's own standard profile is never the name a fresh default lands on.
+// A standard profile that names no provider states nothing this can read: the
+// publisher's own refusal for that profile is the one to read, and the name it
+// holds is left alone (writtenDefaultProfiles only ever adds names the block
+// does not define).
+func firstDefaultProvider(lc *localcfg.Config, providers []string) string {
+	if pr, ok := lc.Profiles[projectpolicy.DefaultProfileName]; ok && pr.Provider != "" {
+		return pr.Provider
+	}
+	if len(providers) == 0 {
+		return ""
+	}
+	return providers[0]
+}
+
+// writtenDefaultProfiles is the default profile of every provider given that
+// the block does not define yet, in that order (R8, D2310): DefaultProfileName
+// for the project's first provider and DefaultProfileName-<provider> for
+// another. A name the config already defines is never returned, whatever it
+// holds (R1): an existing profile is the operator's.
+func writtenDefaultProfiles(lc *localcfg.Config, providers []string, repos map[string][]string) []defaultProfile {
+	first := firstDefaultProvider(lc, providers)
+	var out []defaultProfile
+	for _, p := range providers {
+		name := projectpolicy.DefaultProfileNameFor(p, p == first)
+		if _, ok := lc.Profiles[name]; ok {
+			continue
+		}
+		out = append(out, defaultProfile{Provider: p, Name: name, Repos: repos[p]})
+	}
+	return out
+}
+
+// defaultProfileNames spells the profiles of a write as a person reads them in
+// the file: "profiles.standard, profiles.standard-bitbucket".
+func defaultProfileNames(defaults []defaultProfile) string {
+	names := make([]string, len(defaults))
+	for i, d := range defaults {
+		names[i] = "profiles." + d.Name
+	}
+	return strings.Join(names, ", ")
+}
+
+// installSpec is the installation spec a run plans from, with the one
+// fallback the profiles `fugaro update` writes for itself need.
+//
+// installOptions refuses a local config that declares a github job profile and
+// records no single GitHub App ID (projectJobGitHubAppID), and the default
+// profile this step wrote is a github one for every github project (R1): a
+// project whose last GitHub repository moves to Bitbucket, or that adds a
+// repository on a second App, records no single ID any more, so the door has
+// refused every update of that installation whole — with a message that asks
+// for an App ID the project no longer has, on a profile the update wrote and the
+// operator never touched. That is a failure of a HARD RULE (CLAUDE.md: `fugaro
+// update` is the whole upgrade, and it works perfectly).
+//
+// The job that profile deployed is the installation's own record, and it is
+// kept from it (infra.CarriedProjectJobs, prepare): what this composes is the
+// spec of the config with no JOB for that profile, and the carry puts the
+// deployed job back into the document the plan is made from, so the plan
+// proposes no change to it and the run converges. The profile itself stays
+// composed — in the spec's policy as in the config — because the published
+// policy is where a workflow that names no profile reads it: a spec that
+// dropped the profile whole would leave those workflows refused at run start
+// (projectpolicy's rule that DefaultProfileName be defined), and the refusal
+// would move from the update to every run of the project.
+//
+// The fallback is exactly this narrow: a default-named profile, of a provider a
+// shared job serves, whose job the installation's own tfvars hold (and this
+// run's spec does not). Every other refusal stays installOptions', whole: a
+// config that declares a github profile and has never deployed its job has
+// nothing to carry and is asked for the App ID, as it is today, and a profile
+// the operator renamed or deleted is the config's fact with the remedy
+// RefuseProjectJobDeletes prints for it.
+func installSpec(o *initOptions, lc *localcfg.Config, warn func(string)) (infra.InstallationSpec, error) {
+	spec, err := installOptions(o, lc)
+	if err == nil {
+		return spec, nil
+	}
+	held := heldDefaultProfiles(o, lc)
+	// The profile the refusal is about, and only it: the spec is composed once
+	// with each held profile carried in turn, and the first composition that
+	// succeeds names it. A profile the config can still compose is never
+	// carried — its job follows the config, as an edit of it means it to — and
+	// a refusal two of them together explain is not a refusal this carries:
+	// installOptions' own message names that reason, and it stands.
+	for _, name := range held {
+		kept, kerr := installOptionsCarrying(o, lc, []string{name})
+		if kerr != nil {
+			continue
+		}
+		kept.CarriedProjectJobs = []string{name}
+		warn(fmt.Sprintf("kept the shared job of %s as the installation holds it: this local config cannot compose it now (%s). This run converges with the job kept, and a later %s composes one from the config again once that is fixed",
+			defaultProfileNameList([]string{name}), oneLineCLI(err.Error()), selfCommand()+" update"))
+		return kept, nil
+	}
+	return infra.InstallationSpec{}, err
+}
+
+// heldDefaultProfiles is the default profiles whose shared job the
+// installation already holds, which is what installSpec carries: the profiles
+// of the config the run cannot compose a job for, named by the installation's
+// own tfvars.
+//
+// It answers for every door and not for the update alone (the owner's ruling of
+// 2026-11-16 on S5): the hold is what keeps a default profile this config can no
+// longer compose from taking the installation's jobs with it, and every door
+// that composes that spec plans those same jobs — `fugaro accounts add` and
+// `fugaro accounts rm` converge the Installation stage in-process, and a door
+// that refused where another converges is an installation the operator cannot
+// work on with the command they have. No door writes a default profile another
+// holds back.
+//
+// What keeps this narrow is what it reads rather than the door it is under: a
+// run with no local config has no profile to ask about, and a workdir that holds
+// no tfvars — a machine whose installation this run has not planned yet, which
+// is every first run, `fugaro setup` included — holds no job either. The config
+// is the only thing that says what those profiles are, and installOptions'
+// refusal is the answer for a profile whose job the installation never held.
+//
+// A --plan-only run is one of those doors and not an exception to them: it is
+// the preview of the same converge, so it must not refuse an installation that
+// the run it previews converges. What createDefaultProfiles writes is not part
+// of this answer at all: it does not run under --plan-only, so a profile only
+// that write would add is not in the config for this to name, and a profile the
+// config states is one an earlier `fugaro update` wrote or the operator's own.
+func heldDefaultProfiles(o *initOptions, lc *localcfg.Config) []string {
+	if lc == nil {
+		return nil
+	}
+	dir, err := infra.InstallationWorkdir(os.Getenv, lc.GCPProject)
+	if err != nil {
+		return nil
+	}
+	prev, err := infra.ReadWorkdirVars(dir, "installation")
+	if err != nil {
+		return nil
+	}
+	deployed, err := infra.ProjectJobProfilesOf(prev)
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, name := range slices.Sorted(maps.Keys(lc.Profiles)) {
+		pr := lc.Profiles[name]
+		if !infra.SharedJobProvider(pr.Provider) || !deployed[name] {
+			continue
+		}
+		// The default names alone, as this step writes them (D2310, R8): the
+		// name is the profile's, and a name the update would never write is the
+		// operator's own profile, kept as the config states it.
+		if name != projectpolicy.DefaultProfileNameFor(pr.Provider, true) && name != projectpolicy.DefaultProfileNameFor(pr.Provider, false) {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names
+}
+
+// defaultProfileNameList spells a held set as defaultProfileNames spells a
+// written one, from the names the installation answered for.
+func defaultProfileNameList(names []string) string {
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = "profiles." + n
+	}
+	return strings.Join(out, ", ")
+}
+
+// createDefaultProfiles writes the default profile of every provider this
+// project's repositories use and whose default profile the config does not
+// define yet, so that the installation stage — the one that turns profiles into
+// project jobs — deploys its job in this same `fugaro update` (S5, R1, D2310).
+//
+// It is the update door's alone: a profile describes a project that exists, and
+// `fugaro setup` is a first run whose plan the operator reads before anything
+// is created.
+//
+// The step is here, before the loop, and not a stage of its own: what it writes
+// is an input to the spec the installation stage plans, so the apply must carry
+// the profiles this run wrote (the same reason syncAccess is where it is), and
+// it runs after makeOnboardingRepoEntry so that the repository this run onboards
+// counts among the providers in use.
+func (e *initEngine) createDefaultProfiles() {
+	r, o := e.r, e.r.o
+	if e.lc == nil || o.doorName() != updateDoor.name || o.planOnly {
+		return
+	}
+	providers, repos := usedProviders(e.lc)
+	created := writtenDefaultProfiles(e.lc, defaultProfileProviders(providers, servedProviders(e.lc)), repos)
+	if len(created) == 0 {
+		return
+	}
+	hadBlock := e.lc.Profiles != nil
+	if !hadBlock {
+		e.lc.Profiles = map[string]config.JobProfile{}
+	}
+	for _, d := range created {
+		e.lc.Profiles[d.Name] = d.jobProfile()
+	}
+	// The written config is held to the deployer's own reading before it is
+	// kept, and withdrawn whole when the deployer would refuse it: `fugaro
+	// update` is the whole upgrade and must converge (CLAUDE.md), and a project
+	// whose GitHub repositories record two different App IDs has no shared
+	// GitHub job at all (infra.projectJobGitHubAppID refuses it), so a default
+	// profile written there would stop the run whole. Nothing is written in
+	// that case — the file keeps what the operator had, those repositories keep
+	// the per-repository jobs they run today, and the line says why, so the
+	// next update writes the profile once the reason is fixed.
+	spec, err := installSpec(o, e.lc, r.warn)
+	if err != nil {
+		for _, d := range created {
+			delete(e.lc.Profiles, d.Name)
+		}
+		if !hadBlock {
+			e.lc.Profiles = nil
+		}
+		r.warn(fmt.Sprintf("no default profile was written (%s): %s; the repositories of those providers keep their per-repository jobs, and a later %s writes their default profile once that is fixed",
+			defaultProfileNames(created), oneLineCLI(err.Error()), selfCommand()+" update"))
+		return
+	}
+	// The spec every stage below builds is the one this config now yields, so
+	// the installation stage plans and deploys the jobs of the profiles just
+	// written (the rebuild init_members.go's defaultMembers does for the
+	// members it discovered).
+	e.spec = spec
+	for _, d := range created {
+		fmt.Fprintf(r.w, "%swrote the default profile %s (%s) to the local config: it is the job a %s workflow that names no profile runs on, and it admits %s\n",
+			o.programPrefix(), d.Name, d.Provider, d.Provider, strings.Join(d.Repos, ", "))
+	}
 }

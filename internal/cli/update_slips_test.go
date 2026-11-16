@@ -195,7 +195,7 @@ func TestUpdateAsksNoRunToFinish(t *testing.T) {
 	out := convergeOn(t, r, []string{"policy-older-than-binary", "policy-rules-skew", "plugin-pin"})
 
 	line := inFlightLine(t, out)
-	if !strings.Contains(line, "asks no run to finish first") {
+	if !strings.Contains(line, "update waits for none") {
 		t.Errorf("the update does not say it asks no run to finish first: %q", line)
 	}
 	if got := convergeNode(t, r).Version; got != projectpolicy.Version {

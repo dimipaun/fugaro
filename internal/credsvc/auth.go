@@ -218,6 +218,22 @@ type Identity struct {
 	// than from the request a second time.
 	AuthMode    string
 	AuthAccount string
+	// BuildID and BuildRepositories are what a BUILD's proxy call carries
+	// instead of the run identity above (B1, rule 9): the build id the call
+	// named and the repositories the pairing recorded for that id. A build is
+	// not a run of this installation and is a job of no repository, so Run,
+	// Job, Branch and PRs are empty on such an Identity — and Slug is not a
+	// claim either: the proxy's own admission fills it with the canonical
+	// repository THIS call is served for, out of BuildRepositories, before the
+	// rules see the request.
+	//
+	// BuildID is not a boundary and is never treated as one: a project has one
+	// build identity (B5), so every build of it holds the same ID token and can
+	// name another build's id. What bounds the call is BuildRepositories —
+	// which the service wrote from the entry's own published map — and the
+	// read-only class a build is served as (proxyIdentity).
+	BuildID           string
+	BuildRepositories []string
 }
 
 // KeySource returns the RSA public key a token's kid names. A kid that is not
@@ -341,8 +357,10 @@ type AuthConfig struct {
 	// policy's profiles), each bound to the profile it serves (C3.9's coding
 	// half, D2078, G21). A caller whose verified email is one of them is of
 	// the shared class: admitted on the model path for the identity's
-	// repository when it is one of the row's, admitted to the GitHub mint
-	// under the run's own permission set, and refused everywhere else.
+	// repository when it is one of the row's, served on the Bitbucket proxy
+	// route for that repository when the published block lists it and proxies
+	// it (B5.3), admitted to the GitHub mint under the run's own permission
+	// set, and refused everywhere else.
 	//
 	// It is asked about the *verified* email claim, never about the
 	// X-Fugaro-Run-Job header: the header is the caller's own text, and a gate
@@ -516,6 +534,21 @@ type AuthConfig struct {
 	// The name is recorded in the audit line exactly as the person class's is,
 	// and it is an address like any other: never a credential.
 	CoordinatorAccount string
+	// BuildAccounts are the installation's build identities (B1, B5): the
+	// service accounts a project's catalog builds run as, one per Fugaro
+	// project, and the caller class of the build route and of nothing else.
+	//
+	// It is the same shape as VerifierAccounts and PersonAccounts — bare
+	// addresses, matched by the same fold, duplicates harmless — and it is the
+	// one list held against EVERY other one: a build is neither a run of this
+	// installation nor an operator of it, every other list here is one of those
+	// two, and an address on two of them would be a caller whose class is
+	// decided by which route read it (see NewAuthenticator).
+	//
+	// An empty list is an installation that runs no catalog build of its own: a
+	// class no caller belongs to, which is the state of every project whose
+	// build identity is not rendered yet.
+	BuildAccounts []string
 	// Now is the clock, for tests; nil means time.Now.
 	Now func() time.Time
 }
@@ -565,7 +598,15 @@ type Authenticator struct {
 	// the folded key alone because the spelling the identity carries is
 	// cfg.CoordinatorAccount, and there is exactly one entry.
 	coordinatorAccount string
-	now                func() time.Time
+	// buildAccounts maps a presented email, folded the same way, to the
+	// configured spelling of that build identity (B1): the class the build route
+	// is answered by, read by VerifyBuildCaller and by nothing else. Like the
+	// verifier, person, launcher and orchestrator lists it is read by one entry
+	// point — the build route is answered ahead of the shared parse — so no
+	// branch of Verify consults it, which is what keeps a build off the run
+	// routes.
+	buildAccounts map[string]string
+	now           func() time.Time
 }
 
 // NewAuthenticator validates the configuration and returns the verifier.
@@ -809,6 +850,54 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 		}
 		orchestrators[folded] = email
 	}
+	// The build list is read LAST, and it is the one list held against every
+	// list above it (B1, B5, G4). The order is what makes that one pass: the
+	// build identity is the only caller this service serves a credential to
+	// that is neither a run of this installation nor an operator of it — a job,
+	// a shared job, a review job, a verifier, the coordinator and the daemon
+	// are one of the two — so an address on this list AND on any other is a
+	// caller whose class would be decided by which route read the token, and,
+	// worse here than anywhere else, a job or a person holding a build's reach
+	// over a project's entries. The refusals below are therefore one per list
+	// and are read at the START, where the operator sees a deployment that
+	// disagrees with itself rather than at a route.
+	//
+	// An empty BuildAccounts is not a missing gate: an installation that runs
+	// no catalog build names none, and the class is then one no caller belongs
+	// to. Nothing else here requires the list, for the reason the shared list
+	// is not required.
+	builds := make(map[string]string, len(cfg.BuildAccounts))
+	for _, email := range cfg.BuildAccounts {
+		folded, ok := foldEmail(email)
+		if !ok {
+			return nil, errors.New("credsvc: a build service account is not a printable ASCII email address")
+		}
+		if _, isJob := accounts[folded]; isJob {
+			return nil, errors.New("credsvc: a build service account is also one of the installation's job service accounts, so one caller would be two classes")
+		}
+		if _, isShared := shared[folded]; isShared {
+			return nil, errors.New("credsvc: a build service account is also a shared project job's service account, so one caller would be two classes")
+		}
+		if _, isReview := review[folded]; isReview {
+			return nil, errors.New("credsvc: a build service account is also one of the review job accounts, so one caller would be two classes")
+		}
+		if _, isVerifier := verifiers[folded]; isVerifier {
+			return nil, errors.New("credsvc: a build service account is also one of the installation's verifiers, so one caller would be two classes")
+		}
+		if _, isPerson := people[folded]; isPerson {
+			return nil, errors.New("credsvc: a build service account is also one of the installation's people, and the build class is an automation")
+		}
+		if _, isLauncher := launchers[folded]; isLauncher {
+			return nil, errors.New("credsvc: a build service account is also one of the installation's launchers, and the build class is an automation")
+		}
+		if _, isOrchestrator := orchestrators[folded]; isOrchestrator {
+			return nil, errors.New("credsvc: a build service account is also the installation's orchestrator daemon, so one caller would be two classes")
+		}
+		if coordinator != "" && folded == coordinator {
+			return nil, errors.New("credsvc: a build service account is also the installation's coordinator, so one caller would be two classes")
+		}
+		builds[folded] = email
+	}
 	now := cfg.Now
 	if now == nil {
 		now = time.Now
@@ -823,6 +912,7 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 		launcherAccounts:     launchers,
 		orchestratorAccounts: orchestrators,
 		coordinatorAccount:   coordinator,
+		buildAccounts:        builds,
 		now:                  now,
 	}, nil
 }
@@ -1242,6 +1332,49 @@ func (a *Authenticator) VerifyOrchestrator(ctx context.Context, tok string) (str
 		// The reason names the class and never the address, for the reason
 		// VerifyVerifier's does.
 		return "", fmt.Errorf("%w: the caller is not this installation's orchestrator daemon, so it may not mint a merge token", ErrUnverifiedJob)
+	}
+	if err := checkCallerToken(claims, now); err != nil {
+		return "", err
+	}
+	return account, nil
+}
+
+// VerifyBuildCaller admits the caller of the build route (buildtoken.go), or
+// refuses it with ErrUnverifiedJob (the caller is not one of the installation's
+// build service accounts) or ErrUnavailable (the key set could not be read). It
+// answers the configured spelling of the address that matched, which is what
+// the audit line carries, or the empty string with an error — never a partially
+// verified caller.
+//
+// It is VerifyVerifier's mechanism against one more list and not a sixth
+// spelling of the token check: the signature, the issuer, the email fold and
+// the token's own window are the same shared code (callerClaims,
+// checkCallerToken), and the audience is this class's own line
+// (checkCallerAudience) exactly as it is every other class's — this service's
+// own URL and nothing else, like every class whose caller is not a person.
+//
+// The class is the whole of the difference and it is B5's: a build identity is
+// the account a project's catalog builds run as (B5's terraform), which holds
+// no run identity and is not a job of this installation, so there is nothing
+// here to pair and no repository this caller owns.
+//
+// It takes the caller's token directly for VerifyVerifier's reason: the build
+// route is answered ahead of RequestFromHTTP (server.go), because a build holds
+// no run identity and the shared parse refuses a call that has none.
+func (a *Authenticator) VerifyBuildCaller(ctx context.Context, tok string) (string, error) {
+	now := a.now()
+	claims, folded, err := a.callerClaims(ctx, tok)
+	if err != nil {
+		return "", err
+	}
+	if err := checkCallerAudience(claims, a.cfg.Audience); err != nil {
+		return "", err
+	}
+	account, ok := a.buildAccounts[folded]
+	if !ok {
+		// The reason names the class and never the address, for the reason
+		// VerifyVerifier's does.
+		return "", fmt.Errorf("%w: the caller is not one of this installation's build service accounts, so it may not mint a build's credential", ErrUnverifiedJob)
 	}
 	if err := checkCallerToken(claims, now); err != nil {
 		return "", err

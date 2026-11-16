@@ -224,6 +224,38 @@ func TestOlderCLIRefusesANodeCarryingImageCatalog(t *testing.T) {
 	}
 }
 
+// TestOlderCLIRefusesANodeCarryingTheTokensKey is the same skew for R5's key,
+// and it is the one acceptance T3 has on the CLI side: a launcher older than
+// the key models every top-level key but bitbucket_tokens, so a node a project
+// with typed Bitbucket tokens publishes is a node that release does not know,
+// and every CLI reader refuses it rather than launching against a policy it
+// half-reads — while the runner of that release tolerates the key and keeps
+// serving (projectpolicy's TestOldRunnerReaderToleratesTheTokensKey, which
+// decodes one node twice). What the refusal costs is one line in the release
+// notes and one upgrade, which is why the key is at the top level: an unknown
+// member inside the bitbucket_token block would be refused by every reader,
+// runner included, and no run in flight would survive it.
+func TestOlderCLIRefusesANodeCarryingTheTokensKey(t *testing.T) {
+	older := &projectpolicy.Policy{Version: projectpolicy.Version, UnknownKeys: []string{projectpolicy.BitbucketTokensKey}}
+	err := refuseUnknownPolicyKeys(older)
+	if err == nil {
+		t.Fatal("a launcher of an older CLI accepted a node carrying bitbucket_tokens")
+	}
+	if got := ExitCode(err); got != ExitUserError {
+		t.Errorf("exit %d, want %d: the operator can fix this, so it is not a crash", got, ExitUserError)
+	}
+	for _, want := range []string{projectpolicy.BitbucketTokensKey, projectpolicy.PathShared(), "does not know", "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	// The refusal is about the key nobody reads and not about the tokens: a
+	// node whose policy carries the key this Fugaro knows refuses nothing.
+	if err := refuseUnknownPolicyKeys(&projectpolicy.Policy{Version: projectpolicy.Version, BitbucketTokens: &projectpolicy.BitbucketTokens{}}); err != nil {
+		t.Errorf("a node carrying a key this Fugaro reads was refused: %v", err)
+	}
+}
+
 // TestImageCatalogGateIsNotThePriceCatalogGate is F14: catalogSince and
 // catalogShipped are the *price* catalog's — a route's require_zdr and
 // price_policy — and the image catalog's gate is spelled apart from them

@@ -24,6 +24,22 @@ array order) and K2.7 keys trials on the organisation and the project id (D2201)
 secret when `/renew` answers without a new one and connected keys renew monthly (D2200, D2202); and
 D2194 puts everything in `fugaro-prod`, which is where TN3 already put the sign-in project.
 
+**Follow-up of that amendment, 2026-11-15 (P3.5 built the pages and found this).** The amendment above
+makes the authorize and device-approve pages the SPA's, and those pages let a person choose which of
+the organisation's unbound entitlements the installation is bound to. **The key is not minted for the
+licence the person chooses.** K2.4's mint reads `accountLicence` — the newest uncancelled subscription
+recorded for the **verified address** — for both the exchange (`token`) and the device poll
+(`devicePoll`), nothing in `AuthorizeCall` or `DeviceCall` names a licence, and neither page sends one,
+so an account holding two subscriptions is handed a key for the newer one whichever entitlement it
+chose and bound. What the choice decides is real and stays: it is the binding the installation keeps
+(the portal's own record). What would let the choice reach the key is a mint that can be asked for the
+entitlement bound to a project id, which is P3.1's binding and P4.2's ledger feeding P3.6's
+entitlement-scoped revocation — the model `accountLicence`'s own note already says replaces this
+reader — and neither this file's tasks nor P3.5's may invent it from a subscription. Until that mint
+exists the pages say which licence the choice binds, `DeviceCall`'s doc comment says what the poll
+mints for, and `accountLicence` records the gap where it is made. **Owner:** this is a product
+decision (what a key is a key to) and not a defect P3.5 could repair.
+
 ## What the repo already has
 
 | Spec concept | What exists on `main` |

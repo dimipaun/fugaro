@@ -114,10 +114,10 @@ func TestOrchestratorMemberNamesAreSpelledAsTheBlockSpellsThem(t *testing.T) {
 // image_catalog) are the same case, and a version moves only when a runner's
 // own enforcement does.
 func TestOrchestratorIsUnknownToAReaderThatPredatesIt(t *testing.T) {
-	if Version != 7 {
-		t.Fatalf("the policy Version is %d, and this test's node is written for 7: update both together, deliberately", Version)
+	if Version != 8 {
+		t.Fatalf("the policy Version is %d, and this test's node is written for 8: update both together, deliberately", Version)
 	}
-	raw := []byte(`{"version":7,"budget":{"mode":"observe"},"orchestrator":{"max_running":4,"decision_model_per_class":{"routine":"sonnet"}}}`)
+	raw := []byte(`{"version":8,"budget":{"mode":"observe"},"orchestrator":{"max_running":4,"decision_model_per_class":{"routine":"sonnet"}}}`)
 	p, found, err := Decode(raw)
 	if err != nil || !found || p == nil {
 		t.Fatalf("Decode = (%v, %v, %v), want the node read", p, found, err)

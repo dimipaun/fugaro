@@ -1,10 +1,11 @@
 # The binary allow rule and the no-verdict label: findings, decisions and open items
 
-**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
-approved.** The owner ruled on 2026-11-04 (§2's answers, each with the date and the one-line why);
+**Status: design answered by the owner 2026-11-04, with D990, D992 and D993 ruled 2026-11-15; AR0
+and AR2 landed (#2202, #2204); the owner approved ALL binary-allow-rule tasks (AR0–AR7) on
+2026-11-15.** The owner ruled on 2026-11-04 (§2's answers, each with the date and the one-line why);
 where an answer is **not the recommendation**, it says so. The 2026-11-04 ruling covers the *rule*'s
 decisions — D983–D989, D991 and D997. The **label**'s decisions (D994–D996) and D981, D982, D990,
-D992 and D993 were not part of it and stand as recommendations; that is stated again in §2's
+D992 and D993 were not part of it; D990, D992 and D993 were ruled on 2026-11-15, each as recommended (§2); that is stated again in §2's
 preamble, so no reader assumes more than the owner said. Where this file disagrees with
 [spec.md](spec.md), **this file wins**.
 
@@ -190,8 +191,10 @@ needs no rewrite. **On 2026-11-04 the owner answered the rule's decisions: D983,
 D987, D988, D989, D991 and D997.** Each of the nine carries the date and a one-line *why* below, and
 **none of them deviates from the recommendation** — so no line in this folder says "not the
 recommendation", and the answer to each is the recommendation read as an answer. The decisions the
-owner did **not** rule on are **D981**, **D982**, **D990** and the label's **D992–D996**: they stand
+owner did **not** rule on that day are **D981**, **D982** and the label's **D994–D996**: they stand
 as recommendations only, and an implementation may not treat this section's date as covering them.
+**On 2026-11-15 the owner ruled D990, D992 and D993, each as recommended**, and approved all
+binary-allow-rule tasks (AR0–AR7).
 
 **D981 — the shape of the rule.** **Recommended (not ruled on 2026-11-04):** two members on the
 policy node —
@@ -298,13 +301,13 @@ already happened once: this design's first draft counted four committers and mis
 `shadowFinalize`. *Why:* one reading covers every committer, including the ones added later, and
 the diff finalize already holds is the reading.
 
-**D990 — the policy version.** **Recommended (not ruled on 2026-11-04):** **bump
-`projectpolicy.Version` 5 → 6**, add
-`VersionSince[6] = "0.24.0"` (the release that ships it; implementation-plan.md §4's slot read 0.20.0
-when this decision was recorded), and carry the convergence test
-the HARD RULE asks for. A version-5
+**D990 — the policy version.** **Answered 2026-11-15: yes, as recommended — bump
+`projectpolicy.Version` 7 → 8** (written as 5 → 6 on 2026-11-04; versions 6 and 7 have since shipped,
+both in 0.24.0), add `VersionSince[8] = "0.26.0"` (the release that ships AR1), and carry the
+convergence test the HARD RULE asks for (an installation at version 7 converges through `fugaro
+update`: `TestInstallationAtPolicyVersion7ConvergesBinaries`). *Why:* a version-7
 image tolerates a new *top-level* key (it lands in `UnknownKeys`), so tolerating would not be
-fail-open — but it would be **fail-silent**: the owner publishes a path list, the version-5 image
+fail-open — but it would be **fail-silent**: the owner publishes a path list, the version-7 image
 refuses the very file the list admits, and the run ends a draft with nothing saying why. That is the
 "published change that silently does nothing" class `CLAUDE.md`'s HARD RULE forbids, and `fugaro
 update` refreshes the image in the same command, so the lockstep costs the operator nothing.
@@ -327,14 +330,14 @@ that says less than the reason already does. *Why:* `failed` already means a pol
 runner made, and a refused binary is exactly that; the label this folder adds is for the run nothing
 failed in.
 
-**D992 — what the agent is told.** **Recommended (not ruled on 2026-11-04):** the implement prompt
+**D992 — what the agent is told.** **Answered 2026-11-15: as recommended** — the implement prompt
 names the admitted paths and
 the cap, and the refusal sentence names the rule and says a repository cannot widen it. *Cost of the
 alternative:* saying nothing in the prompt keeps the prompt shorter and makes every run that needs to
 add an asset fail once before it finds out — a full retry round spent on a fact the run could have
 been given for one line.
 
-**D993 — what the pull request says.** **Recommended (not ruled on 2026-11-04):** one bounded line
+**D993 — what the pull request says.** **Answered 2026-11-15: as recommended** — one bounded line
 in the status section
 (`binaries: 2 admitted (…, …)`) when a run committed a binary at an admitted path, and the refusal
 in the run's reason and the PR's own status line when it did not. *Cost of the alternative:* saying

@@ -620,7 +620,7 @@ func repointedAliasFixture(t *testing.T) *projectFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, _, _, err := policyNodeForPublish(t.Context(), lc, nil, nil, false, true, false)
+	body, _, _, err := policyNodeForPublish(t.Context(), lc, nil, nil, false, true, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
