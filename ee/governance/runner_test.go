@@ -36,6 +36,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 	"github.com/dimipaun/fugaro/internal/tier"
+	"github.com/dimipaun/fugaro/internal/verify"
 )
 
 // stageTimeoutCfg is the fixture repository's file with the workflow's
@@ -1003,12 +1004,31 @@ func movedOffTheNarrowedCommit(t *testing.T, _ context.Context, req agent.Reques
 // movedOntoTheRecordedBase is the other way a fix round leaves the narrowed
 // commit behind: the run's own commit is replayed onto main, the base the run
 // recorded, so the round that follows reads the recorded range and is handed
-// nothing implement did not write. It is the drift the digest flags and the
-// stop does not.
-func movedOntoTheRecordedBase(t *testing.T, _ context.Context, req agent.Request) (agent.Result, error) {
+// nothing implement did not write. The range has moved, and the moved range is
+// the run's own commits still — so the stop does not fire and neither does the
+// digest's drift flag, which needs a path outside them (reviewScopeDrift).
+func movedOntoTheRecordedBase(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 	t.Helper()
 	runnertest.Script(t, req, "git rebase -q --onto origin/main origin/"+integrationBranch)
+	// The rebase rewrote the commit implement's own verify was made on, and the
+	// readiness rule wants a passing record for the commit the run ends on, so
+	// the fix verifies what it leaves — what Implement does for its own commit.
+	if _, err := verify.Run(ctx, verify.Options{StateDir: stateDirOf(req), Kind: verify.KindTest,
+		Env: req.Env, Stdout: io.Discard, Stderr: io.Discard}); err != nil {
+		t.Fatal(err)
+	}
 	return agent.Result{CostUSD: 0.5}, nil
+}
+
+// stateDirOf is the state directory the stage was handed, which is where a
+// verify record is written (runnertest.Implement makes the same lookup).
+func stateDirOf(req agent.Request) string {
+	for _, kv := range req.Env {
+		if v, ok := strings.CutPrefix(kv, "FUGARO_STATE_DIR="); ok {
+			return v
+		}
+	}
+	return ""
 }
 
 // TestReviewScopeMismatchHaltsBeforeReview: a review round about to be handed
@@ -1105,6 +1125,36 @@ func TestReviewScopeNotApplicableNeverHalts(t *testing.T) {
 		}
 		if got := len(h.Calls()); got != 2 {
 			t.Fatalf("%d stages ran, want implement and review", got)
+		}
+	})
+
+	t.Run("a moved range that is still the run's own commits", func(t *testing.T) {
+		h := runnertest.New(t, fixtureYAML(t), nil)
+		integrationOnRemote(t, h.Provider.Remote)
+		// The fix round replays the run's own commit onto the base the run
+		// recorded, so the round after it reads the recorded range and is handed
+		// nothing implement did not write: the range moved and is still the run's
+		// own commits, which is the case the stop has to tell from the mismatch
+		// above.
+		rec, err := h.Run(t, cutFromTheIntegrationBranch,
+			runnertest.Review("changes", 1), movedOntoTheRecordedBase, runnertest.Review("ship", 0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.Halt != nil || rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+			t.Fatalf("record = %+v, halt = %+v: a moved range that is still the run's own commits stopped the run", rec, rec.Halt)
+		}
+		sc := rec.ReviewScope
+		if sc == nil || sc.Applicable || sc.WhyNot != runstore.ReviewScopeRangeMoved {
+			t.Fatalf("review scope = %+v, want the moved comparison the round was read over", sc)
+		}
+		if len(sc.Outside) != 0 {
+			t.Errorf("review scope outside = %v, want nothing implement did not write", sc.Outside)
+		}
+		// Both rounds are bought: the stop is about the range a round would be
+		// handed, and this one is handed the run's own work.
+		if got := len(h.Calls()); got != 4 {
+			t.Fatalf("%d stages ran, want implement, two review rounds and the fix", got)
 		}
 	})
 
