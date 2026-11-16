@@ -637,8 +637,13 @@ func (s *Server) admitContextRepos(ctx context.Context, id Identity, repos []str
 				message: "the call names a context repository this service cannot read, and no allow_repos can admit one it cannot read"}
 		}
 		if !projectpolicy.AdmitRepo(shared.AllowRepos, canonical) {
+			// NotAdmitted's own sentence, which is the one the runner's
+			// admission and the launcher's advisory twin already answer with:
+			// one refusal for the same repository, worded once, so an operator
+			// reading the service's line and the launcher's report reads the
+			// same repository and the same fix.
 			return &contextAdmission{status: StatusRequestRefused, typ: ErrorRequestRefused,
-				message: requestRefused + "the project's allow_repos does not admit " + repo + ": " + projectpolicy.NotAdmitted(shared.AllowRepos, canonical)}
+				message: requestRefused + projectpolicy.NotAdmitted(shared.AllowRepos, canonical)}
 		}
 	}
 	return nil
