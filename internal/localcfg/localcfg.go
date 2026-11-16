@@ -2689,13 +2689,20 @@ func (c *Config) validate() error {
 	}
 	// The explicit-unset record names what is gone, so every entry is held to
 	// the shape a name of its block has: a craft is one of config.CraftNames,
-	// and a pool and a credential share the reference rule a craft's access is
-	// written with (config.ValidCredentialRef), which is also the rule that
-	// never echoes the entry — the record is a list of names, and a value
-	// pasted where one belongs (a credential's secret, a pool's members) is
-	// exactly the mistake this block can carry, so no refusal here repeats it.
-	// Naming which block is wrong is the sentence's job; printing the entry is
-	// how a secret reaches a terminal, a log and an issue report.
+	// and a pool and a credential are held to the rule their names are written
+	// with where they are referenced, config.ValidCredentialRef. That is the
+	// only rule internal/config exports for a single name (the definition's own,
+	// credentialNameProblem, is that package's and unexported), and the one name
+	// the two disagree on — the built-in `vertex`, which the reference rule
+	// admits because a craft's access may name it and the definition rule
+	// refuses — is a name no block can hold, so such an entry matches no member
+	// of the node and the reconcile clears it with nothing to delete (N4). That
+	// rule is also the one that never echoes the entry — the record is a list of
+	// names, and a value pasted where one belongs (a credential's secret, a
+	// pool's members) is exactly the mistake this block can carry, so no refusal
+	// here repeats it. Naming which block is wrong is the sentence's job;
+	// printing the entry is how a secret reaches a terminal, a log and an issue
+	// report.
 	if r := c.NodeRemovals; r != nil {
 		for _, l := range []struct {
 			at    string
