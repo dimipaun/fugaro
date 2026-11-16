@@ -62,7 +62,7 @@ func RepoLevelSecret(name string) bool {
 	if _, reserved := ReservedSecrets[name]; reserved {
 		return false
 	}
-	if ClaudeOAuthSecret(name) || CodexOAuthSecret(name) || name == CredentialsBundleSecret {
+	if ClaudeOAuthSecret(name) || CodexOAuthSecret(name) || KeyCredentialSecret(name) || name == CredentialsBundleSecret {
 		return false
 	}
 	return true

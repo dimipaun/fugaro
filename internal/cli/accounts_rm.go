@@ -134,15 +134,22 @@ type accountsRmPlan struct {
 	entry   bool // the profile's list loses the name
 	drop    bool // the declaration, its secret and its job go too
 	// typed is the account's own entry in the credentials block: the one
-	// `accounts add --type claude-oauth` declares beside the account, which is
-	// what lets a craft or a pool spend the name. It goes with the account —
-	// an entry left behind is a credential no service holds that a pool of
-	// this very file is still allowed to list, which is the state add's own
-	// --type refusal exists to keep out of the file (accounts_add.go).
-	typed    bool
-	allow    []string
-	secretID string
-	rest     []string // the profiles that still list the account after the edit
+	// `accounts add --type` declares beside the account, whatever type this
+	// release can define, which is what lets a craft or a pool spend the name.
+	// It goes with the account — an entry left behind is a credential no
+	// service holds that a pool of this very file is still allowed to list,
+	// which is the state add's own --type refusal exists to keep out of the
+	// file (accounts_add.go).
+	typed bool
+	allow []string
+	// secretName is the secret this removal deletes, and secretID its full ID:
+	// the account's own claude-oauth-token-<name> for an account whose value is
+	// a Claude token, and the credential's derived credential-<name>-key for a
+	// key credential (config.CredentialValueSecret, D1670). The block names the
+	// one it really deleted.
+	secretName string
+	secretID   string
+	rest       []string // the profiles that still list the account after the edit
 	// repos is the repository entries whose own claude_accounts names this
 	// account (docs/project-claude-accounts.md §3). They are cleared with the
 	// declaration rather than refused over, for the crafts' reason: no command
@@ -301,13 +308,21 @@ func accountsRmResolve(path string, lc *localcfg.Config, name, want string, old 
 		return accountsRmPlan{}, nil, nil, accountsRmServed(name, serving)
 	}
 
+	// The container the account's value is really in, named by the one function
+	// that decides it (config.CredentialValueSecret): a key credential's value
+	// is the key its provider issued, under the credential's own derived secret
+	// name, and asking Secret Manager for the account's token container instead
+	// would leave that key where it is while this command reported the account
+	// gone — the one state its own contract may not leave behind.
+	valueSecret := config.CredentialValueSecret(lc.Credentials, name)
 	plan := accountsRmPlan{
-		name:     name,
-		profile:  want,
-		entry:    want != "",
-		typed:    accountsRmTyped(lc, name),
-		allow:    slices.Clone(lc.ClaudeAccounts[name].AllowDataTo),
-		secretID: gcp.ProjectSecretID(lc.Name, config.ClaudeAccountSecret(name)),
+		name:       name,
+		profile:    want,
+		entry:      want != "",
+		typed:      accountsRmTyped(lc, name),
+		allow:      slices.Clone(lc.ClaudeAccounts[name].AllowDataTo),
+		secretName: valueSecret,
+		secretID:   gcp.ProjectSecretID(lc.Name, valueSecret),
 	}
 	// The declaration goes when nothing lists it any more: after the entry
 	// above, or at once for an account no profile ever listed.
@@ -392,16 +407,16 @@ func accountsRmResolve(path string, lc *localcfg.Config, name, want string, old 
 
 // accountsRmTyped is whether this account carries a typed half: the entry in
 // the credentials block that names it as the credential a craft or a pool may
-// spend. Only the type this pair's own token step serves is one `accounts add
-// --type` wrote, so an entry of another type is a declaration this command did
-// not make and is left where it is.
+// spend. Every type this release can define is one `accounts add --type` wrote
+// — the loader refuses the others (config.ValidateCredentials) — so an entry
+// that parses is this pair's own and goes with the account, which is what makes
+// the removal symmetric with the write for a key credential too: leaving
+// credentials.<name> behind beside a deleted credential-<name>-key is exactly
+// the entry-without-a-value state add's own --type refusal keeps out of the
+// file.
 func accountsRmTyped(lc *localcfg.Config, name string) bool {
-	for _, c := range lc.Credentials {
-		if c.Name == name && c.Type == config.CredentialTypeClaudeOAuth {
-			return true
-		}
-	}
-	return false
+	c, ok := config.CredentialNamed(lc.Credentials, name)
+	return ok && slices.Contains(config.SupportedCredentialTypes(), c.Type)
 }
 
 // accountsRmPoolMember refuses an account whose typed entry is still a pool's
@@ -1206,14 +1221,14 @@ func accountsRmReport(cmd *cobra.Command, lc *localcfg.Config, stages map[string
 		// The account's name is the value column and the secret's ID opens the
 		// rest, as add's report has it: the ID is longer than that column, so
 		// naming it there would run into the sentence that says what happened to
-		// it ("claude-oauth-token-team-adeleted: …").
-		row("secret", plan.name, config.ClaudeAccountSecret(plan.name)+" "+secret)
+		// it ("credential-team-a-keydeleted: …").
+		row("secret", plan.name, plan.secretName+" "+secret)
 	} else {
 		row("account", plan.name, "claude_accounts."+pluginwire.Printable(plan.name)+" stays: "+accountsAddProfiles(plan.rest)+" still lists it")
 		// The secret's row is here too, and says the step did not run: a block
 		// that leaves it out reads as a deletion that printed nothing, and this
 		// is the one row a reader checks for whether the credential is gone.
-		row("secret", plan.name, config.ClaudeAccountSecret(plan.name)+" kept, not deleted: "+accountsAddProfiles(plan.rest)+" still serves the account, so its token is untouched")
+		row("secret", plan.name, plan.secretName+" kept, not deleted: "+accountsAddProfiles(plan.rest)+" still serves the account, so its value is untouched")
 	}
 	row("publish", "policy node", accountsRmPublishLine(plan, stages[initflow.Policy], allow, carried, why))
 	row("deploy", "jobs", accountsRmDeployLine(lc, plan, stages[initflow.Installation]))

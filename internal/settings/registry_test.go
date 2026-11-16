@@ -219,23 +219,11 @@ func TestRegistryOwnerNamesACommand(t *testing.T) {
 		// this table's, and the read's own map is where it becomes the command's
 		// name (settingsOwnerCommands).
 		"config init",
-		// The keys of the machine's own config that no command edits — the
-		// Issues section's two nudge thresholds (G12): the token names the file
-		// they are stated in, as `config` and `config init` name theirs, and the
-		// read's map names `fugaro update`, which writes it.
-		"config local",
 		// The image map's own family (D1906): the key is the project's image
 		// policy per repository and `fugaro image map set` is what writes it, so
 		// the row names that command rather than `fugaro project`, which writes
 		// the project's other policy keys and not this one.
 		"image map",
-		// The six orchestrator ceilings (G12): the block is stated in the
-		// machine's own config and `fugaro project policy publish` is what
-		// carries it to the node, and the token is this block's own rather than
-		// `project` — that one is a family of settingsFamilyCommands, so naming
-		// it would refuse the six keys by name of `fugaro project` and print a
-		// bare command for keys no subcommand of it edits.
-		"project policy",
 		// The clone URLs' family, the image map's twin: an entry is keyed by a
 		// canonical repository name and its value is held to the node's own
 		// rule, so `fugaro project clone-url` is where the two are checked
@@ -273,6 +261,11 @@ var (
 		"providers.*.secret":              "a Secret Manager name",
 		"project_secrets.*.allow_data_to": "a list of destinations, not a credential",
 		"project_secrets.*.proxy":         "a Secret Manager name",
+		// The cascade's cap on how many runs may hold one shared credential at
+		// a time (projectpolicy.Credentials.ConcurrencyPerToken): the word is
+		// the credential's, the value is a count of runs, and the read prints
+		// the figure the node holds.
+		"credentials.concurrency_per_token": "a count of runs, not a credential",
 		// The cascade's cap is a count of runs, not key material: "token" here
 		// is the shared OAuth token the runs queue behind, and the value is how
 		// many of them may hold it at once (D142). Printing it is the point of

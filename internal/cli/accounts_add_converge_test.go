@@ -512,7 +512,7 @@ func TestAccountsAddDeployLineOnlyClaimsADeploymentForChanged(t *testing.T) {
 	lc := &localcfg.Config{Profiles: map[string]config.JobProfile{"standard": {Provider: "github"}}}
 	job := gcp.ProjectJobName("standard", "github", "team-a")
 	line := func(state initflow.State, detail string) string {
-		return accountsAddDeployLine(lc, "standard", "team-a", initflow.StageResult{Name: initflow.Installation, State: state, Detail: detail})
+		return accountsAddDeployLine(lc, "", "standard", "team-a", initflow.StageResult{Name: initflow.Installation, State: state, Detail: detail})
 	}
 
 	got := line(initflow.Changed, "deployed the job set")

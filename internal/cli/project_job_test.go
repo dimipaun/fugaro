@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
@@ -71,6 +72,33 @@ const projectJobPolicy = `{"version":9,"allow_repos":["github/acme/*"],` +
 // execution is bounded by, and so what the launcher's own reads of the job
 // (the budget token's window) must answer with.
 const projectJobTimeout = 6 * time.Hour
+
+// projectJobCascadePolicy is projectJobPolicy with the project's cascade
+// switch turned on and the allow-list a cascade run needs: O2's spelling of the
+// switch (routing.claude.via, which only the operator can set) and the models
+// the credentials service holds every call of the run to, without which the
+// launch refuses it (cascadeLaunchRefusal, the owner's ruling of 2026-10-22).
+// The budget node's mode is the one that keeps the gateway on, because a
+// cascade run holds no model credential of its own (D143).
+const projectJobCascadePolicy = `{"version":5,"allow_repos":["github/acme/*"],` +
+	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"}},` +
+	`"routing":{"claude":{"via":"cascade"}},` +
+	`"budget":{"mode":"observe","allowed_models":["claude-sonnet-5-5"]}}`
+
+// newCascadeProjectJobFixture is the installation a real cascade launch runs
+// on: the shared-job fixture with the budget mode whose gateway is on, the
+// cascade switch published with the allow-list beside the profile that serves
+// the job, the credentials rules marker the launch reads out of the database,
+// and a checkout of acme/app written from yaml — the document the launch
+// resolves its agent.auth from.
+func newCascadeProjectJobFixture(t *testing.T, yaml string) *projectJobFixture {
+	t.Helper()
+	f := newProjectJobFixtureMode(t, "observe")
+	publishPolicy(t, f.launchBudgetFixture, projectJobCascadePolicy)
+	f.db.Set(rules.PathCredsRulesMarker(), rules.CredsRulesVersion)
+	projectJobCheckoutYAML(t, yaml)
+	return f
+}
 
 // newProjectJobFixture is newLaunchBudget plus the profile: two repositories
 // admitted to one profile, the profile in the local config and in the
@@ -3103,10 +3131,10 @@ func addRepoAppIDToFixture(t *testing.T, f *cloudFixture) {
 // (D893 (c), the fetch path of internal/gitprov/github's ServiceTokens, which
 // the variable's presence opens).
 //
-// The launch itself adds nothing: a job named at launch is not told the
-// address (credentialsServiceLaunchEnv's rule for a shared job), so the value
-// has to come from the variant's own deployment, and the assertion below is
-// that it does.
+// The launch itself adds nothing: a review launch is told nothing at all
+// (credentialsServiceLaunchEnv's rule for a review job, which the address
+// would otherwise reach since B5.2), so the value has to come from the
+// variant's own deployment, and the assertion below is that it does.
 //
 // Mutation (run, restore): mount github-app-key or a Claude token on the
 // variant (internal/infra's reviewVariant), or hand the address in as a
@@ -3134,7 +3162,7 @@ func TestReviewJobVariantIsHandedNoToken(t *testing.T) {
 	// which is why the nil below is this rule and not a config with no
 	// service in it. The other two halves of the switch are the record above
 	// and the cascade repository a checked-out launch reads its auth from.
-	if env := credentialsServiceLaunchEnv(lc, "", "acme/app", config.AuthCascade, "", false); len(env) != 1 || env[0] != providers.EnvCredentialsServiceURL+"="+credentialsServiceFixtureURL {
+	if env := credentialsServiceLaunchEnv(lc, "", "acme/app", config.AuthCascade, "", false, false); len(env) != 1 || env[0] != providers.EnvCredentialsServiceURL+"="+credentialsServiceFixtureURL {
 		t.Fatalf("a repository launch on this config is handed %v, want the service's address alone: the fixture is not an opted-in installation", env)
 	}
 	for _, account := range []string{"acme-personal", ""} {
@@ -3151,7 +3179,7 @@ func TestReviewJobVariantIsHandedNoToken(t *testing.T) {
 			t.Errorf("the launcher resolves the review job %s, which the installation does not deploy (%v): a launcher cannot launch a job that does not exist", job.Name, slices.Sorted(maps.Keys(deployed)))
 			continue
 		}
-		if env := credentialsServiceLaunchEnv(lc, job.Name, "acme/app", config.AuthCascade, "", false); env != nil {
+		if env := credentialsServiceLaunchEnv(lc, job.Name, "acme/app", config.AuthCascade, "", false, true); env != nil {
 			t.Errorf("a launch on the review job %s hands the execution %v: the variant carries the service's address from its deployment, and a per-launch entry is a value an execution object records", job.Name, env)
 		}
 		if got := v.Env[providers.EnvCredentialsServiceURL]; got != credentialsServiceFixtureURL {
@@ -3168,6 +3196,139 @@ func TestReviewJobVariantIsHandedNoToken(t *testing.T) {
 		if len(v.SecretEnv) != 0 {
 			t.Errorf("the review job %s mounts %v: the variant mounts no secret at all", job.Name, v.SecretEnv)
 		}
+	}
+}
+
+// TestLaunchHandsTheServiceURLToASwitchedProjectJob is B5.2 through a real
+// launch, because the job the launcher resolved is the launcher's to get right
+// and a helper test cannot see its call site: a shared project job whose
+// profile the service serves is handed the address exactly as a repository's
+// own job is, and the grant that makes the address usable is the job account's
+// (deploy/terraform/gcp/modules/project/sa.tf).
+//
+// The fixture is a real shared-job launch (projectJobFixture: the profile, the
+// published policy, the job the installation deployed) on an installation that
+// has the credentials service, with the checkout's cascade workflow selecting
+// it — asserted, so the test cannot pass by launching the per-repository job
+// instead, which is the launch that already carried the address before this
+// task.
+//
+// Red against main, where credentialsServiceLaunchEnv answered nil for every
+// job != "".
+func TestLaunchHandsTheServiceURLToASwitchedProjectJob(t *testing.T) {
+	f := newCascadeProjectJobFixture(t, projectJobCascadeRepoYAML)
+	f.appendConfig(t, "credentials_service:\n  url: "+credentialsServiceFixtureURL+"\n")
+	markRepoCredentialsServiceReady(t, f.cloudFixture)
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261116-090000-aaaa", "Add a feature"); err != nil {
+		t.Fatalf("a launch of a switched repository on the installation's shared job: %v", err)
+	}
+	calls := f.run.RunRequests()
+	if len(calls) != 1 || calls[0].Job != f.job {
+		t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the shared job %s: without that this test says nothing about a shared project job", len(calls), calls, f.job)
+	}
+	if got := calls[0].Env[providers.EnvCredentialsServiceURL]; got != credentialsServiceFixtureURL {
+		t.Errorf("the execution carries %s = %q, want %q: the run reaches the service for its model credential and its repository's read mint, and the address is the whole of what tells it where (B5.2)", providers.EnvCredentialsServiceURL, got, credentialsServiceFixtureURL)
+	}
+}
+
+// TestTheSlipOfASwitchedProjectJobNamesTheJobsOwnAccount is the account half of
+// the launch above, and it is the invariant the per-repository launch has pinned
+// since DS1.5 (run_slip_test.go's TestRunRequestsSlipWhenServiceServesIt): the
+// grant call names the account the EXECUTION will call as, because that is the
+// account the service checks the claim against (slipIsThisRuns, D1937). An
+// execution on a shared project job calls as the JOB's account — one per
+// (profile, provider, account) of the published policy
+// (gcp.ProjectServiceAccountID, what internal/infra's ProjectJobs deployed that
+// job's account with) — and never as the account the pair (slug, workflow)
+// derives, which is some per-repository job's: a slip recorded for an account
+// this execution cannot be is a slip it can never claim, so every launch would
+// set FUGARO_SLIP on an execution whose first model call is refused, and the
+// service would keep a grant the run's own audit line calls granted and nobody
+// spends.
+//
+// The address is the fixture's own record and nothing dials it, which is exactly
+// why the URL half of the launch above cannot see this: the grant call fails
+// there and the run starts without a slip (runSlipEnv's quiet failures). The
+// grant is faked here, so the request the launcher really makes is the one
+// asserted — the same seam the per-repository slip tests use.
+//
+// Red before the fix, where runSlipEnv derived the account from (slug, workflow)
+// for every launch: the per-repository account is not the shared job's.
+func TestTheSlipOfASwitchedProjectJobNamesTheJobsOwnAccount(t *testing.T) {
+	f := newCascadeProjectJobFixture(t, projectJobCascadeRepoYAML)
+	f.appendConfig(t, "credentials_service:\n  url: "+credentialsServiceFixtureURL+"\n")
+	markRepoCredentialsServiceReady(t, f.cloudFixture)
+	var asked credsvc.SlipGrantRequest
+	grants := 0
+	prev := slipGrant
+	slipGrant = func(_ context.Context, _ string, req credsvc.SlipGrantRequest) (credsvc.SlipGrantResponse, error) {
+		asked, grants = req, grants+1
+		return credsvc.SlipGrantResponse{Slip: fakeSlipID, MaxRuntimeSeconds: req.MaxRuntimeSeconds}, nil
+	}
+	t.Cleanup(func() { slipGrant = prev })
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261116-090003-dddd", "Add a feature"); err != nil {
+		t.Fatalf("a launch of a switched repository on the installation's shared job: %v", err)
+	}
+	if grants != 1 {
+		t.Fatalf("the launch made %d grant calls, want exactly one: a run has one slip", grants)
+	}
+	calls := f.run.RunRequests()
+	if len(calls) != 1 || calls[0].Job != f.job {
+		t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the shared job %s: this test is about the account of the job the execution lands on", len(calls), calls, f.job)
+	}
+	// The profile lists no Claude account and this run holds no token, so the
+	// job it lands on is the profile's no-account one and its account segment is
+	// empty (projectJobPolicy, config.ProjectJobAccounts).
+	want := gcp.ProjectServiceAccountID("standard", "github", "") + "@proj-1234.iam.gserviceaccount.com"
+	if asked.Account != want {
+		t.Errorf("the grant call named the account %q, want the shared job's own (%q): the claim is checked against the account the execution calls as, so any other one is a slip this run can never claim — the model call is refused mid-run and the grant stays unclaimed on the service", asked.Account, want)
+	}
+	if got := calls[0].Env[envSlip]; got != fakeSlipID {
+		t.Errorf("the execution carries %s = %q, want the slip the service granted (%q): the id is what the job claims the grant with", envSlip, got, fakeSlipID)
+	}
+}
+
+// TestLaunchKeepsAnUnswitchedProjectJobOffTheService is the same launch on
+// each half of the switch the shared path reads, and it is the direction that
+// has to fail closed: the address is also what opens the git provider keyless
+// (internal/gitprov/providers/providers.go), so a job handed it for a
+// credential the service will not serve loses the provider key it mounts and
+// gets nothing in its place.
+//
+// The two rows are the switch's own conditions and nothing else: the
+// installation has the service in both, and the row that differs is the
+// repository's record (`fugaro update`'s answer about its own root) or the
+// document the run will read (`agent.auth`, which the service serves only as
+// the cascade).
+func TestLaunchKeepsAnUnswitchedProjectJobOffTheService(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		repo     string
+		recorded bool
+	}{
+		{"a record that says off", projectJobCascadeRepoYAML, false},
+		{"an auth the service does not serve", strings.Replace(projectJobRepoYAML, "auth: api-key", "auth: vertex", 1), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCascadeProjectJobFixture(t, tc.repo)
+			f.appendConfig(t, "credentials_service:\n  url: "+credentialsServiceFixtureURL+"\n")
+			if tc.recorded {
+				markRepoCredentialsServiceReady(t, f.cloudFixture)
+			}
+
+			if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261116-090001-bbbb", "Add a feature"); err != nil {
+				t.Fatalf("a launch of an unswitched repository on the installation's shared job: %v", err)
+			}
+			calls := f.run.RunRequests()
+			if len(calls) != 1 || calls[0].Job != f.job {
+				t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the shared job %s: without that this test says nothing about a shared project job", len(calls), calls, f.job)
+			}
+			if got, ok := calls[0].Env[providers.EnvCredentialsServiceURL]; ok {
+				t.Errorf("the execution carries %s = %q, want no entry at all: the switch this launcher hands the address on is the one the plan decides with (infra.CredentialsServiceServes), and a job off it keeps every mount it has (G17) rather than being sent to a service that cannot serve it", providers.EnvCredentialsServiceURL, got)
+			}
+		})
 	}
 }
 

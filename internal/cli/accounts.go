@@ -54,7 +54,9 @@ func (o *accountsOptions) addFlags(cmd *cobra.Command) {
 
 // accountsListDoc is fugaro accounts ls --json's shape: the repository and
 // the names it may choose among (config.AllowedClaudeAccounts's own order,
-// "default" first), names only — never a secret ID or a token value.
+// "default" first, less the key credentials' names —
+// config.ClaudeAccountTokenNames), names only — never a secret ID or a token
+// value.
 //
 // Complete is false when project selection failed for a reason other than
 // an explicit --config/--project/$FUGARO_CONFIG/$FUGARO_PROJECT (an
@@ -111,7 +113,11 @@ func newAccountsLsCmd() *cobra.Command {
 accept for a repository: "default" (the repository's own unnamed
 claude-oauth-token secret, always allowed) first, then every claude_accounts
 name in the local config whose allow_data_to lists the repository, sorted
-(config.AllowedClaudeAccounts, the one place that decides the question).
+(config.AllowedClaudeAccounts, the one place that decides the question) and
+less every name the credentials block declares a key credential
+(config.ClaudeAccountTokenNames), whose value is the key its provider issued
+under the credential's own derived secret and not a Claude account's token at
+all.
 
 The names are a local, read-only lookup, offline whenever a project config is
 already selected on this machine: it reads the local config file the CLI would
@@ -203,10 +209,12 @@ func accountsLs(cmd *cobra.Command, o accountsOptions) error {
 		return err
 	}
 	var claudeAccounts map[string]config.ClaudeAccount
+	var credentials []config.Credential
 	if lc != nil {
 		claudeAccounts = lc.ClaudeAccounts
+		credentials = lc.Credentials
 	}
-	names := config.AllowedClaudeAccounts(claudeAccounts, repo)
+	names := config.ClaudeAccountTokenNames(credentials, config.AllowedClaudeAccounts(claudeAccounts, repo))
 	doc := accountsListDoc{Repo: repo, Accounts: names, Complete: note == "", Note: note}
 	if lc != nil {
 		// The block is copied rather than shared: it is the read's own document,

@@ -1677,20 +1677,24 @@ func TestCloneRecipeV07NeedsA07Image(t *testing.T) {
 }
 
 // TestRefuseCatalogSwitches pins plan P4 and Task 4 step 2 for the route
-// switches: FUGARO_MODEL_PROVIDERS is decoded with DisallowUnknownFields
-// (internal/runner/providers.go) and a decode failure is a hard bootstrap
-// error, so a route that sets require_zdr or price_policy — at any value,
-// default or not: the omitempty tags write the key whenever the owner set it
-// — cannot be deployed while no release reads it. update --repo refuses it
-// before any cloud effect, naming the release that will read it and both ways
-// out (leave it unset, or price the model under model_prices); a route that
-// sets neither passes, and so does a repository with no provider at all.
+// switches, both halves of the gate, because FUGARO_MODEL_PROVIDERS is decoded
+// with DisallowUnknownFields (internal/runner/providers.go) and a decode
+// failure is a hard bootstrap error, so which half applies decides whether a
+// route that sets require_zdr or price_policy may be deployed at all. While no
+// release reads the keys, every route that sets one is refused before any
+// cloud effect, naming the release that will read it and both ways out (leave
+// it unset, or price the model under model_prices); that half is inert now
+// that catalogShipped is true, and is asked here through the flag the gate
+// takes. The shipped half, which is the one fugaro update --repo really runs,
+// judges the installation's base image the way the clone gate does: a release
+// that predates catalogSince is refused, naming the release and the command
+// that moves the image, a non-release ref is only warned about, and no base
+// image at all passes because infra.Repo then builds the job from this
+// release's own image, which reads the keys.
 //
-// The shipped half (the release that reads them has been tagged) judges the
-// installation's base image the way the clone gate does: a release that
-// predates catalogSince is refused, a non-release ref only warned about, and
-// no base image at all means the job is built from this release, which reads
-// them.
+// "Set" is ProvidersEnv's own meaning in every case below: the omitempty tags
+// write the key whenever the owner set it, its default value included, so this
+// gate and the job's own value are read against each other.
 func TestRefuseCatalogSwitches(t *testing.T) {
 	yes, no := true, false
 	allows := []string{"acme/app"}
@@ -1727,62 +1731,43 @@ func TestRefuseCatalogSwitches(t *testing.T) {
 				}
 				return
 			}
-			if err == nil || ExitCode(err) != ExitUserError {
-				t.Fatalf("err = %v, want refused", err)
+			// A set key is deployable: 0.7.5, the release whose runner reads
+			// both, is tagged, and this installation names no base image, so
+			// its job is built from this release's own image.
+			if err != nil || warn.Len() != 0 {
+				t.Fatalf("err = %v, warn = %q, want neither: no fugaro release refuses the key any more", err, warn.String())
 			}
-			for _, want := range []string{
-				"fugaro update --repo refuses to deploy acme/app's provider openrouter",
-				"require_zdr or price_policy",
-				"fugaro " + catalogSince,
-				"model_prices",
-				"require_zdr: true, price_policy: cheapest",
-			} {
-				if !strings.Contains(err.Error(), want) {
-					t.Errorf("%v lacks %q", err, want)
-				}
-			}
-			if warn.Len() != 0 {
-				t.Errorf("warn = %q, want none (refused, not warned)", warn.String())
-			}
-			// The key really is in the value that would be deployed: the
-			// refusal is about a field an older runner would refuse.
+			// The key really is in the value that would be deployed: this
+			// half is only worth asking because the value carries it.
 			v, err := runner.ProvidersEnv(lc.Providers, "acme/app")
 			if err != nil {
 				t.Fatal(err)
 			}
 			if !strings.Contains(v, "require_zdr") && !strings.Contains(v, "price_policy") {
-				t.Fatalf("the gate refused a value that carries no key: %s", v)
+				t.Fatalf("the gate let through a value that carries no key: %s", v)
 			}
 		})
 	}
 
-	// Several routes: every one that set a key is named, sorted.
-	lc := &localcfg.Config{Providers: map[string]config.ModelProvider{
-		"zroute": {AllowDataTo: allows, PricePolicy: config.PricePolicyHighest},
-		"aroute": {AllowDataTo: allows, RequireZDR: &no},
-		"plain":  {AllowDataTo: allows},
-	}}
+	// An installation whose base image predates the release that reads the
+	// keys: refused with the age check, which names the release and the one
+	// command that moves the image. Every route that set a key is named,
+	// sorted, and a route that set none is not.
+	lc := &localcfg.Config{
+		Providers: map[string]config.ModelProvider{
+			"zroute": {AllowDataTo: allows, PricePolicy: config.PricePolicyHighest},
+			"aroute": {AllowDataTo: allows, RequireZDR: &no},
+			"plain":  {AllowDataTo: allows},
+		},
+		BaseImages: map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:0.7.0"},
+	}
 	err := refuseCatalogSwitches("acme/app", lc, &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "providers aroute, zroute") || strings.Contains(err.Error(), "plain") {
-		t.Fatalf("two routes: %v", err)
-	}
-
-	// The shipped half: the base image decides. Before catalogSince is
-	// refused, at it (and past it) passes, a ref that is not a release only
-	// warns, and no base image at all passes (the job is built from this
-	// release, which reads the keys).
-	names := []string{"openrouter"}
-	judge := func(ref string) (string, error) {
-		var warn bytes.Buffer
-		err := catalogSwitchSkew("acme/app", names, ref, true, &warn)
-		return warn.String(), err
-	}
-	warn, err := judge("ghcr.io/dimipaun/fugaro-base:0.7.0")
 	if err == nil || ExitCode(err) != ExitUserError {
-		t.Fatalf("0.7.0: err = %v, want refused", err)
+		t.Fatalf("old base image: err = %v, want refused", err)
 	}
 	for _, want := range []string{
-		"the provider openrouter of acme/app sets require_zdr or price_policy",
+		"providers aroute, zroute",
+		"sets require_zdr or price_policy",
 		"fugaro " + catalogSince + " or later",
 		"ghcr.io/dimipaun/fugaro-base:0.7.0, release 0.7.0",
 		"fugaro update --base base",
@@ -1791,15 +1776,58 @@ func TestRefuseCatalogSwitches(t *testing.T) {
 			t.Errorf("%v lacks %q", err, want)
 		}
 	}
+	if strings.Contains(err.Error(), "plain") {
+		t.Errorf("the refusal names a provider that set no key: %v", err)
+	}
+
+	// The half before the release that reads them exists (asked through the
+	// flag, so the test pins it whatever catalogShipped is): refused whatever
+	// the base image, because no image of any age could read the keys, so
+	// "upgrade your base image" would fix nothing.
+	names := []string{"openrouter"}
+	judge := func(shipped bool, ref string) (string, error) {
+		var warn bytes.Buffer
+		err := catalogSwitchSkew("acme/app", names, ref, shipped, &warn)
+		return warn.String(), err
+	}
+	warn, err := judge(false, "")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("unshipped: err = %v, want refused", err)
+	}
+	for _, want := range []string{
+		"fugaro update --repo refuses to deploy acme/app's provider openrouter",
+		"require_zdr or price_policy",
+		"fugaro " + catalogSince,
+		"model_prices",
+		"require_zdr: true, price_policy: cheapest",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%v lacks %q", err, want)
+		}
+	}
+	if warn != "" {
+		t.Errorf("warn = %q, want none (refused, not warned)", warn)
+	}
+
+	// The shipped half, judged with the constant the gate is handed: the base
+	// image decides. Before catalogSince is refused, at it (and past it)
+	// passes -- the current release's base image included, which is the one
+	// an owner deploying price_policy: highest has -- a ref that is not a
+	// release only warns, and no base image at all passes (the job is built
+	// from this release, which reads the keys).
+	warn, err = judge(catalogShipped, "ghcr.io/dimipaun/fugaro-base:0.7.0")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("0.7.0: err = %v, want refused", err)
+	}
 	if warn != "" {
 		t.Errorf("warn = %q, want none", warn)
 	}
-	for _, ref := range []string{"ghcr.io/dimipaun/fugaro-base:" + catalogSince, "ghcr.io/dimipaun/fugaro-base:0.9.0", ""} {
-		if warn, err := judge(ref); err != nil || warn != "" {
-			t.Errorf("%q: err = %v, warn = %q, want neither", ref, err, warn)
+	for _, ref := range []string{"ghcr.io/dimipaun/fugaro-base:" + catalogSince, "ghcr.io/dimipaun/fugaro-base:0.9.0", "ghcr.io/dimipaun/fugaro-base:0.25.0", ""} {
+		if warn, err := judge(catalogShipped, ref); err != nil || warn != "" {
+			t.Errorf("%q: err = %v, warn = %q, want neither (a route with price_policy: highest deploys on it)", ref, err, warn)
 		}
 	}
-	warn, err = judge("us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c")
+	warn, err = judge(catalogShipped, "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c")
 	if err != nil || !strings.Contains(warn, "not a release base image") || !strings.Contains(warn, "is not checked") {
 		t.Errorf("dev ref: err = %v, warn = %q", err, warn)
 	}
