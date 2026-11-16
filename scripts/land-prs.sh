@@ -262,14 +262,16 @@ else:
     merge = d.get("mergeable") or "UNKNOWN"
     head = d.get("headRefOid") or ""
     # The head is printed before the title, and the title is flattened: the
-    # fields are read from one line, so a title holding a tab or a newline must
-    # not be able to shift the head the merge is pinned to, and the report is
-    # one line per pull request.
+    # fields are read from one line, so nothing a title holds may shift the head
+    # the merge is pinned to or the base the census is read against, and the
+    # report is one line per pull request. The `|` is that line's own separator,
+    # and it was harmless only while the title was the last field: a title
+    # carries one as readily as a colon -- this repository's own history has
+    # `settings set|unset: ...` -- and an unflattened one hands the rest of the
+    # title to the base.
     title = d.get("title") or ""
-    for ch in ("\t", "\n", "\r"):
+    for ch in ("\t", "\n", "\r", "|"):
         title = title.replace(ch, " ")
-    # The base comes last, after the flattened title, and a branch name holds
-    # neither a tab nor a newline: nothing a read answers with can shift it.
     base = d.get("baseRefName") or ""
     print("%s|%s|%s|%s|%s|%s" % (state, draft, merge, head, title, base))
 PY

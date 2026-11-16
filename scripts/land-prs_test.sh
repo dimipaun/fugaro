@@ -607,6 +607,24 @@ expect_contains "$OUT" "161: OPEN, ready, MERGEABLE, the one with a tab and a ne
   "the report shows the title flattened onto one line"
 expect_contains "$OUT" "161: MERGED" "the pull request merged"
 
+# ----------------------------------------------------- a title with a pipe in it
+# The fields come back on one `|`-separated line and the base is read after the
+# title, so a pipe in a title is not the harmless character it was while the
+# title was the last field: unflattened it takes the rest of the line, the base
+# becomes a piece of the title, and a batch that merged everything is either
+# skipped as a batch of two bases or sent to fetch a branch that does not exist.
+new_case title-with-a-pipe
+view 162 OPEN false MERGEABLE "settings set|unset: the pair"
+land 162
+expect_status "$RC" 0 "a title with a pipe still lands"
+expect_contains "$(calls)" "pr merge 162 --squash --delete-branch --match-head-commit oid-162" \
+  "the merge is pinned to the head the read named, not to a piece of the title"
+expect_contains "$OUT" "162: OPEN, ready, MERGEABLE, settings set unset: the pair" \
+  "the report shows the pipe flattened onto one line"
+expect_contains "$OUT" "census: ok" "the census runs on the base the read named"
+expect_absent "$OUT" "census: skipped" "a pipe in a title is not a second base"
+expect_contains "$(gitcalls)" "fetch origin main" "the base fetched is main, not a piece of the title"
+
 # ----------------------------------------------------------------- the census
 # A merged batch is followed by the census on the merged tree: two pull requests
 # that each moved the same pinned count in a doc merge with no conflict at all
