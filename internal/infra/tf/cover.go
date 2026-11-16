@@ -1870,6 +1870,15 @@ func (c Cover) grant(rc ResourceChange, creates, createdSAIDs, heldSAIDs map[str
 	if why == "" && t == "google_project_iam_member" && !unknown(rc.Change, "role") && str(rc.Change.After["role"]) == "roles/batch.jobsEditor" {
 		why = c.jobsCondition(rc.Change)
 	}
+	// The resident orchestrator's token-minter row is the one row of its table
+	// whose TARGET is part of what makes it section 4.3's: the bit opens the
+	// cell by member and by role, and this closes it again to the signer
+	// account of this run. A plan that moved the role to another account would
+	// otherwise hand the account that may mint a token for any uid the reach of
+	// every job account of the installation.
+	if why == "" && t == "google_service_account_iam_member" && c.isOrchestratorMember(str(rc.Change.After["member"])) {
+		why = c.orchestratorMinterGrant(rc.Change)
+	}
 	if why == "" {
 		why = c.deployerGrant(t, rc.Change, dep.accounts[modulePrefix(rc)])
 	}
@@ -2158,6 +2167,20 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, creates
 		if kind == toCredentials {
 			return "a computed role to the credentials service's account: it holds the bundle's accessor, the dynamic class's prefix accessor and the shared lister, named, and the prefix condition is what narrows the second (D1931, Q6)"
 		}
+		// The resident orchestrator is refused a computed role as flatly as
+		// those two, and for their reason: the row below this one would accept
+		// a computed role whenever the plan creates ANY custom role of this
+		// module — a plan that created the intake's secret role beside the
+		// grant would then hand the orchestrator a project role nobody can
+		// name, and a project role of this tree is a project-wide reach (the
+		// intake's is create, delete and version-add for every container of the
+		// project, with the name-prefix condition this write has no room to
+		// check). The account's every row is written as a literal in
+		// orchestrator.tf for this reason, and a plan that computes one asks
+		// its owner.
+		if kind == toOrchestrator {
+			return "a computed role to the resident orchestrator's account: section 4.3's table is the whole of what it may hold, every row of it is written as a literal in orchestrator.tf, and a role nobody can name is one no reader of this plan can hold to that table"
+		}
 		if createsDeployerRole && typ == "google_project_iam_member" {
 			// The plan is creating one of the deployer's roles, so a computed
 			// PROJECT role here could be one of the seven conditioned ones —
@@ -2444,6 +2467,49 @@ func (c Cover) deployerTokenCreator(ch Change) string {
 		want = DeployerAccount(dp) + " or the verifier account " + VerifierAccountID + "@" + dp + ".iam.gserviceaccount.com"
 	}
 	return fmt.Sprintf("grants %s on %s, which is not %s: the operators' impersonation is on those two accounts alone", DeployerTokenCreatorRole, id, want)
+}
+
+// orchestratorMinterGrant says why a token-minter grant to the resident
+// orchestrator is not section 4.3's row, "" when it is or when the grant is not
+// this row at all. It exists for the deployer's reason one role over:
+// grantRules decides a grant by its MEMBER and its ROLE, and on
+// google_service_account_iam_member neither of them says WHICH account the role
+// is on — so without this rule a plan granting the resident orchestrator
+// fugaroTokenMinter on a job account, or on any other account of this run,
+// rides the ordinary confirmation, and iam.serviceAccounts.signJwt on an
+// account IS that account: the self-signed JWT it signs is an access token for
+// the issuer, so the resident orchestrator could be the job whose secrets are
+// the model credentials (section 6 rule 5) or any other identity of the
+// installation. The row is the budget signer account of this run and nothing
+// else, in the project the role itself is declared in.
+//
+// Which of this run's projects the signer lives in is not the cover's to
+// derive — the design's Firebase backend may be the installation's own project
+// or one of its own, and the module takes the project from
+// var.orchestrator.firebase_project — so the row is held to that ACCOUNT of
+// this run, in one of this run's projects. The account has to be named: the
+// module writes it out (orchestrator.tf), and a plan that leaves it unknown is
+// a plan whose account nobody can check.
+func (c Cover) orchestratorMinterGrant(ch Change) string {
+	key, ok := c.roleKey(str(ch.After["role"]))
+	if !ok || key != customKey+"fugaroTokenMinter" {
+		return ""
+	}
+	// The account ID the Firebase root's signer carries (modules/firebase/iam.tf,
+	// FugaroAccounts' own spelling of it).
+	const signerID = "fugaro-token-signer"
+	if unknown(ch, "service_account_id") {
+		return "a fugaroTokenMinter grant to the resident orchestrator whose account is not known: section 4.3's row is the budget signer account of this run, written out, and a plan that computes the account is one whose signer nobody can name"
+	}
+	id := str(ch.After["service_account_id"])
+	if m := saName.FindStringSubmatch(id); m != nil {
+		for _, p := range c.Projects {
+			if m[1] == p && m[3] == p && m[2] == signerID {
+				return ""
+			}
+		}
+	}
+	return fmt.Sprintf("grants fugaroTokenMinter on %s to the resident orchestrator: the design's row is the budget signer account of this run (%s), and signJwt on any other account makes the resident orchestrator that account — the job accounts holding the model credentials among them (section 4.3, section 6 rule 5)", id, signerID+"@<one of this run's projects>.iam.gserviceaccount.com")
 }
 
 // accountClause is one clause of a job or build account's bucket condition,

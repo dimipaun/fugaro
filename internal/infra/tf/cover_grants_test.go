@@ -2283,6 +2283,20 @@ func TestOrchestratorAccountIsItsOwnPrincipalKind(t *testing.T) {
 			map[string]any{"member": member}, map[string]any{"role": true}, false},
 		{"the token minter's role on the signer account, in the Firebase project", "google_service_account_iam_member",
 			map[string]any{"member": member, "role": "projects/fp-2/roles/fugaroTokenMinter", "service_account_id": "projects/fp-2/serviceAccounts/" + signer}, map[string]any{}, true},
+		// The row is the signer ACCOUNT and not the role alone: signJwt on any
+		// other account is that account (a self-signed JWT is an access token
+		// for its issuer), so a plan that moved the grant — to a job account
+		// whose secrets are the model credentials, or to any other account of
+		// the run — is refused rather than covered by the role's cell
+		// (orchestratorMinterGrant).
+		{"the token minter's role on a job account instead of the signer", "google_service_account_iam_member",
+			map[string]any{"member": member, "role": "projects/fp-2/roles/fugaroTokenMinter", "service_account_id": "projects/proj-1/serviceAccounts/fugaro-history@proj-1.iam.gserviceaccount.com"}, map[string]any{}, false},
+		{"the token minter's role on the reaper account", "google_service_account_iam_member",
+			map[string]any{"member": member, "role": "projects/proj-1/roles/fugaroTokenMinter", "service_account_id": "projects/proj-1/serviceAccounts/fugaro-reaper@proj-1.iam.gserviceaccount.com"}, map[string]any{}, false},
+		{"the token minter's role on an account the plan leaves unknown", "google_service_account_iam_member",
+			map[string]any{"member": member, "role": "projects/fp-2/roles/fugaroTokenMinter"}, map[string]any{"service_account_id": true}, false},
+		{"the token minter's role on a signer lookalike in a project that is not this run's", "google_service_account_iam_member",
+			map[string]any{"member": member, "role": "projects/fp-2/roles/fugaroTokenMinter", "service_account_id": "projects/fp-9/serviceAccounts/fugaro-token-signer@fp-9.iam.gserviceaccount.com"}, map[string]any{}, false},
 		{"the runs bucket's conditional write, under the launchers' own condition", "google_storage_bucket_iam_member",
 			map[string]any{"member": member, "role": "roles/storage.objectUser", "bucket": bucketName, "condition": launcherCond}, map[string]any{}, true},
 		{"the runs bucket's read, unconditioned", "google_storage_bucket_iam_member",
@@ -2326,6 +2340,23 @@ func TestOrchestratorAccountIsItsOwnPrincipalKind(t *testing.T) {
 		if (len(got) == 0) != tc.covered {
 			t.Errorf("%s: NotCovered = %q, covered want %v", tc.what, got, tc.covered)
 		}
+	}
+
+	// A role the plan leaves UNKNOWN, beside a custom role it creates in this
+	// same module: refused here for the intake's and the credentials service's
+	// reason one kind over, and this is the case that needs the refusal — the
+	// table's project row names a custom role for this kind (fugaroLauncher), so
+	// without the branch a plan that created ANY of the installation's custom
+	// roles beside the grant would cover a project role nobody can name, which
+	// is a project-wide reach (the intake's write role is create, delete and
+	// version-add for every container of the project, and its name-prefix
+	// condition is a thing this walk has no role to read). The account's rows
+	// are literals for this reason.
+	created := customRole(IntakeSecretsRole, "proj-1", []any{"secretmanager.secrets.create", "secretmanager.secrets.delete", "secretmanager.versions.add"})
+	computed := rc("google_project_iam_member", map[string]any{"member": member, "project": "proj-1"}, map[string]any{"role": true}, "create")
+	computedGot := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{created, computed}}, nil)
+	if len(computedGot) == 0 || !strings.Contains(strings.Join(computedGot, "\n"), "a computed role to the resident orchestrator's account") {
+		t.Errorf("a project role left unknown, beside the intake's own custom role created in the same plan: NotCovered = %q, want the computed role refused by name — a role the plan cannot name cannot be held to the design's section 4.3 table", computedGot)
 	}
 
 	// Listed on the review screen by mistake, it is still not a person: the
