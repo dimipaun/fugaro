@@ -26,9 +26,13 @@ deletes. Read those before you start. This file is the commands.
 - **Two sandbox repositories of that installation, already on the credentials-service switch**, one
   whose own `fugaro.yaml` records `agent.auth: api-key` and one whose records `oauth` — and, through
   `fugaro update --repo`, one `creds/repoauth/<slug>` record each, which is what the check reads their
-  auths out of. Name them in that order or the other; the check reads the pair and says which is which.
-  A repository that is not switched, a pair that is not one of each, and an auth the service serves no
-  call by (`cascade`, or anything else) are each stopped before a run is launched.
+  auths out of. The `<slug>` is the repository's own task slug (`task.Slug`: the readable path, a `-`
+  and 16 hex — `acme-sandbox-api-1a2b3c4d5e6f7081`, never the path spelled out of the repository's
+  name), and the check reads it off the `fugaro_repo` label of that repository's jobs, which is the key
+  `fugaro update --repo` writes the record under: a repository whose jobs carry no such label leaves the
+  record unread (verdict `2`). Name them in that order or the other; the check reads the pair and says
+  which is which. A repository that is not switched, a pair that is not one of each, and an auth the
+  service serves no call by (`cascade`, or anything else) are each stopped before a run is launched.
 - `bash`, `mktemp`, `python3`, `gcloud`, `curl` and `fugaro` on PATH, with `gcloud` authenticated as
   you: the two records are read with `gcloud auth print-access-token` and a GET against the
   installation's own Realtime Database (`budget.rtdb_url` in `~/.config/fugaro/projects/fugaro.yaml`, or
@@ -96,8 +100,9 @@ deletes. Read those before you start. This file is the commands.
   budget mode is not `off` (D2071: the mode is read at `fugaro update`, and a switched repository whose
   mode is off has nothing to be served from). A FAIL here **stops the run before any run is launched**.
 - **`record`** — each repository's `creds/repoauth/<slug>` node, read out of the installation's own
-  database: one `api-key` and one `oauth`. `cascade` is refused by name: such a repository is served the
-  whole cascade, and this check is about a repository the service narrows to its own recorded auth.
+  database at the slug its jobs' `fugaro_repo` label carries: one `api-key` and one `oauth`. `cascade` is
+  refused by name: such a repository is served the whole cascade, and this check is about a repository
+  the service narrows to its own recorded auth.
 - **`run-api-key`, `run-oauth`** — the run's own row: `succeeded`, with a pull request. On a repository
   on the switch every model call of that run is answered by the service, so a run that could not finish
   is the service not serving it.
@@ -105,10 +110,14 @@ deletes. Read those before you start. This file is the commands.
   that run and the credentials they name, with tier. No line at all means its model calls were answered
   by something else — the credential the job itself mounts, or an upstream that is not this service.
 - **`served-api-key`** — a line naming `anthropic-api-key` at **tier B**. **`served-oauth`** — a line
-  naming a Claude account's token (`claude-oauth-token[-<account>]`) at **tier A**.
-- **`declared-account`** — the account read off the run's **own** row, and then every tier-A line of
-  that run naming that account's token and no other account the repository's record names. A record
-  naming a single account leaves this row unmeasured (verdict `2`) rather than passing it.
+  naming a Claude account's token at **tier A**, and a tier-A line names the **account** itself —
+  `default` for the unsuffixed `claude-oauth-token`, the bare account name for a named one — never the
+  `claude-oauth-token[-<account>]` Secret Manager container the token is stored in: no audit line
+  carries a container's name.
+- **`declared-account`** — the account read off the run's **own** row (`oauth_account`; the row carries
+  none for a run on the repository's default account, which the service names `default`), and then every
+  tier-A line of that run naming that account and no other account the repository's record names. A
+  record naming a single account leaves this row unmeasured (verdict `2`) rather than passing it.
 - **`proxy`** — a line of the run's own under the purpose `git` or `bitbucket-api`, for the one of the
   two the published policy admits with `proxy: true` (F29). Unmeasured (verdict `2`) when neither is
   published with it.

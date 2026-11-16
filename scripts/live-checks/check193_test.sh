@@ -106,11 +106,15 @@ def record_run(repo, rid):
 
 
 def account_for(repo):
-    """The account a run of this repository declares: the oauth repository's is
-    FAKE_OAUTH_ACCOUNT ('default' unless a case says otherwise), and an api-key
-    repository's run declares none — its credential is the paid key."""
+    """The account a run of this repository declares, as the run's OWN row
+    spells it: FAKE_OAUTH_ACCOUNT, which is EMPTY for the default account —
+    a task spec may not say "default", so a run on the repository's default
+    account declares none and its row carries no `oauth_account` at all
+    (internal/task's OAuthToken rule, internal/runview's row) — and the bare
+    account name for a named one. An api-key repository's run declares none
+    either: its credential is the paid key."""
     if repo == (repos[1] if len(repos) > 1 else ""):
-        return os.environ.get("FAKE_OAUTH_ACCOUNT", "default")
+        return os.environ.get("FAKE_OAUTH_ACCOUNT", "")
     return ""
 
 
@@ -284,8 +288,12 @@ def job_doc(repo):
         envs.append({"name": "FUGARO_PROVIDER_KEY_OPENROUTER",
                      "valueSource": {"secretKeyRef": {"secret": "openrouter-key-abcdef", "key": "latest"}}})
     name = job_name(repo)
+    # The label the record row reads the record's key out of: a job list whose
+    # jobs carry none is the state a check that spelled the key out of the
+    # repository's own name would paper over.
+    labels = {} if mode == "no-repo-label" else {"fugaro_repo": name}
     return {"apiVersion": "run.googleapis.com/v1", "kind": "Job",
-            "metadata": {"name": name, "labels": {"fugaro_repo": name}, "updateTime": UPDATE},
+            "metadata": {"name": name, "labels": labels, "updateTime": UPDATE},
             "spec": {"template": {"spec": {"template": {"spec": {
                 "containers": [{"name": "workflow", "env": envs}],
                 "serviceAccountName": "fugaro-" + name}}}}}}
@@ -324,8 +332,14 @@ elif sub == ("logging", "read"):
         repo_of_run = os.environ.get("FAKE_INFLIGHT_REPO", repos[0] if repos else "")
     proxy_repo = os.environ.get("FAKE_PROXY_REPO", repos[1] if len(repos) > 1 else "")
     oauth_repo = repos[1] if len(repos) > 1 else ""
-    account = os.environ.get("FAKE_OAUTH_ACCOUNT", "default")
-    want = "claude-oauth-token" if account in ("", "default") else "claude-oauth-token-" + account
+    # The credential a tier-A line names is the ACCOUNT and never the secret
+    # container: internal/credsvc's bundle loader names a Claude account
+    # credential after the account — `default` for the unsuffixed
+    # claude-oauth-token, the bare name for claude-oauth-token-<account> — and
+    # the audit line writes that name (bundle.go's credential names, and
+    # narrowToRepoAuth's `tier A && Name == the declared account`).
+    account = os.environ.get("FAKE_OAUTH_ACCOUNT", "")
+    want = account or "default"
 
     def line(credential, tier, purpose):
         p = {"message": "credsvc: audit", "run": rid, "repository": repo_of_run.replace("/", "-"),
@@ -339,11 +353,17 @@ elif sub == ("logging", "read"):
     lines = []
     if rid and rid != inflight and mode != "no-audit":
         if repo_of_run == oauth_repo:
-            lines.append(line(want, "A", "forward"))
-            if mode == "second-account":
-                lines.append(line("claude-oauth-token-other", "A", "forward"))
+            if mode == "oauth-not-recorded":
+                # A tier-A line naming an account this repository's own record
+                # does not name: not a credential the service could have served
+                # its run out of.
+                lines.append(line("someone-else", "A", "forward"))
+            else:
+                lines.append(line(want, "A", "forward"))
+                if mode == "second-account":
+                    lines.append(line("other", "A", "forward"))
         else:
-            lines.append(line("claude-oauth-token" if mode == "wrong-credential" else "anthropic-api-key",
+            lines.append(line("default" if mode == "wrong-credential" else "anthropic-api-key",
                               "A" if mode == "wrong-credential" else "B", "forward"))
     if mode == "inflight-served" and rid == inflight:
         lines.append(line("anthropic-api-key", "B", "forward"))
@@ -371,6 +391,7 @@ the GET the way the real database does when the node is not there (404). The
 record it hands back is READ by the check and never written by it, which is the
 only thing this fake has to get right: nothing here accepts a write.
 """
+import json
 import os, sys
 
 LOG = os.environ["FAKE_LOG_DIR"]
@@ -414,29 +435,52 @@ def body_for(slug):
     """The two records: the api-key repository's and the oauth one's. The oauth
     record names TWO accounts (the default and one other), which is what makes
     the declared-account row measurable at all — a record naming one account has
-    nothing the run could have been served besides it."""
+    nothing the run could have been served besides it.
+
+    A record is keyed by the repository's SLUG and not by its name, which is why
+    every branch below compares against job_key(): the node `fugaro update
+    --repo` writes is creds/repoauth/<readable>-<16 hex>, and a GET at
+    creds/repoauth/<owner>-<name>.json is the node nobody writes — the real
+    database answers it 404, and this fake answers it 404 too, so a check that
+    spelled the key out of the repository's name cannot pass here.
+    """
     if mode == "record-cascade":
         return {"version": 1, "auth": "cascade", "accounts": []}
     if mode == "record-both-api-key":
         return {"version": 1, "auth": "api-key", "accounts": []}
-    if slug == (repos[1].lower().replace("/", "-") if len(repos) > 1 else ""):
+    if slug == job_key(repos[1] if len(repos) > 1 else ""):
         if mode == "record-one-account":
             return {"version": 1, "auth": "oauth", "accounts": ["default"]}
+        if mode == "record-named-account":
+            return {"version": 1, "auth": "oauth", "accounts": ["default", "work"]}
         return {"version": 1, "auth": "oauth", "accounts": ["default", "other"]}
-    return {"version": 1, "auth": "api-key", "accounts": []}
+    if slug == job_key(repos[0] if repos else ""):
+        return {"version": 1, "auth": "api-key", "accounts": []}
+    return None
+
+
+def job_key(repo):
+    """The slug a repository's record is keyed by: the readable path, "-" and 16
+    hex of the hash (task.Slug), which is the same spelling the fake `gcloud`
+    writes as its jobs' `fugaro_repo` label — one key, written once."""
+    return repo.lower().replace("/", "-") + "-0123456789abcdef"
 
 
 slug = url.rsplit("/creds/repoauth/", 1)[-1].replace(".json", "") if "/creds/repoauth/" in url else ""
+body = body_for(slug) if slug else None
 code = "200"
 if mode == "record-missing":
     code = "404"
 elif mode == "record-unreadable":
     code = "500"
-elif not slug:
+elif body is None:
+    # No node at that path: what the real database answers for a key nobody
+    # wrote — including a name-shaped key, which is the whole finding this
+    # fake's strictness holds the check to.
     code = "404"
 if code == "200" and out:
     with open(out, "w") as fh:
-        fh.write(__import__("json").dumps(body_for(slug)))
+        fh.write(json.dumps(body))
 if code != "200" and out:
     with open(out, "w") as fh:
         fh.write("null")
@@ -701,8 +745,8 @@ test_the_happy_path() {
   expect_contains "$out" "FACT record: PASS" "happy path: the records"
   expect_contains "$out" "FACT served-api-key: PASS" "happy path: the paid key served the api-key run"
   expect_contains "$out" "anthropic-api-key|B" "happy path: the credential and its tier"
-  expect_contains "$out" "FACT served-oauth: PASS" "happy path: an account's token served the oauth run"
-  expect_contains "$out" "claude-oauth-token|A" "happy path: the account's token and its tier"
+  expect_contains "$out" "FACT served-oauth: PASS" "happy path: an account served the oauth run"
+  expect_contains "$out" "default|A" "happy path: the account's own name and its tier"
   expect_contains "$out" "FACT declared-account: PASS" "happy path: the account it declared"
   expect_contains "$out" "FACT proxy: PASS" "happy path: the proxied repository"
   expect_contains "$out" "bitbucket-token" "happy path: the git line's credential"
@@ -717,11 +761,16 @@ test_the_happy_path() {
   expect_contains "$calls" "--project fugaro" "happy path: the installation"
   expect_absent "$calls" "--total-timeout" "happy path: no total timeout is ever passed"
   # The record is READ and never written: the check holds no write of its own to
-  # the installation's database at all.
+  # the installation's database at all. And it is read at the key `fugaro update
+  # --repo` wrote it under — the repository's own SLUG, which is the
+  # `fugaro_repo` label of its jobs (task.Slug: <readable>-<16 hex>) — never at
+  # a path spelled out of the repository's name, which is a node nobody writes.
   local curls
   curls=$(cat "$dir/logs/curl.calls")
-  expect_contains "$curls" "creds/repoauth/acme-sandbox-api.json" "happy path: the api-key repository's record"
-  expect_contains "$curls" "creds/repoauth/acme-sandbox-oauth.json" "happy path: the oauth repository's record"
+  expect_contains "$curls" "creds/repoauth/acme-sandbox-api-0123456789abcdef.json" "happy path: the api-key repository's record, at its slug"
+  expect_contains "$curls" "creds/repoauth/acme-sandbox-oauth-0123456789abcdef.json" "happy path: the oauth repository's record, at its slug"
+  expect_absent "$curls" "creds/repoauth/acme-sandbox-api.json" "happy path: the record is never read at a name-shaped path"
+  expect_absent "$curls" "creds/repoauth/acme-sandbox-oauth.json" "happy path: the record is never read at a name-shaped path"
   expect_absent "$curls" "-X " "happy path: nothing was written to the database"
   if [ -d "$scratch" ]; then fail "happy path: the scratch directory survived"; fi
 }
@@ -749,8 +798,12 @@ test_a_second_account_served_is_a_failure() {
   run193 "$dir" FAKE_GCLOUD_MODE=second-account
   expect_status "$status" 1 "second account: the verdict"
   expect_contains "$out" "FACT declared-account: FAIL" "second account: the row"
-  expect_contains "$out" "ANOTHER account's token" "second account: the row says why"
-  expect_contains "$out" "claude-oauth-token-other" "second account: the row names it"
+  expect_contains "$out" "served it ANOTHER account as well" "second account: the row says why"
+  # The second account is named the way the service names a tier-A credential —
+  # the ACCOUNT itself, `other` — and never as the secret container it is stored
+  # in (`claude-oauth-token-other`), which no audit line ever carries.
+  expect_contains "$out" "its lines name default and other" "second account: the row names it by its account"
+  expect_absent "$out" "claude-oauth-token" "second account: no row speaks of a secret container"
 }
 
 # The declared-account row is measurable only where the record names more than
@@ -767,6 +820,54 @@ test_a_record_with_one_account_leaves_the_row_unmeasured() {
   expect_contains "$out" "names 1 account(s)" "one account: the row reads the record"
   expect_contains "$out" "a row about nothing" "one account: the row says why it measures nothing"
   expect_contains "$out" "FACT served-oauth: PASS" "one account: everything above it still holds"
+}
+
+# The record's key is the repository's own task slug, and the slug is read off
+# the `fugaro_repo` label the engine that writes the record also writes on the
+# jobs. A job list whose jobs carry no such label leaves the key unknown — so
+# the row says it could not be measured, and it does not fall back to a path
+# spelled out of the repository's name, which is a node nobody writes.
+test_a_job_without_the_repo_label_leaves_the_record_unmeasured() {
+  local dir=$work/nolabel
+  prepare "$dir"
+  run193 "$dir" FAKE_GCLOUD_MODE=no-repo-label
+  expect_status "$status" 2 "no repo label: the check could not measure"
+  expect_contains "$out" "FACT record: FAIL" "no repo label: the row"
+  expect_contains "$out" "carries its 'fugaro_repo' label" "no repo label: the row says why"
+  expect_contains "$out" "update --repo" "no repo label: the row names the fix"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "run --repo" "no repo label: no run was launched"
+  if [ -s "$dir/logs/curl.calls" ]; then
+    fail "no repo label: the record was read at a key the check made up: $(head -n 1 "$dir/logs/curl.calls")"
+  fi
+}
+
+# A repository on a NAMED Claude account: the record names that account, the run
+# declares it, and the service's tier-A line names the ACCOUNT itself — `work` —
+# never the Secret Manager container the token is stored in
+# (`claude-oauth-token-work`), which no audit line carries.
+test_a_named_account_is_read_by_its_own_name() {
+  local dir=$work/named
+  prepare "$dir"
+  run193 "$dir" FAKE_OAUTH_ACCOUNT=work FAKE_CURL_MODE=record-named-account
+  expect_status "$status" 0 "named account: the verdict"
+  expect_contains "$out" "FACT served-oauth: PASS" "named account: the run was served"
+  expect_contains "$out" "work|A" "named account: the account's own name and its tier"
+  expect_contains "$out" "FACT declared-account: PASS" "named account: the account it declared"
+  expect_absent "$out" "claude-oauth-token" "named account: no row speaks of a secret container"
+}
+
+# A tier-A line naming an account the repository's own record does NOT name is a
+# run served a credential the service had no answer for: the record is the
+# boundary every call of that repository is narrowed to (narrowToRepoAuth), so a
+# line naming an account outside it is the boundary not holding.
+test_a_line_naming_an_account_the_record_does_not_name_is_a_failure() {
+  local dir=$work/notrecorded
+  prepare "$dir"
+  run193 "$dir" FAKE_GCLOUD_MODE=oauth-not-recorded
+  expect_status "$status" 1 "outside the record: the verdict"
+  expect_contains "$out" "FACT served-oauth: FAIL" "outside the record: the row"
+  expect_contains "$out" "no line of this run names an account its own record names" "outside the record: the row says why"
+  expect_contains "$out" "someone-else" "outside the record: the row names the credential it was served"
 }
 
 # A repository published with proxy: true whose runs never reached the service
@@ -945,9 +1046,12 @@ t test_a_repository_off_the_switch_is_a_failure
 t test_a_budget_mode_of_off_is_a_failure
 t test_a_pair_that_is_not_one_api_key_and_one_oauth_stops
 t test_a_record_that_is_not_there_is_unmeasured
+t test_a_job_without_the_repo_label_leaves_the_record_unmeasured
 t test_the_happy_path
 t test_a_run_served_the_wrong_credential_is_a_failure
 t test_a_second_account_served_is_a_failure
+t test_a_named_account_is_read_by_its_own_name
+t test_a_line_naming_an_account_the_record_does_not_name_is_a_failure
 t test_a_record_with_one_account_leaves_the_row_unmeasured
 t test_a_proxied_repository_whose_run_did_not_reach_the_service_is_a_failure
 t test_a_policy_without_the_proxy_leaves_the_row_unmeasured

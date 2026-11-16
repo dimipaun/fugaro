@@ -343,6 +343,12 @@ jobs   argv: `gcloud run jobs list --format=json`'s file, a repository. Prints
        FUGARO_REMOTE, and by the label the installation writes — gcloud's
        `run jobs list` forces the v1 API, so a container and its account sit at
        spec.template.spec.template.spec).
+slug   argv: the same job list's file, a repository. Prints the key that
+       repository's creds/repoauth record is written under, which is the
+       `fugaro_repo` label of its own jobs — the repository's SLUG
+       (`<readable>-<16 hex>`, task.Slug) and never its name: the record is
+       keyed by the slug, and a path spelled from `owner/name` is a node nobody
+       writes.
 """
 import datetime
 import json
@@ -497,12 +503,14 @@ def inside(entry, repo):
 
 
 def jobs_of(path, repo):
-    """The jobs of one repository, as (name, containers, updateTime) — matched by the
-    repository's own FUGARO_REMOTE first, and by the label the installation
-    writes (`fugaro_repo: <slug>-<16 hex>`) where no remote is readable, because
-    a reading that leaned on the label alone would miss a job whose label the
-    installation had not written and one that leaned on the remote alone would
-    miss a job whose env could not be read back."""
+    """The jobs of one repository, as (name, containers, updateTime, label) —
+    matched by the repository's own FUGARO_REMOTE first, and by the label the
+    installation writes (`fugaro_repo: <slug>-<16 hex>`) where no remote is
+    readable, because a reading that leaned on the label alone would miss a job
+    whose label the installation had not written and one that leaned on the
+    remote alone would miss a job whose env could not be read back. The label is
+    the repository's own slug, which is the key its creds/repoauth record is
+    written under (label_of), so it is returned with the rest."""
     slug = repo.lower().replace("/", "-")
     out = []
     for job in load(path) or []:
@@ -520,8 +528,25 @@ def jobs_of(path, repo):
             remote = (env(c).get("FUGARO_REMOTE") or {}).get("value") or remote
         if not owns and remote != "https://" + repo + ".git" and not remote.endswith("/" + repo + ".git"):
             continue
-        out.append((name, containers, ((job.get("metadata") or {}).get("updateTime")) or ""))
+        out.append((name, containers, ((job.get("metadata") or {}).get("updateTime")) or "", label))
     return out
+
+
+def label_of(path, repo):
+    """The key `fugaro update --repo` writes this repository's creds/repoauth
+    record under.
+
+    The record is keyed by the repository's SLUG and never by its name: the slug
+    is the readable path plus "-" and 16 hex of sha256(provider NUL canonical
+    path) (task.Slug: "acme/app" becomes "acme-app-0123456789abcdef"), which is
+    also what the installation writes as its jobs' `fugaro_repo` label — so the
+    label IS the key. A path spelled out of `owner/name` is a node nobody
+    writes: the GET answers 404 on every installation, and a check reading one
+    would call a record that is there "not there" and measure nothing."""
+    for _name, _containers, _up, label in jobs_of(path, repo):
+        if re.fullmatch(r"[a-z0-9][a-z0-9-]*-[0-9a-f]{16}", label):
+            return label
+    return ""
 
 
 def parse_time(v):
@@ -638,7 +663,7 @@ elif cmd == "jobs":
     n = 0
     mounted = 0
     urls = 0
-    for name, containers, _up in jobs_of(sys.argv[2], repo):
+    for name, containers, _up, _label in jobs_of(sys.argv[2], repo):
         n += 1
         mounts = mounts_of(containers)
         if mounts:
@@ -651,6 +676,12 @@ elif cmd == "jobs":
     print("jobs=%s" % n)
     print("mounted=%s" % mounted)
     print("urls=%s" % urls)
+elif cmd == "slug":
+    # argv: the job list's file, a repository. Prints the key the repository's
+    # creds/repoauth record is written under — the `fugaro_repo` label of its
+    # own jobs, which is the repository's slug and not its name (label_of, and
+    # the record is keyed by the slug: creds.PathRepoAuth).
+    print("slug=%s" % word(label_of(sys.argv[2], sys.argv[3]), 100))
 elif cmd == "inflight":
     # argv: the job list's file, a repository, a run's started_at. Prints the
     # repository's LATEST job updateTime and whether the run started before it.
@@ -661,7 +692,7 @@ elif cmd == "inflight":
     repo, started = sys.argv[3], sys.argv[4]
     best = None
     bestname = "-"
-    for name, _containers, up in jobs_of(sys.argv[2], repo):
+    for name, _containers, up, _label in jobs_of(sys.argv[2], repo):
         d = parse_time(up)
         if d is not None and (best is None or d > best):
             best, bestname = d, name
@@ -858,18 +889,44 @@ audit_read() {
 audit_served() { reader audit "$1" "$2" | sed -n 's/^audit=ok|.*/x/p' | wc -l | tr -d ' '; }
 
 # audit_named FILE RID: the `credential|tier` pairs of the run's served lines,
-# one per line. The credential is a NAME (anthropic-api-key, claude-oauth-token,
-# claude-oauth-token-<account>) and the tier is what it is of — which is how a
+# one per line. The credential is a NAME — anthropic-api-key for the paid key,
+# and an ACCOUNT for a Claude subscription credential (`default` for the
+# repository's default account, the bare account name for a named one: that is
+# the name internal/credsvc's bundle holds the token's credential under) — and
+# the tier is what it is of, which is how a
 # row says WHICH credential answered without ever touching its value.
 audit_named() {
   reader audit "$1" "$2" | sed -n 's/^audit=ok|\([^|]*\)|\([^|]*\)|.*/\1|\2/p' | sort -u
 }
 
-# auth_record REPO SLUG OUT: the repository's recorded auth, read from the
+# record_key REPO: the key this repository's record is written under — the
+# `fugaro_repo` label of its own jobs, which is the repository's SLUG
+# (`<readable>-<16 hex>`, task.Slug) and NOT its name. `creds/repoauth` is keyed
+# by the slug (creds.PathRepoAuth, written by `fugaro update --repo` from the
+# spec it applied), so a path spelled out of `owner/name` is a node nobody
+# writes: the GET would answer 404 on every installation, and this check would
+# report a record that is there as one that is not.
+record_key() { # record_key REPO
+  reader slug "$SCRATCH/jobs.json" "$1" | sed -n 's/^slug=//p'
+}
+
+# record_accounts REPO: the account names the repository's own record names, one
+# per line (creds.RepoAuth.Accounts). A tier-A audit line names the CREDENTIAL'S
+# own name, and a Claude account credential's name IS the account — `default`
+# for the unsuffixed claude-oauth-token and the bare name for
+# claude-oauth-token-<account> (internal/credsvc's bundle loader returns the
+# account as the credential's name, and narrowToRepoAuth keeps
+# `tier A && Name == the declared account`) — never the secret container's name.
+record_accounts() { # record_accounts REPO
+  reader auth "$SCRATCH/auth-$(record_key "$1").json" "$1" | sed -n 's/^account=//p'
+}
+
+# auth_record SLUG OUT: the repository's recorded auth, read from the
 # installation's own Realtime Database at the path `fugaro update` writes it to
-# (creds.PathRepoAuth, D2070 (a)). It is READ and never written: the record is
-# the boundary this check exists to confirm, and a check that rewrote one and
-# failed to put it back would refuse every run of that repository.
+# (creds.PathRepoAuth, D2070 (a)), keyed by the repository's SLUG and not its
+# name (record_key). It is READ and never written: the record is the boundary
+# this check exists to confirm, and a check that rewrote one and failed to put
+# it back would refuse every run of that repository.
 auth_record() { # auth_record SLUG OUT
   local slug=$1 out=$2 code
   code=$(curl -sS -o "$out" -w '%{http_code}' --max-time 30 \
@@ -940,30 +997,39 @@ step_switch() {
 # (creds/repoauth, D2070 (a), G16): a repository whose record is missing is one
 # the service serves as the cascade, which is not what this check is about, and
 # a pair of repositories whose records are not one api-key and one oauth is a
-# pair this check cannot read its rows against.
+# pair this check cannot read its rows against. Each record is read at the key
+# `fugaro update --repo` wrote it under — the repository's own task slug, which
+# is the `fugaro_repo` label of its jobs and never its name (record_key).
 step_records() {
-  local repo slug got ok=0
+  local repo key got ok=0
+  if [ ! -s "$SCRATCH/jobs.json" ]; then
+    unmeasured record "the installation's job list was not read (see the switch row), and a repository's record is keyed by its own task slug (creds/repoauth/<slug>, task.Slug), which is the 'fugaro_repo' label those jobs carry: without it the two records are not read at all"
+    return 0
+  fi
   for repo in "$REPO_ONE" "$REPO_TWO"; do
-    slug=$(printf '%s' "$repo" | tr '/' '-')
-    slug=$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]')
-    if ! auth_record "$slug" "$SCRATCH/auth-$slug.json"; then
-      unmeasured record "$(cat "$SCRATCH/auth-$slug.json" 2>/dev/null || printf 'the record could not be read')"
+    key=$(record_key "$repo")
+    if [ -z "$key" ] || [ "$key" = "-" ]; then
+      unmeasured record "no job of ${repo} in the installation's job list carries its 'fugaro_repo' label, which is the slug its creds/repoauth record is keyed by (task.Slug: <readable>-<16 hex>), so the record cannot be read: run 'fugaro update --repo' in ${repo}, then this check again"
       return 0
     fi
-    got=$(reader auth "$SCRATCH/auth-$slug.json" "$repo")
+    if ! auth_record "$key" "$SCRATCH/auth-$key.json"; then
+      unmeasured record "$(cat "$SCRATCH/auth-$key.json" 2>/dev/null || printf 'the record could not be read')"
+      return 0
+    fi
+    got=$(reader auth "$SCRATCH/auth-$key.json" "$repo")
     if [ "$(field_of found "$got")" != yes ]; then
-      unmeasured record "${repo}'s creds/repoauth/${slug} node holds no object, so no auth is recorded for it"
+      unmeasured record "${repo}'s creds/repoauth/${key} node holds no object, so no auth is recorded for it"
       return 0
     fi
     case "$(field_of auth "$got")" in
     api-key) API_REPO=$repo ;;
     oauth) OAUTH_REPO=$repo ;;
     cascade)
-      fact record FAIL "${repo}'s record says 'cascade' (creds/repoauth/${slug}): this repository is served the whole cascade, and Check 193 is about a repository the service narrows to its OWN recorded auth. Put a sandbox repository whose agent.auth is api-key and one whose is oauth on the switch, and run this check again"
+      fact record FAIL "${repo}'s record says 'cascade' (creds/repoauth/${key}): this repository is served the whole cascade, and Check 193 is about a repository the service narrows to its OWN recorded auth. Put a sandbox repository whose agent.auth is api-key and one whose is oauth on the switch, and run this check again"
       return 0
       ;;
     *)
-      fact record FAIL "${repo}'s record names the auth '$(field_of auth "$got")' (creds/repoauth/${slug}), which the credentials service serves no call by: only cascade, oauth and api-key are served here (narrowToRepoAuth)"
+      fact record FAIL "${repo}'s record names the auth '$(field_of auth "$got")' (creds/repoauth/${key}), which the credentials service serves no call by: only cascade, oauth and api-key are served here (narrowToRepoAuth)"
       return 0
       ;;
     esac
@@ -973,11 +1039,9 @@ step_records() {
     fact record FAIL "the two repositories' records are not one api-key and one oauth (CHECK193_REPOS named ${REPO_ONE} and ${REPO_TWO}): this check reads a run of each against the credential its own record names, and it cannot say which row is which without the pair. Name one api-key repository and one oauth repository"
     return 0
   fi
-  local slug
-  slug=$(printf '%s' "$OAUTH_REPO" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
   local got
-  got=$(reader auth "$SCRATCH/auth-$slug.json" "$OAUTH_REPO")
-  fact record PASS "${API_REPO}'s record says 'api-key' and ${OAUTH_REPO}'s says 'oauth', naming $(field_of accounts "$got") account(s) ($(reader auth "$SCRATCH/auth-$slug.json" "$OAUTH_REPO" | sed -n 's/^account=//p' | tr '\n' ' '))"
+  got=$(reader auth "$SCRATCH/auth-$(record_key "$OAUTH_REPO").json" "$OAUTH_REPO")
+  fact record PASS "${API_REPO}'s record says 'api-key' and ${OAUTH_REPO}'s says 'oauth', naming $(field_of accounts "$got") account(s) ($(record_accounts "$OAUTH_REPO" | tr '\n' ' '))"
 }
 
 # step_run REPO AUTH LABEL FACTKEY: one throwaway run of one repository, and the
@@ -987,10 +1051,10 @@ step_records() {
 # service wrote at least one line for it at all (an installation whose runs are
 # answered by the service writes one per call, and a run whose lines are empty
 # was served by something else), and the credential those lines NAME is one of
-# the auth's own — the paid key for `api-key` (tier B), an account's token for
-# `oauth` (tier A) — never a provider key (tier C, R6: a provider route is the
-# one answer a switched repository may still take, and it does not come from
-# the service this way).
+# the auth's own — the paid key for `api-key` (tier B), one of the accounts the
+# repository's own record names for `oauth` (tier A) — never a provider key
+# (tier C, R6: a provider route is the one answer a switched repository may
+# still take, and it does not come from the service this way).
 step_run() { # step_run REPO AUTH LABEL FACTKEY
   local repo=$1 auth=$2 label=$3 key=$4 task rid row status lines served named bad=""
   task=$SCRATCH/task-$label.md
@@ -1024,7 +1088,19 @@ step_run() { # step_run REPO AUTH LABEL FACTKEY
     printf '%s\n' "$named" | grep -q '^anthropic-api-key|B$' || bad="no line of this run names the paid key (anthropic-api-key) at tier B"
     ;;
   oauth)
-    printf '%s\n' "$named" | grep -qE '^claude-oauth-token(-[A-Za-z0-9._-]+)?\|A$' || bad="no line of this run names a Claude account's token (claude-oauth-token[-<account>]) at tier A"
+    # The credential a tier-A line names is the ACCOUNT itself and never the
+    # secret container: internal/credsvc's bundle loader names a Claude account
+    # credential after the account — `default` for the unsuffixed
+    # claude-oauth-token, the bare name for claude-oauth-token-<account> — and
+    # the audit line writes that name. So the line has to name one of the
+    # accounts the run's own repository records, which is the whole of what
+    # narrowToRepoAuth lets through for it.
+    local acc listed=no
+    while IFS= read -r acc; do
+      [ -n "$acc" ] || continue
+      if printf '%s\n' "$named" | grep -qxF -- "${acc}|A"; then listed=yes; break; fi
+    done <<<"$(record_accounts "$repo")"
+    [ "$listed" = yes ] || bad="no line of this run names an account its own record names ($(record_accounts "$repo" | tr '\n' ' ')) at tier A"
     ;;
   esac
   if [ -n "$bad" ]; then
@@ -1048,15 +1124,16 @@ step_run() { # step_run REPO AUTH LABEL FACTKEY
 # names. What IS reachable, and is what a run served the wrong account would
 # look like, is the reading below: the run's record says which account it
 # declared, and every tier-A line the service wrote for it must name that
-# account's token and no other account of the record's. The row is measured only
-# where the record names more than one account: a record that names one has
-# nothing the run could have been served besides it, and a row read there would
-# be a row about nothing.
+# account and no other. (A tier-A line names the ACCOUNT itself — the name the
+# service's bundle holds that credential under, credsvc's loader — and never the
+# secret container it is stored in.) The row is measured only where the record
+# names more than one account: a record that names one has nothing the run could
+# have been served besides it, and a row read there would be a row about
+# nothing.
 step_declared_account() {
-  local slug lines rid declared want named others="" accounts n row
-  slug=$(printf '%s' "$OAUTH_REPO" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
-  accounts=$(reader auth "$SCRATCH/auth-$slug.json" "$OAUTH_REPO" | sed -n 's/^account=//p')
-  n=$(field_of accounts "$(reader auth "$SCRATCH/auth-$slug.json" "$OAUTH_REPO")")
+  local lines rid declared want named others="" accounts n row note
+  accounts=$(record_accounts "$OAUTH_REPO")
+  n=$(field_of accounts "$(reader auth "$SCRATCH/auth-$(record_key "$OAUTH_REPO").json" "$OAUTH_REPO")")
   if [ "${n:-0}" -lt 2 ]; then
     unmeasured declared-account "${OAUTH_REPO}'s own record names ${n:-0} account(s) (${accounts:-none}), so there is no account the run did NOT declare that the service could have served it instead: the row would be a row about nothing. Let the repository's runs name a second Claude account (the account's own allow_data_to for it in this machine's local config, then 'fugaro update --repo' there), so its record names two, and run this check again"
     return 0
@@ -1068,34 +1145,38 @@ step_declared_account() {
   # it, which is the header narrowToRepoAuth narrows by), and never a value
   # inferred from what the service served: a row that read the declaration off
   # the answer would pass whatever the answer was.
+  #
+  # The row carries no `oauth_account` for a run on the repository's DEFAULT
+  # account (a task spec may not say "default": the empty value already means
+  # it, internal/task), and the empty value IS that account's name everywhere
+  # the service speaks it — narrowToRepoAuth normalizes it with
+  # config.ReviewVariantAccount, which answers config.DefaultClaudeAccount
+  # ("default"), and the credential a tier-A line names is that account's own
+  # name. So `want` is the account's NAME — `default` or the named account —
+  # and never a secret container.
   row=$(row_of two)
   declared=$(field_of oauth_account "$row")
-  if [ -z "$declared" ]; then
-    unmeasured declared-account "the oauth run (${rid}) of ${OAUTH_REPO} has no oauth_account in its own row, so the account it declared is not read: ${OAUTH_REPO}'s runs declare an account through the launch ('fugaro run --token', or the config's default) and the record carries it. Read 'fugaro runs show ${rid} --repo ${OAUTH_REPO}' and run this check again"
-    return 0
-  fi
-  # The container the DECLARED account's token is served out of
-  # (config.ClaudeAccountSecret): the unsuffixed claude-oauth-token for the
-  # default account, claude-oauth-token-<account> for a named one. This is the
-  # only tier-A credential name the service may put on a line of this run's.
-  case "$declared" in
-  default | "none") want=claude-oauth-token ;;
-  *) want="claude-oauth-token-${declared}" ;;
-  esac
+  want=${declared:-default}
+  local note="the account the launch resolved, read off the run's own record"
+  [ -n "$declared" ] || note="the repository's default account, which a run declares by declaring none"
   named=$(audit_named "$lines" "$rid")
-  # `|| true`: the arm below this one is the run whose tier-A lines name the
-  # declared account and nothing else, and `grep -v` finding no such other line
-  # is exactly that case — not a failure of the pipeline.
-  others=$(printf '%s\n' "$named" | sed -n 's/^\(claude-oauth-token[-A-Za-z0-9._]*\)|A$/\1/p' | grep -v "^${want}\$" | sort -u | tr '\n' ' ' || true)
+  # Every tier-A line of this run's own, whose credential is not the declared
+  # account: the service may only ever serve it the account it declared
+  # (narrowToRepoAuth keeps `tier A && Name == the declared account`), so a
+  # line naming anything else is the boundary not holding. `|| true`: the arm
+  # below this one is the run whose tier-A lines name the declared account and
+  # nothing else, and `grep -v` finding no such other line is exactly that
+  # case — not a failure of the pipeline.
+  others=$(printf '%s\n' "$named" | sed -n 's/^\(.*\)|A$/\1/p' | grep -vxF -- "${want}" | sort -u | tr '\n' ' ' || true)
   if [ -n "$others" ]; then
-    fact declared-account FAIL "the oauth run (${rid}) of ${OAUTH_REPO} declared ${declared} and the service served it ANOTHER account's token as well: its lines name ${want} and ${others% }. The service narrows an oauth call to the account the call itself declared (narrowToRepoAuth, D2070 (a): keepCandidates keeps tier A and Name == the declared account), so a line naming a second one of the record's accounts is a run served an account it did not declare — this is the row Check 193 exists for. Read that run's lines ('gcloud logging read') and the service's own code path before anything else"
+    fact declared-account FAIL "the oauth run (${rid}) of ${OAUTH_REPO} declared ${want} and the service served it ANOTHER account as well: its lines name ${want} and ${others% }. The service narrows an oauth call to the account the call itself declared (narrowToRepoAuth, D2070 (a): keepCandidates keeps tier A and Name == the declared account), so a line naming a second account — the record names $(printf '%s' "$accounts" | tr '\n' ' ') — is a run served an account it did not declare: this is the row Check 193 exists for. Read that run's lines ('gcloud logging read') and the service's own code path before anything else"
     return 0
   fi
-  if ! printf '%s\n' "$named" | grep -q "^${want}|A\$"; then
-    fact declared-account FAIL "the oauth run (${rid}) of ${OAUTH_REPO} declared ${declared}, and no served line of its own names that account's token at tier A (${want}): the lines name $(printf '%s' "$named" | tr '\n' ' ' | sed 's/ *$//'). An oauth repository's runs are served a Claude account's token and nothing else — the paid key is tier B and this repository's record says oauth — so a run whose lines name no account token was not served by the account it declared. Read 'fugaro runs show ${rid} --repo ${OAUTH_REPO}' and the service's lines for it"
+  if ! printf '%s\n' "$named" | grep -qxF -- "${want}|A"; then
+    fact declared-account FAIL "the oauth run (${rid}) of ${OAUTH_REPO} declared ${want}, and no served line of its own names that account at tier A: the lines name $(printf '%s' "$named" | tr '\n' ' ' | sed 's/ *$//'). An oauth repository's runs are served a Claude account's credential and nothing else — a tier-A line names the account itself (`default` for the repository's default account, the bare account name for a named one), the paid key is tier B, and this repository's record says oauth — so a run whose lines name no account its record names was not served by the account it declared. Read 'fugaro runs show ${rid} --repo ${OAUTH_REPO}' and the service's lines for it"
     return 0
   fi
-  fact declared-account PASS "the oauth run (${rid}) of ${OAUTH_REPO} declared ${declared} (the account the launch resolved, read off the run's own record) and the service served it THAT account alone: every tier-A line of its own names ${want}, and ${n} account(s) are in its record (${accounts//$'\n'/ }) — so no line of the run names any other account the repository's own record would have allowed (narrowToRepoAuth, D2070)"
+  fact declared-account PASS "the oauth run (${rid}) of ${OAUTH_REPO} declared ${want} (${note}) and the service served it THAT account alone: every tier-A line of its own names ${want}, and ${n} account(s) are in its record ($(printf '%s' "$accounts" | tr '\n' ' ')) — so no line of the run names any other account the repository's own record would have allowed (narrowToRepoAuth, D2070)"
 }
 
 # step_proxy: F29's half of S2 — a Bitbucket repository published with
@@ -1333,7 +1414,7 @@ print_plan() {
   say "dry run: NOTHING below was run, and no tool was called at all — not gcloud, not fugaro, not curl. A real run would first check that this is the fugaro-dev installation (fugaro doctor --project fugaro --all, and that fugaro version is not a development build), then read the installation's Realtime Database URL out of the local config, then:"
   say "  [network] gcloud run jobs list --project=${P} --region=${L} --format=json  (a job of each repository, matched by its own FUGARO_REMOTE, that carries FUGARO_CREDENTIALS_SERVICE_URL)"
   say "  [network] fugaro project policy show --project fugaro --json  (the budget mode must not be off, D2071)"
-  say "  [network, read only] gcloud auth print-access-token, then GET ${RTDB:-<budget.rtdb_url>}/creds/repoauth/<slug>.json for each repository (the record 'fugaro update --repo' writes; READ, never written — the check narrows no record)"
+  say "  [network, read only] gcloud auth print-access-token, then GET ${RTDB:-<budget.rtdb_url>}/creds/repoauth/<slug>.json for each repository — the slug being the repository's own task slug ('<readable>-<16 hex>'), which the check reads off its jobs' 'fugaro_repo' label and never spells out of the repository's name — the record 'fugaro update --repo' writes; READ, never written, the check narrows no record"
   if [ "$MODE" = flip ]; then
     say "  [network] gcloud run jobs list … (each job's container: no ANTHROPIC_API_KEY, no CLAUDE_CODE_OAUTH_TOKEN, no env fed from anthropic-api-key or claude-oauth-token*)"
     say "  [network] fugaro runs ls --repo <the repository of CHECK193_INFLIGHT> --no-cache --json  (that run's row: terminal, succeeded, and started before the job's own updateTime)"
@@ -1346,7 +1427,7 @@ print_plan() {
   if [ "$MODE" = flip ]; then
     say "  [network, writes] the same two runs again (<today>-0195 and <today>-0196): after the flip the runs must still finish with NO mount on their jobs"
   else
-    say "  [local] its audit lines must name the ONE account the run declared (claude-oauth-token[-<account>], tier A) and no other account its own record names"
+    say "  [local] its audit lines must name the ONE account the run declared (the account's own name: 'default' for the repository's default account, else the bare account name, tier A) and no other account its own record names"
     say "  [local] the Bitbucket one of the two published with proxy: true must have a line of its own under a Bitbucket purpose (F29)"
   fi
   say "and its cleanup would run: nothing. This check creates no cloud resource and writes no record: the only thing it makes is the scratch directory, which its own EXIT trap removes."

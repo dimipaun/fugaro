@@ -12745,19 +12745,26 @@ half that only the flip can show:
   before anything is launched** — a FAIL that costs no run is worth more than one that costs two.
 - **The record each run is served against**: the check **reads** `creds/repoauth/<slug>` for each
   repository out of the installation's own Realtime Database (the node `fugaro update --repo` writes,
-  **D2070 (a)**) and requires the pair to be one `api-key` and one `oauth`. It never writes one: the
-  record is the installation's, and a check that wrote it would be measuring itself.
+  **D2070 (a)**) and requires the pair to be one `api-key` and one `oauth`. The `<slug>` is the
+  repository's own task slug (`task.Slug`: the readable path, a `-` and 16 hex — never the path spelled
+  out of the repository's name), and the check reads it off the `fugaro_repo` label of that repository's
+  jobs, which is the key `fugaro update --repo` writes the record under; a repository whose jobs carry
+  none leaves the record unread (verdict `2`). It never writes one: the record is the installation's,
+  and a check that wrote it would be measuring itself.
 - **The credential a run is served, and its tier.** The run's own model calls are answered by the
   service, so the service's own `credsvc: audit` lines, read out of Cloud Logging filtered by
   `jsonPayload.run`, are the answer: the `api-key` repository's run must have a line naming
   `anthropic-api-key` at **tier B** (the paid key), and the `oauth` repository's run a line naming a
-  Claude account's token (`claude-oauth-token`, or `claude-oauth-token-<account>` for a named account)
-  at **tier A** — "a run served anything else is the boundary not holding".
+  Claude account's token at **tier A** — and a tier-A line names the **account** itself, `default` for
+  the unsuffixed `claude-oauth-token` and the bare account name for a named one, never the
+  `claude-oauth-token[-<account>]` Secret Manager container the token is stored in — "a run served
+  anything else is the boundary not holding".
 - **The account the `oauth` run declared** (**D2070 (a)**, `narrowToRepoAuth`). The account is read off
-  the run's **own row** (`fugaro runs ls --json`'s `oauth_account`, which is what the launch resolved and
-  what the runner sends as its account header) and never inferred from what was served: a row that read
-  the declaration off the answer would pass whatever the answer was. Every tier-A line of that run must
-  then name that account's token and **no other account the repository's own record names** — the
+  the run's **own row** (`fugaro runs ls --json`'s `oauth_account` — the account the launch resolved and
+  what the runner sends as its account header; the row carries none for a run on the repository's
+  default account, which the service names `default`) and never inferred from what was served: a row
+  that read the declaration off the answer would pass whatever the answer was. Every tier-A line of that
+  run must then name that account and **no other account the repository's own record names** — the
   refusal the check exists for. A record naming only one account leaves the row **unmeasured** and the
   verdict `2`: with nothing the run could have been served besides the account it declared, the row
   would be a row about nothing.
