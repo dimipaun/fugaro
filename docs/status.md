@@ -88,12 +88,13 @@ As of 2026-11-15, read from `main`, the open pull requests and each plan's task 
 | image-env | owner Check 291 (script on main, not yet run) |
 | image-setup-skill | owner Checks 500 and 501 |
 | in-job-review | historical; delivered through cloud-senior-review, review-levels and api-key-review |
-| issue-mine | owner Checks 470 to 472 |
+| issue-mine | owner Checks 470 to 472: all ran 2026-11-14 and none has passed in full (470 passed in part, its issue-record read and two human steps unmeasured; 471 failed its cache-cleared row; 472 passed on an empty store, not at size), so re-runs are owner-run |
 | issues-resolved-on-update | none |
 | managed-agent-converge | none |
 | mcp-server | M9 parked (D936, the fence declined, no release schedules it); M11 declined (2026-11-09) |
 | mobile-auth | owner live checks, numbered Checks 620 to 627 on main (draft #2700's 601 to 608 was closed); P5's D231 gap is a follow-up awaiting the owner's decision — revoking the last device empties the node, so the next publish re-seeds the revoked entry |
 | model-ab-testing | owner Checks 210 to 212 (written on main, not run; drafts #2634 and #2637 were closed as superseded) |
+| model-crafts | owner Checks 420 to 422 (written; 420 and 421 ran 2026-11-15 and did not pass; 422 not run) |
 | models-commands | none |
 | no-prompt-policy | owner Checks 380 to 382 (scripts on main), not yet run; the T11 verification runs found nothing to fix (#2728, #2729) |
 | plugin-user-scope | E1, the release itself (rides the next CLI release; no operator step) |
@@ -109,7 +110,7 @@ As of 2026-11-15, read from `main`, the open pull requests and each plan's task 
 | short-run-ids | owner SR13 (Check 440 as a script and Check 441 as the register's steps, on main, not yet run) |
 | troubleshoot-issue | none |
 | vision-model | owner Checks 520 and 521, not run |
-| website | W3.3 explainer video (parked), owner Check 69 |
+| website | W3.3 explainer video (parked), owner Check 69c (not written yet; 69a and 69b passed 2026-11-15) |
 | website-changelog | WC4 lands with the next release |
 | windows-cli | superseded by console-windows |
 | workspaces | none |
