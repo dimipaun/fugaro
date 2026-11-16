@@ -349,12 +349,19 @@ func (g *Group) answer(basis Basis) Answer {
 
 // widen is a group's quartiles as a range: the p25-p75 it is, and each half of
 // it Widening times as wide while the sample is under WideRuns runs (D2713).
+//
+// The widened low is floored at zero: a sample whose p25 sits under a third of
+// its p50 reaches below it -- five runs of 1, 1, 5, 5 and 9 minutes are p25/p50
+// of 1/5, and the low half of that reaches -1 -- and a plan has no negative
+// minute or dollar figure to print. The high needs no floor: the samples are
+// durations and costs, which Build admits only at zero or above, so it is never
+// under the median.
 func widen(q Quartiles, runs int) Range {
 	if runs >= WideRuns {
 		return Range{Low: q.P25, High: q.P75}
 	}
 	return Range{
-		Low:  q.P50 - Widening*(q.P50-q.P25),
+		Low:  max(0, q.P50-Widening*(q.P50-q.P25)),
 		High: q.P50 + Widening*(q.P75-q.P50),
 	}
 }

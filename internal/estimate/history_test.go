@@ -161,6 +161,20 @@ func TestTableWidensUnderTwenty(t *testing.T) {
 	if got := table.Answer(tier.Small, rigor.Pro); !sameRange(got.Minutes, Range{Low: 5.75, High: 15.25}) {
 		t.Errorf("twenty runs = %v, want the plain 5.75-15.25", got.Minutes)
 	}
+
+	// A skewed sample widens below zero: five runs of 1, 1, 5, 5 and 9 minutes
+	// are p25/p50/p75 of 1/5/5, whose low half reaches 5 - 1.5*(5-1) = -1. A
+	// plan may not print a negative minute or dollar figure, so the low is
+	// floored at zero and the high, here the median itself, is left alone. The
+	// costs are the same five figures, so the same floor answers for them.
+	skewed := Build(historySeries(tier.Medium, rigor.Pro, runstore.StatusSucceeded,
+		[]float64{1, 1, 5, 5, 9}, []float64{1, 1, 5, 5, 9}), historyReadAt).Answer(tier.Medium, rigor.Pro)
+	if want := (Range{Low: 0, High: 5}); !sameRange(skewed.Minutes, want) {
+		t.Errorf("a skewed five runs = %v, want the floored %v", skewed.Minutes, want)
+	}
+	if want := (Range{Low: 0, High: 5}); !skewed.HasCost || !sameRange(skewed.Cost, want) {
+		t.Errorf("a skewed five runs' cost = %v (%v), want the floored %v", skewed.Cost, skewed.HasCost, want)
+	}
 }
 
 // TestNoCostSeed: D2712's "no cost defaults". A seeded answer carries no cost
