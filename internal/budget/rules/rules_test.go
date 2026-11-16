@@ -1469,6 +1469,56 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 	}
 }
 
+// registrationFieldValidators is what each field node of a registration
+// carries, in the macros' own spelling: the message's kind read from the field
+// (`PARENTKIND`), the field's own bound, and — on the three the schema makes
+// required or optional of that kind — the tag of the message it sits on
+// (`PARENTMACOK`). Mobile plan task P5.2.2.
+//
+// Built through expand rather than written out, registrationRequiredClause's
+// reason: the macro writes the expression, and a second spelling of it here
+// would be a second thing to keep in step. What it adds to the field-set
+// assertion above is the *gate*: that one counts a field as gated when its
+// node exists, so a validator that lost `PARENTKIND == 'registration' && ` —
+// or negated it — would leave every field of the schema accounted for while a
+// token, a platform or a preference record travelled on an ordinary message of
+// any kind. Each entry is compared as a whole, so a change to a bound, to an
+// arm or to the conjunction fails here and not only in the golden.
+var registrationFieldValidators = []struct{ field, expr string }{
+	{"token", "PARENTKIND == 'registration' && TOKENOK && PARENTMACOK"},
+	{"platform", "PARENTKIND == 'registration' && PLATFORMOK && PARENTMACOK"},
+	{"prefs", "PARENTKIND == 'registration' && newData.hasChildren(['kill_switch', 'cap_reached', 'consumer_offline', 'cap_near', 'prompt']) && PARENTMACOK"},
+	{"prefs/quiet_hours", "newData.hasChildren(['zone', 'start', 'end'])"},
+	{"prefs/quiet_hours/zone", "ZONEOK"},
+	{"prefs/quiet_hours/start", "MINUTEOK"},
+	{"prefs/quiet_hours/end", "MINUTEOK && newData.val() != newData.parent().child('start').val()"},
+}
+
+// TestRegistrationFieldValidatorsCarryTheKindGate reads the generated document
+// the way the emulator will: field by field, on both messages, against the
+// expression the macros expand to.
+func TestRegistrationFieldValidatorsCarryTheKindGate(t *testing.T) {
+	paths := generatedPaths(t)
+	for _, dir := range []string{"inbox", "outbox"} {
+		for _, f := range registrationFieldValidators {
+			p := "mailbox/$mb/" + dir + "/$msg/" + f.field
+			attrs, ok := paths[p]
+			if !ok {
+				t.Errorf("the template does not generate /%s", p)
+				continue
+			}
+			// The depth render expands at: one per key below the root.
+			want, err := expand(f.expr, len(strings.Split(p, "/")))
+			if err != nil {
+				t.Fatalf("/%s: %v", p, err)
+			}
+			if got, isStr := attrs[".validate"].(string); !isStr || got != want {
+				t.Errorf("/%s .validate = %v, want %q: the kind gate on a field is what refuses it on a message that is not a registration", p, attrs[".validate"], want)
+			}
+		}
+	}
+}
+
 // TestUserReadGrantsAreExactlyTheNamedFamilies: the read grants D112's answer
 // adds, and nothing else. The user claim reads the eight expressions a run
 // token already carried (each now `… || USER`), the two nodes of its own
