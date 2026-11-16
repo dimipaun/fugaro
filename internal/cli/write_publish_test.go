@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -18,8 +19,10 @@ import (
 // write_publish_test.go drives the after-write hook (N3, D2602): the stages a
 // semantic command's write owes, run in process after the write landed.
 //
-// Four things it pins, one test each: the policy stage publishes the node and
-// the local change is live (TestAfterWritePublishesThePolicyStage); a stage that
+// Five things it pins, one test each: the variable C1's seam is held in points
+// at this file's hook and not at the stub's no-op
+// (TestAfterWriteIsWiredToTheHook); the policy stage publishes the node and the
+// local change is live (TestAfterWritePublishesThePolicyStage); a stage that
 // does not leave it live keeps the change and ends the command on the one
 // sentence (TestAfterWriteFailureKeepsTheLocalChange, and the sentence itself in
 // TestAfterWriteSentenceIsOneHelper); a coding agent's session publishes nothing
@@ -65,6 +68,33 @@ func afterWriteFixture(t *testing.T) (*initRig, *gcpfake.RTDB) {
 	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
 	db.Set(projectpolicy.PathShared(), v3Node(nil))
 	return r, db
+}
+
+// TestAfterWriteIsWiredToTheHook is the wiring itself, which every other test in
+// this file takes for granted: they call publishAfterWrite directly, so they
+// stay green if the init in write_publish.go is lost or a later file reassigns
+// the variable — and then every semantic command would run the stub's no-op and
+// publish nothing, silently. What decides that the init wins over
+// after_write_stub.go's is the order two files' inits run in, which this checks
+// rather than assumes: the target first (the pointer says which function, and
+// says the variable is not nil), then one call through the variable carrying a
+// change to the node, which is the path a command takes.
+func TestAfterWriteIsWiredToTheHook(t *testing.T) {
+	if runAfterWrite == nil {
+		t.Fatal("runAfterWrite is nil: a semantic command's write would publish nothing and report nothing")
+	}
+	if got, want := reflect.ValueOf(runAfterWrite).Pointer(), reflect.ValueOf(publishAfterWrite).Pointer(); got != want {
+		t.Fatalf("runAfterWrite holds %#x and the hook is %#x: the variable is not this file's hook, so a run of its stages would not be one", got, want)
+	}
+	_, db := afterWriteFixture(t)
+	cmd, out := afterWriteCmd(t, "settings", "set")
+	change := afterWriteChange{Key: "orchestrator.max_running", Store: settings.StoreLocal}
+	if err := runAfterWrite(t.Context(), cmd, change); err != nil {
+		t.Fatalf("the hook the variable holds reported %q although the stage publishes it:\n%s", ErrorText(err), out.String())
+	}
+	if v := nodeVersionOn(t, db); v != projectpolicy.Version {
+		t.Errorf("the node is version %d after a write through the variable, want the %d the stage migrates it to:\n%s", v, projectpolicy.Version, out.String())
+	}
 }
 
 // TestAfterWritePublishesThePolicyStage is the hook's whole point: the command
