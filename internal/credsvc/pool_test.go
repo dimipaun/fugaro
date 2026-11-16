@@ -1,10 +1,20 @@
 package credsvc
 
 // The credentials service's pools (docs/model-crafts/spec.md §2, reconciliation
-// F7, F10, F21, F22, D154, D1622, D1626, D1627, D1634; plan task MC6): which of
-// the bundle's model credentials a call may be offered once the project's
-// crafts go out on a pool, and what a call is answered when they leave it
-// nothing to be served by.
+// F7, F10, F21, F22, D154, D1622, D1626, D1627, D1634; plan tasks MC6 and MC19):
+// which of the bundle's model credentials a call may be offered once the
+// project's crafts go out on a pool, and what a call is answered when they
+// leave it nothing to be served by.
+//
+// MC19 is the end-to-end half of the same subject and it needs no production
+// change: 0.24.0 already reads the published node, so what it adds is the pin
+// that what serves a call is the DOCUMENT the publish writes (MC18) — the
+// node's crafts, its craft_credentials and its craft_pools' listed members —
+// and, in one place, what each fact of that document decides
+// (TestPublishedPoolOrderReachesTheService, and the seam
+// TestRunnerPathMemberIsNotOfferedToTheService closes). The writing side of the
+// same seam is internal/cli's TestPublishWritesTheCraftsFromTheConfig, which is
+// where the document's shape is held.
 //
 // Everything here is hermetic (Convention 9): the upstream is
 // internal/gateway/anthropicfake on loopback, the policy is a decoded document,
@@ -83,12 +93,22 @@ func poolNode(block string, extra ...string) string {
 	for _, name := range accounts {
 		entries = append(entries, `"`+name+`": {"allow_repos": ["`+testRepo+`", "`+testOtherRepo+`"]}`)
 	}
+	return poolNodeAccounts(strings.Join(entries, ",\n\t\t\t"), block)
+}
+
+// poolNodeAccounts is poolNode with the accounts block written by the test, in
+// the order the test wrote it. The admission's second leg is each account's own
+// allow_repos (`accounts.<name>.allow_repos`, admittedAccounts), so a test whose
+// subject is that leg has to be able to give one account a list of its own —
+// which poolNode, whose three accounts are all offered both fixture
+// repositories, cannot do.
+func poolNodeAccounts(accounts, block string) string {
 	return `{
 		"version": ` + strconv.Itoa(projectpolicy.Version) + `,
 		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
 		"accounts": {
-			` + strings.Join(entries, ",\n\t\t\t") + `
+			` + accounts + `
 		},
 		` + block + `
 	}`
@@ -102,11 +122,22 @@ func poolNode(block string, extra ...string) string {
 // project's node says.
 func poolSvc(t *testing.T, block string) *svc {
 	t.Helper()
+	return poolSvcAdmitted(t, block, config.DefaultClaudeAccount, testAccount, testPoolAccount)
+}
+
+// poolSvcAdmitted is poolSvc with the repository's own node naming the accounts
+// the test gives and no other. That list is the admission's first leg — the
+// repository's child under the node (projectpolicy.PathRepo, and
+// RepoPolicy.Credentials.Accounts) — and a test about a member the repository
+// may not be served by leaves that member out of it (F10, D1627): the pool
+// still lists him, the project's node still defines him, and the child is what
+// says this repository may not be served by him.
+func poolSvcAdmitted(t *testing.T, block string, accounts ...string) *svc {
+	t.Helper()
 	return newSvcWith(t, func(s *svc, _ *Config) {
 		s.src.docs = [][]byte{poolBundleDoc(t)}
 		s.policy.shared = decodeTestPolicy(t, poolNode(block))
-		s.policy.admissions[s.slug] = decodeTestChild(t,
-			testChildDoc(config.DefaultClaudeAccount, testAccount, testPoolAccount))
+		s.policy.admissions[s.slug] = decodeTestChild(t, testChildDoc(accounts...))
 	})
 }
 
@@ -518,6 +549,150 @@ func TestProviderKeyIsAnsweredAsHeldAndNeverSelected(t *testing.T) {
 			t.Errorf("the upstream saw %d requests, want none", n)
 		}
 	})
+}
+
+// TestPublishedPoolOrderReachesTheService is MC19's own pin, and the sentence
+// it holds in one place: what serves a call is the pool the owner published.
+// The document below is the one the publish writes (MC18's `crafts`,
+// `craft_credentials` and `craft_pools`), and the two facts read off it are the
+// whole of how a pool reaches this service — its members are the candidate list,
+// in the order the owner listed them, and that order breaks a tie inside a tier
+// and decides nothing else (F7, D154), because the tier is creds.Selector's and
+// it serves tier A before tier B.
+//
+// The three assertions are one walk. The offering carries the node's order with
+// the bundle's tier for each name, so a service that sorted its candidates — by
+// name, or by tier — would be ordering a pool the owner ordered deliberately.
+// The call is served by the pool's first tier-A member although the paid key is
+// listed before both of them, so the listed order does not outrank the tier. And
+// with both subscriptions held the key serves, which is the same rule from the
+// other end: the node's own order never decides a call on its own.
+func TestPublishedPoolOrderReachesTheService(t *testing.T) {
+	s := poolSvc(t, `"credentials": {"fallback": "auto"},
+		`+poolCraftBlock(
+		`{"name": "`+config.AnthropicSecret+`", "type": "anthropic"},
+			{"name": "`+testPoolAccount+`", "type": "claude-oauth"},
+			{"name": "`+testAccount+`", "type": "claude-oauth"}`,
+		config.AnthropicSecret, testPoolAccount, testAccount)+`,
+		"subscription_spread": true`)
+	// Two replies: this test reads the same pool twice, once with both
+	// subscriptions free and once with both held.
+	s.up.Script = []anthropicfake.Reply{
+		anthropicfake.MessageOK(testModel, testUsage),
+		anthropicfake.MessageOK(testModel, testUsage),
+	}
+
+	b, err := ParseBundle(poolBundleDoc(t))
+	if err != nil {
+		t.Fatalf("the fixture's bundle is not one ParseBundle accepts: %v", err)
+	}
+	offer, strategy, narrowed, err := poolOffering(s.policy.shared, b)
+	if err != nil {
+		t.Fatalf("the published pool leaves this call nothing: %v", err)
+	}
+	if !narrowed {
+		t.Fatal("the node's crafts did not narrow the call's candidates")
+	}
+	if strategy != creds.StrategyFailover {
+		t.Errorf("the pool is served under %q, want the cascade's own rule: the node publishes no strategy (D1632)", strategy)
+	}
+	want := []creds.Credential{
+		{Name: config.AnthropicSecret, Tier: creds.TierB},
+		{Name: testPoolAccount, Tier: creds.TierA},
+		{Name: testAccount, Tier: creds.TierA},
+	}
+	if len(offer) != len(want) {
+		t.Fatalf("the offering holds %d candidates (%v), want the pool's three members", len(offer), offer)
+	}
+	for i, w := range want {
+		if offer[i] != w {
+			t.Errorf("candidate %d is %+v, want %+v: the order the node lists its members in is the order this service holds", i, offer[i], w)
+		}
+	}
+
+	// The node lists the key first, and the pool's own first OAuth member serves:
+	// the tier decides the call and the listed order only breaks a tie inside it
+	// (F7). alice is listed after bob and is the name a reader that sorted its
+	// candidates would have reached instead.
+	resp, body := s.call(t, callBody("published-pool-order"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the call is %d, want the pool's tier-A member to serve it: %s", resp.StatusCode, body)
+	}
+	if got := resp.Header.Get(HeaderCredential); got != testPoolAccount {
+		t.Errorf("%s = %q, want %q: the pool lists the paid key before both subscriptions and this one before the other", HeaderCredential, got, testPoolAccount)
+	}
+	if got := resp.Header.Get(HeaderTier); got != TierA {
+		t.Errorf("%s = %q, want %q: the tier decides and the listed order breaks a tie inside it (F7)", HeaderTier, got, TierA)
+	}
+	if n := s.up.Count(); n != 1 {
+		t.Errorf("the upstream saw %d requests, want 1: the list is narrowed to the pool, not walked", n)
+	}
+
+	// Both subscriptions held for longer than the wait threshold: the cascade
+	// moves on to the paid tier and the key serves. It is the pool's last-listed
+	// member, and it serves because every tier-A member is unavailable now —
+	// which is the one thing a pool's listed order may never do on its own.
+	s.hold(testPoolAccount, s.now, s.now.Add(time.Hour))
+	s.hold(testAccount, s.now, s.now.Add(time.Hour))
+	resp, body = s.call(t, callBody("published-pool-paid"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the call is %d, want the pool's paid member to serve it: %s", resp.StatusCode, body)
+	}
+	if got := resp.Header.Get(HeaderCredential); got != config.AnthropicSecret {
+		t.Errorf("%s = %q, want %q: with both subscriptions held the pool's remaining member serves", HeaderCredential, got, config.AnthropicSecret)
+	}
+	if got := resp.Header.Get(HeaderTier); got != TierB {
+		t.Errorf("%s = %q, want %q", HeaderTier, got, TierB)
+	}
+}
+
+// TestRunnerPathMemberIsNotOfferedToTheService is MC19's seam, and the reason a
+// crossing pool is harmless on this path: a node may list a member of the path
+// this service does not serve — an OpenRouter key, whose value is mounted in the
+// job that spends it (D1634) — and the reader still accepts that pool, because
+// the refusal that splits a crossing pool is the write door's
+// (config.ValidatePoolPaths, MC20) and converging a node an earlier release
+// published is MC21's migration (the activation plan's row 43). So this service
+// is where the crossing is answered for a call, and it answers it by not
+// offering the member at all: the pool's own service-path member serves, and the
+// runner path's is not in the candidate list. internal/projectpolicy's
+// TestTheNodeReadsACrossPathPoolUntilItsSplitLands is the reader's half of the
+// staging, and TestOpenRouterAndVertexMembersNeverReachCredsvc is what this
+// service ANSWERS such a pool (MC6).
+func TestRunnerPathMemberIsNotOfferedToTheService(t *testing.T) {
+	if config.CredentialServingPath(config.CredentialTypeOpenRouter) != config.CredentialPathRunner {
+		t.Fatalf("the fixture's OpenRouter credential is served by %q, and this test is written against it being the runner path's",
+			config.CredentialServingPath(config.CredentialTypeOpenRouter))
+	}
+	s := poolSvc(t, `"credentials": {"fallback": "auto"},
+		`+poolCraftBlock(
+		`{"name": "`+testRouterCredential+`", "type": "openrouter"},
+			{"name": "`+testPoolAccount+`", "type": "claude-oauth"}`,
+		testRouterCredential, testPoolAccount)+`,
+		"subscription_spread": true`)
+
+	b, err := ParseBundle(poolBundleDoc(t))
+	if err != nil {
+		t.Fatalf("the fixture's bundle is not one ParseBundle accepts: %v", err)
+	}
+	offer, _, _, err := poolOffering(s.policy.shared, b)
+	if err != nil {
+		t.Fatalf("the pool's own member serves, so the call is not refused: %v", err)
+	}
+	if len(offer) != 1 || offer[0].Name != testPoolAccount {
+		t.Fatalf("the offering is %v, want the pool's subscription member alone: this path never offers the runner's member", offer)
+	}
+
+	resp, body := s.call(t, callBody("published-runner-member"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the call is %d, want the pool's own member to serve it: %s", resp.StatusCode, body)
+	}
+	if got := resp.Header.Get(HeaderCredential); got != testPoolAccount {
+		t.Errorf("%s = %q, want %q", HeaderCredential, got, testPoolAccount)
+	}
+	if n := s.up.Count(); n != 1 {
+		t.Errorf("the upstream saw %d requests, want 1: the member of the other path is not tried", n)
+	}
 }
 
 // providerNotSelected is the tail both of this file's clauses for a credential
