@@ -3026,10 +3026,12 @@ func TestRepoAddressesFollowTheSwitch(t *testing.T) {
 // block on every installation; the repository root's own
 // `installation.credentials_service` — repoCredentialsService ->
 // CredentialsServiceServes — is what keeps the block out of a repository the
-// service cannot serve, and that is the authorization condition: the service
-// serves config.AuthCascade alone, so an oauth or api-key job that gave its
-// credential up would have nothing to replace it with (and no route at the
-// service that would serve it one).
+// service does not serve, and that is the authorization condition. This
+// fixture publishes no policy, so these two rows are repositories held off by
+// the mode as well (B2.3, D2071), and their mounts stay for the stronger reason
+// that covers every non-cascade repository this release serves: the flip that
+// takes a model mount away is B2.7's, and until it every mount is kept
+// (D2072, G17, ModelSecretsServed's `none`).
 //
 // What each held-off row asserts, in the two forms the installations
 // distinguish (oauth: the shared subscription token, once per Claude account;
@@ -3077,7 +3079,7 @@ func TestTheDeployAloneDropsNoModelMount(t *testing.T) {
 				t.Fatal("the fixture mounts no model credential with no service at all: the test would be vacuous")
 			}
 			if onMounted := mounted(onWS); !slices.Equal(onMounted, offMounted) {
-				t.Errorf("the converged installation's job mounts %v, want exactly %v, the credentials it mounted before the service was deployed: the service serves config.AuthCascade alone, so this job's own credential is the only one it can run on, and the module's accessor drop would refuse to deploy it (D145, D146)", onMounted, offMounted)
+				t.Errorf("the converged installation's job mounts %v, want exactly %v, the credentials it mounted before the service was deployed: every one of this repository's mounts is kept until the flip (D2072, G17), so a mount the deploy alone dropped is the release blocker docs/credentials-service/default-on.md §1.4 states, and the module's accessor drop would refuse to deploy it (D145, D146)", onMounted, offMounted)
 			}
 			// The redaction list follows the mounts: it is built from them, and
 			// a name left out of it that the job holds is a credential the

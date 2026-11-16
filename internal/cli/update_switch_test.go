@@ -23,19 +23,25 @@ import (
 //
 // Every `fugaro update` writes the installation's credentials_service block
 // (DON1), so the block's presence stopped being an opt-in the moment that
-// shipped: the same run's apply reaches the repository roots, and the module
-// drops a job's model mounts and its account's accessors for every root whose
-// `installation.credentials_service` is set (modules/workflow/sa.tf). The
-// service's bundle is empty on a fresh installation — `fugaro creds set` is its
-// only writer — so a drop gated on the block alone would take every
-// repository's model credential away, and a launch gated on it likewise would
-// open the git provider keyless (internal/gitprov/providers/providers.go
-// returns before it reads appKey), for a credential the service cannot hand
-// back. That is the release blocker §1.4 states, and it is what the switch
-// exists for: a repository is served only when the installation HAS the block,
-// the record `fugaro update` wrote from the bundle says the service holds a
-// model credential, and the repository's own agent.auth is one the service
-// serves (infra.CredentialsServiceServes).
+// shipped: the same run's apply reaches the repository roots, and a root whose
+// `installation.credentials_service` is set is one whose job account is granted
+// roles/run.invoker on the service; the model-secret accessor the module drops
+// for such a root keys on the answer `model_secrets_served` carries, which is
+// `none` for every non-cascade repository until the flip (modules/workflow/sa.tf,
+// D2072, G17). The service's bundle is empty on a fresh
+// installation — `fugaro creds set` is its only writer — so a switch gated on
+// the block alone would hand every repository's runs an address the service can
+// answer nothing to, and that address is what opens the git provider keyless
+// (internal/gitprov/providers/providers.go returns before it reads appKey), for
+// a credential the service cannot hand back. That is the release blocker §1.4
+// states, and it is what the switch exists for: a repository is served only
+// when the installation HAS the block,
+// the record `fugaro update` wrote from the bundle says the service holds the
+// credential THIS repository's runs need, the repository's own agent.auth is
+// one the service serves — the cascade, and since B2.3 an `api-key` or `oauth`
+// one — and, for those two, the project's published budget mode is `observe` or
+// `enforce`, the modes the gateway that reaches the service exists in (D2071,
+// infra.CredentialsServiceServes).
 //
 // The tests here are the CLI's half of that — what `fugaro update` records and
 // what a launch is handed. The plan's half, which accessors and mounts a
@@ -56,28 +62,34 @@ func TestTheSwitchTurnsOnForACascadeRepositoryWithAReadyBundle(t *testing.T) {
 	}
 }
 
-// TestTheSwitchStaysOffForANonCascadeRepositoryWithAReadyBundle: a repository
-// whose agent.auth is not the cascade keeps its own model credential, whatever
-// the installation and the bundle say. The service has no route that would
-// serve an `oauth` or `api-key` job one (internal/credsvc's own kinds), so a
-// job told where the service is would lose the credential it runs on and get
-// nothing back.
+// TestTheSwitchStaysOffForANonCascadeRepositoryWhereTheBudgetIsOff: an
+// `api-key` or `oauth` repository is served from this release on, and the
+// switch's fourth condition is the one this test is about (D2071): the service
+// is reached through the gateway that holds the model credential, and the
+// gateway exists only where the project's published budget mode is `observe` or
+// `enforce`. A project whose mode is `off`, and one that has published no node
+// at all, therefore hand such a repository no address — and with the block
+// present, the record set and the bundle ready, the mode is the whole of what
+// holds it off.
 //
-// The record is set and the block is there: this test is about the auth
-// condition alone, so everything else the switch reads says yes.
-func TestTheSwitchStaysOffForANonCascadeRepositoryWithAReadyBundle(t *testing.T) {
-	for _, auth := range []string{"oauth", "api-key"} {
-		var yaml string
-		switch auth {
-		case "oauth":
-			yaml = oauthLaunchYAML
-		default:
-			yaml = strings.Replace(oauthLaunchYAML, "auth: oauth", "auth: "+auth, 1)
-		}
-		plain, secret := launchWithCredentialsService(t, yaml, launchCredsURL, true)
+// Nothing is lost by that: every one of these repositories' mounts is still
+// there (D2072, G17, config.ServiceServedAuths is empty until the flip), so a
+// run held off the service runs on exactly the credential it has always run on.
+// The positive — the same two auths, on a node that is `observe` or `enforce` —
+// is TestLaunchEnvCarriesTheURLForASwitchedAPIKeyRepository.
+func TestTheSwitchStaysOffForANonCascadeRepositoryWhereTheBudgetIsOff(t *testing.T) {
+	for name, tc := range map[string]struct {
+		yaml      string
+		mode      string
+		published bool
+	}{
+		"an api-key repository on a project whose budget is off":    {apiKeyLaunchYAML, config.BudgetOff, true},
+		"an oauth repository on a project that published no policy": {oauthLaunchYAML, "", false},
+	} {
+		plain, secret := launchWithCredentialsServiceMode(t, tc.yaml, launchCredsURL, true, tc.mode, tc.published)
 		for _, kv := range append(append([]string{}, plain...), secret...) {
 			if strings.HasPrefix(kv, envCredentialsServiceURL+"=") {
-				t.Errorf("a launch for an agent.auth %s repository of a converged installation carried %q: the service serves config.AuthCascade alone, so the job would drop the model credential it runs on for an address that has nothing to hand it", auth, kv)
+				t.Errorf("%s: the launch carried %q, and the record, the block and the bundle all say yes: the address is reached through the gateway, which a project on `off` (or with no published node) does not run — and it is what opens the git provider keyless, for a mint that gateway is not there to serve", name, kv)
 			}
 		}
 	}
@@ -942,6 +954,92 @@ func TestTheRecordIsWrittenFalseWhenTheBundleIsEmptied(t *testing.T) {
 	// seventh review round's first finding.
 	if raw := readFileString(t, r.cfg); !strings.Contains(raw, "credentials_service_ready: false") {
 		t.Errorf("the local config does not carry the switch going off for this repository, and this file is the one `fugaro update` publishes for the installation: the switch-off has to travel with it, or the machine that applied the root with the service off looks like one that never judged it:\n%s", raw)
+	}
+}
+
+// oauthRepoYAML is the door's own document for an `oauth` repository whose
+// workflows name account: agent.oauth_token, which is the name the bundle holds
+// that subscription's token under (config.ClaudeAccountSecret). Account "" is a
+// repository that names none, which goes out on the default account.
+func oauthRepoYAML(account string) string {
+	if account == "" {
+		return checkoutYAML("bitbucket", config.AuthOAuth, "aurora", "")
+	}
+	return "version: 1\nproject: aurora\ngit: { provider: bitbucket }\n" +
+		"agent: { auth: " + config.AuthOAuth + ", oauth_token: " + account + " }\n" +
+		"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+}
+
+// TestUpdateSwitchRecordsReadyForTheNamedOAuthAccount is the readiness this
+// task sharpens (B2.3): the bundle reading a repository's record is written
+// from is the credential ITS runs go out on — the account its workflows name,
+// which is what the service will hand that run — and no longer "the bundle
+// holds some model credential", which says nothing about this repository.
+//
+// Both halves run over one rig, each with its own bundle, and the two documents
+// differ in one field: a repository that names no account goes out on the
+// default one, whose token rides the unsuffixed claude-oauth-token.
+func TestUpdateSwitchRecordsReadyForTheNamedOAuthAccount(t *testing.T) {
+	const account = "acme-personal"
+	r := switchRig(t)
+	putSwitchBundle(t, r, []byte(config.ClaudeAccountSecret(account)+": "+credsValue(t, "account")+"\n"))
+	if !recordForRepoDoc(t, r, oauthRepoYAML(account), config.BudgetEnforce, switchOutputs()).Repos["acme/sandbox"].CredentialsServiceOn() {
+		t.Errorf("the record is false for an oauth repository whose own document names %s, over a bundle holding that account's token and a project whose budget is enforced: the plan this run applies is built from this value, so the root is deployed held off — mounts kept, no roles/run.invoker — and the launch withholds the address from a run the service would have served", account)
+	}
+
+	putSwitchBundle(t, r, []byte(config.ClaudeAccountSecret("")+": "+credsValue(t, "default")+"\n"))
+	if !recordForRepoDoc(t, r, oauthRepoYAML(""), config.BudgetEnforce, switchOutputs()).Repos["acme/sandbox"].CredentialsServiceOn() {
+		t.Errorf("the record is false for an oauth repository that names no account, over a bundle holding the default account's token: a repository that names none goes out on the default one, and a record that missed it would hold off the commonest oauth repository there is")
+	}
+}
+
+// TestUpdateSwitchHoldsOffAnOAuthRepoWhoseAccountIsNotInTheBundle is the other
+// direction, and the one the sharper reading exists for: the bundle holds AN
+// account's token — so the old "holds a model credential" question would answer
+// yes — and it is not the account this repository's runs go out on. The service
+// would refuse the run at its door with no candidate for that account, while
+// the record vouched for it and the root was applied with the mounts dropped.
+//
+// The held-off direction costs this repository nothing today: its mounts are
+// all still there (D2072, G17), so its runs go out on their own subscription
+// exactly as they do now.
+func TestUpdateSwitchHoldsOffAnOAuthRepoWhoseAccountIsNotInTheBundle(t *testing.T) {
+	r := switchRig(t)
+	putSwitchBundle(t, r, []byte(config.ClaudeAccountSecret("acme-personal")+": "+credsValue(t, "account")+"\n"))
+	if got := recordForRepoDoc(t, r, oauthRepoYAML("acme-other"), config.BudgetEnforce, switchOutputs()).Repos["acme/sandbox"].CredentialsServiceOn(); got {
+		t.Errorf("the record says the service is ready for an oauth repository that goes out on acme-other, over a bundle holding acme-personal's token alone: the bundle holding SOME model credential is not the question — this run's own account is — and a record that answered the first would vouch for a root whose job mounts are gone and whose calls the service then refuses (no_candidate_credentials)")
+	}
+}
+
+// TestUpdateSwitchHoldsOffARepoWhoseGitCredentialIsNotInTheBundle is the second
+// half of the reading, and the reason the address is not inert (F29, R6): a job
+// handed the service's address opens its git provider KEYLESS
+// (internal/gitprov/providers/providers.go), so a GitHub repository whose
+// bundle holds no App key would lose the mint it needs to push and to comment
+// at all — its own App key is mounted on the job and the address is exactly
+// what stops it being read.
+//
+// The Bitbucket row is the contrast that shows the condition is the GitHub
+// provider's alone: a Bitbucket repository's job reads its own token from its
+// own mount whatever the address says, so the key's absence buys it nothing —
+// and must not hold it off the service.
+func TestUpdateSwitchHoldsOffARepoWhoseGitCredentialIsNotInTheBundle(t *testing.T) {
+	model := config.AnthropicSecret + ": " + credsValue(t, "model") + "\n"
+	r := switchRig(t)
+	putSwitchBundle(t, r, []byte(model))
+
+	if got := recordForRepoDoc(t, r, checkoutYAML("github", config.AuthAPIKey, "aurora", ""), config.BudgetEnforce, switchOutputs()).Repos["acme/sandbox"].CredentialsServiceOn(); got {
+		t.Errorf("the record says the service is ready for a GitHub repository over a bundle holding no App key: this root's job would be applied with the service's address on it, the provider would open keyless, and the push and the pull-request comment of every run of it would be refused with the App key still mounted on the job and unread — the run fails as infra_error with no PR (F29, D143)")
+	}
+
+	putSwitchBundle(t, r, []byte(model+config.GitHubAppKeySecret+": "+credsValue(t, "appkey")+"\n"))
+	if got := recordForRepoDoc(t, r, checkoutYAML("github", config.AuthAPIKey, "aurora", ""), config.BudgetEnforce, switchOutputs()).Repos["acme/sandbox"].CredentialsServiceOn(); !got {
+		t.Errorf("the record is false for a GitHub repository whose bundle holds the App key and the paid key an api-key run needs: the service can mint this repository's git credential and serve its model one, which is every credential such a run needs")
+	}
+
+	putSwitchBundle(t, r, []byte(model))
+	if got := recordForRepoDoc(t, r, checkoutYAML("bitbucket", config.AuthAPIKey, "aurora", ""), config.BudgetEnforce, switchOutputs()).Repos["acme/sandbox"].CredentialsServiceOn(); !got {
+		t.Errorf("the record is false for a Bitbucket repository over a bundle holding no App key: that repository's job reads its own token from its own mount whatever the address says, so the App key's absence is not this repository's business")
 	}
 }
 
