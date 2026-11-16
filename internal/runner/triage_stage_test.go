@@ -1176,10 +1176,10 @@ func triageAccountNode(account string) string {
 //     marked rather than showing a duration that reads as a judge that ran, and
 //     an ERROR naming the cause.
 //
-// Mutation (drop the skip branch in triageRound, or any of the four facts
-// triageUnserved reads): the judge is asked for the round the run cannot serve
-// and this test fails at its own gate — either the count of triage calls or the
-// absence of the skip in the record, the report and the log.
+// Mutation (drop the skip branch in triageRound, or make triageUnserved answer
+// false): the run makes the call after all, the scripted agent has no step for
+// a call it never expected, and this case fails on the error the run returns —
+// the fact it pins being that no such call is made.
 func TestTriageWithNoAccountAndNoKeyIsSkippedNotAsked(t *testing.T) {
 	var logs bytes.Buffer
 	g := newGW(t, budgetedTriageCfg(t, 2, ""), "enforce", "50", out4k())
