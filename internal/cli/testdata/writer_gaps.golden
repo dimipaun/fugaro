@@ -205,8 +205,14 @@ model_grades.strong.model
 model_grades.strongest.access
 model_grades.strongest.model
 model_prices.conformance.cache_read
+model_prices.conformance.cache_read_mult
+model_prices.conformance.cache_read_per_m
 model_prices.conformance.cache_write_1h
+model_prices.conformance.cache_write_1h_mult
+model_prices.conformance.cache_write_1h_per_m
 model_prices.conformance.cache_write_5m
+model_prices.conformance.cache_write_5m_mult
+model_prices.conformance.cache_write_5m_per_m
 model_prices.conformance.image_tokens
 model_prices.conformance.input_per_m
 model_prices.conformance.long_context.above_input_tokens
