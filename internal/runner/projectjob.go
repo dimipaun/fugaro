@@ -668,7 +668,8 @@ func cannotPlaceJob(job string, p *projectpolicy.Policy, found bool, slug, workf
 // its image already holds one: it is the run's own repository's, it is put into
 // a state this run wrote, and only then does anything fetch through it (D2308,
 // review F22). Every other repository the image baked is removed before the
-// agent starts (D2309, review F23). A run in a per-repository job, and a work
+// agent starts (D2309, review F23) — this job class's half of it, the other
+// being openBakedCheckout's. A run in a per-repository job, and a work
 // directory with no checkout at all, pass: the first is the admission's own
 // case (openBakedCheckout), and the second clones.
 //
@@ -776,9 +777,17 @@ func (r *run) bakedProjectCheckout() string {
 // of. Only the directory named by this run's storage slug stays — the run's own
 // repository's, whichever stage baked it.
 //
-// It runs on every project job, before the checkout decision: a run that finds
-// no baked checkout of its own clones, and the other repositories the image
-// baked are no more its to read for that.
+// Both job classes call it, each from the function that settles its checkout:
+// checkProjectCheckoutOrigin for a project job, openBakedCheckout for a
+// per-repository one. The read F23 names is a property of the shared image's
+// layout (D1900: the per-repository class runs the project's catalog image too)
+// and not of the job class, so neither class leaves a sibling for its agent.
+// The call is before the checkout decision either way: a run that finds no
+// baked checkout of its own clones, and the other repositories the image baked
+// are no more its to read for that. The one run that reaches neither call is a
+// per-repository job whose storage slug derives no provider kind
+// (providerForSlug): it adopts no baked directory either, so the layout this
+// removal is about is not the layout it runs in.
 func (r *run) removeOtherBakedRepos() error {
 	root := filepath.Join(filepath.Dir(r.d.WorkDir), BakedRepoRoot)
 	entries, err := os.ReadDir(root)

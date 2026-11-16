@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -312,7 +313,9 @@ func TestBakedCheckoutPerSlugPathRecordsItsOwnCommit(t *testing.T) {
 // TestBakedMissingFallsBackToClone (IS8): the image's per-slug layout holds
 // another repository's checkout and none for this run's repository, so nothing
 // is baked for this run to work on: it clones its own remote into the work
-// directory, and the other repository's checkout is left exactly as it was.
+// directory — and the other repository's checkout is not left beside it either
+// (D2309, review F23): it is a repository this run is not, so it goes before
+// the agent starts, exactly as it does on a project job.
 func TestBakedMissingFallsBackToClone(t *testing.T) {
 	h := newHarness(t, "", nil)
 	other := bakedDir(t, h, mustSlug("github", "evil/other"))
@@ -330,11 +333,51 @@ func TestBakedMissingFallsBackToClone(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(h.deps.WorkDir, "feature.txt")); err != nil {
 		t.Errorf("the run did not work in the checkout it cloned: %v", err)
 	}
-	if got := testutil.Git(t, other, "rev-parse", "--abbrev-ref", "HEAD"); got != "main" {
-		t.Errorf("the other repository's baked checkout is on %q, want it left as it was (main)", got)
+	if _, err := os.Stat(other); err == nil {
+		t.Error("the other repository's baked checkout is still there after the run: it is another repository's source, which this run holds no grant over")
 	}
-	if got := testutil.Git(t, other, "branch", "--list", "fugaro/"+runID); got != "" {
-		t.Errorf("the other repository's baked checkout holds the run's branch: %q", got)
+}
+
+// TestBakedCheckoutPerSlugPathRemovesTheOtherBakedRepos (D2309, review F23): a
+// per-repository job runs the project's catalog image too (D1900), which bakes
+// the checkout of every repository its entry serves and not just this run's —
+// so the read F23 names is a property of the image's layout and not of the job
+// class, and this class removes the siblings exactly as a project job does.
+// What is left under the image's baked root when the agent runs is this run's
+// own directory alone.
+//
+// Mutation (run, restore): drop the removeOtherBakedRepos call from
+// openBakedCheckout. The step below finds the other repository's checkout, and
+// its source is a file of the run's.
+func TestBakedCheckoutPerSlugPathRemovesTheOtherBakedRepos(t *testing.T) {
+	h := newHarness(t, "", nil)
+	own := bakedDir(t, h, repoSlug)
+	testutil.Git(t, filepath.Dir(own), "clone", "--quiet", h.remote, own)
+	other := bakedDir(t, h, mustSlug("github", "evil/other"))
+	otherRepositoryCheckout(t, h, other)
+	writeFileAt(t, filepath.Join(other, "secret.txt"), "another repository's source\n")
+	readable := ""
+	step := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		entries, err := os.ReadDir(filepath.Dir(own))
+		if err != nil {
+			return agent.Result{}, err
+		}
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		readable = strings.Join(names, " ")
+		return implement("feature")(t, ctx, req)
+	}
+	rec, err := h.run(t, step, review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if want := filepath.Base(own); readable != want {
+		t.Errorf("the baked root held %q when the agent ran, want only this run's own %q", readable, want)
+	}
+	if _, err := os.Stat(other); err == nil {
+		t.Error("the other repository's baked checkout is still there after the run")
 	}
 }
 

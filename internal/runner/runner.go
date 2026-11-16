@@ -2171,11 +2171,15 @@ func BakedDir(workDir, slug string) string {
 //
 // Only a per-repository job looks here, and returns below for the other class:
 // a project job's image bakes the project's repositories, and the run settles
-// them in checkProjectCheckoutOrigin instead — the one that is this run's
-// repository's reset and adopted there, the rest removed (D2308, D2309) — so
+// the checkout it works on in checkProjectCheckoutOrigin instead — the reset,
+// the verification and the removal of the rest that D2308 and D2309 put there.
+// What this class shares with that one is D2309, and it is done here: the other
+// repositories the image baked are removed before this function adopts the
+// per-slug directory, because that read is a property of the image's layout and
+// not of the job class — this class runs the same shared image (D1900). So
 // whichever class a run is in, the checkout it works on is settled under this
-// binding before anything fetches through it. And the run must be able to name
-// the repository its task
+// binding, and the image's other repositories are gone, before anything of the
+// run reads one. And the run must be able to name the repository its task
 // names under the kind its own slug derives (providerForSlug): a slug no
 // provider kind produces — what `--provider fake` gives a local invocation —
 // names no repository to call a baked directory after and no remote to hold the
@@ -2194,6 +2198,15 @@ func (r *run) openBakedCheckout(ctx context.Context) error {
 	}
 	if _, project := r.projectJob(); project {
 		return nil
+	}
+	// The other repositories the image baked go before anything of this run
+	// reads one (D2309, review F23): this class runs the same shared image a
+	// project job does (D1900), so the image bakes the project's repositories
+	// and not just this run's. Here rather than after the adoption below, which
+	// rewrites r.d.WorkDir: the directories are found by their position beside
+	// the work directory the job started in.
+	if err := r.removeOtherBakedRepos(); err != nil {
+		return err
 	}
 	repo, err := gitops.Open(r.d.WorkDir, nil)
 	if err != nil {
