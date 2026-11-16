@@ -116,8 +116,19 @@ func secretsSetSettings(cmd *cobra.Command, o secretsOptions, name string) error
 	}
 	command := secretsSettingsCommand(cmd, o, name)
 	var docs []settingsWriteDoc
+	// A dry run writes nothing, so the record after the first would read the
+	// file on disk and work its edit out from a state the write never leaves
+	// behind: `--bitbucket-api-root a --bitbucket-api-root b` adds both roots,
+	// and a dry run that read the file twice would answer b's record with a list
+	// holding b alone. carried is what the dry run hands from one record to the
+	// next, by the file that record resolved to, and it is nil for a write,
+	// where every edit has landed before the next record reads the file.
+	var carried map[string][]byte
+	if o.dryRun {
+		carried = map[string][]byte{}
+	}
 	for _, change := range changes {
-		if err := secretsSettingsRecord(cmd, o, change, sel, lc, command, &docs); err != nil {
+		if err := secretsSettingsRecord(cmd, o, change, sel, lc, command, &docs, carried); err != nil {
 			return err
 		}
 	}
@@ -180,8 +191,9 @@ func secretsSettingsRunDoc(docs []settingsWriteDoc) settingsWriteDoc {
 
 // secretsSettingsRecord writes one record: the row's own layer, the file the
 // settings resolver names for it, the edit the change carries, and then the
-// stages the write owes.
-func secretsSettingsRecord(cmd *cobra.Command, o secretsOptions, change secretsSettingsChange, sel localcfg.Selection, lc *localcfg.Config, command string, collect *[]settingsWriteDoc) error {
+// stages the write owes. carried is a dry run's own state, keyed by file (see
+// secretsSetSettings) and nil for a write.
+func secretsSettingsRecord(cmd *cobra.Command, o secretsOptions, change secretsSettingsChange, sel localcfg.Selection, lc *localcfg.Config, command string, collect *[]settingsWriteDoc, carried map[string][]byte) error {
 	row, ok := settings.Lookup(change.key)
 	if !ok {
 		// Unreachable: every change comes from a row this command registers
@@ -204,6 +216,12 @@ func secretsSettingsRecord(cmd *cobra.Command, o secretsOptions, change secretsS
 	if err != nil {
 		return err
 	}
+	// A record of a file this run has already answered for starts where that
+	// record left it, and not from the file on disk: in a dry run nothing was
+	// written in between, so the disk still holds the state before the run.
+	if prior, ok := carried[target.path]; ok {
+		old = prior
+	}
 	next, err := change.set(target.keyPath, old)
 	if err != nil {
 		return userErr("%s: %v", change.settingsKey(), err)
@@ -222,6 +240,11 @@ func secretsSettingsRecord(cmd *cobra.Command, o secretsOptions, change secretsS
 		DryRun:  secretsSettingsDryRun(o, target, change, old, next, collect),
 	}); err != nil {
 		return err
+	}
+	if carried != nil {
+		// Where this record would leave the file, for the next record of it: the
+		// answer the write itself gets by writing.
+		carried[target.path] = next
 	}
 	// The hook runs for the write that happened. A dry run wrote nothing, and a
 	// record the file already holds — an API root added twice — is the "no

@@ -665,6 +665,84 @@ func TestSecretsSetDryRunPrintsOneDocumentForARun(t *testing.T) {
 	}
 }
 
+// TestSecretsSetDryRunChainsTheRecordsOfOneFile: a dry run writes nothing, so
+// the records of one file have to be worked out from each other and not from the
+// disk — the record after the first that read the file would answer a diff the
+// write never makes, because the write has already landed the record before it.
+// Two roots in one run are the case: the second record's old is the first
+// record's new, and the last record's new is what the write leaves in the file
+// (D1106: the dry run states the write). The add-then-remove run is the same
+// rule the other way, where the disk would answer "no change" for a removal this
+// run really makes.
+func TestSecretsSetDryRunChainsTheRecordsOfOneFile(t *testing.T) {
+	settingsFixture(t, "")
+	secretsClock(t, secretsTestToday)
+	hooked := secretsHookRecord(t)
+	path := os.Getenv("FUGARO_CONFIG")
+	before := readFileString(t, path)
+
+	runOf := func(args ...string) (secretsRunDoc, string) {
+		t.Helper()
+		out, errOut, err := execute(t, append(append([]string{}, args...), "--dry-run", "--json")...)
+		if err != nil {
+			t.Fatalf("%v: stdout %q, stderr %q: %v", args, out, errOut, err)
+		}
+		var run secretsRunDoc
+		if err := json.Unmarshal([]byte(out), &run); err != nil {
+			t.Fatalf("%v did not print one document: %v\n%s", args, err, out)
+		}
+		return run, out
+	}
+
+	const first, second = "https://a.example.com", "https://b.example.com"
+	run, out := runOf("secrets", "set", "--bitbucket-api-root", first, "--bitbucket-api-root", second)
+	want := []secretsWriteDoc{
+		{Key: "bitbucket_api_roots", Layer: settingsLayerLocal, Changed: true, New: first},
+		{Key: "bitbucket_api_roots", Layer: settingsLayerLocal, Changed: true, Old: first, New: first + "," + second},
+	}
+	if !slices.Equal(run.Records, want) {
+		t.Fatalf("records = %+v, want %+v — the second record starts where the first leaves the list\n%s", run.Records, want, out)
+	}
+	if after := readFileString(t, path); after != before {
+		t.Fatalf("a dry run wrote the local config:\n%s", after)
+	}
+	if len(*hooked) != 0 {
+		t.Fatalf("a dry run told the hook %v", *hooked)
+	}
+
+	// The last record's new is where the run leaves the file, and the write of
+	// the same two roots leaves exactly that.
+	if _, _, err := execute(t, "secrets", "set", "--bitbucket-api-root", first, "--bitbucket-api-root", second); err != nil {
+		t.Fatal(err)
+	}
+	written := readFileString(t, path)
+	if got := settingsValueIn([]byte(written), []string{"bitbucket_api_roots"}); got != run.Records[1].New {
+		t.Fatalf("the write left bitbucket_api_roots = %q and the dry run's last record said %q", got, run.Records[1].New)
+	}
+
+	*hooked = nil
+	const third = "https://c.example.com"
+	run, out = runOf("secrets", "set", "--bitbucket-api-root", third, "--remove-bitbucket-api-root", third)
+	if len(run.Records) != 2 {
+		t.Fatalf("records = %+v, want the add and the removal\n%s", run.Records, out)
+	}
+	if !run.Records[0].Changed || !run.Records[1].Changed {
+		t.Fatalf("records = %+v, want a change in both: the removal takes out the root the record before it added\n%s", run.Records, out)
+	}
+	if !strings.Contains(run.Records[1].Old, third) {
+		t.Fatalf("the removal's old is %q, want the list the add left behind\n%s", run.Records[1].Old, out)
+	}
+	if strings.Contains(run.Records[1].New, third) {
+		t.Fatalf("the removal's new is %q, and the root it takes out is still in it\n%s", run.Records[1].New, out)
+	}
+	if after := readFileString(t, path); after != written {
+		t.Fatalf("the second dry run wrote the local config:\n%s", after)
+	}
+	if len(*hooked) != 0 {
+		t.Fatalf("the second dry run told the hook %v", *hooked)
+	}
+}
+
 // TestSecretsSetRefusesARecordBesideAPolicyFlag: a record and a policy entry
 // are two writes, and this command makes one per run. Neither flag set is the
 // other's to drop: --allow-data-to beside --rotation-days would leave the
