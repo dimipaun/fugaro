@@ -2398,7 +2398,7 @@ crafts:
 // removal.
 func TestAccountsRmRefusesAPoolMember(t *testing.T) {
 	r := newAddRigWith(t, accountsRmKeyPoolLocal)
-	r.add(t, "team-a", "--repos", "owner/repo-a")
+	r.addTyped(t, "team-a", "--repos", "owner/repo-a")
 	if v := r.sm.Latest(credentialSecretID("team-a")); v == nil {
 		t.Fatalf("the fixture's %s holds no value, so the refused delete would prove nothing", credentialSecretID("team-a"))
 	}
@@ -2432,7 +2432,7 @@ func TestAccountsRmRefusesAPoolMember(t *testing.T) {
 // — is left where it was.
 func TestAccountsRmClearsACraftAccess(t *testing.T) {
 	r := newAddRigWith(t, accountsRmKeyCraftLocal)
-	r.add(t, "team-a", "--repos", "owner/repo-a")
+	r.addTyped(t, "team-a", "--repos", "owner/repo-a")
 
 	out := r.rm(t, "team-a")
 
@@ -2470,7 +2470,7 @@ func TestAccountsRmClearsACraftAccess(t *testing.T) {
 // container the type decides.
 func TestAccountsRmRemovesTheValueToo(t *testing.T) {
 	r := newAddRigWith(t, accountsRmKeyCraftLocal)
-	r.add(t, "team-a", "--repos", "owner/repo-a")
+	r.addTyped(t, "team-a", "--repos", "owner/repo-a")
 	id := credentialSecretID("team-a")
 	if r.sm.Latest(id) == nil {
 		t.Fatalf("the fixture's %s holds no value, so the delete has nothing to take away", id)
