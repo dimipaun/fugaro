@@ -58,6 +58,22 @@ const (
 	mountedSecretValue = "mounted-workflow-secret-4a20"
 )
 
+// otherSecretEnvVar is a variable that is not the one a call asks for: what a
+// service answers when the answer belongs to another variable, which the run
+// may not read as the one it asked for.
+const otherSecretEnvVar = "SOME_OTHER_VARIABLE"
+
+// shortSecretValue is under the floor a value must clear before a run may
+// register it for redaction: a service that answered it is refused rather than
+// registered, because a value that short would rewrite unrelated text wherever
+// this run publishes.
+const shortSecretValue = "abc"
+
+// minFetchedSecretLen is that floor, which the refusal names. It is spelled as
+// a literal because the runner's own constant is unexported and these cases run
+// from outside the package.
+const minFetchedSecretLen = 4
+
 // secretsCall is one call the stand-in service received, kept whole: what the
 // call asked for and what it presented, which is what a test asserts the fetch
 // is signed by.
@@ -76,7 +92,9 @@ type secretsCall struct {
 // status, body and malformed are the three ways a call is not served: a typed
 // refusal with status, a 200 whose body is not this contract's, and (with no
 // value under the variable asked for) the state_unavailable refusal the route
-// writes for a record that holds nothing there.
+// writes for a record that holds nothing there. answerEnv is the fourth, the
+// one the contract itself forbids: a 200 that names some other variable than
+// the one the call asked for.
 type secretsService struct {
 	mu        sync.Mutex
 	values    map[string]string
@@ -84,6 +102,7 @@ type secretsService struct {
 	status    int
 	body      string
 	malformed string
+	answerEnv string
 	upstream  string
 }
 
@@ -97,7 +116,7 @@ func (s *secretsService) serve(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.calls = append(s.calls, secretsCall{env: req.Env, header: r.Header.Clone(), body: string(raw)})
 	value, ok := s.values[req.Env]
-	status, refusal, malformed := s.status, s.body, s.malformed
+	status, refusal, malformed, answerEnv := s.status, s.body, s.malformed, s.answerEnv
 	s.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	switch {
@@ -110,6 +129,9 @@ func (s *secretsService) serve(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(credsvc.StatusUnavailable)
 		_, _ = fmt.Fprintf(w, `{"error":%q,"message":"the record holds nothing under that name"}`, credsvc.ErrorStateUnavailable)
 	default:
+		if answerEnv != "" {
+			req.Env = answerEnv
+		}
 		_ = json.NewEncoder(w).Encode(credsvc.WorkflowSecretsResponse{Env: req.Env, Value: value})
 	}
 }
@@ -427,9 +449,14 @@ func TestReviewRunFetchedSecretsNeverReachTheAgent(t *testing.T) {
 // the value, or reaching for a credential of the run's own instead, is the one
 // thing a run may not do here (D143).
 //
-// The three ways the service does not serve the call are the three the run's
-// own sentences tell apart: it cannot be reached at all, it refuses the call,
-// and it answers something that is not this contract's.
+// The ways the service does not serve the call are the ways the run's own
+// sentences tell apart: it cannot be reached at all, it refuses the call, and
+// it answers something the run may not read as this variable's value -- a body
+// that is not this contract's, one that carries a second document after it, one
+// that names another variable, and one whose value is too short to be redacted.
+// Each of those stops the run here rather than handing the answer on: the
+// contract echoes the variable for exactly the third of them, and the floor of
+// the fourth is the same one agent.BuildEnv refuses a declared secret under.
 func TestServiceDownHaltsTheRunBeforeTheAgent(t *testing.T) {
 	// A service that is not listening at all: a URL whose port nothing holds.
 	closed := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
@@ -449,6 +476,16 @@ func TestServiceDownHaltsTheRunBeforeTheAgent(t *testing.T) {
 		{name: "the answer is not this contract's", edit: func(s *secretsService) {
 			s.malformed = `{"env":"FIXTURE_FAILS_FILE","value":"x","extra":1}`
 		}, wantInErr: "is not a workflow secret's"},
+		{name: "the answer carries more than one document", edit: func(s *secretsService) {
+			s.malformed = fmt.Sprintf(`{"env":%q,"value":%q}{"env":"SOME_OTHER_VARIABLE","value":%q}`, secretEnvVar, fetchedSecretValue, fetchedSecretValue)
+		}, wantInErr: "carries more than one document"},
+		{name: "the answer names another variable", edit: func(s *secretsService) {
+			s.values[secretEnvVar] = fetchedSecretValue
+			s.answerEnv = otherSecretEnvVar
+		}, wantInErr: "is for another variable"},
+		{name: "the answer is a value too short to redact", edit: func(s *secretsService) {
+			s.values[secretEnvVar] = shortSecretValue
+		}, wantInErr: fmt.Sprintf("answered a value shorter than %d bytes", minFetchedSecretLen)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := &secretsService{values: map[string]string{}}
