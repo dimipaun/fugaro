@@ -2095,25 +2095,27 @@ func TestAnAnnualRowsKeyRenewsInItsOwnLastWeek(t *testing.T) {
 	}
 }
 
-// TestAPurchasedKeyRenewsThroughTheRenewEndpoint: the key a purchase mails is
-// the key D2202 makes a month of, and the endpoint the plan names for carrying an
-// entitlement from one of those to the next is `/renew` — "keys of connected
-// entitlements carry at most 30 days to `paid_through` and renew through
-// `/renew` while the entitlement runs" (docs/portal/reconciliation.md). The
-// state the paid lane writes is the whole of that endpoint's input, and this
-// reads both halves of it: the key's own renewal hash, and the workspace the
-// successor is minted into — a state that names none is refused there rather than
-// renewed (TN2, K2.3), which leaves the customer dark from the end of the key in
-// hand until the merchant's own renewal.
+// TestAPurchasedKeyRenewsThroughTheRenewEndpoint: the key a purchase's binding
+// mints is the key D2202 makes a month of, and the endpoint the plan names for
+// carrying an entitlement from one of those to the next is `/renew` — "keys of
+// connected entitlements carry at most 30 days to `paid_through` and renew
+// through `/renew` while the entitlement runs"
+// (docs/portal/reconciliation.md). The state the paid lane writes is the whole
+// of that endpoint's input, and this reads both halves of it: the key's own
+// renewal hash, and the workspace the successor is minted into — a state that
+// names none is refused there rather than renewed (TN2, K2.3), which leaves the
+// customer dark from the end of the key in hand until the merchant's own
+// renewal.
 func TestAPurchasedKeyRenewsThroughTheRenewEndpoint(t *testing.T) {
 	f, spy := renewing(t)
 	bought := f.purchase("evt-1", "acme.example", 5, 365)
 	if len(f.mail.sent) != 1 {
-		t.Fatalf("the purchase mailed %d message(s), want the one carrying the key", len(f.mail.sent))
+		t.Fatalf("the purchase mailed %d message(s), want the one notice it sends: the key is issued in the portal and mailed by nobody (F3, D2182)", len(f.mail.sent))
 	}
-	key, secret := mailedBundle(t, f.mail.sent[0].Body)
+	key := f.mintedKeys()[0]
+	secret := f.secretOf(t, key)
 	if claims := v1Verified(t, f, key); claims.KeyID != bought.KeyID {
-		t.Fatalf("the mail carries the key %s, want the purchased one %s", claims.KeyID, bought.KeyID)
+		t.Fatalf("the binding minted the key %s, want the one it recorded %s", claims.KeyID, bought.KeyID)
 	}
 
 	state, held, err := f.store.KeyState(context.Background(), bought.KeyID)
@@ -2154,9 +2156,10 @@ func TestAnAnnualPurchasesLicenceIsLiveAllYear(t *testing.T) {
 	f, spy := renewing(t)
 	bought := f.purchase("evt-1", "acme.example", 5, 365)
 	if len(f.mail.sent) != 1 {
-		t.Fatalf("the purchase mailed %d message(s), want the one carrying the key", len(f.mail.sent))
+		t.Fatalf("the purchase mailed %d message(s), want the one notice it sends: the key is issued in the portal and mailed by nobody (F3, D2182)", len(f.mail.sent))
 	}
-	key, secret := mailedBundle(t, f.mail.sent[0].Body)
+	key := f.mintedKeys()[0]
+	secret := f.secretOf(t, key)
 	claims := v1Verified(t, f, key)
 	if run := claims.PaidThrough.Sub(claims.IssuedAt); run != connectedTerm {
 		t.Fatalf("the purchased key runs %s, want D2202's thirty days: the subscription carries the year and the key is a month of it", run)
