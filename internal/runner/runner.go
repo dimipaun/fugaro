@@ -3234,6 +3234,18 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err := r.haltedErr(); err != nil {
 		return err
 	}
+	// The read-only context repositories this task was launched with, cloned
+	// outside the work tree (C5c, D613; context_repos.go). Last, because the
+	// clone spends a mint at the credentials service and a read of somebody
+	// else's repositories, and every refusal that can end this run — an
+	// admission, a halt, a checkout that is not this run's repository — has
+	// been made by now: a run that was going to be refused gets away without
+	// either. Before the record is saved below, because a run whose context is
+	// not in place has not bootstrapped, and the record is what the next
+	// execution and the follow-up read.
+	if err := r.cloneContextRepos(ctx); err != nil {
+		return err
+	}
 	r.save(ctx)
 	return nil
 }
@@ -3436,7 +3448,8 @@ func (r *run) readRepoFile(rel string) (string, error) {
 // from: the run's own state decides each conditional rule.
 func (r *run) systemPromptData() PromptData {
 	pd := PromptData{Branch: r.rec.Branch, Base: r.cfg.Git.BaseBranch, StateDir: r.d.StateDir,
-		NoWorkflows: r.providerKind == gitprov.KindGitHub, Checkpoints: r.checkpointsOn(),
+		ContextRepos: r.contextRepoLines(),
+		NoWorkflows:  r.providerKind == gitprov.KindGitHub, Checkpoints: r.checkpointsOn(),
 		LintConfigured: strings.TrimSpace(r.wf.Commands.Lint) != "",
 		// The brief is the coder's, and "implement" is one of its stages: the
 		// answer is the coder's own model, never a review stage's, which is
