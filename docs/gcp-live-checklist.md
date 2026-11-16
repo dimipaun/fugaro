@@ -18066,16 +18066,24 @@ gcloud scheduler jobs run <job> --project <project> --location <region>   # one 
 gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="<service>"' \
   --project <project> --limit 20 --format="value(timestamp,textPayload)"
 gcloud run jobs executions list --project <project> --region <region> --limit 5
-# the instance count between ticks, which is the annotation's own consequence (paste an
-# RFC3339 timestamp ten minutes back for --interval-start-time):
-gcloud monitoring time-series list --project <project> \
-  --filter='metric.type="run.googleapis.com/container/instance_count" AND resource.labels.service_name="<service>"' \
-  --interval-start-time <rfc3339-10-minutes-ago>
+# the instance count between ticks, which is the annotation's own consequence. The GA `gcloud`
+# carries no `monitoring time-series` group, so this is the Monitoring API's own surface, with the
+# token this shell mints (paste an RFC3339 timestamp ten minutes back, and now):
+TOKEN=$(gcloud auth print-access-token)
+curl -s -G -H "Authorization: Bearer $TOKEN" \
+  --data-urlencode 'filter=metric.type="run.googleapis.com/container/instance_count" AND resource.labels.service_name="<service>"' \
+  --data-urlencode 'interval.startTime=<rfc3339-10-minutes-ago>' \
+  --data-urlencode 'interval.endTime=<rfc3339-now>' \
+  "https://monitoring.googleapis.com/v3/projects/<project>/timeSeries"
+unset TOKEN
 ```
 
 The first command prints the revision template's annotations, and the value of `autoscaling.knative.dev/minScale`
 is what this check turns on; the last read is that value's consequence — with `0` and no tick in flight, the
-series' last point is `0`, which is the instance really going away rather than the annotation alone. The third forces one tick with **nothing in the mailbox**: the pass runs, writes no
+series' last point is `0`, which is the instance really going away rather than the annotation alone. It is the
+one read above that is not a `gcloud` command (`projects.timeSeries.list`, on the Monitoring API's own endpoint,
+against the metric name Cloud Run's metric list carries), and the metric's name is the only string in this
+section a future Cloud Run release could move. The third forces one tick with **nothing in the mailbox**: the pass runs, writes no
 message, starts no execution — the fifth command is the negative control, and the list must not have grown —
 and the generations it writes are the ones a pass over an empty mailbox writes, which the fourth command's log
 lines show. Record the
@@ -18298,9 +18306,13 @@ gcloud projects test-iam-permissions <project> --impersonate-service-account=<or
 # the value read is attempted with its output thrown away: the refusal is the reading, never bytes
 gcloud secrets versions access latest --secret=<model-secret> --project <project> \
   --impersonate-service-account=<orch-account> >/dev/null
-# the bucket root: the write is refused, the read is not. The object below is your own throwaway.
+# the positive control on the write reach: this one must SUCCEED, because runs/ is inside the
+# launcher's condition. The object is your own throwaway, never the marker.
+printf '' | gcloud storage cp - gs://<bucket>/runs/<throwaway-key>
+# and the same throwaway at the bucket root must be REFUSED:
 printf '' | gcloud storage cp - gs://<bucket>/<throwaway-key>
-gcloud storage ls gs://<bucket>/
+gcloud storage ls gs://<bucket>/          # the root read succeeds: the condition fences writes
+gcloud storage ls gs://<bucket>/runs/     # and the listing under it does too
 # the positive controls
 gcloud run jobs list --project <project> --region <region> --impersonate-service-account=<orch-account>
 gcloud secrets list --project <project> --impersonate-service-account=<orch-account>
@@ -18309,14 +18321,18 @@ unset TOKEN
 
 The RTDB read's status code is the reading the whole check turns on: **403 or 401 is a pass**, and a `200` with
 `null` is a **failure**, because a `null` is what an IAM read that bypasses the rules answers a node the caller
-may not see. The one write attempted is the throwaway object at the root — **never the marker itself**: a probe
-that succeeded must not leave a marker behind, which is why the object is empty and named by you. Record the
-status code, the two IAM readings, the permission answers, the two storage results and the two positive
-controls — **under Check 663 here**.
+may not see. The two writes are **one reading, and neither half means anything alone**: the throwaway under
+`runs/` must be **created** — it is the positive control that tells an account with grants from one that was
+never created, and only the `runs/` prefix is inside the launcher's write condition — and the same throwaway at
+the bucket root must be **refused**. Both objects are empty and named by you, and **never the marker itself**: a
+probe that succeeded must not leave a marker behind. Record the status code, the two IAM readings, the
+permission answers, the three storage results (the `runs/` write, the root write, the root listing) and the two
+other positive controls — **under Check 663 here**.
 
 **What a run costs.** Reads and probes: **no model call, no run and nothing billable**. Nothing is created but
-the throwaway object, and deleting it is half the restore; the other half is removing the
-`serviceAccountTokenCreator` grant you added by hand. The token lives in one shell variable for the length of the
+the one throwaway object under `runs/`, and deleting it is half the restore; the other half is removing the
+`serviceAccountTokenCreator` grant you added by hand. The root write creates nothing, which is what it is there
+to show. The token lives in one shell variable for the length of the
 check and is unset at the end; the value read that is refused never reaches stdout, because
 `>/dev/null` is what makes it a refusal with an exit status rather than bytes.
 
