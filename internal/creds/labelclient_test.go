@@ -261,12 +261,12 @@ func TestLabelClientRefusesPlainHTTP(t *testing.T) {
 		})
 	}
 
-	// https is admitted without a connection being made: the client builds the
-	// request and the transport fails, which is a different refusal from the
-	// scheme's.
+	// https is admitted by the rule and the refusal is then the call's, not the
+	// URL's: the port below is loopback's and closed, so nothing leaves this
+	// machine and the answer is the one a service that is not there gives.
 	f := newServiceFake(t)
 	m := labelClient(t, f)
-	m.URL = "https://creds.example.invalid"
+	m.URL = "https://127.0.0.1:1"
 	_, err := m.ListOpenPRLabels(t.Context())
 	if !errors.Is(err, ErrLabel) || !strings.Contains(err.Error(), "could not be reached") {
 		t.Fatalf("the client answered %v for an https service it cannot reach, want ErrLabel for the call", err)
