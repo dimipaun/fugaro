@@ -155,7 +155,7 @@ func projectPolicyFor(project, profile string) string {
 	if profile != "" {
 		own = `,"allow_repos":` + profile
 	}
-	return `{"version":5,"allow_repos":` + project + `,"profiles":{"standard":{"provider":"github"` +
+	return `{"version":9,"allow_repos":` + project + `,"profiles":{"standard":{"provider":"github"` +
 		own + `,` + profileShape + `}}}`
 }
 
@@ -167,7 +167,7 @@ func projectPolicyFor(project, profile string) string {
 // one (projectpolicy's CloneURLs) — so the fixture publishes what a real
 // publish publishes.
 func projectPolicyCloning(project, url string) string {
-	return `{"version":5,"allow_repos":` + project + `,"clone_urls":{"github%2Facme%2Fapp":"` + url + `"},` +
+	return `{"version":9,"allow_repos":` + project + `,"clone_urls":{"github%2Facme%2Fapp":"` + url + `"},` +
 		`"profiles":{"standard":{"provider":"github",` + profileShape + `}}}`
 }
 
@@ -572,7 +572,7 @@ func TestProjectJobBindsTheSlugToTheJobsRepository(t *testing.T) {
 // requires every account it lists to cover it — so the two lists here are the
 // same one repository.
 func projectPolicyServing(account string) string {
-	return `{"version":5,"allow_repos":["github/acme/app"],"profiles":{"standard":{"provider":"github",` +
+	return `{"version":9,"allow_repos":["github/acme/app"],"profiles":{"standard":{"provider":"github",` +
 		`"claude_accounts":["` + account + `"],"allow_repos":["github/acme/app"],` + profileShape + `}},` +
 		`"accounts":{"` + account + `":{"allow_repos":["github/acme/app"]}}}`
 }
@@ -691,10 +691,10 @@ func TestReviewVariantIsNotTheCodingJob(t *testing.T) {
 // account of the profile's axis is therefore placed here, not one of them.
 func TestProjectJobDefaultProfileIsTheProvidersOwn(t *testing.T) {
 	const (
-		bitbucketAndGitHub = `{"version":5,"allow_repos":["github/acme/*","bitbucket/acme/*"],` +
+		bitbucketAndGitHub = `{"version":9,"allow_repos":["github/acme/*","bitbucket/acme/*"],` +
 			`"profiles":{"standard":{"provider":"github",` + profileShape + `},` +
 			`"standard-bitbucket":{"provider":"bitbucket",` + profileShape + `}}}`
-		bitbucketFirst = `{"version":5,"allow_repos":["github/acme/*","bitbucket/acme/*"],` +
+		bitbucketFirst = `{"version":9,"allow_repos":["github/acme/*","bitbucket/acme/*"],` +
 			`"profiles":{"standard":{"provider":"bitbucket",` + profileShape + `},` +
 			`"standard-github":{"provider":"github",` + profileShape + `}}}`
 	)
@@ -709,7 +709,7 @@ func TestProjectJobDefaultProfileIsTheProvidersOwn(t *testing.T) {
 		{"the first provider's repository keeps the project's default", bitbucketFirst, "bitbucket", projectpolicy.DefaultProfileName},
 		{"the second provider's resolves to its own", bitbucketFirst, "github", projectpolicy.DefaultProfileName + "-github"},
 		{"a provider the policy serves no default for", projectPolicyFor(`["github/acme/*"]`, ""), "bitbucket", ""},
-		{"a name that lies about its provider", `{"version":5,"allow_repos":["github/acme/*","bitbucket/acme/*"],` +
+		{"a name that lies about its provider", `{"version":9,"allow_repos":["github/acme/*","bitbucket/acme/*"],` +
 			`"profiles":{"standard":{"provider":"github",` + profileShape + `},` +
 			`"standard-bitbucket":{"provider":"github",` + profileShape + `}}}`, "bitbucket", ""},
 	} {
