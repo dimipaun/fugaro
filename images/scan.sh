@@ -12,7 +12,9 @@
 # filesystem the image ends with, and the `.git/config` of a checkout baked
 # into it, which Trivy's walk skips: that one is read out of every layer of the
 # image as well as out of the filesystem it ends with, since a config a later
-# layer deleted is still a credential the image carries. A catalog build runs
+# layer deleted is still a credential the image carries, and an image holding a
+# layer this cannot decode is refused rather than cleared in part. A catalog
+# build runs
 # this route before it promotes (internal/backend/gcp's catalog-scan step, B3,
 # R2), so an image that carries a credential of the build's is refused rather
 # than promoted.
@@ -113,30 +115,56 @@ leaks() {
   # show: an image whose checkout a later layer deleted -- its config handed to
   # a build that copied the tree out of it, say -- carries the credential in a
   # layer that the filesystem the image ends with no longer has. docker save is
-  # what hands over the layers, as an uncompressed tar whose members are the
-  # layers themselves (and the manifests and config, which are JSON).
+  # what hands over the layers: an uncompressed tar whose members are the
+  # layers themselves, beside the manifests and the image config, which are
+  # JSON.
   #
   # A member is written out before it is read, rather than piped into the
-  # reader: a layer is a compressed tar (gzip, docker's own default), and tar
-  # reads one out of a file by its magic while it refuses a compressed stream
-  # on stdin -- which would leave every layer unread, and the check passing
-  # over an image it never looked into, with nothing said.
+  # reader: a layer is stored as the daemon holds it -- an uncompressed tar for
+  # what docker built, a compressed one (gzip, or whatever codec an image was
+  # pushed with, kept as it is under the containerd image store) -- and tar
+  # finds a compression by its magic in a file while it refuses a compressed
+  # stream on stdin ("Archive is compressed. Use -z option"). Piping would
+  # leave every layer unread and the check passing over an image it never
+  # looked into, with nothing said.
+  #
+  # Every layer is read or the image is refused: a layer this worker cannot
+  # decode -- a codec it has no decompressor for -- is not a layer that carries
+  # no credential, and a skip would promote an image nobody cleared. The count
+  # is the daemon's own, so the number of layers is not taken from the save's
+  # JSON here.
   docker save -o "$work/image.tar" "$image"
+  layers=$(docker inspect --format '{{len .RootFS.Layers}}' "$image")
   tar -tf "$work/image.tar" > "$work/outer"
+  read_layers=0
   while IFS= read -r entry; do
     case "$entry" in */) continue ;; esac
     tar -xOf "$work/image.tar" "$entry" > "$work/layer" 2>/dev/null || continue
-    tar -tf "$work/layer" 2>/dev/null | grep -E '(^|/)\.git/config$' > "$work/members" || continue
+    if ! tar -tf "$work/layer" > "$work/members" 2>/dev/null; then
+      # Not a tar: a manifest or the image's config, which a save carries
+      # beside its layers and which this is not the fence for.
+      continue
+    fi
+    read_layers=$((read_layers + 1))
+    grep -E '(^|/)\.git/config$' "$work/members" > "$work/configs" || true
     while IFS= read -r member; do
       [ -n "$member" ] || continue
-      tar -xOf "$work/layer" "$member" 2>/dev/null > "$work/config" || continue
+      tar -xOf "$work/layer" "$member" 2>/dev/null > "$work/config" || {
+        echo "scan.sh: $image holds a .git/config this cannot read: $member" >&2
+        exit 1
+      }
       if grep -Eiq "$git_config_credential" "$work/config"; then
         echo "scan.sh: $image bakes a .git/config that carries a credential: $member (in a layer of the image)" >&2
         echo "scan.sh: a checkout baked into an image carries no credential in its config" >&2
         exit 1
       fi
-    done < "$work/members"
+    done < "$work/configs"
   done < "$work/outer"
+  if [ "$read_layers" -ne "$layers" ]; then
+    echo "scan.sh: $image holds $layers layers and this read $read_layers of them: a layer it cannot decode is a layer it cannot clear" >&2
+    echo "scan.sh: the image is refused rather than promoted with a layer nobody read" >&2
+    exit 1
+  fi
 }
 if [ "$mode" = secrets ]; then
   trivy --scanners secret --image-config-scanners secret --secret-config /trivy-secret.yaml --exit-code 1

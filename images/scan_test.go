@@ -27,6 +27,12 @@ type scanFixture struct {
 	// image ends with, which is the ordinary image: what a file is in at the
 	// end, some layer put there.
 	layers []map[string]string
+	// undecodable is how many of the image's layers the save hands over in a
+	// compression this worker reads nothing of: an image whose daemon holds a
+	// layer as it was pushed, in a codec the worker's tar has no decompressor
+	// for. The daemon counts them among its layers, which is what turns a skip
+	// into a refusal -- the scan holds what it read to that count.
+	undecodable int
 }
 
 // saveLayers is the fixture's layers as docker save hands them over.
@@ -55,15 +61,20 @@ var cleanFixture = scanFixture{
 }
 
 // scanFakeDocker stands in for the docker CLI: it logs every call, answers the
-// five the leak check makes from the fixture it was given, and exits FAKE_EXIT
-// for everything else -- the one trivy container, whose exit code the scan
-// passes on.
+// calls the leak check makes from the fixture it was given -- the container it
+// creates, the export, the config's environment, the layer count and the file
+// it copies out of the container -- and exits FAKE_EXIT for everything else,
+// the one trivy container, whose exit code the scan passes on.
 const scanFakeDocker = `#!/bin/sh
 echo "$*" >> "$FAKE_LOG"
 case "$1" in
   create) echo fugaro-fixture-container ;;
   export) cat "$FAKE_ROOTFS" ;;
-  inspect) cat "$FAKE_ENV" ;;
+  inspect)
+    case "$*" in
+      *RootFS.Layers*) echo "${FAKE_LAYERS:?}" ;;
+      *) cat "$FAKE_ENV" ;;
+    esac ;;
   cp) member=${2#*:}; tar -xOf "$FAKE_ROOTFS" "${member#/}" > "${3:?}" ;;
   save) cat "$FAKE_SAVE" > "${3:?}" ;;
   *) exit "${FAKE_EXIT:-0}" ;;
@@ -86,12 +97,16 @@ func runScan(t *testing.T, f scanFixture, exit string, args ...string) (string, 
 		t.Fatal(err)
 	}
 	save := filepath.Join(dir, "save.tar")
-	if err := writeSave(save, f.saveLayers()); err != nil {
+	if err := writeSave(save, f.saveLayers(), f.undecodable); err != nil {
 		t.Fatal(err)
 	}
+	// The layer count the daemon reports, which the scan holds its own read to:
+	// every layer the save carries, the ones it cannot decode among them.
+	layers := fmt.Sprint(len(f.saveLayers()) + f.undecodable)
 	cmd := exec.Command("sh", append([]string{"scan.sh"}, args...)...)
 	cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "FAKE_LOG="+log, "FAKE_EXIT="+exit,
-		"FAKE_ROOTFS="+rootfs, "FAKE_SAVE="+save, "FAKE_ENV="+env, "TRIVY_CACHE_DIR="+t.TempDir())
+		"FAKE_ROOTFS="+rootfs, "FAKE_SAVE="+save, "FAKE_ENV="+env, "FAKE_LAYERS="+layers,
+		"TRIVY_CACHE_DIR="+t.TempDir())
 	out, err := cmd.CombinedOutput()
 	logged, _ := os.ReadFile(log)
 	return string(out), string(logged), err
@@ -106,14 +121,23 @@ func writeRootfs(path string, files map[string]string) error {
 	return os.WriteFile(path, tarred.Bytes(), 0o644)
 }
 
+// undecodableLayer is what a layer this worker cannot read looks like from
+// here: the gzip magic, with nothing behind it that a gzip can decompress. A
+// layer kept in a codec the worker has no decompressor for reaches tar the
+// same way, as a stream it can only refuse -- what the layer holds is not the
+// question, since the scan reads none of it.
+var undecodableLayer = append([]byte{0x1f, 0x8b, 0x08, 0x00}, bytes.Repeat([]byte{0xde, 0xad, 0xbe, 0xef}, 8)...)
+
 // writeSave writes the fixture's layers the way `docker save` hands them over:
 // an uncompressed outer tar whose members are the layers, each a *compressed*
-// tar of its own under the name a save gives it (gzip, docker's own default —
-// a layer the scan could only read out of a file, which is why the fixture is
-// not a plain tar), beside the manifests and the image's config, which are
-// JSON and not tars. What the scan reads is the members that list as tars, and
-// everything else has to be skipped without a word.
-func writeSave(path string, layers []map[string]string) error {
+// tar of its own under the name a save gives it -- what a daemon holds a
+// pulled image's layer as, and a stream tar refuses to read from stdin, which
+// is why the fixture is not a plain tar -- beside the manifests and the image's
+// config, which are JSON and not tars. What the scan reads is the members that
+// list as tars; everything else, and every layer in a compression it cannot
+// read, has to leave the count it holds to the daemon's short, so a member it
+// never looked into refuses the image instead of passing it.
+func writeSave(path string, layers []map[string]string, undecodable int) error {
 	var out bytes.Buffer
 	tw := tar.NewWriter(&out)
 	add := func(name string, body []byte) error {
@@ -137,6 +161,11 @@ func writeSave(path string, layers []map[string]string) error {
 			return err
 		}
 		if err := add(fmt.Sprintf("blobs/sha256/%064x", i+1), compressed.Bytes()); err != nil {
+			return err
+		}
+	}
+	for i := 0; i < undecodable; i++ {
+		if err := add(fmt.Sprintf("blobs/sha256/%064x", len(layers)+i+1), undecodableLayer); err != nil {
 			return err
 		}
 	}
@@ -322,6 +351,34 @@ func TestScanPassesACleanLayer(t *testing.T) {
 	out, _, err := runScan(t, f, "0", "--secrets", "fugaro-base:ci")
 	if err != nil {
 		t.Fatalf("a layer holding a config with no credential was refused: %v\n%s", err, out)
+	}
+}
+
+// TestScanRefusesALayerItCannotDecode: a layer the scan cannot read is a layer
+// it cannot clear, so an image it read only in part is refused rather than
+// promoted. The fixture's image holds two layers and one of them is in a
+// compression this worker reads nothing of -- a codec with no decompressor,
+// where a save hands the layer's bytes over as they were pushed and tar can
+// only refuse them -- so the count the daemon gives is what catches it. A skip
+// that left the count unheld is how a credential in such a layer passes with
+// exit 0 and nothing said, which is what the assertion on the refusal's own
+// words is here for.
+func TestScanRefusesALayerItCannotDecode(t *testing.T) {
+	f := cleanFixture
+	f.files = map[string]string{"etc/os-release": "ID=debian\n"}
+	f.layers = []map[string]string{
+		{"src/.git/config": "[remote \"origin\"]\n\turl = https://github.com/owner/repo.git\n"},
+	}
+	f.undecodable = 1
+	out, log, err := runScan(t, f, "0", "--secrets", "fugaro-base:ci")
+	if err == nil {
+		t.Fatalf("an image holding a layer the scan could not read passed:\n%s", out)
+	}
+	if !strings.Contains(out, "holds 2 layers and this read 1 of them") {
+		t.Errorf("the refusal does not say which layer went unread: %s", out)
+	}
+	if !strings.Contains(log, "save -o") {
+		t.Errorf("the scan did not read the image's layers: %s", log)
 	}
 }
 

@@ -858,7 +858,11 @@ printf '%s\n' "$*" >> "$FAKE_DOCKER_CALLS"
 case "$1" in
   create) echo fugaro-fixture-container ;;
   export) cat "$FAKE_DOCKER_ROOTFS" ;;
-  inspect) cat "$FAKE_DOCKER_CONFIG" ;;
+  inspect)
+    case "$*" in
+      *RootFS.Layers*) echo 1 ;;   # the save below holds exactly one layer
+      *) cat "$FAKE_DOCKER_CONFIG" ;;
+    esac ;;
   cp) member=${2#*:}; tar -xOf "$FAKE_DOCKER_ROOTFS" "${member#/}" > "${3:?}" ;;
   save) cat "$FAKE_DOCKER_SAVE" > "${3:?}" ;;
   run) exit "${FAKE_DOCKER_RUN_EXIT:-0}" ;;
@@ -909,10 +913,11 @@ func writeScanRootfs(path string, files map[string]string) error {
 // writeScanSave writes the fixture's files the way `docker save` hands them
 // over, as one layer of them: the scan walks a save's layers for a
 // .git/config, which no other read of the image can show it. The layer is a
-// compressed tar (gzip, docker's own default) inside an uncompressed outer
-// tar, beside the manifest a save also carries, so the step reads the members
-// that are layers and skips the one that is not -- which is what the file
-// rather than the pipe in the scan step's own script is for.
+// compressed tar -- what a daemon holds a pulled image's layer as, and a
+// stream tar refuses to read from stdin -- inside an uncompressed outer tar,
+// beside the manifest a save also carries, so the step reads the members that
+// are layers and skips the one that is not. The fake docker above answers with
+// one layer to match, which is what the scan holds the save to.
 func writeScanSave(path string, files map[string]string) error {
 	layer, err := scanFilesTar(files)
 	if err != nil {
