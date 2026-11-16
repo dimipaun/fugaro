@@ -725,6 +725,17 @@ func (r *run) checkProjectCheckoutOrigin(ctx context.Context, remote string) err
 	if dir == r.d.WorkDir {
 		return nil // already the work directory: there is nothing to adopt
 	}
+	// The image may hold a second checkout of this run's repository in the work
+	// directory the run started in — a hand-written entry's own clone (D1208)
+	// beside the per-slug stage an engine-generated one writes (D2301) — and it
+	// is verified here, before this run works from the per-slug one: the guard
+	// this run replaces refused a work-directory checkout of another repository,
+	// and a second one left unchecked would readmit exactly that — the read of
+	// /work/repo C5's refusal was about — because the run adopts the per-slug
+	// directory and never looks at the work directory again.
+	if err := r.refuseForeignWorkDirCheckout(ctx, job); err != nil {
+		return err
+	}
 	// From here the checkout this run works on is this one, as it is for a
 	// per-repository job that adopts its own baked path (openBakedCheckout),
 	// and for the same reason: everything bootstrap reads of the checkout from
@@ -768,6 +779,37 @@ func (r *run) bakedProjectCheckout() string {
 		}
 	}
 	return ""
+}
+
+// refuseForeignWorkDirCheckout refuses a checkout of another repository in the
+// work directory this run started in, when the checkout it adopts is the
+// per-slug directory beside it (review F25).
+//
+// Which checkout is adopted is a preference, not an exclusion: an image whose
+// entry both bakes the per-slug path and clones into its own WORKDIR holds two
+// checkouts of this run's repository, and the guard above reads only the one it
+// adopts. The other is a checkout of another repository whenever the entry
+// serves one, and a run that adopts the per-slug directory works from there —
+// the agent's stages run in it, and nothing reads the work directory again — so
+// the refusal has to be made here or it is not made at all.
+//
+// A checkout of this run's own repository in the work directory is left where
+// it is: it is the source this run holds a grant over, and what the run works
+// on is the checkout it reset and adopted.
+func (r *run) refuseForeignWorkDirCheckout(ctx context.Context, job jobTriple) error {
+	repo, err := gitops.Open(r.d.WorkDir, nil)
+	if err != nil {
+		return nil // no checkout beside this run's own: the run adopts what it found
+	}
+	origin, err := strip(repo).BakedGitOrigin(ctx)
+	if err != nil {
+		return fmt.Errorf("the checkout this run found at %s cannot be verified as this run's: %w", r.d.WorkDir, err)
+	}
+	r.addRemoteSecrets(origin)
+	if err := remoteAdmissionErr(origin, job.Provider, r.spec.Repo, r.d.Store.Slug()); err != nil {
+		return fmt.Errorf("the checkout this run found at %s is not this run's repository (origin %s): %w", r.d.WorkDir, remoteDisplay(origin), err)
+	}
+	return nil
 }
 
 // removeOtherBakedRepos removes every directory the image baked beside this

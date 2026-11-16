@@ -587,16 +587,19 @@ func TestBakedCheckoutWithAPlantedHookNeverRunsIt(t *testing.T) {
 }
 
 // A checkout the image holds that is not this run's repository is refused, on
-// both of the paths a project job can find one (D2308; review C5's refusal,
-// which this replaces): the directory the image baked this run's repository at
-// (BakedDir) and the work directory, which is where a hand-written Dockerfile's
-// own clone sits. The origin is what says which repository an image's checkout
-// is a checkout OF, and another repository's is one this run may not work on or
-// push from under its own slug, whatever state its .git is put into.
+// every path a project job can find one (D2308; review C5's refusal, which this
+// replaces): the directory the image baked this run's repository at (BakedDir),
+// the work directory, which is where a hand-written Dockerfile's own clone sits,
+// and both at once — where the run adopts the per-slug checkout and would never
+// read the work directory again, which is the case review F25 found unguarded.
+// The origin is what says which repository an image's checkout is a checkout
+// OF, and another repository's is one this run may not work on or push from
+// under its own slug, whatever state its .git is put into.
 //
 // Mutation (run, restored): drop the remoteAdmissionErr call from
-// checkProjectCheckoutOrigin. Both rows then work on another repository's
-// checkout and push the run's branch into it.
+// checkProjectCheckoutOrigin, or the refuseForeignWorkDirCheckout call from the
+// adoption below it. Every row then works on another repository's checkout and
+// pushes the run's branch into it.
 func TestBakedCheckoutWithAnotherOriginHalts(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -606,6 +609,14 @@ func TestBakedCheckoutWithAnotherOriginHalts(t *testing.T) {
 			bakedProjectCheckout(t, b, otherRemote, nil)
 		}},
 		{"the work directory", func(t *testing.T, b *bk) {
+			testutil.Git(t, filepath.Dir(b.deps.WorkDir), "clone", "--quiet", b.remote, b.deps.WorkDir)
+			testutil.Git(t, b.deps.WorkDir, "remote", "set-url", "origin", otherRemote)
+		}},
+		// Both at once, which is what an entry whose Dockerfile clones into its
+		// own WORKDIR leaves beside a generated bake stage: the run adopts the
+		// per-slug checkout and the work directory holds another repository's.
+		{"beside the checkout the run adopts", func(t *testing.T, b *bk) {
+			bakedProjectCheckout(t, b, providerCloneURL(t, "github", "acme/app"), nil)
 			testutil.Git(t, filepath.Dir(b.deps.WorkDir), "clone", "--quiet", b.remote, b.deps.WorkDir)
 			testutil.Git(t, b.deps.WorkDir, "remote", "set-url", "origin", otherRemote)
 		}},
