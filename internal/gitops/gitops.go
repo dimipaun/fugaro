@@ -1447,14 +1447,24 @@ func refuseSubmoduleState(modules string) error {
 //     both substitute the object a read answers with, so a checkout carrying
 //     one makes every commit this run reads — a base, a head, a diff — name
 //     something other than what it holds.
+//   - .git/index is removed and rebuilt by `reset --hard HEAD`, which puts
+//     every tracked file back at the commit HEAD names. The index is also where
+//     a skip-worktree bit lives — what a sparse-checkout build sets, and what
+//     an edit marked skip-worktree leaves behind — and git keeps the
+//     working-tree copy of such a file through every checkout this run makes
+//     afterwards: left in place, the build's edit to it would reach the agent's
+//     tree, and the agent's own edit to it would never be staged. The reset is
+//     what also makes the clean below safe: with no index git finds nothing
+//     tracked, and the clean would remove the tree's every file.
 //   - everything git does not track is removed from the working tree (clean
 //     -ffdx, which is where the ignored files go too): what the entry's build
 //     left behind is not the repository's, and an ignored build output that
-//     stayed would reach the agent and its build. A tracked file the build
-//     changed is not restored here: the run's own checkout of the task's ref
-//     (bootstrap's CheckoutNewBranch, a hard reset onto the fetched ref) is
-//     what puts the tree at the fetched state, and it must run for a checkout
-//     and a ref this run did not choose.
+//     stayed would reach the agent and its build.
+//
+// The tree is left at the commit HEAD names, not at the fetched one: the run's
+// own checkout of the task's ref (bootstrap's CheckoutNewBranch, a hard reset
+// onto the fetched ref) is what puts it at the fetched state, and it must run
+// for a checkout and a ref this run did not choose.
 //
 // The fixed configuration is written before any git of this package runs on
 // the checkout, because a configuration is also how git is made to run a
@@ -1495,6 +1505,17 @@ func (r *Repo) ResetBakedGit(ctx context.Context, remote, hooksDir string) error
 	}
 	if err := os.Remove(filepath.Join(git, "info", "grafts")); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
+	}
+	if err := os.Remove(filepath.Join(git, "index")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	// A checkout whose HEAD names no commit yet — a repository the image baked
+	// before its first commit — has nothing to put back, and is left to the
+	// run's own checkout of the ref it fetched.
+	if _, err := r.git(ctx, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"); err == nil {
+		if _, err := r.git(ctx, "reset", "--quiet", "--hard", "HEAD"); err != nil {
+			return err
+		}
 	}
 	if _, err := r.git(ctx, "clean", "-ffdx", "--quiet"); err != nil {
 		return err

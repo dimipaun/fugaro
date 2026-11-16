@@ -688,6 +688,13 @@ func TestBakedCheckoutWithAGitdirFileAlternatesOrSubmoduleHooksHalts(t *testing.
 // read of a commit with another object, so a base, a head or a diff this run
 // measured would be the image's answer and not the repository's.
 //
+// A tracked file the build marked skip-worktree — what a sparse checkout sets,
+// and what an edit of its own leaves behind — is the one the run's own checkout
+// cannot put back, because git reads that bit and keeps the working-tree copy:
+// the reset's own removal of the index is what restores it, and without it the
+// build's edit reaches the agent's tree and the agent's own edit to that file
+// is never staged.
+//
 // The ignored file is what tells the two cleans apart — an ignore rule from
 // .git/info/exclude, which the run's own clean -fd keeps (a warm build cache)
 // and which the reset's -x removes — and it is committed by the agent's
@@ -697,6 +704,8 @@ func TestBakedCheckoutWithAGitdirFileAlternatesOrSubmoduleHooksHalts(t *testing.
 // Mutation (run, restored): drop the clean -ffdx from ResetBakedGit, or the
 // replace-ref and graft removal. The first row's branch then carries the
 // build's leftovers; the second's reads answer with the replaced object.
+// Dropping the index removal and the reset --hard HEAD leaves README.md reading
+// the build's edit.
 func TestBakedCheckoutDropsReplaceRefsAndGraftsAndTrackedEdits(t *testing.T) {
 	b := projectRun(t, projectJobOf(), "off", "", projectPolicyFor(`["github/acme/*"]`, ""))
 	computed := projectHost(t, b)
@@ -705,6 +714,11 @@ func TestBakedCheckoutDropsReplaceRefsAndGraftsAndTrackedEdits(t *testing.T) {
 		writeFileAt(t, filepath.Join(dir, "build-output", "stale.bin"), "stale\n")
 		writeFileAt(t, filepath.Join(dir, "build.sh"), "#!/bin/sh\nexit 1\n")
 		testutil.Git(t, dir, "commit", "--quiet", "-am", "the image's build")
+		// The build's own checkout state: a tracked file it marked
+		// skip-worktree, holding an edit of its own, which git leaves alone
+		// through every checkout this run makes.
+		testutil.Git(t, dir, "update-index", "--skip-worktree", "README.md")
+		writeFileAt(t, filepath.Join(dir, "README.md"), "the build edited this\n")
 	})
 	// A replacement that would make the fetched main answer with the image's
 	// own commit, loose beside the packed one the build's gc left.
@@ -724,6 +738,10 @@ func TestBakedCheckoutDropsReplaceRefsAndGraftsAndTrackedEdits(t *testing.T) {
 	}
 	if changed := testutil.Git(t, b.remote, "diff", "--name-only", "main.."+rec.Branch); changed != "feature.txt" {
 		t.Errorf("the run's branch changes\n%s\nwant the agent's own file alone: the image's edited build.sh and its ignored output are not the run's", changed)
+	}
+	want := testutil.Git(t, b.remote, "show", "main:README.md")
+	if got, err := os.ReadFile(filepath.Join(baked, "README.md")); err != nil || strings.TrimSpace(string(got)) != want {
+		t.Errorf("README.md in the checkout the run worked on = %q (%v), want the fetched ref's %q: a skip-worktree bit must not carry the image's edit into the run", got, err, want)
 	}
 }
 

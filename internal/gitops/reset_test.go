@@ -62,11 +62,11 @@ func TestBakedCheckoutResetRefusesAGitdirFileAlternatesOrSubmoduleHooks(t *testi
 // another file — with the hooks, the replace refs (loose and packed) and the
 // grafts gone, and everything git does not track removed from the tree.
 //
-// The tracked file the build edited is deliberately still edited: this package's
-// reset does not touch tracked files, because the run's own checkout of the ref
-// it fetched is what puts the tree at the fetched state (runner's bootstrap,
-// CheckoutNewBranch), and that checkout is the runner's to make and not a
-// checkout's to assume.
+// The tracked file the build edited is put back at the commit HEAD names by the
+// reset itself: the run's own checkout of the ref it fetched is what puts the
+// tree at the fetched state (runner's bootstrap, CheckoutNewBranch), and a
+// checkout of that ref cannot restore a file the image's index told git to
+// leave alone (the skip-worktree case below).
 //
 // The included file is what tells a replaced configuration apart from a
 // configuration with keys removed: it sets core.fsmonitor, which is a command
@@ -127,8 +127,46 @@ func TestBakedCheckoutResetDropsReplaceRefsAndGraftsAndBuildLeftovers(t *testing
 			t.Errorf("%s is still in the tree: what the image's build left is not the run's", path)
 		}
 	}
-	if edited, err := os.ReadFile(filepath.Join(repo.Dir, "README.md")); err != nil || string(edited) != "the build edited this\n" {
-		t.Errorf("README.md = %q (%v): the reset must leave tracked files to the run's own checkout of its ref", edited, err)
+	if edited, err := os.ReadFile(filepath.Join(repo.Dir, "README.md")); err != nil || string(edited) != "hello\n" {
+		t.Errorf("README.md = %q (%v): the reset puts a tracked file back at the commit HEAD names", edited, err)
+	}
+}
+
+// ResetBakedGit puts tracked files back at the commit HEAD names, including the
+// ones the build's own checkout state would hide from every later checkout. The
+// index the image leaves is also where a skip-worktree bit lives, and git keeps
+// the working-tree copy of a file marked that way; the sparse checkout a build
+// ran under sets exactly that bit and leaves the files its pattern excluded
+// absent from the tree. The configuration the reset writes turns sparse
+// checkout off, but the bit is not the configuration's — it goes only with the
+// index. The run's own checkout of the fetched ref reads the same bit, so it
+// cannot correct either one: the build's edit would sit in the agent's tree,
+// and the agent's own edit to that file would never be staged.
+//
+// Mutation (run, restored): drop the .git/index removal and the reset --hard
+// HEAD from ResetBakedGit. README.md still reads the build's edit, and the
+// tracked file the build's sparse pattern left out is still missing.
+func TestBakedCheckoutResetRestoresASkipWorktreeOrSparseFile(t *testing.T) {
+	repo, remote := setup(t)
+	writeAt(t, filepath.Join(repo.Dir, "docs", "guide.md"), "the guide\n")
+	testutil.Git(t, repo.Dir, "add", "docs/guide.md")
+	testutil.Git(t, repo.Dir, "commit", "--quiet", "-m", "a file the build's own commit added")
+	testutil.Git(t, repo.Dir, "config", "core.sparseCheckout", "true")
+	writeAt(t, filepath.Join(repo.Dir, ".git", "info", "sparse-checkout"), "/README.md\n")
+	testutil.Git(t, repo.Dir, "update-index", "--skip-worktree", "README.md")
+	writeAt(t, filepath.Join(repo.Dir, "README.md"), "the build edited this\n")
+	if err := os.RemoveAll(filepath.Join(repo.Dir, "docs")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.ResetBakedGit(ctx, remote, filepath.Join(t.TempDir(), "hooks")); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(filepath.Join(repo.Dir, "README.md")); err != nil || string(got) != "hello\n" {
+		t.Errorf("README.md = %q (%v), want the commit's own %q: the build's edit to a skip-worktree file must not reach the run", got, err, "hello\n")
+	}
+	if got, err := os.ReadFile(filepath.Join(repo.Dir, "docs", "guide.md")); err != nil || string(got) != "the guide\n" {
+		t.Errorf("docs/guide.md = %q (%v): a tracked file the build's sparse checkout left out must be back", got, err)
 	}
 }
 
