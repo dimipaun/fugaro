@@ -1024,6 +1024,47 @@ func TestSeedIsRefusedOnceAnOperationsMemberExists(t *testing.T) {
 	}
 }
 
+// TestSeedIsRunnableAgainAfterItsMailFails: a failed send must not leave the
+// deployment in the one state the seed's own guard refuses on. The seed writes
+// an organisation with no member at all, so an invitation left pending is one
+// nobody can withdraw and one that refuses the seed for the whole of the seven
+// days it is live — a fresh deployment with no way in, its only door shut by the
+// record of an invitation nobody ever received. What the failure leaves is the
+// organisation, and the operator's remedy, running the seed again, works.
+func TestSeedIsRunnableAgainAfterItsMailFails(t *testing.T) {
+	f := newFixture(t)
+	f.mail.err = errors.New("the mail provider refused the message")
+
+	if _, err := f.svc.SeedOperations(context.Background(), opsEmail); err == nil {
+		t.Fatal("a seed whose mail the provider refused was accepted, and a link nobody received must not read as one that was sent")
+	}
+	orgs := f.organisations()
+	if len(orgs) != 1 {
+		t.Fatalf("the store holds %d organisation(s), want the one the seed wrote", len(orgs))
+	}
+	if held := f.invitationsOf(orgs[0].ID); len(held) != 0 {
+		t.Errorf("the failed seed left %+v, want nothing: a pending invitation here is what refuses the next seed, and this organisation has no member to withdraw it", held)
+	}
+	if len(f.mail.sent) != 0 {
+		t.Error("the failed send recorded a message anyway")
+	}
+
+	f.mail.err = nil
+	if _, err := f.svc.SeedOperations(context.Background(), samEmail); err != nil {
+		t.Fatalf("running the seed again after a failed send: %v", err)
+	}
+	if again := f.organisations(); len(again) != 1 || again[0].ID != orgs[0].ID {
+		t.Errorf("the second seed wrote %+v, want the organisation already there and no second one", again)
+	}
+	held := f.invitationsOf(orgs[0].ID)
+	if len(held) != 1 || held[0].Email != samEmail || held[0].State != invitePending {
+		t.Errorf("the store holds %+v, want the one pending invitation the second seed wrote", held)
+	}
+	if len(f.mail.sent) != 1 {
+		t.Errorf("the second seed mailed %d message(s), want the one it delivered", len(f.mail.sent))
+	}
+}
+
 // TestSeedRefusesAnAddressThatIsNoMember: the seed's address is the one thing a
 // person types into a one-time command, and an address that is no member of this
 // tree is refused before anything is written — a member is what an invitation is

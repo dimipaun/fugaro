@@ -685,10 +685,12 @@ func (s *Service) acceptInvitation(ctx context.Context, actor Caller, invitation
 // list does not gate, which is why it is one operator's one-time command.
 //
 // The invitation is mailed, so the person the seed names holds the link that
-// leads to it; a mail path that fails is the caller's error and leaves the
-// invitation pending, which the deployment answers by running the seed again
-// (it is refused only once somebody has accepted, or while the invitation is
-// live).
+// leads to it, and a mail path that fails is the caller's error. It is also the
+// one invitation this file takes back when its send fails: the organisation it
+// was written into has no member, so nothing but this command can withdraw it,
+// and a pending invitation is half of what the guard above refuses on — left
+// there, it would refuse the deployment's only remedy, running the seed again,
+// for the whole window the invitation is live.
 func (s *Service) SeedOperations(ctx context.Context, address string) (WireOrganisation, error) {
 	seedMu.Lock()
 	defer seedMu.Unlock()
@@ -774,6 +776,20 @@ func (s *Service) SeedOperations(ctx context.Context, address string) (WireOrgan
 		return WireOrganisation{}, err
 	}
 	if err := s.mail.Send(ctx, invitationMail(origin, org.Name, invitation, inviteTTL)); err != nil {
+		// The invitation goes back with the send that failed, and this is the one
+		// invitation in this file that does. createInvitation keeps its own on a
+		// failed send because somebody in the organisation can withdraw it, and
+		// the operations organisation has nobody: its guard refuses on a member
+		// OR a live invitation, so an invitation left pending here refuses the
+		// only remedy the deployment has — running the seed again — for the whole
+		// seven days it is live, with no member anywhere able to withdraw it. What
+		// the failure leaves is the organisation, which holds nothing and which
+		// the next run fills rather than writing a second one.
+		if undoErr := s.docs.Update(ctx, func(ctx context.Context, tx Tx) error {
+			return tx.Delete(ctx, invitesCollection, invitation.ID)
+		}); undoErr != nil {
+			return WireOrganisation{}, errors.Join(err, undoErr)
+		}
 		return WireOrganisation{}, err
 	}
 	return org, nil
