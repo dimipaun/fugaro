@@ -9,12 +9,12 @@
 # any finding not allowed by images/trivy-secret.yaml, and then runs the checks
 # Trivy's own rules cannot state (leaks, below): a variable named like a
 # credential in the environment the config sets, a credential file in the
-# filesystem the image ends with, and the `.git/config` of a checkout baked
-# into it, which Trivy's walk skips: that one is read out of every layer of the
-# image as well as out of the filesystem it ends with, since a config a later
-# layer deleted is still a credential the image carries, and an image holding a
-# layer this cannot decode is refused rather than cleared in part. A catalog
-# build runs
+# filesystem the image ends with, and the git configs a build's own git call
+# writes a credential to, which Trivy's walk skips where one sits inside a
+# directory named .git: those are read out of every layer of the image as well
+# as out of the filesystem it ends with, since a config a later layer deleted
+# is still a credential the image carries, and an image holding a layer this
+# cannot decode is refused rather than cleared in part. A catalog build runs
 # this route before it promotes (internal/backend/gcp's catalog-scan step, B3,
 # R2), so an image that carries a credential of the build's is refused rather
 # than promoted.
@@ -56,6 +56,14 @@ env_credential_names='(^|_)(TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|CREDENTIALS|
 # fugaro-git-config-credential rule greps for: one definition of what a
 # credential in a git config is, for the two readers that have no git to ask.
 git_config_credential='\[credential|^[[:space:]]*helper[[:space:]]*=|extraheader|(https?|git)://[^/[:space:]]*@'
+# git_config_path is images.GitConfigPathText verbatim (a test pins it), the
+# same text images/trivy-secret.yaml's fugaro-git-config-credential rule reads
+# its path with: every file git reads a config from, because a build's own git
+# call takes the credential to whichever of them is configured -- a checkout's
+# .git/config, a bare or mirror repository's <name>.git/config, the global and
+# system configs. A fence that knew one spelling would pass an image whose
+# build used another.
+git_config_path='(^|/)(\.gitconfig|gitconfig|[^/]*\.git/config|(\.config|xdg)/git/config)$'
 # leaks checks the image as it ends up, for the three things a layer scan
 # cannot state:
 #
@@ -66,19 +74,19 @@ git_config_credential='\[credential|^[[:space:]]*helper[[:space:]]*=|extraheader
 #   - a credential *file*, by name: a .netrc and a credential-helper store are
 #     findings whatever they hold, and Trivy writes one only where the file's
 #     lines match its rule.
-#   - a `.git/config`, which Trivy skips: a directory named .git is left out of
-#     its filesystem analysis, so a checkout baked with `git clone
-#     https://user:token@host` in it is a credential no layer scan reports.
-#     Its contents are read here, out of the filesystem the image ends with and
-#     out of every layer of it, while the image's own .gitconfig and a
-#     system-wide gitconfig stay Trivy's to judge.
+#   - a git config carrying a credential, wherever git_config_path finds one:
+#     Trivy skips the ones under a directory named .git -- a directory named
+#     .git is left out of its filesystem analysis -- so a checkout baked with
+#     `git clone https://user:token@host` in it is a credential its layer scan
+#     does not report. Each config git_config_path names is read here, out of
+#     the filesystem the image ends with and out of every layer of it.
 #
 # The two fences are complements, not duplicates: where Trivy's rules see the
 # contents of every layer, this one sees the filesystem the image ends with, so
 # a `.netrc` a later layer deleted is a finding there and no file here could
-# show it. A `.git/config` is the one file neither fence reads whole on its
-# own, which is why it is the one read in both: the layers through docker save
-# (below), the image as it ends through docker export.
+# show it. A git config under a directory named .git is the one thing neither
+# fence reads whole on its own, which is why it is read in both: the layers
+# through docker save (below), the image as it ends through docker export.
 leaks() {
   work=$(mktemp -d)
   cid=$(docker create "$image")
@@ -101,17 +109,17 @@ leaks() {
     echo "scan.sh: $image bakes a credential file: $(printf '%s' "$found" | tr '\n' ' ')" >&2
     exit 1
   fi
-  grep -E '(^|/)\.git/config$' "$work/names" > "$work/configs" || true
+  grep -E "$git_config_path" "$work/names" > "$work/configs" || true
   while IFS= read -r config; do
     [ -n "$config" ] || continue
     docker cp "$cid:/$config" "$work/config" 2>/dev/null || continue
     if grep -Eiq "$git_config_credential" "$work/config"; then
-      echo "scan.sh: $image bakes a .git/config that carries a credential: $config" >&2
-      echo "scan.sh: a checkout baked into an image carries no credential in its config" >&2
+      echo "scan.sh: $image bakes a git config that carries a credential: $config" >&2
+      echo "scan.sh: a git config baked into an image carries no credential" >&2
       exit 1
     fi
   done < "$work/configs"
-  # And the same file in every layer of the image, which the export cannot
+  # And the same configs in every layer of the image, which the export cannot
   # show: an image whose checkout a later layer deleted -- its config handed to
   # a build that copied the tree out of it, say -- carries the credential in a
   # layer that the filesystem the image ends with no longer has. docker save is
@@ -146,16 +154,16 @@ leaks() {
       continue
     fi
     read_layers=$((read_layers + 1))
-    grep -E '(^|/)\.git/config$' "$work/members" > "$work/configs" || true
+    grep -E "$git_config_path" "$work/members" > "$work/configs" || true
     while IFS= read -r member; do
       [ -n "$member" ] || continue
       tar -xOf "$work/layer" "$member" 2>/dev/null > "$work/config" || {
-        echo "scan.sh: $image holds a .git/config this cannot read: $member" >&2
+        echo "scan.sh: $image holds a git config this cannot read: $member" >&2
         exit 1
       }
       if grep -Eiq "$git_config_credential" "$work/config"; then
-        echo "scan.sh: $image bakes a .git/config that carries a credential: $member (in a layer of the image)" >&2
-        echo "scan.sh: a checkout baked into an image carries no credential in its config" >&2
+        echo "scan.sh: $image bakes a git config that carries a credential: $member (in a layer of the image)" >&2
+        echo "scan.sh: a git config baked into an image carries no credential" >&2
         exit 1
       fi
     done < "$work/configs"

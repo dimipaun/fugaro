@@ -66,6 +66,22 @@ const (
 	// ssh://git@host asks for — a leak scan refusing that would refuse an
 	// image for a config that leaks nothing — so ssh is the scheme left out.
 	GitConfigCredentialText = `\[credential|^[[:space:]]*helper[[:space:]]*=|extraheader|(https?|git)://[^/[:space:]]*@`
+	// GitConfigPathText matches every path git reads a config from, which is
+	// more than a checkout's .git/config: a bare or mirror repository's
+	// <name>.git/config, the global configs (~/.gitconfig and $XDG_CONFIG_HOME's
+	// git/config, which is ~/.config/git/config by default) and the system ones
+	// (/etc/gitconfig and $XDG_CONFIG_DIRS's, /etc/xdg/git/config). A build
+	// writes the credential where its own git call reads it, so a fence that
+	// knew one spelling would pass an image whose build used another; the
+	// content is what GitConfigCredentialText then judges. images/scan.sh's
+	// leak check and images/trivy-secret.yaml's fugaro-git-config-credential
+	// rule both carry it verbatim (a test pins that).
+	//
+	// What it cannot name is a config reached through GIT_CONFIG_GLOBAL,
+	// GIT_CONFIG_SYSTEM, GIT_DIR or an XDG_CONFIG_HOME pointing elsewhere:
+	// those are a build's own naming, and no scan of a filesystem can guess
+	// them.
+	GitConfigPathText = `(^|/)(\.gitconfig|gitconfig|[^/]*\.git/config|(\.config|xdg)/git/config)$`
 )
 
 // CloudBuild is images/derived/cloudbuild.yaml, which fugaro image build

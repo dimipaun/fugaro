@@ -47,16 +47,21 @@ func (f scanFixture) saveLayers() []map[string]string {
 // the base image's own sets, none of them named like a credential, and its
 // files hold the git configs a base image really has: /etc/gitconfig as
 // images/base/byproducts.sh writes it (git-lfs's four filter keys), a user
-// config whose only useful line is an ssh mirror, and a baked checkout whose
-// remote is an https URL with no userinfo.
+// config whose only useful line is an ssh mirror, the XDG global config git
+// reads beside it, and a baked checkout whose remote is an https URL with no
+// userinfo. Every spelling the scan reads is here, so a scan that refused one
+// of them for existing — rather than for what it holds — fails this fixture.
 var cleanFixture = scanFixture{
 	env: []string{"PATH=/usr/local/bin:/usr/bin", "LANG=C.UTF-8", "DISABLE_AUTOUPDATER=1"},
 	files: map[string]string{
 		"etc/gitconfig":          "[filter \"lfs\"]\n\tclean = git-lfs clean -- %f\n\tsmudge = git-lfs smudge -- %f\n\tprocess = git-lfs filter-process\n\trequired = true\n",
 		"etc/os-release":         "ID=debian\n",
 		"home/fugaro/.gitconfig": "[url \"ssh://git@github.com/\"]\n\tinsteadOf = https://github.com/\n[user]\n\tname = Fugaro\n",
-		"src/.git/config":        "[remote \"origin\"]\n\turl = https://github.com/owner/repo.git\n",
-		"workspace/notes":        "nothing here\n",
+		// The XDG global config, which a base image may well carry and which
+		// holds no credential when it does.
+		"home/fugaro/.config/git/config": "[init]\n\tdefaultBranch = main\n[url \"https://github.com/\"]\n\tinsteadOf = git@github.com:\n",
+		"src/.git/config":                "[remote \"origin\"]\n\turl = https://github.com/owner/repo.git\n",
+		"workspace/notes":                "nothing here\n",
 	},
 }
 
@@ -290,6 +295,29 @@ func TestScanRefusesAnImageWithAGitCredential(t *testing.T) {
 			want:  "src/.git/config",
 		},
 		{
+			// The XDG global config, which git reads in place of ~/.gitconfig
+			// whenever XDG_CONFIG_HOME, or the ~/.config its default names,
+			// puts one there. A build configures its credential in whichever
+			// file its own git call reads, so this is one of the spellings a
+			// fence that knew only the checkout's would pass.
+			name:  "a credential in the XDG global config",
+			files: map[string]string{"home/fugaro/.config/git/config": "[http]\n\textraheader = AUTHORIZATION: Basic fixture\n"},
+			want:  "home/fugaro/.config/git/config",
+		},
+		{
+			name:  "a credential in the system XDG config",
+			files: map[string]string{"etc/xdg/git/config": "[credential]\n\thelper = store\n"},
+			want:  "etc/xdg/git/config",
+		},
+		{
+			// A bare or mirror repository, whose config is <name>.git/config:
+			// the same directory a checkout keeps its own in, without the
+			// working tree.
+			name:  "a credential in a mirror repository's config",
+			files: map[string]string{"srv/mirror/repo.git/config": "[remote \"origin\"]\n\turl = https://user:fixture@github.com/owner/repo.git\n"},
+			want:  "srv/mirror/repo.git/config",
+		},
+		{
 			name:  "the git credential-helper store",
 			files: map[string]string{"root/.git-credentials": "https://x-access-token:fixture@github.com\n"},
 			want:  ".git-credentials",
@@ -314,26 +342,38 @@ func TestScanRefusesAnImageWithAGitCredential(t *testing.T) {
 // still carries — and it is the one file neither fence above sees: Trivy
 // leaves a directory named .git out of its walk, and the export is the
 // filesystem the image ends with, where the file is gone. The fixture's export
-// holds no .git at all, so the layer is the only place the config exists and
-// this is exactly that case.
+// holds no git config at all, so the layer is the only place each one exists
+// and every case below is exactly that case. The three spellings are the ones
+// a build's own git call writes a credential into.
 func TestScanRefusesAGitCredentialInALayer(t *testing.T) {
-	f := cleanFixture
-	f.files = map[string]string{"etc/os-release": "ID=debian\n", "workspace/notes": "nothing here\n"}
-	f.layers = []map[string]string{
-		{"src/.git/config": "[remote \"origin\"]\n\turl = https://x-access-token:fixture@github.com/owner/repo.git\n"},
-		// The layer that deletes the checkout: what a config that was handed to
-		// a build and then dropped leaves behind.
-		{"src/README": "the checkout this image no longer ends with\n"},
-	}
-	out, log, err := runScan(t, f, "0", "--secrets", "fugaro-base:ci")
-	if err == nil {
-		t.Fatalf("an image whose layer carries a git credential passed the scan:\n%s", out)
-	}
-	if !strings.Contains(out, "in a layer of the image") || !strings.Contains(out, "src/.git/config") {
-		t.Errorf("the refusal does not say the config is in a layer: %s", out)
-	}
-	if !strings.Contains(log, "save -o") {
-		t.Errorf("the scan did not read the image's layers: %s", log)
+	for _, c := range []struct {
+		name   string
+		member string
+	}{
+		{"a checkout's config", "src/.git/config"},
+		{"a mirror repository's config", "srv/mirror/repo.git/config"},
+		{"the XDG global config", "home/fugaro/.config/git/config"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := cleanFixture
+			f.files = map[string]string{"etc/os-release": "ID=debian\n", "workspace/notes": "nothing here\n"}
+			f.layers = []map[string]string{
+				{c.member: "[remote \"origin\"]\n\turl = https://x-access-token:fixture@github.com/owner/repo.git\n"},
+				// The layer that deletes the checkout: what a config that was
+				// handed to a build and then dropped leaves behind.
+				{"src/README": "the checkout this image no longer ends with\n"},
+			}
+			out, log, err := runScan(t, f, "0", "--secrets", "fugaro-base:ci")
+			if err == nil {
+				t.Fatalf("an image whose layer carries %s with a credential passed the scan:\n%s", c.member, out)
+			}
+			if !strings.Contains(out, "in a layer of the image") || !strings.Contains(out, c.member) {
+				t.Errorf("the refusal does not say %s is in a layer: %s", c.member, out)
+			}
+			if !strings.Contains(log, "save -o") {
+				t.Errorf("the scan did not read the image's layers: %s", log)
+			}
+		})
 	}
 }
 
@@ -417,15 +457,24 @@ func TestScanRefusesAnImageItCannotRead(t *testing.T) {
 	}
 }
 
-// TestScanSharesTheGitCredentialPattern pins images.GitConfigCredentialText
-// into the two readers that have no git to ask: scan.sh's own check of a baked
-// checkout's config, and the Trivy rule over every layer. A reader that drifts
-// from the constant would let through what the other refuses.
-func TestScanSharesTheGitCredentialPattern(t *testing.T) {
+// TestScanSharesTheGitPatterns pins images.GitConfigCredentialText and
+// images.GitConfigPathText into the two readers that have no git to ask:
+// scan.sh's own check of the git configs an image bakes, and the Trivy rule
+// over every layer. A reader that drifts from either constant — the paths one
+// included, since a fence that knew only a checkout's .git/config let a
+// credential in the XDG global config or in a mirror repository's config
+// through — would let through what the other refuses.
+func TestScanSharesTheGitPatterns(t *testing.T) {
 	if want := "git_config_credential='" + images.GitConfigCredentialText + "'"; !strings.Contains(string(images.ScanScript), want) {
 		t.Errorf("images/scan.sh does not carry %s", want)
 	}
 	if want := "(?im)" + images.GitConfigCredentialText; !strings.Contains(string(images.TrivySecretConfig), want) {
+		t.Errorf("images/trivy-secret.yaml does not carry %s", want)
+	}
+	if want := "git_config_path='" + images.GitConfigPathText + "'"; !strings.Contains(string(images.ScanScript), want) {
+		t.Errorf("images/scan.sh does not carry %s", want)
+	}
+	if want := "path: '" + images.GitConfigPathText + "'"; !strings.Contains(string(images.TrivySecretConfig), want) {
 		t.Errorf("images/trivy-secret.yaml does not carry %s", want)
 	}
 }
