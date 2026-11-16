@@ -1269,3 +1269,78 @@ func TestCatalogCheckJobRebuildsADefinitionComposedFromANonCanonicalOrigin(t *te
 		})
 	}
 }
+
+// TestCatalogCheckJobBuildsNothingForAnEntryThatMountsASecret: an entry whose
+// copied definition asks a build for a secret of its own (secretMountDef) is
+// one no build is submitted for, however moved its base is — and the record a
+// build of it already left is left alone, so the next run decides it the same
+// way rather than slipping a rebuild in a day later (B9, D2311).
+//
+// The check fails where it would otherwise rebuild, and not silently: this job
+// is the only thing that rebuilds a published entry (D1900 disabled the
+// repo-level image commands), so an entry it passed over in silence would be
+// one nobody is told about. The line names the entry, the line the mount is on
+// and the command that puts the definition right, which is the owner's own
+// build from the checkout the entry's source names.
+func TestCatalogCheckJobBuildsNothingForAnEntryThatMountsASecret(t *testing.T) {
+	f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("runtime")))
+	// A record whose base has moved: everything this job needs to submit a
+	// rebuild, except a definition it may build.
+	gen, sum := f.seed(t, "runtime", "acme/other", secretMountDef, "sha256:"+strings.Repeat("9", 64))
+
+	lines, err := runCatalogCheck(t)
+	if err == nil {
+		t.Fatal("the catalog check reported no failure for an entry whose definition mounts a secret")
+	}
+	if got := buildPosts(f.fb); got != 0 {
+		t.Fatalf("builds submitted = %d, want 0: a build of the entry would hand its own steps the secret D2311 keeps out of every entry build", got)
+	}
+	l := lineFor(t, lines, "runtime")
+	if l.Decision != imagecheck.CheckFailed || l.Severity != "ERROR" ||
+		!strings.Contains(l.Error, "line 3") || !strings.Contains(l.Error, "the clone step supplies the checkout") ||
+		!strings.Contains(l.Error, "fugaro image build runtime") {
+		t.Fatalf("runtime line = %+v", l)
+	}
+	if st := f.state(t, "runtime", "acme/other"); st == nil || st.Decision != imagecheck.CheckFailed {
+		t.Fatalf("runtime check.json = %+v", st)
+	}
+	// The record, and the generation the copy is pinned by, are the ones the
+	// build of the entry left: nothing this run could have rewritten them with.
+	recKey, err := gcp.CatalogRecordKey(f.slugs["acme/other"], "runtime")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, ok := f.raw(t, recKey)
+	if !ok {
+		t.Fatalf("%s was deleted", recKey)
+	}
+	rec, err := imagecheck.ParseCatalogRecordState(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.DefinitionGeneration != gen || rec.DefinitionSHA256 != sum {
+		t.Fatalf("the record now names generation %d (%s), want the build's own %d (%s)", rec.DefinitionGeneration, rec.DefinitionSHA256, gen, sum)
+	}
+}
+
+// TestCatalogCheckJobRebuildsAnEntryWhoseSecretMountIsOnlyACache: the refusal
+// is about a secret and nothing else. A definition whose RUN mounts a cache, a
+// bind or a tmpfs — the shapes the images skill generates, the mise cache
+// among them — carries no credential and is rebuilt as any other entry is.
+func TestCatalogCheckJobRebuildsAnEntryWhoseSecretMountIsOnlyACache(t *testing.T) {
+	f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("runtime")))
+	f.seed(t, "runtime", "acme/other",
+		"FROM example.invalid/app\nRUN --mount=type=cache,id=fugaro-mise,target=/home/fugaro/.cache/mise --mount=type=bind,source=/a,target=/b true\n",
+		"sha256:"+strings.Repeat("9", 64))
+
+	lines, err := runCatalogCheck(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := buildPosts(f.fb); got != 1 {
+		t.Fatalf("builds submitted = %d, want 1", got)
+	}
+	if l := lineFor(t, lines, "runtime"); l.Decision != imagecheck.Rebuild {
+		t.Fatalf("runtime line = %+v, want a rebuild", l)
+	}
+}

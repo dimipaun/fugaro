@@ -611,6 +611,12 @@ type initRun struct {
 	// providers every repository may use: the converge's repository stage
 	// runs the repo engine too, and the note belongs once.
 	notedOpenProviders bool
+	// notedCatalogSecrets is the once-per-run guard on the warning about a
+	// published catalog entry that asks for a secret of its own (D2311): the
+	// fact is the entry's and not a repository's, and a converge that reaches
+	// several repositories that run one entry says it once
+	// (doctor_catalog.go's warnCatalogSecrets).
+	notedCatalogSecrets map[string]bool
 
 	// buildsLeft is the workflows whose first image build was not offered
 	// because this run cannot take a typed confirmation (--yes, --json, a pipe
@@ -4444,6 +4450,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		return initErr(err)
 	}
 	printWorkflowWarnings(r, spec)
+	r.warnCatalogSecrets(ctx, lc, spec)
 	if err := t.Init(ctx, backend); err != nil {
 		return remote(err)
 	}

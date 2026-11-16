@@ -342,7 +342,7 @@ func refuseCredentialIn(e config.Entry, data []byte) error {
 	lines, esc := dockerfileLines(data)
 	for _, line := range lines {
 		if asksForASecret(line.text) {
-			return SecretRefusal(nameOf(e), line.line)
+			return SecretRefusal(e.Name, line.line)
 		}
 		if err := refuseCredentialNames(e, line.text, esc); err != nil {
 			return err
@@ -391,10 +391,12 @@ func AskSecret(data []byte) (int, bool) {
 //
 // The line is a number and never the line's text: the text is what carries the
 // secret, and a refusal that echoed it would put into the log exactly what this
-// guard keeps out of the definition (the rule the URL refusal follows too).
+// guard keeps out of the definition (the rule the URL refusal follows too). The
+// entry's name goes through pluginwire.Printable like every other value this
+// package prints.
 func SecretRefusal(entry string, line int) error {
 	return fmt.Errorf("the catalog entry %s: line %d of its Dockerfile asks for a secret; a catalog entry carries no secret of its own — the clone step supplies the checkout — so remove it",
-		entry, line)
+		pluginwire.Printable(entry), line)
 }
 
 // asksForASecret reports whether one logical line asks a build for a secret: a
