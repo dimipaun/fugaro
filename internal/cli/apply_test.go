@@ -628,6 +628,44 @@ func TestApplySettlesTheRecordItFindsWhenItsRunEnds(t *testing.T) {
 	}
 }
 
+// TestApplyKeepsAStepRequeuedWithTheSameKeyWhileItsRunWasGoing: the record
+// names the change that asked for a step and never its value (D1570), so a
+// setting edited a second time while the run was going leaves an entry the run
+// read in every member — the step, the project pair and the setting's key — and
+// one member of its own: the queue sequence Add stamped it with. Settling by
+// value alone would drop that second change as the step the run answered, and
+// the run would then stamp the config as applied with the change unpublished
+// and nothing owed (D1563, D1575).
+//
+// The other entry is the control: the rules step was read and answered, nothing
+// re-queued it, and it is cleared — so the record is settled and not left alone.
+func TestApplyKeepsAStepRequeuedWithTheSameKeyWhileItsRunWasGoing(t *testing.T) {
+	_, _ = applyWorld(t)
+	owed(t, initflow.Rules, apply.Change{Kind: apply.Resource, Key: apply.ResourceRepo})
+	owed(t, initflow.Policy, apply.Change{Kind: apply.Setting, Key: "budget.per_run_usd"})
+	queuedDuringRun(t, func() {
+		owed(t, initflow.Policy, apply.Change{Kind: apply.Setting, Key: "budget.per_run_usd"})
+	})
+
+	out, errOut, err := executeStdin(t, "", "apply", "--json")
+	if err != nil {
+		t.Fatalf("apply: %v\n%s", err, out+errOut)
+	}
+	doc := applyDocOf(t, out)
+	if want := []string{initflow.Rules, initflow.Policy}; !slices.Equal(doc.Applied, want) {
+		t.Errorf("the run applied %v, want %v", doc.Applied, want)
+	}
+	if got := applySteps(doc.Pending); !slices.Equal(got, []string{initflow.Policy}) {
+		t.Errorf("the document owes %v, want the policy step re-queued while the run was going", got)
+	}
+	if doc.Current {
+		t.Error("the document reads the config as applied although the change queued during the run was never published")
+	}
+	if p := record(t); p.LastApply != "" {
+		t.Error("a run that never published the change queued during it stamped the config as applied")
+	}
+}
+
 // TestUpdateLeavesAStepOwedWhenItsStageSkipsWithoutDoingTheWork: the rule is
 // one rule for both doors (D1567). `update` clears the entries of the stages it
 // ran successfully, and a stage that skipped because the bucket it publishes
@@ -702,6 +740,35 @@ func TestUpdateKeepsAStepQueuedWhileItsRunWasGoing(t *testing.T) {
 	}
 	if !slices.Contains(steps, initflow.Plugin) {
 		t.Errorf("update cleared the step queued while it was going, whose change it never published: %v\n%s", steps, got)
+	}
+}
+
+// TestUpdateKeepsAStepRequeuedWithTheSameKeyWhileItsRunWasGoing: the same edit
+// twice while an update is going, and the record holds the change's subject and
+// never its value (D1570) — so the entry is the one the run read in every
+// member but the queue sequence Add stamped it with, and clearing by value
+// would drop the second change as the step the run answered. The
+// installation-2 entry is the control: read, answered, nothing re-queued it,
+// and cleared.
+func TestUpdateKeepsAStepRequeuedWithTheSameKeyWhileItsRunWasGoing(t *testing.T) {
+	r := updateManagedRig(t)
+	updating(t, r)
+	owed(t, initflow.Installation2, apply.Change{Kind: apply.Setting, Key: "budget.per_run_usd"})
+	owed(t, initflow.Installation, apply.Change{Kind: apply.Setting, Key: "layer.defaults.agent.model"})
+	queuedDuringRun(t, func() {
+		owed(t, initflow.Installation, apply.Change{Kind: apply.Setting, Key: "layer.defaults.agent.model"})
+	})
+
+	got, err := updateRun(t, r, "update")
+	if !strings.Contains(got, markDone+" "+initflow.Installation) || !strings.Contains(got, markDone+" "+initflow.Installation2) {
+		t.Fatalf("the run did not answer the steps this test owes (%v):\n%s", err, got)
+	}
+	steps := pendingSteps(record(t))
+	if slices.Contains(steps, initflow.Installation2) {
+		t.Errorf("update answered the installation-2 step and left it owed: %v", steps)
+	}
+	if !slices.Contains(steps, initflow.Installation) {
+		t.Errorf("update cleared the step another terminal re-queued while it was going, whose change it never published: %v\n%s", steps, got)
 	}
 }
 
