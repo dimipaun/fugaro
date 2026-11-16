@@ -49,6 +49,41 @@
 //               (§3.5, D169, D171), and on the heartbeat (O7). This is the
 //               field the whole extension exists for; see below.
 //
+// ## What P5.2.1 adds, and why each field is here
+//
+//   token       REQUIRED on `registration`, refused on every other kind. The
+//               app's push registration token — the FCM/APNs token that
+//               installation's project issued (§3.3) — and the whole reason
+//               the kind exists: §3.5 (b) is the only registration path there
+//               is, because D165's pairing request node admits the phone's
+//               public key and its timestamp and nothing else. It is
+//               BOUNDED, and that is the point rather than a tidy-up: the
+//               alternative the design rejects is the token as a message's
+//               `text`, and a consumer that decides "this message is a
+//               registration" by pattern-matching free text is one a
+//               launcher- or user-authored message can imitate.
+//   platform    REQUIRED on `registration`: "ios" or "android", the pair
+//               §3.4's node shape names. §3.4's writers table has the
+//               registration principal write "the token and platform from that
+//               message", so a message that could not carry it would leave the
+//               node half written.
+//   prefs       optional on `registration`, and the only kind that may carry
+//               it: §3.8's user controls — the per-category switches, and the
+//               quiet-hours window with its IANA zone name — written through
+//               the mailbox because that is the app's only write path (§3.8,
+//               §3.5 (b), Q3). Absent means §3.8's stated defaults, which is
+//               why it is optional rather than required.
+//
+// The node's `updated_at` is deliberately **not** a field: §3.4 has it
+// server-written, so the message cannot carry one and the consumer stamps its
+// own clock.
+//
+// **A new kind moves no version constant, because there is none to move.** The
+// field set IS the version (below), so a reader that predates this kind refuses
+// a registration message as an unknown kind and a writer that predates it
+// cannot produce one — fail-closed skew in both directions — while every
+// existing kind's field set, bytes and tag are untouched.
+
 // There is **no expiry field**. Under D168 as amended a prompt expires at
 // D118's mailbox TTL, computed by the CONSUMER from `at` and its own clock, so
 // an `expires_at` would be the phone's clock deciding — the clock D117 refuses
@@ -207,6 +242,33 @@ export const MAC_MAX = 64;
 export const BOOT_MAX = 64;
 
 /**
+ * The permitted length of a registration token, in UTF-16 code units: 256,
+ * against the tokens that really exist. An FCM registration token is the
+ * longest of them at roughly 150–200 characters (the classic one is 152), an
+ * APNs device token is 64 hex characters and an Expo push token is about 41.
+ * The number is chosen to be above every one of those with room for the
+ * provider to grow and far below TEXT_MAX, because a token is an identity
+ * string and not a body — that distance is what makes "bounded" mean something
+ * here (§3.5 (b), P5.2.1).
+ */
+export const TOKEN_MAX = 256;
+
+/**
+ * The permitted length of an IANA zone name, in UTF-16 code units: the longest
+ * name in the tz database is `America/Argentina/ComodRivadavia` at 32
+ * characters, so 64 is that with room to spare and the same bound the other
+ * short identity strings carry (AGENT_MAX, BOOT_MAX).
+ */
+export const ZONE_MAX = 64;
+
+/**
+ * The largest minute of the local day a quiet-hours window may name: a window's
+ * ends are minutes since local midnight, 0 through 1439, so there is one
+ * spelling of every time of day and no clock format to disagree about.
+ */
+export const MINUTE_MAX = 1439;
+
+/**
  * Attributes a Realtime Database key may not contain, ported from the tree's
  * own key rule (`internal/budget`'s Key): `%` (the escape Unkey parses), the
  * six characters the database itself rejects in a key (`.`, `$`, `#`, `[`,
@@ -226,12 +288,26 @@ const FORBIDDEN_KEY_CHARS = new Set(['%', '.', '$', '#', '[', ']', '/']);
  *   answer   the answer to a prompt, naming it in `reply_to` and carrying the
  *            chosen words in `text`
  *   action   D169's typed destructive command
+ *   registration
+ *            the app's registration-and-preferences message (P5.2.1, §3.5 (b),
+ *            §3.8): a push registration token, the platform it was issued for
+ *            and, optionally, the user controls. It is the only kind that
+ *            carries a `token`, and the only path by which a token can reach
+ *            `config/admin/push/$uid` at all.
  *
  * This is not P1.1's own `KIND` (`command` · `prompt`), which names the two
  * ACCEPTANCE WINDOWS; P6.5 and P6.7 map a message kind to a window, and only
  * they can, because the mapping needs the prompt's TTL and the command window.
  */
-export const KINDS = Object.freeze(['message', 'prompt', 'answer', 'action']);
+export const KINDS = Object.freeze(['message', 'prompt', 'answer', 'action', 'registration']);
+
+/**
+ * The platforms a registration may name: the pair §3.4's node shape carries,
+ * and a closed vocabulary for the reason every other one here is closed — the
+ * sender reads it to decide which provider's endpoint it addresses, and a
+ * platform it has never heard of is not one it can send to.
+ */
+export const PLATFORMS = Object.freeze(['ios', 'android']);
 
 /**
  * The verbs an action record may carry: exactly the three the owner's ruling
@@ -273,6 +349,9 @@ export const FIELDS = Object.freeze([
   'options',
   'reply_to',
   'action',
+  'token',
+  'platform',
+  'prefs',
 ]);
 
 /** The fields a message must have, in the order they are checked. */
@@ -289,6 +368,7 @@ const KIND_OPTIONAL = Object.freeze({
   prompt: Object.freeze(['options']),
   answer: Object.freeze(['reply_to']),
   action: Object.freeze(['action', 'reply_to']),
+  registration: Object.freeze(['token', 'platform', 'prefs']),
 });
 
 const KIND_REQUIRED = Object.freeze({
@@ -296,7 +376,46 @@ const KIND_REQUIRED = Object.freeze({
   prompt: Object.freeze([]),
   answer: Object.freeze(['reply_to']),
   action: Object.freeze(['action']),
+  registration: Object.freeze(['token', 'platform']),
 });
+
+/**
+ * A registration's preference record, exactly: §3.8's per-category switches —
+ * one per category of §1's reconciled set, which is D160's kill switch, cap
+ * reached and consumer offline, cap-near (available, off by default) and the
+ * prompt category D127's switch widens to — and the quiet-hours window.
+ *
+ * The names are this task's, and each is the design's own word for the category
+ * it switches (§1, §3.1). The five flags are required when `prefs` is present:
+ * the message carries the whole switch state, so "absent" cannot be read two
+ * ways. `quiet_hours` is optional because §3.8 states its default — off — and
+ * gives it no boolean of its own: a window that is not there is a window that
+ * does not apply.
+ */
+export const PREFS_FIELDS = Object.freeze([
+  'kill_switch',
+  'cap_reached',
+  'consumer_offline',
+  'cap_near',
+  'prompt',
+  'quiet_hours',
+]);
+
+export const PREFS_REQUIRED = Object.freeze([
+  'kill_switch',
+  'cap_reached',
+  'consumer_offline',
+  'cap_near',
+  'prompt',
+]);
+
+/**
+ * A quiet-hours window, exactly: the IANA zone name the window is in, and its
+ * two ends as minutes since local midnight. The zone is a NAME and not an
+ * offset because a stored offset is a fixed offset — it drifts onto the wrong
+ * hour at every DST transition, invisibly (§3.8, Q5).
+ */
+export const QUIET_HOURS_FIELDS = Object.freeze(['zone', 'start', 'end']);
 
 /** The kind a message with no `kind` field is. */
 const DEFAULT_KIND = 'message';
@@ -348,12 +467,19 @@ export const REFUSALS = Object.freeze({
   UNKNOWN_KIND: 'unknown-kind',
   /** An action's verb is not one of the three the ruling names. */
   UNKNOWN_VERB: 'unknown-verb',
+  /** A registration's platform is not one of the two §3.4's node names. */
+  UNKNOWN_PLATFORM: 'unknown-platform',
   /** A field is present on a kind of message that does not carry it. */
   FIELD_NOT_ALLOWED: 'field-not-allowed',
   /** A resolved target is not one of the two shapes its verb resolves to. */
   BAD_TARGET: 'bad-target',
   /** A head SHA is not a hex object name of either length. */
   BAD_SHA: 'bad-sha',
+  /** A quiet-hours zone is not an IANA zone name. */
+  BAD_ZONE: 'bad-zone',
+  /** A quiet-hours window is not a window: a minute outside the day, or two
+   * ends on the same minute, which is either a whole day or none of one. */
+  BAD_WINDOW: 'bad-window',
   /** A mac is not 64 lowercase hex characters: a 32-byte HMAC-SHA-256 tag. */
   BAD_MAC: 'bad-mac',
   /** A list names the same id or option twice, so a choice by name or
@@ -431,7 +557,7 @@ export function validateMessage(value) {
   // The (kind, field) table, in the order that names the more useful fault
   // first: a field the kind cannot carry at all, then one it must carry and
   // does not, then the fields themselves.
-  for (const field of ['options', 'reply_to', 'action']) {
+  for (const field of ['options', 'reply_to', 'action', 'token', 'platform', 'prefs']) {
     if (Object.hasOwn(value, field) && !KIND_OPTIONAL[kind].includes(field)) {
       return refuse(REFUSALS.FIELD_NOT_ALLOWED, field);
     }
@@ -455,6 +581,21 @@ export function validateMessage(value) {
     const action = actionField(value.action, kind);
     if (action.bad) return action.bad;
     message.action = action.value;
+  }
+  if (Object.hasOwn(value, 'token')) {
+    const token = tokenField(value.token);
+    if (token.bad) return token.bad;
+    message.token = token.value;
+  }
+  if (Object.hasOwn(value, 'platform')) {
+    const platform = platformField(value.platform);
+    if (platform.bad) return platform.bad;
+    message.platform = platform.value;
+  }
+  if (Object.hasOwn(value, 'prefs')) {
+    const prefs = prefsField(value.prefs);
+    if (prefs.bad) return prefs.bad;
+    message.prefs = prefs.value;
   }
 
   if (Object.hasOwn(value, 'acked')) {
@@ -796,6 +937,101 @@ function actionField(value, kind) {
   };
 }
 
+// tokenField validates a registration token: a non-empty, single-line string
+// within TOKEN_MAX. It carries no character class of its own on purpose — the
+// providers' own alphabets differ (an FCM token is URL-safe base64 with a `:`
+// in it, an APNs token is hex, an Expo token is bracketed), so a class here
+// would refuse a real token and "no token, no send" would follow. What the
+// bound and the single-line rule do is the thing that matters: a token is an
+// identity of a known shape, never a document, and never a body the consumer
+// would have to read.
+function tokenField(value) {
+  return stringField(value, 'token', TOKEN_MAX, false);
+}
+
+// platformField validates a registration's platform: one of the two §3.4's node
+// names, refused as `unknown-platform` rather than as a wrong type for the
+// reason a kind is refused as `unknown-kind` — "not a platform" and "not a
+// string" are different questions.
+function platformField(value) {
+  if (typeof value !== 'string') return { bad: refuse(REFUSALS.WRONG_TYPE, 'platform') };
+  if (!PLATFORMS.includes(value)) return { bad: refuse(REFUSALS.UNKNOWN_PLATFORM, 'platform') };
+  return { value };
+}
+
+// prefsField validates §3.8's controls: a present record carries every one of
+// the five category switches — the message is the whole state, so a partial one
+// would leave the consumer choosing a value the app never sent — and a
+// quiet-hours window if the app set one.
+function prefsField(value) {
+  if (!isPlainObject(value)) return { bad: refuse(REFUSALS.NOT_AN_OBJECT, 'prefs') };
+  for (const key of Object.keys(value)) {
+    if (!PREFS_FIELDS.includes(key)) return { bad: refuse(REFUSALS.UNKNOWN_FIELD, `prefs.${key}`) };
+  }
+  for (const key of PREFS_REQUIRED) {
+    if (!Object.hasOwn(value, key)) return { bad: refuse(REFUSALS.MISSING_FIELD, `prefs.${key}`) };
+  }
+  const prefs = {};
+  for (const key of PREFS_REQUIRED) {
+    if (typeof value[key] !== 'boolean') return { bad: refuse(REFUSALS.WRONG_TYPE, `prefs.${key}`) };
+    prefs[key] = value[key];
+  }
+  if (Object.hasOwn(value, 'quiet_hours')) {
+    const quiet = quietHoursField(value.quiet_hours);
+    if (quiet.bad) return { bad: quiet.bad };
+    prefs.quiet_hours = quiet.value;
+  }
+  return { value: prefs };
+}
+
+// quietHoursField validates a quiet-hours window: an IANA zone name and its two
+// ends, in minutes since local midnight.
+//
+// The ends must differ, and that is a refusal rather than a convention: with a
+// window that wraps midnight (22:00 to 07:00 is the ordinary one) an end equal
+// to its start is either the whole day or none of it, and a sender that guessed
+// would suppress the wrong hours in one of the two readings. Two right answers
+// is the ambiguity this module refuses everywhere else, so it is refused here
+// too.
+function quietHoursField(value) {
+  if (!isPlainObject(value)) return { bad: refuse(REFUSALS.NOT_AN_OBJECT, 'prefs.quiet_hours') };
+  for (const key of Object.keys(value)) {
+    if (!QUIET_HOURS_FIELDS.includes(key)) {
+      return { bad: refuse(REFUSALS.UNKNOWN_FIELD, `prefs.quiet_hours.${key}`) };
+    }
+  }
+  for (const key of QUIET_HOURS_FIELDS) {
+    if (!Object.hasOwn(value, key)) {
+      return { bad: refuse(REFUSALS.MISSING_FIELD, `prefs.quiet_hours.${key}`) };
+    }
+  }
+  const zone = stringField(value.zone, 'prefs.quiet_hours.zone', ZONE_MAX, false);
+  if (zone.bad) return { bad: zone.bad };
+  if (!ZONE_PATTERN.test(zone.value)) {
+    return { bad: refuse(REFUSALS.BAD_ZONE, 'prefs.quiet_hours.zone') };
+  }
+  const start = minuteField(value.start, 'prefs.quiet_hours.start');
+  if (start.bad) return { bad: start.bad };
+  const end = minuteField(value.end, 'prefs.quiet_hours.end');
+  if (end.bad) return { bad: end.bad };
+  if (start.value === end.value) {
+    return { bad: refuse(REFUSALS.BAD_WINDOW, 'prefs.quiet_hours.end') };
+  }
+  return { value: { zone: zone.value, start: start.value, end: end.value } };
+}
+
+// minuteField validates one end of a quiet-hours window: an integer minute of
+// the local day, 0 through MINUTE_MAX. A float, a string, a negative minute and
+// a minute past the day are each something else, and each is refused rather
+// than floored.
+function minuteField(value, field) {
+  if (typeof value !== 'number') return { bad: refuse(REFUSALS.WRONG_TYPE, field) };
+  if (!Number.isSafeInteger(value) || value < 0 || value > MINUTE_MAX) {
+    return { bad: refuse(REFUSALS.BAD_WINDOW, field) };
+  }
+  return { value };
+}
+
 // targetField validates a resolved target: a run id, or a repository and a
 // pull request number, and the verb decides which. `confirm` — the ruling's
 // third verb, confirming an action — takes either, because the action being
@@ -1105,6 +1341,16 @@ const REPO_CHARS = /^[A-Za-z0-9._:/-]+$/;
  * that neither the whole value nor either side begins with a `.` or a `-`.
  */
 const REPO_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9._-]*\/[A-Za-z0-9_][A-Za-z0-9._-]*$/;
+
+/**
+ * An IANA zone name as the tz database spells one: a letter first — so neither
+ * a leading `.` nor a leading `-` can reach a path or a flag position — then
+ * letters, digits, `.`, `_`, `+` and `-`, in one or more `/`-separated
+ * segments. `Etc/GMT+5` is why the `+` is there and `UTC` why the separator is
+ * optional. The consumer hands this value to its own zone loader, so the shape
+ * is checked here rather than trusted there.
+ */
+const ZONE_PATTERN = /^[A-Za-z][A-Za-z0-9._+-]*(\/[A-Za-z0-9._+-]+)*$/;
 
 /** Lowercase hexadecimal, which is the one spelling a tag or a SHA has here. */
 const HEX_PATTERN = /^[0-9a-f]+$/;

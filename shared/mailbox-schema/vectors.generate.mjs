@@ -22,7 +22,7 @@
 // artifact can be re-derived rather than hand-edited.
 
 import { writeFileSync } from 'node:fs';
-import { canonicalBytes, validateHeartbeat, validateMessage } from './index.js';
+import { TOKEN_MAX, canonicalBytes, validateHeartbeat, validateMessage } from './index.js';
 import { macOf } from './mac.js';
 
 const KEY = ['not', 'a', 'secret', 'test', 'key', '0001'].join('-');
@@ -119,6 +119,33 @@ const mergeOne = verified(
 );
 
 verified('heartbeat', 'O7: the consumer\'s liveness record, whose agent list feeds D163 — an unsigned heartbeat is offline', heartbeat());
+
+// P5.2.1's kind, and the one field of it that is a credential-shaped value: the
+// token is inside the tagged bytes like every other field, so a launcher holding
+// a minted token (G13) but not the per-pairing key (D171) cannot register a
+// device of its own choosing (§3.5 (b), Q3). The placeholder below is plainly
+// not a push token — the vectors' own rule is that nothing credential-shaped is
+// committed here, and the shapes the suite forbids are asserted in index.test.js.
+const aRegistration = (over = {}) => ({
+  kind: 'registration',
+  token: 'not-a-real-registration-token',
+  platform: 'ios',
+  prefs: {
+    kill_switch: true,
+    cap_reached: true,
+    consumer_offline: true,
+    cap_near: false,
+    prompt: true,
+    quiet_hours: { zone: 'Europe/Berlin', start: 1320, end: 420 },
+  },
+  ...over,
+});
+
+verified(
+  'registration',
+  'P5.2.1, §3.5 (b): the app\'s registration-and-preferences message — the token, the platform and §3.8\'s switches, all of them inside the bytes the tag covers',
+  message({ ...aRegistration(), text: 'register this phone' }),
+);
 
 // --- the bytes, not the values: the two encoders must agree exactly ---
 verified(
@@ -258,6 +285,23 @@ refused('answer without reply_to', 'an answer names the prompt it answers', 'mes
 refused('float at', 'a time is an integer millisecond', 'message', message({ at: AT + 0.5 }));
 refused('stored direction', 'the direction is the reader\'s to supply, never a field the writer stores', 'message', message({ direction: 'inbox' }));
 refused('stored direction on a heartbeat', 'a heartbeat cannot claim its own direction either', 'heartbeat', heartbeat({ direction: 'heartbeat' }));
+
+// P5.2.1's kind: the token is the one field here an impostor would want, so its
+// requirement, its bound and the (kind, field) table around it are all pinned.
+const registration = aRegistration();
+refused('unsigned registration', 'a registration is signed like every other kind: an unsigned one could register a device of an impostor\'s choosing', 'message', unsigned(message(registration)));
+refused('registration without a token', 'the token is the field the kind exists for (§3.5 (b): the mailbox is the only path that can carry one)', 'message', message((({ token, ...rest }) => rest)(registration)));
+refused('registration without a platform', '§3.4\'s node carries the platform the token was issued for, and this message is where the principal reads it', 'message', message((({ platform, ...rest }) => rest)(registration)));
+refused('options on a registration', 'a kind carries its own fields and no others', 'message', message({ ...registration, options: ['one'] }));
+refused('a token on a plain message', 'the token travels on a registration alone: on any other kind the (kind, field) table does not name it', 'message', message({ token: 'not-a-real-registration-token' }));
+refused('a token one code unit past its bound', 'a token is bounded (the design\'s word): 257 code units is a body, not a registration token', 'message', message(aRegistration({ token: 'x'.repeat(TOKEN_MAX + 1) })));
+refused('an unknown platform', 'the platforms are ios and android, and a platform outside the pair is not one the sender can address', 'message', message(aRegistration({ platform: 'windows' })));
+refused('a zone that is not an IANA zone name', 'the quiet-hours zone is an IANA name, not a path and not free text', 'message', message(aRegistration({ prefs: { ...registration.prefs, quiet_hours: { zone: '../../etc/passwd', start: 1320, end: 420 } } })));
+refused('a quiet-hours window whose ends are the same minute', 'a window from a minute to itself is either a whole day or none of one, and a sender that guessed would suppress the wrong hours', 'message', message(aRegistration({ prefs: { ...registration.prefs, quiet_hours: { zone: 'UTC', start: 600, end: 600 } } })));
+refused('a quiet-hours minute outside the day', 'a minute of the local day is 0 through 1439', 'message', message(aRegistration({ prefs: { ...registration.prefs, quiet_hours: { zone: 'UTC', start: 1440, end: 420 } } })));
+refused('prefs without one of the switches', 'the message carries the whole switch state, so a partial one would leave the consumer choosing a value the app never sent', 'message', message(aRegistration({ prefs: (({ cap_near, ...rest }) => rest)(registration.prefs) })));
+refused('a switch that is not a boolean', 'a switch is true or false, and never a string the consumer would have to read', 'message', message(aRegistration({ prefs: { ...registration.prefs, cap_near: 'off' } })));
+refused('an unknown field inside prefs', '§3.8\'s controls are a closed set like every other record here', 'message', message(aRegistration({ prefs: { ...registration.prefs, sound: true } })));
 const file = {
   format: 'fugaro mailbox message tag vectors',
   algorithm: 'HMAC-SHA-256 over canonicalBytes(message, direction), lowercase hex (mobile plan §3.5, D171; direction by the owner ruling of 2026-10-18)',
