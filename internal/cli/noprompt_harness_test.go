@@ -337,6 +337,7 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro artifacts ls":         {args: []string{"run-1"}},
 	"fugaro budget preview":       {args: []string{"--recipe", "r", "--runs", "1"}},
 	"fugaro budget history":       {args: []string{"--sweep"}},
+	"fugaro budget reconcile":     {args: []string{"--from", "2026-10-12", "--to", "2026-11-16", "--all"}},
 	"fugaro cancel":               {args: []string{"run-1"}},
 	"fugaro creds set":            {args: []string{"NAME"}},
 	"fugaro diagnose":             {args: []string{"run-1"}},

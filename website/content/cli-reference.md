@@ -1259,6 +1259,7 @@ Subcommands:
 - `fugaro budget kill` -- Halt every run of the project, of one repository or of one workspace (budget admins)
 - `fugaro budget preview` -- Estimate a batch's worst-case model spend against today's caps
 - `fugaro budget prices` -- Show the effective model price table, offline
+- `fugaro budget reconcile` -- Put the runs' charged, reported and table spend side by side, per model
 - `fugaro budget resume` -- Clear a kill switch (budget admins)
 - `fugaro budget set` -- Set a cap, the lease limit or the mode (budget admins)
 - `fugaro budget show` -- Show caps, today's counters, kill switches, headroom and the runs in flight
@@ -1492,6 +1493,90 @@ Flags:
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro budget reconcile`
+
+Put the runs' charged, reported and table spend side by side, per model
+
+Read one window of the project's run records and print, per model, what the
+runs were charged, what the providers reported their calls cost, and the band
+the price table would have put those calls in.
+
+--from and --to are UTC dates (YYYY-MM-DD) and both are inclusive; the window
+is the one runs ls and report read, so a run is in it on the day the bucket's
+run ID places its start. --repo names one repository and --all every
+repository of the runs bucket; one of the two is required, because a reading
+that silently covered less, or more, than the reader meant is how a
+reconciliation comes out plausible and wrong.
+
+The figures are the run records' own, and nothing is priced here:
+
+  CHARGE is the run's model_by, the price table's rates plus the route fees,
+  as the runs recorded it, split by serving model. A run with no gateway
+  records one model figure and names no model for it: that charge, and the
+  part of model_usd model_by does not name, are read on `mixed`. A
+  subscription's notional part is inside the charge; the totals say how
+  much, and no provider bills that part.
+  REPORT is what the providers said their calls cost (their own figures, no
+  route fee in them), and WITH REPORT is how many of the row's runs carried
+  one. A record written before reported_by existed carries one figure for the
+  whole run: it lands on the model's row when the run charged on exactly one
+  model, and under `mixed` when it charged on several.
+  BAND is what the price table would have charged the calls a provider
+  reported a cost for, from the cheapest end of the selected tier to the
+  dearest. It is the run's own figure and is never split between models: a
+  run whose report names several models carries its band under `mixed`.
+  TOKENS are the run's counts by model (model_tokens), with the cache reads
+  and writes apart. A zero is a count: it is what the record says, and a
+  record written before the field existed has none.
+  TIERS are the service tiers the run's calls came back at that the price
+  table has no multiplier for, which explain a dearer figure; the record
+  keeps them per run, so a run that touched two models lists them on both.
+
+`unattributed` is a row of its own: it is the charge for calls no stage
+report carried, which model_by keys apart from the models, and it is never
+folded into one. `mixed` holds what a run recorded for itself rather than for
+one of its models -- a charge the record names no model for among them.
+
+The totals are printed with the route fee and without it: the fee is a
+percentage the project config adds to every charge on a provider route
+(route_fee_pct), the providers report the model's own price and no fee, so the
+report is read against the charge without it. The window's runs that carried
+no usable record, and the settled calls no provider reported a cost for, are
+counted and printed: they are spend the totals are short by, and a reader is
+told rather than left to take the figures for the window's whole.
+
+The read is bounded to the newest 5000 runs of the window, newest first; a
+window holding more says so, in the output and in the --json document's
+truncated. It reads only: no counter, cap or kill switch is read or written,
+and the budget database is not reached at all.
+
+--json prints {project, from, to, repo, all, max_runs, truncated, models[],
+totals, warnings}; a model row carries {model, charge_usd, report_usd,
+band_lo_usd, band_hi_usd, input_tokens, output_tokens, cache_read_tokens,
+cache_write_tokens, runs, runs_with_report, service_tiers}, and totals carries
+the window's own counts and sums, charge_without_fee_usd among them.
+
+Usage: `fugaro budget reconcile --from YYYY-MM-DD --to YYYY-MM-DD (--repo owner/name | --all)`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--all` | bool | `false` | no | every repository in the runs bucket |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--from` | string | "" | yes | first day of the window, inclusive (YYYY-MM-DD, UTC) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for reconcile |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | only this repository (owner/name, or a path inside its checkout) |
+| `--to` | string | "" | yes | last day of the window, inclusive (YYYY-MM-DD, UTC) |
 
 Subcommands:
 
