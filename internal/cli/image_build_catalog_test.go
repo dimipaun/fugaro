@@ -1521,8 +1521,9 @@ func (c *recitingBuildToken) Mint(_ context.Context, req buildtoken.Request) (bu
 }
 
 // installBuildToken points the entry mode at c for one test, and puts the
-// package's own value back afterwards: what ships leaves gitCredBuildToken nil,
-// so the global is a test's to set and not a running process's.
+// package's own value back afterwards: what ships is the call itself
+// (gitcred_build.go), so a test that wants to hold the build's question still
+// replaces it and hands it back.
 func installBuildToken(t *testing.T, c buildtoken.Client) {
 	t.Helper()
 	prev := gitCredBuildToken
@@ -1688,18 +1689,20 @@ func TestCredentialIsReadFromTheNamedEntrysRepos(t *testing.T) {
 			})
 		}
 
-		// A build whose binary has no route to ask: the route is B1's and the
-		// client that calls it is I2's, and until they are joined the entry mode
-		// refuses rather than cloning with something this process can mint for
-		// itself, which would be a credential the project's build identity never
-		// granted.
+		// A build whose seam holds no route at all: the entry mode refuses
+		// rather than cloning with something this process can mint for itself,
+		// which would be a credential the project's build identity never
+		// granted. What ships installs the call (gitcred_build.go), so this is
+		// the guard on a nil seam and not a state of the binary — the test that
+		// holds what the shipped client does with the environment is
+		// TestCatalogBuildBakesTwoReposThroughTheService.
 		t.Run("no route in this binary", func(t *testing.T) {
 			prev := gitCredBuildToken
 			gitCredBuildToken = nil
 			t.Cleanup(func() { gitCredBuildToken = prev })
 			out := filepath.Join(t.TempDir(), "git-credentials")
 			_, _, err := execute(t, entryArgs(out, "--repos", "acme/app")...)
-			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "not wired into this binary yet") {
+			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "no route to the credentials service") {
 				t.Errorf("exit %d, err %v: want the build told it cannot ask", ExitCode(err), err)
 			}
 			if _, err := os.Stat(out); !os.IsNotExist(err) {
