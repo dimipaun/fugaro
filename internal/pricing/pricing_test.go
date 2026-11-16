@@ -222,6 +222,19 @@ func TestOverrideRowEndsEqualRates(t *testing.T) {
 	if m, _ := with.Lookup("claude-new-9"); !reflect.DeepEqual(m.Lo, added.Rates) {
 		t.Errorf("a model the table did not have has Lo %+v, want the override's rates", m.Lo)
 	}
+
+	// A provider row whose override leaves a cache multiplier at 0 has it
+	// raised to 1, and both ends are taken after that: an end keeping the 0
+	// would price a cache-read-only call at nothing and floor a settle there.
+	blank := mustWith(t, testTable(), Overrides{"vendor/model": {Rates: Rates{InputPerM: 1, OutputPerM: 2}}})
+	flat(t, "defaulted", blank, "vendor/model")
+	m, _ := blank.Lookup("vendor/model")
+	if m.Lo.CacheRead != 1 || m.Hi.CacheRead != 1 || m.Lo.CacheWrite5m != 1 || m.Hi.CacheWrite1h != 1 {
+		t.Errorf("a defaulted provider row's ends are %+v / %+v, want the raised multipliers the charge has", m.Lo, m.Hi)
+	}
+	if m.Lo.Cost(Usage{CacheRead: 1_000_000}) == 0 {
+		t.Error("a cache-read-only call at the row's cheapest end costs nothing")
+	}
 }
 
 // mustWith is Table.With for a test that has no error to report.

@@ -373,22 +373,22 @@ func (t *Table) With(o Overrides) (*Table, error) {
 		r := ov.Rates.clone()
 		if m, ok := out.Lookup(key); ok {
 			m.Rates = r
-			m.flatEnds()
 			if ov.ImageTokens != nil {
 				m.ImageTokens = *ov.ImageTokens
 			}
 			m.Unverified, m.PriceSource, m.PriceCheckedAt, m.Catalog = false, "", "", nil
 			m.CacheDefaulted = defaultCacheRates(m.ID, &m.Rates)
+			m.flatEnds()
 			out.Models[m.ID] = m
 			delete(out.Refused, m.ID)
 			continue
 		}
 		m := Model{ID: key, Rates: r}
-		m.flatEnds()
 		if ov.ImageTokens != nil {
 			m.ImageTokens = *ov.ImageTokens
 		}
 		m.CacheDefaulted = defaultCacheRates(key, &m.Rates)
+		m.flatEnds()
 		out.Models[key] = m
 		// An owner who prices a model the catalog refused has answered
 		// what the route's switches ask: the row is the way out, so the
@@ -448,6 +448,11 @@ func (t *Table) clone() *Table {
 // owner's override and the embedded rows are not compiled from a tier, so
 // there is no range to carry and the row's own rates are the whole of it.
 // Nothing that reads an end then has to ask where the row came from.
+//
+// It copies the rates, so it goes after every write to them: the cache
+// defaulting raises a provider row's 0 multipliers to 1, and an end taken
+// before that keeps a 0 the charge does not have, which floors a settle at
+// nothing on the very dimension the defaulting exists to price.
 func (m *Model) flatEnds() { m.Lo, m.Hi = m.Rates, m.Rates }
 
 func (r Rates) clone() Rates {
