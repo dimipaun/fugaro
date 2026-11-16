@@ -414,6 +414,28 @@ agent:
     coder: {model: qwen/qwen3-coder}
 `
 
+// craftRepoResolvableYAML is the same checkout file in a shape config.Resolve
+// accepts, which is what puts the file into the merge the row is judged by: a
+// file the rules refuse contributes no layer at all (the read judges no craft by
+// a config no run would start on), so the arms that use the two files above
+// never exercise the file half of the allow-list. Beyond the anchor
+// (gcp_project) and the workflows block every fugaro.yaml needs, it is the
+// fixture's own file plus one narrowing line: an allow-list that names the
+// Claude IDs alone.
+const craftRepoResolvableYAML = `version: 1
+project: aurora
+gcp_project: aurora-gcp
+git: { provider: github }
+workflows:
+  go: { commands: { build: go build ./..., test: go test ./... } }
+budget: { allowed_models: [claude-sonnet-5-5], mode: off }
+agent:
+  auth: api-key
+  crafts:
+    review: {access: anthropic-key}
+    security-review: {model: claude-opus-4-1}
+`
+
 // craftRowRaw is one row of the document as it was printed, keyed by member, so
 // a test can tell an absent member from a member that says false: a struct's
 // zero value would make the two the same answer, and "the member is there and
@@ -545,6 +567,38 @@ func TestCraftLsRowNamesWhyAModelCannotBeServed(t *testing.T) {
 			if !strings.Contains(problem, want) {
 				t.Errorf("the sentence does not name %q: %q", want, problem)
 			}
+		}
+	})
+
+	t.Run("the checkout's own allow-list excludes the model", func(t *testing.T) {
+		// The file half of the allow-list, and the arm that needs a checkout
+		// file config.Resolve accepts: the fixture's other files are refused
+		// (no gcp_project to anchor to the project layer, no workflows block),
+		// so they contribute no layer at all and every other arm here judges by
+		// the project's answer alone. This file narrows on its own -- the
+		// coder's DeepSeek model is the ID it does not name -- and the read has
+		// to reach that layer for the row to be refused, which is what makes
+		// the file's bytes part of the answer rather than a document read for
+		// nothing.
+		craftFixture(t)
+		testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": craftRepoResolvableYAML})
+		out, _, err := execute(t, "craft", "ls", "--json")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		servable, problem := craftRowServes(t, out, config.CraftCoder)
+		if servable {
+			t.Errorf("the coder row says deepseek/deepseek-v4.1-flash is servable, and this checkout's own fugaro.yaml names claude-sonnet-5-5 alone: %s", out)
+		}
+		for _, want := range []string{"deepseek/deepseek-v4.1-flash", "not an allowed model", "claude-sonnet-5-5"} {
+			if !strings.Contains(problem, want) {
+				t.Errorf("the sentence does not name %q: %q", want, problem)
+			}
+		}
+		// The control, so the arm is not a blanket refusal: the review row's
+		// model is the one ID this file's list names.
+		if servable, problem := craftRowServes(t, out, config.CraftReview); !servable {
+			t.Errorf("the review row says claude-sonnet-5-5 cannot be served (%s), and it is the one ID this file's allow-list names: %s", problem, out)
 		}
 	})
 

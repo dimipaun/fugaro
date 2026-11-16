@@ -161,9 +161,10 @@ func runCraftLs(cmd *cobra.Command, o *craftLsOptions) error {
 	if lc != nil {
 		project = lc.Name
 	}
-	files := craftLsFiles{lc: lc, project: project}
+	files := craftLsFiles{lc: lc}
 	if data, ok := checkoutFugaroYAML(cmd); ok {
 		files.repo = true
+		files.data = data
 		if agent, ok := config.AgentOf(data); ok {
 			files.agent = agent
 		} else {
@@ -198,8 +199,7 @@ func runCraftLs(cmd *cobra.Command, o *craftLsOptions) error {
 // and the resolver read the same three, which is why they are read here and
 // handed down rather than each read where it is used.
 type craftLsFiles struct {
-	lc      *localcfg.Config
-	project string
+	lc *localcfg.Config
 	// data is the checkout's own fugaro.yaml and agent its agent block, both
 	// empty when this directory is no checkout or its file is one this build
 	// cannot read: the two commands that judge a model need the file's bytes
