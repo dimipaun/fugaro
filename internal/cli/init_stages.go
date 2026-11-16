@@ -442,12 +442,20 @@ func (e *initEngine) converge(ctx context.Context) error {
 	if err := e.syncAccess(ctx); err != nil {
 		return err
 	}
-	// The door's one line about the runs that are running while it converges,
-	// and the last thing before the first stage writes anything: a person
-	// deciding whether it is safe to update now reads it before the update
-	// starts rather than after. It asks nothing and it refuses nothing, and it
-	// is silent when there is nothing running (update_in_flight.go).
-	e.announceRunsInFlight(ctx)
+	// The door's note about the runs that are running while it converges, and
+	// the last thing the run prints before its own confirmation and before any
+	// stage writes: a person deciding whether it is safe to update now reads it
+	// before the update starts rather than after. It refuses nothing and asks no
+	// run to finish first, and it is silent when there is nothing running; at an
+	// owner's terminal with --ask it asks the one question the flag restores, and
+	// an answer of stop ends the run here with nothing written — no stage of the
+	// loop has run, and the step before this one computes its node and leaves it
+	// to the installation root's apply rather than writing it (syncAccess).
+	if stop, err := e.announceRunsInFlight(ctx); err != nil {
+		return err
+	} else if stop {
+		return nil
+	}
 	res, err := initflow.Run(ctx, stages, e.options())
 	if err == nil && res != nil && e.r.o.planOnly && res.Failed == nil {
 		e.planOnlyReview(ctx, res.Stages)
