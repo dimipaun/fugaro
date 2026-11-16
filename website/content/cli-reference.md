@@ -4386,11 +4386,15 @@ outbox.
 
 The consumer acts on the operator's behalf, and a voice-originated message
 may never cause a destructive command (D128). The default is refusal: a
-message this build does not recognise is refused, and the confirmation
-record that would admit a destructive one is not built yet, so every message
-that would be acted on is refused and reported by code. A launch and a
-read-only report are the allowance D128's amendment names; it reaches a real
-message only once the confirmation record's consumer lands.
+message this build does not recognise is refused and reported by code, and a
+destructive command is run only from a typed action record this consumer
+re-validates itself — its verb in the closed set, its target resolved, a
+confirmation present and inside the six-hour window measured from the
+confirmation's own time, and its ids not already spent, which outlives a
+restart. A cancel runs this CLI's own cancel path; a merge re-reads the pull
+request's head and refuses one that moved since the confirmation read it
+back. A launch and a read-only report are the allowance D128's amendment
+names, and destructive free text is refused rather than acted on.
 
 Both directions of the wire are MAC-covered. Every inbox message is verified
 before it is acted on, and one that does not verify is refused and never
@@ -4420,7 +4424,10 @@ Its own state is the ledger at
 $XDG_STATE_HOME/fugaro/mailbox/<project>/ledger.json, written 0o600 by
 tmp+rename: it holds the deliveries this consumer has consumed, and it is
 what stops a restart from acting on one twice. The ledger is committed before
-an action is performed, never after.
+an action is performed, never after. Beside it, pending.json holds the action
+and confirmation ids this machine has spent, the questions it is holding and
+the non-destructive answer each is owed when its time is up: an expiry is
+decided on this consumer's own clock, and the answer is handed over once.
 
 Each pass prints one line, or with --json one JSON document, naming the
 pairing, the lease, what was read and what was refused (by code, never by
