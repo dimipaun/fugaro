@@ -573,6 +573,109 @@ func TestProjectReposAddLeavesTheJobStepWithoutACheckout(t *testing.T) {
 	}
 }
 
+// TestProjectReposAddHasNoYesFlag is F5's regression test and the reason it is
+// here rather than in the help text: `--yes` was removed from the tree (T11 of
+// the no-prompt policy), and the one confirmation this command asks is the
+// project's name typed at the operator's own terminal. A later rebase that
+// re-registered the flag — the correction the reconciliation's F22 makes to the
+// draft — would fail here, before it could quietly answer the question.
+func TestProjectReposAddHasNoYesFlag(t *testing.T) {
+	r := enrolRig(t)
+	before := r.cfgText(t)
+	_, _, err := r.enrol(t, enrolRepo, "--yes")
+	if err == nil || !strings.Contains(err.Error(), "unknown flag") {
+		t.Fatalf("project repos add --yes: err = %v, want the flag refused as an unknown one", err)
+	}
+	if got := r.cfgText(t); got != before {
+		t.Errorf("the refused run wrote the local config:\n%s", got)
+	}
+}
+
+// TestProjectReposAddReadsTheSameViewAsLs: the repository's own two facts — the
+// branch a run of it starts from and the workflows it states — are read once,
+// through the view `project repos ls` and `project repos status` print
+// (repos_view.go, RE0, D2409/D2410), rather than derived a second way here. The
+// fixture is the state where the two readings really differ: the checkout's own
+// fugaro.yaml names a base branch and this machine's entry names another, and
+// config.EffectiveBaseBranch — what every launch resolves through — takes the
+// checkout's. An entry written from this command's own read would state
+// `release` while a listing printed `develop`, which is the drift the shared
+// view exists to prevent.
+func TestProjectReposAddReadsTheSameViewAsLs(t *testing.T) {
+	local := strings.Replace(enrolledRigLocal(),
+		"  "+enrolRepo+": { provider: github, github_app_id: \"12345\", workflows: [web] }\n",
+		"  "+enrolRepo+": { provider: github, github_app_id: \"12345\", base_branch: release, workflows: [web] }\n", 1)
+	r := newAddRigWith(t, local)
+	atEnrolCheckoutYAML(t, strings.Replace(enrolCheckoutYAML,
+		"git: { provider: github }\n",
+		"git: { provider: github, base_branch: develop }\n", 1))
+
+	db, err := newBudgetClient(t.Context(), r.db.URL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := newReposView(t.Context(), r.addLocal(t), db, enrolEntry)
+	if err != nil {
+		t.Fatalf("the view the listings print: %v", err)
+	}
+	if view.Named == nil || !view.Named.Enrolled {
+		t.Fatalf("the view holds no row for %s, so this fixture does not exercise the shared read:\n%+v", enrolEntry, view)
+	}
+	row := viewRow(t, view, enrolEntry)
+	if row.BaseBranch != "develop" {
+		t.Fatalf("the view prints base_branch %q for %s, want the checkout's own (develop): this fixture no longer tells the shared read apart from this command's own, which takes the entry's release", row.BaseBranch, enrolEntry)
+	}
+
+	out, _, err := r.enrol(t, enrolRepo)
+	if err != nil {
+		t.Fatalf("project repos add %s: %v\nstdout:\n%s", enrolRepo, err, out)
+	}
+	entry, ok := r.addLocal(t).Repos[enrolRepo]
+	if !ok {
+		t.Fatalf("the converge wrote no repos entry for %s:\n%s", enrolRepo, r.cfgText(t))
+	}
+	if entry.BaseBranch != row.BaseBranch {
+		t.Errorf("repos[%s] states base_branch %q and the view prints %q: add and ls disagree\nstdout:\n%s",
+			enrolRepo, entry.BaseBranch, row.BaseBranch, out)
+	}
+	if want := reposViewWorkflowNames(row); !slices.Equal(entry.Workflows, want) {
+		t.Errorf("repos[%s] states workflows %v and the view prints %v: add and ls disagree", enrolRepo, entry.Workflows, want)
+	}
+	if !strings.Contains(out, "base_branch "+row.BaseBranch) {
+		t.Errorf("the plan does not state the branch the view prints:\n%s", out)
+	}
+}
+
+// TestProjectReposAddRefusesACatalogEntryTheProjectDoesNotHold is D2401's own
+// case, and the one the converge used to read around: a workflow pinning a
+// catalog entry the project's catalog does not hold was a "left out" line in
+// the plan, and the run went on to publish allow_repos. The pin is the
+// repository's own statement and the catalog is the project's, so nothing here
+// may substitute either — the refusal names the one command that supplies the
+// entry, and it lands before the plan, the confirmation and every write.
+func TestProjectReposAddRefusesACatalogEntryTheProjectDoesNotHold(t *testing.T) {
+	pinned := strings.Replace(enrolCheckoutYAML,
+		"  web: { commands: { build: sh build.sh, test: sh test.sh } }\n",
+		"  web: { image_name: universal, commands: { build: sh build.sh, test: sh test.sh } }\n", 1)
+	r := newAddRigWith(t, enrolRigLocal)
+	atEnrolCheckoutYAML(t, pinned)
+	before, node := r.cfgText(t), r.nodeText(t)
+
+	out, _, err := r.enrol(t, enrolRepo)
+	if err == nil || !strings.Contains(err.Error(), "fugaro image add universal") {
+		t.Fatalf("project repos add %s for a workflow pinning an entry the catalog does not hold: err = %v, want the refusal naming the command that writes it\nstdout:\n%s", enrolRepo, err, out)
+	}
+	if got := r.cfgText(t); got != before {
+		t.Errorf("the refused run wrote the local config:\n%s", got)
+	}
+	if got := r.nodeText(t); got != node {
+		t.Errorf("the refused run published the node:\n%s", got)
+	}
+	if p := r.policy(t); slices.Contains(p.AllowRepos, enrolEntry) {
+		t.Errorf("the refused run admitted the repository: allow_repos = %v", p.AllowRepos)
+	}
+}
+
 // enrolledRigLocal is enrolRigLocal with the repository already listed in the
 // project's repos: the state the half-enrolled fixtures start from, written as
 // one config rather than by two writers on one file.

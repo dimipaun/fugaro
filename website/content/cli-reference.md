@@ -6296,8 +6296,11 @@ will change, asks once, and then does each step as far as it can:
   6. the publish of the policy node (fugaro update's policy stage)
 
 Steps 4 to 6 are `fugaro update`'s own stages, run here in the registered
-order they are invoked in, so the policy node is published last: a step
-that stops before it leaves the node as it was.
+order they are invoked in, so the publish is last. Step 3 has already
+written allow_repos by the time they run, so a stage that stops leaves the
+repository admitted — its repos: entry, its mapping and its allow-list
+entry are in place, and the node's other keys are as they were — and
+running this again converges it from there.
 
 Every step is idempotent: a repository already enrolled converges to the
 same state, and a step that has nothing to do says so instead of writing

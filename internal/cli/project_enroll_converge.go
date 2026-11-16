@@ -23,6 +23,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -91,6 +92,13 @@ type reposEnrolment struct {
 	// none: the repository stage converges a checkout, and a repository whose
 	// checkout is elsewhere is the one step this command cannot do here.
 	checkout string
+	// viewRow is this repository's row in the shared enrolment view — the one
+	// `project repos ls` and `project repos status` print (repos_view.go, RE0) —
+	// and nil for a repository the view draws no row for. That is the state an
+	// enrolment starts from: a repository this machine's config does not list
+	// and the published allow-list does not admit has no row, and its checkout
+	// is then the only thing that states its branch and its workflows.
+	viewRow *reposViewRepo
 }
 
 // runProjectReposEnroll is the convergent path: read, show, ask once, write.
@@ -150,13 +158,14 @@ func runProjectReposEnroll(cmd *cobra.Command, o *projectReposOptions, arg strin
 	// One question for the whole convergence, and nothing on the command line
 	// answers it any more: --yes is gone from the tree (T11), so the project's
 	// name typed at the operator's own terminal is the whole of what confirms
-	// it. A pipe, --json or a coding agent's session reaches no line to read
+	// it — which is why no field of this command's options is passed as the
+	// answer. A pipe, --json or a coding agent's session reaches no line to read
 	// and is refused by the same call. Every refusal above already happened,
 	// and not one of them is a confirmation. Safe while runs are in flight
 	// (CLAUDE.md): this asks no run to finish and rewrites nothing a run holds
 	// — the allow-list write is the ETag-guarded one, and the stages are
 	// `fugaro update`'s.
-	if err := confirmTyped(cmd, bufio.NewReader(cmd.InOrStdin()), lc, o.yes, reposEnrolmentWhat(lc, plan)); err != nil {
+	if err := confirmTyped(cmd, bufio.NewReader(cmd.InOrStdin()), lc, false, reposEnrolmentWhat(lc, plan)); err != nil {
 		return err
 	}
 	return reposEnrolmentApply(ctx, cmd, o, lc, db, configPath, plan)
@@ -196,6 +205,24 @@ func reposEnrolmentRead(ctx context.Context, o *projectReposOptions, lc *localcf
 		return plan, userErr("the repository %s: %v", pluginwire.Printable(ownerName), err)
 	}
 	plan.canonical = canonical
+	// The repository's own facts are read once, through the one view
+	// `project repos ls` and `project repos status` print (repos_view.go, RE0):
+	// the branch a run of it starts from and the workflows it states. A converge
+	// that derived either its own way could write an entry the listings do not
+	// show, which is the drift the shared view exists to prevent. Two things are
+	// not the view's, and the row is used for neither: the provider (the view
+	// consumes a canonical name, the one resolved above) and the image the map
+	// step writes (the view reports what a job resolves to today, while the
+	// converge chooses the entry to record, catalog.Choose).
+	view, err := newReposView(ctx, lc, db, canonical)
+	if err != nil {
+		return plan, err
+	}
+	if i, found := slices.BinarySearchFunc(view.Repos, canonical, func(r reposViewRepo, want string) int {
+		return strings.Compare(r.Canonical, want)
+	}); found {
+		plan.viewRow = &view.Repos[i]
+	}
 	plan.checkout = checkoutRoot(ctx, ownerName)
 	cfg := checkoutConfig(ctx, ownerName)
 	if plan.entry, plan.entryWhy, err = reposEnrolmentEntry(ctx, lc, ownerName, plan, provider, cfg); err != nil {
@@ -357,15 +384,27 @@ func originHost(origin string) string {
 // reposEnrolmentEntry is the `repos:` entry the file must hold, and the line
 // the plan prints for it.
 //
-// The workflow selection comes from the checkout's own fugaro.yaml and from
-// nowhere else: it is the repository's own statement, and a converge that
-// guessed one would write a selection no run reads. The rest is read from the
-// project — the App ID the project's other GitHub repositories are onboarded
-// with, and the account they name — or carried as the entry already has it.
+// The workflow selection and the branch come from the shared view's row where
+// the view draws one, and from the checkout's own fugaro.yaml otherwise: the
+// selection is the repository's own statement, and a converge that guessed one
+// would write a selection no run reads. The rest is read from the project — the
+// App ID the project's other GitHub repositories are onboarded with, and the
+// account they name — or carried as the entry already has it.
 func reposEnrolmentEntry(ctx context.Context, lc *localcfg.Config, ownerName string, plan reposEnrolment, provider string, cfg *config.Config) (localcfg.Repo, string, error) {
 	next := plan.entryNow
 	next.Provider = provider
-	if cfg != nil {
+	switch {
+	case plan.viewRow != nil:
+		// The row's own two facts, so the entry this step writes is the entry a
+		// listing prints for the repository: its workflows — the checkout's own
+		// selection where this machine has one, this config's names otherwise —
+		// and the branch a run of it starts from, which is
+		// config.EffectiveBaseBranch's answer, the one launchBaseBranch hands
+		// every launch, and never the empty string an entry that names none
+		// holds.
+		next.Workflows = reposViewWorkflowNames(*plan.viewRow)
+		next.BaseBranch = plan.viewRow.BaseBranch
+	case cfg != nil:
 		next.Workflows = slices.Sorted(maps.Keys(cfg.Workflows))
 	}
 	if len(next.Workflows) == 0 {
@@ -404,6 +443,17 @@ func reposEnrolmentEntry(ctx context.Context, lc *localcfg.Config, ownerName str
 	}
 	next = reposEntryMerge(plan.entryNow, next, plan.entryKnown)
 	return next, reposEntryWhy(plan.entryNow, next, plan.entryKnown, ownerName), nil
+}
+
+// reposViewWorkflowNames is the names of the workflows a row carries, in the
+// order the row lists them — by name, as the listing prints them — so the entry
+// this command writes and the row a person reads name the same list.
+func reposViewWorkflowNames(row reposViewRepo) []string {
+	names := make([]string, 0, len(row.Workflows))
+	for _, w := range row.Workflows {
+		names = append(names, w.Name)
+	}
+	return names
 }
 
 // projectGitHubAppID is the App ID the project's other GitHub repositories
@@ -567,10 +617,14 @@ func reposEnrolmentImage(plan *reposEnrolment, cfg *config.Config, published pro
 		return "", "left out: this machine cannot read " + imageWhyMissing(cfg, plan.local) + ", so nothing here chooses an entry — " + imageMapCommand("<repo>", "<entry>") + " writes the mapping", nil
 	}
 	var repos []catalog.Repo
+	pinned := ""
 	for _, name := range plan.entry.Workflows {
 		w, ok := cfg.Workflows[name]
 		if !ok {
 			continue
+		}
+		if w.ImageName != "" {
+			pinned = w.ImageName
 		}
 		repos = append(repos, catalog.Repo{Slug: name, Pin: w.ImageName, Needs: w.Needs})
 	}
@@ -579,6 +633,19 @@ func reposEnrolmentImage(plan *reposEnrolment, cfg *config.Config, published pro
 		return "", "left out: the checkout's fugaro.yaml names none of the workflows this project runs, so no entry is selected here", nil
 	}
 	choice, err := catalog.Choose(catalog.Job{Catalog: *plan.local.ImageCatalog, Repos: repos, Backend: catalog.Backend(plan.local.Backend())})
+	if errors.Is(err, catalog.ErrUnknownEntry) {
+		// D2401 refuses rather than reads around this one: the name is the
+		// repository's own statement (image_name: in its fugaro.yaml) and the
+		// catalog is the project's, so nothing here may substitute either — an
+		// enrolment that chose another entry would deploy a job whose image is
+		// not the one the repository asked for. The refusal is returned from
+		// this read, before the plan, the confirmation and every write, so no
+		// part of the enrolment lands on the way to it, and it names the two
+		// commands that supply the entry, as `fugaro image map set` does when a
+		// mapping is pointed at a name no catalog describes.
+		return "", "", userErr("cannot read the image entry the workflows of %s pin, and nothing here invents one: %s. Write the entry with `fugaro image add %s` (fugaro image ls lists the entries the project has), or name an entry this project's catalog holds in the repository's own fugaro.yaml (workflows:, image_name:), and run this again",
+			pluginwire.Printable(plan.canonical), oneLine(err.Error()), quoteWord(pinned))
+	}
 	if err != nil {
 		plan.imageMap = plan.imageNow
 		return "", "left out: " + oneLine(err.Error()) + " — " + imageMapCommand("<repo>", "<entry>") + " writes the mapping", nil

@@ -66,7 +66,6 @@ func newProjectReposCmd() *cobra.Command {
 
 type projectReposOptions struct {
 	cloud cloudOptions
-	yes   bool
 	// allowListOnly is `add`'s way back to what it did before RE1: one entry
 	// in the published allow-list and nothing else. It is a flag and not the
 	// absence of a flag because the wide change is the one that needs saying
@@ -115,8 +114,11 @@ func newProjectReposAddCmd() *cobra.Command {
 			"  6. the publish of the policy node (fugaro update's policy stage)\n" +
 			"\n" +
 			"Steps 4 to 6 are `fugaro update`'s own stages, run here in the registered\n" +
-			"order they are invoked in, so the policy node is published last: a step\n" +
-			"that stops before it leaves the node as it was.\n" +
+			"order they are invoked in, so the publish is last. Step 3 has already\n" +
+			"written allow_repos by the time they run, so a stage that stops leaves the\n" +
+			"repository admitted — its repos: entry, its mapping and its allow-list\n" +
+			"entry are in place, and the node's other keys are as they were — and\n" +
+			"running this again converges it from there.\n" +
 			"\n" +
 			"Every step is idempotent: a repository already enrolled converges to the\n" +
 			"same state, and a step that has nothing to do says so instead of writing\n" +
@@ -572,7 +574,11 @@ func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string
 				return err
 			}
 		default:
-			if err := confirmRemoval(cmd, lc, o.yes, what); err != nil {
+			// No field of this command's options answers the confirmation: --yes
+			// was removed from the tree (T11 of the no-prompt policy) and nothing
+			// stands in for the typed name, which is why the answer is spelled
+			// out here rather than read off the options.
+			if err := confirmRemoval(cmd, lc, false, what); err != nil {
 				return err
 			}
 		}
