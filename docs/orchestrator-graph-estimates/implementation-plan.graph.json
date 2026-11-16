@@ -274,6 +274,22 @@
       }
     },
     {
+      "id": "G5",
+      "title": "the merge read on Bitbucket: the label route's get serves Bitbucket state",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/creds/labelroute.go",
+          "internal/credsvc/labelroute.go",
+          "internal/credsvc/labelroute_bitbucket.go",
+          "internal/credsvc/labelroute_bitbucket_test.go"
+        ]
+      }
+    },
+    {
       "id": "E1",
       "title": "the daemon wakes on agents/ and outcomes/",
       "run": null,
@@ -890,6 +906,16 @@
       "task": "W1",
       "needs": "G4",
       "reason": "the end-to-end test approves through the CLI's person path"
+    },
+    {
+      "task": "W1",
+      "needs": "G5",
+      "reason": "the real merge reader reads Bitbucket pull requests through G5's act"
+    },
+    {
+      "task": "B10",
+      "needs": "G5",
+      "reason": "the security pages describe the label route's Bitbucket read as built"
     }
   ]
 }

@@ -2,7 +2,7 @@
 
 What it builds: [`spec.md`](spec.md) as amended by [`reconciliation.md`](reconciliation.md), across the five modules of the approved capability map (`daemon-release`, `graph-import`, `run-events`, `estimates`, `backlog`).
 
-**Status: plan only. Nothing is implemented, and no task is approved.** Each task below needs the owner's explicit go before a run starts. The answers that shaped it: install the unit everywhere from the owner's terminal, superseding T7 (D2700); a top-level policy switch (D2701, D2739); the daemon adopts at start and the session imports the plans it names (D2702); the orchestrator skill teaches the hand-over (D2703); a CLI plan import into the plan's own node (D2704, D2735, D2737); unlock on merge through the existing `review` phase, GitHub only (D2705, D2736); one approval per plan, pinned to the imported items (D2706, D2738); the session writes a missing graph (D2707); stream `agents/` and `outcomes/` (D2708); dependencies reported in `result.json` and folded add-only (D2709, D2710); a separate `tier` field (D2711); time seeds only (D2712); ≥ 5 runs and p25–p75 (D2713); all four surfaces (D2714); the backlog in its own node (D2715, D2735); `docs/backlog/` folded in (D2716); casual adds unapproved, approved one by one or together (D2717); GitHub only: list, read and open (D2718); mirroring opt-in (D2719); all open issues, as references (D2720, not the recommendation); adopted plans approved once (D2721); a daemon-added edge re-queues its item for approval with a fact (D2740); approving an issue item shows its body (D2741); and resolutions D2722–D2734, D2736–D2739 and D2742–D2747. Several decisions carry an "amended after review" or "corrected after review round 2" note for the owner to confirm (open item O4).
+**Status: plan only. Nothing is implemented, and no task is approved.** Each task below needs the owner's explicit go before a run starts. The answers that shaped it: install the unit everywhere from the owner's terminal, superseding T7 (D2700); a top-level policy switch (D2701, D2739); the daemon adopts at start and the session imports the plans it names (D2702); the orchestrator skill teaches the hand-over (D2703); a CLI plan import into the plan's own node (D2704, D2735, D2737); unlock on merge through the existing `review` phase, on GitHub and Bitbucket (D2705, D2736 as amended by the owner); one approval per plan, pinned to the imported items (D2706, D2738); the session writes a missing graph (D2707); stream `agents/` and `outcomes/` (D2708); dependencies reported in `result.json` and folded add-only (D2709, D2710); a separate `tier` field (D2711); time seeds only (D2712); ≥ 5 runs and p25–p75 (D2713); all four surfaces (D2714); the backlog in its own node (D2715, D2735); `docs/backlog/` folded in (D2716); casual adds unapproved, approved one by one or together (D2717); GitHub only: list, read and open (D2718); mirroring opt-in (D2719); all open issues, as references (D2720, not the recommendation); adopted plans approved once (D2721); a daemon-added edge re-queues its item for approval with a fact (D2740); approving an issue item shows its body (D2741); and resolutions D2722–D2734, D2736–D2739 and D2742–D2747. Several decisions carry an "amended after review" or "corrected after review round 2" note for the owner to confirm (open item O4).
 
 **Decoupling.** The pass is on for `dimipaun/fugaro` (`fugaro settings planning.decoupling --repo dimipaun/fugaro --json` → `true`, the default; rigor `startup` from the published project layer, no area rules). It found two edges that needed only an interface (S2 → S1 and its neighbours, by an estimate contract; B4 → B3, by an adapter contract), but `fugaro plan graph` reported both breaks as **no gain**: the critical path runs through the daemon's store and wiring (by tasks B11 → B3 → B9 → W1 → R5; by weight X0 → X4 → E3 → W1 → R5, 9), not through estimates (weight 7) or the issue route and sync (weight 6). Following the rule that a break with no gain is undone, **this plan breaks no edge**. That is a different fact from the pass being off.
 
@@ -36,7 +36,7 @@ What it builds: [`spec.md`](spec.md) as amended by [`reconciliation.md`](reconci
 ## Slices
 
 1. **Inert shapes** (level 0): X0, X1, X2, S0, R1, B8, B11. Nothing changes behaviour.
-2. **The daemon runs plans** (`graph-import`, `run-events`, part of `daemon-release`): X4, G1, G2, G4, G3, E1, E2, E3, E4, R3, R4, B7, B9, W1. Useful alone: an imported, approved plan unlocks on merge with no agent sweeping.
+2. **The daemon runs plans** (`graph-import`, `run-events`, part of `daemon-release`): X4, G1, G2, G4, G3, G5, E1, E2, E3, E4, R3, R4, B7, B9, W1. Useful alone: an imported, approved plan unlocks on merge with no agent sweeping.
 3. **Release** (`daemon-release`): R2, R7, R8, R5, R6. Turns it on everywhere and teaches the agent.
 4. **Estimates**: S1–S6.
 5. **Backlog**: B1–B5, B8–B11.
@@ -207,15 +207,25 @@ What it builds: [`spec.md`](spec.md) as amended by [`reconciliation.md`](reconci
 - Reviewer tier: opus (the approval fence).
 
 ### G3: unlock on merge: the review phase and the merge read (graph-import)
-- Acceptance: `foldPhase` takes a succeeded run that left a GitHub pull request to `review`, and one with none, or on a Bitbucket repository, to `done` (D2736); through a `MergeReader` seam, at most once per 60 s per repository whatever wakes the tick, the daemon lists the repository's open pull requests once and `get`s only the `review` items missing from that list (as `labelsync` does), inside the label route's read budget (D2742), moving `merged` to `done` and `closed` to `failed`; a read that fails leaves the item in `review`; `dependenciesDone` is unchanged, so a dependent waits for `done` (D2705).
+- Acceptance: `foldPhase` takes a succeeded run that left a pull request (GitHub or Bitbucket) to `review`, and one with none to `done` (D2736 as amended); through a `MergeReader` seam, at most once per 60 s per repository whatever wakes the tick, the daemon lists the repository's open pull requests once and `get`s only the `review` items missing from that list (as `labelsync` does), inside the label route's read budget (D2742), moving `merged` to `done` and `closed` to `failed`; a read that fails leaves the item in `review`; `dependenciesDone` is unchanged, so a dependent waits for `done` (D2705).
 - Files: `internal/orchestrator/runview.go`, `internal/orchestrator/mergeread.go` (new), `internal/orchestrator/mergeread_test.go` (new), `internal/orchestrator/export_test.go`.
 - Interfaces: `MergeReader` (W1 builds the real one over the label route's client).
-- Tests: `TestSucceededWithPRGoesToReview`, `TestBitbucketSucceededGoesToDone`, `TestMergedPRMovesToDone`, `TestClosedUnmergedFails`, `TestFailedMergeReadLeavesReview`, `TestDependentWaitsForMerge`, `TestMergeReadKeepsItsCadence`, `TestMergeReadGetsOnlyMissing`.
+- Tests: `TestSucceededWithPRGoesToReview`, `TestBitbucketSucceededGoesToReview`, `TestMergedPRMovesToDone`, `TestClosedUnmergedFails`, `TestFailedMergeReadLeavesReview`, `TestDependentWaitsForMerge`, `TestMergeReadKeepsItsCadence`, `TestMergeReadGetsOnlyMissing`.
 - Command: `go test ./internal/orchestrator/ -run 'TestSucceededWithPR|TestBitbucketSucceeded|TestMergedPR|TestClosedUnmerged|TestFailedMergeRead|TestDependentWaits|TestMergeReadKeeps|TestMergeReadGets' -count=1`
 - Red step: `TestDependentWaitsForMerge` fails: today the dependent launches on success.
 - Depends on: none.
 - Commit: `feat(orchestrator): dependents unlock when the pull request merges (G3, D2705)`
 - Reviewer tier: standard.
+
+### G5: the merge read on Bitbucket (graph-import)
+- Acceptance: the credentials service's label route answers its single pull-request read (`get`) for a Bitbucket repository of the installation: it resolves the repository through the installation's inventory, mints a read-only token from the installation's Bitbucket read credential (as `bitbucketRead` does; no token leaves the service), reads the pull request with `bitbucket.Provider.PullRequest`, and answers `open`, `merged` or `closed` with no labels; list, add and remove stay GitHub-only and refuse a Bitbucket repository as today; only the orchestrator class may call it, it shares the route's per-repository rate limit, and every call writes one audit line (C1.13); `creds.LabelRequest` documents that `get` serves both hosts (D2736 as amended by the owner).
+- Files: `internal/creds/labelroute.go`, `internal/credsvc/labelroute.go`, `internal/credsvc/labelroute_bitbucket.go` (new), `internal/credsvc/labelroute_bitbucket_test.go` (new).
+- Tests: `TestLabelGetServesBitbucketState` (merged, declined, superseded, open), `TestLabelListStillRefusesBitbucket`, `TestBitbucketLabelGetNeverReturnsAToken`, `TestBitbucketLabelGetRefusesOtherClasses`, `TestBitbucketLabelGetAuditsEveryCall`, `TestBitbucketLabelGetRefusesRepoOutsideInventory`.
+- Command: `go test ./internal/credsvc/ ./internal/creds/ -run 'TestLabelGetServesBitbucket|TestLabelListStillRefusesBitbucket|TestBitbucketLabelGet' -count=1`
+- Red step: `TestLabelGetServesBitbucketState` fails: the route builds a GitHub provider for every repository.
+- Depends on: none.
+- Commit: `feat(credsvc): the label route reads a Bitbucket pull request's state (G5, D2736)`
+- Reviewer tier: opus, independent review (`fugaro review --pr N`; credentials service).
 
 ### E1: the daemon wakes on agents/ and outcomes/ (run-events)
 - Acceptance: `orchestratorDaemon.wait` streams its own nodes, `agents/<slug>` for each repository the state names, and `outcomes/<today>` (re-opened at the UTC day change); after the opening snapshot, an `agents/` entry's creation or deletion and any `outcomes/` write wake the tick, debounced by 2 s, while a heartbeat patch does not (F45); an `agents/` entry deleted with no matching `outcomes/` entry also has the tick's existing `executionOver` check run for that run (D2708, D2725); the 30 s ceiling is unchanged; the remote reads (merge read, issue sync) keep their own cadence and are not driven by wakes (D2742); a stream that fails falls back to the ceiling without ending the daemon.
@@ -369,12 +379,12 @@ What it builds: [`spec.md`](spec.md) as amended by [`reconciliation.md`](reconci
 - Reviewer tier: opus, independent review (`fugaro review --pr N`; credentials service).
 
 ### B10: SECURITY.md and the website's security page describe the issue route (backlog)
-- Acceptance: SECURITY.md and `website/content/security.md` describe the issue route as built: who may call it, its scope, its bounds, its audit, and that it never returns a token (`.claude/rules/credentials-service.md`).
+- Acceptance: SECURITY.md and `website/content/security.md` describe the issue route as built, and the label route's Bitbucket read (G5): who may call it, its scope, its bounds, its audit, and that it never returns a token (`.claude/rules/credentials-service.md`).
 - Files: `SECURITY.md`, `website/content/security.md`.
 - Tests: the docs and website tests that pin SECURITY.md.
 - Command: `go test ./internal/cli/ -run Docs -count=1 && cd website && npm run check`
 - Red step: none; the change is documentation, and the pinned tests must stay green.
-- Depends on: B3 (it describes the route as built).
+- Depends on: B3 and G5 (it describes the routes as built).
 - Commit: `docs(security): the credentials service's issue route (B10)`
 - Reviewer tier: opus (SECURITY.md).
 
@@ -419,22 +429,22 @@ What it builds: [`spec.md`](spec.md) as amended by [`reconciliation.md`](reconci
 - Reviewer tier: opus (an issue author's text reaches a run's brief).
 
 ### W1: wire plan approval, adoption and discovery into the daemon, end to end (graph-import, daemon-release, run-events)
-- Acceptance: the CLI builds the real `MergeReader` over the label route's client and the real `RunLister` over the runs bucket (launch records with no final record, and live executions); the daemon calls `Adopt` once at start-up, under the lease, before its first tick; an emulator test imports a three-node plan (A → B, A → C), approves it with one `plan_approve` through the CLI's person path, finishes A's run with a pull request, sees A in `review`, merges it in the fake, and sees B and C launch on the next wake; a second test adopts a run in flight and meets its plan import without a duplicate item; a third finishes a run with a `blocks` entry and sees the edge added.
+- Acceptance: the CLI builds the real `MergeReader` over the label route's client (GitHub and, through G5, Bitbucket) and the real `RunLister` over the runs bucket (launch records with no final record, and live executions); the daemon calls `Adopt` once at start-up, under the lease, before its first tick; an emulator test imports a three-node plan (A → B, A → C), approves it with one `plan_approve` through the CLI's person path, finishes A's run with a pull request, sees A in `review`, merges it in the fake, and sees B and C launch on the next wake; a second test adopts a run in flight and meets its plan import without a duplicate item; a third finishes a run with a `blocks` entry and sees the edge added.
 - Files: `internal/cli/orchestrator_run.go`, `internal/cli/orchestrator_mergeread.go` (new), `internal/cli/orchestrator_runlister.go` (new), `internal/orchestrator/plan_e2e_test.go` (new).
 - Tests: `TestPlanRunsEndToEnd`, `TestAdoptionMeetsImport`, `TestDiscoveredEdgeEndToEnd`.
 - Command: `go test ./internal/orchestrator/ ./internal/cli/ -run 'TestPlanRunsEndToEnd|TestAdoptionMeetsImport|TestDiscoveredEdgeEndToEnd' -count=1`
 - Red step: `TestPlanRunsEndToEnd` fails before the real merge reader and run lister exist.
-- Depends on: G1, G2, G4, G3, R4, E2, E3, B7, B9 (it runs them together), R3 (one file: `orchestrator_run.go`).
+- Depends on: G1, G2, G4, G3, G5, R4, E2, E3, B7, B9 (it runs them together), R3 (one file: `orchestrator_run.go`).
 - Commit: `feat(orchestrator): plans, adoption and discovery end to end (W1)`
 - Reviewer tier: opus (it wires the approval fence and a credentials-service reader).
 
 ## Parallel execution
 
-Read back with `fugaro plan graph --plan docs/orchestrator-graph-estimates/implementation-plan.md`: 38 tasks, five levels, no refusal.
+Read back with `fugaro plan graph --plan docs/orchestrator-graph-estimates/implementation-plan.md`: 39 tasks, five levels, no refusal.
 
 | Level | Tasks |
 | --- | --- |
-| 0 | X0, X1, X2, S0, R1, R2, G3, S1, B8, B11 (10) |
+| 0 | X0, X1, X2, S0, R1, R2, G3, G5, S1, B8, B11 (11) |
 | 1 | X4, R4, R7, R8, G1, G2, E1, E2, S2, B1, B3, B7 (12) |
 | 2 | R3, R6, G4, E3, E4, S3, S5, B2, B5, B9, B10 (11) |
 | 3 | W1, S4, S6, B4 (4) |
@@ -462,8 +472,8 @@ Kept, with the reason that decided it:
 - B2 → B1: the fold reuses backlog add's item writer.
 - B5 → B7: the body reads the field the launcher passes.
 - E4 → E1, G3: it pins their behaviour.
-- R7 → R2, R8 → R2, B10 → B3; R5 → G1, G4, W1, R1, B1; R6 → G1: a document or skill names a command, flag, route or behaviour that must exist as written.
-- W1 → G1, G2, G4, G3, R4, E2, E3, B7, B9: the end-to-end wiring runs the real sides.
+- R7 → R2, R8 → R2, B10 → B3, B10 → G5; R5 → G1, G4, W1, R1, B1; R6 → G1: a document or skill names a command, flag, route or behaviour that must exist as written.
+- W1 → G1, G2, G4, G3, G5, R4, E2, E3, B7, B9: the end-to-end wiring runs the real sides.
 
 ### Shared files
 
@@ -486,12 +496,12 @@ None: the plan holds no contract.
 
 ## Proposed runs, not launched
 
-38 runs, one per task. Worst case at the project's per-run cap of $5: **$190**, over five levels (at most 12 at once, inside `max_parallel = 20`). The independent reviews of R5, E2 and B3 (`fugaro review --pr N`) are three more review jobs. **None starts until the owner says yes.** Level 0 first.
+39 runs, one per task. Worst case at the project's per-run cap of $5: **$195**, over five levels (at most 12 at once, inside `max_parallel = 20`). The independent reviews of R5, E2, B3 and G5 (`fugaro review --pr N`) are four more review jobs. **None starts until the owner says yes.** Level 0 first.
 
 ## Checks the plan takes (Checks 700–703, owner-run)
 
 - **Check 700** (R2, R3): on a sandbox installation, `fugaro update` at the terminal on two machines installs the unit on both; one holds the lease, the other stands by; setting `orchestrator_enabled: false` stops launches on the live one within one tick, and a run already going finishes; then leave one machine on the release behind holding the lease after the other has moved the state version, and read whether launches stall (U5). **You** run it; no agent runs any step.
-- **Check 701** (R4, G3, W1, B7): start a sandbox run by hand with `--plan-task`, then let `update` install the daemon; it adopts the run, the session imports its plan, one `plan_approve`, merge the pull request, and the dependent launches.
+- **Check 701** (R4, G3, G5, W1, B7): start a sandbox run by hand with `--plan-task`, then let `update` install the daemon; it adopts the run, the session imports its plan, one `plan_approve`, merge the pull request, and the dependent launches; repeat the merge step on the sandbox Bitbucket repository.
 - **Check 702** (E1): from a run's final record to its dependent's launch, under 10 s on a laptop that is awake; after a sleep, within one ceiling of waking. Read the RTDB plan's connection limit first (U1).
 - **Check 703** (B3, B4, B5, B9, G4): on the sandbox repository, an open issue becomes a backlog item; with `mirror: true`, an item becomes an issue and is not ingested back; a run for the issue's item opens a pull request with `Fixes #N`, and merging it closes the issue. Settles U3 and U4.
 
