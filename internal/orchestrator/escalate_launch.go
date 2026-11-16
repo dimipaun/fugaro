@@ -240,12 +240,33 @@ func (c *cycle) ladderItem(ctx context.Context, id string, blocked map[string]bo
 	if step.Refuse {
 		return c.askLadder(ctx, w, ladderRefusedQuestion(w))
 	}
-	if !ladderEnterable(step.Rung, ladderReached(w)) {
+	if !ladderEnterable(step.Rung, ladderReached(w)) && !c.ladderReentrant(step.Rung, ladderReached(w)) {
 		// A rung the item is at or past is a rung it has spent (G4), and the
 		// rung it is at is the one a move is written over.
 		return nil
 	}
 	return c.ladderAct(ctx, w, step, reason, read)
+}
+
+// ladderReentrant reports whether an item already at the rung the decision named
+// may enter it again, which is what the rungs past the ladder's own runs are.
+//
+// Rung 3 is a sequence rather than a step — a review of the head, a judge's
+// reading of it and a landing — and each of those takes a cycle of its own, so
+// the item stands at rung 3 for as long as the sequence runs and every cycle of
+// it re-enters the rung it is already at. The state refuses a second transition
+// to a rung the item is at (patch.go's appendEscalation), which is why such a
+// cycle enters the rung rather than moving to it, and why this is the one place
+// the rung is entered more than once. The rung is entered again only where there
+// is a hook past rung 2 to carry the sequence out (E10b's gate, D1243); without
+// one, a daemon that wired the readings and the launcher but no executor is left
+// exactly as it was, and the rung stays the single step ladderEnterable makes of
+// it.
+func (c *cycle) ladderReentrant(rung, at escalation.Rung) bool {
+	if c.tick.Ladder.Beyond == nil || rung != at {
+		return false
+	}
+	return rung == escalation.R3 || rung == escalation.R4
 }
 
 // ladderEnterable reports whether an item at rung at may enter the rung the

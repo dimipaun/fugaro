@@ -1189,3 +1189,108 @@ func TestR3NoAdminBypass(t *testing.T) {
 		t.Fatalf("the provider is not the seam's own implementation: %T", host)
 	}
 }
+
+// TestR3TickReentersTheRung is the half of rung 3 the hook alone cannot show.
+// Rung 3 is a sequence and not a step — a review of the head, a judge's reading
+// of it, the landing — and each of the three takes a cycle of its own, so the
+// item stands at rung 3 for as long as the sequence runs and every cycle of it
+// has to enter the rung the item is already at. A cycle that treated rung 3 as a
+// rung already spent would start the review-only run and never come back for the
+// judge: D2043's sequence would never finish and no head would ever land.
+//
+// So this is the wiring rather than the acting: the real cycle over the real
+// state (internal/gcpfake, the real Apply) with E10b's hook where E10a's ladder
+// calls it, which is the routing the daemon will have. Rung 3 is entered again
+// until the sequence is over — and the cycle after the landing, with the host
+// answering that the pull request is merged, lands nothing a second time.
+func TestR3TickReentersTheRung(t *testing.T) {
+	now := o6Now()
+	m := newMergeHarness(t, now, []string{mergeReviewRun, mergeJudgeRun},
+		mergeItem("wi-1", r3Ledger(now, headA, 2)))
+	m.host.head, m.host.checks = headA, mergeGreen()
+
+	l := &ladderStub{t: t, reads: map[string]orchestrator.LadderReading{
+		"wi-1": reading(rigor.POC, 4*time.Hour, headA),
+	}}
+	seams := l.seams(escalation.DefaultThresholds())
+	seams.Beyond = m.seams.Beyond()
+	launcher := &o6Launcher{}
+	tick := &orchestrator.Tick{
+		Store:    m.node,
+		Runs:     ladderNoRuns{},
+		Launcher: launcher,
+		Mint:     func(time.Time) (string, error) { return mergeRun, nil },
+		Caps:     o6Caps(),
+		Now:      clockAt(now),
+		Ladder:   seams,
+		Notifier: m.sink,
+	}
+	cycle := func(read orchestrator.MergeReading) {
+		t.Helper()
+		m.reader.reads["wi-1"] = read
+		if _, err := tick.Step(context.Background()); err != nil {
+			t.Fatalf("the cycle ended as %v", err)
+		}
+	}
+
+	// Nothing scored at the head yet: the cycle starts the review D2043
+	// requires, and it does not judge a head nothing has read.
+	uncovered := mergePass(headA)
+	uncovered.Scored, uncovered.ReviewRun = false, ""
+	cycle(uncovered)
+	if len(m.stub.launched) != 1 || m.stub.launched[0].Recipe != orchestrator.RecipeReviewOnly {
+		t.Fatalf("the first cycle started %+v, and a head with no verdict gets the review-only run first", m.stub.launched)
+	}
+	if m.stub.launched[0].HeadSHA != headA || m.stub.launched[0].RunID != mergeReviewRun {
+		t.Errorf("the review was started as %+v, and it is the review of the judged head", m.stub.launched[0])
+	}
+
+	// The review came back scored, and the judge is the second cycle's: the
+	// re-entry is what gets there, because the item never left rung 3.
+	judged := mergePass(headA)
+	judged.JudgeRun = ""
+	cycle(judged)
+	if len(m.stub.launched) != 2 || m.stub.launched[1].Recipe != orchestrator.RecipeMergeJudge {
+		t.Fatalf("the second cycle started %+v, and the judge is what a scored head gets", m.stub.launched)
+	}
+	if m.stub.launched[1].RunID != mergeJudgeRun {
+		t.Errorf("the judge was started as %s; want %s", m.stub.launched[1].RunID, mergeJudgeRun)
+	}
+
+	// The verdict is in and vetoes nothing: the third cycle lands the head it
+	// judged, and the two launches are what the item spent.
+	cycle(mergePass(headA))
+	if !slices.Equal(m.host.merged, []string{headA}) {
+		t.Fatalf("the host merged %v, and the sequence ends in the landing of the judged head", m.host.merged)
+	}
+
+	// The host says the head is merged, which is what a landing leaves behind:
+	// the cycle after it reads a merged pull request and does nothing — no
+	// second merge, no ready, no question, nothing for a person. What it does
+	// read is the pull request itself, which is how it learns the head landed.
+	m.host.state = gitprov.PRMerged
+	calls := len(m.host.calls)
+	cycle(mergePass(headA))
+	if len(m.host.merged) != 1 {
+		t.Errorf("the host merged %v, and a merged pull request is one nothing merges again", m.host.merged)
+	}
+	for _, c := range m.host.calls[calls:] {
+		if !strings.HasPrefix(c, "pull") && !strings.HasPrefix(c, "checks ") {
+			t.Errorf("the host was asked %q after the landing, and a merged pull request is read and nothing more", c)
+		}
+	}
+	if _, ok := m.state().Decision("wi-1-escalation"); ok {
+		t.Errorf("a landing under the ceiling asked a person something, and the ceiling decides who is told (D2030)")
+	}
+	if len(m.sink.got) != 0 {
+		t.Errorf("the sink was told %+v, and POC's landing is the quiet one", m.sink.got)
+	}
+	if started := launcher.started; len(started) != 0 {
+		t.Errorf("the loop started %v, and an item the ladder is walking is not one the planner starts beside it", started)
+	}
+
+	// Four cycles, and the item is still at the rung it never left.
+	if w := m.item("wi-1"); w.Escalation == nil || w.Escalation.Rung != escalation.R3 {
+		t.Errorf("the item stands at %+v; want rung %s", w.Escalation, escalation.R3)
+	}
+}
