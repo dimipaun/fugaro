@@ -932,14 +932,19 @@ func TestKeyCredentialSinceHasAReleaseBullet(t *testing.T) {
 	}
 }
 
-// TestKeyCredentialSinceIsNotAheadOfAnyReleasedService: the sibling constants'
-// direction, read the way it applies to a family whose reader has never been in
-// a released image. Their tests hold the constant at or below the release the
-// cli stream is at, which no reader-less version of this family can satisfy —
-// the 0.25.0 tag predates MC22's declaration — so what is asserted here is the
-// fact that makes 0.26.0 the answer: every release at or below that `current`
-// predates the family, and the constant is above every one of them.
-func TestKeyCredentialSinceIsNotAheadOfAnyReleasedService(t *testing.T) {
+// TestKeyCredentialSinceIsNeverBehindTheReleaseTheTreeIsOn: the sibling
+// constants' direction read the way it applies to a family whose reader has
+// never been in a released image. Their tests hold the constant at or BELOW the
+// release the cli stream is at, because a value above it refuses writes the
+// deployed service already serves; this family cannot take that half until its
+// own release is cut — the 0.25.0 tag predates MC22's declaration, so a constant
+// naming 0.25.0 would clear the write that halts that release's service — and
+// the half that holds before the tag and after it alike is the other one: the
+// constant is never BEHIND the release this tree is on. That is the check a
+// release's own bump meets: a streams file moved to a release below the reader
+// (or a constant lowered to a release that has none) names a service that cannot
+// read a document holding the family, which is the fault that halts it.
+func TestKeyCredentialSinceIsNeverBehindTheReleaseTheTreeIsOn(t *testing.T) {
 	cat, err := streams.Parse("docs/release-streams.yaml", []byte(readDoc(t, "docs/release-streams.yaml")))
 	if err != nil {
 		t.Fatalf("docs/release-streams.yaml: %v", err)
@@ -948,8 +953,8 @@ func TestKeyCredentialSinceIsNotAheadOfAnyReleasedService(t *testing.T) {
 	if !ok {
 		t.Fatal("docs/release-streams.yaml carries no cli stream, so the release this tree is on cannot be read")
 	}
-	if !imagePredates(cli.Current.String(), keyCredentialSince) {
-		t.Errorf("keyCredentialSince = %q is not above the cli stream's %s: no release at or below it serves a bundle holding the family (MC22's declaration and MC23's halves are newer than the %s tag), so a constant naming one of them would clear the write that halts that release's service", keyCredentialSince, cli.Current, cli.Current)
+	if imagePredates(keyCredentialSince, cli.Current.String()) {
+		t.Errorf("keyCredentialSince = %q is behind the cli stream's %s: that release's credentials service serves a bundle without the family (MC22's declaration and MC23's halves are newer than the %s tag), so the constant clears the write that halts it", keyCredentialSince, cli.Current, cli.Current)
 	}
 	if imagePredates(keyCredentialSince, providerEntrySince) {
 		t.Errorf("keyCredentialSince = %q predates providerEntrySince = %q: the family's reader is newer than the entry that shipped before it", keyCredentialSince, providerEntrySince)

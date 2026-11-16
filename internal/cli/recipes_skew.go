@@ -734,14 +734,17 @@ const bitbucketTokenSince = "0.24.0"
 // release before this one serves a bundle without the family and cannot read a
 // document that holds it. That is what makes 0.26.0 the answer and not 0.25.0 —
 // a constant naming a released version would clear the write that halts that
-// version's service — and it is why the tests that hold providerEntrySince and
+// version's service. The test that holds providerEntrySince and
 // bitbucketTokenSince to a release at or below docs/release-streams.yaml's
-// `current` have no counterpart here: no release at or below that `current` (the
-// 0.25.0 tag) reads the family, so the value is verified against the tag
-// actually cut, as slotSince's and modelGradesSince's bullets record.
-// TestKeyCredentialSinceHasAReleaseBullet holds the checklist's bullet to it.
+// `current` therefore has no counterpart here — no release at or below that
+// `current` (the 0.25.0 tag) reads the family — so the value is verified against
+// the tag actually cut, as slotSince's and modelGradesSince's bullets record;
+// TestKeyCredentialSinceIsNeverBehindTheReleaseTheTreeIsOn holds the half that
+// does apply in both regimes (the constant is never behind the tree's own
+// release), and TestKeyCredentialSinceHasAReleaseBullet holds the checklist's
+// bullet.
 //
-// The direction those tests protect still holds from 0.26.0 on, and it is the
+// The direction the siblings' tests protect holds from 0.26.0 on, and it is the
 // one to watch at the next release: a value ABOVE the tag that shipped the
 // family refuses `fugaro creds set credential-<name>-key` on installations whose
 // deployed service already reads it, with `fugaro update` no remedy for them.
