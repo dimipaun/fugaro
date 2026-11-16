@@ -918,6 +918,74 @@ func TestLabelRouteWithoutItsOwnToken(t *testing.T) {
 	}
 }
 
+// TestLabelRouteFailsClosedWithoutTheAppKey: the App key is the one credential
+// the route reads for itself — it signs the mint with it, and it makes the one
+// read that names the App, which is what makes the corroboration below possible
+// — so a bundle that holds none, or holds a value that is not a private key, is
+// a refusal of the act and never a fallback to a key the caller may hold (D143).
+// GitHub is not reached at all: there is nothing to sign a mint with.
+//
+// The three cases are the mint's own (TestMintFailsClosedWithNoAppKeyInTheBundle,
+// TestMintRefusesWhatItCannotSignWith), and the third is the collision worth
+// naming here too: a bundle may hold an ACCOUNT whose resolved name is the App
+// key's, and a lookup that took that token for a key would offer an OAuth token
+// to a PEM parser. The refusal names the field and never a value.
+func TestLabelRouteFailsClosedWithoutTheAppKey(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		doc  func(*testing.T) []byte
+		want error
+	}{
+		{
+			name: "a bundle with no App key",
+			doc:  testBundleDoc,
+			want: ErrLabelNoAppKey,
+		},
+		{
+			name: "a value under the App key's name that is not a private key",
+			doc: func(t *testing.T) []byte {
+				return append(testBundleDoc(t), []byte(config.GitHubAppKeySecret+": "+fakeCred(t, "appkey")+"\n")...)
+			},
+			want: ErrLabelBadAppKey,
+		},
+		{
+			name: "a token under the account prefix that spells the App key's name",
+			doc: func(t *testing.T) []byte {
+				return append(testBundleDoc(t), []byte(config.ClaudeAccountSecret(config.GitHubAppKeySecret)+": "+fakeCred(t, "appkey")+"\n")...)
+			},
+			want: ErrLabelNoAppKey,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, gh := labelRouteSvcWith(t, func(s *svc, _ *Config) { s.src.docs = [][]byte{tc.doc(t)} })
+			resp, body := s.labelEnsure(t, wantRunningName)
+			if resp.StatusCode != StatusUnavailable {
+				t.Fatalf("a call with no App key to sign with was answered %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
+			}
+			e := refusal(t, resp.StatusCode, body)
+			if e.Error != ErrorStateUnavailable {
+				t.Errorf("the refusal is %q, want %q: %s", e.Error, ErrorStateUnavailable, e.Message)
+			}
+			if !strings.Contains(e.Message, tc.want.Error()) {
+				t.Errorf("the refusal is %q, want the class %q", e.Message, tc.want)
+			}
+			if got := gh.count(); got != 0 {
+				t.Errorf("GitHub saw %d requests with no App key to sign with, want none", got)
+			}
+			if strings.Contains(string(body), fakeCred(t, "appkey")) {
+				t.Error("the refusal carries the value it refused")
+			}
+			lines := s.auditLines(t)
+			if len(lines) != 1 {
+				t.Fatalf("the refused call wrote %d audit lines, want exactly one: %v", len(lines), lines)
+			}
+			if got := lines[0]["status"]; got != ErrorStateUnavailable {
+				t.Errorf("the audit line's status is %v, want %q", got, ErrorStateUnavailable)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // The gate's own two refusals
 // ---------------------------------------------------------------------------
