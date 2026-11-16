@@ -12,8 +12,8 @@ import (
 
 // The label syncer: the one writer of the forge labels (T5, docs/forge-labels).
 //
-// A tick derives the whole desired set from the node it read — the phase the
-// fold gave each item and the spec the patch declared — reads what the hosts
+// A tick derives the whole desired set from the node it read — the phase of
+// each run an item has and the spec the patch declared — reads what the hosts
 // hold once per repository, and writes only the difference (F15, R5). Nothing
 // here keeps the desired state: a daemon that restarted has lost nothing but
 // the reads its memory saves, because the tick after the restart derives the
@@ -111,39 +111,92 @@ type labelGroup struct {
 	items []labelItem
 }
 
-// labelGroups is the items this tick is responsible for, in the repositories
-// they are on. An item with no run recorded has no pull request to label, and
-// one whose run has opened none is left to the tick after it opens one.
+// labelGroups is the pull requests this tick is responsible for, in the
+// repositories they are on: one per run of one item (labelRuns). An item whose
+// run has opened no pull request yet is left to the tick after it opens one.
 //
-// The repositories come in the order the node carries their items, so a test
-// reads the calls back in the order it seeded the items, and a run the reader
-// cannot answer is one line in the log and no item: nothing else about the
-// cycle depends on a pull request number.
+// The repositories come in the order the node carries their items, and an
+// item's runs in the order the node records their attempts, so a test reads the
+// calls back in the order it seeded them. A run the reader cannot answer is one
+// line in the log and no item: nothing else about the cycle depends on a pull
+// request number.
 func labelGroups(ctx context.Context, seams *LabelSeams, mem *labelMemory, s State) []labelGroup {
 	var (
 		out []labelGroup
 		at  = map[string]int{}
 	)
 	for _, w := range s.WorkItems {
-		if w.RunID == "" || w.Repo == "" {
+		if w.Repo == "" {
 			continue
 		}
-		number, ok, err := seams.PRs.PRNumber(ctx, w.RunID)
-		if err != nil {
-			warnLabel(ctx, seams, fmt.Sprintf("the pull request of run %s could not be read: %s",
-				w.RunID, safetext.OneLine(err.Error())))
+		for _, r := range labelRuns(s, w) {
+			number, ok, err := seams.PRs.PRNumber(ctx, r.runID)
+			if err != nil {
+				warnLabel(ctx, seams, fmt.Sprintf("the pull request of run %s could not be read: %s",
+					r.runID, safetext.OneLine(err.Error())))
+				continue
+			}
+			if !ok {
+				continue
+			}
+			it := labelItem{repo: w.Repo, number: number, runID: r.runID, phase: r.phase, spec: labelSpec(ctx, seams, mem, w)}
+			if i, seen := at[w.Repo]; seen {
+				out[i].items = append(out[i].items, it)
+				continue
+			}
+			at[w.Repo] = len(out)
+			out = append(out, labelGroup{repo: w.Repo, items: []labelItem{it}})
+		}
+	}
+	return out
+}
+
+// labelRun is one run of one item whose pull request this tick keeps, and the
+// phase its label follows.
+type labelRun struct {
+	runID string
+	phase Phase
+}
+
+// labelRuns is every run of one item the tick labels (R8).
+//
+// The item's run is the attempt in flight, whose label follows the item's own
+// phase (R4), and the attempts before it are the item's history. A retry is a
+// new run on a new pull request (F21) and the carry writes the item's new run
+// id in the same cycle the fold records the failure, so the run it replaced is
+// named by nothing else: its pull request was left carrying `fugaro:running`
+// when that run was the item's, and a syncer that walked only the item's own
+// run id would leave that label on it for good, never setting `fugaro:failed`
+// on a failed run's pull request and never clearing it when it closes (R4,
+// R8, F16). A ladder's attempt replaced by the next rung is the same case.
+//
+// Each attempt's label follows its own ending — foldPhase's reading of the
+// outcome, which is the same phase the failure moved the item to — so a run
+// that ended is labelled as it ended whatever the item has moved on to since.
+// An attempt nothing was ever started under — abandoned — has no pull request
+// at all and is left out, and a run id no intent of the item names is labelled
+// from the item's phase, which is the reading the phase's own mapping takes.
+func labelRuns(s State, w WorkItem) []labelRun {
+	var out []labelRun
+	seen := make(map[string]bool, len(s.Intents)+1)
+	for _, it := range s.Intents {
+		if IntentItem(it.ID) != w.ID || seen[it.RunID] {
 			continue
 		}
-		if !ok {
+		seen[it.RunID] = true
+		if it.Outcome == OutcomeAbandoned {
 			continue
 		}
-		it := labelItem{repo: w.Repo, number: number, runID: w.RunID, phase: w.Phase, spec: labelSpec(ctx, seams, mem, w)}
-		if i, seen := at[w.Repo]; seen {
-			out[i].items = append(out[i].items, it)
+		if it.Outcome == "" {
+			out = append(out, labelRun{runID: it.RunID, phase: w.Phase})
 			continue
 		}
-		at[w.Repo] = len(out)
-		out = append(out, labelGroup{repo: w.Repo, items: []labelItem{it}})
+		if phase, ok := foldPhase(it.Outcome); ok {
+			out = append(out, labelRun{runID: it.RunID, phase: phase})
+		}
+	}
+	if w.RunID != "" && !seen[w.RunID] {
+		out = append(out, labelRun{runID: w.RunID, phase: w.Phase})
 	}
 	return out
 }

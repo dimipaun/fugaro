@@ -33,6 +33,11 @@ const (
 	runB = "20261116-120001-c3d4"
 )
 
+// labelDigest is the spec digest an attempt of a test records. Nothing in the
+// label step reads a digest; the node's validator refuses an attempt without
+// one, which is what keeps a seeded state one this release would write.
+var labelDigest = Digest("sha256:" + strings.Repeat("0", 64))
+
 // labelStore is the node a tick reads and writes: the state a test seeded and
 // the ETag it was read at. The label syncer writes no state, so Save is only
 // the store's contract.
@@ -48,11 +53,11 @@ func (s *labelStore) Save(_ context.Context, next State, _ ETag) error {
 	return nil
 }
 
-// labelRuns is the run view a label test's tick reads: no run ever reports, so
-// the cycle folds nothing and the items are the test's own.
-type labelRuns struct{}
+// labelReports is the run view a label test's tick reads: no run ever reports,
+// so the cycle folds nothing and the items are the test's own.
+type labelReports struct{}
 
-func (labelRuns) Runs(context.Context, []string) ([]RunReport, error) { return nil, nil }
+func (labelReports) Runs(context.Context, []string) ([]RunReport, error) { return nil, nil }
 
 // labelPRs is the reader of the pull request behind a run: the numbers a test
 // sets, the run ids it was asked for, and the one failure it answers with.
@@ -123,7 +128,7 @@ func newLabelHarness(t *testing.T, s State, hosts map[string]*fake.Provider, prs
 func (h *labelHarness) nextTick() *Tick {
 	return &Tick{
 		Store:  h.store,
-		Runs:   labelRuns{},
+		Runs:   labelReports{},
 		Mint:   func(time.Time) (string, error) { return "run-unused", nil },
 		Now:    func() (time.Time, bool) { return labelNow, true },
 		Labels: LabelSeams{Labelers: h.hosts, PRs: h.prs, Log: h.log},
@@ -177,6 +182,20 @@ func workItem(id, repo string, phase Phase, runID, spec string) WorkItem {
 		Phase:     phase,
 		RunID:     runID,
 		Spec:      spec,
+	}
+}
+
+// labelAttempt is one attempt of a test's item as the node records it: the run
+// id the daemon minted before anything started, the approval it spent, and how
+// it ended — none while its run is in flight.
+func labelAttempt(item string, attempt int, runID string, outcome Outcome) Intent {
+	return Intent{
+		ID:         IntentID(item, attempt),
+		RunID:      runID,
+		SpecDigest: labelDigest,
+		ApprovalAt: labelNow,
+		At:         labelNow,
+		Outcome:    outcome,
 	}
 }
 
@@ -401,7 +420,7 @@ func TestSyncChangeOnly(t *testing.T) {
 	// A tick with no seams at all labels nothing: no read, no write, no line.
 	bare := &Tick{
 		Store: h.store,
-		Runs:  labelRuns{},
+		Runs:  labelReports{},
 		Mint:  func(time.Time) (string, error) { return "run-unused", nil },
 		Now:   func() (time.Time, bool) { return labelNow, true },
 	}
@@ -486,12 +505,16 @@ func TestSyncClearsOnMergedPR(t *testing.T) {
 }
 
 // TestSyncFailedStaysUntilClose is D2433 and R8: a failed run's pull request
-// keeps fugaro:failed across ticks, and loses it when it closes.
+// keeps fugaro:failed across ticks, and loses it when it closes. The item is
+// the one the fold leaves when the failure is not retried: the phase is failed,
+// and the attempt the run carries ended failed.
 func TestSyncFailedStaysUntilClose(t *testing.T) {
 	host := labelHost("o/a", labelPR(5, "", "spec:forge-labels"))
-	h := newLabelHarness(t, labelState(
-		workItem("item-a", "o/a", PhaseFailed, runA, "forge-labels"),
-	), map[string]*fake.Provider{"o/a": host}, &labelPRs{numbers: map[string]int{runA: 5}})
+	s := labelState(workItem("item-a", "o/a", PhaseFailed, runA, "forge-labels"))
+	s.WorkItems[0].Attempts = 1
+	s.Intents = []Intent{labelAttempt("item-a", 1, runA, OutcomeFailed)}
+	h := newLabelHarness(t, s, map[string]*fake.Provider{"o/a": host},
+		&labelPRs{numbers: map[string]int{runA: 5}})
 
 	h.step()
 	wantCalls(t, host, "list", "ensure fugaro:failed", "add #5 run="+runA+" fugaro:failed")
@@ -518,35 +541,83 @@ func TestSyncFailedStaysUntilClose(t *testing.T) {
 	}
 }
 
-// TestSyncPerRunPullRequest is F21 and R8: the retry opens its own pull
-// request, and the first one is left failed until it closes.
+// TestSyncPerRunPullRequest is F16, F21 and R8: a retry is a new run on a new
+// pull request, and the pull request of the run it replaced is reconciled by
+// nothing but the attempts the node records — it must gain fugaro:failed, keep
+// it and lose it when it closes. The state seeded is the one a cycle leaves
+// behind: the fold recorded the first attempt's failure and moved the item, and
+// the carry committed the second attempt's intent and its run id in the same
+// write, so the item names the retry and its first run is named by the intents
+// alone (F16).
 func TestSyncPerRunPullRequest(t *testing.T) {
-	host := labelHost("o/a", labelPR(5, "", "spec:forge-labels"), labelPR(7, ""))
-	h := newLabelHarness(t, labelState(
-		workItem("item-a", "o/a", PhaseFailed, runA, "forge-labels"),
-	), map[string]*fake.Provider{"o/a": host}, &labelPRs{numbers: map[string]int{runA: 5}})
+	host := labelHost("o/a",
+		labelPR(5, "", labelRunning),
+		labelPR(7, ""),
+	)
+	s := labelState(workItem("item-a", "o/a", PhaseRunning, runB, "forge-labels"))
+	s.WorkItems[0].Attempts = 2
+	s.Intents = []Intent{
+		labelAttempt("item-a", 1, runA, OutcomeFailed),
+		labelAttempt("item-a", 2, runB, ""),
+	}
+	h := newLabelHarness(t, s, map[string]*fake.Provider{"o/a": host},
+		&labelPRs{numbers: map[string]int{runA: 5, runB: 7}})
 
-	h.step()
-	wantCalls(t, host, "list", "ensure fugaro:failed", "add #5 run="+runA+" fugaro:failed")
-
-	// The retry: the item now names its own run, whose pull request is #7.
-	h.seed(t, labelState(workItem("item-a", "o/a", PhaseRunning, runB, "forge-labels")))
-	h.prs.numbers[runB] = 7
+	// The superseded pull request was left carrying running by the run that
+	// opened it: it loses that and gains the failure its own run ended with,
+	// while the retry's pull request gains the running label.
 	h.step()
 	wantCalls(t, host,
 		"list",
 		"ensure fugaro:failed",
-		"add #5 run="+runA+" fugaro:failed",
-		"list",
-		"ensure fugaro:running",
 		"ensure spec:forge-labels",
+		"add #5 run="+runA+" fugaro:failed+spec:forge-labels",
+		"remove #5 run="+runA+" fugaro:running",
+		"ensure fugaro:running",
 		"add #7 run="+runB+" fugaro:running+spec:forge-labels",
 	)
-	if got := prLabels(t, host, 5); !slices.Equal(got, []string{"spec:forge-labels", labelFailed}) {
-		t.Errorf("the superseded pull request carries %q, want fugaro:failed still", got)
+	if got := prLabels(t, host, 5); !slices.Equal(got, []string{labelFailed, "spec:forge-labels"}) {
+		t.Errorf("the superseded pull request carries %q, want fugaro:failed", got)
 	}
 	if got := prLabels(t, host, 7); !slices.Equal(got, []string{labelRunning, "spec:forge-labels"}) {
 		t.Errorf("the retry's pull request carries %q", got)
+	}
+
+	// Nothing changed since, so the next tick writes nothing at all — the
+	// superseded run is still kept by the node's own history.
+	h.step()
+	wantCalls(t, host,
+		"list",
+		"ensure fugaro:failed",
+		"ensure spec:forge-labels",
+		"add #5 run="+runA+" fugaro:failed+spec:forge-labels",
+		"remove #5 run="+runA+" fugaro:running",
+		"ensure fugaro:running",
+		"add #7 run="+runB+" fugaro:running+spec:forge-labels",
+		"list",
+	)
+	if got := prLabels(t, host, 5); !slices.Equal(got, []string{labelFailed, "spec:forge-labels"}) {
+		t.Errorf("the superseded pull request carries %q after the second tick", got)
+	}
+
+	// And it closes: the status label goes, and the spec label stays (D2433).
+	closePR(t, host, 5, gitprov.PRMerged)
+	h.step()
+	wantCalls(t, host,
+		"list",
+		"ensure fugaro:failed",
+		"ensure spec:forge-labels",
+		"add #5 run="+runA+" fugaro:failed+spec:forge-labels",
+		"remove #5 run="+runA+" fugaro:running",
+		"ensure fugaro:running",
+		"add #7 run="+runB+" fugaro:running+spec:forge-labels",
+		"list",
+		"list",
+		"read #5",
+		"remove #5 run="+runA+" fugaro:failed",
+	)
+	if got := prLabels(t, host, 5); !slices.Equal(got, []string{"spec:forge-labels"}) {
+		t.Errorf("the closed superseded pull request carries %q", got)
 	}
 }
 

@@ -48,7 +48,7 @@ var statusLabels = []string{labelRunning, labelFailed}
 
 // labelItem is one pull request the syncer is responsible for: the repository
 // the item is on, the pull request the run behind it opened, that run's id, and
-// what the item's phase and spec want on it.
+// what that run's phase and the item's spec want on it.
 //
 // The run id travels beside the number because every write sends it: the
 // credentials service refuses a write whose pull request's head branch is not
