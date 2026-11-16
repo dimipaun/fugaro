@@ -324,7 +324,12 @@ func TestDocsBitbucketRunbookReadConsumerSectionIsLast(t *testing.T) {
 // rotation paragraph's "**A typed** token (`bitbucket-token--<name>`) is the
 // **proxy's alone**" clause deleted -> FAIL, because the section then tells an
 // operator that every rotation is two writes, which is true of the legacy entry
-// alone.
+// alone. From the review of this round, the not-landed paragraphs came with the
+// section: the third step of the order publishes nothing on this tree, because
+// the node's member is the publisher's (T12) and no non-test code carries it,
+// so the section states the step, what it does not do yet and what still serves
+// -- the legacy entry, unchanged. Its pins fail alone when any one of those
+// three halves is dropped.
 func TestDocsBitbucketRunbookTokenTypes(t *testing.T) {
 	doc := flattenDoc(readDoc(t, bitbucketRunbook))
 	const heading = "## 11. The Bitbucket proxy"
@@ -345,7 +350,16 @@ func TestDocsBitbucketRunbookTokenTypes(t *testing.T) {
 		"the loader refuses a document carrying a key it does not know **whole** — every credential in it, the model credentials included",
 		"fugaro creds set bitbucket-token--<name>` refuses that write itself where the deployed service is too old to read it",
 		"**run `fugaro update` before the write**",
-		"**nothing of the token reaches a run until the policy is published.**",
+		// The third step of the order is real and publishes nothing on this
+		// tree: the node's member is the publisher's (T12), which no non-test
+		// code here carries, so the section says the step, says what it does
+		// not do yet, and says what still serves (the legacy entry).
+		"**nothing of the token reaches a run until the policy is published — and on this tree there is nothing to publish yet.**",
+		"**That third step publishes nothing on this release**",
+		"which **no non-test code here carries**",
+		"the legacy `bitbucket-token` above goes on serving exactly as it does now",
+		"do not read a stored typed token as live until T12 is in the release you run",
+		"**on this release a typed token serves no request yet**",
 		// The mark: where it lives, what shows it, and the two ways out of one
 		// no command clears.
 		"A 401 that a read of a repository the token covers confirms marks **that one token** `broken`; a 429 marks it `exhausted` until `Retry-After`; a 403 or a 404 marks nothing.",

@@ -417,7 +417,12 @@ const bitbucketTokenTypesSection = "#### Any mix of the three token types, serve
 // plans it has not verified; the mark paragraph's name-and-clearing sentence
 // deleted -> FAIL, and that is the shape a later edit drifts into, because the
 // other order of the same facts reads as if storing a fresh token under a
-// broken name brings it back.
+// broken name brings it back; and, from the review of this round, the
+// not-landed sentence's "and **no non-test code on this release writes it into
+// the published node**" softened to "and it is derived by the plan's
+// publisher" -> FAIL on that pin alone, which is the one saying the documented
+// flow is an order to use once T12 lands and not a description of what a store
+// does on this tree.
 func TestDocsStateTheBitbucketTokenTypesAndReach(t *testing.T) {
 	page := flattenDoc(readDoc(t, "docs/git-providers.md"))
 	if !strings.Contains(page, bitbucketTokenTypesSection) {
@@ -461,10 +466,10 @@ func TestDocsStateTheBitbucketTokenTypesAndReach(t *testing.T) {
 		"**Storing a working token under a name a failure already marked broken does not put that name back in service**",
 		// What the node publishes, and the skew the new top-level key brings to
 		// a CLI of the release behind (R5).
-		"The published node carries each token's **name, type and coverage patterns**",
+		"the node carries each token's **name, type and coverage patterns**",
 		"never a value and never a secret version, so every run of the repository can read which repositories each token reaches",
 		"a **CLI of the previous release refuses an unknown top-level key**",
-		"One line in the release notes says so.",
+		"One line in the release notes says so, and",
 		// U8's line: the verified facts, and the unverified one named as
 		// unverified rather than answered either way.
 		"a **project** or **workspace** access token is a Bitbucket **Premium** feature",
@@ -473,7 +478,25 @@ func TestDocsStateTheBitbucketTokenTypesAndReach(t *testing.T) {
 		"**nothing here has been run against Bitbucket with a project or workspace token**",
 		// The order an operator has to take, because the coverage reaches a
 		// run only through the published policy.
-		"**nothing of either reaches a run until the policy is published**",
+		// The review's finding: the paragraph above told an operator to run
+		// `fugaro update` to publish a typed token's coverage, and the
+		// publisher is T12, which no non-test code on this tree carries --
+		// `projectpolicy.DeriveBitbucketTokens` derives the key and nothing
+		// writes it into the published node. So the page says what a store
+		// writes, what is missing, and that the token serves no request until
+		// the publisher lands.
+		"**And one thing makes a typed token serve any request: the publisher, which is not on this tree.**",
+		"**no non-test code on this release writes it into the published node**",
+		"a typed token stored today is in the bundle and in your config and **serves no request**",
+		"**The order the feature is used in is `fugaro update`, then the store, then `fugaro update` again**, once T12 is in the release that runs it",
+		"until then **the section above is the path that works**, with the token it already mounts and the behaviour it already has, unchanged",
+		// The same finding read the other way round: the published-node
+		// paragraph described the shape of a change and not of a node on this
+		// tree, so it says which task builds it and that today's node has no
+		// such member, and the release-notes line R5 asks for is owed with it.
+		"**Publishing the coverage, and the skew it brings — with the publisher (T12), which this tree does not carry.**",
+		"**today's node carries no `bitbucket_tokens` member**",
+		"**that line is owed with T12**",
 	} {
 		if !strings.Contains(section, strings.Join(strings.Fields(want), " ")) {
 			t.Errorf("the `%s` section of docs/git-providers.md does not say %q: an operator stores a Bitbucket token from this page, and every fact here is one they act on before they do", bitbucketTokenTypesSection, want)
