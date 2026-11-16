@@ -1196,10 +1196,13 @@ func reseedPolicyKeys(old []byte, lc *localcfg.Config, p *projectpolicy.Policy, 
 }
 
 // applyPolicyReseed is the accepted offer: the file is backed up and written
-// with what the re-seed could splice. A member it could not write is refused
-// rather than skipped — a re-seed that recorded a generation while leaving a
-// member behind would let the next publish overwrite the newer node with the
-// older file, which is the whole of what D854 refuses.
+// with what the re-seed could splice, and a member it could not write is
+// refused rather than skipped — a re-seed that recorded a generation while
+// leaving a member behind would let the next publish overwrite the newer node
+// with the older file, which is the whole of what D854 refuses. The spliced
+// members are written even when the offer is refused, so the file is the node's
+// own on everything but the members the refusal names; that is what makes the
+// publish it recommends safe, since a publish builds the node from this file.
 //
 // The generation this file is now written from is the caller's to record and
 // not this function's: the caller is the one that knows whether the node is
@@ -1215,6 +1218,21 @@ func applyPolicyReseed(cmd *cobra.Command, path string, lc *localcfg.Config, p *
 	}
 	out, written, hand := reseedPolicyKeys(old, lc, p, members)
 	if len(hand) > 0 {
+		// The members this re-seed could splice are written even though the
+		// offer is refused, because the remedy the sentence below names for an
+		// account key — `fugaro project policy publish` — builds the node from
+		// this file: a spliced member dropped here is this file's older value
+		// written back over the newer node the moment the operator follows that
+		// advice, which is the overwrite D854 refuses, made by the sentence that
+		// recommends the publish. What is left unwritten is named.
+		//
+		// The generation stays unrecorded — the caller returns on the error
+		// below — because the file still differs from the node on the members
+		// named: a record here would claim a baseline the file does not have,
+		// and the next run's refusal is what carries the rest over.
+		if err := writeFileAtomicGuarded(cmd, path, old, out); err != nil {
+			return nil, err
+		}
 		// The remedy is per member, because the two kinds need different ones
 		// and naming the wrong one leaves the operator where they started: a
 		// value the node states and this file does not goes back by a hand edit
@@ -1229,7 +1247,9 @@ func applyPolicyReseed(cmd *cobra.Command, path string, lc *localcfg.Config, p *
 		// The two are ordered where both are named, because that publish writes
 		// every member this file states over the node's: run before the hand
 		// edits, it puts this file's older values for them there, which is the
-		// overwrite D854 refuses one round later.
+		// overwrite D854 refuses one round later — and it is why the members
+		// written above are named in the refusal: they are what the publish no
+		// longer carries back.
 		accounts, rest := splitAccountChoices(hand)
 		var remedies []string
 		if len(rest) > 0 {
@@ -1244,8 +1264,13 @@ func applyPolicyReseed(cmd *cobra.Command, path string, lc *localcfg.Config, p *
 			remedies = append(remedies, fmt.Sprintf("%s: an account choice is your own, and the local config is its only store — write the choice with `fugaro settings set default_claude_account <name>` or `fugaro settings set stages.<stage>.claude_account <name>`, %s (%s is the upgrade, and its policy stage refuses this file until that publish has landed)",
 				strings.Join(accounts, ", "), publishing, selfCommand()+" update"))
 		}
-		return nil, userErr("the published policy node's %s cannot be re-seeded into %s by one edit, so the file was left as it is: %s",
-			strings.Join(hand, ", "), path, strings.Join(remedies, "; and "))
+		left := fmt.Sprintf("the published policy node's %s cannot be re-seeded into %s by one edit", strings.Join(hand, ", "), path)
+		if len(written) > 0 {
+			left += fmt.Sprintf(", so the node's own values for %s were written there and no generation was recorded", strings.Join(written, ", "))
+		} else {
+			left += ", so the file was left as it is"
+		}
+		return written, userErr("%s: %s", left, strings.Join(remedies, "; and "))
 	}
 	if err := writeFileAtomicGuarded(cmd, path, old, out); err != nil {
 		return nil, err

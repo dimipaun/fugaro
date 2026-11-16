@@ -215,6 +215,14 @@ func TestDocsMixedCredentialsRecordsTheRuling(t *testing.T) {
 		// command (CLAUDE.md's HARD RULE), and the section has to say both or a
 		// reader takes the publish for one more thing an upgrade needs.
 		"a setting the operator changed is not part of an upgrade",
+		// And the publish's precondition, without which that sentence is read as
+		// "publish at any point": the publish builds the node from the file, so
+		// the members the re-seed refused to splice have to be in the file
+		// first — the ones it could splice it has already written — or the
+		// operator ends up making the overwrite D854 refuses, with the refusal's
+		// own advice.
+		"**Amended 2026-11-16 (the publish's precondition, review finding).**",
+		"what the publish waits for is the members the refusal named as ones it **could not** write",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("%s §11 never says %q: the ruling is not recorded and the tasks B1-B6 have nothing to build against", path, want)
@@ -374,6 +382,10 @@ func TestDocsMultiModelRecordsTheReviewAccountException(t *testing.T) {
 		"**`fugaro project policy publish`, run at your own terminal**",
 		// And the correction does not add a step to the upgrade.
 		"a setting you changed is not an upgrade",
+		// Nor is the door safe at any moment: it builds the node from the file,
+		// so the members the re-seed refused to splice are in the file first.
+		"so it goes **after** the file states the node's own values",
+		"the re-seed has already written every member it could splice into the file",
 		// And that the credential is not a plan any more: the reader who
 		// meets the rule here has to learn that the keys it names work, and
 		// which owner-run check the claim rests on.
@@ -780,6 +792,11 @@ func TestDocsCheck290IsTheMixedRunsSmokeTest(t *testing.T) {
 		"**Check this first: whether that stage will publish from your file at all.**",
 		"the check above found your file's recorded generation behind the node",
 		"`fugaro project policy publish`, run at your own terminal",
+		// And the order the publish has to come in: it builds the node from the
+		// file, so the members the re-seed refused to splice go in by hand
+		// before it, or the step's own advice makes the overwrite D854 refuses.
+		"it goes only after the file states the node's own values",
+		"its refusal names the members it could not",
 		"it republishes the removal to the policy node",
 		"a key removed from the config reaches no run until that publish rewrites it",
 		"policyConfigDrift",

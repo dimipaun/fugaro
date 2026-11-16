@@ -462,10 +462,14 @@ func TestUpdatePolicyPublishRefusesANodeItDoesNotModel(t *testing.T) {
 // the editor cannot place is one it refuses rather than rewrites around: a
 // budget block written in flow style takes a scalar splice now, but a list the
 // block does not hold yet would be a flow sequence inside a flow mapping, which
-// stays refused. The refusal is the whole of
-// what makes the record safe: a run that recorded the generation anyway would
-// leave the older file in place with a baseline claiming it was written from
-// the newer node, which is the overwrite D854 exists to prevent.
+// stays refused.
+//
+// The members it could splice are written all the same — the refusal names them
+// — and the generation is not: a file left holding the older value for a member
+// the refusal does not name is one the publish it recommends carries back over
+// the newer node, and a file whose record named a generation while a member was
+// still behind is the baseline D854 exists to prevent. The node itself is not
+// written either: the run returns on the error.
 func TestUpdatePolicyReseedRefusesAMemberItCannotSplice(t *testing.T) {
 	f := newProjectFixture(t, "")
 	setConfig(t, f, func(s string) string { return s + "policy_generation: etag-from-an-earlier-publish\n" })
@@ -482,7 +486,11 @@ func TestUpdatePolicyReseedRefusesAMemberItCannotSplice(t *testing.T) {
 	if err == nil {
 		t.Fatalf("the re-seed wrote a member it cannot splice:\n%s", out)
 	}
-	for _, want := range []string{"budget.allowed_models", "cannot be re-seeded", "the file was left as it is"} {
+	for _, want := range []string{
+		"budget.allowed_models",
+		"cannot be re-seeded",
+		"the node's own values for budget.per_run_usd were written there and no generation was recorded",
+	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
@@ -491,19 +499,26 @@ func TestUpdatePolicyReseedRefusesAMemberItCannotSplice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(before) != string(after) {
-		t.Errorf("the file was written behind a refusal:\nbefore %s\nafter  %s", before, after)
+	if string(before) == string(after) {
+		t.Error("the file is unchanged: the member the re-seed could splice was dropped instead of written")
+	}
+	lc, err := localcfg.Load(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lc.Budget.PerRunUSD != 9 {
+		t.Errorf("the file's budget.per_run_usd is %v, want the node's 9 before the publish is recommended", lc.Budget.PerRunUSD)
 	}
 	if gen := recordedGeneration(t, f); gen != "etag-from-an-earlier-publish" {
-		t.Errorf("policy_generation = %q: the refusal recorded a generation for a file it did not write", gen)
+		t.Errorf("policy_generation = %q: the refusal recorded a generation for a file it did not finish writing", gen)
 	}
 	if got := nodeCeiling(t, f); got != 9 {
 		t.Errorf("the node's ceiling is %v, want the other machine's 9: the publish was made anyway", got)
 	}
 	if backups, err := filepath.Glob(f.path + ".bak-*"); err != nil {
 		t.Fatal(err)
-	} else if len(backups) != 0 {
-		t.Errorf("a refused re-seed left backups behind: %v", backups)
+	} else if len(backups) == 0 {
+		t.Error("the spliced member was written with no backup of the file it replaced")
 	}
 }
 
@@ -516,11 +531,19 @@ func TestUpdatePolicyReseedRefusesAMemberItCannotSplice(t *testing.T) {
 // the operator exactly where the refusal found them. `fugaro project policy
 // publish` is the command that writes those members to the node, and it is the
 // one this sentence has to name.
+//
+// The node here also differs on a member the re-seed can splice (base_branch),
+// because that publish builds the node from this file: a refusal that dropped
+// the splicable member and recommended the publish would have the operator write
+// this file's older base_branch over the newer node's — the overwrite D854
+// refuses, made by the command the refusal recommends. The member is written
+// into the file before the publish is named, and the refusal says which one.
 func TestUpdatePolicyReseedRefusalNamesThePublishForAnAccountKey(t *testing.T) {
 	f := newProjectFixture(t, "")
 	setConfig(t, f, func(s string) string { return s + "policy_generation: etag-from-an-earlier-publish\n" })
 	node := staleBudgetNode()
 	node["default_claude_account"] = "team-b"
+	node["base_branch"] = "develop"
 	f.db.Set(projectpolicy.PathShared(), node)
 	h := newMigrationRig(t, f, &initOptions{})
 
@@ -532,6 +555,7 @@ func TestUpdatePolicyReseedRefusalNamesThePublishForAnAccountKey(t *testing.T) {
 		"default_claude_account",
 		"`fugaro project policy publish`",
 		"`fugaro settings set default_claude_account <name>`",
+		"the node's own values for budget.per_run_usd, base_branch were written there and no generation was recorded",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
@@ -539,6 +563,16 @@ func TestUpdatePolicyReseedRefusalNamesThePublishForAnAccountKey(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "put the published values") {
 		t.Errorf("the refusal sends an account key to a hand edit, and there is no published value for one: %v", err)
+	}
+	lc, err := localcfg.Load(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lc.BaseBranch != "develop" {
+		t.Errorf("base_branch = %q, want the node's %q: the publish the refusal recommends would carry this file's stale branch over the newer node", lc.BaseBranch, "develop")
+	}
+	if gen := recordedGeneration(t, f); gen != "etag-from-an-earlier-publish" {
+		t.Errorf("policy_generation = %q: the refusal recorded a generation for a file that still differs from the node", gen)
 	}
 }
 
@@ -568,6 +602,7 @@ func TestUpdatePolicyReseedRefusalOrdersTheHandEditBeforeThePublish(t *testing.T
 		"once this file states the node's own values for the members above",
 		"would write this file's older values for them over the node's",
 		"`fugaro project policy publish`",
+		"the node's own values for budget.per_run_usd were written there and no generation was recorded",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)

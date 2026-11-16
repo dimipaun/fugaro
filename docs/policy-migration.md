@@ -86,7 +86,11 @@ the one the node carries now (`publishPlanFor`,
 has moved past is refused there (D854, below), so the command that publishes from
 such a file — and the one to run when an update has refused it — is **`fugaro
 project policy publish`**, at the operator's own terminal: it builds the node from
-the file, never consults the generation, and records the one it wrote. An
+the file, never consults the generation, and records the one it wrote. That it
+builds the node from the file is also its precondition: run it once the file
+states the node's own values, because a publish made first writes the file's
+older values for those members over the node's — the re-seed has already written
+every member it could splice, and the refusal names the members it could not. An
 ordinary config edit therefore reaches every run of the project through the one
 command the operator was going to run; the publish is the door for the file the
 update refuses.
@@ -167,14 +171,25 @@ and the account-choice keys (`default_claude_account` and
 `claude_account_stages.<stage>`), the members whose only store the local config
 is — the node takes them from the file and never the other way, so a re-seed
 that wrote one of them would overwrite the newer node with the older file. The
-refusal writes neither the file nor the generation, and it says what to do. A
-member an edit can reach goes back by hand — a flow block rewritten as a block
+members the re-seed **can** splice are written even behind that refusal, with a
+backup of the file it replaces, and the refusal says which ones they were: the
+publish below builds the node from this file, so a spliced member dropped there
+would be this file's older value written back over the newer node the moment the
+operator followed the refusal's advice. The generation is not recorded in that
+state — the file still differs from the node on the members the refusal named,
+and a baseline claiming otherwise is the overwrite D854 exists to prevent.
+A member an edit can reach goes back by hand — a flow block rewritten as a block
 mapping is one the edit can reach — and the next `fugaro update` re-seeds the
 rest. An account-choice key has no edit that reaches it: the command that ends
 this refusal for one is **`fugaro project policy publish`**, run at the
 operator's own terminal, which builds the node from this file and never consults
 `policy_generation` — so the file is the source, the publish is the write, and
-the generation it records is what ends the refusal. `fugaro update` is the
+the generation it records is what ends the refusal. Because it is the file that
+is the source, run it only once the file states the node's own values: the
+members the re-seed wrote are already there, and the ones the refusal named as
+members it could **not** write are the ones to put in by hand first — a publish
+made before those edits writes the file's older values for them over the node's.
+`fugaro update` is the
 upgrade, and in this state it publishes nothing: it refuses this file until that
 publish has happened. Where the stage does publish — the ordinary state, a file
 that records no generation or records the node's own — that is how a config edit
