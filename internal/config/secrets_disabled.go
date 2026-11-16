@@ -122,11 +122,22 @@ func RepoSecretsWarnings(c *Config) []Problem {
 			break
 		}
 	}
+	return []Problem{{Path: "workflows." + where + ".secrets", Message: RepoSecretsIgnoredNotice(names)}}
+}
+
+// RepoSecretsIgnoredNotice is the one sentence D2313 has about a repository's
+// declared secrets, over the names it is about (each made printable here). It
+// is the warning `fugaro validate` prints for the file's block and the line the
+// init secrets stage says for the names it therefore does not take — one
+// function, because it is one fact and one remedy: a person who reads it in
+// either place must read the same thing, and a store the ruling answers with a
+// notice is never named as if it worked.
+func RepoSecretsIgnoredNotice(names []string) string {
 	printable := make([]string, 0, len(names))
 	for _, name := range names {
 		printable = append(printable, pluginwire.Printable(name))
 	}
-	return []Problem{{Path: "workflows." + where + ".secrets", Message: fmt.Sprintf(
+	return fmt.Sprintf(
 		"repository-level secrets (%s) are disabled for now and ignored, as a repository's own image is: a shared job mounts only the project's secrets, so store the value once for the project instead (project_secrets.NAME, or a workflow_secrets entry allow-listing the repositories it serves) (D2313)",
-		strings.Join(printable, ", "))}}
+		strings.Join(printable, ", "))
 }

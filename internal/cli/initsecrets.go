@@ -200,6 +200,13 @@ type secretsStage struct {
 	checked bool
 	missing []string // names with no stored value
 	stored  []string // names stored in this run, for Verify
+	// repoLevel are the names of the checkout's own that D2313 disables: a
+	// repository-level secret no job mounts project-wide for this repository.
+	// They are dropped from what the stage wants (nothing to ask, nothing to
+	// store, no line to leave -- every store that would take one answers a
+	// notice), and the ruling's one sentence about them is what Check and Plan
+	// say instead of a step.
+	repoLevel []string
 
 	// node is the project's published policy, read once when the stage
 	// resolves through the run's own memoized read (initRun.policy) and nil
@@ -424,6 +431,30 @@ func (s *secretsStage) resolve(ctx context.Context) {
 	// stage stops the run on the same error.
 	p, found, err := s.e.r.policy.read(ctx, lc)
 	s.node = repoPolicyInput(lc, p, found, err)
+	// A repository-level secret (D2313) is one no shared job mounts, so it is
+	// not a name this stage may take. The only store a prompt here could write
+	// is the repository's own container, the run's job carries no variable for
+	// it, and find() would then count that copy as covering the name and never
+	// ask again: a success message over a step that stores nothing a run can
+	// read, which is what the ruling's "disabled for now" must not become. The
+	// commands that would store one answer the notice instead, so there is no
+	// line to leave either. The name is therefore dropped here, once, before
+	// anything asks: what a person is told about it is the ruling's own
+	// sentence, which Check and Plan print (config.RepoSecretsIgnoredNotice).
+	//
+	// A name this repository may mount the project's copy of (projectScope) is
+	// kept: that copy IS mounted, and the stage's job for such a name is
+	// unchanged. That is why this sits after the node is read and not beside
+	// the mounts it filters: projectScope reads the node.
+	kept := make([]string, 0, len(s.tg.wanted))
+	for _, name := range s.tg.wanted {
+		if repoSecretsDisabledName(lc, name) && !s.projectScope(name) {
+			s.repoLevel = append(s.repoLevel, name)
+			continue
+		}
+		kept = append(kept, name)
+	}
+	s.tg.wanted = kept
 }
 
 // defaultBranchConfig is the fugaro.yaml of the checkout's default branch
@@ -608,6 +639,13 @@ func (s *secretsStage) Check(ctx context.Context) (initflow.Status, error) {
 	if s.tg.noConfig {
 		note = " (no fugaro.yaml on the default branch as last fetched, so the Claude credential is not assumed; git fetch, then rerun)"
 	}
+	if len(s.repoLevel) > 0 {
+		// The names the stage does not take (resolve dropped them), said in the
+		// ruling's own sentence: no line is left for one, so this is the whole
+		// of what a person learns about it here, and the only place the remedy
+		// (a project-wide entry for the name) is named.
+		note += "; " + config.RepoSecretsIgnoredNotice(s.repoLevel)
+	}
 	if len(s.missing) == 0 {
 		return initflow.Status{State: initflow.Done, Detail: "the secrets the jobs mount are stored" + note}, nil
 	}
@@ -671,23 +709,11 @@ func (s *secretsStage) Left() initflow.Left {
 		}
 		set := selfCommand() + " secrets set " + quoteWord(name)
 		if !s.projectScopeLocal(name) {
-			// The line this branch spells is a repository-scope store, and a
-			// repository-level secret is disabled for now (D2313): the command
-			// would answer the notice and change nothing. Its bare form is no
-			// better -- `secrets set` decides the scope from the local config
-			// alone, which is the answer asked just above, so a name with no
-			// project-wide meaning there has none in either spelling. The one
-			// store that still has it is this stage's own, and the run's own
-			// door is how a person reaches it: at a terminal the door's prompt
-			// is take's, which writes the value into the container this
-			// repository's root already creates.
-			if repoSecretsDisabledName(s.e.lc, name) {
-				door := selfCommand() + " " + s.e.r.o.doorName()
-				if !slices.Contains(cmds, door) {
-					cmds = append(cmds, door)
-				}
-				continue
-			}
+			// The line is a repository-scope store, and a name D2313 disables
+			// never reaches it: no shared job mounts a repository-level secret,
+			// so such a name is not one this stage wants at all (resolve drops
+			// it, and Check prints the ruling's sentence for it). What is left
+			// here has a repository copy a run really mounts.
 			set += " --repo " + quoteWord(s.tg.repo)
 		}
 		switch {

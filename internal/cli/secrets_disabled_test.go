@@ -11,8 +11,10 @@ package cli
 // repository-scope forms of the secrets commands, which answer the notice
 // instead of writing, the credentials service's record, which names no
 // repository-level container, the Terraform input, which does not move at
-// all, and the secrets stage, whose own line for a name no job mounts
-// project-wide is a command that works, never the store the notice answers.
+// all, and the secrets stage, which takes no value for such a name at all —
+// no line, no prompt, the ruling's own sentence instead — because the one
+// store a prompt could write is the repository's own copy, which no shared job
+// mounts.
 //
 // Every other test in this package drives the machinery the ruling keeps with
 // the door open, exactly as they did before it (main_test.go, TestMain), so
@@ -29,6 +31,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
@@ -293,21 +296,27 @@ func TestNoWorkflowSecretsRecordIsWrittenForAnIgnoredSecret(t *testing.T) {
 	}
 }
 
-// TestSecretsStageLeavesTheDoorForARepositoryLevelSecret: the line the stage
-// leaves a person is one they run in their own terminal, and under D2313 the
-// repository-scope store it used to spell — `secrets set NAME --repo
-// OWNER/NAME` — answers the notice and changes nothing; the bare form is no
-// better, because `secrets set` decides the scope from the same local config
-// this stage just read, so a name with no project-wide meaning there has none
-// in either spelling. What still stores such a name is the stage's own prompt,
-// and the run's own door is how a person reaches it.
-func TestSecretsStageLeavesTheDoorForARepositoryLevelSecret(t *testing.T) {
+// TestSecretsStageDoesNotAskForARepositoryLevelSecret: a repository-level
+// secret is one no shared job mounts (D2313), so the stage must not take one.
+// Every store a line or a prompt could name for it answers the ruling's notice
+// — `secrets set NAME` decides its scope from this same local config and finds
+// no project-wide meaning, and `--repo` is the notice — so a line for one
+// would be a step that stores nothing, while a prompt for one would write the
+// repository's own copy: find() would then count that copy as covering the
+// name, and the run's job carries no variable for it, so a later run would
+// never ask again and the last "stored" would be over a value nothing reads.
+// What the stage does instead is say the ruling's fact, in the sentence
+// `validate` warns a file's block with.
+func TestSecretsStageDoesNotAskForARepositoryLevelSecret(t *testing.T) {
 	repoSecretsOn(t)
 	r := newSecretsRig(t, bitbucketOrigin, strings.NewReader(""))
 	r.workflowSecretConfig(t, "app-signing-key")
 	r.stage.resolve(context.Background())
-	if r.stage.projectScope("app-signing-key") || r.stage.projectScopeLocal("app-signing-key") {
+	if r.stage.projectScope("app-signing-key") {
 		t.Fatal("the fixture is not the state this case is about: the secret has a project-wide meaning")
+	}
+	if slices.Contains(r.stage.tg.wanted, "app-signing-key") {
+		t.Fatalf("the stage still wants the repository-level secret: %v", r.stage.tg.wanted)
 	}
 	res, err := r.run(t)
 	if err != nil {
@@ -317,12 +326,29 @@ func TestSecretsStageLeavesTheDoorForARepositoryLevelSecret(t *testing.T) {
 	for _, l := range res.Left {
 		left = append(left, l.Commands...)
 	}
-	joined := strings.Join(left, "\n")
-	if strings.Contains(joined, "secrets set app-signing-key") {
-		t.Fatalf("the stage left a command the ruling answers with the notice:\n%s", joined)
+	if joined := strings.Join(left, "\n"); strings.Contains(joined, "app-signing-key") {
+		t.Fatalf("the stage left a line for a secret no job mounts:\n%s", joined)
 	}
-	if !strings.Contains(joined, "fugaro setup") {
-		t.Fatalf("the stage left no run's own door for the repository-level secret:\n%s", joined)
+	if n := r.store.setCalls(); n != 0 {
+		t.Fatalf("%d value(s) stored: the stage took the secret anyway", n)
+	}
+	detail := ""
+	for _, st := range res.Stages {
+		if st.Name == initflow.Secrets {
+			detail = st.Detail
+		}
+	}
+	for _, want := range []string{
+		"app-signing-key",
+		"disabled for now and ignored",
+		"a shared job mounts only the project's secrets",
+		"project_secrets",
+		"workflow_secrets",
+		"D2313",
+	} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("the stage's line does not say %q:\n%s", want, detail)
+		}
 	}
 }
 
