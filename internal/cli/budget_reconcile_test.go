@@ -250,6 +250,46 @@ func TestBudgetReconcileOldRecordsMixed(t *testing.T) {
 	}
 }
 
+// TestBudgetReconcileNoSplitCharge is the record that names no model for its
+// money: a run with no gateway -- a subscription's plan, or Claude Code's own
+// total -- carries model_usd and no model_by at all. That charge is still the
+// window's spend, so it is read on `mixed` rather than dropped from the rows
+// while the notional line counts all of it.
+func TestBudgetReconcileNoSplitCharge(t *testing.T) {
+	f := newCloudFixture(t)
+	reconcileRecord(t, f, "20261014-090000-aaaa", &runstore.Cost{
+		ModelUSD: 3.00, ModelBasis: runstore.BasisSubscription,
+		ModelTokens: map[string]runstore.ModelTokenCounts{"vendor/model-x": {Input: 10, Output: 5}},
+	})
+
+	doc := reconcileWalk(t, "--repo", "acme/app")
+	mixed := reconcileModel(t, doc, budgetReconcileMixed)
+	if m := doc.Models[mixed]; m.ChargeUSD != 3.00 || m.Runs != 1 {
+		t.Errorf("mixed = %+v, want the record's whole model figure", m)
+	}
+	// The tokens are the run's own by model and the record names no dollars
+	// for that model: that row carries the counts and no charge of its own.
+	x := reconcileModel(t, doc, "vendor/model-x")
+	if m := doc.Models[x]; m.ChargeUSD != 0 || m.InputTokens != 10 || m.OutputTokens != 5 || m.Runs != 1 {
+		t.Errorf("vendor/model-x = %+v", m)
+	}
+	if t2 := doc.Totals; t2.ChargeUSD != 3.00 || t2.NotionalUSD != 3.00 || t2.Runs != 1 || t2.NoRecord != 0 {
+		t.Errorf("totals = %+v, want the charge whole and the notional part inside it", t2)
+	}
+	out, _, err := execute(t, append([]string{"budget", "reconcile"}, append(reconcileWindowArgs(), "--repo", "acme/app")...)...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"charge:   $3 with the route fee, $3 without it (what the providers themselves charged)\n",
+		"notional: $3 of the charge was a subscription's plan, which the provider reports and no invoice bills\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the summary carries no %q:\n%s", want, out)
+		}
+	}
+}
+
 // TestBudgetReconcileReportShare is what the acceptance asks a reader to be
 // able to say: of the window's runs, how many carry a provider report at all.
 // The share is per row and over the window, and the runs the reading could not

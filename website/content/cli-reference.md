@@ -1507,8 +1507,11 @@ reconciliation comes out plausible and wrong.
 The figures are the run records' own, and nothing is priced here:
 
   CHARGE is the run's model_by, the price table's rates plus the route fees,
-  as the runs recorded it, split by serving model. A subscription's notional
-  part is inside it; the totals say how much, and no provider bills that part.
+  as the runs recorded it, split by serving model. A run with no gateway
+  records one model figure and names no model for it: that charge, and the
+  part of model_usd model_by does not name, are read on `mixed`. A
+  subscription's notional part is inside the charge; the totals say how
+  much, and no provider bills that part.
   REPORT is what the providers said their calls cost (their own figures, no
   route fee in them), and WITH REPORT is how many of the row's runs carried
   one. A record written before reported_by existed carries one figure for the
@@ -1528,7 +1531,7 @@ The figures are the run records' own, and nothing is priced here:
 `unattributed` is a row of its own: it is the charge for calls no stage
 report carried, which model_by keys apart from the models, and it is never
 folded into one. `mixed` holds what a run recorded for itself rather than for
-one of its models.
+one of its models -- a charge the record names no model for among them.
 
 The totals are printed with the route fee and without it: the fee is a
 percentage the project config adds to every charge on a provider route

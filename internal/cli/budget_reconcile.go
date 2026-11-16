@@ -36,11 +36,15 @@ import (
 // Four rules shape what a row says, and each is written down because a record
 // cannot always answer the question a reader is asking:
 //
-//   - The charge is model_by's own split, in whole: a subscription's notional
-//     part is inside it, exactly as the record keeps it (P12, D140 leaves the
-//     by-model split of a mixed run untellable). The totals say what part of
-//     the window's charge was notional, so a reader putting the figure beside
-//     an invoice is not left comparing a bill against a plan's usage.
+//   - The charge is the run's own model figure, whole: model_by's split where
+//     the record carries one, and whatever model_usd holds above it on `mixed`,
+//     because a run with no gateway records one figure for the whole run and
+//     names no model for it (a subscription's plan, or Claude Code's own
+//     total). A subscription's notional part is inside the charge either way,
+//     exactly as the record keeps it (P12, D140 leaves the by-model split of a
+//     mixed run untellable). The totals say what part of the window's charge
+//     was notional, so a reader putting the figure beside an invoice is not
+//     left comparing a bill against a plan's usage.
 //   - The report is reported_by where the record carries it, which is per
 //     serving model (F7). A record written before that field existed carries
 //     only the run's reported_usd, which is one figure for the run: it lands
@@ -60,10 +64,12 @@ const (
 	// after its stage's wait ran out.
 	budgetReconcileUnattributed = "unattributed"
 	// budgetReconcileMixed is the row for a figure the record keeps whole for
-	// the run rather than for one model: an old record's reported_usd and its
-	// band when the run's charge names several models, and the band of a run
-	// whose report names several. It is a bucket of the reading and never a
-	// model, so it is named apart from every model_by key.
+	// the run rather than for one model: the charge of a run whose model_by
+	// names no model at all (no gateway -- a subscription's plan, or Claude
+	// Code's own total), the charge above model_by's split, an old record's
+	// reported_usd and its band when the run's charge names several models, and
+	// the band of a run whose report names several. It is a bucket of the
+	// reading and never a model, so it is named apart from every model_by key.
 	budgetReconcileMixed = "mixed"
 )
 
@@ -96,8 +102,11 @@ func newBudgetReconcileCmd() *cobra.Command {
 			"reconciliation comes out plausible and wrong.\n\n" +
 			"The figures are the run records' own, and nothing is priced here:\n\n" +
 			"  CHARGE is the run's model_by, the price table's rates plus the route fees,\n" +
-			"  as the runs recorded it, split by serving model. A subscription's notional\n" +
-			"  part is inside it; the totals say how much, and no provider bills that part.\n" +
+			"  as the runs recorded it, split by serving model. A run with no gateway\n" +
+			"  records one model figure and names no model for it: that charge, and the\n" +
+			"  part of model_usd model_by does not name, are read on `mixed`. A\n" +
+			"  subscription's notional part is inside the charge; the totals say how\n" +
+			"  much, and no provider bills that part.\n" +
 			"  REPORT is what the providers said their calls cost (their own figures, no\n" +
 			"  route fee in them), and WITH REPORT is how many of the row's runs carried\n" +
 			"  one. A record written before reported_by existed carries one figure for the\n" +
@@ -116,7 +125,7 @@ func newBudgetReconcileCmd() *cobra.Command {
 			"`unattributed` is a row of its own: it is the charge for calls no stage\n" +
 			"report carried, which model_by keys apart from the models, and it is never\n" +
 			"folded into one. `mixed` holds what a run recorded for itself rather than for\n" +
-			"one of its models.\n\n" +
+			"one of its models -- a charge the record names no model for among them.\n\n" +
 			"The totals are printed with the route fee and without it: the fee is a\n" +
 			"percentage the project config adds to every charge on a provider route\n" +
 			"(route_fee_pct), the providers report the model's own price and no fee, so the\n" +
@@ -231,10 +240,11 @@ type budgetReconcileDoc struct {
 // its band land, and the route fee its charges carry.
 type reconcileRun struct {
 	cost *runstore.Cost
-	// reportBy is the run's report per row, and bandRow the one row that
-	// carries the run's band ("" when it has none). They are what the rules
-	// above decide, worked out once so that the rows and the totals cannot
-	// disagree about where a figure went.
+	// chargeBy is the run's charge per row, reportBy its report per row, and
+	// bandRow the one row that carries the run's band ("" when it has none).
+	// They are what the rules above decide, worked out once so that the rows
+	// and the totals cannot disagree about where a figure went.
+	chargeBy map[string]budget.Micros
 	reportBy map[string]budget.Micros
 	bandRow  string
 	// reported is whether the run carried a provider report at all: a band
@@ -331,8 +341,8 @@ func reconcileWindow(from, to string) (fromDay, toDay int64, err error) {
 	return fromDay, toDay, nil
 }
 
-// reconcileRead takes one run's cost apart: where its report and its band land,
-// and what route fee its charges carry.
+// reconcileRead takes one run's cost apart: where its charge, its report and
+// its band land, and what route fee its charges carry.
 func reconcileRead(c *runstore.Cost, lc *localcfg.Config) reconcileRun {
 	r := reconcileRun{cost: c}
 	// The fee is the providers' routes' own: route_by's "unattributed" key is
@@ -346,9 +356,34 @@ func reconcileRead(c *runstore.Cost, lc *localcfg.Config) reconcileRun {
 		m := microsOfUSD(usd)
 		r.feePaid += m - pricing.WithoutFee(m, lc.Providers[route].RouteFeePct)
 	}
+	r.chargeBy = reconcileCharge(c)
 	r.reportBy, r.bandRow = reconcileReport(c)
 	r.reported = len(c.ReportedBy) > 0 || c.ReportedUSD > 0
 	return r
+}
+
+// reconcileCharge splits a run's charge by row: model_by's own entries, and
+// whatever the record's whole model figure holds above them on the row
+// reconcileChargedModel names. A record with no model_by at all carries one
+// figure and names no model for it -- a run with no gateway, whose model_usd is
+// Claude Code's own total or a subscription's plan -- so its whole charge is
+// read on `mixed` rather than dropped: it is money the window spent, and no row
+// of this reading may hold dollars the record does not name it for.
+func reconcileCharge(c *runstore.Cost) map[string]budget.Micros {
+	charge := make(map[string]budget.Micros, len(c.ModelBy)+1)
+	var named budget.Micros
+	for model, usd := range c.ModelBy {
+		m := microsOfUSD(usd)
+		if m == 0 {
+			continue
+		}
+		charge[model] += m
+		named += m
+	}
+	if total := microsOfUSD(c.ModelUSD); total > named {
+		charge[reconcileChargedModel(c)] += total - named
+	}
+	return charge
 }
 
 // reconcileReport decides the row or rows a run's report and band are read on:
@@ -383,7 +418,8 @@ func reconcileReport(c *runstore.Cost) (reportBy map[string]budget.Micros, bandR
 
 // reconcileChargedModel is the one model a run's charge names, and
 // budgetReconcileMixed when it names none or several: the row an old record's
-// whole-run report belongs on.
+// whole-run report belongs on, and the row the charge model_by does not name
+// belongs on too.
 func reconcileChargedModel(c *runstore.Cost) string {
 	var only string
 	for model, usd := range c.ModelBy {
@@ -436,13 +472,9 @@ func reconcileRows(runs []reconcileRun, totals budgetReconcileTotals) ([]budgetR
 		// touched is the rows this run is one run of, so that a model the run
 		// only recorded tokens for still counts as a run of that row.
 		touched := map[string]bool{}
-		for model, usd := range c.ModelBy {
-			usd := microsOfUSD(usd)
-			if usd == 0 {
-				continue
-			}
-			row(model).charge += usd
-			charge += usd
+		for model, m := range r.chargeBy {
+			row(model).charge += m
+			charge += m
 			touched[model] = true
 		}
 		for model, m := range r.reportBy {
