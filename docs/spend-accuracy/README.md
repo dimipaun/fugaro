@@ -12,8 +12,8 @@ settled and estimated spend drift apart.
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The spec as received, byte for byte (no typo was fixed). **Where [reconciliation.md](reconciliation.md) disagrees with it, the reconciliation wins** |
-| [reconciliation.md](reconciliation.md) | Assumptions A1-A5, findings F1-F20, resolutions RS1-RS4, decisions D2640-D2649 with the owner's answers of 2026-11-15, open items O1-O2, UNVERIFIED U1-U7 |
-| [implementation-plan.md](implementation-plan.md) | Six slices, 16 tasks (SA1.0-SA6.1), levels L0-L3, the critical path, the shared-files table, Checks 650-651, owner-run step OR1. **Nothing in it is approved** |
+| [reconciliation.md](reconciliation.md) | Assumptions A1-A5, findings F1-F30, resolutions RS1-RS6, decisions D2640-D2651 with the owner's answers of 2026-11-15 (four amended after review round 1), tension T1 (resolved), open items O1-O4, UNVERIFIED U1-U8 |
+| [implementation-plan.md](implementation-plan.md) | Seven slices, 21 tasks (SA0.1-SA6.1), levels L0-L3, the critical path, the shared-files table, Checks 650-651, owner-run step OR1. **Nothing in it is approved** |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's tasks as the graph `fugaro plan graph` reads |
 
 **Headline:**
@@ -23,7 +23,7 @@ settled and estimated spend drift apart.
 - `diagnose` already compares reported with charged spend per run (F1).
 - The day counters mix billed and notional dollars in one leaf per model (F9).
 
-**Numbers taken:** D2640-D2659 (D2640-D2649 used), Checks 650-659 (650-651 used). The highest in use were D2639 (on
+**Numbers taken:** D2640-D2659 (D2640-D2651 used), Checks 650-659 (650-651 used). The highest in use were D2639 (on
 `main`, `docs/config-ownership`) and Check 640 (`docs/forge-labels`).
 
 **Waits on something external:** OR1 (delete the dogfood override and run `fugaro update`) and Checks 650-651 are

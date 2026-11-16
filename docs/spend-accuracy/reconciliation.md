@@ -2,7 +2,8 @@
 
 The spec ([spec.md](spec.md)) checked against `origin/main` at `4ce05d949` on 2026-11-15, and the documents of the 30
 pull requests open that day. **Where this document disagrees with `spec.md`, this document wins.** Decisions
-D2640-D2649 were answered by the owner on 2026-11-15. An answer settles a question; it approves no task.
+D2640-D2651 were answered by the owner on 2026-11-15. D2640, D2646, D2648 and D2649 were amended after review round 1,
+on the owner's answers of the same day (D2650, D2651 and the D2646 row). An answer settles a question; it approves no task.
 
 Scope check: one capability, the accuracy of recorded model spend. R1-R6 are slices of it, not separate modules: they
 share one data path (gateway charge, then the stage report, then the run record and the day counters) and no part has
@@ -108,25 +109,34 @@ each run.
 output. **Consequence:** resolution RS2: a partial call stays estimated even when a cost was reported, since a report
 on a cut stream may be partial.
 
-**F14 (Gap).** `model_prices` travels on three wires: the local config (`localcfg.ModelPrice`), the published policy
-node (`projectpolicy.Prices`) and `FUGARO_MODEL_PRICES`, which the runner decodes strictly. **Consequence:** D2646
-keeps both wire formats as multipliers. The CLI converts `_per_m` to multipliers when it reads the local config, and
-`fugaro update` rewrites an old `cache_read` to `cache_read_mult` in place (the update rule in `CLAUDE.md`).
+**F14 (Gap; amended after review round 1).** `model_prices` travels on four wires, not three:
+- the owner's local config (`localcfg.ModelPrice`);
+- the shared copy in the runs bucket, which `localcfg.MergeShared` unions with the local file and an older teammate's
+  `ParseShared` (`internal/cli/sharedcfg.go`) decodes strictly;
+- the published policy node, which `policyPrices` (`internal/cli/project_cmd.go`) fills by copying the `ModelPrice`
+  pointers and not through `Rates`;
+- `FUGARO_MODEL_PRICES`, which the runner decodes strictly.
+
+**Consequence:** D2646 as amended. The new spellings live in the owner's local file alone. Loading it normalises them
+into the multiplier fields `ModelPrice` already has, so `policyPrices`, `MergeShared` and the env all keep the old
+names as multipliers. `fugaro update` rewrites an old `cache_read` to `cache_read_mult` in the local file only, with
+`internal/yamledit` as `models_rm.go` does.
 
 **F15 (Gap).** R4's "below the catalog's cheapest endpoint" needs a tier. **Consequence:** the comparison uses the
 route's selected tier (`zdr` unless `require_zdr: false`) and that tier's minimum per dimension. A model the catalog
 does not price is not compared.
 
 **F16 (Gap).** After D2640, `diagnose`'s `reported_warning` (report above the charge without the fee) is empty by
-construction for calls settled on the report. **Consequence:** diagnose compares the settled charge with the table
-estimate of the same calls, so a run record needs an additive `cost.estimated_usd` (the table's charge for every
-call) and `cost.estimated_calls` (the calls with no report).
+construction for calls settled on the report. **Consequence:** diagnose compares the report with the table's band
+for the same calls (D2650). So a run record needs the additive `cost.table_lo_usd`, `cost.table_hi_usd` and
+`cost.unreported_calls` (RS5; amended after review round 1, whose first names were `estimated_usd` and
+`estimated_calls`).
 
 **F17 (Gap, trust boundary).** D2640 makes the provider's own figure price the call and so drive the caps. A hostile
 agent cannot forge it: the gateway reads the upstream response, not the agent's. A provider that under-reports would
-make calls cheap or free and the caps would never bind. What bounds it: D2641's 10x bound applies only to a report
-above the reservation, not below it; the drift alarm (R6, D2649) compares the settled spend with the table estimate
-per model; and the key's credit limit (`docs/multi-model.md` §1) stays the hard bound. **Consequence:** the gateway
+make calls cheap or free and the caps would never bind. What bounds it: D2651 floors a settle at the tier's cheapest end, so a
+zero report cannot make a call free; the drift alarm (D2650) names a model whose reports leave the band; and the key's
+credit limit (`docs/multi-model.md` §1) stays the hard bound. **Consequence:** the gateway
 task gets the security reviewer, and the alarm watches both directions.
 
 **F18 (Rule).** "A field never changes meaning". `model_usd`, `model_by` and `route_by` keep their meaning: what the
@@ -135,12 +145,60 @@ run was charged. `reported_usd` keeps its meaning too (what providers said); onl
 fields are additive, so no format version bumps.
 
 **F19 (Open).** Likely cause 5 (late settles landing in `model_by["unattributed"]`, `modelByUSD` in
-`internal/runner/cost.go`). Whether they also miss the day counters' `byModel` is U6. **Consequence:** R1 prints
+`internal/runner/cost.go`). F24 settles how they reach the run's figures. **Consequence:** R1 prints
 `unattributed` as its own row.
 
 **F20 (Gap).** "The console says so" (R6). The console reads `fugaro doctor --json` through its spawn allow-list
 (`console/src/main/spawn.ts`). **Consequence:** the alarm is a doctor check. Whether the console shows a new check
 without a console change is U7.
+
+**F21 (Gap, review round 1).** `fugaro report` does not read the live counters. `ee/report.Build` reads
+`budget.DayRecord.ByModel` (`ModelTotals`, `internal/budget/rollup.go`), which the rollup builds from the counters and
+`fugaro history rollover` (`internal/budget/rollover.go`) archives to Firestore. **Consequence:** the new leaves are
+carried through `ModelTotals`, its Firestore fields and its reader (task SA5.6), or R5 never reaches the report.
+
+**F22 (Gap, review round 1).** `usageAcc.merge` (`internal/gateway/sse.go`) takes the cost last-wins even on a provider
+route, where token counts keep the largest (`takeMax`), and it accepts `usage.cost: 0`. **Consequence:** under D2640, a
+later event can lower a call's settled cost, and a zero report would settle a call at $0. D2651 floors the settle at
+the tier's cheapest end, and the provider route keeps the largest cost seen.
+
+**F23 (Gap, review round 1).** Tier-A notional per model. `StageReport.ByModel` holds every tier's money, and
+`Notional` is one scalar (`internal/gateway/ledger.go`). **Consequence:** SA1.0 adds `NotionalBy`, so a cascade
+run's tier-A spend reaches the `notional` leaf per model.
+
+**F24 (Gap, review round 1; was U6).** A call settled after its stage's wait reaches the run's `model_usd` and
+`Ledger.ModelTokens`, but the run-level `Ledger` has no reported or table figure, so it would be missing from
+`reported_by` and the estimates. Those runs carry `model_by["unattributed"]`. **Consequence:** SA1.2 gives the
+`Ledger` the same per-model report and table figures, and the runner (SA1.5) takes the run's totals from it.
+
+**F25 (Gap, review round 1).** `Ledger.ModelTokens` is keyed by the priced (pin) model, while `ByModel` and the
+`byModel/<m>/micros` leaf are keyed by the serving model. **Consequence:** the per-stage tokens the day counters get
+(SA1.0's `TokensBy`) are keyed by the serving model, so a model's dollars and tokens share one row. The run record's
+`model_tokens` keeps its pin keys, and its meaning does not change.
+
+**F26 (Gap, review round 1).** `Session.plan` (`internal/budget/lease.go`) builds each map's leaf writes from the same
+current value. A model that has both billed and notional spend in one flush has its `micros` write overwritten rather
+than summed. **Consequence:** SA5.1 merges writes per leaf before it builds the update.
+
+**F27 (Gap, review round 1).** Rules generation 5 is pinned outside the rules package: `docs_mobile_auth_test.go` pins
+`const RulesVersion = 5`, and the top branch of `rulesMarkerOlderText` (`internal/cli/project_cmd.go`) names the voice
+node as what an older marker lacks. Nothing in `budget.Session` knows the deployed generation today.
+**Consequence:** SA5.0 moves the pins and the marker text, and SA5.1 takes the generation into the session (its
+`Config`, from `internal/runner/budget_session.go`).
+
+**F28 (Rule, review round 1).** An absent `price_policy` changes meaning, from `cheapest` to `highest` (D2644).
+**Consequence:** this is the owner's decision, and the mixed-version window is stated rather than hidden. A job image
+built before the change reads an unset policy as `cheapest` until `fugaro update` rebuilds the images, which the same
+`update` does. Until then, the CLI's caps and its estimates already use `highest`. That is the safe direction: a cap
+only binds sooner.
+
+**F29 (Gap, review round 1).** D795 (`docs/models-commands/reconciliation.md`) deferred a `--price-policy` flag on
+`models add` "with the release that lifts the refusal", and SA1.1 lifts it. **Consequence:** the flag is not in this
+spec. It is listed as considered and declined here and left to the models-commands plan.
+
+**F30 (Gap, review round 1).** The day counters are per UTC day, so "a rolling 24 hours" (D2649) can only be read as
+today plus yesterday, a window of 24 to 48 hours. **Consequence:** D2649 is amended to that window, and O4 asks the
+owner to confirm.
 
 ## Resolutions (one defensible answer)
 
@@ -153,26 +211,35 @@ without a console change is U7.
   names), never a refusal or a prompt (spec R4; the no-prompt policy).
 - **RS4.** Each call's log line gains `priced_as: reported`, and an estimated call keeps today's `priced_as` (table,
   max, tier or surprise).
+- **RS5 (review round 1).** Record and `--json` names avoid the existing `cost.estimate` (a bool). The new fields are
+  `reported_by`, `table_lo_usd`, `table_hi_usd` and `unreported_calls`, and `diagnose --json` uses the same names.
+- **RS6 (review round 1).** Each code task keeps the docs tests green in its own pull request: a pinned sentence it
+  makes false changes in that pull request (the "Docs are tested" rule). SA6.1 writes the narrative that remains.
 
 ## Decisions
 
 | # | Question | Recommendation | Answer (2026-11-15) |
 | --- | --- | --- | --- |
-| D2640 | Settle on the provider's cost (R2, spec question 1) | Reported + `route_fee_pct` where `usage.cost` is present on a complete call; table otherwise, marked estimated; the table stays the reservation | **The recommendation.** |
+| D2640 | Settle on the provider's cost (R2, spec question 1) | Reported + `route_fee_pct` where `usage.cost` is present on a complete call; table otherwise, marked estimated; the table stays the reservation | **The recommendation.** *Amended after review round 1 (F22, D2651):* a report below the tier's cheapest end is floored there. |
 | D2641 | A report above the call's reservation | Settle in full as an overrun; a report above 10x the reservation is malformed and gets the table charge plus a warning | **The recommendation.** |
 | D2642 | Request usage accounting (R2's owner decision) | No body rewrite; R1 measures how often `usage.cost` is present, and the question comes back only if it is mostly absent | **The recommendation.** |
 | D2643 | Which OpenRouter figure the ±3% acceptance compares against | The key's usage in credits against the charge without the fee | **Not the recommendation: the invoice's dollars against the charge with the fee.** Check 651 measures it that way; the daily noise of credit purchases is the cost the owner accepted. |
 | D2644 | The default `price_policy` (R3, spec question 2) | `highest`, the maximum of the selected tier | **The recommendation.** Supersedes owner ruling 3 (F4). |
 | D2645 | The dogfood config's `cache_read: 0.0042` (spec question 3) | Delete the override, so the catalog prices v4.1-flash | **The recommendation.** Owner-run (OR1). |
-| D2646 | The cache-price spelling in `model_prices` (R4) | `cache_read_per_m`, `cache_write_5m_per_m`, `cache_write_1h_per_m` in $/M in the local config, the multiplier only as `cache_read_mult` (and `cache_write_5m_mult`, `cache_write_1h_mult`); the CLI converts, the node and the env stay multipliers; `update` migrates in place | **The recommendation.** |
+| D2646 | The cache-price spelling in `model_prices` (R4) | `cache_read_per_m`, `cache_write_5m_per_m`, `cache_write_1h_per_m` in $/M in the local config, the multiplier only as `cache_read_mult` (and `cache_write_5m_mult`, `cache_write_1h_mult`); the CLI converts, the node and the env stay multipliers; `update` migrates in place | **The recommendation.** *Amended after review round 1, the owner's answer of 2026-11-15 (F14):* the shared copy in the runs bucket also keeps the old names as multipliers. The new names exist only in the owner's local file. |
 | D2647 | Where R1 lives | A core command, `fugaro budget reconcile --from --to`, reading the runs' `result.json` | **The recommendation.** |
-| D2648 | Telling billed from notional per model in the day counters (R5) | New leaves `byModel/<m>/notional`, `est` (the table's estimate of the same calls) and `rep` (the provider-reported cost); a day without them keeps `splitModel` | **The recommendation.** |
-| D2649 | The drift alarm (R6) | 10% (`reportedGapPct`) over a rolling 24 hours, per model, in either direction, from the day-counter leaves, and only once the model has $1 of spend; shown by `watch` and `doctor` (and the console through `doctor --json`) | **The recommendation.** |
+| D2648 | Telling billed from notional per model in the day counters (R5) | New leaves `byModel/<m>/notional`, `est` (the table's estimate of the same calls) and `rep` (the provider-reported cost); a day without them keeps `splitModel` | **The recommendation.** *Amended after review round 1 by D2650:* `est` becomes two leaves, `tlo` and `thi`. |
+| D2649 | The drift alarm (R6) | 10% (`reportedGapPct`) over a rolling 24 hours, per model, in either direction, from the day-counter leaves, and only once the model has $1 of spend; shown by `watch` and `doctor` (and the console through `doctor --json`) | **The recommendation.** *Amended after review round 1:* by D2650 (what drift is measured against), and by F30 (the window is today plus yesterday, UTC; confirm in O4). |
+| D2650 | *Review round 1, the D2644 × D2649 tension.* Under `highest`, the estimate is the tier's top, and v4.1-flash's spread is 8.6x on input and 13.3x on output, so a 10% alarm against it would always fire | Record the table's charge at both ends of the tier (`tlo`, `thi`) over the calls that carried a report, with no fee. Alarm when the report is more than 10% above `thi` or more than 10% below `tlo`. A model the catalog does not price has `tlo = thi` | **The recommendation.** |
+| D2651 | *Review round 1, F22.* A report below the tier's cheapest end, or a zero report | Settle at the larger of the report and the tier's cheapest-end charge, plus the fee, with a warning; on a provider route, keep the largest cost the response reported | **The recommendation.** |
 
 ## Open tensions
 
-None. D2643 (invoice dollars, charge with the fee) and D2640 (settle on the report plus the fee) agree: what is
-recorded is what is compared.
+- **T1, resolved.** D2644 against D2649. A 10% alarm against a highest-end estimate would fire on nearly every
+  DeepSeek call (review round 1). D2650 resolved it on 2026-11-15.
+
+D2643 (invoice dollars, with the fee) and D2640 (settle on the report plus the fee) agree: what is recorded is what is
+compared.
 
 ## Open items
 
@@ -180,6 +247,12 @@ recorded is what is compared.
   to the owner as its own decision. Check 650 answers it.
 - **O2.** Reasoning tokens (spec cause 4) are U2. If OpenRouter bills reasoning outside `output_tokens`, D2640 already
   covers every call that carries a report, and only estimated calls would under-charge.
+
+- **O3.** How OR1's deletion reaches the shared copy. `MergeShared` unions the published copy with the local file, so
+  a deletion in the local file alone may leave the entry published. OR1 is verified by `fugaro budget prices`
+  showing v4.1-flash as catalog-priced. If it does not, removing the entry from the shared copy is the owner's next
+  step (U8).
+- **O4.** Confirm the amended D2649 window: today plus yesterday (UTC), which is 24 to 48 hours (F30).
 
 ## UNVERIFIED
 
@@ -192,7 +265,8 @@ recorded is what is compared.
 - **U4.** Whether `route_fee_pct: 5.5` models OpenRouter's credit-purchase fee, and whether `usage.cost` excludes it.
   The owner knows why the fee was set; Check 651 compares against the invoice either way (D2643).
 - **U5.** The 46% figure and its split between causes 1 to 3. Check 650 (R1 over 2026-10-12 to 2026-11-16) settles it.
-- **U6.** Whether a call that settles after its stage's wait reaches the day counters' `byModel` at all, or only the
-  run's `unattributed`. Read the gateway's late-settle path, or measure in Check 650.
+- **U6.** Withdrawn: settled by F24.
 - **U7.** Whether the console renders a new doctor check without a console change. A console maintainer settles it by
   reading the doctor view; if it does not, the console change is a follow-up task, which this plan does not add.
+- **U8.** Whether any command today removes one `model_prices` entry from the shared copy in the runs bucket. Read
+  `internal/cli/sharedcfg.go`'s publish path, or run OR1 and read the result.
