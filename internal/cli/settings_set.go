@@ -1110,6 +1110,13 @@ type settingsEntryBlock struct {
 	// before. A workflow's secrets are mounted into the job's environment, so
 	// adding one is the widening D1165 classifies as the typed write.
 	widens bool
+	// widensWhy is the sentence the fence prints for an entry added to such a
+	// block: what this entry hands over, in the block's own words. It lives
+	// beside the flag rather than at the refusal because a block that widens at
+	// all widens for one reason, and a sentence written at the refusal would be
+	// a second place that reason is stated — the shape a row's TypedWhy already
+	// has.
+	widensWhy string
 }
 
 // settingsEntryBlocks is that table, keyed by the registry's own spelling of
@@ -1128,8 +1135,11 @@ type settingsEntryBlock struct {
 // refuses, so nothing else is left.
 var settingsEntryBlocks = map[string]settingsEntryBlock{
 	"workflows.*.commands.rerun_failed": {kind: settingsEntryMap},
-	"workflows.*.secrets":               {kind: settingsEntryList, keyField: "name", widens: true},
-	"workflows.*.cache":                 {kind: settingsEntryList},
+	"workflows.*.secrets": {
+		kind: settingsEntryList, keyField: "name", widens: true,
+		widensWhy: "this hands a run a credential it did not reach before: a workflow's secret is mounted into the job's environment",
+	},
+	"workflows.*.cache": {kind: settingsEntryList},
 	// The project layer's blocks (G4, D1175, spec §3.6): `defaults.*`'s three,
 	// its `ab` and the profile blocks a repository's own file has too. Their
 	// leaves are the rows the registry holds one at a time
@@ -1154,11 +1164,35 @@ var settingsEntryBlocks = map[string]settingsEntryBlock{
 	// writes (D1162) and the reason the row is the generic path's rather than a
 	// family's — there is no per-class key for a scalar write to land on, so the
 	// entry is the only spelling the block has. It is the second block of the
-	// local config the entry pair reaches (a repository's and the layer's blocks
-	// are the others), and policy.ValidOrchestrator is what decides whether the
+	// local config the entry pair reaches (a repository's and the layer's are
+	// the others), and policy.ValidOrchestrator is what decides whether the
 	// class and the model are ones the daemon reads, exactly as it does for a
 	// block written by hand.
-	"orchestrator.decision_model_per_class": {kind: settingsEntryMap},
+	//
+	// It is marked widening (D1165): the block is a ceiling (registry.go's row
+	// for it, D1239, D1234), and which way an entry moves a class is not a fact
+	// this comparison can read — the class's floor is what a model is measured
+	// against, and a member's own floor is no value the write holds, so an entry
+	// nobody can prove tightens is typed, D846's asymmetry's own safe half.
+	"orchestrator.decision_model_per_class": {
+		kind: settingsEntryMap, widens: true,
+		widensWhy: "this changes which model a decision class runs on: the block is a ceiling, a class the map does not carry is at its floor, and an entry nobody can prove keeps that class at or above its floor takes the owner's own hand",
+	},
+	// The declared mobile allowlist (docs/mobile-auth, D231, D2603): an object
+	// list whose entries the `uid` field names, so --add-entry is the spelling
+	// that grows it — and one that widens, because an entry admits a phone to
+	// the project's runs: the device node the rules read is seeded from the
+	// declaration, so growing the list widens who may drive them. It is the
+	// blocks' *registration* and not yet their writer: settingsWriteRow refuses
+	// the bare block name today (the registry carries the three `mobile_allow.*`
+	// leaf rows and no row for the block), so the entry pair never reaches this
+	// one — W3's allowlist is what admits it, and the widening D1165 classifies
+	// is recorded here so that the guard is in place before the writer is and
+	// not after it (R1 of docs/config-ownership).
+	"mobile_allow": {
+		kind: settingsEntryList, keyField: "uid", widens: true,
+		widensWhy: "this admits a phone to the project's runs: an entry that names a uid seeds the device node the rules read, so growing the list widens who may drive them",
+	},
 }
 
 // settingsEntryBlockOrder is the table's own order, and the lookup walks it
@@ -1176,6 +1210,7 @@ var settingsEntryBlockOrder = []string{
 	"layer.profiles.*.commands.rerun_failed",
 	"layer.profiles.*.cache",
 	"orchestrator.decision_model_per_class",
+	"mobile_allow",
 }
 
 // settingsEntryBlockOf is the block a key names, matched the way
@@ -1487,8 +1522,22 @@ func settingsEntryLeafKey(key string, block settingsEntryBlock, entry *settingsE
 var settingsCeilingAgentKeys = []string{"agent.max_budget_usd", "agent.max_run_tokens"}
 
 // settingsCeilingKey is the test D846 names: budget.* and governance.* are the
-// keys whose loosening crosses the boundary that fence guards, and the
-// agent block's caps are the same boundary under their own names.
+// keys whose loosening crosses the boundary that fence guards, the
+// agent block's caps are the same boundary under their own names, and the
+// orchestrator daemon's guardrails are that boundary again (D1239, O4): they
+// bound how much work a project's orchestrator sets going at once, which
+// docs/config-management/spec.md §4.1 rule 6 refuses in the words of its own
+// body — "a command that would raise a cap is refused, whichever command it is"
+// — and a class of judgement moved down the tier order is the same authority
+// spent differently.
+//
+// The block is the one family here whose layers do not combine by the
+// tighter-wins rule. The machine's own block REPLACES the published one
+// wholesale when it states any key of it (localcfg.OrchestratorEffective), so a
+// file that starts stating a rate raises what every run of the project gets
+// whatever the node is pinned at, and the ceiling a write is measured against is
+// the block a run gets today (orchestratorEffectiveValues) rather than a clamp
+// a layer above applies.
 //
 // The project layer's own block is the same setting under the `layer.` prefix
 // (SD14), so `layer.governance.review_ratio` is typed exactly as
@@ -1499,7 +1548,7 @@ var settingsCeilingAgentKeys = []string{"agent.max_budget_usd", "agent.max_run_t
 // branches start — which is what D846 guards.
 func settingsCeilingKey(key string) bool {
 	key = strings.TrimPrefix(key, "layer.")
-	if strings.HasPrefix(key, "budget.") || strings.HasPrefix(key, "governance.") {
+	if strings.HasPrefix(key, "budget.") || strings.HasPrefix(key, "governance.") || strings.HasPrefix(key, "orchestrator.") {
 		return true
 	}
 	return slices.Contains(settingsCeilingAgentKeys, strings.TrimPrefix(key, "defaults."))
@@ -1635,6 +1684,17 @@ func settingsEffectiveCeiling(ctx context.Context, row settings.Row) string {
 	r, err := readSettings(ctx, settingsOptions{offline: true}, time.Now())
 	if err != nil {
 		return ""
+	}
+	if strings.HasPrefix(row.Key, "orchestrator.") {
+		// The daemon's own block rather than the read's resolver: these keys
+		// are the one family the layers above the file do not clamp, so what a
+		// run gets is the block's own value with Fugaro's guardrails under it
+		// (orchestratorEffectiveValues), and the resolver would answer the
+		// registry's default for a key the file leaves out — a base of nothing,
+		// which is the hole F2 closes for the agent cap and this reads shut for
+		// the daemon's caps: an unstated key is held to a figure today, and a
+		// first write above that figure raises it.
+		return orchestratorEffectiveValues(r.local)[row.Key]
 	}
 	if s := r.projectRow(row); s.Wins != settings.LayerDefault {
 		return s.Value
@@ -2010,7 +2070,7 @@ func settingsTypedWrite(row settings.Row, oldValue, newValue, mode string) (bool
 	// none.
 	if mode == "add-entry" {
 		if block, ok := settingsEntryBlockOf(key); ok && block.widens {
-			return true, "this hands a run a credential it did not reach before: a workflow's secret is mounted into the job's environment"
+			return true, block.widensWhy
 		}
 	}
 	return false, ""

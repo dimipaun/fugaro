@@ -1210,13 +1210,12 @@ var localRows = []Row{
 
 	// The orchestrator daemon's own guardrails (D1239, D1234) are the owner's
 	// policy like the catalog above, and one row per member for the catalog's
-	// reason. They carry Tighten rather than the ordinary Replace: the smaller
-	// cap wins whatever layer it was written in (policy.Merge), so a person or
-	// a project may lower one and never raise it, and the model a decision
-	// class runs on moves up the tier order or not at all. The default of each
-	// count is the figure policy.WithDefaults fills the ceiling layer with,
-	// named by the constant that holds it — the effective cap is the person's
-	// own max_parallel, which is why the sentence names that key rather than a
+	// reason. They carry Tighten rather than the ordinary Replace, which is the
+	// block's kind: a ceiling, whose counts are caps and whose class models move
+	// up the tier order or not at all. The default of each count is the figure
+	// policy.WithDefaults fills the block with, named by the constant that holds
+	// it — the effective cap of the running count is the person's own
+	// max_parallel, which is why its sentence names that key rather than a
 	// number.
 	//
 	// Owner `settings set` (R1 of docs/config-ownership, D2603): the block is a
@@ -1226,10 +1225,11 @@ var localRows = []Row{
 	// whose words are `fugaro project policy publish` carrying the local block
 	// to the node, which left every one of the six refused by the write while
 	// its row named a writer — the pair D1178 forbids — and sent a reader to a
-	// bare command for keys no subcommand of it edits. Tighten still decides how
-	// the layers combine: the smaller cap wins whatever layer it was written in,
-	// so the publish carries the stricter of the two and a lower layer may only
-	// lower a cap.
+	// bare command for keys no subcommand of it edits. Not the merge, though:
+	// the machine's own block REPLACES the node's when it states any key of it
+	// (localcfg.OrchestratorEffective), and what holds the block is its two
+	// writers — the publish door refusing a loosened node (policyLoosening)
+	// and `settings set` typing a raise (settingsCeilingKey).
 	locTighten("orchestrator.max_running", "the person's max_parallel", "settings set", docOrchestrator),
 	locTighten("orchestrator.batch_size", "10 (policy.DefaultBatchSize)", "settings set", docOrchestrator),
 	locTighten("orchestrator.spawn_per_minute", "2 (policy.DefaultSpawnPerMinute)", "settings set", docOrchestrator),

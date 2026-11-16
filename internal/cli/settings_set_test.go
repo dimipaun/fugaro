@@ -1003,9 +1003,11 @@ func TestSettingsSetRefusesASensitiveKeyAndNeverPrintsItsValue(t *testing.T) {
 
 // TestSettingsCeilingKeyCoversTheCapsAndTheLayerSpellings: D846's prefix test
 // is `budget.*` and `governance.*`, the agent block's two caps are the same
-// boundary under their own names, and the project layer is the same setting
-// under the `layer.` prefix (SD14) — its own block and its `defaults.` block,
-// which is the cap every repository the layer templates runs with.
+// boundary under their own names, the orchestrator daemon's guardrails are that
+// boundary again (D1239, O4) — a raise of one bounds how much work the whole
+// project's orchestrator sets going at once — and the project layer is the same
+// setting under the `layer.` prefix (SD14): its own block and its `defaults.`
+// block, which is the cap every repository the layer templates runs with.
 func TestSettingsCeilingKeyCoversTheCapsAndTheLayerSpellings(t *testing.T) {
 	for _, key := range []string{
 		"budget.per_run_usd", "budget.mode", "budget.allowed_models",
@@ -1013,6 +1015,8 @@ func TestSettingsCeilingKeyCoversTheCapsAndTheLayerSpellings(t *testing.T) {
 		"layer.governance.review_ratio",
 		"agent.max_budget_usd", "agent.max_run_tokens",
 		"layer.defaults.agent.max_budget_usd",
+		"orchestrator.max_running", "orchestrator.spawn_per_day",
+		"orchestrator.decision_model_per_class",
 	} {
 		if !settingsCeilingKey(key) {
 			t.Errorf("settingsCeilingKey(%q) = false, and D846 makes it a ceiling", key)
@@ -2760,5 +2764,93 @@ func TestSettingsTypedAddCoversTheMobileAllowRows(t *testing.T) {
 		t.Error("mobile_allow.operator.uid is writable, and the allowlist carries no row of the declared allowlist: W3's task is what registers one (D1162)")
 	} else if !strings.Contains(err.Error(), "no setting has that name") {
 		t.Errorf("the concrete spelling is refused with %v, want the unknown-key answer the allowlist's silence gives", err)
+	}
+}
+
+// TestSettingsOrchestratorGuardrailsAreMeasuredAgainstTheDaemonBlock: the
+// orchestrator's counts are the daemon's project-wide guardrails (D1239, O4),
+// and the write that raises them takes the typed name however the layers above
+// the file are pinned — because the machine's own block REPLACES the published
+// one when it states any key of it (localcfg.OrchestratorEffective), so a file
+// that starts stating a figure is a raise whatever the node says. The figure a
+// write is measured against is therefore the one a run gets today: the block's
+// own value where the file states one, and the guardrails Fugaro ships — with
+// this machine's own max_parallel filling the running cap — where it does not.
+//
+// Every direction that is not a raise is an ordinary write, which is the half
+// the fence may not swallow: a person lowering a cap is doing what the block is
+// for.
+func TestSettingsOrchestratorGuardrailsAreMeasuredAgainstTheDaemonBlock(t *testing.T) {
+	_, localPath := settingsWriteHome(t)
+	settingsWriteCheckout(t, settingsRepoYAML(""))
+	noTerminal(t)
+	for _, tc := range []struct {
+		widening bool
+		args     []string
+	}{
+		{true, []string{"settings", "set", "orchestrator.spawn_per_day", "600", "--layer", "local"}},
+		{false, []string{"settings", "set", "orchestrator.spawn_per_day", "30", "--layer", "local"}},
+		{true, []string{"settings", "set", "orchestrator.max_running", "40", "--layer", "local"}},
+		{false, []string{"settings", "set", "orchestrator.max_running", "5", "--layer", "local"}},
+		{false, []string{"settings", "set", "orchestrator.spawn_per_minute", "1", "--layer", "local"}},
+		{true, []string{"settings", "set", "orchestrator.decision_model_per_class", "--add-entry", "routine=haiku", "--layer", "local"}},
+	} {
+		doc := settingsDryRunDoc(t, tc.args...)
+		if doc.Widening != tc.widening {
+			t.Errorf("%v: widening = %v (why %q), want %v", tc.args, doc.Widening, doc.Why, tc.widening)
+		}
+	}
+
+	// The same block once the file states it: the value a run gets is the file's
+	// own, so a write raising that figure is the typed one and one lowering it is
+	// not — the node is not consulted and no clamp stands under these keys.
+	if out, _, err := execute(t, "settings", "set", "orchestrator.spawn_per_day", "30", "--layer", "local"); err != nil {
+		t.Fatalf("lowering a guardrail did not write: %v\n%s", err, out)
+	}
+	if got := readFileString(t, localPath); !strings.Contains(got, "spawn_per_day: 30") {
+		t.Fatalf("the local config does not carry the lowered cap:\n%s", got)
+	}
+	doc := settingsDryRunDoc(t, "settings", "set", "orchestrator.spawn_per_day", "600", "--layer", "local")
+	if !doc.Widening {
+		t.Errorf("raising the file's own 30 to 600 is not widening (why %q): the daemon gets the file's block", doc.Why)
+	}
+	// Removing it hands the daemon the guardrail Fugaro ships, which is a looser
+	// figure than the 30 the file states.
+	if doc := settingsDryRunDoc(t, "settings", "unset", "orchestrator.spawn_per_day", "--layer", "local"); !doc.Widening {
+		t.Errorf("removing the file's own guardrail is not widening (why %q): the daemon then runs on the shipped one", doc.Why)
+	}
+}
+
+// TestSettingsTypedWriteCoversTheEntryBlocksThatWiden: an entry write is
+// classified by the block it lands in and not by a row (D1165), so the two
+// blocks R1 hands the generic path — the orchestrator's decision-model map and
+// the declared mobile allowlist — carry the sentence the fence prints for an
+// entry added to them. The mobile block's writer is W3's (`settingsWriteRow`
+// refuses the bare block name today: the registry holds the three leaf rows and
+// no row for the block), and registering the widening before the writer is what
+// makes the guard hold the day the writer lands rather than a release later.
+func TestSettingsTypedWriteCoversTheEntryBlocksThatWiden(t *testing.T) {
+	for _, key := range []string{"orchestrator.decision_model_per_class", "mobile_allow"} {
+		block, ok := settingsEntryBlocks[key]
+		if !ok || !block.widens || block.widensWhy == "" {
+			t.Errorf("%s: block = %+v, want a registered block whose entries widen with a sentence of its own", key, block)
+			continue
+		}
+		if typed, why := settingsTypedWrite(settings.Row{Key: key}, "", "haiku", "add-entry"); !typed || why != block.widensWhy {
+			t.Errorf("settingsTypedWrite(%s, add-entry) = %v %q, want true and the block's own sentence", key, typed, why)
+		}
+	}
+	// Taking an entry away narrows a block and is no widening, the way a
+	// ceiling's own remove is not. It is asked of the mobile list rather than of
+	// the decision-model map because that map is a ceiling row as well, and a
+	// ceiling's `remove-entry` is typed on its own rule (remove-entry hands the
+	// member back to the layer below).
+	if typed, _ := settingsTypedWrite(settings.Row{Key: "mobile_allow"}, "operator", "", "remove-entry"); typed {
+		t.Error("removing a mobile_allow entry is the widening, and taking one away narrows the list")
+	}
+	// The workflow's secrets widen for their own reason, and the sentence they
+	// carried before the table held it is the sentence they still carry.
+	if typed, why := settingsTypedWrite(settings.Row{Key: "workflows.deploy.secrets"}, "", "TOKEN", "add-entry"); !typed || why != settingsEntryBlocks["workflows.*.secrets"].widensWhy {
+		t.Errorf("settingsTypedWrite(workflows.deploy.secrets, add-entry) = %v %q, want the block's own sentence", typed, why)
 	}
 }
