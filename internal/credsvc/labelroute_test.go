@@ -41,6 +41,7 @@ package credsvc
 import (
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -882,6 +883,91 @@ func TestLabelRouteWithoutItsOwnToken(t *testing.T) {
 	}
 	if got := len(s.auditLines(t)); got != 1 {
 		t.Errorf("the refused call wrote %d audit lines, want exactly one", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The gate's own two refusals
+// ---------------------------------------------------------------------------
+
+// TestLabelRouteStoppedByTheKillSwitch: the operator's stop switch is read
+// before the credential, so a stopped service performs no act at all — no
+// bundle read, no App key, no token minted, not one request to GitHub — and the
+// call is refused as the state_unavailable it is, with its own audit line.
+//
+// The switch is the route's and not an act's, so both directions are driven: a
+// stopped service reads no label and writes none, and a write is refused before
+// the pull request it would have been corroborated against is read.
+func TestLabelRouteStoppedByTheKillSwitch(t *testing.T) {
+	stopped := func(t *testing.T, body func(*svc) string) {
+		t.Helper()
+		s, gh := labelRouteSvc(t)
+		s.kills.global = true
+		resp, answer := s.labelCall(t, body(s))
+		if resp.StatusCode != StatusUnavailable {
+			t.Fatalf("a stopped service answered %d, want %d: %s", resp.StatusCode, StatusUnavailable, answer)
+		}
+		if e := refusal(t, resp.StatusCode, answer); e.Error != ErrorStateUnavailable {
+			t.Errorf("the refusal is %q, want %q: %s", e.Error, ErrorStateUnavailable, e.Message)
+		}
+		if got := gh.count(); got != 0 {
+			t.Errorf("the stopped service reached GitHub %d times, want none: %v", got, gh.requests())
+		}
+		if got := s.src.readCount(); got != 0 {
+			t.Errorf("the stopped service read the bundle %d times, want none: the switch is read before the one document that holds a credential", got)
+		}
+		lines := s.auditLines(t)
+		if len(lines) != 1 {
+			t.Fatalf("the refused call wrote %d audit lines, want exactly one: %v", len(lines), lines)
+		}
+		if got := lines[0]["status"]; got != ErrorStateUnavailable {
+			t.Errorf("the audit line's status is %v, want %q", got, ErrorStateUnavailable)
+		}
+	}
+	t.Run("a read", func(t *testing.T) {
+		stopped(t, func(*svc) string { return labelBody(testRepoPath, creds.LabelActionList, "", 0, "") })
+	})
+	t.Run("a write", func(t *testing.T) {
+		stopped(t, func(s *svc) string {
+			return labelBody(testRepoPath, creds.LabelActionAdd, wantRunningName, 7, s.run)
+		})
+	})
+}
+
+// TestLabelRouteUnaudited: an act this service cannot record is not one it
+// reports as done (C1.13, D143), which is answerMergeMint's order for the label
+// route's own reason: the acts are idempotent, so a caller told its call was
+// not served re-does an act that changed nothing the second time.
+//
+// The audit handler fails the first line it is handed — the served act's own —
+// and records the next, which is the refusal's: a test that reads a line here
+// has read the refusal's, and a service that answered 200 with no line at all
+// is what the status assertion below catches.
+func TestLabelRouteUnaudited(t *testing.T) {
+	var failed bool
+	s, gh := labelRouteSvcWith(t, func(s *svc, cfg *Config) {
+		cfg.AuditLog = &failFirstHandler{inner: slog.NewJSONHandler(s.audit, nil), failed: &failed}
+	})
+	resp, body := s.labelEnsure(t, wantRunningName)
+	if resp.StatusCode != StatusUnavailable {
+		t.Fatalf("a call whose line could not be written was answered %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
+	}
+	e := refusal(t, resp.StatusCode, body)
+	if e.Error != ErrorStateUnavailable {
+		t.Errorf("the refusal is %q, want %q: %s", e.Error, ErrorStateUnavailable, e.Message)
+	}
+	if !strings.Contains(e.Message, ErrLabelUnaudited.Error()) {
+		t.Errorf("the refusal does not name the line that could not be written: %s", e.Message)
+	}
+	if got := len(gh.writes()); got != 1 {
+		t.Errorf("the act reached GitHub %d times, want one: the act was performed and its caller was told it was not served", got)
+	}
+	lines := s.auditLines(t)
+	if len(lines) != 1 {
+		t.Fatalf("the service wrote %d audit lines, want the refusal's alone: %v", len(lines), lines)
+	}
+	if got := lines[0]["status"]; got != ErrorStateUnavailable {
+		t.Errorf("the refusal's line carries status %v, want %q", got, ErrorStateUnavailable)
 	}
 }
 
