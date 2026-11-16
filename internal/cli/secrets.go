@@ -129,9 +129,19 @@ func (o *secretsOptions) policyWrite(cmd *cobra.Command) bool {
 // --layer says where a settings write lands. None of them carries a value, and
 // none is read by the value path — the four are the records of
 // secrets_expiry.go and nothing else.
+//
+// Each flag is read as GIVEN and never as the value it parsed to: pflag records
+// `--expires ""` as Changed with an empty string and `--bitbucket-api-root ""` as
+// Changed with an empty slice (readAsCSV), so a route decided from the values
+// alone would send such a run down the value path, where it opens the cloud and
+// reads a value from stdin — `secrets set NAME --expires "$EXP"` with EXP unset is
+// a hidden prompt at a terminal and an overwrite of the stored secret from a pipe,
+// and the help's "reads no value" would be false. A flag given an empty value is
+// this half of the command, and the record it names is refused in
+// secretsSettingsChanges for being the empty one it is.
 func (o *secretsOptions) settingsWrite(cmd *cobra.Command) bool {
-	return o.expires != "" || cmd.Flags().Changed("rotation-days") ||
-		len(o.bitbucketAPIRoots) > 0 || len(o.removeBitbucketAPIRoots) > 0 ||
+	return cmd.Flags().Changed("expires") || cmd.Flags().Changed("rotation-days") ||
+		cmd.Flags().Changed("bitbucket-api-root") || cmd.Flags().Changed("remove-bitbucket-api-root") ||
 		cmd.Flags().Changed("layer")
 }
 
@@ -490,8 +500,13 @@ a value no plan shows.`,
 			case len(args) == 0:
 				// The records that are not about one secret are the whole
 				// command line, which is what makes their registered argv
-				// (writers_secrets.go) runnable as written.
-				if cmd.Flags().Changed("rotation-days") || len(o.bitbucketAPIRoots) > 0 || len(o.removeBitbucketAPIRoots) > 0 {
+				// (writers_secrets.go) runnable as written. As in settingsWrite,
+				// the flags are read as given: `--expires ""` and
+				// `--bitbucket-api-root ""` are this half of the command too, and
+				// reach the record refusals rather than a sentence about a NAME
+				// the flag never wanted.
+				if cmd.Flags().Changed("expires") || cmd.Flags().Changed("rotation-days") ||
+					cmd.Flags().Changed("bitbucket-api-root") || cmd.Flags().Changed("remove-bitbucket-api-root") {
 					return nil
 				}
 				return userErr("secrets set needs the secret's NAME")

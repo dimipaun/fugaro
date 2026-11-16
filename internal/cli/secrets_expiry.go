@@ -260,7 +260,23 @@ func secretsSettingsRecord(cmd *cobra.Command, o secretsOptions, change secretsS
 // anything is opened or read.
 func secretsSettingsChanges(cmd *cobra.Command, o secretsOptions, name string) ([]secretsSettingsChange, error) {
 	var out []secretsSettingsChange
-	if o.expires != "" {
+	// An empty value is refused here, before anything is opened or read, and it
+	// is refused for every flag that was GIVEN one: the route to this half is
+	// decided from Changed and not from the value (settingsWrite), so `--expires
+	// ""` and `--bitbucket-api-root ""` arrive as records of nothing rather than
+	// as no flag at all. Left to fall through, the first would go on to the value
+	// path and read a value, and the second would write the other flags of the
+	// run and silently drop the record this one names.
+	if cmd.Flags().Changed("expires") && o.expires == "" {
+		return nil, userErr("--expires takes a date written YYYY-MM-DD, such as 2026-12-01, and this run passed it an empty value: an empty date is not a record, and dropping the flag is what stores a value — pass the date, or drop the flag to store one")
+	}
+	if cmd.Flags().Changed("bitbucket-api-root") && len(o.bitbucketAPIRoots) == 0 {
+		return nil, userErr("--bitbucket-api-root takes an API root — an https origin such as https://api.bitbucket.org that reaches one host, with no userinfo, no query and no fragment — and this run passed it an empty value: an empty root adds nothing to bitbucket_api_roots, and dropping the flag is what stores a value — pass the root, or drop the flag to store one")
+	}
+	if cmd.Flags().Changed("remove-bitbucket-api-root") && len(o.removeBitbucketAPIRoots) == 0 {
+		return nil, userErr("--remove-bitbucket-api-root takes an API root out of the list, so it takes the same value --bitbucket-api-root does — an https origin such as https://api.bitbucket.org, with no userinfo, no query and no fragment — and this run passed it an empty value: an empty root removes nothing, and dropping the flag is what stores a value — pass the root, or drop the flag to store one")
+	}
+	if cmd.Flags().Changed("expires") {
 		if name == "" {
 			return nil, userErr("--expires records the day one secret lapses, so it needs the secret's NAME: pass it (fugaro secrets set NAME --expires YYYY-MM-DD), or use --rotation-days and --bitbucket-api-root, which are records of the installation rather than of one secret")
 		}

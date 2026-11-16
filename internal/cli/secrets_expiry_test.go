@@ -338,6 +338,54 @@ func TestSecretsSetReadsNoStdin(t *testing.T) {
 	}
 }
 
+// TestSecretsSetRefusesAnEmptyRecordFlag: a flag given an empty value is not a
+// flag left out. pflag records `--expires ""` as Changed with an empty string,
+// and `--bitbucket-api-root ""` as Changed with an empty slice (readAsCSV), so a
+// route decided from the values alone would send the run down the value path,
+// where it opens the cloud and reads a value from stdin — `secrets set NAME
+// --expires "$EXP"` with EXP unset is a hidden prompt on a terminal and the
+// stored secret overwritten by whatever was piped in. The reader below is what
+// says that path was never reached: a run that read it fails, and the three
+// refusals name the flag and the value it takes without printing what it was
+// given.
+func TestSecretsSetRefusesAnEmptyRecordFlag(t *testing.T) {
+	settingsFixture(t, "")
+	secretsClock(t, secretsTestToday)
+	hooked := secretsHookRecord(t)
+	path := os.Getenv("FUGARO_CONFIG")
+	before := readFileString(t, path)
+
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"secrets", "set", "bitbucket-token", "--expires", ""}, "--expires takes a date written YYYY-MM-DD"},
+		{[]string{"secrets", "set", "--bitbucket-api-root", ""}, "--bitbucket-api-root takes an API root"},
+		{[]string{"secrets", "set", "--remove-bitbucket-api-root", ""}, "--remove-bitbucket-api-root takes an API root out of the list"},
+		// The no-NAME branch routes on the same flags: an empty root there is the
+		// same refusal rather than "needs the secret's NAME", which would send the
+		// person after an argument the flag never wanted.
+		{[]string{"secrets", "set", "--rotation-days", "0", "--bitbucket-api-root", ""}, "--bitbucket-api-root takes an API root"},
+	} {
+		out, errOut, err := executeStdinReader(t, secretsUnreadableStdin{}, tc.args...)
+		if err == nil {
+			t.Fatalf("%s: an empty flag was accepted (stdout %q, stderr %q)", strings.Join(tc.args, " "), out, errOut)
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("%s: the refusal does not name the flag and what it takes: %v", strings.Join(tc.args, " "), err)
+		}
+		if strings.Contains(err.Error(), "stdin was read") {
+			t.Fatalf("%s: the run read the value from stdin: %v", strings.Join(tc.args, " "), err)
+		}
+	}
+	if after := readFileString(t, path); after != before {
+		t.Fatalf("an empty flag wrote the config:\n%s", after)
+	}
+	if len(*hooked) != 0 {
+		t.Fatalf("an empty flag told the hook %v", *hooked)
+	}
+}
+
 // TestSecretsSetRefusesALayerTheKeyLacks is T3 read through this family: the
 // three records are local config keys, and a write aimed at another layer is
 // refused with the layers the key does have (docs/contracts/config-ownership.md §6).
