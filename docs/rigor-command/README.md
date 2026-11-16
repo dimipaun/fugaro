@@ -1,6 +1,8 @@
 # `fugaro rigor`: managing a project's rigor mode with one command
 
-**Status as of 2026-11-10: 3/10 merged, and R2–R5 closed as duplicates of the two winning plans; see [docs/status.md](../status.md) for the current table.** Every decision is
+**Status as of 2026-11-16: 3/10 merged, R2–R5 closed as duplicates of the two winning plans, and the
+winners' rigor commands shipped — `fugaro rigor set` and `fugaro rigor floor` are both on `main`; see
+[docs/status.md](../status.md) for the current table.** Every decision is
 answered: **D830 and D831** by the owner's SD4 ruling of 2026-10-31, **D832–D839 on 2026-10-31, all
 as recommended**, and the one decision the plan **cites** from another design — **D854**, whether the
 `Layer` stage records the object generation it reads at the seed — **answered by the owner on
@@ -8,10 +10,15 @@ as recommended**, and the one decision the plan **cites** from another design �
 wizard asks the project's rigor mode explicitly — was added on 2026-10-31 at the owner's ask and
 **answered by the owner the same day: it does**, with task **W**
 ([implementation-plan.md](implementation-plan.md)) and the ruling written out in
-[reconciliation.md](reconciliation.md) §3. Nothing this design cites is left open: the spec and the
-plan are written to those answers and the tasks may start. The CLI tasks R0–R8 and W are 0.15.0's; the
-console half is not a task here (D836) — it is the read-only project view, and it queues for console
-0.117.0 with the rest of that work.
+[reconciliation.md](reconciliation.md) §3. Nothing this design cites is left open, and the tasks have
+run: **R0, R1 and R8 are merged**, and the two commands this family was for are on `main` —
+`fugaro rigor set` (config-management's **G6**) and `fugaro rigor floor` (its **G7**) — so the mode
+and the review floor are one command each. **R6** is the documentation, the skill and the release
+notes; **R7** and **W** are open, each on its own draft pull request (#2538, #2576), and **neither is
+merged**. The CLI tasks were 0.15.0's when this was written and the family has landed across the
+releases since — R1's `Layer` stage in 0.15.0, `fugaro rigor set` in 0.23.0, and `fugaro rigor floor`
+in 0.26.0, which is where R6's own notes announce it; the console half is not a task here (D836) — it
+is the read-only project view, and it queues for console 0.117.0 with the rest of that work.
 
 **The owner's ruling of 2026-11-10: this plan's duplicates are closed, and the settings and
 config-management plans win.** Four tasks here build the same command, key or writer as a task of
@@ -23,7 +30,10 @@ settings design's read, **S0–S2 and S4**. Each of the four carries the ruling'
 [implementation-plan.md](implementation-plan.md), keeps its section as the record of what was
 designed — **G6 re-reads that record as its own first step** — and keeps its number, which is never
 reused. **R0, R1 and R8 are merged and stay exactly as they are**: R0 and R1 landed on `main`, and
-R8's refusal landed with **#1478** on 2026-10-31. **R6, R7 and W stay open.** Where the winners do not
+R8's refusal landed with **#1478** on 2026-10-31, and the winners' two commands have landed too:
+**G6**'s `fugaro rigor set` and **G7**'s `fugaro rigor floor` are on `main`. **R6, R7 and W stay
+open**, and neither R7 nor W is merged: each sits on its own open draft pull request (#2538, #2576).
+Where the winners do not
 carry behaviour a closed task designed — `show`'s four sections and its versioned `--json`, and the
 `--repo R` half of `set` — it is listed under *behaviour not covered by the winners* in the pull
 request that carries this ruling, for the owner to decide, rather than dropped here.
@@ -37,16 +47,19 @@ are stated below, in this folder's own words and referenced by the other folder'
 ## What it is
 
 A project's default rigor mode lives at `defaults.rigor.default` in the **project layer**
-(`fugaro/project-layer.yaml` in the runs bucket), and the only way to change it today is to
-hand-edit a local file and run `fugaro config publish FILE` — a second command, refused in a
-coding agent's session, which the HARD RULE in `CLAUDE.md` forbids: `fugaro update` is the whole
+(`fugaro/project-layer.yaml` in the runs bucket), and when this was written the only way to change
+it was to hand-edit a local file and run `fugaro config publish FILE` — a second command, refused in
+a coding agent's session, which the HARD RULE in `CLAUDE.md` forbids: `fugaro update` is the whole
 upgrade, with no separate publish step. The rigor mode is the key where that costs the most,
 because it is the one key that decides how much review a project's runs get.
 
-This work adds one command family, `fugaro rigor` (`show`, `set`, `unset`), that makes the owner's
-edit one command, checked before it is written, and closes the `fugaro update` gap it leans on:
-`update` does not publish the project layer today, and a project default that only reaches runs
-after a second command is not delivered.
+This work adds one command family, `fugaro rigor`, that makes the owner's edit one command, checked
+before it is written, and closes the `fugaro update` gap it leans on: `update` did not publish the
+project layer, and a project default that only reaches runs after a second command is not delivered.
+The forms it **designed** are `show`, `set`, `unset` and the `floor` subgroup (SD10); the forms that
+are **on `main`** are `fugaro rigor set` and `fugaro rigor floor` — the read and the removal were
+closed with R3–R5 as the settings family's, so `fugaro rigor show` and `fugaro rigor unset` are not
+commands, and this folder's rows for them are the record of what was designed.
 
 **The shape the owner approved (SD4).** There is **one** local layer file,
 `~/.config/fugaro/projects/<project>.layer.yaml`, and no flag and no config key naming it. The first
@@ -139,8 +152,9 @@ file above it, and a path and a symbol survive.
 ## What this folder is not
 
 - **Not code.** It is a design, and the owner has decided it. **R0, R1 and R8 are merged; R2–R5 are
-  closed as duplicates of the two winning plans (2026-11-10); R6, R7 and W are the tasks left for a
-  later run.**
+  closed as duplicates of the two winning plans (2026-11-10), whose commands have shipped
+  (`fugaro rigor set` and `fugaro rigor floor`); R6, R7 and W are the tasks left for a later run**,
+  and neither R7 nor W is merged.
 - **Not a licence to widen it.** Every decision this folder held is answered (D830–D839), so a task
   here may start — but a task that finds a *new* decision reports it rather than picking an answer,
   and the decisions answered above are not reopened by an implementer's convenience. **D854 is
