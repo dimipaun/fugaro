@@ -27,6 +27,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/access"
 )
 
 // The accounts these cases are about. None of them is a real address.
@@ -93,6 +95,36 @@ func (f *fixture) acceptAs(uid, email, provider, invitationID string) *httptest.
 	f.t.Helper()
 	f.actsAs(uid, email, provider)
 	return f.apiAsCaller(http.MethodPost, apiInviteAcceptPathOf(invitationID), "")
+}
+
+// acceptAsClaiming accepts one invitation as the account whose token CLAIMED the
+// address named, with the caller spelled the way P1.3's verifier answers it
+// (signedInAsClaiming): what an invitation is compared against is the member of
+// the claimed address and not the folded one mcpauth hands back.
+func (f *fixture) acceptAsClaiming(uid, claimed, provider, invitationID string) *httptest.ResponseRecorder {
+	f.t.Helper()
+	f.signedInAsClaiming(uid, claimed, provider)
+	return f.apiAsCaller(http.MethodPost, apiInviteAcceptPathOf(invitationID), "")
+}
+
+// signedInAsClaiming makes the fixture's verifier answer the way the seam does
+// for a token that claimed this address: mcpauth's fold of the WHOLE address as
+// the Email and access.Member of the claimed spelling as the Member. actsAs
+// keeps the address as it was given — one spelling for both fields — which is
+// what a case that is not about the fold wants, and this is the case that is.
+func (f *fixture) signedInAsClaiming(uid, claimed, provider string) {
+	f.t.Helper()
+	member, err := access.Member(claimed)
+	if err != nil {
+		f.t.Fatalf("building the member of the claimed address %q: %v", claimed, err)
+	}
+	f.signIn.caller = Caller{
+		UID:      uid,
+		Email:    strings.ToLower(claimed),
+		Member:   member,
+		Provider: provider,
+		AuthTime: f.now,
+	}
 }
 
 // accepted accepts one invitation as the account named and answers the
@@ -337,6 +369,47 @@ func TestInvitationIsBoundToItsAddress(t *testing.T) {
 	if !f.auditedInvitation(actionInvitationAccept, org.ID, invitation.ID) {
 		t.Error("the acceptance left no audit line, and every invitation action is written to the log (D456)")
 	}
+
+	// An address with a capital in its local part. What the invitation holds is
+	// the address as it was typed and what the sign-in answers is mcpauth's
+	// whole-address fold BESIDE the member of the claimed spelling, so the two
+	// are one member where access.Member folds them the same way — and a sign-in
+	// claiming another spelling of that local part is another member, refused
+	// like a stranger's. Comparing the invitation's address with the folded
+	// address gets both halves wrong: the person it was mailed to meets a 404,
+	// and the other spelling is admitted.
+	const claimed = "Sam.Other@example.com"
+	f.actsAs(danaUID, danaEmail, signInGoogle)
+	capitalised := f.invited(org.ID, claimed, roleMember)
+	if capitalised.Email != claimed {
+		t.Errorf("the invitation is bound to %q, want the address as it was asked for %q: the mail goes to what the inviter typed", capitalised.Email, claimed)
+	}
+	rec = f.acceptAsClaiming(samUID, "SAM.OTHER@example.com", signInGoogle, capitalised.ID)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("a sign-in claiming %q accepted an invitation for %q (%d, %s), want 404: two spellings access.Member calls two people are two people (F31)", "SAM.OTHER@example.com", claimed, rec.Code, rec.Body)
+	}
+	if held, _ := f.invitation(capitalised.ID); held.State != invitePending {
+		t.Errorf("the refused acceptance left the invitation %q, want it %q", held.State, invitePending)
+	}
+	if accepted := f.acceptAsClaiming(samUID, claimed, signInGoogle, capitalised.ID); accepted.Code != http.StatusOK {
+		t.Errorf("the address the invitation was mailed to accepting it answered %d (%s), want it: the local part is kept byte for byte on both sides", accepted.Code, accepted.Body)
+	} else if answer := readAnswer[WireInvite](f, accepted); answer.State != inviteAccepted || answer.AcceptedAt == nil {
+		t.Errorf("the accepted invitation is %+v, want it accepted and dated", answer)
+	}
+
+	// The other direction of the same fold: an invitation written in one
+	// spelling of a local part is no admission for another spelling of it, which
+	// is what comparing the invitation's address with mcpauth's folded one would
+	// admit — both sides lower-cased, two members made into one (F31).
+	const lower = "sam.third@example.com"
+	f.actsAs(danaUID, danaEmail, signInGoogle)
+	third := f.invited(org.ID, lower, roleMember)
+	if rec := f.acceptAsClaiming(samUID, "SAM.THIRD@example.com", signInGoogle, third.ID); rec.Code != http.StatusNotFound {
+		t.Errorf("a sign-in claiming %q accepted an invitation for %q (%d, %s), want 404: access.Member keeps the local part byte for byte, so those are two people", "SAM.THIRD@example.com", lower, rec.Code, rec.Body)
+	}
+	if accepted := f.acceptAsClaiming(samUID, lower, signInGoogle, third.ID); accepted.Code != http.StatusOK {
+		t.Errorf("the address the invitation was mailed to accepting it answered %d (%s), want it", accepted.Code, accepted.Body)
+	}
 }
 
 // TestInvitationIsSingleUse: an accepted invitation is not a second membership,
@@ -429,6 +502,81 @@ func TestInvitationExpiresAndIsNotAcceptable(t *testing.T) {
 	}
 	if held, _ := f.invitation(invitation.ID); held.State != invitePending {
 		t.Errorf("the store holds the invitation %q, want it as it was written %q: the window is what expired, and the record says what was decided", held.State, invitePending)
+	}
+}
+
+// TestInvitationsAreRateLimited: an invitation is mail to an address the caller
+// chooses, sent from the deployment's own verified sender and carrying text the
+// caller wrote, and the door that reaches it is a rate (F35): every other path
+// that mails has one, for the reason throttle.go's header states — so the forms
+// cannot be used to mail-bomb a third party's address. The allowance is the
+// organisation's, not one caller's, and it is spent by an invitation that would
+// be mailed and by nothing else: a body the route refuses for its shape is not
+// an invitation and does not spend one.
+func TestInvitationsAreRateLimited(t *testing.T) {
+	f := newFixtureWith(t, Production, func(b *fixture) {
+		b.cfg.InviteRate = Limits{Requests: 2, Window: time.Hour}
+	})
+	org := f.signedUp(danaUID, danaEmail, "Example Ltd")
+	other := f.signedUp(erinUID, erinEmail, "Other Ltd")
+	f.actsAs(danaUID, danaEmail, signInGoogle)
+
+	// A request the route refuses for its own shape is not an invitation, so the
+	// allowance is still whole.
+	if rec := f.inviteAs(org.ID, "one@example.com", "chief"); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("an invitation at a role no membership holds answered %d (%s), want the refusal", rec.Code, rec.Body)
+	}
+
+	for _, address := range []string{"one@example.com", "two@example.com"} {
+		if created := f.invited(org.ID, address, roleMember); created.Email != address {
+			t.Errorf("the invitation is bound to %q, want %q", created.Email, address)
+		}
+	}
+	mailed := len(f.mail.sent)
+
+	rec := f.inviteAs(org.ID, "three@example.com", roleMember)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("the invitation past the organisation's rate answered %d (%s), want 429", rec.Code, rec.Body)
+	}
+	if code := refusal(f, rec); code != "rate_limited" {
+		t.Errorf("the refusal carries the code %q, want rate_limited", code)
+	}
+	if held := f.invitationsOf(org.ID); len(held) != 2 {
+		t.Errorf("the store holds %d invitation(s), want the two the rate allowed: a refused request writes nothing", len(held))
+	}
+	if len(f.mail.sent) != mailed {
+		t.Error("the refused invitation was mailed anyway, and the rate is there to bound the mail")
+	}
+
+	// The allowance is the organisation's and not one caller's: a second admin
+	// of it shares the one bucket, and another organisation's admins have their
+	// own.
+	f.seed(membershipsCollection, membershipID(org.ID, erinUID), WireMembership{
+		OrganisationID: org.ID, UID: erinUID, Email: erinEmail, Role: roleAdmin, CreatedAt: f.now,
+	})
+	f.actsAs(erinUID, erinEmail, signInGoogle)
+	if rec := f.inviteAs(org.ID, "four@example.com", roleMember); rec.Code != http.StatusTooManyRequests {
+		t.Errorf("a second admin of the same organisation answered %d (%s), want the refusal: the allowance is the organisation's and not one caller's", rec.Code, rec.Body)
+	}
+	if rec := f.inviteAs(other.ID, "four@example.com", roleMember); rec.Code != http.StatusCreated {
+		t.Errorf("another organisation's admin answered %d (%s), want it: one organisation's allowance is not another's", rec.Code, rec.Body)
+	}
+
+	// And the rate is a window: the allowance is whole again once the hour it
+	// was spent in has passed.
+	f.advance(time.Hour)
+	f.actsAs(danaUID, danaEmail, signInGoogle)
+	if rec := f.inviteAs(org.ID, "five@example.com", roleMember); rec.Code != http.StatusCreated {
+		t.Errorf("an invitation in the window after the one the allowance was spent in answered %d (%s), want it", rec.Code, rec.Body)
+	}
+
+	// A deployment that names no rate is refused where it is built, as one that
+	// names no intake rate is: an organisation with no rate is one whose owners
+	// can be made to mail on demand.
+	cfg := f.svc.cfg
+	cfg.InviteRate = Limits{}
+	if _, err := New(cfg, *f.deps); err == nil {
+		t.Error("a deployment that names no invitation rate was built, and an internet-facing door that mails without a rate is one a stranger sets")
 	}
 }
 

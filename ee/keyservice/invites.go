@@ -14,9 +14,9 @@ package keyservice
 // and the acceptance is what binds a membership to a uid, because nothing
 // before it knows who the person is (F40).
 //
-// **Acceptance is one comparison and two writes.** The caller's verified
-// address and the invitation's own go through `access.Member` on both sides
-// (SameMember), the membership the invitation becomes is written under the
+// **Acceptance is one comparison and two writes.** The invitation's address and
+// the address the caller's token CLAIMED go through `access.Member` on both
+// sides (invitedMember), the membership the invitation becomes is written under the
 // accepting account's uid, and the invitation is marked accepted — one
 // transaction, so an invitation is never accepted twice and a membership is
 // never written for an invitation that is not.
@@ -130,6 +130,10 @@ var (
 	errInviteDomainRefused = errors.New("keyservice: this address is outside the domains the operations owner allows")
 	// errInviteRoleRefused is a role that is not one of the portal's three.
 	errInviteRoleRefused = errors.New("keyservice: this is not a role a membership can hold")
+	// errInviteRateLimited is an organisation that has spent its invitation rate
+	// for the window (F35): the mail an invitation is, to an address the caller
+	// chooses, is what the rate bounds.
+	errInviteRateLimited = errors.New("keyservice: this organisation has invited as many people as it may right now")
 	// errOperationsSeeded is the seed asked for a deployment that is already
 	// seeded.
 	errOperationsSeeded = errors.New("keyservice: the operations organisation is already seeded")
@@ -153,10 +157,9 @@ const (
 // deployment is already seeded and then writes an organisation, and two of them
 // in flight together would each read "nothing here" and each write one — two
 // operations organisations, whose members read across every customer's. It is a
-// package-level lock rather than a field on Service because this area's file
-// may not write service.go (the plan gives it to P1.0), and it is this
-// process's, like pageMu, for the same reason: a second instance is the store's
-// to hold, and the seed is one operator's command.
+// package-level lock rather than a field on Service, and it is this process's,
+// like pageMu: a second instance is the store's to hold, and the seed is one
+// operator's command.
 var seedMu sync.Mutex
 
 // WireInviteList is one organisation's invitations, the way its owners and its
@@ -355,14 +358,41 @@ func allowedInviteDomain(address string, domains []string) bool {
 	return found && slices.Contains(domains, domain)
 }
 
+// invitedMember is whether a caller is the member an invitation is bound to.
+//
+// Both sides go through access.Member: the invitation's from the address as it
+// was typed when it was written, and the caller's from the address the token
+// CLAIMED (Caller.Member). Comparing the invitation's address with the caller's
+// Email gets it wrong in both directions, because mcpauth folds the whole
+// address while access.Member keeps the local part byte for byte: an invitation
+// for `Sam@example.com` would have no member any sign-in can equal — the person
+// it was mailed to meets a 404 and the invitation can never be accepted — and
+// one for `sam@example.com` would be accepted by a different member claiming
+// `SAM@example.com`, which is the drift F31 keeps out of every other comparison
+// here.
+//
+// An address that is no member at all, and a caller the seam answered without
+// one, answer false rather than an error: every caller of this is a permission
+// check, where the only two answers that mean anything are "yes" and "not this
+// person", and a comparison against an empty member admits nobody (F31's
+// fail-closed half).
+func invitedMember(address string, actor Caller) bool {
+	member, err := access.Member(address)
+	if err != nil {
+		return false
+	}
+	return member == actor.Member
+}
+
 // createInvitation writes one invitation of one organisation and mails it. What
 // is checked, in this order: the caller's standing in the organisation (an owner
 // or an admin of their own membership of it, and of nothing else: inviteAccess),
 // the role — `owner` is asked for by an owner alone, because the role asked for
 // is the membership the invitation becomes — the address as a member this tree
 // can compare, and — for the operations organisation alone — the domain list the
-// owner set (F9). The invitation is written before the mail is sent, so a mail path that
-// fails leaves an invitation that stands and can be withdrawn rather than a link
+// owner set (F9), then, last and only once every other check has passed, the
+// organisation's own invitation rate (F35). The invitation is written before the
+// mail is sent, so a mail path that fails leaves an invitation that stands and can be withdrawn rather than a link
 // to a record nothing holds; the failure is the caller's answer and never a
 // silent success.
 func (s *Service) createInvitation(ctx context.Context, actor Caller, organisationID string, asked WireInviteCreate) (WireInvite, error) {
@@ -403,6 +433,17 @@ func (s *Service) createInvitation(ctx context.Context, actor Caller, organisati
 	origin, err := portalOrigin(s.cfg.URL)
 	if err != nil {
 		return WireInvite{}, err
+	}
+	// The organisation's rate (F35, Config.InviteRate), spent last of all and
+	// before anything is written. It is spent here rather than at the route for
+	// the reason renew.go spends a key's own bucket after the secret is proved:
+	// the caller's standing is known by now, so an account of another
+	// organisation cannot spend somebody else's allowance by posting bodies that
+	// name it. A request that failed a check above is not an invitation and does
+	// not spend one; a request that would mail one does, whatever the mail path
+	// then answers.
+	if !s.invites.allow("organisation:" + organisationID) {
+		return WireInvite{}, errInviteRateLimited
 	}
 	id, err := newID()
 	if err != nil {
@@ -551,7 +592,7 @@ func (s *Service) acceptInvitation(ctx context.Context, actor Caller, invitation
 		if err != nil {
 			return err
 		}
-		if !found || !SameMember(invitation.Email, actor.Email) {
+		if !found || !invitedMember(invitation.Email, actor) {
 			return errNoSuchInvitation
 		}
 		org, present, err := getRecord[WireOrganisation](ctx, tx, organisationsCollection, invitation.OrganisationID)

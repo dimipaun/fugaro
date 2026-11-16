@@ -626,6 +626,9 @@ func newFixtureWith(t *testing.T, env Environment, edit func(*fixture)) *fixture
 		CodeHosts:       []string{"code.example"},
 		MaxRepositories: 8,
 		Throttle:        Limits{Requests: 50, Window: time.Hour},
+		// F35's invitation rate: loose enough that a case which is not about it
+		// never meets it, and a rate the deploy names all the same.
+		InviteRate: Limits{Requests: 50, Window: time.Hour},
 		// The portal's own deploy values (plan P1.0). Sentry is left without a
 		// DSN, which is Sentry off (P1.6) and what a test that is not about
 		// reporting wants.

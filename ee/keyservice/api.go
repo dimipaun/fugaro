@@ -416,8 +416,20 @@ var ErrNoDocument = errors.New("keyservice: the document is not there")
 // them, and the Microsoft (Entra ID) directory the account lives in when the
 // token carries one (F31, D2207 as amended on 2026-11-13).
 type Caller struct {
-	UID      string
-	Email    string
+	UID string
+	// Email is the address the sign-in asserted, and mcpauth has folded it
+	// WHOLE: the local part is lower-cased like the domain, which is not the
+	// fold access.Member makes. Anything comparing an address a person typed
+	// with this one compares through Member and never against Email.
+	Email string
+	// Member is access.Member of the address as the token CLAIMED it, which is
+	// the member an invitation is compared against (P2.2, F10). It is not
+	// derivable from Email — access.Member keeps the local part byte for byte,
+	// so the folded spelling answers a member a capitalised local part can never
+	// equal — and it is empty only when the address is no member at all, which
+	// P1.3's verifier refuses before answering a caller. A comparison against an
+	// empty member admits nobody.
+	Member   string
 	Provider string
 	AuthTime time.Time
 	TenantID string

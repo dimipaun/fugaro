@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/ee/keyservice/docstore"
+	"github.com/dimipaun/fugaro/internal/access"
 )
 
 // The accounts these cases are about. None of them is a real address and none is
@@ -183,9 +184,17 @@ func (d *burstCountDocs) waitForTheBurst() {
 }
 
 // actsAs makes the fixture's verifier answer this account, signed in the way
-// named: what a case changes to make the next request somebody else's.
+// named: what a case changes to make the next request somebody else's. The
+// member is built from the address AS GIVEN, which is what the seam does with
+// the address the token CLAIMED (api.go's Caller, P1.3's Verify): a caller
+// without one is a caller no invitation can be compared against.
 func (f *fixture) actsAs(uid, email, provider string) {
-	f.signIn.caller = Caller{UID: uid, Email: email, Provider: provider, AuthTime: f.now}
+	f.t.Helper()
+	member, err := access.Member(email)
+	if err != nil {
+		f.t.Fatalf("building the member of the address %q: %v", email, err)
+	}
+	f.signIn.caller = Caller{UID: uid, Email: email, Member: member, Provider: provider, AuthTime: f.now}
 }
 
 // apiAsCaller sends one request to the portal's API behind the sign-in the

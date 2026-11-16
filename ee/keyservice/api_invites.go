@@ -157,6 +157,8 @@ func refuseInvitation(w http.ResponseWriter, err error) {
 		refuseAPI(w, http.StatusUnprocessableEntity, "email_not_allowed", "This address is outside the domains this organisation's invitations are limited to.")
 	case errors.Is(err, errInviteRoleRefused):
 		refuseAPI(w, http.StatusUnprocessableEntity, "invalid_role", "A role is one of owner, admin and member.")
+	case errors.Is(err, errInviteRateLimited):
+		refuseAPI(w, http.StatusTooManyRequests, "rate_limited", "This organisation has invited as many people as it may right now. Try again later.")
 	default:
 		failAPI(w, err)
 	}
