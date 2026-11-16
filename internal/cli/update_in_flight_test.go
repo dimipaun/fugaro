@@ -46,11 +46,9 @@ const (
 // TestUpdateLeavesARunInFlightRunning: an installation one release behind,
 // updated while a run of its own repository is in flight. The update converges
 // — `fugaro update` stays the whole upgrade — the runs are named once and the
-// run goes on (the question --ask may ask about them is that flag's own, and the
-// tests beside the end of this file pin it), and every write the run makes
-// afterwards still lands: its lease, the ledger and the counters that lease
-// settles, the outcome it ends with, and its record and review session in the
-// runs bucket.
+// run goes on, and every write the run makes afterwards still lands: its lease,
+// the ledger and the counters that lease settles, the outcome it ends with, and
+// its record and review session in the runs bucket.
 func TestUpdateLeavesARunInFlightRunning(t *testing.T) {
 	r := newConvergeRig(t, v3Node(nil))
 	// The deployed rules are the release behind's document and not a stand-in:
