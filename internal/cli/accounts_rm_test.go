@@ -2339,6 +2339,11 @@ func TestAccountsRmDoesNotWriteAJobForAHeldDefaultProfile(t *testing.T) {
 // are key types rather than the claude-oauth entries above, because the type is
 // what decides which container the value is in (config.CredentialValueSecret)
 // and which pool path may list the name.
+//
+// All three pass before this task as well: the pool guard, the craft clearing
+// and the value's own removal already answer for a typed entry (MC4, MC5,
+// MC22), which is what MC24's plan line calls the accounts' own guard. They are
+// kept here as the key types' regression coverage, not as the driving examples.
 
 // accountsRmKeyPoolLocal is a key credential a pool lists: the state an entry's
 // own removal may not proceed from, by this config's own rule (ValidatePools).
