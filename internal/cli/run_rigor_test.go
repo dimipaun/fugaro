@@ -149,6 +149,35 @@ func TestRunTakesHotfixWithNoOptIn(t *testing.T) {
 	}
 }
 
+// TestRunTakesHotfixInAnAgentSession: a launch from a coding agent's session
+// takes `--mode hotfix` whole. The owner ruled on 2026-11-16 that the fence
+// D832/SD9 and D12 name does not apply to hotfix: a first run, a --pr
+// follow-up and a launch from a session each take it with no opt-in, no fence
+// and no refusal. The fence that does exist is a *layer write's* — `fugaro
+// rigor set` lowering a mode, and the project layer file a session may not
+// write in any direction — while a run's own request decides that run and
+// nothing after it, so no part of that fence reaches this path.
+//
+// Mutation (put a session check on the run's mode path — refuse a hotfix
+// request where a coding-agent marker is set): the launch fails and this fails
+// with it.
+func TestRunTakesHotfixInAnAgentSession(t *testing.T) {
+	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", release0111)
+	checkoutWorkflows(t, "", "  web: { commands: { build: sh build.sh, test: sh test.sh } }\n")
+	agentSession(t)
+	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261025-120201-abcd", "--mode", "hotfix", "Fix production.")
+	if err != nil {
+		t.Fatalf("a session's launch asking for hotfix was refused: %v", err)
+	}
+	if spec := readSpec(t, f, "20261025-120201-abcd"); spec.Rigor != rigor.Hotfix {
+		t.Fatalf("rigor = %q, want the flag's mode recorded as asked", spec.Rigor)
+	}
+	if strings.Contains(errOut, rigorNoEffect) {
+		t.Errorf("the launcher says the request had no effect, and the run's mode is the request:\n%s", errOut)
+	}
+}
+
 // repoRigorKeys is the property names of the repository schema's rigor block,
 // sorted. It is read from the schema rather than from a list here because the
 // claim it serves is "no opt-in key exists anywhere": a key added to the

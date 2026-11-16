@@ -39,7 +39,7 @@ because the run it names is the one with the least room to spend.
 | `startup` | "Good foundation. Happy path plus common error paths. Rare, expensive corner cases go to the backlog." | 2 / 2 | A finding whose likelihood × impact reaches 8, plus the catastrophic override above. | 0.70 |
 | `pro` | "Established-company quality. Aim for bug-free patches, but balance cost against likelihood; extremely rare, high-effort issues may stay unfixed." | 3 / 3 | A finding whose likelihood × impact reaches 4, plus the override — except the case the sentence names: a likelihood of 1 with a fix cost of 4 or more is tolerated. | 0.85 |
 | `critical` | "Maximum care about everything." | 3 / 5 | Every finding. It is the strictest mode: no threshold stands between a finding and the block, and nothing is tolerated at the stop. | 1.00 |
-| `hotfix` | "Production is on fire. Time is the dominant constraint." Reached by an operator asking for it — `fugaro run --mode hotfix`, which needs no opt-in (§[The hotfix mode](#the-hotfix-mode)). | 1 / 1 | A finding of class `security` alone, plus an unscored one. A `data_loss` finding and an impact of 5 are tolerated. | 0.40 |
+| `hotfix` | "Production is on fire. Time is the dominant constraint." Reached by asking for it — `fugaro run --mode hotfix`, which needs no opt-in anywhere (§[The hotfix mode](#the-hotfix-mode)). | 1 / 1 | A finding of class `security` alone, plus an unscored one. A `data_loss` finding and an impact of 5 are tolerated. | 0.40 |
 
 The rounds column is the mode's **default**, not a cap (§[Review
 rounds](#review-rounds)), and the last column is the mode's share of the
@@ -178,7 +178,8 @@ resolves from its configuration and never lower it**: a request below what the
 configuration already says has no effect, and the launcher says so. `hotfix` is
 the one exception, and the flag is its door: it is off the axis and ranks below
 every other mode, so it is taken whole rather than compared and needs no opt-in
-(§[The hotfix mode](#the-hotfix-mode)). `--path` declares a path the run will
+anywhere — from a terminal, from a coding agent's session, on a first run or on a
+follow-up (§[The hotfix mode](#the-hotfix-mode)). `--path` declares a path the run will
 touch, which is what lets `rigor.areas` rules be matched from the first moment
 rather than from the run's diff. Repeat it for each path.
 
@@ -290,14 +291,27 @@ owner's minimum.
 
 ## The hotfix mode
 
-`hotfix` is the mode an operator reaches by asking for it: `fugaro run --mode
-hotfix`. It needs **no opt-in and no authorization read from the base branch** —
-the gate the spec named was *dropped rather than built* by the owner's ruling of
+`hotfix` is the mode anyone who asks for it reaches: `fugaro run --mode hotfix`.
+It needs **no opt-in and no authorization read from the base branch** — the gate
+the spec named was *dropped rather than built* by the owner's ruling of
 2026-11-13, because there is no way to predict when a hotfix will be needed (task
 R7 of `docs/rigor-command/implementation-plan.md`). The request is the whole door:
 it takes the run to `hotfix` whatever the layers below resolved, and it is the one
 request that is not compared against them — every other mode keeps the raise-only
 rule, so a launcher may raise a run's mode and never lower it.
+
+**The request works everywhere** (the owner's ruling of 2026-11-16): a first run,
+a `--pr` follow-up and a launch from a coding agent's session alike. Neither of
+the fences that guard the other rigor writes is a fence on it. D12's base-branch
+opt-in is the gate that was dropped rather than built, and the sensitive-direction
+fence — the typed project name `fugaro rigor set` asks before it lowers a mode
+(D832), and the diff-and-write-nothing answer a coding agent's session gets for a
+write outside a repository (SD9) — is about **writing a mode into a layer**, which
+decides what every later run of the project is held to. A run's own `--mode`
+decides that one run and nothing after it, so a session that launches a run may
+ask for `hotfix` exactly as the person at the terminal may, and nothing in that
+path refuses it. What a session is still refused is `fugaro rigor set` itself —
+the layer write — and never the run.
 
 `hotfix` also resolves like any other mode value: `rigor: { default: hotfix }` in
 a `fugaro.yaml`, or an `areas` rule whose `mode` is `hotfix`, in either layer, is

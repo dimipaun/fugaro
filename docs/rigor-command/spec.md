@@ -163,11 +163,13 @@ becomes `<mode>`. In order:
    `pro`, `critical`, `hotfix`); a near miss ("Pro", "critical ") is refused with the vocabulary in
    the message, as `fugaro run --mode` refuses it.
 2. **Refuse `hotfix`.** `hotfix` is not a default in any layer (D834, D12): it is off the axis,
-   ranks below every on-axis mode, and is reached by an operator's own `fugaro run --mode hotfix`.
-   The refusal names that command and never offers a flag that would write it. This refusal is owed
-   on its own terms and is unchanged by the owner's ruling of 2026-11-13: the base-branch opt-in D12
-   named (F13) is **dropped rather than built**, so `fugaro run --mode hotfix` takes effect with no
-   opt-in — the *request* is opened, and the *writer* stays closed. Nothing here may be read as
+   ranks below every on-axis mode, and is reached by anyone who asks for it with `fugaro run --mode
+   hotfix`. The refusal names that command and never offers a flag that would write it. This refusal is owed
+   on its own terms and is unchanged by the owner's rulings of 2026-11-13 and 2026-11-16: the
+   base-branch opt-in D12 named (F13) is **dropped rather than built**, so `fugaro run --mode hotfix`
+   takes effect with no opt-in **anywhere** — a coding agent's session and a `--pr` follow-up
+   included, since the fence D832/SD9 and D12 name is a fence on a layer *write* and not on a run's
+   own request. The *request* is opened, and the *writer* stays closed. Nothing here may be read as
    evidence of a gate.
 3. **Write nothing in a coding agent's session.** The target file is outside every repository, in
    the owner's own config home, so `set` and `unset` of the project layer are refused where
@@ -406,7 +408,10 @@ name it:
   D12 names does not exist (F13) and **is not built**: the owner's ruling of 2026-11-13 is that
   `fugaro run --mode hotfix` needs no opt-in, because there is no way to predict when a hotfix will
   be needed, so the gate is dropped and the request itself is the door — it takes the run to
-  `hotfix` whatever the layers below resolved. This design still writes nothing for it, and nothing
+  `hotfix` whatever the layers below resolved. The ruling of 2026-11-16 adds that the door is the
+  same everywhere: a first run, a `--pr` follow-up and a launch from a coding agent's session alike,
+  because the fence D832/SD9 and D12 name guards a layer write and not a run's own request. This
+  design still writes nothing for it, and nothing
   in this folder may be read as evidence of a gate.
 - **A project layer that changes executable keys is still gated.** `update`'s layer stage publishes
   through the same `publishLayer` the explicit door uses, so a change to `commands.*` or

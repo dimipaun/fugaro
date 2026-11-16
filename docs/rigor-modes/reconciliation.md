@@ -1489,13 +1489,24 @@ no opt-in.** The owner ruled that there is no way to predict when a hotfix will
 be needed, so the base-branch key this decision named is read by nothing and no
 `rigor.hotfix` gate exists (docs/rigor-command/implementation-plan.md R7, and
 F13's amendment in `docs/rigor-command/reconciliation.md` §2). The half of the
-decision that stands is the one about surfaces: the request is the operator's own
-launch — `fugaro run --mode hotfix`, on a first run or on a follow-up — and no
+decision that stands is the one about surfaces: the request is the launch's own
+door — `fugaro run --mode hotfix`, on a first run or on a follow-up — and no
 comment reaches the mode, since a task filed from one never carries it.
 `fugaro rigor set` still refuses to **write** it as a
 default in any form it can write. A hand-written `rigor.default: hotfix` in a
 `fugaro.yaml` still resolves, as it always did; whether that stays reachable is
 the owner's to rule on separately.
+
+**Amended 2026-11-16: the door is the same everywhere, and the fence does not
+apply to it.** The owner ruled that `fugaro run --mode hotfix` takes effect with
+no opt-in *including a coding agent's session and a `--pr` follow-up*, and that
+the fence the rigor-command design writes — the typed project name a lowering
+`fugaro rigor set` asks for, and the diff-and-write-nothing answer a session gets
+for a write outside a repository, both that design's own rules
+(`docs/rigor-command/`) — does not apply to hotfix. So the launch paths are one
+door: the request decides that run and nothing after it, while what those two
+refusals guard is a **layer write** — a mode every later run of the project
+inherits (`fugaro rigor set`, which keeps both refusals).
 
 **Recommended: `fugaro run --mode hotfix` by a person, gated on the base branch's
 configuration (`rigor.hotfix` on, plus the trusted list) — never a PR comment,

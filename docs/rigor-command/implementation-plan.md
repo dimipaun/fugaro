@@ -22,7 +22,10 @@ G6's own interface says its first step is re-reading that record against the tre
 number, which is never reused. **R0, R1, R7 and R8 are merged and stay as they are**: R0 and R1 landed on
 `main`, R8's refusal landed with **#1478** on 2026-10-31, and **R7 was answered by the owner on
 2026-11-13** — `fugaro run --mode hotfix` takes effect with no opt-in, so the gate D12 named is
-**dropped, not built** — and its behaviour is on `main` with it. **R6 and W stay open**, and the
+**dropped, not built** — and its behaviour is on `main` with it. **The owner's ruling of 2026-11-16
+adds where that door is**: `fugaro run --mode hotfix` needs no opt-in *anywhere* — a coding agent's
+session and a `--pr` follow-up included — because the fence D832/SD9 and D12 name guards a layer
+write and not a run's own request (R7). **R6 and W stay open**, and the
 behaviour the winners do not carry is listed under *behaviour not covered by the winners* in the pull
 request that carries this ruling rather than dropped here.
 
@@ -626,10 +629,19 @@ no opt-in, in `fugaro run` and on the follow-up path alike.
   config-management's G6 and is not built. A hand-written `rigor.default: hotfix` in a layer or a
   `fugaro.yaml` stays reachable too — the ruling did not close that door either, and it is reported
   rather than changed.
+- **The fence does not apply to it (the owner's ruling of 2026-11-16).** `fugaro run --mode hotfix`
+  works with no opt-in **everywhere**: a first run, a `--pr` follow-up and a launch from a coding
+  agent's session alike. D12's base-branch gate is the one dropped rather than built, and the other
+  fence this design writes — D832's typed project name for a lowering `set`, and SD9's
+  diff-and-write-nothing answer a session gets for a write outside a repository — is about **writing
+  a mode into a layer**, which decides every later run of the project, while a run's own `--mode`
+  decides that one run. So the three launch paths are one door: no flag, no marker and no terminal
+  is required on any of them, and none refuses it. What stays refused in a session is `fugaro rigor
+  set` itself, the write.
 - **Tests.** `TestResolveTakesAHotfixRequestWhole`, `TestLayersModeAnswersOnlyBesideARequestThatTakesTheRunWhole`
   (`internal/rigor`); `TestReviewFloorForHoldsBothRowsOfAnOffAxisRequest` (`internal/policy`);
   `TestResolveLevelsFloorHoldsForAHotfixRequest` (`internal/config`); `TestRunTakesHotfixWithNoOptIn`,
-  `TestFollowUpTakesHotfix`, `TestStoredFollowUpKeepsAHotfixRequest`, `TestBudgetPreviewTakesHotfix`,
+  `TestRunTakesHotfixInAnAgentSession`, `TestFollowUpTakesHotfix`, `TestStoredFollowUpKeepsAHotfixRequest`, `TestBudgetPreviewTakesHotfix`,
   `TestLaunchReviewLevelsAskHoldsTheFloorOfTheModeTheLayersResolved` and
   `TestDocsRigorModesProductStatesTheHotfixDoor` (`internal/cli`); and
   `TestBootstrapRigorTakesTheRunsOwnRequestOnlyUpward`'s hotfix row,

@@ -7043,8 +7043,10 @@ the strictest of the rules that match it. The file is the one `fugaro update`
 publishes, and every write ends with `next: fugaro update`.
 
 A mode is `poc`, `startup`, `pro`, `critical` or `hotfix`, and `hotfix` is the one
-no layer sets: it is an operator's per-run mode, reached with
-`fugaro run --mode hotfix`. A mode below what the project resolves to today is
+no layer sets: it is a per-run mode, reached with
+`fugaro run --mode hotfix` from wherever a run is launched — a coding
+agent's session included (the owner's ruling of 2026-11-16). A mode below what the
+project resolves to today is
 the sensitive direction, so a coding agent's session is refused it with the
 command to run at your own terminal, and your own terminal writes it and asks
 nothing.
@@ -7314,7 +7316,8 @@ It may raise the mode the run resolves from its own configuration
 and never lower it, so a launch that asks for less cannot outvote a repository
 that asked for more. hotfix is the one exception: it is off the rigor axis and
 ranks below every other mode, so it is taken whole rather than compared, needs
-no opt-in, and takes effect on a first run and on a follow-up alike. A
+no opt-in anywhere — a first run, a --pr follow-up and a launch from a coding
+agent's session alike — and no fence or refusal stands in that path. A
 follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it,
 and asking for less than that is refused. --path PATH declares a path this run
 will touch, repeatable, matched against those area rules before the run starts;
@@ -7343,7 +7346,7 @@ Flags:
 | `--max-time` | string | "" | no | cap this chain's elapsed run time, as a duration such as 45m or 2h: --total-timeout keeps its own meaning and may raise this run's clock, and the two compose as the smaller of the two (the run's clock is min(--total-timeout, this)) |
 | `--max-tokens` | string | "" | no | cap this chain's token total at N tokens, such as 900000: tighten-only, like --max-usd, and recorded in the task's overrides |
 | `--max-usd` | string | "" | no | cap this chain's model spend at X dollars, such as 5 or 12.5: it may only tighten the ceiling this launch resolves (fugaro refuses a looser value and names the layer that set the lower one), and it is recorded in the task's overrides, beside the total_timeout that is there today. A chain is the run that sets it and the runs that continue it; a launch that names no such limit gets today's per-run caps and no chain at all |
-| `--mode` | string | "" | no | the rigor mode to ask for: poc, startup, pro, critical, hotfix; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it, except hotfix, which this run takes whole and which needs no opt-in; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps |
+| `--mode` | string | "" | no | the rigor mode to ask for: poc, startup, pro, critical, hotfix; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it, except hotfix, which this run takes whole and which needs no opt-in anywhere — a first run, a follow-up and a launch from a coding agent's session alike; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps |
 | `--no-budget-check` | bool | `false` | no | skip the launch pre-check of the budget (kill switches, missing caps, no headroom); the run is held to the same limits when it starts |
 | `--no-compression` | bool | `false` | no | turn agent.compression off for this run only, overriding fugaro.yaml; there is no flag to turn it on, which is a reviewed fugaro.yaml change |
 | `--owner-ruled` | string | "" | no | the repository owner's ruling on the findings a run on this PR left for them (OD1): either the text itself, a file, or - for stdin. A follow-up on a pull request whose last run stopped waiting on owner decisions is refused without it, and one whose last run left no such decisions is refused with it: the ruling answers what that run left, and nothing else; it is appended to this run's brief verbatim and recorded in the run |
