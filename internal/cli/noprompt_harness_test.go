@@ -366,7 +366,7 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 		args:    []string{"claude-sonnet-5-5", "--input-per-m", "3", "--output-per-m", "15"},
 		reaches: "set model_prices.claude-sonnet-5-5 in",
 	},
-	"fugaro pair revoke":    {args: []string{"--uid", "uid-1"}},
+	"fugaro pair revoke": {args: []string{"--uid", "uid-1"}},
 	"fugaro project profile add": {args: []string{"standard", "--provider", "github", "--cpu", "2",
 		"--memory", "4Gi", "--timeout-class", "6h"}},
 	"fugaro project profile rm": {args: []string{"standard"}},
