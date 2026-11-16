@@ -171,10 +171,12 @@ func TestModelsUseLayerFlag(t *testing.T) {
 
 // TestClaudeModelsWideningRefusedInAnAgentSession is D2617 at this command:
 // layer.claude_models is a widening — it hands a route the ability to serve a
-// Claude model to every repository that route lists — so the write is Typed and
-// a coding agent's session is refused it whatever the gate says. The owner's own
-// terminal writes it, and what it reads instead of a prompt is the sentence
-// saying what the write widens.
+// Claude model to every repository that route lists — so the write is Typed.
+// Typed is what makes it the owner's own step in every store and under every
+// gate, and what a person reads at their own terminal instead of a prompt is
+// the sentence saying what the write widens (D1540). The refusal a session
+// reads names the command to run at that terminal, which is the whole of what
+// it may produce beside the diff.
 func TestClaudeModelsWideningRefusedInAnAgentSession(t *testing.T) {
 	modelsWriteHomeWith(t, modelsUseProjectExtra)
 	layer := settingsWriteLayerFile(t, "")
@@ -187,6 +189,9 @@ func TestClaudeModelsWideningRefusedInAnAgentSession(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "refusing to write") || !strings.Contains(err.Error(), "CLAUDECODE") {
 		t.Errorf("the refusal is not the session fence's: %v", err)
+	}
+	if !strings.Contains(err.Error(), "fugaro models use layer.claude_models openrouter=anthropic/claude-sonnet-5-5 --layer project") {
+		t.Errorf("the refusal does not name the line to run at the owner's own terminal: %v", err)
 	}
 	if got := readFileString(t, layer); got != before {
 		t.Errorf("the refused widening wrote the layer:\n%s", got)
