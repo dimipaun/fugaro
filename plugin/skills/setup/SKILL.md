@@ -121,7 +121,7 @@ From the checkout, run `fugaro secrets ls --repo --json` (not doctor, which list
 
 Setup's prompts (step 9) have no `--repo` to pass: they store a name project-wide, except a per-repository one (`bitbucket-token`, project-wide only through an explicit `project_secrets` allow-list entry); a covered name is not asked for, nor is a covered workflow secret; for its own copy instead, press Ctrl-C at the prompt and run the command it printed in your own terminal, then start setup again.
 
-The user runs these in their own terminal, not through the agent. One line per missing secret, at its default scope: no `--repo` for the GitHub App key (project-wide), `--repo <owner/name>` for `bitbucket-token` (per-repository by default; project-wide only through that same entry). Run:
+The user runs these in their own terminal, not through the agent. One line per missing secret: no `--repo` for the GitHub App key (project-wide), `--repo <owner/name>` for `bitbucket-token` (per-repository by default; project-wide only through that same entry). Run:
 
 ```bash user-runs
 # the GitHub App private key (a PEM file: redirected, not typed)
@@ -136,7 +136,7 @@ An account with no stored token is not usable: the operator's one command is `fu
 
 ## 9. Hand off
 
-1. Run `fugaro update --repo --plan-only` (read-only; on a GitHub repository add `--github-app-id <id>` with the ID from step 5, topic 1) and show what update would apply. It uses the user's own credentials and may refuse without a terminal or an installation: a refusal is normal, and the user then runs it and reads you the plan.
+1. Run `fugaro update --repo --plan-only` (read-only; on a GitHub repository add `--github-app-id <id>` with the ID from step 5, topic 1) and show what update would apply. It may refuse without a terminal or an installation: a refusal is normal, and the user then runs it and reads you the plan.
 2. Offer a pull request; make one only when the user says so. It holds `fugaro.yaml`, `mise.toml` if you wrote or changed one, each `.fugaro/<workflow>.Dockerfile`, and the `agent.instructions` file if there is one. Nothing else goes in it: on GitHub a run can never change `.github/workflows/*` (the job's credential can't push workflow files), so that is theirs to do.
 3. Summarize: the workflows with their commands and report globs, the image each job runs — a catalog entry or the fallback — and what you could not express or verify, the `project:` you wrote (the base branch must carry it before runs work), the decisions the user made, any `rebuild.paths`, and the secrets still missing.
 4. Tell the user the next step: merge it, then run setup from the merged checkout. That adds this repository's job, first image build and schedule, and prompts for the secrets. The user runs it in their own terminal window, not through the agent:
