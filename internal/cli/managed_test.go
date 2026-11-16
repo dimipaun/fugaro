@@ -868,7 +868,7 @@ var propertyAgentSites = map[string]string{
 	// The layer stage refuses a marker itself for the same reason: it is
 	// SelfConfirming, so the loop would call it.
 	"init_layer_stage.go Apply": "TestUpdateLayerStageAppliesNothingInAnAgentSession",
-	// The switch's record is the same shape: credentialsBundleReady opens the
+	// The switch's record is the same shape: readCredentialsBundle opens the
 	// credentials service's bundle with the identity of whoever runs the
 	// update, so a coding agent's session reads nothing there and says so,
 	// and the two doors that write the record leave every entry as the
@@ -877,7 +877,7 @@ var propertyAgentSites = map[string]string{
 	// third the installation door's backfill — under the run markers, which
 	// are the ones that reach it, an agent's session being refused by the
 	// installation step before that door runs at all.
-	"init_credentials.go credentialsBundleReady": "TestTheBundleIsNeverOpenedInAnAgentsSessionOrARunsProcess, TestTheRecordIsKeptUnderARunsProcessMarker and TestTheBackfillIsNotWrittenInAnAgentsSessionOrARunsProcess",
+	"init_credentials.go readCredentialsBundle": "TestTheBundleIsNeverOpenedInAnAgentsSessionOrARunsProcess, TestTheRecordIsKeptUnderARunsProcessMarker and TestTheBackfillIsNotWrittenInAnAgentsSessionOrARunsProcess",
 	// The login unit's step (O9, Q2 and T7) refuses a marker itself rather
 	// than leaning on the loop's gate: it SKIPS with the marker's own
 	// sentence, because a unit is code that runs at every login and the drift
