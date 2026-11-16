@@ -788,7 +788,21 @@ func (r *run) bakedProjectCheckout() string {
 // per-repository job whose storage slug derives no provider kind
 // (providerForSlug): it adopts no baked directory either, so the layout this
 // removal is about is not the layout it runs in.
+//
+// The directories are found by their position beside the work directory, so
+// before anything is removed the run has to be able to show that directory is
+// the job image's own (review F24). A caller supplies a local invocation's
+// (exec's --workdir, whose default only happens to spell the path a job image's
+// WORKDIR does), and the directory beside a caller's is the caller's too —
+// holding their own directories and files, not all of them repositories — so a
+// local run removes nothing at all. Deps.Local is that distinction and the one
+// place it is read: its zero value means the run is in the cloud, in a job the
+// platform placed, whose work directory the job's image chose and no caller
+// did. That is where this removal and D2309's read are about.
 func (r *run) removeOtherBakedRepos() error {
+	if r.d.Local {
+		return nil
+	}
 	root := filepath.Join(filepath.Dir(r.d.WorkDir), BakedRepoRoot)
 	entries, err := os.ReadDir(root)
 	if errors.Is(err, os.ErrNotExist) {

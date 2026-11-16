@@ -727,6 +727,7 @@ func TestBakedCheckoutDropsReplaceRefsAndGraftsAndTrackedEdits(t *testing.T) {
 // checkouts, and their source is a file of the run's.
 func TestOtherBakedReposAreRemovedBeforeTheAgentStarts(t *testing.T) {
 	b := projectRun(t, projectJobOf(), "off", "", projectPolicyFor(`["github/acme/*"]`, ""))
+	b.deps.Local, b.deps.Project = false, "aurora"
 	computed := projectHost(t, b)
 	own := bakedProjectCheckout(t, b, computed, nil)
 	other := bakedDir(t, b.harness, mustSlug("github", "evil/other"))

@@ -2204,7 +2204,9 @@ func (r *run) openBakedCheckout(ctx context.Context) error {
 	// project job does (D1900), so the image bakes the project's repositories
 	// and not just this run's. Here rather than after the adoption below, which
 	// rewrites r.d.WorkDir: the directories are found by their position beside
-	// the work directory the job started in.
+	// the work directory the job started in — the image's own, which is why a
+	// local invocation, whose work directory is its caller's, removes nothing
+	// there at all (review F24, removeOtherBakedRepos).
 	if err := r.removeOtherBakedRepos(); err != nil {
 		return err
 	}

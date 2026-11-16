@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -315,9 +316,16 @@ func TestBakedCheckoutPerSlugPathRecordsItsOwnCommit(t *testing.T) {
 // is baked for this run to work on: it clones its own remote into the work
 // directory — and the other repository's checkout is not left beside it either
 // (D2309, review F23): it is a repository this run is not, so it goes before
-// the agent starts, exactly as it does on a project job.
+// the agent starts, exactly as it does on a project job. The run is a job, as
+// the removal is a job's (F24): a local invocation's work directory is its
+// caller's and nothing beside it is removed
+// (TestLocalRunLeavesTheCallersBakedRootAlone).
 func TestBakedMissingFallsBackToClone(t *testing.T) {
 	h := newHarness(t, "", nil)
+	h.deps.Local = false
+	h.deps.Project = "aurora"
+	h.deps.Execution = cloudRunExecution(gcp.JobName(repoSlug, gcp.WorkflowVariant("app", "")))
+	h.deps.Env = append(h.deps.Env, "CLOUD_RUN_EXECUTION=exec-1")
 	other := bakedDir(t, h, mustSlug("github", "evil/other"))
 	testutil.Git(t, filepath.Dir(other), "clone", "--quiet", h.remote, other)
 	// The other repository's own origin, so a run that opened this checkout
@@ -351,6 +359,10 @@ func TestBakedMissingFallsBackToClone(t *testing.T) {
 // its source is a file of the run's.
 func TestBakedCheckoutPerSlugPathRemovesTheOtherBakedRepos(t *testing.T) {
 	h := newHarness(t, "", nil)
+	h.deps.Local = false
+	h.deps.Project = "aurora"
+	h.deps.Execution = cloudRunExecution(gcp.JobName(repoSlug, gcp.WorkflowVariant("app", "")))
+	h.deps.Env = append(h.deps.Env, "CLOUD_RUN_EXECUTION=exec-1")
 	own := bakedDir(t, h, repoSlug)
 	testutil.Git(t, filepath.Dir(own), "clone", "--quiet", h.remote, own)
 	other := bakedDir(t, h, mustSlug("github", "evil/other"))
@@ -378,6 +390,43 @@ func TestBakedCheckoutPerSlugPathRemovesTheOtherBakedRepos(t *testing.T) {
 	}
 	if _, err := os.Stat(other); err == nil {
 		t.Error("the other repository's baked checkout is still there after the run")
+	}
+}
+
+// TestLocalRunLeavesTheCallersBakedRootAlone (review F24): D2309's removal is
+// bounded by the directory it can show is a job image's own, and a local
+// invocation's work directory is the caller's (exec's --workdir), so the
+// directory beside it is the caller's too: a local run removes nothing there,
+// whether what sits under it is a repository or not — the directory F24 names
+// also carries files that are not repositories at all.
+//
+// Mutation (run, restore): drop the Deps.Local early return from
+// removeOtherBakedRepos. Everything the caller had beside the work directory is
+// gone after the run, and this test's first two assertions fail.
+func TestLocalRunLeavesTheCallersBakedRootAlone(t *testing.T) {
+	h := newHarness(t, "", nil)
+	root := filepath.Dir(bakedDir(t, h, repoSlug))
+	// What a caller's directory of that name may hold: another repository's
+	// checkout, beside files that are not repositories.
+	other := filepath.Join(root, mustSlug("github", "evil/other"))
+	otherRepositoryCheckout(t, h, other)
+	notes := filepath.Join(root, "notes")
+	if err := os.MkdirAll(notes, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFileAt(t, filepath.Join(notes, "todo.md"), "the caller's own file\n")
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Fatalf("the caller's checkout of another repository is gone after the run: %v", err)
+	}
+	if got := testutil.Git(t, other, "rev-parse", "--abbrev-ref", "HEAD"); got != "main" {
+		t.Errorf("the caller's checkout of another repository is on %q, want it left as it was (main)", got)
+	}
+	if got, err := os.ReadFile(filepath.Join(notes, "todo.md")); err != nil || string(got) != "the caller's own file\n" {
+		t.Errorf("the caller's own file is %q, %v, want it left as it was", got, err)
 	}
 }
 
