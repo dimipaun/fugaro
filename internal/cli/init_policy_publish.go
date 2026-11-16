@@ -174,6 +174,29 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy) []policyDri
 	if lc.Binaries != nil {
 		add("binaries", lc.BinariesEffective(p.Binaries), p.Binaries, false)
 	}
+	// The crafts, their credentials and their pools reach a run off this node
+	// and nowhere else (docs/model-crafts §1–3), and the local config is their
+	// carrier from this release on (MC18, D1667), so a config that states one
+	// where the node carries another is exactly the gap this stage exists to
+	// close: without the comparison the operator's own `credentials:` or
+	// `crafts:` edit would reach no run until they ran the explicit publish,
+	// which is the second command the HARD RULE forbids.
+	//
+	// Each row is compared through the publisher's own merge — the one
+	// buildProjectPolicy writes the node with — and not by a rule of its own
+	// here, the clone_urls line's reason: a config that states nothing is then
+	// not reported as a difference (the merge hands the node's own member back,
+	// so the two sides are one document and the row is silent), while a written
+	// block is the operator's edit and is reported like any other. A pool the
+	// config states and the node cannot carry is not a difference either: the
+	// publish leaves it out and names it (D2608), so reporting it would send the
+	// operator to a command that cannot close the gap it fired on — the rule the
+	// accounts entry above follows.
+	craftCreds := publishedCraftCredentials(lc, p)
+	add("craft_credentials", craftCreds, p.CraftCredentials, false)
+	craftPools, _ := publishedCraftPools(lc, p, craftCreds)
+	add("craft_pools", craftPools, p.CraftPools, false)
+	add("crafts", publishedCrafts(lc, p), p.Crafts, false)
 	// The triage switch reaches a run off this node too (D1854), so a config
 	// that states it where the node states the other answer is a difference a
 	// publish closes, and it is compared the bake switch's way: the node's value
