@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"strings"
 	"testing"
 
@@ -105,14 +104,14 @@ func TestRunContextRefusedOnBitbucket(t *testing.T) {
 	slug := mustSlug("bitbucket", proxiedRepo)
 	spec := &task.Spec{Version: 1, RunID: budgetRun, Repo: proxiedRepo, Ref: "main", Workflow: "app",
 		Task: "Read the graph", ContextRepos: []string{"workspace-a/lib"}}
-	err := contextReposRefusal(context.Background(), env, slug, spec, io.Discard)
+	err := contextReposRefusal(context.Background(), env, slug, spec)
 	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "is on bitbucket") {
 		t.Fatalf("a context repository on a Bitbucket run = %v, want a refusal naming the provider", err)
 	}
 	// A launch naming no context repository is refused by nothing here, so the
 	// refusal above is the list's and not the provider's.
 	if err := contextReposRefusal(context.Background(), env, slug,
-		&task.Spec{Version: 1, RunID: budgetRun, Repo: proxiedRepo, Ref: "main", Workflow: "app", Task: "x"}, io.Discard); err != nil {
+		&task.Spec{Version: 1, RunID: budgetRun, Repo: proxiedRepo, Ref: "main", Workflow: "app", Task: "x"}); err != nil {
 		t.Fatalf("a Bitbucket launch naming no context repository = %v, want no refusal", err)
 	}
 }

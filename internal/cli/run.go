@@ -1668,7 +1668,7 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	// The context repositories' own gate, beside the cascade's and for the
 	// same reason: a launch whose context repositories this installation
 	// could not read is refused here rather than started (contextReposRefusal).
-	if err := contextReposRefusal(ctx, env, slug, spec, warn); err != nil {
+	if err := contextReposRefusal(ctx, env, slug, spec); err != nil {
 		return config.Inputs{}, err
 	}
 	// --attach, before the gates below: its recipe refusal, its caps,
@@ -4074,7 +4074,11 @@ func printRecipeNote(warn io.Writer, rr *resolvedRecipe, explicit bool) {
 //     that decides it for the launch (credentialsServiceLaunchEnv, proxiedRepo's
 //     last question too), so this gate and the execution cannot disagree about
 //     whether the job was handed the service.
-func contextReposRefusal(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, warn io.Writer) error {
+//
+// io.Discard is the reader's warning writer, the way proxiedRepo's and the
+// planner's are: the launch reads the same two documents and words the one
+// warning this read can report (repoServiceAuth) once.
+func contextReposRefusal(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) error {
 	if len(spec.ContextRepos) == 0 {
 		return nil
 	}
@@ -4089,7 +4093,7 @@ func contextReposRefusal(ctx context.Context, env *cloudEnv, slug string, spec *
 		return userErr("--context needs a GitHub repository, and %s is on %s: the credentials service brokers a fetch against the run's own repository and its installation (secrets-brokering D496), a path that serves GitHub alone, so a %s run could not read the repositories it was launched with. Drop --context, or run the task in the repository whose files it needs",
 			spec.Repo, kind, kind)
 	}
-	auth, deployed := env.repoServiceAuth(ctx, spec, warn)
+	auth, deployed := env.repoServiceAuth(ctx, spec, io.Discard)
 	if len(credentialsServiceLaunchEnv(env.lc, "", spec.Repo, auth, deployed)) == 0 {
 		return userErr("--context needs a credentials service that serves %s, and this installation's does not: the service is what would read a context repository for a run, and the address it is reached at is written on the job only where the installation carries the service and this repository's runs use an auth it serves (today agent.auth: cascade alone). Run '%s update' in your own terminal to deploy the service where the installation can carry it, then set agent.auth: cascade in %s's fugaro.yaml and run '%s update --repo %s' to apply that repository's root with the switch on — or drop --context",
 			spec.Repo, selfCommand(), spec.Repo, selfCommand(), spec.Repo)
