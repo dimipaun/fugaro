@@ -18276,10 +18276,12 @@ that a grant that would be refused by the rules rather than by IAM is not mistak
   `fugaro/allow-delete.json` (D74) are unwritable — **while the read of the root is not**, which §4.3 says in
   its own words: listing needs `storage.objects.list` and a condition on an object's *name* cannot grant it, so
   the root is outside the **write** condition and not outside the read.
-- `gcloud projects test-iam-permissions` — the `projects:testIamPermissions` REST call is the same reading if
-  your `gcloud` is older — for `resourcemanager.projects.setIamPolicy` and `iam.roles.create` answers **not
-  held**, and `secretmanager.versions.access` on a model, git or App secret is **refused** on the probe that
-  actually attempts it.
+- The `projects:testIamPermissions` call — **no `gcloud` surface carries it**, so it travels as a `curl` against
+  the Resource Manager API, the way Check 660's instance-count read travels against the Monitoring API — answers
+  with **only the permissions the caller holds**, so the reading is the absence of
+  `resourcemanager.projects.setIamPolicy` and `iam.roles.create` from its answer; and
+  `secretmanager.versions.access` on a model, git or App secret is **refused** on the probe that actually
+  attempts it.
 - **The positive controls**, because a check of nothing but refusals passes on an account that was never
   created: the same token **does** list the installation's jobs (`run.jobs.get`/`list`), **does** list secrets
   and versions by name, and **does** succeed at a write under `runs/` on a throwaway key of your own.
@@ -18301,8 +18303,11 @@ TOKEN=$(gcloud auth print-access-token --impersonate-service-account=<orch-accou
 # a read of another mailbox, and of the device node, through the RTDB rules:
 curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $TOKEN" \
   "https://<project>-default-rtdb.<region>.firebasedatabase.app/config/admin/devices/<other-uid>.json"
-gcloud projects test-iam-permissions <project> --impersonate-service-account=<orch-account> \
-  --permissions=resourcemanager.projects.setIamPolicy,iam.roles.create,secretmanager.versions.access
+# which permissions the account holds: the Resource Manager API's own call, since no gcloud
+# surface carries it. The answer lists what it holds, so the reading is the two names' absence.
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"permissions":["resourcemanager.projects.setIamPolicy","iam.roles.create","secretmanager.versions.access"]}' \
+  "https://cloudresourcemanager.googleapis.com/v1/projects/<project>:testIamPermissions"
 # the value read is attempted with its output thrown away: the refusal is the reading, never bytes
 gcloud secrets versions access latest --secret=<model-secret> --project <project> \
   --impersonate-service-account=<orch-account> >/dev/null

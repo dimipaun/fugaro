@@ -369,7 +369,7 @@ func TestDocsMobileOrchestratorChecksAreRegistered(t *testing.T) {
 		{"660", []string{"minscale", "min-instances = 0", "empty mailbox", "scheduler"}},
 		{"661", []string{"with the laptop shut", "job execution", "internal/cli/mailbox.go", "p4.1"}},
 		{"662", []string{"destroyed", "2b", "reads a secret value"}},
-		{"663", []string{"var.launchers", "roles/firebasedatabase.viewer", "test-iam-permissions"}},
+		{"663", []string{"var.launchers", "roles/firebasedatabase.viewer", "testiampermissions"}},
 	} {
 		section := strings.ToLower(flattenDoc(checkSection(t, register, want.number)))
 		for _, phrase := range want.phrases {
