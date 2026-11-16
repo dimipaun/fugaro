@@ -23,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -1826,8 +1827,10 @@ func levelsBlockAsk(name string, l *config.ReviewLevels) string {
 // authoritative resolution is the runner's at bootstrap. The recipe is the
 // one this launcher can read (launchRecipeForLevels), and recipeUnknown says
 // the one thing that read could not settle: whether that recipe writes a
-// first-line step of its own. CatalogDefault is read as false: it decides
-// level 1's own default alone, which this gate does not judge.
+// first-line step of its own. This resolution reads CatalogDefault as false,
+// which decides level 1's default on a recipe this launcher has in hand alone;
+// the crafts read below takes the run's own answer (launchCatalogDefault),
+// because the crafts are judged by the run's write and not by this resolution.
 //
 // The run's own request for the strongest review is part of this resolution
 // exactly as it is part of the run's (securityRequestSources, the runner's
@@ -1880,6 +1883,13 @@ func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, 
 		Config: cfg, Mode: mode, Floor: floor, Task: spec.ReviewLevels, Recipe: rcp, Providers: env.lc.Providers,
 		CraftModels: cr.models,
 	}
+	// The crafts the run reads, asked before the levels are resolved because the
+	// run's own write happens before it resolves them (MC12's write, applyCrafts)
+	// and because this is the run's answer, not the one the resolution below
+	// gives: the resolution reads the crafts' models (CraftModels) so that its
+	// refusals name the craft key that wrote a model, and what the run reads is
+	// the set of slots its own write fills.
+	read := launchCraftsRead(cr, launchCraftWrites(cfg, cr, in, launchCatalogDefault(spec)))
 	if fromTask || fromSwitch {
 		// Cloned: ReviewFloor hands out the policy's own slice, and appending
 		// to it would write the forced level into the merged policy.
@@ -1922,8 +1932,7 @@ func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, 
 	// D1628) and the node is that config published, so a name the node carries
 	// is a name this config holds — and this is the read slipCredentialNames
 	// makes for the same half, for the same reason.
-	if ps := craftModelProblems(cfg, env.lc, spec.Repo, claimed, launchFileSubject,
-		launchCraftsRead(cr.crafts, cr.models, levels)); len(ps) > 0 {
+	if ps := craftModelProblems(cfg, env.lc, spec.Repo, claimed, launchFileSubject, read); len(ps) > 0 {
 		lines := make([]string, 0, len(ps))
 		for _, p := range ps {
 			lines = append(lines, p.String())
@@ -1935,8 +1944,9 @@ func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, 
 }
 
 // launchCraftsRead is the crafts whose model the run this launch resolved
-// really reads, out of every craft the layers resolve (MC12's write,
-// internal/runner/craftmodel.go's applyCrafts).
+// really reads, out of every craft the layers resolve, and the answer is the
+// run's own write (MC12, internal/runner/craftmodel.go's applyCrafts): written
+// is the set of crafts launchCraftWrites performed below.
 //
 // The coder's model goes into agent.models.coder and the senior review's into
 // agent.models.reviewer whatever the levels are, and the first-line review's
@@ -1948,30 +1958,86 @@ func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, 
 // serves, with a sentence saying the run refuses the same configuration, and
 // the way out would be editing a key the refused run never reads.
 //
-// The levels answer the last clause rather than a second copy of the rule: a
-// level that wrote its own model resolved to it, so `models[craft]` is in no
-// slot — while a level that wrote none resolved to the craft's model, which is
-// what the slot carries and so what the run's own allow-list, route, price and
-// access checks judge. Where a level wrote a model and the craft names the same
-// ID, the two are one model and the craft's is judged, which is what the run
-// charges. Level 2's slot is not asked about: its model comes from the senior
-// review's role slot, which is judged above whatever the level resolved to.
-func launchCraftsRead(crafts []config.CraftModel, models map[string]string, levels config.Levels) []config.CraftModel {
-	out := make([]config.CraftModel, 0, len(crafts))
-	for _, c := range crafts {
-		switch c.Craft {
-		case config.CraftReview:
-			if !levels.L1.On || levels.L1.Model != models[config.CraftReview] {
-				continue
-			}
-		case config.CraftSecurityReview:
-			if !levels.L3.On || levels.L3.Model != models[config.CraftSecurityReview] {
-				continue
-			}
+// The set is the write's own answer rather than a second copy of the rule: the
+// level 1 switch is read off the coder's model
+// (config.Agent.FirstLineOn, agent.first_line_review: auto), so a craft can turn
+// a level on, and a launch resolving the levels off the models the file's own
+// slots name answers that switch differently from the run whose slots the
+// crafts' models were written into before it resolved them
+// (TestLaunchTakesTheCraftsTheRunsBootstrapResolves).
+func launchCraftsRead(cr craftResolution, written map[string]bool) []config.CraftModel {
+	out := make([]config.CraftModel, 0, len(cr.crafts))
+	for _, c := range cr.crafts {
+		if written[c.Craft] {
+			out = append(out, c)
 		}
-		out = append(out, c)
 	}
 	return out
+}
+
+// launchCraftWrites is the crafts the run this launch resolved writes into a
+// slot: MC12's write, performed on a copy of the launch's own merged
+// configuration through the functions the run's bootstrap performs it with
+// (runner.WriteCraftRoles and runner.WriteCraftLevels), over the same inputs its
+// own resolution is given.
+//
+// It is a copy for two reasons: the launch's own configuration is what every
+// gate below judges, and the write allocates a level's block and writes a model
+// into one a layer left empty — through the shared block pointers, either would
+// land in the launch's.
+//
+// The role write goes first because level 1's answer is read off the roles
+// (WriteCraftRoles), and the levels are asked whether they run on the
+// configuration as it stands then, exactly as the run asks them
+// (CraftLevelsRunning, which is applyCrafts' own call).
+//
+// in is the resolution's own inputs with the crafts' models in it: the role and
+// level writes do not read CraftModels, and the level answer this needs is the
+// one the run takes before it resolves the levels — the resolution below is the
+// launch's, with the task's forced levels in it, and the run's write precedes
+// every forcing (internal/runner's resolveLevels).
+func launchCraftWrites(cfg *config.Config, cr craftResolution, in config.LevelInputs, derived bool) map[string]bool {
+	run := *cfg
+	run.Agent.Levels = launchLevelsCopy(cfg.Agent.Levels)
+	written := runner.WriteCraftRoles(&run, cr.eff, in.Recipe)
+	in.Config, in.CatalogDefault = &run, derived
+	for name := range runner.WriteCraftLevels(&run, cr.eff, runner.CraftLevelsRunning(in)) {
+		written[name] = true
+	}
+	return written
+}
+
+// launchLevelsCopy clones the three level blocks, nil for a level no layer
+// wrote: a craft's write is a write into a block, and the blocks of the
+// configuration a launch holds are shared with the copy launchCraftWrites hands
+// the run's own functions.
+func launchLevelsCopy(lv config.ReviewLevels) config.ReviewLevels {
+	return config.ReviewLevels{
+		L1: launchLevelCopy(lv.L1),
+		L2: launchLevelCopy(lv.L2),
+		L3: launchLevelCopy(lv.L3),
+	}
+}
+
+func launchLevelCopy(b *config.LevelSetting) *config.LevelSetting {
+	if b == nil {
+		return nil
+	}
+	c := *b
+	return &c
+}
+
+// launchCatalogDefault is whether the recipe the run will follow is the
+// catalog's own `default`, the one whose first_line step runs only when
+// agent.first_line_review turns it on (config.LevelInputs.CatalogDefault): the
+// run's own r.derived read off the task, since the launcher embedded every
+// recipe it could read and the recipe a task carries no text for is that
+// default (recipes_resolve.go's taskRecipe, launchRecipeForLevels).
+func launchCatalogDefault(spec *task.Spec) bool {
+	if spec.Recipe == nil {
+		return true
+	}
+	return spec.Recipe.Name == recipe.DefaultName && spec.Recipe.Source == string(recipe.SourceCatalog)
 }
 
 // launchFileSubject is what a launch's own model messages call the file the
@@ -1986,9 +2052,9 @@ const launchFileSubject = "the fugaro.yaml at the ref"
 // internal/runner's craftLayers, which is the answer the run itself resolves —
 // the agent block this launch read, where the file at the ref and the project
 // layer file's defaults both arrive, and the published node, which carries the
-// project's own crafts, credentials and pools (craftNodeKeyPrefix). The
-// launcher cannot call that function (internal/runner imports this package), so
-// the two are kept in step by hand, as craft ls's own three layers are.
+// project's own crafts, credentials and pools (craftNodeKeyPrefix). That
+// function is unexported, since it answers a run's own configuration, so the two
+// are kept in step by hand, as craft ls's own three layers are.
 //
 // A node the launcher could not read is no project layer: the launch then
 // resolves what the file and the installation's config alone say, and a craft

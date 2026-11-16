@@ -594,29 +594,25 @@ func cascadeProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 }
 
 // validateCraftLayers are the documents `fugaro validate` resolves the crafts
-// over, narrowest first: the file in hand, the installation's config and the
-// project layer file that file resolved over — `fugaro craft ls`'s three layers
-// in the same order (craftLsLayers), so the panel states what this command
-// judges.
+// over, narrowest first: the file in hand and the project layer file that file
+// resolved over — the two a run of it resolves over, which are the repository's
+// own agent.crafts block (where the file's crafts and the project layer file's
+// defaults both arrive) and the layer the owner published (internal/runner's
+// craftLayers). The installation's config is not among them: a run in a job has
+// no installation config, it carries what the owner published, so a craft only
+// that config writes reaches no slot of any run — judging it would refuse a
+// file for a model nothing reads.
 //
-// The file in hand is a layer of its own rather than the resolved
-// configuration's merged agent.crafts block, which holds the project layer's
-// crafts as well: a problem has to be named at the key of the document that
-// wrote the model (craft.Layer.CraftKey), and the merged block cannot say which
-// document that was. The installation's config is a layer only when it is this
-// file's own project — another project's config holds another owner's
-// credentials and pools, and the rules this drives judge nothing for it either
-// (craftModelProblems' guard) — and the same holds for the layer's crafts, which
-// are read off the layer the file resolved over and not off this machine's
-// cached copy of it.
-func validateCraftLayers(data []byte, rf resolvedFile, cfg *config.Config, lc *localcfg.Config) []craft.Layer {
+// The crafts are resolved here rather than off cfg.Agent.Crafts, which is the
+// layer a launch reads: a problem has to be named at the key of the document
+// that wrote the model (craft.Layer.CraftKey), and the merged block cannot say
+// which document that was. The panel `fugaro craft ls` prints reads one layer
+// more (craftLsLayers: the installation's own crafts too), because it answers
+// what the owner's documents say rather than what one run reads.
+func validateCraftLayers(data []byte, rf resolvedFile) []craft.Layer {
 	var layers []craft.Layer
 	if agent, ok := config.AgentOf(data); ok {
 		layers = append(layers, craft.Layer{Name: craft.SourceRepo, Crafts: agent.Crafts})
-	}
-	if lc != nil && lc.Name == cfg.Project {
-		layers = append(layers, craft.Layer{Name: craft.SourceLocal, Crafts: lc.Crafts,
-			Credentials: lc.Credentials, Pools: lc.Pools, KeyPrefix: craftLocalKeyPrefix})
 	}
 	if l := rf.Layer.Layer; l != nil {
 		layers = append(layers, craft.Layer{Name: craft.SourceProject, Crafts: l.Defaults.Agent.Crafts,
@@ -637,6 +633,11 @@ type craftResolution struct {
 	// inherit a neighbour's model in the level resolver's hands (F17).
 	models map[string]string
 	crafts []config.CraftModel
+	// eff is the resolver's own answer, which is what MC12's write reads
+	// (internal/runner's WriteCraftRoles and WriteCraftLevels, through
+	// craft.ModelFor): the two shapes above answer the level resolver and MC15's
+	// checks, and neither of them is what the run's bootstrap writes from.
+	eff map[string]craft.Effective
 }
 
 // craftsOf answers every craft from the layers a caller holds, narrowest
@@ -658,7 +659,7 @@ func craftsOf(layers []craft.Layer) craftResolution {
 	// configuration the launcher launches, and `fugaro craft ls` is the read
 	// that names them, where they are a list rather than an exit code.
 	eff, _ := craft.Resolve(layers, false)
-	r := craftResolution{models: map[string]string{}, crafts: make([]config.CraftModel, 0, len(config.CraftNames))}
+	r := craftResolution{models: map[string]string{}, crafts: make([]config.CraftModel, 0, len(config.CraftNames)), eff: eff}
 	for _, name := range config.CraftNames {
 		e := eff[name]
 		if e.Model != "" {
@@ -2267,12 +2268,12 @@ func newValidateCmd() *cobra.Command {
 				rtp, rtn := routingProblems(cmd.Context(), ecfg, lc, routes, lcErr)
 				problems, notes = append(problems, rtp...), append(notes, rtn...)
 				problems = append(problems, cascadeProblems(cmd.Context(), ecfg, lc, lcErr, offline)...)
-				// The crafts this file's runs would resolve, over the same three
-				// documents `fugaro craft ls` reads (validateCraftLayers): the
-				// models the two resolutions below are judged on, resolved once
-				// so that the levels and the model half's own checks cannot read
-				// two answers.
-				cr := craftsOf(validateCraftLayers(data, rf, cfg, lc))
+				// The crafts this file's runs would resolve, over the same two
+				// documents a run of it resolves them over (validateCraftLayers):
+				// the models the two resolutions below are judged on, resolved
+				// once so that the levels and the model half's own checks cannot
+				// read two answers.
+				cr := craftsOf(validateCraftLayers(data, rf))
 				// The review levels this file's runs would resolve (L3.2). The
 				// resolver reads the file's own agent.levels, agent.models and
 				// rigor:, so it is judged on the file as it is, and the recipe

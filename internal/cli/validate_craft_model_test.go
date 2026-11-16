@@ -23,6 +23,7 @@ agent:
   auth: api-key
   crafts:
     review: {access: anthropic-key}
+    senior-review: {model: claude-opus-4}
     security-review: {model: claude-opus-4-1}
 workflows:
   app: { commands: { build: sh build.sh, test: sh test.sh } }
@@ -39,18 +40,17 @@ workflows:
 // disagree: a rule written twice is a rule that drifts.
 
 // TestValidateNamesACraftModelProblemAtItsOwnPath: the model half is judged on
-// the three documents the crafts resolve over — the checkout's own file, the
-// installation's config and the project layer file — and every problem is
-// reported at the key that wrote the model, which is not always a key of the
-// file in hand: `fugaro validate` reads one fugaro.yaml and may name a line of
-// two other documents, because a reader sent to a key that is not in the file
-// they have is being sent to the wrong file.
+// the documents the crafts resolve over — the file in hand and the project
+// layer file it resolved over, the two a run of this file resolves over — and
+// every problem is reported at the key that wrote the model, which is not
+// always a key of the file in hand: `fugaro validate` reads one fugaro.yaml and
+// may name a line of the layer it resolved over, because a reader sent to a key
+// that is not in the file they have is being sent to the wrong file.
 //
 // The allow-list is the problem this test uses because it is one rule that
-// reaches every layer: the installation config's coder model and the project
-// layer's first-line review model are both left out of it while the senior
-// review's is on it, and the checkout's own security review model is left out
-// too, so the three paths come out of one run.
+// reaches both layers: the project layer file's first-line review model is left
+// out of it while the file's own senior review model is on it, and the file's
+// security review model is left out too, so the two paths come out of one run.
 func TestValidateNamesACraftModelProblemAtItsOwnPath(t *testing.T) {
 	craftFixtureWith(t, "budget: { allowed_models: [\"claude-opus-4\"] }\n")
 	testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": validateCraftModelYAML})
@@ -59,12 +59,9 @@ func TestValidateNamesACraftModelProblemAtItsOwnPath(t *testing.T) {
 		t.Fatalf("validate accepted craft models no allow-list holds: exit %d\n%s%s", ExitCode(err), out, errOut)
 	}
 	for _, want := range []struct{ path, message string }{
-		// The installation's own config wrote the coder's model (craftLocalExtra),
-		// and that document's key is `crafts.<craft>.model`.
-		{"crafts.coder.model", "`deepseek/deepseek-v4.1-flash` is not an allowed model"},
-		// The project layer file wrote the first-line review's, and its key is
-		// `defaults.agent.crafts.<craft>.model` -- a document the reader has, but
-		// not the one this command was handed.
+		// The project layer file wrote the first-line review's model, and its
+		// key is `defaults.agent.crafts.<craft>.model` -- a document the reader
+		// has, but not the one this command was handed.
 		{"defaults.agent.crafts.review.model", "`claude-sonnet-5-5` is not an allowed model"},
 		// The file in hand wrote the security review's model, at the key its own
 		// document spells.
@@ -78,10 +75,60 @@ func TestValidateNamesACraftModelProblemAtItsOwnPath(t *testing.T) {
 	// model of their own — the coder's follower and the security review — are
 	// not refused for a model they did not write (F17): a problem at their keys
 	// would send a reader to a line that changes nothing.
-	if line := problemLine(out, "crafts.senior-review.model"); line != "" {
-		t.Errorf("the senior review's model is on the allow-list and was reported anyway: %q", line)
+	for _, path := range []string{"agent.crafts.senior-review.model", "crafts.senior-review.model"} {
+		if line := problemLine(out, path); line != "" {
+			t.Errorf("the senior review's model is on the allow-list and was reported anyway: %q", line)
+		}
 	}
 }
+
+// TestValidateIgnoresTheCraftsNoRunReads: the crafts are resolved over the
+// documents a run of this file resolves over — the file, merged with the
+// project layer — and the installation's own config is not one of them
+// (internal/runner's craftLayers: a run in a job has no installation config,
+// it carries what the owner published). `fugaro validate` reads one for the
+// credentials, the pools and the routes a craft's access and its model are
+// judged against, and reading its crafts too would refuse a file for a model
+// no run of it reads.
+//
+// The world is the one above, with an allow-list that holds every model the
+// run's two documents write and a file whose own pins are on it, so that the
+// crafts are the only thing left a refusal could be about: the installation
+// config's crafts name two models no run of this file reads, and a validate
+// that judged them would report the coder's at a key of a document its reader
+// may not even have.
+func TestValidateIgnoresTheCraftsNoRunReads(t *testing.T) {
+	craftFixtureWith(t, "budget: { allowed_models: [\"claude-opus-4-1\", \"claude-sonnet-5-5\"] }\n")
+	testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": validateCraftPinnedYAML})
+	out, errOut, err := execute(t, "validate", "--offline", "fugaro.yaml")
+	if ExitCode(err) != ExitOK {
+		t.Fatalf("validate refused a file whose crafts are all served: exit %d\n%s%s", ExitCode(err), out, errOut)
+	}
+	for _, path := range []string{"crafts.coder.model", "crafts.senior-review.model"} {
+		if line := problemLine(out, path); line != "" {
+			t.Errorf("validate judged the installation config's own craft at %s, which no run of this file reads: %q\n%s", path, line, out)
+		}
+	}
+}
+
+// validateCraftPinnedYAML is validateCraftModelYAML with the pins a file needs
+// once an allow-list bounds the run: agent.model on the list, and the
+// background slot, which has no fallback of its own, which is what leaves the
+// crafts as the one thing a refusal can be about.
+const validateCraftPinnedYAML = `version: 1
+project: aurora
+gcp_project: aurora-gcp
+git: { provider: github }
+agent:
+  auth: api-key
+  model: claude-sonnet-5-5
+  models: { background: claude-sonnet-5-5 }
+  crafts:
+    review: {access: anthropic-key}
+    security-review: {model: claude-opus-4-1}
+workflows:
+  app: { commands: { build: sh build.sh, test: sh test.sh } }
+`
 
 // launchCraftAllowListYAML is the file the allow-list launch commits as the
 // ref's fugaro.yaml: configSkewHead's repository, ref and workflow, with a craft
@@ -269,8 +316,79 @@ func TestLaunchServesACraftWhoseLevelIsOff(t *testing.T) {
 	})
 }
 
+// launchCraftAutoYAML is the file the launch below commits: the coder craft
+// moves the coder onto a model a route claims, and first_line_review is auto —
+// so whether level 1 runs is read off the coder's model
+// (config.Agent.FirstLineOn), which the craft decides, and the first-line
+// review's own model is off the allow-list.
+//
+// The file's own slots say the other answer: they name one model, no route
+// claims it, so a resolution that reads them leaves level 1 off. That is the
+// divergence the launch must not have (MC12's write comes before the levels are
+// asked whether they run).
+const launchCraftAutoYAML = `version: 1
+project: aurora
+git: { provider: github, base_branch: develop }
+budget: { allowed_models: [claude-opus-4-1, deepseek/deepseek-v4.1-flash] }
+agent:
+  auth: api-key
+  model: claude-opus-4-1
+  first_line_review: auto
+  crafts:
+    coder: { model: deepseek/deepseek-v4.1-flash }
+    review: { model: claude-sonnet-5-5 }
+workflows:
+  svc: { commands: { build: sh build.sh, test: sh test.sh } }
+`
+
+// launchCraftAutoRoute is the owner's route the launch below needs: it claims
+// the model the coder craft names, which is what turns level 1 on for the run
+// and leaves it off for a resolution reading the file's own slots.
+const launchCraftAutoRoute = "providers:\n" +
+	"  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n    auth: bearer\n" +
+	"    secret: openrouter-api-key\n    models: [\"deepseek/*\"]\n" +
+	"model_prices:\n  \"deepseek/deepseek-v4.1-flash\": { input_per_m: 1, output_per_m: 2 }\n"
+
+// TestLaunchTakesTheCraftsTheRunsBootstrapResolves: the crafts a launch judges
+// are the ones the run's own bootstrap reads, and the level 1 switch is the
+// one answer a craft can move — the coder craft's model is what
+// agent.first_line_review: auto reads, so the run turns level 1 on for a file
+// whose own slots leave it off (MC12's write happens before the levels are
+// resolved, internal/runner/craftmodel.go).
+//
+// A launch that resolved the file's own slots reads level 1 as off, reads the
+// first-line review's craft nowhere and starts a job whose first act is to
+// refuse the task — the exact cost this gate exists to save (MC14, D1665).
+func TestLaunchTakesTheCraftsTheRunsBootstrapResolves(t *testing.T) {
+	noAgentSession(t)
+	f := newCloudFixture(t)
+	f.appendConfig(t, launchCraftAutoRoute)
+	configSkewCheckout(t, f, launchCraftAutoYAML)
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releasePolicy)
+	_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("the launch served a craft the run reads and refuses: err = %v (exit %d)", err, ExitCode(err))
+	}
+	for _, want := range []string{
+		"the crafts this run would resolve cannot be served",
+		"agent.crafts.review.model",
+		"`claude-sonnet-5-5` is not an allowed model",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("%d executions were created for a refused launch", n)
+	}
+	if storedTask(t, f) {
+		t.Error("the refused launch stored its task")
+	}
+}
+
 // cropLayerNoReviewCraft is craftProjectLayer without the first-line review's
-// model, so that craft follows the coder's (F16).
+// model and with the coder's: the layer writes the one model two crafts run —
+// the coder's own, and the review's, which follows it (F16).
 const cropLayerNoReviewCraft = `version: 1
 project: aurora
 gcp_project: aurora-gcp
@@ -278,6 +396,8 @@ defaults:
   git: { provider: github }
   agent:
     auth: api-key
+    crafts:
+      coder: {model: deepseek/deepseek-v4.1-flash}
 `
 
 // TestValidateNamesAnInheritedCraftModelProblemOnce: the first-line review
@@ -300,7 +420,7 @@ func TestValidateNamesAnInheritedCraftModelProblemOnce(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("validate accepted a coder model no allow-list holds: exit %d\n%s", ExitCode(err), out)
 	}
-	line := "crafts.coder.model: `deepseek/deepseek-v4.1-flash` is not an allowed model"
+	line := "defaults.agent.crafts.coder.model: `deepseek/deepseek-v4.1-flash` is not an allowed model"
 	if n := strings.Count(out, line); n != 1 {
 		t.Errorf("the coder's model is refused %d time(s), want once: the review craft runs it too (F16), and one line is what a reader has to change\n%s", n, out)
 	}
