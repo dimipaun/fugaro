@@ -267,6 +267,9 @@ run_or_print gcloud run deploy fugaro-key-minter \
 run_or_print firebase deploy --only hosting,firestore:rules --project "$project" --config "$config"
 
 if [[ -n $seed_address ]]; then
+  # The dry run prints the two commands instead, so this line -- which says the
+  # seed is happening -- is the real run's alone.
+  [[ $dry_run == true ]] || echo "deploy-portal: seeding the operations organisation for $seed_address"
   # The job is the services root's and the image is this script's, so it is
   # revised to the image just pushed before it runs: the root writes the job's
   # image from var.api_image, which is still the previous image until an apply
@@ -274,7 +277,6 @@ if [[ -n $seed_address ]]; then
   # which revision ran it is not something anybody can read afterwards.
   run_or_print gcloud run jobs update "$DEFAULT_SEED_JOB" \
     --image "$image_base/fugaro-portal-api:$tag" --project "$project" --region "$region"
-  echo "deploy-portal: seeding the operations organisation for $seed_address"
   # --wait is what makes this the deploy's own step rather than a submission: the
   # execution's exit status is this line's, so a seed that refused is a deploy
   # that failed and says so.

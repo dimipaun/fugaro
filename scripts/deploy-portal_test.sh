@@ -210,6 +210,7 @@ run --dry-run --project my-portal-1 --seed-operations owner@example.test
 [[ $out == *"would run: gcloud run jobs execute $SEED_JOB --args=seed-operations,owner@example.test --project my-portal-1 --region us-east5 --wait"* ]] ||
   fail "the dry run does not print the seed's execution: $out"
 called "gcloud" && fail "the dry run ran the seed: $(cat "$work/calls")"
+[[ $out == *"seeding the operations organisation"* ]] && fail "the dry run says it is seeding, and nothing was seeded: $out"
 
 # 5. A build with no Firebase configuration is refused before anything runs: it
 #    would deploy a portal nobody can sign into.
