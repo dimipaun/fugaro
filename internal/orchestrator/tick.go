@@ -223,13 +223,15 @@ func (c *cycle) run(ctx context.Context) error {
 	if err := c.fold(ctx, reports); err != nil {
 		return err
 	}
-	// A run the workspace refused stops this cycle before it plans anything:
-	// the question has to be on the node before the plan is derived from it, or
-	// the cycle that learned of the refusal starts the very next item into the
-	// same one (O19, D2022 (a)). Every other question is the streak's and comes
-	// after the cycle has ended, where Step asks it (Observe).
+	// A run the workspace refused stops this cycle before it plans anything: the
+	// fold has just put the question on the node in the same patch as the
+	// outcome, so the plan this cycle derives already refuses over the pause
+	// (O19, D2022 (a)) and the next item is not started into the same refusal.
+	// What is left is the line the log keeps of which run it was. Every other
+	// question is the streak's and comes after the cycle has ended, where Step
+	// asks it (Observe).
 	if c.refused != "" {
-		if err := c.refuse(ctx); err != nil {
+		if err := c.auditRefusal(ctx); err != nil {
 			return err
 		}
 	}
@@ -258,6 +260,16 @@ func (c *cycle) run(ctx context.Context) error {
 // refusal this build's seam claims is remembered on the cycle, which asks a
 // person at once rather than spending the attempts the streak would take.
 //
+// The question that refusal raises goes into this same patch (O19). The outcome
+// that spends the attempt and the pause that stops the next item are one write,
+// so a write that does not land leaves the intent still unreported and the next
+// cycle reads the same report, folds the same refusal and asks then. A second
+// write is the pause's whole risk: an ETag a person's or a session's write
+// moved, a database that refused it, or the daemon dying between the two would
+// leave the outcome landed and the refusal never folded again — openRunIDs
+// skips an intent that has reported — so the queue would carry on into the
+// workspace's refusal with no question and no line.
+//
 // What it asks about is the reports the reader answered for the intents that
 // have not reported, which is every report the fold looks at: an attempt that
 // has already reported is history, and a refusal folded in an earlier cycle is
@@ -268,10 +280,21 @@ func (c *cycle) fold(ctx context.Context, reports []RunReport) error {
 	if err != nil {
 		return err
 	}
+	folded := len(ops)
 	for _, r := range reports {
 		if r.Finished && WorkspaceRefused(r) {
 			c.refused, c.refusedRun = r.WorkspaceRefusal, r.RunID
 			break
+		}
+	}
+	var asked *DecisionOp
+	if c.refused != "" && c.tick.Breaker != nil {
+		// Against the state before this patch: the fold's ops write items and
+		// intents, and whether the node already carries the breaker's question
+		// is a read of the decisions it leaves alone.
+		if op, ok := c.tick.Breaker.WorkspaceDecision(c.state, c.now, c.refused); ok {
+			ops = append(ops, op)
+			asked = op.Decision
 		}
 	}
 	if len(ops) == 0 {
@@ -284,9 +307,12 @@ func (c *cycle) fold(ctx context.Context, reports []RunReport) error {
 	if err := c.commit(ctx, next); err != nil {
 		return err
 	}
-	c.rep.Folded = len(ops)
+	c.rep.Folded = folded
 	for _, n := range notes {
 		c.say(ctx, n)
+	}
+	if asked != nil {
+		c.say(ctx, Notification{Kind: NotifyDecisionNeeded, Subject: asked.ID, Text: asked.Question})
 	}
 	return nil
 }
@@ -396,27 +422,16 @@ func (c *cycle) question() (Op, bool) {
 	return c.tick.Breaker.Decision(c.state, c.now)
 }
 
-// refuse is the whole of what a cycle owes a workspace's refusal: the question
-// a person answers, and the line the log keeps of which run was stopped. Both
-// land before the cycle plans, which is what makes "at once" mean this cycle
-// rather than the next one.
-//
-// The line is written whether or not the question was raised — a node that
-// already carried one is a node whose refusal is still worth reading about —
-// and neither depends on the other: the pause is the question, and the log is
-// evidence of it.
-func (c *cycle) refuse(ctx context.Context) error {
-	if err := c.ask(ctx); err != nil {
-		return err
-	}
-	return c.auditRefusal(ctx)
-}
-
 // auditRefusal writes the line a run a workspace refused leaves: which run it
 // was, which of the workspace's refusals the record named, and what the daemon
 // did about it. The id is derived from the run and the transition, so a cycle
 // that sees the same refusal again writes the same key rather than a second
 // line.
+//
+// The line is written whether or not the question was raised — a node that
+// already carried the breaker's question is a node whose refusal is still worth
+// reading about — and it is not what raises it: the question is the fold's
+// patch, and the log is evidence of it.
 //
 // A log this package cannot write fails the cycle with its error, which the
 // tick returns and the report calls failed. What it does not do is lift the

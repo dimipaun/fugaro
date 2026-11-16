@@ -19,6 +19,7 @@ package orchestrator_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -104,6 +105,124 @@ func TestAWorkspaceRefusalPausesTheQueueAtOnce(t *testing.T) {
 	if len(runs) != 1 {
 		t.Fatalf("this test seeds %d run(s)", len(runs))
 	}
+}
+
+// TestARefusedRunWhoseWriteFailsIsAskedAboutOnTheRetry pins the pause against
+// the write it travels in: the outcome that spends the attempt and the question
+// that stops the queue are one patch, so the pause lands in the write that
+// lands the outcome or in no write at all.
+//
+// Both halves are what a second write would lose, and the second is the one
+// that fails open: the outcome lands, the attempt has reported, openRunIDs
+// never asks the reader about it again, and the refusal is gone — no question,
+// no line, and the queue carries on into the workspace's refusal, which is the
+// opposite of "at once".
+func TestARefusedRunWhoseWriteFailsIsAskedAboutOnTheRetry(t *testing.T) {
+	now := o6Now()
+	const runID = "20261107-090000-abcd"
+
+	t.Run("the write the fold carries is refused", func(t *testing.T) {
+		workspaceClaims(t)
+		s, _ := workspaceQueue(t, now, runID)
+
+		h := newHarness(t, s, now, "20261107-090001-beef")
+		h.tick.Breaker = &orchestrator.Breaker{}
+		h.tick.Store = &refusingStore{Store: h.node}
+		h.reader.reports = []orchestrator.RunReport{workspaceRefusedRun(runID, "stop")}
+
+		if _, err := h.tick.Step(context.Background()); !errors.Is(err, orchestrator.ErrStateMoved) {
+			t.Fatalf("the cycle over a refused run whose write was refused ended as %v, want the store's own refusal", err)
+		}
+		// Nothing landed — neither the outcome nor the question — and the
+		// attempt is still unreported, which is what makes the refusal visible
+		// to the next cycle at all.
+		got := h.state()
+		if n := len(got.Decisions); n != 0 {
+			t.Fatalf("the node carries %d decision(s) after a write that did not land: %+v", n, got.Decisions)
+		}
+		if it := intentByID(t, got, "wi-1:1"); it.Outcome != "" {
+			t.Errorf("the intent is %+v, and a write that did not land leaves the attempt unreported", it)
+		}
+		if w, ok := got.Item("wi-1"); !ok || w.Phase != orchestrator.PhaseRunning {
+			t.Errorf("the item is %+v, and a write that did not land leaves it where it was", w)
+		}
+
+		// The retry: the same report folded again, and this time the outcome
+		// and the question are one write, so the pause stands before the cycle
+		// plans.
+		h.step()
+		got = h.state()
+		if n := len(got.Decisions); n != 1 {
+			t.Fatalf("the retry left %d decision(s): %+v", n, got.Decisions)
+		}
+		if !orchestrator.BreakerOpen(got, now) {
+			t.Error("the retry folded the refusal but the node carries no pause")
+		}
+		if w, ok := got.Item("wi-2"); !ok || w.Phase != orchestrator.PhaseQueued {
+			t.Errorf("the item beside the refusal is %+v, and the pause the retry raised has to hold it", w)
+		}
+	})
+
+	t.Run("the write after it is refused", func(t *testing.T) {
+		workspaceClaims(t)
+		s, _ := workspaceQueue(t, now, runID)
+
+		h := newHarness(t, s, now, "20261107-090001-beef")
+		h.tick.Breaker = &orchestrator.Breaker{}
+		h.tick.Store = &refusingStore{Store: h.node, allowed: 1}
+		h.reader.reports = []orchestrator.RunReport{workspaceRefusedRun(runID, "stop")}
+
+		// The question is in the fold's write, so there is no second one to
+		// lose it: a store that refuses the write after it leaves the cycle
+		// finished and the pause standing.
+		if _, err := h.tick.Step(context.Background()); err != nil {
+			t.Fatalf("a store that refused the write after the fold's ended the cycle as %v: the outcome and the pause have to be one write", err)
+		}
+		got := h.state()
+		if n := len(got.Decisions); n != 1 {
+			t.Fatalf("the node carries %d decision(s) after the write that landed: %+v", n, got.Decisions)
+		}
+		if !orchestrator.BreakerOpen(got, now) {
+			t.Error("the write that landed left no pause: the question went out in a second write that this store refused")
+		}
+		if w, ok := got.Item("wi-2"); !ok || w.Phase != orchestrator.PhaseQueued {
+			t.Errorf("the item beside the refusal is %+v, and the pause has to hold it", w)
+		}
+
+		// And the queue stays stopped: the next cycle asks nothing more and
+		// starts nothing, which is what a pause lost with the second write
+		// would have given up here — the attempt has reported, so the refusal
+		// is never folded again.
+		h.reader.reports = nil
+		h.step()
+		got = h.state()
+		if n := len(got.Decisions); n != 1 {
+			t.Errorf("the cycle after the refusal left %d decision(s), want the one question: %+v", n, got.Decisions)
+		}
+		if w, ok := got.Item("wi-2"); !ok || w.Phase != orchestrator.PhaseQueued {
+			t.Errorf("the item beside the refusal is %+v after another cycle, and nothing may start it while the pause stands", w)
+		}
+
+	})
+}
+
+// refusingStore is the harness's own store with one write it will not take, the
+// one after the allowed ones, which is what a person's or a session's
+// concurrent write looks like to the cycle that lost the ETag under it.
+type refusingStore struct {
+	orchestrator.Store
+	// allowed is how many writes go through before the refused one; the zero
+	// value refuses the first.
+	allowed int
+	writes  int
+}
+
+func (s *refusingStore) Save(ctx context.Context, st orchestrator.State, etag orchestrator.ETag) error {
+	s.writes++
+	if s.writes == s.allowed+1 {
+		return fmt.Errorf("the store refused write %d: %w", s.writes, orchestrator.ErrStateMoved)
+	}
+	return s.Store.Save(ctx, st, etag)
 }
 
 // TestAWorkspaceRefusalRaisesOnePersonDecision pins the question the trip
