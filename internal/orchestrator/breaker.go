@@ -180,6 +180,55 @@ func BreakerOpen(s State, now time.Time) bool {
 	return false
 }
 
+// dropLapsedWorkspaceQuestions is s without the workspace questions whose
+// window has passed and that nobody answered: the questions BreakerOpen no
+// longer reads as the pause.
+//
+// Nothing else retires one. Retention never drops an open decision — Retain's
+// own rules and shrink's both stop at it, and Retain has no caller in the loop
+// at all — so a question left here is a decision the document carries for good,
+// and the pause lifts on its own: a refusal an hour raises a question an hour,
+// ~24 a day, and the node is at MaxDecisions and MaxStateBytes in a few days.
+// Past that every write from every class is refused with ErrTooLarge — the
+// daemon's and a person's alike, Apply validating the state before the patch as
+// well as the one after it — with nothing in the loop able to bring the node
+// back under, which is the failure decide's dropStaleCallRecords answers the
+// same way for the call ledger's records (internal/orchestrator/decide/
+// bounds.go, "a record per call would fill the document").
+//
+// What it drops is inert by construction: BreakerOpen skips a workspace
+// question past its window, so the pause, the plan and every count read the
+// same state with or without it. It is called where the next question is
+// raised, which is the only moment one of these appears, and it leaves a
+// question a person has answered alone — that one is the record of what was
+// asked and what came back, and it takes a person's answer to make another.
+func dropLapsedWorkspaceQuestions(s State, now time.Time) State {
+	lapsed := func(d Decision) bool {
+		return !d.Resolved() && strings.HasPrefix(d.ID, WorkspaceDecisionID+"-") &&
+			!now.Before(d.At.Add(WorkspacePauseWindow))
+	}
+	any := false
+	for _, d := range s.Decisions {
+		if lapsed(d) {
+			any = true
+			break
+		}
+	}
+	if !any {
+		return s
+	}
+	s = s.Clone()
+	kept := make([]Decision, 0, len(s.Decisions))
+	for _, d := range s.Decisions {
+		if lapsed(d) {
+			continue
+		}
+		kept = append(kept, d)
+	}
+	s.Decisions = kept
+	return s
+}
+
 // Decision is the question a tripped breaker raises, for the tick to commit
 // with the rest of its patch, and false when there is none to raise: the node
 // already carries the breaker's question (see BreakerOpen), and a cycle that

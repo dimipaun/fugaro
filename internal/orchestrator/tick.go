@@ -287,12 +287,18 @@ func (c *cycle) fold(ctx context.Context, reports []RunReport) error {
 			break
 		}
 	}
+	base := c.state
 	var asked *DecisionOp
 	if c.refused != "" && c.tick.Breaker != nil {
 		// Against the state before this patch: the fold's ops write items and
 		// intents, and whether the node already carries the breaker's question
 		// is a read of the decisions it leaves alone.
-		if op, ok := c.tick.Breaker.WorkspaceDecision(c.state, c.now, c.refused); ok {
+		if op, ok := c.tick.Breaker.WorkspaceDecision(base, c.now, c.refused); ok {
+			// The questions whose window has passed go out with the one this
+			// patch raises: they are inert and nothing else retires them, so
+			// the document would carry one per window until it refused every
+			// write (dropLapsedWorkspaceQuestions).
+			base = dropLapsedWorkspaceQuestions(base, c.now)
 			ops = append(ops, op)
 			asked = op.Decision
 		}
@@ -300,7 +306,7 @@ func (c *cycle) fold(ctx context.Context, reports []RunReport) error {
 	if len(ops) == 0 {
 		return nil
 	}
-	next, err := Apply(c.state, Patch{BaseRev: c.state.Rev, Ops: ops}, Actor{Class: Daemon, Now: c.now})
+	next, err := Apply(base, Patch{BaseRev: base.Rev, Ops: ops}, Actor{Class: Daemon, Now: c.now})
 	if err != nil {
 		return err
 	}

@@ -206,6 +206,57 @@ func TestARefusedRunWhoseWriteFailsIsAskedAboutOnTheRetry(t *testing.T) {
 	})
 }
 
+// TestNRefusalsAcrossNWindowsLeaveTheNodeBounded pins the half of the pause that
+// keeps the daemon able to write at all. A workspace refusing an hour raises a
+// question an hour, and nothing retires one — retention stops at an open
+// decision and the loop calls no retention pass at all — so the document fills:
+// past MaxStateBytes and MaxDecisions every write from every class is refused
+// with ErrTooLarge, a person's included, with nothing in the loop able to bring
+// the node back under.
+//
+// The lapsed questions go out with the next one the fold raises, so a window's
+// worth of refusals leaves the node at one question and still writable.
+func TestNRefusalsAcrossNWindowsLeaveTheNodeBounded(t *testing.T) {
+	workspaceClaims(t)
+	now := o6Now()
+	const refusals = 24
+	runID := func(k int) string { return fmt.Sprintf("20261107-090000-%04x", k) }
+
+	items := make([]orchestrator.WorkItem, 0, refusals)
+	intents := make([]orchestrator.Intent, 0, refusals)
+	for k := range refusals {
+		w, it := o6OpenItem(fmt.Sprintf("wi-%d", k), runID(k), now.Add(-time.Hour), now.Add(-30*time.Minute))
+		items = append(items, w)
+		intents = append(intents, it)
+	}
+	h := newHarness(t, tickState(t, now, items, intents), now)
+	h.tick.Breaker = &orchestrator.Breaker{}
+
+	for k := range refusals {
+		h.tick.Now = clockAt(now.Add(time.Duration(k) * orchestrator.WorkspacePauseWindow))
+		h.reader.reports = []orchestrator.RunReport{workspaceRefusedRun(runID(k), "stop")}
+		h.step()
+	}
+
+	got := h.state()
+	if n := len(got.Decisions); n != 1 {
+		t.Fatalf("the node carries %d decision(s) after %d refusals across as many windows, want the one the last raised: a question per window that nothing retires fills the document", n, refusals)
+	}
+	if orchestrator.OverCap(got) {
+		t.Errorf("the node is %d bytes after %d refusals, over MaxStateBytes", stateBytes(t, got), refusals)
+	}
+
+	// And it is still writable, which is what the bound is for: a person's
+	// answer to the question that stands lands.
+	at := now.Add(time.Duration(refusals) * orchestrator.WorkspacePauseWindow)
+	if _, err := orchestrator.Apply(got, orchestrator.Patch{BaseRev: got.Rev, Ops: []orchestrator.Op{{
+		Op:      orchestrator.OpDecisionResolve,
+		Resolve: &orchestrator.ResolveOp{ID: got.Decisions[0].ID, Answer: "carry on"},
+	}}}, orchestrator.Actor{Class: orchestrator.Person, Name: "owner", Now: at}); err != nil {
+		t.Fatalf("a person's answer after %d refusals was refused (%v): nothing in the loop can bring a node over the cap back under", refusals, err)
+	}
+}
+
 // refusingStore is the harness's own store with one write it will not take, the
 // one after the allowed ones, which is what a person's or a session's
 // concurrent write looks like to the cycle that lost the ETag under it.
