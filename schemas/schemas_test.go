@@ -1142,7 +1142,9 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 // out, so it reads the Go fields' own json tags the way
 // TestTaskSchemaAcceptsFollowUp does: renaming a tag or a schema property stops
 // the two agreeing, and the drift would otherwise be silent, since no Go test
-// reads this document.
+// reads this document. The rounds it holds are the three kinds a record can
+// carry — one that answered, one whose call failed, and one the run did not ask
+// — so an additive member the schema is missing is caught here.
 //
 // Mutation (drop the triage property, or rename the Go tag): the marshalled
 // record is rejected as an unknown key and this test fails.
@@ -1197,6 +1199,13 @@ func TestResultSchemaAcceptsTriage(t *testing.T) {
 		// rejects.
 		{Round: 2, Mode: rigor.Pro, Level: policy.LevelL3, Failed: true, Cause: "Invalid API key · Fix external API key",
 			Entries: []runstore.TriageEntry{}},
+		// And the round the run did not ask at all, whose call could only have
+		// come back as an auth failure: it carries a cause the same way and
+		// stays out of `failed`, because nothing failed — the run chose not to
+		// ask. Marshalled from the record, so a `skipped` the schema does not
+		// carry is an unknown key this test rejects.
+		{Round: 3, Mode: rigor.Pro, Level: policy.LevelL3, Skipped: true, Cause: runstore.TriageCauseNoAccount,
+			Entries: []runstore.TriageEntry{}},
 	})
 	rec.Deferred = runstore.NewDeferred([]runstore.DeferredFinding{
 		{Key: "9f2a1c", Summary: "a long comment restates the function", Reason: "doc drift, not the main path", Group: "docs", Source: runstore.TriageSourceAgent},
@@ -1220,7 +1229,9 @@ func TestResultSchemaAcceptsTriage(t *testing.T) {
 		{"a round with no entries list", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":0}]}`},
 		{"a round with no total", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","entries":[]}]}`},
 		{"a failed that is not a boolean", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","failed":"yes","total":0,"entries":[]}]}`},
+		{"a skipped that is not a boolean", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","skipped":"yes","total":0,"entries":[]}]}`},
 		{"an empty cause", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","failed":true,"cause":"","total":0,"entries":[]}]}`},
+		{"a skip with an empty cause", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","skipped":true,"cause":"","total":0,"entries":[]}]}`},
 		{"a cause longer than the bound", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","failed":true,"cause":"` + strings.Repeat("x", runstore.MaxTriageLine+1) + `","total":0,"entries":[]}]}`},
 		{"a member the round does not carry", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","verdict":"defer","total":0,"entries":[]}]}`},
 		{"more rounds than the bound", `,"triage":{"rounds":[` + strings.TrimSuffix(strings.Repeat(`{"round":1,"mode":"pro","level":"l2","total":0,"entries":[]},`, runstore.MaxTriageRounds+1), ",") + `]}`},

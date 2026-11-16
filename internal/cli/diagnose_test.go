@@ -320,6 +320,80 @@ func TestDiagnosePrintsTriageRounds(t *testing.T) {
 	}
 }
 
+// TestDiagnosePrintsASkippedTriageRound: a round the run did not ask at all is
+// a different fact from one whose call failed, and the document says so on a
+// member of its own: `skipped` set, `failed` absent, and the run's own cause
+// beside them. The human diagnosis flags it above the status block and in the
+// Triage block below it -- a reader who saw "failed" over a round that never
+// ran would go looking for a call that does not exist -- and the fix round that
+// follows such a round was handed what the mode's table blocks, which no judge
+// weighed (D1846).
+func TestDiagnosePrintsASkippedTriageRound(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abd8"
+	exec := seedRun(t, f, id, "", "someone@example.com", true)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	s := runstore.Open(b, appSlug, id)
+	rec := &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+		Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady,
+		Stages: []runstore.StageTiming{{Name: "triage"}},
+		Triage: runstore.NewTriage([]runstore.TriageRound{
+			{Round: 1, Mode: rigor.Startup, Level: policy.LevelL2, Model: "claude-opus-5",
+				Skipped: true, Cause: runstore.TriageCauseNoAccount,
+				Entries: []runstore.TriageEntry{
+					{Key: "k1", Verdict: runstore.VerdictBlock, Reason: "no verdict was read", Source: runstore.TriageSourceFailSafe},
+				}},
+			// The round that answered, so the two readings sit beside each
+			// other and a reader can tell them apart.
+			{Round: 2, Mode: rigor.Startup, Level: policy.LevelL2, Model: "claude-opus-5",
+				Entries: []runstore.TriageEntry{
+					{Key: "k1", Verdict: runstore.VerdictDefer, Reason: "doc drift", Source: runstore.TriageSourceAgent},
+				}},
+		})}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d Diagnosis
+	if err := json.Unmarshal([]byte(out), &d); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if len(d.Triage) != 2 {
+		t.Fatalf("triage = %+v, want the record's two rounds", d.Triage)
+	}
+	skipped := d.Triage[0]
+	if !skipped.Skipped || skipped.Failed {
+		t.Errorf("the round = %+v, want it skipped and not failed", skipped)
+	}
+	if skipped.Cause != runstore.TriageCauseNoAccount {
+		t.Errorf("the skipped round's cause = %q, want the record's own", skipped.Cause)
+	}
+	if skipped.Sources != (TriageSources{FailSafe: 1}) || skipped.Total != 1 {
+		t.Errorf("the skipped round's placements = %+v of %d, want the fail-safe's one", skipped.Sources, skipped.Total)
+	}
+	if answered := d.Triage[1]; answered.Skipped || answered.Failed || answered.Cause != "" {
+		t.Errorf("the round that answered = %+v, want it unflagged and without a cause", answered)
+	}
+	human, _, err := execute(t, "diagnose", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Triage:   skipped (round 1: " + runstore.TriageCauseNoAccount + "); the fail-safe blocked every finding the mode's table blocks",
+		"round 1 (startup, l2, claude-opus-5): 1 finding — agent 0, table 0, fail_safe 1, cap 0; SKIPPED: " + runstore.TriageCauseNoAccount,
+		"round 2 (startup, l2, claude-opus-5): 1 finding — agent 1, table 0, fail_safe 0, cap 0",
+	} {
+		if !strings.Contains(human, want) {
+			t.Errorf("the human diagnosis lacks %q:\n%s", want, human)
+		}
+	}
+}
+
 // TestDiagnoseOmitsStagesAndToleratedWhenEmpty: both keys are omitempty, so a
 // run whose record carries neither -- a run that never recorded a stage, and
 // one with no record at all -- prints a document without them rather than an

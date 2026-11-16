@@ -605,13 +605,15 @@ func TestNewTriageBoundsWhatItStores(t *testing.T) {
 }
 
 // TestNewTriageKeepsACauseOnlyForAFailedRound: the cause is why a round failed
-// and the field is the round's own, so the two cannot disagree in the record —
-// a round the constructor did not store as failed carries no cause whatever the
-// caller passed with it, and a cause longer than MaxTriageLine is clipped like
-// the reason and the group are. It is clipped here as well as where it is read
-// off the call (internal/runner's triageCause) because this constructor is what
-// writes the record: a caller that handed it a paragraph would otherwise put
-// one in the run's own document, which every listing reads.
+// — or, since a round could be skipped before the call was made, why it did not
+// run (TestNewTriageKeepsACauseForASkippedRound) — and the field is the round's
+// own, so the two cannot disagree in the record: a round the constructor stored
+// as neither carries no cause whatever the caller passed with it, and a cause
+// longer than MaxTriageLine is clipped like the reason and the group are. It is
+// clipped here as well as where it is read off the call (internal/runner's
+// triageCause) because this constructor is what writes the record: a caller
+// that handed it a paragraph would otherwise put one in the run's own document,
+// which every listing reads.
 func TestNewTriageKeepsACauseOnlyForAFailedRound(t *testing.T) {
 	answered := NewTriage([]TriageRound{{Round: 1, Mode: rigor.Pro, Level: policy.LevelL2, Cause: "a cause on a round that answered"}})
 	if answered == nil || answered.Rounds[0].Cause != "" {
@@ -627,6 +629,21 @@ func TestNewTriageKeepsACauseOnlyForAFailedRound(t *testing.T) {
 	}
 	if !failed.Rounds[0].Failed {
 		t.Errorf("the round = %+v, want the failure it was given kept", failed.Rounds[0])
+	}
+}
+
+// TestNewTriageKeepsACauseForASkippedRound: a skipped round is the other kind
+// that carries one — the run made no call at all (TriageCauseNoAccount), and
+// the cause is what the report, the row and `fugaro diagnose` say instead of a
+// verdict. It is not a failure, so it stays out of Failed: a reader that told
+// the two apart by that field alone would say the call went out and broke.
+func TestNewTriageKeepsACauseForASkippedRound(t *testing.T) {
+	skipped := NewTriage([]TriageRound{{Round: 1, Mode: rigor.Pro, Level: policy.LevelL2, Skipped: true, Cause: TriageCauseNoAccount}})
+	if skipped == nil {
+		t.Fatal("NewTriage dropped a skipped round")
+	}
+	if got := skipped.Rounds[0]; got.Cause != TriageCauseNoAccount || !got.Skipped || got.Failed {
+		t.Errorf("the round = %+v, want the cause kept on a skipped round and Failed false", got)
 	}
 }
 
