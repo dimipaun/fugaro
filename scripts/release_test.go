@@ -78,6 +78,10 @@ func newReleaseRepo(t *testing.T) *releaseRepo {
 		"0.12.0":  "A user-facing change.",
 		"0.12.10": "A user-facing change.",
 	})
+	// The default release these fixtures cut is 0.12.0, so the seed's
+	// FEATURES.md is stamped for it; a test that releases another version
+	// stamps its own (addReleaseNotes, stampFeatures).
+	writeFeatures(t, seed, "0.12.0")
 	testutil.Git(t, seed, "add", "-A")
 	testutil.Git(t, seed, "commit", "--quiet", "-m", "seed")
 	testutil.Git(t, seed, "push", "--quiet", "origin", "HEAD:refs/heads/main")
@@ -96,6 +100,34 @@ func writeHighlights(t *testing.T, dir, version, body string) {
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// writeFeatures writes the fixture's FEATURES.md carrying the release's stamp,
+// in the shape docs/feature-matrix/contract.md fixes for the line release.sh
+// greps: `as_of: vX.Y.Z`, as a line of its own. The release's own PR writes it
+// with the notes (docs/release.md, "Before you tag"), so a fixture that makes a
+// version releasable stamps it for that version, the way writeHighlights and
+// writeSummaries write the release's other two files.
+func writeFeatures(t *testing.T, dir, version string) {
+	t.Helper()
+	path := filepath.Join(dir, "FEATURES.md")
+	body := "# Features\n\nas_of: v" + version + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// stampFeatures writes FEATURES.md stamped for version on the fixture's main and
+// commits it, which is what the release's own PR does: release.sh refuses an
+// origin/main whose FEATURES.md carries no commit since the previous release
+// tag (D2449), so a fixture that puts a tag in front of one needs this rather
+// than a file already in the seed.
+func stampFeatures(t *testing.T, r *releaseRepo, version string) {
+	t.Helper()
+	writeFeatures(t, r.local, version)
+	testutil.Git(t, r.local, "add", "FEATURES.md")
+	testutil.Git(t, r.local, "commit", "--quiet", "-m", "features: the matrix as of v"+version)
+	testutil.Git(t, r.local, "push", "--quiet", "origin", "main")
 }
 
 // streamsFixture is the fixture checkout's docs/release-streams.yaml: the real
@@ -180,13 +212,17 @@ func rewriteFixtureStreams(t *testing.T, r *releaseRepo, body string) {
 	testutil.Git(t, r.local, "push", "--quiet", "origin", "main")
 }
 
-// addReleaseNotes writes the Highlights and the end-user summary a release from
-// 0.4.0 on needs, commits them on main and pushes them, so a test can release a
-// version of its own.
+// addReleaseNotes writes the Highlights, the end-user summary and the
+// FEATURES.md stamp a release needs -- the three files its own PR carries
+// (docs/release.md, "Before you tag") -- commits them on main and pushes them,
+// so a test can release a version of its own.
 func addReleaseNotes(t *testing.T, r *releaseRepo, version string) {
 	t.Helper()
 	writeHighlights(t, r.local, version, "- Something a user sees.\n")
 	writeSummaries(t, r.local, map[string]string{version: "Something a user sees."})
+	// The release's own PR carries FEATURES.md too (docs/release.md, "Before
+	// you tag"), so the file is stamped for the version being released.
+	writeFeatures(t, r.local, version)
 	testutil.Git(t, r.local, "add", "-A")
 	testutil.Git(t, r.local, "commit", "--quiet", "-m", "release notes")
 	testutil.Git(t, r.local, "push", "--quiet", "origin", "main")
@@ -665,6 +701,26 @@ func TestPreconditionFailures(t *testing.T) {
 				g.env = append(g.env, "FAKE_GH_CHECK_TEST=failed")
 			},
 			want: "required check 'test' is failed",
+		},
+		{
+			// The seed's FEATURES.md is stamped 0.12.0, so a release of another
+			// version finds a stamp that is not its own.
+			name:    "FEATURES.md without the release's stamp",
+			version: "0.12.10",
+			mutate:  func(t *testing.T, r *releaseRepo, g *ghState) {},
+			want:    "FEATURES.md on origin/main does not carry v0.12.10's stamp",
+		},
+		{
+			// The stamp is right and the file is on main, but nothing has
+			// committed it since the previous release tag: the shape D2449
+			// refuses, which a stamp written mid-cycle would otherwise pass.
+			name:    "FEATURES.md stamped but not committed since the previous tag",
+			version: "0.12.10",
+			mutate: func(t *testing.T, r *releaseRepo, g *ghState) {
+				stampFeatures(t, r, "0.12.10")
+				testutil.Git(t, r.local, "tag", "-a", "v0.12.9", "-m", "x")
+			},
+			want: "FEATURES.md on origin/main carries v0.12.10's stamp but has no commit to it since v0.12.9",
 		},
 	}
 	for _, c := range cases {
@@ -1510,6 +1566,10 @@ func TestVersionComparisonIsNumeric(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks())
 	testutil.Git(t, r.local, "tag", "-a", "v0.12.9", "-m", "x")
+	// The tag carries the seed's FEATURES.md, stamped 0.12.0; the release's own
+	// PR stamps the file for the version it releases, after the previous tag
+	// (D2449).
+	stampFeatures(t, r, "0.12.10")
 	res := runRelease(t, r, g, "", "0.12.10", "--dry-run")
 	res.requireSuccess(t)
 }
@@ -2277,8 +2337,10 @@ func TestHighlightsRequiredFrom040(t *testing.T) {
 			}
 			// The summaries entry this test is not about (TestSummaries...)
 			// goes in, so a case that expects the run to pass does not stop on
-			// the later precondition instead.
+			// the later precondition instead, and so does the matrix's stamp
+			// (TestPreconditionFailures' FEATURES.md cases).
 			writeSummaries(t, r.local, map[string]string{c.version: "Something a user sees."})
+			writeFeatures(t, r.local, c.version)
 			testutil.Git(t, r.local, "add", "-A")
 			testutil.Git(t, r.local, "commit", "--quiet", "-m", "summary")
 			testutil.Git(t, r.local, "push", "--quiet", "origin", "main")
@@ -2353,6 +2415,10 @@ func TestSummariesRequiredFrom040(t *testing.T) {
 			if c.entries != nil {
 				writeSummaries(t, r.local, c.entries)
 			}
+			// As in TestHighlightsRequiredFrom040: the release's own three
+			// files go in together, so a case that expects the run to pass
+			// does not stop on a later precondition instead.
+			writeFeatures(t, r.local, c.version)
 			testutil.Git(t, r.local, "add", "-A")
 			testutil.Git(t, r.local, "commit", "--quiet", "-m", "release notes")
 			testutil.Git(t, r.local, "push", "--quiet", "origin", "main")
