@@ -54,24 +54,19 @@ import (
 // of what each step does to a run in flight is its clause here, its row in the
 // audit (docs/design/update-in-flight.md) and the gate function the line reads.
 // The count's own read is a step of the run, so the wait it can be is named
-// while it happens, and the one question the door asks — whether to stop here —
-// is asked after the note, at an owner's terminal with --ask and nowhere else.
+// while it happens.
 
 // announceRunsInFlight prints the update door's note about the runs in flight —
-// the count's line and the steps under it — and answers whether the run stops
-// here, before anything is written. It prints nothing at all when no run is
-// running (an installation with an empty registry gets the update's ordinary
+// the count's line and the steps under it. It prints nothing at all when no run
+// is running (an installation with an empty registry gets the update's ordinary
 // transcript).
 //
-// It refuses nothing, it asks no run to finish first, and it never makes the
-// update wait for one: what it claims is that the update waits for none and
-// changes nothing a run holds, and the steps that can still reach a run are
-// named under it rather than denied. The one question it asks — stop here, or go
-// on — is the one --ask puts back (r.asksBack: the flag, a project whose marks
-// answered managed, and a session that can answer), it is asked after the note
-// and before the first stage, and the answer it defaults to is to go on: the
-// update may not refuse over a run in flight, and a reader who presses return
-// gets exactly the update they would have had without the flag.
+// It refuses nothing, it asks nothing, it asks no run to finish first, and it
+// never makes the update wait for one: what it claims is that the update waits
+// for none and changes nothing a run holds, and the steps that can still reach a
+// run are named under it rather than denied. A person who wants to stop instead
+// has the update's own confirmation, and this note is the fact they decide it
+// on: it is printed before that confirmation and before any stage writes.
 //
 // It says nothing with --json (stdout is one object) or --print-vars (stdout is
 // the variables alone), the two modes whose stdout is a document rather than a
@@ -84,17 +79,17 @@ import (
 // update that could not reach the budget database says so in the stages that
 // need it, and a door that failed here over a line would invent a new way for
 // the one command the upgrade is to stop.
-func (e *initEngine) announceRunsInFlight(ctx context.Context) (bool, error) {
+func (e *initEngine) announceRunsInFlight(ctx context.Context) error {
 	r, o := e.r, e.r.o
 	if o.doorName() != updateDoor.name || o.asJSON || o.printVars || o.planOnly {
-		return false, nil
+		return nil
 	}
 	if e.lc == nil {
-		return false, nil
+		return nil
 	}
 	lc, db, err := budgetDBFor(ctx, e.lc)
 	if err != nil {
-		return false, nil
+		return nil
 	}
 	// The registry read is the door's slow one on an installation with many
 	// runs, and it is the reason this door has a step of its own before the
@@ -116,7 +111,7 @@ func (e *initEngine) announceRunsInFlight(ctx context.Context) (bool, error) {
 		}
 	}
 	if err != nil || n == 0 {
-		return false, nil
+		return nil
 	}
 	note := fmt.Sprintf("%s%s in flight: update waits for none and changes nothing they hold", o.programPrefix(), runsPhrase(n))
 	// The screen and the log read the same note, because it is one note: the
@@ -132,41 +127,7 @@ func (e *initEngine) announceRunsInFlight(ctx context.Context) (bool, error) {
 	} else {
 		fmt.Fprintf(w, "%s, and no step reaches them\n", note)
 	}
-	return e.stopOverRunsInFlight()
-}
-
-// stopOverRunsInFlight is the door's one question: whether to stop here, with
-// nothing written, rather than converge over the runs just named. It is asked
-// where --ask has a confirmation to put back and nowhere else — the same
-// condition the run's other confirmations are asked under (initRun.asksBack,
-// managed_ask.go) — so a managed project's own update, a pipe, --json, a coding
-// agent's session and a project the marks did not answer managed for all go on
-// exactly as they did before this question existed, with the note and nothing
-// else. Where the flag is passed and nobody can answer it, askConfirm refuses in
-// initflow.AskRefusal's sentence, which is the policy's own rule: a prompt
-// nobody can answer is a refusal and never a silent proceed.
-//
-// The answer defaults to going on — the question is a y/N with the no as the
-// default, and a reader who presses return is not made to have said stop — and
-// "stop" is the answer the update obeys: the converge ends the run here, with no
-// stage run and no write made (nothing before this point writes: the roles step
-// computes its node and leaves it to the installation root's apply, syncAccess).
-// The update is not refused over a run in flight; a person who asked to be asked
-// may still say stop, and the line says what it cost them.
-func (e *initEngine) stopOverRunsInFlight() (bool, error) {
-	r := e.r
-	if !r.asksBack() {
-		return false, nil
-	}
-	stop, err := askConfirm(r.cmd, "Stop here, before anything is written?")
-	if err != nil {
-		return false, err
-	}
-	if !stop {
-		return false, nil
-	}
-	fmt.Fprintf(loggedOut(r.w, r.repLog), "%sstopped at your answer: nothing was written\n", r.o.programPrefix())
-	return true, nil
+	return nil
 }
 
 func runsPhrase(n int) string {

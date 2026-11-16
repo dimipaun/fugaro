@@ -217,18 +217,13 @@ asks anybody to wait, and it never claims the flat "the runs are unaffected",
 which the budget-mode raise below makes false. It is absent when nothing runs, under `--json` and `--print-vars`
 (whose stdout is a document), and under `--plan-only` (which applies nothing).
 
-The one question the door asks is asked after the note, and only where a question
-can be answered at all: at the owner's own terminal, under `--ask` (`asksBack` —
-the same condition the update's other confirmations come back under). Going on is
-the answer it defaults to, and return pressed is it: a run in flight is never a
-reason to stop, so the person who presses it gets the update they would have had
-without the flag. Stopping is theirs alone, and choosing it ends the run at exit 0
-before any write is made, with one line saying that nothing was written
-(`TestUpdateAskStopsOverARunInFlight`, `TestUpdateAskGoesOnWhenTheAnswerIsNotStop`,
-`internal/cli/update_in_flight_test.go`). Where the no-prompt policy applies — a
-pipe, `--json`, a coding agent's session, a project whose marks did not answer
-managed — nothing is asked and the update proceeds exactly as it did before this
-question existed, printing the note only (`docs/no-prompt-policy/spec.md`).
+The door asks nothing of its own: the note is information, printed before the
+update's own confirmation and before any stage writes, and it is where a person
+deciding whether it is safe to update now reads it. Nothing is added to the
+no-prompt policy's surface — a pipe, `--json`, a coding agent's session and a
+managed project all proceed exactly as they did, printing the note only
+(`docs/no-prompt-policy/spec.md`) — and a run in flight is never a reason for the
+update to stop.
 
 The refusal stays where it is not the update door's: `fugaro project policy publish --delete` /
 `fugaro project repos rm`, which are not the whole upgrade and are their own
@@ -238,8 +233,8 @@ door either, so they keep the answer they had before this ruling, which is the
 ruling of 2026-11-06: a managed project's own session is told the count as a note
 and writes, and every other session is refused
 (`inflightManaged`, `policyMigrateStage.inflightAnswer`, which reads the answer
-off the door rather than taking it as a parameter). The note and the question are
-the update door's and neither is printed by those doors.
+off the door rather than taking it as a parameter). The note is the update
+door's and is not printed by those doors.
 
 The rows that are not simply safe are the ones the note has to own, and they are
 six (`inFlightSteps`, `internal/cli/update_in_flight.go`): the budget-mode
