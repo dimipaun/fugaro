@@ -208,8 +208,21 @@ func TestAccountsRmRemovesTheDefinitionAndItsAllowListEntry(t *testing.T) {
 // block defines is the file this config's own loader rejects, and `accounts
 // pool rm` is what drops one; the craft's access is not, because no command of
 // this release writes a crafts key, so the entry's own crafts are cleared with
-// it (accountsRmCraftAccesses, and the test below).
+// it (craftsNaming, and the test below).
+//
+// The declaration is the file's, so the removal is run on its own rather than
+// after an `accounts add`: that command's own publish would write this file's
+// craft key onto a node that does not hold it, which is the craft grant the
+// gate wants a person's typed name for in a project with no gate of its own
+// (init_policy_publish.go's policyCraftWidening) — and a file that declares the
+// account is the world a removal reaches its declaration in
+// (accountsRmDeclaredLocal's own comment says the same thing), while the
+// removal itself publishes the key's REMOVAL and asks nothing.
 const accountsRmTypedLocal = addRigLocal + `
+claude_accounts:
+  team-a:
+    allow_data_to:
+      - owner/repo-a
 credentials:
   - name: team-a
     type: claude-oauth
@@ -225,6 +238,10 @@ pools:
 
 // accountsRmTypedCraftLocal is the same entry named by a craft alone.
 const accountsRmTypedCraftLocal = addRigLocal + `
+claude_accounts:
+  team-a:
+    allow_data_to:
+      - owner/repo-a
 credentials:
   - name: team-a
     type: claude-oauth
@@ -276,13 +293,12 @@ func TestAccountsRmTakesTheTypedEntryWithTheAccount(t *testing.T) {
 // Nothing is written.
 func TestAccountsRmRefusesWhileAPoolStillListsTheCredential(t *testing.T) {
 	r := newAddRigWith(t, accountsRmTypedLocal)
-	r.add(t, "team-a", "--repos", "owner/repo-a")
 	before, err := os.ReadFile(r.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, _, rmErr := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
+	_, _, rmErr := executeStdin(t, "", "accounts", "rm", "team-a")
 
 	after, err := os.ReadFile(r.cfg)
 	if err != nil {
@@ -319,9 +335,8 @@ func TestAccountsRmRefusesWhileAPoolStillListsTheCredential(t *testing.T) {
 // left is one this config's own loader reads.
 func TestAccountsRmClearsTheCraftThatNamedTheCredential(t *testing.T) {
 	r := newAddRigWith(t, accountsRmTypedCraftLocal)
-	r.add(t, "team-a", "--repos", "owner/repo-a")
 
-	out := r.rm(t, "team-a", "--profile", "standard")
+	out := r.rm(t, "team-a")
 
 	lc := r.addLocal(t)
 	if got := lc.Credentials; len(got) != 0 {
@@ -2275,5 +2290,55 @@ func accountsRmRefuseSecrets(t *testing.T, cfg string) {
 	swapped := strings.Replace(string(data), url, srv.URL, 1)
 	if err := os.WriteFile(cfg, []byte(swapped), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestAccountsRmDoesNotWriteAJobForAHeldDefaultProfile: the hold applies to this
+// door too (the owner's ruling of 2026-11-16 on S5), so a removal is not refused
+// by a config that cannot compose the default profile's job — and the door
+// writes no job for that profile: the jobs the record holds are kept whole.
+//
+// The account's own job is one of them, and it is the half of this command the
+// hold defers: the job set of a held profile is the installation's and not this
+// run's, so the job the removal takes away is the one a run composes after the
+// config can compose the profile again — the same deferral the add half has for
+// a job the account it declares would have got. What the command owns is done
+// either way: the secret is deleted, the declaration is gone from the config,
+// and the node every run is admitted by no longer names the account.
+//
+// Mutation (run, restore): compose with installOptions instead of installSpec
+// (accounts_add_converge.go's door), and this door and the addition's own above
+// both fail on the refusal installOptions raises for a config that records two
+// GitHub App IDs.
+func TestAccountsRmDoesNotWriteAJobForAHeldDefaultProfile(t *testing.T) {
+	r := newAddRig(t)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	deployed := r.projectJobs(t)
+	job := gcp.ProjectJobName("standard", "github", "team-a")
+	if _, ok := deployed[job]; !ok {
+		t.Fatalf("the fixture deployed no %s, so this test has no record to hold: %v", job, slices.Sorted(maps.Keys(deployed)))
+	}
+
+	secondAppRepoInConfig(t, r.cfg)
+	out := r.rm(t, "team-a", "--profile", "standard")
+
+	kept := r.projectJobs(t)
+	if !reflect.DeepEqual(kept, deployed) {
+		t.Errorf("the door wrote a job set of its own for a profile it cannot compose:\n--- written %v\n--- held %v\n%s",
+			slices.Sorted(maps.Keys(kept)), slices.Sorted(maps.Keys(deployed)), out)
+	}
+	if _, ok := kept[job]; !ok {
+		t.Errorf("the hold dropped %s: the profile's jobs are the installation's while the config composes none", job)
+	}
+	// The command's own work, which the hold does not touch.
+	id := gcp.ProjectSecretID("aurora", config.ClaudeAccountSecret("team-a"))
+	if v := r.sm.Latest(id); v != nil {
+		t.Errorf("the secret %s still holds a value after the removal: %q", id, v)
+	}
+	if _, ok := r.addLocal(t).ClaudeAccounts["team-a"]; ok {
+		t.Errorf("the door left the team-a declaration in the local config: %v", slices.Sorted(maps.Keys(r.addLocal(t).ClaudeAccounts)))
+	}
+	if p := r.policy(t); len(p.Accounts) != 0 {
+		t.Errorf("the published node still carries accounts = %v, want the account gone", slices.Sorted(maps.Keys(p.Accounts)))
 	}
 }

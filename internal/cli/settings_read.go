@@ -422,26 +422,26 @@ func layerSelected(row settings.Row, want []string) bool {
 //
 // An entry names a command of this binary's tree, and where that command is not
 // the key's own editor the sentence says what it does with the file the key is
-// stated in. The three file tokens are the whole of that shape, one per file a
-// settings key lives in, and each names the command that carries the file rather
-// than the one that applies it afterwards: `fugaro config publish` carries the
-// project layer (D1515 — that row's keys are edited in the file), `fugaro config
-// init` writes the repository's own `fugaro.yaml`, and `fugaro update` writes the
-// machine's own config, where the `config local` rows are stated and which no
-// command edits key by key. One token may not span two files: its sentence would
-// be true of some of its rows, which is what `config`'s was for the six
-// orchestrator rows and the two nudge thresholds until this task moved them to
-// the owners that carry them.
+// stated in. The two file tokens are the whole of that shape, one per file a
+// settings key is stated in and no command edits key by key, and each names the
+// command that carries the file rather than the one that applies it afterwards:
+// `fugaro config publish` carries the project layer (D1515 — that row's keys are
+// edited in the file) and `fugaro config init` writes the repository's own
+// `fugaro.yaml`. The machine's own config was the third until R1: its last rows,
+// the two nudge thresholds, are `settings set`'s now (D2603), and a token whose
+// rows have all moved is a sentence no reader reads. One token may not span two
+// files: its sentence would be true of some of its rows, which is what `config`'s
+// was for the six orchestrator rows and the two nudge thresholds until they moved
+// to the owners that carry them.
 //
-// `project policy` is that shape's fourth entry and not a file's: the
-// orchestrator block is stated in the machine's own config like the two nudge
-// thresholds beside it, and what its sentence names is the command that carries
-// it from there to the node every run of the project is held to
-// (buildProjectPolicy copies lc.Orchestrator into it). It is a token of its own
-// rather than `project` because that token is a family of the write's map: a row
-// naming it is refused by name of `fugaro project`, and the read prints the bare
-// command D1178 asks a sentence in place of, for keys no `fugaro project`
-// subcommand edits.
+// `project policy` is that shape's third entry and not a file's: the orchestrator
+// block is stated in the machine's own config like the two nudge thresholds
+// beside it, and what its sentence names is the command that carries it from
+// there to the node every run of the project is held to (buildProjectPolicy
+// copies lc.Orchestrator into it). It is a token of its own rather than `project`
+// because that token is a family of the write's map: a row naming it is refused
+// by name of `fugaro project`, and the read prints the bare command D1178 asks a
+// sentence in place of, for keys no `fugaro project` subcommand edits.
 var settingsOwnerCommands = map[string]string{
 	"settings set":      "fugaro settings set",
 	"models":            "fugaro models",
@@ -458,8 +458,6 @@ var settingsOwnerCommands = map[string]string{
 	"budget":            "fugaro setup, which writes the installation's own budget backend",
 	"config":            "fugaro config publish, which carries the layer file the key is stated in",
 	"config init":       "fugaro config init, which writes the repository's own file",
-	"config local":      "fugaro update, which writes the machine's own config the key is stated in",
-	"project policy":    "fugaro project policy publish, which carries the local config's orchestrator block and its declared allowlist to the project's nodes",
 }
 
 // settingsOwnerDefaultToken is the registry's owner for a key no family and no
@@ -482,8 +480,8 @@ func (r *settingsRead) projectRow(row settings.Row) setting {
 	// `fugaro settings set` beside `writable: false` says in one breath that the
 	// command writes the key and that it does not, and the console draws exactly
 	// that pair as `written by fugaro settings set, not by the generic path`. A
-	// family's token and the file-carriers' (`config`, `config init`,
-	// `config local`) are untouched by this: their rows are refused by the
+	// family's token and the file-carriers' (`config`, `config init`) are
+	// untouched by this: their rows are refused by the
 	// generic path and name the command that does write them. The rows left
 	// naming nothing are the map spellings, whose literal `*` the write refuses
 	// while it writes their concrete spellings (`layer.profiles.*.base` against

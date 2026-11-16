@@ -1,17 +1,23 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	accesslib "github.com/dimipaun/fugaro/internal/access"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // update_access_test.go is the roles step of the converge (update_access.go,
@@ -1209,5 +1215,85 @@ func TestTheReviewAnnouncesTheInstallationsMembersNotTheNodesAdditions(t *testin
 	blind.spec = e.spec
 	if listed := blind.cover().Listed; !slices.Contains(listed, extra) {
 		t.Errorf("a run that could not read the installation's outputs does not cover the node's roster, which is all it knows of the installation\nlisted: %v", listed)
+	}
+}
+
+// heldDefaultProfileRig is the rig the two tests below share: an installation
+// whose local config can no longer compose the shared job of its default
+// profile — two GitHub repositories on two Apps, which is projectJobGitHubAppID's
+// refusal — and whose own variables hold the job that profile deployed, which is
+// what makes the profile a HELD one (heldDefaultProfiles).
+//
+// It is the pair of ordinary acts of S5's story read at the roles step: the
+// installation holds the job `fugaro update` wrote for the profile, and nothing
+// this machine's file says can compose it again. The grants node and its marker
+// are absent, which is the state accessRig is and the state a migration whose
+// write the caller's IAM refused leaves behind
+// (TestAMigrationThatCannotRecordItselfIsNotAFailure) — the next run reads it as
+// never-migrated and migrates.
+func heldDefaultProfileRig(t *testing.T) (*initRig, *gcpfake.RTDB) {
+	t.Helper()
+	r, db := accessRig(t, []string{"user:ops@example.com"}, nil, []string{"user:ops@example.com"}, nil)
+	lc := parseLocalConfigBytes(t, readFile(t, r.cfg))
+	lc.Repos["acme/app"] = localcfg.Repo{Provider: "github", BaseBranch: "main", Workflows: []string{"ci"}, GitHubAppID: "111111111"}
+	lc.Repos["acme/other"] = localcfg.Repo{Provider: "github", BaseBranch: "main", Workflows: []string{"ci"}, GitHubAppID: "222222222"}
+	lc.Profiles = map[string]config.JobProfile{
+		projectpolicy.DefaultProfileName: {Provider: "github", CPU: 2, Memory: "8Gi", TimeoutClass: "6h"},
+	}
+	data, err := lc.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.cfg, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r.save(t)
+	dir := r.root()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	vars, err := json.Marshal(map[string]any{"project_jobs": map[string]any{
+		gcp.ProjectJobName(projectpolicy.DefaultProfileName, "github", ""): map[string]any{"profile": projectpolicy.DefaultProfileName},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, infra.VarsFile), vars, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return r, db
+}
+
+// TestUpdateMigratesTheNodeWithAHeldDefaultProfile: the roles step and the held
+// default profile meet in the same run, and the hold does not stop the step.
+//
+// The step is reached exactly when the node and its marker are both absent, and
+// the state is a reachable one rather than a broken file: a migration whose
+// write the caller's IAM refused leaves it, and the command's own account says
+// so ("the next fugaro update by a project Owner records it"). A run that reads
+// the marker, finds it unset and then composes its spec the plain way dies here
+// — before any stage — with the two-GitHub-Apps sentence, whose remedy is a hand
+// edit of fugaro.yaml, the second step CLAUDE.md's HARD RULE forbids; and the
+// `fugaro update` that would converge is the very run that died.
+//
+// Mutation (run, restore): compose the spec with infra.Installation(e.lc,
+// infra.InstallOptions{StateBucket: e.r.o.stateBucket}), the roles step's own
+// composition before this, and this test is red with that sentence while every
+// other test stays green.
+func TestUpdateMigratesTheNodeWithAHeldDefaultProfile(t *testing.T) {
+	_, db := heldDefaultProfileRig(t)
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update")
+	all := accessOut(out, errOut, err)
+	if err != nil {
+		t.Fatalf("an installation holding the default profile's job is one fugaro update no longer converges: %v\n%s", err, all)
+	}
+	if got, want := grantLines(accessGrants(t, db)), []string{"user:ops@example.com (operator)"}; !slices.Equal(got, want) {
+		t.Errorf("the grants node holds %v, want %v: the migration is the one step this run may not refuse\n%s", got, want, all)
+	}
+	// The hold is what made the run possible, so it is said: an operator whose
+	// config cannot compose the profile is told which job was kept and why.
+	if !strings.Contains(all, "kept the shared job of profiles."+projectpolicy.DefaultProfileName) {
+		t.Errorf("the run converged without saying it kept the default profile's job:\n%s", all)
 	}
 }

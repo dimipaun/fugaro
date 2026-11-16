@@ -3026,10 +3026,12 @@ func TestRepoAddressesFollowTheSwitch(t *testing.T) {
 // block on every installation; the repository root's own
 // `installation.credentials_service` — repoCredentialsService ->
 // CredentialsServiceServes — is what keeps the block out of a repository the
-// service cannot serve, and that is the authorization condition: the service
-// serves config.AuthCascade alone, so an oauth or api-key job that gave its
-// credential up would have nothing to replace it with (and no route at the
-// service that would serve it one).
+// service does not serve, and that is the authorization condition. This
+// fixture publishes no policy, so these two rows are repositories held off by
+// the mode as well (B2.3, D2071), and their mounts stay for the stronger reason
+// that covers every non-cascade repository this release serves: the flip that
+// takes a model mount away is B2.7's, and until it every mount is kept
+// (D2072, G17, ModelSecretsServed's `none`).
 //
 // What each held-off row asserts, in the two forms the installations
 // distinguish (oauth: the shared subscription token, once per Claude account;
@@ -3077,7 +3079,7 @@ func TestTheDeployAloneDropsNoModelMount(t *testing.T) {
 				t.Fatal("the fixture mounts no model credential with no service at all: the test would be vacuous")
 			}
 			if onMounted := mounted(onWS); !slices.Equal(onMounted, offMounted) {
-				t.Errorf("the converged installation's job mounts %v, want exactly %v, the credentials it mounted before the service was deployed: the service serves config.AuthCascade alone, so this job's own credential is the only one it can run on, and the module's accessor drop would refuse to deploy it (D145, D146)", onMounted, offMounted)
+				t.Errorf("the converged installation's job mounts %v, want exactly %v, the credentials it mounted before the service was deployed: every one of this repository's mounts is kept until the flip (D2072, G17), so a mount the deploy alone dropped is the release blocker docs/credentials-service/default-on.md §1.4 states, and the module's accessor drop would refuse to deploy it (D145, D146)", onMounted, offMounted)
 			}
 			// The redaction list follows the mounts: it is built from them, and
 			// a name left out of it that the job holds is a credential the
@@ -3237,6 +3239,293 @@ func TestCascadeMountsNoOAuthToken(t *testing.T) {
 	}
 	if strings.Contains(ws.Env[runner.SecretEnvsVar], "CLAUDE_CODE_OAUTH_TOKEN") {
 		t.Errorf("%s still redacts the token: %q", runner.SecretEnvsVar, ws.Env[runner.SecretEnvsVar])
+	}
+}
+
+// repoRootServed plans the repository root fixture of one agent block as the
+// installation it is when the switch is ON for it: the credentials service in
+// the installation's outputs, the record the update read out of the bundle, and
+// a published node of the given budget mode. Everything else is the fixture's.
+func repoRootServed(t *testing.T, agent, lc, mode string) RepoSpec {
+	t.Helper()
+	in := repoRootInputs(t, agent)
+	in.LC = parseLC(t, lc)
+	in.Installation.CredentialsService = credentialsService()
+	serviceReady(t, in.LC, in.Repo)
+	in.Policy = &projectpolicy.Policy{Budget: projectpolicy.Budget{Mode: mode}}
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rs
+}
+
+// modelMountsOf are a workflow spec's model credentials, as env=logical, which
+// is the half of the drop that decides whether a run has a credential at all
+// (the other half is the account's accessor, Readiness' Addresses).
+func modelMountsOf(ws WorkflowSpec) []string {
+	var out []string
+	for env, logical := range ws.SecretEnv {
+		if config.IsModelSecretEnv(env) {
+			out = append(out, env+"="+logical)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// TestServesAPIKeyAndOAuthWhenTheModeIsOn is B2.3's own answer (D2071, F30): an
+// `api-key` or `oauth` repository of an installation whose published mode is
+// `observe` or `enforce` is ON the switch, and one whose mode is off is not.
+//
+// The mode is the fourth condition and the reason it exists: the gateway is
+// what reaches the service, and the gateway exists only in those two modes, so
+// a repository on a mode-off project that was switched on would have its job
+// handed an address its own runner refuses to use. The auth half is what this
+// task adds: before it, the switch admitted the cascade alone, and every
+// non-cascade repository kept its model credential with no address to the
+// service at all.
+//
+// The spec half is what the switch's answer buys a repository root: the
+// installation's block (the job's invoker grant and the address its launches
+// are handed) and — this release's step of D2072 — a model_secrets_served of
+// `none`, so the module drops no accessor and the job keeps every mount. The
+// red step of the task was the first assertion below: with the auth half
+// removed, `api-key` answered false and this repository root carried no block.
+func TestServesAPIKeyAndOAuthWhenTheModeIsOn(t *testing.T) {
+	for _, auth := range []string{config.AuthAPIKey, config.AuthOAuth} {
+		for _, mode := range []string{config.BudgetObserve, config.BudgetEnforce} {
+			if !CredentialsServiceServes(true, true, auth, mode) {
+				t.Errorf("CredentialsServiceServes(installed, ready, %q, %q) = false, want true: the gateway that reaches the service runs in observe and enforce, so a repository on one of those modes is exactly what the service serves (D2071)", auth, mode)
+			}
+		}
+	}
+
+	for _, tc := range []struct{ name, agent, lc string }{
+		{name: "oauth", agent: repoRootOAuthAgent, lc: repoRootLC},
+		{name: "api-key", agent: `agent: { auth: api-key }`, lc: repoRootAPIKeyLC},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			offIn := repoRootInputs(t, tc.agent)
+			offIn.LC = parseLC(t, tc.lc)
+			off, err := Repo(offIn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			on := repoRootServed(t, tc.agent, tc.lc, config.BudgetEnforce)
+
+			if on.Installation.CredentialsService == nil {
+				t.Fatalf("the repository root carries no credentials service with the mode in force: the installation has the block, the record vouches for the bundle and agent.auth is %s, and D2071 holds a repository off the switch for a mode that is off alone — so no non-cascade repository would ever reach the service", tc.agent)
+			}
+			if got := on.Installation.CredentialsService; got.Name != credentialsService().Name || got.Region != credentialsService().Region {
+				t.Errorf("the repository root's credentials service is %+v, want name and region alone (%+v): a repository root reads those two and nothing else (repoCredentialsService)", got, credentialsService())
+			}
+			// The address the launch is handed is the same answer, and the
+			// invoker grant follows the block: a job that may not call the
+			// service is a job whose address must not be set.
+			addrs := on.Addresses()
+			if len(addrs) == 0 {
+				t.Fatal("the fixture produces no address at all: the test would be vacuous")
+			}
+			if !slices.ContainsFunc(addrs, func(a string) bool {
+				return strings.Contains(a, "google_cloud_run_v2_service_iam_member.credentials[0]")
+			}) {
+				t.Errorf("the switched repository's jobs carry no invoker grant on the service: %v", addrs)
+			}
+			// D2072's first step, and G17's whole point: the address is handed
+			// out with every mount kept.
+			if on.ModelSecretsServed != config.ModelSecretServedNone {
+				t.Errorf("the switched %s repository's root plans model_secrets_served = %q, want %q: this release hands out the address and takes nothing away, so an older launcher or an older job image still finds the credential it reads (D2072, G17)", tc.name, on.ModelSecretsServed, config.ModelSecretServedNone)
+			}
+			var checked int
+			for key, ws := range on.Workflows {
+				offWS, ok := off.Workflows[key]
+				if !ok {
+					continue
+				}
+				checked++
+				if !slices.Equal(modelMountsOf(ws), modelMountsOf(offWS)) {
+					t.Errorf("the switched repository's %s job mounts %v, want %v, the credentials it mounted with no service at all: every mount stays until the flip (D2072, G17)", key, modelMountsOf(ws), modelMountsOf(offWS))
+				}
+			}
+			if checked == 0 {
+				t.Fatal("the two plans share no workflow: the mount assertion above passed vacuously")
+			}
+		})
+	}
+}
+
+// TestServesNoAPIKeyOrOAuthWithBudgetOff is the other side of D2071: with the
+// published mode off, a non-cascade repository is held off the switch — no
+// block in its root, no invoker grant, no address — and every mount stays.
+//
+// The `""` row is the caller that read no node at all (fugaro image, fugaro
+// doctor, --print-vars): the fail-closed answer, and not the same one as a node
+// that was read and carries an empty mode. The vertex row is the auth nothing
+// serves whatever the mode says: its calls go to Vertex AI on the job's own
+// service account.
+func TestServesNoAPIKeyOrOAuthWithBudgetOff(t *testing.T) {
+	for _, auth := range []string{config.AuthAPIKey, config.AuthOAuth} {
+		for _, mode := range []string{"", config.BudgetOff} {
+			if CredentialsServiceServes(true, true, auth, mode) {
+				t.Errorf("CredentialsServiceServes(installed, ready, %q, %q) = true, want false: the gateway the service serves a run through exists in observe and enforce alone, so a mode-off repository must keep its own credential and be handed no address (D2071)", auth, mode)
+			}
+		}
+	}
+	for _, mode := range []string{"", config.BudgetOff, config.BudgetObserve, config.BudgetEnforce} {
+		if CredentialsServiceServes(true, true, "vertex", mode) {
+			t.Errorf("CredentialsServiceServes(installed, ready, %q, %q) = true, want false: a vertex repository's calls are the project's own GCP service and no credential of the service's, whatever the mode says", "vertex", mode)
+		}
+	}
+
+	offIn := repoRootInputs(t, repoRootOAuthAgent)
+	offIn.LC = parseLC(t, repoRootLC)
+	off, err := Repo(offIn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The fixture's premise: this repository root DOES carry the block and a
+	// model mount when the switch is on, so the assertions below are about the
+	// mode and not about a hold-off that would happen anyway.
+	on := repoRootServed(t, repoRootOAuthAgent, repoRootLC, config.BudgetObserve)
+	if on.Installation.CredentialsService == nil || len(modelMountsOf(on.Workflows["web"])) == 0 {
+		t.Fatalf("the mode-on fixture carries no block or no model mount (%+v): the test would be vacuous", on.Installation.CredentialsService)
+	}
+
+	for _, mode := range []string{"", config.BudgetOff} {
+		held := repoRootServed(t, repoRootOAuthAgent, repoRootLC, mode)
+		if held.Installation.CredentialsService != nil {
+			t.Errorf("with the published mode %q the repository root carries the credentials service %+v, want none: its runs would be handed an address their own runner refuses to use, and its job would give up accessors on credentials it still mounts (D2071)", mode, held.Installation.CredentialsService)
+		}
+		if held.ModelSecretsServed != config.ModelSecretServedNone {
+			t.Errorf("with the published mode %q the root plans model_secrets_served = %q, want %q", mode, held.ModelSecretsServed, config.ModelSecretServedNone)
+		}
+		for key, ws := range off.Workflows {
+			if got := modelMountsOf(held.Workflows[key]); !slices.Equal(got, modelMountsOf(ws)) {
+				t.Errorf("with the published mode %q the %s job mounts %v, want %v: a held-off repository keeps every mount", mode, key, got, modelMountsOf(ws))
+			}
+		}
+		if slices.ContainsFunc(held.Addresses(), func(a string) bool {
+			return strings.Contains(a, "google_cloud_run_v2_service_iam_member.credentials[0]")
+		}) {
+			t.Errorf("with the published mode %q a job carries the invoker grant on the service: a repository the switch holds off must not be granted a call the service would refuse (D2071)", mode)
+		}
+	}
+}
+
+// TestEmptyServiceServedAuthsKeepsEveryNonCascadeMount is D2072's first step
+// pinned where it holds: the flip list is empty on this branch, so an `api-key`
+// or `oauth` repository that IS on the switch plans `model_secrets_served =
+// none` and keeps every mount and every accessor.
+//
+// The premise is asserted rather than assumed: a list that was filled in —
+// B2.7's release — turns the very next plan of these repositories into dropped
+// mounts, so a test that only read the spec would pass for the wrong reason.
+// The services served are read through ModelSecretsServed, the one function
+// both the root's tfvars and Readiness' mount drop call.
+func TestEmptyServiceServedAuthsKeepsEveryNonCascadeMount(t *testing.T) {
+	if len(config.ServiceServedAuths) != 0 {
+		t.Fatalf("config.ServiceServedAuths is %v, and this branch's whole point is that it is empty: a filled list is B2.7's flip, and every assertion below would have to move with it", config.ServiceServedAuths)
+	}
+	for _, auth := range []string{config.AuthAPIKey, config.AuthOAuth} {
+		if got := ModelSecretsServed(true, auth); got != config.ModelSecretServedNone {
+			t.Errorf("ModelSecretsServed(serving, %q) = %q, want %q: a switched non-cascade repository's mounts are dropped only once the auth is in the flip list (D2072, G17)", auth, got, config.ModelSecretServedNone)
+		}
+		if got := ModelSecretsServed(false, auth); got != config.ModelSecretServedNone {
+			t.Errorf("ModelSecretsServed(held off, %q) = %q, want %q", auth, got, config.ModelSecretServedNone)
+		}
+	}
+	// And through the spec: the switched root names none, keeps its mounts,
+	// keeps its containers, and still redacts what it mounts.
+	offIn := repoRootInputs(t, repoRootOAuthAgent)
+	offIn.LC = parseLC(t, repoRootLC)
+	off, err := Repo(offIn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	on := repoRootServed(t, repoRootOAuthAgent, repoRootLC, config.BudgetEnforce)
+	if on.Installation.CredentialsService == nil {
+		t.Fatal("the fixture is not on the switch: nothing below would be about a switched repository")
+	}
+	offMounts := modelMountsOf(off.Workflows["web"])
+	if len(offMounts) == 0 {
+		t.Fatal("the fixture mounts no model credential even with no service at all: the test would be vacuous")
+	}
+	if got := modelMountsOf(on.Workflows["web"]); !slices.Equal(got, offMounts) {
+		t.Errorf("the switched repository's web job mounts %v, want %v: the address is handed out with every mount kept (D2072, G17)", got, offMounts)
+	}
+	if !maps.Equal(off.Secrets, on.Secrets) {
+		t.Errorf("the secret containers moved with the switch: %v, want %v — a container carries prevent_destroy, so a dropped one plans a destruction and is reported as retired", on.Secrets, off.Secrets)
+	}
+	if got, want := on.Workflows["web"].Env[runner.SecretEnvsVar], redactionEnvs(on.Workflows["web"].SecretEnv); got != want {
+		t.Errorf("%s = %q, want %q: the list follows the mounts, and a mounted credential left off it is one the runner would print", runner.SecretEnvsVar, got, want)
+	}
+}
+
+// TestCascadeStillDropsItsMounts is the cascade's arm, unchanged by this task:
+// the one auth whose in-job credential the service replaces whole, so its
+// answer is `all` and every model mount and accessor goes (D143, C1.18/C1.20).
+//
+// The last block is the `anthropic` arm of the same function — B2.7's, and
+// unreachable through a spec on this branch because the flip list is empty —
+// pinned here where the drop rule lives: it drops the two Claude credentials
+// and never a provider's key, whose value the runner forwards rather than
+// attaches (R6, D1634).
+func TestCascadeStillDropsItsMounts(t *testing.T) {
+	if got := ModelSecretsServed(true, config.AuthCascade); got != config.ModelSecretServedAll {
+		t.Errorf("ModelSecretsServed(serving, cascade) = %q, want %q: the cascade's runner reads every model credential from the service, so its job keeps none (D143)", got, config.ModelSecretServedAll)
+	}
+	if got := ModelSecretsServed(false, config.AuthCascade); got != config.ModelSecretServedNone {
+		t.Errorf("ModelSecretsServed(held off, cascade) = %q, want %q: a cascade repository the switch holds off keeps exactly what it had", got, config.ModelSecretServedNone)
+	}
+	rs := repoRootServed(t, repoRootCascadeAgent, repoRootLC, config.BudgetEnforce)
+	if rs.ModelSecretsServed != config.ModelSecretServedAll {
+		t.Errorf("a switched cascade repository's root plans model_secrets_served = %q, want %q: its job mounts no model credential in any case, and the module drops the accessors it would otherwise have", rs.ModelSecretsServed, config.ModelSecretServedAll)
+	}
+	for key, ws := range rs.Workflows {
+		if got := modelMountsOf(ws); len(got) != 0 {
+			t.Errorf("the switched cascade repository's %s job mounts %v: a cascade job holds no model credential at all (D143)", key, got)
+		}
+	}
+
+	// dropModelMounts, the mount half of the drop, on a workflow that carries
+	// all three kinds: the provider key is the one the anthropic arm keeps.
+	ws := func() *WorkflowSpec {
+		return &WorkflowSpec{
+			SecretEnv: map[string]string{
+				"CLAUDE_CODE_OAUTH_TOKEN":        "claude-oauth-token",
+				"ANTHROPIC_API_KEY":              "anthropic-api-key",
+				"FUGARO_PROVIDER_KEY_OPENROUTER": "openrouter-api-key",
+				"NPM_TOKEN":                      "npm-token",
+			},
+			Env: map[string]string{runner.SecretEnvsVar: "stale"},
+		}
+	}
+	for _, tc := range []struct {
+		served string
+		want   []string
+		// redaction is the list the drop leaves behind: the mounts that
+		// remain, or the fixture's own stale value where nothing was dropped
+		// and so nothing is rebuilt.
+		redaction string
+	}{
+		{served: config.ModelSecretServedAll, want: []string{"NPM_TOKEN=npm-token"}, redaction: redactionEnvs(map[string]string{"NPM_TOKEN": "npm-token"})},
+		{served: config.ModelSecretServedAnthropic, want: []string{"FUGARO_PROVIDER_KEY_OPENROUTER=openrouter-api-key", "NPM_TOKEN=npm-token"}, redaction: redactionEnvs(map[string]string{"FUGARO_PROVIDER_KEY_OPENROUTER": "openrouter-api-key", "NPM_TOKEN": "npm-token"})},
+		{served: config.ModelSecretServedNone, want: []string{"ANTHROPIC_API_KEY=anthropic-api-key", "CLAUDE_CODE_OAUTH_TOKEN=claude-oauth-token", "FUGARO_PROVIDER_KEY_OPENROUTER=openrouter-api-key", "NPM_TOKEN=npm-token"}, redaction: "stale"},
+	} {
+		s := ws()
+		dropModelMounts(s, tc.served)
+		var got []string
+		for env, logical := range s.SecretEnv {
+			got = append(got, env+"="+logical)
+		}
+		slices.Sort(got)
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("dropModelMounts(%q) leaves %v, want %v", tc.served, got, tc.want)
+		}
+		if s.Env[runner.SecretEnvsVar] != tc.redaction {
+			t.Errorf("dropModelMounts(%q) leaves %s = %q, want %q", tc.served, runner.SecretEnvsVar, s.Env[runner.SecretEnvsVar], tc.redaction)
+		}
 	}
 }
 

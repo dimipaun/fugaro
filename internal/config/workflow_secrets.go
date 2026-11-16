@@ -89,6 +89,13 @@ func workflowSecretKeyRefusal(name string) string {
 	if CodexOAuthSecret(name) {
 		return fmt.Sprintf("%s and names starting %s are reserved for the Codex harness's OAuth credential, not a workflow secret", CodexOAuthToken, CodexOAuthTokenPrefix)
 	}
+	// A typed credential's own derived secret name: the container the
+	// credential's reader reads, so a workflow secret under one would be read
+	// as that credential's key. Reserved whether or not a credentials entry
+	// exists, as the Claude namespace above is.
+	if KeyCredentialSecret(name) {
+		return fmt.Sprintf("names starting %s are reserved for a typed credential's own secret (credentials in the local config), not a workflow secret", CredentialSecretPrefix)
+	}
 	// The credentials service's one bundle container: its document is every
 	// model credential the installation holds, and a project copy of that name
 	// would mount the whole set into a job a run's agent can read.

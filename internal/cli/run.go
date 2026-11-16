@@ -1388,7 +1388,7 @@ func plannedRun(ctx context.Context, env *cloudEnv, o *runOptions, slug string, 
 		Spec: copied, Chosen: o.runID != "", Config: cfg,
 		Providers:      mixRoutes(env, spec.Repo, cfg),
 		Prices:         prices,
-		ServiceHeldKey: len(credentialsServiceLaunchEnv(env.lc, "", spec.Repo, auth, deployed)) > 0,
+		ServiceHeldKey: len(credentialsServiceLaunchEnv(env.lc, "", spec.Repo, auth, env.policyMode(ctx), deployed)) > 0,
 	}
 	eff, _ := chainLimitPolicyOf(ctx, env, spec, cfg).merge(o.limits.layer())
 	run.Policy = eff
@@ -1969,6 +1969,13 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if err := checkCloneVisionImage(env.lc, spec, fileCfg, warn); err != nil {
 			return config.Inputs{}, err
 		}
+		// The merge judge's craft, on the same configuration read: a
+		// runner older than mergeJudgeSince refuses
+		// agent.crafts.merge-judge at bootstrap, whatever it holds
+		// (checkCloneMergeJudgeCraftImage).
+		if err := checkCloneMergeJudgeCraftImage(env.lc, spec, fileCfg, warn); err != nil {
+			return config.Inputs{}, err
+		}
 	} else {
 		if needsRecipeImage(spec, agentRecipe) {
 			if err := checkRecipeImage(ctx, env, slug, spec, kind, warn); err != nil {
@@ -2129,6 +2136,11 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		// The same gate as the clone branch's above, and for the same
 		// reason: see checkVisionImage.
 		if err := checkVisionImage(ctx, env, slug, spec, kind, fileCfg, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The same gate as the clone branch's above, and for the same
+		// reason: see checkMergeJudgeCraftImage.
+		if err := checkMergeJudgeCraftImage(ctx, env, slug, spec, kind, fileCfg, warn); err != nil {
 			return config.Inputs{}, err
 		}
 		// The digest drift, last of this branch's image reads, and the
@@ -4147,7 +4159,7 @@ func contextReposRefusal(ctx context.Context, env *cloudEnv, slug string, spec *
 		jobName = job.Name
 	}
 	auth, deployed := env.repoServiceAuth(ctx, spec, io.Discard)
-	if len(credentialsServiceLaunchEnv(env.lc, jobName, spec.Repo, auth, deployed)) == 0 {
+	if len(credentialsServiceLaunchEnv(env.lc, jobName, spec.Repo, auth, env.policyMode(ctx), deployed)) == 0 {
 		if jobName != "" {
 			// A shared project job is never told the address whatever the
 			// installation's switch says, so the sentence below would be false
@@ -5694,7 +5706,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		jobName = job.Name
 	}
 	svcAuth, deployed := env.repoServiceAuth(ctx, spec, launchWarn)
-	lspec.Env = credentialsServiceLaunchEnv(env.lc, jobName, spec.Repo, svcAuth, deployed)
+	lspec.Env = credentialsServiceLaunchEnv(env.lc, jobName, spec.Repo, svcAuth, env.policyMode(ctx), deployed)
 	// The run's slip, asked for exactly where the service's address was just
 	// written: the grant the credentials service keeps for this run, whose id
 	// the job claims at its first call and presents on every call after it
@@ -5848,17 +5860,27 @@ func servicesLaunchEnv(entry config.Entry) string {
 // THE SWITCH DECIDES, and it is the same function the plan decides with
 // (infra.CredentialsServiceServes): the installation has the block, the record
 // `fugaro update` wrote for this repository says a root of it was applied with
-// the service on — the bundle held a model credential and the auth was the
-// cascade when that apply was made (localcfg.Repo.CredentialsServiceReady,
-// written into the local config's repository entry and published with the rest
-// of it, so a teammate's `fugaro run` on a machine that never ran the update
-// reads it too, internal/localcfg/shared.go) — and this repository's
-// agent.auth, read live, is one the service serves. All three, because the URL
-// is not a hint: the same variable is what
-// opens the git provider keyless (internal/gitprov/providers/providers.go),
-// which reads no App key at all once it is set. A job that still mounts its
-// own model credential and is handed the address of a service that cannot
-// serve it would lose the credential it has and get nothing in its place.
+// the service on (localcfg.Repo.CredentialsServiceReady, written into the local
+// config's repository entry and published with the rest of it, so a teammate's
+// `fugaro run` on a machine that never ran the update reads it too,
+// internal/localcfg/shared.go) — and this repository's agent.auth, read live,
+// is one the service serves under the mode the published node carries. All of
+// them, because the URL is not a hint: the same variable is what opens the git
+// provider keyless (internal/gitprov/providers/providers.go), which reads no
+// App key at all once it is set, and what makes a Bitbucket repository a
+// proxied one (proxiedRepo). A job that still mounts its own model credential
+// and is handed the address of a service that cannot serve it would lose the
+// credential it has and get nothing in its place.
+//
+// mode is the budget mode the published node carries, read by the launcher
+// (policyMode) and handed in: it is the switch's fourth condition for an
+// `api-key` or `oauth` repository alone (D2071), because the gateway the
+// service is reached through exists only in `observe` and `enforce`. A
+// repository on a project whose mode is `off` gets no address at all and keeps
+// the mounts it has. A read that found no node answers "", which is that same
+// held-off answer — the fail-closed direction — while the repository's own
+// record and tfvars remain the two answers a launch without a document
+// decides on (below).
 //
 // The config is the published shared one where this machine has no local
 // config of its own (localcfg.Select), and the URL in it is the installation's
@@ -5919,7 +5941,7 @@ func servicesLaunchEnv(entry config.Entry) string {
 // on its own here: the deployed root still answers for the machine that applied
 // it.
 
-func credentialsServiceLaunchEnv(lc *localcfg.Config, job, repo, auth string, deployed bool) []string {
+func credentialsServiceLaunchEnv(lc *localcfg.Config, job, repo, auth, mode string, deployed bool) []string {
 	if job != "" || lc == nil {
 		return nil
 	}
@@ -5929,7 +5951,7 @@ func credentialsServiceLaunchEnv(lc *localcfg.Config, job, repo, auth string, de
 	// to put on a job's environment either.
 	installed := lc.CredentialsService != nil && lc.CredentialsService.URL != ""
 	local, _ := lc.RepoFor(repo)
-	serves := infra.CredentialsServiceServes(installed, local.CredentialsServiceOn(), auth)
+	serves := infra.CredentialsServiceServes(installed, local.CredentialsServiceOn(), auth, mode)
 	if auth == "" {
 		// No document this launcher could read, so the switch's third
 		// condition is judged on the two answers that do not need one: the
@@ -6162,7 +6184,7 @@ func runSlipEnv(ctx context.Context, env *cloudEnv, spec *task.Spec, slug, workf
 }
 
 // slipCredentialNames are the credentials the run's slip asks the service to
-// serve: what each of the four crafts resolves to for this launch, deduplicated
+// serve: what each of the five crafts resolves to for this launch, deduplicated
 // — the same answer `fugaro craft ls` prints and the same one the runner will
 // make its calls with, because the resolution is internal/craft's and not a
 // second rule here (that package's own promise: a launcher and a runner cannot

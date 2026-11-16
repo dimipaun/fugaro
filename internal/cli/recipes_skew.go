@@ -14,6 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/craft"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -22,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -165,29 +167,39 @@ func policyTooNewFix(version int) string {
 // and price_policy (price-catalog plan Task 4, design D11): a runner before
 // it decodes FUGARO_MODEL_PROVIDERS with DisallowUnknownFields
 // (internal/runner/providers.go), so a job whose value carries either key
-// fails at bootstrap with an error naming a field nobody typed. Today it
-// names a release that does not exist yet, on purpose (see catalogShipped).
-// Once the release that ships them is tagged, this constant's job becomes
+// fails at bootstrap with an error naming a field nobody typed. It names
+// 0.7.5, a release that is built and tagged and whose runner reads both keys
+// (internal/runner/providers_test.go decodes them), so this constant's job is
 // the same as recipesSince's above: docs/release.md's ("Before you tag")
 // checklist verifies it equals the release that ships them.
 const catalogSince = "0.7.5"
 
-// catalogShipped is false until the release named by catalogSince is
-// actually tagged: no fugaro release reads a route's require_zdr or
-// price_policy yet, so no runner that can exist today can run a job whose
-// value carries either key. While it is false, catalogSwitchSkew refuses
-// fugaro update --repo outright when any provider that may receive the
-// repository's code sets one — before any cloud effect, since the job it
-// would deploy carries FUGARO_MODEL_PROVIDERS — rather than judging the
-// base image (no release, of any base image, would read the key, so
-// "upgrade your base image" would not fix anything).
+// catalogShipped is true: the release named by catalogSince exists and reads
+// a route's require_zdr and price_policy, so a job whose
+// FUGARO_MODEL_PROVIDERS value carries either key can be run by a runner that
+// was built from it. It was flipped after 0.7.5 was tagged rather than in that
+// release, which is why docs/release.md's checklist line for catalogSince is
+// the one that records it had been left false — and why the two things the
+// flip makes inert are stated here rather than in that release's notes:
+//   - catalogSwitchSkew's unshipped branch (the "no fugaro release reads those
+//     route keys yet" refusal) no longer fires. A route that sets either key
+//     is judged by the installation's base image the way checkCloneImageSince
+//     judges a checkout: an image older than catalogSince is refused, naming
+//     the release and `fugaro update --base base`, a ref with no release tag
+//     (a dev build, a hand-pushed image, an --image-source mirror) is only
+//     warned about, and an installation with no base image at all passes
+//     because infra.Repo then builds the job from this release's own image;
+//   - the key really is deployable end to end: fugaro update --repo and
+//     fugaro setup --repo carry the value into the job's FUGARO_MODEL_PROVIDERS.
 //
-// Flip this to true in the same commit that bumps catalogSince to the
-// release that ships them: that one edit turns the refusal back into the
-// ordinary base-image age check (the installation's base image predating
-// catalogSince), the same shape as checkCloneImageSince's; update
-// docs/release.md's checklist line for catalogSince in that commit too.
-const catalogShipped = false
+// Both stay in the tree, behind this constant, for the same reason every other
+// shipped flag here keeps its gate: the flip is one boolean, and a test that
+// pins the shipped behavior (TestRefuseCatalogSwitches, TestGateCatalogSwitches,
+// TestInitRepoDeploysCatalogSwitches) fails the moment it is flipped back.
+// Nothing here should ever flip it back: 0.7.5 ships a runner that reads both
+// keys, and a later release that had to un-ship them would be a different
+// decision, made in its own PR.
+const catalogShipped = true
 
 // imageCatalogSince names the release that publishes — and reads — the
 // project policy node's image_catalog key (D1140, D1156): the release whose
@@ -456,29 +468,79 @@ const escalationSince = "0.23.0"
 // refuses its task) or too early (an image that can judge stays blocked).
 const evaluateSince = "0.24.0"
 
+// mergeJudgeSince is the first fugaro release whose runner runs the merge
+// judge (E6, D2031): its recipe parser knows `merge_judge` as a kind, and
+// mode: evaluate's own step list carries it, so the judge's recipe — one step,
+// and that step — is a run; and its configuration reader knows the judge's
+// craft, `agent.crafts.merge-judge`, which the five-craft block adds (its
+// `Crafts` struct carries a field per craft, so the decoder refuses the field
+// and not the block).
+//
+// **It is not evaluateSince, and the two are a release apart.** 0.24.0 reads
+// mode: evaluate, which is the mode the judge's task carries, so that gate
+// admits a launch against a 0.24.0 job image and cannot tell this run from any
+// other evaluate one; its parser then refuses `merge_judge` outright ("is not a
+// step type") and its decoder refuses the craft key ("field merge-judge not
+// found in type config.Crafts"), so the run dies at bootstrap with the launch
+// already paid for and nothing judged. What judges a launch is therefore the
+// recipe's own constructs (recipe.UsesMergeJudge, read from the embedded text a
+// catalog launch carries) and the catalog's own name, for the task that names
+// it and carries no text — the two arms of recipeSinceFor, not the mode's —
+// and, for the craft key, the two files the configuration writes it in
+// (mergeJudgeCraftLaunchSources, checkMergeJudgeCraftImage).
+//
+// The two halves are one constant because they are one release and one
+// feature, but they are judged apart and a launch may carry either without the
+// other: a repository's file may set the judge's craft with no judge run ever
+// launched from it (the ladder launches the judge, and its task is the
+// ladder's), and a judge run may be launched where no layer sets the craft,
+// the judge then following the coder.
+//
+// It names 0.25.0, the release this work lands in, which is not tagged yet:
+// docs/release.md's ("Before you tag") checklist verifies the constant against
+// the tag actually cut, the way digestSince's, adversarialSince's and
+// evaluateSince's bullets record. A wrong value refuses too late (a launch
+// reaches a runner that refuses its recipe or its configuration) or too early
+// (an image that can judge stays blocked).
+const mergeJudgeSince = "0.25.0"
+
 // escalationRecipes are the catalog recipe names whose runner half ships in
 // escalationSince's release: `escalate` (one coder pass, one review, the
-// verdict recorded) and `rebase`, which that release adds, and `merge-judge`,
-// the merge judge's own recipe, which E6 adds with the same engine — its name
-// is listed here from the start so the three the escalation ladder launches
-// (E11) are held to the one release in one place, rather than each arrival
-// moving this gate. A recipe of the same name from the repository or the
-// project is that layer's own file and is judged by the constructs it
-// carries, like any other: this list is the catalog's names, not the names.
-var escalationRecipes = []string{"escalate", "rebase", "merge-judge"}
+// verdict recorded) and `rebase`, which that release adds. A recipe of the
+// same name from the repository or the project is that layer's own file and is
+// judged by the constructs it carries, like any other: this list is the
+// catalog's names, not the names. `merge-judge`, the third of the ladder's
+// recipes (E6), is deliberately not here: its runner half ships a release
+// later, and mergeJudgeRecipeNamed holds it to that one.
+var escalationRecipes = []string{"escalate", "rebase"}
 
 // escalationRecipeNamed reports whether the task's recipe is one of the
 // catalog's escalation recipes: a name the launcher resolved from the catalog
 // itself, never a repository's or the project's own file that happens to
 // share it (resolveRecipe reads those first, and they win). It is the floor
 // under the construct gates: a recipe whose text carries no hand_over and no
-// rebase step this launcher can see — merge-judge, whose file the catalog
-// does not hold yet, and any of the three whose text a later release edits to
-// use fewer constructs — is still held to the release whose runner runs the
-// ladder's recipes, so an image that cannot take the launch is refused at the
-// terminal rather than at bootstrap.
+// rebase step this launcher can see — or either of the two whose text a later
+// release edits to use fewer constructs — is still held to the release whose
+// runner runs the ladder's recipes, so an image that cannot take the launch is
+// refused at the terminal rather than at bootstrap.
 func escalationRecipeNamed(spec *task.Spec) bool {
 	return spec.Recipe != nil && spec.Recipe.Source == string(recipe.SourceCatalog) && slices.Contains(escalationRecipes, spec.Recipe.Name)
+}
+
+// mergeJudgeRecipe is the catalog recipe the judge run is launched by, and
+// mergeJudgeRecipeNamed reports whether the task's recipe is that catalog
+// entry: a name the launcher resolved from the catalog itself, never a
+// repository's or the project's own file that happens to share it.
+//
+// It is the name arm mergeJudgeSince needs beside the construct one: a catalog
+// launch carries the recipe's text, which recipe.UsesMergeJudge reads, but a
+// task naming the catalog entry and carrying no text (a hand-written task.json,
+// or a later release's launcher) has no construct to read, and the name is then
+// the only thing that says which run this is.
+const mergeJudgeRecipe = "merge-judge"
+
+func mergeJudgeRecipeNamed(spec *task.Spec) bool {
+	return spec.Recipe != nil && spec.Recipe.Source == string(recipe.SourceCatalog) && spec.Recipe.Name == mergeJudgeRecipe
 }
 
 // reviewLevelsSince is the first fugaro release whose runner acts on review
@@ -1251,27 +1313,30 @@ func repoRecipeForGate(ctx context.Context, spec *task.Spec) *recipe.Recipe {
 // and start a job whose runner refuses the whole task at bootstrap, the
 // manifest being a field it does not know.
 //
-// The adversarial step and the escalation constructs are judged from rp too,
-// and they are the newest a recipe can carry (escalationSince, then
-// adversarialSince), so their cases come first. Unlike the manifest and mode:
-// artifact — a repository recipe's digest run and its mode both reach the
-// task as fields, which carry their own gates above — neither the step nor
-// the two escalation constructs has anything in the task behind it, so the
-// launcher's read of the file the recipe names is the only place the gate can
-// see it; one this launcher cannot read keeps recipesSince, with the runner's
-// parse refusal as the backstop. Every older construct keeps the gate it
-// always had, judged from the embedded text alone: a repository recipe trips
-// none of them here, which is what its own tests pin.
+// The judge's step, the adversarial step and the escalation constructs are
+// judged from rp too, and they are the newest a recipe can carry
+// (mergeJudgeSince, then escalationSince, then adversarialSince), so their
+// cases come first. Unlike the manifest and mode: artifact — a repository
+// recipe's digest run and its mode both reach the task as fields, which carry
+// their own gates above — none of those three has anything in the task behind
+// it, so the launcher's read of the file the recipe names is the only place
+// the gate can see it; one this launcher cannot read keeps recipesSince, with
+// the runner's parse refusal as the backstop. Every older construct keeps the
+// gate it always had, judged from the embedded text alone: a repository recipe
+// trips none of them here, which is what its own tests pin.
 //
 // The catalog's escalation recipes are held to escalationSince by name as
 // well (escalationRecipeNamed), which is the floor under the constructs: the
 // name is what the ladder's launches and a person's terminal carry, and the
 // gate must not move back if a later release edits one of those files to use
-// fewer of them.
+// fewer of them. The judge's recipe is the third of those names and is held
+// the same way, to its own, newer release (mergeJudgeRecipeNamed).
 func recipeSinceFor(spec *task.Spec, rp *recipe.Recipe) string {
 	r := embeddedRecipeOf(spec)
 	if len(spec.DigestRuns) == 0 && r == nil && rp != nil {
 		switch {
+		case recipe.UsesMergeJudge(rp):
+			return mergeJudgeSince
 		case recipe.UsesRebase(rp) || recipe.UsesHandOver(rp):
 			return escalationSince
 		case recipe.UsesAdversarial(rp):
@@ -1284,6 +1349,8 @@ func recipeSinceFor(spec *task.Spec, rp *recipe.Recipe) string {
 		since = digestSince
 	case r == nil:
 		since = recipesSince
+	case recipe.UsesMergeJudge(r):
+		since = mergeJudgeSince
 	case recipe.UsesRebase(r) || recipe.UsesHandOver(r):
 		since = escalationSince
 	case recipe.UsesAdversarial(r):
@@ -1302,6 +1369,9 @@ func recipeSinceFor(spec *task.Spec, rp *recipe.Recipe) string {
 		since = recipesV07Since
 	default:
 		since = recipesSince
+	}
+	if mergeJudgeRecipeNamed(spec) {
+		return mergeJudgeSince
 	}
 	if imagePredates(since, escalationSince) && escalationRecipeNamed(spec) {
 		return escalationSince
@@ -1850,8 +1920,10 @@ func levelsBlockAsk(name string, l *config.ReviewLevels) string {
 // authoritative resolution is the runner's at bootstrap. The recipe is the
 // one this launcher can read (launchRecipeForLevels), and recipeUnknown says
 // the one thing that read could not settle: whether that recipe writes a
-// first-line step of its own. CatalogDefault is read as false: it decides
-// level 1's own default alone, which this gate does not judge.
+// first-line step of its own. This resolution reads CatalogDefault as false,
+// which decides level 1's default on a recipe this launcher has in hand alone;
+// the crafts read below takes the run's own answer (launchCatalogDefault),
+// because the crafts are judged by the run's write and not by this resolution.
 //
 // The run's own request for the strongest review is part of this resolution
 // exactly as it is part of the run's (securityRequestSources, the runner's
@@ -1874,7 +1946,14 @@ func levelsBlockAsk(name string, l *config.ReviewLevels) string {
 func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config, rcp *recipe.Recipe, recipeUnknown bool, warn io.Writer) (string, error) {
 	mode := rigor.Resolve(cfg.RigorConfig(), rigor.Request{Mode: rigor.Mode(spec.Rigor), Paths: spec.Paths}).Mode
 	var floor []policy.Level
+	// The node is read once for both halves of the model's own gates: its
+	// floor, and the crafts it carries, which are the project layer's answer to
+	// the model half (internal/runner's craftLayers reads the same node for the
+	// run, so the two cannot disagree about which model a craft runs).
+	var node *projectpolicy.Policy
+	var foundNode bool
 	if p, found, err := env.policy.read(ctx, env.lc); err == nil && found && p != nil {
+		node, foundNode = p, true
 		floor = p.ReviewFloor[mode]
 	}
 	fromTask, fromSwitch := securityRequestSources(spec, cfg)
@@ -1883,9 +1962,27 @@ func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, 
 		fmt.Fprintf(warn, "warning: the run asks for the strongest review (%s) and its recipe %s is mode: review, which allows exactly one review step and nothing else: review level 3 has no step to run in, so the launch resolves the levels the run would have resolved without it\n", subject, rcp.Name)
 		fromTask, fromSwitch = false, false
 	}
+	// The crafts the run will resolve (MC12's write, MC13's rung): the same two
+	// layers internal/runner's craftLayers hands the run — the agent block this
+	// launch resolved, where the file at the ref and the project layer file's
+	// defaults both arrive, and the published node — so a craft model the run
+	// would be refused for is refused here, before a task is written.
+	cr := craftsOf(launchCraftLayers(cfg, node, foundNode))
+	claimed := env.lc.Providers
+	if _, c, _ := layerRoutes(env.lc, cfg.Layer, spec.Repo); c != nil {
+		claimed = c
+	}
 	in := config.LevelInputs{
 		Config: cfg, Mode: mode, Floor: floor, Task: spec.ReviewLevels, Recipe: rcp, Providers: env.lc.Providers,
+		CraftModels: cr.models,
 	}
+	// The crafts the run reads, asked before the levels are resolved because the
+	// run's own write happens before it resolves them (MC12's write, applyCrafts)
+	// and because this is the run's answer, not the one the resolution below
+	// gives: the resolution reads the crafts' models (CraftModels) so that its
+	// refusals name the craft key that wrote a model, and what the run reads is
+	// the set of slots its own write fills.
+	read := launchCraftsRead(cr, launchCraftWrites(cfg, cr, in, launchCatalogDefault(spec)))
 	if fromTask || fromSwitch {
 		// Cloned: ReviewFloor hands out the policy's own slice, and appending
 		// to it would write the forced level into the merged policy.
@@ -1910,7 +2007,166 @@ func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, 
 		}
 		return "", userErr("%v", err)
 	}
+	// The model half's own checks (MC14, D1665): the allow-list, the route, the
+	// price and the access, each at the key of the document that wrote the
+	// craft's model. It is the verdict `fugaro validate` prints, from the same
+	// function, and the one the run's bootstrap reaches through the slots MC12
+	// writes — so a configuration that cannot be served stops the launch here,
+	// where the task is not yet written and no job is paid for.
+	//
+	// The crafts judged are the ones this run reads (launchCraftsRead), not
+	// every craft the layers resolve: the sentence below says the run refuses
+	// the same configuration, and a craft whose level the run's own layers left
+	// off reaches no slot at all, so the run neither runs it nor refuses it.
+	//
+	// The documents the access half is judged against are the installation's own
+	// (env.lc's credentials, pools and accounts) and not the node's, which is
+	// where the crafts were resolved from: they are the owner's writes (F12,
+	// D1628) and the node is that config published, so a name the node carries
+	// is a name this config holds — and this is the read slipCredentialNames
+	// makes for the same half, for the same reason.
+	if ps := craftModelProblems(cfg, env.lc, spec.Repo, claimed, launchFileSubject, read); len(ps) > 0 {
+		lines := make([]string, 0, len(ps))
+		for _, p := range ps {
+			lines = append(lines, p.String())
+		}
+		return "", userErr("the crafts this run would resolve cannot be served: %s; the run this launch would start refuses the same configuration at bootstrap, so the launch is refused before any execution exists",
+			strings.Join(lines, "; "))
+	}
 	return reviewLevelsAsk(levels, spec.ReviewLevels, cfg, floor, recipeUnknown), nil
+}
+
+// launchCraftsRead is the crafts whose model the run this launch resolved
+// really reads, out of every craft the layers resolve, and the answer is the
+// run's own write (MC12, internal/runner/craftmodel.go's applyCrafts): written
+// is the set of crafts launchCraftWrites performed below.
+//
+// The coder's model goes into agent.models.coder and the senior review's into
+// agent.models.reviewer whatever the levels are, and the first-line review's
+// and the security review's go into their own level's slot alone: applyCrafts
+// writes those two only where the level runs and wrote no model of its own
+// (F14 — a craft decides a level's model, never whether it runs), and a craft
+// written nowhere the run looks is a craft the run charges nothing for and
+// refuses nothing for. Judging one at a launch would refuse a launch the run
+// serves, with a sentence saying the run refuses the same configuration, and
+// the way out would be editing a key the refused run never reads.
+//
+// The set is the write's own answer rather than a second copy of the rule: the
+// level 1 switch is read off the coder's model
+// (config.Agent.FirstLineOn, agent.first_line_review: auto), so a craft can turn
+// a level on, and a launch resolving the levels off the models the file's own
+// slots name answers that switch differently from the run whose slots the
+// crafts' models were written into before it resolved them
+// (TestLaunchTakesTheCraftsTheRunsBootstrapResolves).
+func launchCraftsRead(cr craftResolution, written map[string]bool) []config.CraftModel {
+	out := make([]config.CraftModel, 0, len(cr.crafts))
+	for _, c := range cr.crafts {
+		if written[c.Craft] {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// launchCraftWrites is the crafts the run this launch resolved writes into a
+// slot: MC12's write, performed on a copy of the launch's own merged
+// configuration through the functions the run's bootstrap performs it with
+// (runner.WriteCraftRoles and runner.WriteCraftLevels), over the same inputs its
+// own resolution is given.
+//
+// It is a copy for two reasons: the launch's own configuration is what every
+// gate below judges, and the write allocates a level's block and writes a model
+// into one a layer left empty — through the shared block pointers, either would
+// land in the launch's.
+//
+// The role write goes first because level 1's answer is read off the roles
+// (WriteCraftRoles), and the levels are asked whether they run on the
+// configuration as it stands then, exactly as the run asks them
+// (CraftLevelsRunning, which is applyCrafts' own call).
+//
+// in is the resolution's own inputs with the crafts' models in it: the role and
+// level writes do not read CraftModels, and the level answer this needs is the
+// one the run takes before it resolves the levels — the resolution below is the
+// launch's, with the task's forced levels in it, and the run's write precedes
+// every forcing (internal/runner's resolveLevels).
+func launchCraftWrites(cfg *config.Config, cr craftResolution, in config.LevelInputs, derived bool) map[string]bool {
+	run := *cfg
+	run.Agent.Levels = launchLevelsCopy(cfg.Agent.Levels)
+	written := runner.WriteCraftRoles(&run, cr.eff, in.Recipe)
+	in.Config, in.CatalogDefault = &run, derived
+	for name := range runner.WriteCraftLevels(&run, cr.eff, runner.CraftLevelsRunning(in)) {
+		written[name] = true
+	}
+	return written
+}
+
+// launchLevelsCopy clones the three level blocks, nil for a level no layer
+// wrote: a craft's write is a write into a block, and the blocks of the
+// configuration a launch holds are shared with the copy launchCraftWrites hands
+// the run's own functions.
+func launchLevelsCopy(lv config.ReviewLevels) config.ReviewLevels {
+	return config.ReviewLevels{
+		L1: launchLevelCopy(lv.L1),
+		L2: launchLevelCopy(lv.L2),
+		L3: launchLevelCopy(lv.L3),
+	}
+}
+
+func launchLevelCopy(b *config.LevelSetting) *config.LevelSetting {
+	if b == nil {
+		return nil
+	}
+	c := *b
+	return &c
+}
+
+// launchCatalogDefault is whether the recipe the run will follow is the
+// catalog's own `default`, the one whose first_line step runs only when
+// agent.first_line_review turns it on (config.LevelInputs.CatalogDefault): the
+// run's own r.derived read off the task, since the launcher carries every recipe
+// it resolved (recipes_resolve.go's taskRecipeEmbedding) and a task that carries
+// none names nothing else — launchRecipeOf's own answer for the recipe of a
+// launch, which reads absent-and-not-chosen as this default.
+func launchCatalogDefault(spec *task.Spec) bool {
+	if spec.Recipe == nil {
+		return true
+	}
+	return spec.Recipe.Name == recipe.DefaultName && spec.Recipe.Source == string(recipe.SourceCatalog)
+}
+
+// launchFileSubject is what a launch's own model messages call the file the
+// policy merge reads (policy.SourceDefaultBranch): the fugaro.yaml at the ref
+// the run checks out, which is the document a run of it resolves and not the
+// launcher's working tree — the distinction cascadeRefConfig exists for. A
+// message saying "this file" would name the checkout the person typed the
+// command in, which is a document the run never reads.
+const launchFileSubject = "the fugaro.yaml at the ref"
+
+// launchCraftLayers are the layers a launch resolves the crafts' models over:
+// internal/runner's craftLayers, which is the answer the run itself resolves —
+// the agent block this launch read, where the file at the ref and the project
+// layer file's defaults both arrive, and the published node, which carries the
+// project's own crafts, credentials and pools (craftNodeKeyPrefix). That
+// function is unexported, since it answers a run's own configuration, so the two
+// are kept in step by hand, as craft ls's own three layers are.
+//
+// A node the launcher could not read is no project layer: the launch then
+// resolves what the file and the installation's config alone say, and a craft
+// model the node would have named is left to the run's own bootstrap — which
+// reads the node and refuses there — rather than invented here. The
+// installation's own config is not among these layers because a run has none:
+// the job carries what the owner published.
+func launchCraftLayers(cfg *config.Config, node *projectpolicy.Policy, found bool) []craft.Layer {
+	layers := []craft.Layer{{Name: craft.SourceRepo, Crafts: cfg.Agent.Crafts}}
+	if !found || node == nil {
+		return layers
+	}
+	l := craft.Layer{Name: craft.SourceProject, KeyPrefix: craftNodeKeyPrefix,
+		Credentials: node.CraftCredentials, Pools: node.CraftPools}
+	if node.Crafts != nil {
+		l.Crafts = *node.Crafts
+	}
+	return append(layers, l)
 }
 
 // launchLevelsConfig is the configuration the launch's review-level gates read:
@@ -3590,6 +3846,100 @@ func checkCloneVisionImage(lc *localcfg.Config, spec *task.Spec, cfg *config.Con
 	return checkCloneImageSince(lc, spec, visionSince, subject, visionKnows(fromRepo, fromLayer), "; or "+alt, warn)
 }
 
+// mergeJudgeCraftLaunchSources reports, for the launch's mergeJudgeSince gate
+// on the judge's craft, whether the configuration the run will read writes
+// agent.crafts.merge-judge: the repository's fugaro.yaml
+// (RepoMergeJudgeCraftSet) or the project layer it resolves over
+// (SetsMergeJudgeCraft), the two homes config.Scopes gives agent.crafts, read
+// the way visionLaunchSources reads the vision slot's.
+//
+// It is the merge judge's craft key and not the crafts block: the other four
+// crafts are 0.24.0's, so a runner older than mergeJudgeSince decodes them, and
+// it is this one field that its KnownFields decoder refuses ("field merge-judge
+// not found in type config.Crafts"). Both files are read for the reason
+// visionLaunchSources reads both: an older runner refuses the key in either,
+// and the layer's is the one that reaches every repository of the project.
+func mergeJudgeCraftLaunchSources(cfg *config.Config) (fromRepo, fromLayer bool) {
+	if cfg == nil {
+		return false, false
+	}
+	return cfg.RepoMergeJudgeCraftSet, cfg.Layer.SetsMergeJudgeCraft()
+}
+
+// mergeJudgeCraftSubject names, for the gates' messages, which file wrote the
+// key, and the way out that file's author has: the craft is a choice of which
+// credential the judge's call goes out on, not a behaviour the run depends on —
+// a runner that does not read it resolves the judge's craft from the craft it
+// follows (the coder, config.CraftParent), which is what a run that sets no
+// judge craft already does — so removing the key is a way out with no image to
+// move, at the cost of the credential the operator asked for. The distinction
+// between the two files is visionSubject's: the layer's key reaches every
+// repository of the project and only its operator can remove it.
+func mergeJudgeCraftSubject(repo string, fromRepo, fromLayer bool) (subject, alt string) {
+	const (
+		repoAlt  = "remove agent.crafts.merge-judge from fugaro.yaml: a runner that does not read it resolves the judge's craft from the coder's, which is what a run that sets no judge craft already does"
+		layerAlt = "remove defaults.agent.crafts.merge-judge from the project layer and publish it again: until then every repository of the project whose job image predates it fails the same way, and a runner that does not read the key resolves the judge's craft from the coder's"
+	)
+	switch {
+	case fromRepo && fromLayer:
+		return "fugaro.yaml's agent.crafts.merge-judge and the project layer's defaults.agent.crafts.merge-judge of " + repo,
+			"remove the key from fugaro.yaml and " + layerAlt
+	case fromLayer:
+		return "the project layer's defaults.agent.crafts.merge-judge (read for " + repo + ")", layerAlt
+	}
+	return "fugaro.yaml's agent.crafts.merge-judge of " + repo, repoAlt
+}
+
+// mergeJudgeCraftKnows names, for the image gates' messages, the key the job
+// image's runner has to know: the message reads "needs a job image whose runner
+// knows <this>", so it has to name whichever of the two files wrote it.
+func mergeJudgeCraftKnows(fromRepo, fromLayer bool) string {
+	switch {
+	case fromRepo && fromLayer:
+		return "the merge judge's craft (agent.crafts.merge-judge and the project layer's defaults.agent.crafts.merge-judge)"
+	case fromLayer:
+		return "the merge judge's craft (the project layer's defaults.agent.crafts.merge-judge)"
+	}
+	return "the merge judge's craft (agent.crafts.merge-judge)"
+}
+
+// checkMergeJudgeCraftImage and checkCloneMergeJudgeCraftImage are the launch's
+// own mergeJudgeSince gate for the judge's craft, for a workflow whose job
+// image is a derived one and for a checkout: clone workflow respectively — the
+// pair every other per-workflow image gate has (checkImageSince and
+// checkCloneImageSince), judged on the key the configuration the run will read
+// writes (mergeJudgeCraftLaunchSources), exactly as checkVisionImage is judged
+// on the vision slot's.
+//
+// It is the second half of the release's gate on the merge judge: the step
+// gate (mergeJudgeSince, recipeSinceFor) judges the judge's recipe, and this
+// one judges the craft key its configuration writes. A launch may carry either
+// without the other — a hand launch of another recipe in a repository whose
+// file sets the judge's craft, and a judge run whose file sets none — so the
+// two are separate reads of the same constant. A repository's or the project's
+// file that writes the key is refused at the terminal, naming the file, the
+// release and the image to move, rather than at bootstrap on a runner that
+// cannot decode it.
+func checkMergeJudgeCraftImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, cfg *config.Config, warn io.Writer) error {
+	fromRepo, fromLayer := mergeJudgeCraftLaunchSources(cfg)
+	if !fromRepo && !fromLayer {
+		return nil
+	}
+	subject, alt := mergeJudgeCraftSubject(spec.Repo, fromRepo, fromLayer)
+	return checkImageSince(ctx, env, slug, spec, kind, mergeJudgeSince, subject, mergeJudgeCraftKnows(fromRepo, fromLayer), "; or "+alt, warn)
+}
+
+// checkCloneMergeJudgeCraftImage is checkMergeJudgeCraftImage for a checkout:
+// clone workflow: see checkCloneImageSince.
+func checkCloneMergeJudgeCraftImage(lc *localcfg.Config, spec *task.Spec, cfg *config.Config, warn io.Writer) error {
+	fromRepo, fromLayer := mergeJudgeCraftLaunchSources(cfg)
+	if !fromRepo && !fromLayer {
+		return nil
+	}
+	subject, alt := mergeJudgeCraftSubject(spec.Repo, fromRepo, fromLayer)
+	return checkCloneImageSince(lc, spec, mergeJudgeSince, subject, mergeJudgeCraftKnows(fromRepo, fromLayer), "; or "+alt, warn)
+}
+
 // modelGradesImageWarnings warns, once, that a configuration which writes the
 // key — the repository's file (RepoModelGradesSet) or the project layer it
 // resolved over (SetsModelGrades) — needs every job image on modelGradesSince.
@@ -3945,11 +4295,13 @@ func refuseCatalogSwitches(repo string, lc *localcfg.Config, warn io.Writer) err
 
 // catalogSwitchSkew is the refusal itself: shipped false refuses every
 // provider in names, whatever the base image, because no release reads the
-// keys yet; shipped true judges the installation's base image the job is
-// built from, the way checkCloneImageSince does — a release that predates
-// catalogSince is refused, a ref that is not a release image is only warned
-// about (nothing can tell what its runner knows), and no base image at all
-// passes (infra.Repo then builds the job from this release's own image,
+// keys yet — the state catalogShipped left behind, and the reason the flag is
+// passed rather than read, so a test can still ask that half; shipped true,
+// which is what catalogShipped is, judges the installation's base image the
+// job is built from, the way checkCloneImageSince does — a release that
+// predates catalogSince is refused, a ref that is not a release image is only
+// warned about (nothing can tell what its runner knows), and no base image at
+// all passes (infra.Repo then builds the job from this release's own image,
 // which reads them). names must not be empty and is already sorted.
 func catalogSwitchSkew(repo string, names []string, ref string, shipped bool, warn io.Writer) error {
 	where := "provider " + names[0]

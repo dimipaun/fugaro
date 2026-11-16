@@ -127,9 +127,6 @@ type catalogCheckRepo struct {
 	// BuildServiceAccount is the email of the repository's build account: the
 	// one account a build of this repository's entries may run as.
 	BuildServiceAccount string `json:"build_service_account"`
-	// WorkflowSecrets are the repository's build secrets, the ones its
-	// workflows declare (catalogBuildSecrets' answer for it).
-	WorkflowSecrets []config.Secret `json:"workflow_secrets,omitempty"`
 	// Entries are the catalog entries this repository builds.
 	Entries []string `json:"entries"`
 }
@@ -306,6 +303,24 @@ func (t *catalogCheckTarget) evaluate(ctx context.Context, e config.Entry, r cat
 	case err != nil:
 		return ev, fmt.Errorf("reading %s: %w", key, err)
 	}
+	// A definition that asks for a secret of its own is an entry no build may
+	// be submitted for (D2311, B9). This release refuses to publish another one
+	// (catalog's refuseCredentialIn), and an object an earlier release copied
+	// into the bucket is still what a rebuild would read, so the entry is left
+	// alone: a build of it would hand the entry's own steps the very secret the
+	// ruling keeps out of every entry build (F19). What the owner has to do
+	// instead is in the line.
+	//
+	// The entry's own bytes, never the whole object: a definition this engine
+	// composed carries the bake's own stage, which mounts the git credential
+	// until the clone leaves the definition (imagebake.EntryOwn, and the
+	// reasoning on doctor_catalog.go's entryAsksForASecret). Such an entry is
+	// rebuilt like any other — its author asked for no secret, and the stage
+	// below is what binds the rebuild to the repository it bakes.
+	if line, ok := entryAsksForASecret(def); ok {
+		return ev, fmt.Errorf("the catalog entry %s asks for a secret at line %d of its definition (D2311): a catalog entry carries no secret of its own, because the clone step supplies the checkout, so nothing is submitted for it — change the entry's definition and run fugaro image build %s from %s's checkout",
+			pluginwire.Printable(e.Name), line, pluginwire.Printable(e.Name), pluginwire.Printable(r.Repo))
+	}
 	sum := sha256.Sum256(def)
 	ev.definitionSHA256, ev.definitionGeneration = hex.EncodeToString(sum[:]), gen
 	// Where the definition this job rebuilds bakes its checkout, when a build
@@ -472,8 +487,7 @@ func (t *catalogCheckTarget) submit(ctx context.Context, e config.Entry, r catal
 		Base: t.base, Image: imageRef,
 		Definition:     gcp.CatalogDefinition{SourceCommit: commit, Generation: ev.definitionGeneration, SHA256: ev.definitionSHA256},
 		ServiceAccount: r.BuildServiceAccount, MachineType: t.spec.MachineType,
-		WorkflowSecrets: r.WorkflowSecrets,
-		Bucket:          "gs://" + t.bucket.GCSName,
+		Bucket: "gs://" + t.bucket.GCSName,
 		// The rebuild records the template it ran, which is this job's own: the
 		// entry it rebuilds stops firing the template trigger (F33, D1402).
 		TemplateSalt: gcp.TemplateSalt(Version),
