@@ -1598,6 +1598,156 @@ func TestCoverRefusesAnIntakeServiceThatIsNotTheModules(t *testing.T) {
 	})
 }
 
+// --- The voice hop's own service (P5.3.3) ---------------------------------
+
+// TestCoverRefusesAVoiceServiceThatIsNotTheModules is the hop's counterpart of
+// the intake's test above, and it mutates the GOLDEN's own change rather than
+// one written here: the fixture is the plan scripts/gen-golden-plans.sh makes
+// from internal/infra/testdata/installation-voice.tfvars.json, so the "as the
+// module writes it" row is the module's real service and every other row is one
+// attribute of it moved. The cover is the golden plans' own (goldenCover),
+// because the fixture's projects are the golden's.
+//
+// The rules it holds are the intake's four plus the hop's two, and each refusal
+// matters more here than at the two services beside it, because this address is
+// the one of the three anyone on the internet may call (voice.tf's allUsers
+// binding): a plan that served `credentials serve` there would answer the
+// credentials service's routes at a public address as the account that reads
+// the whole database instance and the bundle beside it; an environment the
+// module did not write is a value an unauthenticated caller's request would run
+// with; and an instance kept warm is the installation paying for a public
+// endpoint nobody called.
+//
+// Mutation (run, restore): make voiceServiceChange return "" on entry — every
+// row below is covered and this fails. The module's own plan stays covered
+// either way, which is why TestGoldenPlansAreCovered cannot see it.
+func TestCoverRefusesAVoiceServiceThatIsNotTheModules(t *testing.T) {
+	f := voiceGoldenFixture(t)
+	credentialsEmail := CredentialsAccountID + "@" + f.Project + ".iam.gserviceaccount.com"
+
+	// A fresh golden per row: a change's After is the plan's own map, so a
+	// mutation written into the plan one row loaded would carry into the next.
+	load := func() (ResourceChange, ResourceChange) {
+		p := goldenPlan(t, "installation-voice")
+		return resource(t, p, "module.installation.google_cloud_run_v2_service.voice[0]"),
+			resource(t, p, "module.installation.google_service_account.voice[0]")
+	}
+	container := func(r ResourceChange) map[string]any {
+		return r.Change.After["template"].([]any)[0].(map[string]any)["containers"].([]any)[0].(map[string]any)
+	}
+	template := func(r ResourceChange) map[string]any {
+		return r.Change.After["template"].([]any)[0].(map[string]any)
+	}
+	for name, tc := range map[string]struct {
+		change  func() ResourceChange
+		covered bool
+	}{
+		"as the module writes it": {func() ResourceChange { r, _ := load(); return r }, true},
+		// The account: the hop runs as its own google_service_account.voice[0]
+		// and never a sibling's, or the bundle's reader would sit behind the
+		// one address anyone may call.
+		"the credentials service's own account": {func() ResourceChange {
+			r, _ := load()
+			template(r)["service_account"] = credentialsEmail
+			return r
+		}, false},
+		// The args, which are what makes this service the hop: without them the
+		// container serves `credentials serve` — the credentials service's
+		// routes, from the hop's public address.
+		"no args at all, as the credentials service's container": {func() ResourceChange {
+			r, _ := load()
+			delete(container(r), "args")
+			return r
+		}, false},
+		"the credentials service's own args": {func() ResourceChange {
+			r, _ := load()
+			container(r)["args"] = []any{"credentials", "serve"}
+			return r
+		}, false},
+		"a command the module does not set": {func() ResourceChange {
+			r, _ := load()
+			container(r)["command"] = []any{"/bin/sh", "-c"}
+			return r
+		}, false},
+		// An environment is the one path a value could reach this process
+		// without a Secret Manager read, and this process is reachable by
+		// anyone.
+		"an environment the module does not set": {func() ResourceChange {
+			r, _ := load()
+			c := container(r)
+			c["env"] = append(c["env"].([]any), map[string]any{"name": "FUGARO_GCP_PROJECT", "value": f.Project})
+			return r
+		}, false},
+		"an environment whose value comes from a source": {func() ResourceChange {
+			r, _ := load()
+			container(r)["env"] = []any{map[string]any{"name": "FUGARO_FIREBASE_PROJECT",
+				"value_source": []any{map[string]any{"secret_key_ref": []any{map[string]any{"secret": "creds-bundle"}}}}}}
+			return r
+		}, false},
+		// The image: the hop is a subcommand of the released binary, so it runs
+		// the credentials service's own pin and never an image of its own.
+		"an image outside the pin": {func() ResourceChange {
+			r, _ := load()
+			container(r)["image"] = "us-east5-docker.pkg.dev/" + f.Project + "/fugaro-base/fugaro-credentials:latest"
+			return r
+		}, false},
+		// The two scaling blocks, one row each: the hop is the one service of
+		// the tree that must stay at zero minimum instances, and voice.tf
+		// writes the count at both levels because the provider computes the
+		// service-level one otherwise.
+		"a warm instance at the service level": {func() ResourceChange {
+			r, _ := load()
+			r.Change.After["scaling"].([]any)[0].(map[string]any)["min_instance_count"] = 1
+			return r
+		}, false},
+		"a warm instance at the template level": {func() ResourceChange {
+			r, _ := load()
+			template(r)["scaling"].([]any)[0].(map[string]any)["min_instance_count"] = 1
+			return r
+		}, false},
+		// IAM, which is required and stated: with the check off the service is
+		// reachable through a flag no reviewer reads instead of through the
+		// binding voice.tf writes.
+		"IAM turned off": {func() ResourceChange {
+			r, _ := load()
+			r.Change.After["invoker_iam_disabled"] = true
+			return r
+		}, false},
+		"IAM not stated": {func() ResourceChange {
+			r, _ := load()
+			delete(r.Change.After, "invoker_iam_disabled")
+			return r
+		}, false},
+		"no container": {func() ResourceChange {
+			r, _ := load()
+			r.Change.After["template"] = []any{map[string]any{}}
+			return r
+		}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// The account the module creates for the hop is in the plan
+			// because the account check reads the plan's creation fact; the
+			// change under test is the row's own.
+			_, acct := load()
+			p := &Plan{ResourceChanges: []ResourceChange{tc.change(), acct}}
+			if got := goldenCover().NotCovered(p, nil); (len(got) == 0) != tc.covered {
+				t.Fatalf("NotCovered = %q, covered want %v", got, tc.covered)
+			}
+		})
+	}
+	// The plan the module writes after the one that created the hop: the
+	// account is a no-op and the service keeps naming it, which is every later
+	// plan and must stay covered.
+	t.Run("the account unchanged and the service still naming it", func(t *testing.T) {
+		svc, acct := load()
+		acct.Change.Actions = []string{"no-op"}
+		p := &Plan{ResourceChanges: []ResourceChange{svc, acct}}
+		if got := goldenCover().NotCovered(p, nil); len(got) != 0 {
+			t.Fatalf("NotCovered = %q, want covered: the account is the plan's own, unchanged", got)
+		}
+	})
+}
+
 // --- The deployer account of D75 (Task 1.5) -------------------------------
 
 // deployerRoleGolden is every deployer role's permission list, permission for
