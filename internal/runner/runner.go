@@ -2181,9 +2181,17 @@ func BakedDir(workDir, slug string) string {
 // will open (credentialVars). bootstrap therefore calls this before it asks
 // where the run clones from.
 //
-// Only a per-repository job looks. A project job's image bakes no checkout and
-// the run refuses any it finds (checkProjectCheckoutOrigin), so there is nothing
-// for it to adopt. And the run must be able to name the repository its task
+// Only a per-repository job looks here, and returns below for the other class:
+// a project job's image bakes the project's repositories, and the run settles
+// the checkout it works on in checkProjectCheckoutOrigin instead — the reset,
+// the verification and the removal of the rest that D2308 and D2309 put there.
+// What this class shares with that one is D2309, and it is done here: the other
+// repositories the image baked are removed before this function adopts the
+// per-slug directory, because that read is a property of the image's layout and
+// not of the job class — this class runs the same shared image (D1900). So
+// whichever class a run is in, the checkout it works on is settled under this
+// binding, and the image's other repositories are gone, before anything of the
+// run reads one. And the run must be able to name the repository its task
 // names under the kind its own slug derives (providerForSlug): a slug no
 // provider kind produces — what `--provider fake` gives a local invocation —
 // names no repository to call a baked directory after and no remote to hold the
@@ -2202,6 +2210,17 @@ func (r *run) openBakedCheckout(ctx context.Context) error {
 	}
 	if _, project := r.projectJob(); project {
 		return nil
+	}
+	// The other repositories the image baked go before anything of this run
+	// reads one (D2309, review F23): this class runs the same shared image a
+	// project job does (D1900), so the image bakes the project's repositories
+	// and not just this run's. Here rather than after the adoption below, which
+	// rewrites r.d.WorkDir: the directories are found by their position beside
+	// the work directory the job started in — the image's own, which is why a
+	// local invocation, whose work directory is its caller's, removes nothing
+	// there at all (review F24, removeOtherBakedRepos).
+	if err := r.removeOtherBakedRepos(); err != nil {
+		return err
 	}
 	repo, err := gitops.Open(r.d.WorkDir, nil)
 	if err != nil {
@@ -2435,10 +2454,12 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// fetch, the agent's git and the final push would all run with no git
 	// credential at all (the review finding on this change).
 	//
-	// It is also the other half of checkProjectCheckoutOrigin's question, for
-	// the job that may hold a baked checkout: which repository the one in the
-	// image is a checkout of, and whether this run may work on it at all (a
-	// shared image bakes several). Here rather than in openCheckout, which is
+	// It is also the per-repository half of checkProjectCheckoutOrigin's
+	// question, for the job that may hold a baked checkout: which repository the
+	// one in the image is a checkout of, and whether this run may work on it at
+	// all (a shared image bakes several; the project job's half is that
+	// function's, which resets this run's own and removes the rest, D2308,
+	// D2309). Here rather than in openCheckout, which is
 	// called once the provider below has minted this run's git credential, so a
 	// refusal is still a run that requested nothing.
 	if err := r.openBakedCheckout(ctx); err != nil {
