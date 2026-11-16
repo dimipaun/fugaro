@@ -2,7 +2,10 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/backend"
@@ -13,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/repourl"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 // The run's job identity (plan task 3.3, design §4.1 and §12a items 1 and 2).
@@ -660,38 +664,154 @@ func cannotPlaceJob(job string, p *projectpolicy.Policy, found bool, slug, workf
 		job, gcp.JobName(slug, variant), slug, workflow, detail, fix)
 }
 
-// checkProjectCheckoutOrigin refuses, on a project job, any checkout already
-// in the work directory (review C5). openCheckout opens an existing checkout
-// as it is, and on a per-repository job the admission holds its origin to the
-// task's repository (originURL feeds remoteAdmissionErr); a project job
-// computes its clone URL and reads no origin, so without this a checkout of
-// another repository — a baked image built for one, or a directory something
-// left behind — would be fetched with the profile's credential and worked on
-// under this run's slug.
+// checkProjectCheckoutOrigin settles the checkout a project job works on when
+// its image already holds one: it is the run's own repository's, it is put into
+// a state this run wrote, and only then does anything fetch through it (D2308,
+// review F22). Every other repository the image baked is removed before the
+// agent starts (D2309, review F23). A run in a per-repository job, and a work
+// directory with no checkout at all, pass: the first is the admission's own
+// case (openBakedCheckout), and the second clones.
 //
-// The refusal covers a checkout whose origin is the computed URL too, and that
-// is deliberate: an origin is one line of the checkout's .git/config, which
-// also holds a push URL, url rewrites and hooks — code and configuration the
-// run would execute with the profile's credential — so no origin can vouch for
-// a checkout the run did not make. Nothing legitimate is lost: project jobs run
-// the installation's base image, which bakes no checkout, and each Cloud Run
-// execution starts from that image. A run in a per-repository job, and a work
-// directory with no checkout, pass.
+// The guard this replaces refused every checkout a project job's image held
+// (review C5), because a project job's image was the base one and baked none —
+// so any checkout was something the run did not make, and its .git/config,
+// which also holds push URLs, url rewrites and hooks, was code the profile's
+// credential would have run. The job model no longer decides that: a project
+// job runs the project's catalog image (S10), whose generated stages bake the
+// checkout of every repository the entry serves (D2301), and the entry's own
+// Dockerfile may clone into the work directory besides. What replaces the
+// refusal is the reset gitops' ResetBakedGit performs — the configuration
+// replaced by one the run writes, the hooks removed, the replace refs and
+// grafts dropped, the build's leftovers cleaned — so what a run works on is a
+// checkout whose configuration, hooks and refs are the run's own, whichever
+// stage put the files there. A checkout whose origin is not this run's
+// repository is refused before that reset, as it was before: no origin can
+// vouch for a checkout of another repository.
+//
+// Which checkout it is comes from bakedProjectCheckout, and it is read before
+// the provider is opened, so every refusal below is a run that requested no git
+// credential and fetched nothing.
 func (r *run) checkProjectCheckoutOrigin(ctx context.Context, remote string) error {
 	job, project := r.projectJob()
 	if !project {
 		return nil
 	}
-	repo, err := gitops.Open(r.d.WorkDir, nil)
-	if err != nil {
+	if err := r.removeOtherBakedRepos(); err != nil {
+		return err
+	}
+	dir := r.bakedProjectCheckout()
+	if dir == "" {
 		return nil // no checkout: the run clones remote
 	}
-	got := "no origin"
-	if origin, err := strip(repo).OriginURL(ctx); err == nil {
-		got = remoteDisplay(origin)
+	repo, err := gitops.Open(dir, nil)
+	if err != nil {
+		return nil // not a checkout after all: the run clones remote
 	}
-	return fmt.Errorf("the work directory %s already holds a checkout (origin %s), and this run is in the project job %s, which clones %s itself: a project job's image bakes no checkout and the run works only on the one it clones, since a checkout it did not make carries configuration and hooks the profile's credential would run with, so the run stops before any git credential is requested",
-		r.d.WorkDir, got, gcp.ProjectJobName(job.Profile, job.Provider, job.Account), remoteDisplay(remote))
+	origin, err := strip(repo).BakedGitOrigin(ctx)
+	if err != nil {
+		return fmt.Errorf("the checkout this run found at %s cannot be reset to the state this run works from: %w", dir, err)
+	}
+	// The image's own configuration is not the run's, and its origin is the one
+	// line of it this run quotes: registered before anything can print it, as
+	// the job's remote and a work-directory checkout's are (bootstrap).
+	r.addRemoteSecrets(origin)
+	if err := remoteAdmissionErr(origin, job.Provider, r.spec.Repo, r.d.Store.Slug()); err != nil {
+		return fmt.Errorf("the checkout this run found at %s is not this run's repository (origin %s): %w", dir, remoteDisplay(origin), err)
+	}
+	if err := strip(repo).ResetBakedGit(ctx, remote, r.bakedHooksDir()); err != nil {
+		return fmt.Errorf("the checkout this run found at %s cannot be reset to the state this run works from: %w", dir, err)
+	}
+	if dir == r.d.WorkDir {
+		return nil // already the work directory: there is nothing to adopt
+	}
+	// From here the checkout this run works on is this one, as it is for a
+	// per-repository job that adopts its own baked path (openBakedCheckout),
+	// and for the same reason: everything bootstrap reads of the checkout from
+	// now on — which remote the agent's git and the push name, which tree a
+	// stage runs in — reads this directory.
+	if err := stateDirOutsideCheckout(dir, r.d.StateDir); err != nil {
+		return err
+	}
+	r.d.WorkDir = dir
+	// The record's image has to name the commit this run's checkout is at, and
+	// the read bootstrap made ran while the work directory held no checkout of
+	// this run's — where imageInfo falls back to the commit the image's own
+	// record names, which belongs to whichever repository the image was built
+	// from. Read here, after the adoption and before the sync below moves the
+	// checkout off the baked commit, as openBakedCheckout's adoption does.
+	if sha := r.bakedHead(ctx); sha != "" {
+		if r.rec.Image == nil {
+			r.rec.Image = &runstore.ImageInfo{}
+		}
+		r.rec.Image.BakedCommit = sha
+	}
+	return nil
+}
+
+// bakedProjectCheckout is the checkout a project job's image holds for this
+// run, or the empty string when it holds none and the run clones.
+//
+// The directory the image baked this run's own repository at is preferred: it
+// is the one an engine-generated bake stage writes (runner.BakedDir), which is
+// the stage D2308 trusts, and it is the layout imagebake guarantees — the
+// generated stages bake at a per-slug path and never at /work/repo, so a
+// hand-written entry's own clone sits in the work directory beside it. That
+// clone is taken when there is no per-slug checkout — a derived image whose
+// Dockerfile clones is a definition D1208 leaves to its author — and it is
+// reset like the baked one, since the guard this replaces refused it for the
+// same reason it refused any other.
+func (r *run) bakedProjectCheckout() string {
+	for _, dir := range []string{BakedDir(r.d.WorkDir, r.d.Store.Slug()), r.d.WorkDir} {
+		if _, err := gitops.Open(dir, nil); err == nil {
+			return dir
+		}
+	}
+	return ""
+}
+
+// removeOtherBakedRepos removes every directory the image baked beside this
+// run's own (D2309, review F23): a catalog image bakes the checkout of every
+// repository its entry serves (D2301), so leaving them in place would let this
+// run's agent read a repository this run holds no grant over and works on none
+// of. Only the directory named by this run's storage slug stays — the run's own
+// repository's, whichever stage baked it.
+//
+// It runs on every project job, before the checkout decision: a run that finds
+// no baked checkout of its own clones, and the other repositories the image
+// baked are no more its to read for that.
+func (r *run) removeOtherBakedRepos() error {
+	root := filepath.Join(filepath.Dir(r.d.WorkDir), BakedRepoRoot)
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("reading the baked repositories at %s: %w", root, err)
+	}
+	keep := r.d.Store.Slug()
+	for _, entry := range entries {
+		if entry.Name() == keep {
+			continue
+		}
+		path := filepath.Join(root, entry.Name())
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("removing %s, which the image baked for a repository this run is not for: %w", path, err)
+		}
+	}
+	return nil
+}
+
+// bakedHooksDir is the directory a reset baked checkout points core.hooksPath
+// at: an empty directory this run owns, so no hook the image's build installed
+// runs for this run — on the agent's commits, whose stamp pass-throughs chain
+// to whatever the checkout configures (writeStampHooks), or anywhere else.
+//
+// It is under the state directory, the one place of the run's own that is
+// outside the checkout (stateDirOutsideCheckout), and ResetBakedGit empties and
+// re-makes it, so a file an earlier execution of the job left in it is not one
+// a later hook reaches.
+func (r *run) bakedHooksDir() string {
+	return filepath.Join(r.d.StateDir, "baked-hooks")
 }
 
 // cloneURL is where this run clones from (design §4.1(1), plan task 3.3 step

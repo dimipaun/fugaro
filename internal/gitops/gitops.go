@@ -1343,3 +1343,203 @@ func (r *Repo) tipBelongsToRun(ctx context.Context, tip string) (bool, error) {
 	}
 	return slices.Contains(strings.Split(reflog, "\n"), tip), nil
 }
+
+// BakedGitOrigin is the origin a checkout the image baked records, read from
+// the file and after the shapes this package cannot reset such a checkout from
+// are refused (ResetBakedGit).
+//
+// `git remote get-url origin` (OriginURL) answers with the URL this environment
+// would open — it applies the run's own url.*.insteadOf rules, which route a
+// provider's URL through the run's forwarder or, in a test, to a local
+// repository. That is a property of the run. What a caller asking which
+// repository an image's checkout is a checkout OF wants is what the image
+// wrote, so the key is read from the checkout's own configuration.
+func (r *Repo) BakedGitOrigin(ctx context.Context) (string, error) {
+	if err := r.refuseUnresettableBakedGit(); err != nil {
+		return "", err
+	}
+	return r.git(ctx, "config", "--get", "remote.origin.url")
+}
+
+// refuseUnresettableBakedGit refuses the four shapes of a baked .git that
+// ResetBakedGit cannot put into the fixed state it writes, each for its own
+// reason and each named in the refusal so the run's halt says which one it met.
+//
+// A .git that is a FILE (a linked worktree, a submodule's checkout, a
+// --separate-git-dir clone) names a git directory outside this directory: the
+// configuration, the hooks and the refs this package replaces are then not the
+// ones git reads for the checkout. .git/objects/info/alternates makes the
+// objects of a store outside the checkout available as if they were in it, so
+// what a read of a commit answers with is not what this checkout holds.
+// .git/commondir is the same statement as the file above, written down.
+// A configuration or a hook directory under .git/modules is a submodule's own,
+// read by git for that submodule: what such a configuration says (a URL to
+// fetch from, a hook to run) is the image's and no reset of the top-level .git
+// reaches it.
+func (r *Repo) refuseUnresettableBakedGit() error {
+	git := filepath.Join(r.Dir, ".git")
+	info, err := os.Lstat(git)
+	if err != nil {
+		return fmt.Errorf("%s has no .git: %w", r.Dir, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%s is a file naming a git directory outside the checkout, so the configuration and hooks git reads for it are not the ones in it", git)
+	}
+	if _, err := os.Lstat(filepath.Join(git, "commondir")); err == nil {
+		return fmt.Errorf("%s names another repository's git directory as the one shared by this checkout", filepath.Join(git, "commondir"))
+	}
+	if _, err := os.Lstat(filepath.Join(git, "objects", "info", "alternates")); err == nil {
+		return fmt.Errorf("%s makes objects from a store outside the checkout available as this checkout's", filepath.Join(git, "objects", "info", "alternates"))
+	}
+	return refuseSubmoduleState(filepath.Join(git, "modules"))
+}
+
+// refuseSubmoduleState reports the first submodule configuration file or
+// non-empty hook directory under modules, at any depth: a submodule's git
+// directory can hold both, and both are read by git for that submodule rather
+// than for the checkout this package resets.
+func refuseSubmoduleState(modules string) error {
+	if _, err := os.Lstat(modules); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return filepath.WalkDir(modules, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			if d.Name() == "config" {
+				return fmt.Errorf("%s is a submodule's configuration, which git reads for that submodule", path)
+			}
+			return nil
+		}
+		if d.Name() == "hooks" {
+			entries, err := os.ReadDir(path)
+			if err != nil {
+				return err
+			}
+			if len(entries) > 0 {
+				return fmt.Errorf("%s is a submodule's hook directory", path)
+			}
+		}
+		return nil
+	})
+}
+
+// ResetBakedGit puts a checkout the image baked into the fixed state this run
+// works from, and is D2308's reset. It replaces what the image's build left in
+// the checkout with what the run writes itself:
+//
+//   - .git/config and .git/config.worktree are replaced — the first by a
+//     configuration holding the origin remote alone, whose URL is remote (the
+//     clone URL this run computed for its own repository) and whose
+//     core.hooksPath is hooksDir. A credential helper, a url.*.insteadOf, a
+//     pushurl, a remote whose name is a URL, a filter driver and an include of
+//     another file all live in the configuration, so replacing the file closes
+//     every one of those doors at once — including a spelling this package's
+//     own readers (pushRewrite, PushURLs, CredentialURL) do not know.
+//   - .git/hooks is removed, and hooksDir is emptied and re-made: the hooks the
+//     image's build installed are the ones the agent's own git would run on its
+//     commits (the stamp's pass-throughs chain to whatever the checkout
+//     configures, runner's writeStampHooks), and the directory the run points
+//     git at is one the image never wrote to.
+//   - every refs/replace entry and .git/info/grafts are deleted, the replace
+//     refs through git so the ones the image packed into packed-refs go too:
+//     both substitute the object a read answers with, so a checkout carrying
+//     one makes every commit this run reads — a base, a head, a diff — name
+//     something other than what it holds.
+//   - everything git does not track is removed from the working tree (clean
+//     -ffdx, which is where the ignored files go too): what the entry's build
+//     left behind is not the repository's, and an ignored build output that
+//     stayed would reach the agent and its build. A tracked file the build
+//     changed is not restored here: the run's own checkout of the task's ref
+//     (bootstrap's CheckoutNewBranch, a hard reset onto the fetched ref) is
+//     what puts the tree at the fetched state, and it must run for a checkout
+//     and a ref this run did not choose.
+//
+// The fixed configuration is written before any git of this package runs on
+// the checkout, because a configuration is also how git is made to run a
+// command (core.fsmonitor, a filter driver) — with the image's configuration
+// still in place, the clean below would be a command the image chose, in the
+// environment this run's git carries.
+//
+// remote is the run's own clone URL and hooksDir a directory outside the
+// checkout that this run owns; both are written into the configuration, so git
+// fetches and pushes where the run decided and resolves no hook the image
+// left. Nothing here reads or needs a credential: no fetch is made and no
+// remote is contacted.
+func (r *Repo) ResetBakedGit(ctx context.Context, remote, hooksDir string) error {
+	if err := r.refuseUnresettableBakedGit(); err != nil {
+		return err
+	}
+	if remote == "" || hooksDir == "" {
+		return errors.New("a baked checkout is reset to a remote and a hook directory, and one of them is empty")
+	}
+	git := filepath.Join(r.Dir, ".git")
+	if err := os.RemoveAll(filepath.Join(git, "hooks")); err != nil {
+		return err
+	}
+	if err := os.Remove(filepath.Join(git, "config")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.Remove(filepath.Join(git, "config.worktree")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(git, "config"), []byte(bakedConfig(remote, hooksDir)), 0o644); err != nil {
+		return err
+	}
+	if err := r.dropReplaceRefs(ctx); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(filepath.Join(git, "refs", "replace")); err != nil {
+		return err
+	}
+	if err := os.Remove(filepath.Join(git, "info", "grafts")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if _, err := r.git(ctx, "clean", "-ffdx", "--quiet"); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(hooksDir); err != nil {
+		return err
+	}
+	return os.MkdirAll(hooksDir, 0o755)
+}
+
+// bakedConfig is the configuration ResetBakedGit writes: the origin remote the
+// run clones from, with the refspec that gives every branch a remote-tracking
+// ref (the image's own clone is --single-branch, and a run fetches a base
+// branch, a reviewed pull request's head and its own ref), and the hook
+// directory the run owns. Values are quoted, so a path with a space in it is a
+// value and not a syntax error.
+func bakedConfig(remote, hooksDir string) string {
+	return fmt.Sprintf("[core]\n\thooksPath = %s\n[remote \"origin\"]\n\turl = %s\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n",
+		quoteConfigValue(hooksDir), quoteConfigValue(remote))
+}
+
+// quoteConfigValue renders v as the value of a configuration entry, which git
+// reads as a quoted string with backslash escapes (git-config(1)).
+func quoteConfigValue(v string) string {
+	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(v) + `"`
+}
+
+// dropReplaceRefs deletes every refs/replace entry through git, so an entry the
+// image packed into .git/packed-refs goes with the loose ones — removing the
+// directory alone would leave a packed replacement in place, and a replacement
+// is exactly what makes this run's reads answer with another commit.
+func (r *Repo) dropReplaceRefs(ctx context.Context) error {
+	out, err := r.git(ctx, "for-each-ref", "--format=%(refname)", "refs/replace/")
+	if err != nil {
+		return err
+	}
+	var in strings.Builder
+	for _, ref := range strings.Split(out, "\n") {
+		if ref = strings.TrimSpace(ref); ref != "" {
+			fmt.Fprintf(&in, "delete %s\n", ref)
+		}
+	}
+	if in.Len() == 0 {
+		return nil
+	}
+	_, err = r.gitIn(ctx, in.String(), "update-ref", "--stdin")
+	return err
+}

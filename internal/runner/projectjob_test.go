@@ -23,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // This file is the end-to-end half of the job identity (plan task 3.3): whole
@@ -436,35 +437,325 @@ func TestProjectJobIgnoresFUGARORemote(t *testing.T) {
 	projectSucceeded(t, b)
 }
 
-// A checkout already in the work directory is opened as it is (OpenOrClone),
-// and on a per-repository job its origin is held to the task's repository by
-// the admission (remoteOfAnotherRepo reads it through originURL). A project
-// job reads neither (review C5): its clone URL is computed, so a checkout a
-// project job's container somehow carried — a baked image built for another
-// repository, or a work directory something left — would be fetched with the
-// profile's credential and worked on under this run's slug. Project jobs run
-// the installation's base image, which bakes no checkout, so any checkout is
-// refused before any git credential — including one whose origin is the URL
-// the run computes, since its .git/config and hooks are not the run's.
+// bakedProjectCheckout plants the checkout a project job's image holds for
+// this run's repository: a clone of the fixture's remote — so nothing here
+// needs a network — whose origin is the URL the run computes for it, at the
+// per-slug path the engine's own bake stage writes (BakedDir). plant is what
+// the image's build is taken to have done to it, and it is nil for a checkout
+// the run is expected to accept as it is.
+func bakedProjectCheckout(t *testing.T, b *bk, remote string, plant func(t *testing.T, dir string)) string {
+	t.Helper()
+	dir := bakedDir(t, b.harness, repoSlug)
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, filepath.Dir(dir), "clone", "--quiet", b.remote, dir)
+	testutil.Git(t, dir, "remote", "set-url", "origin", remote)
+	if plant != nil {
+		plant(t, dir)
+	}
+	return dir
+}
+
+// bakedHook writes a hook of name into dir, executable, that appends one line
+// to marker: what the image's build left behind for the run to run.
+func bakedHook(t *testing.T, dir, name, marker string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\necho \"$0\" >> "+marker+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeFileAt writes content at path, creating its directory: a file the
+// image's build is taken to have left in the checkout.
+func writeFileAt(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// gitTry runs git in dir and returns its output, or "" when git exits non-zero
+// — a configuration key that is not set, a remote that has no push URL. The
+// keys a test expects to be gone are the ones asked this way.
+func gitTry(dir string, args ...string) string {
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// A project job whose image baked this run's repository works on that baked
+// checkout, once the runner has reset it to the state it works from (D2308):
+// the checkout's own configuration is replaced by the one the run writes, so
+// the fetch that follows goes to the URL the run computed and to nothing the
+// image's configuration named.
 //
-// Mutation (run, restored): drop the checkProjectCheckoutOrigin call in
-// bootstrap. Both rows then open the planted checkout and ask for a credential.
-func TestProjectJobRefusesACheckoutItDidNotMake(t *testing.T) {
-	for name, origin := range map[string]func(computed string) string{
-		"another repository": func(string) string { return "https://github.com/evil/other.git" },
-		"its own URL":        func(computed string) string { return computed },
+// The configuration here is a hostile one — a push URL to another repository, a
+// rewrite of the run's own URL onto it, and a remote whose name is that URL,
+// which is the fourth door a push finds (gitops' PushURLs) — and one write
+// closes all of them, because the file is replaced. A run that kept them
+// fetches a URL cloneHost rewrites into a directory that is not a repository,
+// and fails locally instead of reaching anything.
+//
+// Mutation (run, restored): return from checkProjectCheckoutOrigin after the
+// origin check, without the reset. The fetch meets the rewrite, and this test
+// fails on the checkout the run then works on.
+func TestBakedCheckoutOnAProjectJobIsResetBeforeFetch(t *testing.T) {
+	b := projectRun(t, projectJobOf(), "off", "", projectPolicyFor(`["github/acme/*"]`, ""))
+	computed := projectHost(t, b)
+	baked := bakedProjectCheckout(t, b, computed, func(t *testing.T, dir string) {
+		testutil.Git(t, dir, "config", "remote.origin.pushurl", otherRemote)
+		testutil.Git(t, dir, "config", "url."+otherRemote+".insteadOf", computed)
+		testutil.Git(t, dir, "config", "remote."+computed+".url", otherRemote)
+	})
+	testutil.Git(t, baked, "commit", "--quiet", "--allow-empty", "-m", "baked")
+	head := testutil.Git(t, baked, "rev-parse", "HEAD")
+	rec := projectSucceeded(t, b)
+	want, err := filepath.EvalSymlinks(baked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := b.agent.calls[0].Dir; got != want {
+		t.Errorf("the implement stage ran in %q, want the image's baked checkout %q", got, want)
+	}
+	if got := testutil.Git(t, baked, "config", "--local", "--get-regexp", `^remote\.`); got != "remote.origin.url "+computed+"\nremote.origin.fetch +refs/heads/*:refs/remotes/origin/*" {
+		t.Errorf("the baked checkout's remotes are\n%s\nwant the origin the run wrote and nothing else", got)
+	}
+	if got := gitTry(baked, "config", "--local", "--get", "remote.origin.pushurl"); got != "" {
+		t.Errorf("the baked checkout still pushes to %q", got)
+	}
+	if got := gitTry(baked, "config", "--local", "--get-regexp", `^url\.`); got != "" {
+		t.Errorf("the baked checkout still rewrites URLs: %q", got)
+	}
+	if got := gitTry(baked, "config", "--local", "--get", "core.hooksPath"); filepath.Base(got) != "baked-hooks" {
+		t.Errorf("the baked checkout's core.hooksPath = %q, want the run's own empty hook directory", got)
+	}
+	if rec.Image == nil || rec.Image.BakedCommit != head {
+		t.Errorf("the record's image = %+v, want the baked commit %s", rec.Image, head)
+	}
+	if got := testutil.Git(t, b.remote, "rev-parse", "refs/heads/"+rec.Branch); got != rec.HeadSHA {
+		t.Errorf("remote branch %s != record head %s: the run did not push its own repository", got, rec.HeadSHA)
+	}
+}
+
+// A hook the image baked never runs (D2308). The image's build is free to leave
+// one in the hook directory git resolves — its own configuration's
+// core.hooksPath, or .git/hooks, which is git's default — and the run's agent
+// commits in that checkout: without the reset, the stamp's pass-throughs chain
+// to that directory (writeStampHooks reads it at bootstrap) and the image's
+// hook runs inside the run's own commit.
+//
+// Mutation (run, restored): leave the hooks in place — drop the .git/hooks
+// removal and the core.hooksPath write from ResetBakedGit. Both rows then find
+// the marker, and this test is the one that fails.
+func TestBakedCheckoutWithAPlantedHookNeverRunsIt(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		plant func(t *testing.T, b *bk, dir, marker string)
+	}{
+		{"the hook directory the configuration names", func(t *testing.T, b *bk, dir, marker string) {
+			hooks := filepath.Join(t.TempDir(), "baked-hooks")
+			bakedHook(t, hooks, "pre-commit", marker)
+			testutil.Git(t, dir, "config", "core.hooksPath", hooks)
+		}},
+		{"the hook directory git finds by default", func(t *testing.T, b *bk, dir, marker string) {
+			bakedHook(t, filepath.Join(dir, ".git", "hooks"), "pre-commit", marker)
+		}},
 	} {
-		t.Run(name, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
+			marker := filepath.Join(t.TempDir(), "hook-ran")
 			b := projectRun(t, projectJobOf(), "off", "", projectPolicyFor(`["github/acme/*"]`, ""))
 			computed := projectHost(t, b)
-			for _, args := range [][]string{{"init", "-q", b.deps.WorkDir}, {"-C", b.deps.WorkDir, "remote", "add", "origin", origin(computed)}} {
-				if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
-					t.Fatalf("git %v: %v\n%s", args, err, out)
-				}
+			bakedProjectCheckout(t, b, computed, func(t *testing.T, dir string) {
+				tc.plant(t, b, dir, marker)
+			})
+			projectSucceeded(t, b)
+			if data, err := os.ReadFile(marker); err == nil {
+				t.Errorf("a hook the image baked ran during the run: %s", strings.TrimSpace(string(data)))
 			}
-			rec, err := b.run(t)
-			refusedAdmission(t, b, rec, err, "already holds a checkout", computed, "before any git credential")
 		})
+	}
+}
+
+// A checkout the image holds that is not this run's repository is refused, on
+// both of the paths a project job can find one (D2308; review C5's refusal,
+// which this replaces): the directory the image baked this run's repository at
+// (BakedDir) and the work directory, which is where a hand-written Dockerfile's
+// own clone sits. The origin is what says which repository an image's checkout
+// is a checkout OF, and another repository's is one this run may not work on or
+// push from under its own slug, whatever state its .git is put into.
+//
+// Mutation (run, restored): drop the remoteAdmissionErr call from
+// checkProjectCheckoutOrigin. Both rows then work on another repository's
+// checkout and push the run's branch into it.
+func TestBakedCheckoutWithAnotherOriginHalts(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		plant func(t *testing.T, b *bk)
+	}{
+		{"the directory the run would adopt", func(t *testing.T, b *bk) {
+			bakedProjectCheckout(t, b, otherRemote, nil)
+		}},
+		{"the work directory", func(t *testing.T, b *bk) {
+			testutil.Git(t, filepath.Dir(b.deps.WorkDir), "clone", "--quiet", b.remote, b.deps.WorkDir)
+			testutil.Git(t, b.deps.WorkDir, "remote", "set-url", "origin", otherRemote)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := projectRun(t, projectJobOf(), "off", "", projectPolicyFor(`["github/acme/*"]`, ""))
+			projectHost(t, b)
+			tc.plant(t, b)
+			rec, err := b.run(t)
+			refusedAdmission(t, b, rec, err, "is not this run's repository", "evil/other", "acme/app", "before any git credential")
+		})
+	}
+}
+
+// A baked .git this run cannot put into a fixed state halts the run, and the
+// halt names which shape it met (D2308): a .git that is a file naming a git
+// directory elsewhere, objects complemented by a store outside the checkout, a
+// commondir, and a submodule's own configuration or hooks — each of them a way
+// for what this run reads and runs to be decided by something other than the
+// checkout it works on, and none of them reachable by a reset of this .git.
+//
+// Mutation (run, restored): drop the shape refusals (refuseUnresettableBakedGit
+// returns nil). Every row then resets the checkout and runs.
+func TestBakedCheckoutWithAGitdirFileAlternatesOrSubmoduleHooksHalts(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		want  string
+		plant func(t *testing.T, b *bk, dir string)
+	}{
+		{"a .git file", "naming a git directory outside the checkout", func(t *testing.T, b *bk, dir string) {
+			if err := os.RemoveAll(filepath.Join(dir, ".git")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: ../elsewhere\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"alternates", "objects from a store outside the checkout", func(t *testing.T, b *bk, dir string) {
+			writeFileAt(t, filepath.Join(dir, ".git", "objects", "info", "alternates"), "../elsewhere/objects\n")
+		}},
+		{"a commondir", "another repository's git directory", func(t *testing.T, b *bk, dir string) {
+			writeFileAt(t, filepath.Join(dir, ".git", "commondir"), "../elsewhere\n")
+		}},
+		{"a submodule's configuration", "a submodule's configuration", func(t *testing.T, b *bk, dir string) {
+			writeFileAt(t, filepath.Join(dir, ".git", "modules", "sub", "config"), "[remote \"origin\"]\n\turl = "+otherRemote+"\n")
+		}},
+		{"a submodule's hooks", "a submodule's hook directory", func(t *testing.T, b *bk, dir string) {
+			bakedHook(t, filepath.Join(dir, ".git", "modules", "sub", "hooks"), "pre-commit", filepath.Join(t.TempDir(), "ran"))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := projectRun(t, projectJobOf(), "off", "", projectPolicyFor(`["github/acme/*"]`, ""))
+			computed := projectHost(t, b)
+			bakedProjectCheckout(t, b, computed, func(t *testing.T, dir string) {
+				tc.plant(t, b, dir)
+			})
+			rec, err := b.run(t)
+			refusedAdmission(t, b, rec, err, "cannot be reset", tc.want)
+		})
+	}
+}
+
+// The reset is what makes the tree the run works on the repository's and not
+// the image's: a commit the image's build made and a tracked file it changed
+// never reach the run's branch, because the run checks out the ref it fetched
+// onto the reset checkout (a hard reset to the fetched ref), and what the build
+// left untracked or ignored is removed from the tree before that (clean -ffdx).
+// The replace refs and grafts go with them: a checkout carrying one answers a
+// read of a commit with another object, so a base, a head or a diff this run
+// measured would be the image's answer and not the repository's.
+//
+// The ignored file is what tells the two cleans apart — an ignore rule from
+// .git/info/exclude, which the run's own clean -fd keeps (a warm build cache)
+// and which the reset's -x removes — and it is committed by the agent's
+// `git add -A` in the implement step, so the run's own pull request is where it
+// would surface.
+//
+// Mutation (run, restored): drop the clean -ffdx from ResetBakedGit, or the
+// replace-ref and graft removal. The first row's branch then carries the
+// build's leftovers; the second's reads answer with the replaced object.
+func TestBakedCheckoutDropsReplaceRefsAndGraftsAndTrackedEdits(t *testing.T) {
+	b := projectRun(t, projectJobOf(), "off", "", projectPolicyFor(`["github/acme/*"]`, ""))
+	computed := projectHost(t, b)
+	baked := bakedProjectCheckout(t, b, computed, func(t *testing.T, dir string) {
+		writeFileAt(t, filepath.Join(dir, ".git", "info", "exclude"), "build-output/\n")
+		writeFileAt(t, filepath.Join(dir, "build-output", "stale.bin"), "stale\n")
+		writeFileAt(t, filepath.Join(dir, "build.sh"), "#!/bin/sh\nexit 1\n")
+		testutil.Git(t, dir, "commit", "--quiet", "-am", "the image's build")
+	})
+	// A replacement that would make the fetched main answer with the image's
+	// own commit, loose beside the packed one the build's gc left.
+	planted := testutil.Git(t, baked, "commit-tree", "-m", "replaced", testutil.Git(t, baked, "rev-parse", "HEAD^{tree}"))
+	testutil.Git(t, baked, "replace", testutil.Git(t, baked, "rev-parse", "HEAD"), planted)
+	testutil.Git(t, baked, "pack-refs", "--all")
+	writeFileAt(t, filepath.Join(baked, ".git", "info", "grafts"), testutil.Git(t, baked, "rev-parse", "HEAD")+"\n")
+	rec := projectSucceeded(t, b)
+	if _, err := os.Stat(filepath.Join(baked, "build-output")); err == nil {
+		t.Error("the ignored output the image's build left is still in the checkout the run worked on")
+	}
+	if got := gitTry(baked, "for-each-ref", "refs/replace/"); got != "" {
+		t.Errorf("the reset checkout still carries the replacement %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(baked, ".git", "info", "grafts")); err == nil {
+		t.Error("the reset checkout still carries a graft")
+	}
+	if changed := testutil.Git(t, b.remote, "diff", "--name-only", "main.."+rec.Branch); changed != "feature.txt" {
+		t.Errorf("the run's branch changes\n%s\nwant the agent's own file alone: the image's edited build.sh and its ignored output are not the run's", changed)
+	}
+}
+
+// The other repositories the image baked are removed before the agent starts
+// (D2309, review F23): a catalog image bakes the checkout of every repository
+// its entry serves (D2301), and this run neither works on nor holds a grant
+// over any but its own — so what is left under the image's baked root when the
+// agent runs is this run's own directory alone.
+//
+// Mutation (run, restored): drop the removeOtherBakedRepos call from
+// checkProjectCheckoutOrigin. The step below finds the other repositories'
+// checkouts, and their source is a file of the run's.
+func TestOtherBakedReposAreRemovedBeforeTheAgentStarts(t *testing.T) {
+	b := projectRun(t, projectJobOf(), "off", "", projectPolicyFor(`["github/acme/*"]`, ""))
+	computed := projectHost(t, b)
+	own := bakedProjectCheckout(t, b, computed, nil)
+	other := bakedDir(t, b.harness, mustSlug("github", "evil/other"))
+	if err := os.MkdirAll(other, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFileAt(t, filepath.Join(other, "secret.txt"), "another repository's source\n")
+	readable := ""
+	step := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		root := filepath.Dir(own)
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			return agent.Result{}, err
+		}
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		readable = strings.Join(names, " ")
+		return implement("feature")(t, ctx, req)
+	}
+	if _, err := b.run(t, step, review("ship", 0)); err != nil {
+		t.Fatalf("the run did not finish: %v", err)
+	}
+	if want := filepath.Base(own); readable != want {
+		t.Errorf("the baked root held %q when the agent ran, want only this run's own %q", readable, want)
+	}
+	if _, err := os.Stat(other); err == nil {
+		t.Error("the other repository's baked checkout is still there after the run")
 	}
 }
 
