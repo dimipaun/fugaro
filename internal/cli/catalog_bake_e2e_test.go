@@ -71,8 +71,19 @@ const (
 // The two halves are two commands and cannot be one: this repository's `image
 // build` composes the definition and submits the Cloud Build, and the credential
 // step of that build is the CLI's entry mode running inside it. So the test
-// composes the build and then runs the step with the plan's own repositories —
-// which is what the submitted build does with them.
+// composes the build and then runs the step with the plan's own repositories.
+//
+// No submitted build runs that step yet: the step the template carries is the
+// one-repository mode (images/derived/cloudbuild.yaml), and the env
+// internal/backend/gcp/catalog.go composes for it from credentialEnv names the
+// provider, the repository and the App ID — no entry, no bake plan's
+// repositories, no build id and no FUGARO_CREDENTIALS_SERVICE_URL
+// (internal/backend/gcp/build.go). A submitted bake therefore still clones with
+// the one-repository mint narrowed to its own repository, and what hands the
+// entry mode to it is the plan's B3 and B6, which write that file after B8 (the
+// shared-files table in docs/shared-jobs-default/implementation-plan.md). This
+// file holds the entry mode's two halves together against the service until
+// that wiring exists.
 func TestCatalogBuildBakesTwoReposThroughTheService(t *testing.T) {
 	// The second repository the project's map puts on the entry the build's own
 	// repository runs: two repositories on one entry is D2301's ordinary case,

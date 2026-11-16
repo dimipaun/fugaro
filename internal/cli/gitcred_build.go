@@ -113,7 +113,7 @@ var _ buildtoken.Client = buildTokenClient{}
 func newBuildTokenClient(*cobra.Command) (buildtoken.Client, error) {
 	raw := os.Getenv(envCredentialsServiceURL)
 	if raw == "" {
-		return nil, userErr("this build cannot ask for the entry's credential: %s is not set, and a catalog build's credential step asks the installation's credentials service for the credential that clones the entry's repositories. The variable is the service's own URL, which the installation's build steps are handed; an installation whose service is not deployed has no entry credential to ask for", envCredentialsServiceURL)
+		return nil, userErr("this build cannot ask for the entry's credential: %s is not set, and a catalog build's credential step asks the installation's credentials service for the credential that clones the entry's repositories. The variable is the service's own URL; an installation whose service is not deployed has no entry credential to ask for", envCredentialsServiceURL)
 	}
 	url, err := checkBuildServiceURL(raw)
 	if err != nil {
