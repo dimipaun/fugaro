@@ -195,9 +195,18 @@ func policyValues(p *projectpolicy.Policy) map[string]string {
 // what `fugaro update`'s policy stage writes from, so a key the stage would
 // publish and the read does not call unpublished is a difference a consumer
 // would never see (G1, G2).
+//
+// The identities the typed Bitbucket tokens carry (R12) are read out of the
+// creds state store by the doors that publish them and not by this one: this
+// read is a report, it dials no second store, and the member the comparison
+// would add is one the registry has no row for — its Bitbucket token rows are
+// the per-field wildcards (`bitbucket_tokens.*.coverage`), which a drift map
+// keyed by the member's own name is never consulted for. So no row of the table
+// is marked by that member either way, and a nil set here changes nothing the
+// operator reads.
 func policyDriftSet(lc *localcfg.Config, p *projectpolicy.Policy) map[string]bool {
 	out := map[string]bool{}
-	for _, d := range policyConfigDrift(lc, p) {
+	for _, d := range policyConfigDrift(lc, p, nil) {
 		out[d.Member] = true
 	}
 	return out

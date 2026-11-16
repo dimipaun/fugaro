@@ -584,7 +584,19 @@ func projectConfigEditLocal(cmd *cobra.Command, lc *localcfg.Config, sel localcf
 // functions rather than a second copy of the rule, and both are asked in the
 // order the node's decoder asks them. A config that sets no profiles block sets
 // no profile at all, and there is nothing to check.
+//
+// The typed Bitbucket tokens (R5) are the one block checked before that guard,
+// because the rule they are held to is not a property of the profiles: a
+// bitbucket_tokens record the node cannot carry is one every reader of the node
+// refuses, and DeriveBitbucketTokens is the publisher's own sentence about it,
+// asked here so the edit that wrote the record is where the operator reads it.
+// The identities the entries carry (R12) are not a rule — an entry with no
+// identity is what a repository token has (R14) — so the check derives them
+// without them.
 func projectProfileCheck(path string, lc *localcfg.Config) error {
+	if _, err := projectpolicy.DeriveBitbucketTokens(lc.BitbucketTokens, nil); err != nil {
+		return userErr("%s would not publish as a policy: %v", path, err)
+	}
 	if len(lc.Profiles) == 0 {
 		return nil
 	}

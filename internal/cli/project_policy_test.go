@@ -4024,14 +4024,14 @@ func TestVerifierAccountsDriftNamesTheMember(t *testing.T) {
 		VerifierAccounts: &[]string{"person-1@example.com"},
 	}
 	var got []string
-	for _, d := range policyConfigDrift(lc, node) {
+	for _, d := range policyConfigDrift(lc, node, nil) {
 		got = append(got, d.Member)
 	}
 	if want := []string{"verifier_accounts"}; !slices.Equal(got, want) {
 		t.Errorf("policyConfigDrift = %v, want %v", got, want)
 	}
 	lc.VerifierAccounts = nil
-	if got := policyConfigDrift(lc, node); len(got) != 0 {
+	if got := policyConfigDrift(lc, node, nil); len(got) != 0 {
 		t.Errorf("a config silent about the list drifts on %v, want nothing", got)
 	}
 }
@@ -4053,18 +4053,18 @@ func TestOrchestratorDriftNamesTheMember(t *testing.T) {
 		Orchestrator: &policy.Orchestrator{MaxRunning: 4},
 	}
 	var got []string
-	for _, d := range policyConfigDrift(lc, node) {
+	for _, d := range policyConfigDrift(lc, node, nil) {
 		got = append(got, d.Member)
 	}
 	if want := []string{"orchestrator"}; !slices.Equal(got, want) {
 		t.Errorf("policyConfigDrift = %v, want %v", got, want)
 	}
 	lc.Orchestrator = nil
-	if got := policyConfigDrift(lc, node); len(got) != 0 {
+	if got := policyConfigDrift(lc, node, nil); len(got) != 0 {
 		t.Errorf("a config silent about the block drifts on %v, want nothing", got)
 	}
 	lc.Orchestrator = &policy.Orchestrator{}
-	if got := policyConfigDrift(lc, node); len(got) != 0 {
+	if got := policyConfigDrift(lc, node, nil); len(got) != 0 {
 		t.Errorf("a written block that sets no key drifts on %v, want nothing: it is the absent key, and the publish keeps what the node holds", got)
 	}
 	// A node that carries a block and a config that writes another: the member
@@ -4072,7 +4072,7 @@ func TestOrchestratorDriftNamesTheMember(t *testing.T) {
 	node.Orchestrator = &policy.Orchestrator{MaxRunning: 9}
 	lc.Orchestrator = &policy.Orchestrator{MaxRunning: 4}
 	got = nil
-	for _, d := range policyConfigDrift(lc, node) {
+	for _, d := range policyConfigDrift(lc, node, nil) {
 		got = append(got, d.Member)
 	}
 	if want := []string{"orchestrator"}; !slices.Equal(got, want) {
