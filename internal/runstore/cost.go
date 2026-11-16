@@ -56,10 +56,13 @@ type Cost struct {
 	// prices a call the table priced.
 	ReportedUSD float64 `json:"reported_usd,omitempty"`
 	// ReportedBy is what providers said their calls cost, by serving model
-	// (F7): ReportedUSD split the way ModelBy splits the charge, so a reader
+	// (F7): the report split the way ModelBy splits the charge, so a reader
 	// can put a model's charge beside its report -- the reconcile view SA1.3
-	// adds is that reader. No route fee is in it, and every settled call's
-	// report is in a key, so the entries sum to ReportedUSD.
+	// adds is that reader. No route fee is in it. Whether a call the table
+	// could not band -- one priced `max` whose pin the table does not know --
+	// is a key of it, and so whether the entries sum to ReportedUSD, is left
+	// open (O5, docs/spend-accuracy/reconciliation.md): a reader must not
+	// assume they are that sum.
 	ReportedBy map[string]float64 `json:"reported_by,omitempty"`
 	// TableLoUSD and TableHiUSD are what the price table would have charged
 	// the calls a provider reported a cost for: the selected tier's cheapest

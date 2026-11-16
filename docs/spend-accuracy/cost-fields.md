@@ -10,7 +10,7 @@ whose calls reported no cost.
 
 | Field (`runstore.Cost`) | Wire name | Holds |
 | --- | --- | --- |
-| `ReportedBy` | `reported_by` | What providers said their calls cost, in USD, by serving model. `ReportedUSD` (`reported_usd`) is its sum: every settled call's report is in a key. |
+| `ReportedBy` | `reported_by` | What providers said their calls cost, in USD, by serving model: the report split by the model that served each call. `ReportedUSD` (`reported_usd`) keeps its own meaning, a run total. |
 | `TableLoUSD` | `table_lo_usd` | What the price table would have charged those same calls at the selected tier's cheapest end. |
 | `TableHiUSD` | `table_hi_usd` | The same at the tier's dearest end. With `table_lo_usd` this is the band a report is read against. |
 | `UnreportedCalls` | `unreported_calls` | How many of the run's settled calls came back with no provider cost, which is how much of the band the report is actually over. |
@@ -31,13 +31,17 @@ are too (F7, F25). They are deliberately not `model_tokens`' keys, which stay th
 priced each call under (the run's own pin), and `model_tokens` keeps that meaning.
 
 A model priced `max` — a serving model the table does not know — takes its band from the pin's row
-where the table knows the pin, and is left out of the band otherwise (RS7).
+where the table knows the pin, and is left out of the band otherwise (RS7). Whether such a call is a
+key of `reported_by` is **open** (O5 of the [reconciliation](reconciliation.md)): keeping it in
+`reported_by` while leaving it out of the band makes the drift alarm fire, and dropping it from
+`reported_by` leaves the entries short of `reported_usd`. Until that is settled, a reader must not
+read `reported_by`'s entries as a sum of `reported_usd`.
 
 ## The gateway shapes behind them
 
 | Field (`gateway.StageReport`) | Holds |
 | --- | --- |
-| `ReportedBy` | The stage's `Reported` by serving model; its sum is `Reported`. |
+| `ReportedBy` | The stage's `Reported` by serving model, with the same open case as the record's own `reported_by`: whether a call priced `max` with no known pin is a key of it is O5's question. |
 | `TableLoBy`, `TableHiBy` | The stage's band by serving model, over the calls that carried a report. |
 | `UnreportedCalls` | The stage's settled calls that carried none. |
 | `NotionalBy` | `Notional` by serving model (F23): a cascade run's tier-A spend, so one model's notional dollars can be told from its billed ones. |
