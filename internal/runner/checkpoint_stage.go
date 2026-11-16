@@ -98,8 +98,20 @@ func (r *run) checkpointStage(ctx context.Context) {
 		// The report is worth one call and no more: Claude Code's own budget
 		// for it is the same small figure the gateway admits the call at.
 		MaxBudgetUSD: r.cfg.Agent.MaxBudgetUSD,
-		Dir:          r.d.WorkDir,
-		Env:          env,
+		// The posture is the triage judge's (F25, F29): this call writes a
+		// report and touches nothing else. The one-call allowance bounds the
+		// stage's spend and not what the session may do — a tool use in the
+		// reply, a hook the checkout's settings declare and an MCP server its
+		// .mcp.json names would all run after the halt, in the tree finalize is
+		// about to commit and push. Both lists are empty and not nil, for the
+		// reason agent.Request spells the two readings apart: a nil one is the
+		// flag's absence, which is Claude Code's own default of every level and
+		// every built-in tool.
+		SettingSources:  []string{},
+		Tools:           []string{},
+		StrictMCPConfig: true,
+		Dir:             r.d.WorkDir,
+		Env:             env,
 	}
 	res, err := r.d.Agent.Run(stageCtx, req)
 	violations, _ := r.endGatewayStage(name)

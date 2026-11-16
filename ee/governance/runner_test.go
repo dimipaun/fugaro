@@ -891,6 +891,20 @@ func TestGatewayStageHaltBecomesCheckpoint(t *testing.T) {
 	if calls[1].SessionID == calls[0].SessionID {
 		t.Errorf("the checkpoint call resumed the stopped stage's session %q", calls[0].SessionID)
 	}
+	// The stage writes a report and nothing else: no setting source, no
+	// built-in tool and no MCP server, so nothing the checkout declares runs
+	// after the halt in the tree finalize commits and pushes (F25, F29). The
+	// two lists are the empty one and not nil, which is what the flags need to
+	// mean "none" rather than "the CLI's own default".
+	if calls[1].Tools == nil || len(calls[1].Tools) != 0 {
+		t.Errorf("the checkpoint call's tools = %v, want the empty list", calls[1].Tools)
+	}
+	if calls[1].SettingSources == nil || len(calls[1].SettingSources) != 0 {
+		t.Errorf("the checkpoint call's setting sources = %v, want the empty list", calls[1].SettingSources)
+	}
+	if !calls[1].StrictMCPConfig {
+		t.Error("the checkpoint call was not launched with a strict MCP config")
+	}
 	// The draft is where a person reads the report; finalize must not have
 	// turned the halted run into a ready pull request.
 	if pr := h.PR(t); !pr.Draft {
