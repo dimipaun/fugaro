@@ -73,8 +73,26 @@ func (f *bindingFixture) buyingWorkspace(t *testing.T) (WireOrganisation, WireWo
 	return org, f.seedWorkspace("ws-1", org.ID, "Dana's portal")
 }
 
+// boundWorkspace is one workspace that has been bound: it carries a project id,
+// which is what a subscription is recorded under (store.go's WorkspaceID, and
+// the value `merchant.go`'s `purchased` writes).
+func (f *bindingFixture) boundWorkspace(id, organisationID, name, projectID string) WireWorkspace {
+	f.t.Helper()
+	workspace := WireWorkspace{
+		ID:             id,
+		OrganisationID: organisationID,
+		Name:           name,
+		ProjectID:      &projectID,
+		CreatedAt:      f.now,
+	}
+	f.seed(workspacesCollection, workspace.ID, workspace)
+	return workspace
+}
+
 // subscription writes one subscription for a workspace straight into the store,
-// which is what a merchant event does (P4.2) and what D2192's rule reads.
+// which is what a merchant event does (P4.2) and what D2192's rule reads. The
+// workspace is named the way the writer landing today names it: the Firebase
+// project the subscription's keys bind to.
 func (f *bindingFixture) subscription(id, organisationID, workspaceID string, expires time.Time, cancelled bool) {
 	f.t.Helper()
 	err := f.store.SaveSubscription(context.Background(), Subscription{
@@ -205,10 +223,19 @@ func TestTransactionIsCreatedServerSide(t *testing.T) {
 // "active" is the renewal's own reading (renew.go): not cancelled and not past
 // the end of the term it has paid for, so a subscription that has run out, and a
 // cancelled one, are both a workspace a customer can buy again for.
+//
+// **The record names the workspace in the spelling the writer landing today
+// uses**, which is the Firebase project its keys bind to (store.go, and
+// `merchant.go`'s `purchased`) — a test that seeded the portal workspace id
+// there would pin a comparison against a value the field never holds. A
+// subscription for a workspace that is still unbound can only carry the portal
+// id (F25: the customer paid before `fugaro setup` created anything), so that
+// spelling is refused as well.
 func TestSecondSubscriptionForAWorkspaceIsRefused(t *testing.T) {
 	f := newCheckoutFixture(t)
-	org, workspace := f.buyingWorkspace(t)
-	f.subscription("sub-live", org.ID, workspace.ID, f.now.Add(12*24*time.Hour), false)
+	org := f.seededOrganisation("org-dana", "Dana Ltd", orgTypeCustomer, danaUID, danaEmail, roleOwner)
+	workspace := f.boundWorkspace("ws-1", org.ID, "Dana's portal", "dana-portal-4821")
+	f.subscription("sub-live", org.ID, *workspace.ProjectID, f.now.Add(12*24*time.Hour), false)
 
 	rec := f.buy(t, workspace.ID, checkoutTerms)
 	if rec.Code != http.StatusConflict {
@@ -217,6 +244,15 @@ func TestSecondSubscriptionForAWorkspaceIsRefused(t *testing.T) {
 	if code := refusal(f.fixture, rec); code != "already_subscribed" {
 		t.Errorf("the refusal is %q, want %q", code, "already_subscribed")
 	}
+
+	// And the same workspace before it was bound: its subscription can only be
+	// recorded under the portal id the checkout's own custom_data carries.
+	unbound := f.seedWorkspace("ws-unbound", org.ID, "Dana's portal before setup")
+	f.subscription("sub-unbound", org.ID, unbound.ID, f.now.Add(12*24*time.Hour), false)
+	if rec := f.buy(t, unbound.ID, checkoutTerms); rec.Code != http.StatusConflict {
+		t.Errorf("a second checkout for an unbound subscribed workspace answered %d: %s", rec.Code, rec.Body)
+	}
+
 	if len(f.paddle.checkouts) != 0 {
 		t.Errorf("the merchant was asked for %d transaction(s) for a workspace that is already subscribed", len(f.paddle.checkouts))
 	}
@@ -229,17 +265,18 @@ func TestSecondSubscriptionForAWorkspaceIsRefused(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		id        string
+		project   string
 		expires   time.Time
 		cancelled bool
 	}{
-		{name: "a workspace with no subscription", id: "ws-2"},
-		{name: "a cancelled subscription", id: "ws-3", expires: f.now.Add(12 * 24 * time.Hour), cancelled: true},
-		{name: "a subscription that has run out", id: "ws-4", expires: f.now.Add(-time.Hour)},
+		{name: "a workspace with no subscription", id: "ws-2", project: "dana-portal-2"},
+		{name: "a cancelled subscription", id: "ws-3", project: "dana-portal-3", expires: f.now.Add(12 * 24 * time.Hour), cancelled: true},
+		{name: "a subscription that has run out", id: "ws-4", project: "dana-portal-4", expires: f.now.Add(-time.Hour)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			second := f.seedWorkspace(tc.id, org.ID, "Dana's other portal")
+			second := f.boundWorkspace(tc.id, org.ID, "Dana's other portal", tc.project)
 			if tc.id != "ws-2" {
-				f.subscription("sub-"+tc.id, org.ID, second.ID, tc.expires, tc.cancelled)
+				f.subscription("sub-"+tc.id, org.ID, tc.project, tc.expires, tc.cancelled)
 			}
 			if rec := f.buy(t, second.ID, checkoutTerms); rec.Code != http.StatusCreated {
 				t.Errorf("a checkout for %s answered %d: %s", tc.name, rec.Code, rec.Body)

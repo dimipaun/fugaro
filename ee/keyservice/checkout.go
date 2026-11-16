@@ -172,7 +172,7 @@ func (s *Service) checkout(ctx context.Context, actor Caller, asked WireCheckout
 		return WireCheckoutSession{}, errors.New("this deployment names no Paddle price (Config.PaddlePriceID), so there is nothing for a checkout to sell")
 	}
 	now := s.now().UTC()
-	if err := s.refuseSubscribedWorkspace(ctx, workspace.ID, now); err != nil {
+	if err := s.refuseSubscribedWorkspace(ctx, workspace, now); err != nil {
 		return WireCheckoutSession{}, err
 	}
 	transaction, err := s.paddle.CreateTransaction(ctx, Checkout{
@@ -209,13 +209,32 @@ func (s *Service) checkout(ctx context.Context, actor Caller, asked WireCheckout
 // running (D2192). "Running" is the rule the renewal reads (renew.go): not
 // cancelled, and not past the end of the term it has paid for. A workspace whose
 // subscription was cancelled and has run out is one a customer buys again for.
-func (s *Service) refuseSubscribedWorkspace(ctx context.Context, workspaceID string, now time.Time) error {
+//
+// **The record names the workspace in one of two spellings, and both are read.**
+// `Subscription.WorkspaceID` is the Firebase project the subscription's keys
+// bind to (store.go), which is what the one landed writer stores — `merchant.go`'s
+// `purchased`, from the deploy event's own project id. A portal workspace may
+// instead have no project at all: D2192's "a workspace may be unbound" is F25's
+// whole point, since a customer pays before `fugaro setup` has created anything,
+// and a subscription bought for such a workspace can only be recorded under the
+// portal workspace id the checkout's own `custom_data` carries. A guard reading
+// one spelling alone would either never fire or miss a second sale, so this one
+// reads both: the two are names of one workspace, so either naming it is this
+// workspace and not two.
+func (s *Service) refuseSubscribedWorkspace(ctx context.Context, workspace WireWorkspace, now time.Time) error {
 	held, err := s.store.Subscriptions(ctx)
 	if err != nil {
 		return err
 	}
+	project := ""
+	if workspace.ProjectID != nil {
+		project = strings.TrimSpace(*workspace.ProjectID)
+	}
 	for _, sub := range held {
-		if sub.WorkspaceID != workspaceID || sub.Cancelled || !now.Before(sub.Expires) {
+		if sub.Cancelled || !now.Before(sub.Expires) {
+			continue
+		}
+		if sub.WorkspaceID != workspace.ID && (project == "" || sub.WorkspaceID != project) {
 			continue
 		}
 		return fmt.Errorf("%w: the subscription %s runs to %s", errWorkspaceSubscribed, sub.ID, sub.Expires.UTC().Format(time.RFC3339))
