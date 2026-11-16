@@ -193,7 +193,8 @@ func validateRepoAB(a *AB) []Problem {
 // this block asks for a second run at a review slot, which is a review of this
 // workflow's own, so the ask sits where every other per-workflow selection
 // does — under workflows.<name> — and the same key is what the launch's image
-// gate reads (internal/cli's slotAsk).
+// gate reads (internal/cli's checkWorkflowABImage, the gate workflowABSince
+// declares).
 //
 // The ask is a review level and never the coder: a coder pair is launched at
 // the champion's own moment (D571, A3.3), while a reviewer arm waits for the
@@ -211,8 +212,9 @@ type WorkflowAB struct {
 // ReviewerArm is the level this workflow asks its A/B reviewer arm to run at,
 // or "" when the workflow asks for none. It is the one reader of the key: the
 // launch (ee/ab's ReviewerArm) and the image gate that judges whether the job's
-// runner can carry an arm at all (internal/cli's slotAsk) read the same answer,
-// so a launch can never ask the gate about one level and write another.
+// runner knows the block at all (internal/cli's checkWorkflowABImage) read the
+// same answer, so a launch can never ask the gate about one level and write
+// another.
 func (w Workflow) ReviewerArm() string {
 	if w.AB == nil {
 		return ""

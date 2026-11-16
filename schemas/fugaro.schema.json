@@ -581,7 +581,7 @@
           "properties": {
             "reviewer_arm": {
               "enum": ["l1", "l2", "l3"],
-              "description": "The review level the reviewer arm replays (config.WorkflowAB.ReviewerArm): l1, l2 or l3. `coder` is refused: a coder pair is launched beside its champion at one moment and asks nothing of this key. A workflow that asks for an arm is launched only onto a job image whose runner acts on a review slot (internal/cli's slotSince)."
+              "description": "The review level the reviewer arm replays (config.WorkflowAB.ReviewerArm): l1, l2 or l3. `coder` is refused: a coder pair is launched beside its champion at one moment and asks nothing of this key. A workflow that asks for an arm is launched only onto a job image whose runner reads this block (internal/cli's workflowABSince), and the arm's own launch onto one whose runner acts on the review slot it replays (slotSince)."
             }
           }
         },

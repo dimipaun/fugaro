@@ -2350,22 +2350,16 @@ func triageSubject(repo string, written *bool) (subject, alt string) {
 // a review slot, would run the whole task on the challenger's coder model —
 // publish: none keeps it harmless, and it is still a paid run of the entire
 // loop where the pair means one review, which is the "refuses too late"
-// failure proxySince's comment describes. It names 0.24.0, the CLI minor after
-// the untagged 0.23.0, the release the replay is expected in: that release does
-// not exist yet, so no image is at or past it, and the gate refuses every
-// launch that would need the replay until the release carrying it is cut.
-// docs/release.md's Before-you-tag list verifies the number against the release
-// that actually carries B1.2, the way it does for the other *Since constants.
+// failure proxySince's comment describes. It names 0.24.0, the release whose
+// task reader and runner carry the slot and the replay (B1.1, B1.2), which
+// docs/release.md's Before-you-tag list verifies against the tag actually cut,
+// the way it does for the other *Since constants.
 //
-// The launches that read it are the workflow that asks for a reviewer arm and
-// the arm's own (B1.4, ee/ab, and the owner's ruling of 2026-11-16,
-// docs/review-levels-ab-jobmax O12): the ask
-// is the workflow's own key (workflows.<name>.ab.reviewer_arm, config.WorkflowAB),
-// so the launch of the champion — the only run whose start can still be refused
-// before the money is spent — asks this gate about that key, exactly as the pair
-// launch (A3.3) asks its own gate before writing an `ab` block at all, and
-// ee/ab's ReviewerArm reads the same key to cut the arm. A task that carries
-// `ab.slot` itself, replayed or hand-written, asks too (B1.1).
+// The launch that reads it is a task that carries `ab.slot` itself, replayed or
+// hand-written (B1.1, B1.4). The workflow's own ask for a reviewer arm
+// (workflows.<name>.ab.reviewer_arm, config.WorkflowAB) is a different key in a
+// different file, and an older runner dies while decoding that file rather than
+// while replaying a slot, so it is gated by workflowABSince and not here.
 const slotSince = "0.24.0"
 
 // slotKnows names, for the image gates' messages, what the job image's runner
@@ -2373,16 +2367,9 @@ const slotSince = "0.24.0"
 const slotKnows = "the A/B pair's slot (ab.slot, ab.champion_run)"
 
 // slotAsk is what a launch asks of its job image's runner about the pair's
-// slot, in the terms the refusal names, and "" when it asks nothing.
-//
-// Two launches ask. The first is the workflow's own ask for an A/B reviewer
-// arm (workflows.<name>.ab.reviewer_arm, config.WorkflowAB): the arm at a
-// review slot is cut only once the champion's patch exists, so the launch that
-// can still refuse the image is the champion's own, and the ask is read off the
-// configuration rather than off a task field, which cannot carry an arm that is
-// not launched yet. The second is a task that carries `ab.slot` itself — a
-// replayed or hand-written one — which is what B1.1 declared this gate for. A
-// task with no `ab` block, and one whose block names no slot at all, ask
+// slot, in the terms the refusal names, and "" when it asks nothing: the task's
+// own `ab.slot`, replayed or hand-written, which is what B1.1 declared this gate
+// for. A task with no `ab` block, and one whose block names no slot at all, ask
 // nothing: the second is the coder pair A1.1 already wrote, which B1.1 reads as
 // coder without a key.
 //
@@ -2392,17 +2379,13 @@ const slotKnows = "the A/B pair's slot (ab.slot, ab.champion_run)"
 // all. A coder pair — the pair A3.3 samples — writes neither key, so this gate
 // is never the one that refuses it: that launch is judged by the `ab` field's
 // own gate (A3.3).
-func slotAsk(cfg *config.Config, spec *task.Spec) string {
-	if cfg != nil && spec != nil {
-		// A workflow the configuration does not define selects nothing, and a
-		// launch that far along is refused by its own reader of the selection
-		// (SelectWorkflow): an ask is only read off a workflow that resolved.
-		if name, wf, err := cfg.SelectWorkflow(spec.Workflow); err == nil {
-			if lvl := wf.ReviewerArm(); lvl != "" {
-				return fmt.Sprintf("workflows.%s.ab.reviewer_arm (%s)", name, lvl)
-			}
-		}
-	}
+//
+// A workflow's ask for an A/B reviewer arm is not asked here even though the
+// champion's launch is where it is judged: the ask is a key of the file the job
+// decodes rather than a field of the task, and it is refused by the config
+// reader rather than by the runner's slot handling, so it has an ask of its own
+// (workflowABSince, checkWorkflowABImage).
+func slotAsk(spec *task.Spec) string {
 	if spec == nil || spec.AB == nil || spec.AB.Slot == "" {
 		return ""
 	}
@@ -2427,6 +2410,140 @@ func checkCloneSlotImage(lc *localcfg.Config, spec *task.Spec, subject string, w
 		return nil
 	}
 	return checkCloneImageSince(lc, spec, slotSince, subject, slotKnows, "", warn)
+}
+
+// workflowABSince is the first fugaro release whose config reader knows a
+// workflow's own ab: block (fugaro.yaml's workflows.<name>.ab,
+// config.WorkflowAB): the key a workflow asks its A/B reviewer arm with (the
+// owner's ruling of 2026-11-16, docs/review-levels-ab-jobmax O12). A runner
+// built from an older image decodes fugaro.yaml with KnownFields, so the block
+// alone refuses the whole file at bootstrap — the champion's own launch, the
+// last moment a job image whose runner cannot carry the arm is still refusable
+// before the job is paid for, dies there whatever the block says.
+//
+// It is a constant of its own and not slotSince, because the two keys are
+// written by different things at different moments: the ask is the repository's
+// file, read by the job's config reader before anything runs, while the slot is
+// the task the launcher writes and is read by the runner's review stage. A
+// release can carry one and not the other, and these two did: both 0.24.0 and
+// 0.25.0 are tagged, both carry `ab.slot` (task.AB.Slot), and neither has
+// config.WorkflowAB, so a slotSince gate would admit them and the paid job would
+// die at bootstrap on `field ab not found in type config.Workflow`.
+//
+// It names 0.26.0, the release this work ships in — docs/release-streams.yaml
+// has 0.25.0 current and Wombat 0.26.0 next — which is not tagged yet, so
+// docs/release.md's Before-you-tag list verifies the number against the tag
+// actually cut, the way it does for the other *Since constants.
+const workflowABSince = "0.26.0"
+
+// workflowABKnows names, for the image gates' messages, what the job image's
+// runner has to know. The message reads "needs a job image whose runner knows
+// <this>".
+const workflowABKnows = "a workflow's ab: block (workflows.<name>.ab)"
+
+// workflowABNames is the workflows of the configuration the run will read that
+// write an ab: block, sorted, and the whole of what the three gates below judge.
+//
+// Every one of them is named and not only the workflow the task selects:
+// fugaro.yaml is decoded whole, so a sibling workflow's ab: block is exactly as
+// fatal to an older runner as the selected one's — the file that fails to decode
+// is the whole file, and the job dies before it reads which workflow it runs.
+func workflowABNames(cfg *config.Config) []string {
+	if cfg == nil {
+		return nil
+	}
+	var names []string
+	for name, wf := range cfg.Workflows {
+		if wf.AB != nil {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return names
+}
+
+// workflowABSubject names, for the gates' messages, the keys that wrote the
+// block and the way out their author has. The way out is the block itself rather
+// than the image's age, because the block is the repository's own line: removing
+// it costs the ask, and a job image that predates the key runs no reviewer arm
+// whatever the file says, so a file that asks for none is refused nothing.
+func workflowABSubject(repo string, names []string) (subject, alt string) {
+	keys := make([]string, 0, len(names))
+	for _, name := range names {
+		keys = append(keys, "workflows."+name+".ab")
+	}
+	return "fugaro.yaml's " + strings.Join(keys, ", ") + " of " + repo,
+		"remove the ab: block from fugaro.yaml (or from each workflow named): a job image that predates the key runs no reviewer arm at all, so the file that asks for none is refused nothing"
+}
+
+// workflowABImageWarnings warns, once per workflow that writes the block, that a
+// configuration which asks for an A/B reviewer arm needs every job image on
+// workflowABSince. It is validate's half of checkWorkflowABImage, and a warning
+// rather than a Problem for triageImageWarnings' reason: the file is valid, and
+// what has to move is the installation's image, which is why both ways to move
+// one are named. One Problem per key, because each block is a separate line an
+// operator removes.
+func workflowABImageWarnings(c *config.Config) []config.Problem {
+	var ps []config.Problem
+	for _, name := range workflowABNames(c) {
+		ps = append(ps, config.Problem{Path: "workflows." + name + ".ab", Message: "this file's workflows." + name + ".ab needs fugaro " + workflowABSince + " or later in the job image that runs it, and in the CLI of everyone who reads this file: an older runner decodes the file strictly and refuses the run at bootstrap on a key it does not know. Run fugaro update --base base in your own terminal window to move the installation's base image, and fugaro image refresh for a workflow's own derived image"})
+	}
+	return ps
+}
+
+// refuseWorkflowABSkew refuses fugaro update --repo, before any cloud effect,
+// when the configuration the checkout resolves writes a workflow's ab: block and
+// the installation's base image predates workflowABSince — a runner built from it
+// decodes fugaro.yaml with KnownFields and refuses the run at bootstrap on a key
+// it does not know. It is the half checkWorkflowABImage cannot be: a launch from
+// outside a checkout reads no fugaro.yaml at all, so the key the run will find
+// once it has one is judged here, by the operator's own converge
+// (refuseTriageSkew's shape and its reason). The states of ref are read as
+// refuseRigorSkew reads them: no base image passes, one that is not a release
+// only warns.
+func refuseWorkflowABSkew(repo string, cfg *config.Config, ref string, warn io.Writer) error {
+	names := workflowABNames(cfg)
+	if len(names) == 0 {
+		return nil
+	}
+	subject, alt := workflowABSubject(repo, names)
+	switch rel, ok := releaseOf(ref); {
+	case ref == "":
+		return nil
+	case !ok:
+		fmt.Fprintf(warn, "warning: %s cannot be judged: the installation's base image is %s, which is not a release base image, so whether its runner reads the key is not checked\n",
+			subject, pluginwire.Printable(ref))
+	case imagePredates(rel, workflowABSince):
+		return userErr("%s needs a job image whose runner knows %s (fugaro %s or later), but the installation's base image is %s, release %s: an older runner decodes the file strictly and refuses the run at bootstrap on a key it does not know. Run fugaro update --base base in your own terminal window to move the installation's base image to a current release, or %s",
+			subject, workflowABKnows, workflowABSince, pluginwire.Printable(ref), rel, alt)
+	}
+	return nil
+}
+
+// checkWorkflowABImage refuses a launch whose job image runs a fugaro older than
+// workflowABSince while the configuration the run will read writes a workflow's
+// ab: block: that runner decodes fugaro.yaml with KnownFields, so the block alone
+// kills the run at bootstrap. The judge is the build record's base_ref, as every
+// checkImageSince gate's is, and cfg is the file the run will read — nil, a launch
+// that could not read one, gated by nothing, as triageSources' nil is.
+func checkWorkflowABImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, cfg *config.Config, warn io.Writer) error {
+	names := workflowABNames(cfg)
+	if len(names) == 0 {
+		return nil
+	}
+	subject, alt := workflowABSubject(spec.Repo, names)
+	return checkImageSince(ctx, env, slug, spec, kind, workflowABSince, subject, workflowABKnows, "; or "+alt, warn)
+}
+
+// checkCloneWorkflowABImage is checkWorkflowABImage for a checkout: clone
+// workflow: see checkCloneImageSince.
+func checkCloneWorkflowABImage(lc *localcfg.Config, spec *task.Spec, cfg *config.Config, warn io.Writer) error {
+	names := workflowABNames(cfg)
+	if len(names) == 0 {
+		return nil
+	}
+	subject, alt := workflowABSubject(spec.Repo, names)
+	return checkCloneImageSince(lc, spec, workflowABSince, subject, workflowABKnows, "; or "+alt, warn)
 }
 
 // triageSources reports, for the launch's triageSince gate, whether the

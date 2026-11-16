@@ -1944,12 +1944,20 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 			return config.Inputs{}, err
 		}
 		// The A/B pair's slot, on the same configuration read and beside
-		// those: a workflow that asks for a reviewer arm
-		// (workflows.<name>.ab.reviewer_arm) asks for a runner that acts on
-		// a review slot, and one older than slotSince runs the whole coding
-		// loop on the challenger's model in place of that one review
+		// those: a task that carries ab.slot itself asks for a runner that
+		// acts on a review slot, and one older than slotSince runs the whole
+		// coding loop on the challenger's model in place of that one review
 		// (slotAsk).
-		if err := checkCloneSlotImage(env.lc, spec, slotAsk(fileCfg, spec), warn); err != nil {
+		if err := checkCloneSlotImage(env.lc, spec, slotAsk(spec), warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// A workflow's own ask for an A/B reviewer arm
+		// (workflows.<name>.ab.reviewer_arm) is a key of the file the job
+		// reads rather than of the task, so a runner older than
+		// workflowABSince refuses the whole file at bootstrap: judged beside
+		// the slot gate above and on the same configuration read
+		// (checkCloneWorkflowABImage).
+		if err := checkCloneWorkflowABImage(env.lc, spec, fileCfg, warn); err != nil {
 			return config.Inputs{}, err
 		}
 		// The spelling's own gate, on the same configuration read and
@@ -2122,7 +2130,12 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		}
 		// The same gate as the clone branch's above and for the same
 		// reason: see slotAsk.
-		if err := checkSlotImage(ctx, env, slug, spec, kind, slotAsk(fileCfg, spec), warn); err != nil {
+		if err := checkSlotImage(ctx, env, slug, spec, kind, slotAsk(spec), warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The same gate as the clone branch's above and for the same
+		// reason: see checkWorkflowABImage.
+		if err := checkWorkflowABImage(ctx, env, slug, spec, kind, fileCfg, warn); err != nil {
 			return config.Inputs{}, err
 		}
 		// The same gate as the clone branch's above, and for the same

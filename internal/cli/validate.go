@@ -2038,6 +2038,7 @@ func newValidateCmd() *cobra.Command {
 				warnings = append(warnings, modelGradesImageWarnings(cfg)...)
 				warnings = append(warnings, stopFractionImageWarnings(cfg)...)
 				warnings = append(warnings, triageImageWarnings(cfg)...)
+				warnings = append(warnings, workflowABImageWarnings(cfg)...)
 				editionOf, note := governanceEditions(cmd.Context(), lc, cfg, offline)
 				gw, gn := governanceImageWarnings(cfg, editionOf, note)
 				warnings, notes = append(warnings, gw...), append(notes, gn...)

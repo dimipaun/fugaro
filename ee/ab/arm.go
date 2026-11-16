@@ -33,8 +33,9 @@ import (
 // The workflow asks for the arm and this function reads the ask (O12): a file
 // that writes workflows.<name>.ab.reviewer_arm asks for a second run at that
 // level on every launch of that workflow, and the champion's own launch reads
-// the same key at the job image's slot gate (internal/cli's slotAsk, the gate
-// slotSince declares), so the ask is gated before any money is spent and this
+// the same key at the job image's own gate (internal/cli's
+// checkWorkflowABImage, the gate workflowABSince declares), so the ask is gated
+// before any money is spent and this
 // function cannot be asked for a level the file does not ask for.
 //
 // Nothing in this tree calls ReviewerArm yet. What a launcher would do with the
@@ -92,8 +93,8 @@ const (
 // workflow's own key (workflows.<name>.ab.reviewer_arm, config.WorkflowAB —
 // the owner's ruling of 2026-11-16, docs/review-levels-ab-jobmax O12) and
 // never through a flag, so the ask
-// and the image gate that judges whether a job's runner can carry the arm
-// (internal/cli's slotAsk) read one value, and a caller cannot ask this
+// and the image gate that judges whether a job's runner knows the block
+// (internal/cli's checkWorkflowABImage) read one value, and a caller cannot ask this
 // function for a level its own file does not ask for. The level it does ask
 // for is judged against the champion's own block (B1.1: the launcher writes
 // the pair's slot on both arms, and an absent one means coder), so an arm is
