@@ -1801,11 +1801,54 @@ func levelsBlockAsk(name string, l *config.ReviewLevels) string {
 // owner's own, with no flag that lifts it — and the same would go for
 // `run --pr --recipe review-only` and for a recipe picked by --recipe pick.
 // A request that costs a launch is worse than one a launch cannot honour.
+//
+// The resolution itself is launchReviewLevels', beside this one, which a
+// planner reads the levels of the same run through (api.go's
+// Cloud.ReviewLevels): a reviewer arm outside the core decides which model to
+// run by what the run will run, and an answer resolved a second way there
+// would be that planner's reading of these rules rather than the run's own.
 func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config, rcp *recipe.Recipe, recipeUnknown bool, warn io.Writer) (string, error) {
+	levels, floor, raised, err := launchReviewLevels(ctx, env, spec, cfg, rcp, warn)
+	if err != nil {
+		// Nothing is asked of the image and no task is written: the launch is
+		// the resolution's to refuse, and a refusal carries no levels to read
+		// an ask off (config.ResolveLevels answers with the zero Levels).
+		// Refusing here rather than leaving it to the run's bootstrap is what
+		// G2 means by "never launches", and the alternative is a job paid for
+		// a run whose first act is to refuse the task it was given.
+		if raised {
+			// The refusal is config's own (a level a layer turns off under the
+			// floor, a model the allow-list does not name): what this adds is
+			// that the request is why the level was resolved at all, so a
+			// reader is not left looking for a floor nobody set.
+			subject, _ := securityRequestNames(securityRequestSources(spec, cfg))
+			return "", userErr("the run's request for the strongest review (%s) turns review level 3 on, and its review levels do not resolve: %v", subject, err)
+		}
+		return "", userErr("%v", err)
+	}
+	return reviewLevelsAsk(levels, spec.ReviewLevels, cfg, floor, recipeUnknown), nil
+}
+
+// launchReviewLevels is that resolution alone, so the gate and a planner that
+// has to know what the run it is planning will run ask one call the same
+// question: the levels themselves, the floor they resolved under (the
+// published policy's, before any force below), whether the run's request for
+// the strongest review is what raised review level 3, and the resolution's own
+// refusal. The last of the three is what the gate words its refusal with: only
+// a level the request raised may be reported as refused because of it.
+//
+// A cloud with no project config (CloudOverBucket) has no database to read a
+// policy node from and no provider table: it resolves with no floor and no
+// providers rather than reaching for the config it does not have.
+func launchReviewLevels(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config, rcp *recipe.Recipe, warn io.Writer) (config.Levels, []policy.Level, bool, error) {
 	mode := rigor.Resolve(cfg.RigorConfig(), rigor.Request{Mode: rigor.Mode(spec.Rigor), Paths: spec.Paths}).Mode
 	var floor []policy.Level
-	if p, found, err := env.policy.read(ctx, env.lc); err == nil && found && p != nil {
-		floor = p.ReviewFloor[mode]
+	var providers map[string]config.ModelProvider
+	if lc := env.lc; lc != nil {
+		providers = lc.Providers
+		if p, found, err := env.policy.read(ctx, lc); err == nil && found && p != nil {
+			floor = p.ReviewFloor[mode]
+		}
 	}
 	fromTask, fromSwitch := securityRequestSources(spec, cfg)
 	if (fromTask || fromSwitch) && rcp != nil && rcp.Mode == recipe.ModeReview {
@@ -1814,7 +1857,7 @@ func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, 
 		fromTask, fromSwitch = false, false
 	}
 	in := config.LevelInputs{
-		Config: cfg, Mode: mode, Floor: floor, Task: spec.ReviewLevels, Recipe: rcp, Providers: env.lc.Providers,
+		Config: cfg, Mode: mode, Floor: floor, Task: spec.ReviewLevels, Recipe: rcp, Providers: providers,
 	}
 	if fromTask || fromSwitch {
 		// Cloned: ReviewFloor hands out the policy's own slice, and appending
@@ -1823,24 +1866,7 @@ func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, 
 		in.Config, in.Task = securityRequestRaiseOnly(cfg, spec.ReviewLevels)
 	}
 	levels, _, err := config.ResolveLevels(in)
-	if err != nil {
-		// Nothing is asked of the image and no task is written: the launch is
-		// the resolution's to refuse, and a refusal carries no levels to read
-		// an ask off (config.ResolveLevels answers with the zero Levels).
-		// Refusing here rather than leaving it to the run's bootstrap is what
-		// G2 means by "never launches", and the alternative is a job paid for
-		// a run whose first act is to refuse the task it was given.
-		if fromTask || fromSwitch {
-			// The refusal is config's own (a level a layer turns off under the
-			// floor, a model the allow-list does not name): what this adds is
-			// that the request is why the level was resolved at all, so a
-			// reader is not left looking for a floor nobody set.
-			subject, _ := securityRequestNames(fromTask, fromSwitch)
-			return "", userErr("the run's request for the strongest review (%s) turns review level 3 on, and its review levels do not resolve: %v", subject, err)
-		}
-		return "", userErr("%v", err)
-	}
-	return reviewLevelsAsk(levels, spec.ReviewLevels, cfg, floor, recipeUnknown), nil
+	return levels, floor, fromTask || fromSwitch, err
 }
 
 // launchLevelsConfig is the configuration the launch's review-level gates read:

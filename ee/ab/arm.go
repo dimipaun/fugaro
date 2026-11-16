@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
 	fcli "github.com/dimipaun/fugaro/internal/cli"
@@ -182,7 +183,7 @@ func ReviewerArm(ctx context.Context, run fcli.PlannedRun, champion fcli.RunReco
 	// read: the owner's list is still the owner's (D556) and every other check
 	// is a coder pair's, but a reviewer pair varies the review's model and not
 	// the coder's (O12).
-	varied, err := reviewSlotModel(run, slot)
+	varied, err := reviewSlotModel(ctx, run, slot)
 	if err != nil {
 		return nil, "", err
 	}
@@ -251,10 +252,18 @@ func reviewerArmSlot(run fcli.PlannedRun) (task.ABSlot, error) {
 // reviewSlotModel is the model the slot this arm varies runs: what the arm's
 // challenger must not be, since a pair is two runs that differ in the one thing
 // the slot varies (D555) and for a review slot that one thing is the review's
-// model. The model is the launch's own resolution of its levels, with the same
-// call and the same inputs the launcher's own level gates make: the merged
-// configuration, the launch's rigor mode, the owner's floor for that mode, the
-// task's own review_levels block and the recipe.
+// model. The model is read off the launch's own level resolution and not
+// resolved a second time here (fcli.Cloud's ReviewLevels, which is the call the
+// launch's own review-levels gate makes): the run's request for the strongest
+// review is part of that resolution — it raises review level 3 and clears that
+// level's own off-switch rather than letting a layer's `l3: none` defeat it
+// (the owner's ruling of 2026-11-16, docs/review-levels-ab-jobmax O12, and
+// internal/runner's securityForcedLevels, SC10/D1517) — and the floor it
+// resolves under is the project's published one, which the launch's own merged
+// policy (PlannedRun.Policy) does not carry. A resolution made from this
+// package's side of the boundary would therefore refuse an arm at a level the
+// run does run, or judge the challenger against a model the level does not
+// run.
 //
 // A recipe that travels as a name alone (a repository recipe, which the task
 // carries no text of) resolves here as no recipe at all, exactly as
@@ -264,14 +273,15 @@ func reviewerArmSlot(run fcli.PlannedRun) (task.ABSlot, error) {
 // the level runs. That is a wrong pair and never a wrong arm: the challenger
 // is still a model the owner allows, priced and routed for this repository,
 // and the runner refuses the arm at bootstrap if the level it replays is one
-// its own resolution does not have.
-func reviewSlotModel(run fcli.PlannedRun, slot task.ABSlot) (string, error) {
-	spec, cfg := run.Spec, run.Config
-	mode := launchedMode(cfg, spec)
-	levels, _, err := config.ResolveLevels(config.LevelInputs{
-		Config: cfg, Mode: mode, Floor: run.Policy.ReviewFloor(mode), Task: spec.ReviewLevels,
-		Recipe: embeddedRecipe(spec), Providers: run.Providers,
-	})
+// its own resolution does not have. The one line the resolution can have to
+// show (a mode: review recipe, which drops the run's request for the strongest
+// review) goes nowhere here: the launcher's own gate prints it for the launch
+// the arm replays, and an arm has no launch of its own to warn about.
+func reviewSlotModel(ctx context.Context, run fcli.PlannedRun, slot task.ABSlot) (string, error) {
+	if run.Cloud == nil {
+		return "", errors.New("the reviewer arm was asked about a launch with no cloud to resolve the levels of the run it would join")
+	}
+	levels, err := run.Cloud.ReviewLevels(ctx, run.Spec, run.Config, embeddedRecipe(run.Spec), io.Discard)
 	if err != nil {
 		return "", fmt.Errorf("the levels of the run this arm would join do not resolve, so the model the %s slot runs is not known: %w", slot, err)
 	}

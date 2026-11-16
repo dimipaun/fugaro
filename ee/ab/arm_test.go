@@ -673,3 +673,63 @@ func TestABReviewerArmJudgesTheSlotItVaries(t *testing.T) {
 		}
 	})
 }
+
+// TestABReviewerArmJudgesTheLevelAStrongestReviewRequestRaises: a launch that
+// asks for the strongest review — the task's own security field, or the
+// project layer's always_level_3 — runs review level 3 whatever the layers
+// around it say (SC10/D1517; internal/runner's securityForcedLevels raises the
+// level and clears its off-switch, and the launch's own gate resolves the same
+// way), so an arm at l3 is judged against the model level 3 then runs, and a
+// file that writes `l3: none` does not turn the level off under it. The
+// champion's pair varies l3, which outside critical is the level a mode's own
+// row leaves out: a resolution made without the request answers "the l3 level
+// does not run" for a run that runs it.
+func TestABReviewerArmJudgesTheLevelAStrongestReviewRequestRaises(t *testing.T) {
+	f := newArmFixture(t)
+	f.seed(championRecord(f.store(), task.ABSlotL3))
+	f.putPatch(armDiff)
+
+	// raise is a launch whose reviewer model is model and whose file turns l3
+	// off, plus the one source that asks for the strongest review: the floor
+	// and the cleared off-switch are what the request raises the level with.
+	raise := func(model string, ask func(run *fcli.PlannedRun)) func(run *fcli.PlannedRun) {
+		return func(run *fcli.PlannedRun) {
+			run.Config.Agent.Model = model
+			run.Config.Agent.Levels = config.ReviewLevels{L3: &config.LevelSetting{Model: config.NoneModel}}
+			ask(run)
+		}
+	}
+
+	for _, tc := range []struct {
+		name string
+		ask  func(run *fcli.PlannedRun)
+	}{
+		{"the task's own security field", func(run *fcli.PlannedRun) { run.Spec.Security = true }},
+		{"the layer's always_level_3", func(run *fcli.PlannedRun) {
+			run.Config.Layer.Security = &config.LayerSecurity{AlwaysLevel3: true}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			arm, why, err := f.armWith(task.ABSlotL3, raise(armLevelModel, tc.ask))
+			if err != nil || why != "" || arm == nil {
+				t.Fatalf("spec = %v, why = %q, err = %v, want the arm", arm, why, err)
+			}
+			if arm.AB.Slot != task.ABSlotL3 {
+				t.Errorf("the arm's slot is %q, want %q", arm.AB.Slot, task.ABSlotL3)
+			}
+		})
+	}
+
+	t.Run("the model the raised level runs", func(t *testing.T) {
+		// The level runs the reviewer's model, and that is the model the
+		// challenger may not be: judging it against anything else — the
+		// coder's, or the model the level would have run with the level off —
+		// would admit a pair whose two arms ran the same review.
+		arm, why, err := f.armWith(task.ABSlotL3, raise(abLaunchChallenger, func(run *fcli.PlannedRun) {
+			run.Spec.Security = true
+		}))
+		if err != nil || why != ReasonChampionModel || arm != nil {
+			t.Fatalf("spec = %v, why = %q, err = %v, want %q and no task", arm, why, err, ReasonChampionModel)
+		}
+	})
+}
