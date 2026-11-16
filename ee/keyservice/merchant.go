@@ -985,6 +985,13 @@ func (s *Service) seatChanged(ctx context.Context, e Event, sub Subscription) er
 // stops being active, so the binding the customer would otherwise make after the
 // refund is refused rather than served with the key the walk had nothing to
 // find.
+//
+// A withdrawal whose **licence** is not there yet is the one thing here that is
+// a failure, and it is the refund that arrived before the purchase it belongs
+// to: nothing has been withdrawn and the purchase is still coming, so the event
+// is refused rather than marked processed — a state that would short-circuit
+// every redelivery of it while the purchase's own retry granted a licence for
+// money that has gone back.
 func (s *Service) withdrawn(ctx context.Context, e Event) error {
 	reason := ReasonRefund
 	if e.Type == EventChargeback {
@@ -993,6 +1000,20 @@ func (s *Service) withdrawn(ctx context.Context, e Event) error {
 	entitlement, licensed, err := s.entitlementFor(ctx, e)
 	if err != nil {
 		return err
+	}
+	if !licensed {
+		// An admitted withdrawal that resolves to no licence is the refund that
+		// arrived before the purchase it belongs to: the money's own record — the
+		// checkout's, or the subscription's origin — is here, because that is what
+		// admitted the event, and the licence the purchase writes onto it is not,
+		// because that delivery is still being retried. Applying it now would mark
+		// the event processed with nothing withdrawn, and that state short-circuits
+		// every redelivery of it, so the purchase's own retry would go on to grant
+		// an active licence for money that has gone back. The refusal is the one an
+		// event about an unknown subscription gets (`apply`), and for the same
+		// reason: a `500` is the merchant's cue to deliver it again, and by then the
+		// licence is there to withdraw.
+		return fmt.Errorf("%w: the %s %s resolves to no licence the store holds yet", ErrNoTransaction, e.Type, e.ID)
 	}
 	records, err := s.store.Issuances(ctx)
 	if err != nil {
@@ -1013,25 +1034,23 @@ func (s *Service) withdrawn(ctx context.Context, e Event) error {
 	// the subscription of a licence bought after D2196 names no key at all until
 	// a seat change or a renewal mints one.
 	subscription := e.Subscription
-	if licensed {
-		keys, err := s.bindingKeys(ctx, entitlement.ID)
-		if err != nil {
+	keys, err := s.bindingKeys(ctx, entitlement.ID)
+	if err != nil {
+		return err
+	}
+	for _, keyID := range keys {
+		if err := revoke(keyID); err != nil {
 			return err
 		}
-		for _, keyID := range keys {
-			if err := revoke(keyID); err != nil {
-				return err
-			}
-		}
-		if subscription == "" {
-			// A refund against a transaction alone names no subscription, and the
-			// licence's own is where its other keys are: the origin record a
-			// purchase wrote is keyed by the subscription and holds the
-			// entitlement, so the step back is a query on the entitlement's id.
-			subscription, err = s.licenceSubscription(ctx, entitlement.ID)
-			if err != nil {
-				return err
-			}
+	}
+	if subscription == "" {
+		// A refund against a transaction alone names no subscription, and the
+		// licence's own is where its other keys are: the origin record a
+		// purchase wrote is keyed by the subscription and holds the
+		// entitlement, so the step back is a query on the entitlement's id.
+		subscription, err = s.licenceSubscription(ctx, entitlement.ID)
+		if err != nil {
+			return err
 		}
 	}
 	// successors indexes the rotations the store holds by the key they replace,
@@ -1066,22 +1085,18 @@ func (s *Service) withdrawn(ctx context.Context, e Event) error {
 			}
 		}
 	}
-	if licensed {
-		// F29's revocation is by entitlement, so the licence itself is withdrawn
-		// and not only the keys that happened to exist when the money went back.
-		// A licence left active is one the customer binds again — the first
-		// rebind after a binding is not held by D2198's clock — and the binding
-		// mints a key the walk above never reached, running to the end of the
-		// term that was refunded.
-		//
-		// The keys are withdrawn first, because they are the half that reaches an
-		// installation: a store that fails on this write leaves keys that are
-		// already dead and a licence the merchant's retry withdraws again — the
-		// walk above is idempotent — rather than a licence that is dead with its
-		// keys still live.
-		if err := s.revokeEntitlement(ctx, entitlement); err != nil {
-			return err
-		}
+	// F29's revocation is by entitlement, so the licence itself is withdrawn and
+	// not only the keys that happened to exist when the money went back. A licence
+	// left active is one the customer binds again — the first rebind after a
+	// binding is not held by D2198's clock — and the binding mints a key the walk
+	// above never reached, running to the end of the term that was refunded.
+	//
+	// The keys are withdrawn first, because they are the half that reaches an
+	// installation: a store that fails on this write leaves keys that are already
+	// dead and a licence the merchant's retry withdraws again — the walk above is
+	// idempotent — rather than a licence that is dead with its keys still live.
+	if err := s.revokeEntitlement(ctx, entitlement); err != nil {
+		return err
 	}
 	return nil
 }

@@ -718,6 +718,56 @@ func TestARefundRevokesTheLicenceItsTransactionBought(t *testing.T) {
 	}
 }
 
+// TestARefundBeforeItsPurchaseIsRetried: the merchant's deliveries are not
+// ordered, and a refund can arrive before the purchase it belongs to has been
+// applied — that delivery may be the very one the merchant is still retrying.
+// The checkout's own record is what admits the refund, and it is also what
+// resolves it to a licence, which is not written yet. Nothing is withdrawn at
+// that moment and the licence is still coming, so the event is refused (a `500`)
+// rather than marked processed: a state saying it was applied short-circuits
+// every redelivery of it, and the purchase's own retry would then go on to grant
+// an active licence for money that has gone back (F16, F29).
+func TestARefundBeforeItsPurchaseIsRetried(t *testing.T) {
+	f := newFixture(t)
+	purchase := f.claimsOf(purchaseEvent("evt-1", "acme.example", 3, 30))
+	purchase.OccurredAt = f.now
+	refund := Event{
+		ID: "evt-2", Type: EventRefund, OccurredAt: f.now,
+		Transaction: purchase.Transaction,
+	}
+
+	if rec := f.deliver(refund); rec.Code != http.StatusInternalServerError {
+		t.Errorf("a refund that arrived before its purchase was answered %d, want 500: the merchant's retry is what carries it to the licence it withdraws", rec.Code)
+	}
+	if got := f.stored(t, "evt-2").State; got != ledgerStored {
+		t.Errorf("the early refund reads %q, want %q: nothing was applied, so nothing is processed", got, ledgerStored)
+	}
+	if got := f.entitlements(t); len(got) != 0 {
+		t.Fatalf("the early refund left %d licence(s), want none: the purchase it is about has not been applied", len(got))
+	}
+
+	if rec := f.event(purchase); rec.Code != http.StatusOK {
+		t.Fatalf("the purchase was answered %d, want 200", rec.Code)
+	}
+	licence := f.onlyEntitlement(t)
+	if licence.Status != entitlementActive {
+		t.Fatalf("the purchase left the licence %q, want %q", licence.Status, entitlementActive)
+	}
+	if rec := f.deliver(refund); rec.Code != http.StatusOK {
+		t.Fatalf("the redelivered refund was answered %d, want 200: the licence it resolves to is in the store now", rec.Code)
+	}
+	withdrawn, held, err := getRecord[WireEntitlement](context.Background(), f.docs, entitlementsCollection, licence.ID)
+	if err != nil || !held {
+		t.Fatalf("reading the licence back (held=%v, err=%v)", held, err)
+	}
+	if withdrawn.Status != entitlementRevoked {
+		t.Errorf("the licence reads %q after the refund's redelivery, want %q: the money went back", withdrawn.Status, entitlementRevoked)
+	}
+	if got := f.stored(t, "evt-2").State; got != ledgerProcessed {
+		t.Errorf("the redelivered refund reads %q, want %q", got, ledgerProcessed)
+	}
+}
+
 // TestPurchaseCreatesAnEntitlement: D2196 — a purchase grants a licence and
 // mints nothing. The grant carries the row the term is sold under, the seats,
 // the workspace the money was for and the term the customer bought, running from
