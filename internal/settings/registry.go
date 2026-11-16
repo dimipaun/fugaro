@@ -567,6 +567,16 @@ const (
 	// operator writes. K1's command and the carrier N1 adds take the rows over
 	// the day they land.
 	docCredentialsCascade = "docs/credentials-service/implementation-plan.md"
+	// docOrchestratorGraph is the document that states the orchestrator's
+	// switch and the project's issue adapter (D2701, D2733, D2739): both keys
+	// are named in the work's plan, and the reconciliation's decision table is
+	// where each spelling was settled — the switch after the review that moved
+	// it out of the strictly decoded orchestrator block (F35) and the adapter
+	// after the round that moved it off a localcfg block (F46). The plan is the
+	// rows' document for docOrchestrator's reason: the keys are named there and
+	// nowhere else yet, and a document of the daemon's own would take the rows
+	// over the day it is written.
+	docOrchestratorGraph = "docs/orchestrator-graph-estimates/implementation-plan.md"
 )
 
 // layerRow is a row of the project layer's file. The layer is its only store,
@@ -1508,6 +1518,32 @@ var policyRows = []Row{
 	{Key: "credentials.backoff.cap", Layers: []string{LayerPolicy}, Merge: Replace, Default: unset("5h: the longest wait the doubling reaches (projectpolicy.DefaultBackoffCap)"), Owner: "accounts", Doc: docCredentialsCascade},
 	{Key: "credentials.stop_after_exhaustion_per_window", Layers: []string{LayerPolicy}, Merge: Replace, Default: unset("true: a credential exhausted within its window stops the runs that need it (projectpolicy.Credentials.StopsAfterExhaustion)"), Owner: "accounts", Doc: docCredentialsCascade},
 	{Key: "credentials.concurrency_per_token", Layers: []string{LayerPolicy}, Merge: Replace, Default: unset("1: how many runs may hold one shared credential at a time (projectpolicy.DefaultConcurrencyPerToken), where a written 0 is no cap at all"), Owner: "accounts", Doc: docCredentialsCascade},
+
+	// The daemon's own two (R1 of docs/orchestrator-graph-estimates, D2739,
+	// D2733): the switch that hands orchestration back to the person and their
+	// agent, and the project's issue adapter. Both are top-level keys of the
+	// published node and of nothing else, so `policy` is the whole of their
+	// Layers for the cascade's reason — and for one of their own: the node is
+	// what every machine of the project reads, which is the whole point of the
+	// switch (one write reaches them all, D2701), where a file would reach the
+	// machine it sits on.
+	//
+	// Both name the `project` family: `fugaro project policy publish` is the
+	// door that carries a node-only key onto the node, and the generic path
+	// refuses them in that family's name — handing orchestration back and
+	// reading a repository's issues are not scalars a generic write may land,
+	// and the carrier a command would edit does not exist yet. Until it does,
+	// the two are testdata/writer_gaps.golden's, as the cascade's six were
+	// before K1.
+	//
+	// The switch merges by Tighten, and it is the rule rather than a figure
+	// here: false is its stricter value and the only one that can undo the
+	// daemon's work, so a layer that writes it off decides whatever another
+	// layer writes and no layer turns it back on over one (D2701, D2739). The
+	// adapter replaces, because which repositories are synced and whether an
+	// item opens an issue is one answer rather than the stricter of two.
+	{Key: "orchestrator_enabled", Layers: []string{LayerPolicy}, Merge: Tighten, Default: unset("true: the project's daemon launches runs, and a written false hands orchestration back to the person and their agent"), Owner: "project", Doc: docOrchestratorGraph},
+	{Key: "issue_sync", Layers: []string{LayerPolicy}, Merge: Replace, Default: unset("none: no repository's issues are ingested into the project's backlog, and no item opens an issue of its own"), Owner: "project", Doc: docOrchestratorGraph},
 }
 
 // stageAccountRows are the concrete spellings of the stages.*.claude_account
