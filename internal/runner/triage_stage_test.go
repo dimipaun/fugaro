@@ -838,14 +838,17 @@ func triageTableRows(t *testing.T, report string) []string {
 	return out
 }
 
-// triageRowRounds is the round number each of the record's triage rows carries
-// (runstore.StageTiming.Round): the key the report pairs a row with its round's
-// failure by, and the whole of what makes that pairing right.
-func triageRowRounds(rec *runstore.Record) []string {
+// triageRowKeys is the key each of the record's triage rows carries, as
+// "<level>:<round>" from the two members that make it (runstore.StageTiming's
+// Round and Level): the pair the report pairs a row with its round's failure
+// by, and the whole of what makes that pairing right. The round number alone is
+// not a key -- two levels of one run both number a round 1 (D1847) -- so a case
+// about the pairing reads both halves off the row.
+func triageRowKeys(rec *runstore.Record) []string {
 	var out []string
 	for _, s := range rec.Stages {
 		if s.Name == "triage" {
-			out = append(out, strconv.Itoa(s.Round))
+			out = append(out, string(s.Level)+":"+strconv.Itoa(s.Round))
 		}
 	}
 	return out
@@ -885,10 +888,10 @@ func TestTriageRowCarriesItsOwnRoundsFailure(t *testing.T) {
 	if tr == nil || len(tr.Rounds) != 2 || !tr.Rounds[0].Failed || tr.Rounds[1].Failed {
 		t.Fatalf("the record's triage block = %+v, want round 1 failed and round 2 answered", tr)
 	}
-	if got := triageRowRounds(rec); !eq(got, "1", "2", "2") {
-		t.Fatalf("the triage rows carry the rounds %v, want round 1's row and round 2's retried pair", got)
+	if got := triageRowKeys(rec); !eq(got, "l2:1", "l2:2", "l2:2") {
+		t.Fatalf("the triage rows carry the keys %v, want round 1's row and round 2's retried pair", got)
 	}
-	// The new field is additive: a record carrying it is one the published
+	// The new fields are additive: a record carrying them is one the published
 	// schema accepts.
 	assertStoredRecordValidates(t, h.store)
 	rows := triageTableRows(t, runner.Report(rec, "runs/acme-app/"+rec.RunID+"/", nil))
@@ -935,8 +938,8 @@ func TestTriageRowCarriesItsOwnRoundsFailureWhenARetryHalts(t *testing.T) {
 	if tr == nil || len(tr.Rounds) != 1 || !tr.Rounds[0].Failed {
 		t.Fatalf("the record's triage block = %+v, want round 1's failure alone: the halted round was never recorded", tr)
 	}
-	if got := triageRowRounds(rec); !eq(got, "1", "2", "2") {
-		t.Fatalf("the triage rows carry the rounds %v, want round 1's row and the halted round 2's pair", got)
+	if got := triageRowKeys(rec); !eq(got, "l2:1", "l2:2", "l2:2") {
+		t.Fatalf("the triage rows carry the keys %v, want round 1's row and the halted round 2's pair", got)
 	}
 	assertStoredRecordValidates(t, h.store)
 	report := runner.Report(rec, "runs/acme-app/"+rec.RunID+"/", nil)
@@ -955,6 +958,53 @@ func TestTriageRowCarriesItsOwnRoundsFailureWhenARetryHalts(t *testing.T) {
 		if strings.Contains(row, "(failed") {
 			t.Errorf("row %d = %q, want no mark: it belongs to the round the run halted in, which the record never recorded", i+1, row)
 		}
+	}
+}
+
+// TestTriageRowCarriesItsOwnLevelsFailure: a run that reviewed at two levels
+// records a triage round for each of them, and each level numbers its own
+// rounds from 1 (D1847) — so level 1's round 1 and level 2's round 1 are two
+// rounds whose own numbers agree, and a mark keyed on the number alone lands on
+// both. Here level 1's judge buys no verdict and level 2's answers: the table
+// must mark the level 1 row alone, because telling a reader that level 2's judge
+// failed when it answered is the false failure claim the mark exists to avoid.
+func TestTriageRowCarriesItsOwnLevelsFailure(t *testing.T) {
+	const answer = "Invalid API key · Fix external API key"
+	h := newHarness(t, startupCfg(t, 1, "  first_line_review: on\n"), nil)
+	rec, err := h.run(t,
+		implement("feature"),
+		reviewScored("changes", blockingFinding()),
+		triageTextStep(answer), // level 1, round 1: the judge bought no verdict
+		fixStep,
+		review("ship", 0),
+		triageStep("defer"), // level 2, round 1: a verdict
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := rec.Triage
+	if tr == nil || len(tr.Rounds) != 2 {
+		t.Fatalf("the record's triage block = %+v, want both levels' first rounds", tr)
+	}
+	if tr.Rounds[0].Round != 1 || tr.Rounds[0].Level != policy.LevelL1 || !tr.Rounds[0].Failed {
+		t.Fatalf("the first round = %+v, want level 1's round 1 failed", tr.Rounds[0])
+	}
+	if tr.Rounds[1].Round != 1 || tr.Rounds[1].Level != policy.LevelL2 || tr.Rounds[1].Failed {
+		t.Fatalf("the second round = %+v, want level 2's round 1 answered", tr.Rounds[1])
+	}
+	if got := triageRowKeys(rec); !eq(got, "l1:1", "l2:1") {
+		t.Fatalf("the triage rows carry the keys %v, want one row per level's round 1", got)
+	}
+	assertStoredRecordValidates(t, h.store)
+	rows := triageTableRows(t, runner.Report(rec, "runs/acme-app/"+rec.RunID+"/", nil))
+	if len(rows) != 2 {
+		t.Fatalf("the report has %d triage rows, want one per level:\n%s", len(rows), strings.Join(rows, "\n"))
+	}
+	if !strings.Contains(rows[0], "(failed: "+answer+")") {
+		t.Errorf("level 1's row = %q, want it marked with the failure its round recorded", rows[0])
+	}
+	if strings.Contains(rows[1], "(failed") {
+		t.Errorf("level 2's row = %q, want no mark: that level's judge answered, and only the number its round carries says otherwise", rows[1])
 	}
 }
 

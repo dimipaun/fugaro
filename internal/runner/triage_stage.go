@@ -231,7 +231,7 @@ func (r *run) triageRound(ctx context.Context, round int, level policy.Level, v 
 		Tools:           []string{},
 		StrictMCPConfig: true,
 	}
-	res, ok, err := r.stage(ctx, stageTriage, req, stageOpts{Skippable: true, Dir: dir, Round: round})
+	res, ok, err := r.stage(ctx, stageTriage, req, stageOpts{Skippable: true, Dir: dir, Round: round, Level: level})
 	r.countTokens(res)
 	var skipped skippedError
 	if !ok && !errors.As(err, &skipped) {

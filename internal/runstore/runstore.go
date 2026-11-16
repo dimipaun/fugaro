@@ -1251,7 +1251,22 @@ type StageTiming struct {
 	// its own, and position then marks one round's row with another's (D1846).
 	// Absent for every stage that is not tied to a round and in records written
 	// before the field existed, so a reader must not read it as round 0.
+	//
+	// It is not a key on its own: a level numbers its own rounds from 1 (D1847),
+	// so a run that reviewed at two levels records two triage rounds numbered 1,
+	// and a reader pairing on Round alone marks one level's row with the other's
+	// failure. Level is the other half of the pair, and the two are read
+	// together or not at all.
 	Round int `json:"round,omitempty"`
+	// Level is the review level this attempt served, for the stage above and
+	// only for it: the row carries the level whose round it judged, the same
+	// value the round's own record keeps (TriageRound.Level), and it is what
+	// makes Round identify a round -- two levels of one run both have a round 1,
+	// and the report's row marks are keyed on the pair (D1847, D1846). Empty
+	// for every stage that is not tied to a round, which is the same set Round
+	// is absent for, and in records written before the field existed: an empty
+	// value is not level 1.
+	Level policy.Level `json:"level,omitempty"`
 	// ServedBy names the credential this stage's model calls ran on, the run's
 	// own included -- which is the case Credential's stated meaning excludes,
 	// and the reason this is a field of its own rather than a second value

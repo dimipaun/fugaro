@@ -1821,11 +1821,13 @@ func TestResultSchemaStageCredential(t *testing.T) {
 }
 
 // TestResultSchemaStageRound pins the schema half of the round a per-round
-// stage's attempt served (docs/triage.md, D1846): the member is optional — every
-// stage but the triage judge's, and every record written before it existed,
-// carries none — and where it is there it is a round number the triage block's
-// own `round` could carry, so the report can pair a row with its round's
-// failure by a key instead of by position.
+// stage's attempt served and of the level that round belongs to (docs/triage.md,
+// D1846, D1847): both members are optional — every stage but the triage judge's,
+// and every record written before they existed, carries neither — and where
+// they are there they are values the triage block's own `round` and `level`
+// could carry, so the report can pair a row with its round's failure by a key
+// instead of by position. The level is the half that makes the pair a key: two
+// levels of one run both number a round 1, so the number alone names two rounds.
 func TestResultSchemaStageRound(t *testing.T) {
 	sch := compile(t, "result.schema.json")
 	validate := func(stage string) error {
@@ -1845,6 +1847,9 @@ func TestResultSchemaStageRound(t *testing.T) {
 		{"the round the judge weighed", head + `,"round":2}`},
 		{"the first round", head + `,"round":1}`},
 		{"no round at all", head + `}`},
+		{"the pair of a level 2 round 1", head + `,"round":1,"level":"l2"}`},
+		{"the pair of a level 1 round 1", head + `,"round":1,"level":"l1"}`},
+		{"the level alone", head + `,"level":"l3"}`},
 	} {
 		if err := validate(tc.stage); err != nil {
 			t.Errorf("schema rejects a stage with %s: %v", tc.name, err)
@@ -1858,6 +1863,10 @@ func TestResultSchemaStageRound(t *testing.T) {
 		{"a negative round", head + `,"round":-1}`},
 		{"a fractional round", head + `,"round":1.5}`},
 		{"a round as a string", head + `,"round":"2"}`},
+		{"a level nobody defined", head + `,"round":1,"level":"l4"}`},
+		{"a level in another spelling", head + `,"round":1,"level":"level 2"}`},
+		{"a level as a number", head + `,"round":1,"level":2}`},
+		{"an empty level", head + `,"round":1,"level":""}`},
 	} {
 		if err := validate(tc.stage); err == nil {
 			t.Errorf("schema accepts %s: %s", tc.name, tc.stage)

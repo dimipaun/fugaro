@@ -201,16 +201,23 @@ func triageFailureLine(rec *runstore.Record) string {
 // the shape a hand-edited record has. "" for every other row, and for the rows
 // of a record that triaged nothing.
 //
-// A row and a round are paired by the round number the row carries
-// (runstore.StageTiming.Round, which is the round's own TriageRound.Round), and
-// never by position: the table has a row per *attempt*, and a stage whose model
-// stream closed is run once more (stage's own retry), so counting rows and
-// rounds back from the end marks a row with a failure that belongs to the round
-// before or after it as soon as an extra attempt falls on the wrong side of a
-// failed one. Both rows of a round that was retried carry its mark, because
-// both are that round's own call. A record written before the row carried the
-// number has rows no round can be paired with, and reads the failures from the
-// line above the table, which is written from the rounds alone.
+// A row and a round are paired by the key the row carries -- its round and the
+// level that round belongs to (runstore.StageTiming.Round and .Level, which are
+// the round's own TriageRound.Round and .Level) -- and never by position: the
+// table has a row per *attempt*, and a stage whose model stream closed is run
+// once more (stage's own retry), so counting rows and rounds back from the end
+// marks a row with a failure that belongs to the round before or after it as
+// soon as an extra attempt falls on the wrong side of a failed one. Both rows
+// of a round that was retried carry its mark, because both are that round's own
+// call.
+//
+// The round number is not a key by itself: a level numbers its own rounds from
+// 1 (D1847), so a run that reviewed at two levels records two triage rounds
+// numbered 1, and keying on the number alone marks the answering level's row
+// with the failing level's cause. The pair is what names one round. A record
+// written before the rows carried the pair has rows no round can be paired
+// with, and reads the failures from the line above the table, which is written
+// from the rounds alone.
 //
 // The mark is the record's own cause through inlineText, because it reaches a
 // markdown table cell: a cause carrying a `|` or a newline would end the row it
@@ -220,22 +227,27 @@ func triageRowMarks(rec *runstore.Record) []string {
 	if rec.Triage == nil {
 		return marks
 	}
-	byRound := make(map[int]string, len(rec.Triage.Rounds))
+	type roundKey struct {
+		level policy.Level
+		round int
+	}
+	byRound := make(map[roundKey]string, len(rec.Triage.Rounds))
 	for _, rnd := range rec.Triage.Rounds {
 		if !rnd.Failed {
 			continue
 		}
+		key := roundKey{level: rnd.Level, round: rnd.Round}
 		if rnd.Cause == "" {
-			byRound[rnd.Round] = " (failed)"
+			byRound[key] = " (failed)"
 			continue
 		}
-		byRound[rnd.Round] = " (failed: " + inlineText(rnd.Cause) + ")"
+		byRound[key] = " (failed: " + inlineText(rnd.Cause) + ")"
 	}
 	for i, s := range rec.Stages {
 		if s.Name != stageTriage {
 			continue
 		}
-		if mark, ok := byRound[s.Round]; ok {
+		if mark, ok := byRound[roundKey{level: s.Level, round: s.Round}]; ok {
 			marks[i] = mark
 		}
 	}

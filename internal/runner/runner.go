@@ -4461,6 +4461,12 @@ type stageOpts struct {
 	// (runstore.StageTiming.Round, D1846). 0 for every stage that is not tied
 	// to a round.
 	Round int
+	// Level is the review level that round belongs to, and it is set wherever
+	// Round is: a level numbers its own rounds from 1 (D1847), so the number
+	// alone names two rounds of a run that reviewed at two levels, and the
+	// report keys on the pair. Empty for every stage that is not tied to a
+	// round.
+	Level policy.Level
 }
 
 // transientRetries is the run's own bound on the retry a closed model stream
@@ -4985,6 +4991,7 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	res.Repeats = relay.Repeats
 	st := r.stageTiming(name, started, res.CostUSD, res.SubAgents, res.Repeats)
 	st.Round = opts.Round
+	st.Level = opts.Level
 	r.rec.Stages = append(r.rec.Stages, st)
 	var errText any // the agent's error may carry a key an upstream echoed
 	if err != nil {
