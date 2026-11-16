@@ -2897,9 +2897,9 @@ func TestPolicyNodeBytesTreatsANullRoutingMemberAsAbsent(t *testing.T) {
 		pol       *projectpolicy.Policy
 		keep      bool
 	}{
-		{"a null routing member, kept", `{"version": 5, "routing": null}`, quiet, true},
-		{"a null routing member, replaced by the config's switch", `{"version": 5, "routing": null}`, switchOn, false},
-		{"a null claude member, replaced by the config's switch", `{"version": 5, "routing": {"claude": null}}`, switchOn, false},
+		{"a null routing member, kept", `{"version": 9, "routing": null}`, quiet, true},
+		{"a null routing member, replaced by the config's switch", `{"version": 9, "routing": null}`, switchOn, false},
+		{"a null claude member, replaced by the config's switch", `{"version": 9, "routing": {"claude": null}}`, switchOn, false},
 	} {
 		node, err := policyNodeBytes(tc.pol, []byte(tc.old), true, tc.keep, true, true)
 		if err != nil {
@@ -2943,16 +2943,16 @@ func TestPolicyNodeBytesTreatsANullRoutingMemberAsAbsent(t *testing.T) {
 func TestPolicyNodeBytesRefusesCaseFoldedRoutingMembers(t *testing.T) {
 	pol := &projectpolicy.Policy{Version: projectpolicy.Version}
 	for name, old := range map[string]string{
-		"a case-folded via":    `{"version": 5, "routing": {"claude": {"via": "direct", "VIA": "openrouter"}}}`,
-		"models twice":         `{"version": 5, "routing": {"claude": {"via": "direct", "models": ["claude-sonnet-5-5"], "models": []}}}`,
-		"a case-folded claude": `{"version": 5, "routing": {"CLAUDE": {"via": "direct"}}}`,
+		"a case-folded via":    `{"version": 9, "routing": {"claude": {"via": "direct", "VIA": "openrouter"}}}`,
+		"models twice":         `{"version": 9, "routing": {"claude": {"via": "direct", "models": ["claude-sonnet-5-5"], "models": []}}}`,
+		"a case-folded claude": `{"version": 9, "routing": {"CLAUDE": {"via": "direct"}}}`,
 	} {
 		if _, err := policyNodeBytes(pol, []byte(old), true, true, true, true); err == nil || !strings.Contains(err.Error(), "routing block") {
 			t.Errorf("%s: policyNodeBytes = %v, want a refusal naming the block", name, err)
 		}
 	}
 	// The other side: a block this Fugaro reads as written is patched as before.
-	if _, err := policyNodeBytes(pol, []byte(`{"version": 5, "routing": {"claude": {"via": "direct"}}}`), true, true, true, true); err != nil {
+	if _, err := policyNodeBytes(pol, []byte(`{"version": 9, "routing": {"claude": {"via": "direct"}}}`), true, true, true, true); err != nil {
 		t.Errorf("a well-spelled block: policyNodeBytes = %v, want it written", err)
 	}
 }
@@ -3001,37 +3001,6 @@ func TestProjectPolicyPublishRefusesAnOlderNodeWithAWorkingRemedy(t *testing.T) 
 	}
 }
 
-// TestProjectPolicyPublishReplacesAShapeFreePredecessor: a node one shape-free
-// step behind this binary is read rather than refused (projectpolicy's
-// ReadsVersion), and the publish is what writes it forward: the node it leaves
-// is this release's version, and the members the owner had written into the
-// older node survive it — the `binaries` block is kept, the same keep the
-// update door pins (TestUpdateKeepsAHandWrittenBinariesBlock).
-//
-// The state is one `fugaro update` passes through rather than one an
-// installation rests in: the policy stage migrates the node, and a publish run
-// against the same node must reach the same answer instead of stopping on a
-// node it reads member for member.
-func TestProjectPolicyPublishReplacesAShapeFreePredecessor(t *testing.T) {
-	f := newProjectFixture(t, "")
-	f.db.Set(projectpolicy.PathShared(), map[string]any{
-		"version":     projectpolicy.Version - 1,
-		"budget":      map[string]any{"mode": "enforce"},
-		"allow_repos": []string{"github/acme/app"},
-		"binaries":    map[string]any{"allow": []string{"brand/*.png"}},
-	})
-	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
-		t.Fatalf("the publish refused a node one shape-free version behind this binary: %v", err)
-	}
-	p := publishedPolicy(t, f)
-	if p.Version != projectpolicy.Version {
-		t.Errorf("the published node is version %d, want %d: the publish writes this release's node over a shape-free predecessor", p.Version, projectpolicy.Version)
-	}
-	if want := []string{"brand/*.png"}; !slices.Equal(p.BinariesAllow(), want) {
-		t.Errorf("BinariesAllow() = %v, want %v: the block the older node carried did not survive the publish", p.BinariesAllow(), want)
-	}
-}
-
 // TestProjectPolicyPublishRefusesACarriedNodeWithTheUpdate: the other older
 // state, and the one an operator meets most — a node this reader refuses and
 // the migration chain still carries is what an installation holds between the
@@ -3043,7 +3012,11 @@ func TestProjectPolicyPublishReplacesAShapeFreePredecessor(t *testing.T) {
 // of the same node and names the same move.
 func TestProjectPolicyPublishRefusesACarriedNodeWithTheUpdate(t *testing.T) {
 	f := newProjectFixture(t, "")
-	f.db.Set(projectpolicy.PathShared(), map[string]any{"version": refusedOlderVersion(t), "budget": map[string]any{"mode": "enforce"}})
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":  refusedOlderVersion(t),
+		"budget":   map[string]any{"mode": "enforce"},
+		"binaries": map[string]any{"allow": []string{"brand/*.png"}},
+	})
 	_, _, err := execute(t, "project", "policy", "publish")
 	if err == nil {
 		t.Fatal("publishing over an older node was allowed")
@@ -3058,6 +3031,17 @@ func TestProjectPolicyPublishRefusesACarriedNodeWithTheUpdate(t *testing.T) {
 	}
 	if v := f.db.Value(projectpolicy.PathShared()); v == nil {
 		t.Fatal("the node was removed by a refused publish")
+	}
+	// And the node is untouched rather than half-rewritten: the member the
+	// owner had written into it is still there, which is what the refusal
+	// exists to protect — a publish that went ahead would rebuild the node
+	// from this machine's config and drop it.
+	raw, err := json.Marshal(f.db.Value(projectpolicy.PathShared()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "brand/*.png") {
+		t.Errorf("the refused publish left the node without its own member: %s", raw)
 	}
 }
 
