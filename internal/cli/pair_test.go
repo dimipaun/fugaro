@@ -2602,6 +2602,21 @@ func (f *pairFixture) pairSeedItem(t *testing.T, uid string) (string, string) {
 	return name, value
 }
 
+// pairSeedPush writes the push node §3.4 puts beside the device node, as the
+// registration principal leaves it: that installation's one registration for
+// the account, with the children the design gives the node — the platform, the
+// preferences and the sender's own ledger — so a revoke that deleted the node
+// deletes all of them with it. The token is the phone's own registration and
+// no Fugaro credential, and it is spelled as a fixture rather than as a value
+// a real provider would mint.
+func (f *pairFixture) pairSeedPush(uid string) {
+	f.db.Set(pairPushPath(uid), map[string]any{
+		"token": "fcm-registration-for-tests", "platform": "ios", "updated_at": pairT0.UnixMilli(),
+		"prefs":  map[string]any{"runs": false},
+		"ledger": map[string]any{"sent": map[string]any{"at": pairT0.UnixMilli()}},
+	})
+}
+
 // pairKeychainSpy is the keychain with the moment of its Delete recorded. M4's
 // order is the assertion, and it is not "the item was deleted" but "the item was
 // deleted when the device node was already gone": the two are different
@@ -2684,8 +2699,8 @@ func TestRevokeNeverDeletesTheAuthUser(t *testing.T) {
 	if doc == nil {
 		t.Fatalf("the %s event carries no document: %v", pairEventRevoked, events[0])
 	}
-	if want := []string{rules.PathDevices + "/" + pairDevA}; !slices.Equal(doc.Wrote, want) {
-		t.Fatalf("wrote = %v, want the device node alone: the Auth user is not this command's to delete", doc.Wrote)
+	if want := []string{rules.PathDevices + "/" + pairDevA, pairPushPath(pairDevA)}; !slices.Equal(doc.Wrote, want) {
+		t.Fatalf("wrote = %v, want the two nodes the act deleted (%v): the Auth user is not this command's to delete, and the pairing session's node is the sweep's", doc.Wrote, want)
 	}
 	if len(doc.Warnings) != 0 || len(doc.Refused) != 0 {
 		t.Fatalf("document = %+v, want no warnings and no refusals", doc)
@@ -2700,6 +2715,168 @@ func TestRevokeNeverDeletesTheAuthUser(t *testing.T) {
 	}
 	if !strings.Contains(text, "Auth user is not deleted") || !strings.Contains(text, "sweep") {
 		t.Fatalf("the text output does not say the Auth user survives and that the sweep removes it:\n%s", text)
+	}
+}
+
+// TestRevokeDeletesThePushNodeWithTheDeviceNode is §3.4's one revocation act:
+// `fugaro pair revoke` deletes the push node config/admin/push/$uid in the same
+// act as config/admin/devices/$uid, so the registration's token, platform,
+// prefs and ledger go with the pairing instead of outliving it on a timer
+// (§7, Q10(i)), and both nodes are what the act reports it deleted.
+func TestRevokeDeletesThePushNodeWithTheDeviceNode(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	f.pairSeedDevice(pairDevA, "phone-a")
+	f.pairSeedItem(t, pairDevA)
+	f.pairSeedPush(pairDevA)
+
+	out, _, err := pairRun(t, "revoke", "--uid", pairDevA, "--json")
+	if err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	events := pairLines(t, out)
+	if len(events) != 1 || events[0].Event != pairEventRevoked || events[0].Revoke == nil {
+		t.Fatalf("events = %v, want one %s carrying a document", events, pairEventRevoked)
+	}
+	want := []string{rules.PathDevices + "/" + pairDevA, pairPushPath(pairDevA)}
+	if !slices.Equal(events[0].Revoke.Wrote, want) {
+		t.Fatalf("wrote = %v, want %v: the device node first, because it is what the rules read and its deletion is the revocation, and the push node with it", events[0].Revoke.Wrote, want)
+	}
+	if v := f.db.Value(pairPushPath(pairDevA)); v != nil {
+		t.Fatalf("the push node survived the revoke: %v", v)
+	}
+	// The node's children went with it — the token, the platform, the prefs and
+	// the ledger are one subtree — and the tree itself goes when its last child
+	// does, which is what makes a re-pairing start from nothing.
+	if v := f.db.Value(pairPushRoot); v != nil {
+		t.Fatalf("%s survived the revoke: %v", pairPushRoot, v)
+	}
+}
+
+// TestRevokeWithoutAPushNodeIsNotAnError: pairing writes no push node at all
+// (§3.4: the pairing session carries no registration token), so a device that
+// never registered holds none, and its revoke must not read the node's absence
+// as a failure — deleting a node that is not there is the no-op the database
+// makes it.
+func TestRevokeWithoutAPushNodeIsNotAnError(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	f.pairSeedDevice(pairDevA, "phone-a")
+	f.pairSeedItem(t, pairDevA)
+
+	out, _, err := pairRun(t, "revoke", "--uid", pairDevA)
+	if err != nil {
+		t.Fatalf("revoke of a device that holds no push node: %v", err)
+	}
+	if !strings.Contains(out, pairPushPath(pairDevA)) {
+		t.Fatalf("the output does not name the push node the act deleted:\n%s", out)
+	}
+	if v := f.db.Value(pairPushPath(pairDevA)); v != nil {
+		t.Fatalf("a push node exists after the revoke: %v", v)
+	}
+}
+
+// TestRevokeLeavesTheAllowlistClosedToALaterRegistration is §3.4's rule 2 read
+// from this command's side: the node the rules read is the DEVICE node, so a
+// registration that arrives after a revoke — the write the design permits, a
+// create at the sibling — admits nobody. The phone stays off the allowlist and
+// the node that write leaves is the orphan the sender reaps, not a live
+// registration.
+//
+// Half of the sentence is a later task's: `fugaro mailbox`, the consumer that
+// applies the app's registration message, is P5.2.4's and does not exist in
+// this tree, so what the test writes here is the node that message lands in
+// rather than the consumer's own path. What the command is held to is its own
+// half: it leaves no device node for such a write to build a send on.
+func TestRevokeLeavesTheAllowlistClosedToALaterRegistration(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	f.pairSeedDevice(pairDevA, "phone-a")
+	f.pairSeedItem(t, pairDevA)
+	f.pairSeedPush(pairDevA)
+	if _, _, err := pairRun(t, "revoke", "--uid", pairDevA); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+
+	f.pairSeedPush(pairDevA)
+
+	if v := f.db.Value(rules.PathDevices + "/" + pairDevA); v != nil {
+		t.Fatalf("a write at the sibling re-admitted the device: the device node is %v, and the rules admit nobody without it (userClaim, D166)", v)
+	}
+	if v := f.db.Value(pairPushPath(pairDevA)); v == nil {
+		t.Fatal("the later registration wrote nothing, so this test holds the command to nothing: it is the sibling's write that the design permits and the sender's reaping that covers")
+	}
+}
+
+// TestRepairStartsFromAnEmptyPushNode: a pairing after a revoke writes the
+// device node and the delivery and no push node at all (§3.4), so the phone
+// registers from nothing. Neither half of the revoked account's registration
+// survives it — the node is deleted, and a re-pairing mints a device uid of
+// its own and inherits no node from the one the revoke removed.
+func TestRepairStartsFromAnEmptyPushNode(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	f.pairSeedDevice(pairDevA, "phone-a")
+	f.pairSeedItem(t, pairDevA)
+	f.pairSeedPush(pairDevA)
+	if _, _, err := pairRun(t, "revoke", "--uid", pairDevA); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+
+	uid := pairFixedRand(t)
+	f.pairSeedRequest(uid, pairKey)
+	if _, _, err := pairRunIn(t, token.Fingerprint(pairKeyBytes), "--name", "phone-b"); err != nil {
+		t.Fatalf("pairing again after a revoke: %v", err)
+	}
+	if got := f.pairDeviceUID(t); got == pairDevA {
+		t.Fatalf("the second pairing wrote device %s, the uid the revoke deleted: a pairing mints its own", got)
+	}
+	if v := f.db.Value(pairPushRoot); v != nil {
+		t.Fatalf("%s is not empty after a re-pairing: %v; pairing writes the device node and the delivery and no push node, so the phone registers from nothing", pairPushRoot, v)
+	}
+}
+
+// TestRevokePushDeleteFailureIsNotSuccess: §3.4's second deletion is what
+// bounds the registration's lifetime by the pairing, so a revoke that could not
+// delete the push node must not report success. The device node is already gone
+// by then — the phone is off the allowlist, and the sender's send condition
+// needs both nodes — but the node holding the registration token is still
+// there, and the refusal says so and names it.
+//
+// The keychain item is deleted even on that path, and that is the one place
+// this act departs from "the step that failed stops the ones after it": the
+// device node is gone, so a second `fugaro pair revoke` is refused as nothing
+// to revoke, and this command would never remove the item again. A leftover
+// key with no command that deletes it is worse than a leftover push node, which
+// is a write away for an admin and is what the sender's reaping exists for.
+func TestRevokePushDeleteFailureIsNotSuccess(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	f.pairSeedDevice(pairDevA, "phone-a")
+	itemName, _ := f.pairSeedItem(t, pairDevA)
+	f.pairSeedPush(pairDevA)
+	f.db.Deny(pairPushRoot)
+
+	out, _, err := pairRun(t, "revoke", "--uid", pairDevA, "--json")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want exit 1: a revoke that could not delete the push node is not a success", err)
+	}
+	events := pairLines(t, out)
+	last := events[len(events)-1]
+	if last.Event != pairEventRefused || last.Code != pairRefusedDatabaseAdmin {
+		t.Fatalf("events = %v, want a %s with code %q", events, pairEventRefused, pairRefusedDatabaseAdmin)
+	}
+	if !strings.Contains(last.Reason, pairPushPath(pairDevA)) {
+		t.Fatalf("the refusal does not name the push node it could not delete: %q", last.Reason)
+	}
+	for _, e := range events {
+		if e.Event == pairEventRevoked {
+			t.Fatalf("a failed revoke emitted the %s event: %v", pairEventRevoked, events)
+		}
+	}
+	if v := f.db.Value(rules.PathDevices + "/" + pairDevA); v != nil {
+		t.Fatalf("the device node survived: its deletion is the revocation, and it is the one step the deny does not touch (%v)", v)
+	}
+	if v := f.db.Value(pairPushPath(pairDevA)); v == nil {
+		t.Fatal("a write the database denied deleted the push node anyway")
+	}
+	if _, ok := f.keys.Keys[itemName]; ok {
+		t.Fatal("the MAC keychain item survived a revoke whose device node is already gone: no second revoke could ever remove it")
 	}
 }
 

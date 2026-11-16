@@ -94,6 +94,13 @@ type Tick struct {
 	// and neither depends on the line (audit.go, "the log is evidence, not the
 	// fence").
 	Audit *Audit
+	// Labels is what this cycle keeps the pull request labels of its own runs
+	// through (D2432): the host of each repository, the pull request behind
+	// each run, and the log every failure leaves a line in. Left unset the
+	// cycle labels nothing at all, which is where a daemon with no provider or
+	// no path to the credentials service stands — and nothing a label does
+	// fails a cycle (docs/forge-labels, "best-effort").
+	Labels LabelSeams
 	// Now is the database server's clock (rtdb.ServerNow). Every stamp a cycle
 	// writes comes from it, and a cycle that cannot read it refuses rather
 	// than stamping anything with this machine's clock (D1230).
@@ -248,6 +255,7 @@ func (c *cycle) run(ctx context.Context) error {
 	if err := c.decide(ctx, viewOf(reports)); err != nil {
 		return err
 	}
+	c.label(ctx)
 	c.rep.Outcome = c.outcome()
 	return nil
 }

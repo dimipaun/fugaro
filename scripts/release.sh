@@ -725,6 +725,32 @@ if [ -n "$latest" ] && ! version_gt "$version" "$latest"; then
   exit 1
 fi
 
+# The feature matrix's stamp (docs/feature-matrix/contract.md). The release's
+# own PR refreshes the file, so the tree being released carries FEATURES.md
+# stamped for this version -- the line `as_of: vX.Y.Z`, read off origin/main
+# the way the checks above read the notes, with git and grep and no node
+# (D2447).
+#
+# The stamp alone does not prove a refresh: a release's notes are written ahead
+# of it, so a file stamped mid-cycle would pass. The file must also have been
+# committed since the previous release tag, `latest` here (D2449); with no
+# previous tag the file's own commit is the whole history's, which is the same
+# read.
+#
+# Both halves are this path's alone: a hotfix branch may commit nothing but the
+# release's own three files (scripts/hotfix-commits.sh), so it can never refresh
+# FEATURES.md and the matrix waits for the next ordinary release
+# (docs/release.md, "Hotfix releases").
+features=FEATURES.md
+if ! git show "origin/main:$features" 2>/dev/null | grep -qxF "as_of: $tag"; then
+  echo "$features on origin/main does not carry $tag's stamp: it needs the line as_of: $tag, which the release's own PR writes -- npm run features -- --as-of $tag in website/, committed beside the notes, the summary line and the compatibility stamp (docs/release.md, \"Before you tag\") -- and the generator refuses to write while any status.md name is unmapped, listing the names for that PR to map. Regenerate it, merge it to main, then re-run scripts/release.sh $version" >&2
+  exit 1
+fi
+if [ -n "$latest" ] && [ -z "$(git log --oneline "v$latest..origin/main" -- "$features")" ]; then
+  echo "$features on origin/main carries $tag's stamp but has no commit to it since v$latest, the previous release tag: the stamp alone does not prove the matrix was rebuilt, because a release's notes are written ahead of it. Commit $features in the release's own PR (docs/release.md, \"Before you tag\"), merge it to main, then re-run scripts/release.sh $version" >&2
+  exit 1
+fi
+
 # The CLI stream's own record of where the line is at, docs/release-streams.yaml
 # (GD7: one file, read by the console's dependency graph and by this script):
 # the release takes the version it must not go behind, the name it is spoken
