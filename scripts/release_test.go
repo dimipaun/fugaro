@@ -713,7 +713,7 @@ func TestPreconditionFailures(t *testing.T) {
 		{
 			// The stamp is right and the file is on main, but nothing has
 			// committed it since the previous release tag: the shape D2449
-			// refuses, which a stamp written mid-cycle would otherwise pass.
+			// refuses, and a stamp written mid-cycle would otherwise pass.
 			name:    "FEATURES.md stamped but not committed since the previous tag",
 			version: "0.12.10",
 			mutate: func(t *testing.T, r *releaseRepo, g *ghState) {
