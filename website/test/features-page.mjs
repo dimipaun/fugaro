@@ -31,8 +31,8 @@
 //      for the state that is not a mark (reconciliation O1 — a footnote about the Community column
 //      is the owner's to write, at the preview, and not this page's to invent).
 //   4. **Nothing the page may not print.** No spec name, no status.md section name, no task id and
-//      no date anywhere on the built page (`leakProblems`, with the contract's own fixture spec
-//      list), and no price: a currency amount or a percentage in the page's own text, read with
+//      no date anywhere on the built page (`leakProblems`, with the spec names read out of the
+//      mapping), and no price: a currency amount or a percentage in the page's own text, read with
 //      its stylesheet and its script dropped, which is the shape the repository's own Go scan
 //      reads (`internal/cli/docs_subscriptions_test.go`, S0.1).
 //   5. **The page is reachable, and the one link off it resolves.** `/features/` carries exactly
@@ -41,13 +41,16 @@
 //      `meta.mjs`, `origins.mjs`, `os-cards.mjs`) read every built page and so read this one
 //      without a line here.
 //
-// **The cases below hold the page to `loadFeatures()`, not to the fixture.** The snapshot is the
-// contract's fixture while the stub is the reader's stand-in (`website/src/lib/feature-matrix-stub.mjs`,
-// task C1), and task I1 replaces that with the matrix out of the repository; a case that read the
-// fixture would go red on the day the real rows landed, which is the day nobody would be looking
-// at this file. So the shape, the legend and the plans are read against the loader's own answer —
-// the same call the build makes — and the one case that is about the fixture is skipped once the
-// stub is deleted, naming the file that takes it over.
+// **The cases below hold the page to `loadFeatures()`, not to the fixture.** Task I1 deleted the
+// stub (`website/src/lib/feature-matrix-stub.mjs`, task C1), so the loader answers with the matrix
+// the repository carries — the block of `FEATURES.md`, written by the generator out of
+// `docs/status.md` and `docs/feature-matrix/mapping.yaml` — and the shape, the legend, the plans
+// and the leak check are read against that answer, the same call the build makes. A case that read
+// the contract's fixture would go red on the day the real rows landed, which is the day nobody
+// would be looking at this file. The one case that is still about the fixture is skipped now the
+// stub is gone, naming the file that takes it over; and the mapping's own account of the page, the
+// built page's rows against the block the loader read them from, is
+// `website/test/feature-matrix-stamp.mjs`'s.
 //
 // A gate whose refusal has never been seen to fire is a gate nobody knows the shape of, so the
 // last case mutates the **built page** — one edit per refusal, taken from the artifact itself
@@ -58,9 +61,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import { DIST, SITE, builtPages, findAll, parse, textOf } from './lib/html.mjs'
-import { loadFeatures, FEATURE_PLANS, FEATURE_STATUSES } from '../src/content.ts'
-import { FIXTURE_SPECS, leakProblems, readFixtureSnapshot } from '../src/lib/feature-matrix-model.mjs'
+import { DIST, REPO, SITE, builtPages, findAll, parse, textOf } from './lib/html.mjs'
+import { loadFeatures, parseYAML, FEATURE_PLANS, FEATURE_STATUSES } from '../src/content.ts'
+import { leakProblems, readFixtureSnapshot } from '../src/lib/feature-matrix-model.mjs'
 
 /** The built page these cases are about. */
 const BUILT_PAGE = path.join(DIST, 'features', 'index.html')
@@ -83,8 +86,12 @@ const TITLE = 'Features'
  */
 const PLAN_LABELS = { community: 'Community', team: 'Team', enterprise: 'Enterprise' }
 
-/** The stub task I1 deletes: while it is there, `loadFeatures()` answers with the fixture. */
+/** The stub task I1 deleted: while it was there, `loadFeatures()` answered with the fixture. */
 const STUB = path.join(SITE, 'src', 'lib', 'feature-matrix-stub.mjs')
+
+/** The mapping: the one place a feature's words and its specs are written (D2441), and so the one
+ * place the names this page's rows could leak are read from. */
+const MAPPING_FILE = path.join(REPO, 'docs', 'feature-matrix', 'mapping.yaml')
 
 /** A page's text as a reader reads it: one line, one space between two words. */
 function flat(text) {
@@ -352,11 +359,22 @@ export function legendFailures(html, doc) {
   return out
 }
 
+/** The spec names the matrix knows: every feature's specs and every excluded name (R8). */
+function specNames() {
+  const mapping = parseYAML(readFileSync(MAPPING_FILE, 'utf8'), MAPPING_FILE)
+  return [
+    ...(mapping.features ?? []).flatMap((feature) => feature?.specs ?? []),
+    ...(mapping.excluded ?? []).map((entry) => entry?.spec),
+  ].filter((name) => typeof name === 'string')
+}
+
 /**
  * Every way the page prints what it may not, as failure lines: a spec name, status.md's section
  * names, a task id or a date anywhere in the page's own text (R1 and R8), read by the contract's
- * own `leakProblems` with the fixture's spec list — the list the contract carries while the
- * snapshot is its fixture, and the hyphenated names this page's rows could leak.
+ * own `leakProblems` with the spec names the mapping carries — the mapping is where the matrix's
+ * features name the specs they come from (D2441), so its names are the ones these rows could leak.
+ * The contract's fixture list is not that list: it belongs to the fixture the page no longer
+ * renders, while the mapping is the one the rows on the page were built from.
  */
 export function leakFailures(html) {
   const text = flat(textOf(parse(html)))
@@ -365,7 +383,7 @@ export function leakFailures(html) {
     out.push('the built page reads as no text at all, so this case would find no leak in a page that has none to find: the reading is the page\'s words, and an empty one means the reader is broken rather than the page clean')
     return out
   }
-  for (const problem of leakProblems(text, FIXTURE_SPECS)) {
+  for (const problem of leakProblems(text, specNames())) {
     out.push(`the built page carries ${problem}, and a spec name, a status page section name, a task id and a date are the four the page may not print (R1, R8): the matrix's rows are user-language and its stamp is a release`)
   }
   return out
@@ -465,9 +483,9 @@ test('the page carries one link to the compatibility page, and it resolves', () 
 })
 
 /**
- * Why the fixture case below does not run, or false while it does. The stub is task I1's to
- * delete, and a case that ran after the deletion would be checking the loader against a file
- * nothing reads any more.
+ * Why the fixture case below does not run, or false while it does. Task I1 deleted the stub, and a
+ * case that ran after the deletion would be checking the loader against a file nothing reads any
+ * more.
  */
 const STUB_IS_GONE = existsSync(STUB)
   ? false
