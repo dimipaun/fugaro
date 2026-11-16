@@ -61,9 +61,11 @@ func TestWriterOfMatchesWildcardRows(t *testing.T) {
 	// happened to iterate in is an answer nothing pins. Each broad pattern is
 	// registered BEFORE the narrower one that must beat it, so a lookup that
 	// stopped sorting — or sorted by something other than the rule under test —
-	// fails here rather than passing by luck. No two rows below share a star
-	// count, so no pair of them reaches the text tie-break: the star count alone
-	// decides every answer here.
+	// fails here rather than passing by luck. The rows that share a star count
+	// here cannot match one key — `wtesta.*.leaf`, `wtestb.*.leaf` and
+	// `wtestc.wide.*.leaf` differ in a fixed segment, which is what the
+	// equal-star overlap refusal leaves the table — so no pair of them reaches
+	// the text tie-break: the star count alone decides every answer here.
 	registerWriters(t,
 		writerRow{pattern: "wtesta.*.leaf", writer: broad},
 		writerRow{pattern: "wtesta.exact.leaf", writer: exact},
@@ -431,13 +433,13 @@ func TestWriterStoreSaysTheNodeServesAPool(t *testing.T) {
 
 	got, ok := WriterOf("pools.team.owner")
 	if !ok {
-		t.Fatalf("WriterOf(pools.team.owner) found no writer: the registry's row is the pattern pools.*.*, and the key is the one a command writes and the refusal prints")
+		t.Fatalf("WriterOf(pools.team.owner) found no writer: the writer pattern pools.*.* answers the key a command writes and the refusal prints")
 	}
 	if got.Store != StoreLocal || !got.Node {
 		t.Errorf("WriterOf(pools.team.owner) = store %s, node %v, want store %s with node true: the write lands in the local config while the node serves the pool, so the policy stage is owed for it (D2615)", got.Store, got.Node, StoreLocal)
 	}
 	if _, found := Lookup("pools.team.owner"); found {
-		t.Errorf("Lookup(pools.team.owner) found a row: the key is answered by the pattern pools.*.* and not by a row of its own, which is why the stage choice is read through WriterOf")
+		t.Errorf("Lookup(pools.team.owner) found a row: the registry's rows are one per leaf (pools.*.owner and its siblings), and the key is answered by the writer pattern pools.*.* rather than by a row of its own, which is why the stage choice is read through WriterOf")
 	}
 }
 
