@@ -124,6 +124,7 @@ reads, the others being `logs RUN --json` (§6.2) and the graph's own live feed
 | `total` | `JSONTotal` | — | no | see below |
 | `repos` | `[]JSONRepo` | — | no | `[]` when none (BuildJSON seeds `[]JSONRepo{}`) — **empty, not unavailable** |
 | `runs` | `[]JSONRun` | — | no | `[]` when none |
+| `drift` | `[]JSONDrift` | — | **yes** | **absent when nothing drifted** — R6's alarm (`View.Drift`), one entry per model whose reported cost has left the price table's band over today and yesterday, ordered by model name (spend-accuracy SA5.7; see below) |
 | `finished` | `[]JSONFinished` | — | no | `[]` when none; **always unfiltered** (`--all`/`--keep`/`--keep-count` bound only the plain and interactive views) |
 | `ready` | `[]JSONFinished` | — | no | `[]` when none; the finished runs whose `outcome` is `ready` (`ReadyRowsOf`), unfiltered |
 | `queued_note` | string | — | **yes** | absent when the runs bucket was read; present = the bucket could not be read for queued rows, already sanitized (`JSONDoc.QueuedNote`) |
@@ -188,6 +189,32 @@ drift from it.
 | `by` | string | — | **yes** | who, when known |
 | `at` | string | RFC 3339 | **yes** | when, when known (`jsonKill`) |
 | `reason` | string | — | **yes** | why |
+
+### `JSONDrift` (`internal/watch/json.go`) — where a report left the table's band
+
+| Field | Type | Unit | omitempty | Availability state |
+|---|---|---|---|---|
+| `model` | string | — | no | the serving model, sanitized and clipped like every other database-derived string (`clean`, `internal/watch/build.go`) |
+| `reported_usd` | float64 | USD | no | measured — the cost the provider reported, summed over the calls that came back with one, **with no route fee** |
+| `table_lo_usd` | float64 | USD | no | measured — the table's charge over those same calls at the cheapest end of the tier that served them |
+| `table_hi_usd` | float64 | USD | no | measured — the same at the dearest end; equal to `table_lo_usd` for a model the catalog does not price |
+| `factor` | float64 | multiple | no | measured — `reported_usd` over the end of the band the report left: over `table_hi_usd` when `direction` is `above`, over `table_lo_usd` when it is `below`. `Drift.Factor` |
+| `direction` | string | — | no | **the closed word `above` or `below`** — which end of the band the report left (`Drift.Direction`) |
+
+The leaves are `budget.ModelUse`'s, summed per model over **today and
+yesterday**, UTC, and over **every repository** (`driftLines`,
+`internal/watch/build.go`): the counters are per UTC day, so R6's "a rolling
+day" (D2649) can only be read as those two (F30), and what is being checked is
+the price table's reading of a model, not a repository's. The band is over the
+calls that carried a report and carries no fee (D2650), which is why it is read
+against `table_lo_usd` and `table_hi_usd` rather than against one estimate. An
+entry is present only when `reported_usd` is more than **10%** above
+`table_hi_usd` or more than 10% below `table_lo_usd` (`DriftGapPercent`) for a
+model with at least **$1** of spend in the window (`DriftMinSpend`): a model
+under the floor, a day whose counters predate the leaves (nothing to compare),
+and a caller that read no previous day are all silent rather than wrong. **No
+console release draws it yet**, and the field is additive: absent, a document
+is the one every CLI before it wrote.
 
 ### `JSONRepo` (`internal/watch/json.go`)
 
