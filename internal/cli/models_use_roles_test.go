@@ -40,6 +40,14 @@ repos:
   owner/repo-b: {}
 `
 
+// modelsUseLayerAuth is the project layer a model write lands in: defaults.agent
+// is the agent block a repository that names none of its own runs with, so a
+// default that pins a provider model needs the auth that carries one — the same
+// rule a repository's own file is held to (modelsUseModelCheck). A layer naming
+// no auth is a default no launch takes, which
+// TestModelsUseJudgesTheProjectLayerAsALaunchWould pins.
+const modelsUseLayerAuth = "defaults:\n  agent:\n    auth: api-key\n"
+
 // TestModelsUseWritesEveryRole is M1's own red step: the switch writes every
 // key agent.models has, the diagnose slot included. The slot is the model
 // `fugaro troubleshoot` runs on (D1607), it is written by hand until this
@@ -104,7 +112,7 @@ func TestModelsUseLayerFlag(t *testing.T) {
 
 	t.Run("project writes the layer", func(t *testing.T) {
 		modelsWriteHomeWith(t, modelsUseProjectExtra)
-		layer := settingsWriteLayerFile(t, "")
+		layer := settingsWriteLayerFile(t, modelsUseLayerAuth)
 
 		out, _, err := execute(t, "models", "use", "coder", "deepseek/deepseek-v4-pro", "--layer", "project")
 		if err != nil {
@@ -156,7 +164,7 @@ func TestModelsUseLayerFlag(t *testing.T) {
 
 	t.Run("the layer spelling names its own layer", func(t *testing.T) {
 		modelsWriteHomeWith(t, modelsUseProjectExtra)
-		layer := settingsWriteLayerFile(t, "")
+		layer := settingsWriteLayerFile(t, modelsUseLayerAuth)
 
 		out, _, err := execute(t, "models", "use", "layer.defaults.agent.models.coder", "deepseek/deepseek-v4-pro", "--layer", "project")
 		if err != nil {
@@ -211,6 +219,54 @@ func TestClaudeModelsWideningRefusedInAnAgentSession(t *testing.T) {
 	}
 	if got := l.ClaudeModels["openrouter"]; !slices.Equal(got, []string{"anthropic/claude-sonnet-5-5"}) {
 		t.Errorf("claude_models.openrouter = %v, want [anthropic/claude-sonnet-5-5]:\n%s", got, readFileString(t, layer))
+	}
+}
+
+// TestModelsUseJudgesTheProjectLayerAsALaunchWould is the layer half of the
+// same rule the repository's own file is held to: defaults.agent is the agent
+// block every repository that names none of its own runs with, so a
+// project-layer default pinning a provider model under an auth that cannot
+// carry one is refused here — with the sentence the identical write in a
+// repository's own file gets — rather than left to be refused at the launch of
+// each repository that inherits it.
+func TestModelsUseJudgesTheProjectLayerAsALaunchWould(t *testing.T) {
+	modelsWriteHomeWith(t, modelsUseProjectExtra)
+	layer := settingsWriteLayerFile(t, "")
+	before := readFileString(t, layer)
+
+	_, _, err := execute(t, "models", "use", "coder", "deepseek/deepseek-v4-pro", "--layer", "project")
+	if err == nil {
+		t.Fatal("a provider model was accepted as a project-layer default under no auth")
+	}
+	if !strings.Contains(err.Error(), "api-key") {
+		t.Errorf("the refusal does not say which auth the model needs: %v", err)
+	}
+	if got := readFileString(t, layer); got != before {
+		t.Errorf("the refused default wrote the layer:\n%s", got)
+	}
+}
+
+// TestClaudeModelsRefusesARouteTheProjectDoesNotDefine: a layer adds a Claude
+// model to a route the owner has already opened and never creates one
+// (config.ApplyClaudeClaims, P8), so a claim naming a route this project does
+// not define is refused with the routes it does have rather than written as an
+// entry no run can read.
+func TestClaudeModelsRefusesARouteTheProjectDoesNotDefine(t *testing.T) {
+	modelsWriteHomeWith(t, modelsUseProjectExtra)
+	layer := settingsWriteLayerFile(t, "")
+	before := readFileString(t, layer)
+
+	_, _, err := execute(t, "models", "use", "layer.claude_models", "nowhere=anthropic/claude-sonnet-5-5", "--layer", "project")
+	if err == nil {
+		t.Fatal("a claim on a route the project does not define was written")
+	}
+	for _, want := range []string{"is not defined here", "openrouter"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if got := readFileString(t, layer); got != before {
+		t.Errorf("the refused claim wrote the layer:\n%s", got)
 	}
 }
 
@@ -310,7 +366,7 @@ func TestModelsUseRegisteredArgvWritesTheKey(t *testing.T) {
 	} {
 		t.Run(c.key, func(t *testing.T) {
 			modelsWriteHomeWith(t, modelsUseProjectExtra)
-			layer := settingsWriteLayerFile(t, "")
+			layer := settingsWriteLayerFile(t, modelsUseLayerAuth)
 			repoFile := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseCommentedYAML)
 
 			w, ok := settings.WriterOf(c.key)

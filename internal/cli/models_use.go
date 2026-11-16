@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"maps"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -137,7 +139,7 @@ func runModelsUse(cmd *cobra.Command, args []string, o *modelsUseOptions) error 
 	if err != nil {
 		return err
 	}
-	before, err := modelsUseParse(target, old)
+	before, launch, err := modelsUseParse(lc, target, old)
 	if err != nil {
 		return err
 	}
@@ -151,7 +153,7 @@ func runModelsUse(cmd *cobra.Command, args []string, o *modelsUseOptions) error 
 	} else {
 		scope.repos = []string{repo}
 	}
-	if err := modelsUseCheck(lc, before, target, scope, kind, base, id, table); err != nil {
+	if err := modelsUseCheck(lc, launch, target, scope, kind, base, id, table); err != nil {
 		return err
 	}
 
@@ -166,11 +168,13 @@ func runModelsUse(cmd *cobra.Command, args []string, o *modelsUseOptions) error 
 	if err := settingsReparse(target, next); err != nil {
 		return err
 	}
-	after, err := modelsUseParse(target, next)
-	if err != nil {
-		return err
-	}
+	// Only a repository's own file is held against validate's rules: the layer
+	// file is no fugaro.yaml, and its own key is judged by modelsUseCheck.
 	if before != nil {
+		after, _, err := modelsUseParse(lc, target, next)
+		if err != nil {
+			return err
+		}
 		if err := modelsUseJudge(ctx, lc, before, after, target.path, repo, base, id); err != nil {
 			return err
 		}
@@ -315,20 +319,76 @@ func (s modelsUseScope) reach() string {
 	return "no run of this project could"
 }
 
+// modelsUseLaunch is what the launch's own rules read a write against: the
+// agent block the document gives a run, and the budget mode that run starts
+// with. The two travel together because they are one reading of one document,
+// and because the project layer answers both from a block of its own.
+type modelsUseLaunch struct {
+	agent config.Agent
+	mode  string
+}
+
 // modelsUseParse reads the document a write is about, in the reader that
-// document has: a repository's own fugaro.yaml, or the project layer's file.
-// The project layer has no config.Config, and the checks that read one — the
-// repository's own auth and budget — are the repository's and not the layer's,
-// which is why the layer path answers nil here.
-func modelsUseParse(target settingsTarget, data []byte) (*config.Config, error) {
-	if target.kind != settingsDocRepo {
-		return nil, nil
+// document has, and answers with the launch that document gives.
+//
+// A repository's own file is its agent: block, and the mode the project's
+// ceiling merged with its own budget decides. The project layer has no
+// config.Config — no workflows, no budget, no repository — and the agent block
+// it gives a run is its defaults.agent: that is the block a repository naming
+// no agent of its own runs with, which is why the checks read it here. A
+// project-layer default is written once and inherited by every repository that
+// names nothing, so a default no launch would take is refused at the write
+// rather than at the launch of each of them. Its mode is the ceiling alone for
+// the same reason: the layer carries no budget, and a repository that names
+// none starts on the ceiling.
+//
+// The *config.Config is the repository's own file, nil for the layer: the
+// rules modelsUseJudge holds a file against read a whole fugaro.yaml, and the
+// layer file is not one.
+func modelsUseParse(lc *localcfg.Config, target settingsTarget, data []byte) (*config.Config, modelsUseLaunch, error) {
+	if target.kind == settingsDocLayer {
+		l, ps := config.ParseProjectLayer(data, target.anchor)
+		if len(ps) > 0 {
+			return nil, modelsUseLaunch{}, userErr("%s: %s", target.path, ps[0].String())
+		}
+		agent, err := modelsUseLayerAgent(l)
+		if err != nil {
+			return nil, modelsUseLaunch{}, err
+		}
+		return nil, modelsUseLaunch{agent: agent, mode: policy.Merge(ceilingLayer(lc)).Mode}, nil
 	}
 	cfg, ps := config.Parse(data)
 	if len(ps) > 0 {
-		return nil, userErr("%s: %s", target.path, ps[0].String())
+		return nil, modelsUseLaunch{}, userErr("%s: %s", target.path, ps[0].String())
 	}
-	return cfg, nil
+	return cfg, modelsUseLaunch{agent: cfg.Agent, mode: policy.Merge(ceilingLayer(lc), runner.FileLayer(cfg)).Mode}, nil
+}
+
+// modelsUseLayerAgent is the agent block the project layer gives a repository
+// that names none of its own: defaults.agent, decoded through the same strict
+// reader the resolver decodes the merged tree with, so the checks below read
+// the block a run reads rather than a second reading of it that could drift
+// from the first.
+//
+// Auth carries the default the rest of Fugaro applies to a block that names
+// none (config.DefaultAgentAuth), which is what a repository file naming no
+// auth reads as: of everything applyDefaults fills in, it is the one field the
+// two checks below read.
+func modelsUseLayerAgent(l *config.ProjectLayer) (config.Agent, error) {
+	data, err := yaml.Marshal(l.Defaults.Agent)
+	if err != nil {
+		return config.Agent{}, userErr("the project layer's defaults.agent: %v", err)
+	}
+	var agent config.Agent
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&agent); err != nil {
+		return config.Agent{}, userErr("the project layer's defaults.agent: %v", err)
+	}
+	if agent.Auth == "" {
+		agent.Auth = config.DefaultAgentAuth
+	}
+	return agent, nil
 }
 
 // modelsUseEdit is the one key written: the value at the path the resolver
@@ -381,7 +441,7 @@ func modelsUseClaimProvider(value string) string {
 // modelsUseCheck is the launch's own judgement of one write, made before the
 // file changes rather than at the next run (spec §6). The order is the order a
 // reader can act in — the fix that has to happen first is the one named.
-func modelsUseCheck(lc *localcfg.Config, cfg *config.Config, target settingsTarget, scope modelsUseScope, kind modelsUseKind, base, id string, table *pricing.Table) error {
+func modelsUseCheck(lc *localcfg.Config, launch modelsUseLaunch, target settingsTarget, scope modelsUseScope, kind modelsUseKind, base, id string, table *pricing.Table) error {
 	switch kind {
 	case modelsUseEffort:
 		if !config.ValidEffort(id) {
@@ -396,7 +456,7 @@ func modelsUseCheck(lc *localcfg.Config, cfg *config.Config, target settingsTarg
 	case modelsUseClaim:
 		return modelsUseClaimCheck(lc, id)
 	}
-	return modelsUseModelCheck(lc, cfg, target, scope, base, id, table)
+	return modelsUseModelCheck(lc, launch, target, scope, base, id, table)
 }
 
 // modelsUseClaimCheck judges one claude_models entry: the route it names is one
@@ -428,9 +488,11 @@ func modelsUseClaimCheck(lc *localcfg.Config, value string) error {
 
 // modelsUseModelCheck is the judgement of one model pin: the model is claimed
 // by a route, that route opens to every repository the write serves, the model
-// is priced, the allow-list admits it, and — for a repository's own file — the
-// repository's own auth and budget support a provider model.
-func modelsUseModelCheck(lc *localcfg.Config, cfg *config.Config, target settingsTarget, scope modelsUseScope, base, id string, table *pricing.Table) error {
+// is priced, the allow-list admits it, and the agent block the document gives a
+// run supports a provider model — a repository's own block, or the project
+// layer's defaults.agent, which is what a repository naming none of its own
+// runs with.
+func modelsUseModelCheck(lc *localcfg.Config, launch modelsUseLaunch, target settingsTarget, scope modelsUseScope, base, id string, table *pricing.Table) error {
 	if err := modelsUseRefuseID(id); err != nil {
 		return err
 	}
@@ -475,19 +537,11 @@ func modelsUseModelCheck(lc *localcfg.Config, cfg *config.Config, target setting
 	if lc.Budget != nil && len(lc.Budget.AllowedModels) > 0 && !slices.Contains(lc.Budget.AllowedModels, id) {
 		return userErr("budget.allowed_models of the project config does not name %s, so %s use it: the owner names it there, or adds the model with `fugaro models add %s`", config.CodeSpan(id), scope.reach(), id)
 	}
-	if cfg == nil {
-		// A layer's key is the project's, and the repository's own auth and
-		// budget are the repository's: what a run of one may do with a
-		// provider model is decided at that repository's own launch, from a
-		// file this write does not touch.
-		return nil
-	}
-	agent := modelsUseAgent(cfg.Agent, base, id)
+	agent := modelsUseAgent(launch.agent, base, id)
 	if ps := config.CheckProviderAuth(agent, lc.Providers); len(ps) > 0 {
 		return userErr("%s would not launch with %s pinned for %s: %s", target.path, config.CodeSpan(id), base, ps[0].String())
 	}
-	mode := policy.Merge(ceilingLayer(lc), runner.FileLayer(cfg)).Mode
-	if ps := config.CheckProviderGateway(agent, config.EffectiveBackground(agent, lc.Providers), lc.Providers, mode); len(ps) > 0 {
+	if ps := config.CheckProviderGateway(agent, config.EffectiveBackground(agent, lc.Providers), lc.Providers, launch.mode); len(ps) > 0 {
 		return userErr("%s would not launch with %s pinned for %s: %s", target.path, config.CodeSpan(id), base, ps[0].String())
 	}
 	return nil
