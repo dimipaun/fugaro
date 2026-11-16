@@ -666,7 +666,7 @@ const IntakeAccountID = "fugaro-intake"
 // carries.
 //
 // The literal is pinned to internal/infra's OrchestratorAccountID by
-// internal/infra's own test (TestOrchestratorAccountIDIsTheCodes), the way
+// internal/infra's own test (TestCoverNamesAreTheCodes), the way
 // tf.CoordinatorAccountID is pinned to infra.CoordinatorAccountID, because this
 // package cannot import internal/infra.
 const OrchestratorAccountID = "fugaro-orch"

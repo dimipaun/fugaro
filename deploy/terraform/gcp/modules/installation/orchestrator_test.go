@@ -201,7 +201,9 @@ func TestOrchestratorModuleGrantsTheDesignsTable(t *testing.T) {
 // fails on is the shape the mistake takes here — the account's address reaching
 // var.launchers, var.operators or var.viewers from inside this module, or the
 // wide roles being named in this file at all. internal/infra's
-// TestOrchestratorTurnedOnChangesNothingElse is the plan-level half.
+// TestOrchestratorGrantsAreTheDesignsTableRows is the plan-level half: it reads
+// every row of the plan that names the account and fails on one beside the
+// table's.
 func TestOrchestratorIsNeverALauncher(t *testing.T) {
 	src := tfSource(t, orchestratorTF)
 	for _, never := range []string{
@@ -240,7 +242,7 @@ func TestOrchestratorIsNeverALauncher(t *testing.T) {
 // carries it a no-op for every installation that never asked for a resident
 // orchestrator (docs/design/update-in-flight.md's row for the installation
 // step). The plan-level half is internal/infra's
-// TestOrchestratorTurnedOffPlansExactlyAsBefore.
+// TestOrchestratorTurnedOffPlansAsTheGoldenDoes.
 func TestOrchestratorLeavesAPlanUntouchedWhenItIsOff(t *testing.T) {
 	src := tfSource(t, orchestratorTF)
 	if !strings.Contains(src, "orchestrator_on = var.orchestrator != null") {
