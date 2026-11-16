@@ -449,8 +449,18 @@ type Server struct {
 	// the same `usageRead`, so the per-model sums and the cache totals are
 	// the same tokens counted two ways, exactly.
 	modelTokens map[string]pricing.Usage
-	halt        *Halt
-	haltMsg     string
+	// reportedBy, tableLoBy, tableHiBy and unreportedCalls are the run's
+	// per-model report and table band and the calls that carried no report
+	// (F24, D2650), with the stage report's own fields' meanings. They are
+	// kept beside used and notional for the reason modelTokens is: a call
+	// that settles after its stage's report was taken is in the run's
+	// figures, and summing the stages' reports would drop it.
+	reportedBy      map[string]pricing.Micros
+	tableLoBy       map[string]pricing.Micros
+	tableHiBy       map[string]pricing.Micros
+	unreportedCalls int
+	halt            *Halt
+	haltMsg         string
 	// haltDelivered records that the halt was sent on haltCh (which is then
 	// closed): the gateway delivers one halt per server, and a stage limit's
 	// stop is delivered before any run-wide halt can be.
@@ -518,6 +528,9 @@ func Start(ctx context.Context, o Options) (*Server, error) {
 		haltCh: make(chan Halt, 1),
 
 		modelTokens: map[string]pricing.Usage{},
+		reportedBy:  map[string]pricing.Micros{},
+		tableLoBy:   map[string]pricing.Micros{},
+		tableHiBy:   map[string]pricing.Micros{},
 		ended:       map[string]StageReport{},
 		countSlots:  make(chan struct{}, maxCountsInFlight),
 	}
@@ -708,7 +721,9 @@ func (s *Server) Ledger() Ledger {
 
 func (s *Server) ledgerLocked() Ledger {
 	l := Ledger{Granted: pricing.Micros(math.MaxInt64), Used: s.used, Notional: s.notional, Reserved: s.reserved,
-		CacheReadTokens: s.cacheRead, CacheWriteTokens: s.cacheWrite, ModelTokens: copyUsage(s.modelTokens)}
+		CacheReadTokens: s.cacheRead, CacheWriteTokens: s.cacheWrite, ModelTokens: copyUsage(s.modelTokens),
+		ReportedBy: copyMicros(s.reportedBy), TableLoBy: copyMicros(s.tableLoBy), TableHiBy: copyMicros(s.tableHiBy),
+		UnreportedCalls: s.unreportedCalls}
 	if s.o.Lease != nil {
 		l.Granted = s.granted
 	} else if s.o.Mode == Enforce {
@@ -731,15 +746,34 @@ func copyUsage(by map[string]pricing.Usage) map[string]pricing.Usage {
 	return out
 }
 
+// copyMicros is copyUsage for a per-model dollar figure, and a copy for the
+// same reason: the ledger's report and band are what a reader holds, and the
+// next call's settle must not change them under it.
+func copyMicros(by map[string]pricing.Micros) map[string]pricing.Micros {
+	if len(by) == 0 {
+		return nil
+	}
+	out := make(map[string]pricing.Micros, len(by))
+	for m, v := range by {
+		out[m] = v
+	}
+	return out
+}
+
 // BeginStage starts allowing st's models. A stage still running is ended
 // without waiting.
 func (s *Server) BeginStage(st Stage) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.stage = &stageState{st: st, agents: map[string]struct{}{}, rep: StageReport{
-		ByTier:  map[string]pricing.Micros{},
-		ByModel: map[string]pricing.Micros{},
-		ByRoute: map[string]pricing.Micros{},
+		ByTier:     map[string]pricing.Micros{},
+		ByModel:    map[string]pricing.Micros{},
+		ByRoute:    map[string]pricing.Micros{},
+		NotionalBy: map[string]pricing.Micros{},
+		ReportedBy: map[string]pricing.Micros{},
+		TableLoBy:  map[string]pricing.Micros{},
+		TableHiBy:  map[string]pricing.Micros{},
+		TokensBy:   map[string]pricing.Usage{},
 	}}
 	// The stage is begun before a limit sees it: a limit that keeps per-stage
 	// state of its own is told which stage it is now about, and the reports
@@ -758,7 +792,12 @@ func (s *Server) EndStage() StageReport {
 	s.stage = nil
 	s.mu.Unlock()
 	if st == nil {
-		return StageReport{ByTier: map[string]pricing.Micros{}, ByModel: map[string]pricing.Micros{}, ByRoute: map[string]pricing.Micros{}}
+		return StageReport{
+			ByTier: map[string]pricing.Micros{}, ByModel: map[string]pricing.Micros{}, ByRoute: map[string]pricing.Micros{},
+			NotionalBy: map[string]pricing.Micros{}, ReportedBy: map[string]pricing.Micros{},
+			TableLoBy: map[string]pricing.Micros{}, TableHiBy: map[string]pricing.Micros{},
+			TokensBy: map[string]pricing.Usage{},
+		}
 	}
 	done := make(chan struct{})
 	go func() { st.calls.Wait(); close(done) }()
@@ -797,6 +836,11 @@ func (s *Server) stageReport(st *stageState) StageReport {
 	for k, v := range st.rep.ByRoute {
 		rep.ByRoute[k] = v
 	}
+	rep.NotionalBy = copyMicros(st.rep.NotionalBy)
+	rep.ReportedBy = copyMicros(st.rep.ReportedBy)
+	rep.TableLoBy = copyMicros(st.rep.TableLoBy)
+	rep.TableHiBy = copyMicros(st.rep.TableHiBy)
+	rep.TokensBy = copyUsage(st.rep.TokensBy)
 	rep.Violations = append([]string(nil), st.rep.Violations...)
 	rep.ServiceTiers = st.rep.ServiceTiers.clone()
 	return rep
