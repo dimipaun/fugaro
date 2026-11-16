@@ -576,7 +576,7 @@ func triageFlag(rounds []TriageRound) string {
 		if !r.Failed {
 			continue
 		}
-		parts = append(parts, runstore.TriageFailureClause(r.Round, r.Cause))
+		parts = append(parts, runstore.TriageFailureClause(r.Level, r.Round, r.Cause))
 	}
 	if len(parts) == 0 {
 		return ""

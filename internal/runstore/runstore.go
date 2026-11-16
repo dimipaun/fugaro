@@ -786,17 +786,29 @@ const (
 // the round bought no verdict and does not say which way, and "did not answer"
 // is the one claim the pair has in common.
 //
+// The round is named by its number and the level it belongs to, because the
+// number alone names two rounds: each level numbers its own from 1 (D1847), so
+// a run that reviewed at two levels and failed a round at each would otherwise
+// say "round 1" twice with nothing to tell them apart — in one line, and in the
+// stage table under it, which carries no level either. A level outside the
+// vocabulary (a hand-edited record) falls back to the bare number, which is the
+// most the record says.
+//
 // The cause reaches a markdown table cell in the runner and a terminal line in
 // the CLI, so a caller that has to escape or clip it does so before calling:
 // the clause is the record's own words and nothing else.
-func TriageFailureClause(round int, cause string) string {
+func TriageFailureClause(level policy.Level, round int, cause string) string {
+	where := fmt.Sprintf("round %d", round)
+	if policy.KnownLevel(level) {
+		where = fmt.Sprintf("round %d of level %s", round, strings.TrimPrefix(string(level), "l"))
+	}
 	switch cause {
 	case TriageCauseUnreadable:
-		return fmt.Sprintf("the judge's answer for round %d could not be read", round)
+		return fmt.Sprintf("the judge's answer for %s could not be read", where)
 	case TriageCauseNoAnswer, "":
-		return fmt.Sprintf("the judge did not answer for round %d", round)
+		return fmt.Sprintf("the judge did not answer for %s", where)
 	}
-	return fmt.Sprintf("the judge did not answer for round %d: %s", round, cause)
+	return fmt.Sprintf("the judge did not answer for %s: %s", where, cause)
 }
 
 // TriageRecord is what a run's triage decided (docs/post-review-triage, D1850):

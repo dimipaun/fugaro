@@ -79,9 +79,11 @@ taken out of it and clipped to 200 runes: a service's auth error quotes the
 credential it refused, and this line reaches a person. A failed round is then
 shown, not left to be noticed: the run's own log line for it is an `ERROR` naming
 the cause; the pull request's status section carries one line above its stage
-table saying what became of the judge's call in each of them — that it did not
-answer, with the call's own words, or that its answer could not be read — and
-that the fail-safe blocked every finding the mode's table blocks; that round's
+table saying what became of the judge's call in each of them — naming each round
+by its number and the level it belongs to, since each level numbers its own
+rounds from 1 — that it did not answer, with the call's own words, or that its
+answer could not be read — and that the fail-safe blocked every finding the
+mode's table blocks; that round's
 row in the same table reads `triage (failed: <cause>)` rather than a bare
 duration, the row being paired with its round by what the row itself carries —
 its round and the level that round belongs to (`stages[].round`,

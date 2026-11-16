@@ -762,7 +762,7 @@ func TestTriageAuthFailureIsRecordedWithItsCause(t *testing.T) {
 	}
 	got := runner.Report(rec, "runs/acme-app/"+rec.RunID+"/", nil)
 	for _, want := range []string{
-		"**Triage:** the judge did not answer for round 1: " + answer + ", so the fail-safe blocked every finding the mode's table blocks.",
+		"**Triage:** the judge did not answer for round 1 of level 2: " + answer + ", so the fail-safe blocked every finding the mode's table blocks.",
 		"| triage (failed: " + answer + ") |",
 	} {
 		if !strings.Contains(got, want) {
@@ -815,7 +815,7 @@ func TestTriageUnreadableVerdictIsRecordedWithTheReadersCause(t *testing.T) {
 	}
 	got := runner.Report(rec, "runs/acme-app/"+rec.RunID+"/", nil)
 	for _, want := range []string{
-		"**Triage:** the judge's answer for round 1 could not be read,",
+		"**Triage:** the judge's answer for round 1 of level 2 could not be read,",
 		"| triage (failed: " + runstore.TriageCauseUnreadable + ") |",
 	} {
 		if !strings.Contains(got, want) {
@@ -943,7 +943,7 @@ func TestTriageRowCarriesItsOwnRoundsFailureWhenARetryHalts(t *testing.T) {
 	}
 	assertStoredRecordValidates(t, h.store)
 	report := runner.Report(rec, "runs/acme-app/"+rec.RunID+"/", nil)
-	line := "**Triage:** the judge did not answer for round 1: " + answer + ", so the fail-safe blocked every finding the mode's table blocks."
+	line := "**Triage:** the judge did not answer for round 1 of level 2: " + answer + ", so the fail-safe blocked every finding the mode's table blocks."
 	if !strings.Contains(report, line) {
 		t.Errorf("the report lacks %q:\n%s", line, report)
 	}
@@ -996,7 +996,15 @@ func TestTriageRowCarriesItsOwnLevelsFailure(t *testing.T) {
 		t.Fatalf("the triage rows carry the keys %v, want one row per level's round 1", got)
 	}
 	assertStoredRecordValidates(t, h.store)
-	rows := triageTableRows(t, runner.Report(rec, "runs/acme-app/"+rec.RunID+"/", nil))
+	report := runner.Report(rec, "runs/acme-app/"+rec.RunID+"/", nil)
+	// The one line above the table names the round with its level: the number
+	// alone names both of this run's rounds, and a reader who stops at the line
+	// has nothing else to tell them apart (runstore.TriageFailureClause).
+	line := "**Triage:** the judge did not answer for round 1 of level 1: " + answer + ", so the fail-safe blocked every finding the mode's table blocks."
+	if !strings.Contains(report, line) {
+		t.Errorf("the report lacks %q:\n%s", line, report)
+	}
+	rows := triageTableRows(t, report)
 	if len(rows) != 2 {
 		t.Fatalf("the report has %d triage rows, want one per level:\n%s", len(rows), strings.Join(rows, "\n"))
 	}

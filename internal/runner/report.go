@@ -187,7 +187,7 @@ func triageFailureLine(rec *runstore.Record) string {
 		if !rnd.Failed {
 			continue
 		}
-		parts = append(parts, runstore.TriageFailureClause(rnd.Round, inlineText(rnd.Cause)))
+		parts = append(parts, runstore.TriageFailureClause(rnd.Level, rnd.Round, inlineText(rnd.Cause)))
 	}
 	if len(parts) == 0 {
 		return ""

@@ -639,22 +639,35 @@ func TestNewTriageKeepsACauseOnlyForAFailedRound(t *testing.T) {
 func TestTriageFailureClauseSaysWhatEachCauseIs(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
+		level policy.Level
 		round int
 		cause string
 		want  string
 	}{
-		{"an answer the reader refused", 2, TriageCauseUnreadable,
-			"the judge's answer for round 2 could not be read"},
-		{"no words at all", 1, TriageCauseNoAnswer, "the judge did not answer for round 1"},
-		{"a service's own words", 3, "Invalid API key", "the judge did not answer for round 3: Invalid API key"},
+		{"an answer the reader refused", policy.LevelL2, 2, TriageCauseUnreadable,
+			"the judge's answer for round 2 of level 2 could not be read"},
+		{"no words at all", policy.LevelL2, 1, TriageCauseNoAnswer, "the judge did not answer for round 1 of level 2"},
+		{"a service's own words", policy.LevelL3, 3, "Invalid API key", "the judge did not answer for round 3 of level 3: Invalid API key"},
 		// A record written before the field existed, or a hand-edited one: the
 		// round says it bought no verdict and does not say which way, so the
 		// clause claims only what both readings share.
-		{"a round with no cause kept", 1, "", "the judge did not answer for round 1"},
+		{"a round with no cause kept", policy.LevelL2, 1, "", "the judge did not answer for round 1 of level 2"},
+		// A level a hand-edited record invented: the clause names the round and
+		// claims nothing about a level it cannot read.
+		{"a level nobody defined", policy.Level("l9"), 1, TriageCauseNoAnswer, "the judge did not answer for round 1"},
+		{"no level at all", "", 1, TriageCauseNoAnswer, "the judge did not answer for round 1"},
 	} {
-		if got := TriageFailureClause(tc.round, tc.cause); got != tc.want {
-			t.Errorf("%s: TriageFailureClause(%d, %q) = %q, want %q", tc.name, tc.round, tc.cause, got, tc.want)
+		if got := TriageFailureClause(tc.level, tc.round, tc.cause); got != tc.want {
+			t.Errorf("%s: TriageFailureClause(%q, %d, %q) = %q, want %q", tc.name, tc.level, tc.round, tc.cause, got, tc.want)
 		}
+	}
+	// Both levels number a round 1 (D1847), so the level is the whole of what
+	// tells the two rounds apart in the one line a reader gets: a clause
+	// spelling the number alone would say the same sentence twice about two
+	// different judges.
+	first, second := TriageFailureClause(policy.LevelL1, 1, TriageCauseNoAnswer), TriageFailureClause(policy.LevelL2, 1, TriageCauseNoAnswer)
+	if first == second {
+		t.Errorf("both levels' first rounds read as %q, want two clauses a reader can tell apart", first)
 	}
 }
 
