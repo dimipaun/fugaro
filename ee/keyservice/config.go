@@ -76,6 +76,7 @@ const (
 	varAdminTokenTTL   = "FUGARO_ADMIN_TOKEN_TTL"
 	varPaddlePriceID   = "FUGARO_PADDLE_PRICE_ID"
 	varSchedulerAudien = "FUGARO_SCHEDULER_AUDIENCE"
+	varSchedulerAcct   = "FUGARO_SCHEDULER_ACCOUNT"
 	varSealerKeyName   = "FUGARO_SEALER_KEY_NAME"
 	varTenantsColl     = "FUGARO_TENANTS_COLLECTION"
 	varTermsVersion    = "FUGARO_TERMS_VERSION"
@@ -101,7 +102,8 @@ var (
 	apiVariables = []string{
 		varEnvironment, varKeys, varURL, varPlans, varFreeMailDomains, varVerificationTTL,
 		varCodeHosts, varMaxRepositories, varThrottle, varInviteRate, varAdminAccount,
-		varAdminTokenTTL, varPaddlePriceID, varSchedulerAudien, varSealerKeyName, varTenantsColl,
+		varAdminTokenTTL, varPaddlePriceID, varSchedulerAudien, varSchedulerAcct, varSealerKeyName,
+		varTenantsColl,
 		varTermsVersion, varSecrets, varProject, varMinterURL, varMailFrom, varNotifyAddress,
 	}
 	minterVariables = []string{varEnvironment, varKeys, varSignerKeyVersion}
@@ -206,6 +208,35 @@ type Deploy struct {
 	// NotifyAddress is where the owner is told a request is waiting in the
 	// manual queue (§4.5). It is the deployment's, like the sender above.
 	NotifyAddress string
+	// SchedulerAccount is the service account Cloud Scheduler's jobs run as
+	// (F33), which is half of what NewSchedulerVerifier checks a job's token
+	// against: without it the verifier would admit a token any other job in the
+	// project minted. It is here rather than on Config for the reason the rest
+	// of this struct is — the verifier it builds is the deployment's wiring —
+	// and it is the one value the scheduler's own route cannot be given from
+	// anywhere else.
+	SchedulerAccount string
+}
+
+// DeployProject answers the licence project from an environment, and it exists
+// for one ordering reason: the Secret Manager reader is built with the project
+// before the configuration is read, because reading a secret is how half of that
+// configuration arrives. It reads the same variable LoadConfig does, so the two
+// cannot disagree about which project this is, and it refuses an environment
+// that names none rather than reaching for a default the deployment never chose
+// (the platform fills GOOGLE_CLOUD_PROJECT, and a service that fell back to it
+// would read another project's secrets the day the two differed).
+func DeployProject(environ []string) (string, error) {
+	for _, entry := range environ {
+		name, value, ok := strings.Cut(entry, "=")
+		if ok && name == varProject {
+			if trimmed := strings.TrimSpace(value); trimmed != "" {
+				return trimmed, nil
+			}
+			return "", fmt.Errorf("keyservice: %s is set to nothing, so there is no project to read the deployment's secrets from", varProject)
+		}
+	}
+	return "", fmt.Errorf("keyservice: the environment does not set %s, and the deployment's secrets live in one project's own containers", varProject)
 }
 
 // LoadConfig builds the portal API's Config and Deploy from the process's own
@@ -332,6 +363,8 @@ func LoadConfig(ctx context.Context, environ []string, secrets Secrets) (Config,
 		MinterURL:     env.value(varMinterURL),
 		MailFrom:      env.value(varMailFrom),
 		NotifyAddress: env.value(varNotifyAddress),
+
+		SchedulerAccount: env.value(varSchedulerAcct),
 	}
 	return cfg, deploy, nil
 }
