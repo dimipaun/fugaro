@@ -223,13 +223,6 @@ func TestRegistryOwnerNamesACommand(t *testing.T) {
 		// the row names that command rather than `fugaro project`, which writes
 		// the project's other policy keys and not this one.
 		"image map",
-		// The six orchestrator ceilings (G12): the block is stated in the
-		// machine's own config and `fugaro project policy publish` is what
-		// carries it to the node, and the token is this block's own rather than
-		// `project` — that one is a family of settingsFamilyCommands, so naming
-		// it would refuse the six keys by name of `fugaro project` and print a
-		// bare command for keys no subcommand of it edits.
-		"project policy",
 		// The clone URLs' family, the image map's twin: an entry is keyed by a
 		// canonical repository name and its value is held to the node's own
 		// rule, so `fugaro project clone-url` is where the two are checked

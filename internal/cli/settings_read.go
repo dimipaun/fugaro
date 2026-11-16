@@ -458,7 +458,6 @@ var settingsOwnerCommands = map[string]string{
 	"budget":            "fugaro setup, which writes the installation's own budget backend",
 	"config":            "fugaro config publish, which carries the layer file the key is stated in",
 	"config init":       "fugaro config init, which writes the repository's own file",
-	"project policy":    "fugaro project policy publish, which carries the local config's orchestrator block and its declared allowlist to the project's nodes",
 	"rigor security":    "fugaro rigor security",
 }
 

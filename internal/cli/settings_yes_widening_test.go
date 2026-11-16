@@ -153,6 +153,51 @@ func TestSettingsSetARowTypedKeyWithYesWrites(t *testing.T) {
 	}
 }
 
+// TestSettingsSetAgentSessionRefusesARowTypedKey: the fence refuses the
+// spelling a row's own TypedWhy is written by, and not only the ceiling's `set`.
+// A list the registry marks widening (verifier_accounts, D2603) takes --add and
+// nothing else, and the other two tests here write scalars — so this is the
+// spelling the session's refusal is not otherwise held to: a coding agent's
+// session may not grow the installation's list of verifier accounts, and the
+// person it sends the edit to is given the --add line to run.
+//
+// The refusal is not the classification's — every TypedWhy row of the registry
+// is local-only, `insideRepo` is the file's kind and not the session's cwd, and
+// a session outside a repository writes nothing whatever the edit is (D1012) —
+// so what this test pins is the effect and the sentence, and it is the dry run
+// and the real write beside it that pin the classification.
+func TestSettingsSetAgentSessionRefusesARowTypedKey(t *testing.T) {
+	for _, marker := range agentenv.Markers {
+		t.Run(marker, func(t *testing.T) {
+			noTerminal(t)
+			_, localPath := settingsWriteHome(t)
+			settingsWriteCheckout(t, settingsRepoYAML(""))
+			before := readFileString(t, localPath)
+			t.Setenv(marker, "1")
+
+			out, _, err := execute(t, "settings", "set", "verifier_accounts", "--add", settingsProbeItems["verifier_accounts"], "--layer", "local")
+			if err == nil {
+				t.Fatal("a coding agent's session added a verifier account")
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
+			}
+			if !strings.Contains(err.Error(), marker) {
+				t.Errorf("the refusal does not name %s, so nobody knows which variable to unset: %v", marker, err)
+			}
+			if !strings.Contains(err.Error(), "fugaro settings set verifier_accounts --add "+settingsProbeItems["verifier_accounts"]) {
+				t.Errorf("the refusal does not print the command to run at a terminal: %v", err)
+			}
+			if !strings.Contains(out, "+   - "+settingsProbeItems["verifier_accounts"]) {
+				t.Errorf("the refusal does not print the diff:\n%s", out)
+			}
+			if readFileString(t, localPath) != before {
+				t.Error("the file changed in a coding agent's session")
+			}
+		})
+	}
+}
+
 // TestSettingsUnsetAgentSessionWithYesIsRefused: the fence is the write path's
 // and not `set`'s — `unset` goes through the same refusal, so --yes lifts it
 // there neither. The loop is over agentenv.Markers itself, and nothing is

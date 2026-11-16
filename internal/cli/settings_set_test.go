@@ -2679,19 +2679,86 @@ func TestSettingsSelectionReadsTheCheckoutsProject(t *testing.T) {
 }
 
 // TestSettingsSetAddToAWideningListRowIsTyped: a row whose TypedWhy names the
-// widening direction of a list (verifier_accounts, mobile_allow.*) is marked
-// by `--add` as well as by a truthy `set`, so the dry run says widening and
-// the sentence it carries is the row's own.
+// widening direction of a list (verifier_accounts) is marked by `--add` as well
+// as by a truthy `set`, so the dry run says widening and the sentence it carries
+// is the row's own. The real write carries the same pair: a person who does not
+// run --dry-run first reads the sentence the row states, and nothing else about
+// the edit is asked of them (D1540, D1552).
 func TestSettingsSetAddToAWideningListRowIsTyped(t *testing.T) {
-	settingsWriteHome(t)
+	_, localPath := settingsWriteHome(t)
 	settingsWriteCheckout(t, settingsRepoYAML(""))
 	noTerminal(t)
 	row, ok := settings.Lookup("verifier_accounts")
 	if !ok || row.TypedWhy == "" {
 		t.Fatal("verifier_accounts carries no TypedWhy")
 	}
-	doc := settingsDryRunDoc(t, "settings", "set", "verifier_accounts", "--add", settingsProbeItems["verifier_accounts"])
+	item := settingsProbeItems["verifier_accounts"]
+	doc := settingsDryRunDoc(t, "settings", "set", "verifier_accounts", "--add", item)
 	if !doc.Widening || doc.Why != row.TypedWhy {
 		t.Errorf("--add on verifier_accounts says widening=%v why=%q, want true and the row's TypedWhy", doc.Widening, doc.Why)
+	}
+
+	out, _, err := execute(t, "settings", "set", "verifier_accounts", "--add", item, "--layer", "local")
+	if err != nil {
+		t.Fatalf("--add on a widening list row did not write: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, row.TypedWhy) {
+		t.Errorf("the write does not print the row's own sentence saying what it widens:\n%s", out)
+	}
+	if got := readFileString(t, localPath); !strings.Contains(got, item) {
+		t.Errorf("the local config does not carry the account:\n%s", got)
+	}
+}
+
+// TestSettingsTypedAddCoversTheMobileAllowRows: the three `mobile_allow.*` rows
+// a person declares a phone with are marked TypedWhy exactly as
+// verifier_accounts is (D231, D1165), so the widening classification is the
+// same one — asked of settingsTypedWrite directly, because the rows' own
+// spelling carries a `*` and no write lands on one: the literal `*` meets the
+// map rule, a concrete spelling meets the unknown-key answer, and W3's allowlist
+// is what reaches their concrete spellings. What the test pins is the half that
+// is true today and the half that has to hold the day it is not: the row's
+// TypedWhy is the sentence `--add` and a truthy `set` both carry.
+func TestSettingsTypedAddCoversTheMobileAllowRows(t *testing.T) {
+	for _, key := range []string{"mobile_allow.*.uid", "mobile_allow.*.address", "mobile_allow.*.role"} {
+		row, ok := settings.Lookup(key)
+		if !ok {
+			t.Errorf("%s: no registry row (D231)", key)
+			continue
+		}
+		if row.TypedWhy == "" {
+			t.Errorf("%s: no TypedWhy, so growing the declared allowlist is written unasked", key)
+			continue
+		}
+		if typed, why := settingsTypedWrite(row, "", "operator", "add"); !typed || why != row.TypedWhy {
+			t.Errorf("settingsTypedWrite(%s, add) = %v %q, want true and the row's own sentence", key, typed, why)
+		}
+		if typed, why := settingsTypedWrite(row, "", "true", "set"); !typed || why != row.TypedWhy {
+			t.Errorf("settingsTypedWrite(%s, set true) = %v %q, want true and the row's own sentence", key, typed, why)
+		}
+		// `--remove` and `--remove-entry` take an entry away, which narrows the
+		// allowlist: neither is the typed form, the same way a ceiling's remove
+		// is not.
+		if typed, _ := settingsTypedWrite(row, "operator", "", "remove"); typed {
+			t.Errorf("settingsTypedWrite(%s, remove) is the widening, and taking an entry away narrows the list", key)
+		}
+	}
+
+	// Neither spelling is a write today, and each refusal is the one it should
+	// be: the literal `*` meets the map rule, and the concrete name is one the
+	// lookup does not resolve — the allowlist carries no `mobile_allow.` prefix
+	// and no wildcard row of it by name, so a concrete spelling has no row to
+	// land on and W3's task is what gives it one (D1162). It is the writer
+	// table that registers the concrete form, which is why all three are
+	// testdata/writer_gaps.golden's until then.
+	if _, err := settingsWriteRow("mobile_allow.*.uid"); err == nil {
+		t.Error("the literal mobile_allow.*.uid is writable, and a key with a `*` is a map entry the generic path never writes")
+	} else if !strings.Contains(err.Error(), "a key with a * is a map entry") {
+		t.Errorf("the literal spelling is refused with %v, want the map rule's own words", err)
+	}
+	if _, err := settingsWriteRow("mobile_allow.operator.uid"); err == nil {
+		t.Error("mobile_allow.operator.uid is writable, and the allowlist carries no row of the declared allowlist: W3's task is what registers one (D1162)")
+	} else if !strings.Contains(err.Error(), "no setting has that name") {
+		t.Errorf("the concrete spelling is refused with %v, want the unknown-key answer the allowlist's silence gives", err)
 	}
 }
