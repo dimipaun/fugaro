@@ -860,6 +860,24 @@ func TestDeviceNodesAreClientDenied(t *testing.T) {
 	if r, ok := attrs[".read"].(string); ok {
 		t.Errorf("/%s .read = %q: the node is written and read over IAM only", node, r)
 	}
+	// And its sibling `config/admin/push/$uid` — the registration and the
+	// ledger the sender writes (the push-notifications design §3.4) —
+	// has no node of its own here, which is a decision rather than an omission:
+	// it inherits `config/admin`'s own refusal, and a node written out is the
+	// only way a client could be granted one. P5.2.2's registration kind does
+	// not touch it, and if a later generation does, this is the diff that says
+	// so.
+	if v, has := paths["config/admin"][".read"]; !has || v != false {
+		t.Errorf("/config/admin .read = %v, want false: the push store is denied by inheritance from this node and carries no rule of its own", paths["config/admin"][".read"])
+	}
+	if v, has := paths["config/admin"][".write"]; !has || v != false {
+		t.Errorf("/config/admin .write = %v, want false", paths["config/admin"][".write"])
+	}
+	for p := range paths {
+		if p == "config/admin/push" || strings.HasPrefix(p, "config/admin/push/") {
+			t.Errorf("/%s is written out in the template: the push store is refused by /config/admin's own denial, and a node of its own is the only way to grant a client one", p)
+		}
+	}
 }
 
 // TestDeviceNodeCarriesNoShapeRule is P2's fourth claim — the plan's red step
@@ -1200,7 +1218,7 @@ func schemaCatalog(t *testing.T) (consts map[string]int64, fields, required, kin
 //
 // P5.2.1 grew the schema again and P5.2.2 is the generation that grew the
 // template with it: `token`, `platform` and `prefs` are the registration kind's,
-// the kind enumeration carries the fourth kind, and the fields are gated on the
+// the kind enumeration carries the fifth kind, and the fields are gated on the
 // message's own tag. Until generation 6 the rules gated none of them — a
 // registration message was refused at the database, which was fail-closed
 // rather than wrong, because no writer of one exists before the consumer
@@ -2404,12 +2422,18 @@ func isNewCredsPath(p string) bool {
 //     not know the family is there, which is the drift the marker exists to
 //     report; so the generation moved to 4 and doctor's policy-rules-skew is
 //     what tells an installation whose owner has not redeployed yet. P5.3.1
-//     moves it to 5 for the same reason one step over: the voice policy node
+//     moved it to 5 for the same reason one step over: the voice policy node
 //     (PathVoice, `config/policy/voice/{shared,repos/$slug}`) is a grant too —
 //     a run token reads its own project's node there and did not before — and
 //     the generation is what tells an installation at 4 that its deployed
-//     document is not this binary's. `fugaro update`'s rules stage is the
-//     migration, and it is the same stage every generation is met through.
+//     document is not this binary's. P5.2.2 moves it to 6 for the same reason
+//     in the other direction: the registration kind's fields are what the phone
+//     *writes* into its own inbox, so under the document behind the app's every
+//     registration is refused at the database with no error — a reach a client
+//     holds, which is what the marker records — and the widening folds into the
+//     same stage: `fugaro update`'s rules deploy is the migration, and it is
+//     the same stage every generation is met through, safe while runs are in
+//     flight.
 //   - projectpolicy.PolicyRulesVersion gates the policy nodes, which neither
 //     change touches. It stays 1.
 //   - rules.CredsRulesVersion is the credentials family's own generation, at 1,
@@ -2424,8 +2448,8 @@ func isNewCredsPath(p string) bool {
 // Hand mutation this fails on: bumping any of the four (or lowering one of the
 // family versions), which is what a reviewer must see argued for.
 func TestRulesVersionUnchanged(t *testing.T) {
-	if projectpolicy.RulesVersion != 5 {
-		t.Errorf("projectpolicy.RulesVersion = %d, want 5: the generation that carries the voice policy node (mobile plan task P5.3.1)", projectpolicy.RulesVersion)
+	if projectpolicy.RulesVersion != 6 {
+		t.Errorf("projectpolicy.RulesVersion = %d, want 6: the generation that carries the registration kind's fields in the mailbox (mobile plan task P5.2.2)", projectpolicy.RulesVersion)
 	}
 	if projectpolicy.PolicyRulesVersion != 1 {
 		t.Errorf("projectpolicy.PolicyRulesVersion = %d, want 1: this change does not touch the policy nodes", projectpolicy.PolicyRulesVersion)
