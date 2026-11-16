@@ -176,14 +176,19 @@ data "google_project" "this" {
 # merchant secret, a mail key and a store out of the process that signs
 # (§3.3, Check 571).
 locals {
-  # The API's own URL, derived because a resource cannot read its own attribute:
-  # the scheduled calls' audience is `google_cloud_run_v2_service.api.uri` where
-  # scheduler.tf mints their tokens, and the API's own environment needs the same
-  # string. It is Cloud Run's own form, `<service>-<project number>.<region>`, the
-  # spelling deploy/terraform's coordinator uses for its issuer. A change in that
-  # form is a scheduled call refused for an audience nobody minted for, and the
-  # jobs go quiet rather than loud — the two places are one value, and this is the
-  # one of the two that cannot be an attribute.
+  # The API's own URL, which is the audience both sides of a scheduled call name:
+  # it is what FUGARO_SCHEDULER_AUDIENCE carries below and what scheduler.tf's
+  # `oidc_token` blocks are minted for, because the API compares that claim
+  # exactly. Neither place can simply read the service's own `uri` — a container's
+  # env cannot read an attribute of the resource it is declared in, and Cloud Run
+  # answers with its assigned URL anyway, the `<service>-<hash>-<code>` form under
+  # `.a.run.app`, which is a different string from this one. It is Cloud Run's own
+  # form,
+  # `<service>-<project number>.<region>`, the spelling deploy/terraform's
+  # coordinator uses for its issuer. A change in that form is a scheduled call
+  # refused for an audience nobody minted for, and the jobs go quiet rather than
+  # loud — the two places are one value, and this is the one of the two that
+  # cannot be an attribute.
   api_url = "https://${var.api_service}-${data.google_project.this.number}.${var.region}.run.app"
 
   # The KMS key version the minter signs with (S2.1): this environment's licence
@@ -213,7 +218,7 @@ locals {
   api_env = {
     FUGARO_ENVIRONMENT        = var.environment
     FUGARO_KEYS               = jsonencode(var.keys)
-    FUGARO_URL                = var.portal_url
+    FUGARO_URL                = var.intake_url
     FUGARO_PLANS              = var.plans
     FUGARO_FREE_MAIL_DOMAINS  = join(",", var.free_mail_domains)
     FUGARO_VERIFICATION_TTL   = var.verification_ttl

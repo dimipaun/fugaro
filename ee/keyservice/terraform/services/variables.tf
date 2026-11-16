@@ -186,13 +186,13 @@ variable "secrets" {
 # values the programs read are not variables at all: they are this root's own
 # (the project, the environment, the scheduler's account, the sealer key, the
 # minter's URL, the secret containers), and main.tf derives them.
-variable "portal_url" {
-  description = "The portal's own origin, which P1.7's Config.URL is: a mailed invitation or verification link is built by joining a path to it (invites.go's portalOrigin refuses anything else), and it is the site the SPA is served from (P0.1's app.fugaro.dev, or the staging host)."
+variable "intake_url" {
+  description = "The intake's own origin — `https://keys.` plus the site's canonical host (P0.1's keys.fugaro.dev, or the staging host) — which is P1.7's Config.URL and therefore FUGARO_URL. It is the intake that reads it, not the portal: invites.go's portalOrigin derives the portal's origin from it by swapping the `keys.` label for `app.` (§3.1, §7.2), and it refuses a host that is not that shape rather than mailing a link to a site nobody stated. The site the SPA is served from is therefore never named here."
   type        = string
 
   validation {
-    condition     = can(regex("^https://[^/]+$", var.portal_url))
-    error_message = "portal_url must be an https origin such as https://app.fugaro.dev, with no trailing slash and no path: the deployment joins a path to it, so a value with a path of its own puts every mailed link somewhere else."
+    condition     = can(regex("^https://keys\\.[^/]+$", var.intake_url))
+    error_message = "intake_url must be an https origin on the `keys.` host such as https://keys.fugaro.dev, with no trailing slash and no path: the deployment reads the portal's own origin out of it and builds every mailed link from the intake's own label, so a value on another host is a revision whose every invitation refuses."
   }
 }
 
