@@ -212,8 +212,8 @@ run "a record that cannot be read is the fail-closed badge, not a render of the 
   "    if (!record.ok) return failClosedIndicator(asked, record);" \
   "    if (!record.ok) return renderIndicator({ ...asked, settings: record.settings, consent: record.consent });"
 run "the switch is per direction: setting one leaves the other alone" \
-  "        settings: { ...record.settings, [direction]: engine }," \
-  "        settings: { stt: engine, tts: engine },"
+  "      settings: { ...record.settings, [direction]: engine }," \
+  "      settings: { stt: engine, tts: engine },"
 run "an engine that is not one of the two is refused before anything is written" \
   "    if (!ENGINES.includes(engine)) return refuse(REFUSAL.UNKNOWN_ENGINE, 'engine');" \
   "    if (false) return refuse(REFUSAL.UNKNOWN_ENGINE, 'engine');"
@@ -273,8 +273,8 @@ run "a record field this module does not have is refused" \
   "    if (false) return refuse(VOICE_CODES.UNKNOWN_FIELD, 'record');" \
   "$SETTINGS" "$SETTINGS_SUITE"
 run "the stored values are judged by the shared rule, not copied" \
-  "    if (!probe.ok) return refuse(probe.code, probe.field);" \
-  "    if (false) return refuse(probe.code, probe.field);" \
+  "  if (!probe.ok) return refuse(probe.code, probe.field);" \
+  "  if (false) return refuse(probe.code, probe.field);" \
   "$SETTINGS" "$SETTINGS_SUITE"
 run "a record with no consent list is an empty one, not a dropped field" \
   "    consent: freezeConsent(value.consent ?? [])," \
