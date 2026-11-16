@@ -46,6 +46,7 @@
 import {
   UNAVAILABLE_MARK,
   formatReading,
+  estimated,
   gap,
   measured,
   notional,
@@ -85,6 +86,26 @@ export const LIVE_BURN_WINDOW_SECONDS = 5 * 60
  * for a feed that sends faster than that or stamps that bunch up: past it the
  * oldest samples go first, which are the ones a window would drop next. */
 export const LIVE_BURN_MAX_SAMPLES = 1024
+
+/**
+ * LIVE_HOUR_WINDOW_SECONDS is the second history's window: one hour, kept only
+ * while the console runs.
+ *
+ * **It is the console's own constant and not a second `BurnWindow`.** The
+ * five-minute window above is `watch`'s, and the CLI has no hour-long rate to
+ * match -- so this one is a *second reading of the same samples*, drawn beside
+ * the first, and nothing in the CLI is asked to agree with it. What the
+ * sparkline shows is the shape of the last hour of arrivals, over an axis that
+ * is that window's own highest rate (`sparkline`), exactly as the five-minute
+ * line is over its own.
+ */
+export const LIVE_HOUR_WINDOW_SECONDS = 60 * 60
+
+/** LIVE_HOUR_MAX_SAMPLES bounds one key's hour history whatever its stamps say.
+ * An hour of the CLI's one document a second is 3,600 samples, so the count is
+ * the bound that catches a feed sending faster than the CLI writes -- four
+ * times the burn history's, for a window twelve times as long. */
+export const LIVE_HOUR_MAX_SAMPLES = 4096
 
 /** LIVE_STALE_AFTER_SECONDS is `internal/watch/state.go`'s `StaleAfter`: the
  * 45 s after which the design's header calls the connection stale. */
@@ -365,12 +386,16 @@ export function contradiction(health: string, ageSeconds: number | null): string
 }
 
 // ---------------------------------------------------------------------------
-// The burn history.
+// The histories.
 // ---------------------------------------------------------------------------
 
 /**
- * BurnHistory is the rolling window the sparkline is drawn from: one **bounded**
- * list of `{at, reading}` per key, and a window that is `BurnWindow` wide.
+ * WindowHistory is the machinery both sparklines are drawn from: one **bounded**
+ * list of `{at, reading}` per key, a window of the subclass's own width, and a
+ * sample cap of its own. The five-minute line and the hour line are the same
+ * instrument over two windows, so they are the same class rather than two
+ * copies of the ordering, dedup and pruning rules below -- which are the parts
+ * a second copy would get subtly wrong.
  *
  * The window is taken **at a stamp the caller names** rather than at the wall
  * clock. That is not a detail: a replay of a recorded feed must produce the
@@ -387,11 +412,20 @@ export function contradiction(health: string, ageSeconds: number | null): string
  * `window` makes for a window ending there, so nothing `window` would have
  * returned is lost.
  */
-export class BurnHistory {
+export class WindowHistory {
   /** Each key's samples, in time order, each with its stamp parsed once: the
    * parse is the cost (review round 4 of PR 494: walking the list with a
    * `Date.parse` per step made 20,000 reverse-ordered samples take 5.9 s). */
   private readonly samples = new Map<string, Timed[]>()
+
+  /** The window's width in seconds and the sample cap are the subclass's: a
+   * history that took them per call would make the bound a thing the caller
+   * could forget, and a list whose bound nobody set is the unbounded one
+   * `observe` exists to prevent. */
+  protected constructor(
+    private readonly windowSeconds: number,
+    private readonly maxSamples: number,
+  ) {}
 
   /**
    * observe adds one arrival and drops what has fallen out of the window.
@@ -421,7 +455,7 @@ export class BurnHistory {
       this.samples.set(key, [{ sample, when }])
       return
     }
-    const windowMs = LIVE_BURN_WINDOW_SECONDS * 1000
+    const windowMs = this.windowSeconds * 1000
     const newestBefore = existing[existing.length - 1]?.when ?? when
     if (when < newestBefore - windowMs) return
     const isGap = sample.reading.state === 'gap'
@@ -446,20 +480,20 @@ export class BurnHistory {
     }
     // The list is ordered, so the newest is last.
     const newest = Math.max(when, existing[existing.length - 1]?.when ?? when)
-    const keep = Math.max(firstAtOrAfter(existing, newest - windowMs), existing.length - LIVE_BURN_MAX_SAMPLES)
+    const keep = Math.max(firstAtOrAfter(existing, newest - windowMs), existing.length - this.maxSamples)
     if (keep > 0) existing.splice(0, keep)
   }
 
-  /** size is how many samples the history holds for `key`: what the bound
-   * (`LIVE_BURN_MAX_SAMPLES`) is a bound on. */
+  /** size is how many samples the history holds for `key`: what the sample cap
+   * (`LIVE_BURN_MAX_SAMPLES`, `LIVE_HOUR_MAX_SAMPLES`) is a bound on. */
   size(key: string): number {
     return this.samples.get(key)?.length ?? 0
   }
 
   /**
-   * window is the samples a rate over the last `BurnWindow` ending at `at` is
-   * computed from: those stamped at or after `at - LIVE_BURN_WINDOW_SECONDS`,
-   * and no later than `at` itself.
+   * window is the samples a rate over the last `windowSeconds` ending at `at`
+   * is computed from: those stamped at or after `at - windowSeconds`, and no
+   * later than `at` itself.
    *
    * The boundary is `State.Burn`'s own (`internal/watch/state.go:168`): it
    * drops what is `Before(cut)`, so a sample stamped **exactly** at the cut is
@@ -470,12 +504,41 @@ export class BurnHistory {
     const all = this.samples.get(key) ?? []
     const end = Date.parse(at)
     if (Number.isNaN(end)) return []
-    const cut = end - LIVE_BURN_WINDOW_SECONDS * 1000
+    const cut = end - this.windowSeconds * 1000
     return all.slice(firstAtOrAfter(all, cut), firstAfter(all, end)).map((entry) => entry.sample)
   }
 }
 
-/** Timed is one sample of a `BurnHistory` list with its stamp parsed. */
+/**
+ * BurnHistory is the burn sparkline's history: `BurnWindow` wide, which is
+ * `internal/watch/state.go`'s window and the one the CLI's own rate is taken
+ * over, so the drawn instrument measures the thing the document reports.
+ */
+export class BurnHistory extends WindowHistory {
+  constructor() {
+    super(LIVE_BURN_WINDOW_SECONDS, LIVE_BURN_MAX_SAMPLES)
+  }
+}
+
+/**
+ * HourHistory is the second history beside `BurnHistory`: one hour of samples
+ * per key, kept **only while the console runs** -- it is never saved, so a
+ * console restarted an hour into a run draws the hour line from what arrives
+ * after it starts and says so by drawing fewer bars, exactly as the burn line
+ * does.
+ *
+ * It is fed the same samples as the burn history and holds them longer. The
+ * five-minute rate is the CLI's own reading; the hour line is the console's
+ * longer view of the rates it was told, which is what tells a spike apart from
+ * a rising hour.
+ */
+export class HourHistory extends WindowHistory {
+  constructor() {
+    super(LIVE_HOUR_WINDOW_SECONDS, LIVE_HOUR_MAX_SAMPLES)
+  }
+}
+
+/** Timed is one sample of a `WindowHistory` list with its stamp parsed. */
 interface Timed {
   readonly sample: Sample
   readonly when: number
@@ -537,7 +600,7 @@ export interface Sparkline {
  * document does not carry is a **gap** and breaks the series, which is the
  * other half.
  */
-export function sparkline(history: BurnHistory, key: string, at: string): Sparkline {
+export function sparkline(history: WindowHistory, key: string, at: string): Sparkline {
   const samples = history.window(key, at)
   const rates: number[] = []
   for (const sample of samples) {
@@ -665,6 +728,10 @@ export interface LiveRepoRow {
   readonly burnPerMin: Reading
   readonly burnFast: boolean
   readonly spark: Sparkline
+  /** hour is the same instrument over `HourHistory`'s window: the shape of the
+   * last hour of arrivals, drawn beside the five-minute line. It is the
+   * console's own reading and not a second one from the CLI (`sparkline`). */
+  readonly hour: Sparkline
   readonly kill: KillView | null
   readonly runs: readonly LiveRunRow[]
 }
@@ -713,6 +780,17 @@ export interface LiveFleet {
    * zero, and `unavailable` when either side is not a measurement */
   readonly headroom: Reading
   readonly burn: Reading
+  /** rate is the same burn as dollars per hour (`perHourOf`): the CLI reports
+   * the fleet's rate per minute, and the gauge is drawn in $/h because that is
+   * the unit the red zone beside it is in. */
+  readonly rate: Reading
+  /** redZone is the rate that would use up `headroom` before the UTC day ends
+   * (`redZoneOf`): the gauge's red zone starts there, so a needle at or past it
+   * says "at this rate today's cap does not last the day". */
+  readonly redZone: Reading
+  /** concurrent is the share of `total.maxParallel` the active runs take
+   * (`concurrentOf`), drawn as a bar beside the spend one. */
+  readonly concurrent: Reading
   readonly active: number
   readonly queued: number
   readonly heartbeatLost: boolean
@@ -739,6 +817,111 @@ export function headroomOf(cap: Reading, counted: Reading): Reading {
     return unavailable('the document carries no total.counted_usd, so the console cannot say what is left of the cap')
   }
   return measured(Math.max(0, limit - used))
+}
+
+/**
+ * perHourOf is a per-minute rate as a per-hour one: the gauge's own unit, and
+ * the red zone's (`redZoneOf`), which is headroom over hours.
+ *
+ * **The state and the lower-bound mark travel with the value.** A rate the
+ * document does not know stays `unavailable` with its own sentence rather than
+ * becoming `unavailable` about the multiplication, and a `≥` sum stays a `≥`
+ * sum: scaling a number cannot turn a measurement into a different kind of
+ * number.
+ */
+export function perHourOf(rate: Reading): Reading {
+  const perMinute = rate.value
+  if (perMinute === null) return rate
+  const hourly = perMinute * 60
+  const options = { lowerBound: rate.lowerBound }
+  if (rate.state === 'notional') return notional(hourly, options)
+  if (rate.state === 'estimated') return estimated(hourly, options)
+  return measured(hourly, options)
+}
+
+/**
+ * hoursLeftOf is how long is left of the UTC day the document's stamp falls in,
+ * in hours -- the divisor `redZoneOf` needs and the only reason the day's end
+ * matters to this screen. The CLI's day is the UTC calendar day
+ * (`internal/runstore`'s daily counters are keyed by it, and `JSONTotal`'s
+ * `daily_cap_usd` is that day's cap), so "before the UTC day ends" is the next
+ * UTC midnight and nothing else: a local midnight would put the red zone on a
+ * boundary the cap is not measured against.
+ *
+ * `null` is a stamp the console cannot read. A decoded document always carries
+ * one (`timestampAt`), so this is the console refusing to guess rather than a
+ * document's state -- and `redZoneOf` is where it becomes a sentence.
+ *
+ * **A stamp exactly at midnight is a whole day, not none.** `Date.parse` of a
+ * stamp at 00:00:00Z is a multiple of the day, where `ceil` would answer the
+ * same instant and leave zero hours: dividing headroom by that is the division
+ * by zero this function exists to keep out of `redZoneOf`.
+ */
+export function hoursLeftOf(now: string): number | null {
+  const at = Date.parse(now)
+  if (Number.isNaN(at)) return null
+  const dayMs = 24 * 60 * 60 * 1000
+  const end = Math.ceil(at / dayMs) * dayMs
+  const left = end - at
+  return (left === 0 ? dayMs : left) / (60 * 60 * 1000)
+}
+
+/**
+ * redZoneOf is the rate at which the day's remaining headroom runs out before
+ * the UTC day ends: `headroom / hoursLeft`.
+ *
+ * **This is the red zone's definition and not a threshold anyone chose** (D737).
+ * Spend is what the day's cap is measured against, so the honest red line is
+ * where the current rate would consume what is left by midnight -- at $10 of
+ * headroom and 5 hours left, $2.00/h. A rate below it finishes the day inside
+ * the cap; a rate above it does not. The alternative a gauge could draw -- a
+ * fixed share of the cap, or a rate chosen by hand -- would be a number about
+ * nobody's day.
+ *
+ * It moves with the clock and with the spend, which is the point: the same $4/h
+ * is comfortable at 09:00 and alarming at 23:00, and a red zone that did not
+ * move would say the two are the same. `headroom` is already floored at zero
+ * (`headroomOf`), so at a spent-out cap the whole gauge is red.
+ */
+export function redZoneOf(headroom: Reading, now: string): Reading {
+  const left = headroom.value
+  if (left === null) {
+    return unavailable('the console cannot say what is left of the day’s cap, so it cannot say which rate would use it up')
+  }
+  const hours = hoursLeftOf(now)
+  if (hours === null) {
+    return unavailable('the document’s own stamp is not a time the console can read, so it cannot say how much of the UTC day is left')
+  }
+  return measured(left / hours)
+}
+
+/**
+ * concurrentOf is the active runs as a share of the concurrent-run cap: the
+ * second of the two cap bars (`LiveFleet.concurrent`).
+ *
+ * **The cap is `unavailable` far more often than it is read.** `max_parallel` is
+ * a key a CLI older than the release that added it does not write at all, and a
+ * document whose installation has no cap carries `null` -- both of which
+ * `schema.ts` decodes as unavailable, never as a cap of none. A screen that read
+ * either as zero would draw a full bar over an installation nobody capped, so
+ * the share is unavailable with the cap's own reason and the bar is drawn
+ * unavailable (`bar`), which is `n/a`.
+ *
+ * A cap of **zero** is a real cap and not a missing one, so it is not folded in
+ * with the two above: no runs active is honestly 0% of it, and runs active
+ * against it is a document contradicting itself -- there is no finite share of
+ * zero -- which the console says rather than drawing `Infinity` as a full bar.
+ */
+export function concurrentOf(active: number, cap: Reading): Reading {
+  const limit = cap.value
+  if (limit === null) {
+    return unavailable('the document carries no total.max_parallel, so the console cannot say how full the concurrent-run cap is')
+  }
+  if (limit === 0) {
+    if (active === 0) return measured(0)
+    return unavailable(`the document’s total.max_parallel is 0 and the console draws ${String(active)} runs as active, so their share of the cap is not a number it can draw`)
+  }
+  return measured((active / limit) * 100)
 }
 
 /** LiveModel is the whole screen as data. */
@@ -1091,6 +1274,7 @@ export function buildLiveModel(
   history: BurnHistory = new BurnHistory(),
   feed: FeedHealth | null = null,
   rigor: ReadonlyMap<string, RigorView> = NO_RIGOR,
+  hours: HourHistory = new HourHistory(),
 ): LiveModel {
   // Every run row is built once and the row lists and the fleet's counts are
   // both read off these, so the panel counts exactly the runs the screen draws:
@@ -1131,13 +1315,22 @@ export function buildLiveModel(
     // and one ahead of it -- by any amount -- cannot stamp a gap in the CLI's
     // future that would prune every fresh document on arrival. The banner still
     // shows the console's own stamp (`feed.at`), which is the reading it took.
+    // The hour history takes the same sample at the same stamp as the burn
+    // history, because the two lines are one instrument at two scales (D737):
+    // a sample the five-minute window saw and the hour window did not would
+    // draw two pictures of the same moment, and the pair is meant to be read
+    // against each other.
+    // The hour history takes the same reading at the same stamp as the burn
+    // history, because the two lines are one instrument at two scales (D737):
+    // a sample one window saw and the other did not would draw two pictures of
+    // the same moment, and the pair is meant to be read against each other.
+    hours.observe(repo.slug, { at: document.now, reading: burn })
     let at = document.now
     if (feed !== null && feed.stale) {
       at = silenceStamp(document.now, feed.seconds)
-      history.observe(repo.slug, {
-        at,
-        reading: gap(`no document has arrived for ${String(feed.seconds ?? 0)}s, so this series breaks here`),
-      })
+      const breaking = gap(`no document has arrived for ${String(feed.seconds ?? 0)}s, so this series breaks here`)
+      history.observe(repo.slug, { at, reading: breaking })
+      hours.observe(repo.slug, { at, reading: breaking })
     }
     return {
       slug: repo.slug,
@@ -1150,6 +1343,7 @@ export function buildLiveModel(
       burnPerMin: burn,
       burnFast: repo.burn.fast,
       spark: sparkline(history, repo.slug, at),
+      hour: sparkline(hours, repo.slug, at),
       kill: repo.kill,
       runs: runRows.filter((row) => row.slug === repo.slug),
     }
@@ -1180,6 +1374,13 @@ export function buildLiveModel(
   const review = document.ready.map(reviewRowOf)
 
   const age = document.connection.ageSeconds
+  // The fleet's rate is the *total's* burn and not a repository's: the panel is
+  // the whole fleet's, and a rate summed from the rows would be the console's
+  // arithmetic rather than the CLI's measurement. It is read once and used
+  // twice -- the panel's figure and the gauge's -- so the two cannot be two
+  // different numbers.
+  const burn = burnReading(document.total.burn)
+  const headroom = headroomOf(document.total.dailyCapUsd, document.total.countedUsd)
   return {
     project: document.project,
     mode: document.mode,
@@ -1196,11 +1397,17 @@ export function buildLiveModel(
     },
     total: { ...document.total, notionalUsd: notionalReading(document.total.notionalUsd) },
     fleet: {
-      headroom: headroomOf(document.total.dailyCapUsd, document.total.countedUsd),
-      // The fleet's rate is the *total's* burn and not a repository's: the panel
-      // is the whole fleet's, and a rate summed from the rows would be the
-      // console's arithmetic rather than the CLI's measurement.
-      burn: burnReading(document.total.burn),
+      headroom,
+      burn,
+      // The gauge's three figures, all derived here rather than decoded: `rate`
+      // is that same measured burn in the gauge's unit, `redZone` is the day's
+      // own threshold for it (`redZoneOf`), and `concurrent` is the active count
+      // above against the cap the document carries -- `total.maxParallel`, a key
+      // a CLI older than the release that added it does not write at all, which
+      // is why the share is `unavailable` there rather than a cap of none.
+      rate: perHourOf(burn),
+      redZone: redZoneOf(headroom, document.now),
+      concurrent: concurrentOf(active, document.total.maxParallel),
       active,
       queued,
       heartbeatLost,
@@ -1211,6 +1418,48 @@ export function buildLiveModel(
     reviewCount: review.length,
     queuedNote: document.queuedNote,
     feed,
+  }
+}
+
+/**
+ * LIVE_CAPS_HIDDEN_WORD is what a withheld cap figure says, and it is the
+ * sentence the Coordinator's queue draws for the same withholding
+ * (`COORDINATOR_QUEUE_CAPS_HIDDEN_WORD`): `caps` is one view of
+ * `REDUCED_VIEWS`, and one mode withholding it in two places under two
+ * different sentences would read as two different modes. It is a second copy
+ * rather than an import because the screens are siblings and none owns the
+ * others (the same reason `LIVE_PR_NO_LINK_REASON` is a copy of `run.ts`'s),
+ * and `live.test.ts` holds the two constants equal so they cannot drift.
+ */
+export const LIVE_CAPS_HIDDEN_WORD = 'the caps are withheld for the installation this console is driving'
+
+/**
+ * capsWithheld is the Live model with the cap figures taken out (design section
+ * 5.1 rule 4 and C10; `REDUCED_VIEWS`, which is `hidesView`).
+ *
+ * **What the `caps` view covers, and what it does not.** The gauge and its red
+ * zone, the concurrent-run bar and the cap that bar is a share of: those are the
+ * figures a CLI the console cannot vouch for might mean something else by, and
+ * each becomes an `unavailable` carrying `LIVE_CAPS_HIDDEN_WORD`, drawn `n/a`
+ * with the reason on its `title` rather than as a shape nobody can read.
+ *
+ * The money of the totals block -- `countedUsd`, `dailyCapUsd`, a repository's
+ * own cap -- is **not** here. Those keys have been read since the first release
+ * and withholding them is the `spend` view's question, which is a product
+ * decision and not something to fold into a cap-bar task.
+ *
+ * It is a **value rather than a flag threaded through the drawing**, exactly as
+ * `killWithheld` is (`entry.ts`): the gauge draws its figures from the model, so
+ * a model whose figures are already unavailable cannot draw a rate however the
+ * gauge is written later. `renderLive` takes that value as its fourth argument,
+ * and the gate is asked by the caller.
+ */
+export function capsWithheld(model: LiveModel): LiveModel {
+  const hidden = unavailable(LIVE_CAPS_HIDDEN_WORD)
+  return {
+    ...model,
+    total: { ...model.total, maxParallel: hidden },
+    fleet: { ...model.fleet, rate: hidden, redZone: hidden, concurrent: hidden },
   }
 }
 
@@ -1368,9 +1617,17 @@ function killBanner(factory: ScreenFactory, kill: KillView): ScreenElement {
   return element
 }
 
-/** spark draws the burn window's bars. */
-function spark(factory: ScreenFactory, line: Sparkline): ScreenElement {
-  const element = make(factory, 'ol', 'live-burn')
+/**
+ * spark draws one history's bars. **It is drawn twice per repository, and it is
+ * the same function both times** (D737): the five-minute `BurnHistory` beside the
+ * console's own `HourHistory`. Two copies of this function would be two places
+ * the empty-line branch, the `data-height` reading and the gap's `title` could
+ * drift apart, and the two lines are meant to be read as one instrument at two
+ * scales. `window` picks the class hooks alone -- the axis, the sample count and
+ * the gap's sentence are the history's, not the window's.
+ */
+function spark(factory: ScreenFactory, line: Sparkline, window: 'burn' | 'hour'): ScreenElement {
+  const element = make(factory, 'ol', window === 'burn' ? 'live-burn' : 'live-hour')
   element.setAttribute('data-segments', String(line.segments))
   if (line.bars.length === 0) {
     // No sample at all is not an empty chart: it is the console saying it has
@@ -1378,14 +1635,14 @@ function spark(factory: ScreenFactory, line: Sparkline): ScreenElement {
     // availability.ts maps that to a gap (an em dash), so the mark, the state
     // and the title all come from one gap reading rather than from three
     // separate choices.
-    const empty = cell(element, factory, 'li', 'live-burn-bar', 'live-num')
+    const empty = cell(element, factory, 'li', window === 'burn' ? 'live-burn-bar' : 'live-hour-bar', 'live-num')
     const none = gap('no document has been seen for this repository yet')
     putReading(empty, none, 'percent')
     empty.setAttribute('data-state', none.state)
     return element
   }
   for (const point of line.bars) {
-    const drawn = cell(element, factory, 'li', 'live-burn-bar', 'live-num')
+    const drawn = cell(element, factory, 'li', window === 'burn' ? 'live-burn-bar' : 'live-hour-bar', 'live-num')
     putReading(drawn, point.height, 'percent')
     drawn.setAttribute('data-height', formatReading(point.height, 'percent'))
     drawn.setAttribute('data-state', point.height.state)
@@ -1876,7 +2133,12 @@ function repoBlock(factory: ScreenFactory, repo: LiveRepoRow): ScreenElement {
 
   const meters = cell(element, factory, 'div', 'live-repo-meters')
   bar(meters, factory, repo.percent, 'live-repo-percent')
-  meters.append(spark(factory, repo.spark))
+  meters.append(spark(factory, repo.spark, 'burn'))
+  // The hour line follows the five-minute one, and the pair is the reason the
+  // meters row is a wrapping row rather than a fixed one: they are read
+  // together (is this repository busy now, and has it been busy all hour) and
+  // each keeps its own axis, so neither is drawn as a share of the other.
+  meters.append(spark(factory, repo.hour, 'hour'))
 
   if (repo.kill !== null) element.append(killBanner(factory, repo.kill))
   const runs = cell(element, factory, 'div', 'live-runs')
@@ -2055,6 +2317,35 @@ const FLEET_WAITING_WORD = 'waiting for a lease'
  * rather than looking, and the word is what carries the state (design section
  * 6.1 rule 3, "never colour alone"). */
 const FLEET_WARN_ICON = '⚠'
+
+/** FLEET_GAUGE_WORD, FLEET_GAUGE_UNIT and FLEET_GAUGE_NOTE are the spend-rate
+ * gauge's own words: its caption, the unit its figure is in, and the sentence
+ * that says what the red zone means.
+ *
+ * **The sentence is drawn, not a tooltip.** The red zone is a threshold nobody
+ * typed -- it is the day's remaining headroom over the hours left (`redZoneOf`)
+ * -- so a person meeting the gauge for the first time has to be told what it
+ * is, and the goldens are evidence that cannot be hovered. */
+const FLEET_GAUGE_WORD = 'SPEND RATE'
+const FLEET_GAUGE_UNIT = '/h'
+const FLEET_GAUGE_NOTE = 'the red zone starts at the rate that uses up what is left of today’s cap before the UTC day ends'
+
+/** FLEET_SPEND_CAP_WORD and FLEET_RUNS_CAP_WORD are the two cap bars' captions:
+ * the day's spend against the day's cap, and the active runs against the
+ * installation's concurrent-run cap (`total.maxParallel`). */
+const FLEET_SPEND_CAP_WORD = 'SPEND OF CAP'
+const FLEET_RUNS_CAP_WORD = 'RUNS OF CAP'
+
+/** FLEET_GAUGE_LENGTH, FLEET_GAUGE_THICKNESS and FLEET_GAUGE_BOX are the
+ * gauge's geometry, the way `FLEET_BAR_LENGTH` and its neighbours are the cap
+ * bar's. It is the same 100-unit axis (`axis`) so that a share drawn on one is
+ * the same fraction of the width as a share drawn on the other, and the needle
+ * is one unit of it wide -- a mark a person can see on any width the panel is
+ * drawn at, and not a hairline a fractional-pixel layout can swallow. */
+const FLEET_GAUGE_LENGTH = '100'
+const FLEET_GAUGE_THICKNESS = '12'
+const FLEET_GAUGE_BOX = `0 0 ${FLEET_GAUGE_LENGTH} ${FLEET_GAUGE_THICKNESS}`
+const FLEET_GAUGE_NEEDLE_WIDTH = '1'
 
 /** FleetAccount is one money account of the panel: the word it is called by, the
  * reading behind it, and whether the bar draws a shape for it. */
@@ -2289,6 +2580,110 @@ function fleetFullBanner(factory: ScreenFactory): ScreenElement {
   return element
 }
 
+/** GaugeShares is the gauge's track filled in: where the red zone starts and how
+ * wide it is, and where the needle stands -- all three as shares of the 100-unit
+ * axis, or `null` for a mark that is not drawn at all. */
+interface GaugeShares {
+  readonly zoneFrom: number | null
+  readonly zoneWidth: number
+  readonly needle: number | null
+}
+
+/**
+ * gaugeShares is the one choice the gauge has to make that the readings do not:
+ * the scale.
+ *
+ * **The axis is twice the red-zone rate, so the red zone is the right half of
+ * the track whenever there is a zone at all.** A scale that followed the current
+ * rate would slide the threshold under the needle as the rate changed -- a gauge
+ * whose threshold moves with its reading is a gauge nothing can be read against
+ * -- and a scale pinned to the day's cap in dollars would leave the zone a
+ * sliver on a quiet morning and off the end of the track by night. Twice the
+ * red-zone rate puts the two figures a person compares at one scale, with the
+ * needle in the left half exactly when the current rate finishes the day inside
+ * the cap.
+ *
+ * A red zone of **zero is a red zone and not a missing one**: it is what a spent
+ * -out cap gives (`headroomOf` floors at zero, and no rate can outlast a day
+ * with no headroom in it), so the whole track is red and the needle stands at
+ * the right-hand end. A red zone the console cannot read draws no zone and no
+ * needle, which is `unavailable`'s statement everywhere else on this tree: not a
+ * zone of none. A rate it cannot read leaves the zone where it is and draws no
+ * needle, because the threshold is still a fact about the day.
+ */
+function gaugeShares(rate: number | null, zone: number | null): GaugeShares {
+  if (zone === null) return { zoneFrom: null, zoneWidth: 0, needle: null }
+  const from = zone > 0 ? 0.5 : 0
+  const width = 1 - from
+  if (rate === null) return { zoneFrom: from, zoneWidth: width, needle: null }
+  // The needle is one unit wide, so the rightmost position it can take is one
+  // unit inside the track: a needle at 100 starts at the track's edge and is
+  // clipped by the `viewBox` to nothing, which would draw "past the red zone"
+  // as no needle at all.
+  if (zone <= 0) return { zoneFrom: from, zoneWidth: width, needle: 0.99 }
+  return { zoneFrom: from, zoneWidth: width, needle: Math.min(0.99, Math.max(0, rate / (zone * 2))) }
+}
+
+/**
+ * gauge draws the fleet's spend rate in dollars per hour, against the red zone
+ * the day gives it (`redZoneOf`).
+ *
+ * **A gauge and not a bar**, which is why it is the one shape on this panel
+ * built here rather than through `bar()`: the other bars fill from the left
+ * towards a cap, and this one answers a different question -- where the current
+ * rate stands against the rate that would use the day up. It is an `svg` for the
+ * same reason `fleetBar` is: the zone and the needle are two positions on one
+ * scale, and the scale has to be shared between them.
+ *
+ * The figure and the sentence are text (a person reads "SPEND RATE $4.20/h" and
+ * the sentence below says what the red zone is); the shapes are hidden from a
+ * reader who is listening, exactly as the cap bar's segments are.
+ */
+function gauge(factory: LiveFactory, model: LiveModel): ScreenElement {
+  const element = make(factory, 'div', 'live-gauge')
+
+  const head = cell(element, factory, 'div', 'live-gauge-head')
+  literal(cell(head, factory, 'span', 'live-fleet-stat-label'), FLEET_GAUGE_WORD)
+  const rate = numberCell(head, factory, 'span', model.fleet.rate, 'usd', 'live-gauge-rate')
+  literal(cell(rate, factory, 'span', 'live-gauge-unit'), FLEET_GAUGE_UNIT)
+
+  const shares = gaugeShares(model.fleet.rate.value, model.fleet.redZone.value)
+  const plot = makeNS(factory, 'svg', 'live-gauge-bar')
+  plot.setAttribute('viewBox', FLEET_GAUGE_BOX)
+  plot.setAttribute('height', FLEET_GAUGE_THICKNESS)
+  plot.setAttribute('aria-hidden', 'true')
+
+  const track = makeNS(factory, 'rect', 'live-gauge-track')
+  track.setAttribute('x', '0')
+  track.setAttribute('y', '0')
+  track.setAttribute('width', FLEET_GAUGE_LENGTH)
+  track.setAttribute('height', FLEET_GAUGE_THICKNESS)
+  track.setAttribute('rx', '3')
+  plot.append(track)
+
+  if (shares.zoneFrom !== null) {
+    const zone = makeNS(factory, 'rect', 'live-gauge-zone')
+    zone.setAttribute('x', axis(shares.zoneFrom))
+    zone.setAttribute('y', '0')
+    zone.setAttribute('width', axis(shares.zoneWidth))
+    zone.setAttribute('height', FLEET_GAUGE_THICKNESS)
+    plot.append(zone)
+  }
+
+  if (shares.needle !== null) {
+    const needle = makeNS(factory, 'rect', 'live-gauge-needle')
+    needle.setAttribute('x', axis(shares.needle))
+    needle.setAttribute('y', '0')
+    needle.setAttribute('width', FLEET_GAUGE_NEEDLE_WIDTH)
+    needle.setAttribute('height', FLEET_GAUGE_THICKNESS)
+    plot.append(needle)
+  }
+
+  element.append(plot)
+  literal(cell(element, factory, 'p', 'live-gauge-note'), FLEET_GAUGE_NOTE)
+  return element
+}
+
 /**
  * total draws the fleet budget panel: the redesign's total block.
  *
@@ -2325,6 +2720,33 @@ function total(factory: LiveFactory, model: LiveModel): ScreenElement {
   numberCell(counted, factory, 'span', model.total.countedUsd, 'usd', 'live-counted')
   literal(cell(counted, factory, 'span', 'live-fleet-sep'), '·')
   numberCell(counted, factory, 'span', model.total.percent, 'percent', 'live-percent')
+
+  // The two cap bars, side by side: how much of the day's money cap is spent,
+  // and how much of the installation's concurrent-run cap is taken. Each is a
+  // share of its own cap and neither is a share of the other, which is why
+  // they are drawn as two bars of the same width rather than as one bar with a
+  // second segment.
+  //
+  // The runs bar carries the cap itself beside its caption: `max_parallel` is a
+  // count a document from an older CLI does not carry at all, and a share with
+  // no cap behind it would answer "how full" with no "of what" -- the bar is
+  // `n/a` in that case, and so is this figure, each with the reason the decoder
+  // gave it (`concurrentOf`).
+  const caps = cell(wide, factory, 'div', 'live-fleet-caps')
+
+  const spendCap = cell(caps, factory, 'div', 'live-fleet-cap-bar')
+  const spendHead = cell(spendCap, factory, 'div', 'live-fleet-cap-head')
+  literal(cell(spendHead, factory, 'span', 'live-fleet-cap-word'), FLEET_SPEND_CAP_WORD)
+  bar(spendCap, factory, model.total.percent, 'live-fleet-spend-cap')
+
+  const runsCap = cell(caps, factory, 'div', 'live-fleet-cap-bar')
+  const runsHead = cell(runsCap, factory, 'div', 'live-fleet-cap-head')
+  literal(cell(runsHead, factory, 'span', 'live-fleet-cap-word'), FLEET_RUNS_CAP_WORD)
+  numberCell(runsHead, factory, 'span', model.total.maxParallel, 'count', 'live-fleet-cap-limit')
+  bar(runsCap, factory, model.fleet.concurrent, 'live-fleet-runs-cap')
+
+  wide.append(caps)
+  wide.append(gauge(factory, model))
 
   if (model.fleet.headroom.value === 0) wide.append(fleetFullBanner(factory))
   if (model.total.kill !== null) wide.append(killBanner(factory, model.total.kill))
@@ -2495,36 +2917,44 @@ function reviewRow(factory: ScreenFactory, row: LiveReviewRow, ending: string): 
  * markup, and nothing is ever written into the navigating attribute --
  * `live.test.ts` scans this directory for the first and hands the screen a fake
  * element whose navigating attribute throws for the second.
+ *
+ * `withheld` is the `caps` answer from `hidesView`, which the caller asks and
+ * this screen does not (`capsWithheld`): the caps are one of `REDUCED_VIEWS`,
+ * and a screen that asked the gate itself would be a second place the question
+ * is answered -- the same reason the kill banner arrives as a model that carries
+ * none. It defaults to `false`, so every drawing that has no gate in front of it
+ * -- a test, a golden -- draws the caps.
  */
-export function renderLive(factory: LiveFactory, model: LiveModel, theme: LiveTheme): ScreenElement {
+export function renderLive(factory: LiveFactory, model: LiveModel, theme: LiveTheme, withheld = false): ScreenElement {
+  const drawn = withheld ? capsWithheld(model) : model
   const root = make(factory, 'section', 'live')
   root.setAttribute('data-theme', theme)
   // The arrival stamp of the frame the values came from, on the root as well as
   // in the header's own line: a test (and a later screen) reads the timestamp of
   // what it is looking at without walking the tree, and an empty value is a
   // caller that keeps no feed reading at all.
-  root.setAttribute('data-received-at', model.feed === null ? '' : (model.feed.since ?? ''))
-  root.append(header(factory, model))
-  root.append(total(factory, model))
+  root.setAttribute('data-received-at', drawn.feed === null ? '' : (drawn.feed.since ?? ''))
+  root.append(header(factory, drawn))
+  root.append(total(factory, drawn))
 
   // A `div` and not an `ol`: each child is a `section`, and a list whose items
   // are not list items is markup that says one thing and means another.
   const repos = cell(root, factory, 'div', 'live-repos')
-  for (const repo of model.repos) repos.append(repoBlock(factory, repo))
+  for (const repo of drawn.repos) repos.append(repoBlock(factory, repo))
 
-  if (model.orphans.length > 0) {
+  if (drawn.orphans.length > 0) {
     // A run the console cannot place under a repository is still a run that is
     // spending, so it is drawn -- in the same table, with no panel around it,
     // which is exactly the fact: nothing in this document says which project it
     // belongs to.
     const orphans = cell(root, factory, 'div', 'live-orphans')
-    orphans.append(runTable(factory, model.orphans))
+    orphans.append(runTable(factory, drawn.orphans))
   }
 
   // The review inbox is last: the screen answers "what is spending now" first,
   // and what is waiting for the operator after it (design section 6.1 rule 6,
   // "one glance answers what is responsible"). It is drawn whether or not it
   // has a row -- see `reviewSection`.
-  root.append(reviewSection(factory, model))
+  root.append(reviewSection(factory, drawn))
   return root
 }

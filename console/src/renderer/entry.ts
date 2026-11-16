@@ -103,7 +103,7 @@ import type {
   RunsSummaryView,
 } from '../shared/schema'
 import { sanitizeRefusal } from '../shared/sanitize'
-import { LIVE_STALE_AFTER_SECONDS, BurnHistory, buildLiveModel, renderLive } from './screens/live'
+import { LIVE_STALE_AFTER_SECONDS, BurnHistory, HourHistory, buildLiveModel, renderLive } from './screens/live'
 import type { FeedHealth, LiveModel } from './screens/live'
 import {
   SPEND_DEFAULT_CONTROLS,
@@ -3115,10 +3115,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   const factory = surface.factory
   const theme = CONSOLE_THEME
 
-  // The Live screen's own state, kept across polls: the burn window accumulates
-  // samples, so it must outlive a drawing. A fresh one per poll would be a
-  // one-bar sparkline forever.
+  // The Live screen's own state, kept across polls: the two windows accumulate
+  // samples, so they must outlive a drawing. A fresh pair per poll would be a
+  // one-bar sparkline forever, and the hour line would never be longer than the
+  // five-minute one.
   let history = new BurnHistory()
+  let hourHistory = new HourHistory()
   const live: {
     drawn: Drawn | null
     inFlight: boolean
@@ -3592,7 +3594,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     // which is the second of the two conditions the design gives `silent`
     // (section 4.1). A read that was refused sets it above.
     rail.setState(feed.stale ? 'silent' : 'running')
-    const model = buildLiveModel(decoded.value, history, feed, live.rigor)
+    const model = buildLiveModel(decoded.value, history, feed, live.rigor, hourHistory)
     setGauge({ notionalUsd: model.total.notionalUsd, countedUsd: model.total.countedUsd, capUsd: model.total.dailyCapUsd })
     // The kill banner is the `kill` view. It is asked for through the gate --
     // the one door -- with an empty drawing, because what a reduced console
@@ -3600,7 +3602,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     // answer decides whether the model the screen is handed carries the kill
     // state at all.
     const mayDrawKill = gate.drawScreen('kill', () => undefined) === 'drawn'
-    const drawn = renderLive(factory, mayDrawKill ? model : killWithheld(model), theme)
+    // The caps are the second view this screen withholds (`caps` beside `kill`
+    // above), and the answer travels the same way the kill banner's does: as a
+    // model the screen is handed, so a figure the gate withheld is one the
+    // gauge cannot draw back later.
+    const drawn = renderLive(factory, mayDrawKill ? model : killWithheld(model), theme, hidesView(gate.compatibility, 'caps'))
     live.drawn = drawn
     replace(drawn)
     wireRuns(drawn, model)
@@ -8685,6 +8691,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     live.rigor = new Map()
     live.rigorAt = 0
     history = new BurnHistory()
+    hourHistory = new HourHistory()
     // Spend's two documents and the views read from them are this
     // installation's: the caps are its budget, and a cached view carries its
     // figures. The next installation is read afresh rather than drawn from
