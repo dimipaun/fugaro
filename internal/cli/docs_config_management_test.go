@@ -241,8 +241,15 @@ const (
 // (D2613), so the generic path carries none of them: the fallback is a word
 // whose second answer spends the project's money, and a removal is a name held
 // to the rule of the block it names.
+//
+// SA4.1 of docs/spend-accuracy/ is the last mover, by six rows and by none: a
+// model price gains the three cache prices in dollars per million and the three
+// keys that name the multiplier beside the old cache_read, cache_write_5m and
+// cache_write_1h (D2646, R4). All six name the `models` family, which is where
+// `fugaro models price set` writes an entry's prices (D2613), so the generic
+// path carries none of them.
 const (
-	cfmRegistryRows   = 472
+	cfmRegistryRows   = 478
 	cfmAllowlistNamed = 118
 )
 
