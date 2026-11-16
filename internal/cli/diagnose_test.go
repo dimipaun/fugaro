@@ -1394,6 +1394,160 @@ func TestDiagnoseReportedComparesTheProviderRouteOnly(t *testing.T) {
 	}
 }
 
+// TestDiagnoseReportAgainstBand: a record that carries the table's band is
+// read against the band and not against the charge (D2650, F16). The human
+// line says what the run settled, how many of its calls the report covers and
+// the band; the JSON carries the record's three fields; and a report more than
+// reportedGapPct outside either end warns in band_warning -- the field the
+// console does not render yet, which is why reported_warning is empty for such
+// a record rather than left carrying a comparison it no longer makes.
+func TestDiagnoseReportAgainstBand(t *testing.T) {
+	f := newCloudFixture(t)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	for i, tc := range []struct {
+		reported   float64
+		lo, hi     float64
+		unreported int
+		warn       string // "" inside the band, else "above" or "below"
+	}{
+		{0.42, 0.30, 0.45, 2, ""},
+		{0.55, 0.30, 0.45, 2, "above"},
+		{0.20, 0.30, 0.45, 2, "below"},
+		{0.45, 0.30, 0.45, 0, ""}, // the dearest end itself, and every call reported
+	} {
+		id := fmt.Sprintf("20260927-17000%d-aaaa", i)
+		exec := seedRun(t, f, id, "", "someone@example.com", true)
+		cost := runstore.NewCost(0.42, 0, runstore.BasisAPIList)
+		cost.ModelBy = map[string]float64{"deepseek/deepseek-v4-flash": 0.42}
+		cost.RouteBy = map[string]float64{"openrouter": 0.42}
+		cost.ReportedUSD, cost.TableLoUSD, cost.TableHiUSD, cost.UnreportedCalls =
+			tc.reported, tc.lo, tc.hi, tc.unreported
+		calls := 5
+		if err := runstore.Open(b, appSlug, id).WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+			Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady, CostUSD: 0.42, Cost: &cost,
+			Stages: []runstore.StageTiming{{Name: "implement", Calls: &calls}}}); err != nil {
+			t.Fatal(err)
+		}
+		human, _, err := execute(t, "diagnose", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := fmt.Sprintf("Settled:  $0.4200 (reported on %d of %d calls); table band $%.4f-$%.4f",
+			5-tc.unreported, 5, tc.lo, tc.hi)
+		if !strings.Contains(human, want) {
+			t.Fatalf("reported %v: diagnose lacks %q:\n%s", tc.reported, want, human)
+		}
+		if strings.Contains(human, "Reported:") {
+			t.Fatalf("reported %v: a record with the band printed the charge comparison:\n%s", tc.reported, human)
+		}
+		js, _, err := execute(t, "diagnose", "--json", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var d Diagnosis
+		if err := json.Unmarshal([]byte(js), &d); err != nil {
+			t.Fatal(err)
+		}
+		if d.TableLoUSD != tc.lo || d.TableHiUSD != tc.hi || d.UnreportedCalls != tc.unreported {
+			t.Fatalf("reported %v: band %v-%v unreported %d, want %v-%v %d",
+				tc.reported, d.TableLoUSD, d.TableHiUSD, d.UnreportedCalls, tc.lo, tc.hi, tc.unreported)
+		}
+		if d.ReportedWarning != "" {
+			t.Errorf("reported %v: reported_warning = %q, want empty for a record with a band", tc.reported, d.ReportedWarning)
+		}
+		if tc.warn == "" && d.BandWarning != "" {
+			t.Errorf("reported %v: band_warning = %q, want none inside the band", tc.reported, d.BandWarning)
+		}
+		if tc.warn != "" {
+			if d.BandWarning == "" {
+				t.Fatalf("reported %v: no band_warning, want one %s the band", tc.reported, tc.warn)
+			}
+			if !strings.Contains(d.BandWarning, tc.warn) {
+				t.Errorf("reported %v: band_warning %q does not say %q", tc.reported, d.BandWarning, tc.warn)
+			}
+			if !strings.Contains(human, "Warning:  "+oneLine(d.BandWarning)) {
+				t.Errorf("reported %v: the warning is not in the human output:\n%s", tc.reported, human)
+			}
+		}
+	}
+}
+
+// TestReportedCallsReadsTheRunsOwnCounts: the coverage the Settled line prints
+// comes from the record's own figures -- the gateway's per-stage call counts
+// and cost.unreported_calls -- and never from a count diagnose would have to
+// guess. A record whose unreported count sits above the stages' sum is a run
+// whose calls settled after their stage's report was taken, and the larger of
+// the two is what it settled.
+func TestReportedCallsReadsTheRunsOwnCounts(t *testing.T) {
+	calls, none := 5, 0
+	stages := []runstore.StageTiming{{Name: "implement", Calls: &calls}, {Name: "review"}, {Name: "fix", Calls: &none}}
+	for _, tc := range []struct{ unreported, reported, settled int }{
+		{0, 5, 5},
+		{2, 3, 5},
+		{5, 0, 5},
+		{7, 0, 7},
+	} {
+		reported, settled := reportedCalls(stages, tc.unreported)
+		if reported != tc.reported || settled != tc.settled {
+			t.Errorf("unreported %d: reported on %d of %d, want %d of %d",
+				tc.unreported, reported, settled, tc.reported, tc.settled)
+		}
+	}
+}
+
+// TestDiagnoseOldRecordUnchanged: a record written before the band existed
+// keeps the comparison and the line it always had -- the report against the
+// charge without the route fee, and no band in either output.
+func TestDiagnoseOldRecordUnchanged(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-180000-aaaa"
+	exec := seedRun(t, f, id, "", "someone@example.com", true)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	cost := runstore.NewCost(0.60, 0, runstore.BasisAPIList)
+	cost.ModelBy = map[string]float64{"deepseek/deepseek-v4-flash": 0.30, "unattributed": 0.30}
+	cost.RouteBy = map[string]float64{"openrouter": 0.30, "unattributed": 0.30}
+	cost.ReportedUSD = 0.40
+	if err := runstore.Open(b, appSlug, id).WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+		Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady, CostUSD: 0.60, Cost: &cost}); err != nil {
+		t.Fatal(err)
+	}
+	human, _, err := execute(t, "diagnose", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Reported: providers said $0.4000; charged $0.3000 (the table price settles; an unpriced tier's charge is floored by the report, clamped to the call's reservation)"
+	if !strings.Contains(human, want) {
+		t.Fatalf("diagnose lacks %q:\n%s", want, human)
+	}
+	if strings.Contains(human, "Settled:") || strings.Contains(human, "table band") {
+		t.Fatalf("a record with no band printed one:\n%s", human)
+	}
+	js, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(js), &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"table_lo_usd", "table_hi_usd", "unreported_calls", "band_warning"} {
+		if _, ok := doc[key]; ok {
+			t.Errorf("a record with no band carries %q:\n%s", key, js)
+		}
+	}
+	var d Diagnosis
+	if err := json.Unmarshal([]byte(js), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Reported != 0.40 || d.Charge != 0.30 || d.ReportedWarning == "" {
+		t.Fatalf("reported %v charge %v warning %q", d.Reported, d.Charge, d.ReportedWarning)
+	}
+}
+
 // With first-line entries in Reviews, the findings come from the transcript
 // of the last senior round, not review-<len(Reviews)>.
 func TestDiagnoseFindingsFromSeniorRound(t *testing.T) {
@@ -1458,7 +1612,10 @@ func TestRouteOfComparesWithoutTheRouteFee(t *testing.T) {
 // TestDiagnoseReportedWarningNamesPricePolicy: on a catalog-priced route a
 // reported cost above the charge is as likely to be OpenRouter serving a
 // dearer endpoint as a wrong model_prices, so the warning names both ways
-// out (design §7, D12, Task 5 step 4).
+// out (design §7, D12, Task 5 step 4). A record that carries the band warns
+// the same way in band_warning, whose two directions name the same two
+// answers -- the band's dearest end for a report above it, and a price too
+// high for a report below the cheapest one (D2650).
 func TestDiagnoseReportedWarningNamesPricePolicy(t *testing.T) {
 	cost := runstore.NewCost(0.42, 0, runstore.BasisAPIList)
 	cost.RouteBy = map[string]float64{"openrouter": 0.30}
@@ -1477,6 +1634,36 @@ func TestDiagnoseReportedWarningNamesPricePolicy(t *testing.T) {
 	routeOf(&d, rec, nil, func(s string) string { return s })
 	if d.ReportedWarning != "" {
 		t.Errorf("a report inside the margin warned: %q", d.ReportedWarning)
+	}
+
+	// The same record with the table's band: the charge is no longer the
+	// comparison, so the warning is the band's and reported_warning is empty.
+	cost.ReportedUSD, cost.TableLoUSD, cost.TableHiUSD = 0.40, 0.30, 0.35
+	d = Diagnosis{}
+	routeOf(&d, rec, nil, func(s string) string { return s })
+	for _, want := range []string{"model_prices", "price_policy: highest", "reported", "above"} {
+		if !strings.Contains(d.BandWarning, want) {
+			t.Errorf("the band warning lacks %q: %q", want, d.BandWarning)
+		}
+	}
+	if d.ReportedWarning != "" {
+		t.Errorf("a record with a band kept the charge comparison: %q", d.ReportedWarning)
+	}
+	cost.ReportedUSD = 0.20
+	d = Diagnosis{}
+	routeOf(&d, rec, nil, func(s string) string { return s })
+	for _, want := range []string{"model_prices", "below"} {
+		if !strings.Contains(d.BandWarning, want) {
+			t.Errorf("the below-band warning lacks %q: %q", want, d.BandWarning)
+		}
+	}
+	// Inside the band -- between the cheapest end and the dearest, with the
+	// 10% margin either side -- nothing warns at all.
+	cost.ReportedUSD = 0.32
+	d = Diagnosis{}
+	routeOf(&d, rec, nil, func(s string) string { return s })
+	if d.BandWarning != "" || d.ReportedWarning != "" {
+		t.Errorf("a report inside the band warned: %q / %q", d.BandWarning, d.ReportedWarning)
 	}
 }
 
