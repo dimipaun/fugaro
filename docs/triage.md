@@ -85,6 +85,27 @@ every finding the mode's table blocks; that round's row in the same table reads
 lists every round with its placements counted by source, and the failed ones
 flagged above the rest with their cause.
 
+A round the run **does not ask at all** is *skipped*, and it is not a failed one.
+The stage's account can resolve to none — `triage` is a stage-scoped Claude
+account the published policy has to name, and a policy that names none for it
+leaves the stage with nothing to run on ([mixed
+credentials](design/mixed-credentials.md)) — and when the model the stage would
+run is one only Anthropic serves while the run's gateway is the api-key one
+holding no Anthropic key, the call could only come back as an auth failure with
+no verdict behind it. So the run makes no call, records the round as **skipped**
+with the same one-line **`cause`** a failure carries (in `skipped`, never
+`failed`: nothing failed, the run chose not to ask, and a reader tells the two
+apart by which field is set), and fails safe exactly as a failure does: **every
+finding the table blocks blocks**, so no decision changes. It is shown in the
+same three places a failed round is, with the same wording the failures use: an
+`ERROR` log line naming the cause; the status section's line above the stage
+table (`triage did not run for round N: …`); that round's row reading
+`triage (skipped: no account)` rather than a duration, because no call ran;
+and `fugaro diagnose`'s round summaries and its per-round lines, marked
+`SKIPPED` with the cause. A record written before the field existed reads
+`skipped` false, which is right: those rounds made the doomed call and are
+failed ones.
+
 ## The floor
 
 Some findings are never the judge's to move, whatever the persona would do with
@@ -126,14 +147,15 @@ happens the change is not there.
 The run records every verdict, and the record has two blocks in `result.json`:
 
 - **`triage`** — one entry per round: the mode, the review level, the account and
-  model the call ran as, whether the call **failed** and, for a round that did,
-  the one-line **`cause`** saying why (`cause` is dropped for a round that did
-  not fail, so the two can never disagree), and one entry per finding
+  model the call ran as, whether the call **failed** or the run did not ask it at
+  all (**`skipped`**) and, for either, the one-line **`cause`** saying why
+  (`cause` is dropped for a round that neither failed nor was skipped, so the
+  fields can never disagree), and one entry per finding
   with its index, its key, the verdict, the one-line reason, the group key and
   the **source**. The source says who placed it: `agent` for the judge's own
   verdict, `table` for the ones the mode's table placed with no judge involved
   (tolerated, floor, a `needs_owner` finding), `fail_safe` for a round whose call
-  failed, and `cap` for a deferral a review cap made (below).
+  failed or was not made, and `cap` for a deferral a review cap made (below).
 - **`deferred`** — the findings a deferral **took effect** for, each with the key,
   the summary, the reason, the group it belongs to and its **source**: the judge's
   own deferrals (`agent`), the findings the mode's **table tolerates** (`table` —

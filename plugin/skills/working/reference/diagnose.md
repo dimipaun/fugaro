@@ -26,7 +26,7 @@ The JSON has:
 - `halt`: when halted, `reason`, `scope`, `at` and `detail`
 - `verify`, `failed` and `flaky`: the last test results, the failed and flaky tests
 - `findings`: the last review's findings
-- `triage`: the post-review triage's rounds: `round`, `mode`, `level`, `model`, `account`, `failed`, `cause` (why a failed call bought no verdict), `sources` (`agent`, `table`, `fail_safe`, `cap`) and `total`; a round with `failed: true` was not judged — the fail-safe blocked every finding the mode's table blocks, and the fix round after it worked on those
+- `triage`: the triage stage's rounds: `round`, `mode`, `level`, `model`, `account`, `failed`, `skipped`, `cause` (why it bought no verdict), `sources` (`agent`, `table`, `fail_safe`, `cap`) and `total`; a round with `failed` or `skipped` true was not judged — the fail-safe blocked every finding the mode's table blocks, and the fix round worked on those
 - `agent_message`: the agent's final message (clipped to 4 KiB)
 - `log_tail`: the newest 30 log lines
 - `draft_note`: a line about the run's draft pull request when it needs one; `row.stale_draft`, `row.draft_fallback` and `row.pr_status_at` say the same in fields
