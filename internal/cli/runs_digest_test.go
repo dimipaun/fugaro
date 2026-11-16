@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -1256,5 +1257,185 @@ func TestRunsDigestFileUnchangedWithResolved(t *testing.T) {
 	}
 	if got := digestIndex(t, dir); !bytes.Equal(got, index) {
 		t.Errorf("a fixed issue changed the index:\n%s", got)
+	}
+}
+
+// seedStoredReport writes one report into the fixture's runs bucket where the
+// project's reports job writes it: reports/<slug>/<YYYY>/<key>.md of the
+// repository the fixture's checkout resolves.
+func seedStoredReport(t *testing.T, f *cloudFixture, key, body string) {
+	t.Helper()
+	b := statsBucket(t, f)
+	store := digest.NewStore(b, appSlug)
+	if err := b.WriteAll(context.Background(), store.Object(key), []byte(body), nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestRunsDigestReadsAStoredReport: --stored prints the report the project's
+// reports job stored for this repository and that period, byte for byte the
+// file --dir writes for the same period (F2, D1440), and writes nothing at all
+// -- no report, no index, nothing in the checkout.
+func TestRunsDigestReadsAStoredReport(t *testing.T) {
+	digestCheckout(t)
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	digestClock(t, "2026-10-27")
+	seedDigestRun(t, f, "20261025-120000-abcd", time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC), "acme/app")
+	// The stored report is the very bytes a writer produces for the period, so
+	// the comparison below is the two writers' byte-identical rule.
+	if _, errOut, err := execute(t, "runs", "digest", "--period", "day", "--date", "2026-10-25", "--dir", dir); err != nil {
+		t.Fatalf("runs digest: %v (%s)", err, errOut)
+	}
+	body := digestReport(t, dir, "2026-10-25")
+	seedStoredReport(t, f, "2026-10-25", body)
+
+	out, errOut, err := execute(t, "runs", "digest", "--stored", "2026-10-25")
+	if err != nil {
+		t.Fatalf("runs digest --stored: %v (%s)", err, errOut)
+	}
+	if out != body {
+		t.Errorf("--stored printed:\n%s\nwant the stored object:\n%s", out, body)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The read writes nothing: the checkout is as the command found it.
+	if status := testutil.Git(t, wd, "status", "--porcelain"); status != "" {
+		t.Errorf("--stored wrote into the checkout: %q", status)
+	}
+}
+
+// TestRunsDigestStillWritesLocallyWithDir: the report still lands in the folder
+// --dir names, and only there. The person's path into their own checkout is a
+// feature of the command, not a fallback of a read.
+func TestRunsDigestStillWritesLocallyWithDir(t *testing.T) {
+	digestCheckout(t)
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	digestClock(t, "2026-10-27")
+	seedDigestRun(t, f, "20261025-120000-abcd", time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC), "acme/app")
+
+	out, errOut, err := execute(t, "runs", "digest", "--period", "day", "--date", "2026-10-25", "--dir", dir)
+	if err != nil {
+		t.Fatalf("runs digest --dir: %v (%s)", err, errOut)
+	}
+	if body := digestReport(t, dir, "2026-10-25"); !strings.Contains(body, "# Run digest: 2026-10-25") {
+		t.Errorf("the report is not in the folder --dir named:\n%s", body)
+	}
+	if index := digestIndex(t, dir); !bytes.Contains(index, []byte("2026/2026-10-25.md")) {
+		t.Errorf("the index is not in the folder --dir named:\n%s", index)
+	}
+	if !strings.Contains(out, filepath.Join(dir, "2026", "2026-10-25.md")) {
+		t.Errorf("the command does not say which report it wrote:\n%s", out)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(wd, digest.Dir)); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("--dir wrote into the checkout's own %s as well, which the flag does not name", digest.Dir)
+	}
+}
+
+// TestRunsDigestNeverCommits: the report is written into the working tree and
+// left there. Nothing is committed, staged or pushed (D964, E5) -- the commit
+// is the person's, or their own automation's, exactly as for any other file a
+// tool wrote.
+func TestRunsDigestNeverCommits(t *testing.T) {
+	digestCheckout(t)
+	f := newCloudFixture(t)
+	digestClock(t, "2026-10-27")
+	seedDigestRun(t, f, "20261025-120000-abcd", time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC), "acme/app")
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, wd, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "the checkout as the command found it")
+	head := testutil.Git(t, wd, "rev-parse", "HEAD")
+
+	out, errOut, err := execute(t, "runs", "digest", "--period", "day", "--date", "2026-10-25")
+	if err != nil {
+		t.Fatalf("runs digest: %v (%s)", err, errOut)
+	}
+	// The report really landed in the checkout, so the assertions below are
+	// about the commit and not about a command that wrote nothing.
+	if _, err := os.Stat(filepath.Join(wd, digest.Dir, "2026", "2026-10-25.md")); err != nil {
+		t.Fatalf("the command wrote no report into the checkout: %v", err)
+	}
+	if got := testutil.Git(t, wd, "rev-parse", "HEAD"); got != head {
+		t.Errorf("the command committed: HEAD moved from %s to %s", head, got)
+	}
+	if staged := testutil.Git(t, wd, "diff", "--cached", "--name-only"); staged != "" {
+		t.Errorf("the command staged %q", staged)
+	}
+	if status := testutil.Git(t, wd, "status", "--porcelain"); !strings.Contains(status, "?? ") || strings.Contains(status, "A ") || strings.Contains(status, "M ") {
+		t.Errorf("the checkout's status is %q, want the report it wrote untracked and nothing else", status)
+	}
+	if !strings.Contains(out, filepath.Join(digest.Dir, "2026", "2026-10-25.md")) {
+		t.Errorf("the command does not say which report it wrote:\n%s", out)
+	}
+}
+
+// TestRunsDigestRefusesFlagsBesideStored: --stored prints one stored report and
+// writes nothing, so a flag that selects a period, a folder, an output shape or
+// a draft has nothing to act on beside it. Each is refused by name rather than
+// silently ignored.
+func TestRunsDigestRefusesFlagsBesideStored(t *testing.T) {
+	digestCheckout(t)
+	newCloudFixture(t)
+	for _, f := range []struct{ name, arg string }{
+		{"period", "--period=day"},
+		{"date", "--date=2026-10-25"},
+		{"dir", "--dir=" + t.TempDir()},
+		{"stdout", "--stdout"},
+		{"json", "--json"},
+		{"submit-draft", "--submit-draft"},
+	} {
+		_, _, err := execute(t, "runs", "digest", "--stored", "2026-10-25", f.arg)
+		if err == nil || !strings.Contains(err.Error(), "--"+f.name) {
+			t.Errorf("runs digest --stored with %s = %v, want a refusal naming --%s", f.arg, err, f.name)
+		}
+	}
+	// --due is the command's other read, and it refuses --stored the same way
+	// rather than ignoring the flag it was handed.
+	if _, _, err := execute(t, "runs", "digest", "--due", "--stored", "2026-10-25"); err == nil || !strings.Contains(err.Error(), "--stored") {
+		t.Errorf("runs digest --due --stored = %v, want a refusal naming --stored", err)
+	}
+}
+
+// TestRunsDigestRefusesAStoredKeyThatIsNoPeriod: the flag carries the period
+// key itself, so a value that names no period of the layout is refused before
+// anything is read -- a key the layout cannot name addresses no object.
+func TestRunsDigestRefusesAStoredKeyThatIsNoPeriod(t *testing.T) {
+	digestCheckout(t)
+	newCloudFixture(t)
+	for _, key := range []string{"x", "last-week", "2026-13", "2027-W53"} {
+		_, _, err := execute(t, "runs", "digest", "--stored", key)
+		if err == nil || !strings.Contains(err.Error(), "use a period key") {
+			t.Errorf("runs digest --stored %s = %v, want a refusal naming the period keys", key, err)
+		}
+	}
+}
+
+// TestRunsDigestRefusesAnUnstoredPeriod: the read is of this repository's own
+// prefix and of the period named, and of nothing else (G2). Another
+// repository's stored report, and another period's, are not the report asked
+// for, and the command says so instead of printing an object nobody asked for.
+func TestRunsDigestRefusesAnUnstoredPeriod(t *testing.T) {
+	digestCheckout(t)
+	f := newCloudFixture(t)
+	digestClock(t, "2026-10-27")
+	b := statsBucket(t, f)
+	other := digest.NewStore(b, mustSlug("github", "acme/other"))
+	if err := b.WriteAll(context.Background(), other.Object("2026-10-25"), []byte("another repository's report"), nil); err != nil {
+		t.Fatal(err)
+	}
+	seedStoredReport(t, f, "2026-10-24", "the day before")
+
+	_, _, err := execute(t, "runs", "digest", "--stored", "2026-10-25")
+	if err == nil || !strings.Contains(err.Error(), "no report of 2026-10-25 is stored") {
+		t.Errorf("runs digest --stored 2026-10-25 = %v, want a refusal naming the period it found no report of", err)
 	}
 }

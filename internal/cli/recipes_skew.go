@@ -167,29 +167,39 @@ func policyTooNewFix(version int) string {
 // and price_policy (price-catalog plan Task 4, design D11): a runner before
 // it decodes FUGARO_MODEL_PROVIDERS with DisallowUnknownFields
 // (internal/runner/providers.go), so a job whose value carries either key
-// fails at bootstrap with an error naming a field nobody typed. Today it
-// names a release that does not exist yet, on purpose (see catalogShipped).
-// Once the release that ships them is tagged, this constant's job becomes
+// fails at bootstrap with an error naming a field nobody typed. It names
+// 0.7.5, a release that is built and tagged and whose runner reads both keys
+// (internal/runner/providers_test.go decodes them), so this constant's job is
 // the same as recipesSince's above: docs/release.md's ("Before you tag")
 // checklist verifies it equals the release that ships them.
 const catalogSince = "0.7.5"
 
-// catalogShipped is false until the release named by catalogSince is
-// actually tagged: no fugaro release reads a route's require_zdr or
-// price_policy yet, so no runner that can exist today can run a job whose
-// value carries either key. While it is false, catalogSwitchSkew refuses
-// fugaro update --repo outright when any provider that may receive the
-// repository's code sets one — before any cloud effect, since the job it
-// would deploy carries FUGARO_MODEL_PROVIDERS — rather than judging the
-// base image (no release, of any base image, would read the key, so
-// "upgrade your base image" would not fix anything).
+// catalogShipped is true: the release named by catalogSince exists and reads
+// a route's require_zdr and price_policy, so a job whose
+// FUGARO_MODEL_PROVIDERS value carries either key can be run by a runner that
+// was built from it. It was flipped after 0.7.5 was tagged rather than in that
+// release, which is why docs/release.md's checklist line for catalogSince is
+// the one that records it had been left false — and why the two things the
+// flip makes inert are stated here rather than in that release's notes:
+//   - catalogSwitchSkew's unshipped branch (the "no fugaro release reads those
+//     route keys yet" refusal) no longer fires. A route that sets either key
+//     is judged by the installation's base image the way checkCloneImageSince
+//     judges a checkout: an image older than catalogSince is refused, naming
+//     the release and `fugaro update --base base`, a ref with no release tag
+//     (a dev build, a hand-pushed image, an --image-source mirror) is only
+//     warned about, and an installation with no base image at all passes
+//     because infra.Repo then builds the job from this release's own image;
+//   - the key really is deployable end to end: fugaro update --repo and
+//     fugaro setup --repo carry the value into the job's FUGARO_MODEL_PROVIDERS.
 //
-// Flip this to true in the same commit that bumps catalogSince to the
-// release that ships them: that one edit turns the refusal back into the
-// ordinary base-image age check (the installation's base image predating
-// catalogSince), the same shape as checkCloneImageSince's; update
-// docs/release.md's checklist line for catalogSince in that commit too.
-const catalogShipped = false
+// Both stay in the tree, behind this constant, for the same reason every other
+// shipped flag here keeps its gate: the flip is one boolean, and a test that
+// pins the shipped behavior (TestRefuseCatalogSwitches, TestGateCatalogSwitches,
+// TestInitRepoDeploysCatalogSwitches) fails the moment it is flipped back.
+// Nothing here should ever flip it back: 0.7.5 ships a runner that reads both
+// keys, and a later release that had to un-ship them would be a different
+// decision, made in its own PR.
+const catalogShipped = true
 
 // imageCatalogSince names the release that publishes — and reads — the
 // project policy node's image_catalog key (D1140, D1156): the release whose
@@ -997,6 +1007,31 @@ const contextReposSubject = "read-only context repositories (--context, kept by 
 // contextReposAlt is the gate's other cure: the launch can name none, where
 // the image cannot be brought forward.
 const contextReposAlt = "; or drop --context, which needs a job image whose runner reads the field before it can carry one"
+
+// changeSetSince is the release whose runner reads a task's change set
+// (task.Spec.ChangeSet, fugaro run --change-set, plan task D1). task.Parse
+// decodes with DisallowUnknownFields, so a runner older than this refuses the
+// whole task at bootstrap: the member run would die over a field it cannot
+// read, which is why the launch is gated here rather than started on such a
+// job.
+//
+// It gates the field and never the flag, exactly as contextReposSince does: a
+// launch that is in no change set writes none (the field is omitempty, so the
+// spec is byte-identical to what the previous release wrote) and is never
+// gated, while a --retry of a task that carries one is gated the same way the
+// launch that wrote it was.
+const changeSetSince = "0.26.0"
+
+// changeSetKnows is what such a runner knows, as the gate names it.
+const changeSetKnows = "the change set its task is a member of (change_set)"
+
+// changeSetSubject is what the gate says the launch carries: the flag, and
+// the stored task a --retry replays the field from.
+const changeSetSubject = "a change set (--change-set, kept by --retry and by a stored task)"
+
+// changeSetAlt is the gate's other cure: the launch can name no change set,
+// where the image cannot be brought forward.
+const changeSetAlt = "; or drop --change-set, which needs a job image whose runner reads the field before it can carry one"
 
 // authorSince is the first fugaro release whose runner reads a task's author
 // field (task.Spec.Author, the launcher's identity a launch records for the
@@ -4285,11 +4320,13 @@ func refuseCatalogSwitches(repo string, lc *localcfg.Config, warn io.Writer) err
 
 // catalogSwitchSkew is the refusal itself: shipped false refuses every
 // provider in names, whatever the base image, because no release reads the
-// keys yet; shipped true judges the installation's base image the job is
-// built from, the way checkCloneImageSince does — a release that predates
-// catalogSince is refused, a ref that is not a release image is only warned
-// about (nothing can tell what its runner knows), and no base image at all
-// passes (infra.Repo then builds the job from this release's own image,
+// keys yet — the state catalogShipped left behind, and the reason the flag is
+// passed rather than read, so a test can still ask that half; shipped true,
+// which is what catalogShipped is, judges the installation's base image the
+// job is built from, the way checkCloneImageSince does — a release that
+// predates catalogSince is refused, a ref that is not a release image is only
+// warned about (nothing can tell what its runner knows), and no base image at
+// all passes (infra.Repo then builds the job from this release's own image,
 // which reads them). names must not be empty and is already sorted.
 func catalogSwitchSkew(repo string, names []string, ref string, shipped bool, warn io.Writer) error {
 	where := "provider " + names[0]

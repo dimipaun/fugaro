@@ -124,6 +124,7 @@ reads, the others being `logs RUN --json` (§6.2) and the graph's own live feed
 | `total` | `JSONTotal` | — | no | see below |
 | `repos` | `[]JSONRepo` | — | no | `[]` when none (BuildJSON seeds `[]JSONRepo{}`) — **empty, not unavailable** |
 | `runs` | `[]JSONRun` | — | no | `[]` when none |
+| `drift` | `[]JSONDrift` | — | **yes** | **absent when nothing drifted** — R6's alarm (`View.Drift`), one entry per model whose reported cost has left the price table's band over today and yesterday, ordered by model name (spend-accuracy SA5.7; see below) |
 | `finished` | `[]JSONFinished` | — | no | `[]` when none; **always unfiltered** (`--all`/`--keep`/`--keep-count` bound only the plain and interactive views) |
 | `ready` | `[]JSONFinished` | — | no | `[]` when none; the finished runs whose `outcome` is `ready` (`ReadyRowsOf`), unfiltered |
 | `queued_note` | string | — | **yes** | absent when the runs bucket was read; present = the bucket could not be read for queued rows, already sanitized (`JSONDoc.QueuedNote`) |
@@ -188,6 +189,32 @@ drift from it.
 | `by` | string | — | **yes** | who, when known |
 | `at` | string | RFC 3339 | **yes** | when, when known (`jsonKill`) |
 | `reason` | string | — | **yes** | why |
+
+### `JSONDrift` (`internal/watch/json.go`) — where a report left the table's band
+
+| Field | Type | Unit | omitempty | Availability state |
+|---|---|---|---|---|
+| `model` | string | — | no | the serving model, sanitized and clipped like every other database-derived string (`clean`, `internal/watch/build.go`) |
+| `reported_usd` | float64 | USD | no | measured — the cost the provider reported, summed over the calls that came back with one, **with no route fee** |
+| `table_lo_usd` | float64 | USD | no | measured — the table's charge over those same calls at the cheapest end of the tier that served them |
+| `table_hi_usd` | float64 | USD | no | measured — the same at the dearest end; equal to `table_lo_usd` for a model the catalog does not price |
+| `factor` | float64 | multiple | no | measured — `reported_usd` over the end of the band the report left: over `table_hi_usd` when `direction` is `above`, over `table_lo_usd` when it is `below`. `Drift.Factor` |
+| `direction` | string | — | no | **the closed word `above` or `below`** — which end of the band the report left (`Drift.Direction`) |
+
+The leaves are `budget.ModelUse`'s, summed per model over **today and
+yesterday**, UTC, and over **every repository** (`driftLines`,
+`internal/watch/build.go`): the counters are per UTC day, so R6's "a rolling
+day" (D2649) can only be read as those two (F30), and what is being checked is
+the price table's reading of a model, not a repository's. The band is over the
+calls that carried a report and carries no fee (D2650), which is why it is read
+against `table_lo_usd` and `table_hi_usd` rather than against one estimate. An
+entry is present only when `reported_usd` is more than **10%** above
+`table_hi_usd` or more than 10% below `table_lo_usd` (`DriftGapPercent`) for a
+model with at least **$1** of spend in the window (`DriftMinSpend`): a model
+under the floor, a day whose counters predate the leaves (nothing to compare),
+and a caller that read no previous day are all silent rather than wrong. **No
+console release draws it yet**, and the field is additive: absent, a document
+is the one every CLI before it wrote.
 
 ### `JSONRepo` (`internal/watch/json.go`)
 
@@ -924,7 +951,8 @@ either: that flag's document is the session-start nudge's, not a screen's.
 **Command:** `internal/cli/accounts.go` `newAccountsLsCmd`, indented
 (`printAccounts`). **Document:** `accountsListDoc`:
 `repo` string, `accounts` `[]string`, `complete` bool,
-`note`° (why selection failed), `states`°, `state_note`° and `aliases`°. **`complete: false` means the project config
+`note`° (why selection failed), `states`°, `state_note`°, `aliases`° and
+`credentials`°. **`complete: false` means the project config
 could not be selected — the screen renders `unavailable`, never "no
 accounts"** (the type's own doc comment is the authority). Flags: `--repo`
 (always passed explicitly), `--json`, plus the cloud flags. The **names** are
@@ -948,6 +976,21 @@ is **names only**: the block is the owner's own local file and is never publishe
 (D2090), so a screen draws it as what a launch on this machine would resolve, not
 as anything a run in the project could read.
 
+**`credentials` (the key credentials' work, MC24, D1671)** is the project
+config's `credentials` block, one object per entry: `name`, `type`, and
+`serving_path` — the half of a run that serves a credential of that type
+(`credsvc` or `runner`, `config.CredentialServingPath`), or `""` for a type
+nothing places, which the loader refuses. The block is **not** the accounts
+above and the two may not be read as one: a key credential's name is
+deliberately **dropped from `accounts`** (`config.ClaudeAccountTokenNames`), so a
+screen that wants to show what a pool may list or a craft's access may name
+reads this member and never `accounts`. It is **additive within this document's
+version** (D848), it is empty/absent on a machine with no credentials block, and
+it is **names, types and paths only — never a secret ID and never a value
+(F27)**: the entry's derived secret name (`credential-<name>-key`) is
+deliberately not carried, because the config's own read answers which half serves
+it and the store is the only thing that names a container.
+
 **`states` (CLI 0.10.0, credentials-service C1.21)** is every listed account's
 credential state, keyed by account name, and it is **absent exactly when no
 mark could be read** — then `state_note` says why (no Firebase budget backend,
@@ -965,8 +1008,9 @@ they are the same credential (`creds.Mark`'s own doc). **Names and states only
 
 The text view of the same command is the plan's column — `available`,
 `exhausted until T`, `backed off`, `broken` — and falls back to one bare name
-per line when there is no state to show, which is the shape a console that
-passes `--json` never sees.
+per line when there is no state to show, with the credentials block below it as
+one `NAME (TYPE, served by HALF)` line per entry, which is the shape a console
+that passes `--json` never sees.
 
 ### 6.5a `fugaro accounts clear NAME` — the operator's write
 

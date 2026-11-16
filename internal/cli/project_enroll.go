@@ -83,7 +83,18 @@ func newProjectReposCmd() *cobra.Command {
 
 type projectReposOptions struct {
 	cloud cloudOptions
-	yes   bool
+	// yes is the field the no-prompt policy's T11 left behind when it removed
+	// the flag: `rm` still passes it to confirmRemoval, and no constructor
+	// registers it any more. `add`'s confirmation is its own and nothing on
+	// the command line answers it (D2403).
+	yes bool
+	// allowListOnly is `add`'s way back to what it did before the whole
+	// enrolment converged: one entry in the published allow-list and nothing
+	// else. It is a flag and not the absence of a flag because the converge is
+	// the ordinary act of enrolling while a pattern — owner/* — has no
+	// checkout, no fugaro.yaml and no image to converge, and * is the list's
+	// own entry for every repository rather than a repository at all.
+	allowListOnly bool
 }
 
 func newProjectReposLsCmd() *cobra.Command {
@@ -108,17 +119,53 @@ func newProjectReposLsCmd() *cobra.Command {
 func newProjectReposAddCmd() *cobra.Command {
 	var o projectReposOptions
 	cmd := &cobra.Command{
-		Use:   "add <provider/owner/name | owner/name | *>",
-		Short: "Enroll a repository: add it to the policy's allow-list",
-		Long: "Add a canonical repository (github/acme/app, bitbucket/acme/*) to the\n" +
-			"published policy's allow_repos, through the same ETag-guarded write the\n" +
-			"publisher uses, and print the change. A bare owner/name takes its provider\n" +
-			"from this machine's project config, and * is the list's own entry for every\n" +
-			"repository: it is written as it is. Only allow_repos changes.",
+		Use:   "add <provider/owner/name | owner/name>",
+		Short: "Enroll a repository: one confirmation for the whole enrolment",
+		Long: "Enrol a repository in the project, behind one confirmation. The command\n" +
+			"reads what it can and never guesses one: the provider from this machine's\n" +
+			"config, then the checkout's own fugaro.yaml, then its origin remote; the\n" +
+			"workflows and the base branch from that fugaro.yaml; the image its job runs\n" +
+			"from the workflow's catalog reference, then this project's effective image\n" +
+			"map, then the catalog's default; the GitHub App ID and the Claude accounts\n" +
+			"from the project's other repositories. It prints the whole list of what it\n" +
+			"will change, asks once for the project's name, and then does each step as\n" +
+			"far as it can:\n" +
+			"\n" +
+			"  1. the repository's own fugaro.yaml: read, never written\n" +
+			"  2. this machine's project config: the repository's repos: entry\n" +
+			"  3. this machine's project config: its repo-to-image mapping\n" +
+			"  4. the published policy's allow_repos\n" +
+			"  5. the publish of the policy node (fugaro update's policy stage)\n" +
+			"  6. the repository's job set and its roles/run.invoker grant\n" +
+			"\n" +
+			"Every step is idempotent and the command is resumable: over a repository\n" +
+			"already enrolled nothing is written and each step says so, and over an\n" +
+			"enrolment a failure or a Ctrl-C left half done the missing steps are done\n" +
+			"and the ones already done are left alone. A value it cannot read it refuses\n" +
+			"with the one command that supplies it, and never guesses one.\n" +
+			"\n" +
+			"Step 6 converges the repository's own root, which is deployed from a\n" +
+			"checkout of it, so run this from that checkout: without one the command\n" +
+			"refuses and names --allow-list-only. The catalog's entry for the repository\n" +
+			"is mapped and never built — the first image build is billable and it is\n" +
+			"`fugaro image build <entry>`'s — and the map step merges the entry into the\n" +
+			"map the published node holds, so enrolling one repository cannot take\n" +
+			"another's mapping away. Nothing here asks a run to finish, and nothing\n" +
+			"rewrites what a run in flight holds.\n" +
+			"\n" +
+			"--allow-list-only writes the published allow-list entry and nothing else,\n" +
+			"as this command did before the enrolment converged: it is what * needs, and\n" +
+			"it is the whole of what a pattern such as owner/* can want.",
 		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error { return runProjectReposEdit(cmd, &o, args[0], false) },
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if o.allowListOnly {
+				return runProjectReposEdit(cmd, &o, args[0], false)
+			}
+			return runProjectReposEnroll(cmd, &o, args[0])
+		},
 	}
 	addCloudFlags(cmd, &o.cloud)
+	cmd.Flags().BoolVar(&o.allowListOnly, "allow-list-only", false, "Write only the allow-list entry, as this command did before the whole enrolment converged (required for *)")
 	return cmd
 }
 

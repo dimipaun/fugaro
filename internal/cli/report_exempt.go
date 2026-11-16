@@ -69,13 +69,19 @@ var reporterCommands = map[string]string{
 	"managed apply":      "managed-apply",
 	"managed flag":       "managed-flag",
 	"managed unflag":     "managed-unflag",
-	"reaper":             "reaper",
-	"restore":            "restore",
-	"run":                "run",
-	"secrets rm":         "secrets-rm",
-	"secrets set":        "secrets-set",
-	"setup":              "setup",
-	"update":             "update",
+	// The enrolment converged behind one confirmation (RE3): this command
+	// writes this machine's entry, the image mapping, the allow-list, the
+	// publish and the repository's own root, and prints each as a step of its
+	// run rather than one row by hand — which is what keeps its siblings,
+	// whose write is one row each, in exemptAnswers below.
+	"project repos add": "project-repos-add",
+	"reaper":            "reaper",
+	"restore":           "restore",
+	"run":               "run",
+	"secrets rm":        "secrets-rm",
+	"secrets set":       "secrets-set",
+	"setup":             "setup",
+	"update":            "update",
 }
 
 // builtLogName is one reporter command whose log name is not a literal at the
@@ -132,6 +138,7 @@ var exemptListings = map[string]exemptListing{
 	"backlog list":         {"a listing: the backlog's items as the index lists them, table or document", true},
 	"budget preview":       {"a listing: a batch's worst-case spend, as a table or a document", true},
 	"budget prices":        {"a listing: the effective model price table, which is the answer itself", true},
+	"budget reconcile":     {"a listing: a window's charged, reported and table spend per model, table or document", true},
 	"budget show":          {"a listing: the caps, counters, kill switches and headroom, table or document", true},
 	"config example":       {"a listing: the annotated fugaro.yaml template, printed whole", false},
 	"config layer":         {"a listing: the project layer published for this checkout, table or document", true},
@@ -141,6 +148,8 @@ var exemptListings = map[string]exemptListing{
 	"creds ls":             {"a listing: the credential names and metadata the bundle holds, never a value", true},
 	"diagnose":             {"a listing: how one run went, as a report or a document under --json", true},
 	"doctor":               {"a listing: one screen of checks, which G9 keeps to a single screen", true},
+	"escalation ls":        {"a listing: the ladder's ledger per pull request, as a table or a document", true},
+	"escalation show":      {"a listing: one pull request's ledger and its transitions, table or document", true},
 	"image check":          {"a listing: whether each workflow's image needs a rebuild, table or document", true},
 	"image ls":             {"a listing: the project's image catalog entries, as a table or a document", true},
 	"image render":         {"a listing: the Dockerfile that builds the workflow's image, printed whole", false},
@@ -250,7 +259,6 @@ var exemptAnswers = map[string]string{
 	"project repos set":      "writes one repository's workflow selection or one job profile, and prints the row it wrote",
 	"project routing set":    "writes the project's routing posture into this machine's project config, and prints it",
 	"project routing unset":  "removes the project's routing posture from this machine's project config, and prints the result",
-	"project repos add":      "adds one repository to the policy's allow-list, and prints the entry it wrote",
 	"project repos rm":       "removes one repository from the policy's allow-list, and prints what it dropped",
 	"project sync":           "offers the installed repositories the allow-list does not admit, printing its own account by hand",
 	"recipes publish":        "publishes one recipe to the project, printing its own account of the write by hand",

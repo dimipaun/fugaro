@@ -398,6 +398,13 @@ type Digest struct {
 	Expectations []Expectation
 	// Dropped is how many selected rows the size cap left out.
 	Dropped int
+	// Escalation is the report's Escalation section, absent on a report whose
+	// caller built none (E12, D2034). It is the one block of a Digest that
+	// Build cannot fill: the ladder's ledger is the orchestrator's (E7) and
+	// not a run record, so the caller that can reach it sets this from
+	// EscalationSection after Build, and a report with none prints the report
+	// it printed before the section existed (G3).
+	Escalation *Escalation
 }
 
 // Build selects the period's runs and returns its report. recs are one

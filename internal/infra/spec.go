@@ -1265,10 +1265,24 @@ func SecretMounts(gitSecret string, cfg *config.Config, name, token string, w co
 // under api-key, and the default alone under every other auth. RepoSpec
 // deploys one job per (workflow, account) from it, and RequiredSecrets reads
 // the same list, so the two cannot disagree about which tokens are mounted.
+//
+// A name the local config declares a KEY credential is not one of them
+// (config.ClaudeAccountTokenNames), and the reason is the mount rather than the
+// name: every job of this set exists to carry an account's Claude token,
+// config.ClaudeAccountSecret(name) as CLAUDE_CODE_OAUTH_TOKEN
+// (SecretMounts), and a key credential's value is stored under its own derived
+// name instead (config.CredentialSecret, D1670) — no run ever writes a version
+// to the account's token container for such a name, so a job built for it
+// would mount an empty token, `fugaro secrets ls` would flag a MISSING secret
+// no `claude setup-token` step could fill (SecretCommands), and a run launched
+// on the variant would fail in the credential. The name's claude_accounts
+// entry keeps the meaning it has for a key credential — the bound on where the
+// key may be sent — and what carries the key to a call is the serving half of
+// its type, never a Claude account job of its own (D1670, MC23).
 func WorkflowAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []string {
 	switch cfg.Agent.Auth {
 	case "oauth":
-		return config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo)
+		return config.ClaudeAccountTokenNames(lc.Credentials, config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo))
 	case "api-key":
 		out := []string{config.DefaultClaudeAccount}
 		for _, name := range mixedStageAccounts(cfg, lc, repo) {
@@ -1276,7 +1290,7 @@ func WorkflowAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []st
 				out = append(out, name)
 			}
 		}
-		return out
+		return config.ClaudeAccountTokenNames(lc.Credentials, out)
 	}
 	return []string{config.DefaultClaudeAccount}
 }

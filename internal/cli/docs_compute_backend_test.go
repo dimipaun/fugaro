@@ -1706,12 +1706,11 @@ func TestDocsComputeBackendReaperRoleCountMatchesTheModule(t *testing.T) {
 // TestReleaseChecklistCopiesNoApplyFailure: "fails partway through its apply" is
 // true of one bullet only — `managedDeployerShipped`, whose flip re-enables an
 // installation apply the deployer's fence refuses — and it was copied into the
-// `catalogSince` bullet above it, where the failure is not an init at all:
-// `catalogSince` names a release that does not exist yet, so the base-image age
-// check passes for every image there is, the deploy goes through, and the RUN
-// fails at bootstrap on a `FUGARO_MODEL_PROVIDERS` field its runner refuses to
-// decode. The sentence is read against the bullet it sits in, so a later copy
-// fails here rather than in a release.
+// `catalogSince` bullet above it, where the failure is not an init at all: the
+// two route keys are written into `FUGARO_MODEL_PROVIDERS`, which a runner older
+// than `catalogSince` decodes with DisallowUnknownFields, so it is the RUN that
+// fails at bootstrap on a field nobody typed. The sentence is read against the
+// bullet it sits in, so a later copy fails here rather than in a release.
 //
 // Mutation (verified, run and restored): put the copied sentence back into the
 // `catalogSince` bullet — this fails naming it.

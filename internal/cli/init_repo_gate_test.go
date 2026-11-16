@@ -394,15 +394,15 @@ func TestHostileOriginIsTruncatedInDetail(t *testing.T) {
 	}
 }
 
-// TestInitRepoRefusesCatalogSwitches (price-catalog plan Task 4 step 2): a
-// route that sets require_zdr or price_policy is refused at the converge
-// --repo before any cloud call, because the job it would deploy carries
-// FUGARO_MODEL_PROVIDERS with a key no release reads yet, and an older
-// runner fails the run at bootstrap on it. The same command with the switch
-// unset goes on to its own next refusal (this rig has no base image for the
-// workflow), which is what proves the gate is the new one and not something
-// earlier.
-func TestInitRepoRefusesCatalogSwitches(t *testing.T) {
+// TestInitRepoDeploysCatalogSwitches: a route that sets require_zdr or
+// price_policy is no longer refused at the converge --repo. 0.7.5, the
+// release whose runner reads both keys, is tagged (catalogShipped), and this
+// rig names no base image for the workflow, so the job is built from this
+// release's own image and the switches deploy: the command runs past the
+// switch gate to its own next refusal (this rig has no base image), which is
+// what proves the gate is the one that moved. The age check that replaces it
+// is pinned in TestRefuseCatalogSwitches, where a base image can be named.
+func TestInitRepoDeploysCatalogSwitches(t *testing.T) {
 	init := func(t *testing.T, extra string) (*initRig, error, string, string) {
 		t.Helper()
 		r := newInitRig(t)
@@ -416,23 +416,16 @@ func TestInitRepoRefusesCatalogSwitches(t *testing.T) {
 		out, errOut, err := executeStdin(t, "", "setup", "--repo", dir)
 		return r, err, out, errOut
 	}
-	r, err, out, errOut := init(t, "    require_zdr: false\n")
-	if err == nil {
-		t.Fatalf("a route with require_zdr set was deployed:\n%s%s", out, errOut)
-	}
-	noCloudTouched(t, r, "a route with require_zdr set")
-	for _, want := range []string{
-		"fugaro update --repo refuses to deploy acme/sandbox's provider openrouter",
-		"require_zdr or price_policy",
-		"fugaro " + catalogSince,
-		"model_prices",
-	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("%v lacks %q", err, want)
+	for _, extra := range []string{"    require_zdr: false\n", "    price_policy: highest\n"} {
+		_, err, _, _ := init(t, extra)
+		if err != nil && strings.Contains(err.Error(), "require_zdr or price_policy") {
+			t.Fatalf("a route that sets %q was refused by the switch gate: %v", strings.TrimSpace(extra), err)
 		}
+		pastGate(t, err)
 	}
-	// Unset: the same command gets past this gate to its own next refusal.
-	_, err, _, _ = init(t, "")
+	// The same command with neither switch set behaves the same way, so the
+	// two runs differ in nothing but the keys.
+	_, err, _, _ := init(t, "")
 	pastGate(t, err)
 }
 

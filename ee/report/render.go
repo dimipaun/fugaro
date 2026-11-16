@@ -117,7 +117,7 @@ func Table(w io.Writer, rep Report, m Meta) error {
 		fmt.Fprintln(w, "a subscription model's notional is priced from its tokens and can differ slightly from the run's recorded notional total in the other views")
 	}
 	if rep.By == ByModel && rep.MixedModelDays {
-		fmt.Fprintln(w, "a day with both billed and notional spend splits each model's dollars in that day's proportion (the runner records one figure per model)")
+		fmt.Fprintln(w, "a model whose day recorded no notional is split in that day's billed:notional proportion (the runner recorded one figure per model then)")
 	}
 	if rep.By == ByPerson {
 		for _, row := range rep.Rows {

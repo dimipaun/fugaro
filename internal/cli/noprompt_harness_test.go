@@ -337,6 +337,7 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro artifacts ls":         {args: []string{"run-1"}},
 	"fugaro budget preview":       {args: []string{"--recipe", "r", "--runs", "1"}},
 	"fugaro budget history":       {args: []string{"--sweep"}},
+	"fugaro budget reconcile":     {args: []string{"--from", "2026-10-12", "--to", "2026-11-16", "--all"}},
 	"fugaro cancel":               {args: []string{"run-1"}},
 	"fugaro creds set":            {args: []string{"NAME"}},
 	"fugaro diagnose":             {args: []string{"run-1"}},
@@ -401,6 +402,7 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro restore":              {args: []string{"proj-2", "root"}},
 	"fugaro review show":          {args: []string{"run-1"}},
 	"fugaro run":                  {args: []string{"do something"}},
+	"fugaro escalation show":      {args: []string{"wi-1"}},
 	"fugaro runs show":            {args: []string{"run-1"}},
 	"fugaro secrets rm":           {args: []string{"NAME"}},
 	"fugaro secrets set":          {args: []string{"NAME"}},
@@ -527,6 +529,13 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro orchestrator events": "reads project aurora's audit node out of the fixture's database, which holds none yet: there are no events to print",
 	"fugaro orchestrator patch":  "refuses its missing -f: a patch document is what it applies, and the closed stdin is no document",
 	"fugaro orchestrator import": "refuses its missing -f: a dump is one patch document, and the closed stdin is no document",
+	// The escalation family reads that same node for the ladder's ledger (E13).
+	// ls takes no argument, and its bare run is the whole command: the fixture's
+	// database holds no work item, so what it says is that no pull request has
+	// entered the ladder. show needs the item it is about, so it is fixtured
+	// below with one this world does not hold — the read's own refusal rather
+	// than cobra's usage error — and the closed stdin asks it nothing either way.
+	"fugaro escalation ls": "reads project aurora's state node out of the fixture's database, which holds no work item, and says no pull request has entered the ladder",
 	// The login unit's three commands read this machine's own home and nothing
 	// else, and this world's home has no unit: install is refused before its
 	// typed confirmation (a unit runs code at every login, and the word install
