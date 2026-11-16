@@ -800,6 +800,47 @@ func TestRenewalOfAnAPISubscriptionIsAdmitted(t *testing.T) {
 	}
 }
 
+// TestAnUnsoldStatedPeriodKeepsTheSubscriptionsOwnTerm: a transaction Paddle
+// creates on a subscription it already bills states a period of its own, and a
+// proration's period is one the checkout sells no row for. What the customer
+// bought is the row the subscription stands on, so the record keeps that row's
+// term and not the period the one event stated — a record left holding a term
+// nobody sells is one every later event is refused for good from, and the
+// customer's licence is never served again (D442).
+func TestAnUnsoldStatedPeriodKeepsTheSubscriptionsOwnTerm(t *testing.T) {
+	f := newFixture(t)
+	f.boughtEvent(t, purchaseEvent("evt-1", "acme.example", 5, 365))
+
+	proration := Event{
+		ID: "evt-2", Type: EventPurchase, OccurredAt: f.now,
+		Transaction: "txn-proration", Subscription: "sub-acme.example",
+		Organisation: "acme.example", WorkspaceID: workspaceID,
+		Email: buyerAddress("acme.example"), Seats: 5, TermDays: 7,
+	}
+	body := renewalBody(t, proration)
+	if rec := f.deliverRaw(body, signEvent(f.secret, f.now, body)); rec.Code != http.StatusOK {
+		t.Fatalf("the proration stating an unsold period was answered %d, want 200: %s", rec.Code, rec.Body)
+	}
+	sub, held, err := f.store.Subscription(context.Background(), "sub-acme.example")
+	if err != nil || !held {
+		t.Fatalf("reading the subscription back (held=%v, err=%v)", held, err)
+	}
+	if sub.TermDays != 365 {
+		t.Errorf("the subscription stands for %d day(s), want the 365 its purchase bought: a period no row sells is read against the row it was bought on (D442)", sub.TermDays)
+	}
+
+	// And the licence the customer holds is one the portal can still serve: an
+	// ordinary seat change is minted under the subscription's own term.
+	f.advance(24 * time.Hour)
+	seatChange := f.event(Event{ID: "evt-3", Type: EventSeatChange, Organisation: "acme.example", Seats: 9})
+	if seatChange.Code != http.StatusOK {
+		t.Fatalf("a seat change after an unsold stated period was answered %d, want 200: the subscription's own term is what its events are served under", seatChange.Code)
+	}
+	if got := len(f.records()); got != 1 {
+		t.Errorf("the seat change recorded %d key(s), want the one it reissued", got)
+	}
+}
+
 // TestUnverifiedBodyIsNeverStored: F16's round 2 — the store is written *after*
 // verification, so a stranger who can post bodies cannot pre-store a forged one
 // under a real event id and have the real delivery read as a redelivery of it.

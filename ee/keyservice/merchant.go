@@ -600,7 +600,11 @@ func (s *Service) purchased(ctx context.Context, e Event) error {
 	// (checkout.go's `refuseSubscribedWorkspace` reads both spellings).
 	sub.WorkspaceID = e.WorkspaceID
 	sub.Seats = e.Seats
-	sub.TermDays = e.TermDays
+	// The term the subscription stands for is the row it was bought on and never
+	// the period this one event stated: a period Paddle computed is not a row
+	// anybody sells, and a record left holding it is one whose every later event
+	// — a seat change, a renewal — is refused for good (D442).
+	sub.TermDays = days
 	sub.Email = to
 	sub.At = e.OccurredAt
 	if end.After(sub.Expires) {
