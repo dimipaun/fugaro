@@ -152,14 +152,24 @@ writer that published between this run's write and its read-back is **not**
 adopted, so the file never names a generation this machine did not write.
 
 A member a single file edit cannot re-seed is refused **by name** rather than
-skipped: a value the node leaves out, which the file would have to drop, and a
+skipped: a value the node leaves out, which the file would have to drop, a
 value written inside a flow collection (`budget: { mode: enforce, per_run_usd: 2
-}`, the shape the setup docs themselves use), which one edit cannot splice into.
-The refusal writes neither the file nor the generation, and it says what to do:
-put the published values in by hand — a flow block rewritten as a block mapping
-is one the edit can reach — and run `fugaro update` again. A re-seed that
-recorded the generation while leaving a member behind is exactly the overwrite
-this rule exists to prevent.
+}`, the shape the setup docs themselves use), which one edit cannot splice into,
+and the account-choice keys (`default_claude_account` and
+`claude_account_stages.<stage>`), the members whose only store the local config
+is — the node takes them from the file and never the other way, so a re-seed
+that wrote one of them would overwrite the newer node with the older file. The
+refusal writes neither the file nor the generation, and it says what to do. A
+member an edit can reach goes back by hand — a flow block rewritten as a block
+mapping is one the edit can reach — and the next `fugaro update` re-seeds the
+rest. An account-choice key has no edit that reaches it: the command that
+publishes it is **`fugaro project policy publish`**, run at the operator's own
+terminal, which builds the node from this file and never consults
+`policy_generation` — so the file is the source, the publish is the write, and
+the generation it records is what ends the refusal. `fugaro update` is the
+upgrade, and here it publishes nothing: it refuses this file until that publish
+has happened. A re-seed that recorded the generation while leaving a member
+behind is exactly the overwrite this rule exists to prevent.
 
 A project policy is read under a deployed security rules generation, so the
 migration's write is gated on it (`requirePolicyRules`): the same run deploys
