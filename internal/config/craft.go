@@ -487,6 +487,15 @@ func ValidatePools(pools []Pool, creds []Credential) []Problem {
 // either. The built-in vertex is not one of those — being built in is what
 // defines it — so a subscription beside vertex is refused like any other
 // crossing.
+//
+// This is the one rule of this file that a pool an earlier release wrote cannot
+// satisfy, so it may not ship without the step that converges such a pool
+// wherever it is held — the installation's config and the published node both
+// (D1668, D1673). That step is the activation plan's MC21 and lands in this
+// refusal's own release (row 43): a config a release starts refusing, with no
+// step to converge it, is the broken installation CLAUDE.md's HARD RULE
+// forbids — the reason the rules poolAccessProblems holds are the published
+// node's alone.
 func poolCrossingProblem(at string, p Pool, creds []Credential, defined map[string]bool) (Problem, bool) {
 	members := PoolMembers(p, creds)
 	credsvc, runner, crossed, first := -1, -1, -1, ""
