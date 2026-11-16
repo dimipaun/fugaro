@@ -45,6 +45,7 @@ case "$1" in
   create) echo fugaro-fixture-container ;;
   export) cat "$FAKE_ROOTFS" ;;
   inspect) cat "$FAKE_ENV" ;;
+  cp) member=${2#*:}; tar -xOf "$FAKE_ROOTFS" "${member#/}" > "${3:?}" ;;
   *) exit "${FAKE_EXIT:-0}" ;;
 esac
 `

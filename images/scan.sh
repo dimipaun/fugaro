@@ -79,9 +79,9 @@ leaks() {
     echo "scan.sh: a value a build needs belongs in a BuildKit secret file mount, never in an ENV" >&2
     exit 1
   fi
-  # The names come from one export, the contents of the configs found from a
-  # second: a stream is read once, and naming the member to tar is what keeps
-  # a config that is not there from failing the scan.
+  # The export is read for its member names and not for its contents: it is a
+  # whole filesystem, and the one file whose text is wanted is copied out of
+  # the container on its own, by docker, rather than unpacked from here.
   docker export "$cid" | tar -tf - > "$work/names"
   [ -s "$work/names" ] || {
     echo "scan.sh: $image exported no filesystem to read" >&2
@@ -91,15 +91,16 @@ leaks() {
     echo "scan.sh: $image bakes a credential file: $(printf '%s' "$found" | tr '\n' ' ')" >&2
     exit 1
   fi
-  if grep -qE '(^|/)\.git/config$' "$work/names"; then
-    grep -E '(^|/)\.git/config$' "$work/names" > "$work/configs"
-    docker export "$cid" | tar -xO --files-from "$work/configs" > "$work/text"
-    if grep -Eiq "$git_config_credential" "$work/text"; then
-      echo "scan.sh: $image bakes a .git/config that carries a credential: $(head -n 1 "$work/configs")" >&2
+  grep -E '(^|/)\.git/config$' "$work/names" > "$work/configs" || true
+  while IFS= read -r config; do
+    [ -n "$config" ] || continue
+    docker cp "$cid:/$config" "$work/config" 2>/dev/null || continue
+    if grep -Eiq "$git_config_credential" "$work/config"; then
+      echo "scan.sh: $image bakes a .git/config that carries a credential: $config" >&2
       echo "scan.sh: a checkout baked into an image carries no credential in its config" >&2
       exit 1
     fi
-  fi
+  done < "$work/configs"
 }
 if [ "$mode" = secrets ]; then
   trivy --scanners secret --image-config-scanners secret --secret-config /trivy-secret.yaml --exit-code 1

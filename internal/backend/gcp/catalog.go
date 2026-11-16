@@ -16,6 +16,7 @@ import (
 
 	cloudbuild "google.golang.org/api/cloudbuild/v1"
 
+	"github.com/dimipaun/fugaro/images"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -40,6 +41,9 @@ const (
 	// nothing to build, so the one thing it does is smoke the reference the
 	// entry names against the runtime contract (F10).
 	catalogSmokeStepID = "catalog-smoke"
+	// catalogScanStepID scans the image the build made for a leftover
+	// credential of the build's, between the smoke and the promote (B3).
+	catalogScanStepID = "catalog-scan"
 )
 
 // catalogContextRoot is where the clone step clones the entry's repository:
@@ -55,6 +59,11 @@ const catalogContextRoot = "/workspace/src"
 // whose build the entry has no part in, which is where the entry's build
 // stopped being handed the git credential (B8, F19).
 //
+// The scan step stands between the smoke and the promote (B3, R2): an image
+// that carries a credential of the build's — in a baked git config, in a
+// .netrc, in a credential-helper store, in a variable or in any layer — is
+// refused rather than moved to latest.
+//
 // Having no gate is the one difference that shows: a derived build's gate
 // reads the record already in the bucket and refuses to promote over a newer
 // one, so a build that finishes late leaves latest where it is, while a
@@ -64,7 +73,7 @@ const catalogContextRoot = "/workspace/src"
 // pretends to have one.
 var catalogBuildSteps = []string{
 	"prep", credentialStep, catalogDockerfileStepID, catalogCloneStepID, catalogPinStepID,
-	"build", "smoke", "promote", catalogTagStepID, catalogRecordStepID, "untag",
+	"build", "smoke", catalogScanStepID, "promote", catalogTagStepID, catalogRecordStepID, "untag",
 }
 
 // CatalogDefinition is what PIC3's copy left in the runs bucket, as the
@@ -326,6 +335,7 @@ func CatalogBuildRequest(project string, s CatalogBuildSpec) (*cloudbuild.Build,
 		catalogDockerfileStepID: read,
 		catalogCloneStepID:      clone,
 		catalogPinStepID:        catalogPinStep(s),
+		catalogScanStepID:       catalogScanStep(s),
 		catalogTagStepID:        catalogTagStep(s),
 		catalogRecordStepID:     catalogRecordStep(s),
 	}
@@ -378,6 +388,11 @@ func CatalogBuildRequest(project string, s CatalogBuildSpec) (*cloudbuild.Build,
 		// The smoke's spec, base64 because the request substitutes textually
 		// and JSON is text this config would have to quote.
 		"_SELFTEST_B64": base64.StdEncoding.EncodeToString(s.Selftest),
+		// The leak scan's two files, carried the same way: a catalog build
+		// reads no checkout, so the script and its rules reach it from the
+		// binary that submitted the build (catalogScanStep).
+		"_SCAN_B64":         base64.StdEncoding.EncodeToString(images.ScanScript),
+		"_TRIVY_SECRET_B64": base64.StdEncoding.EncodeToString(images.TrivySecretConfig),
 	}
 	switch s.GitProvider {
 	case gitprov.KindBitbucket:
@@ -497,6 +512,55 @@ printf '%s\n' "$$report"
 case "$$report" in *'"passed":true'*) ;; *) echo "the prebuilt image $$IMAGE did not pass its smoke test" >&2; exit 1 ;; esac
 printf '%s' "$${ref#*@}" > "$$BUILDER_OUTPUT/output"
 echo "smoked $$ref"`},
+	}
+}
+
+// catalogScanStep scans the image the build just pushed, before the build
+// would promote it: images/scan.sh --secrets, the scan CI runs on the same
+// image (R2, F19), over the digest the build pushed, so what is scanned is the
+// bytes latest would move to and not a tag that could have moved since.
+//
+// It refuses an image that carries a credential of the build's anywhere the
+// scan looks: a token in the image config's environment, a .netrc, a
+// credential-helper store, or a git config that carries one — in any layer, and
+// in the .git/config of a checkout baked into it. The entry's build is what
+// puts them there: an entry's source is built from a checkout the clone step
+// made, and today's derived Dockerfiles clone with the credential inside the
+// build (B8's own hole, closed for the entry step and not for its builds).
+//
+// The script and its Trivy rules travel in the request, base64, because a
+// catalog build reads no checkout to run them from (images.ScanScript,
+// images.TrivySecretConfig, which this package embeds through the images
+// package). It is the same script and the same rules CI runs, so the build and
+// CI cannot disagree about what a leak is — the step writes both out and runs
+// the script, rather than growing a second copy of the checks.
+//
+// The trivy container needs nothing of the network and no registry credential:
+// it reads the image out of the worker's own docker daemon, which is where the
+// build step left it.
+func catalogScanStep(s CatalogBuildSpec) *cloudbuild.BuildStep {
+	// The three paths reach the script through env: and are read as quoted
+	// "$$VAR" (the rule images/derived/cloudbuild.yaml states). SCANDIR and the
+	// digest's directory are env values of their own rather than text in the
+	// script, as the smoke step's own are, so the script runs outside Cloud
+	// Build too (catalog_test.go runs it).
+	return &cloudbuild.BuildStep{
+		Id:         catalogScanStepID,
+		Name:       "gcr.io/cloud-builders/docker",
+		Entrypoint: "bash",
+		Env: []string{
+			"IMAGE=${_IMAGE}", "OUT=/workspace/out", "SCANDIR=/workspace/scan",
+			"TRIVY_CACHE_DIR=/workspace/trivy",
+			"SCAN_B64=${_SCAN_B64}", "TRIVY_SECRET_B64=${_TRIVY_SECRET_B64}",
+		},
+		Args: []string{"-c", `set -eu
+install -d -m 0755 "$$SCANDIR"
+printf '%s' "$$SCAN_B64" | base64 -d > "$$SCANDIR/scan.sh"
+printf '%s' "$$TRIVY_SECRET_B64" | base64 -d > "$$SCANDIR/trivy-secret.yaml"
+digest=$$(cat "$$OUT/image-digest")
+case "$$digest" in sha256:*) ;; *) echo "no pushed digest" >&2; exit 1 ;; esac
+sh "$$SCANDIR/scan.sh" --secrets "$$IMAGE@$$digest"
+echo "scanned $$IMAGE@$$digest"`},
 	}
 }
 
