@@ -93,27 +93,32 @@ deploy over a marker above this binary's generation.
 carried with the task for the layer. The update's own write is ETag-conditional
 and preserves the values a migration moves.
 
-**A version bump is a shape question, and this release's is shape-free.** The
+**A version bump is a shape question, and the ordering plus the carry is what
+makes it safe.** The
 update migrates the node in its policy stage and replaces the credentials
 service in the stage immediately after it, with nothing between the two (the
 owner's ruling of 2026-11-10): the re-pin cannot stay in the installation stage,
 which runs before the image builds, because a version-4 → 5 bump in between
 would have made every cascade and Bitbucket-proxied call refuse the node for the
 length of those builds. The service this release installs is therefore never
-handed a node it has not migrated — and it does not need to be, because the step
-moves the version member and nothing else and the readers accept a node one
-shape-free step behind (`projectpolicy`'s `ReadsVersion`, which `Decode` and the
-credentials service both go through) — while a version whose step carries a
-Note, like 3 → 4, stays refused in both directions and must not be bumped this
-way. What the order cannot close is the mirror of the same window: until this
+handed a node it has not migrated — and it does not need to be, because the
+credentials service's own read carries a node behind it forward in memory
+rather than refusing it (`DecodeCarriedForwardShapeFree`, whose floor is
+`ShapeFreeFloor` = 4, `server.go`): the steps between the node and this release
+are applied to its bytes for the length of one call and written nowhere, so the
+service serves a node the release behind published whether the step between
+them moves the version member alone or rewrites blocks — which this release's
+own step from 8 does (the split, MC21, D1668). What the order cannot close is
+the mirror of the same window: until this
 stage's apply lands, the process in the project is the one the release behind
 deployed, and that binary refuses a node above its own version. The window is
 one apply — the two stages are adjacent, and this stage builds no image — and
 the binary that reads it was released, so it cannot be taught anything, and it is
 named in the update's own line about the runs in flight (`credentialsWindowOpens`)
-rather than left to be discovered by a refused call. A later bump that changes
-the shape has to solve the same window again: the reader can only be taught to
-accept a predecessor whose members it reads verbatim.
+rather than left to be discovered by a refused call. What such a bump must not
+be is a step that needs something OUTSIDE the node: 3 → 4's republish is the
+one, no reader can derive the block it adds from the bytes it holds, and
+`ShapeFreeFloor` is where the carry stops for exactly that reason.
 
 Two writes are the pair's precondition rather than a second attempt at ordering
 them. The image the move pins is resolved and verified **before** the policy

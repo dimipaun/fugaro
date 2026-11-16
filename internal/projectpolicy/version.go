@@ -142,14 +142,32 @@ import (
 // (internal/projectpolicy/migrate.go), like the two before it: the node keeps
 // its bytes and only the number moves, because a node with no `binaries` block
 // admits nothing — which is what a project that never set one means.
-const Version = 8
+//
+// Version 9 (model-crafts MC20 and MC21; decisions D1668 and D1673) is the
+// version at which a pool stays on one path. It adds no member: what it changes
+// is what the members of `craft_pools` may be. The credentials service selects
+// among a pool's members by tier and the listed order only breaks a tie (F7,
+// D154), while a run's own gateway holds one upstream per stage and never
+// retries a call across a secret (F20, D1635) — so a pool naming members of both
+// halves of a run is a pool whose order can mean nothing, and from this release
+// the read of a published node refuses one (config.ValidatePublishedPools, which
+// Decode runs) instead of serving it. The bump is what makes a reader of the
+// release behind refuse such a node rather than read past a pool it cannot
+// honour, and the migration step that carries a version-8 node forward is NOT
+// shape-free (internal/projectpolicy/migrate.go): it splits every crossing pool
+// into one pool per half and repoints the crafts whose access named it, so a
+// version-8 node is one a version-9 reader refuses until `fugaro update`'s
+// policy stage has migrated it. A node with no crossing pool changes only its
+// number.
+const Version = 9
 
 // VersionSince names, for each policy version, the fugaro release that
 // introduced it: 1 is the model itself (0.8.0, internal/cli's policySince), 2
 // is the profile gate above (0.8.5), 3 the account axis (0.9.0), 4 the
 // Bitbucket token block (0.14.0), 5 the pools' owner and roster (0.23.0), 6 the
 // binaries block (0.24.0), 7 the two model grades (0.24.0) and 8 the binaries
-// block's carrier in the project's own config (0.26.0). It sits beside
+// block's carrier in the project's own config (0.26.0) and 9 the one-path pool
+// (0.26.0). It sits beside
 // Version because a bump of Version adds its row in the same change
 // (TestVersionSinceCoversEveryVersion fails until it does), and it is
 // read by every message about a node *ahead* of its reader (SkewSentence, so
@@ -171,6 +189,7 @@ var VersionSince = map[int]string{
 	6: "0.24.0",
 	7: "0.24.0",
 	8: "0.26.0",
+	9: "0.26.0",
 }
 
 // VersionRelease is the release that introduced policy version v, and false
