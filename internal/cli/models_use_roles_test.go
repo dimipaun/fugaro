@@ -290,8 +290,8 @@ func TestModelsUseReadsNoStdin(t *testing.T) {
 
 // modelsUseWriterKeys is every pattern `models use` registers and one concrete
 // key each answers for, with the store the write lands in. The two patterns
-// that name a segment are absent: their argv is complete only once CR1 fills
-// `<1>`, and TestModelsUseArgvFillsTheSegmentPlaceholder holds them.
+// that vary are here like the rest: every one of these templates names the
+// key, so every line the registry answers is complete on this base.
 var modelsUseWriterKeys = []struct {
 	pattern string
 	key     string
@@ -354,10 +354,12 @@ func TestModelsUseRegisteredArgvWritesTheKey(t *testing.T) {
 	}{
 		{"agent.model", "deepseek/deepseek-v4-pro", settings.StoreRepo, []string{"agent", "model"}, "deepseek/deepseek-v4-pro"},
 		{"agent.recipe", "solo", settings.StoreRepo, []string{"agent", "recipe"}, "solo"},
+		{"agent.models.coder", "deepseek/deepseek-v4-pro", settings.StoreRepo, []string{"agent", "models", "coder"}, "deepseek/deepseek-v4-pro"},
 		{"agent.levels.l2.model", "deepseek/deepseek-v4-pro", settings.StoreRepo, []string{"agent", "levels", "l2", "model"}, "deepseek/deepseek-v4-pro"},
 		{"agent.levels.l2.effort", "high", settings.StoreRepo, []string{"agent", "levels", "l2", "effort"}, "high"},
 		{"layer.defaults.agent.model", "deepseek/deepseek-v4-pro", settings.StoreProject, []string{"defaults", "agent", "model"}, "deepseek/deepseek-v4-pro"},
 		{"layer.defaults.agent.recipe", "solo", settings.StoreProject, []string{"defaults", "agent", "recipe"}, "solo"},
+		{"layer.defaults.agent.models.coder", "deepseek/deepseek-v4-pro", settings.StoreProject, []string{"defaults", "agent", "models", "coder"}, "deepseek/deepseek-v4-pro"},
 		{"layer.defaults.agent.levels.l2.model", "deepseek/deepseek-v4-pro", settings.StoreProject, []string{"defaults", "agent", "levels", "l2", "model"}, "deepseek/deepseek-v4-pro"},
 		{"layer.defaults.agent.levels.l2.effort", "high", settings.StoreProject, []string{"defaults", "agent", "levels", "l2", "effort"}, "high"},
 		// claude_models is a block and not a scalar, so the assertion is the
@@ -394,41 +396,38 @@ func TestModelsUseRegisteredArgvWritesTheKey(t *testing.T) {
 	}
 }
 
-// TestModelsUseArgvFillsTheSegmentPlaceholder: a template that names the
-// pattern's own varying segment writes the segment and not the whole key,
-// because the command takes the role's name and not the key. The filling is
-// CR1's (per-segment placeholders in Writer.ArgvFor, #2842), and on a base
-// without it the word stays `<1>` as written — the skip is that fact detected
-// from the registry, never a claim about which branch this is.
-func TestModelsUseArgvFillsTheSegmentPlaceholder(t *testing.T) {
+// TestModelsUseArgvNamesTheKeyInEveryRow: the two patterns that vary are held
+// to the line that runs. settings.Writer.ArgvFor fills `<key>` and nothing
+// else, so a template that named the pattern's segment alone answered
+// `<1>` where the key goes, and `fugaro models use <1> <value> --layer repo` is
+// a line neither a person nor the conformance test can run. The word the
+// command takes there is the key's own spelling, which is what these rows
+// register.
+func TestModelsUseArgvNamesTheKeyInEveryRow(t *testing.T) {
 	for _, c := range []struct {
 		key  string
 		want []string
 	}{
-		{"agent.models.coder", []string{"models", "use", "coder", "<value>", "--layer", "repo"}},
-		{"agent.models.diagnose", []string{"models", "use", "diagnose", "<value>", "--layer", "repo"}},
-		{"layer.defaults.agent.models.coder", []string{"models", "use", "coder", "<value>", "--layer", "project"}},
+		{"agent.models.coder", []string{"models", "use", "agent.models.coder", "<value>", "--layer", "repo"}},
+		{"agent.models.diagnose", []string{"models", "use", "agent.models.diagnose", "<value>", "--layer", "repo"}},
+		{"layer.defaults.agent.models.coder", []string{"models", "use", "layer.defaults.agent.models.coder", "<value>", "--layer", "project"}},
 	} {
 		t.Run(c.key, func(t *testing.T) {
 			w, ok := settings.WriterOf(c.key)
 			if !ok {
 				t.Fatalf("no writer answers for %s", c.key)
 			}
-			got := w.ArgvFor(c.key)
-			if slices.Contains(got, "<1>") {
-				t.Skip("needs CR1 (#2842): per-segment argv placeholders")
-			}
-			if !slices.Equal(got, c.want) {
+			if got := w.ArgvFor(c.key); !slices.Equal(got, c.want) {
 				t.Errorf("ArgvFor(%s) = %v, want %v", c.key, got, c.want)
 			}
 		})
 	}
 }
 
-// TestModelsUseSegmentPlaceholderArgvWritesTheKey is the same rule end to end:
-// once the segment is filled the line runs, and the role it names is the key's
-// own. It is skipped with the test above, on the same detected fact.
-func TestModelsUseSegmentPlaceholderArgvWritesTheKey(t *testing.T) {
+// TestModelsUseVaryingArgvWritesTheKeyItNames is the same rule end to end: the
+// line a varying row answers runs as it stands, and the role it names is the
+// key's own.
+func TestModelsUseVaryingArgvWritesTheKeyItNames(t *testing.T) {
 	modelsWriteHomeWith(t, modelsUseProjectExtra)
 	layer := settingsWriteLayerFile(t, "")
 	repoFile := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseCommentedYAML)
@@ -437,11 +436,7 @@ func TestModelsUseSegmentPlaceholderArgvWritesTheKey(t *testing.T) {
 	if !ok {
 		t.Fatal("no writer answers for agent.models.coder")
 	}
-	argv := w.ArgvFor("agent.models.coder")
-	if slices.Contains(argv, "<1>") {
-		t.Skip("needs CR1 (#2842): per-segment argv placeholders")
-	}
-	out, _, err := execute(t, modelsUseArgv(argv, "deepseek/deepseek-v4-pro")...)
+	out, _, err := execute(t, modelsUseArgv(w.ArgvFor("agent.models.coder"), "deepseek/deepseek-v4-pro")...)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}

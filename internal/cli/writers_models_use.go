@@ -38,11 +38,13 @@ func init() {
 // rows in this machine's project layer file. The argv names the layer it
 // writes, so the line a refusal prints runs as it stands.
 //
-// A template writes `<key>` where the whole key goes and `<1>` where the
-// command takes the pattern's first varying segment alone: `agent.models.*` is
-// written by the role's name (that is the argument the command takes), while
-// `agent.levels.*.model` is written by the key, because no argument of this
-// command is a bare `l2`.
+// A template names the key itself with `<key>`, the only word
+// settings.Writer.ArgvFor fills: the line a refusal prints has to run as it
+// stands, and a `<1>` left for the pattern's varying segment is printed as
+// written, which is a command line nobody can run. Naming the whole key costs
+// nothing, because `models use` resolves the key's own spelling for every row
+// it carries, `agent.models.coder` and `layer.defaults.agent.models.coder`
+// included.
 var modelsUseWriters = []struct {
 	pattern string
 	writer  settings.Writer
@@ -67,7 +69,7 @@ var modelsUseWriters = []struct {
 		pattern: "agent.models.*",
 		writer: settings.Writer{
 			Command: "fugaro models use",
-			Argv:    []string{"models", "use", "<1>", "<value>", "--layer", "repo"},
+			Argv:    []string{"models", "use", settings.KeyPlaceholder, "<value>", "--layer", "repo"},
 			Store:   settings.StoreRepo,
 		},
 	},
@@ -107,7 +109,7 @@ var modelsUseWriters = []struct {
 		pattern: "layer.defaults.agent.models.*",
 		writer: settings.Writer{
 			Command: "fugaro models use",
-			Argv:    []string{"models", "use", "<1>", "<value>", "--layer", "project"},
+			Argv:    []string{"models", "use", settings.KeyPlaceholder, "<value>", "--layer", "project"},
 			Store:   settings.StoreProject,
 		},
 	},
