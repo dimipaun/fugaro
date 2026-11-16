@@ -100,8 +100,15 @@ func enrolRigOver(t *testing.T, local string) *addRig {
 // the origin remote that says so and a committed fugaro.yaml.
 func atEnrolCheckout(t *testing.T) string {
 	t.Helper()
+	return atEnrolCheckoutYAML(t, enrolCheckoutYAML)
+}
+
+// atEnrolCheckoutYAML is atEnrolCheckout with the file written from yaml, for
+// the cases about what the checkout itself says about the repository.
+func atEnrolCheckoutYAML(t *testing.T, yaml string) string {
+	t.Helper()
 	dir := filepath.Join(t.TempDir(), "checkout-b")
-	gitCheckout(t, dir, enrolCheckoutYAML)
+	gitCheckout(t, dir, yaml)
 	testutil.Git(t, dir, "remote", "add", "origin", "https://github.com/owner/repo-b.git")
 	testutil.Git(t, dir, "add", "fugaro.yaml")
 	testutil.Git(t, dir, "commit", "-q", "-m", "fugaro.yaml")
@@ -437,6 +444,65 @@ func TestProjectReposAddReadsTheProviderFromTheCanonicalArgument(t *testing.T) {
 	}
 	if p := r.policy(t); !slices.Contains(p.AllowRepos, enrolEntry) {
 		t.Errorf("allow_repos = %v, want %s on it", p.AllowRepos, enrolEntry)
+	}
+}
+
+// TestProjectReposAddRefusesAProviderThatDisagrees: the argument may name the
+// provider — that is what makes the canonical form the listings print a command
+// that works — but not one that contradicts what this machine reads. The
+// provider is half of the canonical name the published allow-list admits, and a
+// checkout is matched by owner/name alone (checkoutRoot knows no host), so an
+// argument overruled would enrol a repository the operator did not name, with
+// the substitution visible only in the plan, between the confirmation and the
+// write. Each case is a refusal first: the sentence names both providers and
+// what said the one it read, and neither the config nor the node moved.
+func TestProjectReposAddRefusesAProviderThatDisagrees(t *testing.T) {
+	entryLocal := strings.Replace(enrolRigLocal,
+		"  owner/repo-a: { provider: github, github_app_id: \"12345\", workflows: [web] }\n",
+		"  owner/repo-a: { provider: github, github_app_id: \"12345\", workflows: [web] }\n"+
+			"  "+enrolRepo+": { provider: github, github_app_id: \"12345\", workflows: [web] }\n", 1)
+
+	for _, tc := range []struct {
+		name   string
+		rig    func(t *testing.T) *addRig
+		source string
+	}{
+		{"the config entry", func(t *testing.T) *addRig {
+			r := newAddRigWith(t, entryLocal)
+			t.Chdir(t.TempDir())
+			return r
+		}, "this machine's config entry for " + enrolRepo},
+		{"the checkout's fugaro.yaml", func(t *testing.T) *addRig {
+			return enrolRig(t)
+		}, "the fugaro.yaml of the checkout here"},
+		// The checkout is a checkout of this owner/name whatever host its
+		// origin names, which is why the typed provider is not simply ignored:
+		// this is the case the finding is about.
+		{"the checkout's origin remote", func(t *testing.T) *addRig {
+			r := newAddRigWith(t, enrolRigLocal)
+			atEnrolCheckoutYAML(t, strings.Replace(enrolCheckoutYAML, "git: { provider: github }\n", "", 1))
+			return r
+		}, "the origin remote of the checkout here"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := tc.rig(t)
+			before := r.cfgText(t)
+			out, _, err := r.enrol(t, "bitbucket/"+enrolRepo)
+			if err == nil {
+				t.Fatalf("repos add bitbucket/%s: the command ran, want the refusal naming what it reads\n%s", enrolRepo, out)
+			}
+			for _, want := range []string{"nothing was enrolled", "bitbucket/" + enrolRepo, "says github", tc.source} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not say %q:\n%v", want, err)
+				}
+			}
+			if got := r.cfgText(t); got != before {
+				t.Errorf("the refused run wrote the local config:\n%s", got)
+			}
+			if p := r.policy(t); slices.Contains(p.AllowRepos, enrolEntry) || slices.Contains(p.AllowRepos, "bitbucket/"+enrolRepo) {
+				t.Errorf("the refused run admitted the repository: allow_repos = %v", p.AllowRepos)
+			}
+		})
 	}
 }
 

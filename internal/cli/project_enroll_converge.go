@@ -291,31 +291,56 @@ func providerKind(kind string) (string, bool) {
 // reposEnrolmentProvider is the repository's git provider, read and never
 // guessed: the config's own entry first (an enrolled repository keeps the
 // provider it was enrolled with), then the checkout's fugaro.yaml, then the
-// checkout's origin host, and last the provider the argument itself named when
-// it was written canonically — a fact the operator typed rather than one this
-// program read, which is what makes the remedy the listings print
+// checkout's origin host — and the provider the argument itself named when it
+// was written canonically, which is a fact the operator typed rather than one
+// this program read, and is what makes the remedy the listings print
 // (`fugaro project repos add github/owner/name`) a command that works on a
-// machine that has neither the entry nor a checkout. A repository with none of
-// the four is refused, and the sentence names the one command that supplies it.
+// machine that has neither the entry nor a checkout. A repository nothing here
+// reads a provider for is refused, and the sentence names the one command that
+// supplies it.
+//
+// A provider the operator typed that DISAGREES with one this machine reads is
+// refused rather than overruled, and both are named. The provider is half of
+// the canonical name the published allow-list admits, and a checkout is matched
+// by owner/name alone (checkoutRoot knows no host), so an argument overruled
+// would enrol a repository the operator did not name — a substitution visible
+// only in the plan, between the confirmation and the write.
 func reposEnrolmentProvider(ctx context.Context, ownerName string, entry localcfg.Repo, known bool, typed string) (string, error) {
+	read, source := reposEnrolmentProviderRead(ctx, ownerName, entry, known)
+	if typed != "" {
+		if read != "" && read != typed {
+			return "", userErr("nothing was enrolled: you wrote %s, and %s says %s. The provider is half of the canonical name the published allow-list admits, so those are two repositories, and the one this command enrols is the one it reads: write `fugaro project repos add %s` for that one, or correct %s first",
+				pluginwire.Printable(typed+"/"+ownerName), source, read, pluginwire.Printable(read+"/"+ownerName), source)
+		}
+		return typed, nil
+	}
+	if read != "" {
+		return read, nil
+	}
+	return "", userErr("cannot tell which git provider %s is on, and nothing here reads it: run this from its checkout, whose origin remote says which, or write it with 'fugaro settings set repos.%s.provider github' and run this again",
+		pluginwire.Printable(ownerName), ownerName)
+}
+
+// reposEnrolmentProviderRead is the half of the provider that is read rather
+// than typed, with what said it for the refusal above: the local config's entry
+// for a repository it lists, then the checkout's own fugaro.yaml, then that
+// checkout's origin host. Both values are empty when nothing here reads one,
+// which is the case the argument's own provider covers.
+func reposEnrolmentProviderRead(ctx context.Context, ownerName string, entry localcfg.Repo, known bool) (string, string) {
 	if known && entry.Provider != "" {
-		return entry.Provider, nil
+		return entry.Provider, "this machine's config entry for " + pluginwire.Printable(ownerName)
 	}
 	if cfg := checkoutConfig(ctx, ownerName); cfg != nil {
 		if p, ok := providerKind(cfg.Git.Provider); ok {
-			return p, nil
+			return p, "the fugaro.yaml of the checkout here"
 		}
 	}
 	if checkoutRoot(ctx, ownerName) != "" {
 		if p, ok := providerFromOrigin(ctx); ok {
-			return p, nil
+			return p, "the origin remote of the checkout here"
 		}
 	}
-	if typed != "" {
-		return typed, nil
-	}
-	return "", userErr("cannot tell which git provider %s is on, and nothing here reads it: run this from its checkout, whose origin remote says which, or write it with 'fugaro settings set repos.%s.provider github' and run this again",
-		pluginwire.Printable(ownerName), ownerName)
+	return "", ""
 }
 
 // providerFromOrigin is the provider of the checkout in the working
