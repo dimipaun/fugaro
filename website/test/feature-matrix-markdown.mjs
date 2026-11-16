@@ -3,9 +3,9 @@
 //
 // The fixture is the contract's, rendered here rather than built: what this file holds is the
 // three-column shape D2440 chose, the block that comes back equal to the snapshot it was written
-// from (R5), the leak check over the whole rendered document (R1, R8), the stamp's agreement
-// with the release the command was asked for, and the command's promise that a refusal leaves
-// the file as it was. The builder the command uses is passed in, so the
+// from (R5), the leak check over the whole rendered document (R1, R8), the lead, the legend and
+// the `as_of` line T3 asks for, the stamp's agreement with the release the command was asked for,
+// and the command's promise that a refusal leaves the file as it was. The builder the command uses is passed in, so the
 // refusal case needs no status.md that has one in it — and the real builder (T1) and the stub it
 // replaces are both out of this file's reach.
 
@@ -110,6 +110,45 @@ test('the whole rendered document carries no leak', () => {
   assert.deepEqual(leakProblems(renderMarkdown(fixture()), FIXTURE_SPECS), [])
 })
 
+test('the document opens on the lead and the legend, and carries the as_of line the release greps', () => {
+  const snapshot = fixture()
+  const lines = renderMarkdown(snapshot).split('\n')
+  const stamp = `as_of: ${snapshot.as_of}`
+
+  // The stamp is a line of its own and the document carries one of them. `scripts/release.sh` has
+  // git and grep and no node, so this line — not the block's own `as_of` — is the fact the release
+  // procedure moves on every release (D2447, D2449), and a second one would leave it two answers.
+  assert.deepEqual(
+    lines.filter((line) => line.startsWith('as_of:')),
+    [stamp],
+    'the document carries no one line of its own reading `as_of: vX.Y.Z`',
+  )
+
+  // What a reader meets between the title and the stamp, read as blocks: the lead and the legend,
+  // each in its place. A reworded sentence is not a failure here and a deleted one is — the two
+  // are prose, and what T3 asks for is that they are there, above the table they introduce.
+  const blocks = lines
+    .slice(0, lines.indexOf(stamp))
+    .join('\n')
+    .split(/\n\s*\n/)
+    .map((block) => block.trim())
+    .filter((block) => block !== '')
+  const body = blocks.slice(1)
+
+  assert.ok(
+    body.length > 0 && !Object.values(STATUS_WORDS).every((word) => body[0].includes(word)),
+    'the document opens on the legend: the lead is the first thing a reader reads, before the legend that reads the table (T3)',
+  )
+  assert.ok(
+    body.some((block) => Object.values(STATUS_WORDS).every((word) => block.includes(word))),
+    `no block above the stamp names every status the table prints (${Object.values(STATUS_WORDS).join(', ')}): the legend is the key to the Status column, and a reader without it cannot read the table (T3)`,
+  )
+  assert.ok(
+    body.some((block) => block.includes(MARK)),
+    `no block above the stamp carries the ${MARK} the plan columns draw: the legend is the key to the marks, and a reader without it cannot read the three plan columns (T3)`,
+  )
+})
+
 test('the command writes FEATURES.md from the snapshot its builder answers with', () => {
   const repo = scratch()
   const code = main({ asOf: 'v0.24.0', builder: () => fixture(), repo })
@@ -150,6 +189,19 @@ test('the command refuses without a release to stamp, and writes nothing', () =>
   const printed = captureStderr(() => {
     assert.notEqual(main({ builder: () => fixture(), repo }), 0)
   })
-  assert.match(printed, /--as-of/)
+  // The guard's own sentence, not the word `--as-of`: the stamp-mismatch refusal names `--as-of`
+  // too, so a looser match would read green with the guard deleted.
+  assert.match(printed, /--as-of takes the release the file is stamped with/)
+  assert.match(printed, /was given nothing/)
+  assert.ok(!existsSync(path.join(repo, 'FEATURES.md')), 'a refused run wrote FEATURES.md')
+})
+
+test('the command refuses a --as-of that is not a release, naming what it was given', () => {
+  const repo = scratch()
+  const printed = captureStderr(() => {
+    assert.notEqual(main({ asOf: '0.24.0', builder: () => fixture(), repo }), 0)
+  })
+  assert.match(printed, /--as-of takes the release the file is stamped with/)
+  assert.match(printed, /"0\.24\.0"/)
   assert.ok(!existsSync(path.join(repo, 'FEATURES.md')), 'a refused run wrote FEATURES.md')
 })
