@@ -4159,7 +4159,7 @@ func contextReposRefusal(ctx context.Context, env *cloudEnv, slug string, spec *
 		jobName = job.Name
 	}
 	auth, deployed := env.repoServiceAuth(ctx, spec, io.Discard)
-	if len(credentialsServiceLaunchEnv(env.lc, jobName, spec.Repo, auth, deployed)) == 0 {
+	if len(credentialsServiceLaunchEnv(env.lc, jobName, spec.Repo, auth, env.policyMode(ctx), deployed)) == 0 {
 		if jobName != "" {
 			// A shared project job is never told the address whatever the
 			// installation's switch says, so the sentence below would be false

@@ -470,10 +470,10 @@ func TestContextReposRefusalJudgesTheDecidedJob(t *testing.T) {
 	env := memEnv(t, control.cloudFixture)
 	spec := readSpec(t, control.cloudFixture, budgetRun)
 	auth, deployed := env.repoServiceAuth(context.Background(), spec, io.Discard)
-	if got := credentialsServiceLaunchEnv(env.lc, "", spec.Repo, auth, deployed); len(got) == 0 {
+	if got := credentialsServiceLaunchEnv(env.lc, "", spec.Repo, auth, env.policyMode(context.Background()), deployed); len(got) == 0 {
 		t.Fatalf("a launch of %s on a repository's own job would be handed no address (auth %q, deployed %v): this fixture cannot tell the two jobs apart", spec.Repo, auth, deployed)
 	}
-	if got := credentialsServiceLaunchEnv(env.lc, control.job, spec.Repo, auth, deployed); len(got) != 0 {
+	if got := credentialsServiceLaunchEnv(env.lc, control.job, spec.Repo, auth, env.policyMode(context.Background()), deployed); len(got) != 0 {
 		t.Fatalf("the shared project job %s was handed %v", control.job, got)
 	}
 
