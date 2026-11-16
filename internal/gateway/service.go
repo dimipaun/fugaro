@@ -343,23 +343,12 @@ func (s *Server) serviceUpstream(ctx context.Context, rt route, in http.Header) 
 		return nil, errServiceOnRoute
 	}
 	sv := s.o.Upstream.Service
-	if sv == nil || sv.IDToken == nil || sv.RunIDToken == nil {
+	if sv == nil {
 		return nil, fmt.Errorf("%w: the credentials service's identity isn't available", errServiceUnidentified)
 	}
-	run := sv.RunIDToken()
-	if run == "" {
-		// An unauthenticated call to the service under the job's own Google
-		// identity is not a call this gateway makes (D143): the run's
-		// identity is what the service verifies the run with, and there is
-		// no second way to be admitted.
-		return nil, fmt.Errorf("%w: the run's identity token isn't available", errServiceUnidentified)
-	}
-	id, err := sv.IDToken(ctx)
+	id, run, slipID, slipClaim, err := sv.serviceCallIdentity(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%w: the job's identity token isn't available: %v", errServiceUnidentified, err)
-	}
-	if id == "" {
-		return nil, fmt.Errorf("%w: the job's identity token isn't available", errServiceUnidentified)
+		return nil, err
 	}
 	h := forwardHeaders(in)
 	s.scrubToken(h)
@@ -386,12 +375,132 @@ func (s *Server) serviceUpstream(ctx context.Context, rt route, in http.Header) 
 	if account := s.o.Upstream.Account; account != "" {
 		h.Set(HeaderAuthAccount, account)
 	}
-	if sv.SlipID != "" {
-		h.Set(HeaderSlip, sv.SlipID)
-		h.Set(HeaderSlipClaim, sv.SlipClaim)
+	if slipID != "" {
+		h.Set(HeaderSlip, slipID)
+		h.Set(HeaderSlipClaim, slipClaim)
 	}
 	return h, nil
 }
+
+// serviceCallIdentity mints the identity every call this package makes to the
+// credentials service presents (C1.10, D135): the job service account's Google
+// ID token, which Cloud Run IAM consumes from Authorization, the run's own
+// Firebase ID token, and the slip the run claimed, if it holds one. It is the
+// one place the two identities are read, so the model path (serviceUpstream)
+// and the runner's own call (Post, B3.4's workflow-secret fetch) cannot come to
+// present different identities to the one service.
+//
+// An identity that cannot be assembled is errServiceUnidentified and nothing is
+// sent: there is no credential of the job's to fall back to (D143), and a call
+// the service would refuse for want of an identity is not one this package
+// makes. The slip is all or nothing for Upstream.validate's reason: a call
+// presenting an id and no claim secret is a request the service does not read.
+func (s Service) serviceCallIdentity(ctx context.Context) (bearer, run, slipID, slipClaim string, err error) {
+	if s.IDToken == nil || s.RunIDToken == nil {
+		return "", "", "", "", fmt.Errorf("%w: the credentials service's identity isn't available", errServiceUnidentified)
+	}
+	run = s.RunIDToken()
+	if run == "" {
+		// An unauthenticated call to the service under the job's own Google
+		// identity is not a call this package makes (D143): the run's identity
+		// is what the service verifies the run with, and there is no second
+		// way to be admitted.
+		return "", "", "", "", fmt.Errorf("%w: the run's identity token isn't available", errServiceUnidentified)
+	}
+	id, err := s.IDToken(ctx)
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("%w: the job's identity token isn't available: %v", errServiceUnidentified, err)
+	}
+	if id == "" {
+		return "", "", "", "", fmt.Errorf("%w: the job's identity token isn't available", errServiceUnidentified)
+	}
+	if (s.SlipID == "") != (s.SlipClaim == "") {
+		return "", "", "", "", fmt.Errorf("%w: the run holds half a slip", errServiceUnidentified)
+	}
+	return id, run, s.SlipID, s.SlipClaim, nil
+}
+
+// Post sends one signed call to a route of the credentials service and hands
+// back the status and the answer, for a caller whose call is not a model call
+// (B3.4: the runner fetches a workflow secret its job does not mount). It is
+// the client of the same service the model path reaches, signed the same way:
+// the two identities serviceCallIdentity assembles, the slip the run holds, and
+// nothing else — no header of the caller's own travels, and this package writes
+// no other one.
+//
+// The path and the body are the caller's, spelled from the contract's own file
+// (credsvc's WorkflowSecretsPath, its request and its answer): this package
+// cannot import internal/credsvc — the service imports this one — so the
+// contract's text lives once, in that file, and never a second time here. What
+// this method owns is the wire the contract travels on.
+//
+// The answer is bounded and the client follows no redirect: a followed 307 or
+// 308 would carry the job's ID token to whatever host the Location named. The
+// credential the answer may carry is returned to the caller and appears nowhere
+// else — not in an error, not in a log line, and not in this package's own
+// sentences, all of which name the call and never what it answered.
+func (s Service) Post(ctx context.Context, baseURL, path string, body []byte) (status int, answer []byte, err error) {
+	if err := checkBaseURL(baseURL); err != nil {
+		return 0, nil, err
+	}
+	if !validJobName(s.Job) {
+		// The service holds the reported job to the job-name rule (and decides
+		// nothing from it, C1.10), so a call that could not report one is
+		// refused here rather than sent to be refused there.
+		return 0, nil, fmt.Errorf("%w: this call cannot report the job it is in", errServiceUnidentified)
+	}
+	if !strings.HasPrefix(path, "/") {
+		return 0, nil, fmt.Errorf("gateway: %q isn't a path of the credentials service", path)
+	}
+	bearer, run, slipID, slipClaim, err := s.serviceCallIdentity(ctx)
+	if err != nil {
+		return 0, nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(baseURL, "/")+path, bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, errors.New("gateway: the credentials service call could not be built")
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+bearer)
+	req.Header.Set(HeaderRunIdentity, run)
+	req.Header.Set(HeaderRunJob, s.Job)
+	if slipID != "" {
+		req.Header.Set(HeaderSlip, slipID)
+		req.Header.Set(HeaderSlipClaim, slipClaim)
+	}
+	resp, err := serviceCallClient.Do(req)
+	if err != nil {
+		// The cause is the transport's own and names no value: nothing of the
+		// answer exists yet.
+		return 0, nil, fmt.Errorf("gateway: the credentials service could not be reached: %v", err)
+	}
+	defer resp.Body.Close()
+	answer, err = io.ReadAll(io.LimitReader(resp.Body, maxServiceAnswerBytes+1))
+	if err != nil {
+		return resp.StatusCode, nil, errors.New("gateway: the credentials service's answer could not be read")
+	}
+	if len(answer) > maxServiceAnswerBytes {
+		// A bound rather than a read to the end: the answer of a route that
+		// serves one value is small, and the service is another writer.
+		return resp.StatusCode, nil, fmt.Errorf("gateway: the credentials service's answer is larger than the %d bytes this call reads", maxServiceAnswerBytes)
+	}
+	return resp.StatusCode, answer, nil
+}
+
+// maxServiceAnswerBytes bounds the answer Service.Post reads. It is far above
+// the two fields of the contract's answer (credsvc.WorkflowSecretsResponse) and
+// above Secret Manager's own 64 KiB value bound, so no honest answer of the
+// route this client serves meets it, and an unbounded one never reaches the
+// caller.
+const maxServiceAnswerBytes = 128 << 10
+
+// serviceCallClient is the client a Service.Post call is made with: the
+// gateway's own upstream client, which follows no redirect and keeps no cookie
+// jar. The call's own deadline is the caller's context — a bootstrap fetch
+// bounds the whole thing before the agent starts — so this adds none of its
+// own, and it is a var so a test can point it at a stand-in.
+var serviceCallClient = upstreamClient(nil)
 
 // errServiceOnRoute is the refusal a service call gives a route offered to it,
 // from validateRoutes and from serviceUpstream. There is no cycle to break

@@ -3022,6 +3022,15 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}); err != nil {
 		return fmt.Errorf("writing verify settings: %w", err)
 	}
+	// A declared secret this job does not mount is fetched from the
+	// installation's credentials service here, before any of it is read
+	// (workflowsecrets.go, B3.4): the flip's runs hold no value of their own,
+	// and the values this leaves in r.d.Env are the ones a mount would have
+	// left. A fetch that cannot be served stops the run here, before the
+	// agent's environment is built and long before any stage.
+	if err := r.fetchWorkflowSecrets(ctx, wf); err != nil {
+		return err
+	}
 	// A review run's agent gets none of the workflow's secrets (design
 	// generic-tool §3.6, G12): it runs a reviewed pull request's own,
 	// untrusted checkout and prompt (a hook, an auto-loaded CLAUDE.md), so
