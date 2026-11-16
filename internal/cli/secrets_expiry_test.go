@@ -521,6 +521,10 @@ func TestSecretsWritersNeverCarryAValueOnArgv(t *testing.T) {
 		{"secrets", "set", "bitbucket-token", "--expires", "2026-12-01", "--repo", "acme/app"},
 		{"secrets", "set", "bitbucket-token", secretsTestSentinel},
 		{"secrets", "set", "bitbucket-token", "--not-a-flag", secretsTestSentinel},
+		// --layer is a name this program knows, not a value it is given, and the
+		// resolver's own refusal quotes the layer it was handed: this case is what
+		// keeps the sentinel out of that refusal.
+		{"secrets", "set", "bitbucket-token", "--rotation-days", "30", "--layer", secretsTestSentinel},
 	}
 	for _, args := range cases {
 		out, errOut, err := execute(t, args...)

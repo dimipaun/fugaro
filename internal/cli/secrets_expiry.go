@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -100,6 +101,16 @@ func secretsSetSettings(cmd *cobra.Command, o secretsOptions, name string) error
 	// the command twice" is the same rule, D1171).
 	if o.policyWrite(cmd) {
 		return userErr("--allow-data-to and --proxy write the entry that decides who may mount a secret's value, and %s write this machine's own records about secrets: this command does one write per run — pass one of the two, then repeat it with the other", secretsRecordFlags)
+	}
+	// --layer is checked here rather than left to the resolver, which refuses an
+	// unknown layer by quoting it ("--layer %s: a write lands in one of …",
+	// settingsResolveTarget): a value typed into this flag is exactly what this
+	// family may not print (secretsNoEcho). The names the flag does take are not
+	// a value, so the refusals about them — the layers a key has, which is T3 —
+	// stay the resolver's own.
+	if o.layer != "" && !slices.Contains(settingsWriteLayers, o.layer) {
+		return userErr("--layer takes the layer a settings write lands in — %s — and the value given is not one of them. %s",
+			strings.Join(settingsWriteLayers, ", "), secretsNoEcho)
 	}
 	changes, err := secretsSettingsChanges(cmd, o, name)
 	if err != nil {
