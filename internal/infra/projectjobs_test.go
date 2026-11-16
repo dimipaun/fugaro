@@ -1055,6 +1055,99 @@ func TestProjectJobAccountAxis(t *testing.T) {
 	}
 }
 
+// keyCredentialAccountAxisLC is the account axis's fixture with a KEY
+// credential beside a token account: acme-key is a name `fugaro accounts add
+// --type openrouter` declares (MC22, D1670), whose value is stored under the
+// credential's own derived secret (config.CredentialSecret) and never under
+// acme-key's claude-oauth-token container, and acme-personal is the account
+// whose token a job of this profile really holds. The profile lists both,
+// because a key credential's claude_accounts entry keeps the meaning it has
+// for such a name — the list of repositories the key may be sent to — and only
+// the JOB is what the name must not get (config.ClaudeAccountTokenNames).
+const keyCredentialAccountAxisLC = `claude_accounts:
+  acme-personal: { allow_data_to: [acme/webapp] }
+  acme-key: { allow_data_to: [acme/webapp] }
+credentials:
+  - { name: acme-key, type: openrouter }
+project_secrets:
+  claude-oauth-token: { allow_data_to: [acme/webapp] }
+  github-app-key: { allow_data_to: [acme/webapp] }
+profiles:
+  standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, allow_repos: [github/acme/webapp], claude_accounts: [acme-personal, acme-key], secrets: [github-app-key] }
+`
+
+// TestProjectJobsLeaveAKeyCredentialOut is MC22 (D1670) at the project job
+// set, and it is the same rule TestAKeyCredentialDeploysNoJobMountingAnEmptyToken
+// pins on the per-repository set: a name the local config declares a KEY
+// credential gets no job, because every job of the axis exists to carry an
+// account's Claude token — projectAccountMount mounts
+// config.ClaudeAccountSecret(acme-key) as CLAUDE_CODE_OAUTH_TOKEN — and
+// nothing ever writes a version to that container for such a name. A job built
+// for it would mount an empty token, the run launched on it would fail in the
+// credential, and `fugaro secrets ls` would flag a MISSING name no
+// `claude setup-token` step could fill. The rule is the one WorkflowAccounts
+// applies (config.ClaudeAccountTokenNames), reused rather than restated: the
+// name's claude_accounts entry keeps the reach it bounds, and only the job
+// goes.
+//
+// The token account beside it is the control: the rule is about the
+// credential's TYPE and not about the profile's list, so acme-personal's job,
+// its own job service account and its token mount stay exactly where they
+// were — and the no-account job every profile keeps stays with them (D9).
+//
+// Mutation (run, restore): iterate config.ProjectJobAccounts(pr) alone (the
+// pre-fix code), which gives the key account a job and a job service account
+// again, both mounting the empty token.
+func TestProjectJobsLeaveAKeyCredentialOut(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+keyCredentialAccountAxisLC)
+	jobs, err := ProjectJobs(lc, "fugaro-runs-proj-1234", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := gcp.ProjectJobName("standard", "github", "acme-key")
+	keySA := gcp.ProjectServiceAccountID("standard", "github", "acme-key")
+	token := config.ClaudeAccountSecret("acme-key")
+	for name, j := range jobs {
+		if name == key || j.Job == key || j.Account == "acme-key" {
+			t.Errorf("the job set holds %s (profile %s, provider %s, account %q): a name declared a key credential gets no job, and every job of this axis mounts %s as %s — a container nothing writes a version to for such a name (its value is %s)",
+				name, j.Profile, j.Provider, j.Account, token, config.ReservedSecrets[config.ClaudeOAuthToken], config.CredentialSecret("acme-key"))
+		}
+		if j.ServiceAccount.AccountID == keySA {
+			t.Errorf("the job %s runs as %s, the job service account of acme-key: the secretAccessor member follows the mount, so an account that mounts nothing must have no service account either", name, keySA)
+		}
+		if _, mounted := j.SecretEnv[config.ReservedSecrets[config.ClaudeOAuthToken]]; mounted && j.SecretEnv[config.ReservedSecrets[config.ClaudeOAuthToken]] == token {
+			t.Errorf("the job %s mounts %s as %s: no job mounts a key credential's empty token container", name, token, config.ReservedSecrets[config.ClaudeOAuthToken])
+		}
+	}
+	// The set is not emptied by the rule: the profile's no-account job and its
+	// one token account's job are the two it deploys.
+	want := []string{
+		gcp.ProjectJobName("standard", "github", ""),
+		gcp.ProjectJobName("standard", "github", "acme-personal"),
+	}
+	if got := sortedJobNames(jobs); !slices.Equal(got, want) {
+		t.Fatalf("jobs = %v, want %v: the profile's no-account job and acme-personal's — the token account the profile serves", got, want)
+	}
+	personal := jobs[gcp.ProjectJobName("standard", "github", "acme-personal")]
+	if got := personal.SecretEnv[config.ReservedSecrets[config.ClaudeOAuthToken]]; got != config.ClaudeAccountSecret("acme-personal") {
+		t.Errorf("acme-personal's job mounts %s = %q, want %q", config.ReservedSecrets[config.ClaudeOAuthToken], got, config.ClaudeAccountSecret("acme-personal"))
+	}
+	if got := gcp.ProjectServiceAccountID("standard", "github", "acme-personal"); personal.ServiceAccount.AccountID != got {
+		t.Errorf("acme-personal's job runs as %s, want %s", personal.ServiceAccount.AccountID, got)
+	}
+	// And the account stays where it was, in the block a publish derives from
+	// the same config: a key credential keeps its claude_accounts entry, whose
+	// allow_data_to is the reach its key may be sent to (D1670) — the rule here
+	// drops a job and never the account.
+	accounts, err := projectpolicy.DeriveAccounts(profilesAsPolicy(lc.Profiles), lc.ClaudeAccounts, lc.ProjectSecrets, lc.PolicyRepoAccounts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := accounts["acme-key"]; !ok {
+		t.Errorf("the accounts block lost acme-key: %v — a key credential keeps its claude_accounts entry, whose allow_data_to is the reach its key may be sent to", slices.Sorted(maps.Keys(accounts)))
+	}
+}
+
 // TestProjectJobNoAccountJobUnchanged: a profile taking an account on does not
 // move the job it already had. The no-account job's name, service account,
 // env, resources and mounts are what they were before the profile listed
