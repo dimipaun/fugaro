@@ -1287,14 +1287,19 @@ func (m *ModelPrice) cachePrices() []cachePrice {
 // old names only — and refuses an entry that writes two spellings of one
 // price. A per-million price needs the entry's input price to be read
 // against, so an entry that writes one without input_per_m is refused too,
-// naming the key rather than letting the division decide. warnOld is where
-// the old key's note goes, for the documents Parse allows one on.
-func (c *Config) foldCacheSpellings(warnOld func(string)) error {
+// naming the key rather than letting the division decide. ownerFile is where
+// the old key's note goes: into the config's own warnings for the owner's own
+// file, and nowhere for the published copy, which keeps those keys by design.
+func (c *Config) foldCacheSpellings(ownerFile bool) error {
+	note := func(string) {}
+	if ownerFile {
+		note = c.AddWarning
+	}
 	var errs []error
 	for _, id := range slices.Sorted(maps.Keys(c.ModelPrices)) {
 		mp := c.ModelPrices[id]
 		for _, p := range mp.cachePrices() {
-			if err := foldCachePrice(id, p, mp.InputPerM, warnOld); err != nil {
+			if err := foldCachePrice(id, p, mp.InputPerM, note); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -1303,20 +1308,10 @@ func (c *Config) foldCacheSpellings(warnOld func(string)) error {
 	return errors.Join(errs...)
 }
 
-// warnOldCacheKey is where foldCacheSpellings' note goes: into the config's
-// own warnings when this document is the owner's file, and nowhere when it is
-// the published copy.
-func (c *Config) warnOldCacheKey(ownerFile bool) func(string) {
-	if !ownerFile {
-		return func(string) {}
-	}
-	return c.AddWarning
-}
-
 // foldCachePrice folds one dimension's one spelling into its multiplier field
-// and, for the old key, sets the note. warnOld is the caller's, because only
-// the caller knows whether this document may draw one at all.
-func foldCachePrice(id string, p cachePrice, inputPerM *float64, warnOld func(string)) error {
+// and, for the old key, sets the note. note is the caller's, because only the
+// caller knows whether this document may draw one at all.
+func foldCachePrice(id string, p cachePrice, inputPerM *float64, note func(string)) error {
 	var written []string
 	for _, k := range []cacheKey{p.old, p.mult, p.perM} {
 		if *k.field != nil {
@@ -1337,9 +1332,10 @@ func foldCachePrice(id string, p cachePrice, inputPerM *float64, warnOld func(st
 		v := **p.perM.field / *inputPerM
 		*p.old.field = &v
 	case *p.mult.field != nil:
-		*p.old.field = *p.mult.field
+		v := **p.mult.field
+		*p.old.field = &v
 	default:
-		warnOld(fmt.Sprintf("model_prices.%s.%s is a multiple of input_per_m: write %s for the same number, or %s in dollars per million tokens; fugaro update renames it for you",
+		note(fmt.Sprintf("model_prices.%s.%s is a multiple of input_per_m: write %s for the same number, or %s in dollars per million tokens",
 			id, p.old.key, p.mult.key, p.perM.key))
 	}
 	return nil
@@ -2353,7 +2349,7 @@ func Parse(data []byte) (*Config, error) {
 	}
 	// The document's own version, read before the fills below overwrite it:
 	// it is the one thing at this depth that tells the owner's file from the
-	// published copy (see foldCacheSpellings' caller).
+	// published copy (see the note under the version stamp).
 	fileVersion := c.Version
 	if c.Version == 0 {
 		c.Version = 1 // the first spelling: a document that says nothing is version 1's
@@ -2376,7 +2372,7 @@ func Parse(data []byte) (*Config, error) {
 	// local file this release has written is ConfigVersion. A local file still
 	// at version 1 reads as the published copy and stays quiet: SA4.2's
 	// migration renames its key and prints its own line for it.
-	if err := c.foldCacheSpellings(c.warnOldCacheKey(fileVersion != SharedVersion)); err != nil {
+	if err := c.foldCacheSpellings(fileVersion != SharedVersion); err != nil {
 		return &c, err
 	}
 	if c.MaxParallel == 0 {
