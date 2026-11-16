@@ -662,6 +662,47 @@ func TestReviewRefusesAnImplicitJobForAnotherAccount(t *testing.T) {
 	}
 }
 
+// TestReviewRefusesASlugThatNamesAnotherRepository is the first of the
+// resolution's facts and the one that decides which provider's job is asked for
+// at all: the provider is derived from the slug the launch computed and the
+// repository the task names (runner.ProviderForSlug), never from the config's
+// optional provider key or from the job's name, so a slug and a task that name
+// two different repositories have no provider to derive and no job to run on.
+// Without the check the derivation falls through to the provider of the task's
+// own repository, and a review is placed in the review job of a repository the
+// run is not about — a job whose container reads a different checkout and
+// reports a verdict on a pull request the task never named.
+//
+// The installation is the admitted one in every other respect (the credentials
+// service is published, the App ID is recorded, the implicit github job is
+// deployed), so the incoherence is the only thing this refusal is about.
+//
+// Mutation (run, restored): drop the ProviderForSlug arm and take the provider
+// from the task's repository alone, and this call resolves the installation's
+// implicit github job for a slug that names another repository.
+func TestReviewRefusesASlugThatNamesAnotherRepository(t *testing.T) {
+	f := newImplicitReviewFixture(t)
+	env := memEnv(t, f.cloudFixture)
+
+	// A slug the launcher's own derivation produces, for a repository other than
+	// the one the task names.
+	const otherRepo = "acme/other"
+	spec := &task.Spec{Repo: "acme/app"}
+	slug := reviewSlug(t, "github", otherRepo)
+	job, err := env.reviewJobFor(context.Background(), nil, spec, slug)
+	if err == nil {
+		t.Fatalf("the resolution returned the job %+v for the slug of %s and a task naming %s, want a refusal: the job a review runs on is the review job of the repository its own task names", job, otherRepo, spec.Repo)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want a refusal (exit 1): %v", ExitCode(err), err)
+	}
+	for _, want := range []string{slug, spec.Repo, "the slug and the task must name one repository"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+}
+
 // TestReviewRefusesAnImplicitJobWhenNoPolicyIsPublished is the fourth of the
 // resolution's facts, and the run's own: a run places itself in the job it is in
 // by the policy the project published (internal/runner's matchJobName), and a
