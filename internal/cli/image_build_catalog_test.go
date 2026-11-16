@@ -607,16 +607,19 @@ func TestImageBuildWithoutACatalogKeepsItsMeaning(t *testing.T) {
 	}
 }
 
-// TestCatalogBuildNeverPutsASecretInALogOrAnError: a build secret reaches a
-// catalog build as the Secret Manager name the build mounts and nothing else
-// (D1150) — never its value, in no request, no output and no error, whatever
-// the build does with it.
+// TestCatalogBuildNeverPutsASecretInALogOrAnError: a secret's value is never in
+// a request, an output or an error, whatever the build does with it. Since B9
+// the one secret a catalog build names at all is the clone step's credential
+// (D2311), so the container a workflow's own `secrets:` entry is stored in is
+// not in the request either: a value seeded there has no path into the build,
+// and this test holds both halves — the value nowhere, and the container
+// nowhere.
 func TestCatalogBuildNeverPutsASecretInALogOrAnError(t *testing.T) {
 	value := "npm-token-value-" + strings.Repeat("9", 24)
 	fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
 	stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
 	// The secret holds a value in the project, as it does in a real one: what
-	// the CLI may carry of it is its name.
+	// the CLI may carry of it is its name, and of a catalog build's none at all.
 	secret := gcp.SecretID(mustSlug("bitbucket", "acme/app"), "npm-token")
 	f.sm.Seed(secret, nil, []byte(value))
 
@@ -633,8 +636,8 @@ func TestCatalogBuildNeverPutsASecretInALogOrAnError(t *testing.T) {
 			t.Errorf("%s carries the secret's value", what)
 		}
 	}
-	if !strings.Contains(string(body), secret) {
-		t.Errorf("the request does not name the secret it mounts: %s", body)
+	if strings.Contains(string(body), secret) {
+		t.Errorf("the request names the workflow secret's container: an entry's build is handed no secret of the entry's (B9, D2311): %s", body)
 	}
 	// The value is a file secret the build step mounts, never an env of any
 	// step and never a build argument the image's history would hold.
