@@ -387,7 +387,7 @@ var grantRules = map[string]map[string]who{
 	// runs. It is Fugaro's own account, on the same switch as the service, and
 	// it comes with nothing wider.
 	"google_cloud_run_v2_service_iam_member": {
-		"roles/run.invoker": toAccounts | toPeople | toCoordinator | toVerifier | toVoice,
+		"roles/run.invoker": toAccounts | toPeople | toCoordinator | toVerifier,
 	},
 	"google_logging_log_view_iam_member": {
 		"roles/logging.viewAccessor": toPeople,
