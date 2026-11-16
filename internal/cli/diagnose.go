@@ -157,10 +157,31 @@ type Diagnosis struct {
 	// what the run charged the provider routes' calls -- the table's price
 	// with the fee, or the report where it floors an unpriced tier's charge.
 	// Claude's spend is not in it. Zero when no provider reported one.
-	// ReportedWarning is set when the two differ by more than reportedGapPct.
-	Reported        float64 `json:"reported_usd,omitempty"`
-	Charge          float64 `json:"charge_usd,omitempty"`
-	ReportedWarning string  `json:"reported_warning,omitempty"`
+	//
+	// TableLoUSD and TableHiUSD are what the table would have charged the calls
+	// a provider reported a cost for, at the tier's cheapest and dearest ends,
+	// and UnreportedCalls is how many of the run's settled calls carried no
+	// report at all (D2650, runstore.Cost's own fields). Together they are the
+	// band a report is read against: under D2640 a complete call settles on the
+	// report, so a report compared with Charge agrees with it by construction
+	// (F16). Zero for a record written before the fields existed, and for a run
+	// whose calls reported no cost -- and zero is what says this record has no
+	// band, so its report is compared with the charge instead.
+	Reported float64 `json:"reported_usd,omitempty"`
+	Charge   float64 `json:"charge_usd,omitempty"`
+	// ReportedWarning is set when the report and the charge differ by more than
+	// reportedGapPct, for a record with no band. It is empty for a record that
+	// has one, whose comparison is BandWarning's: the console renders this
+	// field, so a sentence left in it would describe a comparison that record
+	// never made.
+	ReportedWarning string `json:"reported_warning,omitempty"`
+	// BandWarning is set when the report falls more than reportedGapPct above
+	// TableHiUSD or below TableLoUSD: the provider billed outside the band the
+	// table prices those calls in, in either direction (D2650, F17).
+	BandWarning     string  `json:"band_warning,omitempty"`
+	TableLoUSD      float64 `json:"table_lo_usd,omitempty"`
+	TableHiUSD      float64 `json:"table_hi_usd,omitempty"`
+	UnreportedCalls int     `json:"unreported_calls,omitempty"`
 	// PinWarnings are the model prices the run's cap counted on a guess:
 	// an unverified placeholder, or cache rates left at 0.
 	PinWarnings []string `json:"pin_warnings,omitempty"`
@@ -820,11 +841,12 @@ func seniorRound(rs []runstore.ReviewSummary) int {
 	return 0
 }
 
-// reportedGapPct is how far above Fugaro's charge (without the route fee) a
-// provider's reported cost may be before diagnose warns.
+// reportedGapPct is how far outside the table's band -- or, for a record that
+// carries none, above Fugaro's charge without the route fee -- a provider's
+// reported cost may sit before diagnose warns.
 const reportedGapPct = 10
 
-// routeOf fills d's route, reported-vs-charge and pin warnings from the
+// routeOf fills d's route, reported-vs-band and pin warnings from the
 // record's cost: the models the run paid for are its pins. The warnings use
 // the price table with the project's overrides, as the run's cap did.
 func routeOf(d *Diagnosis, rec *runstore.Record, lc *localcfg.Config, red func(string) string) {
@@ -833,6 +855,7 @@ func routeOf(d *Diagnosis, rec *runstore.Record, lc *localcfg.Config, red func(s
 	}
 	c := rec.Cost
 	d.Route, d.ModelBy = redactKeys(c.RouteBy, red), redactKeys(c.ModelBy, red)
+	d.TableLoUSD, d.TableHiUSD, d.UnreportedCalls = c.TableLoUSD, c.TableHiUSD, c.UnreportedCalls
 	if c.ReportedUSD > 0 {
 		// The provider's charge is the routes' spend; the run's ModelUSD also
 		// holds Claude's, and "unattributed" may be a Claude call's.
@@ -852,12 +875,31 @@ func routeOf(d *Diagnosis, rec *runstore.Record, lc *localcfg.Config, red func(s
 			bare += pricing.WithoutFee(m, fee).USD()
 		}
 		d.Reported, d.Charge = c.ReportedUSD, charge
-		// Only a report above the charge is a sign of under-pricing: a lower
-		// one may be partial reporting (a cut stream, a call without a cost).
-		if d.Reported > bare*(1+reportedGapPct/100.0) {
+		// A record that carries the band is compared with it and not with the
+		// charge: D2640 settles a complete call on the report, so a report
+		// against the charge agrees with it by construction (F16).
+		switch {
+		case d.TableHiUSD > 0 && d.Reported > d.TableHiUSD*(1+reportedGapPct/100.0):
 			// Two answers, because a catalog-priced route has two: the
-			// owner's own price, or the built-in catalog's cheapest end
-			// while OpenRouter served a dearer endpoint (design §7, D12).
+			// owner's own price, or the built-in catalog's dearest end
+			// while the route served an endpoint dearer still (design §7,
+			// D12).
+			d.BandWarning = fmt.Sprintf("the providers reported $%.4f, more than %d%% above the $%.4f the table would have charged the calls they reported at the tier's dearest end: model_prices may be too low, or a catalog-priced route served an endpoint dearer than the tier's range — set price_policy: highest, or price the model under model_prices; check model_prices and the account's provider settings",
+				d.Reported, reportedGapPct, d.TableHiUSD)
+		case d.TableLoUSD > 0 && d.Reported < d.TableLoUSD*(1-reportedGapPct/100.0):
+			// Below the band the table over-prices those calls, which is the
+			// direction an override meant as dollars-per-million leaves
+			// (spec §"Likely causes" 2) and the one a provider that
+			// under-reports its own bill shows up in (F17): the caps are
+			// enforced against the charge, so a low report is the one that
+			// hides spend.
+			d.BandWarning = fmt.Sprintf("the providers reported $%.4f, more than %d%% below the $%.4f the table would have charged those calls at the tier's cheapest end: model_prices may be too high for the endpoints served, or the provider under-reported what it billed; check model_prices and the account's provider settings",
+				d.Reported, reportedGapPct, d.TableLoUSD)
+		case d.TableHiUSD == 0 && d.TableLoUSD == 0 && d.Reported > bare*(1+reportedGapPct/100.0):
+			// The charge is the comparison only for a record with no band,
+			// and only a report above it is a sign of under-pricing: a lower
+			// one may be partial reporting (a cut stream, a call without a
+			// cost).
 			d.ReportedWarning = fmt.Sprintf("the providers reported $%.4f, more than %d%% above the $%.4f the table charged without the route fee: model_prices may be too low, or a catalog-priced route was charged its cheapest end while a dearer endpoint served the call — set price_policy: highest, or price the model under model_prices (partial reporting is also possible); check model_prices and the account's provider settings",
 				d.Reported, reportedGapPct, bare)
 		}
@@ -878,6 +920,23 @@ func routeOf(d *Diagnosis, rec *runstore.Record, lc *localcfg.Config, red func(s
 			}
 		}
 	}
+}
+
+// reportedCalls is how many of the run's settled calls carried a provider
+// report, and how many it settled in all. The record keeps the unreported
+// count alone (runstore.Cost), and the gateway's count of each stage's calls
+// is the only figure in it the two can be read off: a call that settled after
+// its stage's report was taken is in the record's unreported count and in no
+// stage's, so the sum can sit below the calls the record itself says carried
+// no report, and the larger of the two is the run's settled calls.
+func reportedCalls(stages []runstore.StageTiming, unreported int) (reported, settled int) {
+	for _, st := range stages {
+		if st.Calls != nil {
+			settled += *st.Calls
+		}
+	}
+	settled = max(settled, unreported)
+	return settled - unreported, settled
 }
 
 func redactKeys(m map[string]float64, red func(string) string) map[string]float64 {
@@ -1198,14 +1257,26 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 	if d.Retries > 0 {
 		fmt.Fprintf(&b, "Retries:  %d (the model's stream was closed before a stage finished, so that stage was run once more)\n", d.Retries)
 	}
-	if d.Reported > 0 {
+	// A record that carries the band says so here instead of the Reported
+	// line: the report is read against the table's band for the same calls
+	// (F16), and the settled figure is what the run was charged beside it.
+	// The count says how much of the run the report covers -- the calls the
+	// band is over -- so a band that a report sits inside is not read as a
+	// whole run's report.
+	if d.TableHiUSD > 0 || d.TableLoUSD > 0 {
+		reported, settled := reportedCalls(d.Stages, d.UnreportedCalls)
+		fmt.Fprintf(&b, "Settled:  $%.4f (reported on %d of %d calls); table band $%.4f-$%.4f\n",
+			d.Charge, reported, settled, d.TableLoUSD, d.TableHiUSD)
+	} else if d.Reported > 0 {
 		fmt.Fprintf(&b, "Reported: providers said $%.4f; charged $%.4f (the table price settles; an unpriced tier's charge is floored by the report, clamped to the call's reservation)\n", d.Reported, d.Charge)
 	}
 	for _, w := range d.PinWarnings {
 		fmt.Fprintf(&b, "Warning:  %s\n", oneLine(w))
 	}
-	if d.ReportedWarning != "" {
-		fmt.Fprintf(&b, "Warning:  %s\n", oneLine(d.ReportedWarning))
+	for _, w := range []string{d.ReportedWarning, d.BandWarning} {
+		if w != "" {
+			fmt.Fprintf(&b, "Warning:  %s\n", oneLine(w))
+		}
 	}
 	if r.PRURL != "" {
 		fmt.Fprintf(&b, "PR:       %s\n", oneLine(prColumnURL(r)))
