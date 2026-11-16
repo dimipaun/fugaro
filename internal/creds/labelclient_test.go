@@ -6,10 +6,10 @@ package creds
 // error of its may carry.
 //
 // Everything here is hermetic (Convention 9): the service is the httptest server
-// servicemint_test.go builds (serviceFake) on loopback, and no test opens a
-// socket to anything else — the plain-http cases below are refused before a
-// connection could be attempted. No literal in this file is, or looks like, a
-// credential (Convention 2): testIDToken and testToken are the package's own two
+// mergemint_test.go builds (serviceFake) on loopback, and no test opens a socket
+// to anything else — the plain-http cases below are refused before a connection
+// could be attempted. No literal in this file is, or looks like, a credential
+// (Convention 2): testIDToken and testToken are the package's own two
 // placeholders, and every assertion about them is an assertion that they are
 // absent from what the client writes.
 
@@ -25,9 +25,9 @@ import (
 )
 
 // labelRun is a run id of the shape the route corroborates a write's pull
-// request against, derived here rather than written down (the same form the
-// daemon's own items carry).
-const labelRun = "20261116-152117-9041"
+// request against — the form the daemon's own items carry, and the same one the
+// syncer's tests use.
+const labelRun = "20261116-120000-a1b2"
 
 // labelClient is the client under test, pointed at the fake: one repository, the
 // test's own App ID, and the daemon's own ID token minted by a function the test
