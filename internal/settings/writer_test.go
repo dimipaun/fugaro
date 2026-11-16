@@ -9,10 +9,10 @@ import (
 // These tests are C1's, the contract the writer registry and the after-write
 // hook are built against (docs/config-ownership/implementation-plan.md §3,
 // D2609, D2610, D2611), plus CR1's revision of it: the segment placeholders,
-// the overlap refusal, and the copies in and out. They register under
-// `writertest.` (and `wtesta.`-`wtests.`) so that no pattern a family registers
-// can collide with one of theirs, and so that a pattern left in the table by a
-// test matches no registry row. Each registration is dropped again by
+// the overlap refusal, and the copies in and out. They register under the
+// `writertest.` namespace or a `wtest`-prefixed one, so that no pattern a family
+// registers can collide with one of theirs, and so that a pattern left in the
+// table by a test matches no registry row. Each registration is dropped again by
 // registerForTest, so the package's tests run twice (`-count=2`) without a
 // second run meeting the first run's table as another family's registrations.
 
