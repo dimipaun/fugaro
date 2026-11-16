@@ -48,8 +48,8 @@
 // and the leak check are read against that answer, the same call the build makes. A case that read
 // the contract's fixture would go red on the day the real rows landed, which is the day nobody
 // would be looking at this file. The one case that is still about the fixture is skipped now the
-// stub is gone, naming the file that takes it over; and the mapping's own account of the page, the
-// built page's rows against the block the loader read them from, is
+// stub is gone, naming the file that takes it over. The case that holds the built page's rows to
+// the block the loader read them from, and both outputs to the names the mapping carries, is
 // `website/test/feature-matrix-stamp.mjs`'s.
 //
 // A gate whose refusal has never been seen to fire is a gate nobody knows the shape of, so the
