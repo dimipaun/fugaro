@@ -253,9 +253,9 @@ const (
 // none: the orchestrator's switch `orchestrator_enabled` (D2701, D2739) and the
 // project's issue adapter `issue_sync` (D2733) are top-level keys of the
 // published policy node and of nothing else, so `policy` is the whole of their
-// Layers — and both name the `project` family, whose `fugaro project policy
-// publish` is the door that carries a node-only key onto the node, so the
-// generic path carries neither.
+// Layers — and both name the `project` family, the family whose command is the
+// node's door, so the generic path refuses them in its name rather than writing
+// them somewhere they do not live.
 const (
 	cfmRegistryRows   = 480
 	cfmAllowlistNamed = 118

@@ -1528,13 +1528,16 @@ var policyRows = []Row{
 	// switch (one write reaches them all, D2701), where a file would reach the
 	// machine it sits on.
 	//
-	// Both name the `project` family: `fugaro project policy publish` is the
-	// door that carries a node-only key onto the node, and the generic path
-	// refuses them in that family's name — handing orchestration back and
-	// reading a repository's issues are not scalars a generic write may land,
-	// and the carrier a command would edit does not exist yet. Until it does,
-	// the two are testdata/writer_gaps.golden's, as the cascade's six were
-	// before K1.
+	// Both name the `project` family, whose command is the node's door
+	// (`fugaro project policy publish`), because that is what makes the generic
+	// path refuse them in that family's name rather than write them somewhere
+	// they do not live: handing orchestration back and naming the repositories
+	// whose issues feed the backlog are not scalars `settings set` may land.
+	// What the family does *not* have is a carrier for either: no key of the
+	// local config states the switch or the adapter (D2701, D2733), so a person
+	// writes the node's own member and `publish` carries it from the node
+	// forward — which is why the two are testdata/writer_gaps.golden's, the
+	// cascade's six before K1.
 	//
 	// The switch merges by Tighten, and it is the rule rather than a figure
 	// here: false is its stricter value and the only one that can undo the
