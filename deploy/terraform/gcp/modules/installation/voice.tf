@@ -50,11 +50,12 @@ locals {
 
   # The two facts the process is configured with, read out of the credentials
   # service's block — the one place this document carries the installation's
-  # Firebase project and database, and the block the same `fugaro update`
-  # writes or carries in the same pass that writes var.voice_service (DON1).
-  # One fact and not two copies: a second pair of members on var.voice_service
-  # would be a value a hand edit could pull apart from the database the
-  # credentials service, the runs and the policy all read.
+  # Firebase project and database. That block is written by every `fugaro
+  # update`; this one is the installation's own opt-in and the run never writes
+  # it, so what the two share is the installation and not the run that wrote
+  # them. One fact and not two copies: a second pair of members on
+  # var.voice_service would be a value a hand edit could pull apart from the
+  # database the credentials service, the runs and the policy all read.
   #
   # try() is what keeps a hand-written tfvars carrying voice_service ALONE
   # from failing as "attempt to get attribute from null value": the locals are

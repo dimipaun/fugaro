@@ -275,19 +275,24 @@ variable "intake" {
 }
 
 # The voice hop (P5.3.3, design docs/mobile/design/voice-evaluation-switch.md
-# §4.4): the third service this installation may run, beside the credentials
+# §4.4): the third service this installation MAY run, beside the credentials
 # service and the intake, and the one a phone calls. account_id and service are
 # its own account's ID and the Cloud Run service's name, image is the released
-# binary's digest pin — internal/infra.Voice computes all three and writes them
-# beside the credentials service's block, because the hop's configuration is
-# that block's: the Firebase project whose ID tokens it verifies and the
-# database whose device nodes and policy it reads are credentials_service's own
-# members (firebase_project, rtdb_url), which modules/installation/voice.tf
-# reads rather than repeating here. There is deliberately no url member and no
-# fill step: the audience a device's token must carry is that Firebase project
-# and not the service's own URL. Absent, the module creates nothing, which is
-# every installation until it asks for the hop; the type is the module's, and
-# its validations are the ones that hold the three to their shape.
+# binary's digest pin. The block IS the opt-in, and the installation writes it:
+# `fugaro update` deploys the other two services on every installation and never
+# writes this one, so an installation that never wrote the block gets no hop at
+# all — no account, no service and no invoker binding — and an installation that
+# did keeps it across updates, with its image moved onto each release's pin
+# beside the two services it shares that pin with. The hop's configuration is
+# the credentials service's block's: the Firebase project whose ID tokens it
+# verifies and the database whose device nodes and policy it reads are
+# credentials_service's own members (firebase_project, rtdb_url), which
+# modules/installation/voice.tf reads rather than repeating here. There is
+# deliberately no url member and no fill step: the audience a device's token
+# must carry is that Firebase project and not the service's own URL. Absent, the
+# module creates nothing, which is every installation until it asks for the hop;
+# the type is the module's, and its validations are the ones that hold the three
+# to their shape.
 variable "voice_service" {
   type = object({
     account_id = string

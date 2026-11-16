@@ -10,12 +10,11 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 )
 
-// The voice hop is OPT-IN (P5.3.3, design
-// docs/mobile/design/voice-evaluation-switch.md §4.4): `var.voice_service` is
-// "off unless the installation turns it on", and the one route that turns it on
-// is the installation root's own block. Nothing composes it from the local
-// config, no command writes it and no flag asks for it — an owner who wants the
-// hop writes the three members the module's variable takes
+// The voice hop is OPT-IN (P5.3.3, the design voice-evaluation-switch.md §4.4):
+// `var.voice_service` is "off unless the installation turns it on", and the one
+// route that turns it on is the installation root's own block. Nothing composes
+// it from the local config, no command writes it and no flag asks for it — an
+// owner who wants the hop writes the three members the module's variable takes
 // (deploy/terraform/gcp/modules/installation/variables.tf), and from then on the
 // one documented command keeps it.
 //
@@ -88,11 +87,13 @@ func seedVoiceService(t *testing.T, r *imagesRig, image string) {
 // plan with no account, no service and no public invoker binding in it, and the
 // module's own goldens are where that is read (TestTheVoiceHopIsInTheVoiceGoldenOnly).
 //
-// Mutation (run, restore): put infra.SetVoiceService(doc, infra.Voice(pinned))
-// back into deployCredentialsService, or carriedVoiceService back into
-// writeCarriedCredentials, and this fails at the tfvars assertion with
-// "the installation's tfvars carry voice_service" — which is every installation
-// getting the hop, the state this change ends.
+// Mutation (run, restore): put the hop's block back into
+// deployCredentialsService (infra.SetVoiceService(doc, infra.VoiceServiceSpec{
+// AccountID: infra.VoiceAccountID, Service: infra.VoiceServiceName,
+// Image: pinned})), or carriedVoiceService back into writeCarriedCredentials,
+// and this fails at the tfvars assertion with "the installation's tfvars carry
+// voice_service" — which is every installation getting the hop, the state this
+// change ends.
 func TestUpdateLeavesTheVoiceHopOffOnAnInstallationThatNeverOptedIn(t *testing.T) {
 	r := credentialsRig(t)
 	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))

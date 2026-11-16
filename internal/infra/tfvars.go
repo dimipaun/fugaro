@@ -1348,18 +1348,6 @@ func CarriedIntake(vars, prev []byte) ([]byte, error) {
 	return sortedJSON(doc)
 }
 
-// Voice is the voice hop's block for an installation that has none: the
-// module's own account and service names, running image.
-//
-// The image is the release's, and it is the one the credentials service's
-// block and the intake's carry: see VoiceServiceSpec — one pin, three
-// services, and the digest form is the module's own rule (var.voice_service's
-// validation), so a caller that hands in a tag writes a document the plan
-// refuses.
-func Voice(image string) VoiceServiceSpec {
-	return VoiceServiceSpec{AccountID: VoiceAccountID, Service: VoiceServiceName, Image: image}
-}
-
 // SetVoiceService returns the installation root's tfvars vars with
 // voice_service set to spec, and every other entry byte-for-byte what it was.
 // It is SetIntake's read-modify-write of the ONE key and for the same reason:
