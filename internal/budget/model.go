@@ -13,6 +13,7 @@
 package budget
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -375,12 +376,48 @@ func (l RunLedger) Outstanding() Micros { return l.Reserved - l.Released }
 func (l RunLedger) Unsettled() Micros { return l.Reserved - l.Released - l.Spent }
 
 // ModelUse is one model's usage under a repository's day counter.
+//
+// Micros is the whole of the model's dollars, billed and notional together.
+// Notional, Rep, TLo and THi are the four spend leaves rules generation 6
+// adds (spend-accuracy D2648, D2650; docs/spend-accuracy/day-leaves.md): the
+// subscription part of Micros, the cost the provider reported for the calls
+// that came back with a report, and the table's charge over those same calls
+// at the two ends of the tier that served them, with no route fee in either.
+//
+// NotionalSet records whether the notional leaf was on the node at all. A day
+// written before the leaf existed and a gateway-only model's real 0 both read
+// notional as 0, and only the leaf's presence tells them apart (RS8), so a
+// reader must ask NotionalSet before it treats the value as recorded. It is
+// read off the wire and never written to it: the wire's signal is the leaf.
 type ModelUse struct {
-	Micros Micros `json:"micros"`
-	In     int64  `json:"in"`
-	Out    int64  `json:"out"`
-	CR     int64  `json:"cr"`
-	CW     int64  `json:"cw"`
+	Micros      Micros `json:"micros"`
+	In          int64  `json:"in"`
+	Out         int64  `json:"out"`
+	CR          int64  `json:"cr"`
+	CW          int64  `json:"cw"`
+	Notional    Micros `json:"notional,omitempty"`
+	Rep         Micros `json:"rep,omitempty"`
+	TLo         Micros `json:"tlo,omitempty"`
+	THi         Micros `json:"thi,omitempty"`
+	NotionalSet bool   `json:"-"`
+}
+
+// UnmarshalJSON reads one model's node and keeps whether its notional leaf was
+// present. The leaves themselves are the tags' business; the presence is not
+// a field of the node, so it takes the raw keys (RS8).
+func (m *ModelUse) UnmarshalJSON(b []byte) error {
+	type node ModelUse
+	var n node
+	if err := json.Unmarshal(b, &n); err != nil {
+		return err
+	}
+	var leaves map[string]json.RawMessage
+	if err := json.Unmarshal(b, &leaves); err != nil {
+		return err
+	}
+	*m = ModelUse(n)
+	_, m.NotionalSet = leaves["notional"]
+	return nil
 }
 
 // Counters is /spend/<day>/global or /spend/<day>/repos/<slug>. Counted is

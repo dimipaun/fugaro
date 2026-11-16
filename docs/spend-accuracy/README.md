@@ -15,7 +15,8 @@ settled and estimated spend drift apart.
 | [reconciliation.md](reconciliation.md) | Assumptions A1-A5, findings F1-F34, resolutions RS1-RS8, decisions D2640-D2651 with the owner's answers of 2026-11-15 (four amended after review round 1), tension T1 (resolved), open items O1-O6, UNVERIFIED U1-U8 (U6 and U8 settled by findings) |
 | [implementation-plan.md](implementation-plan.md) | Seven slices, 23 tasks (SA0.1-SA6.1), levels L0-L4, the critical path, the shared-files table, Checks 650-651, owner-run step OR1. **Nothing in it is approved** |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's tasks as the graph `fugaro plan graph` reads |
-| `cost-fields.md`, `day-leaves.md` | Not written yet: tasks SA1.0 and SA5.6 add them, to say what each new field and leaf holds |
+| [day-leaves.md](day-leaves.md) | What each day-counter leaf holds, `notional`, `rep`, `tlo` and `thi` included, and what a day without them means (SA5.6) |
+| `cost-fields.md` | Not written yet: task SA1.0 adds it, to say what each new field holds |
 
 **Headline:**
 - `price_policy: highest` exists, but `fugaro update --repo` still refuses it: `catalogShipped` was never flipped
