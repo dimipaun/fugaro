@@ -1207,6 +1207,14 @@ func TestResultSchemaAcceptsTriage(t *testing.T) {
 		// rejects.
 		{Ordinal: 2, Round: 2, Mode: rigor.Pro, Level: policy.LevelL3, Failed: true, Cause: "Invalid API key · Fix external API key",
 			Entries: []runstore.TriageEntry{}},
+		// And the round the run did not ask at all, whose call the gateway would
+		// have refused for the key the run does not hold: it carries a cause the
+		// same way and stays out of `failed`, because nothing failed — the run
+		// chose not to ask. Marshalled from the record like the failure above,
+		// so a `skipped` the schema does not carry is an unknown key this test
+		// rejects.
+		{Ordinal: 3, Round: 3, Mode: rigor.Pro, Level: policy.LevelL2, Skipped: true, Cause: runstore.TriageCauseNoAccount,
+			Entries: []runstore.TriageEntry{}},
 	})
 	rec.Deferred = runstore.NewDeferred([]runstore.DeferredFinding{
 		{Key: "9f2a1c", Summary: "a long comment restates the function", Reason: "doc drift, not the main path", Group: "docs", Source: runstore.TriageSourceAgent},
@@ -1232,7 +1240,9 @@ func TestResultSchemaAcceptsTriage(t *testing.T) {
 		{"a round with no entries list", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":0}]}`},
 		{"a round with no total", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","entries":[]}]}`},
 		{"a failed that is not a boolean", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","failed":"yes","total":0,"entries":[]}]}`},
+		{"a skipped that is not a boolean", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","skipped":"yes","total":0,"entries":[]}]}`},
 		{"an empty cause", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","failed":true,"cause":"","total":0,"entries":[]}]}`},
+		{"a skip with an empty cause", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","skipped":true,"cause":"","total":0,"entries":[]}]}`},
 		{"a cause longer than the bound", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","failed":true,"cause":"` + strings.Repeat("x", runstore.MaxTriageLine+1) + `","total":0,"entries":[]}]}`},
 		{"a member the round does not carry", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","verdict":"defer","total":0,"entries":[]}]}`},
 		{"more rounds than the bound", `,"triage":{"rounds":[` + strings.TrimSuffix(strings.Repeat(`{"round":1,"mode":"pro","level":"l2","total":0,"entries":[]},`, runstore.MaxTriageRounds+1), ",") + `]}`},
