@@ -18312,12 +18312,17 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/
 gcloud secrets versions access latest --secret=<model-secret> --project <project> \
   --impersonate-service-account=<orch-account> >/dev/null
 # the positive control on the write reach: this one must SUCCEED, because runs/ is inside the
-# launcher's condition. The object is your own throwaway, never the marker.
-printf '' | gcloud storage cp - gs://<bucket>/runs/<throwaway-key>
+# launcher's condition. The object is your own throwaway, never the marker. Every storage
+# command below runs as the account under test: a denial your own identity meets proves
+# nothing, and a write your own identity is allowed to make would read as a failure (Check 68).
+printf '' | gcloud storage cp - gs://<bucket>/runs/<throwaway-key> --impersonate-service-account=<orch-account>
 # and the same throwaway at the bucket root must be REFUSED:
-printf '' | gcloud storage cp - gs://<bucket>/<throwaway-key>
-gcloud storage ls gs://<bucket>/          # the root read succeeds: the condition fences writes
-gcloud storage ls gs://<bucket>/runs/     # and the listing under it does too
+printf '' | gcloud storage cp - gs://<bucket>/<throwaway-key> --impersonate-service-account=<orch-account>
+# the root read succeeds: the condition fences writes, and the listing under it does too
+gcloud storage ls gs://<bucket>/ --impersonate-service-account=<orch-account>
+gcloud storage ls gs://<bucket>/runs/ --impersonate-service-account=<orch-account>
+# the restore: the one object this check creates, removed as the account that made it
+gcloud storage rm gs://<bucket>/runs/<throwaway-key> --impersonate-service-account=<orch-account>
 # the positive controls
 gcloud run jobs list --project <project> --region <region> --impersonate-service-account=<orch-account>
 gcloud secrets list --project <project> --impersonate-service-account=<orch-account>
@@ -18335,9 +18340,11 @@ permission answers, the three storage results (the `runs/` write, the root write
 other positive controls — **under Check 663 here**.
 
 **What a run costs.** Reads and probes: **no model call, no run and nothing billable**. Nothing is created but
-the one throwaway object under `runs/`, and deleting it is half the restore; the other half is removing the
-`serviceAccountTokenCreator` grant you added by hand. The root write creates nothing, which is what it is there
-to show. The token lives in one shell variable for the length of the
+the one throwaway object under `runs/`, and the block's own `gcloud storage rm gs://<bucket>/runs/<throwaway-key>`
+is how the restore removes it — run it with the same impersonation flag, since it deletes what that account
+wrote; the other half of the restore is removing the `serviceAccountTokenCreator` grant you added by hand. The
+root write creates nothing, which is what it is there to show: run as the `orch` account it is refused, and run
+as your own identity it would be a write that left an object and a failure that was never the account's. The token lives in one shell variable for the length of the
 check and is unset at the end; the value read that is refused never reaches stdout, because
 `>/dev/null` is what makes it a refusal with an exit status rather than bytes.
 

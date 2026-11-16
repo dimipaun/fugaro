@@ -379,6 +379,38 @@ func TestDocsMobileOrchestratorChecksAreRegistered(t *testing.T) {
 		}
 	}
 
+	// Check 663's storage probes are readings of the `orch` account's own grants,
+	// so every `gcloud storage` command in its block has to run as that account:
+	// without the flag the command reads your own identity, whose refusal of the
+	// bucket root proves nothing (Check 68's rule) and whose writes succeed
+	// whatever the account holds -- a false failure, an object no restore step
+	// names, and a positive control that controls for nothing. The block, and not
+	// the whole section, is what is read: the prose below it names the restore
+	// command without repeating the flag.
+	section663 := checkSection(t, register, "663")
+	block := ""
+	if open := strings.Index(section663, "```sh"); open >= 0 {
+		if rest := section663[open+len("```sh"):]; strings.Contains(rest, "```") {
+			block = rest[:strings.Index(rest, "```")]
+		}
+	}
+	if block == "" {
+		t.Fatalf("%s: Check 663's section carries no ```sh command block, and the check is run from it", liveChecksDoc)
+	}
+	storage := 0
+	for _, line := range strings.Split(block, "\n") {
+		if !strings.Contains(line, "gcloud storage") {
+			continue
+		}
+		storage++
+		if !strings.Contains(line, "--impersonate-service-account=<orch-account>") {
+			t.Errorf("Check 663's `%s` does not carry `--impersonate-service-account=<orch-account>`: the storage probes read the `orch` account's own grants, and a denial for your own identity proves nothing", strings.TrimSpace(line))
+		}
+	}
+	if storage < 4 {
+		t.Errorf("Check 663's block carries %d `gcloud storage` commands, want at least four: the two writes (the `runs/` positive control and the refused root write) and the two listings", storage)
+	}
+
 	// The four are appended where the register's written sections end, in
 	// ascending order: the register writes a work's sections after every section
 	// already there, and the numbering paragraph's reading -- the number free
