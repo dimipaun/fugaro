@@ -1454,13 +1454,13 @@ func TestServiceServesUnderAPolicyWithNoCredentialsBlock(t *testing.T) {
 // that answered cannot serve it, and the run is told which member answered and
 // which one took the call.
 //
-// What moves a call is what the answer MEANS and never its status: a usage limit
-// (429) and a credential that answered 401 are the two the cascade retries on
-// another member (usageLimitStatus, unauthorizedStatus; ReasonExhausted and
-// ReasonBroken), and the third sub-case is the boundary this path draws — an
-// answer about the request, an overloaded 529, is the client's own and moves
-// nothing here, so a pool fails over on a credential and never on an upstream's
-// mood.
+// What moves a call is the status, and only the two that are about a credential:
+// a usage limit (429) and a credential that answered 401. Those are the two the
+// cascade retries on another member (usageLimitStatus, unauthorizedStatus;
+// ReasonExhausted and ReasonBroken), and the third sub-case is the boundary this
+// path draws — an answer about the request, an overloaded 529, is the client's
+// own and moves nothing here, so a pool fails over on a credential and never on
+// an upstream's mood.
 //
 // The plan's own wording for this test lists 429/402/529 together, which is F5's
 // table of exhaustion signals (internal/runner's exhaustionSignals) rather than
@@ -1549,13 +1549,16 @@ func TestPublishedPoolFailsOverToItsNextMember(t *testing.T) {
 
 	t.Run("an answer about the request moves nothing", func(t *testing.T) {
 		s := poolSvc(t, block)
+		// 529 is the status an overloaded upstream answers with, and the one the
+		// runner's own table reads (F5). 503 is what this service answers its own
+		// refusals with, so a relayed 503 could not be told from one.
 		s.up.Script = []anthropicfake.Reply{
-			{Status: http.StatusServiceUnavailable, Body: `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`},
+			{Status: 529, Body: `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`},
 		}
 
 		resp, body := s.call(t, callBody("published-pool-529"))
-		if resp.StatusCode != http.StatusServiceUnavailable {
-			t.Fatalf("the answer is %d, want the upstream's own (%d): a retry is for a credential that cannot serve the call", resp.StatusCode, http.StatusServiceUnavailable)
+		if resp.StatusCode != 529 {
+			t.Fatalf("the answer is %d, want the upstream's own 529: a retry is for a credential that cannot serve the call", resp.StatusCode)
 		}
 		if got := resp.Header.Get(HeaderCredential); got != testPoolAccount {
 			t.Errorf("%s = %q, want %q: the member that answered keeps the call", HeaderCredential, got, testPoolAccount)
