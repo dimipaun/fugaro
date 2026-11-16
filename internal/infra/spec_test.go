@@ -2888,6 +2888,11 @@ func TestRepoAddressesFollowTheSwitch(t *testing.T) {
 		}
 		return out
 	}
+	// serviceAccessor is D2074's grant: the service's own accessor on one
+	// container the workflow's job mounts.
+	serviceAccessor := func(workflow, logical string) string {
+		return `module.repo.module.workflow["` + workflow + `"].google_secret_manager_secret_iam_member.service["` + logical + `"]`
+	}
 	for _, tc := range []struct {
 		name string
 		in   Inputs
@@ -2900,14 +2905,21 @@ func TestRepoAddressesFollowTheSwitch(t *testing.T) {
 		// and C2.2's release with the App key in ServiceHeldSecretNames.
 		wantGone   []string
 		wantAppKey []string
-		wantAdd    []string
+		// wantAdd is what the switch ARRIVES with in each of those two states,
+		// and it is two sets of grants, not one: the job's invoker grant on the
+		// service (D135), and the service's own accessor on each container the
+		// job still mounts (D2074) — which is one fewer under C2.2's release,
+		// because the App key's mount goes with its accessor (F1).
+		wantAdd       []string
+		wantAddAppKey []string
 	}{
 		{
-			name:       "cascade, the auth the service serves",
-			in:         repoRootInputs(t, repoRootCascadeAgent),
-			lc:         parseLC(t, repoRootLC),
-			wantAdd:    invoker("web"),
-			wantAppKey: appKey("web"),
+			name:          "cascade, the auth the service serves",
+			in:            repoRootInputs(t, repoRootCascadeAgent),
+			lc:            parseLC(t, repoRootLC),
+			wantAdd:       slices.Concat(invoker("web"), []string{serviceAccessor("web", "github-app-key"), serviceAccessor("web", "npm-token")}),
+			wantAddAppKey: slices.Concat(invoker("web"), []string{serviceAccessor("web", "npm-token")}),
+			wantAppKey:    appKey("web"),
 		},
 		{
 			name:  "oauth",
@@ -3007,7 +3019,7 @@ func TestRepoAddressesFollowTheSwitch(t *testing.T) {
 			// C2.2's release: the App key joins the list and its accessor goes
 			// with the model ones, in the same plan.
 			serviceHoldsTheAppKey(t)
-			check("C2.2's release", slices.Concat(tc.wantGone, tc.wantAppKey), tc.wantAdd)
+			check("C2.2's release", slices.Concat(tc.wantGone, tc.wantAppKey), tc.wantAddAppKey)
 		})
 	}
 }

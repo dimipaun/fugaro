@@ -1949,11 +1949,11 @@ run "credentials_service_reads_the_jobs_containers" {
 
   assert {
     condition = tomap({ for k, m in google_secret_manager_secret_iam_member.service : k => m.secret_id }) == tomap({
-      CLAUDE_CODE_OAUTH_TOKEN = "fugaro-acme-sandbox-claude-oauth-token-d68d08fb66f32201"
-      FUGARO_BITBUCKET_TOKEN  = "fugaro-acme-sandbox-bitbucket-token-a9273afb5a2f66ba"
-      SANDBOX_PROBE           = "fugaro-acme-sandbox-sandbox-probe-8ed07eaf4b722cd8"
+      claude-oauth-token = "fugaro-acme-sandbox-claude-oauth-token-d68d08fb66f32201"
+      bitbucket-token    = "fugaro-acme-sandbox-bitbucket-token-a9273afb5a2f66ba"
+      sandbox-probe      = "fugaro-acme-sandbox-sandbox-probe-8ed07eaf4b722cd8"
     })
-    error_message = "the service's account must hold an accessor on every secret this job mounts — the model credential it serves (claude-oauth-token), the git credential, and the workflow's own secret — one container per mount, and no container the job does not mount"
+    error_message = "the service's account must hold an accessor on every secret this job mounts — the model credential it serves (claude-oauth-token), the git credential, and the workflow's own secret — one container per mount, keyed by its logical name, and no container the job does not mount"
   }
   assert {
     condition = alltrue([for m in google_secret_manager_secret_iam_member.service :

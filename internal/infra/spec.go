@@ -2173,6 +2173,16 @@ func (rs RepoSpec) Addresses() []string {
 			}
 			add(p + "google_secret_manager_secret_iam_member.job[" + q(logical) + "]")
 		}
+		// And the service's own accessor, one per container this workflow's
+		// job MOUNTS (D2074) — a set of its own, and not the job's grants
+		// read backwards: a mount the job keeps an accessor on is one the
+		// service may still be asked for (the module's set is the mounts), and
+		// a mount the job has given up is one the service is not granted.
+		for _, logical := range uniqueSecrets(ws) {
+			if serviceReadsSecret(rs.Installation.CredentialsService, logical, rs.BitbucketProxied) {
+				add(p + "google_secret_manager_secret_iam_member.service[" + q(logical) + "]")
+			}
+		}
 		if rs.Installation.CredentialsService != nil {
 			// The job account's roles/run.invoker on the service (D135).
 			add(p + "google_cloud_run_v2_service_iam_member.credentials[0]")
@@ -2233,6 +2243,38 @@ func mountsServiceHeldSecret(ws WorkflowSpec, name string, proxied bool) bool {
 		held = true
 	}
 	return held
+}
+
+// serviceReadsSecret reports whether the credentials service's own account is
+// granted this logical secret's container in this repository's root (D2074,
+// B3.3): the module's service_secret_names is the values of its job_mounts, so
+// the test is "does this job still MOUNT the secret" — every mounted secret
+// except the two whose mount the module's own drop takes away once the service
+// is on, by logical name (the GitHub App's private key, C2.3) or for this
+// repository alone (a proxied repository's git credential, B1.13, G9/G15).
+// config.ServiceHeldSecretNames is the same list the module's literal is held
+// to (deploy/terraform's TestServiceHeldSecretsMatchTheCredentialsService).
+//
+// It is a different question from mountsServiceHeldSecret, and deliberately:
+// that one answers "may the JOB still read it", which the served model
+// credentials also say no to (their accessor goes at C1.18, their mount at
+// C1.20), while their MOUNT is still on the container this release, and a
+// container the job mounts is one the service may be asked for. So a model
+// credential of a repository the service serves is a grant here until Go's
+// own dropModelMounts takes the mount out of the spec — which is exactly the
+// tfvars the module reads.
+//
+// svc nil, or with no account in it, is the switch off and the installation
+// applied before the account existed: no grant at all, which is what makes
+// this release plan nothing new on such an installation.
+func serviceReadsSecret(svc *CredentialsService, name string, proxied bool) bool {
+	if svc == nil || svc.Account == "" {
+		return false
+	}
+	if slices.Contains(config.ServiceHeldSecretNames, name) {
+		return false
+	}
+	return !proxied || !slices.Contains(config.ProxiedGitSecretNames, name)
 }
 
 // Schedule is the check's daily cron schedule: a minute between 05:00 and

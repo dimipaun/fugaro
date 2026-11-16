@@ -1866,6 +1866,32 @@ var runAccountGrants = setOf(
 	// with the opt-in off (credentials_service unset, the default) the set is
 	// unchanged.
 	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | google_service_account.job.member | for_each=local.job_secret_names [local.job_secret_names=toset([ for env, logical in var.workflow.secret_env : logical if var.credentials_service == null || !local.is_service_held[env] ])] | perms=`,
+	// Reviewed for D2074 (B3.3): the SAME account the row above is about, the
+	// other way round — the credentials service's own account reads each
+	// container the workflow's job still mounts, so that the value a run asks
+	// the service for (B3.4) is one the service can read at all. The set is the
+	// job's mounts and not the job's accessors: a mount whose logical name the
+	// service holds (the App key, C2.2) or that is a proxied git credential
+	// (G9) is dropped from local.job_mounts in the same plan, so the container
+	// set is the job's declared mounts exactly
+	// (TestServiceWorkflowSecretGrantsMatchTheJobsMounts holds the two sets
+	// equal, in both directions).
+	//
+	// roles/secretmanager.secretAccessor carries no storage permission, no
+	// permission to grant a role, no actAs and no token minting: it reads the
+	// VALUE of a container that already exists. The containers are
+	// var.secrets[each.value] — the repository's own workflow secrets, resolved
+	// by the operator's own update into this root's tfvars — and none of them
+	// is the runs bucket, which is a Cloud Storage bucket and not a Secret
+	// Manager secret at all, so fugaro/managed.json is not something this
+	// reaches. What it is, deliberately, is a REACH: the account that can
+	// already read the bundle can now read the workflow secrets of every
+	// repository whose root carries the switch, which is the decision (D2074,
+	// with G19 fencing the service to each repository's own job account and
+	// workflow at fetch time). The for_each is empty on an installation whose
+	// outputs carry no account, and empty while the opt-in is off, so nothing
+	// is granted where the service is not.
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | "serviceAccount:${var.credentials_service.account}" | for_each=local.service_secret_names [local.service_secret_names=var.credentials_service == null || var.credentials_service.account == "" ? toset([]) : toset(values(local.job_mounts))] | perms=`,
 	// Reviewed for C1.18: the credentials service's own account, on the one
 	// bundle container C1.18 creates, and on nothing else. secretAccessor on
 	// a secret the installation creates is not a write path to the marker:
