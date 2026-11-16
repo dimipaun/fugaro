@@ -435,29 +435,66 @@ const escalationSince = "0.23.0"
 // refuses its task) or too early (an image that can judge stays blocked).
 const evaluateSince = "0.24.0"
 
+// mergeJudgeSince is the first fugaro release whose runner runs the merge
+// judge's step (E6, D2031): its recipe parser knows `merge_judge` as a kind,
+// and mode: evaluate's own step list carries it, so the judge's recipe — one
+// step, and that step — is a run.
+//
+// **It is not evaluateSince, and the two are a release apart.** 0.24.0 reads
+// mode: evaluate, which is the mode the judge's task carries, so that gate
+// admits a launch against a 0.24.0 job image and cannot tell this run from any
+// other evaluate one; its parser then refuses `merge_judge` outright ("is not a
+// step type"), so the run dies at bootstrap with the launch already paid for
+// and nothing judged. What judges the launch is therefore the recipe's own
+// constructs (recipe.UsesMergeJudge, read from the embedded text a catalog
+// launch carries) and the catalog's own name, for the task that names it and
+// carries no text — the two arms of recipeSinceFor, not the mode's.
+//
+// It names 0.25.0, the release this work lands in, which is not tagged yet:
+// docs/release.md's ("Before you tag") checklist verifies the constant against
+// the tag actually cut, the way digestSince's, adversarialSince's and
+// evaluateSince's bullets record. A wrong value refuses too late (a launch
+// reaches a runner that refuses its recipe) or too early (an image that can
+// judge stays blocked).
+const mergeJudgeSince = "0.25.0"
+
 // escalationRecipes are the catalog recipe names whose runner half ships in
 // escalationSince's release: `escalate` (one coder pass, one review, the
-// verdict recorded) and `rebase`, which that release adds, and `merge-judge`,
-// the merge judge's own recipe, which E6 adds with the same engine — its name
-// is listed here from the start so the three the escalation ladder launches
-// (E11) are held to the one release in one place, rather than each arrival
-// moving this gate. A recipe of the same name from the repository or the
-// project is that layer's own file and is judged by the constructs it
-// carries, like any other: this list is the catalog's names, not the names.
-var escalationRecipes = []string{"escalate", "rebase", "merge-judge"}
+// verdict recorded) and `rebase`, which that release adds. A recipe of the
+// same name from the repository or the project is that layer's own file and is
+// judged by the constructs it carries, like any other: this list is the
+// catalog's names, not the names. `merge-judge`, the third of the ladder's
+// recipes (E6), is deliberately not here: its runner half ships a release
+// later, and mergeJudgeRecipeNamed holds it to that one.
+var escalationRecipes = []string{"escalate", "rebase"}
 
 // escalationRecipeNamed reports whether the task's recipe is one of the
 // catalog's escalation recipes: a name the launcher resolved from the catalog
 // itself, never a repository's or the project's own file that happens to
 // share it (resolveRecipe reads those first, and they win). It is the floor
 // under the construct gates: a recipe whose text carries no hand_over and no
-// rebase step this launcher can see — merge-judge, which carries neither, and
-// any of the three whose text a later release edits to use fewer constructs —
-// is still held to the release whose runner runs the ladder's recipes, so an
-// image that cannot take the launch is refused at the terminal rather than at
-// bootstrap.
+// rebase step this launcher can see — or either of the two whose text a later
+// release edits to use fewer constructs — is still held to the release whose
+// runner runs the ladder's recipes, so an image that cannot take the launch is
+// refused at the terminal rather than at bootstrap.
 func escalationRecipeNamed(spec *task.Spec) bool {
 	return spec.Recipe != nil && spec.Recipe.Source == string(recipe.SourceCatalog) && slices.Contains(escalationRecipes, spec.Recipe.Name)
+}
+
+// mergeJudgeRecipe is the catalog recipe the judge run is launched by, and
+// mergeJudgeRecipeNamed reports whether the task's recipe is that catalog
+// entry: a name the launcher resolved from the catalog itself, never a
+// repository's or the project's own file that happens to share it.
+//
+// It is the name arm mergeJudgeSince needs beside the construct one: a catalog
+// launch carries the recipe's text, which recipe.UsesMergeJudge reads, but a
+// task naming the catalog entry and carrying no text (a hand-written task.json,
+// or a later release's launcher) has no construct to read, and the name is then
+// the only thing that says which run this is.
+const mergeJudgeRecipe = "merge-judge"
+
+func mergeJudgeRecipeNamed(spec *task.Spec) bool {
+	return spec.Recipe != nil && spec.Recipe.Source == string(recipe.SourceCatalog) && spec.Recipe.Name == mergeJudgeRecipe
 }
 
 // reviewLevelsSince is the first fugaro release whose runner acts on review
@@ -1181,27 +1218,30 @@ func repoRecipeForGate(ctx context.Context, spec *task.Spec) *recipe.Recipe {
 // and start a job whose runner refuses the whole task at bootstrap, the
 // manifest being a field it does not know.
 //
-// The adversarial step and the escalation constructs are judged from rp too,
-// and they are the newest a recipe can carry (escalationSince, then
-// adversarialSince), so their cases come first. Unlike the manifest and mode:
-// artifact — a repository recipe's digest run and its mode both reach the
-// task as fields, which carry their own gates above — neither the step nor
-// the two escalation constructs has anything in the task behind it, so the
-// launcher's read of the file the recipe names is the only place the gate can
-// see it; one this launcher cannot read keeps recipesSince, with the runner's
-// parse refusal as the backstop. Every older construct keeps the gate it
-// always had, judged from the embedded text alone: a repository recipe trips
-// none of them here, which is what its own tests pin.
+// The judge's step, the adversarial step and the escalation constructs are
+// judged from rp too, and they are the newest a recipe can carry
+// (mergeJudgeSince, then escalationSince, then adversarialSince), so their
+// cases come first. Unlike the manifest and mode: artifact — a repository
+// recipe's digest run and its mode both reach the task as fields, which carry
+// their own gates above — none of those three has anything in the task behind
+// it, so the launcher's read of the file the recipe names is the only place
+// the gate can see it; one this launcher cannot read keeps recipesSince, with
+// the runner's parse refusal as the backstop. Every older construct keeps the
+// gate it always had, judged from the embedded text alone: a repository recipe
+// trips none of them here, which is what its own tests pin.
 //
 // The catalog's escalation recipes are held to escalationSince by name as
 // well (escalationRecipeNamed), which is the floor under the constructs: the
 // name is what the ladder's launches and a person's terminal carry, and the
 // gate must not move back if a later release edits one of those files to use
-// fewer of them.
+// fewer of them. The judge's recipe is the third of those names and is held
+// the same way, to its own, newer release (mergeJudgeRecipeNamed).
 func recipeSinceFor(spec *task.Spec, rp *recipe.Recipe) string {
 	r := embeddedRecipeOf(spec)
 	if len(spec.DigestRuns) == 0 && r == nil && rp != nil {
 		switch {
+		case recipe.UsesMergeJudge(rp):
+			return mergeJudgeSince
 		case recipe.UsesRebase(rp) || recipe.UsesHandOver(rp):
 			return escalationSince
 		case recipe.UsesAdversarial(rp):
@@ -1214,6 +1254,8 @@ func recipeSinceFor(spec *task.Spec, rp *recipe.Recipe) string {
 		since = digestSince
 	case r == nil:
 		since = recipesSince
+	case recipe.UsesMergeJudge(r):
+		since = mergeJudgeSince
 	case recipe.UsesRebase(r) || recipe.UsesHandOver(r):
 		since = escalationSince
 	case recipe.UsesAdversarial(r):
@@ -1232,6 +1274,9 @@ func recipeSinceFor(spec *task.Spec, rp *recipe.Recipe) string {
 		since = recipesV07Since
 	default:
 		since = recipesSince
+	}
+	if mergeJudgeRecipeNamed(spec) {
+		return mergeJudgeSince
 	}
 	if imagePredates(since, escalationSince) && escalationRecipeNamed(spec) {
 		return escalationSince

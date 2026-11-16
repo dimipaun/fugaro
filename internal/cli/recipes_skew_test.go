@@ -2806,7 +2806,7 @@ func TestTriageSinceIsTheReleaseTheDocsName(t *testing.T) {
 // TestRecipesSkewRefusesEscalationOnOldImage: a recipe holding the escalation
 // constructs — a review step's hand_over, or the rebase step — needs a job
 // image whose runner holds them, which is one release for both
-// (escalationSince, E5), and the catalog's three escalation recipes are held to
+// (escalationSince, E5), and the catalog's two escalation recipes are held to
 // that release by name as well (escalationRecipeNamed). 0.22.0 knows every
 // other recipe construct and refuses both outright, so the whole recipe would
 // die at bootstrap with the launch already paid for: the gate turns that into a
@@ -2858,12 +2858,15 @@ func TestRecipesSkewRefusesEscalationOnOldImage(t *testing.T) {
 		!strings.Contains(err.Error(), "recipe rebase needs a job image whose runner knows recipes (fugaro 0.23.0 or later)") {
 		t.Fatalf("rebase on 0.22.0: err = %v", err)
 	}
-	// The name floor: merge-judge is the third of the ladder's recipes and
-	// E6's, so the catalog does not hold its file yet, and a task naming it is
-	// held to the same release as the two that carry the constructs.
+	// The name floor, and its own release: merge-judge is the third of the
+	// ladder's recipes (E6), whose runner half ships a release after the two
+	// constructs above, so a task naming it is held to mergeJudgeSince rather
+	// than to this one — 0.22.0 is refused for the same reason, one release
+	// later in the message. TestRecipesSkewRefusesMergeJudgeOnAnImageWithoutTheStep
+	// is where that release and its boundary are pinned.
 	spec.Recipe = &task.Recipe{Name: "merge-judge", Source: string(recipe.SourceCatalog)}
 	if _, err := check("ghcr.io/dimipaun/fugaro-base:0.22.0"); err == nil ||
-		!strings.Contains(err.Error(), "recipe merge-judge needs a job image whose runner knows recipes (fugaro 0.23.0 or later)") {
+		!strings.Contains(err.Error(), "recipe merge-judge needs a job image whose runner knows recipes (fugaro "+mergeJudgeSince+" or later)") {
 		t.Fatalf("merge-judge on 0.22.0: err = %v", err)
 	}
 	// A launch on a checkout: clone workflow, whose job has no derived image
@@ -2873,7 +2876,7 @@ func TestRecipesSkewRefusesEscalationOnOldImage(t *testing.T) {
 	lc.BaseImages = map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:0.22.0"}
 	var cloneWarn bytes.Buffer
 	if err := checkCloneRecipeImage(context.Background(), &lc, spec, &cloneWarn); err == nil ||
-		!strings.Contains(err.Error(), "recipe merge-judge needs a job image whose runner knows recipes (fugaro 0.23.0 or later)") ||
+		!strings.Contains(err.Error(), "recipe merge-judge needs a job image whose runner knows recipes (fugaro "+mergeJudgeSince+" or later)") ||
 		!strings.Contains(err.Error(), "release 0.22.0") {
 		t.Fatalf("clone: warn = %q, err = %v", cloneWarn.String(), err)
 	}
@@ -2957,6 +2960,136 @@ func TestEscalationSinceHasAReleaseBullet(t *testing.T) {
 		if !strings.Contains(bullet, want) {
 			t.Errorf("docs/release.md's escalationSince bullet does not say %q", want)
 		}
+	}
+}
+
+// TestRecipesSkewRefusesMergeJudgeOnAnImageWithoutTheStep: the judge's recipe
+// needs a job image whose runner holds the merge_judge step, which is a
+// release later than the mode the recipe runs in (mergeJudgeSince, E6). 0.24.0
+// reads mode: evaluate — the mode the judge's task carries, so the evaluate
+// gate admits the launch — and refuses the step outright ("is not a step
+// type"), so the run dies at bootstrap with the launch already paid for and
+// nothing judged. What judges it is therefore the recipe's own constructs,
+// from the text a catalog launch carries, and the catalog's name for a task
+// that carries none.
+func TestRecipesSkewRefusesMergeJudgeOnAnImageWithoutTheStep(t *testing.T) {
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	judge, ok := recipe.CatalogText("merge-judge")
+	if !ok {
+		t.Fatal("no catalog recipe merge-judge")
+	}
+	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x",
+		Recipe: &task.Recipe{Name: "merge-judge", Source: string(recipe.SourceCatalog), YAML: string(judge)}}
+	check := func(baseRef string) (string, error) {
+		var warn bytes.Buffer
+		writeBuildRecord(t, f, appSlug, "web", baseRef)
+		err := checkRecipeImage(context.Background(), env, appSlug, spec, "base", &warn)
+		return warn.String(), err
+	}
+	// 0.24.0 is the release whose runner reads the mode this recipe runs in and
+	// does not know the step it holds: the image a launch would otherwise be
+	// admitted against, and the one this gate exists to refuse.
+	warn, err := check("ghcr.io/dimipaun/fugaro-base:" + evaluateSince)
+	if err == nil || !strings.Contains(err.Error(), "recipe merge-judge needs a job image whose runner knows recipes (fugaro "+mergeJudgeSince+" or later)") || ExitCode(err) != ExitUserError {
+		t.Fatalf("%s: warn = %q, err = %v", evaluateSince, warn, err)
+	}
+	if warn != "" {
+		t.Errorf("%s: warning %q, want none", evaluateSince, warn)
+	}
+	// And the release it names, where the runner holds the step.
+	if warn, err := check("ghcr.io/dimipaun/fugaro-base:" + mergeJudgeSince); err != nil {
+		t.Fatalf("%s: warn = %q, err = %v", mergeJudgeSince, warn, err)
+	}
+	// A dev base is not judged, the shape every other *Since gate has.
+	warn, err = check("us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c")
+	if err != nil {
+		t.Fatalf("dev base: %v", err)
+	}
+	if !strings.Contains(warn, "not a release base image") {
+		t.Errorf("dev base: warning %q, want the not-a-release note", warn)
+	}
+	// The name arm: the catalog's own entry named with no text, which is what
+	// a hand-written task carries, has no construct for the gate to read.
+	spec.Recipe = &task.Recipe{Name: "merge-judge", Source: string(recipe.SourceCatalog)}
+	if _, err := check("ghcr.io/dimipaun/fugaro-base:" + evaluateSince); err == nil ||
+		!strings.Contains(err.Error(), "fugaro "+mergeJudgeSince+" or later") {
+		t.Fatalf("a catalog merge-judge task with no text on %s: err = %v", evaluateSince, err)
+	}
+	// A checkout: clone workflow has no derived image and so no build record:
+	// the gate raises checkCloneImageSince's threshold on base_images.base.
+	lc := *env.lc
+	lc.BaseImages = map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:" + evaluateSince}
+	var cloneWarn bytes.Buffer
+	if err := checkCloneRecipeImage(context.Background(), &lc, spec, &cloneWarn); err == nil ||
+		!strings.Contains(err.Error(), "fugaro "+mergeJudgeSince+" or later") ||
+		!strings.Contains(err.Error(), "release "+evaluateSince) {
+		t.Fatalf("clone: warn = %q, err = %v", cloneWarn.String(), err)
+	}
+	// A project recipe reaches the task as embedded text and is judged by the
+	// construct in it, whatever its name.
+	other := mustSlug("github", "acme/other")
+	writeBuildRecord(t, f, other, "svc", "ghcr.io/dimipaun/fugaro-base:"+evaluateSince)
+	spec.Repo, spec.Workflow = "acme/other", "svc"
+	spec.Recipe = &task.Recipe{Name: "project-judge", Source: string(recipe.SourceProject),
+		YAML: "version: 1\nname: project-judge\nmode: evaluate\nsteps:\n  - merge_judge: {}\n"}
+	if err := checkRecipeImage(context.Background(), env, other, spec, "base", &bytes.Buffer{}); err == nil ||
+		!strings.Contains(err.Error(), "recipe project-judge needs a job image whose runner knows recipes (fugaro "+mergeJudgeSince+" or later)") {
+		t.Fatalf("a project recipe holding the judge step: %v", err)
+	}
+	// A repository recipe is that repository's own file: its construct is read
+	// from the checkout, the rp arm of recipeSinceFor.
+	recipeCheckout(t, f, "", map[string]string{
+		".fugaro/recipes/judge.yaml": "version: 1\nname: judge\nmode: evaluate\nsteps:\n  - merge_judge: {}\n",
+	})
+	spec.Recipe = &task.Recipe{Name: "judge", Source: string(recipe.SourceRepo)}
+	if err := checkRecipeImage(context.Background(), env, other, spec, "base", &bytes.Buffer{}); err == nil ||
+		!strings.Contains(err.Error(), "recipe judge needs a job image whose runner knows recipes (fugaro "+mergeJudgeSince+" or later)") {
+		t.Fatalf("a repository recipe holding the judge step: %v", err)
+	}
+	// The control, and the reason the gate is the step and not the mode: an
+	// evaluate recipe that holds no judge step is judged at recipesSince, which
+	// 0.24.0 knows — the mode is its own gate (evaluateSince) and this one is
+	// the step's.
+	spec.Recipe = &task.Recipe{Name: "project-plain-judge", Source: string(recipe.SourceProject),
+		YAML: "version: 1\nname: project-plain-judge\nmode: evaluate\nsteps:\n  - " + string(evaluateFixtureKind) + ": {}\n"}
+	if err := checkRecipeImage(context.Background(), env, other, spec, "base", &bytes.Buffer{}); err != nil {
+		t.Fatalf("an evaluate recipe with no judge step: %v", err)
+	}
+}
+
+// TestMergeJudgeSinceHasAReleaseBullet: mergeJudgeSince names 0.25.0, which is
+// not tagged, so docs/release.md's Before-you-tag list is what holds the
+// constant to the release actually cut — the job every other *Since constant's
+// bullet does (TestEvaluateSinceHasAReleaseBullet). Nothing else ties the
+// number the gate accepts to the release whose runner holds the merge_judge
+// step, and a release that landed the step elsewhere would otherwise keep
+// refusing images that have it.
+func TestMergeJudgeSinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `mergeJudgeSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no mergeJudgeSince bullet: the checklist is where a release verifies the constant")
+	}
+	if !strings.Contains(bullet, "currently `\""+mergeJudgeSince+"\"`") {
+		t.Errorf("docs/release.md's mergeJudgeSince bullet does not carry the constant's release (%q)", mergeJudgeSince)
+	}
+	for _, want := range []string{"not tagged yet", "merge_judge", "mode: evaluate", "evaluateSince", "recipeSinceFor"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's mergeJudgeSince bullet does not say %q", want)
+		}
+	}
+	// The constant names the release whose runner holds the step, and the
+	// bullet has to say so: a bullet that promised the mode alone would have a
+	// release verify against an image that reads mode: evaluate and refuses
+	// the recipe carrying it.
+	if !strings.Contains(bullet, "E6") {
+		t.Errorf("docs/release.md's mergeJudgeSince bullet does not name the runner half the release must carry")
 	}
 }
 
