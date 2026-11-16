@@ -458,7 +458,6 @@ var settingsOwnerCommands = map[string]string{
 	"budget":            "fugaro setup, which writes the installation's own budget backend",
 	"config":            "fugaro config publish, which carries the layer file the key is stated in",
 	"config init":       "fugaro config init, which writes the repository's own file",
-	"rigor security":    "fugaro rigor security",
 }
 
 // settingsOwnerDefaultToken is the registry's owner for a key no family and no

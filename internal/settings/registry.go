@@ -372,15 +372,15 @@ var yamlMeta = map[string]Row{
 	// the repository's rows are added to the project's and the engine's, never
 	// put in their place, so a layer that writes the key can only ever say
 	// more. And its owner is not `settings set`, though that is the row a key
-	// with no entry here takes: D1515 decides the two editors are a
-	// repository's fugaro.yaml and the project layer file — a list has no
-	// scalar floor for the allow-list's rule to raise — and the command that
-	// adds or removes an entry by its key field is `fugaro rigor security`
-	// (D2613, M4 of docs/config-ownership), which is the family this row names
-	// until that task registers its writers. The generic path refuses the key
-	// in the family's name rather than offering an edit to one entry of a list,
-	// and the read prints the command that does write it.
-	"security.patterns": {Owner: "rigor security", Merge: Union, Default: unset("the engine's floor alone")},
+	// with no entry here takes: D1515 decides the editor is fugaro.yaml and the
+	// project layer file — a list has no scalar floor for the allow-list's rule
+	// to raise — and `fugaro config publish` is the command that carries the
+	// layer's half, which is what the row names. The family that will edit one
+	// entry by its key field is `fugaro rigor security`, which M4 of
+	// docs/config-ownership registers (D2613): the token stays `config` until
+	// that command is in the tree, because a token names a command a person can
+	// run — the read prints it, and the write refuses in its name.
+	"security.patterns": {Owner: "config", Merge: Union, Default: unset("the engine's floor alone")},
 
 	// The planning pass's switch (docs/contract-first-decoupling, D1813). It
 	// is a preference rather than a bound, so the ordinary rule decides it:
@@ -803,17 +803,17 @@ var layerRows = []Row{
 	// The project layer's own half of the security list (D1501) and the switch
 	// that is its alone (D1517, D1503): the rows the layer adds for every
 	// repository of the project, and always_level_3, which asks for the
-	// adversarial review level for every change of the project. Owner `rigor
-	// security` for `security.patterns`' reason: the layer file is one of the
-	// two editors D1515 names, the command that writes an entry by its key
-	// field is `fugaro rigor security` (M4), and the rows are judged by the
-	// rules the repository's own are, which is why they share that row's
-	// answer. always_level_3 is the one that is no list: it is a switch that
-	// only turns on, and false is a layer that states nothing.
-	layerRow("security.patterns.*.name", "none", "rigor security", docLayer),
-	layerRow("security.patterns.*.match", "none", "rigor security", docLayer),
-	layerRow("security.patterns.*.category", "none", "rigor security", docLayer),
-	layerValueRow("security.always_level_3", "false", "rigor security", docLayer),
+	// adversarial review level for every change of the project. Owner `config`
+	// for security.patterns' reason — the layer file is the second editor
+	// D1515 names, and `fugaro config publish` is what carries it — and the
+	// rows are judged by the rules the repository's own are, which is why they
+	// share that row's answer. always_level_3 is the one that is no list: it is
+	// a switch that only turns on, and false is a layer that states nothing.
+	// M4's `fugaro rigor security` is the family that will edit one of these.
+	layerRow("security.patterns.*.name", "none", "config", docLayer),
+	layerRow("security.patterns.*.match", "none", "config", docLayer),
+	layerRow("security.patterns.*.category", "none", "config", docLayer),
+	layerValueRow("security.always_level_3", "false", "config", docLayer),
 }
 
 // LocalPrefix marks a local row whose bare name a fugaro.yaml key already

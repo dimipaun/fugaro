@@ -239,48 +239,6 @@ func TestGenericPathRefusesTheCascadeRows(t *testing.T) {
 	}
 }
 
-// TestGenericPathRefusesTheSecurityRowsUntilM4 is the same pin for the five rows
-// M4 takes over: R1 moves them off `config` — the token whose sentence names the
-// layer file `fugaro config publish` carries, which no command edits entry by
-// entry — onto `rigor security`, the family `fugaro rigor security add|rm` is
-// (D2613). The token is in the write's own map from this commit, before the
-// command exists, so the refusal a person reads today names the family and the
-// read prints the same words: the row says which command writes it rather than
-// leaving the write to answer "no setting has that name".
-func TestGenericPathRefusesTheSecurityRowsUntilM4(t *testing.T) {
-	command := settingsFamilyCommands["rigor security"]
-	if command == "" {
-		t.Fatal("the write's map has no `rigor security` entry, and the five rows R1 moves name that token (D2613)")
-	}
-	for _, key := range []string{
-		"security.patterns",
-		"layer.security.patterns.*.name",
-		"layer.security.patterns.*.match",
-		"layer.security.patterns.*.category",
-		"layer.security.always_level_3",
-	} {
-		row, ok := settings.Lookup(key)
-		if !ok {
-			t.Errorf("%s: no registry row (R1 moves the five onto the security family)", key)
-			continue
-		}
-		if row.Owner != "rigor security" {
-			t.Errorf("%s: Owner = %q, and the command that writes an entry of it is `%s` (D2613, M4)", key, row.Owner, command)
-		}
-		if strings.Contains(key, "*") {
-			// A wildcard row's own spelling is no key a write lands on: the
-			// literal `*` is refused before the family's name is read, which is
-			// the rule every wildcard row meets.
-			continue
-		}
-		if _, err := settingsWriteRow(key); err == nil {
-			t.Errorf("%s: the generic path writes it, and M4 registers the command that does (D2613)", key)
-		} else if !strings.Contains(err.Error(), "is written by "+command) {
-			t.Errorf("%s: the write refuses it in %v, and the security rows are refused in `%s`'s name until M4 registers it (D2613)", key, err, command)
-		}
-	}
-}
-
 // TestSettingsRefusedRowsNameNoGenericWriter is the pair a reader cannot draw:
 // the console prints `written by <owner>, not by the generic path` on a
 // `writable: false` row, so a refused row that names the generic writer says in
@@ -350,16 +308,14 @@ func TestSettingsRefusedRowsNameNoGenericWriter(t *testing.T) {
 // refuse the keys by name of `fugaro project`, a wording of the write's G12 did
 // not touch, and print the bare command D1178 asks a sentence in place of.
 //
-// Three groups of R1's rows are deliberately not here. `ab.rate`,
+// One group of R1's rows is deliberately not here. `ab.rate`,
 // `workflows.*.needs` and the six cascade leaves are rows R1 adds, not owners it
 // moves, and the test asks a move of every entry (a new row's `was` would be a
-// name no release ever held). And `security.patterns` with the layer's four
-// `security.*` rows *is* a move — `config` to `rigor security` — onto a token
-// this task adds to the write's own map in the same commit, so the key is refused
-// in that family's name by design until M4 registers the command; the loop in
-// TestSettingsOwnerMovesLeaveTheRefusalAlone is exactly the pin that a moved key
-// may not meet a family's sentence, which is why the move is covered by
-// TestGenericPathRefusesTheSecurityRowsUntilM4 instead of by this table.
+// name no release ever held). The five security rows are not a move either: R1
+// considered handing them to M4's `fugaro rigor security` (D2613) and left them
+// on `config` instead, the token whose sentence names the file each of them is
+// stated in, so they keep the owner they had and this table has no entry for
+// them. The family's token arrives in M4's own commit, beside the command.
 var settingsOwnerChanges = []struct{ key, was, now string }{
 	{"base_branch", "config", "settings set"},
 	{"budget.max_run_tokens", "budget", "settings set"},
