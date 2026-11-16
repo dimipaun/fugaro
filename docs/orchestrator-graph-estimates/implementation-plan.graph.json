@@ -8,21 +8,36 @@
       "title": "the orchestrator store's plan and backlog nodes",
       "run": null,
       "version": null,
-      "size": 2.5,
+      "size": 2,
       "footprint": {
         "prediction": true,
         "paths": [
           "internal/orchestrator/store.go",
           "internal/orchestrator/shard.go",
           "internal/orchestrator/shard_test.go",
-          "internal/orchestrator/tick.go",
           "internal/budget/rules/emulator_orchestrator_test.go"
         ]
       }
     },
     {
+      "id": "X4",
+      "title": "the tick plans and counts its caps across all nodes",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/orchestrator/tick.go",
+          "internal/orchestrator/caps.go",
+          "internal/orchestrator/launch.go",
+          "internal/orchestrator/tick_nodes_test.go"
+        ]
+      }
+    },
+    {
       "id": "X1",
-      "title": "the orchestrator state shape: external ids, plan_task, the plan_approve op, the migration",
+      "title": "the orchestrator state shape: external ids, plan_task, adoption, the migration",
       "run": null,
       "version": null,
       "size": 1.5,
@@ -30,11 +45,9 @@
         "prediction": true,
         "paths": [
           "internal/orchestrator/state.go",
-          "internal/orchestrator/patch.go",
           "internal/orchestrator/validate.go",
           "internal/orchestrator/state_test.go",
-          "schemas/orchestrator-state.schema.json",
-          "schemas/orchestrator-patch.schema.json"
+          "schemas/orchestrator-state.schema.json"
         ]
       }
     },
@@ -98,7 +111,8 @@
           "internal/cli/update_unit_stage.go",
           "internal/cli/update_unit_stage_test.go",
           "internal/cli/managed_test.go",
-          "internal/cli/orchestrator_install.go"
+          "internal/cli/orchestrator_install.go",
+          "internal/cli/init_orchestrator_stage.go"
         ]
       }
     },
@@ -213,17 +227,33 @@
     },
     {
       "id": "G2",
-      "title": "the plan_approve patch op",
+      "title": "the plan_approve op, routed through Apply",
       "run": null,
       "version": null,
       "size": 1.5,
       "footprint": {
         "prediction": true,
         "paths": [
+          "internal/orchestrator/patch.go",
           "internal/orchestrator/patch_plan.go",
           "internal/orchestrator/patch_plan_test.go",
+          "schemas/orchestrator-patch.schema.json"
+        ]
+      }
+    },
+    {
+      "id": "G4",
+      "title": "the CLI's person-class approve, showing an issue item's body",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
           "internal/cli/orchestrator_patch.go",
-          "internal/cli/orchestrator_patch_test.go"
+          "internal/cli/orchestrator_patch_test.go",
+          "internal/cli/orchestrator_approve_issue.go",
+          "internal/cli/orchestrator_approve_issue_test.go"
         ]
       }
     },
@@ -446,15 +476,42 @@
       "title": "the GitHub issues route behind the credentials service",
       "run": null,
       "version": null,
-      "size": 3,
+      "size": 2.5,
       "footprint": {
         "prediction": true,
         "paths": [
           "internal/creds/issueroute.go",
           "internal/credsvc/issueroute.go",
           "internal/credsvc/issueroute_test.go",
+          "internal/credsvc/server.go"
+        ]
+      }
+    },
+    {
+      "id": "B11",
+      "title": "the GitHub issues REST calls",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
           "internal/gitprov/github/issues.go",
           "internal/gitprov/github/issues_test.go"
+        ]
+      }
+    },
+    {
+      "id": "B10",
+      "title": "SECURITY.md and the website's security page describe the issue route",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "SECURITY.md",
+          "website/content/security.md"
         ]
       }
     },
@@ -515,7 +572,6 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "internal/orchestrator/patch.go",
           "internal/cli/orchestrator_run.go",
           "internal/cli/orchestrator_mergeread.go",
           "internal/cli/orchestrator_runlister.go",
@@ -584,11 +640,6 @@
       "task": "G1",
       "needs": "S0",
       "reason": "the import reads and validates the node's tier"
-    },
-    {
-      "task": "G2",
-      "needs": "X1",
-      "reason": "the plan_approve op and its digest walk"
     },
     {
       "task": "E2",
@@ -682,7 +733,7 @@
     },
     {
       "task": "E3",
-      "needs": "X0",
+      "needs": "X4",
       "reason": "one file: both edit internal/orchestrator/tick.go"
     },
     {
@@ -804,6 +855,41 @@
       "task": "R4",
       "needs": "X0",
       "reason": "an adopted plan run is written into its plan's node"
+    },
+    {
+      "task": "X4",
+      "needs": "X0",
+      "reason": "the tick reads the nodes X0 adds"
+    },
+    {
+      "task": "R3",
+      "needs": "X4",
+      "reason": "one file: both edit internal/orchestrator/caps.go"
+    },
+    {
+      "task": "G4",
+      "needs": "G2",
+      "reason": "the CLI sends the op G2 applies"
+    },
+    {
+      "task": "R5",
+      "needs": "G4",
+      "reason": "the skill teaches the person's approve as the CLI does it"
+    },
+    {
+      "task": "B3",
+      "needs": "B11",
+      "reason": "the route calls the GitHub client"
+    },
+    {
+      "task": "B10",
+      "needs": "B3",
+      "reason": "the security pages describe the route as built"
+    },
+    {
+      "task": "W1",
+      "needs": "G4",
+      "reason": "the end-to-end test approves through the CLI's person path"
     }
   ]
 }
