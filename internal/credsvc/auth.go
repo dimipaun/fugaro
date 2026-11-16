@@ -548,6 +548,16 @@ type AuthConfig struct {
 	// An empty list is an installation that runs no catalog build of its own: a
 	// class no caller belongs to, which is the state of every project whose
 	// build identity is not rendered yet.
+	//
+	// Where the list comes from (B5, D2301). Not from a stored document: the
+	// installation module creates ONE build identity per project —
+	// `fugaro-build-identity`, deploy/terraform/gcp/modules/installation/
+	// build_identity.tf — and renders its address into the service's
+	// FUGARO_BUILD_ACCOUNTS, which internal/cli's credentials serve reads. The
+	// account ID is a literal on both sides for the reason the verifier's is:
+	// any reader of the deployment can name the address before the apply, so
+	// the identity that may knock and the identity that is served are one value
+	// read twice rather than two derivations that agree by luck.
 	BuildAccounts []string
 	// Now is the clock, for tests; nil means time.Now.
 	Now func() time.Time
