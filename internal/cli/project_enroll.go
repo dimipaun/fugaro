@@ -157,7 +157,7 @@ func newProjectReposAddCmd() *cobra.Command {
 func newProjectReposRmCmd() *cobra.Command {
 	var o projectReposOptions
 	cmd := &cobra.Command{
-		Use:   "rm <provider/owner/name | owner/name | *>",
+		Use:   "rm <provider/owner/name | owner/name | pattern>",
 		Short: "Un-enroll a repository: remove its enrolment, its jobs and its state",
 		Long: "Remove a repository's enrolment in one step, the way `fugaro project repos add`\n" +
 			"writes it: the published allow-list entry, this machine's repos: entry, this\n" +
@@ -181,9 +181,10 @@ func newProjectReposRmCmd() *cobra.Command {
 			"that typing confirms it: the sentence names the run, which keeps its job, its\n" +
 			"record and its ledger until it ends.\n" +
 			"\n" +
-			"`*` is the allow-list's own entry for every repository and not a repository, so\n" +
-			"it removes that entry alone — there is no repository behind it, and no local\n" +
-			"entry, job or state of its own.",
+			"`*` and a pattern such as github/acme/* are allow-list entries and not\n" +
+			"repositories: neither has a provider, a repos: entry, a job or a state of its\n" +
+			"own, so removing one takes that entry away and says nothing about the\n" +
+			"repositories it admitted.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runProjectReposRm(cmd, &o, args[0]) },
 	}

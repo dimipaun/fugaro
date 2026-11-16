@@ -6379,11 +6379,12 @@ So it asks you to type the project's name, and while a run is in flight only
 that typing confirms it: the sentence names the run, which keeps its job, its
 record and its ledger until it ends.
 
-`*` is the allow-list's own entry for every repository and not a repository, so
-it removes that entry alone — there is no repository behind it, and no local
-entry, job or state of its own.
+`*` and a pattern such as github/acme/* are allow-list entries and not
+repositories: neither has a provider, a repos: entry, a job or a state of its
+own, so removing one takes that entry away and says nothing about the
+repositories it admitted.
 
-Usage: `fugaro project repos rm <provider/owner/name | owner/name | *>`
+Usage: `fugaro project repos rm <provider/owner/name | owner/name | pattern>`
 
 Flags:
 

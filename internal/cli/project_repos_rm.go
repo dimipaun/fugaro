@@ -124,27 +124,41 @@ var reposRemovalLeaves = []string{
 // (D2407), with nothing on the command line standing in for it.
 func runProjectReposRm(cmd *cobra.Command, o *projectReposOptions, arg string) error {
 	ctx := cmd.Context()
-	// `*` is the allow-list's own entry for every repository and not a
-	// repository (D2404): it has no provider, no local entry, no slug and no
-	// state, so there is nothing here but the entry itself. It keeps the
-	// group's own edit path, byte for byte — a removal that reached the
-	// repository machinery with no repository to reach it for would be
-	// guessing at one.
-	if arg == wildcardEntry {
+	// An entry that is not a repository is the entry alone: `*` is the
+	// allow-list's own entry for every repository (D2404), and a pattern such
+	// as github/acme/* admits repositories without being one. Neither has a
+	// provider (task.Slug needs one), a local entry, a slug, a job or a state,
+	// so there is nothing here but the entry itself, and the group's own edit
+	// path is what removes one — the door `--allow-list-only` is on the other
+	// side of the group. A removal that reached the repository machinery with
+	// no repository to reach it for would be guessing at one.
+	//
+	// The test is the argument's own, before any read: `*` anywhere in it is a
+	// pattern and not a name, and no concrete repository carries one — a
+	// checkout, a fugaro.yaml and a config entry are all read through
+	// canonicalRepoArg, which hands a pattern to ValidPattern and never to
+	// Canonical.
+	if strings.Contains(arg, "*") {
 		return runProjectReposEdit(cmd, o, arg, true)
 	}
 	// SD8: this writes the published node's allow_repos, which is what admits
 	// a repository to the project at all, and then deletes the repository's
 	// jobs and its state: a person's step and never a coding agent's, before
-	// every read and before any cloud write is reached.
+	// every read and before any cloud write is reached. The opener is the
+	// group's own — the doors' test pins "nothing was written" for all three
+	// commands that write the list — with the removal's own verb beside it and
+	// the list of what would have gone.
 	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
-		return userErr("nothing was removed: fugaro project repos rm removes the published allow-list entry, this machine's config entry, the repository's published admission, its Cloud Run jobs and its Terraform state, which are what admit a repository to the project and what run it: %s", initflow.AgentRefusal(m))
+		return userErr("nothing was written or removed: fugaro project repos rm removes the published allow-list entry, this machine's config entry, the repository's published admission, its Cloud Run jobs and its Terraform state, which are what admit a repository to the project and what run it: %s", initflow.AgentRefusal(m))
 	}
 	// openProjectBudget, not openBudget: this writes the published policy node
 	// and is a writer like `policy publish`, so it takes the same two refusals
 	// — the shared config is not an operator's own installation, and the
-	// database must be this project's.
-	lc, db, configPath, err := openProjectBudget(ctx, o.cloud, "nothing was removed")
+	// database must be this project's. The declined sentence is the one the
+	// group's removal has always printed, and it is the ownership and admin
+	// refusals' own wording (TestReposAddRefusesAnotherInstallationsDatabase).
+	declined := "nothing was removed from the allow-list"
+	lc, db, configPath, err := openProjectBudget(ctx, o.cloud, declined)
 	if err != nil {
 		return err
 	}
@@ -152,7 +166,7 @@ func runProjectReposRm(cmd *cobra.Command, o *projectReposOptions, arg string) e
 	// an entry is a project-level act: an admin of the repository itself still
 	// cannot take the project's admission away. Refused before the deployed
 	// rules are read and before the node is.
-	if err := accessGateProject(ctx, lc, db, "nothing was removed", "removing a repository from the project"); err != nil {
+	if err := accessGateProject(ctx, lc, db, declined, "removing a repository from the project"); err != nil {
 		return err
 	}
 	if err := requirePolicyRules(ctx, db, lc); err != nil {

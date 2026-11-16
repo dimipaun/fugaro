@@ -1331,10 +1331,18 @@ func TestProjectShowDoesNotCallAPatternEntryIdleWhileItsRepositoriesRun(t *testi
 	if _, _, err := execute(t, "project", "repos", "add", "github/acme/*", "--allow-list-only"); err != nil {
 		t.Fatal(err)
 	}
+	local := rmLocalEntry(t, "acme/app")
 	fakeTerminal(t)
 	if _, _, err := executeStdin(t, "aurora\n", "project", "repos", "rm", "github/acme/app"); err != nil {
 		t.Fatal(err)
 	}
+	// The registry holds slugs, and this command resolves one to a repository
+	// name through this machine's config (runningRepos, repoBySlug). A removal
+	// takes that entry away with the list entry (RE4, D2405), so it is written
+	// back: the pair of lists below is asked about a repository this machine
+	// still names, which is the question this test is about — whether an
+	// allow-list entry that is a pattern counts as running.
+	rmLocalEntryBack(t, "acme/app", local)
 	// The pattern admits github/acme/app, and a run of it is in flight.
 	appSlug, err := task.Slug("github", "acme/app")
 	if err != nil {
