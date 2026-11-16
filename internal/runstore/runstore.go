@@ -746,6 +746,27 @@ const (
 	TriageSourceCap TriageSource = "cap"
 )
 
+// The two causes a failed triage round records that are not a service's own
+// words (TriageRound.Cause). They are the record's vocabulary and not
+// internal/triage's or internal/runner's, because every reader of the record
+// has to be able to tell a call that never got through from a judge whose
+// answer was unusable without guessing at a service's phrasing: the first is
+// what an auth or upstream failure looks like once the service's text is
+// clipped to its first line, and this pair is what the run itself knows.
+const (
+	// TriageCauseUnreadable is a round whose call answered something shaped
+	// like a verdict that internal/triage's reader refused: a word outside the
+	// two, a key that is not a finding's, a reason wrapped onto a second line,
+	// or a finding the round does not have. The judge ran; the answer was
+	// unusable, and the fail-safe blocked every finding the table blocks.
+	TriageCauseUnreadable = "unreadable verdict"
+	// TriageCauseNoAnswer is a round whose call left no words at all to quote:
+	// no text, and no error the stage could read — a stream that ended before
+	// its first token. It is the cause of last resort, so a failed round says
+	// something rather than carrying an empty line beside Failed.
+	TriageCauseNoAnswer = "the call answered nothing"
+)
+
 // TriageRecord is what a run's triage decided (docs/post-review-triage, D1850):
 // one entry per round the stage ran, in the order it ran them, so a reader can
 // see how each finding was placed, by which model, and what a failed call left
@@ -786,6 +807,16 @@ type TriageRound struct {
 	// the flag is what makes that visible rather than a round that looks like
 	// any other.
 	Failed bool `json:"failed,omitempty"`
+	// Cause is why a failed round failed, one line, and empty for a round that
+	// did not. It is the call's own first line where the call answered nothing
+	// a verdict could be read from — an auth or upstream failure, a stream cut
+	// before the answer — and TriageCauseUnreadable where it answered
+	// something shaped like a verdict that the reader refused. Clipped to
+	// MaxTriageLine and dropped for a round that is not failed (NewTriage),
+	// and redacted with both passes where it is written (internal/runner): a
+	// service's auth error quotes the credential it refused, and this line
+	// reaches the pull request's body.
+	Cause string `json:"cause,omitempty"`
 	// Entries is one verdict per finding of the round. It may be empty — a
 	// round whose call failed before it placed anything still says so through
 	// Failed — and is never null, so a reader can range over it.
@@ -827,8 +858,10 @@ type TriageEntry struct {
 // The rounds are capped at MaxTriageRounds and one round's entries at
 // MaxTriageEntries — each round's Total is set here, from the entries the
 // caller gave it, so a round the cap cut says how many verdicts it wrote
-// instead of looking like one that read only the first hundred — the reason and
-// the group key are clipped to MaxTriageLine, and a round or an entry a reader
+// instead of looking like one that read only the first hundred — the reason,
+// the group key and a failed round's cause are clipped to MaxTriageLine, the
+// cause of a round that did not fail is dropped, and a round or an entry a
+// reader
 // cannot place is dropped: a round with no number, a mode or a level outside
 // its vocabulary, and an entry at a negative index, with no key, no reason, a
 // word outside the two or a source outside the four — an index below 0 names no
@@ -860,6 +893,13 @@ func NewTriage(rounds []TriageRound) *TriageRecord {
 			entries = append(entries, e)
 		}
 		r.Entries = entries
+		// The cause belongs to a failed round and to no other: a round that
+		// answered a verdict did not fail, and a record whose cause outlived
+		// its flag would read as a failure beside a flag that says otherwise.
+		if !r.Failed {
+			r.Cause = ""
+		}
+		r.Cause = clipRunes(r.Cause, MaxTriageLine)
 		tr.Rounds = append(tr.Rounds, r)
 	}
 	if len(tr.Rounds) == 0 {

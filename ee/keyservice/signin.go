@@ -482,13 +482,36 @@ func (c *signInCodes) unspendDevice(device string, held deviceCode, now time.Tim
 // the **user code** the person typed and not by the device code, which the CLI
 // holds and the person never sees. The scan is over the codes this process is
 // holding inside their ten minutes, which is what makes a scan the honest shape.
+//
+// The same approver answering the same code twice is answered as the first
+// answer was, and that repeat is the whole reason this is not a `!held.approved`
+// skip: the SPA's page confirms the code and then binds the licence, and a
+// binding that failed leaves the person on the page with the button still there
+// (`device.tsx`'s `approve`), because a page cannot tell a network failure after
+// the service acted from a refusal. So the click that retries the binding sends
+// the confirm again, and a confirm skipped here would answer that page "unknown
+// code" for a code this service is holding approved — the binding never retried.
+// A repeat outlives nothing: the terminal's poll takes an approved code out in
+// the read that finds it (pollDevice), so the window this can be asked in is the
+// one before the terminal collects its key.
+//
+// Who may repeat it is only the approver: another account or another
+// subscription asking about a code that already carries one is refused exactly
+// as a code this service is not holding, because one person's approval is never
+// overwritten by another's.
 func (c *signInCodes) approve(userCode, subscription, account string, now time.Time) (deviceCode, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.sweep(now)
 	hash := digest(userCode)
 	for _, held := range c.devices {
-		if held.userCodeHash != hash || held.approved || !now.Before(held.expires) {
+		if held.userCodeHash != hash || !now.Before(held.expires) {
+			continue
+		}
+		if held.approved {
+			if held.subscription == subscription && held.account == account {
+				return *held, true
+			}
 			continue
 		}
 		held.approved, held.subscription, held.account = true, subscription, account

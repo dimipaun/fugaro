@@ -112,6 +112,16 @@ func routeAct(path string) (purpose, credential string) {
 		// run's mint and not a person's read, even though all three are signed
 		// with the one key.
 		return PurposeMergeMint, config.GitHubAppKeySecret
+	case LabelPath:
+		// The label route issues from the SAME credential the three routes above
+		// issue from — the App key in the bundle, which is what the service signs
+		// the token it performs the label act with — and names it here for their
+		// reason: it is the endpoint's own name for what it signs with, known
+		// before the bundle is read and after it alike. The purpose is what tells
+		// the four acts apart (D2439): a daemon's label call is not a merge, a
+		// run's mint or a person's read, even though all four are signed with the
+		// one key.
+		return PurposeLabel, config.GitHubAppKeySecret
 	case SlipPath:
 		// A grant's line names the launcher and no credential: the act is a
 		// request for a run's grant and not an issuance, so there is no name of
@@ -200,7 +210,7 @@ func servedRoute(r *http.Request) bool {
 		return false
 	}
 	switch r.URL.Path {
-	case MessagesPath, CountTokensPath, MintPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, SlipPath, SlipClaimPath, WorkflowSecretsPath:
+	case MessagesPath, CountTokensPath, MintPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, SlipPath, SlipClaimPath, WorkflowSecretsPath:
 		return true
 	}
 	return false
@@ -916,7 +926,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// "no admin endpoint" is kept by there being nothing to reach rather
 		// than by a check inside a handler.
 		s.refuse(w, http.StatusNotFound, "not_found",
-			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+SlipPath+", "+SlipClaimPath+" and "+WorkflowSecretsPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
+			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+LabelPath+", "+SlipPath+", "+SlipClaimPath+" and "+WorkflowSecretsPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
 		return
 	}
 	if r.URL.Path == VerifyPath {
@@ -956,6 +966,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// readMergeMintRequest, and the run-identity headers are refused by name
 		// inside the handler.
 		s.mergeMint(ctx, w, r)
+		return
+	}
+	if r.URL.Path == LabelPath {
+		// The sixth route answered before the shared parse, and the orchestrator
+		// daemon's reason is the merge mint's (D2439): the daemon is not a run of
+		// this installation and holds no run identity, so RequestFromHTTP would
+		// refuse the call — for the missing identity headers — before the daemon
+		// class ever read the token. What replaces the parse is this route's own
+		// read of the call, and the run-identity headers are refused by name
+		// inside the handler.
+		s.labelRoute(ctx, w, r)
 		return
 	}
 	if r.URL.Path == SlipPath {

@@ -67,6 +67,24 @@ ledger: the stage runs on the senior reviewer's model and account (a
 `stages.triage.claude_account` may name another), it is recorded per round, and
 it runs with no tools and no settings sources of its own.
 
+A failed round keeps the **cause** it failed with, one line, because a round that
+bought no verdict is not a round a judge weighed and a reader has to be able to
+tell that. The cause is the call's own words where it left nothing a verdict
+could be read from — an expired or wrong credential, an upstream error, a stream
+cut before the answer, each of them a call the stage itself can still report as
+successful, which is why the round has to say so — and `unreadable verdict`
+where it answered something shaped like a verdict that the reader refused. It is
+the call's first line, with the run's secrets and any credential-shaped string
+taken out of it and clipped to 200 runes: a service's auth error quotes the
+credential it refused, and this line reaches a person. A failed round is then
+shown, not left to be noticed: the run's own log line for it is an `ERROR` naming
+the cause; the pull request's status section carries one line above its stage
+table saying the judge did not run for those rounds and the fail-safe blocked
+every finding the mode's table blocks; that round's row in the same table reads
+`triage (failed: <cause>)` rather than a bare duration; and `fugaro diagnose`
+lists every round with its placements counted by source, and the failed ones
+flagged above the rest with their cause.
+
 ## The floor
 
 Some findings are never the judge's to move, whatever the persona would do with
@@ -108,7 +126,9 @@ happens the change is not there.
 The run records every verdict, and the record has two blocks in `result.json`:
 
 - **`triage`** — one entry per round: the mode, the review level, the account and
-  model the call ran as, whether the call **failed**, and one entry per finding
+  model the call ran as, whether the call **failed** and, for a round that did,
+  the one-line **`cause`** saying why (`cause` is dropped for a round that did
+  not fail, so the two can never disagree), and one entry per finding
   with its index, its key, the verdict, the one-line reason, the group key and
   the **source**. The source says who placed it: `agent` for the judge's own
   verdict, `table` for the ones the mode's table placed with no judge involved

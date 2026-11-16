@@ -233,6 +233,23 @@ const (
 	// repository, the job the run reported and the verified account like every
 	// other job-class line: nothing here is a person's act.
 	PurposeWorkflowSecret = "workflow-secret"
+	// PurposeLabel is one label read or one label write this service performs on
+	// the pull requests of the installation's orchestrator daemon (the label
+	// route, D2439, F5): the service performs the act itself and no token leaves
+	// it, because GitHub has no label-only permission and a token handed out for
+	// labels would be a pull-request write credential on the whole repository.
+	//
+	// The credential a line of this purpose names is the App key the service
+	// mints its own token from — the same credential a mint, a read mint and a
+	// merge mint name, which is why the purpose is what tells the four acts
+	// apart. It is not a model credential of the cascade and has no tier, so a
+	// line for it names a credential and no tier (see credentialWithoutTier).
+	//
+	// Its line carries a repository and no run, like the read mints' and the
+	// merge mint's: the caller is the orchestrator daemon, which holds no run
+	// identity and is not a job of this installation (callerWithoutJobPurpose,
+	// repositoryOnlyPurpose).
+	PurposeLabel = "label"
 )
 
 // ValidPurpose reports whether purpose is one this service issues a credential
@@ -240,14 +257,16 @@ const (
 func ValidPurpose(purpose string) bool {
 	switch purpose {
 	case PurposeForward, PurposeProbe, PurposeMint, PurposeReviewSign, PurposeReviewVerify, PurposeBitbucketRead, PurposeGitHubRead,
-		PurposeGit, PurposeBitbucketAPI, PurposeSlipGrant, PurposeSlipClaim, PurposeMergeMint, PurposeWorkflowSecret:
+		PurposeGit, PurposeBitbucketAPI, PurposeSlipGrant, PurposeSlipClaim, PurposeMergeMint, PurposeWorkflowSecret, PurposeLabel:
 		return true
 	}
 	return false
 }
 
 // credentialWithoutTier reports whether a purpose's credential is one the
-// cascade never had: the App key a mint signs a JWT with, the review-signing key
+// cascade never had: the App key a mint signs a JWT with — and the same key
+// under the three other purposes that sign with it, a read mint, a merge mint
+// and a label call — the review-signing key
 // a sign line or a verify line names, the read consumer a read mint exchanges
 // for a Bitbucket token, the bundle's Bitbucket token a git or a
 // Bitbucket-API line names (B1.5), and the container a workflow-secrets line
@@ -266,14 +285,15 @@ func credentialWithoutTier(purpose string) bool {
 		purpose == PurposeReviewVerify || purpose == PurposeBitbucketRead ||
 		purpose == PurposeGitHubRead || purpose == PurposeGit ||
 		purpose == PurposeBitbucketAPI || purpose == PurposeMergeMint ||
-		purpose == PurposeWorkflowSecret
+		purpose == PurposeWorkflowSecret || purpose == PurposeLabel
 }
 
 // callerWithoutJobPurpose reports whether a line records a caller's act rather
 // than a run's: a verifier's, a read mint's — whose callers are a person or
-// the coordinator (BB5) — and a slip GRANT's, whose caller is a launcher and
+// the coordinator (BB5) — a slip GRANT's, whose caller is a launcher and
 // holds no run identity either, because the run it names does not exist yet
-// (DS1.3, D1937). All of them hold no run
+// (DS1.3, D1937), and a merge mint's or a label call's, whose caller is the
+// installation's orchestrator daemon (E16, D2439). All of them hold no run
 // identity and are not a job of this installation, so the Caller-without-Job
 // rule and the StatusOK line's "a run and a job, or neither" rule are relaxed
 // for them and for no other purpose — a job purpose that dropped its job is
@@ -282,18 +302,19 @@ func credentialWithoutTier(purpose string) bool {
 func callerWithoutJobPurpose(purpose string) bool {
 	return purpose == PurposeReviewVerify || purpose == PurposeBitbucketRead ||
 		purpose == PurposeGitHubRead || purpose == PurposeSlipGrant ||
-		purpose == PurposeMergeMint
+		purpose == PurposeMergeMint || purpose == PurposeLabel
 }
 
 // repositoryOnlyPurpose reports whether a line names a repository and no run:
-// the read mint's, whose act is the repository the token was minted for. The
-// verify purpose is not one of these — its line carries no repository — so the
-// both-or-neither rule that ties a repository to its run (checked) is relaxed
-// for this purpose alone, and a repository recorded under any other purpose is
-// refused exactly as it is today.
+// the read mint's, whose act is the repository the token was minted for, the
+// merge mint's and a label call's, whose acts are the repository they were made
+// for. The verify purpose is not one of these — its line carries no repository
+// — so the both-or-neither rule that ties a repository to its run (checked) is
+// relaxed for these purposes alone, and a repository recorded under any other
+// purpose is refused exactly as it is today.
 func repositoryOnlyPurpose(purpose string) bool {
 	return purpose == PurposeBitbucketRead || purpose == PurposeGitHubRead ||
-		purpose == PurposeMergeMint
+		purpose == PurposeMergeMint || purpose == PurposeLabel
 }
 
 // StatusOK is the one status that is not a refusal: a credential answered —
