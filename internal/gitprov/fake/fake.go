@@ -83,8 +83,15 @@ type State struct {
 	// Public makes the repository public.
 	Public bool `json:"public,omitempty"`
 	// Calls is every call made, in order (failed injected ones included),
-	// so tests can assert what the runner did and in which order.
+	// so tests can assert what the runner did and in which order. It holds
+	// the provider interface's calls, which are the ones that write; the
+	// label capability's are in LabelCalls, which holds its reads too.
 	Calls []Call `json:"calls,omitempty"`
+	// LabelCalls is every gitprov.Labeler call made, in order (failed
+	// injected ones included), with the arguments it was made with: the
+	// orchestrator's syncer runs against this, and what it wrote is what its
+	// tests read back (labels.go).
+	LabelCalls []LabelCall `json:"label_calls,omitempty"`
 	// Files is the repository's file tree at its default branch (gitprov.
 	// ContentsReader, PIC3): a path relative to the repository's root ->
 	// the file's bytes. Branches is the same tree per named branch, for a
@@ -157,6 +164,14 @@ type Provider struct {
 	// changing anything.
 	FailUpdatePR   int
 	FailApplyReady int
+	// FailEnsureLabel, FailAddLabels, FailRemoveLabels, FailListOpenPRLabels
+	// and FailPRLabels make that many calls of each fail without changing
+	// anything; the call is logged either way.
+	FailEnsureLabel      int
+	FailAddLabels        int
+	FailRemoveLabels     int
+	FailListOpenPRLabels int
+	FailPRLabels         int
 	// RejectReviewers names reviewers the host does not know: ApplyReady
 	// (and a ready creation) still applies the others and the labels, and
 	// reports a *gitprov.PartialError.
@@ -227,6 +242,10 @@ func (p *Provider) Snapshot() State {
 		st.PRs[i] = pr
 	}
 	st.Calls = slices.Clone(p.State.Calls)
+	st.LabelCalls = slices.Clone(p.State.LabelCalls)
+	for i := range st.LabelCalls {
+		st.LabelCalls[i].Names = slices.Clone(st.LabelCalls[i].Names)
+	}
 	if p.State.Checks != nil {
 		st.Checks = make(map[string][]gitprov.CheckRun, len(p.State.Checks))
 		for sha, runs := range p.State.Checks {

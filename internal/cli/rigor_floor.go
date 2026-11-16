@@ -33,9 +33,10 @@ import (
 //
 // A removal and a lowering are the step D1170 calls this plan's SEC one: taking
 // a level away — by lowering a mode's floor or by removing the mode's entry — is
-// a whole project reviewing less, so the edit is Typed, and `applySettingsEdit`
-// refuses a Typed edit in a coding agent's session whatever `--yes` says
-// (D1552, D1555; D1026: a Typed edit is never gate-admitted). Adding a mode the
+// a whole project reviewing less, so the edit is the widening one, and
+// `applySettingsEdit` refuses a widening edit in a coding agent's session
+// whatever a run carries (D1552, D1555; D1026: a widening edit is never
+// gate-admitted). Adding a mode the
 // file does not carry, or a level a mode's floor does not carry, is the ordinary
 // write: it can only require more review, never less.
 //
@@ -46,7 +47,7 @@ import (
 // name; the owner's policy answers the other way — docs/no-prompt-policy, rule 1:
 // "no command may wait for interactive input: no y/n questions, no typing the
 // project name", and "any confirmation prompt in Fugaro is a bug" — and the tree
-// already implements that answer for every other Typed settings write: the
+// already implements that answer for every other widening settings write: the
 // `else if e.Typed` branch of `applySettingsEdit` prints what a widening widens
 // and what it writes and asks nothing, and settingsEdit.Yes, the hand-off
 // update_workspace.go gives a staged write and the fence budget.go puts where
@@ -63,7 +64,8 @@ import (
 // command to run at the owner's own terminal is the whole of what it gets. That
 // is why this command reads no gate (the plan's §5: G7 needs neither M0 nor M6):
 // the refusal is this file's own, and it is stronger than any admission. It is
-// the same fence `applySettingsEdit` would make (the write is Typed either way),
+// the same fence `applySettingsEdit` would make (the write is the widening one
+// either way),
 // and it is made here because the ORDER is the point — a session reads nothing
 // of the document.
 //

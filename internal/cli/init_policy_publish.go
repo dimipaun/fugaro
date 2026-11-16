@@ -159,6 +159,21 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy) []policyDri
 	if lc.CloneURLs != nil {
 		add("clone_urls", projectpolicy.CloneURLs(lc.CloneURLsEffective(nil)), p.CloneURLs, false)
 	}
+	// The binaries block reaches a run off this node and nowhere else (D981,
+	// D983) — no job's environment carries it — and the local config is its
+	// carrier from this release on (AR1, D987), so a config that states one
+	// where the node carries another is exactly the gap this stage exists to
+	// close: without the comparison, the operator's own `binaries:` edit would
+	// reach no run until they ran the explicit publish, which is the second
+	// command the HARD RULE forbids. It is compared by the publisher's own keep
+	// rule (BinariesEffective), the clone_urls line's reason: a config that
+	// writes no block is not reported — nil would read as a difference against
+	// every node that carries a block, and the block is then deliberately the
+	// node's own (D987) — while a written block, the empty one that clears the
+	// list included, is the operator's edit and is reported like any other.
+	if lc.Binaries != nil {
+		add("binaries", lc.BinariesEffective(p.Binaries), p.Binaries, false)
+	}
 	// The triage switch reaches a run off this node too (D1854), so a config
 	// that states it where the node states the other answer is a difference a
 	// publish closes, and it is compared the bake switch's way: the node's value
@@ -470,7 +485,7 @@ func policyNodeForPublish(ctx context.Context, lc *localcfg.Config, old *project
 	if err := policyImageTokensRefusal(pol, lc.BaseImage(config.BaseKind)); err != nil {
 		return nil, nil, nil, err
 	}
-	body, err := policyNodeBytes(pol, base, exists, keepRouting, lc.CloneURLs == nil)
+	body, err := policyNodeBytes(pol, base, exists, keepRouting, lc.CloneURLs == nil, lc.Binaries == nil)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -682,8 +697,9 @@ func policyAccountValues(p *projectpolicy.Policy) map[string]string {
 // the node itself — looseningWhy words the first publish as the widening of the
 // whole node, so it never prints the two empty values.
 //
-// It is what gives a first publish the Typed class: the typed name rather than
-// --yes, and a coding agent's session refused by the gate's own D1026 rule
+// It is what makes a first publish the owner's own step: the person's own
+// answer rather than one a run carries, and a coding agent's session refused by
+// the gate's own D1026 rule
 // rather than admitted to the boundary every later run of the project is
 // admitted by.
 func (m *policyMigration) loosening() []policyCeiling {
@@ -698,6 +714,26 @@ func (m *policyMigration) loosening() []policyCeiling {
 	// same class of decision — who is admitted, and on whose credential — that
 	// the typed name guards here.
 	return append(policyLoosening(m.node, m.pub.pol), policyAccountWidening(m.node, m.pub.pol)...)
+}
+
+// accountChoiceOnly is whether the whole of this publish's loosening is the
+// account-choice members — which account the project's stages go out on — and
+// nothing else: no ceiling is raised, none is removed and the model list is not
+// widened. It is asked where the typed name is about to be, and its one caller
+// is the door whose own command the owner typed at their own terminal (D2097):
+// for that door the account choice is the decision it was run to make, while a
+// ceiling raised in the same publish is the separate one D846 reserves for the
+// project's own hand and keeps its typed name.
+//
+// A project's FIRST node is never this, whatever it carries: the node it writes
+// is the whole of the project's policy, which is what the first publish's own
+// sentence says and what its Typed class is about. So is a run with no node to
+// compare against, which is the same case read from the other side.
+func (m *policyMigration) accountChoiceOnly(loosening []policyCeiling) bool {
+	if m.firstPublish || m.pub == nil || len(loosening) == 0 {
+		return false
+	}
+	return len(policyLoosening(m.node, m.pub.pol)) == 0
 }
 
 // looseningWhy is the sentence the typed confirmation shows and the refusal

@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -31,10 +33,10 @@ func newAccountsCmd() *cobra.Command {
 			if len(args) == 0 {
 				return cmd.Help()
 			}
-			return userErr("unknown accounts subcommand; want ls, add, allow, deny, rm, clear or pool (see fugaro accounts --help)")
+			return userErr("unknown accounts subcommand; want ls, add, allow, deny, rm, clear, pool or alias (see fugaro accounts --help)")
 		},
 	}
-	cmd.AddCommand(newAccountsLsCmd(), newAccountsAddCmd(), newAccountsAllowCmd(), newAccountsDenyCmd(), newAccountsRmCmd(), newAccountsClearCmd(), newAccountsPoolCmd())
+	cmd.AddCommand(newAccountsLsCmd(), newAccountsAddCmd(), newAccountsAllowCmd(), newAccountsDenyCmd(), newAccountsRmCmd(), newAccountsClearCmd(), newAccountsPoolCmd(), newAccountsAliasCmd())
 	return cmd
 }
 
@@ -82,6 +84,13 @@ type accountsListDoc struct {
 	// make about marks it actually read.
 	States    map[string]accountState `json:"states,omitempty"`
 	StateNote string                  `json:"state_note,omitempty"`
+	// Aliases is this machine's claude_account_aliases block: each name the
+	// choice keys may hold, and the account it stands for (docs/account-aliases
+	// §7, D2099). It is additive — a member added within this document's own
+	// version (D848) — so a reader of an older release sees exactly the document
+	// it always did, and the read is names only: no alias here is resolved, and
+	// no token is read or printed.
+	Aliases map[string]string `json:"aliases,omitempty"`
 }
 
 // accountState is one account's state as fugaro accounts ls --json reports it:
@@ -199,6 +208,12 @@ func accountsLs(cmd *cobra.Command, o accountsOptions) error {
 	}
 	names := config.AllowedClaudeAccounts(claudeAccounts, repo)
 	doc := accountsListDoc{Repo: repo, Accounts: names, Complete: note == "", Note: note}
+	if lc != nil {
+		// The block is copied rather than shared: it is the read's own document,
+		// and a caller holding onto it may not reach the config the command
+		// loaded.
+		doc.Aliases = maps.Clone(lc.ClaudeAccountAliases)
+	}
 	doc.States, doc.StateNote, err = accountsStates(ctx, lc, names, note)
 	if err != nil {
 		// The one failure that is not a note: a refusal to open the database
@@ -358,7 +373,7 @@ func printAccounts(w io.Writer, doc accountsListDoc, asJSON bool) error {
 				return err
 			}
 		}
-		return nil
+		return printAliases(w, doc)
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	for _, n := range doc.Accounts {
@@ -366,7 +381,25 @@ func printAccounts(w io.Writer, doc accountsListDoc, asJSON bool) error {
 			return err
 		}
 	}
-	return tw.Flush()
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	return printAliases(w, doc)
+}
+
+// printAliases writes each alias and the account it stands for, one line each,
+// after the names: an alias is a NAME a launch may hand to `fugaro run --token`
+// or a key may hold, so a read that listed the accounts and not the aliases
+// would leave the operator to open the file for the one thing that decides what
+// a choice key does. A machine with no aliases prints nothing here and the read
+// is byte-identical to what it always was.
+func printAliases(w io.Writer, doc accountsListDoc) error {
+	for _, alias := range slices.Sorted(maps.Keys(doc.Aliases)) {
+		if _, err := fmt.Fprintf(w, "%s -> %s\n", nameCell(alias), nameCell(doc.Aliases[alias])); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ------------------------------------------------------------------- clear

@@ -89,7 +89,7 @@ func imageMapGate(ctx context.Context, lc *localcfg.Config, doc []byte, marker s
 	if err != nil || !g.managed {
 		return nil
 	}
-	if _, err := g.admit(ctx, initflow.YesOrTyped, managedmode.ConvergeRefused(doc, initflow.YesOrTyped, imageMapRules())); errors.Is(err, managedmode.ErrNotConverged) {
+	if _, err := g.admit(ctx, managedmode.ConvergeRefused(doc, imageMapRules())); errors.Is(err, managedmode.ErrNotConverged) {
 		// The gate's own sentence and the rules that refused, unwrapped: the
 		// session reads why the write stopped, the record of the refusal was
 		// written by admit before it returned, and the exit class is the user's

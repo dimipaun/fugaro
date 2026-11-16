@@ -86,10 +86,10 @@ up to and including `0.112.0` stays under the MIT licence it was released under.
 under the new licence, production use needs a subscription, and the earlier releases stay MIT.
 The licence text is counsel's, and it names Subscription Terms that are not published yet: the release waits until the owner has published those terms or replaced that
 sentence, because until then a production user has no way to comply — and that wait was not kept
-either: the Terms are still not in force —
-[`docs/licensing/subscription-terms.md`](../../licensing/subscription-terms.md) says the text "is in
-force only once the owner publishes it", and [`LICENSING.md`](../../../LICENSING.md) still says the
-page is not published yet — so `0.113.0` went out with them unpublished too. **`0.113.0` shipped
+either: the Terms were still not in force when `0.113.0` shipped (they have been published since 2026-11-11) —
+[`docs/licensing/subscription-terms.md`](../../licensing/subscription-terms.md) then said the text "is in
+force only once the owner publishes it", and [`LICENSING.md`](../../../LICENSING.md) then said the
+page was not published yet — so `0.113.0` went out with them unpublished too. **`0.113.0` shipped
 before counsel's sign-off.** D448 and T17 put the first licensed release of each stream behind
 counsel signing off D432, D433 and D436 — S8.4's round — and console `0.113.0` went out on
 2026-10-27, the tag `console-v0.113.0`, ahead of that sign-off; every release through `0.120.0` has

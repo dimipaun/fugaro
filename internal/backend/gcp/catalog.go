@@ -35,27 +35,24 @@ const (
 	catalogTagStepID = "catalog-tag"
 	// catalogRecordStepID writes the record the daily check reads.
 	catalogRecordStepID = "catalog-record"
-	// catalogContextStepID is the checkout an entry that names a build
-	// context gets, between the copied Dockerfile and the step that pins it.
-	catalogContextStepID = "catalog-context"
 	// catalogSmokeStepID is the whole of a prebuilt entry's run: there is
 	// nothing to build, so the one thing it does is smoke the reference the
 	// entry names against the runtime contract (F10).
 	catalogSmokeStepID = "catalog-smoke"
 )
 
-// catalogContextRoot is where the checkout step clones the entry's
-// repository: the path the derived build's own source step clones into, and
-// the path a catalog build drops. It is not /workspace/context, which holds
-// the copied Dockerfile the build reads and the pin step verifies (D1404).
+// catalogContextRoot is where the clone step clones the entry's repository:
+// the path the derived build's own source step clones into, and the path a
+// catalog build drops. It is not /workspace/context, which holds the copied
+// Dockerfile the build reads and the pin step verifies (D1404).
 const catalogContextRoot = "/workspace/src"
 
 // catalogBuildSteps are a catalog build's steps, in order. The derived
 // config's source, render, gate and record steps are not among them: a
 // catalog build renders nothing (its Dockerfile is PIC3's copy), writes a
-// record of its own, and clones only when the entry names a build context —
-// catalogContextStepID, which is dropped for an entry that names none, so
-// such an entry builds the steps it built before this existed.
+// record of its own, and clones in catalogCloneStepID — a step of its own
+// whose build the entry has no part in, which is where the entry's build
+// stopped being handed the git credential (B8, F19).
 //
 // Having no gate is the one difference that shows: a derived build's gate
 // reads the record already in the bucket and refuses to promote over a newer
@@ -65,7 +62,7 @@ const catalogContextRoot = "/workspace/src"
 // the entry's record already carries — is a follow-up, and nothing here
 // pretends to have one.
 var catalogBuildSteps = []string{
-	"prep", credentialStep, catalogDockerfileStepID, catalogContextStepID, catalogPinStepID,
+	"prep", credentialStep, catalogDockerfileStepID, catalogCloneStepID, catalogPinStepID,
 	"build", "smoke", "promote", catalogTagStepID, catalogRecordStepID, "untag",
 }
 
@@ -101,8 +98,9 @@ type CatalogBuildSpec struct {
 	Slug string
 	// GitProvider, RepoURL, BaseBranch, GitSecretID, GitUser and
 	// GitHubAppID are the entry's source repository, as BuildSpec's are: the
-	// image bakes that repository's source, and the Dockerfile the copy
-	// holds clones it with this credential.
+	// image bakes that repository's source, which the clone step clones with
+	// this credential and the entry's own build copies out of the build
+	// context it is handed (B8, F19).
 	GitProvider string
 	RepoURL     string
 	BaseBranch  string
@@ -303,6 +301,14 @@ func CatalogBuildRequest(project string, s CatalogBuildSpec) (*cloudbuild.Build,
 	if build == nil || cred == nil || !slices.Equal(cred.SecretEnv, []string{gitTokenEnv}) || !slices.Equal(cred.Env, credentialEnv[gitprov.KindBitbucket]) {
 		return nil, errNoCredentialStep
 	}
+	// The entry's own build step stops being handed the git credential before
+	// the spec is checked, so the variables the request reserves are the ones
+	// that step really carries: the checkout reaches it as a named build
+	// context instead, and the secret and the volume that held it stay in the
+	// clone step's build (B8, F19).
+	if err := catalogEntryBuildStep(build); err != nil {
+		return nil, err
+	}
 	if err := s.check(project, reservedEnv(build)); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrBadBuildSpec, err)
 	}
@@ -312,16 +318,16 @@ func CatalogBuildRequest(project string, s CatalogBuildSpec) (*cloudbuild.Build,
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrBadBuildSpec, err)
 	}
+	clone, err := catalogCloneStep(s, buildStepCwd(build))
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrBadBuildSpec, err)
+	}
 	own := map[string]*cloudbuild.BuildStep{
 		catalogDockerfileStepID: read,
+		catalogCloneStepID:      clone,
 		catalogPinStepID:        catalogPinStep(s),
 		catalogTagStepID:        catalogTagStep(s),
 		catalogRecordStepID:     catalogRecordStep(s),
-	}
-	// An entry with no context has no checkout step: the id is in the list
-	// and no step answers to it, which is how the list drops it.
-	if s.Context != "" {
-		own[catalogContextStepID] = catalogContextStep(s, buildStepCwd(build))
 	}
 	steps := make([]*cloudbuild.BuildStep, 0, len(catalogBuildSteps))
 	for _, id := range catalogBuildSteps {
@@ -550,10 +556,13 @@ func (s CatalogBuildSpec) contextDir() string {
 // contextPathMessage names what is wrong with a context as the directory a
 // build runs on, "" when nothing is. contextDir joins the value onto
 // catalogContextRoot, so a leading / or a .. segment would hand the build step
-// a directory elsewhere in the container — the fugaro-creds volume is mounted
-// at /creds while that step runs, and a Dockerfile's `COPY .` would bake the
-// repository's credential into the image — and a `//` or a `.` segment would
-// name a directory the checkout does not have. config holds these rules for
+// a directory elsewhere in the container rather than the checkout this
+// request's own clone step wrote — the workspace's other files, a tree no step
+// cloned — and a `//` or a `.` segment would name a directory the checkout does
+// not have. What the build step may read is that one tree, which is why the
+// rule stands after B8 as it did before it: the fence is a build context now
+// instead of a secret, and catalogCloneGuard is its other half (a link out of
+// the checkout is visible only in the tree). config holds these rules for
 // the key (catalogContextMessage); the request holds them too, because it is
 // built from a spec, not from a fugaro.yaml that was validated. config's
 // remaining rules for the key, the length bound it shares with every other
@@ -587,88 +596,6 @@ func buildStepCwd(build *cloudbuild.BuildStep) string {
 		return build.Dir
 	}
 	return "/workspace/" + build.Dir
-}
-
-// catalogContextStep is the step that gives a build context to the entry's
-// Dockerfile: it checks the entry's repository out at the commit the copy
-// pinned, into catalogContextRoot, so the build step's context is a tree
-// rather than the one copied object (D1394, D1396).
-//
-// It runs outside the Docker build, because Docker resolves COPY before any
-// RUN and a checkout inside the build is not a context at all. It clones
-// with the repository's own credential out of the volume the credential step
-// wrote — the same file the derived source step uses — and mounts nothing
-// else: the credential reaches no image, because it is never a build
-// argument, a secret of the build step or a file under the context.
-//
-// The helper goes to git, never to clone: git's own -c is process config and
-// is not written into the new repository's config, while clone's own -c is,
-// and a credential.helper in that config would be copied into any image whose
-// Dockerfile COPYs the context and would fail the smoke's checkout check —
-// which the context entry's Dockerfile does instead of calling
-// finalize-checkout, because there is nothing to strip (context-design.md A4,
-// D1397, D1407).
-//
-// The clone is shallow, so it holds the branch tip and not an arbitrary
-// commit: the commit is fetched by itself when it is not there, and a commit
-// the remote no longer has fails the build saying so rather than building
-// another tree — the shape images/derived/Dockerfile.tmpl already uses for
-// FUGARO_COMMIT. The step writes catalogContextRoot and nothing under
-// /workspace/context: that directory holds the copied Dockerfile, which
-// stays the file the build runs and the pin step verifies (D1404).
-//
-// It refuses a context that leaves the checkout by a link. The context reaches
-// docker as the directory its path resolves to — the CLI tars what a symlinked
-// root points at, not the link — so a repository whose context is a symlink to
-// /creds, which this step mounts, would hand the build step's credential
-// volume to the entry's Dockerfile, and a Dockerfile that only says `COPY .`
-// would copy the repository's token into the shared catalog image. The step
-// resolves the context the way docker will — a cd follows the link and pwd -P
-// says where it landed — and builds only from a directory inside the checkout
-// the clone just made. The request refuses the text of such a context earlier
-// (check, contextPathMessage); a link is visible only in the tree, so this is
-// the one place it can be seen, and it is checked on the directory docker is
-// handed rather than walked through the tree.
-//
-// The resolution has to be docker's own, not an approximation of it: docker
-// resolves the context against the working directory of the step that hands it
-// the argument, so a relative _CONTEXT_DIR names that directory's child and not
-// the checkout's. The guard resolves it from buildCwd — the build step's own
-// directory — rather than from the checkout it just made: resolved from the
-// checkout, a relative context is answered for a directory the build never
-// opens, and a link the checkout commits can turn that answer into "inside the
-// checkout" for a value docker resolves to the worker's own directory, which
-// holds every other tree this build wrote. This step belongs to the template,
-// so it must answer for the value any submitter hands it, not only for the
-// absolute path contextDir builds today.
-func catalogContextStep(s CatalogBuildSpec, buildCwd string) *cloudbuild.BuildStep {
-	// The values reach the script through env: and are read as quoted
-	// "$$VAR" (the rule images/derived/cloudbuild.yaml states).
-	return &cloudbuild.BuildStep{
-		Id:         catalogContextStepID,
-		Name:       "gcr.io/cloud-builders/git",
-		Entrypoint: "bash",
-		Env:        []string{"REPO_URL=" + s.RepoURL, "COMMIT=" + s.ContextCommit, "CONTEXT_DIR=${_CONTEXT_DIR}", "BUILD_CWD=" + buildCwd},
-		Args: []string{"-c", `set -eu
-case "$$REPO_URL" in https://*) ;; *) echo "REPO_URL must be an https URL" >&2; exit 1 ;; esac
-GIT_TERMINAL_PROMPT=0 git -c credential.helper='store --file=/creds/git-credentials' \
-  clone --quiet --depth 1 --no-checkout -- "$$REPO_URL" /workspace/src
-cd /workspace/src
-git cat-file -e "$$COMMIT^{commit}" 2>/dev/null \
-  || GIT_TERMINAL_PROMPT=0 git -c credential.helper='store --file=/creds/git-credentials' \
-       fetch --quiet origin "$$COMMIT" \
-  || { echo "commit $$COMMIT is no longer reachable: the branch was force-pushed; re-run the build" >&2; exit 1; }
-git reset --quiet --hard "$$COMMIT"
-root=$$(cd /workspace/src && pwd -P)
-cd -- "$$BUILD_CWD"
-context=$$(cd -- "$$CONTEXT_DIR" 2>/dev/null && pwd -P) \
-  || { echo "the context $$CONTEXT_DIR is not a directory of the checkout" >&2; exit 1; }
-case "$$context" in
-  "$$root"|"$$root"/*) ;;
-  *) echo "the context $$CONTEXT_DIR resolves to $$context, outside the checkout: the build step mounts the repository's credential there" >&2; exit 1 ;;
-esac`},
-		Volumes: []*cloudbuild.Volume{{Name: "fugaro-creds", Path: "/creds"}},
-	}
 }
 
 // catalogTagStep adds the content tag to the digest the build pushed, so

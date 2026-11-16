@@ -374,6 +374,13 @@ func TestServiceHasNoAdminRoutes(t *testing.T) {
 		{http.MethodGet, SignPath},
 		{http.MethodPost, SignPath + "/"},
 		{http.MethodPost, SignPath + "/x"},
+		// The workflow-secrets route (B3.2): a POST of its exact path and
+		// nothing else. The three rows are what holds it — a GET, a trailing
+		// slash and a subpath are all no route at all, which is how D143's "no
+		// admin surface" is kept over the one route that serves a secret.
+		{http.MethodGet, WorkflowSecretsPath},
+		{http.MethodPost, WorkflowSecretsPath + "/"},
+		{http.MethodPost, WorkflowSecretsPath + "/x"},
 		{http.MethodGet, VerifyPath},
 		{http.MethodPost, VerifyPath + "/"},
 		{http.MethodPost, VerifyPath + "/x"},

@@ -632,7 +632,42 @@ type Config struct {
 	// two spellings are told apart here (a written empty object is a non-nil
 	// empty map, an absent key a nil one) and mean the same floor, none.
 	ReviewFloor map[string][]string `yaml:"review_floor,omitempty"`
-	Repos       map[string]Repo     `yaml:"repos"`
+	// Binaries is the owner's grant of the paths a run may add a binary at,
+	// and the cap it is held to (D981–D983; binary-allow-rule, plan task
+	// AR1): `binaries.allow` is a list of doublestar path globs relative to
+	// the repository root, and `binaries.max_bytes` the size an admitted one
+	// must not exceed, 2 MiB unless the project lowers it.
+	//
+	// It travels the way ReviewFloor does, and the reason is the same one:
+	// `fugaro project policy publish` copies it into the policy node, which
+	// only the owner writes and the runner fails closed on, and the block
+	// never enters the shared config a launcher can write (Shared drops it,
+	// and ParseShared refuses the key besides). The rule this key states is
+	// about the bytes a run's own agent may add, so a file the subject of the
+	// rule can write must not carry it: a repository's committed `fugaro.yaml`
+	// has no such key at all (D986) — the run's own agent writes that file —
+	// and this one is the installation's own config, which no launcher can
+	// reach.
+	//
+	// It is projectpolicy's type, the way Orchestrator is policy's, because
+	// the file's key and the node's member are one block: a person reading the
+	// published node reads the key they wrote, and the pattern rule cannot be
+	// applied one way to a file and another to the node
+	// (projectpolicy.ValidBinariesAllow is called here and by that package's
+	// decode of the node).
+	//
+	// A publish keeps the node's block when this file states none, and a
+	// written empty block takes it away (BinariesEffective, D987): silence is
+	// not a request to remove an admission the owner published — a second
+	// machine whose config predates the key, or an owner who declined to set
+	// one, would otherwise widen the project's own rule by omission — while
+	// taking it away on purpose is written, and the strictest spelling of it
+	// is `binaries: {allow: []}`. The database keeps no member for an empty
+	// list, so what the written-empty spelling publishes is a node with no
+	// block at all: the same node a project that never set one has, and one
+	// that admits nothing either way.
+	Binaries *projectpolicy.Binaries `yaml:"binaries,omitempty"`
+	Repos    map[string]Repo         `yaml:"repos"`
 	// Workspace is the membership: the name of the workspace this project
 	// belongs to, and nothing else (D1291, docs/workspaces/spec.md §2). It is
 	// a scalar and not a list, because a project is in at most one workspace —
@@ -2074,6 +2109,16 @@ func Parse(data []byte) (*Config, error) {
 	if c.Build.MachineType == "" {
 		c.Build.MachineType = DefaultBuildMachineType
 	}
+	// A written `max_bytes: 0` (and a written `max_bytes:` with nothing under
+	// it) is refused while the decoded block cannot tell it from the absent
+	// member: absent means the 2 MiB default, so the zero a decode leaves is
+	// this block's one *wider* answer and a file that wrote it would silently
+	// raise the cap to its ceiling. The node's decode reads the same member off
+	// its own document for the same reason (decodeBinaries), and the two
+	// spellings are told apart the same way there.
+	if blk, ok := top["binaries"]; ok && c.Binaries != nil && c.Binaries.MaxBytes == 0 && mappingValue(&blk, "max_bytes") != nil {
+		return nil, fmt.Errorf("local config: %v", projectpolicy.ValidBinariesMaxBytes(c.Binaries.MaxBytes))
+	}
 	if err := c.validate(); err != nil {
 		return &c, err
 	}
@@ -2206,6 +2251,32 @@ func (c *Config) CloneURLsEffective(published map[string]string) map[string]stri
 		return nil
 	}
 	return effective
+}
+
+// BinariesEffective is the keep rule for the binaries block (AR1, D987): the
+// block this file states when it writes one, and the published node's when it
+// says nothing. The second half is what leaves a machine whose config predates
+// the key — a teammate's, a CI box's, an operator's second laptop — publishing
+// the node's own grant rather than a node that admits nothing and holds every
+// admitted binary to the ceiling again: the block is the owner's own word about
+// the bytes a run may add, and a publish must not widen the project's other
+// machines by saying nothing.
+//
+// A written block that states no member is the other direction, and it is the
+// one spelling that takes a published grant away on purpose (D987): nil, so
+// the publisher writes a node with no block at all — which is what the
+// database would keep of an empty list anyway, so the written-empty spelling
+// is this file's and never the node's, and the node it leaves is the node a
+// project that never set one has. A written block with a member in it (the
+// globs, a lowered cap) is published as it stands.
+func (c *Config) BinariesEffective(published *projectpolicy.Binaries) *projectpolicy.Binaries {
+	if c.Binaries == nil {
+		return published
+	}
+	if len(c.Binaries.Allow) == 0 && c.Binaries.MaxBytes == 0 {
+		return nil
+	}
+	return c.Binaries
 }
 
 // BakeReposEffective is the keep rule for the bake switch (D1901): this file's
@@ -2712,6 +2783,34 @@ func (c *Config) validate() error {
 	// under the floor of the class it is written for.
 	if err := policy.ValidOrchestrator(c.Orchestrator); err != nil {
 		bad("%v", err)
+	}
+	// The binaries block is held to the node's own rules here, the way the
+	// floor, the verifier list, the catalog and the orchestrator block are: it
+	// is copied into the policy node, and a pattern this file accepted while the
+	// node refused it — or the one the node accepted and this file refused —
+	// would be an admission whose meaning depended on which door it came
+	// through. projectpolicy.ValidBinariesAllow and ValidBinariesMaxBytes are
+	// those two rules, the same functions the node's own decode applies. The
+	// pattern rule is the one that has to be asked here rather than at
+	// admission: a misspelt glob is a lock that is not there, and it reads
+	// exactly like the silence of a project that admitted nothing.
+	//
+	// The cap is judged only when it is written, because this document cannot
+	// tell a written blank from the absent member: a YAML `max_bytes:` with
+	// nothing under it decodes to the zero an absent key has, and the zero is
+	// read as the shipped 2 MiB — the widest cap this block may hold, so the
+	// reading is the strict one, and a written 0 or null is refused where it
+	// can be told apart (the node's own decode reads the member off the
+	// document).
+	if c.Binaries != nil {
+		if err := projectpolicy.ValidBinariesAllow(c.Binaries.Allow); err != nil {
+			bad("%v", err)
+		}
+		if c.Binaries.MaxBytes != 0 {
+			if err := projectpolicy.ValidBinariesMaxBytes(c.Binaries.MaxBytes); err != nil {
+				bad("%v", err)
+			}
+		}
 	}
 	for repo, r := range c.Repos {
 		if !repoRE.MatchString(repo) {

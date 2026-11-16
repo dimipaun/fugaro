@@ -785,6 +785,56 @@ func TestSharedConfigRefusesCloneURLs(t *testing.T) {
 	}
 }
 
+// TestConfigPublishRefusesTheBinariesKey: the binaries block is the owner's
+// grant of the paths a run may add a binary at and of the cap the run is held
+// to, and it travels the way the review floor and the clone URLs do (AR1, D986,
+// F11). The shared config is the file any launcher holding objectAdmin on the
+// runs bucket can write, so a `binaries:` key in it would be the launcher the
+// rule binds stating the rule — admitting its own payload to every teammate's
+// runs, from the one file it can write — and both doors are closed here as they
+// are for the floor: the reader refuses the key (sharedForbidden), and the
+// publisher never writes it, because localcfg's Shared nils the block (so the
+// local file's block publishes none of itself) and the block reaches a run off
+// the policy node instead, which the owner writes and the runner fails closed
+// on.
+//
+// The existing published object is the launcher's half of the fixture rather
+// than an older publisher's, and it is the case the refusal exists for: an
+// object carrying the key is refused and replaced, never merged, so the next
+// publish is the one that takes the launcher's own grant out of the file every
+// teammate reads.
+func TestConfigPublishRefusesTheBinariesKey(t *testing.T) {
+	f := newCloudFixture(t)
+	dir := filepath.Join(f.dir, "runs")
+	block := "binaries:\n  allow: [\"brand/*.png\"]\n  max_bytes: 1048576\n"
+	writePublished(t, dir, publishedWithOtherRepo+block)
+	if _, err := localcfg.Parse([]byte(publishedWithOtherRepo + block)); err != nil {
+		t.Fatalf("fixture: %v", err)
+	}
+	f.appendConfig(t, block)
+	lc := publishable(t)
+	if lc.Binaries == nil {
+		t.Fatalf("the local fixture states no binaries block: %+v", lc.Binaries)
+	}
+	var warned []string
+	if _, err := publishSharedWarn(context.Background(), lc, func(m string) { warned = append(warned, m) }); err != nil {
+		t.Fatal(err)
+	}
+	if len(warned) != 1 || !strings.Contains(warned[0], "refused") || !strings.Contains(warned[0], "binaries") {
+		t.Errorf("warnings = %q", warned)
+	}
+	got, err := os.ReadFile(sharedObjectPath(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "binaries") || strings.Contains(string(got), "brand/*.png") {
+		t.Errorf("the shared config carries the binaries block, which the launcher who wrote it must not be able to state:\n%s", got)
+	}
+	if r := publishedRepos(t, dir); len(r) != 1 || r["acme/app"].Provider != "github" {
+		t.Errorf("published repos = %v; want only the local acme/app", r)
+	}
+}
+
 // TestSharedConfigRefusesARepositoryAccountList: a repos entry's own
 // claude_accounts is the repository-level half of the trust anchor T1 keeps in
 // the operator-only local config — it is what admits a repository whose runs
