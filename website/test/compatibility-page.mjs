@@ -38,7 +38,12 @@
 //      own `<h1>` — which is the check that the hub's typed entry title and the page agree. The
 //      page-wide gates (`a11y.mjs`, `linkcheck.mjs`, `budget.mjs`, `origins.mjs`, `copy.mjs`,
 //      `fold.mjs`, `meta.mjs`) read every built page and so read this one without a line here.
-//   5. **And the loader's own refusals, each one seen to fire.** `src/content.ts`'s
+//   5. **The page sends a reader on once.** It carries exactly one link to `/features/`, beside
+//      its lead and above the legend — what the product does is the feature matrix's question,
+//      and the page that answers it is the one a reader is sent to (Task T7) — and the route it
+//      names is a page of this build rather than a name. `linkcheck.mjs` is the gate that follows
+//      every link; this is the one link this page owns.
+//   6. **And the loader's own refusals, each one seen to fire.** `src/content.ts`'s
 //      `loadCompatibility()` refuses a state of the data file before a page is rendered from it:
 //      the closed sets of statuses and editions, the groups in the spec's order, an
 //      edition on every row of a group or on none, and the evidence path behind every
@@ -72,6 +77,9 @@ const BUILT_PAGE = path.join(DIST, 'compatibility', 'index.html')
 
 /** The page's route, which is the menu's href, the hub's href and the page's own `<h1>`. */
 const ROUTE = '/compatibility/'
+
+/** The features page, which is the one link this page carries off itself (the feature matrix's plan, Task T7). */
+const FEATURES = '/features/'
 
 /** The page's title, as the layout renders it: the page's own word, then the site's name. */
 const TITLE = 'Compatibility · Fugaro'
@@ -475,6 +483,48 @@ test('the docs hub carries the page, under the page\'s own title', () => {
     flat(textOf(line)),
     ROUTE,
     `the hub's entry for ${ROUTE} names ${JSON.stringify(flat(textOf(line)))} as its path: the path line is what the link opens, and what this one opens is the page`,
+  )
+})
+
+test('the page carries one link to the features page, and it resolves', () => {
+  const html = builtPage()
+  const article = findAll(parse(html), (el) => el.name === 'article' && el.attrs.has('data-compatibility-page'))[0]
+  assert.ok(article, 'the built page has no <article data-compatibility-page>: this case reads the page\'s own part of the document, and the marker is the page\'s own')
+
+  // The count is over the page's own article rather than the whole document: the site's menu
+  // carries `/features/` too once task T4b lands, and a count over the document would read the
+  // menu's link as this page's.
+  const own = findAll(article, (el) => el.name === 'a')
+  assert.equal(
+    own.length,
+    1,
+    `the page carries ${own.length} link(s) of its own, and it carries one: what the product does is the feature matrix's question, and the page that answers it is the one a reader is sent to (the feature matrix's plan, Task T7)`,
+  )
+  const link = own[0]
+  assert.equal(
+    link.attrs.get('href'),
+    FEATURES,
+    `the page's one link points at ${JSON.stringify(link.attrs.get('href'))} rather than ${FEATURES}: the feature matrix's page is where a reader asking what the product does today is sent, and a link to anywhere else is a reader sent past it (the feature matrix's plan, Task T7)`,
+  )
+  assert.notEqual(flat(textOf(link)), '', `the page's link to ${FEATURES} has no text, so a screen reader reads it as a link with no name (a11y.mjs refuses that over every page)`)
+
+  // Beside the lead: the link is inside the page's opening band, above the legend and the first
+  // table, so a reader who came for the other answer meets it before the matrix rather than
+  // scrolling through it — which is what "beside its lead" is a requirement about (Task T7).
+  const hero = findAll(article, (el) => hasClass(el, 'compat-hero'))
+  assert.equal(hero.length, 1, `the page has ${hero.length} opening band(s) marked \`compat-hero\`, and it has one: this case reads the lead's own block, and the class is what names it`)
+  const beside = findAll(hero[0], (el) => el.name === 'a' && el.attrs.get('href') === FEATURES)
+  assert.equal(
+    beside.length,
+    1,
+    `the page's link to ${FEATURES} is not beside its lead: the opening band carries ${beside.length} of them, and a link a reader has to leave the page's opening to find is not where the plan puts it`,
+  )
+
+  // And the route the link points at is a page of this build rather than a name: the page-wide
+  // linkcheck is the gate that follows every link, and this is the one link this page owns.
+  assert.ok(
+    builtPages(DIST).some((page) => page.url === FEATURES),
+    `the build produced no page at ${FEATURES}, and this page links it: what runs where and what the product does are read together, and a link to a route nothing serves is a reader sent nowhere`,
   )
 })
 
