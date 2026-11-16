@@ -287,9 +287,10 @@ type Service struct {
 	// two sign-ups in flight together would each read a count that does not hold
 	// the other's membership yet — the limit passed by racing it. The count
 	// belongs inside the sign-up's own transaction, and this is where it is not:
-	// api.go's Tx reads and writes by id and holds no query. It is this
-	// process's, like pageMu and for the same reason — what a second process
-	// does is the store's to hold, and when the store can count inside a
+	// a count is a query, and a query inside that transaction would make every
+	// other sign-up of the day a conflict with it (orgs.go's recordReader). It
+	// is this process's, like pageMu and for the same reason — what a second
+	// process does is the store's to hold, and when the store can count inside a
 	// transaction the lock is what goes.
 	signUpMu sync.Mutex
 	// renewMu is one renewal at a time in this process. A renewal reads the key's
