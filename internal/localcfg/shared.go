@@ -382,7 +382,11 @@ func MergeShared(published, local *Config) *Config {
 	}
 	out.Repos = withoutRepoLocalKeys(mergeRepoRecords(published.Repos, out.Repos))
 	out.BaseImages = unionMaps(published.BaseImages, local.BaseImages)
-	out.ModelPrices = unionMaps(published.ModelPrices, out.ModelPrices)
+	// The published side is stripped of the new spellings for withoutRepoLocalKeys'
+	// reason, one file over: a shared document carrying cache_read_mult would stop
+	// a teammate whose Fugaro is older than this file with an unknown field, which
+	// is the lockout Shared's own version exists to prevent.
+	out.ModelPrices = withoutCacheSpellings(unionMaps(published.ModelPrices, out.ModelPrices))
 	out.ComputePrices = unionMaps(published.ComputePrices, local.ComputePrices)
 	keep := func(dst *string, old string) {
 		if *dst == "" {

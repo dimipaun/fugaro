@@ -1154,6 +1154,7 @@ region: us-central1
 runs_bucket: my-runs
 model_prices:
   claude-other-1: { input_per_m: 10, output_per_m: 50, cache_read: 0.1 }
+  claude-other-2: { input_per_m: 10, output_per_m: 50, cache_read_mult: 0.1 }
 `))
 	if err != nil {
 		t.Fatalf("the published copy of another machine: %v", err)
@@ -1180,6 +1181,17 @@ model_prices:
 				}
 			}
 		})
+	}
+	// An entry the published copy already spelled with the new name goes back
+	// out under the old one: the published document carries one spelling, and
+	// it is the one a teammate's older Fugaro reads without refusing the file.
+	merged := MergeShared(published, local)
+	if got := merged.ModelPrices["claude-other-2"]; got.CacheRead == nil || *got.CacheRead != 0.1 || got.CacheReadMult != nil {
+		t.Fatalf("the published entry = %+v, want the multiplier under the old name alone", got)
+	}
+	mergedData, err := merged.Marshal()
+	if err != nil || !strings.Contains(string(mergedData), "cache_read: 0.1\n") || strings.Contains(string(mergedData), "cache_read_mult") {
+		t.Fatalf("the republished copy = %s (%v), want the old name", mergedData, err)
 	}
 	// The owner's own file keeps the spelling he wrote.
 	data, err := local.Marshal()
