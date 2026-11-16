@@ -201,6 +201,9 @@ func (s *Session) Claims() Claims {
 	if prs, ok := ClaimInts(extra, ClaimPRs); ok {
 		c.PRs = prs
 	}
+	if repos, ok := ClaimStrings(extra, ClaimContextRepos); ok {
+		c.ContextRepos = repos
+	}
 	return c
 }
 

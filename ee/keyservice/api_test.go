@@ -238,9 +238,12 @@ func TestNewRefusesASeamOnlyAMountedRouteReaches(t *testing.T) {
 	}
 
 	// The seams no mounted route reaches are not this deployment's: a service
-	// that serves none of their doors starts without them.
+	// that serves none of their doors starts without them. The merchant is not
+	// one of these any more — P4.1's checkout reaches it — so what is left here
+	// is the two seams whose areas have not landed a route yet (P1.7's handover
+	// and the scheduler's jobs).
 	deps := *f.deps
-	deps.Sealer, deps.Paddle, deps.Scheduler = nil, nil, nil
+	deps.Sealer, deps.Scheduler = nil, nil
 	if _, err := New(base, deps); err != nil {
 		t.Errorf("a deployment holding no seam a mounted route reaches did not start: %v", err)
 	}

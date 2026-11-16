@@ -220,14 +220,18 @@ const (
 // the block into the shared file would be admitting its own payload to every
 // teammate's runs (D986).
 //
-// The removal record of docs/config-ownership/ (F22, plan task A1) is the mover
-// after it, by three rows and by none: `node_removals` holds one list per block
-// whose members are named, so the local config gains `node_removals.pools`,
-// `node_removals.crafts` and `node_removals.craft_credentials`, and all three
-// belong to the `accounts` family -- `accounts pool rm` and `accounts rm` are
-// the doors that write them -- so the generic path reaches none of them.
+// N1 of docs/config-ownership/ is the last mover, by nine rows and by none: the
+// local config gains the carriers of the two node-only blocks — the cascade's
+// six leaves under `credential_cascade` (F23: the node's `credentials` member
+// is the cascade, while this file's `credentials` is already the list of typed
+// credentials) and the `node_removals` record's three lists, which is the shape
+// an explicit unset takes (F22, D2607). All nine name the `accounts` family,
+// which is where `fugaro accounts` writes the cascade and records a removal
+// (D2613), so the generic path carries none of them: the fallback is a word
+// whose second answer spends the project's money, and a removal is a name held
+// to the rule of the block it names.
 const (
-	cfmRegistryRows   = 452
+	cfmRegistryRows   = 458
 	cfmAllowlistNamed = 105
 )
 

@@ -11,7 +11,7 @@ from [reconciliation-image-setup.md](reconciliation-image-setup.md), which check
 **The owner answered D600–D649 on 2026-10-29: every answer is the recommendation except D618**
 (shared images across repos, scoped to repos with an identical resolved dependency set), which
 slice C below follows (C7, C8). Its tension T6 (open item O6) was resolved on 2026-10-29: shared
-images stay under user control, a divergence is proposed and confirmed, never forked silently. Answers are not task approvals: slice A still needs the owner's explicit go. Every task
+images stay under user control, a divergence is proposed and confirmed, never forked silently. Answers are not task approvals: slice A still needed the owner's explicit go, **given on 2026-11-16 with every other agent task of this folder; owner-run A5 (Check 230), C8b/C8c (unscheduled, D650), and tasks that wait on a merged dependency (D3 and D4 on ee-reorg's coordinator move, B3 on its own first reconciliation) stay gated, as the plan already says.** Every task
 names the decisions it rests on. Tasks marked **GATED** are not planned in detail
 because their decision may remove them.
 
@@ -476,12 +476,13 @@ from it. **Not sized here** beyond: L, security-sensitive throughout.
 
 #### C6. SECURITY.md: baked source and registry readers
 
-- **State:** Kept in part — the shared-key half of the commit is merged with C8a (`SECURITY.md`'s
-  "Shared images: what the key protects, and what it does not", pinned by
-  `internal/cli/docs_security_test.go` `TestSecurityMdStatesTheModelAndItsLimits`); the baked-source
-  half is written nowhere — the design's own "C6 is not written" line predates C8a's paragraph and
-  still holds for that half. Whether to re-point it at the catalog's images is
-  [reconciliation-image-setup.md](reconciliation-image-setup.md) §5, D651.
+- **State:** Merged — the shared-key half with C8a (`SECURITY.md`'s "Shared images: what the key
+  protects, and what it does not", pinned by `internal/cli/docs_security_test.go`
+  `TestSecurityMdStatesTheModelAndItsLimits`), and the baked-source half as
+  [reconciliation-image-setup.md](reconciliation-image-setup.md) §5's D651 answered it on
+  2026-11-16 -- re-pointed at the catalog's images and at a baked catalog entry, in `SECURITY.md`'s
+  "The source an image carries, and who can read it", pinned by
+  `internal/cli/docs_registry_readers_test.go`.
 
 - **Files:** `SECURITY.md`, `website/content/security.md` (regenerated),
   `internal/cli/docs_registry_readers_test.go` (new).
@@ -783,7 +784,7 @@ from E0.
 | D649 | A2b |
 | D647 | A3, A4 |
 | D648 | A5 (Check 230's squash step) |
-| D650–D653 | written 2026-11-10 by [reconciliation-image-setup.md](reconciliation-image-setup.md), **awaiting the owner's answers**; they name what C8b/C8c become (D650), whether C6 is re-pointed at the catalog's images (D651), whether baked repositories replace C5a–C5c (D652), and what defines a shared image if C8b/C8c are built (D653) |
+| D650–D653 | written 2026-11-10 by [reconciliation-image-setup.md](reconciliation-image-setup.md), **answered 2026-11-16, each as recommended**; they name what C8b/C8c become (D650), whether C6 is re-pointed at the catalog's images (D651), whether baked repositories replace C5a–C5c (D652), and what defines a shared image if C8b/C8c are built (D653): C8b/C8c stay unscheduled, C6's first half is re-pointed at the catalog's images and baked catalog entries and the task stays, C5a–C5c stay, and a shared dependency-layer image is a catalog entry keyed by the dependency set |
 
 ## Parallel execution
 

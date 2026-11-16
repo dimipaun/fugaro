@@ -471,7 +471,16 @@ func (e *initEngine) migrateAccess(ctx context.Context, node accesslib.Node) (ac
 	// reader of those outputs resolves it rather than spelled again here: a run
 	// given --state-bucket must read the outputs of the installation it is
 	// about to apply, not of the one the file remembers.
-	spec, err := infra.Installation(e.lc, infra.InstallOptions{StateBucket: e.r.o.stateBucket})
+	//
+	// installSpec and not installOptions: this spec is the door's, so a config
+	// that can no longer compose the job of a default profile the installation
+	// holds must not stop the run here. The state this step is reached in is the
+	// one a migration that wrote nothing leaves behind — the roles node absent
+	// and its marker with it (syncAccess reads exactly that, and accessGate's
+	// note names the same state as reachable) — and the refusal installOptions
+	// raises there is the two-GitHub-Apps message, whose remedy is the hand edit
+	// of fugaro.yaml this product never asks for (CLAUDE.md's HARD RULE).
+	spec, err := installSpec(e.r.o, e.lc, e.r.warn)
 	if err != nil {
 		return accesslib.Node{}, initErr(err)
 	}
