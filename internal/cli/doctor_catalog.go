@@ -172,7 +172,13 @@ func (r *initRun) warnCatalogSecrets(ctx context.Context, lc *localcfg.Config, s
 	if len(names) == 0 || lc == nil {
 		return
 	}
-	b, err := blobx.Open(ctx, lc.BucketURL())
+	if fakeEndpointsOnGS(lc, lc.BucketURL()) {
+		// The config's endpoints are fakes (tests, emulators): the gs:// bucket
+		// is not the one they stand for, and opening it would reach the real
+		// network with the operator's credentials (publishSharedWarn's rule).
+		return
+	}
+	b, err := sharedBucketOpener(ctx, lc.BucketURL())
 	if err != nil {
 		return
 	}
