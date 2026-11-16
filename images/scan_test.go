@@ -438,14 +438,49 @@ func TestScanPassesAnSshMirror(t *testing.T) {
 }
 
 func TestScanRefusesATokenInTheEnvironment(t *testing.T) {
-	f := cleanFixture
-	f.env = append([]string{"FUGARO_GIT_TOKEN=fixture"}, f.env...)
-	out, _, err := runScan(t, f, "0", "--secrets", "fugaro-base:ci")
-	if err == nil {
-		t.Fatal("an image setting a credential in its environment passed the scan")
+	for _, c := range []struct{ name, value string }{
+		{"FUGARO_GIT_TOKEN", "fixture"},
+		// The same name the pass test below exempts, holding a value that is
+		// not a path: the exemption is on the value, never on the name.
+		{"GOOGLE_APPLICATION_CREDENTIALS", "fixture"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := cleanFixture
+			f.env = append([]string{c.name + "=" + c.value}, f.env...)
+			out, _, err := runScan(t, f, "0", "--secrets", "fugaro-base:ci")
+			if err == nil {
+				t.Fatal("an image setting a credential in its environment passed the scan")
+			}
+			if !strings.Contains(out, c.name) {
+				t.Errorf("the refusal does not name the variable: %s", out)
+			}
+		})
 	}
-	if !strings.Contains(out, "FUGARO_GIT_TOKEN") {
-		t.Errorf("the refusal does not name the variable: %s", out)
+}
+
+// TestScanPassesACredentialNamePointingAtAPath: a variable *named* like a
+// credential whose value is a path names a file rather than carrying a secret.
+// GOOGLE_APPLICATION_CREDENTIALS=/dev/null is the shape
+// docs/gcp-live-checklist.md's Check 291 builds and the definition guard
+// deliberately accepts (internal/catalog/fetch.go's pathValue, whose reason is
+// written there); the catalog build then runs this scan on that image, so a
+// scan refusing the name alone would refuse an entry with no credential in it
+// and tell the author to move a path into a secret mount — advice a name the
+// platform reserves and drops at run time cannot take. Each prefix pathValue
+// reads is a pass, and the whitespace it trims is no way past it.
+func TestScanPassesACredentialNamePointingAtAPath(t *testing.T) {
+	for _, value := range []string{"/dev/null", "./creds.json", "../creds.json", "~/.aws/credentials", " /dev/null"} {
+		f := cleanFixture
+		f.env = append([]string{
+			"GOOGLE_APPLICATION_CREDENTIALS=" + value,
+			"AWS_SHARED_CREDENTIALS_FILE=" + value,
+			"API_KEY_PATH=" + value,
+			"SSH_PRIVATE_KEY_PATH=" + value,
+		}, f.env...)
+		out, _, err := runScan(t, f, "0", "--secrets", "fugaro-base:ci")
+		if err != nil {
+			t.Fatalf("the scan refused a credential name holding %q, a path: %v\n%s", value, err, out)
+		}
 	}
 }
 

@@ -70,7 +70,8 @@ git_config_path='(^|/)(\.gitconfig|gitconfig|[^/]*\.git/config|(\.config|xdg)/gi
 #   - the environment its config sets. Trivy's image-config scan applies its
 #     built-in rules to it and no custom rule reaches it, so a provider's own
 #     token -- an app password, a workspace token, neither of which has a
-#     built-in format -- would pass there.
+#     built-in format -- would pass there. A variable whose value is a path is
+#     no finding: the check reads the value, below.
 #   - a credential *file*, by name: a .netrc and a credential-helper store are
 #     findings whatever they hold, and Trivy writes one only where the file's
 #     lines match its rule.
@@ -92,7 +93,32 @@ leaks() {
   cid=$(docker create "$image")
   trap 'docker rm -f "$cid" >/dev/null 2>&1 || true; rm -rf "$work"' EXIT INT TERM
   docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$image" > "$work/env"
-  if named=$(sed -n 's/=.*//p' "$work/env" | grep -Ei "$env_credential_names" | sort -u) && [ -n "$named" ]; then
+  # A variable *named* like a credential is a finding unless the value it holds
+  # is a path. GOOGLE_APPLICATION_CREDENTIALS, AWS_SHARED_CREDENTIALS_FILE,
+  # API_KEY_PATH and SSH_PRIVATE_KEY_PATH are the platform's own names for a
+  # *file*, and the path an author writes for one carries no secret: refusing
+  # that shape tells an author to put a path in a secret mount, which a name the
+  # platform reserves and drops at run time cannot do. The definition guard lets
+  # the same shape through for the same reason
+  # (internal/catalog/fetch.go's pathValue, whose test this is: whitespace
+  # trimmed, then a leading /, ./, ../ or ~/ and nothing else -- a value
+  # written through a variable is not a path literal and stays a finding).
+  : > "$work/named"
+  while IFS= read -r setting; do
+    [ -n "$setting" ] || continue
+    name=${setting%%=*}
+    value=${setting#*=}
+    value=${value#"${value%%[![:space:]]*}"}
+    case "$value" in
+      # The tilde is quoted: a shell expands an unquoted one in a case pattern
+      # to the home directory, and then no value beginning with ~ would match
+      # and every such value would be refused.
+      /*|./*|../*|"~/"*) continue ;;
+    esac
+    printf '%s\n' "$name" | grep -Eiq "$env_credential_names" || continue
+    printf '%s\n' "$name" >> "$work/named"
+  done < "$work/env"
+  if named=$(sort -u "$work/named") && [ -n "$named" ]; then
     echo "scan.sh: $image sets a credential in its environment: $(printf '%s' "$named" | tr '\n' ' ')" >&2
     echo "scan.sh: a value a build needs belongs in a BuildKit secret file mount, never in an ENV" >&2
     exit 1
