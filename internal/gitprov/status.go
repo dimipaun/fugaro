@@ -263,10 +263,12 @@ type ChangeSetMember struct {
 }
 
 // ChangeSetLine is the section's change-set block: the set's name, how many
-// runs it holds and one line per member. setID and selfRunID are the short
-// forms the section names runs by (task.ShortRun); selfRunID is the run whose
-// section this is and is marked as such, so a reader who landed on one
-// member's pull request can tell which of the runs it is.
+// runs it holds and one line per member. setID, selfRunID and each member's
+// RunID are the short forms the CLI's own prose names runs by
+// (task.ShortRun): what a reader acts on is the repository beside them and the
+// pull request where the caller knows it. selfRunID is the run whose section
+// this is and is marked as such, so a reader who landed on one member's pull
+// request can tell which of the runs it is.
 //
 // A member run can never fill this in completely. Runs of one repository share
 // their prefixes in the runs bucket and no run reaches another repository's
