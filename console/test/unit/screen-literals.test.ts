@@ -637,7 +637,7 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     "repo.kill === null ? 'false' : 'true'": 'a boolean drawn as one of two literals',
     "connection.textContent ?? ''": 'read back from a cell `putText` wrote, so it is the sanitized text',
     "formatReading(feedReading(feed), 'seconds')": '`formatReading` of a Reading: the console\'s own number formatting or its unavailable mark',
-    "model.feed === null ? '' : (model.feed.since ?? '')":
+    "drawn.feed === null ? '' : (drawn.feed.since ?? '')":
       'the arrival stamp `src/source/cli.ts` wrote on the frame (or the empty string when the caller keeps no feed reading), used as a key rather than as text',
     'segment.name': {
       within: 'fleetBar',
@@ -658,6 +658,21 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
       within: 'fleetBar',
       reason:
         '`axis` of the same share as the segment\'s own width: the axis is this file\'s constant rather than a number from the document, so the value is the shape\'s size and nothing a document can spell',
+    },
+    'axis(shares.zoneFrom)': {
+      within: 'gauge',
+      reason:
+        '`axis` of where the red zone starts on the gauge\'s own 100-unit axis (`gaugeShares`, computed from the rate and the red-zone readings and clamped to the track): the left edge of a shape, which is geometry rather than text, and the same kind of value `axis(drawn)` is for the cap bar',
+    },
+    'axis(shares.zoneWidth)': {
+      within: 'gauge',
+      reason:
+        '`axis` of the red zone\'s own width on the same axis: the right-hand half of the track whenever there is a zone at all, so the value is this file\'s own constant share and never a number a document chose',
+    },
+    'axis(shares.needle)': {
+      within: 'gauge',
+      reason:
+        '`axis` of the needle\'s position on the same axis, clamped by `gaugeShares` into one unit of the track: the x of a mark whose height and width are string constants, so nothing of the document reaches the attribute -- only the reading it was computed from, which is drawn as text beside it through `putReading`',
     },
     'id.text': {
       within: 'putRunId',

@@ -9,6 +9,9 @@
     },
     {
       "$ref": "#/$defs/bind"
+    },
+    {
+      "$ref": "#/$defs/list"
     }
   ],
   "$defs": {
@@ -90,6 +93,23 @@
           "type": "string",
           "pattern": "^[a-z][a-z0-9-]{4,28}[a-z0-9]$",
           "description": "The Firebase project id the caller names, as text and never as a claim about who controls it."
+        }
+      }
+    },
+    "list": {
+      "type": "object",
+      "description": "Every workspace of the caller's own organisation, which is what GET /api/workspaces answers (P3.1). The list is there whether or not it holds anything: an organisation that has not bound a project yet is an ordinary state, and a reader that had to tell an absent list from an empty one would draw it as a failure.",
+      "additionalProperties": false,
+      "required": [
+        "workspaces"
+      ],
+      "properties": {
+        "workspaces": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/workspace"
+          },
+          "description": "The organisation's workspaces, oldest first. It is empty for an organisation that has none, which is every organisation until a licence is bound: binding is what makes a workspace for a licence that has none (D2196, F6)."
         }
       }
     }

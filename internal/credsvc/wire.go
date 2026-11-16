@@ -94,6 +94,26 @@ const (
 	// for the unsuffixed account). It is the caller's statement too, and it is
 	// read for one thing only: whether the repository's record names it.
 	HeaderAuthAccount = "X-Fugaro-Auth-Account"
+	// HeaderBuild names the build a call of the BITBUCKET PROXY is made for
+	// (B1, rule 9): the id the build's grant was answered for
+	// (buildtoken.Request.BuildID), which is the second half of the key the
+	// grant's pairing is recorded under (creds.PathBuildPair). It is the one
+	// header of the build class, and it is what the proxy's admission reads to
+	// find the repositories that build may reach.
+	//
+	// It is the caller's own word, exactly as BuildID is on the grant route: a
+	// project has one build identity, so any build of it can name any id, and
+	// what the header buys is bookkeeping rather than authorization — a build
+	// names its own pairing and no other build's, and what bounds the call is
+	// the repository set that pairing holds. Its value is checked against the
+	// build id shape (buildIDRE) before it reaches a path, so a call that
+	// named a path is refused rather than read.
+	//
+	// It travels on a build's git calls as git config rather than on the wire
+	// of a client this service ships: the generated clone step (B8) is what
+	// sets it (http.extraHeader), and the build's own Dockerfile holds neither
+	// it nor the ID token beside it.
+	HeaderBuild = "X-Fugaro-Build"
 )
 
 // BitbucketProxyPrefix is the path prefix under which this service serves one
