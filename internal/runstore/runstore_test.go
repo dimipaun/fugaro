@@ -604,6 +604,73 @@ func TestNewTriageBoundsWhatItStores(t *testing.T) {
 	}
 }
 
+// TestNewTriageKeepsACauseOnlyForAFailedRound: the cause is why a round failed
+// and the field is the round's own, so the two cannot disagree in the record —
+// a round the constructor did not store as failed carries no cause whatever the
+// caller passed with it, and a cause longer than MaxTriageLine is clipped like
+// the reason and the group are. It is clipped here as well as where it is read
+// off the call (internal/runner's triageCause) because this constructor is what
+// writes the record: a caller that handed it a paragraph would otherwise put
+// one in the run's own document, which every listing reads.
+func TestNewTriageKeepsACauseOnlyForAFailedRound(t *testing.T) {
+	answered := NewTriage([]TriageRound{{Round: 1, Mode: rigor.Pro, Level: policy.LevelL2, Cause: "a cause on a round that answered"}})
+	if answered == nil || answered.Rounds[0].Cause != "" {
+		t.Errorf("NewTriage = %+v, want the cause dropped for a round that is not failed", answered)
+	}
+	long := strings.Repeat("x", MaxTriageLine+50)
+	failed := NewTriage([]TriageRound{{Round: 1, Mode: rigor.Pro, Level: policy.LevelL2, Failed: true, Cause: long}})
+	if failed == nil {
+		t.Fatal("NewTriage dropped a round whose call failed")
+	}
+	if got := len([]rune(failed.Rounds[0].Cause)); got != MaxTriageLine {
+		t.Errorf("cause length = %d, want %d", got, MaxTriageLine)
+	}
+	if !failed.Rounds[0].Failed {
+		t.Errorf("the round = %+v, want the failure it was given kept", failed.Rounds[0])
+	}
+}
+
+// TestTriageFailureClauseSaysWhatEachCauseIs: the clause two readers of the
+// record write a failed round in — the pull request's status section and
+// `fugaro diagnose` — is true of the cause it is given, which is the whole of
+// why it exists: a judge that answered nothing and a judge whose answer could
+// not be read are two different facts, and "the judge did not run" is true of
+// neither the second one nor a call a service refused with words of its own.
+func TestTriageFailureClauseSaysWhatEachCauseIs(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		level policy.Level
+		round int
+		cause string
+		want  string
+	}{
+		{"an answer the reader refused", policy.LevelL2, 2, TriageCauseUnreadable,
+			"the judge's answer for round 2 of level 2 could not be read"},
+		{"no words at all", policy.LevelL2, 1, TriageCauseNoAnswer, "the judge did not answer for round 1 of level 2"},
+		{"a service's own words", policy.LevelL3, 3, "Invalid API key", "the judge did not answer for round 3 of level 3: Invalid API key"},
+		// A record written before the field existed, or a hand-edited one: the
+		// round says it bought no verdict and does not say which way, so the
+		// clause claims only what both readings share.
+		{"a round with no cause kept", policy.LevelL2, 1, "", "the judge did not answer for round 1 of level 2"},
+		// A level a hand-edited record invented: the clause names the round and
+		// claims nothing about a level it cannot read.
+		{"a level nobody defined", policy.Level("l9"), 1, TriageCauseNoAnswer, "the judge did not answer for round 1"},
+		{"no level at all", "", 1, TriageCauseNoAnswer, "the judge did not answer for round 1"},
+	} {
+		if got := TriageFailureClause(tc.level, tc.round, tc.cause); got != tc.want {
+			t.Errorf("%s: TriageFailureClause(%q, %d, %q) = %q, want %q", tc.name, tc.level, tc.round, tc.cause, got, tc.want)
+		}
+	}
+	// Both levels number a round 1 (D1847), so the level is the whole of what
+	// tells the two rounds apart in the one line a reader gets: a clause
+	// spelling the number alone would say the same sentence twice about two
+	// different judges.
+	first, second := TriageFailureClause(policy.LevelL1, 1, TriageCauseNoAnswer), TriageFailureClause(policy.LevelL2, 1, TriageCauseNoAnswer)
+	if first == second {
+		t.Errorf("both levels' first rounds read as %q, want two clauses a reader can tell apart", first)
+	}
+}
+
 // TestTriageSourcesCoverTheStagesVocabulary: the record's four sources hold
 // internal/triage's three, spelled the same way, and add the cap's. The two
 // vocabularies are separate declarations — the record restates the stage's

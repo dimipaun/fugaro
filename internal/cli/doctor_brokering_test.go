@@ -10,6 +10,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
@@ -1505,6 +1507,321 @@ func TestDoctorBrokeringBitbucketTokenValid(t *testing.T) {
 		vs := checksByID(o, "bitbucket-token-valid")
 		if len(vs) != 1 || vs[0].OK || vs[0].Severity != "info" {
 			t.Fatalf("bitbucket-token-valid = %+v, want one informational line", vs)
+		}
+	})
+}
+
+// bitbucketTokensConfig is the owner's side of an installation holding TYPED
+// Bitbucket tokens (T10): two Bitbucket repositories this checkout's config
+// records, of which the project_secrets entry proxies the ones allow names, and
+// the bitbucket_tokens records the checks read — the coverage each token
+// reaches, which is what decides the repository a token is asked about.
+func bitbucketTokensConfig(allow, records string) string {
+	return "project_secrets:\n  bitbucket-token:\n    allow_data_to: [" + allow + "]\n    proxy: true\n" +
+		"repos:\n  workspace-a/repo-a: { provider: bitbucket, workflows: [app] }\n" +
+		"  workspace-a/repo-b: { provider: bitbucket, workflows: [app] }\n" + records
+}
+
+// newBitbucketTokensRig is that installation with the credentials service
+// deployed and the bundle document a test writes, plus the token's own
+// project-wide container: a rig with no version anywhere is red for a reason
+// that has nothing to do with these checks.
+func newBitbucketTokensRig(t *testing.T, allow, records, bundle string) *brokeringRig {
+	t.Helper()
+	r := newBrokeringCheckout(t, true)
+	addLocalLines(t, r.doctorRig, bitbucketTokensConfig(allow, records))
+	putProjectSecret(t, r.sm, "aurora", config.BitbucketSecret, []byte("bundle-token-value"))
+	r.putBundle(t, bundle)
+	return r
+}
+
+// bitbucketTypedBundleDoc is the bundle an installation with typed tokens
+// holds: one entry per named token and the model credential the service's own
+// checks need beside them, with no legacy bitbucket-token credential at all —
+// the state R3's retirement leaves, and the one where a repository the
+// operator proxied can be covered by nothing.
+func bitbucketTypedBundleDoc(t *testing.T, names ...string) string {
+	t.Helper()
+	doc := ""
+	for _, name := range names {
+		doc += config.BitbucketTokenKey(name) + ": " + credsValue(t, name) + "\n"
+	}
+	return doc + config.AnthropicSecret + ": " + credsValue(t, "model") + "\n"
+}
+
+// bitbucketBundleWithLegacy is that document with the legacy credential beside
+// the named tokens: the installation mid-move, where both kinds are served.
+func bitbucketBundleWithLegacy(t *testing.T, names ...string) string {
+	t.Helper()
+	return config.BitbucketSecret + ": " + credsValue(t, "legacy") + "\n" + bitbucketTypedBundleDoc(t, names...)
+}
+
+// bitbucketTokenFake answers per repository AND records the credential each
+// question carried. Both halves are what T10's F4 check is about — which token
+// is asked about which repository — and the value is the only thing that tells
+// the tokens apart, so the fake keeps it and the assertion reads it back.
+func bitbucketTokenFake(t *testing.T, byPath map[string]int) (*httptest.Server, func(string) []string) {
+	t.Helper()
+	var mu sync.Mutex
+	seen := map[string][]string{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		status := http.StatusOK
+		for path, s := range byPath {
+			if strings.Contains(r.URL.Path, path) {
+				status = s
+			}
+		}
+		mu.Lock()
+		seen[r.URL.Path] = append(seen[r.URL.Path], strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+		mu.Unlock()
+		if status != http.StatusOK {
+			http.Error(w, `{"error":{"message":"refused"}}`, status)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"is_private":true}`)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, func(repo string) []string {
+		mu.Lock()
+		defer mu.Unlock()
+		var out []string
+		for path, tokens := range seen {
+			if strings.HasSuffix(path, "/repositories/"+repo) {
+				out = append(out, tokens...)
+			}
+		}
+		return out
+	}
+}
+
+// TestDoctorChecksEveryStoredBitbucketToken is T10's F4: --check-bitbucket-token
+// re-checks every stored token and not only the legacy one, and it asks each
+// token about the repository its own coverage reaches — the repository a run of
+// it would be served by. The rig proxies two repositories and holds a typed
+// token covering the second alone, so the two tokens must be asked about
+// different repositories, each with its own value, and neither question may be
+// skipped: a check that asked only the legacy credential would leave repo-b's
+// runs unexplained, which is exactly the state this pins against.
+func TestDoctorChecksEveryStoredBitbucketToken(t *testing.T) {
+	r := newBitbucketTokensRig(t,
+		"workspace-a/repo-a, workspace-a/repo-b",
+		"bitbucket_tokens:\n  - {name: ci, type: repo, coverage: [workspace-a/repo-b]}\n",
+		bitbucketBundleWithLegacy(t, "ci"))
+	srv, seen := bitbucketTokenFake(t, map[string]int{
+		"workspace-a/repo-a": http.StatusOK,
+		"workspace-a/repo-b": http.StatusUnauthorized,
+	})
+	useBitbucketRoot(t, srv.URL, srv.Client())
+
+	o, err := r.doctor(t, "--check-bitbucket-token")
+	if err != nil {
+		t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+	}
+	// The legacy credential serves repo-a, the typed token repo-b: each token
+	// was asked about the one repository it covers, with its own value.
+	legacy := checksByID(o, "bitbucket-token-valid")
+	if len(legacy) != 1 || !legacy[0].OK {
+		t.Fatalf("bitbucket-token-valid = %+v, want one ok check: Bitbucket accepts the legacy credential for repo-a", legacy)
+	}
+	typed := checksByID(o, "bitbucket-token-valid--ci")
+	if len(typed) != 1 || typed[0].OK || typed[0].Severity != "warning" {
+		t.Fatalf("bitbucket-token-valid--ci = %+v, want one warning", typed)
+	}
+	if !strings.Contains(typed[0].Problem, "workspace-a/repo-b") {
+		t.Errorf("the warning does not name the repository the typed token serves: %q", typed[0].Problem)
+	}
+	if !strings.Contains(typed[0].Fix, "creds set "+config.BitbucketTokenKey("ci")) {
+		t.Errorf("the fix does not name the command that replaces the typed token: %q", typed[0].Fix)
+	}
+	if !strings.Contains(typed[0].Fix, "--coverage workspace-a/repo-b") {
+		t.Errorf("the fix does not carry the record's own coverage: %q", typed[0].Fix)
+	}
+	for _, want := range []struct{ repo, token string }{
+		{"workspace-a/repo-a", credsValue(t, "legacy")},
+		{"workspace-a/repo-b", credsValue(t, "ci")},
+	} {
+		got := seen(want.repo)
+		if len(got) != 1 || got[0] != want.token {
+			t.Errorf("Bitbucket was asked about %s with %d credential(s), want exactly the one that serves it", want.repo, len(got))
+		}
+	}
+
+	// The one-screen view: the typed token's line is its own ID's sentence, so
+	// a reader who passed the flag sees which token is dead rather than a
+	// sentence about "the token".
+	def := doctorDefaultOutput(t, o.Checks)
+	if !strings.Contains(def, "warning bitbucket-token-valid--ci: Bitbucket refuses this typed Bitbucket token, or could not be asked about it.") {
+		t.Errorf("the typed token's warning is not on the one screen in its own words:\n%s", def)
+	}
+}
+
+// TestDoctorNamesBrokenBitbucketToken is the other half of T10's second
+// finding: a stored token the credential state holds as broken. Bitbucket
+// answered 401 for it once, the selection skips a broken token, and nothing
+// ends the state but the token being replaced — so a repository only it covers
+// is refused with nothing else saying why. The line names the token, because
+// the operator's next move is to replace that one.
+func TestDoctorNamesBrokenBitbucketToken(t *testing.T) {
+	r := newBitbucketTokensRig(t,
+		"workspace-a/repo-a",
+		"bitbucket_tokens:\n  - {name: ci, type: repo, coverage: [workspace-a/repo-a]}\n",
+		bitbucketTypedBundleDoc(t, "ci"))
+	// The state store the service writes into, with the token held as broken:
+	// the mark a 401 leaves (creds.Break), which carries no hold — a broken
+	// token waits for the operator and not for its clock.
+	db := r.publishPolicyNode(t, "")
+	at := time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC).Format(time.RFC3339)
+	db.Set(creds.PathTokenStatus(config.BitbucketTokenKey("ci")),
+		map[string]any{"state": string(creds.StateBroken), "since": at, "verified_at": at})
+
+	o, err := r.doctor(t)
+	if err != nil {
+		t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+	}
+	cs := checksByID(o, "bitbucket-token-broken")
+	if len(cs) != 1 || cs[0].OK || cs[0].Severity != "warning" {
+		t.Fatalf("bitbucket-token-broken = %+v, want one warning", cs)
+	}
+	if !strings.Contains(cs[0].Problem, config.BitbucketTokenKey("ci")) {
+		t.Errorf("the warning does not name the broken token: %q", cs[0].Problem)
+	}
+	if !strings.Contains(cs[0].Fix, "creds set "+config.BitbucketTokenPrefix) {
+		t.Errorf("the fix does not name the command that replaces it: %q", cs[0].Fix)
+	}
+	def := doctorDefaultOutput(t, o.Checks)
+	if !strings.Contains(def, "warning bitbucket-token-broken: a stored Bitbucket token was refused with 401 and the credential state holds it as broken.") {
+		t.Errorf("the broken token is not on the one screen:\n%s", def)
+	}
+
+	// And the state a store holding nothing broken leaves: no line at all,
+	// because "no token is broken" is not a finding — and it is not silence
+	// about a read doctor did not make, either: the store answered.
+	t.Run("nothing broken", func(t *testing.T) {
+		r := newBitbucketTokensRig(t,
+			"workspace-a/repo-a",
+			"bitbucket_tokens:\n  - {name: ci, type: repo, coverage: [workspace-a/repo-a]}\n",
+			bitbucketTypedBundleDoc(t, "ci"))
+		db := r.publishPolicyNode(t, "")
+		db.Set(creds.PathTokenStatus(config.BitbucketTokenKey("ci")),
+			map[string]any{"state": string(creds.StateAvailable), "verified_at": at})
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		if cs := checksByID(o, "bitbucket-token-broken"); len(cs) != 0 {
+			t.Errorf("an available token is reported as broken: %+v", cs)
+		}
+	})
+}
+
+// TestDoctorNamesUncoveredAllowedRepository is T10's third finding: a repository
+// the project_secrets entry admits with proxy: true, which no stored token
+// covers. The credentials service refuses such a run with token_not_covered
+// before its first git call, and nothing in the installation can serve it — so
+// doctor has to say which repository, and name the command that covers it. The
+// red step is the line's absence: an installation whose bundle holds a typed
+// token and no legacy credential produced no line about this repository at all.
+func TestDoctorNamesUncoveredAllowedRepository(t *testing.T) {
+	r := newBitbucketTokensRig(t,
+		"workspace-a/repo-a",
+		"bitbucket_tokens:\n  - {name: ci, type: repo, coverage: [workspace-a/repo-b]}\n",
+		bitbucketTypedBundleDoc(t, "ci"))
+	srv, calls := bitbucketFake(t, http.StatusOK)
+	useBitbucketRoot(t, srv.URL, srv.Client())
+
+	o, err := r.doctor(t, "--check-bitbucket-token")
+	if err != nil {
+		t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+	}
+	cs := checksByID(o, "bitbucket-tokens-uncovered")
+	if len(cs) != 1 || cs[0].OK || cs[0].Severity != "warning" {
+		t.Fatalf("bitbucket-tokens-uncovered = %+v, want one warning", cs)
+	}
+	if !strings.Contains(cs[0].Problem, "workspace-a/repo-a") {
+		t.Errorf("the warning does not name the repository nothing covers: %q", cs[0].Problem)
+	}
+	if !strings.Contains(cs[0].Problem, "token_not_covered") {
+		t.Errorf("the warning does not name the refusal a run of it meets: %q", cs[0].Problem)
+	}
+	if !strings.Contains(cs[0].Fix, "creds set "+config.BitbucketTokenPrefix) || !strings.Contains(cs[0].Fix, "--coverage workspace-a/repo-a") {
+		t.Errorf("the fix is not the command that covers the repository: %q", cs[0].Fix)
+	}
+	if calls.Load() != 0 {
+		t.Errorf("Bitbucket was asked %d time(s) about a repository no token covers: there is no credential to ask with", calls.Load())
+	}
+	// The bundle's own line still answers what it holds, and it says the
+	// legacy credential is not one of them.
+	if bs := checksByID(o, "bundle-bitbucket-token"); len(bs) != 1 || !bs[0].OK {
+		t.Fatalf("bundle-bitbucket-token = %+v, want one ok check: the bundle holds a typed token", bs)
+	} else if !strings.Contains(bs[0].Problem, config.BitbucketTokenKey("ci")) {
+		t.Errorf("the bundle's line does not name the typed token it holds: %q", bs[0].Problem)
+	}
+	def := doctorDefaultOutput(t, o.Checks)
+	if !strings.Contains(def, "warning bitbucket-tokens-uncovered: a proxied repository no stored Bitbucket token covers is refused before its first git call.") {
+		t.Errorf("the uncovered repository is not on the one screen:\n%s", def)
+	}
+}
+
+// TestDoctorWarnsTokenNearExpiry is T10's O3: a typed record whose expires is
+// inside the lead doctor already uses for secret_expires, or past it, is a
+// warning. It is offline — the date is this machine's own record — so it needs
+// no flag, and the token's date is the only thing doctor has to read to say it.
+func TestDoctorWarnsTokenNearExpiry(t *testing.T) {
+	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	pinDoctorNow(t, func() time.Time { return now })
+
+	for _, tc := range []struct {
+		name, expires string
+		want          []string
+	}{
+		{"near", "2026-03-04", []string{"expires on 2026-03-04", "in 2 days"}},
+		{"past", "2026-02-25", []string{"expired on 2026-02-25", "4 days ago"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newBitbucketTokensRig(t,
+				"workspace-a/repo-a",
+				"bitbucket_tokens:\n  - {name: ci, type: repo, coverage: [workspace-a/repo-a], expires: "+tc.expires+"}\n",
+				bitbucketTypedBundleDoc(t, "ci"))
+
+			// No --check-bitbucket-token: the record is this machine's file.
+			o, err := r.doctor(t)
+			if err != nil {
+				t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+			}
+			cs := checksByID(o, "bitbucket-token-expiry")
+			if len(cs) != 1 || cs[0].OK || cs[0].Severity != "warning" {
+				t.Fatalf("bitbucket-token-expiry = %+v, want one warning", cs)
+			}
+			for _, want := range append([]string{config.BitbucketTokenKey("ci")}, tc.want...) {
+				if !strings.Contains(cs[0].Problem, want) {
+					t.Errorf("the warning does not carry %q: %q", want, cs[0].Problem)
+				}
+			}
+			if !strings.Contains(cs[0].Fix, "creds set "+config.BitbucketTokenKey("ci")) {
+				t.Errorf("the fix does not name the command that replaces the token: %q", cs[0].Fix)
+			}
+			def := doctorDefaultOutput(t, o.Checks)
+			if !strings.Contains(def, "warning bitbucket-token-expiry: a stored Bitbucket token's recorded expiry is near or past.") {
+				t.Errorf("the expiry is not on the one screen:\n%s", def)
+			}
+		})
+	}
+
+	// A date far enough out is not a finding: the warning is the lead, and an
+	// installation that recorded a date is one that answered the question.
+	t.Run("inside the lead", func(t *testing.T) {
+		r := newBitbucketTokensRig(t,
+			"workspace-a/repo-a",
+			"bitbucket_tokens:\n  - {name: ci, type: repo, coverage: [workspace-a/repo-a], expires: 2027-01-31}\n",
+			bitbucketTypedBundleDoc(t, "ci"))
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		if cs := checksByID(o, "bitbucket-token-expiry"); len(cs) != 0 {
+			t.Errorf("a date %s away is reported as near: %+v", "eleven months", cs)
 		}
 	})
 }

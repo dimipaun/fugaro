@@ -820,6 +820,49 @@ JSON
   expect_contains "$out" "holds roles/secretmanager.secretAccessor on another account's token secret: $other_secret" "the row names the secret it may read"
 }
 
+# The window the check's verdict was read through, made certain instead of rare.
+# The verdict used to be taken with `printf '%s\n' "$facts" | grep -qE …`, a
+# pipeline, and under `set -o pipefail` a pipeline's status is its WRITER's:
+# `grep -q` ends at its first match and closes the pipe, so what the row above
+# came to was printf's SIGPIPE (141) and not grep's 0, and the FAILed row grep
+# had just found read as absent — the block printed the finding and the check
+# exited 0 beside it. That needs the writer to be still writing when grep ends,
+# which one pipe buffer (64 KiB) of facts makes certain and a loaded runner
+# makes likely: this harness runs three shards at once under `fugaro verify`, so
+# the two cases that ended this way in CI did not end this way on an idle
+# machine. The job's mount list is what carries the size here — a check that
+# prints every secret-backed entry it read prints a big row when a job carries
+# many, and nothing in it reads a list's length.
+test_a_fail_row_in_a_block_bigger_than_one_pipe_buffer_is_still_a_finding() {
+  local dir i
+  dir=$(mktemp -d "$work/bigblock.XXXX")
+  prepare "$dir"
+  # The account's own token under the right variable, wearing another account's
+  # label: a short FAILed row, and the only criterion row this run fails.
+  cat >"$dir/json/secret-$token_secret.json" <<JSON
+{"name":"projects/$project/secrets/$token_secret","labels":{"fugaro_secret":"claude-oauth-token-other"}}
+JSON
+  # Below it the job mounts no App key and 2500 other secrets: the row that
+  # lists them is what makes the block bigger than one pipe buffer.
+  {
+    printf '{"spec":{"template":{"spec":{"template":{"spec":{"serviceAccountName":"%s","containers":[{"env":[\n' "$sa"
+    printf '{"name":"CLAUDE_CODE_OAUTH_TOKEN","valueFrom":{"secretKeyRef":{"name":"%s","key":"latest"}}}' "$token_secret"
+    for i in $(seq 1 2500); do
+      printf ',\n{"name":"FUGARO_SECRET_ENTRY_%04d_OF_THE_MOUNTED_ENTRIES",\n "valueFrom":{"secretKeyRef":{"name":"claude-oauth-token-sandbox-account-%04d","key":"latest"}}}' "$i" "$i"
+    done
+    printf '\n]}]}}}}}}\n'
+  } >"$dir/json/job.json"
+  run_default "$dir"
+  expect_status "$status" 1 "a FAILed row in a block bigger than one pipe buffer"
+  expect_contains "$out" "FACT token-secret: FAIL" "the failed row is still printed"
+  expect_contains "$out" "is labelled fugaro_secret=claude-oauth-token-other" "and names the label it found"
+  # The block the check printed is the premise of this case and not a reading of
+  # the check: a case whose block shrank back under one pipe buffer would stop
+  # reproducing the window it is here for, and would pass either way.
+  [ "$(printf '%s' "$out" | wc -c)" -gt 200000 ] ||
+    fail "the block this case printed is not bigger than one pipe buffer ($(printf '%s' "$out" | wc -c) bytes)"
+}
+
 test_the_default_account_is_read_by_its_own_names() {
   local dir
   dir=$(mktemp -d "$work/defaultaccount.XXXX")
@@ -924,6 +967,7 @@ t test_an_app_key_mounted_out_of_the_wrong_secret_is_a_finding
 t test_another_accounts_token_mounted_beside_its_own_is_a_finding
 t test_a_job_account_that_cannot_read_its_own_secret_is_a_finding
 t test_a_job_account_that_can_read_another_accounts_secret_is_a_finding
+t test_a_fail_row_in_a_block_bigger_than_one_pipe_buffer_is_still_a_finding
 t test_the_default_account_is_read_by_its_own_names
 t test_a_secrets_list_that_is_denied_stops
 t test_a_secret_describe_that_is_denied_stops

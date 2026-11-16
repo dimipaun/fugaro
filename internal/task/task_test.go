@@ -1380,6 +1380,107 @@ func TestSpecWithoutABIsByteIdentical(t *testing.T) {
 	}
 }
 
+// TestSpecWithoutContextIsByteIdentical: a launch that names no context
+// repository writes no context_repos key at all, so its task.json is
+// byte-for-byte what the release before this field wrote — which is what keeps
+// every launch that names none readable by a runner older than the field,
+// whose Parse refuses the whole spec over an unknown key (Spec.ContextRepos,
+// D613).
+func TestSpecWithoutContextIsByteIdentical(t *testing.T) {
+	s := Spec{Version: 1, RunID: "20261116-120000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "do it"}
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"version":1,"run_id":"20261116-120000-abcd","repo":"owner/repo-a","ref":"main","task":"do it","overrides":{}}`
+	if string(data) != want {
+		t.Fatalf("a spec with no context repository is not byte-identical to the previous release's:\n got %s\nwant %s", data, want)
+	}
+	s.ContextRepos = []string{"owner/repo-b"}
+	data, err = json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"context_repos":["owner/repo-b"]`) {
+		t.Fatalf("a spec naming a context repository does not carry it: %s", data)
+	}
+	back, err := Parse(data)
+	if err != nil {
+		t.Fatalf("parse of %s: %v", data, err)
+	}
+	if len(back.ContextRepos) != 1 || back.ContextRepos[0] != "owner/repo-b" {
+		t.Fatalf("ContextRepos round-tripped as %v", back.ContextRepos)
+	}
+}
+
+// TestContextReposProblem: the shape rule of one context repository is one
+// function with two readers (the launcher at --context and Spec.Validate when
+// the runner reads a stored task back), and it is the repository rule itself —
+// owner/name, no "." or ".." element — so a repository the policy can admit is
+// a repository a task may name.
+func TestContextReposProblem(t *testing.T) {
+	for _, tc := range []struct{ repo, want string }{
+		{"acme/lib", ""},
+		{"owner/repo-a", ""},
+		{"acme/group/lib", ""},
+		{"", "must look like owner/name"},
+		{"acme", "must look like owner/name"},
+		{"/acme/lib", "must look like owner/name"},
+		{"acme/..", "must look like owner/name"},
+		{"acme/../lib", "must look like owner/name"},
+		{"acme/li b", "must look like owner/name"},
+	} {
+		got := ContextReposProblem(tc.repo)
+		if tc.want == "" && got != "" {
+			t.Errorf("ContextReposProblem(%q) = %q, want ok", tc.repo, got)
+		}
+		if tc.want != "" && !strings.Contains(got, tc.want) {
+			t.Errorf("ContextReposProblem(%q) = %q, want %q", tc.repo, got, tc.want)
+		}
+	}
+}
+
+// TestValidateContextRepos: the task's own bound is five repositories, each
+// held to ContextReposProblem's rule, none of them twice. It is defence in
+// depth behind the launcher's flag, the way the review_prs rule is: a
+// hand-built task.json is refused by the runner at bootstrap rather than run
+// against a claim the launcher would not have minted.
+func TestValidateContextRepos(t *testing.T) {
+	base := func() *Spec {
+		return &Spec{Version: 1, RunID: "20261116-120000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "do it"}
+	}
+	five := []string{"a/1", "b/2", "c/3", "d/4", "e/5"}
+	for _, tc := range []struct {
+		name  string
+		repos []string
+		want  string
+	}{
+		{"none", nil, ""},
+		{"five", five, ""},
+		{"six", append(append([]string(nil), five...), "f/6"), "must name 1 to 5 repositories"},
+		{"an empty list", []string{}, "must name 1 to 5 repositories"},
+		{"one that is not a repository", []string{"acme"}, "must look like owner/name"},
+		{"one twice", []string{"acme/lib", "acme/lib"}, "repeats"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := base()
+			if tc.repos != nil {
+				s.ContextRepos = tc.repos
+			}
+			err := s.Validate()
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("Validate: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate = %v, want a refusal naming %q", err, tc.want)
+			}
+		})
+	}
+}
+
 // TestSpecAuthorRoundTrips: the launcher's author survives a marshal and a
 // parse with both of its fields intact. It is the field A2b fills and A3's
 // stamp environment reads back out of the spec it parsed, so a value that

@@ -17,6 +17,24 @@ import (
 // reader of a policy reads it.
 const DefaultProfileName = config.DefaultJobProfile
 
+// DefaultProfileNameFor is the name the default profile of a provider has:
+// DefaultProfileName for the project's first provider and
+// DefaultProfileName-<provider> for another (D2310, R8).
+//
+// The reader's half of the rule is runner.ProjectJobDefaultProfile, which
+// resolves a workflow's silence against the profile a policy actually defines
+// for the repository's provider; this is the writer's, asked by the one that
+// decides whether a config's profiles block may publish
+// (cli.buildProjectPolicy) and by `fugaro update` when it writes the defaults
+// a project has none of, so that what the writer writes is what the reader
+// resolves and what the publish demands.
+func DefaultProfileNameFor(provider string, first bool) string {
+	if first {
+		return DefaultProfileName
+	}
+	return DefaultProfileName + "-" + provider
+}
+
 // Profile is one project job's shape (design §4.1): the unit shared by every
 // repository admitted to it. Cloud Run cannot vary the image, the service
 // account, cpu, memory or the task timeout per execution, so a profile names

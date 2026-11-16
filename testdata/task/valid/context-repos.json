@@ -1,0 +1,1 @@
+{ "version": 1, "run_id": "20261116-120000-a1b2", "repo": "acme/app", "ref": "main", "task": "Read the graph in the sibling repository", "context_repos": ["acme/lib", "acme/other"] }

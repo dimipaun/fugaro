@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -860,5 +861,42 @@ func TestUserRefusesASelectionWithNoFile(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "fugaro setup") {
 		t.Errorf("the refusal does not name the door that writes one: %v", err)
+	}
+}
+
+// TestUserAddWritesWithAHeldDefaultProfile: `fugaro user add` reads the
+// installation's own outputs before it writes, and that read composes the same
+// installation spec the converge does — so it is one of the doors the held
+// default profile would otherwise close.
+//
+// The state is the rig the roles step's own test uses: the installation holds
+// the job `fugaro update` wrote for its default profile and this machine's file
+// can no longer compose it. The lists this command edits are the local config's
+// and no job is planned here, so the hold has nothing to do with what it writes:
+// a door that refused would leave an operator unable to name the person who is
+// to read the grants the converge goes on applying.
+//
+// Mutation (run, restore): compose the spec with infra.Installation(lc,
+// infra.InstallOptions{}) — userOutputs' own composition before this — and this
+// test is red with installOptions' two-GitHub-Apps sentence, which asks for a
+// hand edit of fugaro.yaml.
+func TestUserAddWritesWithAHeldDefaultProfile(t *testing.T) {
+	noAgentSession(t)
+	r, _ := heldDefaultProfileRig(t)
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "user", "add", "user:ops2@example.com", "--role", "operator")
+	all := accessOut(out, errOut, err)
+	if err != nil {
+		t.Fatalf("the installation's outputs could not be read, so the member was not written: %v\n%s", err, all)
+	}
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatalf("the local config the command wrote does not load: %v\n%s", err, all)
+	}
+	if !slices.Contains(lc.Terraform.Operators, "user:ops2@example.com") {
+		t.Errorf("the file's operators are %v, want the member this command was asked to add:\n%s", lc.Terraform.Operators, all)
+	}
+	if !strings.Contains(all, "user:ops2@example.com") || !strings.Contains(all, "now an operator") {
+		t.Errorf("the command does not say what it did:\n%s", all)
 	}
 }

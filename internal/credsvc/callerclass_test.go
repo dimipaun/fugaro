@@ -614,6 +614,128 @@ func TestNewAuthenticatorRefusesAPersonThatIsAnotherClass(t *testing.T) {
 	}
 }
 
+// TestNewAuthenticatorRefusesABuildThatIsAnotherClass: the build list is the
+// one list read last and held against every list above it (B1, D2301). Each
+// shape below is a deployment that disagrees with itself — one caller, two
+// classes — and the collision is worse here than anywhere else: a job's, a
+// person's or the daemon's address on the build list holds a build's reach
+// over the union of every catalog entry of the project, and the class would
+// then be decided by which route read the token.
+//
+// The launcher and the person are the two cases the build address cannot be a
+// service account of: those two lists refuse a `*.gserviceaccount.com` entry
+// before the build loop ever reads it, so the only way one caller is both is
+// the non-service-account address those lists are made of.
+//
+// The refusals name the field and the class it collided with and never the
+// address, as on the person list.
+func TestNewAuthenticatorRefusesABuildThatIsAnotherClass(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		build   string
+		authFor func(*AuthConfig)
+		want    string
+	}{
+		{
+			name:  "a per-repository job's account",
+			build: testBuildSA,
+			authFor: func(cfg *AuthConfig) {
+				cfg.JobAccounts = []string{testBuildSA}
+			},
+			want: "job service account",
+		},
+		{
+			name:  "a shared project job's account",
+			build: testBuildSA,
+			authFor: func(cfg *AuthConfig) {
+				cfg.SharedJobAccounts = []SharedJobAccount{{Email: testBuildSA, Profile: testSharedProfile, Repos: []string{testSharedRepo}}}
+			},
+			want: "shared project job's service account",
+		},
+		{
+			name:  "a review job's account",
+			build: testBuildSA,
+			authFor: func(cfg *AuthConfig) {
+				cfg.ReviewJobAccounts = []ReviewJobAccount{{Email: testBuildSA, Account: testReviewAccount}}
+			},
+			want: "review job account",
+		},
+		{
+			name:  "a verifier's address",
+			build: testBuildSA,
+			authFor: func(cfg *AuthConfig) {
+				cfg.VerifierAccounts = []string{testBuildSA}
+			},
+			want: "verifier",
+		},
+		{
+			name:  "one of the installation's people",
+			build: testPersonAccount,
+			authFor: func(cfg *AuthConfig) {
+				cfg.PersonAccounts = []string{testPersonAccount}
+			},
+			want: "installation's people",
+		},
+		{
+			name:  "one of the installation's launchers",
+			build: testLauncherAccount,
+			authFor: func(cfg *AuthConfig) {
+				cfg.LauncherAccounts = []string{testLauncherAccount}
+			},
+			want: "installation's launchers",
+		},
+		{
+			name:  "the orchestrator daemon's account",
+			build: testBuildSA,
+			authFor: func(cfg *AuthConfig) {
+				cfg.OrchestratorAccounts = []string{testBuildSA}
+			},
+			want: "orchestrator",
+		},
+		{
+			name:  "the coordinator's account",
+			build: testBuildSA,
+			authFor: func(cfg *AuthConfig) {
+				cfg.CoordinatorAccount = testBuildSA
+			},
+			want: "coordinator",
+		},
+		{
+			// U+212A KELVIN SIGN, as on the verifier list: the build class is
+			// the one a deployment derives from the catalog's entries, and an
+			// address that is not printable ASCII is not one this service can
+			// match a caller's claim against.
+			name:  "an address that is not printable ASCII",
+			build: "fugaro-builK@aurora-dev.iam.gserviceaccount.com",
+			want:  "printable ASCII",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			_, err := NewAuthenticator(buildAuthConfig(f, tc.build, tc.authFor))
+			if err == nil {
+				t.Fatalf("NewAuthenticator admitted %s as a build identity", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("the configuration error is %q, want it to be about the %s the address also is", err, tc.want)
+			}
+			if strings.Contains(err.Error(), tc.build) {
+				t.Errorf("the configuration error is %q, and it carries the address it refused", err)
+			}
+		})
+	}
+}
+
+// TestBuildListAloneIsAdmitted is the other direction of the rule above, so
+// that no refusal there can be the fixture's own doing: the same configuration
+// with nothing else holding the address is one this service must start on.
+func TestBuildListAloneIsAdmitted(t *testing.T) {
+	f := newFixture(t)
+	if _, err := NewAuthenticator(buildAuthConfig(f, testBuildSA, nil)); err != nil {
+		t.Fatalf("NewAuthenticator refused a build list that collides with no other class: %v", err)
+	}
+}
+
 // TestPersonListStaysDisjointInTheOtherDirection: the four checks above are
 // about the people list, and the three lists a person may not be in must
 // themselves still admit those addresses where their own rules do. An
@@ -629,6 +751,28 @@ func TestPersonListStaysDisjointInTheOtherDirection(t *testing.T) {
 	if _, err := NewAuthenticator(cfg); err != nil {
 		t.Fatalf("NewAuthenticator refused a verifier that is also a job's account, which is C3.9f's own configuration: %v", err)
 	}
+}
+
+// buildAuthConfig is the fixture's own configuration with the build list under
+// the test's control and, when it gives one, the extra list a case needs — the
+// same shape as personAuthConfig, because the two tests differ in the list read
+// last and in nothing else.
+func buildAuthConfig(f *fixture, build string, extra func(*AuthConfig)) AuthConfig {
+	cfg := AuthConfig{
+		Project:         testProject,
+		FirebaseProject: testFirebase,
+		Audience:        testAudience,
+		JobAccounts:     []string{testJobSA},
+		Keys:            f.keys,
+		JobKeys:         f.jobKeys,
+		Outcomes:        RTDBOutcomes{DB: f.db},
+		BuildAccounts:   []string{build},
+		Now:             func() time.Time { return f.now },
+	}
+	if extra != nil {
+		extra(&cfg)
+	}
+	return cfg
 }
 
 // personAuthConfig is the fixture's own configuration with the person list
