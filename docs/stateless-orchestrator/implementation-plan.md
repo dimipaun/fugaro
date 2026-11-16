@@ -928,7 +928,11 @@ such cycles (`internal/orchestrator/breaker.go`, `BreakerThreshold`). **D2022** 
   the pause are one patch, so a store that refuses the write loses neither) and `TestNRefusalsAcrossNWindowsLeaveTheNodeBounded` (a refusal a
   window for as many windows as it takes leaves the node at one question, under its caps and still writable — without it the state crosses
   `MaxStateBytes` and every write from every class, a person's included, is refused with `ErrTooLarge` for good).
-- **Command:** `go test ./internal/orchestrator/ -run 'Workspace|Breaker|Tick' -count=1 && go test ./internal/cli/ -run TestRunViewCarriesTheWorkspaceRefusal -count=1 && go test ./ee/orchestrator/ ./ee/register/ -run 'Workspace|Orchestrator' -count=1 && go test ./internal/eeboundary/ -count=1`
+- **Command:** `go test ./internal/orchestrator/ -run 'Workspace|Breaker|Tick|Refus|Marker' -count=1 && go test ./internal/cli/ -run TestRunViewCarriesTheWorkspaceRefusal -count=1 && go test ./ee/orchestrator/ ./ee/register/ -run 'Workspace|Orchestrator|Untagged' -count=1 && go test ./internal/eeboundary/ -count=1`
+  (the filters are the names the tests above are written with, and not just the task's own two words: `Refus` is what reaches
+  `TestTheCoreDefaultClaimsNoRefusal`, `TestARefusedRunWhoseWriteFailsIsAskedAboutOnTheRetry` and
+  `TestNRefusalsAcrossNWindowsLeaveTheNodeBounded`, `Marker` is what reaches `TestAForgedMarkerPausesAtMostTheWindow` — the bound's other
+  end — and `Untagged` is what reaches `TestTheUntaggedBuildClaimsNoRefusal` in `ee/orchestrator`.)
 - **Depends on:** O6, O7, O8 and O18 (merged), **O14** (it writes `tick.go` at level 7), and externally **D2022 answered (a)** (done
   2026-11-10) and **W7** (#2275, merged 2026-11-11 as `d3b7613f`). **Serializes after** the open #2207 (`internal/cli/orchestrator_run.go`) and #2202 (`internal/cli/orchestrator_run_test.go`), and after O13 and O14 (`tick.go`,
   `orchestrator_run.go`). **Level 8**, and both external triggers have fired — **which did not make it launchable: the reading below blocked it,
