@@ -62,5 +62,14 @@ export interface EntitlementMint {
   check_interval: string | null
 }
 
+/**
+ * Every entitlement of the caller's own organisation, oldest first. Superseded
+ * and ended grants are in it beside the active one: a workspace whose licence a
+ * purchase replaced still names that licence, whose key runs to its own end.
+ */
+export interface EntitlementList {
+  entitlements: Entitlement[]
+}
+
 /** Everything `entitlements.schema.json` describes. */
-export type Entitlements = Entitlement | EntitlementMint
+export type Entitlements = Entitlement | EntitlementMint | EntitlementList

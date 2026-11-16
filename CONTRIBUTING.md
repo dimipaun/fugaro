@@ -71,7 +71,17 @@ bash scripts/land-prs.sh --repo OWNER/NAME 1234 1235 1236
 
 It reads every pull request's mergeable state in one parallel sweep and prints one line per pull request — state, draft or ready, MERGEABLE, CONFLICTING or UNKNOWN, and the title — before it touches anything. `--check-only` stops there and merges nothing. Then it merges the ones that are open and MERGEABLE, back to back and in the order given, marking a draft ready first; one that is CONFLICTING, still UNKNOWN or not open is skipped and named, and a merge that fails is reported while the batch goes on, with a draft it marked ready put back the way it found it. The exit status is 0 when every pull request ended merged, 1 when any did not, and 2 for a usage error or a coding agent's session.
 
-It never force-pushes, never rewrites a branch, never runs tests and never decides what is safe to merge: the caller has already decided, and the script only merges and reports. Its hermetic test is `scripts/land-prs_test.sh`, driven from `scripts/land_prs_test.go`.
+When at least one pull request merged, the batch ends with the census, printed after `merged X of Y`. This is what catches the batch that moved a pinned count in a doc: two pull requests each moving the same figure merge with no conflict at all and leave `main` red for a 25-minute CI run. A census that failed is the batch's exit status even when every merge succeeded, `--no-census` skips it, and `--check-only` never runs it.
+
+The census is `scripts/docs-census.sh`, a script of its own because it is not a person's alone to run: an agent landing pull requests under the owner's word runs the same command and gets the same answer. It merges nothing, decides nothing and refuses no session — it reads and tests.
+
+```sh
+bash scripts/docs-census.sh [--base NAME] [--since SHA]
+```
+
+It fetches the base the pull requests named — `main` unless they say otherwise — makes a worktree of `origin/<base>` in a temporary directory, and runs `go test ./internal/cli/ -run Docs -count=1 -timeout 9m` and `go test ./plugin/ -count=1 -timeout 5m` there, so what is tested is the merged tree and never the checkout the caller happens to be in. It prints `census: ok`, or one `census: FAILED (<command>)` line per failing command with the failing test names as go printed them, exits 1 when a suite failed, and prints the line `website content changed: run npm run check in website/` when `--since <the base before the batch>` was given and the diff from it moved a path under `website/`: `npm run check` is minutes of Node rather than seconds, so it is not run here.
+
+It never force-pushes, never rewrites a branch and never decides what is safe to merge: the caller has already decided, and the merges are theirs. Its hermetic test is `scripts/land-prs_test.sh`, driven from `scripts/land_prs_test.go`, and the census's is `scripts/docs-census_test.sh`, driven from `scripts/docs_census_test.go`.
 
 ## Licensing of contributions
 
