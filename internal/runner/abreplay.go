@@ -134,12 +134,19 @@ func (r *run) runReviewReplay(ctx context.Context) {
 		r.failReplayRead(ctx, err)
 		return
 	}
+	// The component is bytes the patch itself spelled -- a C-quoted header names
+	// its path in escapes, newlines and all -- so it enters the reason the way a
+	// stage's own error text does (stageErrorText: redacted, folded onto one
+	// line, clipped), and not as the bytes were written: this reason reaches the
+	// run record, the run log and the owner's watch output.
 	if comp := replayPatchRefusal(patch); comp != "" {
-		r.refuseReplay(fmt.Sprintf("the champion run %s's patch touches %s, and a patch that reaches a hook, an instruction file or a tool setting may not be replayed: the review this arm runs would load it as configuration of its own session (B1.2, D728). Launch the pair against a champion whose patch touches none of .claude, .claude-plugin, .fugaro, .github, .git*, fugaro.yaml, CLAUDE.md, CLAUDE.local.md or .mcp.json, at any depth", r.spec.AB.ChampionRun, comp))
+		r.refuseReplay(fmt.Sprintf("the champion run %s's patch touches %s, and a patch that reaches a hook, an instruction file or a tool setting may not be replayed: the review this arm runs would load it as configuration of its own session (B1.2, D728). Launch the pair against a champion whose patch touches none of .claude, .claude-plugin, .fugaro, .github, .git*, fugaro.yaml, CLAUDE.md, CLAUDE.local.md or .mcp.json, at any depth", r.spec.AB.ChampionRun, r.stageErrorText(comp)))
 		return
 	}
 	if err := replayApply(ctx, r.repo, patch); err != nil {
-		r.refuseReplay(fmt.Sprintf("the champion run %s's patch does not apply to this checkout: %v. The arm applies the patch with git apply, which writes nothing when it refuses, so this is a patch written for another base: launch the arm at the commit the champion's run started from (B1.4)", r.spec.AB.ChampionRun, err))
+		// git's own message quotes the paths the patch carries, so it is bytes
+		// out of the patch too and gets the same treatment.
+		r.refuseReplay(fmt.Sprintf("the champion run %s's patch does not apply to this checkout: %s. The arm applies the patch with git apply, which writes nothing when it refuses, so this is a patch written for another base: launch the arm at the commit the champion's run started from (B1.4)", r.spec.AB.ChampionRun, r.stageErrorText(err.Error())))
 		return
 	}
 	committed, err := r.repo.CommitAll(ctx, "fugaro: the champion's patch (run "+r.spec.AB.ChampionRun+"), replayed")
@@ -266,7 +273,9 @@ func (r *run) failReplayRead(ctx context.Context, err error) {
 // record here: a replay refused after bootstrap still has a finalize to run, and
 // the shadow finalize is what writes the arm's ending, its changed paths and its
 // own patch object (an empty one: nothing was applied). The reason quotes the
-// champion's patch and git's own message about it, so it is redacted first.
+// champion's patch and git's own message about it, so it is redacted first --
+// and the bytes it quotes out of the patch are put on one line and clipped
+// before they get here (stageErrorText), because the object is untrusted.
 func (r *run) refuseReplay(reason string) {
 	reason = r.redact(reason)
 	r.failWithClass(failure.ConfigInvalid, reason)

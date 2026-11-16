@@ -379,3 +379,64 @@ new file mode 100644
 		})
 	}
 }
+
+// TestABReplayQuotesTheRefusedComponent: the refusal names a component out of
+// the patch's own bytes, and those bytes are untrusted -- a C-quoted header
+// spells them in escapes, so a name may carry a newline, an escape sequence or
+// the whole MaxPatchBytes -- so the reason carries it folded onto one line and
+// clipped, the treatment a stage's own error text gets (stageErrorText).
+// Anything that can write the champion's patch object could otherwise put a
+// line break, a control sequence or a wall of text into the run record, the run
+// log and the owner's watch output.
+func TestABReplayQuotesTheRefusedComponent(t *testing.T) {
+	g, _ := armGWSpec(t, armCfg(t), "50", replayTask(task.ABSlotL2), armLayer)
+	withBucket(g.harness)
+	// A refused prefix, a newline, and 4 KiB past it: the patch spells the name
+	// as a C-quoted header does, so the bytes the fence decodes are these.
+	name := `"b/.git\n` + strings.Repeat("A", 4<<10) + `"`
+	putChampionPatch(t, g.harness, "diff --git "+name+" "+name+"\nnew file mode 100644\n--- /dev/null\n+++ "+name+"\n@@ -0,0 +1 @@\n+one line\n")
+	rec, err := g.run(t, replayReview("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(g.agent.calls) != 0 {
+		t.Fatalf("a patch touching .git ran %d stage(s), want none", len(g.agent.calls))
+	}
+	if !strings.Contains(rec.Reason, ".git?") {
+		t.Fatalf("reason = %q, want the refused component in it, folded onto one line", rec.Reason)
+	}
+	if strings.ContainsAny(rec.Reason, "\n\r\x1b") {
+		t.Fatalf("reason = %q, want no line break or escape out of the patch's own bytes", rec.Reason)
+	}
+	if strings.Contains(rec.Reason, strings.Repeat("A", 400)) {
+		t.Fatalf("reason = %q, want the component clipped to one log line", rec.Reason)
+	}
+}
+
+// TestABReplayQuotesGitsRefusal: the apply's own failure carries git's message,
+// which quotes the paths the patch named and runs to several lines, so the
+// reason carries it the same way -- folded onto one line (stageErrorText) --
+// rather than as git wrote it.
+func TestABReplayQuotesGitsRefusal(t *testing.T) {
+	g, _ := armGWSpec(t, armCfg(t), "50", replayTask(task.ABSlotL2), armLayer)
+	withBucket(g.harness)
+	// A patch written for another base: its hunk changes a line of the fixture's
+	// README that is not there, which is what git refuses and reports on.
+	putChampionPatch(t, g.harness, "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1,1 +1,1 @@\n-a line the fixture does not have\n+the champion's change\n")
+	rec, err := g.run(t, replayReview("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(g.agent.calls) != 0 {
+		t.Fatalf("a patch that does not apply ran %d stage(s), want none", len(g.agent.calls))
+	}
+	if rec.Status != runstore.StatusFailed || rec.FailureClass != failure.ConfigInvalid {
+		t.Fatalf("record = %s/%s, want failed/%s", rec.Status, rec.FailureClass, failure.ConfigInvalid)
+	}
+	if !strings.Contains(rec.Reason, "does not apply to this checkout") || !strings.Contains(rec.Reason, "patch failed") {
+		t.Fatalf("reason = %q, want the apply's refusal carrying git's own message", rec.Reason)
+	}
+	if strings.ContainsAny(rec.Reason, "\n\r") {
+		t.Fatalf("reason = %q, want git's message folded onto one line", rec.Reason)
+	}
+}
