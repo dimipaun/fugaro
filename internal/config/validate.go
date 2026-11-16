@@ -308,6 +308,17 @@ func Validate(c *Config) []Problem {
 				// value the repository chose. Refused whether or not a Codex
 				// provider ever names it.
 				add(sp+".name", "%s and names starting %s are reserved for the Codex harness's OAuth credential (codex-oauth-token), not a workflow secret", CodexOAuthToken, CodexOAuthTokenPrefix)
+			} else if KeyCredentialSecret(s.Name) {
+				// A typed credential's own derived secret name
+				// (CredentialSecret, MC22). The whole namespace is reserved,
+				// whether or not a credentials entry exists: a credential's
+				// key is stored there by the command that declares it, and a
+				// workflow secret of that shape would be the container the
+				// credential's own reader reads — a value the repository
+				// chose, sent wherever the credential's calls go. The name is
+				// derived from the credential and never chosen, so there is
+				// no workflow secret to spell with it.
+				add(sp+".name", "names starting %s are reserved for a typed credential's own secret (credentials in the local config), not a workflow secret", CredentialSecretPrefix)
 			} else if s.Name == CredentialsBundleSecret {
 				// The credentials service's one bundle container (C1.11's
 				// review finding n2). Nothing mounts it: its document is every

@@ -177,7 +177,16 @@ func hook(f func()) {
 }
 
 type runOptions struct {
-	cloud                                 cloudOptions
+	cloud cloudOptions
+	// repos is --repo as it was typed, repeated: the repository a launch works
+	// on, or — for a change set (plan task D1) — one per member, 2 to
+	// task.MaxChangeSetMembers of them. Every launch shape but that one names
+	// exactly one, and runRun refuses a second rather than reading it as a set
+	// of one. repo below is the one repository a launch acts on: the single
+	// value for an ordinary launch, and each member's own while a change set is
+	// launched (runChangeSet sets it per member, since the spec builders and
+	// the gates read it for themselves).
+	repos                                 []string
 	repo, ref, workflow, runID, batch, tf string
 	retry                                 string
 	totalTimeout                          string
@@ -231,6 +240,17 @@ type runOptions struct {
 	// review-mode recipe (the last already refused by chooseRecipe, since
 	// a batch never sets --pr).
 	attempts int
+	// changeSet is --change-set: this one launch creates a change set (plan
+	// task D1, reconciliation-image-setup D613 step 2, D616, D642) — one run
+	// per repository named by a repeated --repo, each member's task carrying
+	// the set's ID and the whole member list, and each member's pull request
+	// left draft for the settle step to flip once every member is verified.
+	// False (the default) is the ordinary single-repository launch, whose task
+	// carries no change set at all and stays byte-identical to what the
+	// previous release wrote. Refused by every build until the settle step
+	// ships, which is what keeps a set from being created that nothing could
+	// lift out of draft (changeSetRefusal).
+	changeSet bool
 	// title is --title, as the task stores it: the run's own job title
 	// (task.Spec.Title), the one line every surface that names a run shows
 	// — fugaro watch's rows, the budget registry's entry, the pull
@@ -441,7 +461,8 @@ func newRunCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error { return runRun(cmd, &o, args) },
 	}
 	f := cmd.Flags()
-	f.StringVar(&o.repo, "repo", "", "repository as owner/name, or a path inside its checkout (default: this checkout's origin)")
+	f.StringArrayVar(&o.repos, "repo", nil, "repository as owner/name, or a path inside its checkout (default: this checkout's origin); repeatable only with --change-set, which launches one run per repository named, 2 to "+fmt.Sprint(task.MaxChangeSetMembers))
+	f.BoolVar(&o.changeSet, "change-set", false, "launch one run per repository named by --repo (2 to "+fmt.Sprint(task.MaxChangeSetMembers)+") as members of one change set: every member's task carries the set's ID and the whole member list, and the members' pull requests are linked as siblings. Part of Fugaro Subscription Edition, and not available yet in any build: the settle step that flips a set's pull requests ready ships after this release, and a set launched now would stay in draft with nothing able to lift it")
 	f.StringVar(&o.ref, "ref", "", "base branch or ref the run is cut from (default: the branch this checkout is on, when origin has it and it is not the base branch; else the base branch (fugaro.yaml git.base_branch, then the local config's, then the project's base_branch, then main))")
 	f.StringVar(&o.workflow, "workflow", "", "workflow to run (default: the repo's only workflow)")
 	f.StringVar(&o.runID, "run-id", "", "run ID to use; repeating one reports its launch instead of starting another")
@@ -480,7 +501,7 @@ func newRunCmd() *cobra.Command {
 }
 
 // taskFlags are the flags --retry excludes: the stored task.json supplies them.
-var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "title", "plan-task", "allow-duplicate", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "mode", "path", "context", "tier", "security", "no-compression", "review-levels", "review-run", "max-usd", "max-tokens", "max-time", "max-review-rounds", "continues", "used-usd", "used-tokens", "used-time", "used-review-rounds"}
+var taskFlags = []string{"repo", "change-set", "ref", "workflow", "run-id", "batch", "title", "plan-task", "allow-duplicate", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "mode", "path", "context", "tier", "security", "no-compression", "review-levels", "review-run", "max-usd", "max-tokens", "max-time", "max-review-rounds", "continues", "used-usd", "used-tokens", "used-time", "used-review-rounds"}
 
 // prFlags are the flags --pr excludes: the previous run on the PR supplies them.
 var prFlags = []string{"ref", "workflow"}
@@ -644,6 +665,27 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	if cmd.Flags().Changed("owner-ruled") && !prSet {
 		return userErr("--owner-ruled needs --pr: it answers the findings the last run on that pull request left for you")
 	}
+	// --change-set, judged here with the flags above and for the same reason:
+	// every refusal below is the caller's own text, costs no cloud call and
+	// leaves nothing behind. It is a launch of its own — one run per
+	// repository, each a fresh run (D613's linked runs) — so the flags that
+	// name or continue ONE run are refused with it rather than applied to
+	// every member.
+	if o.changeSet {
+		if why := changeSetRefusal(Edition()); why != "" {
+			return userErr("%s", why)
+		}
+		if n := len(o.repos); n < 2 || n > task.MaxChangeSetMembers {
+			return userErr("--change-set launches one run per repository: name 2 to %d of them with --repo, got %d", task.MaxChangeSetMembers, n)
+		}
+		for _, x := range changeSetExcludes {
+			if cmd.Flags().Changed(x.name) {
+				return userErr("--change-set takes no --%s: %s", x.name, x.why)
+			}
+		}
+	} else if len(o.repos) > 1 {
+		return userErr("--repo names one repository, and %d were given: a single launch of several repositories at once is a change set (--change-set)", len(o.repos))
+	}
 	env, err := openCloud(ctx, o.cloud)
 	if err != nil {
 		return err
@@ -657,9 +699,13 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	// review-run's findings, and the spec builders (newSpec, prSpec, retrySpec
 	// and reviewSpec each read o.repo for themselves). Not higher, because the
 	// flags above refused the launch before this ever ran, and their sentences
-	// are still the ones a caller gets.
-	if o.repo, err = repoArg(ctx, o.cloud, o.repo); err != nil {
-		return err
+	// are still the ones a caller gets. A change set resolves one repository
+	// per member instead (runChangeSet), each with its own checkout, base
+	// branch and workflow, so o.repo is left to that loop.
+	if len(o.repos) > 0 && !o.changeSet {
+		if o.repo, err = repoArg(ctx, o.cloud, o.repos[0]); err != nil {
+			return err
+		}
 	}
 
 	// --pr's second meaning (design generic-tool §3.6, G12): with an
@@ -751,6 +797,13 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		// it (runAttempts): a batch this launcher refuses is no run to keep a
 		// log of either (D1352, D1354).
 		return runAttempts(cmd, env, o, text, total)
+	}
+	if o.changeSet {
+		// A change set builds one plan and one spec per member, so it takes no
+		// part in the switch below: there is no --pr, --retry or review recipe
+		// for it (refused above), and its own launch opens its own reporter
+		// where its refusals end (runChangeSet).
+		return runChangeSet(ctx, cmd, env, o, text, total)
 	}
 
 	var (
@@ -1351,7 +1404,7 @@ func sampledPair(ctx context.Context, env *cloudEnv, o *runOptions, slug string,
 	// that cannot hold both starts neither (the shape runAttempts checks for a
 	// batch). The champion's own gate below asks the same question for one run,
 	// so a pair this refuses still starts the champion if there is room for it.
-	if err := checkMaxParallelFor(ctx, env, 2); err != nil {
+	if err := checkMaxParallelFor(ctx, env, 2, "--attempts"); err != nil {
 		why := oneLineCLI(err.Error())
 		pairSkip(warn, why)
 		return nil, why
@@ -1388,7 +1441,7 @@ func plannedRun(ctx context.Context, env *cloudEnv, o *runOptions, slug string, 
 		Spec: copied, Chosen: o.runID != "", Config: cfg,
 		Providers:      mixRoutes(env, spec.Repo, cfg),
 		Prices:         prices,
-		ServiceHeldKey: len(credentialsServiceLaunchEnv(env.lc, "", spec.Repo, auth, deployed)) > 0,
+		ServiceHeldKey: len(credentialsServiceLaunchEnv(env.lc, "", spec.Repo, auth, env.policyMode(ctx), deployed)) > 0,
 	}
 	eff, _ := chainLimitPolicyOf(ctx, env, spec, cfg).merge(o.limits.layer())
 	run.Policy = eff
@@ -1663,6 +1716,49 @@ func launchClockSource(o *runOptions, spec *task.Spec) string {
 	return "workflows." + spec.Workflow + ".timeouts.total"
 }
 
+// launchWorkflowShape is the workflow a launch's gates are judged by: the
+// checkout's own document where this machine holds one, else the document read
+// at the forge (source 3, D902) — the same read the job decision makes,
+// memoized, so a launch costs one mint. The workflow's kind and checkout mode
+// are what the image gates are judged by: a checkout: clone workflow runs the
+// installation's base image and has no build record, so judging it as a
+// derived image refuses it for a record it can never have (image_refresh.go).
+// Where that read fails, the caller refuses in the decision's own words rather
+// than judging an image by a workflow nobody read.
+//
+// It is one function because two callers judge one launch: freshLaunchGates
+// below, and the troubleshoot pre-flight, which calls that same block and then
+// names the review-variant checks the block carries for a mode: review spec
+// alone (T-TC1). A second read of the same document is how the two would come
+// to disagree about which job image a launch is judged on.
+//
+// kind, clone and shared are zero where no workflow was read at all — a
+// repository no shared job serves, a project that published no profile, a ref
+// whose tree carries no document, and a checkout whose document could not be
+// read. mode is the same answer for baseBranchSkew and nil there for the same
+// reason: it asks both judges rather than take the one a derived workflow
+// would use (its comment has why).
+func launchWorkflowShape(ctx context.Context, env *cloudEnv, spec *task.Spec) (co *config.Config, kind string, clone, shared bool, mode *bool, err error) {
+	co = checkoutConfig(ctx, spec.Repo)
+	if co == nil {
+		co, err = env.launchConfigWhereTheTreeGivesNone(ctx, spec)
+		if err != nil {
+			return nil, "", false, false, nil, err
+		}
+	}
+	if co == nil {
+		return nil, "", false, false, nil, nil
+	}
+	if w, ok := co.Workflows[spec.Workflow]; ok {
+		kind = w.BaseKind()
+		clone = w.Checkout == config.CheckoutClone
+		shared = w.Checkout == config.CheckoutShared
+		m := clone
+		mode = &m
+	}
+	return co, kind, clone, shared, mode, nil
+}
+
 // freshLaunchGates is the block of gates a fresh launch passes before anything
 // of it is written, and it is one function because the daemon's own launch path
 // (orchestrator_launcher.go) is that same launch shape and must pass the same
@@ -1691,48 +1787,20 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	if err := contextReposRefusal(ctx, env, slug, spec); err != nil {
 		return config.Inputs{}, err
 	}
+	co, kind, clone, shared, mode, err := launchWorkflowShape(ctx, env, spec)
+	if err != nil {
+		return config.Inputs{}, err
+	}
+	agentRecipe := ""
+	if co != nil {
+		agentRecipe = co.Agent.Recipe
+	}
 	// --attach, before the gates below: its recipe refusal, its caps,
 	// D9's line and its image gate (design §4, plan P7/P9). It uploads
 	// nothing here — attachUpload does that below, after the last gate
 	// that can still refuse this launch, so a refused launch leaves
 	// nothing in the bucket under a run id that never gets a task. A
 	// launch with no --attach does nothing here at all.
-	agentRecipe, kind, clone, shared := "", "", false, false
-	// mode is the same answer for baseBranchSkew, and nil where no workflow
-	// was read at all — a repository no shared job serves, a project that
-	// published no profile, a ref whose tree carries no document, and a
-	// checkout whose document could not be read: baseBranchSkew asks both
-	// judges there rather than take the one a derived workflow would use
-	// (its comment has why).
-	var mode *bool
-	co := checkoutConfig(ctx, spec.Repo)
-	if co == nil {
-		// The working tree gave no document. Where the machine holds no
-		// checkout of the repository at all, this launch's document is the one
-		// read at the forge (source 3, D902) — the same read the job decision
-		// makes, memoized, so a launch costs one mint — because the workflow's
-		// kind and checkout mode are what the image gates below are judged by:
-		// a checkout: clone workflow runs the installation's base image and
-		// has no build record, so judging it as a derived image refuses it for
-		// a record it can never have (image_refresh.go). Where that read
-		// fails, this refuses in the decision's own words rather than judging
-		// an image by a workflow nobody read.
-		cfg, err := env.launchConfigWhereTheTreeGivesNone(ctx, spec)
-		if err != nil {
-			return config.Inputs{}, err
-		}
-		co = cfg
-	}
-	if co != nil {
-		agentRecipe = co.Agent.Recipe
-		if w, ok := co.Workflows[spec.Workflow]; ok {
-			kind = w.BaseKind()
-			clone = w.Checkout == config.CheckoutClone
-			shared = w.Checkout == config.CheckoutShared
-			m := clone
-			mode = &m
-		}
-	}
 	caps, err := attachLaunch(ctx, env, slug, spec, s.Prefix(), o.attach, kind, clone, warn)
 	if err != nil {
 		return config.Inputs{}, err
@@ -1828,6 +1896,17 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if len(spec.ContextRepos) > 0 {
 			if err := checkCloneImageSince(env.lc, spec, contextReposSince,
 				contextReposSubject, contextReposKnows, contextReposAlt, warn); err != nil {
+				return config.Inputs{}, err
+			}
+		}
+		// The change set's own gate, for the same reason as the two blocks
+		// above: a member's task carries the set and every member's run, and a
+		// runner older than changeSetSince refuses it at bootstrap. Judged on
+		// the field and not on the flag, so a --retry of a stored member's task
+		// is judged here too — the launch that wrote it is not the one running.
+		if spec.ChangeSet != nil {
+			if err := checkCloneImageSince(env.lc, spec, changeSetSince,
+				changeSetSubject, changeSetKnows, changeSetAlt, warn); err != nil {
 				return config.Inputs{}, err
 			}
 		}
@@ -1969,6 +2048,13 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if err := checkCloneVisionImage(env.lc, spec, fileCfg, warn); err != nil {
 			return config.Inputs{}, err
 		}
+		// The merge judge's craft, on the same configuration read: a
+		// runner older than mergeJudgeSince refuses
+		// agent.crafts.merge-judge at bootstrap, whatever it holds
+		// (checkCloneMergeJudgeCraftImage).
+		if err := checkCloneMergeJudgeCraftImage(env.lc, spec, fileCfg, warn); err != nil {
+			return config.Inputs{}, err
+		}
 	} else {
 		if needsRecipeImage(spec, agentRecipe) {
 			if err := checkRecipeImage(ctx, env, slug, spec, kind, warn); err != nil {
@@ -2025,6 +2111,14 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if len(spec.ContextRepos) > 0 {
 			if err := checkImageSince(ctx, env, slug, spec, kind, contextReposSince,
 				contextReposSubject, contextReposKnows, contextReposAlt, warn); err != nil {
+				return config.Inputs{}, err
+			}
+		}
+		// The same gate as the clone branch's above, and for the same reason:
+		// see changeSetSince.
+		if spec.ChangeSet != nil {
+			if err := checkImageSince(ctx, env, slug, spec, kind, changeSetSince,
+				changeSetSubject, changeSetKnows, changeSetAlt, warn); err != nil {
 				return config.Inputs{}, err
 			}
 		}
@@ -2129,6 +2223,11 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		// The same gate as the clone branch's above, and for the same
 		// reason: see checkVisionImage.
 		if err := checkVisionImage(ctx, env, slug, spec, kind, fileCfg, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The same gate as the clone branch's above, and for the same
+		// reason: see checkMergeJudgeCraftImage.
+		if err := checkMergeJudgeCraftImage(ctx, env, slug, spec, kind, fileCfg, warn); err != nil {
 			return config.Inputs{}, err
 		}
 		// The digest drift, last of this branch's image reads, and the
@@ -2639,6 +2738,45 @@ func contextReposFlag(o *runOptions) error {
 	return nil
 }
 
+// changeSetRefusal says why this build does not launch a change set, and ""
+// when it does (plan task D1; reconciliation-image-setup D616 as amended).
+// Two answers, in this order: an untagged build has no change sets at all —
+// the settle step and the ordering are `ee/` behaviour, and the flag is
+// refused the way a paid command is, in D522's sentence — and a tagged one
+// still refuses the flag until the settle step ships, because a set whose
+// members' pull requests nothing can flip ready would be stuck in draft for
+// good, and the draft hold (D614) is the whole point of creating one.
+//
+// The edition is a parameter rather than a call to Edition() inside, so that
+// both answers are reachable from one test binary: a test of this package
+// builds without ee/register (only cmd/fugaro imports it), so Edition() is
+// core here whatever tag the test binary carries, and the refusal a tagged
+// BUILD gives — the sentence every release until D3 prints — would otherwise
+// never be judged by the release that ships it.
+func changeSetRefusal(edition string) string {
+	if edition != EditionEE {
+		return "--change-set is part of Fugaro Subscription Edition; this build does not include it"
+	}
+	return "--change-set is not available yet in any build: the settle step that flips a change set's pull requests ready is not part of this release, and a set created now would keep its pull requests in draft with nothing able to lift them; it opens with the release that ships that step"
+}
+
+// changeSetExcludes are the flags a change set refuses, each with the reason
+// its refusal gives. Every one of them names or continues ONE run — a pull
+// request, a run ID, a chain, a batch of attempts — and a change set is a
+// launch of several fresh runs at once (D613's linked runs), so applying one
+// to every member would either name a run that is not the member's or mean
+// something the caller did not ask for. --json is here because the set's
+// several launches have no single document: the document a set answers with is
+// the settle step's to define, and a shape published now would be one this
+// release cannot fill (a field never changes meaning).
+var changeSetExcludes = []struct{ name, why string }{
+	{"pr", "a change set is a launch of fresh runs, one per repository, and --pr continues one pull request of one repository"},
+	{"attempts", "a change set launches one run per repository itself, and --attempts launches several of one repository"},
+	{"run-id", "a change set mints one run ID per member, the first of which is the set's own ID"},
+	{"continues", "each member begins a chain of its own, and --continues joins a chain that exists"},
+	{"json", "the several runs a change set launches have no single document yet"},
+}
+
 // noteRigorRequest says, once per launch, when --mode asks for a mode the
 // layers already meet: the request may raise and never lower (D6), so such a
 // request is recorded as asked and changes nothing, and a launcher that typed
@@ -2905,7 +3043,7 @@ func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, 
 	}
 	noteRigorRequest(ctx, o, plan.repo, warn)
 	warnTaskCutsBranch(warn, text, plan.ref)
-	if err := checkMaxParallelFor(ctx, env, n); err != nil {
+	if err := checkMaxParallelFor(ctx, env, n, "--attempts"); err != nil {
 		return err
 	}
 	if err := env.batchBudgetPrecheck(ctx, plan.slug, plan.repo, n, warn); err != nil {
@@ -2981,6 +3119,177 @@ func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, 
 		strings.Join(parts, " "), o.batch)
 	rep.Summary()
 	return nil
+}
+
+// runChangeSet launches a change set (plan task D1): one run per repository
+// named by a repeated --repo, 2 to task.MaxChangeSetMembers of them, each
+// member's task carrying the set's ID and the whole member list, and each
+// member's pull request left draft for the settle step to flip once every
+// member is verified (D614, D642).
+//
+// Each member is an ordinary launch of its own repository otherwise — its own
+// plan, its own budget caps, its own pull request — because D613's linked runs
+// are exactly that: several runs that share one set, never one run holding
+// several repositories. What makes them a set is the block every member's task
+// carries, written once here from the launch's own list: no later launch can
+// join a set, which is what stops a member being added to one unseen (D642).
+//
+// Every member's spec is built before any of them is launched, since each
+// member's task names every member's run. A member that refuses therefore
+// stops the set with the members before it already launched — a set is not
+// atomic, and nothing here cancels a run behind the caller's back — which is
+// one more reason the flag is refused in every build until the settle step
+// ships (changeSetRefusal): a set that cannot be completed is a set whose
+// pull requests stay draft.
+func runChangeSet(ctx context.Context, cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, total time.Duration) error {
+	warn := cmd.ErrOrStderr()
+	// One document read per member, shared by the whole launch rather than
+	// paid once per reader inside it (spec.md §6, D904): each member resolves
+	// its own ref, workflow and recipe, and every one of those reads is this
+	// launch's.
+	ctx = withServiceReadCache(ctx)
+	n := len(o.repos)
+	plans := make([]*attemptPlan, n)
+	members := make([]task.ChangeSetMember, n)
+	seen := make(map[string]bool, n)
+	for i, repo := range o.repos {
+		o.repo = repo
+		plan, err := resolveAttemptPlan(ctx, env, o, total, warn, false)
+		if err != nil {
+			return err
+		}
+		// resolveAttemptPlan refused anything that is not owner/name, so this
+		// is CanonicalRepo's reduction of a value it has already accepted.
+		c, _ := task.CanonicalRepo(plan.repo)
+		if seen[c] {
+			return userErr("--change-set names %s twice: it is one run per repository, and two --repo values that reduce to one repository are one member", c)
+		}
+		seen[c] = true
+		plans[i], members[i].Repo = plan, c
+		warnTaskCutsBranch(warn, text, plan.ref)
+	}
+	// The members are all fixed before anything is launched, and their run IDs
+	// with them: buildUniqueAttemptSpec mints one per member over its own plan
+	// (retrying a collision inside the set, as a batch does), and the set's own
+	// ID is the first member's run, so a set is named by a run that exists
+	// rather than by a second identity to mint and keep unique.
+	slugs := make([]string, n)
+	specs := make([]*task.Spec, n)
+	used := make(map[string]bool, n)
+	for i, plan := range plans {
+		slug, spec, err := buildUniqueAttemptSpec(plan, o, text, used)
+		if err != nil {
+			return err
+		}
+		slugs[i], specs[i], members[i].RunID = slug, spec, spec.RunID
+	}
+	set := &task.ChangeSet{ID: members[0].RunID, Members: members}
+	for _, spec := range specs {
+		// Each member's task carries its own copy of the block: the spec is
+		// written by its own launch (the launch embeds the project layer into
+		// it), and two specs sharing one set would be two tasks that can change
+		// each other.
+		spec.ChangeSet = &task.ChangeSet{ID: set.ID, Members: slices.Clone(set.Members)}
+		if err := spec.Validate(); err != nil {
+			return userErr("%v", err)
+		}
+	}
+	// The whole set is judged before any of it starts: a member whose task is
+	// already being worked on, or whose repository has no budget headroom,
+	// stops the set before the members before it have spent anything. The
+	// parallelism check between the two is the one about the set as a whole:
+	// the installation bounds runs in flight whatever repository they are of,
+	// so a set of three on a machine with room for two would be refused at its
+	// third member with two already launched. Each member's budget is read
+	// against its own repository's ledger, one member at a time, and it is that
+	// read which lets each member's own launch skip the check (skipBudget).
+	for i := range plans {
+		o.repo = plans[i].repo
+		if err := planTaskDuplicate(ctx, env, o, slugs[i], specs[i].RunID, warn); err != nil {
+			return err
+		}
+		noteRigorRequest(ctx, o, plans[i].repo, warn)
+	}
+	if err := checkMaxParallelFor(ctx, env, n, "--change-set"); err != nil {
+		return err
+	}
+	for i := range plans {
+		o.repo = plans[i].repo
+		if err := env.budgetPrecheck(ctx, slugs[i], specs[i], warn); err != nil {
+			return err
+		}
+	}
+	// The launch's reporter opens where its own refusals end, as a batch's
+	// does: everything above this line is answered before any run begins, and
+	// a set that never began keeps no log (D1352, D1354).
+	rep, sink := reporterFor(cmd, "run", nil)
+	if sink != nil {
+		defer func() { _ = sink.Close() }()
+	}
+	out := loggedOut(cmd.OutOrStdout(), sink)
+	results := make([]launchResult, 0, n)
+	for i := range plans {
+		o.repo = plans[i].repo
+		step := rep.Step(fmt.Sprintf("launch %d of %d (%s)", i+1, n, members[i].Repo))
+		if res, err := launchChangeSetMember(ctx, env, o, slugs[i], specs[i], warn); err != nil {
+			failStep(rep, step, err)
+			return changeSetFailure(members, results, i, err)
+		} else if res.Status == "already-launched" {
+			// A run ID this launch minted names a run it did not start: too
+			// improbable to recover from, and the member's task would not be
+			// the one this set wrote.
+			err := fmt.Errorf("run %s was already launched, not by this change set", task.ShortRun(oneLine(res.Run)))
+			failStep(rep, step, err)
+			return changeSetFailure(members, results, i, err)
+		} else {
+			step.Done(launchWhat(res))
+			if err := launchDetail(out, res); err != nil {
+				return err
+			}
+			results = append(results, res)
+		}
+	}
+	fmt.Fprintf(warn, "change set %s: %s\n", task.ShortRun(set.ID), changeSetMembersLine(members))
+	rep.Summary()
+	return nil
+}
+
+// launchChangeSetMember is finishLaunch's call in production for one member of
+// a change set; a test swaps it to fail a chosen member, so the set's partial
+// launch can be read without a live fault in the backend fake (launchAttempt's
+// shape for a batch). The four arguments it drops are the same for every
+// member: a change set always starts fresh runs of a plan it resolved here,
+// and judges each member's budget before the first of them launches.
+var launchChangeSetMember = func(ctx context.Context, env *cloudEnv, o *runOptions, slug string, spec *task.Spec, warn io.Writer) (launchResult, error) {
+	return finishLaunch(ctx, env, o, slug, spec, false, true, warn, true)
+}
+
+// changeSetFailure is the error a change set returns when a member refused,
+// after the members before it launched: which member it was, out of how many,
+// and what already launched. The launched members are named and never
+// cancelled: a run this launcher started is the caller's, and stopping the set
+// is not the same as undoing it.
+func changeSetFailure(members []task.ChangeSetMember, results []launchResult, i int, err error) error {
+	what := "nothing was launched"
+	if len(results) > 0 {
+		ids := make([]string, len(results))
+		for j, r := range results {
+			ids[j] = task.ShortRun(r.RunID)
+		}
+		what = "launched " + strings.Join(ids, ", ")
+	}
+	return fmt.Errorf("change set member %d of %d (%s): %w; %s", i+1, len(members), members[i].Repo, err, what)
+}
+
+// changeSetMembersLine is the launch's closing line: the set's member list, by
+// repository and short run, so the caller can name the set to the settle step
+// without reading the bucket.
+func changeSetMembersLine(members []task.ChangeSetMember) string {
+	parts := make([]string, 0, len(members))
+	for _, m := range members {
+		parts = append(parts, m.Repo+" ("+task.ShortRun(m.RunID)+")")
+	}
+	return strings.Join(parts, ", ")
 }
 
 // buildUniqueAttemptSpec is buildAttemptSpec, retried while its fresh run id
@@ -4147,7 +4456,7 @@ func contextReposRefusal(ctx context.Context, env *cloudEnv, slug string, spec *
 		jobName = job.Name
 	}
 	auth, deployed := env.repoServiceAuth(ctx, spec, io.Discard)
-	if len(credentialsServiceLaunchEnv(env.lc, jobName, spec.Repo, auth, deployed)) == 0 {
+	if len(credentialsServiceLaunchEnv(env.lc, jobName, spec.Repo, auth, env.policyMode(ctx), deployed)) == 0 {
 		if jobName != "" {
 			// A shared project job is never told the address whatever the
 			// installation's switch says, so the sentence below would be false
@@ -4848,7 +5157,7 @@ const horizonMargin = time.Hour
 // the execution listing is newest first across every job, so it stops
 // paging at that horizon. One jobs.list finds the longest timeout.
 func checkMaxParallel(ctx context.Context, env *cloudEnv) error {
-	return checkMaxParallelFor(ctx, env, 1)
+	return checkMaxParallelFor(ctx, env, 1, "")
 }
 
 // activeHorizon is the longest a run can still be going: the longest job
@@ -4867,9 +5176,16 @@ func activeHorizon(ctx context.Context, env *cloudEnv) (time.Duration, error) {
 // checkMaxParallelFor is checkMaxParallel, generalized to a launch that
 // needs room for `need` runs at once: a best-of-N batch (runAttempts) checks
 // for all of N before its first launch, so it never starts part of a batch
-// it cannot finish (design generic-tool G13). need is always 1 outside that
-// one caller, which checkMaxParallel keeps as the common case.
-func checkMaxParallelFor(ctx context.Context, env *cloudEnv, need int) error {
+// it cannot finish (design generic-tool G13); a change set checks for all of
+// its members before its first launch, for the same reason (runChangeSet).
+// need is always 1 outside those callers, which checkMaxParallel keeps as the
+// common case.
+//
+// flag is the flag the refusal names as the one that needs the room, since
+// the sentence is the caller's: a batch and a change set ask this same
+// question about different launches, and only the caller knows which flag its
+// user typed.
+func checkMaxParallelFor(ctx context.Context, env *cloudEnv, need int, flag string) error {
 	horizon, err := activeHorizon(ctx, env)
 	if err != nil {
 		return err
@@ -4880,7 +5196,7 @@ func checkMaxParallelFor(ctx context.Context, env *cloudEnv, need int) error {
 	}
 	if len(active)+need > env.lc.MaxParallel {
 		if need > 1 {
-			return userErr("%d runs active; max_parallel is %d (--attempts %d needs %d)", len(active), env.lc.MaxParallel, need, need)
+			return userErr("%d runs active; max_parallel is %d (%s %d needs %d)", len(active), env.lc.MaxParallel, flag, need, need)
 		}
 		return userErr("%d runs active; max_parallel is %d", len(active), env.lc.MaxParallel)
 	}
@@ -5694,7 +6010,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		jobName = job.Name
 	}
 	svcAuth, deployed := env.repoServiceAuth(ctx, spec, launchWarn)
-	lspec.Env = credentialsServiceLaunchEnv(env.lc, jobName, spec.Repo, svcAuth, deployed)
+	lspec.Env = credentialsServiceLaunchEnv(env.lc, jobName, spec.Repo, svcAuth, env.policyMode(ctx), deployed)
 	// The run's slip, asked for exactly where the service's address was just
 	// written: the grant the credentials service keeps for this run, whose id
 	// the job claims at its first call and presents on every call after it
@@ -5848,17 +6164,27 @@ func servicesLaunchEnv(entry config.Entry) string {
 // THE SWITCH DECIDES, and it is the same function the plan decides with
 // (infra.CredentialsServiceServes): the installation has the block, the record
 // `fugaro update` wrote for this repository says a root of it was applied with
-// the service on — the bundle held a model credential and the auth was the
-// cascade when that apply was made (localcfg.Repo.CredentialsServiceReady,
-// written into the local config's repository entry and published with the rest
-// of it, so a teammate's `fugaro run` on a machine that never ran the update
-// reads it too, internal/localcfg/shared.go) — and this repository's
-// agent.auth, read live, is one the service serves. All three, because the URL
-// is not a hint: the same variable is what
-// opens the git provider keyless (internal/gitprov/providers/providers.go),
-// which reads no App key at all once it is set. A job that still mounts its
-// own model credential and is handed the address of a service that cannot
-// serve it would lose the credential it has and get nothing in its place.
+// the service on (localcfg.Repo.CredentialsServiceReady, written into the local
+// config's repository entry and published with the rest of it, so a teammate's
+// `fugaro run` on a machine that never ran the update reads it too,
+// internal/localcfg/shared.go) — and this repository's agent.auth, read live,
+// is one the service serves under the mode the published node carries. All of
+// them, because the URL is not a hint: the same variable is what opens the git
+// provider keyless (internal/gitprov/providers/providers.go), which reads no
+// App key at all once it is set, and what makes a Bitbucket repository a
+// proxied one (proxiedRepo). A job that still mounts its own model credential
+// and is handed the address of a service that cannot serve it would lose the
+// credential it has and get nothing in its place.
+//
+// mode is the budget mode the published node carries, read by the launcher
+// (policyMode) and handed in: it is the switch's fourth condition for an
+// `api-key` or `oauth` repository alone (D2071), because the gateway the
+// service is reached through exists only in `observe` and `enforce`. A
+// repository on a project whose mode is `off` gets no address at all and keeps
+// the mounts it has. A read that found no node answers "", which is that same
+// held-off answer — the fail-closed direction — while the repository's own
+// record and tfvars remain the two answers a launch without a document
+// decides on (below).
 //
 // The config is the published shared one where this machine has no local
 // config of its own (localcfg.Select), and the URL in it is the installation's
@@ -5919,7 +6245,7 @@ func servicesLaunchEnv(entry config.Entry) string {
 // on its own here: the deployed root still answers for the machine that applied
 // it.
 
-func credentialsServiceLaunchEnv(lc *localcfg.Config, job, repo, auth string, deployed bool) []string {
+func credentialsServiceLaunchEnv(lc *localcfg.Config, job, repo, auth, mode string, deployed bool) []string {
 	if job != "" || lc == nil {
 		return nil
 	}
@@ -5929,7 +6255,7 @@ func credentialsServiceLaunchEnv(lc *localcfg.Config, job, repo, auth string, de
 	// to put on a job's environment either.
 	installed := lc.CredentialsService != nil && lc.CredentialsService.URL != ""
 	local, _ := lc.RepoFor(repo)
-	serves := infra.CredentialsServiceServes(installed, local.CredentialsServiceOn(), auth)
+	serves := infra.CredentialsServiceServes(installed, local.CredentialsServiceOn(), auth, mode)
 	if auth == "" {
 		// No document this launcher could read, so the switch's third
 		// condition is judged on the two answers that do not need one: the
@@ -6162,7 +6488,7 @@ func runSlipEnv(ctx context.Context, env *cloudEnv, spec *task.Spec, slug, workf
 }
 
 // slipCredentialNames are the credentials the run's slip asks the service to
-// serve: what each of the four crafts resolves to for this launch, deduplicated
+// serve: what each of the five crafts resolves to for this launch, deduplicated
 // — the same answer `fugaro craft ls` prints and the same one the runner will
 // make its calls with, because the resolution is internal/craft's and not a
 // second rule here (that package's own promise: a launcher and a runner cannot

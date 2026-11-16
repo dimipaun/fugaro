@@ -16,7 +16,7 @@
 | Constraint | Pinned by |
 | --- | --- |
 | Once a catalog default exists the resolver never returns a per-repo image, and warns once per ignored key | IS1 `TestJobImageIgnoresRepoLevelConfig` |
-| A secret never reaches an image layer; generated Dockerfiles use `--mount=type=secret`, no `ARG`/`COPY` of a token | IS12 `TestImagesSkillNoBuildArgSecrets` (text) and IS11b (code) |
+| A secret never reaches an image layer; generated Dockerfiles ask for no secret of the entry's own, no `ARG`/`COPY` of a token, and an entry's build is handed none — the checkout arrives as the `fugaro-checkout` build context a clone step of Fugaro's own exports (B9, D2311) | IS12 `TestImagesSkillNoBuildArgSecrets`, `TestImagesSkillEntryBuildAsksForNoSecret` (text) and IS11b (code) |
 | The survey reads through the CLI's provider opener (process-environment token), read-only, and prints no file contents beyond the named signals | IS10 `TestSurveyReadsOnlySignals` (mutation check) |
 | A rerun on an unchanged project proposes nothing | IS12 `TestImagesSkillRerunProposesDiffOnly` |
 | A skill never builds locally | IS12 `TestImagesSkillNeverLocalBuild` |

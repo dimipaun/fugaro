@@ -162,6 +162,18 @@ variable "bitbucket_proxied" {
   nullable    = false
 }
 
+variable "model_secrets_served" {
+  description = "Which of the model credentials the credentials service serves THIS repository's runs (D2072, G17), which is what the job's account keeps its secretAccessor on: `all` for a cascade repository the switch admits, `anthropic` for an `api-key` or `oauth` one it admits and the service holds the credential of, `none` for every other. Go writes it per repository (infra.ModelSecretsServed, RepoSpec.ModelSecretsServed), and the default is `all` because that is what a tfvars written before the input existed means: every root applied then planned with the model clauses of the drop in force, and only a switched repository has them read at all."
+  type        = string
+  default     = "all"
+  nullable    = false
+
+  validation {
+    condition     = contains(["all", "anthropic", "none"], var.model_secrets_served)
+    error_message = "model_secrets_served must be one of \"all\", \"anthropic\" or \"none\" (config.ModelSecretsServedValues)."
+  }
+}
+
 variable "job_runner_role" {
   description = "The installation's fugaroJobRunner role, as its full name projects/<project>/roles/<id>."
   type        = string

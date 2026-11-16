@@ -209,10 +209,10 @@ var yamlMeta = map[string]Row{
 		Default: unset("Fugaro's own diagnose model (config.DefaultDiagnoseModel)"),
 		Doc:     docDiagnose,
 	},
-	// The four crafts (docs/model-crafts/spec.md §3), the spec's own table
+	// The crafts (docs/model-crafts/spec.md §3), the spec's own table
 	// read back: the coder and the senior review are what a run cannot do
-	// without, and the review and the security review follow the craft above
-	// them when they set nothing of their own.
+	// without, and the review, the security review and the merge judge follow
+	// the craft above them when they set nothing of their own.
 	"agent.crafts.coder.model":            {Owner: "models", Default: unset("required: the coder implements, so a run needs its model"), Doc: docCrafts},
 	"agent.crafts.coder.access":           {Owner: "accounts", Default: unset("required: the coder's calls go out on a credential or a pool"), Doc: docCrafts},
 	"agent.crafts.review.model":           {Owner: "models", Default: unset("the coder's model"), Doc: docCrafts},
@@ -221,6 +221,8 @@ var yamlMeta = map[string]Row{
 	"agent.crafts.senior-review.access":   {Owner: "accounts", Default: unset("required: the senior review's calls go out on a credential or a pool"), Doc: docCrafts},
 	"agent.crafts.security-review.model":  {Owner: "models", Default: unset("the senior review's model"), Doc: docCrafts},
 	"agent.crafts.security-review.access": {Owner: "accounts", Default: unset("the senior review's access"), Doc: docCrafts},
+	"agent.crafts.merge-judge.model":      {Owner: "models", Default: unset("the coder's model"), Doc: docCrafts},
+	"agent.crafts.merge-judge.access":     {Owner: "accounts", Default: unset("the coder's access"), Doc: docCrafts},
 
 	// The escalation ladder's two model grades (docs/outer-loop-escalation E2,
 	// D2039): the model each rung runs and the credential or pool its calls go
@@ -335,6 +337,29 @@ var yamlMeta = map[string]Row{
 	"followup.trusted":      {Default: unset("nobody")},
 	"followup.allow_public": {Default: unset("false")},
 
+	// A repository's A/B opt-out (D556, F18). The block is the project layer's
+	// and rate is the one leaf a repository may write, only downward to 0
+	// (validateRepoAB reads a repository's ab: block and refuses every other
+	// key), so the row is the block's own family's: `models` names the command
+	// that decides sampling, as the five `layer.ab.*` rows beside it do, and the
+	// write refuses the key in that family's name rather than offering a
+	// generic edit at a rate the project's own ceiling decides.
+	"ab.rate": {Owner: "models", Default: unset("the project layer's ab.rate, or 0: no run is a challenger"), Doc: docModels},
+
+	// The tags a job of a repository's workflow needs (D1155, spec
+	// project-image-catalog §Repo configuration item 3). A list of strings is
+	// what the generic path's --add writes (D1162), so the row keeps the default
+	// owner the yamlRow fallback gives it and needs no family of its own: the
+	// catalog validates a tag against the entries it publishes when a run
+	// selects one, where the project's catalog is at hand and this command's is
+	// not.
+	//
+	// The row is reachable only once the allowlist names the key, which is the
+	// write path's own task (W3 of docs/config-ownership): until then the write
+	// refuses the spelling with "no setting has that name" and the row is
+	// testdata/writer_gaps.golden's.
+	"workflows.*.needs": {Default: unset("none: the job needs no tag of the entry the run picks"), Doc: docImages},
+
 	"rigor.default": {
 		Owner: "rigor",
 		// A value here would be the fourth copy of the mode's floor: the
@@ -352,19 +377,22 @@ var yamlMeta = map[string]Row{
 	// with no entry here takes: D1515 decides the editor is fugaro.yaml and the
 	// project layer file — a list has no scalar floor for the allow-list's rule
 	// to raise — and `fugaro config publish` is the command that carries the
-	// layer's half, which is what the row names.
+	// layer's half, which is what the row names. The family that will edit one
+	// entry by its key field is `fugaro rigor security`, which M4 of
+	// docs/config-ownership registers (D2613): the token stays `config` until
+	// that command is in the tree, because a token names a command a person can
+	// run — the read prints it, and the write refuses in its name.
 	"security.patterns": {Owner: "config", Merge: Union, Default: unset("the engine's floor alone")},
 
 	// The planning pass's switch (docs/contract-first-decoupling, D1813). It
 	// is a preference rather than a bound, so the ordinary rule decides it:
-	// the narrowest layer that sets it wins. Owner `config` for
-	// security.patterns' reason (D1515): the key is stated in a file — a
-	// repository's `fugaro.yaml`, and the layer's `defaults:` — and the
-	// layer's half is what `fugaro config publish` carries. Its second half is
-	// `layer.defaults.planning.decoupling`, which the generic path does write,
-	// so a project sets the key through that row; the repository's own half is
-	// the file's, and the allowlist does not carry the bare spelling.
-	"planning.decoupling": {Owner: "config", Default: value("true", "config.DefaultPlanningDecoupling")},
+	// the narrowest layer that sets it wins. The row takes the default owner
+	// the yamlRow fallback gives it (D2603): the allowlist carries the
+	// repository's spelling below and the layer's
+	// `layer.defaults.planning.decoupling` beside it, so both halves are the
+	// generic path's, where D1515's file tokens named a file the repository's
+	// half is only one of two in.
+	"planning.decoupling": {Default: value("true", "config.DefaultPlanningDecoupling")},
 }
 
 // buildRows is the table, assembled from the three documents' own sources: the
@@ -378,6 +406,7 @@ func buildRows() []Row {
 	out = append(out, layerRows...)
 	out = append(out, localRows...)
 	out = append(out, cloudRows...)
+	out = append(out, policyRows...)
 	out = append(out, stageAccountRows()...)
 	for i := range out {
 		out[i].Sensitive = sensitiveKeys[out[i].Key]
@@ -530,6 +559,14 @@ const (
 	// yet. The spec is the owner's own text and states no key, so a document
 	// of the block's own would be the one that takes these rows over.
 	docMobileAuth = "docs/mobile-auth/reconciliation.md"
+	// docCredentialsCascade is the document that states the credentials
+	// cascade's controls (D152, D153, D142): the wait-or-switch threshold, the
+	// backoff's two ends and the two owner-headroom knobs are named in the
+	// credentials service's plan, and the spec of the service (its README's
+	// sibling) is the design of the service rather than of the policy an
+	// operator writes. K1's command and the carrier N1 adds take the rows over
+	// the day they land.
+	docCredentialsCascade = "docs/credentials-service/implementation-plan.md"
 )
 
 // layerRow is a row of the project layer's file. The layer is its only store,
@@ -648,6 +685,8 @@ var layerRows = []Row{
 	layerRow("defaults.agent.crafts.senior-review.access", "none: only the local config and the policy node name a credential", "accounts", docCrafts),
 	layerRow("defaults.agent.crafts.security-review.model", "the senior review's model", "models", docCrafts),
 	layerRow("defaults.agent.crafts.security-review.access", "none: only the local config and the policy node name a credential", "accounts", docCrafts),
+	layerRow("defaults.agent.crafts.merge-judge.model", "the coder's model", "models", docCrafts),
+	layerRow("defaults.agent.crafts.merge-judge.access", "none: only the local config and the policy node name a credential", "accounts", docCrafts),
 	// The grades' layer rows (E2, D2039): the project layer sets both halves
 	// for every repository of it, and a repository's own entry is recorded
 	// rather than applied (internal/policy's tightenGrades). A grade nobody set
@@ -754,13 +793,16 @@ var layerRows = []Row{
 
 	// The two schedules (R13). They are the installation's only keys in this
 	// table whose loosening direction starts something: paused: false is what
-	// makes a job run, and it is the operator's alone — a repository writes no
-	// jobs: key at all, and the generic path writes its allowlist, which
-	// carries neither of these. Owner update is the command that reads the
-	// layer file and applies the value into the installation; `fugaro settings
-	// set` refuses both keys, which is the state R13 ships.
-	layerValueRow("jobs.reports.paused", "true", "update", docPeriodicReviews),
-	layerValueRow("jobs.catalog_check.paused", "true", "update", docPeriodicReviews),
+	// makes a job run, so the key is the operator's own and a repository writes
+	// no jobs: block at all. Owner `settings set` (R1 of docs/config-ownership):
+	// `update` is not a writer, so a row naming it named a command that never
+	// writes the key, and the allowlist carries the two spellings by name —
+	// they are not §4.4's list, and a row no list carries is a key nobody can
+	// write. The pair is a project-layer key, so the ceiling rule a layer-file
+	// write meets and the coding agent's session's own refusal are what stand
+	// in front of starting a job.
+	layerValueRow("jobs.reports.paused", "true", "settings set", docPeriodicReviews),
+	layerValueRow("jobs.catalog_check.paused", "true", "settings set", docPeriodicReviews),
 
 	// The project layer's own half of the security list (D1501) and the switch
 	// that is its alone (D1517, D1503): the rows the layer adds for every
@@ -771,6 +813,7 @@ var layerRows = []Row{
 	// rows are judged by the rules the repository's own are, which is why they
 	// share that row's answer. always_level_3 is the one that is no list: it is
 	// a switch that only turns on, and false is a layer that states nothing.
+	// M4's `fugaro rigor security` is the family that will edit one of these.
 	layerRow("security.patterns.*.name", "none", "config", docLayer),
 	layerRow("security.patterns.*.match", "none", "config", docLayer),
 	layerRow("security.patterns.*.category", "none", "config", docLayer),
@@ -887,8 +930,14 @@ var localRows = []Row{
 	loc("model_prices.*.input_per_m", "the built-in price", "models", docModels),
 	loc("model_prices.*.output_per_m", "the built-in price", "models", docModels),
 	loc("model_prices.*.cache_write_5m", "the built-in price", "models", docModels),
+	loc("model_prices.*.cache_write_5m_mult", "the built-in price", "models", docModels),
+	loc("model_prices.*.cache_write_5m_per_m", "the built-in price", "models", docModels),
 	loc("model_prices.*.cache_write_1h", "the built-in price", "models", docModels),
+	loc("model_prices.*.cache_write_1h_mult", "the built-in price", "models", docModels),
+	loc("model_prices.*.cache_write_1h_per_m", "the built-in price", "models", docModels),
 	loc("model_prices.*.cache_read", "the built-in price", "models", docModels),
+	loc("model_prices.*.cache_read_mult", "the built-in price", "models", docModels),
+	loc("model_prices.*.cache_read_per_m", "the built-in price", "models", docModels),
 	loc("model_prices.*.web_search_per_1k", "the built-in price", "models", docModels),
 	loc("model_prices.*.image_tokens", "the built-in price", "models", docModels),
 	loc("model_prices.*.long_context.above_input_tokens", "the built-in price", "models", docModels),
@@ -988,6 +1037,8 @@ var localRows = []Row{
 	locLocal("crafts.senior-review.access", "required: the senior review's calls go out on a credential or a pool", "accounts", docCrafts),
 	locLocal("crafts.security-review.model", "the senior review's model", "models", docCrafts),
 	locLocal("crafts.security-review.access", "the senior review's access", "accounts", docCrafts),
+	locLocal("crafts.merge-judge.model", "the coder's model", "models", docCrafts),
+	locLocal("crafts.merge-judge.access", "the coder's access", "accounts", docCrafts),
 
 	loc("project_secrets.*.allow_data_to", "nobody", "secrets", docSetup),
 	loc("project_secrets.*.proxy", "none", "secrets", docSetup),
@@ -1032,12 +1083,24 @@ var localRows = []Row{
 
 	loc("review_floor", "none: no floor is added", "rigor floor", docRigor),
 
-	// Unset is not "nobody" on an installation that has opted into the
-	// credentials service: the module answers an absent list with its own
-	// verifier account, the identity the installation's runs verify as (CSR14,
-	// verifier.tf), so the row says both states rather than the one that is
-	// only true while the service is off.
-	loc("verifier_accounts", "nobody may ask the credentials service to verify a signature, except on an installation whose credentials service is deployed, where the installation's own verifier account may", "secrets", docSetup),
+	// The identity list is the owner's own (CSR14, verifier.tf). Owner
+	// `settings set` (R1 of docs/config-ownership, D2603): a list in the
+	// machine's own config is what the generic path writes, and the `secrets`
+	// family next door writes secret expiry and rotation and no key of this
+	// list — so naming it was a row saying a command writes a key it does not.
+	// The TypedWhy is the widening direction: an entry is an identity that may
+	// ask the credentials service to verify a signature for this installation's
+	// runs, which is the owner's own admission rather than an edit of a
+	// threshold.
+	{
+		Key:      "verifier_accounts",
+		Layers:   []string{LayerLocal, LayerShared},
+		Merge:    Replace,
+		Default:  unset("nobody may ask the credentials service to verify a signature, except on an installation whose credentials service is deployed, where the installation's own verifier account may"),
+		Owner:    "settings set",
+		Doc:      docSetup,
+		TypedWhy: "this admits an identity that may ask the credentials service to verify a signature for the installation's runs",
+	},
 
 	// The image catalog decides which image a run's job executes in, so it is
 	// the operator's own list in the local file like the verifier list above,
@@ -1081,13 +1144,14 @@ var localRows = []Row{
 	// be a command family that does nothing the generic write does not.
 	loc("bake_repos", "true: a repository the build can read is baked into the image its job runs", "settings set", docImages),
 	// The triage switch is the other policy key of that shape — a local key the
-	// node is published from — and it is the catalog's rather than the bake
-	// switch's: `fugaro project policy publish` is what carries it, which is why
-	// the owner names the project family and not the generic path. The switch is
-	// the owner's because it decides which of a review round's findings hold a
-	// pull request back (D1854), and no command writes it beyond the publish: an
-	// operator states it in the file and runs the update.
-	loc("triage", "true: a review round's findings are judged by the triage stage in the modes that triage at all, and a written false turns the stage off for the project", "project", docTriage),
+	// node is published from. Owner `settings set` (R1 of docs/config-ownership,
+	// D2603): a boolean in the machine's own config is the generic path's, and
+	// `project` named a family none of whose subcommands edits the key — the
+	// publish carries whatever the file holds rather than writing it. The switch
+	// is the owner's because it decides which of a review round's findings hold
+	// a pull request back (D1854), and the publish is what carries the value to
+	// the node every run of the project reads it from.
+	loc("triage", "true: a review round's findings are judged by the triage stage in the modes that triage at all, and a written false turns the stage off for the project", "settings set", docTriage),
 	// The clone URLs the project's repositories clone from (settings spec
 	// §5.6, SD5, D842). The block moved out of the policy node and into the
 	// owner's local config, and `fugaro project clone-url` is the family that
@@ -1158,54 +1222,86 @@ var localRows = []Row{
 
 	// The orchestrator daemon's own guardrails (D1239, D1234) are the owner's
 	// policy like the catalog above, and one row per member for the catalog's
-	// reason. They carry Tighten rather than the ordinary Replace: the smaller
-	// cap wins whatever layer it was written in (policy.Merge), so a person or
-	// a project may lower one and never raise it, and the model a decision
-	// class runs on moves up the tier order or not at all. The default of each
-	// count is the figure policy.WithDefaults fills the ceiling layer with,
-	// named by the constant that holds it — the effective cap is the person's
-	// own max_parallel, which is why the sentence names that key rather than a
+	// reason. They carry Tighten rather than the ordinary Replace, which is the
+	// block's kind: a ceiling, whose counts are caps and whose class models move
+	// up the tier order or not at all. The default of each count is the figure
+	// policy.WithDefaults fills the block with, named by the constant that holds
+	// it — the effective cap of the running count is the person's own
+	// max_parallel, which is why its sentence names that key rather than a
 	// number.
 	//
-	// Owner `project policy`, not `project`: the block is stated in the local
-	// config and `fugaro project policy publish` is what carries it to the node
-	// every run of the project is held to (buildProjectPolicy copies
-	// lc.Orchestrator into the node, and policyCeilingValues spells these six
-	// members back out of it), which is triage's fact above. The token is this
-	// block's own because `project` is one of settingsFamilyCommands: a row
-	// naming it is refused by name of `fugaro project` — a wording of the
-	// write's that this task does not touch — and the read prints that bare
-	// command, which D1178 asks a sentence in place of for a key no subcommand
-	// edits. It was `config` until G12, whose read printed that token's
-	// sentence — the layer file `fugaro config publish` carries — beside a row
-	// whose own target_layer is `local`, a file the publish never reads.
-	locTighten("orchestrator.max_running", "the person's max_parallel", "project policy", docOrchestrator),
-	locTighten("orchestrator.batch_size", "10 (policy.DefaultBatchSize)", "project policy", docOrchestrator),
-	locTighten("orchestrator.spawn_per_minute", "2 (policy.DefaultSpawnPerMinute)", "project policy", docOrchestrator),
-	locTighten("orchestrator.spawn_per_hour", "12 (policy.DefaultSpawnPerHour)", "project policy", docOrchestrator),
-	locTighten("orchestrator.spawn_per_day", "60 (policy.DefaultSpawnPerDay)", "project policy", docOrchestrator),
+	// Owner `settings set` (R1 of docs/config-ownership, D2603): the block is a
+	// set of scalars in the machine's own config, which is exactly what the
+	// generic path writes, and the allowlist carries the six spellings by name
+	// so that the row and the write agree. G12 named `project policy`, the token
+	// whose words are `fugaro project policy publish` carrying the local block
+	// to the node, which left every one of the six refused by the write while
+	// its row named a writer — the pair D1178 forbids — and sent a reader to a
+	// bare command for keys no subcommand of it edits. Not the merge, though:
+	// the machine's own block REPLACES the node's when it states any key of it
+	// (localcfg.OrchestratorEffective), and what holds the block is its two
+	// writers — the publish door refusing a loosened node (policyLoosening)
+	// and `settings set` typing a raise (settingsCeilingKey).
+	locTighten("orchestrator.max_running", "the person's max_parallel", "settings set", docOrchestrator),
+	locTighten("orchestrator.batch_size", "10 (policy.DefaultBatchSize)", "settings set", docOrchestrator),
+	locTighten("orchestrator.spawn_per_minute", "2 (policy.DefaultSpawnPerMinute)", "settings set", docOrchestrator),
+	locTighten("orchestrator.spawn_per_hour", "12 (policy.DefaultSpawnPerHour)", "settings set", docOrchestrator),
+	locTighten("orchestrator.spawn_per_day", "60 (policy.DefaultSpawnPerDay)", "settings set", docOrchestrator),
 	// The one key of the block that is not a count: a class the map does not
 	// carry is at its floor, which is the bottom of the order for a routine
 	// decision and the top for a security-sensitive one (policy.ValidOrchestrator
 	// refuses a name outside the order and a model under the class's floor, so
 	// the classes' two ends are the two answers an absent key can take).
-	locTighten("orchestrator.decision_model_per_class", "each class's floor: haiku for a routine decision and opus for a sensitive one", "project policy", docOrchestrator),
+	locTighten("orchestrator.decision_model_per_class", "each class's floor: haiku for a routine decision and opus for a sensitive one", "settings set", docOrchestrator),
 
 	// The declared mobile allowlist's three members (docs/mobile-auth, D231).
 	// The block is stated in the machine's own config, exactly as the
 	// orchestrator's is and for a stronger reason: the role an entry carries is
 	// an authority over every phone admitted to the project's runs, and every
 	// other store of it is one a run or a teammate can write (localcfg's
-	// MobileAllow comment says which). `fugaro project policy publish` is what
-	// carries the entries to the device node the rules read, so the rows name
-	// that token rather than `settings set`, whose allowlist deliberately does
-	// not carry them: an entry is a list of records a scalar write cannot
-	// express, and the role in it is not a value the generic path may set. The
-	// default is the block's own emptiness — an absent mobile_allow: declares
-	// nothing, so nothing is seeded and nobody is admitted by the file.
-	locLocal("mobile_allow.*.uid", "no uid: an entry that names one seeds no device node, and the node is what admits a phone (D231)", "project policy", docMobileAuth),
-	locLocal("mobile_allow.*.address", "required: the administered email or the domain the entry admits", "project policy", docMobileAuth),
-	locLocal("mobile_allow.*.role", "required: an entry with no role is refused rather than given one", "project policy", docMobileAuth),
+	// MobileAllow comment says which).
+	//
+	// Owner `settings set` (R1 of docs/config-ownership, D2603): the block's
+	// entries are objects and the generic path writes an object list entry with
+	// --add-entry (D1162), so the command that can write one is this path's and
+	// not `fugaro project policy publish`'s, which carries the local declaration
+	// to the device node the rules read — a carrier and not an editor, exactly as
+	// it is for the orchestrator block above. The rows are marked widening
+	// (TypedWhy, D1165): an entry admits a phone to the project's runs, so
+	// growing the list is the edit the fence asks the owner's own hand for, and
+	// the coding agent's session is refused it whatever the gate says. The
+	// spelling carries a `*`, which is the shape of a map entry rather than a key
+	// a write lands on, so the literal refusals answer these rows today and W3's
+	// allowlist is what reaches their concrete spellings. The default is the
+	// block's own emptiness — an absent mobile_allow: declares nothing, so
+	// nothing is seeded and nobody is admitted by the file.
+	{
+		Key:      "mobile_allow.*.uid",
+		Layers:   []string{LayerLocal},
+		Merge:    Replace,
+		Default:  unset("no uid: an entry that names one seeds no device node, and the node is what admits a phone (D231)"),
+		Owner:    "settings set",
+		Doc:      docMobileAuth,
+		TypedWhy: "this admits a phone to the project's runs: an entry that names a uid seeds the device node the rules read, so growing the list widens who may drive them",
+	},
+	{
+		Key:      "mobile_allow.*.address",
+		Layers:   []string{LayerLocal},
+		Merge:    Replace,
+		Default:  unset("required: the administered email or the domain the entry admits"),
+		Owner:    "settings set",
+		Doc:      docMobileAuth,
+		TypedWhy: "this admits a phone to the project's runs: an entry whose address matches a device admits it, so growing the list widens who may drive them",
+	},
+	{
+		Key:      "mobile_allow.*.role",
+		Layers:   []string{LayerLocal},
+		Merge:    Replace,
+		Default:  unset("required: an entry with no role is refused rather than given one"),
+		Owner:    "settings set",
+		Doc:      docMobileAuth,
+		TypedWhy: "the role an entry carries is an authority over every phone admitted to the project's runs, so writing it is the widening this fence asks the owner's own hand for",
+	},
 
 	// The four members of a repository's entry a PERSON writes are the generic
 	// writer's (D1173, docs/config-management/spec.md §3.4): they are a map of
@@ -1302,14 +1398,14 @@ var localRows = []Row{
 	// the loader leaves in place, so they come from defaultValues below, as
 	// update_check's does, rather than from an "unset means" sentence.
 	//
-	// Owner `config local` (G12): the machine's own config is their only store,
-	// and no command edits them key by key — so the row names the file and the
-	// command that writes it, the way `config` names the layer file and
-	// `fugaro config publish`. It was `config` until G12, whose read printed
-	// that token's sentence — a file these two are not stated in — beside a row
-	// whose own target_layer is `local`.
-	{Key: "issues.nudge_after_days", Layers: []string{LayerLocal}, Merge: Replace, Owner: "config local", Doc: docTroubleshoot},
-	{Key: "issues.nudge_recurrence", Layers: []string{LayerLocal}, Merge: Replace, Owner: "config local", Doc: docTroubleshoot},
+	// Owner `settings set` (R1 of docs/config-ownership, D2603): the machine's
+	// own config is the key's only store and this CLI's generic path is its one
+	// door, which is what puts the owner's own hand in front of a threshold
+	// nothing else can write. G12 named the file instead (`config local`) while
+	// the allowlist did not carry the two spellings, and a row that names a
+	// file as an owner while a command writes it is the pair D1178 refuses.
+	{Key: "issues.nudge_after_days", Layers: []string{LayerLocal}, Merge: Replace, Owner: "settings set", Doc: docTroubleshoot},
+	{Key: "issues.nudge_recurrence", Layers: []string{LayerLocal}, Merge: Replace, Owner: "settings set", Doc: docTroubleshoot},
 
 	// The outer loop's ladder (E3, D2032). Every row here is local-only and
 	// every one is `settings set`'s: a threshold, a grade the ladder's rungs
@@ -1378,6 +1474,40 @@ var cloudRows = []Row{
 	{Key: "caps.defaults.per_day_usd", Layers: []string{LayerCaps}, Merge: Replace, Default: unset("no default cap"), Owner: "budget", Doc: docSetup},
 	{Key: "caps.max_reserve_usd", Layers: []string{LayerCaps}, Merge: Replace, Default: unset("no reserve limit"), Owner: "budget", Doc: docSetup},
 	{Key: "kill.global.on", Layers: []string{LayerCaps}, Merge: Replace, Default: unset("false: no run is stopped"), Owner: "budget", Doc: docSetup},
+}
+
+// policyRows are the published policy node's own keys (spec §2.1, §2.2): the
+// credentials cascade's controls, which today live in the Realtime Database
+// node and nowhere else (docs/config-ownership/audit.md's own row for them;
+// projectpolicy.Credentials is the shape the node decodes into). They are the
+// first rows of the `policy` layer, which the vocabulary has carried since the
+// settings design and no row claimed: a node member an operator writes is
+// neither a file of this machine nor the budget database's, and a row claiming
+// one of the three file layers would send the read and the write at a file the
+// key is not in.
+//
+// The spelling is `credentials.<leaf>`, which is §4.4's own name for the
+// block — `credentials.` is one of the generic path's prefixes — and the owner
+// is the `accounts` family's, so the generic path refuses every one of the six
+// in that family's name rather than writing an operator's node policy as a
+// local setting (D2603, R1 of docs/config-ownership). K1 registers
+// `fugaro accounts cascade set` as their writer; until it lands the six are
+// testdata/writer_gaps.golden's.
+//
+// Every default is a sentence naming the constant the node's own reader falls
+// back to (projectpolicy.FallbackValue, WaitThresholdDuration,
+// BackoffInitialDuration, BackoffCapDuration, StopsAfterExhaustion,
+// ConcurrencyCap), because an absent member is the protective answer rather
+// than a value the node holds — and the two switches among them are written to
+// be turned off, which is why replacing this block's policy is the widening
+// its own family's write fences (D142).
+var policyRows = []Row{
+	{Key: "credentials.fallback", Layers: []string{LayerPolicy}, Merge: Replace, Default: unset("oauth-only: a run does not fail over to the paid tier (projectpolicy.FallbackOAuthOnly), and the one value that spends the project's money is written by an operator"), Owner: "accounts", Doc: docCredentialsCascade},
+	{Key: "credentials.wait_threshold", Layers: []string{LayerPolicy}, Merge: Replace, Default: unset("15m: how long a run waits for an exhausted credential's reset before failing over (projectpolicy.DefaultWaitThreshold)"), Owner: "accounts", Doc: docCredentialsCascade},
+	{Key: "credentials.backoff.initial", Layers: []string{LayerPolicy}, Merge: Replace, Default: unset("15m: the first wait of a credential backed off with no reset time (projectpolicy.DefaultBackoffInitial)"), Owner: "accounts", Doc: docCredentialsCascade},
+	{Key: "credentials.backoff.cap", Layers: []string{LayerPolicy}, Merge: Replace, Default: unset("5h: the longest wait the doubling reaches (projectpolicy.DefaultBackoffCap)"), Owner: "accounts", Doc: docCredentialsCascade},
+	{Key: "credentials.stop_after_exhaustion_per_window", Layers: []string{LayerPolicy}, Merge: Replace, Default: unset("true: a credential exhausted within its window stops the runs that need it (projectpolicy.Credentials.StopsAfterExhaustion)"), Owner: "accounts", Doc: docCredentialsCascade},
+	{Key: "credentials.concurrency_per_token", Layers: []string{LayerPolicy}, Merge: Replace, Default: unset("1: how many runs may hold one shared credential at a time (projectpolicy.DefaultConcurrencyPerToken), where a written 0 is no cap at all"), Owner: "accounts", Doc: docCredentialsCascade},
 }
 
 // stageAccountRows are the concrete spellings of the stages.*.claude_account

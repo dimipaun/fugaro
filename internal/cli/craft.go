@@ -49,14 +49,14 @@ func newCraftCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "craft",
 		Short: "Show the model and the credential or pool each craft runs on",
-		Long: `Show the four crafts: the coder, the first-line review, the senior review
-and the security review.
+		Long: `Show the crafts: the coder, the first-line review, the senior review,
+the security review and the merge judge.
 
 Each craft runs a model and sends its calls out on a credential or a pool, and
-the two halves inherit separately: the first-line review follows the coder and
-the security review follows the senior review, so a craft that sets only one
-half keeps the other half it follows. A craft that sets no access anywhere
-resolves to the project's default credential.
+the two halves inherit separately: the first-line review and the merge judge
+follow the coder, and the security review follows the senior review, so a craft
+that sets only one half keeps the other half it follows. A craft that sets no
+access anywhere resolves to the project's default credential.
 
 Every half names where it came from: the layer that wrote it (repo, local or
 project), the craft it was inherited from, or default when nothing set it. A
@@ -292,6 +292,12 @@ func craftLsLayers(f craftLsFiles) []craft.Layer {
 const (
 	craftLocalKeyPrefix   = "crafts"
 	craftProjectKeyPrefix = "defaults.agent.crafts"
+	// craftNodeKeyPrefix is where the published policy node writes the crafts.
+	// It is the installation config's own path because the node is that config
+	// published (a launch resolves the node, a `fugaro craft ls` the config),
+	// so a problem about a model the node wrote names the key the operator
+	// edits in the document they have.
+	craftNodeKeyPrefix = craftLocalKeyPrefix
 )
 
 // checkoutFugaroYAML is the working directory's checkout's fugaro.yaml, and

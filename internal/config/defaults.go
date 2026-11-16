@@ -83,6 +83,17 @@ const (
 	// credential of the job's own. It is a value of the one list below, so
 	// every reader that places an auth places this one the same way.
 	AuthCascade = "cascade"
+	// AuthAPIKey and AuthOAuth are agent.auth's two job-credentials values:
+	// the run's calls are made with the Anthropic API key the workflow's own
+	// job mounts, or with a Claude subscription account's OAuth token. They
+	// are named here for the readers that tell them from the other two by
+	// value — the credentials service's switch, which serves these two only
+	// under a gateway mode (infra.CredentialsServiceServes), and the flip
+	// list that will hand the service their model calls
+	// (config.ServiceServedAuths) — rather than restated as literals where a
+	// misspelling would be a second, silently different answer.
+	AuthAPIKey = "api-key"
+	AuthOAuth  = "oauth"
 	// DefaultDiagnoseModel is the model a local diagnosis runs on when neither
 	// the repository nor the project layer names one (D1607): Sonnet, because
 	// diagnosing means reading real code and real logs and a diagnosis is rare.
