@@ -114,6 +114,26 @@ func CredentialBySecret(secret string) (name string, ok bool) {
 	return name, true
 }
 
+// CredentialValueSecret is the container the config's own declaration puts
+// name's value in: the credential's derived KEY name when the credentials block
+// declares the name a key type (CredentialSecret), and the account's own Claude
+// OAuth token name otherwise — including for a name no credentials entry
+// mentions, which is the account family's own.
+//
+// A name can be both things at once and the two are stored apart (MC22):
+// claude_accounts.<name>.allow_data_to bounds where the value may be sent,
+// whoever serves it, while credentials.<name>.type decides which container
+// holds it. Every reader that asks whether a name's value is stored — and every
+// fix line that hands the owner a command to store one — resolves the container
+// through this function, so a check and the command it names cannot come to ask
+// about two different secrets under one name.
+func CredentialValueSecret(creds []Credential, name string) string {
+	if c, ok := CredentialNamed(creds, name); ok && KeyCredentialType(c.Type) {
+		return CredentialSecret(name)
+	}
+	return ClaudeAccountSecret(name)
+}
+
 // CredentialsBundleSecret is the logical name of the ONE Secret Manager
 // container the credentials service reads (Q6, docs/credentials-service's
 // implementation plan, C1.11; the reservation is its review finding n2). It
