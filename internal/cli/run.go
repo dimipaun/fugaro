@@ -1663,6 +1663,49 @@ func launchClockSource(o *runOptions, spec *task.Spec) string {
 	return "workflows." + spec.Workflow + ".timeouts.total"
 }
 
+// launchWorkflowShape is the workflow a launch's gates are judged by: the
+// checkout's own document where this machine holds one, else the document read
+// at the forge (source 3, D902) — the same read the job decision makes,
+// memoized, so a launch costs one mint. The workflow's kind and checkout mode
+// are what the image gates are judged by: a checkout: clone workflow runs the
+// installation's base image and has no build record, so judging it as a
+// derived image refuses it for a record it can never have (image_refresh.go).
+// Where that read fails, the caller refuses in the decision's own words rather
+// than judging an image by a workflow nobody read.
+//
+// It is one function because two callers judge one launch: freshLaunchGates
+// below, and the troubleshoot pre-flight, which calls that same block and then
+// names the review-variant checks the block carries for a mode: review spec
+// alone (T-TC1). A second read of the same document is how the two would come
+// to disagree about which job image a launch is judged on.
+//
+// kind, clone and shared are zero where no workflow was read at all — a
+// repository no shared job serves, a project that published no profile, a ref
+// whose tree carries no document, and a checkout whose document could not be
+// read. mode is the same answer for baseBranchSkew and nil there for the same
+// reason: it asks both judges rather than take the one a derived workflow
+// would use (its comment has why).
+func launchWorkflowShape(ctx context.Context, env *cloudEnv, spec *task.Spec) (co *config.Config, kind string, clone, shared bool, mode *bool, err error) {
+	co = checkoutConfig(ctx, spec.Repo)
+	if co == nil {
+		co, err = env.launchConfigWhereTheTreeGivesNone(ctx, spec)
+		if err != nil {
+			return nil, "", false, false, nil, err
+		}
+	}
+	if co == nil {
+		return nil, "", false, false, nil, nil
+	}
+	if w, ok := co.Workflows[spec.Workflow]; ok {
+		kind = w.BaseKind()
+		clone = w.Checkout == config.CheckoutClone
+		shared = w.Checkout == config.CheckoutShared
+		m := clone
+		mode = &m
+	}
+	return co, kind, clone, shared, mode, nil
+}
+
 // freshLaunchGates is the block of gates a fresh launch passes before anything
 // of it is written, and it is one function because the daemon's own launch path
 // (orchestrator_launcher.go) is that same launch shape and must pass the same
@@ -1691,48 +1734,20 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	if err := contextReposRefusal(ctx, env, slug, spec); err != nil {
 		return config.Inputs{}, err
 	}
+	co, kind, clone, shared, mode, err := launchWorkflowShape(ctx, env, spec)
+	if err != nil {
+		return config.Inputs{}, err
+	}
+	agentRecipe := ""
+	if co != nil {
+		agentRecipe = co.Agent.Recipe
+	}
 	// --attach, before the gates below: its recipe refusal, its caps,
 	// D9's line and its image gate (design §4, plan P7/P9). It uploads
 	// nothing here — attachUpload does that below, after the last gate
 	// that can still refuse this launch, so a refused launch leaves
 	// nothing in the bucket under a run id that never gets a task. A
 	// launch with no --attach does nothing here at all.
-	agentRecipe, kind, clone, shared := "", "", false, false
-	// mode is the same answer for baseBranchSkew, and nil where no workflow
-	// was read at all — a repository no shared job serves, a project that
-	// published no profile, a ref whose tree carries no document, and a
-	// checkout whose document could not be read: baseBranchSkew asks both
-	// judges there rather than take the one a derived workflow would use
-	// (its comment has why).
-	var mode *bool
-	co := checkoutConfig(ctx, spec.Repo)
-	if co == nil {
-		// The working tree gave no document. Where the machine holds no
-		// checkout of the repository at all, this launch's document is the one
-		// read at the forge (source 3, D902) — the same read the job decision
-		// makes, memoized, so a launch costs one mint — because the workflow's
-		// kind and checkout mode are what the image gates below are judged by:
-		// a checkout: clone workflow runs the installation's base image and
-		// has no build record, so judging it as a derived image refuses it for
-		// a record it can never have (image_refresh.go). Where that read
-		// fails, this refuses in the decision's own words rather than judging
-		// an image by a workflow nobody read.
-		cfg, err := env.launchConfigWhereTheTreeGivesNone(ctx, spec)
-		if err != nil {
-			return config.Inputs{}, err
-		}
-		co = cfg
-	}
-	if co != nil {
-		agentRecipe = co.Agent.Recipe
-		if w, ok := co.Workflows[spec.Workflow]; ok {
-			kind = w.BaseKind()
-			clone = w.Checkout == config.CheckoutClone
-			shared = w.Checkout == config.CheckoutShared
-			m := clone
-			mode = &m
-		}
-	}
 	caps, err := attachLaunch(ctx, env, slug, spec, s.Prefix(), o.attach, kind, clone, warn)
 	if err != nil {
 		return config.Inputs{}, err
