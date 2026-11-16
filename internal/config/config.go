@@ -193,6 +193,17 @@ type Config struct {
 	// visionSince refuses the key itself, whatever it says (internal/cli).
 	// Like the fields above it is never part of the file or of SHA256.
 	RepoVisionSet bool `yaml:"-" json:"-"`
+	// RepoMergeJudgeCraftSet is whether the repository's own file wrote the
+	// agent.crafts.merge-judge key at all, at any value: the question
+	// RepoVisionSet answers for agent.models.vision, and Agent.Crafts cannot
+	// answer it — the block written empty (`merge-judge: {}`, which sets
+	// neither half and so inherits both) decodes to the same zero Craft as the
+	// key being absent, and a runner older than mergeJudgeSince refuses the key
+	// itself, whatever it says (internal/cli). The other four crafts are not
+	// read here: their keys are 0.24.0's, so an older runner's decoder knows
+	// them, and only this one is the key that has to be judged. Like the fields
+	// above it is never part of the file or of SHA256.
+	RepoMergeJudgeCraftSet bool `yaml:"-" json:"-"`
 }
 
 // Planning is fugaro.yaml's planning: block and the project layer's

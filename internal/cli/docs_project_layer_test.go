@@ -657,12 +657,15 @@ func TestDocsProjectLayerSaysWhatTiesARepositoryToAProject(t *testing.T) {
 // reference described every key of the node but the one that release added, and
 // nothing read the table, so the gap was silent. `providers` is the precedent
 // the row has to follow — a key this release decodes, validates and accepts and
-// no run applies yet — and `binaries` is the one row whose *written block* is a
-// statement at publish time, which the row has to state because a publisher
-// reading it is deciding whether to write `{"allow": []}` or nothing — and
-// because the database keeps no member for an empty list, so the spelling a
-// publisher writes is one the node cannot hold (the review finding on AR0: the
-// row promised a difference at the node that exists only at the publish).
+// no run applies yet — while `binaries` left that state with AR3 of the
+// binary-allow-rule plan, whose finalize enforces it, so the row says what the
+// run now does with the block rather than that nothing does; it stays the one
+// row whose *written block* is a statement at publish time, which the row has to
+// state because a publisher reading it is deciding whether to write
+// `{"allow": []}` or nothing — and because the database keeps no member for an
+// empty list, so the spelling a publisher writes is one the node cannot hold
+// (the review finding on AR0: the row promised a difference at the node that
+// exists only at the publish).
 //
 // E2's `model_grades` row is the same kind of row for the same reason: the
 // member is decoded, validated and accepted by this release and read by no run
@@ -720,9 +723,12 @@ func TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes(t *testing.T) {
 		t.Errorf("docs/project-layer.md's policy table lists %v, want %v: every key of the node the page describes has a row, and a member that ships without one is invisible to the operator reading what a run does with it", keys, want)
 	}
 	for _, want := range []string{
-		"| `binaries` | decoded, validated and accepted, **not applied**",
+		"| `binaries` | decoded, validated and accepted, **applied at finalize**",
 		"the block is the owner's grant of the paths a run may add a binary at",
-		"no run does that yet",
+		"reads it over what a commit would carry that no commit has — the run's untracked files and the ones the agent staged itself",
+		"a file the project admits at that path and within the cap is committed with the run's work",
+		"**What the run commits as work of its own is not read here**",
+		"which is the residual [binary-allow-rule/](binary-allow-rule/) closes as its task AR4",
 		"the one key of this table whose *written block* is a statement at publish time and not at admission time",
 		"the database keeps no member for an empty list, so the node never *holds* that spelling",
 		"an empty block and a write of nothing leave the same node, and both admit nothing",

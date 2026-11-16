@@ -451,11 +451,20 @@ func userOutputs(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config) (
 	// the flag, the config's own terraform.state_bucket, else the default),
 	// so the one place that answers for it is asked rather than a default
 	// spelled again here.
-	spec, err := infra.Installation(lc, infra.InstallOptions{})
+	//
+	// installSpec and not installOptions: this is the door's own composition,
+	// and a config that can no longer compose the job of a default profile the
+	// installation holds refuses installOptions whole — with the
+	// two-GitHub-Apps message, whose remedy is a hand edit of fugaro.yaml. That
+	// is not a state add and rm may be unable to read in: the lists they edit
+	// are this machine's file's and no job is planned here, and the run an
+	// operator would have to fix first (`fugaro update`) converges in that same
+	// state, by the carry heldDefaultProfiles answers it.
+	r := &initRun{cmd: cmd, o: &initOptions{door: "user"}, w: cmd.ErrOrStderr()}
+	spec, err := installSpec(r.o, lc, r.warn)
 	if err != nil {
 		return infra.InstallationOutputs{}, initErr(err)
 	}
-	r := &initRun{cmd: cmd, o: &initOptions{door: "user"}, w: cmd.ErrOrStderr()}
 	bin, err := r.checkEnv(lc)
 	if err != nil {
 		return infra.InstallationOutputs{}, err

@@ -55,6 +55,28 @@ type Cost struct {
 	// floor under the charge for a service tier no one prices: it never
 	// prices a call the table priced.
 	ReportedUSD float64 `json:"reported_usd,omitempty"`
+	// ReportedBy is what providers said their calls cost, by serving model
+	// (F7): the report split the way ModelBy splits the charge, so a reader
+	// can put a model's charge beside its report -- the reconcile view SA1.3
+	// adds is that reader. No route fee is in it. Whether a call the table
+	// could not band -- one priced `max` whose pin the table does not know --
+	// is a key of it, and so whether the entries sum to ReportedUSD, is left
+	// open (O5, docs/spend-accuracy/reconciliation.md): a reader must not
+	// assume they are that sum.
+	ReportedBy map[string]float64 `json:"reported_by,omitempty"`
+	// TableLoUSD and TableHiUSD are what the price table would have charged
+	// the calls a provider reported a cost for: the selected tier's cheapest
+	// end and its dearest, with no route fee (D2650, SA1.6). They are the
+	// band a report is read against -- `diagnose` and the drift alarm compare
+	// the two -- and they are over reported calls only: a call the table
+	// settled is the table's own figure, so counting it would make the band
+	// agree with itself. A model the catalog does not price has equal ends.
+	TableLoUSD float64 `json:"table_lo_usd,omitempty"`
+	TableHiUSD float64 `json:"table_hi_usd,omitempty"`
+	// UnreportedCalls is the run's settled calls whose response carried no
+	// provider cost: what says how much of the band, and of ReportedUSD, the
+	// report is actually over.
+	UnreportedCalls int `json:"unreported_calls,omitempty"`
 	// Unreconciled is the USD charged from reservations rather than from
 	// reported usage.
 	Unreconciled float64 `json:"unreconciled,omitempty"`

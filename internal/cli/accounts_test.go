@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -132,6 +133,39 @@ func TestAccountsLsDefaultFirstThenNamedSorted(t *testing.T) {
 	}
 	if !doc.Complete || doc.Note != "" {
 		t.Fatalf("doc = %+v, want complete=true with no note (selection succeeded)", doc)
+	}
+}
+
+// TestAccountsLsLeavesAKeyCredentialOut is the listing half of the reader this
+// command and init's secrets stage share: a name the credentials block declares
+// a key credential is not a Claude account token, so it is not a name
+// `fugaro run --token` may be given — the whole of what this command lists
+// (its own Short) — and printing it beside the accounts that are leaves the
+// operator with a name whose only two answers are a refusal and a job that
+// mounts nothing. Its declaration is the account's entry, written by
+// `accounts add --type` and bounded by allow_data_to; what lists the credential
+// as what it is, with its type and the half that serves it, is MC24's.
+func TestAccountsLsLeavesAKeyCredentialOut(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, claudeAccountsConfig+"credentials:\n  - { name: acme-overflow, type: openrouter }\n")
+	out, _, err := execute(t, "accounts", "ls", "--repo", "acme/other", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc accountsListDoc
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("unmarshal %q: %v", out, err)
+	}
+	want := []string{"default", "acme-personal"}
+	if fmt.Sprint(doc.Accounts) != fmt.Sprint(want) {
+		t.Errorf("accounts = %v, want %v: a key credential is not an account a --token run may name, and the name it is declared under is not one either", doc.Accounts, want)
+	}
+	text, _, err := execute(t, "accounts", "ls", "--repo", "acme/other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(text, "acme-overflow") {
+		t.Errorf("the text output names the key credential:\n%s", text)
 	}
 }
 

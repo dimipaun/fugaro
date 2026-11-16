@@ -102,6 +102,11 @@ func settingsAccessSecondRepo(t *testing.T, r *initRig, repo string) {
 	}
 }
 
+// settingsAccessRoute is a route the rig's own config opens to its one
+// repository: a model pin is refused without one, and the cases about who may
+// write a model are about the write the command would otherwise make.
+const settingsAccessRoute = "providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n    auth: bearer\n    secret: openrouter-api-key\n    models:\n      - deepseek/*\n    allow_data_to:\n      - acme/sandbox\n"
+
 // settingsAccessCheckout remembers a checkout of repo carrying a repository's
 // smallest fugaro.yaml, and answers with the file a --layer repo write lands
 // in.
@@ -206,6 +211,40 @@ func TestAccessSettingsRepoAdminCannotChangeProjectGuardrails(t *testing.T) {
 			t.Error("the local write changed the project layer file")
 		}
 	})
+}
+
+// TestAccessSettingsModelsUseCannotChangeTheProjectLayer: the same rule at the
+// command that reaches the layer through its own edit rather than `settings
+// set`'s. `fugaro models use --layer project` writes the project's guardrails —
+// a default every repository of the project runs with, claude_models included
+// — so a repository-scoped admin is refused it here exactly as they are refused
+// `settings set layer.defaults.agent.recipe`, with the file untouched.
+func TestAccessSettingsModelsUseCannotChangeTheProjectLayer(t *testing.T) {
+	r, _ := settingsAccessRig(t, userStored(t, settingsAccessRepoUser, accesslib.RoleAdmin, "bitbucket/acme/sandbox"))
+	r.appendConfig(t, settingsAccessRoute)
+	layer := settingsAccessLayerFile(t, modelsUseLayerAuth)
+	layerBefore, localBefore := readFileString(t, layer), readFileString(t, r.cfg)
+	userPairAs(t, settingsAccessRepoUser)
+
+	_, _, err := execute(t, "models", "use", "coder", "deepseek/deepseek-v4-pro", "--layer", "project")
+	if err == nil {
+		t.Fatal("a repository-scoped admin made a project-level write")
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want %d (a user error: nothing was attempted)", ExitCode(err), ExitUserError)
+	}
+	if !strings.Contains(err.Error(), "admin at project scope") {
+		t.Errorf("the refusal does not name the role and the scope the write needs: %v", err)
+	}
+	if !strings.Contains(err.Error(), "finding F19") {
+		t.Errorf("the refusal does not say where the rule comes from: %v", err)
+	}
+	if !strings.Contains(err.Error(), "admin at bitbucket/acme/sandbox") {
+		t.Errorf("the refusal does not say what the caller holds: %v", err)
+	}
+	if readFileString(t, layer) != layerBefore || readFileString(t, r.cfg) != localBefore {
+		t.Error("the refused write changed a project file")
+	}
 }
 
 // TestAccessSettingsRepoAdminChangesRepoSettingWithinGuardrail: the other half

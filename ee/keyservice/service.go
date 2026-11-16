@@ -126,6 +126,17 @@ type Config struct {
 	MaxRepositories int
 	// Throttle is the intake's rate (§7.2).
 	Throttle Limits
+	// InviteRate is how many invitations one organisation may write in one
+	// window (F35, portal plan P2.2). An invitation is mail to an address the
+	// caller chooses, sent from the deployment's own verified sender and
+	// carrying text the caller wrote (the organisation's name), so the door that
+	// reaches it is a rate — every other path that mails has one, and this is
+	// the one that a person reaches by signing up for a free organisation. It is
+	// per organisation and not per caller: what an organisation's owners and
+	// admins may reach is that organisation's allowance, and a second admin is
+	// not a second allowance. Like Throttle it is the deploy's, and New refuses a
+	// deployment that names none rather than mailing on demand.
+	InviteRate Limits
 	// AdminAccount is the one account the admin page answers to: the project
 	// owner's (§6, D455). There is exactly one Licensor, so this is one account
 	// and never a list.
@@ -267,6 +278,12 @@ type Service struct {
 	// of its own rather than the intake's: one sign-in is up to 120 polls, four
 	// times the intake's whole hourly budget for one address (devicePoll).
 	pollLimiter *throttle
+	// invites is the portal's invitation rate, per organisation, and it is a
+	// bucket of its own rather than the intake's: the intake's is keyed on the
+	// address a form carries and the IP it came from, and an invitation is
+	// neither — what it bounds is the mail one organisation can be made to send
+	// (F35, Config.InviteRate).
+	invites *throttle
 	// signIn is §11's verifier of the licence project's own ID tokens, and codes
 	// is what the two sign-in flows are holding: an authorize code between its
 	// sign-in and its exchange, and a device code between the CLI's start and
@@ -446,6 +463,13 @@ func New(cfg Config, deps Deps) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("the device poll's rate is %d request(s) per %s: a poll with no rate is one a stranger sets", devicePollLimits.Requests, devicePollLimits.Window)
 	}
+	// The invitations' rate is the deploy's (F35), beside the intake's own: an
+	// invitation mails an address the caller chooses, so an organisation with no
+	// rate is one whose owners can be made to mail on demand.
+	inviteLimiter, err := newThrottle(cfg.InviteRate, now)
+	if err != nil {
+		return nil, fmt.Errorf("the portal's invitations cannot be served without a rate of their own: %w", err)
+	}
 	cfg.FreeMailDomains = lowerAll(cfg.FreeMailDomains)
 	return &Service{
 		cfg:         cfg,
@@ -464,6 +488,7 @@ func New(cfg Config, deps Deps) (*Service, error) {
 		now:         now,
 		limiter:     limiter,
 		pollLimiter: pollLimiter,
+		invites:     inviteLimiter,
 		signIn:      deps.SignIn,
 		codes:       newSignInCodes(),
 		docs:        deps.Docs,

@@ -229,8 +229,8 @@ func TestModelsAddLeavesAnAbsentAllowListAbsent(t *testing.T) {
 // needs no price, and the command explains what it will be charged at — the
 // tier, the bound charged and the spread to the dearest endpoint of that tier,
 // which is what a call served from the dearest one can be billed. It writes no
-// price_policy switch: `fugaro update` does not accept the key yet, so writing
-// it would refuse the owner's very next step (D795).
+// price_policy switch and names no flag that would: the route is where the
+// switch belongs, and `fugaro update --repo` deploys it from there (D795, F29).
 func TestModelsAddExplainsTheSpreadAndWritesNoSwitch(t *testing.T) {
 	_, path := modelsWriteHome(t)
 
@@ -238,13 +238,16 @@ func TestModelsAddExplainsTheSpreadAndWritesNoSwitch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	for _, want := range []string{"cheapest end", "dearest endpoint", "price_policy", "fugaro update"} {
+	for _, want := range []string{"cheapest end", "dearest endpoint", "price_policy", "fugaro update --repo"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the price note does not explain %q:\n%s", want, out)
 		}
 	}
+	if strings.Contains(out, "does not accept") {
+		t.Errorf("the price note still says the switch cannot be deployed, which is what SA1.1 fixed:\n%s", out)
+	}
 	if got := readFileString(t, path); strings.Contains(got, "price_policy") {
-		t.Errorf("a switch the update does not accept was written:\n%s", got)
+		t.Errorf("models add wrote a switch, which is the route's to carry:\n%s", got)
 	}
 	if p := modelsWriteLocalConfig(t, path).Providers["openrouter"]; p.PricePolicy != "" {
 		t.Errorf("the route's price_policy is %q, want it left unset", p.PricePolicy)

@@ -14,7 +14,7 @@ import (
 // run's shape rather than a knob, or escalate's single round, which is the
 // escalation's own shape: one pass and the verdict, with no round after it.
 func TestCatalogIsTheStarterSet(t *testing.T) {
-	want := []string{"default", "escalate", "lint-fix", "pick", "premium", "rebase", "review-only", "run-digest", "solo", "standard", "test-and-fix"}
+	want := []string{"default", "escalate", "lint-fix", "merge-judge", "pick", "premium", "rebase", "review-only", "run-digest", "solo", "standard", "test-and-fix"}
 	if got := CatalogNames(); !slices.Equal(got, want) {
 		t.Fatalf("catalog = %v", got)
 	}

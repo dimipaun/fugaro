@@ -954,6 +954,286 @@ func TestModelPricesCarryAnImageRate(t *testing.T) {
 	}
 }
 
+// perMLocalSample is the owner's own file with the cache prices written the
+// way a provider's page prints them, in dollars per million tokens (D2646),
+// at the version this release writes.
+const perMLocalSample = `version: 2
+name: aurora
+gcp_project: my-project
+region: us-central1
+runs_bucket: my-runs
+model_prices:
+  claude-mine-1:
+    input_per_m: 10
+    output_per_m: 50
+    cache_read_per_m: 1
+    cache_write_5m_per_m: 12.5
+    cache_write_1h_per_m: 20
+`
+
+// TestPerMConvertsToMultiplier: the owner's file may price a model's cache in
+// dollars per million tokens, the way every list price it was copied from is
+// printed. Loading folds the three per-million keys into the multiplier
+// fields ModelPrice already carries, so what the binary reads — the policy
+// node's prices, the shared copy and the job's FUGARO_MODEL_PRICES — is the
+// multiplier under the old name, and a write back out keeps the spelling the
+// owner chose (D2646 as amended).
+func TestPerMConvertsToMultiplier(t *testing.T) {
+	c, err := Parse([]byte(perMLocalSample))
+	if err != nil {
+		t.Fatalf("a file pricing the cache in dollars per million: %v", err)
+	}
+	mp := c.ModelPrices["claude-mine-1"]
+	for _, tc := range []struct {
+		key  string
+		got  *float64
+		want float64
+	}{
+		{"cache_read", mp.CacheRead, 0.1},
+		{"cache_write_5m", mp.CacheWrite5m, 1.25},
+		{"cache_write_1h", mp.CacheWrite1h, 2},
+	} {
+		if tc.got == nil || *tc.got != tc.want {
+			t.Errorf("%s = %v, want the multiplier %g", tc.key, tc.got, tc.want)
+		}
+	}
+	o, err := c.Overrides()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := o["claude-mine-1"]
+	if r.InputPerM != 10 || r.OutputPerM != 50 || r.CacheRead != 0.1 || r.CacheWrite5m != 1.25 || r.CacheWrite1h != 2 {
+		t.Fatalf("the rates a run gets = %+v", r)
+	}
+	// The env the gateway reads is the multipliers under the old names: the
+	// job's wire is not where a new spelling may appear.
+	env, err := o.Env()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(env, `"cache_read":0.1`) || !strings.Contains(env, `"cache_write_5m":1.25`) || !strings.Contains(env, `"cache_write_1h":2`) {
+		t.Errorf("FUGARO_MODEL_PRICES = %s, want the three multipliers under the old names", env)
+	}
+	for _, bad := range []string{"cache_read_per_m", "cache_write_5m_per_m", "cache_write_1h_per_m", "cache_read_mult", "cache_write_5m_mult", "cache_write_1h_mult"} {
+		if strings.Contains(env, bad) {
+			t.Errorf("FUGARO_MODEL_PRICES = %s, and the job's wire carries no new spelling: %s is in it", env, bad)
+		}
+	}
+	// What the owner wrote survives a write and a read: the file keeps the
+	// per-million keys, and never both spellings of one dimension.
+	data, err := c.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"cache_read_per_m: 1\n", "cache_write_5m_per_m: 12.5\n", "cache_write_1h_per_m: 20\n"} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("marshal = %s, want it to carry %q", data, want)
+		}
+	}
+	for _, bad := range []string{"cache_read:", "cache_read_mult:", "cache_write_5m:", "cache_write_5m_mult:"} {
+		if strings.Contains(string(data), bad) {
+			t.Errorf("marshal = %s, want no second spelling %q", data, bad)
+		}
+	}
+	back, err := Parse(data)
+	if err != nil {
+		t.Fatalf("round trip: %v\n%s", err, data)
+	}
+	o2, err := back.Overrides()
+	if err != nil {
+		t.Fatalf("round trip overrides: %v", err)
+	}
+	if back := o2["claude-mine-1"]; back.CacheRead != r.CacheRead || back.CacheWrite5m != r.CacheWrite5m || back.CacheWrite1h != r.CacheWrite1h {
+		t.Fatalf("round trip rates = %+v, want %+v", back, r)
+	}
+}
+
+// localFileWithPrices is the owner's own file — at the version this release
+// writes, which is what makes it his rather than the published copy — with the
+// model_prices body given, indented under the key.
+func localFileWithPrices(body string) string {
+	return "version: 2\nname: aurora\ngcp_project: my-project\nregion: us-central1\nruns_bucket: my-runs\nmodel_prices:\n" + body
+}
+
+// oneEntry is the smallest priced entry these tests build their documents
+// from: a model the table does not have, at $10 in and $50 out per million.
+const oneEntry = "  claude-mine-1:\n    input_per_m: 10\n    output_per_m: 50\n"
+
+// TestTwoSpellingsRefused: one price written twice is a validation error
+// naming both keys, for every dimension and every pair of its three
+// spellings: the loader answers which number the owner meant by refusing
+// rather than by picking one (D2646).
+func TestTwoSpellingsRefused(t *testing.T) {
+	for _, tc := range []struct{ name, keys string }{
+		{"old and per_m", "cache_read: 0.1\n    cache_read_per_m: 1\n"},
+		{"mult and per_m", "cache_read_mult: 0.1\n    cache_read_per_m: 1\n"},
+		{"old and mult", "cache_read: 0.1\n    cache_read_mult: 0.1\n"},
+		{"write old and per_m", "cache_write_5m: 1.25\n    cache_write_5m_per_m: 12.5\n"},
+		{"write mult and per_m", "cache_write_1h_mult: 2\n    cache_write_1h_per_m: 20\n"},
+		{"all three", "cache_write_1h: 2\n    cache_write_1h_mult: 2\n    cache_write_1h_per_m: 20\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(localFileWithPrices(oneEntry + "    " + tc.keys)))
+			if err == nil {
+				t.Fatal("an entry that writes one price twice is accepted")
+			}
+			first := strings.SplitN(tc.keys, ":", 2)[0]
+			for _, want := range []string{"claude-mine-1", first} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("err = %v, want it to name %q", err, want)
+				}
+			}
+		})
+	}
+	// A per-million price with no input price to read it against is refused
+	// by name too: the division has nothing to divide by.
+	_, err := Parse([]byte(localFileWithPrices("  claude-mine-1:\n    output_per_m: 50\n    cache_read_per_m: 1\n")))
+	if err == nil || !strings.Contains(err.Error(), "cache_read_per_m") || !strings.Contains(err.Error(), "input_per_m") {
+		t.Fatalf("err = %v, want one naming cache_read_per_m and input_per_m", err)
+	}
+}
+
+// TestOldCacheReadWarns: the old cache keys still mean what they always
+// meant — a multiple of input_per_m — and the owner's file is told so, in a
+// note naming the key that says it (D2646). A file that writes only the new
+// names draws nothing.
+func TestOldCacheReadWarns(t *testing.T) {
+	c, err := Parse([]byte(localFileWithPrices(oneEntry + "    cache_read: 0.1\n    cache_write_5m: 1.25\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := c.Warnings()
+	if len(w) != 2 {
+		t.Fatalf("warnings = %v, want one per old key", w)
+	}
+	joined := strings.Join(w, "\n")
+	for _, want := range []string{"model_prices.claude-mine-1.cache_read", "cache_read_mult", "cache_read_per_m", "model_prices.claude-mine-1.cache_write_5m", "cache_write_5m_mult"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("warnings = %v, want %q in them", w, want)
+		}
+	}
+	o, err := c.Overrides()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := o["claude-mine-1"]; r.CacheRead != 0.1 || r.CacheWrite5m != 1.25 || r.CacheWrite1h != 2 {
+		t.Fatalf("rates = %+v, want the old keys read as the multipliers they are", r)
+	}
+	// Neither the new names nor a file that writes none of the old keys is
+	// deprecated.
+	for _, tc := range []struct{ name, prices string }{
+		{"named multipliers", "    cache_read_mult: 0.1\n    cache_write_5m_mult: 1.25\n"},
+		{"per million", "    cache_read_per_m: 1\n    cache_write_1h_per_m: 20\n"},
+		{"none at all", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := Parse([]byte(localFileWithPrices(oneEntry + tc.prices)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if w := c.Warnings(); len(w) != 0 {
+				t.Fatalf("warnings = %v, want none", w)
+			}
+		})
+	}
+}
+
+// TestSharedKeepsOldSpelling: what this machine publishes is the multipliers
+// under the old names, whatever the owner's own file spells, so a teammate
+// whose Fugaro is older than the file reads the document it knows (D2646 as
+// amended). The name the owner wrote stays in his own file.
+func TestSharedKeepsOldSpelling(t *testing.T) {
+	local, err := Parse([]byte(perMLocalSample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	published, err := Parse([]byte(`version: 1
+name: aurora
+gcp_project: my-project
+region: us-central1
+runs_bucket: my-runs
+model_prices:
+  claude-other-1: { input_per_m: 10, output_per_m: 50, cache_read: 0.1 }
+  claude-other-2: { input_per_m: 10, output_per_m: 50, cache_read_mult: 0.1 }
+`))
+	if err != nil {
+		t.Fatalf("the published copy of another machine: %v", err)
+	}
+	for name, c := range map[string]*Config{
+		"Shared":      local.Shared(),
+		"MergeShared": MergeShared(published, local),
+	} {
+		t.Run(name, func(t *testing.T) {
+			data, err := c.Marshal()
+			if err != nil {
+				t.Fatal(err)
+			}
+			mp := c.ModelPrices["claude-mine-1"]
+			if mp.CacheRead == nil || *mp.CacheRead != 0.1 || mp.CacheWrite5m == nil || *mp.CacheWrite5m != 1.25 || mp.CacheWrite1h == nil || *mp.CacheWrite1h != 2 {
+				t.Errorf("%s: multipliers = %+v, want the ones the owner's file implies", name, mp)
+			}
+			if !strings.Contains(string(data), "cache_read: 0.1\n") {
+				t.Errorf("%s = %s, want the multiplier under the old name", name, data)
+			}
+			for _, bad := range []string{"cache_read_per_m", "cache_read_mult", "cache_write_5m_per_m", "cache_write_1h_per_m"} {
+				if strings.Contains(string(data), bad) {
+					t.Errorf("%s = %s, and the new name %s must not be published", name, data, bad)
+				}
+			}
+		})
+	}
+	// An entry the published copy already spelled with the new name goes back
+	// out under the old one: the published document carries one spelling, and
+	// it is the one a teammate's older Fugaro reads without refusing the file.
+	merged := MergeShared(published, local)
+	if got := merged.ModelPrices["claude-other-2"]; got.CacheRead == nil || *got.CacheRead != 0.1 || got.CacheReadMult != nil {
+		t.Fatalf("the published entry = %+v, want the multiplier under the old name alone", got)
+	}
+	mergedData, err := merged.Marshal()
+	if err != nil || !strings.Contains(string(mergedData), "cache_read: 0.1\n") || strings.Contains(string(mergedData), "cache_read_mult") {
+		t.Fatalf("the republished copy = %s (%v), want the old name", mergedData, err)
+	}
+	// The owner's own file keeps the spelling he wrote.
+	data, err := local.Marshal()
+	if err != nil || !strings.Contains(string(data), "cache_read_per_m: 1\n") {
+		t.Fatalf("the local file = %s (%v), want the dollars-per-million key it wrote", data, err)
+	}
+}
+
+// TestSharedCopyNoWarning: the old keys in the published copy are the design,
+// not a deprecation, so reading one draws no note — while the same keys in
+// the owner's own file do. What tells the two apart is the version: every
+// shared document is SharedVersion, because Shared stamps it that way for the
+// teammate whose Fugaro is older than the file, and a local file this release
+// has written is ConfigVersion.
+func TestSharedCopyNoWarning(t *testing.T) {
+	local, err := Parse([]byte(localFileWithPrices(oneEntry + "    cache_read: 0.1\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := local.Warnings(); len(w) != 1 {
+		t.Fatalf("the owner's own file: warnings = %v, want the one note", w)
+	}
+	data, err := local.Shared().Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "version: 1\n") {
+		t.Fatalf("the published copy = %s, want it at SharedVersion", data)
+	}
+	shared, err := Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := shared.Warnings(); len(w) != 0 {
+		t.Fatalf("the published copy: warnings = %v, want none", w)
+	}
+	o, err := shared.Overrides()
+	if err != nil || o["claude-mine-1"].CacheRead != 0.1 {
+		t.Fatalf("the published copy reads as the multiplier: %v, %v", o["claude-mine-1"], err)
+	}
+}
+
 func TestBudgetTokensAndModelsValidation(t *testing.T) {
 	for name, tc := range map[string]struct{ yaml, msg string }{
 		"negative tokens":   {"budget: { max_run_tokens: -1 }\n", "max_run_tokens"},

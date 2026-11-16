@@ -58,14 +58,26 @@ import (
 // config.ProjectJobAccounts is the one function the deployer, the runner and
 // this launcher compute the account with.
 
-// launchProjectJob is the shared project job a launch runs on, and the two
-// things about it a launch needs.
+// launchProjectJob is the shared project job a launch runs on, and the things
+// about it a launch needs.
 type launchProjectJob struct {
 	// Name is the job's own name (gcp.ProjectJobName), as Cloud Run deployed
 	// it.
 	Name string
 	// Profile is the profile's name, for messages.
 	Profile string
+	// Provider and Account are the two axes beside the profile that the
+	// published policy computes the job's name from (gcp.ProjectJobName), and
+	// what the job's own service account is derived from
+	// (gcp.ProjectServiceAccountID, the one derivation internal/infra's
+	// ProjectJobs deployed the job's account with): the account every
+	// execution on the job calls as, and the account the credentials service
+	// checks a run's slip claim against (D1937). A review-only variant
+	// (projectJobReviewFor) carries neither, because its name and its account
+	// are credsvc.ReviewJobName's and credsvc.ReviewServiceAccountID's: no
+	// account is derivable from this pair for it.
+	Provider string
+	Account  string
 	// Timeout is the job's own task timeout: the profile's timeout_class plus
 	// the slack every job's template carries (internal/infra's ProjectJobs).
 	// It bounds this run's execution, and it is the budget token's window: a
@@ -260,9 +272,7 @@ func (e *cloudEnv) continuedJob(ctx context.Context, slug string, spec *task.Spe
 // that is not a project job is not this launch's job to reuse. Handing it to
 // the shared path would run it on a job this installation was never asked for
 // (a name the platform's list does not hold, or the previous account's job where
-// this launch names another): the credentials service's address is withheld
-// from a named job (credentialsServiceLaunchEnv), which is the fetch path a
-// cascade repository clones by, the token's window would be the platform's
+// this launch names another): the token's window would be the platform's
 // default rather than the job's own class, and the account axis the launch
 // derives would be pinned to the run being continued. A policy that is not
 // published, or cannot be read, leaves every name uncomputed, so a continuation
@@ -276,12 +286,13 @@ func (e *cloudEnv) projectJobOfRecord(ctx context.Context, job string) (*launchP
 	if !found || p == nil {
 		return nil, false, nil
 	}
-	profile, _, _, ok := runner.ProjectJobOfPolicy(p, job)
+	profile, provider, account, ok := runner.ProjectJobOfPolicy(p, job)
 	if !ok {
 		return nil, false, nil
 	}
 	timeout, _ := config.ParseDuration(p.Profiles[profile].TimeoutClass)
-	return &launchProjectJob{Name: job, Profile: profile, Timeout: timeout + backend.TaskTimeoutSlack}, true, nil
+	return &launchProjectJob{Name: job, Profile: profile, Provider: provider, Account: account,
+		Timeout: timeout + backend.TaskTimeoutSlack}, true, nil
 }
 
 // launchProjectJobFor resolves the project job spec runs on, and returns nil
@@ -471,9 +482,11 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, slug string, spec *t
 	// (contract.md: the runner matches CLOUD_RUN_JOB against this same
 	// computation).
 	return &launchProjectJob{
-		Name:    gcp.ProjectJobName(choice.Profile, pr.Provider, account),
-		Profile: choice.Profile,
-		Timeout: timeout + backend.TaskTimeoutSlack,
+		Name:     gcp.ProjectJobName(choice.Profile, pr.Provider, account),
+		Profile:  choice.Profile,
+		Provider: pr.Provider,
+		Account:  account,
+		Timeout:  timeout + backend.TaskTimeoutSlack,
 	}, nil
 }
 

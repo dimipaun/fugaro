@@ -1060,7 +1060,28 @@ func (r *run) closeGateway() {
 	if err := gw.Close(ctx); err != nil {
 		r.d.Log.Warn("closing the gateway failed", "err", r.redact(err.Error()))
 	}
-	led := gw.Ledger()
+	r.recordLedgerCost(gw.Ledger())
+	r.mu.Lock()
+	// The run's own model figure is the ledger's totals plus the stages the
+	// ledger never saw, an account stage's own among them (P11, P12): the
+	// ledger's figure alone would drop them from the record here, at the last
+	// gateway write of the run, however carefully the stages kept them.
+	spent := r.gwUsed + r.gwNotional + r.direct
+	r.mu.Unlock()
+	r.rec.CostUSD = spent.USD()
+	r.updateCost()
+	r.warnReportedGap()
+}
+
+// recordLedgerCost takes the run's cost figures from the gateway's ledger:
+// the settled totals, the prompt-cache totals, the token counts by model, and
+// the provider reports with the price table's band behind them. Every one of
+// them is the ledger's and none is a sum of the stage reports, because the
+// ledger holds calls no report does: a call that settled after its stage's
+// wait ran out is in the ledger's figures and in no stage report at all, so a
+// figure built by adding a report's to the ledger's would count that call
+// twice (F24, G1.2, SA1.5).
+func (r *run) recordLedgerCost(led gateway.Ledger) {
 	r.mu.Lock()
 	// The ledger's settled totals are the run's, and they are the ones
 	// r.gwUsed and r.gwNotional keep: the money its calls paid and the
@@ -1073,15 +1094,14 @@ func (r *run) closeGateway() {
 	// stage's wait ran out is in them (G1.2, F8). The two are the same calls'
 	// tokens, so a reader that sums these entries gets exactly those totals.
 	r.modelTokens = modelTokenCounts(led.ModelTokens)
-	// The run's own model figure is the ledger's totals plus the stages the
-	// ledger never saw, an account stage's own among them (P11, P12): the
-	// ledger's figure alone would drop them from the record here, at the last
-	// gateway write of the run, however carefully the stages kept them.
-	spent := r.gwUsed + r.gwNotional + r.direct
+	// The provider reports and the table band behind them, by serving model,
+	// with the calls that carried no report counted beside them (F24, D2650).
+	// A Ledger is a snapshot, so these are the run's until it reads another.
+	r.reportedBy = led.ReportedBy
+	r.tableLoBy = led.TableLoBy
+	r.tableHiBy = led.TableHiBy
+	r.unreportedCalls = led.UnreportedCalls
 	r.mu.Unlock()
-	r.rec.CostUSD = spent.USD()
-	r.updateCost()
-	r.warnReportedGap()
 }
 
 // routingKnob reports whether the live test's knob skips the
