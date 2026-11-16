@@ -400,9 +400,17 @@ func (s *secretsStage) resolve(ctx context.Context) {
 		// already knows about per workflow; the line it leaves for one of
 		// them is that account's own `fugaro accounts add` command (Left),
 		// not the default's mint-then-store pair (design
-		// docs/design/named-oauth-tokens.md §3 T3, §4).
+		// docs/design/named-oauth-tokens.md §3 T3, §4). A name the credentials
+		// block declares a key credential is no such account
+		// (config.ClaudeAccountTokenNames): it has no
+		// claude-oauth-token-<name>, and the command the entry would leave the
+		// owner is one `accounts add` refuses for it — a stage waiting on a
+		// value nothing could store, under a name no command of the line
+		// writes.
 		if cfg.Agent.Auth == "oauth" {
-			for _, n := range config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo) {
+			accounts := config.ClaudeAccountTokenNames(lc.Credentials,
+				config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo))
+			for _, n := range accounts {
 				if n == config.DefaultClaudeAccount {
 					continue
 				}
