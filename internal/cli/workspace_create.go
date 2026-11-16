@@ -389,7 +389,12 @@ func (s *workspaceProjectStage) prepare(ctx context.Context) error {
 	if err := e.setup(ctx); err != nil {
 		return err
 	}
-	spec, err := installOptions(e.r.o, e.lc)
+	// installSpec and not installOptions: this stage runs in the run's loop
+	// (init_stages.go, W3), so an update that reaches it on a config that can
+	// no longer compose the default profile's job would stop here instead of
+	// converging. What this stage reads of the spec is its state bucket alone,
+	// which the carry never changes.
+	spec, err := installSpec(e.r.o, e.lc, e.r.warn)
 	if err != nil {
 		return err
 	}

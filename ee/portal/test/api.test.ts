@@ -154,4 +154,27 @@ describe('the API client', () => {
 
     await expect(api.request('/orgs')).resolves.toBeUndefined()
   })
+
+  it('asks for no body when a request that carries one is answered 204', async () => {
+    // The two acts that end this way: a trial's ask and an open-source request
+    // answer 204 and nothing else, because what they hand back is nothing --
+    // the key goes by mail (D2135) and the open-source decision is a person's
+    // (P5.1). A client that read a body wherever it was offered would throw on
+    // the empty answer of a request that succeeded.
+    const { api, calls } = client([
+      () =>
+        ({
+          ok: true,
+          status: 204,
+          json: () => Promise.reject(new Error('a 204 has no body to read')),
+        }) as unknown as Response,
+    ])
+
+    await expect(
+      api.request('/trial', { method: 'POST', body: { workspace_id: 'example-portal' } }),
+    ).resolves.toBeUndefined()
+    expect(calls[0]?.url).toBe('/api/trial')
+    expect(calls[0]?.init.method).toBe('POST')
+    expect(calls[0]?.init.body).toBe('{"workspace_id":"example-portal"}')
+  })
 })

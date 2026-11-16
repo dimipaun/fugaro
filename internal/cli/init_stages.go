@@ -422,6 +422,15 @@ func (e *initEngine) converge(ctx context.Context) error {
 	// names its jobs in the credentials service's table (the same run grants
 	// them roles/run.invoker on that service: makeOnboardingRepoEntry).
 	e.makeOnboardingRepoEntry()
+	// The default job profile of every provider this project's repositories
+	// use joins the local config here, before the first stage plans, so that
+	// the installation stage — the one that turns profiles into project jobs —
+	// deploys their jobs in this same update (S5). It is after the onboarding
+	// entry above so that the repository this run onboards is one of the
+	// providers in use, and before the loop for the reason syncAccess is
+	// below it: the config every stage of this run reads is the one this run
+	// writes.
+	e.createDefaultProfiles()
 	// The managed project's read, once for the whole run: it is what the run's
 	// one confirmation and the steps the gate does not judge ask about
 	// (update_managed.go's gateRun), and it is made before the first stage so
@@ -1629,8 +1638,11 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 			// built before the images stage, and the base image both scheduled
 			// jobs run FROM is one of the things that stage moves — a job this
 			// apply left at the image the run started with would lag an entire
-			// `fugaro update` behind.
-			next, err := installOptions(e.r.o, e.lc)
+			// `fugaro update` behind. installSpec and not installOptions, for
+			// the reason the repository stage reads it that way too: a config
+			// this run cannot compose the default profile's job from must not
+			// stop a stage of a converging update.
+			next, err := installSpec(e.r.o, e.lc, e.r.warn)
 			if err != nil {
 				return err
 			}

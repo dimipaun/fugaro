@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -259,5 +260,149 @@ func TestNewPoolDefaultsToOnlyOwner(t *testing.T) {
 	}
 	if (Pool{Name: "claude", Members: []string{"oauth-one"}}).Serves("anyone@example.com") {
 		t.Error("a pool with no owner and no marker serves someone")
+	}
+}
+
+// poolCrossingMembers is the credentials block the crossing tests read: two
+// subscriptions and a key on the credentials service's path, and a route on the
+// run's own gateway's, so a pool can be written on either side of the seam and
+// with a member between the crossing's two.
+func poolCrossingMembers() []Credential {
+	return []Credential{
+		{Name: "sub-one", Type: CredentialTypeClaudeOAuth},
+		{Name: "sub-two", Type: CredentialTypeClaudeOAuth},
+		{Name: "key-one", Type: CredentialTypeAnthropic},
+		{Name: "router-one", Type: CredentialTypeOpenRouter},
+	}
+}
+
+// TestPoolCannotCrossTheTwoPaths is D1668 and this task's red step: a pool whose
+// members are not all served on one path is refused, whichever way it lists
+// them, at the member its own order crosses at — the first one whose half is not
+// the first member's. The order is what makes the refusal necessary rather than
+// tidy: failover walks the list (D1632), and neither half can walk a list that
+// reaches into the other (F7, F20).
+func TestPoolCannotCrossTheTwoPaths(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		members []string
+		at      int
+	}{
+		{"a subscription then a route", []string{"sub-one", "router-one"}, 1},
+		{"a route then a subscription", []string{"router-one", "sub-one"}, 1},
+		{"an API key then the built-in vertex", []string{"key-one", CredentialVertex}, 1},
+		{"a crossing behind two members of one half", []string{"sub-one", "sub-two", "router-one"}, 2},
+		{"a crossing, and then the half it started on", []string{"router-one", "sub-one", "key-one"}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ps := ValidatePoolPaths([]Pool{{Name: "mixed", Members: tc.members}}, poolCrossingMembers())
+			if len(ps) != 1 {
+				t.Fatalf("the pool %v is answered with %d problem(s), want one: %v", tc.members, len(ps), ps)
+			}
+			if want := fmt.Sprintf("pools.mixed.members[%d]", tc.at); ps[0].Path != want {
+				t.Errorf("the refusal is at %q, want %q: the member the pool's own order crosses at", ps[0].Path, want)
+			}
+		})
+	}
+	// A pool this document does not define a member of is reported for that and
+	// not also for a crossing: a name no layer places is not a half, and the
+	// operator has one thing to fix, not two.
+	undefined := []Pool{{Name: "mixed", Members: []string{"sub-one", "nowhere"}}}
+	ps := ValidatePools(undefined, poolCrossingMembers())
+	if len(ps) != 1 || !strings.Contains(ps[0].Message, "no credential of this name is defined") {
+		t.Errorf("a pool naming an undefined member is answered with %v, want the member's own problem alone", ps)
+	}
+	if ps := ValidatePoolPaths(undefined, poolCrossingMembers()); len(ps) != 0 {
+		t.Errorf("a pool naming an undefined member is refused a second time for a crossing: %v", ps)
+	}
+}
+
+// TestTheReadersLeaveACrossingPoolToTheSplit is the staging this refusal ships
+// under, and it is the test that keeps it deliberate: D1668's rule is the door a
+// pool is WRITTEN through and not a rule of the two readers, because 0.25.0's
+// `accounts pool add` wrote a pool naming both halves and its `accounts pool ls`
+// read it as valid — so a config or a published node that carries one is a
+// document no step of this release can repair, and a reader that refused it
+// would leave an installation that cannot read its own config, `fugaro update`'s
+// own load included. MC21 converges a pool that already crosses — the config in
+// place in `fugaro update`, the published node by a step of the policy chain —
+// and moves the rule into these two functions in the change that lands it, which
+// is this refusal's own release (row 43). This test is what fails if the rule
+// reaches the readers before that step does.
+func TestTheReadersLeaveACrossingPoolToTheSplit(t *testing.T) {
+	pool := Pool{Name: "mixed", Members: []string{"sub-one", "router-one"}, Owner: "owner@example.com"}
+	for name, ps := range map[string][]Problem{
+		"ValidatePools":          ValidatePools([]Pool{pool}, poolCrossingMembers()),
+		"ValidatePublishedPools": ValidatePublishedPools([]Pool{pool}, poolCrossingMembers()),
+	} {
+		if len(ps) != 0 {
+			t.Errorf("%s refuses a pool an earlier release wrote: %v", name, ps)
+		}
+	}
+	if ps := ValidatePoolPaths([]Pool{pool}, poolCrossingMembers()); len(ps) != 1 {
+		t.Errorf("the door a pool is written through does not refuse the crossing: %v", ps)
+	}
+}
+
+// TestCrossPathPoolRefusedWithTheSplitSentence pins the ONE sentence D1668 rules
+// the refusal is: it names the two members, the half each is served by, and the
+// fix — two pools, one per half, and each craft's access naming the one its
+// stages need. It is the sentence where the pool is written today, and the one
+// the config's load and the node's read say too once MC21 moves the rule into
+// them, so the operator reads the same thing whichever door they met it at.
+func TestCrossPathPoolRefusedWithTheSplitSentence(t *testing.T) {
+	creds := []Credential{
+		{Name: "openrouter-x", Type: CredentialTypeOpenRouter},
+		{Name: "anthropic-y", Type: CredentialTypeAnthropic},
+	}
+	const want = "members anthropic-y and openrouter-x are served by different halves of a run (anthropic-y's type is served by the credentials service, openrouter-x's by the run's own gateway), and a pool's order can therefore mean nothing: name two pools, one per half, and let each craft's access name the one its stages need"
+	for _, tc := range []struct {
+		name    string
+		members []string
+	}{
+		{"a route then a key", []string{"openrouter-x", "anthropic-y"}},
+		{"a key then a route", []string{"anthropic-y", "openrouter-x"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pool := Pool{Name: "mixed", Members: tc.members, Owner: "owner@example.com"}
+			ps := ValidatePoolPaths([]Pool{pool}, creds)
+			if len(ps) != 1 {
+				t.Fatalf("the pool %v is answered with %d problem(s), want one: %v", tc.members, len(ps), ps)
+			}
+			if ps[0].Message != want {
+				t.Errorf("the refusal is\n%s\nwant\n%s", ps[0].Message, want)
+			}
+			if ps[0].Path != "pools.mixed.members[1]" {
+				t.Errorf("the refusal is at %q, want pools.mixed.members[1]", ps[0].Path)
+			}
+		})
+	}
+}
+
+// TestPoolOfOnePathStillAdmitsEveryMemberOfIt is the other half of the rule, and
+// the reason it is about the PATH rather than about a type: a subscription and
+// an API key are one path — the credentials service, which selects between them
+// by tier (D154, D1626) — and a route and the built-in vertex are the other, so
+// every member of a half may be listed, however many, in whatever order.
+func TestPoolOfOnePathStillAdmitsEveryMemberOfIt(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		members []string
+	}{
+		{"a subscription and an API key", []string{"sub-one", "key-one"}},
+		{"two subscriptions and the key beside them", []string{"sub-one", "sub-two", "key-one"}},
+		{"the key first and a subscription after it", []string{"key-one", "sub-one"}},
+		{"a route and the built-in vertex", []string{"router-one", CredentialVertex}},
+		{"the built-in alone", []string{CredentialVertex}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pools := []Pool{{Name: "claude", Members: tc.members}}
+			if ps := ValidatePools(pools, poolCrossingMembers()); len(ps) != 0 {
+				t.Errorf("the pool %v is refused: %v", tc.members, ps)
+			}
+			if ps := ValidatePoolPaths(pools, poolCrossingMembers()); len(ps) != 0 {
+				t.Errorf("the pool %v is refused where it would be written: %v", tc.members, ps)
+			}
+		})
 	}
 }

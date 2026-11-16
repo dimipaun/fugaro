@@ -1188,6 +1188,11 @@ func secretCleanRig(t *testing.T) (*doctorRig, string) {
 	// An empty layer bucket of the test's own: the clean state reads no gs://.
 	addLocalLines(t, r, "bucket_url: "+layerBucketWith(t, "")+"\n")
 	addLocalLines(t, r, projectSecretsConfig)
+	// And on the shared job: a repository this machine still launches on its
+	// per-repository job is one doctor has something to say about (M3, R3), so
+	// the profile its provider's default names is part of the clean state —
+	// the secret listing is the only thing left for this screen to measure.
+	addLocalLines(t, r, "profiles:\n  standard: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h }\n")
 	// Both copies the listing resolves: the project's, and this repository's
 	// own. Values are never printed, and doctor must not print them here.
 	putProjectSecret(t, r.sm, "aurora", "github-app-key", []byte("project-value"))

@@ -610,6 +610,30 @@ resource "google_cloud_run_v2_service" "credentials" {
           value = env.value
         }
       }
+      # The build class (B1, B5, D2301): the identities that may ask the build
+      # route for the one credential a catalog build runs on. The value is the
+      # address of the build identity THIS apply creates (build_identity.tf),
+      # which is the coordinator's shape above — the module rendering an
+      # account it creates rather than a value the owner wrote — and it is one
+      # project's identity and not a list of jobs: a catalog build bakes a
+      # project's entry, so the account it runs as is the project's, and
+      # FUGARO_JOB_ACCOUNTS' per-repository accounts are not it.
+      #
+      # The address comes from the resource and never from a second spelling of
+      # the literal: the identity that may knock and the identity that is
+      # served are one value read twice, the property the coordinator's own
+      # entry has.
+      #
+      # It is a JSON ARRAY holding that one address — the shape
+      # internal/cli's credentialsServiceBuildAccounts decodes with
+      # json.Unmarshal, which refuses anything that is not a list — and it is
+      # rendered whenever this service is: the account is created on the same
+      # switch (local.credentials_service_on, build_identity.tf), so there is
+      # no state in which the container exists and the identity does not.
+      env {
+        name  = "FUGARO_BUILD_ACCOUNTS"
+        value = jsonencode([google_service_account.build_identity[0].email])
+      }
       # The read mint's admitted people (BB4), rendered the same way and for the
       # same reason: an installation that names no operator renders the seven
       # names above and nothing else, and the process reads this one as an

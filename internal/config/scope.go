@@ -70,11 +70,11 @@ var Scopes = []ScopeRow{
 	// diagnose one — which is why it is here beside the vision slot rather than
 	// with the roles a run reads.
 	{Key: "agent.models.diagnose", In: InProject | InRepo},
-	// The four crafts (docs/model-crafts/spec.md §3): each craft's model and
+	// The crafts (docs/model-crafts/spec.md §3): each craft's model and
 	// the credential or pool its calls go out on. A craft's model is a default
 	// the project sets for every repository of it, as agent.models.* is; its
 	// access is not, and carries agent.oauth_token's own why — one sentence
-	// for all four, because the reason is about the key and not about which
+	// for all of them, because the reason is about the key and not about which
 	// craft writes it.
 	{Key: "agent.crafts.coder.model", In: InProject | InRepo},
 	{Key: "agent.crafts.coder.access", In: InRepo, Why: whyCredentialAccess},
@@ -84,6 +84,8 @@ var Scopes = []ScopeRow{
 	{Key: "agent.crafts.senior-review.access", In: InRepo, Why: whyCredentialAccess},
 	{Key: "agent.crafts.security-review.model", In: InProject | InRepo},
 	{Key: "agent.crafts.security-review.access", In: InRepo, Why: whyCredentialAccess},
+	{Key: "agent.crafts.merge-judge.model", In: InProject | InRepo},
+	{Key: "agent.crafts.merge-judge.access", In: InRepo, Why: whyCredentialAccess},
 	// The escalation ladder's two model grades (docs/outer-loop-escalation E2,
 	// D2039): the pair a craft carries, in one block of its own, and the one
 	// place a project layer may name an access (whyGrade). A repository's entry

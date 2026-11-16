@@ -236,11 +236,24 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy, identities 
 	}
 	add("accounts", accounts, p.Accounts, false)
 	for _, name := range slices.Sorted(maps.Keys(profiles)) {
-		var served []string
-		if np, ok := p.Profiles[name]; ok {
-			served = np.ClaudeAccounts
+		np, ok := p.Profiles[name]
+		if !ok {
+			// The NAME is a difference a publish closes, and the only one in
+			// the block this comparison reports: a config that defines a
+			// profile the node does not carry is a profile nothing resolves —
+			// a workflow that names it, and the default of a provider (R8) —
+			// and `fugaro update` writing the default profile of a provider a
+			// project uses is exactly that config (S5, R1, D2310): the node of
+			// an installation that never carried one learns it here, in the
+			// same run, or the shared job the installation stage deploys is a
+			// job no policy names. The contents are still not compared, for
+			// the reason above them: a publish that fired on those would
+			// rewrite the node on every run without closing the gap it fired
+			// on.
+			out = append(out, policyDrift{Member: "profiles." + name, File: jsonText(profiles[name])})
+			continue
 		}
-		add("profiles."+name+".claude_accounts", profiles[name].ClaudeAccounts, served, false)
+		add("profiles."+name+".claude_accounts", profiles[name].ClaudeAccounts, np.ClaudeAccounts, false)
 	}
 	// The account-choice keys are compared too — the project's
 	// default_claude_account and each stage's own claude_account — because
@@ -356,6 +369,23 @@ func accountChoiceNames(sides ...map[string]string) []string {
 		}
 	}
 	return out
+}
+
+// splitAccountChoices separates a re-seed's unwritten members into the
+// account-choice keys and everything else, in the order they came. The two take
+// different remedies in the refusal (applyPolicyReseed), so the split happens
+// where the sentence is built rather than in the members' own shape: a member
+// that is an account choice is recognised by name and prefix, which is the same
+// spelling stageAccountMember and the published node use.
+func splitAccountChoices(hand []string) (accounts, rest []string) {
+	for _, member := range hand {
+		if member == "default_claude_account" || strings.HasPrefix(member, "claude_account_stages.") {
+			accounts = append(accounts, member)
+			continue
+		}
+		rest = append(rest, member)
+	}
+	return accounts, rest
 }
 
 // jsonText is a value as the two documents spell it, with the empty forms
@@ -1232,11 +1262,11 @@ func reseedPolicyKeys(old []byte, lc *localcfg.Config, p *projectpolicy.Policy, 
 			// and these are the operator's own settings, which is why the local
 			// config is their only store (the locLocal rows `fugaro settings set`
 			// writes). An operator whose node carries an account this file does
-			// not puts it back with that command — `fugaro settings set
-			// default_claude_account <name>`, `fugaro settings set
-			// stages.<stage>.claude_account <name>` — and runs `fugaro update`
-			// again, which is the path the refusal's message leaves open rather
-			// than a splice this re-seed could have made.
+			// not writes it back with that command and publishes it with
+			// `fugaro project policy publish`, not by running `fugaro update`
+			// again: the update refuses this file until a publish has landed
+			// (publishPlanFor's generation check), so its message names the
+			// publish rather than the run that would repeat the refusal.
 			hand = append(hand, member)
 		}
 	}
@@ -1244,10 +1274,13 @@ func reseedPolicyKeys(old []byte, lc *localcfg.Config, p *projectpolicy.Policy, 
 }
 
 // applyPolicyReseed is the accepted offer: the file is backed up and written
-// with what the re-seed could splice. A member it could not write is refused
-// rather than skipped — a re-seed that recorded a generation while leaving a
-// member behind would let the next publish overwrite the newer node with the
-// older file, which is the whole of what D854 refuses.
+// with what the re-seed could splice, and a member it could not write is
+// refused rather than skipped — a re-seed that recorded a generation while
+// leaving a member behind would let the next publish overwrite the newer node
+// with the older file, which is the whole of what D854 refuses. The spliced
+// members are written even when the offer is refused, so the file is the node's
+// own on everything but the members the refusal names; that is what makes the
+// publish it recommends safe, since a publish builds the node from this file.
 //
 // The generation this file is now written from is the caller's to record and
 // not this function's: the caller is the one that knows whether the node is
@@ -1263,8 +1296,59 @@ func applyPolicyReseed(cmd *cobra.Command, path string, lc *localcfg.Config, p *
 	}
 	out, written, hand := reseedPolicyKeys(old, lc, p, members)
 	if len(hand) > 0 {
-		return nil, userErr("the published policy node's %s cannot be re-seeded into %s by one edit, so the file was left as it is: put the published values there by hand, then run %s again",
-			strings.Join(hand, ", "), path, selfCommand()+" update")
+		// The members this re-seed could splice are written even though the
+		// offer is refused, because the remedy the sentence below names for an
+		// account key — `fugaro project policy publish` — builds the node from
+		// this file: a spliced member dropped here is this file's older value
+		// written back over the newer node the moment the operator follows that
+		// advice, which is the overwrite D854 refuses, made by the sentence that
+		// recommends the publish. What is left unwritten is named.
+		//
+		// The generation stays unrecorded — the caller returns on the error
+		// below — because the file still differs from the node on the members
+		// named: a record here would claim a baseline the file does not have,
+		// and the next run's refusal is what carries the rest over.
+		if err := writeFileAtomicGuarded(cmd, path, old, out); err != nil {
+			return nil, err
+		}
+		// The remedy is per member, because the two kinds need different ones
+		// and naming the wrong one leaves the operator where they started: a
+		// value the node states and this file does not goes back by a hand edit
+		// the update then re-seeds around, while an account-choice key has no
+		// published value for a hand edit to put there — the local file is its
+		// only store — and the command that writes it to the node is
+		// `fugaro project policy publish` at the operator's own terminal. The
+		// update is named only where it is the way out: run again over an
+		// account key it refuses this same file (publishPlanFor), which is the
+		// dead end this sentence exists not to send anyone into.
+		//
+		// The two are ordered where both are named, because that publish writes
+		// every member this file states over the node's: run before the hand
+		// edits, it puts this file's older values for them there, which is the
+		// overwrite D854 refuses one round later — and it is why the members
+		// written above are named in the refusal: they are what the publish no
+		// longer carries back.
+		accounts, rest := splitAccountChoices(hand)
+		var remedies []string
+		if len(rest) > 0 {
+			remedies = append(remedies, fmt.Sprintf("put the published values of %s there by hand — a flow block rewritten as a block mapping is one an edit can reach — and run %s again",
+				strings.Join(rest, ", "), selfCommand()+" update"))
+		}
+		if len(accounts) > 0 {
+			publishing := "then publish it with `fugaro project policy publish` at your own terminal, which builds the node from this file and never consults the recorded generation"
+			if len(rest) > 0 {
+				publishing = "then, once this file states the node's own values for the members above, publish it with `fugaro project policy publish` at your own terminal — that command builds the node from this file, so run before those edits it would write this file's older values for them over the node's"
+			}
+			remedies = append(remedies, fmt.Sprintf("%s: an account choice is your own, and the local config is its only store — write the choice with `fugaro settings set default_claude_account <name>` or `fugaro settings set stages.<stage>.claude_account <name>`, %s (%s is the upgrade, and its policy stage refuses this file until that publish has landed)",
+				strings.Join(accounts, ", "), publishing, selfCommand()+" update"))
+		}
+		left := fmt.Sprintf("the published policy node's %s cannot be re-seeded into %s by one edit", strings.Join(hand, ", "), path)
+		if len(written) > 0 {
+			left += fmt.Sprintf(", so the node's own values for %s were written there and no generation was recorded", strings.Join(written, ", "))
+		} else {
+			left += ", so the file was left as it is"
+		}
+		return written, userErr("%s: %s", left, strings.Join(remedies, "; and "))
 	}
 	if err := writeFileAtomicGuarded(cmd, path, old, out); err != nil {
 		return nil, err

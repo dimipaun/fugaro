@@ -242,7 +242,7 @@ const (
 // whose second answer spends the project's money, and a removal is a name held
 // to the rule of the block it names.
 const (
-	cfmRegistryRows   = 466
+	cfmRegistryRows   = 472
 	cfmAllowlistNamed = 118
 )
 
