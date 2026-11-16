@@ -200,6 +200,28 @@ func TestUpdateTokensStepIsIdempotent(t *testing.T) {
 	}
 }
 
+// TestPolicyPublishWritesTheTokensIdentity: the explicit door publishes the
+// same key from the same store. `fugaro project policy publish` is the other
+// caller of the one build (policyNodeForPublish), and the identity is the half
+// of an entry that no local config states (R12) — a door that derived the
+// records and left the identity out would publish a node the service cannot say
+// whose token it is serving, which is the state R12's ruling moved the fact
+// into the store to avoid.
+func TestPolicyPublishWritesTheTokensIdentity(t *testing.T) {
+	f := newProjectFixture(t, typedTokenRecords)
+	seedTokenIdentity(t, f, typedTokenKey, "uuid-ci")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatalf("the explicit door refused a config naming a typed Bitbucket token: %v", err)
+	}
+	bt := publishedPolicy(t, f).BitbucketTokens
+	if bt == nil || len(bt.Entries) != 1 {
+		t.Fatalf("the published node carries %+v, want the one record the local config names", bt)
+	}
+	if got := bt.Entries[0].Identity; got != "uuid-ci" {
+		t.Errorf("the entry's identity is %q, want the UUID the state store holds: the door reads the same store `fugaro update` reads (R12)", got)
+	}
+}
+
 // TestUpdateInFlightLineNamesTheBitbucketTokensPublish: the step this task adds
 // to the update's one line about the runs in flight. The policy stage writes
 // the node's bitbucket_tokens key, and a PROXIED call re-reads that node on
