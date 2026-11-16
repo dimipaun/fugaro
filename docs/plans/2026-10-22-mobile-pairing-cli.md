@@ -896,6 +896,12 @@ The merged P4.1 plan's §9 states the fence as a **seam**: the code path exists,
 nothing in the merged tree writes a confirmation record. **P6.7 is the half that reads the record**,
 and this section is the change of state, not a new fence:
 
+*(Amended 2026-11-16: P6.7 has landed, so the seam is behaviour now — the record is re-validated
+against the merged vectors by a Go implementation, spent action and confirmation ids are kept across
+a restart, and a record a phone minted would be acted on. What is missing is the phone's half: the
+spoken read-back and the explicit "confirm" are P6.12's, so the records exercised today are the
+simulator's and the tests'. The table below is unchanged; it is what P6.7 answers.)*
+
 | The message asks for | P4.1's answer | P6.7's answer |
 | --- | --- | --- |
 | `fugaro cancel RUN` | refused | refused unless a MAC-verified action record names the same action id, inside the 6-hour command window from the confirmation time, with the confirmation not already used, and the target resolved |
