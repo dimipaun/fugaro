@@ -6,15 +6,16 @@ import (
 )
 
 // TestCatalogIsTheStarterSet: the catalog holds exactly the spec's starter
-// set (design generic-tool.md §3.5) plus the two the escalation plan adds
-// (E5), each one parses clean, every recipe but default has a use_when, and
+// set (design generic-tool.md §3.5), the two the escalation plan adds (E5)
+// and the one the cloud diagnosis runs (docs/troubleshoot-cloud D2402), each
+// one parses clean, every recipe but default has a use_when, and
 // no recipe pins max_rounds outside mode: review (a catalog recipe takes the
 // agent.* knobs, G6) other than the one-round cap mode: review itself
 // requires, a digest recipe's own single review round, which is the report
 // run's shape rather than a knob, or escalate's single round, which is the
 // escalation's own shape: one pass and the verdict, with no round after it.
 func TestCatalogIsTheStarterSet(t *testing.T) {
-	want := []string{"default", "escalate", "lint-fix", "merge-judge", "pick", "premium", "rebase", "review-only", "run-digest", "solo", "standard", "test-and-fix"}
+	want := []string{"default", "escalate", "lint-fix", "merge-judge", "pick", "premium", "rebase", "review-only", "run-digest", "solo", "standard", "test-and-fix", "troubleshoot"}
 	if got := CatalogNames(); !slices.Equal(got, want) {
 		t.Fatalf("catalog = %v", got)
 	}
@@ -117,6 +118,55 @@ func TestRecipeRebaseStagesOrder(t *testing.T) {
 				t.Fatalf("%s parses clean, want a refusal", name)
 			}
 		})
+	}
+}
+
+// TestCatalogTroubleshootCarriesItsOutputsBlock: the catalog's troubleshoot
+// is the recipe one cloud diagnosis runs (docs/troubleshoot-cloud, D2402): a
+// mode: artifact recipe whose single diagnose step writes the answer's two
+// files — out/diagnosis.md for a person and out/diagnosis.json for the
+// offline path and the record — which its outputs: block is what names. The
+// block is not decoration here: on this mode it is required (Parse), and it
+// is what the runner's artifact stage globs and uploads, so a recipe that
+// named nothing, or named something else, would leave a diagnosis with no
+// deliverable.
+func TestCatalogTroubleshootCarriesItsOutputsBlock(t *testing.T) {
+	data, ok := CatalogText(TroubleshootRecipe)
+	if !ok {
+		t.Fatalf("%s is not in the catalog", TroubleshootRecipe)
+	}
+	r, ps := Parse(data)
+	if len(ps) != 0 {
+		t.Fatalf("problems: %s", ProblemsText(ps))
+	}
+	if r.Mode != ModeArtifact {
+		t.Fatalf("mode = %q, want %q: a diagnosis delivers files, not a pull request", r.Mode, ModeArtifact)
+	}
+	if len(r.Steps) != 1 || r.Steps[0] != (Step{Kind: StepDiagnose}) {
+		t.Fatalf("steps = %+v, want the diagnose step alone", r.Steps)
+	}
+	out := r.Outputs
+	if out == nil {
+		t.Fatal("outputs parsed to nothing: a mode: artifact recipe must name its deliverable")
+	}
+	if want := []string{"out/diagnosis.md", "out/diagnosis.json"}; !slices.Equal(out.Globs, want) {
+		t.Fatalf("outputs.globs = %v, want %v", out.Globs, want)
+	}
+	// Two files is all the run may deliver, and the defaults are roomier than
+	// the stage's own answer: the block leaves the caps alone.
+	if out.FileCount() != DefaultOutputFiles {
+		t.Fatalf("max_files = %d, want the default %d", out.FileCount(), DefaultOutputFiles)
+	}
+	// The bounds a diagnosis runs under are the recipe's (D2407) and they are
+	// this package's: 8 turns and the $0.25 the tier's cap holds at the
+	// reviewer model's $20/M output rate.
+	if TroubleshootMaxTurns != 8 || TroubleshootReviewerMaxOutput != 12500 {
+		t.Fatalf("bounds = %d turns, %d output tokens", TroubleshootMaxTurns, TroubleshootReviewerMaxOutput)
+	}
+	// The step is the whole run: no implement loop, no review, no render
+	// command beside it, whatever the knobs say.
+	if got := StageBound(r, 3, 10, n3Default); got != 1 {
+		t.Fatalf("troubleshoot bound = %d, want 1", got)
 	}
 }
 
