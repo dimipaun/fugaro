@@ -420,7 +420,7 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		// address), and the auth-blind drop it named beside that was false for
 		// the same reason — the review of this branch caught both still
 		// standing ten lines above the paragraph that says the opposite.
-		"the switch admits an `api-key` or `oauth` repository too",
+		"**The switch admits an `api-key` or `oauth` repository too (B2.2, B2.3, D2071)**:",
 		"a budget mode of `observe` or `enforce`, because the gateway that reaches the service exists only there",
 		"`anthropic-api-key` for `api-key` and every account's `claude-oauth-token[-<account>]` for `oauth`",
 		"a `vertex` repository is the one `agent.auth` it never admits",
