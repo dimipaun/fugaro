@@ -5500,16 +5500,23 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	// the per-repository account for a shared execution writes a slip that run
 	// can never claim: it spends its model call on the refusal, the service
 	// keeps the slip as a grant nobody claimed, and FUGARO_SLIP sits on an
-	// execution it cannot open. A review launch is named none: its variant
-	// carries the address from its own deployment rather than from this
-	// launch, so the gate below is closed for it (credentialsServiceLaunchEnv),
-	// and the triple in a review job's own axes is the coding job's.
-	slipAccount := gcp.ServiceAccountID(slug, variant) + "@" + env.lc.GCPProject + ".iam.gserviceaccount.com"
-	if job != nil {
-		slipAccount = gcp.ProjectServiceAccountID(job.Profile, job.Provider, job.Account) + "@" + env.lc.GCPProject + ".iam.gserviceaccount.com"
-	}
-	if url, ok := credentialsServiceURLOf(lspec.Env); ok {
-		lspec.Env = append(lspec.Env, runSlipEnv(hctx, env, spec, slug, slipAccount, url)...)
+	// execution it cannot open.
+	//
+	// A review launch is left out whole rather than judged by the gate below.
+	// It has no address to ask with — its variant carries one from its own
+	// deployment, and credentialsServiceLaunchEnv writes none here — and no
+	// account either arm below could name: a review-only variant's own account
+	// is credsvc.ReviewServiceAccountID's, deployed by internal/infra beside
+	// the coding job, so a slip granted for either derivation would be one
+	// that job can never claim.
+	if !reviewJob {
+		slipAccount := gcp.ServiceAccountID(slug, variant) + "@" + env.lc.GCPProject + ".iam.gserviceaccount.com"
+		if job != nil {
+			slipAccount = gcp.ProjectServiceAccountID(job.Profile, job.Provider, job.Account) + "@" + env.lc.GCPProject + ".iam.gserviceaccount.com"
+		}
+		if url, ok := credentialsServiceURLOf(lspec.Env); ok {
+			lspec.Env = append(lspec.Env, runSlipEnv(hctx, env, spec, slug, slipAccount, url)...)
+		}
 	}
 	// The services the job's own catalog entry declares, on EVERY launch and
 	// empty where the deployed image is no catalog entry (backend.ServicesEnv

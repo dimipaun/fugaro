@@ -66,13 +66,16 @@ type launchProjectJob struct {
 	Name string
 	// Profile is the profile's name, for messages.
 	Profile string
-	// Provider and Account are the job's other two axes, as the published
-	// policy computes its name from them (gcp.ProjectJobName): they are what
-	// the job's own service account is derived from
+	// Provider and Account are the two axes beside the profile that the
+	// published policy computes the job's name from (gcp.ProjectJobName), and
+	// what the job's own service account is derived from
 	// (gcp.ProjectServiceAccountID, the one derivation internal/infra's
-	// ProjectJobs deployed the job's account with), which is the account every
-	// execution on the job calls as — and the account the credentials service
-	// checks a run's slip claim against (D1937).
+	// ProjectJobs deployed the job's account with): the account every
+	// execution on the job calls as, and the account the credentials service
+	// checks a run's slip claim against (D1937). A review-only variant
+	// (projectJobReviewFor) carries neither, because its name and its account
+	// are credsvc.ReviewJobName's and credsvc.ReviewServiceAccountID's: no
+	// account is derivable from this pair for it.
 	Provider string
 	Account  string
 	// Timeout is the job's own task timeout: the profile's timeout_class plus
