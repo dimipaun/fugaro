@@ -276,6 +276,11 @@ func initStages(e *initEngine) []initflow.Stage {
 	// its own write and leave the upgrade for a second command
 	// (init_rules_stage.go, the owner's rule of 2026-10-30).
 	stages = append(stages, newRulesStage(e))
+	// The owner's own cache-price keys, renamed in place, before the policy
+	// stage: that stage publishes a node built from this config, so the two
+	// documents agree about the spelling of every price from the first run on
+	// (update_model_prices.go, SA4.2).
+	stages = append(stages, newModelPricesStage(e))
 	e.policy = newPolicyMigrateStage(e)
 	// The run's own local-config write drops the read this stage's plan is made
 	// from (initRun.writeConfig), so the stage is reachable from there too.

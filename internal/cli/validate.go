@@ -2304,6 +2304,15 @@ func newValidateCmd() *cobra.Command {
 				sp, sn := stageAccountProblems(lc, ecfg)
 				problems, notes = append(problems, sp...), append(notes, sn...)
 				problems = append(problems, catalogSourceProblems(lc)...)
+				// The owner's own model_prices against the routes that would
+				// have priced those models without them: a price below the
+				// cheapest endpoint the catalog prices the model at is reported
+				// with both figures, and nothing is refused (SA4.2/SA4.3, R4).
+				// It reads the selected config the way catalogSourceProblems
+				// above reads it — the prices are that config's own, whichever
+				// project this checkout names — and the path it prints is the
+				// key in that file the owner would edit.
+				warnings = append(warnings, undercutProblems(lc)...)
 				annotateProjectRecipe(filepath.Dir(path), cfg, problems)
 				if lc != nil && lc.Name == cfg.Project && setsPolicy(cfg) {
 					if n := branchNote(cmd.Context(), path); n != "" {

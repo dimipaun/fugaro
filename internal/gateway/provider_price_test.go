@@ -149,7 +149,7 @@ func TestRefusedCatalogModelRefusedWithTheReason(t *testing.T) {
 	// claims the model and cannot price it: the table records the reason and
 	// materializes no row.
 	// Models here are the catalog's own IDs, expanded from the route's
-	// pattern by config.catalogRoutes: the gateway's route below keeps the
+	// pattern by config.CatalogRoutes: the gateway's route below keeps the
 	// pattern, which is what decides where a call goes.
 	tbl, err := pricing.ApplyCatalog(pricing.Embedded(), cat,
 		[]pricing.CatalogRoute{{Name: "openrouter", Models: []string{qwen}, RequireZDR: true, Policy: "cheapest"}},

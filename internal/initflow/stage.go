@@ -109,6 +109,15 @@ const (
 	// whole upgrade for a second command (the owner's rule of 2026-10-30:
 	// fugaro update is the whole upgrade).
 	Rules = "rules"
+	// ModelPrices is the owner's own config rewritten in place: the old
+	// cache-price key names (cache_read, cache_write_5m, cache_write_1h) become
+	// the ones this release documents (docs/spend-accuracy SA4.2, D2646). It is
+	// the owner's file and this machine's alone, so it asks nothing and runs in
+	// an agent's session too (LocalUnderAgent), and it comes BEFORE the policy
+	// stage because the node that stage publishes is built from this config: a
+	// node carrying the old spelling would differ from the file on every run
+	// that followed.
+	ModelPrices = "model-prices"
 	// Policy is the published policy node's migration in place
 	// (internal/cli/init_policy_migrate.go, the owner's rule of 2026-10-30:
 	// fugaro update is the whole upgrade). It comes after the repository
@@ -255,6 +264,10 @@ var order = []slot{
 	// predate the policy model, and a run whose rules are stale would refuse
 	// its own migration and leave the upgrade unfinished.
 	{name: Rules, needs: []string{Repository}},
+	// The owner's own cache-price keys are renamed before the node that is
+	// built from that config is published, so the published copy and the file
+	// say the same thing about the same price.
+	{name: ModelPrices, needs: []string{Repository}},
 	// The policy node is what every run of the project is admitted by, and
 	// the repository stage is the last writer of the installation those runs
 	// read it against.

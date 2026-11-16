@@ -1465,6 +1465,16 @@ func (r *initRun) checkEnv(lc *localcfg.Config) (string, error) {
 	for _, w := range lc.Warnings() {
 		r.warn(w)
 	}
+	// The prices this config writes below the marketplace's, in the same place
+	// and for the same reason as its own warnings above: this is where the one
+	// command the owner runs says what it read in their file, once, before the
+	// stages that act on it. Nothing is refused — a price below the cheapest
+	// endpoint the catalog prices the model at is the owner's to hold — and the
+	// model_prices stage beside those stages is where the file's key names are
+	// brought up to date (update_model_prices.go, SA4.2).
+	for _, w := range modelPriceUndercuts(lc) {
+		r.warn(w)
+	}
 	return bin, nil
 }
 
