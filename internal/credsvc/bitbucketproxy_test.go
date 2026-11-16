@@ -1546,7 +1546,7 @@ func TestProxyChoosesTokenAfterDecide(t *testing.T) {
 		// A store that answers a name the bundle holds no value for is refused
 		// rather than served: a call with no credential to attach is never
 		// made (D143).
-		sel := &bbtokens.Stub{Selected: bbtokens.Name(config.BitbucketTokenKey("other"))}
+		sel := &tokenStub{Selected: bbtokens.Name(config.BitbucketTokenKey("other"))}
 		s, up, _, _ := proxyTokensSvc(t, sel)
 
 		resp, ans := s.proxyCall(t, http.MethodGet, fetch, nil)
@@ -1559,7 +1559,7 @@ func TestProxyChoosesTokenAfterDecide(t *testing.T) {
 	t.Run("a store that cannot answer is refused", func(t *testing.T) {
 		// A failure of the store is not the caller's refusal: it is answered as
 		// state_unavailable, and nothing is forwarded.
-		sel := &bbtokens.Stub{Err: errors.New("credsvc: the token store could not be read")}
+		sel := &tokenStub{Err: errors.New("credsvc: the token store could not be read")}
 		s, up, _, _ := proxyTokensSvc(t, sel)
 
 		resp, ans := s.proxyCall(t, http.MethodGet, fetch, nil)
@@ -1575,7 +1575,7 @@ func TestProxyChoosesTokenAfterDecide(t *testing.T) {
 // way to tell which of several tokens a call used — and never the token's
 // value, in the line, in the service's log or in the answer.
 func TestProxyAuditNamesTheToken(t *testing.T) {
-	s, up, legacy, named := proxyTokensSvc(t, &bbtokens.Stub{Selected: proxyNamedToken})
+	s, up, legacy, named := proxyTokensSvc(t, &tokenStub{Selected: proxyNamedToken})
 	up.answerWith(http.StatusOK, "{}")
 
 	resp, ans := s.proxyCall(t, http.MethodGet, proxyPath(proxyRESTPath("")), nil)
@@ -1615,7 +1615,7 @@ func TestProxyAuditNamesTheToken(t *testing.T) {
 	t.Run("a refusal of the facts read names the chosen token", func(t *testing.T) {
 		// The facts read answers an error status: refuseUnavailable, taken past
 		// the choice.
-		s, up, _, _ := proxyTokensSvc(t, &bbtokens.Stub{Selected: proxyNamedToken})
+		s, up, _, _ := proxyTokensSvc(t, &tokenStub{Selected: proxyNamedToken})
 		up.answerWith(http.StatusInternalServerError, foreignFacts)
 
 		resp, ans := s.proxyCall(t, http.MethodPut, proxyPath(proxyRESTPath("/pullrequests/7")), write)
@@ -1628,7 +1628,7 @@ func TestProxyAuditNamesTheToken(t *testing.T) {
 	t.Run("a refusal of the write names the chosen token", func(t *testing.T) {
 		// The facts read succeeds and reports a source that is not this run's:
 		// the CheckPRWrite refusal, also taken past the choice.
-		s, up, _, named := proxyTokensSvc(t, &bbtokens.Stub{Selected: proxyNamedToken})
+		s, up, _, named := proxyTokensSvc(t, &tokenStub{Selected: proxyNamedToken})
 		up.mu.Lock()
 		up.answer = func(r *http.Request) proxyAnswer {
 			if r.Method != http.MethodGet {
@@ -1693,7 +1693,7 @@ func TestProxyAuditNamesTheToken(t *testing.T) {
 // writes — and never a token.
 func TestProxyRefusesUncoveredRepository(t *testing.T) {
 	canonical := testCanonical(t, testBitbucketRepo)
-	sel := &bbtokens.Stub{Err: &bbtokens.Refusal{Class: bbtokens.ClassNotCovered, Repo: canonical}}
+	sel := &tokenStub{Err: &bbtokens.Refusal{Class: bbtokens.ClassNotCovered, Repo: canonical}}
 	s, up, legacy, named := proxyTokensSvc(t, sel)
 
 	resp, ans := s.proxyCall(t, http.MethodGet, proxyPath(proxyGitPath("info/refs")+"?service=git-upload-pack"), nil)
@@ -1756,7 +1756,7 @@ func TestProxyLegacySingleTokenUnchanged(t *testing.T) {
 
 	t.Run("the store answers the legacy record", func(t *testing.T) {
 		s, up, token := proxySvc(t, func(_ *svc, cfg *Config) {
-			cfg.Selector = &bbtokens.Stub{Selected: bbtokens.LegacyName}
+			cfg.Selector = &tokenStub{Selected: bbtokens.LegacyName}
 		})
 		up.answerWith(http.StatusOK, "{}")
 
@@ -1862,7 +1862,7 @@ func proxyRecordedHostPolicyDoc(t *testing.T) string {
 // api.bitbucket.org — at the paths this service rebuilt, never the ones the
 // caller sent.
 func TestProxyNeverForwardsToARecordedHost(t *testing.T) {
-	s, up, _, _ := proxyTokensSvc(t, &bbtokens.Stub{Selected: proxyNamedToken}, func(_ *svc, cfg *Config) {
+	s, up, _, _ := proxyTokensSvc(t, &tokenStub{Selected: proxyNamedToken}, func(_ *svc, cfg *Config) {
 		pol := cfg.Policy.(*fakePolicy)
 		pol.shared = decodeTestPolicy(t, proxyRecordedHostPolicyDoc(t))
 	})
