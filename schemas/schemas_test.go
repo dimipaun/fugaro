@@ -23,10 +23,12 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/digest"
+	"github.com/dimipaun/fugaro/internal/escalation"
 	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/imagesurvey"
+	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/orchestrator/sensitivity"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/recipe"
@@ -6719,6 +6721,169 @@ func TestRunsShowSchema(t *testing.T) {
 		{"a document with no limits_read member", `{"version": 1, "repo": "r", "run": "s/x", "chain": "x", "run_count": 1, "enforced": true, "limits": []}`},
 		{"limits_read read as text", `{"version": 1, "repo": "r", "run": "s/x", "chain": "x", "run_count": 1, "enforced": true, "limits_read": "yes", "limits": []}`},
 		{"a halt of a scope no limit is set at", `{"version": 1, "repo": "r", "run": "s/x", "chain": "x", "run_count": 1, "enforced": true, "limits_read": true, "limits": [], "halt": {"reason": "run_cap", "scope": "project", "at": "2026-11-01T15:05:00Z"}}`},
+	} {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(tc.doc))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(inst); err == nil {
+			t.Errorf("%s: the schema accepts a document the command cannot write", tc.name)
+		}
+	}
+}
+
+// TestEscalationSchemaAgreesWithGo: the escalation documents' contract, and the
+// code that contract is for. `fugaro escalation ls|show --json` prints the
+// ladder's ledger (docs/outer-loop-escalation, E13), and every member of it is
+// a value this release already names: the rung and the reason are
+// escalation.Rungs and escalation.Reasons, the ladder-run bound is
+// orchestrator.MaxOuterAttempts and the transition bound
+// orchestrator.MaxEscalationTransitions, and the version is the constant the
+// command itself writes under (escalationDocVersion, read out of the file by
+// name rather than guessed at).
+//
+// The two figures the ledger does not hold — the age and the cost, which come
+// from the item's own run records (D2038, F7) — are each a figure or null and
+// never a bare zero: a command that could not read one of those records has an
+// unknown figure, and a zero there is the one wrong answer a person would act
+// on (D1049, D1051).
+//
+// Mutation (add a rung to escalation.Rungs, or a reason to escalation.Reasons,
+// without the schema; drop either null branch; or move MaxOuterAttempts): this
+// test fails naming the side that has it.
+func TestEscalationSchemaAgreesWithGo(t *testing.T) {
+	raw, err := os.ReadFile("escalation.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	sch := compile(t, "escalation.schema.json")
+
+	consts := goConstValues(t, "../internal/cli/escalation.go")
+	version := nodeOf(t, doc, "$defs", "version")
+	if version["const"] != float64(1) {
+		t.Errorf("$defs.version: const = %v, and the documents' first version is 1", version["const"])
+	}
+	if got, _ := version["$comment"].(string); !strings.Contains(got, "escalationDocVersion") || consts["escalationDocVersion"] != "1" {
+		t.Errorf("$defs.version: $comment = %q, and escalationDocVersion in internal/cli/escalation.go is %q", got, consts["escalationDocVersion"])
+	}
+
+	rungs := make([]string, 0, len(escalation.Rungs))
+	for _, r := range escalation.Rungs {
+		rungs = append(rungs, string(r))
+	}
+	if got := stringsOf(t, doc, "$defs", "rung", "enum"); !slices.Equal(got, rungs) {
+		t.Errorf("$defs.rung: the enum is %v, and escalation.Rungs is %v", got, rungs)
+	}
+	reasons := make([]string, 0, len(escalation.Reasons))
+	for _, r := range escalation.Reasons {
+		reasons = append(reasons, string(r))
+	}
+	if got := stringsOf(t, doc, "$defs", "reason", "enum"); !slices.Equal(got, reasons) {
+		t.Errorf("$defs.reason: the enum is %v, and escalation.Reasons is %v", got, reasons)
+	}
+
+	// Every member of an item is required: the two figures are null rather than
+	// absent when they are unknown, so a document that left one out would leave
+	// a consumer unable to tell an unknown figure from an older document.
+	itemReq := stringsOf(t, doc, "$defs", "item", "required")
+	for _, key := range []string{"id", "repo", "rung", "reason", "entered_at", "age_seconds", "outer_attempts", "cost_usd", "transitions"} {
+		if !slices.Contains(itemReq, key) {
+			t.Errorf("$defs.item.required is %v, and every item carries %q", itemReq, key)
+		}
+	}
+	for _, key := range []string{"age_seconds", "cost_usd"} {
+		branches, _ := nodeOf(t, doc, "$defs", "item", "properties", key)["oneOf"].([]any)
+		var figure, nul bool
+		for _, b := range branches {
+			m, _ := b.(map[string]any)
+			figure = figure || m["type"] == "integer" || m["type"] == "number"
+			nul = nul || m["type"] == "null"
+		}
+		if !figure || !nul {
+			t.Errorf("$defs.item.%s: oneOf is %v, and the member is either its own figure or null", key, branches)
+		}
+	}
+	attempts := nodeOf(t, doc, "$defs", "item", "properties", "outer_attempts")
+	if attempts["maximum"] != float64(orchestrator.MaxOuterAttempts) {
+		t.Errorf("$defs.item.outer_attempts: maximum = %v, and orchestrator.MaxOuterAttempts is %d", attempts["maximum"], orchestrator.MaxOuterAttempts)
+	}
+	transitions := nodeOf(t, doc, "$defs", "item", "properties", "transitions")
+	if transitions["maxItems"] != float64(orchestrator.MaxEscalationTransitions) {
+		t.Errorf("$defs.item.transitions: maxItems = %v, and orchestrator.MaxEscalationTransitions is %d", transitions["maxItems"], orchestrator.MaxEscalationTransitions)
+	}
+	// A ledger carries at least one transition: an item no rung has touched has
+	// no ledger at all, and `show` refuses it rather than printing an empty one.
+	if transitions["minItems"] != float64(1) {
+		t.Errorf("$defs.item.transitions: minItems = %v, want 1", transitions["minItems"])
+	}
+	// The first transition leaves the rung no rung is: the zero Rung is how the
+	// ledger spells an item that had entered none, and it is why `from` is not
+	// required.
+	if from := stringsOf(t, doc, "$defs", "transition", "required"); slices.Contains(from, "from") {
+		t.Errorf("$defs.transition.required is %v, and the first transition carries no `from`", from)
+	}
+
+	// The two documents' own members, and what each is about.
+	lsReq := stringsOf(t, doc, "$defs", "ls", "required")
+	for _, key := range []string{"version", "kind", "project", "now", "items"} {
+		if !slices.Contains(lsReq, key) {
+			t.Errorf("$defs.ls.required is %v, and the listing carries %q", lsReq, key)
+		}
+	}
+	showReq := stringsOf(t, doc, "$defs", "show", "required")
+	for _, key := range []string{"version", "kind", "project", "now", "item"} {
+		if !slices.Contains(showReq, key) {
+			t.Errorf("$defs.show.required is %v, and the single item's document carries %q", showReq, key)
+		}
+	}
+	if kind := nodeOf(t, doc, "$defs", "ls", "properties", "kind")["const"]; kind != "ls" {
+		t.Errorf("$defs.ls.kind: const = %v, want \"ls\"", kind)
+	}
+	if kind := nodeOf(t, doc, "$defs", "show", "properties", "kind")["const"]; kind != "show" {
+		t.Errorf("$defs.show.kind: const = %v, want \"show\"", kind)
+	}
+
+	// A document the command writes validates, in both of its shapes.
+	for _, tc := range []struct{ name, doc string }{
+		{"a listing with a readable item and an unreadable one", `{"version": 1, "kind": "ls", "project": "aurora", "now": "2026-11-08T12:00:00Z", "items": [` +
+			`{"id": "wi-1", "repo": "acme/repo", "rung": "R2", "reason": "attempts", "entered_at": "2026-11-08T11:00:00Z", "age_seconds": 7200, "outer_attempts": 2, "cost_usd": 1.25, "transitions": [` +
+			`{"to": "R0", "reason": "rebase", "at": "2026-11-08T09:00:00Z", "head_sha": "0f1e2d3"},` +
+			`{"from": "R0", "to": "R2", "reason": "attempts", "at": "2026-11-08T11:00:00Z"}]},` +
+			`{"id": "wi-2", "repo": "acme/repo", "rung": "R1", "reason": "age", "entered_at": "2026-11-08T11:30:00Z", "age_seconds": null, "outer_attempts": 1, "cost_usd": null, "transitions": [` +
+			`{"to": "R1", "reason": "age", "at": "2026-11-08T11:30:00Z"}]}]}`},
+		{"a listing the ladder has acted on nobody in", `{"version": 1, "kind": "ls", "project": "aurora", "now": "2026-11-08T12:00:00Z", "items": []}`},
+		{"one item in full", `{"version": 1, "kind": "show", "project": "aurora", "now": "2026-11-08T12:00:00Z", "item": ` +
+			`{"id": "wi-1", "repo": "acme/repo", "rung": "R3", "reason": "r2_findings", "entered_at": "2026-11-08T10:00:00Z", "age_seconds": 0, "outer_attempts": 3, "cost_usd": 0, "transitions": [` +
+			`{"to": "R0", "reason": "rebase", "at": "2026-11-08T08:00:00Z", "head_sha": "0f1e2d3"},` +
+			`{"from": "R0", "to": "R2", "reason": "attempts", "at": "2026-11-08T09:00:00Z"},` +
+			`{"from": "R2", "to": "R3", "reason": "r2_findings", "at": "2026-11-08T10:00:00Z"}]}}`},
+	} {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(tc.doc))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(inst); err != nil {
+			t.Errorf("%s: the schema refuses a document the command writes: %v", tc.name, err)
+		}
+	}
+
+	// And the documents it cannot write are refused: a rung the ladder has no
+	// word for, a reason that is not a code, a figure the ledger could not have
+	// read, a transition that enters nothing, and a version this release must
+	// not read as its own.
+	item := `"id": "wi-1", "repo": "acme/repo", "rung": "R2", "reason": "attempts", "entered_at": "2026-11-08T11:00:00Z", "age_seconds": 7200, "outer_attempts": 2, "cost_usd": 1.25, ` +
+		`"transitions": [{"to": "R0", "reason": "rebase", "at": "2026-11-08T09:00:00Z"}]`
+	for _, tc := range []struct{ name, doc string }{
+		{"a rung this release has no word for", `{"version": 1, "kind": "show", "project": "aurora", "now": "2026-11-08T12:00:00Z", "item": {` + strings.Replace(item, `"rung": "R2"`, `"rung": "R5"`, 1) + `}}`},
+		{"a reason that is not a code", `{"version": 1, "kind": "show", "project": "aurora", "now": "2026-11-08T12:00:00Z", "item": {` + strings.Replace(item, `"reason": "attempts"`, `"reason": "the reviewer keeps finding new things"`, 1) + `}}`},
+		{"an age nobody measured", `{"version": 1, "kind": "show", "project": "aurora", "now": "2026-11-08T12:00:00Z", "item": {` + strings.Replace(item, `"age_seconds": 7200`, `"age_seconds": -1`, 1) + `}}`},
+		{"a cost below nothing", `{"version": 1, "kind": "show", "project": "aurora", "now": "2026-11-08T12:00:00Z", "item": {` + strings.Replace(item, `"cost_usd": 1.25`, `"cost_usd": -0.5`, 1) + `}}`},
+		{"an item with no transition", `{"version": 1, "kind": "show", "project": "aurora", "now": "2026-11-08T12:00:00Z", "item": {` + strings.Replace(item, `"transitions": [{"to": "R0", "reason": "rebase", "at": "2026-11-08T09:00:00Z"}]`, `"transitions": []`, 1) + `}}`},
+		{"a version this release does not write", `{"version": 2, "kind": "show", "project": "aurora", "now": "2026-11-08T12:00:00Z", "item": {` + item + `}}`},
 	} {
 		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(tc.doc))
 		if err != nil {
