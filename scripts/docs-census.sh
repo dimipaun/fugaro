@@ -10,11 +10,11 @@
 # the census runs them here, on the tree the merges made rather than on the
 # checkout that made them.
 #
-# It reads and tests only: it merges nothing, writes nothing outside its own
-# temporary worktree, and has no agent-session guard — nothing it does is a
-# person's alone to do, so an agent landing pull requests under the owner's word
-# runs it the same way. scripts/land-prs.sh runs it after a batch; the census
-# lives here and nowhere else, since a copy under /tmp is one nobody re-runs.
+# It reads and tests only: it merges nothing, commits nothing, moves no branch
+# and has no agent-session guard — nothing it does is a person's alone to do, so
+# an agent landing pull requests under the owner's word runs it the same way.
+# scripts/land-prs.sh runs it after a batch; the census lives here and nowhere
+# else, since a copy under /tmp is one nobody re-runs.
 #
 # Usage: bash scripts/docs-census.sh [--base NAME] [--since SHA]
 #
