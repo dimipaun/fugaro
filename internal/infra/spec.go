@@ -254,7 +254,7 @@ type CredentialsService struct {
 	// Account is the email of the service's own account (D2074), which a
 	// repository root grants roles/secretmanager.secretAccessor per mounted
 	// workflow secret to — the service reads the container a run asks it for
-	// (B3.5). It is written into the repository root's tfvars and never read
+	// (B3.4). It is written into the repository root's tfvars and never read
 	// by this binary: the module turns it into the IAM member.
 	//
 	// Empty in the outputs of an installation applied before the field

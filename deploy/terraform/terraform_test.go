@@ -5382,7 +5382,7 @@ func TestServiceHeldSecretsMatchTheCredentialsService(t *testing.T) {
 func workflowSecretGrants(t *testing.T) map[string]string {
 	t.Helper()
 	const path = "gcp/modules/workflow/sa.tf"
-	b, err := os.ReadFile(path)
+	b, err := fs.ReadFile(FS, path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -5420,7 +5420,7 @@ func workflowSecretGrants(t *testing.T) map[string]string {
 // secret, which is exactly what B3.4's fetch forwards to a run.
 func TestServiceWorkflowSecretGrantsMatchTheJobsMounts(t *testing.T) {
 	const path = "gcp/modules/workflow/sa.tf"
-	b, err := os.ReadFile(path)
+	b, err := fs.ReadFile(FS, path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -5490,7 +5490,7 @@ func TestServiceWorkflowSecretGrantsMatchTheJobsMounts(t *testing.T) {
 // default.
 func TestNoServiceGrantWithoutTheService(t *testing.T) {
 	const path = "gcp/modules/workflow/sa.tf"
-	b, err := os.ReadFile(path)
+	b, err := fs.ReadFile(FS, path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -5521,7 +5521,7 @@ func TestNoServiceGrantWithoutTheService(t *testing.T) {
 
 	// And the attribute itself, in the variable the repository root fills from
 	// the installation's outputs: optional, empty by default.
-	vb, err := os.ReadFile("gcp/modules/workflow/variables.tf")
+	vb, err := fs.ReadFile(FS, "gcp/modules/workflow/variables.tf")
 	if err != nil {
 		t.Fatal(err)
 	}
