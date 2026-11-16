@@ -402,6 +402,72 @@ func TestUpdateRefusesRigorOnAMachineWithNoProjectConfig(t *testing.T) {
 	}
 }
 
+// TestRigorIsRefusedOnEveryWalkThatNeverReachesTheLayerStage: the Layer stage
+// is the flag's only reader (init_layer_stage.go), and it is a stage of the
+// converge alone. Every other walk — the four one-shot modes, --anchor, and a
+// --repo run, which has a stage set of its own — stops before it, so a flag
+// accepted there would be dropped with exit 0 and the user's explicit answer
+// to the wizard's question would be lost with no error. Each refuses it by
+// name instead, in the sentence that walk already gives a flag it cannot act
+// on, and none of them asks a question on the way to the refusal.
+func TestRigorIsRefusedOnEveryWalkThatNeverReachesTheLayerStage(t *testing.T) {
+	const oneShot = "it has no use with --forget, --config-only, --print-vars and --publish-config"
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"--config-only", []string{"update", "--config-only", "--rigor", "pro"}, oneShot},
+		{"--print-vars", []string{"setup", "--print-vars", "--rigor", "pro"}, oneShot},
+		{"--forget", []string{"update", "--forget", "--rigor", "pro"}, oneShot},
+		{"--publish-config", []string{"update", "--publish-config", "--rigor", "pro"}, oneShot},
+		{"--anchor", []string{"setup", "--anchor", "--rigor", "pro"}, "it excludes --rigor"},
+		{"--repo", []string{"update", "--repo", "--rigor", "pro"}, "--rigor set(s) up the installation, not a repository"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			newInitRig(t)
+			out, errOut, err := executeStdin(t, "", tc.args...)
+			if err == nil {
+				t.Fatalf("%v took --rigor on a walk that never runs the Layer stage, so the answer was dropped:\n%s\n%s", tc.args, out, errOut)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("%v exits %d, want the refusal as a user error: %v", tc.args, ExitCode(err), err)
+			}
+			for _, want := range []string{"--rigor", tc.want} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal lacks %q: %v", want, err)
+				}
+			}
+			if asked := out + errOut; strings.Contains(asked, rigorQuestionLead) || strings.Contains(asked, questionFor("--rigor").what) {
+				t.Errorf("the run asked the rigor question on its way to refusing the flag:\n%s", asked)
+			}
+		})
+	}
+}
+
+// TestPublishConfigIsNotAskedTheRigorQuestion: --publish-config publishes the
+// shared config of an installation that is already there and stops, so it is
+// not a run that stands one up (setupCreates) and not a run the wizard's
+// questions about a new project are asked on. A first run given it is refused
+// for the flags it is missing rather than held to the rigor answer, which no
+// stage of its walk would write.
+func TestPublishConfigIsNotAskedTheRigorQuestion(t *testing.T) {
+	firstRunEnv(t)
+	noTerminal(t)
+	o := &initOptions{door: setupDoor.name, publishConfig: true}
+	r := &initRun{o: o, w: &strings.Builder{}, in: bufio.NewReader(strings.NewReader("")), cmd: NewRootCmd()}
+	err := r.gatherInputs(t.Context())
+	if err == nil {
+		t.Fatal("a --publish-config first run went on with no project config to publish")
+	}
+	if strings.Contains(err.Error(), questionFor("--rigor").missing) {
+		t.Errorf("a --publish-config run demanded the rigor answer, which it has no stage to write: %v", err)
+	}
+	if o.rigor != "" {
+		t.Errorf("the run chose the mode %q for a caller nobody could ask, want none", o.rigor)
+	}
+}
+
 // TestUpdateSummaryShowsTheResolvedMode: the review screen is where a run says
 // what it is about to do, and the rigor mode is one of the facts it now states
 // — the mode rigor.Resolve answers for the project, with the word that says

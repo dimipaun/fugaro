@@ -1714,6 +1714,15 @@ func (o *initOptions) check() error {
 	if o.githubAppID != "" && (o.forget || o.configOnly || o.printVars) {
 		return userErr("--github-app-id is for the repository stage of the converge (or --repo); it has no use with --forget, --config-only and --print-vars")
 	}
+	if o.rigor != "" && (o.forget || o.configOnly || o.printVars || o.publishConfig) {
+		// These four stop before the converge's stages — forgetting, writing
+		// this machine's config, printing the variables, publishing the shared
+		// config — and the Layer stage, the flag's only reader, is one of
+		// them: accepted, the mode would be dropped with exit 0, and the
+		// user's explicit answer to the wizard's question would be lost with
+		// no error. Refused by name here, as the two flags above are.
+		return userErr("--rigor is the mode of the project a first run creates, written by that run's Layer stage; it has no use with --forget, --config-only, --print-vars and --publish-config")
+	}
 	n := 0
 	for _, b := range []bool{o.planOnly, o.printVars, o.configOnly, o.forget, o.publishConfig, o.anchor} {
 		if b {
@@ -4119,6 +4128,12 @@ func (o *initOptions) installationFlags() []string {
 		// writes no local config of its own shape — would drop a value it was
 		// handed. It is refused by name instead, like the flags above it.
 		"--bake-repos": o.bakeReposChanged,
+		// --rigor is the project's mode, written by the Layer stage of the run
+		// that creates the installation: --anchor returns before that stage,
+		// and a --repo run has none of the installation's stages at all, so
+		// both would drop the answer. Refused by name instead, in the sentence
+		// each of those two walks already has for a flag it cannot act on.
+		"--rigor": o.rigor != "",
 	}
 	var set []string
 	for _, f := range slices.Sorted(maps.Keys(installationOnly)) {

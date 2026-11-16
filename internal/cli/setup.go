@@ -729,9 +729,10 @@ func wizardStages(ctx context.Context, r *initRun) []initflow.Stage {
 //
 // A run that cannot act on a creation does not get one: `fugaro update` creates
 // nothing (its stage set has no project stage at all, init_stages.go), and
-// --config-only and --print-vars write or print from an installation that is
-// already there and touch no project. firstRun is whether this run selected no
-// project config (wizardStage.creating): a run with one was created already.
+// --config-only, --print-vars and --publish-config write, print or publish from
+// an installation that is already there and touch no project. firstRun is
+// whether this run selected no project config (wizardStage.creating): a run
+// with one was created already.
 //
 // Either way the flags that only a creation takes are checked here
 // (checkCreateProject): init.go's check() validated them only where
@@ -756,10 +757,12 @@ func (r *initRun) settleCreation(firstRun bool) error {
 //
 // It is not --create-project: that field is what this SETTLES, and a run reads
 // it to act. A first run of `fugaro setup` creates, and so does nothing else:
-// `fugaro update` never creates, and --config-only and --print-vars write or
-// print from an installation that is already there.
+// `fugaro update` never creates, and --config-only, --print-vars,
+// --publish-config and --forget work on an installation that is already there
+// — writing this machine's config, printing its variables, publishing its
+// shared config, or taking it apart — and touch no project.
 func (o *initOptions) setupCreates(firstRun bool) bool {
-	return firstRun && o.door != updateDoor.name && !o.configOnly && !o.printVars && !o.forget
+	return firstRun && o.door != updateDoor.name && !o.configOnly && !o.printVars && !o.forget && !o.publishConfig
 }
 
 // announceAlreadySetUp is setup's one line for a run whose installation is
