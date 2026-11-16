@@ -898,6 +898,120 @@ func TestR3FollowUpsFiledWithImportance(t *testing.T) {
 	}
 }
 
+// TestR3ReplayFinishesALostLanding is the landing the node never heard about:
+// the host took the merge, and the cycle died between that call and the write
+// that files what the landing left open. Every cycle after it reads a pull
+// request that is already merged, and without the replay the findings are filed
+// by nobody and the person a Pro merge is owed is told nothing at all.
+//
+// What tells a lost landing from a pull request somebody else merged is the
+// item's own ledger: the transition that put it at rung 3 names the head the
+// ladder reached that rung at, and the ladder merges no other head. The log's
+// lines are the second half — a cycle that finds either of them has already done
+// this — so a replay happens once and a landing that landed properly is never
+// replayed on top of itself.
+//
+// Mutation: drop the replay and the first case below merges nothing, files
+// nothing and tells nobody.
+func TestR3ReplayFinishesALostLanding(t *testing.T) {
+	now := o6Now()
+	const second = "fedcba9876543210"
+
+	lost := func(t *testing.T) *mergeHarness {
+		t.Helper()
+		m := newMergeHarness(t, now, nil, mergeItem("wi-1", r3Ledger(now, headA, 2)))
+		read := mergePass(headA)
+		read.Findings.List = []orchestrator.Finding{
+			{Severity: orchestrator.SeverityHigh, Path: mergeRoutinePath, Key: mergeFinding},
+			{Severity: orchestrator.SeverityMedium, Path: mergeRoutinePath, Key: second},
+		}
+		read.Verdict.FollowUps = []runstore.MergeJudgeFollowUp{{Key: mergeFinding, Importance: runstore.MergeJudgeMinor}}
+		m.reader.reads["wi-1"] = read
+		m.host.head, m.host.checks, m.host.state = headA, mergeGreen(), gitprov.PRMerged
+		return m
+	}
+
+	t.Run("the next cycle files what the landing left and tells the person", func(t *testing.T) {
+		m := lost(t)
+		m.act("wi-1", r3Step(escalation.CeilingAutoMergeNotify), escalation.ReasonR2Clean, r3Read(headA))
+
+		s := m.state()
+		if len(s.WorkItems) != 3 {
+			t.Fatalf("the node carries %d items, and a replay files one follow-up per open finding", len(s.WorkItems))
+		}
+		for _, tc := range []struct {
+			suffix     string
+			importance runstore.MergeJudgeImportance
+			severity   orchestrator.Severity
+		}{
+			{"-fu-" + mergeFinding, runstore.MergeJudgeMinor, orchestrator.SeverityHigh},
+			{"-fu-" + second, runstore.MergeJudgeMinor, orchestrator.SeverityMedium},
+		} {
+			w, ok := s.Item("wi-1" + tc.suffix)
+			if !ok {
+				t.Fatalf("the node carries no follow-up %q: %+v", "wi-1"+tc.suffix, s.WorkItems)
+			}
+			if !strings.Contains(w.Brief, string(tc.importance)) || !strings.Contains(w.Brief, string(tc.severity)) {
+				t.Fatalf("the brief reads %q, and a replayed landing's findings are filed as the landing's are", w.Brief)
+			}
+		}
+		if len(m.host.merged) != 0 {
+			t.Fatalf("the host merged %v, and a pull request that is already merged is not merged again", m.host.merged)
+		}
+		m.stub.line("ladder-r3-merged-" + headA[:8])
+
+		if len(m.sink.got) != 1 || m.sink.got[0].Kind != orchestrator.NotifyMergedNeedsReview {
+			t.Fatalf("the sink was told %+v, and an unattended merge nobody heard about is what a Pro ceiling tells", m.sink.got)
+		}
+		if text := m.sink.got[0].Text; !strings.Contains(text, "already merged") || !strings.Contains(text, "2 findings") {
+			t.Fatalf("the notification reads %q, and it says what is true of a merge this cycle did not make", text)
+		}
+
+		// The line the replay wrote is the fence: the cycle after it finds the
+		// work filed and the person told, and does neither again.
+		m.act("wi-1", r3Step(escalation.CeilingAutoMergeNotify), escalation.ReasonR2Clean, r3Read(headA))
+		if got := len(m.state().WorkItems); got != 3 {
+			t.Fatalf("the cycle after the replay carries %d items, and a replay files each finding once", got)
+		}
+		if len(m.sink.got) != 1 {
+			t.Fatalf("the cycle after the replay told the sink %d times, and a replay is said once", len(m.sink.got))
+		}
+	})
+
+	t.Run("a merge the ladder never reached files nothing", func(t *testing.T) {
+		// The item reached rung 3 at another head, so this head is none of its
+		// landing's: the ladder has no landing to finish and nothing to say.
+		m := newMergeHarness(t, now, nil, mergeItem("wi-1", r3Ledger(now, headB, 2)))
+		read := mergePass(headA)
+		read.Findings.List = []orchestrator.Finding{{Severity: orchestrator.SeverityHigh, Path: mergeRoutinePath, Key: mergeFinding}}
+		m.reader.reads["wi-1"] = read
+		m.host.head, m.host.checks, m.host.state = headA, mergeGreen(), gitprov.PRMerged
+		m.act("wi-1", r3Step(escalation.CeilingAutoMergeNotify), escalation.ReasonR2Clean, r3Read(headA))
+
+		if got := len(m.state().WorkItems); got != 1 {
+			t.Fatalf("the node carries %d items, and a merge this ladder did not reach files nothing", got)
+		}
+		if len(m.sink.got) != 0 {
+			t.Fatalf("the sink was told %+v, and the ladder has nothing to say about a merge it did not make", m.sink.got)
+		}
+	})
+
+	t.Run("a findings read nobody could make files nothing", func(t *testing.T) {
+		m := lost(t)
+		read := m.reader.reads["wi-1"]
+		read.Findings = orchestrator.Findings{Read: orchestrator.FindingsAbsent}
+		m.reader.reads["wi-1"] = read
+		m.act("wi-1", r3Step(escalation.CeilingAutoMergeNotify), escalation.ReasonR2Clean, r3Read(headA))
+
+		if got := len(m.state().WorkItems); got != 1 {
+			t.Fatalf("the node carries %d items, and a replay invents no finding it could not read", got)
+		}
+		if len(m.sink.got) != 0 {
+			t.Fatalf("the sink was told %+v, and a replay with nothing to file says nothing", m.sink.got)
+		}
+	})
+}
+
 // TestR3NotifiesProAndHotfix is D2030: the two ceilings that merge and tell
 // somebody do, and the one that merges quietly does not.
 //
