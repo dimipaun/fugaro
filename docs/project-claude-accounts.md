@@ -693,7 +693,12 @@ entry gains a `credentials` entry of the type every one of them is, and the craf
 the accesses its stage keys named. It **adds and removes nothing** — `claude_accounts`,
 `default_claude_account` and `stages.<stage>.claude_account` (§8) are read exactly as before — so an
 installation that never writes a `credentials:` block itself is served by the same names it always
-was. `fugaro update` is the command that runs it, and no second command is one.
+was. `fugaro update` is the command that runs that local convergence, and no second command is
+one; what carries the names it writes to the project's policy node — which is what a run reads —
+is **`fugaro project policy publish`**, run at the operator's own terminal, since the policy stage
+refuses a file that records a generation the node has moved past and its re-seed refuses the
+account keys by name
+(`docs/policy-migration.md`, "A machine whose file is older than the node").
 
 ## 13. Pools: an ordered list of credentials
 
@@ -738,7 +743,7 @@ pool ls` says which half serves each member for exactly that reading.
 Fugaro spreads one run across subscriptions only once the project's `subscription_spread` switch is
 on — `fugaro settings set subscription_spread true`, off by default — and while it is off a craft
 whose access names such a pool is **inert**: `fugaro craft ls` marks the row — it is offline, so it
-reads the switch from this machine's own config, the value `fugaro update` publishes into the node —
+reads the switch from this machine's own config, the value `fugaro project policy publish` writes into the node from it —
 and a call that would have been served by it is refused with the switch named. That is the switch §1's terms question is
 about, kept explicit for the reason the accounts' own agreement gives.
 

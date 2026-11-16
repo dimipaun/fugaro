@@ -367,11 +367,15 @@ func TestDocsMultiModelRecordsTheReviewAccountException(t *testing.T) {
 		// meets the credential.
 		"not priced or capped by the gateway",
 		// Where the two keys live and what carries them to a run: the reader
-		// who sets one has to learn that the file alone is not enough and that
-		// the one command they already run is what publishes it (B7).
-		"`fugaro update` publishes them",
+		// who sets one has to learn that the file alone is not enough, which
+		// command publishes it (corrected 2026-11-16: §3 named `fugaro update`,
+		// whose policy stage refuses a file that records a generation the node
+		// has moved past), and that the correction does not add a step to the
+		// upgrade.
+		"`fugaro project policy publish`, run at your own terminal, is the command that publishes them",
 		"the project's published policy node",
-		"there is no second publish to run",
+		"**`fugaro update` is the upgrade and not the publish**",
+		"a setting you changed is not an upgrade",
 		// And that the credential is not a plan any more: the reader who
 		// meets the rule here has to learn that the keys it names work, and
 		// which owner-run check the claim rests on.

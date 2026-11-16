@@ -77,12 +77,19 @@ deleting it:
 
 ## Who publishes the node
 
-`fugaro update` is the one command an operator runs, and it is also what
-*publishes*: the same stage that migrates an older node writes the node the
-local config states when the published one does not carry it — the budget block,
-the model-price overrides, the base branch, the routing switch and the review
-floor. A config edit therefore reaches every run of the project through the one
-command, instead of a second `fugaro project policy publish` after every edit.
+`fugaro update`'s policy stage publishes the node the local config states where
+the published one does not carry it — the budget block, the model-price
+overrides, the base branch, the routing switch and the review floor — and it does
+so under one condition: the file records no `policy_generation` at all or records
+the one the node carries now (`publishPlanFor`,
+`internal/cli/init_policy_publish.go`). A file that records a generation the node
+has moved past is refused there (D854, below), so the command that publishes from
+such a file — and the one to run when an update has refused it — is **`fugaro
+project policy publish`**, at the operator's own terminal: it builds the node from
+the file, never consults the generation, and records the one it wrote. An
+ordinary config edit therefore reaches every run of the project through the one
+command the operator was going to run; the publish is the door for the file the
+update refuses.
 
 It is one write. The migration and the publish share one ownership read (the
 database this installation adopted), one ETag and one write path, and the
@@ -95,7 +102,8 @@ What the publish writes is read and changed through `fugaro settings`, not by
 hand: `fugaro settings 'budget.*'` prints each key with the value a run gets,
 the layer that decided it and the built-in default, and `fugaro settings set
 budget.per_run_usd 5 --layer local` writes the value the next `fugaro update`
-publishes. `settings set` and `unset` never write the node themselves — the
+publishes — or `fugaro project policy publish`, where that update refuses the
+file (above). `settings set` and `unset` never write the node themselves — the
 published node is written by `fugaro update` and by the commands that write it
 by hand (`fugaro project policy publish`, and `repos add`, `rm` and `sync` for
 its allow-list) — so a value the config states and the node does not carry yet
