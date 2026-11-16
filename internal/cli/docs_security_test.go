@@ -414,8 +414,13 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"the deploy alone changes no run",
 		// The job holds nothing — and the one job that is not reached, named
 		// rather than left to be assumed, because a shared project job keeps
-		// its accessors and its token mount.
-		"a per-repository job holds no model credential at all",
+		// its accessors and its token mount. The claim is the cascade job's as
+		// of B2.4: the switch admits api-key and oauth repositories too, and
+		// their jobs keep the mount until the flip, so a sentence that says
+		// "a per-repository job" flat is false for them (B2.3, D2072).
+		"a per-repository `cascade` job holds no model credential at all",
+		"an `api-key` or `oauth` one is served by the service while its job still mounts its credential",
+		"the job keeps its model mount and its service account keeps `secretAccessor` on it",
 		"a shared project job is the one job it does not reach",
 		"fugaro creds set",
 		// The invariant, spelled as the code enforces it.
@@ -501,19 +506,22 @@ func TestSecurityMdNamesTheCredentialsServicesKnownLimits(t *testing.T) {
 		// launcher's.
 		"the launcher makes no account allow-list check of its own",
 		// The dormancy limit is GONE and replaced, deliberately: the release
-		// that wires the service is this one. The bullet it used to carry
+		// that wires the service is 0.10.1. The bullet it used to carry
 		// said the opt-in gave a job no address and that no installation
 		// should opt in — both false once internal/cli/run.go sets
 		// FUGARO_CREDENTIALS_SERVICE_URL on a repository job's execution.
-		// What is stated instead is the half that is still not wired (every
-		// other agent.auth mode, and the shared project jobs), so the
-		// section cannot be read as "the service now serves everything".
+		// B2.4 rewrote the half that replaced it again: as of this release the
+		// switch admits `api-key` and `oauth` repositories too (B2.2, B2.3,
+		// D2071), so "the half it does not carry is the other auth modes'" and
+		// the auth-blind drop it named are both false. What has not landed is
+		// the MOUNT: a switched `api-key` or `oauth` repository's job keeps its
+		// credential and its accessor until the flip (B2.7, D2072).
 		"the service is wired as of 0.10.1",
-		"the half it does not carry is the other auth modes'",
+		"as of this release every `agent.auth` reaches it",
+		"what has not landed is the mount drop",
 		"FUGARO_CREDENTIALS_SERVICE_URL",
-		"the mount drop is auth-blind",
-		"no model credential of their own and nothing yet to replace it",
-		"agent.auth: cascade",
+		"a switched `api-key` or `oauth` repository's job still declares its model credential and its account still holds `secretAccessor` on it",
+		"the credential is the job's own copy until that release and the agent can reach it",
 		"A shared project job is not wired either",
 		"a repository whose root has not been re-applied with the switch on is byte for byte what it was",
 		// And the App key's own limit stays: the mount and the grant are
@@ -601,9 +609,16 @@ func TestSecurityMdStatesTheBitbucketGitProxy(t *testing.T) {
 		"the run's life",
 		"There is no agent sandbox, and none is planned",
 		// The switch a repository is proxied by, and the one source of that
-		// fact (G15): the published node's block with `proxy: true`.
+		// fact (G15): the published node's block with `proxy: true`. B2.4 adds
+		// the second half of that fact's reach (F29): before the switch
+		// admitted `api-key` and `oauth` repositories, `proxy: true` was inert
+		// for every repository whose `agent.auth` was not `cascade`, because
+		// the launcher writes the address on a job's execution only where the
+		// switch holds — and a `vertex` repository is still not admitted at all.
 		"bitbucket_token",
 		"proxy: true",
+		"`proxy: true` was inert for every repository whose `agent.auth` was not `cascade`",
+		"a `vertex` repository is still not admitted by the switch at all and so cannot be proxied",
 		// The forwarder's shape (G5): loopback, the job's ID token, no
 		// credential of its own.
 		"loopback forwarder",
