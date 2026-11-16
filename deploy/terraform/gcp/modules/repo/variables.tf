@@ -121,6 +121,11 @@ variable "repo" {
     # the fact existed — every golden one — plans exactly what it planned, and
     # false is what an installation that never proxies a repository sends.
     bitbucket_proxied = optional(bool, false)
+    # Which of the model credentials the credentials service serves this
+    # repository's runs (D2072, G17), passed down to every workflow: `all`,
+    # `anthropic` or `none`. Optional and `all`, so a tfvars written before the
+    # fact existed plans exactly what it planned.
+    model_secrets_served = optional(string, "all")
     registry = object({
       repository_id   = string
       cleanup_dry_run = bool

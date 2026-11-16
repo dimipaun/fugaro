@@ -182,6 +182,12 @@ func TestParseProblems(t *testing.T) {
 		// mutation that checked only the prefix would pass the first.
 		{"codex-oauth-token workflow secret reserved", minimalYAML + "    secrets:\n      - { name: codex-oauth-token, env: TOK }\n", "workflows.server.secrets[0].name", "reserved for the Codex harness", 0},
 		{"codex-oauth-token-prefixed workflow secret reserved", minimalYAML + "    secrets:\n      - { name: codex-oauth-token-acme-personal, env: TOK }\n", "workflows.server.secrets[0].name", "reserved for the Codex harness", 0},
+		// A typed credential's own derived secret name (config.CredentialSecret,
+		// MC22): the container the credential's own reader reads, so a value
+		// declared as a workflow's own would be the key the credential spends.
+		// Refused for the whole namespace, whether or not a credentials entry
+		// defines the credential the name derives from.
+		{"typed credential's derived secret reserved", minimalYAML + "    secrets:\n      - { name: credential-acme-router-key, env: TOK }\n", "workflows.server.secrets[0].name", "reserved for a typed credential", 0},
 		// The credentials service's bundle container (config.CredentialsBundleSecret,
 		// C1.11's review finding n2): its document is every model credential the
 		// installation holds, and the service is its only reader, so a workflow
