@@ -192,20 +192,31 @@ func TestDocsMixedCredentialsRecordsTheRuling(t *testing.T) {
 		"### The decisions the tasks B1-B6 follow",
 		// Where the keys live and what carries them to a run: the file is the
 		// only store of the two, the node is the only thing a run reads, and
-		// `fugaro update` is the one command that closes the gap (B7). A note
-		// that named the keys and never said how they reach the node would
-		// leave an operator setting them and getting a mix the runner never
-		// sees.
+		// `fugaro project policy publish` is the command that publishes them
+		// (corrected 2026-11-16). A note that named the keys and never said how
+		// they reach the node would leave an operator setting them and getting
+		// a mix the runner never sees — and one that named `fugaro update` as
+		// the publisher left the owner in a state where nothing was published
+		// at all, because that stage refuses to publish from a file whose
+		// recorded generation the node has moved past.
 		"### Where the two keys live, and what carries them to a run",
-		"`fugaro update` publishes them",
+		"`fugaro project policy publish`, run at the operator's own terminal, is the command that publishes them",
 		"the project's **published policy node**",
 		"a mix no run of the project has",
-		"no second `fugaro project policy publish`",
-		// And the one step that command cannot take for these members: the D854
-		// re-seed refuses the account keys by name, and the doc says which
-		// command writes them, so the operator who meets that refusal has a path
-		// rather than a failure naming members no documented command sets.
-		"refuses the account keys **by name**",
+		// The upgrade stays one command (CLAUDE.md's HARD RULE): what the
+		// correction changes is which command publishes an operator's own
+		// setting, and the section has to say both or a reader takes the
+		// correction for a second upgrade step.
+		"**`fugaro update` is the upgrade, not the publish.**",
+		"carries the published node forward to this Fugaro's version in place",
+		"a setting the operator changed is not part of an upgrade",
+		// The other half: the stage does carry the file's members into the node
+		// while the recorded generation is the node's own, and the D854 re-seed
+		// refuses the account keys by name — the doc says which command writes
+		// them, so the operator who meets that refusal has a path rather than a
+		// failure naming members no documented command sets.
+		"policyConfigDrift",
+		"refuses the account keys by name",
 		"fugaro settings set default_claude_account <name>",
 	} {
 		if !strings.Contains(section, want) {
