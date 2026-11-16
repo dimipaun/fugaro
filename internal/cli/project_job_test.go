@@ -80,7 +80,7 @@ const projectJobTimeout = 6 * time.Hour
 // launch refuses it (cascadeLaunchRefusal, the owner's ruling of 2026-10-22).
 // The budget node's mode is the one that keeps the gateway on, because a
 // cascade run holds no model credential of its own (D143).
-const projectJobCascadePolicy = `{"version":5,"allow_repos":["github/acme/*"],` +
+const projectJobCascadePolicy = `{"version":9,"allow_repos":["github/acme/*"],` +
 	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"}},` +
 	`"routing":{"claude":{"via":"cascade"}},` +
 	`"budget":{"mode":"observe","allowed_models":["claude-sonnet-5-5"]}}`

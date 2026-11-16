@@ -654,7 +654,7 @@ func convergeOn(t *testing.T, r *convergeRig, stale []string) string {
 		}
 	}
 
-	out, errOut, err := executeStdin(t, "", "update")
+	out, errOut, err := executeStdin(t, "aurora\n", "update")
 	if err != nil {
 		t.Fatalf("fugaro update stopped at %s (exit %d), so this installation needs a second command:\n%s\n%s",
 			stoppedStage(out), ExitCode(err), out, errOut)
@@ -1329,7 +1329,7 @@ func TestUpdateConvergesTheSpendLeavesFromThePreviousGeneration(t *testing.T) {
 	// The fixture is read before the rig is built: newConvergeRig chdirs into
 	// the checkout it makes, and the path below is this package's own.
 	previous := previousGenerationRulesDocument(t)
-	r := newConvergeRig(t, v8Node())
+	r := newConvergeRig(t, currentNode())
 	currentRelease(t)
 	r.db.SetRules(previous)
 	if got := r.db.Value(projectpolicy.PathRulesMarker()); fmt.Sprint(got) != fmt.Sprint(projectpolicy.RulesVersion-1) {

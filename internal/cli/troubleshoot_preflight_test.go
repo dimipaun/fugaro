@@ -178,7 +178,7 @@ func TestTroubleshootPreflightRefusesWhatTheLaunchRefuses(t *testing.T) {
 		{
 			name: "a policy that does not admit the repository",
 			setup: func(t *testing.T, f *launchBudgetFixture) *task.Spec {
-				publishPolicy(t, f, `{"version":5,"allow_repos":["github/acme/other"]}`)
+				publishPolicy(t, f, `{"version":9,"allow_repos":["github/acme/other"]}`)
 				return nil
 			},
 			want: []string{"the project's policy does not admit github/acme/app"},
