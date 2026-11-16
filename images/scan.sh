@@ -50,7 +50,7 @@ env_credential_names='(^|_)(TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|CREDENTIALS|
 # pins it there), the same text images/trivy-secret.yaml's
 # fugaro-git-config-credential rule greps for: one definition of what a
 # credential in a git config is, for the two readers that have no git to ask.
-git_config_credential='\[credential|^[[:space:]]*helper[[:space:]]*=|extraheader|://[^/@[:space:]]+:[^/@[:space:]]+@'
+git_config_credential='\[credential|^[[:space:]]*helper[[:space:]]*=|extraheader|(https?|git)://[^/[:space:]]*@'
 # leaks checks the image as it ends up, for the three things a layer scan
 # cannot state:
 #

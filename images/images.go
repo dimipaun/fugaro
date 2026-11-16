@@ -45,7 +45,7 @@ const (
 	GitCredentialRemoteURLKey = `^remote\..*\.(url|pushurl)$`
 	// GitConfigCredentialText matches a git config file's own text that
 	// carries a credential: a credential section, a helper, an
-	// http.extraheader, or a URL whose userinfo holds a secret. The constants
+	// http.extraheader, or a URL whose userinfo is a credential. The constants
 	// above are `git config --get-regexp` patterns over a *key*, read
 	// lowercased, and cannot be applied to the file as it is written; this is
 	// the same thing a reader with no git to ask greps for. images/scan.sh's
@@ -53,15 +53,19 @@ const (
 	// rule both carry it verbatim (a test pins that), so the two never
 	// disagree about what a credential in a config is.
 	//
-	// Its URL alternative is deliberately narrower than GitCredentialURL. That
-	// one is read by the checkout strip and the smoke, which refuse an ssh URL
-	// because run-time credential injection cannot use it either; this one asks
-	// what *is* a credential in the file, and the answer is a URL with a secret
-	// in its userinfo — the shape every credential Fugaro injects has
-	// (https://x-token-auth:<token>@host). A mirror rule naming ssh://git@host
-	// carries no secret, and a leak scan refusing it would refuse an image for
-	// a config that leaks nothing.
-	GitConfigCredentialText = `\[credential|^[[:space:]]*helper[[:space:]]*=|extraheader|://[^/@[:space:]]+:[^/@[:space:]]+@`
+	// Its URL alternative names the schemes instead of taking every userinfo,
+	// where GitCredentialURL — read by the checkout strip and the smoke, which
+	// refuse an ssh URL because run-time credential injection cannot use it
+	// either — takes them all. This one asks what *is* a credential in the
+	// file, and on http(s) and git any userinfo is one: Fugaro's own injected
+	// credential is https://x-token-auth:<token>@host, and the form GitHub's
+	// token instructions give, which is what a Dockerfile's own
+	// `git clone https://${TOKEN}@github.com/...` bakes into .git/config, is
+	// the token alone as the user name. The one userinfo that carries no
+	// secret is ssh's own git@host, which is what a mirror rule naming
+	// ssh://git@host asks for — a leak scan refusing that would refuse an
+	// image for a config that leaks nothing — so ssh is the scheme left out.
+	GitConfigCredentialText = `\[credential|^[[:space:]]*helper[[:space:]]*=|extraheader|(https?|git)://[^/[:space:]]*@`
 )
 
 // CloudBuild is images/derived/cloudbuild.yaml, which fugaro image build

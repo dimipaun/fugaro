@@ -617,11 +617,27 @@ func TestCatalogBuildStepsRunTheScanBeforePromote(t *testing.T) {
 	}
 	// The scan is the script and the rules the repository's own scan runs, byte
 	// for byte, and not a second copy of the checks that could drift from it.
-	if got, want := b.Substitutions["_SCAN_B64"], base64.StdEncoding.EncodeToString(images.ScanScript); got != want {
-		t.Error("_SCAN_B64 is not images/scan.sh")
-	}
-	if got, want := b.Substitutions["_TRIVY_SECRET_B64"], base64.StdEncoding.EncodeToString(images.TrivySecretConfig); got != want {
-		t.Error("_TRIVY_SECRET_B64 is not images/trivy-secret.yaml")
+	// Each is over the limit on one substitution's value, so each travels as
+	// several, joined by the step before it decodes them.
+	for _, f := range []struct {
+		substitution string
+		data         []byte
+	}{
+		{"_SCAN_B64", images.ScanScript},
+		{"_TRIVY_SECRET_B64", images.TrivySecretConfig},
+	} {
+		chunks := scanChunks(t, b.Substitutions, f.substitution)
+		if len(chunks) < 2 {
+			t.Errorf("%s travels in %d value(s), and the file is over the limit on one", f.substitution, len(chunks))
+		}
+		joined, want := strings.Join(chunks, ""), base64.StdEncoding.EncodeToString(f.data)
+		if joined != want {
+			t.Errorf("%s joins to %d bytes of base64, and the file's own encode is %d", f.substitution, len(joined), len(want))
+		}
+		decoded, err := base64.StdEncoding.DecodeString(joined)
+		if err != nil || string(decoded) != string(f.data) {
+			t.Errorf("%s does not decode to the file the binary carries: %v", f.substitution, err)
+		}
 	}
 	scanStep := step(t, b, catalogScanStepID)
 	// The image it scans is the request's own, through the substitution the
@@ -706,6 +722,60 @@ func TestCatalogBuildStepsRunTheScanBeforePromote(t *testing.T) {
 			t.Fatalf("the scan passed a finding Trivy reported:\n%s", got.out)
 		}
 	})
+}
+
+// scanChunks returns the values a request carries one of the leak scan's files
+// in, in order: <prefix>_1, <prefix>_2, ... — the names the step's own env:
+// declares, spelled here rather than through the code's own helper, so a
+// request that names its values something else fails the test that reads them.
+func scanChunks(t *testing.T, subs map[string]string, prefix string) []string {
+	t.Helper()
+	var chunks []string
+	for i := 1; ; i++ {
+		value, ok := subs[prefix+"_"+strconv.Itoa(i)]
+		if !ok {
+			if i == 1 {
+				t.Fatalf("the request carries no %s_1: %v", prefix, subs)
+			}
+			return chunks
+		}
+		chunks = append(chunks, value)
+	}
+}
+
+// TestCatalogBuildSubstitutionsStayUnderTheCloudBuildLimit: Cloud Build limits
+// the length of one substitution's value and its validator refuses a request
+// that breaks the limit before the build is created. Nothing here submits a
+// build, so a request over the limit would not fail this package's tests — it
+// would fail the first real catalog build, with the scan never running and no
+// entry ever built — which is why the limit is asserted on the requests
+// instead. The leak scan's two files are the only values big enough to reach
+// it (catalogScanFile), so this is what catches a payload that outgrew a single
+// substitution again.
+func TestCatalogBuildSubstitutionsStayUnderTheCloudBuildLimit(t *testing.T) {
+	s := catalogBuildSpec(t)
+	build, err := CatalogBuildRequest("proj-1234", s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prebuilt, err := CatalogBuildRequest("proj-1234", catalogPrebuiltSpec(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, req := range []struct {
+		what string
+		b    *cloudbuild.Build
+	}{{"the catalog build", build}, {"the prebuilt run", prebuilt}} {
+		if len(req.b.Substitutions) == 0 {
+			t.Fatalf("%s carries no substitutions", req.what)
+		}
+		for name, value := range req.b.Substitutions {
+			if len(value) > catalogSubstitutionLimit {
+				t.Errorf("%s carries %s of %d bytes, and a substitution value may be %d",
+					req.what, name, len(value), catalogSubstitutionLimit)
+			}
+		}
+	}
 }
 
 // scanFixture is the image the fake docker of runCatalogScan answers for: the

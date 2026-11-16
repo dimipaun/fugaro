@@ -175,6 +175,15 @@ func TestScanRefusesAnImageWithAGitCredential(t *testing.T) {
 			want:  "src/.git/config",
 		},
 		{
+			// The form GitHub's token instructions give, and what a
+			// Dockerfile's own `git clone https://${TOKEN}@github.com/...`
+			// bakes into the config: the token is the user name and the
+			// userinfo carries no colon at all.
+			name:  "a checkout cloned with the token as its user name",
+			files: map[string]string{"src/.git/config": "[remote \"origin\"]\n\turl = https://sometokenvalue@github.com/owner/repo.git\n"},
+			want:  "src/.git/config",
+		},
+		{
 			name:  "a checkout whose config carries an authorization header",
 			files: map[string]string{"src/.git/config": "[http]\n\textraheader = AUTHORIZATION: Basic fixture\n"},
 			want:  "src/.git/config",

@@ -46,6 +46,71 @@ const (
 	catalogScanStepID = "catalog-scan"
 )
 
+// catalogSubstitutionLimit is Cloud Build's ceiling on one substitution's
+// value: "the length of a parameter value is limited to 4000 bytes"
+// (Substituting variable values), which its validator applies to a request's
+// substitutions before the build is created. Every value a catalog build sent
+// before the leak scan was small — a repository URL, an image reference, a
+// sha256, the smoke's spec — and the scan's files are not: images/scan.sh's
+// base64 is over twice this, so each file travels as more than one value
+// (catalogScanFile, and the step that joins them in catalogScanStep).
+const catalogSubstitutionLimit = 4000
+
+// catalogScanFile is one of the two files the leak scan runs from, as the
+// request carries it: images/scan.sh and images/trivy-secret.yaml, embedded in
+// the binary that submits the build because a catalog build reads no checkout
+// to run them from. It is the same script and the same rules CI runs, so the
+// build and CI cannot disagree about what a leak is.
+type catalogScanFile struct {
+	// substitution is the prefix of the values this file travels in:
+	// _SCAN_B64_1, _SCAN_B64_2, ... in order, each under
+	// catalogSubstitutionLimit (catalogScanSubstitutions).
+	substitution string
+	// file is the name the scan step writes it under in SCANDIR, which is what
+	// images/scan.sh reads its Trivy rules from (they sit next to the script).
+	file string
+	data []byte
+}
+
+// catalogScanFiles are the leak scan's two files, in the order the step writes
+// them.
+var catalogScanFiles = []catalogScanFile{
+	{substitution: "_SCAN_B64", file: "scan.sh", data: images.ScanScript},
+	{substitution: "_TRIVY_SECRET_B64", file: "trivy-secret.yaml", data: images.TrivySecretConfig},
+}
+
+// catalogScanChunks cuts a file's base64 into values at or under the limit.
+// The cut need not fall on a group boundary: the step joins a file's chunks
+// and decodes the join, never one chunk at a time.
+func catalogScanChunks(data []byte) []string {
+	b64 := base64.StdEncoding.EncodeToString(data)
+	chunks := make([]string, 0, (len(b64)+catalogSubstitutionLimit-1)/catalogSubstitutionLimit)
+	for len(b64) > catalogSubstitutionLimit {
+		chunks = append(chunks, b64[:catalogSubstitutionLimit])
+		b64 = b64[catalogSubstitutionLimit:]
+	}
+	return append(chunks, b64)
+}
+
+// catalogScanSubstitutions are the values the request carries the leak scan's
+// files in, under the names the scan step's own env: declares.
+func catalogScanSubstitutions() map[string]string {
+	subs := map[string]string{}
+	for _, f := range catalogScanFiles {
+		for i, chunk := range catalogScanChunks(f.data) {
+			subs[catalogScanValueName(f.substitution, i)] = chunk
+		}
+	}
+	return subs
+}
+
+// catalogScanValueName is the name of a file's i'th chunk (from 0) as a
+// substitution and as the env variable the step reads it from: the two differ
+// only in the substitution's leading underscore.
+func catalogScanValueName(substitution string, i int) string {
+	return fmt.Sprintf("%s_%d", substitution, i+1)
+}
+
 // catalogContextRoot is where the clone step clones the entry's repository:
 // the path the derived build's own source step clones into, and the path a
 // catalog build drops. It is not /workspace/context, which holds the copied
@@ -388,11 +453,14 @@ func CatalogBuildRequest(project string, s CatalogBuildSpec) (*cloudbuild.Build,
 		// The smoke's spec, base64 because the request substitutes textually
 		// and JSON is text this config would have to quote.
 		"_SELFTEST_B64": base64.StdEncoding.EncodeToString(s.Selftest),
-		// The leak scan's two files, carried the same way: a catalog build
-		// reads no checkout, so the script and its rules reach it from the
-		// binary that submitted the build (catalogScanStep).
-		"_SCAN_B64":         base64.StdEncoding.EncodeToString(images.ScanScript),
-		"_TRIVY_SECRET_B64": base64.StdEncoding.EncodeToString(images.TrivySecretConfig),
+	}
+	// The leak scan's two files, carried the same way but cut into more than
+	// one value each: a catalog build reads no checkout, so the script and its
+	// rules reach it from the binary that submitted the build
+	// (catalogScanStep), and one of them is over the limit on a substitution's
+	// value (catalogSubstitutionLimit).
+	for name, value := range catalogScanSubstitutions() {
+		b.Substitutions[name] = value
 	}
 	switch s.GitProvider {
 	case gitprov.KindBitbucket:
@@ -538,6 +606,12 @@ echo "smoked $$ref"`},
 // writes both out and runs the script, rather than growing a second copy of
 // the checks.
 //
+// Each file arrives as several substitutions (catalogScanFiles), because one
+// value may not exceed the limit Cloud Build puts on a substitution — and the
+// step reads them as several env variables and joins them before decoding
+// them, rather than as one variable holding the whole file: joining them in
+// the request would put the file back over the limit in a single string.
+//
 // The trivy container needs nothing of the network and no registry credential:
 // it reads the image out of the worker's own docker daemon, which is where the
 // build step left it.
@@ -547,19 +621,33 @@ func catalogScanStep(s CatalogBuildSpec) *cloudbuild.BuildStep {
 	// digest's directory are env values of their own rather than text in the
 	// script, as the smoke step's own are, so the script runs outside Cloud
 	// Build too (catalog_test.go runs it).
+	env := []string{
+		"IMAGE=${_IMAGE}", "OUT=/workspace/out", "SCANDIR=/workspace/scan",
+		"TRIVY_CACHE_DIR=/workspace/trivy",
+	}
+	// One env variable per chunk of a file, none larger than the substitution
+	// behind it, and one line per file joining its chunks into it.
+	var writes []string
+	for _, f := range catalogScanFiles {
+		chunks := catalogScanChunks(f.data)
+		read := make([]string, 0, len(chunks))
+		for i := range chunks {
+			substitution := catalogScanValueName(f.substitution, i)
+			name := strings.TrimPrefix(substitution, "_")
+			env = append(env, name+"=${"+substitution+"}")
+			read = append(read, `"$$`+name+`"`)
+		}
+		writes = append(writes, "for chunk in "+strings.Join(read, " ")+
+			`; do printf '%s' "$$chunk"; done | base64 -d > "$$SCANDIR/`+f.file+`"`)
+	}
 	return &cloudbuild.BuildStep{
 		Id:         catalogScanStepID,
 		Name:       "gcr.io/cloud-builders/docker",
 		Entrypoint: "bash",
-		Env: []string{
-			"IMAGE=${_IMAGE}", "OUT=/workspace/out", "SCANDIR=/workspace/scan",
-			"TRIVY_CACHE_DIR=/workspace/trivy",
-			"SCAN_B64=${_SCAN_B64}", "TRIVY_SECRET_B64=${_TRIVY_SECRET_B64}",
-		},
+		Env:        env,
 		Args: []string{"-c", `set -eu
 install -d -m 0755 "$$SCANDIR"
-printf '%s' "$$SCAN_B64" | base64 -d > "$$SCANDIR/scan.sh"
-printf '%s' "$$TRIVY_SECRET_B64" | base64 -d > "$$SCANDIR/trivy-secret.yaml"
+` + strings.Join(writes, "\n") + `
 digest=$$(cat "$$OUT/image-digest")
 case "$$digest" in sha256:*) ;; *) echo "no pushed digest" >&2; exit 1 ;; esac
 sh "$$SCANDIR/scan.sh" --secrets "$$IMAGE@$$digest"
