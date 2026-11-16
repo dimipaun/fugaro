@@ -3,11 +3,11 @@
 
 package register
 
-// The orchestrator's two seams, at the one point that sets them (O17, O18):
-// what none of the feature's own tests can see — that the functions handed to
-// internal/orchestrator.SetHandoff and SetBatch are ee/orchestrator's own
-// Transfer and BatchSize and not other functions of the right shape, and that
-// the names are taken for good.
+// The orchestrator's three seams, at the one point that sets them (O17, O18,
+// O19): what none of the feature's own tests can see — that the functions
+// handed to internal/orchestrator.SetHandoff, SetBatch and SetWorkspace are
+// ee/orchestrator's own Transfer, BatchSize and WorkspaceRefused and not other
+// functions of the right shape, and that the names are taken for good.
 
 import (
 	"errors"
@@ -15,6 +15,7 @@ import (
 
 	eeorch "github.com/dimipaun/fugaro/ee/orchestrator"
 	"github.com/dimipaun/fugaro/internal/access"
+	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 )
 
@@ -91,5 +92,40 @@ func TestTaggedBinaryRaisesABatchForAPerson(t *testing.T) {
 		return 0, nil
 	}}); err == nil {
 		t.Error("a second SetBatch was accepted: the batch rule a tagged binary carries could be replaced after it was registered")
+	}
+}
+
+// TestTaggedBinaryClaimsAWorkspaceRefusal is the workspace seam's identity half,
+// read through the seam rather than by comparing functions: a build that
+// compiled this package claims the refusal a workspace's credentials service
+// wrote and refuses the record that only claims one, which is
+// ee/orchestrator.WorkspaceRefused's rule and not the core default's — the
+// default refuses everything, so the claimed case is what catches a
+// registration that installed anything else.
+func TestTaggedBinaryClaimsAWorkspaceRefusal(t *testing.T) {
+	reason, scope, detail := gateway.WorkspaceRefusalHalt()
+	refused := orchestrator.RunReport{
+		RunID: "20261107-090000-abcd", Started: true, Finished: true,
+		Outcome:          orchestrator.OutcomeRefused,
+		WorkspaceRefusal: gateway.WorkspaceRefusalStop,
+		Halt:             orchestrator.Halt{Reason: reason, Scope: scope, Detail: detail},
+	}
+	if !orchestrator.WorkspaceRefused(refused) {
+		t.Error("the tagged binary did not claim a run the workspace refused: this package registered the core's default rather than ee/orchestrator's WorkspaceRefused")
+	}
+
+	forged := refused
+	forged.Halt = orchestrator.Halt{Reason: reason, Scope: scope, Detail: "the workspace refused this run"}
+	if orchestrator.WorkspaceRefused(forged) {
+		t.Error("the tagged binary claimed a marker with no halt of the shape that path writes: the corroboration is the half that costs a forger more than the word")
+	}
+
+	// The name is taken here too, for the reason it is on the other two: a rule
+	// installed after this package decided one would be a pause the build did
+	// not intend.
+	if err := orchestrator.SetWorkspace(orchestrator.WorkspaceFuncs{Refused: func(orchestrator.RunReport) bool {
+		return false
+	}}); err == nil {
+		t.Error("a second SetWorkspace was accepted: the pause rule a tagged binary carries could be replaced after it was registered")
 	}
 }
