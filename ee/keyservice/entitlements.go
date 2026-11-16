@@ -60,6 +60,13 @@ const (
 // purchase, a trial, an operations grant and the free seat differ in their row,
 // their source and who they are for, and in nothing else.
 type entitlementGrant struct {
+	// ID is the record's own id, for the one caller whose grant has to be the same
+	// record when it is made twice: a purchase is granted from a merchant event the
+	// merchant may deliver again, and the id it names is derived from the
+	// transaction that bought the licence, so a delivery applied twice writes the
+	// licence the first one did rather than a second one that supersedes it (P4.2,
+	// D2204). Empty means a fresh id, which is every other grant.
+	ID string
 	// At is when the grant is written. The zero time means the term's own start,
 	// which is what a grant made at the instant it was paid for is.
 	At time.Time
@@ -311,9 +318,13 @@ func entitlementRecord(grant entitlementGrant) (WireEntitlement, error) {
 	if at.IsZero() {
 		at = grant.StartsAt
 	}
-	id, err := newID()
-	if err != nil {
-		return WireEntitlement{}, fmt.Errorf("keyservice: the entitlement's id: %w", err)
+	id := grant.ID
+	if id == "" {
+		minted, err := newID()
+		if err != nil {
+			return WireEntitlement{}, fmt.Errorf("keyservice: the entitlement's id: %w", err)
+		}
+		id = minted
 	}
 	entitlement := WireEntitlement{
 		ID:             id,

@@ -562,9 +562,17 @@ func (s *Service) purchased(ctx context.Context, e Event) error {
 	// A first purchase is the one that grants; a renewal and a proration are the
 	// same licence continued, and what they move is the term of the grant that is
 	// already there (`renewedLicence`).
+	//
+	// The grant is made only when the checkout's record names no licence yet: the
+	// grant is followed by writes that can fail, and the merchant redelivers what
+	// it got no answer for, so a retry that reached `recordBought` reads its own
+	// licence back here and carries on with it. The notice is not gated this way —
+	// the failure being answered may have been the notice itself, so it is sent
+	// again below.
 	licence := bought.EntitlementID
-	if bought.First {
+	if bought.First && licence == "" {
 		entitlement, err := s.grantEntitlement(ctx, entitlementGrant{
+			ID:             purchaseLicenceID(bought.TransactionID),
 			At:             e.OccurredAt,
 			OrganisationID: bought.OrganisationID,
 			WorkspaceID:    &workspace,
@@ -683,6 +691,22 @@ func (s *Service) renewedLicence(ctx context.Context, e Event, licence string, e
 	return nil
 }
 
+// purchaseLicenceID is the id of the licence one transaction bought. It is taken
+// from the transaction rather than minted, because the grant is followed by
+// writes that can fail and the merchant delivers an event again when it got no
+// answer: a delivery applied twice has to write one licence and not two, and the
+// transaction is the one thing the two deliveries share (D2192's one transaction
+// is one purchase).
+//
+// It is the second of two halves. A redelivery whose licence the checkout's
+// record already names is not granted again at all (`boughtBy`, `purchased`), and
+// this id is what keeps the grant itself one record for the failures before that
+// record was stamped: the same id is written again, superseding nothing, instead
+// of a second licence superseding the first (D2204).
+func purchaseLicenceID(transactionID string) string {
+	return "purchase:" + digest(transactionID)
+}
+
 // boughtBy is what one purchase event is read against: the transaction this API
 // created for it, or — for a renewal or a proration, which Paddle creates itself
 // (F15) — the subscription that transaction began.
@@ -691,12 +715,19 @@ type boughtBy struct {
 	OrganisationID string
 	WorkspaceID    string
 	Email          string
-	// EntitlementID is the licence the subscription was begun by, which is what a
-	// renewal's and a proration's term is added to. It is empty for a first
-	// purchase, because the grant is what that event makes.
+	// EntitlementID is the licence this money is already the money of: the one
+	// the subscription was begun by, which is what a renewal's and a proration's
+	// term is added to, or — for a purchase whose grant has already landed — the
+	// licence the checkout's own record names, which is what a redelivery reads
+	// instead of granting a second one. It is empty for a first purchase whose
+	// grant is what this delivery makes.
 	EntitlementID string
 	// First is whether this event is the subscription's first payment, which is
-	// the one that grants the licence and mails the customer.
+	// the one that grants the licence and mails the customer. A redelivery of it
+	// is still the first payment — the subscription was begun by it and no other
+	// — and what keeps it from granting twice is EntitlementID, which the grant
+	// itself writes; the notice is mailed again, because the failure the
+	// redelivery is answering may have been the notice.
 	First bool
 }
 
@@ -710,11 +741,19 @@ func (s *Service) boughtBy(ctx context.Context, e Event) (boughtBy, bool, error)
 			return boughtBy{}, false, err
 		}
 		if held {
+			// The licence the checkout's record names is read back here so that a
+			// redelivery of a purchase whose grant already landed reuses it. The
+			// merchant retries a delivery whose answer it never saw, and every step
+			// after the grant — the subscription's write, the origin, the record
+			// itself, the notice, the event's own state — can be the one that failed:
+			// a second grant would supersede the licence the customer is already
+			// binding against, for money that bought one licence (D2204).
 			return boughtBy{
 				TransactionID:  record.ID,
 				OrganisationID: record.OrganisationID,
 				WorkspaceID:    record.WorkspaceID,
 				Email:          record.Email,
+				EntitlementID:  record.EntitlementID,
 				First:          true,
 			}, true, nil
 		}

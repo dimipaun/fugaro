@@ -85,6 +85,12 @@ func TestAnUndeliveredPurchaseNoticeIsRetried(t *testing.T) {
 	if got := f.ledger(t); len(got) != 1 {
 		t.Errorf("the retried purchase made %d ledger line(s), want one", len(got))
 	}
+	// The grant is the one thing a retry must not repeat: it is written before the
+	// notice, so the failed delivery above left a licence the customer can already
+	// be binding, and a second grant would supersede it (D2204).
+	if got := len(f.entitlements(t)); got != 1 {
+		t.Errorf("the redelivered purchase left %d licence(s) in all, want the one grant the first delivery made", got)
+	}
 }
 
 // TestARenewalKeyIsMailedToTheBuyer: a renewal is minted months after the event
@@ -164,10 +170,10 @@ func newFailingStore(t *testing.T) (*fixture, *failingSubscriptions) {
 // licence and then saves the subscription, and the store has no transaction to
 // make the two one write (§5.2) — so the failure between them is real, and what
 // the merchant's retry meets is an event whose grant landed and whose
-// subscription did not. The retry re-applies the grant and writes the
-// subscription; what it must not do is leave the customer with two active
-// licences (D2204) or a term that starts at the retry rather than at the payment
-// (D2197).
+// subscription did not. The retry reads the licence back off the checkout's own
+// record, which the grant wrote it onto, and finishes the writes after it; what
+// it must not do is leave the customer with two licences at all (D2204) or a
+// term that starts at the retry rather than at the payment (D2197).
 func TestAPurchaseWhoseSubscriptionWriteFailedIsRetried(t *testing.T) {
 	f, store := newFailingStore(t)
 	store.refuse = 1
@@ -216,17 +222,12 @@ func TestAPurchaseWhoseSubscriptionWriteFailedIsRetried(t *testing.T) {
 	if got := f.records(); len(got) != 0 {
 		t.Errorf("the redelivery recorded %d key(s), want none: the licence is granted and the key is the binding's (D2196)", len(got))
 	}
-	// D2204's one active grant per workspace is what the retry has to keep and
-	// not add to: the customer's binding reads the licence the portal shows as
-	// theirs, and a second active one would leave the key bound to the other.
-	active := 0
-	for _, licence := range f.entitlements(t) {
-		if licence.Status == entitlementActive {
-			active++
-		}
-	}
-	if active != 1 {
-		t.Errorf("the retried purchase left %d active licence(s), want one", active)
+	// D2204's one grant per workspace is what the retry has to keep and not add
+	// to: the customer's binding reads the licence the portal shows as theirs, and
+	// a second one — the first grant superseded by the retry's — would leave the
+	// key bound to the licence the portal no longer serves them from.
+	if got := len(f.entitlements(t)); got != 1 {
+		t.Errorf("the retried purchase left %d licence(s) in all, want the one grant the first delivery made", got)
 	}
 
 	// And the state the retry wrote is live: the domain now holds a paid
