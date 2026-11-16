@@ -127,9 +127,6 @@ type catalogCheckRepo struct {
 	// BuildServiceAccount is the email of the repository's build account: the
 	// one account a build of this repository's entries may run as.
 	BuildServiceAccount string `json:"build_service_account"`
-	// WorkflowSecrets are the repository's build secrets, the ones its
-	// workflows declare (catalogBuildSecrets' answer for it).
-	WorkflowSecrets []config.Secret `json:"workflow_secrets,omitempty"`
 	// Entries are the catalog entries this repository builds.
 	Entries []string `json:"entries"`
 }
@@ -490,8 +487,7 @@ func (t *catalogCheckTarget) submit(ctx context.Context, e config.Entry, r catal
 		Base: t.base, Image: imageRef,
 		Definition:     gcp.CatalogDefinition{SourceCommit: commit, Generation: ev.definitionGeneration, SHA256: ev.definitionSHA256},
 		ServiceAccount: r.BuildServiceAccount, MachineType: t.spec.MachineType,
-		WorkflowSecrets: r.WorkflowSecrets,
-		Bucket:          "gs://" + t.bucket.GCSName,
+		Bucket: "gs://" + t.bucket.GCSName,
 		// The rebuild records the template it ran, which is this job's own: the
 		// entry it rebuilds stops firing the template trigger (F33, D1402).
 		TemplateSalt: gcp.TemplateSalt(Version),

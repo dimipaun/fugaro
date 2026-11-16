@@ -276,12 +276,12 @@ func TestImagesSkillNoBuildArgSecrets(t *testing.T) {
 	}
 }
 
-// TestImagesSkillEntryBuildAsksForNoSecret: the one secret shape a catalog
-// build really does satisfy — a `RUN --mount=type=secret` under a variable the
-// entry's own repository declares in its workflows — is the shape the catalog
-// now refuses when it reads the definition (refuseCredentialIn and
-// SecretRefusal, internal/catalog/fetch.go; B9, D2311), and the skill has to
-// say so, because a mount that would work is the one an agent writes without
+// TestImagesSkillEntryBuildAsksForNoSecret: an entry's build is handed no
+// secret at all — the catalog refuses a definition that asks for one when it
+// reads it (refuseCredentialIn and SecretRefusal, internal/catalog/fetch.go;
+// B9, D2311), and no step of the request that builds it carries a secret, so
+// there is nothing a mount could be satisfied with. The skill has to say so,
+// because a mount that would work is the one an agent writes without
 // hesitating. Two things follow and both are pinned here: the skill names the
 // shape that replaces it (the `fugaro-checkout` build context, B8) and, for the
 // token no entry build can carry any more — a private registry's — the entry
@@ -305,16 +305,19 @@ func TestImagesSkillEntryBuildAsksForNoSecret(t *testing.T) {
 	if !strings.Contains(fetch, "if asksForASecret(line.text) {") || !strings.Contains(fetch, "return SecretRefusal(e.Name, line.line)") {
 		t.Error("refuseCredentialIn no longer refuses a definition that asks for a secret of its own by name and line, which is the refusal the skill states")
 	}
-	// And the refusal is the entry's own definition's, not the build's: the
-	// build step still carries the secrets the repository declares in its
-	// workflows (catalogBuildSecrets, internal/cli/image_build_catalog.go, to the
-	// request's WorkflowSecrets), so a mount would be satisfied and refused
-	// anyway. That is the capability D2311 closes, an entry's build being handed
-	// no secret of the entry's — so a later task that takes the mounts away has
-	// to move this test with it, and one that reads this skill must not read the
-	// refusal as the build having nothing to mount.
-	if !strings.Contains(readRepoFile(t, "internal/cli/image_build_catalog.go"), "catalogBuildSecrets(cfg)") {
-		t.Error("the catalog build no longer reads the checkout's declared workflow secrets: the skill's rule that an entry asks for no secret of its own is now the whole of the guard, rather than a policy over a build that could satisfy one")
+	// And the refusal is not a text guard standing in front of a build that
+	// could satisfy a mount the reading missed: the build is handed no secret
+	// of the entry's, so the entry's own words are not the only thing keeping a
+	// secret out of it. Both halves of that are pinned: the manual build reads
+	// no workflow secret at all (catalogBuildSecrets is gone), and the request's
+	// build step carries none (_SECRET_ENVS empty, internal/backend/gcp).
+	manual := readRepoFile(t, "internal/cli/image_build_catalog.go")
+	if strings.Contains(manual, "catalogBuildSecrets") || strings.Contains(manual, "WorkflowSecrets") {
+		t.Error("the catalog build still reads the checkout's declared workflow secrets: the skill's rule that an entry asks for no secret of its own is a policy over a build that could satisfy a mount the reading missed, rather than the build having nothing to mount (B9, D2311)")
+	}
+	request := readRepoFile(t, "internal/backend/gcp/catalog.go")
+	if !strings.Contains(request, `"_SECRET_ENVS": ""`) {
+		t.Error("the catalog build request no longer states an empty _SECRET_ENVS, so the build step's loop could hand docker a secret the skill says an entry's build never has")
 	}
 }
 

@@ -74,9 +74,11 @@ const catalogBuildThreeYAML = `image_catalog:
       source: { kind: inline, inline: "FROM example.invalid/gamma\nRUN true\n" }
 `
 
-// catalogBuildWorkflowsYAML is bitbucketYAML with a second workflow, so a
-// catalog build has to take its secrets from the repository rather than from
-// one workflow: extra declares the secrets the test at hand needs.
+// catalogBuildWorkflowsYAML is bitbucketYAML with a second workflow, for the
+// tests about a repository that declares several: an entry's build reads no
+// workflow's secrets (B9, D2311), and the workflow count changes neither that
+// nor which workflow's name the smoke's spec is rendered for. secrets is what
+// the second workflow declares.
 func catalogBuildWorkflowsYAML(secrets string) string {
 	second := "  extra: { secrets: [" + secrets + "], commands: { build: sh build.sh, test: sh test.sh } }\n"
 	return strings.Replace(bitbucketYAML, "workflows:\n", "workflows:\n"+second, 1)
@@ -95,8 +97,9 @@ func catalogBuildCheckout(t *testing.T, repo, catalog string) (*gcpfake.Build, *
 
 // catalogBuildCheckoutFor is a checkout of acme/app on provider whose
 // fugaro.yaml is repo and whose project names the catalog catalog, with the
-// fakes a Cloud Build needs, the installation's shared registry a catalog
-// image is pushed to (D1152) and the build secrets repo's workflows declare.
+// fakes a Cloud Build needs and the installation's shared registry a catalog
+// image is pushed to (D1152). Whatever secrets repo's workflows declare are
+// part of the checkout and reach no step of the build (B9, D2311).
 // appID is what the local config records for the repository, which only a
 // GitHub one carries (infra.Repo refuses a GitHub repository without one); ""
 // records none, which is the state the missing-ID test wants.
@@ -751,14 +754,16 @@ func TestCatalogBuildCountsTheWholeReservationWhenTheWatchIsLost(t *testing.T) {
 	wholeReservationCounted(t, f.db, mustSlug("bitbucket", "acme/app"), "for a catalog build whose watch was lost")
 }
 
-// TestCatalogBuildMountsEveryWorkflowsSecrets: an entry is not a workflow
-// (D1144), so its build mounts the secrets the repository declares — every
-// workflow's, each one mounted once — and a repository that declares several
-// workflows builds an entry the way one that declares a single workflow does.
-func TestCatalogBuildMountsEveryWorkflowsSecrets(t *testing.T) {
-	// extra declares app's own pair again beside one of its own, so a build
-	// that mounted the list per workflow would either mount NPM_TOKEN twice
-	// (which the request refuses) or drop a secret.
+// TestCatalogBuildIsHandedNoWorkflowSecret: an entry is not a workflow
+// (D1144), and since B9 no workflow's secrets reach its build at all — the
+// step is handed none (D2311), the one secret the request names is the
+// repository's clone credential, and _SECRET_ENVS is empty. So a repository
+// that declares several workflows builds an entry the way one that declares a
+// single workflow does: there is no list to merge and none to carry.
+func TestCatalogBuildIsHandedNoWorkflowSecret(t *testing.T) {
+	// extra declares app's own pair again beside one of its own: a build that
+	// still merged the lists would carry one of these names in _SECRET_ENVS and
+	// fail this test, whatever it did with the duplicate.
 	repo := catalogBuildWorkflowsYAML("{ name: npm-token, env: NPM_TOKEN }, { name: registry-token, env: REGISTRY_TOKEN }")
 	fb, _, _ := catalogBuildCheckout(t, repo, catalogBuildYAML)
 	stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
@@ -766,49 +771,49 @@ func TestCatalogBuildMountsEveryWorkflowsSecrets(t *testing.T) {
 	if _, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1"); err != nil {
 		t.Fatalf("%v (%s)", err, stderr)
 	}
-	if got := catalogBuildSubs(t, fb)["_SECRET_ENVS"]; got != "NPM_TOKEN REGISTRY_TOKEN" {
-		t.Errorf("_SECRET_ENVS = %v, want each declared variable once", got)
+	if got := catalogBuildSubs(t, fb)["_SECRET_ENVS"]; got != "" {
+		t.Errorf("_SECRET_ENVS = %v, want empty: the build step's loop hands docker a --secret for every name in it, and an entry's build is handed none (B9, D2311)", got)
 	}
 	avail, _ := fb.Last()["availableSecrets"].(map[string]any)
 	mounted, _ := avail["secretManager"].([]any)
-	counts := map[string]int{}
+	var envs []string
 	for _, raw := range mounted {
 		m, _ := raw.(map[string]any)
 		env, _ := m["env"].(string)
-		counts[env]++
+		envs = append(envs, env)
 	}
-	if counts["NPM_TOKEN"] != 1 || counts["REGISTRY_TOKEN"] != 1 {
-		t.Errorf("availableSecrets mounts %v, want each declared secret once", counts)
+	if !slices.Equal(envs, []string{"GIT_TOKEN"}) {
+		t.Errorf("availableSecrets mounts %v, want the clone credential alone: a workflow secret the entry's repository declares is not a secret of its build", envs)
 	}
 	body, err := json.Marshal(fb.Last())
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"npm-token", "registry-token"} {
-		if want := gcp.SecretID(mustSlug("bitbucket", "acme/app"), name); !strings.Contains(string(body), want) {
-			t.Errorf("the request does not name %s, which a workflow declares: %s", want, body)
+		if want := gcp.SecretID(mustSlug("bitbucket", "acme/app"), name); strings.Contains(string(body), want) {
+			t.Errorf("the request names %s, which a workflow declares: a catalog build carries no secret of the entry's (B9, D2311): %s", want, body)
 		}
 	}
 }
 
-// TestCatalogBuildRefusesTwoSecretsOnOneVariable: two workflows that mount
-// different secrets on one variable are refused before anything is copied or
-// submitted: a build mounts the repository's secrets, and one variable cannot
-// carry two of them.
-func TestCatalogBuildRefusesTwoSecretsOnOneVariable(t *testing.T) {
+// TestCatalogBuildIgnoresTwoSecretsOnOneVariable: two workflows that declare
+// different secrets on one variable used to be refused, because the merged
+// list would have carried the variable twice. Nothing merges it any more (B9,
+// D2311): neither secret reaches the build, so there is nothing to refuse and
+// the entry builds.
+func TestCatalogBuildIgnoresTwoSecretsOnOneVariable(t *testing.T) {
 	repo := catalogBuildWorkflowsYAML("{ name: other-token, env: NPM_TOKEN }")
-	fb, gcs, _ := catalogBuildCheckout(t, repo, catalogBuildYAML)
+	fb, _, _ := catalogBuildCheckout(t, repo, catalogBuildYAML)
 	stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
 
-	_, _, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "NPM_TOKEN") || !strings.Contains(err.Error(), "other-token") {
-		t.Fatalf("exit %d, err %v: two secrets on one variable are refused", ExitCode(err), err)
+	if _, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1"); err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
 	}
-	if buildPosts(fb) != 0 {
-		t.Errorf("a refused build reached Cloud Build: %d posts", buildPosts(fb))
+	if buildPosts(fb) != 1 {
+		t.Errorf("the entry's build was submitted %d times, want the one a repository declaring two secrets on a variable gets", buildPosts(fb))
 	}
-	if !catalogCopyAbsent(t, gcs, "tools") {
-		t.Errorf("a refused build copied the entry's Dockerfile")
+	if got := catalogBuildSubs(t, fb)["_SECRET_ENVS"]; got != "" {
+		t.Errorf("_SECRET_ENVS = %v, want empty: no workflow secret reaches the build, so no variable is carried twice either", got)
 	}
 }
 
