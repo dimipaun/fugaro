@@ -197,8 +197,11 @@ serves; openrouter and anthropic are the two key types, and a key is read the
 same way the token is — from stdin, or at the hidden prompt on your terminal —
 and stored project-wide under the credential's own derived secret name
 (credential-<name>-key) rather than the account's, so --profile is refused with
-them: a profile's list is what deploys the job mounting the account's token, and
-that job would read a container nothing writes. vertex is built in and is never
+them, and so is a name a profile already lists: a profile's list is what deploys
+the job mounting the account's token, and that job would read a container
+nothing writes. Take the name off that list first (fugaro accounts rm <name>
+--profile <profile>) or declare the key credential under another name. vertex is
+built in and is never
 defined, and the two types the spec lists as future work are refused in words
 that say so. What carries a key credential's key to a model call is not
 installed by this command yet: the credential is declared and its key stored,

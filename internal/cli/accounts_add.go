@@ -81,8 +81,11 @@ serves; openrouter and anthropic are the two key types, and a key is read the
 same way the token is — from stdin, or at the hidden prompt on your terminal —
 and stored project-wide under the credential's own derived secret name
 (credential-<name>-key) rather than the account's, so --profile is refused with
-them: a profile's list is what deploys the job mounting the account's token, and
-that job would read a container nothing writes. vertex is built in and is never
+them, and so is a name a profile already lists: a profile's list is what deploys
+the job mounting the account's token, and that job would read a container
+nothing writes. Take the name off that list first (fugaro accounts rm <name>
+--profile <profile>) or declare the key credential under another name. vertex is
+built in and is never
 defined, and the two types the spec lists as future work are refused in words
 that say so. What carries a key credential's key to a model call is not
 installed by this command yet: the credential is declared and its key stored,
@@ -222,6 +225,25 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 		if o.profile != "" {
 			return userErr("--profile %s: profiles.<p>.claude_accounts serves a Claude account TOKEN to a run, and %s is a key credential — its value is stored under %s and no job mounts it as CLAUDE_CODE_OAUTH_TOKEN, so this would deploy a job reading an empty token. What bounds the key is claude_accounts.%s.allow_data_to, which this command writes either way; drop --profile",
 				pluginwire.Printable(o.profile), pluginwire.Printable(name), config.CredentialSecret(name), pluginwire.Printable(name))
+		}
+		// The other half of that state, and the one no flag of this run shows: a
+		// name a profile ALREADY lists is the file's, not this run's, so refusing
+		// --profile alone would leave the very job the paragraph above is about
+		// deployable. The edit below writes claude_accounts.<name>.allow_data_to
+		// and nothing else, so the entry lands beside a list that still serves the
+		// name: the node keeps accounts.<name>, the job set keeps the variant, and
+		// where the name was an OAuth account before — the ordinary conversion
+		// this path exists for — claude-oauth-token-<name> still holds a version,
+		// so a run launched onto that job authenticates as a token the owner has
+		// just declared to be a provider's key. A refusal printed with the fix
+		// asks nothing (no-prompt spec rule 1), and the fix is the one command
+		// that edits that list alone (`accounts rm --profile`, which the list's
+		// owner runs at their own terminal): `settings set` has no key for a
+		// profile's claude_accounts — the registry lists the name and the command
+		// refuses it — so naming one would be a remedy nobody can carry out.
+		if serving := config.ClaudeAccountProfile(lc.Profiles, name); serving != "" {
+			return userErr("profiles.%s.claude_accounts already lists %s, and that list is what serves a Claude account TOKEN to a run: %s is a key credential, whose value is the key its provider issued under %s, so the job it deploys would mount claude-oauth-token-%s — a container nothing writes for it — and a run launched on that job would authenticate as whatever that container still holds. Take the name out of that profile's list first (`fugaro accounts rm %s --profile %s`), or declare the key credential under another name; nothing was written",
+				pluginwire.Printable(serving), pluginwire.Printable(name), pluginwire.Printable(name), config.CredentialSecret(name), pluginwire.Printable(name), pluginwire.Printable(name), pluginwire.Printable(serving))
 		}
 	} else if profile, err = accountsAddProfile(o.profile, lc); err != nil {
 		return err

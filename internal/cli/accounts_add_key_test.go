@@ -207,6 +207,62 @@ func TestAKeyCredentialTakesNoProfile(t *testing.T) {
 	}
 }
 
+// TestAKeyCredentialTakesNoServingProfile is the file's half of the same rule,
+// and the half no flag of this run shows. `--profile` is refused because the
+// list serves a Claude account TOKEN; a name a profile ALREADY lists is a list
+// this process does not write, so refusing the flag alone would leave the very
+// job that refusal is about reachable — the name an OAuth account before
+// (the ordinary conversion --type exists for) still has a version in
+// claude-oauth-token-<name>, and a run launched onto that job would
+// authenticate as a token the owner has just declared to be a provider's key.
+// The declaration below is written by claude_accounts.<name>.allow_data_to and
+// by nothing else, so before this refusal the entry landed beside the list: the
+// node carried accounts.<name>, the job set carried the variant, and the three
+// sentences of the report said the opposite of what the file held. The refusal
+// is on the name and not on this run's flag, which is what the second case
+// asserts: a re-run of the declaration carries no --type.
+func TestAKeyCredentialTakesNoServingProfile(t *testing.T) {
+	for _, c := range []struct {
+		what, local string
+		args        []string
+	}{
+		{"the flag declares the type", accountsAddKeyCredentialServedLocal, []string{"accounts", "add", "team-a", "--repos", "owner/repo-a", "--type", "openrouter"}},
+		{"the config already declares it", accountsAddKeyCredentialServedLocal + "credentials:\n  - { name: team-a, type: openrouter }\n", []string{"accounts", "add", "team-a", "--repos", "owner/repo-a"}},
+	} {
+		t.Run(c.what, func(t *testing.T) {
+			r := newAddRigWith(t, c.local)
+			before := readFileString(t, r.cfg)
+
+			out, errOut, err := executeStdin(t, addToken()+"\n", c.args...)
+			if err == nil {
+				t.Fatalf("the key credential was declared beside a profile that still serves team-a:\n%s\n%s", out, errOut)
+			}
+			want := "profiles.standard.claude_accounts already lists team-a"
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not read %q: %v", want, err)
+			}
+			if !strings.Contains(err.Error(), "fugaro accounts rm team-a --profile standard") || !strings.Contains(err.Error(), "another name") {
+				t.Errorf("the refusal does not name the fix: %v", err)
+			}
+			if !strings.Contains(err.Error(), "nothing was written") {
+				t.Errorf("the refusal does not say nothing was written: %v", err)
+			}
+			// Nothing was written means the file's bytes: the list that serves the
+			// name, the credentials entry the run had resolved, and the declaration
+			// the edit below would have added are all still as they were.
+			if got := readFileString(t, r.cfg); got != before {
+				t.Errorf("the refused write changed the file:\n%s", got)
+			}
+			if got := string(r.sm.Latest(credentialSecretID("team-a"))); got != "" {
+				t.Errorf("the refused run stored %q under %s", got, credentialSecretID("team-a"))
+			}
+			if strings.Contains(out+errOut, addToken()) {
+				t.Errorf("the refusal printed the value:\n%s\n%s", out, errOut)
+			}
+		})
+	}
+}
+
 // TestAKeyCredentialTakesNoClaudeLogin is the other flag a habit adds, and the
 // one the value's own rule refuses: --claude runs Anthropic's own
 // `claude setup-token` login and then reads the token it printed at the hidden
@@ -355,6 +411,43 @@ claude_accounts:
   team-a:
     allow_data_to:
       - owner/repo-a
+`
+
+// accountsAddKeyCredentialServedLocal is the file's own half of the state
+// TestAKeyCredentialTakesNoServingProfile refuses over, and it is what an
+// earlier run of this command leaves: claude_accounts.team-a bounds the account
+// to the repository and profiles.standard lists it, which is the pair that
+// deploys the project job mounting claude-oauth-token-team-a as a run's
+// CLAUDE_CODE_OAUTH_TOKEN. The name carries no credentials entry, so it is an
+// OAuth account and not a key credential yet — and `--type` on it is the
+// conversion the two key credentials exist for. Written out rather than
+// appended to addRigLocal because the list the refusal is about is inside the
+// profiles block, which an appended key cannot reach.
+const accountsAddKeyCredentialServedLocal = `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+registry: us-east5-docker.pkg.dev/proj-1234/fugaro
+build: { service_account: fugaro-build@proj-1234.iam.gserviceaccount.com }
+user: test@example.com
+base_images: { base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc }
+claude_accounts:
+  team-a:
+    allow_data_to:
+      - owner/repo-a
+profiles:
+  standard:
+    provider: github
+    cpu: 2
+    memory: 8Gi
+    timeout_class: 6h
+    allow_repos:
+      - github/owner/repo-a
+    claude_accounts:
+      - team-a
+repos:
+  owner/repo-a: { provider: github, github_app_id: "12345", workflows: [web] }
 `
 
 // TestARerunWithoutTypeWritesOnlyTheCredentialsOwnSecret is the derive's other
