@@ -1323,11 +1323,7 @@ export function buildLiveModel(
     // and one ahead of it -- by any amount -- cannot stamp a gap in the CLI's
     // future that would prune every fresh document on arrival. The banner still
     // shows the console's own stamp (`feed.at`), which is the reading it took.
-    // The hour history takes the same sample at the same stamp as the burn
-    // history, because the two lines are one instrument at two scales (D737):
-    // a sample the five-minute window saw and the hour window did not would
-    // draw two pictures of the same moment, and the pair is meant to be read
-    // against each other.
+    //
     // The hour history takes the same reading at the same stamp as the burn
     // history, because the two lines are one instrument at two scales (D737):
     // a sample one window saw and the other did not would draw two pictures of
