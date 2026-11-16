@@ -378,6 +378,20 @@ func maxParallelOf(lc *localcfg.Config) *int {
 	return &n
 }
 
+// loadPrevRepos reads yesterday's repository counters into st, which is the other
+// half of the drift line's window (R6): the counters are per UTC day, so
+// D2649's "a rolling day" is today and the day before (F30). A read that fails
+// leaves the window empty and the line quiet -- it is a reading of counters
+// this command could not get, and the frame's own subject, today's spend, was
+// read either way.
+func (d *WatchDeps) loadPrevRepos(ctx context.Context, st *watch.State, day int64) {
+	var raw json.RawMessage
+	if _, err := d.DB.Get(ctx, "spend/"+budget.DayKey(day-1)+"/repos", &raw); err != nil {
+		return
+	}
+	st.SetPrev(raw)
+}
+
 // watchOnce prints one snapshot, read by plain GETs of the four paths the
 // stream would follow.
 func watchOnce(ctx context.Context, d *WatchDeps, o *watchOptions) error {
@@ -419,6 +433,7 @@ func watchOnce(ctx context.Context, d *WatchDeps, o *watchOptions) error {
 			return err
 		}
 	}
+	d.loadPrevRepos(ctx, st, day)
 	v := watch.Build(st, now, d.Config)
 	if d.Queued != nil {
 		rows, finished, note := d.Queued()
@@ -444,6 +459,10 @@ func watchStream(ctx context.Context, d *WatchDeps, o *watchOptions) error {
 	st := watch.NewState()
 	var seen [4]bool
 	started := time.Now()
+	// prevReposDay is the day yesterday's counters were read for: the window the
+	// drift line sums over is today and the day before, so it is read once per
+	// day and again when the clock rolls one (F30).
+	var prevReposDay int64
 	var last time.Time
 	var lastConn watch.ConnKind
 	var lastQueued []watch.QueuedRun
@@ -472,6 +491,10 @@ func watchStream(ctx context.Context, d *WatchDeps, o *watchOptions) error {
 			}
 		case u.Kind == watch.UpdDay || u.Kind == watch.UpdPolling:
 			dirty = true
+		}
+		if st.Day != prevReposDay {
+			prevReposDay = st.Day
+			d.loadPrevRepos(ctx, st, st.Day)
 		}
 		v := watch.Build(st, u.Now, d.Config)
 		if d.Queued != nil {
