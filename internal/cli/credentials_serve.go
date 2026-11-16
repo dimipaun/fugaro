@@ -647,7 +647,16 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 		// policy: the table must be the one the per-repository bindings are
 		// made from.
 		Repos: repos,
-		Log:   log,
+		// The service's own URL, which is already read and checked as the
+		// audience (credentialsServiceAudience above): a build's Bitbucket
+		// grant names the proxy its git will reach, and the URL in that answer
+		// is this service's and never the Host header of the call that asked
+		// for it -- a grant built from a caller's own text would send a
+		// build's clone wherever its caller said (B1, D2302). The check above
+		// is what makes this the same value a caller's ID token is minted for,
+		// so the grant names a URL the build can actually reach.
+		BaseURL: env[envCredentialsServiceURL],
+		Log:     log,
 	}, nil
 }
 
