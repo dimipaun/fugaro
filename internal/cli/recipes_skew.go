@@ -998,6 +998,31 @@ const contextReposSubject = "read-only context repositories (--context, kept by 
 // the image cannot be brought forward.
 const contextReposAlt = "; or drop --context, which needs a job image whose runner reads the field before it can carry one"
 
+// changeSetSince is the release whose runner reads a task's change set
+// (task.Spec.ChangeSet, fugaro run --change-set, plan task D1). task.Parse
+// decodes with DisallowUnknownFields, so a runner older than this refuses the
+// whole task at bootstrap: the member run would die over a field it cannot
+// read, which is why the launch is gated here rather than started on such a
+// job.
+//
+// It gates the field and never the flag, exactly as contextReposSince does: a
+// launch that is in no change set writes none (the field is omitempty, so the
+// spec is byte-identical to what the previous release wrote) and is never
+// gated, while a --retry of a task that carries one is gated the same way the
+// launch that wrote it was.
+const changeSetSince = "0.26.0"
+
+// changeSetKnows is what such a runner knows, as the gate names it.
+const changeSetKnows = "the change set its task is a member of (change_set)"
+
+// changeSetSubject is what the gate says the launch carries: the flag, and
+// the stored task a --retry replays the field from.
+const changeSetSubject = "a change set (--change-set, kept by --retry and by a stored task)"
+
+// changeSetAlt is the gate's other cure: the launch can name no change set,
+// where the image cannot be brought forward.
+const changeSetAlt = "; or drop --change-set, which needs a job image whose runner reads the field before it can carry one"
+
 // authorSince is the first fugaro release whose runner reads a task's author
 // field (task.Spec.Author, the launcher's identity a launch records for the
 // repositories that opted in, D604/D606): an older runner refuses the field
