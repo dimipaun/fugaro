@@ -2650,9 +2650,12 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// the reason internal/recipe's RegisterStepKind gives: a step the parser
 	// accepts and the run drops may never happen. The launcher's image gate
 	// cannot make this refusal yet — the *Since constant for the step is
-	// T-TC6's — so this is the one a launch of a diagnosis meets.
+	// T-TC6's — so this is the one a launch of a diagnosis meets. It names no
+	// way out: no release's runner runs the stage yet, so a refreshed job image
+	// would refuse the recipe again, and the release that runs it is T-TC4's to
+	// carry — not a step a person is sent to take here.
 	if recipe.UsesDiagnose(rcp) {
-		return fmt.Errorf("recipe %s holds a diagnose step, which this job image's runner does not execute yet: the run would run the repository's commands.render in the step's place and end succeeded with no diagnosis in it. Upgrade the job image of %s workflow %s (fugaro image refresh --repo %s --workflow %s) to one whose runner runs the diagnosis", rrec.Name, r.spec.Repo, r.spec.Workflow, r.spec.Repo, r.spec.Workflow)
+		return fmt.Errorf("recipe %s holds a diagnose step, which this job image's runner does not execute yet: the run would run the repository's commands.render in the step's place and end succeeded with no diagnosis in it. No Fugaro release runs the diagnose step yet, so there is no job image to move to", rrec.Name)
 	}
 	// The rebase step is the runner's own work plus one model stage for the
 	// conflicts (rebase.go, E5): its run's step is the whole plan, it reviews
