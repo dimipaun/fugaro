@@ -725,7 +725,10 @@ func TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes(t *testing.T) {
 	for _, want := range []string{
 		"| `binaries` | decoded, validated and accepted, **applied at finalize**",
 		"the block is the owner's grant of the paths a run may add a binary at",
+		"reads it over what a commit would carry that no commit has — the run's untracked files and the ones the agent staged itself",
 		"a file the project admits at that path and within the cap is committed with the run's work",
+		"**What the run commits as work of its own is not read here**",
+		"which is the residual [binary-allow-rule/](binary-allow-rule/) closes as its task AR4",
 		"the one key of this table whose *written block* is a statement at publish time and not at admission time",
 		"the database keeps no member for an empty list, so the node never *holds* that spelling",
 		"an empty block and a write of nothing leave the same node, and both admit nothing",
