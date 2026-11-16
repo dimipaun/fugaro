@@ -3086,10 +3086,14 @@ func TestPublishDiffNamesTheCraftLines(t *testing.T) {
 // Two things are NOT widenings and are pinned beside them: a craft's model, which
 // decides what a stage runs and not whose credential it spends, and the member
 // MC4's conversion derives on an installation whose config predates the craft
-// keys (init_craft_migrate.go) — a credential under an account's own name and the
-// craft key naming it. Counting that one would make the first `fugaro update`
-// after this release a step the owner has to answer for by name, and the HARD
-// RULE's own migration is not the operator's decision to confirm.
+// keys (init_craft_migrate.go) — a credential under an account's own name, and a
+// craft key that is the account THAT craft's stages run on. Counting that one
+// would make the first `fugaro update` after this release a step the owner has to
+// answer for by name, and the HARD RULE's own migration is not the operator's
+// decision to confirm. The account's own NAME is not the exemption: a craft moved
+// onto ANOTHER account the config declares is a widening, and the two cases below
+// pin one craft each: the review craft's derived key exempt, the coder craft's
+// key naming the account its stages do not run on reported.
 func TestPolicyCraftWideningNamesTheGrants(t *testing.T) {
 	const acmeCoder = "claude-opus-5-5"
 	policyOf := func(creds []config.Credential, pools []config.Pool, crafts *config.Crafts) *projectpolicy.Policy {
@@ -3184,6 +3188,32 @@ func TestPolicyCraftWideningNamesTheGrants(t *testing.T) {
 				nil,
 				crafts(config.Craft{Model: acmeCoder, Access: "team-a"}),
 			),
+		},
+		{
+			// The exemption is read per craft: the review craft's stages run on
+			// team-b (stages.review_first), which is the account the conversion
+			// writes for IT — so the account that is not the coder's derived key
+			// is this craft's own, and its key is no widening.
+			name: "nothing for the migration's craft key on the account that craft runs on",
+			new: policyOf(
+				creds(config.Credential{Name: "team-b", Type: config.CredentialTypeClaudeOAuth}),
+				nil,
+				&config.Crafts{Review: config.Craft{Model: acmeCoder, Access: "team-b"}},
+			),
+		},
+		{
+			// And it is the derived VALUE and not the account's name: the
+			// coder's stages run on team-a, so this access is one the conversion
+			// does not write, and it moves the craft's calls onto an account with
+			// its own allow_data_to. A session that edits the config alone
+			// publishes it nowhere.
+			name: "a craft's access moved onto another account the config declares",
+			new: policyOf(
+				creds(config.Credential{Name: "team-b", Type: config.CredentialTypeClaudeOAuth}),
+				nil,
+				crafts(config.Craft{Model: acmeCoder, Access: "team-b"}),
+			),
+			want: []string{"crafts coder.access (not set) -> team-b"},
 		},
 		{
 			// The name is the account's and the type is not: a key credential of

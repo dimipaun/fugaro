@@ -208,8 +208,21 @@ func TestAccountsRmRemovesTheDefinitionAndItsAllowListEntry(t *testing.T) {
 // block defines is the file this config's own loader rejects, and `accounts
 // pool rm` is what drops one; the craft's access is not, because no command of
 // this release writes a crafts key, so the entry's own crafts are cleared with
-// it (accountsRmCraftAccesses, and the test below).
+// it (craftsNaming, and the test below).
+//
+// The declaration is the file's, so the removal is run on its own rather than
+// after an `accounts add`: that command's own publish would write this file's
+// craft key onto a node that does not hold it, which is the craft grant the
+// gate wants a person's typed name for in a project with no gate of its own
+// (init_policy_publish.go's policyCraftWidening) — and a file that declares the
+// account is the world a removal reaches its declaration in
+// (accountsRmDeclaredLocal's own comment says the same thing), while the
+// removal itself publishes the key's REMOVAL and asks nothing.
 const accountsRmTypedLocal = addRigLocal + `
+claude_accounts:
+  team-a:
+    allow_data_to:
+      - owner/repo-a
 credentials:
   - name: team-a
     type: claude-oauth
@@ -225,6 +238,10 @@ pools:
 
 // accountsRmTypedCraftLocal is the same entry named by a craft alone.
 const accountsRmTypedCraftLocal = addRigLocal + `
+claude_accounts:
+  team-a:
+    allow_data_to:
+      - owner/repo-a
 credentials:
   - name: team-a
     type: claude-oauth
@@ -276,13 +293,12 @@ func TestAccountsRmTakesTheTypedEntryWithTheAccount(t *testing.T) {
 // Nothing is written.
 func TestAccountsRmRefusesWhileAPoolStillListsTheCredential(t *testing.T) {
 	r := newAddRigWith(t, accountsRmTypedLocal)
-	r.add(t, "team-a", "--repos", "owner/repo-a")
 	before, err := os.ReadFile(r.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, _, rmErr := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
+	_, _, rmErr := executeStdin(t, "", "accounts", "rm", "team-a")
 
 	after, err := os.ReadFile(r.cfg)
 	if err != nil {
@@ -319,9 +335,8 @@ func TestAccountsRmRefusesWhileAPoolStillListsTheCredential(t *testing.T) {
 // left is one this config's own loader reads.
 func TestAccountsRmClearsTheCraftThatNamedTheCredential(t *testing.T) {
 	r := newAddRigWith(t, accountsRmTypedCraftLocal)
-	r.add(t, "team-a", "--repos", "owner/repo-a")
 
-	out := r.rm(t, "team-a", "--profile", "standard")
+	out := r.rm(t, "team-a")
 
 	lc := r.addLocal(t)
 	if got := lc.Credentials; len(got) != 0 {

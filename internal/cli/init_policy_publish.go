@@ -716,6 +716,7 @@ func policyAccountWidening(old, new *projectpolicy.Policy) []policyCeiling {
 // run the command.
 func policyCraftWidening(old, new *projectpolicy.Policy, lc *localcfg.Config) []policyCeiling {
 	was, now := policyCraftGrantValues(old), policyCraftGrantValues(new)
+	derived := craftDerivedAccesses(lc)
 	names := map[string]bool{}
 	for _, side := range []map[string]string{was, now} {
 		for name := range side {
@@ -733,7 +734,7 @@ func policyCraftWidening(old, new *projectpolicy.Policy, lc *localcfg.Config) []
 		// Only a member the node does NOT hold can be the migration's: a value
 		// it does hold and this publish rewrites is the operator's own, whatever
 		// it names.
-		if was[member] == "" && craftGrantDerived(lc, member, after) {
+		if was[member] == "" && craftGrantDerived(lc, derived, member, after) {
 			continue
 		}
 		before := was[member]
@@ -749,8 +750,8 @@ func policyCraftWidening(old, new *projectpolicy.Policy, lc *localcfg.Config) []
 // derives for an installation whose config predates the craft keys
 // (init_craft_migrate.go): a credential of type claude-oauth under the name of an
 // account the installation's own keys declare — the account written down as the
-// typed credential this release reads (spec §1) — and the craft access naming
-// such a name, which is the account that craft's stages run on.
+// typed credential this release reads (spec §1) — and a craft access that is
+// exactly the one the conversion derives for that craft (craftDerivedAccesses).
 //
 // The names are read off the config's own account keys (lc.ClaudeAccounts) and
 // never off the node's accounts block: that block is derived from the profiles
@@ -758,17 +759,55 @@ func policyCraftWidening(old, new *projectpolicy.Policy, lc *localcfg.Config) []
 // an installation whose stages name an account nothing else does holds none of
 // it. Every name the conversion writes is one of the config's own, the alias a
 // stage key may carry resolved to the account it stands for first (D2092).
-func craftGrantDerived(lc *localcfg.Config, member, value string) bool {
+//
+// The access half is asked per craft and not by the account it names: a craft
+// moved onto ANOTHER account the installation declares is an access the
+// conversion does not derive — that craft's stages run on the account they name
+// today, and the derived key is that account — so it is the widening this
+// comparison exists to find. It is the same change the account keys make, which
+// policyAccountWidening already catches, and the runner reads the node's crafts
+// for the layers a craft's tooling reaches (runner/poolchoice.go): a craft
+// repointed through the craft keys alone must not be the one spelling of it that
+// no gate reads.
+func craftGrantDerived(lc *localcfg.Config, derived map[string]string, member, value string) bool {
 	if lc == nil || value == "" {
 		return false
 	}
 	if name, ok := strings.CutPrefix(member, "craft_credentials "); ok {
 		return value == config.CredentialTypeClaudeOAuth && craftAccountNamed(lc, name)
 	}
-	if strings.HasPrefix(member, "crafts ") && strings.HasSuffix(member, ".access") {
-		return craftAccountNamed(lc, value)
+	if craft, ok := strings.CutPrefix(member, "crafts "); ok {
+		craft, ok = strings.CutSuffix(craft, ".access")
+		return ok && derived[craft] == value
 	}
 	return false
+}
+
+// craftDerivedAccesses is the access MC4's conversion derives for each craft of
+// this config, by craft name (deriveCraftAccesses).
+//
+// It is asked of a clone whose crafts block is emptied rather than of the config
+// itself: the conversion leaves a craft the owner has already written an access
+// for exactly as it is (its own guard), so a config that carries one would hand
+// back the operator's own value as the conversion's and exempt it. The
+// credentials are cloned because the derivation appends the entries it derives
+// to the slice it is handed (deriveCraftCredentials); the crafts block is the
+// clone's own copy and the derivation's only other write.
+func craftDerivedAccesses(lc *localcfg.Config) map[string]string {
+	if lc == nil {
+		return nil
+	}
+	clone := *lc
+	clone.Crafts = config.Crafts{}
+	clone.Credentials = slices.Clone(lc.Credentials)
+	deriveCraftAccesses(&clone, deriveCraftCredentials(&clone))
+	out := map[string]string{}
+	for _, craft := range config.CraftNames {
+		if access := clone.Crafts.Of(craft).Access; access != "" {
+			out[craft] = access
+		}
+	}
+	return out
 }
 
 // craftAccountNamed is whether the installation's own keys declare an account
