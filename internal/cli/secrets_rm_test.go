@@ -299,7 +299,7 @@ func TestSecretsRmRefusesTheUnknownYesFlag(t *testing.T) {
 	before := readFileString(t, path)
 
 	_, _, err := execute(t, "secrets", "rm", "bitbucket-token", "--dry-run", "--yes")
-	want := "unknown or malformed flag; secrets commands take --repo, --project-wide, --json, --config, --project, --gcp-project, --region, --allow-data-to, --proxy and --dry-run, and never the value"
+	want := "unknown or malformed flag; secrets commands take --repo, --project-wide, --json, --config, --project, --gcp-project, --region, --allow-data-to, --proxy, --dry-run, --expires, --rotation-days, --bitbucket-api-root and --layer, and never the value"
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("err = %v, want the family's own refusal %q", err, want)
 	}

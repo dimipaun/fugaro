@@ -7692,11 +7692,37 @@ it with the command to run yourself (D1552). --dry-run
 says what the write would do and writes nothing, and --json prints that as
 the settings-write document.
 
+Three flags record what this machine knows about secrets, in its own local
+config, and read no value at all:
+
+  --expires DATE               record secret_expires.NAME, the day this secret
+                               lapses, written YYYY-MM-DD and not in the past:
+                               fugaro doctor warns ahead of it
+  --rotation-days N            record secret_rotation_days, the period this
+                               installation means to go between rotations
+  --bitbucket-api-root URL     add an API root to bitbucket_api_roots, the
+                               roots a run may send the Bitbucket token to: an
+                               https origin, with no userinfo, query or
+                               fragment, and never a credential
+
+NAME goes with --expires alone — a date is recorded for one secret, while the
+other two are records of the installation. --layer names the document such a
+record is written in (local, project or repo), and these are local config keys,
+so --layer project is refused with the layers the key has (local, shared). Each
+flag is a settings write of its own: one diff, one backup and one --dry-run
+answer each, so two flags in one command are two writes. The flag adds to
+bitbucket_api_roots rather than writing the key whole, so no run of it can drop
+a root you put there: taking one away is
+`fugaro settings set bitbucket_api_roots --remove URL`, and clearing
+the period is `fugaro settings unset secret_rotation_days`. --repo and
+--project-wide are refused beside these flags: a record has no repository's
+copy.
+
 A value is not a setting: it has no row, it is never in a diff, and no dry
-run of this command prints one. secrets set with neither policy flag is the
-value write and reads the value from stdin; to store a value and change its
-policy, run the command twice. A coding agent's session is refused the
-policy flags outright (spec §5), because a secret's policy is
+run of this command prints one. secrets set with neither the policy flags nor
+the records above is the value write and reads the value from stdin; to store
+a value and change its policy, run the command twice. A coding agent's session
+is refused the policy flags outright (spec §5), because a secret's policy is
 a value no plan shows.
 
 Usage: `fugaro secrets set NAME`
@@ -7706,16 +7732,20 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `--allow-data-to` | stringSlice | `[]` | no | add a repository (owner/name) to NAME's allow_data_to — project_secrets.NAME.allow_data_to, or workflow_secrets.NAME.allow_data_to for a workflow secret — the list of repositories the value is stored for; comma-separated or repeated |
+| `--bitbucket-api-root` | stringSlice | `[]` | no | add an API root (https://host, no userinfo, query or fragment) to bitbucket_api_roots, the roots a run may send the Bitbucket token to; comma-separated or repeated, and never a credential |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
-| `--dry-run` | bool | `false` | no | print what the policy write would do and write nothing |
+| `--dry-run` | bool | `false` | no | print what the write would do — the policy entry, or one of the records --expires, --rotation-days and --bitbucket-api-root write — and write nothing |
+| `--expires` | string | "" | no | record secret_expires.NAME, the day this secret lapses, as YYYY-MM-DD (today or later); writes the local config and reads no value |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for set |
 | `--json` | bool | `false` | no | print machine-readable output |
+| `--layer` | string | "" | no | the layer a record is written in (local, project, repo); these records are the local config's, so local is the layer they take |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--project-wide` | bool | `false` | no | the default for a name that has a project-wide meaning, accepted as a synonym so existing scripts keep working (cannot be combined with --repo) |
 | `--proxy` | bool | `false` | no | set project_secrets.NAME.proxy, the Bitbucket token's switch for the credentials service (--proxy=false turns it off) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | work on one repository's own copy, given as owner/name or a path inside its checkout (no value: this checkout's origin); without it, a name that has a project-wide meaning is stored and listed project-wide |
+| `--rotation-days` | int | `0` | no | record secret_rotation_days, the period this installation means to go between rotations, in days; writes the local config and reads no value |
 
 Subcommands:
 

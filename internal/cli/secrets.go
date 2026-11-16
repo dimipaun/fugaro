@@ -454,10 +454,9 @@ copy.
 
 A value is not a setting: it has no row, it is never in a diff, and no dry
 run of this command prints one. secrets set with neither the policy flags nor
-the record flags above is the
-value write and reads the value from stdin; to store a value and change its
-policy, run the command twice. A coding agent's session is refused the
-policy flags outright (spec §5), because a secret's policy is
+the records above is the value write and reads the value from stdin; to store
+a value and change its policy, run the command twice. A coding agent's session
+is refused the policy flags outright (spec §5), because a secret's policy is
 a value no plan shows.`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			switch {
