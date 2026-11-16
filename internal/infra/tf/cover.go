@@ -155,6 +155,28 @@ const (
 	// grantRules are written with, and a shift would rewrite all of them.
 	// ReportsAccountID says why the account is its own kind.
 	toReports
+	// Voice is the voice hop's own account (P5.3.3), its own kind for the
+	// reports job's reason: as one of FugaroAccounts every toAccounts row would
+	// have accepted it, and this is the account a PHONE's request runs as — an
+	// endpoint anyone on the internet can reach (voice.tf's allUsers binding),
+	// reading the installation's whole Realtime Database instance through
+	// fugaroStateRead. Exactly one row carries the bit (the custom read role,
+	// which is also the front door's), and voiceStateReadGrant narrows it
+	// further to that role, on the project the module declares it in, under no
+	// condition. Appended rather than inserted, for toReports' reason.
+	toVoice
+	// VoicePublic is the voice hop's public invoker binding (P5.3.3) — the one
+	// grant in this tree whose member is NOBODY (`allUsers`). It is a kind of
+	// its own rather than a row on toVoice because the two are different
+	// principals and different resource types: toVoice is the hop's account on
+	// the project's read role, and this is everyone on the internet, on the
+	// service's own invoker binding. Exactly one row carries the bit, and
+	// voicePublicGrant closes it to that one service, that one role and this
+	// run's project — so `allUsers` on anything else is refused, which is the
+	// property D920's front door binding is also held to (its own review, and
+	// deploy/terraform's TestAllUsersIsRefusedOnEveryOtherResource on the
+	// module's side).
+	toVoicePublic
 )
 
 // customKey is how grantRules names a custom role of the installation (by its
@@ -228,7 +250,7 @@ var grantRules = map[string]map[string]who{
 		// that moved the read to another project, another role to this
 		// account, or a write permission into the role (which RolePermissions
 		// pins) is refused rather than covered.
-		customKey + MCPStateReadRole: toMCP,
+		customKey + MCPStateReadRole: toMCP | toVoice,
 		// The service's project-level accessor over the same fence: a PROJECT
 		// grant, unlike the bundle's (google_secret_manager_secret_iam_member),
 		// so the row is here rather than in that type's, and it names the
@@ -368,7 +390,7 @@ var grantRules = map[string]map[string]who{
 	// runs. It is Fugaro's own account, on the same switch as the service, and
 	// it comes with nothing wider.
 	"google_cloud_run_v2_service_iam_member": {
-		"roles/run.invoker": toAccounts | toPeople | toCoordinator | toVerifier,
+		"roles/run.invoker": toAccounts | toPeople | toCoordinator | toVerifier | toVoice | toVoicePublic,
 	},
 	"google_logging_log_view_iam_member": {
 		"roles/logging.viewAccessor": toPeople,
@@ -617,6 +639,23 @@ const MCPServerStorePrefix = "fugaro-mcpauth-"
 // the intake is DS4.1's — so the module's own validation is what holds the ID
 // today, and the pin lands with that stage's tfvars.
 const IntakeAccountID = "fugaro-intake"
+
+// VoiceAccountID is the voice hop's own service account (P5.3.3), the one
+// modules/installation/voice.tf creates in the installation's project and the
+// service runs as. It is NOT among FugaroAccounts, for the front door's
+// account's reason and a stronger one: as one of them every toAccounts row
+// would have accepted it, and this account runs the ONE service of the tree
+// that anyone on the internet may call — so a row's worth of extra reach, a
+// job's datastore.user or a launcher's role, is a public endpoint one plan away
+// from it. It is a kind of its own (toVoice), and the one grant it is given is
+// refused unless the row carries that bit AND voiceStateReadGrant accepts the
+// role, the project and the absence of a condition: the shared database read,
+// which is a read of every node of the instance (state_read.tf).
+//
+// internal/infra's own VoiceAccountID is the same literal on the writer's side
+// (tfvars.go), which is what lets this table hold the account the plan creates
+// for it.
+const VoiceAccountID = "fugaro-voice"
 
 // IntakeSecretsRole and SecretListerRole are the dynamic class's two custom
 // roles (intake.tf, D1931, DS2.2). They are two and not one because an IAM
@@ -1015,6 +1054,133 @@ func (c Cover) isIntakeMember(m string) bool {
 	return p != "" && m == "serviceAccount:"+IntakeAccountID+"@"+p+".iam.gserviceaccount.com"
 }
 
+// isVoiceMember is whether m is the voice hop's own account as an IAM member,
+// in the installation's project: the account voice.tf creates and the service
+// runs as (VoiceAccountID). It classifies the account's PROJECT grant — the one
+// read role — and nothing else: the hop's other grant is to nobody at all, and
+// the member it names is allUsers (voicePublicGrant).
+func (c Cover) isVoiceMember(m string) bool {
+	p := c.installationProject()
+	return p != "" && m == "serviceAccount:"+VoiceAccountID+"@"+p+".iam.gserviceaccount.com"
+}
+
+// publicInvokerMember is the member of the one grant in this tree that names
+// nobody: the voice hop's invoker binding (voice.tf, P5.3.3). It is a constant
+// so that the bit the grant table carries (toVoicePublic) and the closing rule
+// (voicePublicGrant) name the same spelling, and so that a plan carrying
+// `allUsers` anywhere else is refused as an unknown member rather than
+// classified and then narrowed.
+const publicInvokerMember = "allUsers"
+
+// voicePublicResource is the block name voice.tf gives the hop's public
+// invoker binding, which is the resource voicePublicGrant admits an allUsers
+// member on and no other. It is a literal here for the same reason
+// voiceServiceResource is: a copy of the block under another name — the shape
+// a hand edit or a second service would take — has to fail the check rather
+// than pass as "a public binding somebody reviewed".
+const voicePublicResource = "voice_public"
+
+// resourceBlockName is the resource's own name inside its module, for the
+// counted or uncounted address of one type: "voice" for
+// module.installation.google_service_account.voice[0], "" for another type or
+// another module. It is cloudRunServiceName's read without that function's
+// type, so a rule about a resource that is not a Cloud Run service itself —
+// the hop's invoker binding — can name the block it admits.
+func resourceBlockName(rc ResourceChange, typ string) string {
+	if rc.Type != typ {
+		return ""
+	}
+	pre := modulePrefix(rc)
+	if pre == "" {
+		return ""
+	}
+	rest, found := strings.CutPrefix(rc.Address, pre+"."+rc.Type+".")
+	if !found {
+		return ""
+	}
+	name, _, _ := strings.Cut(rest, "[")
+	return name
+}
+
+// voicePublicGrant says why an invoker grant to nobody is not the hop's own
+// reachability, "" when it is (the whole of the reasoning for WHY the hop is
+// public at all is voice.tf's own comment). Three things must be exactly the
+// module's:
+//
+//   - the resource. It is a binding on the hop's own service and not on another
+//     Cloud Run service of the installation (the credentials service's, whose
+//     account reads the bundle; the intake's; or a job's), so the address's
+//     resource name must be voiceServiceResource — which is also what makes
+//     copying voice.tf's block under another resource name fail here rather
+//     than pass as "a public binding somebody reviewed".
+//   - the role. roles/run.invoker and nothing else: an allUsers member on any
+//     other role is a reach this tree never wrote.
+//   - the project and the region. The binding's project must be this run's,
+//     and its location the service's own (the plan carries the location
+//     literally, so a binding that pointed at another region's service of the
+//     same name would be admitted by the address check alone).
+//
+// A condition is refused on it as well: an allUsers binding under a condition
+// is a reach that looks narrower than it is, and the hop's own binding carries
+// none (RTDB IAM and Cloud Run's invoker check cannot scope a caller by the
+// Firebase identity it presents).
+func (c Cover) voicePublicGrant(rc ResourceChange) string {
+	ch := rc.Change
+	if resourceBlockName(rc, "google_cloud_run_v2_service_iam_member") != voicePublicResource {
+		return "admits everyone to " + rc.Address + ", and the hop's public binding is the one block voice.tf declares (" + voicePublicResource + "): no other binding of this installation is reachable by an unauthenticated caller"
+	}
+	if project := str(ch.After["project"]); !slices.Contains(c.Projects, project) {
+		return "admits everyone to a service in a project that is not this run's"
+	}
+	if location := str(ch.After["location"]); location != c.Region {
+		return "admits everyone to a service in " + location + ", and this run's services are in " + c.Region
+	}
+	if role := str(ch.After["role"]); role != "roles/run.invoker" {
+		return "admits everyone to " + role + ", and the hop's public binding is " + "roles/run.invoker" + ": the invoker bit is what lets a caller reach the container, and the container's own handler is the gate"
+	}
+	conds, why := grantConditions(ch, "the hop's public binding")
+	switch {
+	case why != "":
+		return why
+	case len(conds) != 0:
+		return "admits everyone to the hop under a condition, which voice.tf never sets: the hop's callers are phones whose Firebase identity the invoker check cannot read, so a condition here would look like a fence and fence nothing"
+	}
+	return ""
+}
+
+// voiceStateReadGrant is mcpauthStateReadGrant's rule for the hop's own
+// account (P5.3.3): the same role, on the project the role was declared in,
+// under no condition, and the same refusal of every other role.
+//
+// It is a function of its own rather than a call with the front door's message
+// because the account is a different one and the sentence has to name it: a
+// reader of the refusal is deciding whether the update may proceed, and "the
+// front door's account" would send them to the wrong file. The reasoning is
+// mcpauthStateReadGrant's whole: RTDB IAM has no path-level scope, so this is a
+// read of the WHOLE database instance — every run's state, the policy, the kill
+// switches, creds/ and the mailbox — and what narrows each reader to its own
+// nodes is its own code and not the grant (internal/voicesvc's paths for the
+// hop). That is why the grant is checked rather than accepted by the row.
+func (c Cover) voiceStateReadGrant(rc ResourceChange) string {
+	ch := rc.Change
+	project := str(ch.After["project"])
+	if !slices.Contains(c.Projects, project) {
+		return "grants the voice hop's account its database read in a project that is not this run's, where the role the module declares cannot be read"
+	}
+	want := "projects/" + project + "/roles/" + MCPStateReadRole
+	if role := str(ch.After["role"]); role != want {
+		return "grants the voice hop's account " + role + " on a project, and its one role is " + MCPStateReadRole + " on the project the module declares it in"
+	}
+	conds, why := grantConditions(ch, "a project grant")
+	switch {
+	case why != "":
+		return why
+	case len(conds) != 0:
+		return "grants the voice hop's account its database read under a condition, which the module never sets: RTDB IAM cannot express a path prefix, so a condition here would fence nothing"
+	}
+	return ""
+}
+
 // mcpauthStoreBucket is the name of D935's store in this cover's installation
 // project — MCPServerStorePrefix + the project — and "" when the cover has
 // none. It is the same name for every installation of that project, which is
@@ -1334,6 +1500,27 @@ var (
 	intakeServiceEnv  = []string{"FUGARO_GCP_PROJECT", "FUGARO_INTAKE_URL", "FUGARO_RUNS_BUCKET", "FUGARO_LAUNCHER_ACCOUNTS"}
 )
 
+// voiceServiceArgs and voiceServiceEnv are the argv and the environment
+// voice.tf writes for the voice hop's container (P5.3.3), and nothing else is
+// admitted on it: the released image's `voice serve` subcommand — the same
+// image and the same pin the credentials service and the intake run, whose
+// default command serves the credentials service — and the TWO names
+// internal/cli/voice_serve.go reads, the Firebase project whose ID tokens the
+// process verifies and the Realtime Database it reads the device node and the
+// policy from.
+//
+// Two names and not the credentials service's twelve, because the hop holds no
+// bundle, no job table and no address of its own: its callers are phones whose
+// tokens are minted for the Firebase project, so there is no service URL in its
+// environment (and no second apply to fill one). A name added here is a value
+// the process would read out of the module rather than the deployment, which is
+// the one path a credential could reach a container without a Secret Manager
+// read — the reason the credentials service's own allow-list is enumerated.
+var (
+	voiceServiceArgs = []string{"voice", "serve"}
+	voiceServiceEnv  = []string{"FUGARO_FIREBASE_PROJECT", "FUGARO_RTDB_URL"}
+)
+
 // CredentialsServiceEnvAwaitingTheModule are the names credentialsServiceEnv
 // admits that the installation module does not render yet: the cover is what
 // one `fugaro update` confirmation covers, so a name is added to the allow-list
@@ -1598,10 +1785,15 @@ func planAccounts(p *Plan) (created, held map[string]bool) {
 const (
 	credentialsAccountResource = "credentials"
 	intakeAccountResource      = "intake"
+	voiceAccountResource       = "voice"
 	// intakeServiceResource is the Cloud Run service's own resource name:
 	// intake.tf names the service and the account that runs it the same word,
 	// and the service case dispatches on this one (cloudRunServiceName).
 	intakeServiceResource = "intake"
+	// voiceServiceResource is the same word for the hop (P5.3.3): voice.tf
+	// names its service and its account "voice" too, and the dispatch below
+	// reads this one.
+	voiceServiceResource = "voice"
 )
 
 // accountPlan is one of those accounts as a plan carries it, which the two
@@ -1627,22 +1819,28 @@ type accountPlan struct {
 	held    map[string]bool
 }
 
-// serviceAccountsPlan is the installation module's two service accounts as a plan
-// carries them, which the google_cloud_run_v2_service case reads: the
-// credentials service's (D146) and the secrets intake's (D1931, DS2.2).
+// serviceAccountsPlan is the installation module's three service accounts as a
+// plan carries them, which the google_cloud_run_v2_service case reads: the
+// credentials service's (D146), the secrets intake's (D1931, DS2.2) and the
+// voice hop's (P5.3.3).
 //
-// They are two and not one because the two services run as two different
-// identities: a check that admitted either for both would let a plan run the
-// intake's container as the account that reads every model credential in the
-// bundle — the account the intake's own roles deliberately keep free of every
-// read (R3) — or the credentials service's as the account that only writes
-// dynamic containers.
+// They are three and not one because the three services run as three different
+// identities: a check that admitted either of the first two for the others
+// would let a plan run the intake's container as the account that reads every
+// model credential in the bundle — the account the intake's own roles
+// deliberately keep free of every read (R3) — or the credentials service's as
+// the account that only writes dynamic containers. The hop's is the third for
+// the same reason and a sharper one: its service is reachable by anyone
+// (voice.tf), so running another service's container as its account — or its
+// container as the credentials service's — is a public endpoint one plan away
+// from the bundle.
 type serviceAccountsPlan struct {
 	credentials accountPlan
 	intake      accountPlan
+	voice       accountPlan
 }
 
-// planServiceAccounts reads the two accounts out of a plan. Every change
+// planServiceAccounts reads the three accounts out of a plan. Every change
 // counts, a no-op included: an unchanged account is one the plan holds and the
 // service it runs keeps naming, which is the shape of every plan after the one
 // that created the service.
@@ -1650,12 +1848,13 @@ func planServiceAccounts(p *Plan) serviceAccountsPlan {
 	c := serviceAccountsPlan{
 		credentials: accountPlan{id: map[string]string{}, created: map[string]bool{}, held: map[string]bool{}},
 		intake:      accountPlan{id: map[string]string{}, created: map[string]bool{}, held: map[string]bool{}},
+		voice:       accountPlan{id: map[string]string{}, created: map[string]bool{}, held: map[string]bool{}},
 	}
 	for _, rc := range p.ResourceChanges {
 		for _, a := range []struct {
 			resource string
 			plan     *accountPlan
-		}{{credentialsAccountResource, &c.credentials}, {intakeAccountResource, &c.intake}} {
+		}{{credentialsAccountResource, &c.credentials}, {intakeAccountResource, &c.intake}, {voiceAccountResource, &c.voice}} {
 			id, ok := accountOfResource(rc, a.resource)
 			if !ok || id == "" {
 				continue
@@ -1781,6 +1980,27 @@ func (c Cover) grant(rc ResourceChange, creates, createdSAIDs, heldSAIDs map[str
 	// otherwise accept it.
 	if why == "" && t == "google_project_iam_member" && c.isMCPMember(str(rc.Change.After["member"])) {
 		why = c.mcpauthStateReadGrant(rc)
+	}
+	// ... and the hop's account's one row, on the same role and the same
+	// rule: voiceStateReadGrant closes the custom-role cell to that role, on
+	// the project it was declared in, under no condition. The two accounts
+	// share the role because RTDB IAM has it as the only read there is
+	// (state_read.tf), so what tells the two grants apart is whose account the
+	// member names.
+	if why == "" && t == "google_project_iam_member" && c.isVoiceMember(str(rc.Change.After["member"])) {
+		why = c.voiceStateReadGrant(rc)
+	}
+	// ... and the one grant of this tree whose member is nobody: the hop's
+	// public invoker binding, which voicePublicGrant closes to the one service,
+	// the one role and the one region voice.tf writes (P5.3.3). It is the
+	// cover's first allUsers member, and it is admitted on purpose rather than
+	// by widening the member classification: the row above names toVoicePublic
+	// for exactly one resource type and one role, and this is what narrows that
+	// row to one resource — which is the property the front door's own binding
+	// has on the module's side (deploy/terraform's
+	// TestAllUsersIsRefusedOnEveryOtherResource).
+	if why == "" && t == "google_cloud_run_v2_service_iam_member" && str(rc.Change.After["member"]) == publicInvokerMember {
+		why = c.voicePublicGrant(rc)
 	}
 	if why == "" && t == "google_project_iam_member" {
 		why = c.dynamicSecretsGrant(rc)
@@ -2046,6 +2266,28 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, creates
 			// a plan that listed the intake's address would otherwise be able
 			// to grant it a launcher's or an operator's role.
 			kind = toIntake
+		case c.isVoiceMember(m):
+			// ... and the voice hop's own account (P5.3.3): its own kind, whose
+			// one row is the shared database read role, narrowed further by
+			// voiceStateReadGrant — the account, that role, that project, no
+			// condition. Every other grant it is given is refused and the update
+			// that carries one asks its owner. Read here, before the review
+			// screen's list, for the deployer's reason: this account runs the one
+			// service anyone on the internet may call, so a plan that listed its
+			// address would otherwise be able to grant it any toAccounts row's
+			// role.
+			kind = toVoice
+		case m == publicInvokerMember:
+			// ... and the voice hop's public invoker binding (P5.3.3), which is
+			// the tree's ONLY grant to nobody: voicePublicGrant closes it to the
+			// one service, the one role and the one project voice.tf writes, so
+			// `allUsers` anywhere else — and any other role or resource on this
+			// service — is refused and the update that carries it asks its owner.
+			// It is checked here rather than left to the default arm's "not on
+			// the review screen" because the hop's binding is on purpose: a
+			// device presents a Firebase ID token and no Google identity, so
+			// there is no member an invoker binding could name (voice.tf).
+			kind = toVoicePublic
 		case slices.Contains(c.Listed, m):
 			if !strings.HasPrefix(m, "user:") && !strings.HasPrefix(m, "group:") && !strings.HasPrefix(m, "serviceAccount:") {
 				return fmt.Sprintf("grants to %s, which is not a user, group or service account", m)
@@ -3147,6 +3389,13 @@ func (c Cover) attributes(rc ResourceChange, creates, createdSAIDs, heldSAIDs ma
 		if cloudRunServiceName(rc) == intakeServiceResource {
 			return c.intakeServiceChange(rc, a, rc.Change.AfterUnknown, pre, creds, proj)
 		}
+		// ... and the voice hop (P5.3.3), the third subcommand of the same
+		// image: voice.tf hardcodes the hop's account, its args, its two
+		// environment names and its zero-minimum scaling, so the change at that
+		// address is the hop's.
+		if cloudRunServiceName(rc) == voiceServiceResource {
+			return c.voiceServiceChange(rc, a, rc.Change.AfterUnknown, pre, creds, proj)
+		}
 		// The credentials service (D146, C1.18): the one container image in
 		// the tree that is not a job's. Its container sits one `template`
 		// shorter than a job's (template[0].containers[0]), and it is held to
@@ -3576,6 +3825,20 @@ func (c Cover) intakeAccount(a map[string]any, unk any, pre string, plans servic
 	return c.accountFrom(a, unk, pre, plans.intake, "the secrets intake", intakeAccountResource)
 }
 
+// voiceAccount is serviceAccount's check on the third service of the same
+// module (P5.3.3): the plan's own google_service_account.voice[0], which
+// voice.tf writes into the template and which the same rules hold.
+//
+// It is a check of its own for the same reason the intake's is, and the stakes
+// are the highest of the three: the hop's service is the one anyone on the
+// internet may call (voice.tf's allUsers binding), so a plan that ran its
+// container as the credentials service's account would put every model
+// credential of the bundle behind a public endpoint whose handler verifies a
+// phone's token and nothing else.
+func (c Cover) voiceAccount(a map[string]any, unk any, pre string, plans serviceAccountsPlan) string {
+	return c.accountFrom(a, unk, pre, plans.voice, "the voice hop", voiceAccountResource)
+}
+
 // accountFrom is the check both of the above are: the account a covered
 // service's template names must be the plan's own resource named resource, in
 // this run's project and in the service's module, and the plan must create or
@@ -3670,6 +3933,135 @@ func (c Cover) intakeServiceChange(rc ResourceChange, a map[string]any, unk any,
 			if refs := objects(e["value_source"]); len(refs) > 0 {
 				return "an environment variable whose value comes from a source rather than the module: this service's environment is the module's own names and nothing else"
 			}
+		}
+	}
+	return ""
+}
+
+// voiceServiceChange holds the voice hop's own service (P5.3.3) to the same
+// four rules the credentials service's and the intake's changes are held to,
+// and the whole of the reasoning is that case's comment. Three of its rules are
+// the hop's own, and they are why the branch exists:
+//
+//   - the argv. The hop runs the credentials service's own image — the released
+//     binary, one pin — and that image's default command is `credentials
+//     serve`, so voice.tf tells the three services apart by `args = ["voice",
+//     "serve"]`. A change whose args are not exactly that pair is refused in
+//     both directions: none would serve the credentials service's routes from
+//     the hop's own ADDRESS, as the account that reads the whole database
+//     instance and the bundle beside it, and anything else would run code the
+//     module does not write. The command is still empty, as the other two
+//     services': the image's entrypoint is the binary.
+//   - the account, which is the hop's own google_service_account.voice[0]
+//     (voiceAccount) and never a sibling's, for the reason voiceAccount
+//     states: this is the one service of the three anyone may call.
+//   - the two scaling blocks. The hop is the one service of the tree that must
+//     stay at ZERO minimum instances: it has no warm path worth paying for (a
+//     phone calls it when it speaks, and a cold start is a second), and a
+//     public endpoint with a warm instance is a public endpoint with a monthly
+//     bill attached whether or not anyone calls it. voice.tf writes the count
+//     at BOTH levels because the provider computes one of them otherwise (the
+//     service-level block's), which is why both are read here.
+//
+// The environment is the two names the process reads (voiceServiceEnv), held
+// to literal values and no value_source for the credentials service's reason:
+// the environment is the one path a value could reach this process without a
+// Secret Manager read — and this process is reachable by anyone, so an entry
+// the module did not write is one an unauthenticated caller's request would run
+// with.
+func (c Cover) voiceServiceChange(rc ResourceChange, a map[string]any, unk any, pre string, plans serviceAccountsPlan, proj string) string {
+	if unknown(rc.Change, "invoker_iam_disabled") {
+		return "an IAM setting that is not known"
+	}
+	// The flag is checked rather than merely required to be literal: with the
+	// IAM check off the service would be reachable without the plan's own
+	// allUsers member — that is, with no resource a reviewer reads — which is
+	// the shape this tree refuses everywhere (voice.tf states it).
+	if a["invoker_iam_disabled"] != false {
+		return "a service that does not require IAM, which would make the hop public through a flag the plan's review never reads instead of through the binding voice.tf writes"
+	}
+	if why := c.voiceMinInstances(a, unk, rc.Address); why != "" {
+		return why
+	}
+	cs := objects(at(a["template"], "containers"))
+	if unknownAt(unk, "template", 0, "containers") {
+		return "containers that are not known"
+	}
+	if len(cs) == 0 {
+		return "no container"
+	}
+	if why := c.voiceAccount(a, unk, pre, plans); why != "" {
+		return why
+	}
+	for i, m := range cs {
+		cp := []any{"template", 0, "containers", i}
+		for _, attr := range []string{"image", "command", "args"} {
+			if unknownAt(unk, append(slices.Clone(cp), attr)...) {
+				return "a container " + attr + " that is not known"
+			}
+		}
+		img := str(m["image"])
+		if !c.credentialsImageOK(img, proj) {
+			return fmt.Sprintf("runs the image %q, which is not this installation's released pin read back through the pull-through repository (%s/%s/%s/%s/fugaro-<kind>:<version>@sha256:<digest>): the hop is a subcommand of the released binary, so it runs the credentials service's own pin and never an image of its own",
+				img, c.Registry, proj, c.Ghcr, c.Owner)
+		}
+		cmd, args := strList(m["command"]), strList(m["args"])
+		if len(cmd) != 0 || !slices.Equal(args, voiceServiceArgs) {
+			return "a container whose command or args are not the module's: the hop runs the released image with no command of its own and args " +
+				strings.Join(voiceServiceArgs, " ") + ", and a change that named anything else would either serve the credentials service's routes at the hop's own public address or run code voice.tf does not write"
+		}
+		if unknownAt(unk, append(slices.Clone(cp), "env")...) {
+			return "an environment that is not known"
+		}
+		for j, e := range objects(m["env"]) {
+			ep := append(slices.Clone(cp), "env", j)
+			if unknownAt(unk, append(slices.Clone(ep), "name")...) || unknownAt(unk, append(slices.Clone(ep), "value")...) ||
+				unknownAt(unk, append(slices.Clone(ep), "value_source")...) {
+				return "an environment variable that is not known"
+			}
+			if n := str(e["name"]); !slices.Contains(voiceServiceEnv, n) {
+				return fmt.Sprintf("an environment variable %q, which the voice hop does not read: its container sets only %s",
+					n, strings.Join(voiceServiceEnv, ", "))
+			}
+			if refs := objects(e["value_source"]); len(refs) > 0 {
+				return "an environment variable whose value comes from a source rather than the module: this service's environment is the module's own names and nothing else"
+			}
+		}
+	}
+	return ""
+}
+
+// voiceMinInstances holds the hop's two scaling blocks to a literal zero
+// (voiceServiceChange's third rule). address is the change's own, for the
+// message: a reader of the refusal has to know which of the two blocks moved.
+func (c Cover) voiceMinInstances(a map[string]any, unk any, address string) string {
+	// The service-level block and the template's: the first is what the managed
+	// gate prices and the second is what Cloud Run keeps warm, and voice.tf
+	// writes both because the provider computes one of them otherwise (the
+	// service-level block's). An unknown count is a no here for the service-level
+	// reason: the gate cannot price a service whose floor it cannot read.
+	for _, b := range []struct {
+		// read is the path at() takes to the block: at() unwraps a one-element
+		// block list, so what comes back for a module-written plan is the block
+		// itself, and a plan that wrote two of them is refused by the count
+		// below.
+		read []string
+		// unknown is the same block's path in after_unknown, where the index
+		// is explicit: unknownAt does not unwrap.
+		min []any
+	}{
+		{read: []string{"scaling"}, min: []any{"scaling", 0, "min_instance_count"}},
+		{read: []string{"template", "scaling"}, min: []any{"template", 0, "scaling", 0, "min_instance_count"}},
+	} {
+		if unknownAt(unk, b.min...) {
+			return "a minimum instance count that is not known"
+		}
+		blocks := objects(at(a, b.read...))
+		if len(blocks) != 1 {
+			return fmt.Sprintf("%s states %d scaling blocks, want one: the hop's minimum instance count is zero and it is written at both the service and the template level", address, len(blocks))
+		}
+		if n := blocks[0]["min_instance_count"]; n != float64(0) {
+			return fmt.Sprintf("%s keeps %v instance(s) warm: the voice hop's minimum instance count is zero (voice.tf), because it is a public endpoint whose work arrives with a phone's call and whose idle cost is the installation's to pay for nothing", address, n)
 		}
 	}
 	return ""

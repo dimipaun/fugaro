@@ -74,6 +74,18 @@ func TestGoldenPlansAreCovered(t *testing.T) {
 		// whole of it). The fixture names no operator or launcher, so no
 		// person's grant is in this plan.
 		"installation-review": nil,
+		// The voice hop ON (P5.3.3): the same root, the same run and the same
+		// image pin as the credentials service's golden beside it, with the
+		// hop's service (min instances 0, args `voice serve`, its own two
+		// environment names), its account, its one role binding and the one
+		// allUsers invoker member a phone reaches it through. The member is why
+		// this plan's grants are the cover's own affair rather than the front
+		// door's: it is nobody's identity and there is no member a device could
+		// name (voice.tf), so the cover carries it on purpose. The fixture is
+		// the credentials golden's own, operator and all, so this plan carries
+		// that operator's grants too — and the same one of them the cover does
+		// not reach (below).
+		"installation-voice": {"user:person-1@example.com"},
 		// The coordinator's opt-in ON (coordinator plan P5): its account, the
 		// account's two reads, its job and schedule, and the Firebase root's
 		// database grant to it. TestTheCoordinatorIsInTheOptInGoldensOnly
@@ -110,7 +122,7 @@ func TestGoldenPlansAreCovered(t *testing.T) {
 			// refusal going away, which is what would say the cover learned the
 			// bucket and this exception is stale.
 			want := []string{}
-			if name == "installation-credentials" {
+			if name == "installation-credentials" || name == "installation-voice" {
 				want = []string{`module.installation.google_storage_bucket_iam_member.state["user:person-1@example.com"] (on bucket fugaro-tfstate-proj-1234, which is not this run's)`}
 			}
 			if !slices.Equal(got, want) {
