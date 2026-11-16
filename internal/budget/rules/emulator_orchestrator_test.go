@@ -103,7 +103,9 @@ func orchestratorInTemplate(t *testing.T) map[string]any {
 
 // TestOrchestratorSubtreeIsReadableOnlyBySignedInPeople: the subtree is read by
 // the signed-in person (the `USER` macro, the same reader the coordinator's
-// state has) and by nobody the rules evaluate as a client token.
+// state has) and by nobody the rules evaluate as a client token — E12's
+// reports-job read (F27) is the one grant under it, it is on the escalation
+// block alone, and the loop below requires it to be exactly that.
 func TestOrchestratorSubtreeIsReadableOnlyBySignedInPeople(t *testing.T) {
 	node := orchestratorInTemplate(t)
 	// The read is the explicit `USER` grant, not an inherited one: D1241's
@@ -127,16 +129,26 @@ func TestOrchestratorSubtreeIsReadableOnlyBySignedInPeople(t *testing.T) {
 	if v, has := generated[".write"]; !has || v != false {
 		t.Errorf("generated /%s .write = %v, want false", PathOrchestrator, v)
 	}
-	// Nothing beneath it may carry a grant of its own: the subtree is one node
-	// whose read cascades, and a child with a rule is the shape a widening hides
-	// in.
+	// Nothing beneath it may carry a grant of its own except E12's, which is
+	// named and required here: the subtree is one node whose read cascades, and
+	// a child with a rule is the shape a widening hides in. The reports job's
+	// read of the escalation block (F27) is the one grant under it — on exactly
+	// one node, for the reports job's claim alone — so a second grant, the same
+	// grant moved one node up, and the same grant widened to another identity
+	// each fail here.
 	for path, attrs := range generatedPaths(t) {
 		if !strings.HasPrefix(path, PathOrchestrator+"/") {
 			continue
 		}
+		if path == escalationLedgerPath {
+			if len(attrs) != 1 || attrs[".read"] != reportsJobClaim {
+				t.Errorf("generated /%s = %v, want exactly the reports job's read (%q): E12's grant is the one rule under this subtree", path, attrs, reportsJobClaim)
+			}
+			continue
+		}
 		for _, attr := range []string{".read", ".write"} {
 			if v, has := attrs[attr]; has {
-				t.Errorf("generated /%s carries %s = %v, under a subtree whose single grant is its own .read", path, attr, v)
+				t.Errorf("generated /%s carries %s = %v, under a subtree whose only grants are its own .read and E12's escalation read", path, attr, v)
 			}
 		}
 	}
