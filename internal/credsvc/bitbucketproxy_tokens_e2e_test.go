@@ -172,6 +172,7 @@ type proxyTokensWorld struct {
 	t      *testing.T
 	s      *svc
 	up     *proxyUpstream
+	db     *gcpfake.RTDB
 	store  *creds.RTDBStore
 	values map[string]string
 }
@@ -224,7 +225,7 @@ func proxyTokensWorldOf(t *testing.T, node string, doc []byte, values map[string
 	// agree, so the mark a 429 leaves is a mark the next request meets.
 	s.now = time.Now().UTC().Truncate(time.Second)
 
-	w := &proxyTokensWorld{t: t, s: s, up: up, store: store, values: values}
+	w := &proxyTokensWorld{t: t, s: s, up: up, db: db, store: store, values: values}
 	w.answers(projects)
 	return w
 }
@@ -267,6 +268,26 @@ func (w *proxyTokensWorld) hold(repo string, retryAfter int) {
 		}
 		return previous(r)
 	}
+}
+
+// unauthorized makes the fake refuse this installation's every call with 401:
+// the git advertisement, and the repository document the route's own
+// confirmation of a 401 reads (confirmBitbucket401). Both, because a 401 the
+// repository read does not confirm is not a dead token at all.
+func (w *proxyTokensWorld) unauthorized() {
+	w.up.mu.Lock()
+	defer w.up.mu.Unlock()
+	w.up.answer = func(*http.Request) proxyAnswer {
+		return proxyAnswer{status: http.StatusUnauthorized}
+	}
+}
+
+// breakStatus writes a token status this release cannot decode under the name
+// given, which is what one node the release did not write does to the read: the
+// subtree is decoded strictly and whole (creds.RTDBStore.TokenStatuses), so
+// this one is enough to fail the read for every token there is.
+func (w *proxyTokensWorld) breakStatus(name string) {
+	w.db.Set(creds.PathTokenStatus(name), json.RawMessage(`{"state": "available", "unknown_to_this_release": true}`))
 }
 
 // proxyTokenGitRepo reads the repository a git path names, out of the path the
@@ -557,6 +578,119 @@ func TestProxyOnlyLegacyTokenEndToEnd(t *testing.T) {
 	waitFor(t, "the legacy token's requests to be counted", func() bool {
 		st, ok := w.mark(legacy)
 		return ok && st.Count == 2
+	})
+}
+
+// TestProxyLegacyRecordIsNeverMarked: the legacy untyped record takes no mark
+// and no confirmation read, and keeps answering as it did before this store was
+// wired (R3, T8's legacy-only acceptance).
+//
+// It is the one record this route may not mark, and the reason is not that it
+// is special in what it is: a mark is a state this release has nothing to clear
+// with (`creds set` writes an added token's identity and verification time and
+// never its state, `accounts clear` touches the model credentials' marks), so a
+// token marked broken stays broken until an operator edits the state store by
+// hand. Every other record can be put out of the way by republishing the node
+// without it; the legacy record is implicit and is therefore a candidate for
+// every repository its allow_repos list admits whatever the node says. Marked
+// once, an installation holding only it would refuse every Bitbucket call of
+// every run with a class no operator step clears.
+func TestProxyLegacyRecordIsNeverMarked(t *testing.T) {
+	legacy := config.BitbucketSecret
+
+	t.Run("a 401 is answered by bitbucket.org and marks nothing", func(t *testing.T) {
+		doc, values := proxyTokenBundle(t, true)
+		w := proxyTokensWorldOf(t, proxyTokenNode(t), doc, values, nil)
+		w.unauthorized()
+
+		before := w.up.count()
+		resp, ans := w.s.proxySharedCall(t, http.MethodGet, proxyTokenFetchPath(testBitbucketRepo), nil, bitbucketSlug(t, testBitbucketRepo))
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("the fetch answered %d, want bitbucket.org's own 401 (%s)", resp.StatusCode, ans)
+		}
+		if reads := w.lookups(before); len(reads) != 0 {
+			t.Errorf("the 401 made %d reads of a repository, want none: a token this route does not mark is not confirmed either", len(reads))
+		}
+		if st, ok := w.mark(legacy); ok && !statusOf(st).Available() {
+			t.Errorf("the legacy record is marked %+v, and nothing in this release clears a mark", st)
+		}
+
+		// The call after it is made again, and refused by bitbucket.org rather
+		// than by a mark: that is what "keeps working with no step" means for
+		// the installation whose only token this is.
+		since := w.up.count()
+		resp, ans = w.s.proxySharedCall(t, http.MethodGet, proxyTokenFetchPath(testBitbucketRepo), nil, bitbucketSlug(t, testBitbucketRepo))
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("the second fetch answered %d, want bitbucket.org's own 401 again (%s)", resp.StatusCode, ans)
+		}
+		if calls := w.gitCalls(since); len(calls) != 1 {
+			t.Errorf("the second fetch reached the upstream %d times, want exactly 1: nothing this route wrote refuses a call of the legacy record", len(calls))
+		}
+	})
+
+	t.Run("a 429 is relayed and holds nothing", func(t *testing.T) {
+		doc, values := proxyTokenBundle(t, true)
+		w := proxyTokensWorldOf(t, proxyTokenNode(t), doc, values, nil)
+		w.hold(testBitbucketRepo, 60)
+
+		resp, ans := w.s.proxySharedCall(t, http.MethodGet, proxyTokenFetchPath(testBitbucketRepo), nil, bitbucketSlug(t, testBitbucketRepo))
+		if resp.StatusCode != http.StatusTooManyRequests {
+			t.Fatalf("the fetch answered %d, want bitbucket.org's own 429 (%s)", resp.StatusCode, ans)
+		}
+		st, ok := w.mark(legacy)
+		if ok && !statusOf(st).Available() {
+			t.Errorf("the legacy record is held %+v, want no hold of any kind", st)
+		}
+
+		// A held token is skipped by the selection, so a mark here would turn
+		// the next call into this service's own 429 with a Retry-After instead
+		// of the call it was: the wait nothing supports is the promise the
+		// upstream's own answer alone can make.
+		since := w.up.count()
+		resp, ans = w.s.proxySharedCall(t, http.MethodGet, proxyTokenFetchPath(testBitbucketRepo), nil, bitbucketSlug(t, testBitbucketRepo))
+		if resp.StatusCode != http.StatusTooManyRequests {
+			t.Fatalf("the second fetch answered %d, want bitbucket.org's own 429 (%s)", resp.StatusCode, ans)
+		}
+		if strings.Contains(string(ans), ErrorExhaustedUntil) {
+			t.Errorf("the second fetch was answered this service's own refusal (%s), want the upstream's answer relayed", ans)
+		}
+		if calls := w.gitCalls(since); len(calls) != 1 {
+			t.Errorf("the second fetch reached the upstream %d times, want exactly 1: the legacy record is never held", len(calls))
+		}
+	})
+}
+
+// TestProxyUnreadableStatusIsNotACoverageRefusal: the tokens' statuses are read
+// as ONE subtree (creds.RTDBStore.TokenStatuses), and a node this release
+// cannot decode fails that read for every token — so the failure is the store's
+// and not a repository no token covers. The difference is what the operator is
+// sent to look at: token_not_covered points at the node's coverage and is
+// answered 400, and a transient database error or one hand-edited node under a
+// name no token is would be presented as exactly that, for every repository of
+// every run, with nothing retried.
+func TestProxyUnreadableStatusIsNotACoverageRefusal(t *testing.T) {
+	t.Run("a store that cannot answer is state_unavailable", func(t *testing.T) {
+		doc, values := proxyTokenBundle(t, true)
+		w := proxyTokensWorldOf(t, proxyTokenNode(t), doc, values, nil)
+		w.breakStatus("bitbucket-token--stray")
+
+		line := w.refuse(testBitbucketRepo, http.StatusServiceUnavailable, ErrorStateUnavailable,
+			"the Bitbucket token could not be chosen")
+		w.noTokenTrails(line)
+		if calls := w.gitCalls(0); len(calls) != 0 {
+			t.Errorf("the upstream saw %d git calls, and a request no token could be chosen for forwards no byte", len(calls))
+		}
+	})
+
+	t.Run("a bundle holding no token is refused for the bundle alone", func(t *testing.T) {
+		// Whether this installation holds a Bitbucket token at all is the
+		// bundle's fact and not the store's, so this answer does not change
+		// with the store being unreachable.
+		doc, values := proxyTokenBundle(t, false)
+		w := proxyTokensWorldOf(t, proxyTokenNode(t), doc, values, nil)
+		w.breakStatus("bitbucket-token--stray")
+
+		w.refuse(testBitbucketRepo, http.StatusBadRequest, ErrorRequestRefused, string(bbtokens.ClassNoToken))
 	})
 }
 

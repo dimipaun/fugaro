@@ -764,7 +764,7 @@ func (s *Server) forwardBitbucket(ctx context.Context, w http.ResponseWriter, r 
 	// The reaction this answer earns is taken BEFORE the line and applied after
 	// it: the line is what records it (R14), and a mark a line could not record
 	// is not written (D143, the model probe's own order — probe.go).
-	react := s.reactToBitbucket(ctx, resp, req, snap, canonical, token)
+	react := s.reactToBitbucket(ctx, resp, req, snap, name, canonical, token)
 	if err := s.auditCall(ctx, id, purpose, credential, "", react.status); err != nil {
 		// The act this line records is the forwarding of the call, and an act
 		// this service cannot record is not made (D143): the answer is dropped
@@ -885,17 +885,23 @@ type bitbucketReaction struct {
 // second one or a changed status (R14): the caller of this function is the
 // route's forward, which writes one line and takes what is answered here as its
 // status.
-func (s *Server) reactToBitbucket(ctx context.Context, resp *http.Response, req gitproxy.Request, snap bbtokens.Snapshot, canonical, token string) bitbucketReaction {
+func (s *Server) reactToBitbucket(ctx context.Context, resp *http.Response, req gitproxy.Request, snap bbtokens.Snapshot, name bbtokens.Name, canonical, token string) bitbucketReaction {
 	if _, ok := s.reactionStore(); !ok {
 		return bitbucketReaction{status: StatusOK}
 	}
 	switch resp.StatusCode {
 	case http.StatusUnauthorized:
+		if !marksItsToken(name) {
+			return bitbucketReaction{status: StatusOK}
+		}
 		if !s.confirmBitbucket401(ctx, canonical, token) {
 			return bitbucketReaction{status: StatusOK}
 		}
 		return bitbucketReaction{status: ReasonBroken, mark: heldStatus(bbtokens.StateBroken, time.Time{})}
 	case http.StatusTooManyRequests:
+		if !marksItsToken(name) {
+			return bitbucketReaction{status: StatusOK}
+		}
 		// A reset the answer named is a time, and one it did not is this side's
 		// own wait (the contract's StateBackedOff). BOTH are dated here, and a
 		// hold is never written with no end: the zero Until is the contract's
@@ -986,6 +992,36 @@ func (s *Server) confirmBitbucket401(ctx context.Context, canonical, token strin
 	outcome, _ := classifyProbe(resp, nil, s.now())
 	return outcome == probeRefused
 }
+
+// marksItsToken reports whether a reaction to bitbucket.org's answer may mark
+// the token a call was served with: false for the legacy untyped record alone
+// (R3), and nothing here reads the upstream to confirm it either.
+//
+// A mark is a state this release has nothing to clear with: `creds set` writes
+// an added token's identity and verification time and never its state, and
+// `accounts clear` touches the model credentials' marks alone, so a token
+// marked broken is out of service until an operator edits the state store by
+// hand (C1.21, R4). For every other record the plan takes that price knowingly
+// (R12), and an operator has a way around it: the mark is keyed by the token's
+// name, so a token stored under another name serves what the broken one
+// covered.
+//
+// The legacy record is the one an installation may not be asked to route
+// around, because R3 promises that an installation holding only it keeps
+// working with NO STEP — the same promise T8's acceptance keeps ("with only the
+// legacy bitbucket-token ... the behaviour is today's exactly"), and today that
+// record is not marked and not refused for a status: it had no store at all.
+// It is also the record nothing takes out of the way: it is IMPLICIT (R3), so
+// its allow_repos list alone makes it a candidate for every repository the node
+// admits, whatever is published over it. So a legacy token bitbucket.org
+// refuses is left answering every call with bitbucket.org's own 401 — which is
+// what the release behind did with it — rather than taken out of service for
+// good by the first one.
+//
+// The count is not a mark and is still written (D2356), and the eviction a 403
+// or a 404 earns is still taken: it is the project lookup's cache, not a
+// token's state, and a stale match is a wrong answer with or without a mark.
+func marksItsToken(name bbtokens.Name) bool { return name != bbtokens.LegacyName }
 
 // heldStatus is the status one reaction writes: the state and the hold it
 // decided, and nothing else.

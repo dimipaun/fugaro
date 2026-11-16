@@ -29,8 +29,8 @@ import (
 // deployment cannot wire a store whose selection and whose reactions disagree
 // about which tokens exist — the one thing a reaction must not do.
 type bitbucketTokens struct {
-	status bbtokens.StatusStore
-	client *http.Client
+	statuses creds.TokenStatusStore
+	client   *http.Client
 
 	mu     sync.Mutex
 	key    [sha256.Size]byte
@@ -56,7 +56,7 @@ var (
 // no jar), so the candidate project token is never presented to a host the
 // adapter's constant does not name (F22, G10).
 func NewBitbucketTokenStore(statuses creds.TokenStatusStore, client *http.Client) bbtokens.Selector {
-	return &bitbucketTokens{status: tokenStatuses{store: statuses}, client: client}
+	return &bitbucketTokens{statuses: statuses, client: client}
 }
 
 // Select answers the narrowest usable token covering one request's repository.
@@ -71,7 +71,53 @@ func NewBitbucketTokenStore(statuses creds.TokenStatusStore, client *http.Client
 // again on every proxied call (O1).
 func (b *bitbucketTokens) Select(ctx context.Context, snap bbtokens.Snapshot, canonical string, write bool) (bbtokens.Choice, error) {
 	records := tokenRecords(snap)
-	return bbtokens.NewSelector(records, b.lookupFor(records, snap.Bundle), b.status).Select(ctx, snap, canonical, write)
+	status, err := b.selectionStatuses(ctx, snap)
+	if err != nil {
+		return bbtokens.Choice{}, err
+	}
+	return bbtokens.NewSelector(records, b.lookupFor(records, snap.Bundle), status).Select(ctx, snap, canonical, write)
+}
+
+// selectionStatuses is the status store one request's selection reads: every
+// token's status, read ONCE, at the head of the selection.
+//
+// The read is made here rather than left to the selector's per-candidate Read
+// for two reasons, and the first is the one that matters.
+//
+// A store that cannot answer is this request's failure and not a skip. The
+// selector's own rule is that a candidate whose status cannot be read is not a
+// candidate (select.go, R14's fail-closed direction), which is right for a
+// store answering about one token; but the store's read is the SUBTREE's and
+// all-or-nothing — one node this release cannot decode fails
+// creds.RTDBStore.TokenStatuses for every token (readNameTree) — so a transient
+// database error, or one hand-edited node under a name no token is, would skip
+// every candidate and leave the request refused with the contract's
+// token_not_covered: a class that sends the operator to the node's coverage for
+// a fault in the state store, answered 400 and never retried. Returning the
+// store's own error instead is what the route already does with one: a store
+// that could not answer is not the caller's refusal, so the answer is
+// state_unavailable.
+//
+// The second is cost: the subtree read is a whole GET, so one per candidate is
+// one per token on every proxied call (O1's own complaint about this route),
+// and judging every candidate against ONE read also means a mark cannot be
+// half-seen. It is read per request and never held across requests, so a mark
+// the previous request wrote is seen by this one — the contract's Snapshot
+// makes the same promise for the two documents.
+//
+// A bundle holding no Bitbucket token at all is the exception and is not asked
+// about the store: which tokens exist is the bundle's fact, the selection
+// refuses that request as no_bitbucket_token before reading anything, and that
+// answer must not change because the state store is unreachable.
+func (b *bitbucketTokens) selectionStatuses(ctx context.Context, snap bbtokens.Snapshot) (bbtokens.StatusStore, error) {
+	if snap.Bundle == nil || len(snap.Bundle.Names()) == 0 {
+		return tokenStatuses{store: b.statuses}, nil
+	}
+	held, err := b.statuses.TokenStatuses(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return selectionStatuses{held: held, store: b.statuses}, nil
 }
 
 // ProjectOf answers which project a repository is in, through the lookup this
@@ -107,17 +153,17 @@ func (b *bitbucketTokens) Evict(canonical string) {
 
 // Read answers one token's status.
 func (b *bitbucketTokens) Read(ctx context.Context, name bbtokens.Name) (bbtokens.Status, error) {
-	return b.status.Read(ctx, name)
+	return tokenStatuses{store: b.statuses}.Read(ctx, name)
 }
 
 // Write records one token's status.
 func (b *bitbucketTokens) Write(ctx context.Context, name bbtokens.Name, st bbtokens.Status) error {
-	return b.status.Write(ctx, name, st)
+	return tokenStatuses{store: b.statuses}.Write(ctx, name, st)
 }
 
 // CountRequest records one request served with the token.
 func (b *bitbucketTokens) CountRequest(ctx context.Context, name bbtokens.Name) error {
-	return b.status.CountRequest(ctx, name)
+	return tokenStatuses{store: b.statuses}.CountRequest(ctx, name)
 }
 
 // current is the lookup this instance holds, and nil before any request has
@@ -201,6 +247,39 @@ func tokenRecords(snap bbtokens.Snapshot) []bbtokens.Record {
 		})
 	}
 	return out
+}
+
+// selectionStatuses is one selection's status store: every token's status, as
+// the ONE read of the subtree found them, so that the candidates are judged
+// against one read and a store that could not be read at all is refused before
+// a candidate is looked at (bitbucketTokens.selectionStatuses builds it).
+//
+// A token the read found nothing for reads as the zero status — the contract's
+// "nothing recorded", which is available (StatusStore.Read) — and the read is
+// not taken again here: a mark D2356 writes during a request is for the NEXT
+// request's read, which this request's answer cannot depend on anyway.
+type selectionStatuses struct {
+	held  map[string]creds.TokenStatus
+	store creds.TokenStatusStore
+}
+
+var _ bbtokens.StatusStore = selectionStatuses{}
+
+// Read answers the status this selection's one read found for the token.
+func (s selectionStatuses) Read(_ context.Context, name bbtokens.Name) (bbtokens.Status, error) {
+	return statusOf(s.held[string(name)]), nil
+}
+
+// Write and CountRequest are the store's own, and are here because the contract
+// states the status store as one interface: the selector writes nothing — the
+// route's reactions are the writers, and they write through bitbucketTokens —
+// so nothing calls either of these on a selection's view.
+func (s selectionStatuses) Write(ctx context.Context, name bbtokens.Name, st bbtokens.Status) error {
+	return tokenStatuses{store: s.store}.Write(ctx, name, st)
+}
+
+func (s selectionStatuses) CountRequest(ctx context.Context, name bbtokens.Name) error {
+	return tokenStatuses{store: s.store}.CountRequest(ctx, name)
 }
 
 // tokenStatuses is the contract's StatusStore over the creds state store's
