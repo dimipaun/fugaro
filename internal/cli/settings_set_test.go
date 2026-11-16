@@ -2677,3 +2677,21 @@ func TestSettingsSelectionReadsTheCheckoutsProject(t *testing.T) {
 		t.Fatalf("outside a checkout nothing selects one of two project configs, got %v", err)
 	}
 }
+
+// TestSettingsSetAddToAWideningListRowIsTyped: a row whose TypedWhy names the
+// widening direction of a list (verifier_accounts, mobile_allow.*) is marked
+// by `--add` as well as by a truthy `set`, so the dry run says widening and
+// the sentence it carries is the row's own.
+func TestSettingsSetAddToAWideningListRowIsTyped(t *testing.T) {
+	settingsWriteHome(t)
+	settingsWriteCheckout(t, settingsRepoYAML(""))
+	noTerminal(t)
+	row, ok := settings.Lookup("verifier_accounts")
+	if !ok || row.TypedWhy == "" {
+		t.Fatal("verifier_accounts carries no TypedWhy")
+	}
+	doc := settingsDryRunDoc(t, "settings", "set", "verifier_accounts", "--add", settingsProbeItems["verifier_accounts"])
+	if !doc.Widening || doc.Why != row.TypedWhy {
+		t.Errorf("--add on verifier_accounts says widening=%v why=%q, want true and the row's TypedWhy", doc.Widening, doc.Why)
+	}
+}

@@ -575,6 +575,10 @@ const rulesDeviceGeneration = 3
 // coordinator's read grant (coordinator plan P3, D194).
 const rulesCoordinatorGeneration = 4
 
+// rulesVoiceGeneration is the rules generation that added the voice policy node
+// (mobile plan task P5.3.1).
+const rulesVoiceGeneration = 5
+
 // rulesMarkerOlderText is the sentence for the state between the two
 // generations: at or above PolicyRulesVersion and below RulesVersion. Nothing
 // refuses here — Read reads the policy the marker's rules carry and
@@ -587,10 +591,15 @@ const rulesCoordinatorGeneration = 4
 // Each branch names the one thing the next generation adds, so the sentence
 // never sends the operator after a grant the deployed rules already carry: a
 // marker at rulesDeviceGeneration already has the mailbox and the device
-// binding, and one at rulesCoordinatorGeneration already has the coordinator's
-// read grant, so for it the sentence names the voice policy node (mobile plan
-// task P5.3.1).
+// binding, one at rulesCoordinatorGeneration already has the coordinator's read
+// grant and only the voice policy node is new to it (mobile plan task P5.3.1),
+// and one at rulesVoiceGeneration already has that node too and only the
+// registration kind's fields are new to it (mobile plan task P5.2.2).
 func rulesMarkerOlderText(gen int) string {
+	if gen >= rulesVoiceGeneration {
+		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox, the device binding, the coordinator's read grant and the voice policy node, so runs, a published policy, the mobile app and the coordinator are unaffected — what they predate is this release's own document, which adds the fields a push registration carries (the `token`, `platform` and `prefs` fields of a mailbox message of the new `registration` kind, mobile plan task P5.2.2): the app writes one into its own inbox, and until this is deployed the database refuses that message with no error, so the phone is registered with nothing; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
+			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, projectpolicy.RulesVersion)
+	}
 	if gen >= rulesCoordinatorGeneration {
 		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox, the device binding and the coordinator's read grant, so runs, a published policy, the mobile app and the coordinator are unaffected — what they predate is this release's own document, which adds the voice policy node %s/{shared,repos/$slug} (mobile plan task P5.3.1): a run token reads its own project's node there, and no client writes either node; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
 			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, rules.PathVoice, projectpolicy.RulesVersion)

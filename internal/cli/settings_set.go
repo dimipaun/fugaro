@@ -2000,7 +2000,7 @@ func settingsTypedWrite(row settings.Row, oldValue, newValue, mode string) (bool
 	}
 	// A row's own sensitive direction: turning the key on is the act D846
 	// reserves, and the row carries the sentence saying why.
-	if row.TypedWhy != "" && mode == "set" && settingsTrue(newValue) {
+	if row.TypedWhy != "" && ((mode == "set" && settingsTrue(newValue)) || mode == "add") {
 		return true, row.TypedWhy
 	}
 	// An entry write is classified here and nowhere else (D1165): the block the

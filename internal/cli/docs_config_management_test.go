@@ -230,8 +230,19 @@ const (
 // rows are the eight that move the registry and not the allowlist: their owner
 // is the `accounts` family, which settingsFamilyCommands maps, so the generic
 // path refuses them by name.
+//
+// N1 of docs/config-ownership/ is the last mover, by nine rows and by none: the
+// local config gains the carriers of the two node-only blocks — the cascade's
+// six leaves under `credential_cascade` (F23: the node's `credentials` member
+// is the cascade, while this file's `credentials` is already the list of typed
+// credentials) and the `node_removals` record's three lists, which is the shape
+// an explicit unset takes (F22, D2607). All nine name the `accounts` family,
+// which is where `fugaro accounts` writes the cascade and records a removal
+// (D2613), so the generic path carries none of them: the fallback is a word
+// whose second answer spends the project's money, and a removal is a name held
+// to the rule of the block it names.
 const (
-	cfmRegistryRows   = 457
+	cfmRegistryRows   = 466
 	cfmAllowlistNamed = 118
 )
 

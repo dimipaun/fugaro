@@ -279,6 +279,13 @@ var (
 		// the credential's, the value is a count of runs, and the read prints
 		// the figure the node holds.
 		"credentials.concurrency_per_token": "a count of runs, not a credential",
+		// The cascade's cap is a count of runs, not key material: "token" here
+		// is the shared OAuth token the runs queue behind, and the value is how
+		// many of them may hold it at once (D142). Printing it is the point of
+		// the row — a person reading why their launches queue wants the figure,
+		// and hiding it would leave the one key of the cascade that is a number
+		// reading as a secret.
+		"credential_cascade.concurrency_per_token": "how many runs may hold one shared credential, not a credential",
 	}
 )
 

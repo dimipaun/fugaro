@@ -48,8 +48,9 @@ import (
 //   - Nothing in a report is a person or a task's own words (G1, D323): the
 //     flags, recipes and figures are internal/digest's closed vocabulary.
 //
-// It writes the repository reports and no aggregate: the project's own
-// document beside them is R8's, a later run of the same job.
+// It writes each repository's report and then the project's own aggregate of
+// the period beside them: one document naming every repository, which adds the
+// stored reports up and carries no rule of its own (E2, E7).
 
 // reportsJobSpecEnv is where the project's reports job reads its assignment:
 // the JSON document internal/infra renders into the job's environment
@@ -108,8 +109,11 @@ func newRunsReportsCmd() *cobra.Command {
 			"days.\n\n" +
 			"Nothing in a report is a person or a task's own words (G1, D323). The command\n" +
 			"writes with the job's own credentials and nothing else: no git credential, no model\n" +
-			"credential, no secret, and reports/ is the only prefix it may write. The project's\n" +
-			"own aggregate is a later step of the job's and is not written here.\n\n" +
+			"credential, no secret, and reports/ is the only prefix it may write.\n\n" +
+			"Then it writes the project's own aggregate of each period, beside them at\n" +
+			"reports/<YYYY>/<key>.md: the one document that names every repository, which adds\n" +
+			"the repositories' stored reports up -- a year's is the stored monthly aggregates of\n" +
+			"that year -- and names no rule and no pattern (E2, E7).\n\n" +
 			"Without --job there is nothing to report: a person reads or writes one repository's\n" +
 			"report of one period in a checkout with fugaro runs digest.",
 		Args: cobra.NoArgs,
@@ -217,7 +221,88 @@ func runRunsReports(cmd *cobra.Command) error {
 			}
 		}
 	}
+	for _, p := range periods {
+		if err := reportsWriteProject(ctx, bucket, doc, p, out); err != nil {
+			return remote(fmt.Errorf("the project aggregate of %s: %w", p.Key, err))
+		}
+	}
 	return nil
+}
+
+// reportsWriteProject writes the project's own aggregate of one period, after
+// the loop wrote every repository's report of it: the one document that names
+// every repository (E2), at reports/<YYYY>/<key>.md -- the layout's own path
+// with no slug in it.
+//
+// It adds up what is stored rather than what the loop computed, so the
+// aggregate and the reports beside it cannot disagree, and a rerun that left a
+// report as it was adds up the bytes that are there. The figures are the
+// repositories' runs and not the job's own (D1433, D1448): the job is the
+// machinery that reports the project's work, and it is no repository of the
+// document the run was handed, so nothing of it is read at all.
+//
+// It writes no rule and no pattern (E7): the aggregate's file is written here
+// and never through FileBody, which is the one place the rules are rendered.
+//
+// The figures are the repositories' own summary blocks and no second source:
+// the budget database's day nodes, which the design names beside them
+// (implementation-plan Open items, "the aggregate's second read"), would be a
+// third read on the job's account and the plan leaves that undecided, so the
+// first slice's aggregate is built from the blocks alone. The seam is
+// reportsProjectLine: the day-node answer adds a source there and changes no
+// shape.
+func reportsWriteProject(ctx context.Context, b *blobx.Bucket, doc reportsJobDoc, p digest.Period, out io.Writer) error {
+	project := digest.NewProject(b.Bucket, p.Key[:4])
+	var a digest.Aggregate
+	if p.Dim == digest.ByYear {
+		// A year has no runs of its own to read -- the records are kept 90
+		// days -- so it is the stored monthly aggregates of that year added up,
+		// which is the shape a repository's yearly report already has.
+		rows, err := project.Rows(ctx)
+		if err != nil {
+			return fmt.Errorf("reading the stored aggregates under %s: %w", project.Prefix(), err)
+		}
+		a = digest.ProjectRollUp(p, digest.MonthsOf(rows, p.Key))
+		if a.Period.Key == "" {
+			fmt.Fprintf(out, "no project aggregate for %s: no monthly aggregate of %s is stored yet, and a yearly one is its months added up\n", p.Key, p.Key)
+			return nil
+		}
+	} else {
+		repos := make([]digest.AggregateRepo, 0, len(doc.Repositories))
+		for _, slug := range doc.Repositories {
+			line, err := reportsProjectLine(ctx, b, slug, p)
+			if err != nil {
+				return err
+			}
+			repos = append(repos, line)
+		}
+		a = digest.ProjectAggregate(p, repos)
+	}
+	return reportsPut(ctx, b, project.Object(p.Key), a.Markdown(), out)
+}
+
+// reportsProjectLine is one repository's line of the project's aggregate: the
+// summary block of the report this run has just written for it.
+//
+// A report that is not stored, or one this package cannot read, is a line with
+// no figures at all: a repository whose report is missing is not a repository
+// whose runs were none, and a zero would be a figure nobody counted (G5). Any
+// other read failure is the run's own -- a bucket that answers half the reads
+// is not an aggregate of half the project.
+func reportsProjectLine(ctx context.Context, b *blobx.Bucket, slug string, p digest.Period) (digest.AggregateRepo, error) {
+	line := digest.AggregateRepo{Slug: slug}
+	store := digest.NewStore(b.Bucket, slug)
+	data, _, err := b.Read(ctx, store.Object(p.Key))
+	switch {
+	case errors.Is(err, blobx.ErrNotExist):
+		return line, nil
+	case err != nil:
+		return line, fmt.Errorf("reading %s: %w", store.Object(p.Key), err)
+	}
+	if s, err := digest.ReadSummary(data); err == nil && s.Period == p.Key {
+		line.Summary, line.Read = s, true
+	}
+	return line, nil
 }
 
 // reportsWriteRepository writes one repository's report of one period into the

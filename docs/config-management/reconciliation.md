@@ -19,7 +19,7 @@ project config** — a sentence it prints and exits on — so the figures below
 are counted from the registry in this tree through the same predicate the write path uses, which is
 what the guard at the end of this section re-runs.
 
-- **F1 — the registry is 457 rows and the generic writer carries 206 of them.** 118 by name
+- **F1 — the registry is 466 rows and the generic writer carries 206 of them.** 118 by name
   (`internal/cli/settings_set.go:106`), made of the thirteen §4.4 names (the four budget scalars,
   `base_branch`, `max_parallel`, `update_check`, `commit_name`, `commit_email`, `layer.default_profile`,
   and D873's three account keys — `default_claude_account`, `claude_account_auto` and the wildcard
@@ -41,7 +41,7 @@ what the guard at the end of this section re-runs.
   `layer.defaults.`, `layer.governance.`, `credentials.`, `clone_urls.`, `escalation.`):
   13 + 7 + 2 + 1 + 37 + 36 + 1 + 4 + 4 = 105, the last four being the ladder's per-mode override rows
   below, and R1's thirteen named rows (F1's amendment below) bring it to 118.
-  **251 rows have no generic writer**, and the audit's whole subject is which of them are a defect and
+  **260 rows have no generic writer**, and the audit's whole subject is which of them are a defect and
   which are the installation's own plumbing (F13, D1182). The count moved from 390 by the image setup
   skill's two rows: the map (D1906) is the `image map` family's and one row, so it is not carried here,
   and the bake switch above is — and it moved again by the stop rule's two rows,
@@ -108,6 +108,12 @@ what the guard at the end of this section re-runs.
   `accounts` family, which `settingsFamilyCommands` maps, so the generic path refuses them by name
   (and the `credentials.` prefix, which reaches the credential records' own keys, does not open a
   window onto the block).
+  N1 of docs/config-ownership/ then moved the registry by nine rows to 466 and by none: the local
+  config gains the node-only blocks' carriers — the cascade's six leaves under `credential_cascade`
+  (F23, because the node's `credentials` member is the cascade while this file's `credentials` is the
+  list of typed credentials; the policy layer's own six `credentials.*` rows stay, one per layer) and
+  the three lists of the `node_removals` record that states an explicit unset (F22, D2607) — and all
+  nine name the `accounts` family (D2613), so the rows without a generic writer are nine more for them.
 - **F2 — `fugaro rigor` does not exist.** There is no `newRigorCmd` in `internal/cli`, no `rigor` cobra
   command and no `floor` subcommand, while the registry names `rigor` (`internal/settings/registry.go:266`)
   and `rigor floor` (`:682`) as the owners of keys. Two of the registry's owner strings name a command a
