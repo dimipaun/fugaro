@@ -986,13 +986,23 @@ func (e *initEngine) credentialsMoveHeld() string {
 // is the run's at the stage that applies the file (the installation root, whose
 // engines run before this one), and this precondition has nothing to answer
 // about a document it cannot read.
+//
+// It asks servicesImageStale and not the credentials service's own image,
+// because the move it is a precondition for is the three services' (the hop's
+// image is the one a hand-written block leaves behind): a node this stage raises
+// while a hop on the release behind stays where it is is the same refusal one
+// service over, and the resolve has to fail here rather than after the write.
 func (e *initEngine) credentialsResolveBeforeRaise(ctx context.Context) error {
 	ver := releaseVersion()
 	if ver == "" {
 		return nil
 	}
-	doc, image, err := e.recordedCredentialsImage()
-	if err != nil || doc == nil || !credentialsImageStale(ver, image) {
+	doc, _, err := e.recordedCredentialsImage()
+	if err != nil || doc == nil {
+		return nil
+	}
+	stale, err := servicesImageStale(ver, doc)
+	if err != nil || !stale {
 		return nil
 	}
 	_, err = e.credentialsResolve(ctx)
@@ -1016,9 +1026,13 @@ func (e *initEngine) credentialsResolve(ctx context.Context) (string, error) {
 }
 
 // moveCredentialsImage moves the installation's recorded credentials image
-// forward onto this release's, in the installation root's tfvars, and it is the
-// credentials-service stage's step (init_stages.go's newCredentialsStage): it
-// runs after the policy stage, so the node every call of the service is read
+// forward onto this release's, in the installation root's tfvars, and the
+// intake's and the hop's beside it — the three are one pin of one image, and
+// what this step has to do is read over all three (servicesImageStale), so an
+// installation whose credentials image is already this release's is still a
+// move when the hop's block, the one the run never writes, names an older
+// release. It is the credentials-service stage's step (newCredentialsStage):
+// it runs after the policy stage, so the node every call of the service is read
 // under is this release's before the process that reads it is replaced (the
 // owner's ruling of 2026-11-10; initflow.CredentialsService has the order and
 // the window it leaves). The resolve behind it is the policy stage's own read
@@ -1045,7 +1059,7 @@ func (e *initEngine) moveCredentialsImage(ctx context.Context) error {
 	if ver == "" {
 		return nil
 	}
-	doc, image, err := e.recordedCredentialsImage()
+	doc, _, err := e.recordedCredentialsImage()
 	if err != nil {
 		return err
 	}
@@ -1056,7 +1070,14 @@ func (e *initEngine) moveCredentialsImage(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if !credentialsImageStale(ver, image) {
+	// The three images decide, not the credentials service's alone: an
+	// installation whose credentials image is already this release's and whose
+	// hop's is not is a move with work to do (servicesImageStale says why).
+	stale, err := servicesImageStale(ver, next)
+	if err != nil {
+		return userErr("reading the installation's %s: %v", infra.VarsFile, err)
+	}
+	if !stale {
 		return nil
 	}
 	pinned, err := e.credentialsResolve(ctx)
@@ -1126,10 +1147,56 @@ func (e *initEngine) moveCredentialsImage(ctx context.Context) error {
 //
 // It is one function because two callers ask it: the move itself, and the
 // credentials-service stage's own skip, which may not answer "nothing to do"
-// about a block the move would rewrite.
+// about a block the move would rewrite. And it reads a reference of any of the
+// three services this run writes, not only the credentials service's:
+// servicesImageStale asks it about the intake's and the hop's images too, the
+// three being one reference shape of one image.
 func credentialsImageStale(ver, image string) bool {
 	recorded := infra.CredentialsServiceImageRelease(image)
 	return recorded == "" || newer(ver, recorded)
+}
+
+// servicesImageStale reports whether the installation's tfvars carry an image
+// this release's move replaces: the credentials service's, the intake's or the
+// voice hop's — the three services of one pin, which moveCredentialsImage
+// re-pins in one write.
+//
+// It is wider than credentialsImageStale on purpose, and the hop is why. Its
+// block is the one the run never writes (it is the installation's own opt-in,
+// hand-written into the installation root's tfvars), so a hand-written
+// reference is the ordinary way its image is left behind while the credentials
+// service's own is already this release's: the hop's revision would then run a
+// binary that may have no `voice serve` at all and whose reader is a release
+// behind the policy node this run's policy stage has just raised — which
+// internal/voicesvc refuses, so every device call of that installation is
+// refused — and every later update would answer "the recorded image is already
+// this release's" and leave it there. The intake is read for the same reason
+// one step weaker: the run writes its block, but a document whose intake image
+// was hand-edited or left by an interrupted run has the same shape.
+//
+// The comparison is credentialsImageStale's, image by image: a reference that
+// names NO release is replaced, and one that names a release NEWER than this
+// binary is left alone, so two machines of one installation upgraded at
+// different times do not flip the three services between their two releases on
+// every update.
+func servicesImageStale(ver string, doc []byte) (bool, error) {
+	image, ok, err := infra.CredentialsServiceImageOf(doc)
+	if err != nil {
+		return false, err
+	}
+	if ok && credentialsImageStale(ver, image) {
+		return true, nil
+	}
+	if spec, have, err := infra.IntakeOf(doc); err != nil {
+		return false, err
+	} else if have && credentialsImageStale(ver, spec.Image) {
+		return true, nil
+	}
+	spec, have, err := infra.VoiceServiceOf(doc)
+	if err != nil {
+		return false, err
+	}
+	return have && credentialsImageStale(ver, spec.Image), nil
 }
 
 // deployCredentialsService writes the block an installation that has none gets:
@@ -1703,11 +1770,13 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 // apart in the tfvars — the block, then the image inside it.
 //
 // Its skip is what keeps a converged installation from planning the root a
-// second time: a run whose recorded image is already this release's, or whose
-// tfvars carry no block at all, has nothing to move and answers with the
+// second time: a run whose three recorded images are already this release's, or
+// whose tfvars carry no block at all, has nothing to move and answers with the
 // sentence rather than an apply. It asks the same predicate the move does
-// (credentialsImageStale), so the two can never disagree about whether there is
-// anything to do.
+// (servicesImageStale, which is credentialsImageStale over all three services),
+// so the two can never disagree about whether there is anything to do — the
+// disagreement that would leave a hop hand-written onto an older release where
+// it is while the credentials service beside it is current.
 func newCredentialsStage(e *initEngine) *engineStage {
 	return &engineStage{e: e, name: initflow.CredentialsService, isolate: true,
 		skip: func() string {
@@ -1718,7 +1787,7 @@ func newCredentialsStage(e *initEngine) *engineStage {
 			if ver == "" {
 				return credentialsDevBuildHeld
 			}
-			doc, image, err := e.recordedCredentialsImage()
+			doc, _, err := e.recordedCredentialsImage()
 			switch {
 			case err != nil:
 				// The run reports the read's own failure: a stage that could not
@@ -1726,7 +1795,14 @@ func newCredentialsStage(e *initEngine) *engineStage {
 				return ""
 			case doc == nil:
 				return "the installation's tfvars carry no credentials service"
-			case !credentialsImageStale(ver, image):
+			}
+			stale, err := servicesImageStale(ver, doc)
+			switch {
+			case err != nil:
+				// A document whose blocks the predicate cannot read is one this
+				// stage may not answer "nothing to move" about either.
+				return ""
+			case !stale:
 				return "the recorded image is already this release's"
 			}
 			return ""

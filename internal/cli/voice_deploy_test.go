@@ -267,3 +267,93 @@ func TestUpdateKeepsTheVoiceHopOnAnInstallationThatOptedIn(t *testing.T) {
 		t.Errorf("voice_service.image = %v after the second update, want %s: the hop an installation opted into is not a key the next run drops", got, r.credentialsRef())
 	}
 }
+
+// TestUpdateMovesTheVoiceHopWhoseCredentialsImageIsCurrent is the HARD RULE at
+// the one edge only the hop can be at: its block is the key the run NEVER
+// writes — the installation writes it, by hand, which is the whole of the
+// opt-in — so its image is the one that can be left behind while the
+// credentials service's own is already this release's. A move that read only
+// that service's image would answer "the recorded image is already this
+// release's" for the whole installation and leave the hop where the owner's own
+// reference put it: a revision that may have no `voice serve` at all, and one
+// whose reader is a release behind the policy node this run's policy stage has
+// just raised, which internal/voicesvc refuses — every device call of that
+// installation refused, on every update, until some later release happened to
+// move the credentials image.
+//
+// Mutation (run, restore): ask the credentials service's image alone in the
+// move's gate and in the stage's skip (credentialsImageStale instead of
+// servicesImageStale) and the first assertion fails — the run reports the
+// recorded image is already this release's and the hop keeps the hand-written
+// reference.
+func TestUpdateMovesTheVoiceHopWhoseCredentialsImageIsCurrent(t *testing.T) {
+	r := credentialsRig(t)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.voice[0]", "update"))
+	credentialsOutputs(t, r)
+	// The credentials service is already this release's — the state a second
+	// run of one upgrade leaves — and the hop's block is what the owner wrote by
+	// hand: the three members the module's variable takes, on the release the
+	// installation was at when they wrote it.
+	seedCredentialsService(t, r, r.credentialsRef())
+	seedVoiceService(t, r, oldCredentialsRef("0.22.3"))
+	applies := r.captureApplies(t)
+
+	out, errOut, err := executeStdin(t, "", "update")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("one fugaro update of an installation whose hop lags its credentials service failed: %v\n%s", err, s)
+	}
+	if got := voiceServiceEntry(t, r)["image"]; got != r.credentialsRef() {
+		t.Fatalf("voice_service.image = %v after one update, want %s: the hop's block is the one the run never writes, so its hand-written reference is the one that can lag the credentials service the installation already runs this release's image for — and a hop left on the release behind runs a binary that may have no `voice serve` and reads a node this release's policy stage has raised, so every device call is refused\n%s", got, r.credentialsRef(), s)
+	}
+	// The credentials service's own image is not what moved, and it is the same
+	// reference before and after: this run's work is the hop's alone.
+	if got := credentialsServiceEntry(t, r)["image"]; got != r.credentialsRef() {
+		t.Errorf("credentials_service.image = %v after the update, want %s: the installation was already on this release's service, and the move re-pins the three to the one reference\n%s", got, r.credentialsRef(), s)
+	}
+	// The move is before the apply that deploys it: the document the
+	// credentials-service stage's apply of the installation root reads carries
+	// the hop's new pin, so the revision that lands is the one that can serve.
+	ran := capturedApplies(t, applies, "installation")
+	if len(ran) == 0 {
+		t.Fatalf("the update applied the installation root not at all, so nothing deployed the hop's move:\n%s", s)
+	}
+	seenPin := false
+	for i, doc := range ran {
+		voice, _ := doc["voice_service"].(map[string]any)
+		if voice == nil {
+			t.Fatalf("the installation root's apply %d ran with no voice_service block: the block is the opt-in, so a run that dropped it plans the hop away\n%v", i+1, doc)
+		}
+		switch got := voice["image"]; got {
+		case r.credentialsRef():
+			seenPin = true
+		case oldCredentialsRef("0.22.3"):
+		default:
+			t.Errorf("the installation root's apply %d ran with voice_service.image = %v, want the hand-written reference or this release's pin\n%s", i+1, got, s)
+		}
+	}
+	if !seenPin {
+		t.Errorf("no apply of the installation root ran with voice_service.image = %s: the move has to be on disk before the apply that deploys the revision, or the hop's service is left on the reference the owner wrote\n%s", r.credentialsRef(), s)
+	}
+
+	// And a second update writes nothing: the move the first made is the one
+	// documented command's own output, not a state the next run moves again.
+	before := len(r.ran(t, "apply"))
+	r.script["plan"] = map[string]any{"exit": 0}
+	r.setPlanAt(t, "installation")
+	r.setPlan(t)
+	out, errOut, err = executeStdin(t, "", "update")
+	s = out + errOut
+	if err != nil {
+		t.Fatalf("the second update of a converged installation failed: %v\n%s", err, s)
+	}
+	if after := len(r.ran(t, "apply")); after != before {
+		t.Errorf("the second update applied %d time(s): a run after a converged update has nothing left to do\n%s", after-before, s)
+	}
+	if !strings.Contains(s, "No changes") {
+		t.Errorf("the second update does not report a converged installation:\n%s", s)
+	}
+	if got := voiceServiceEntry(t, r)["image"]; got != r.credentialsRef() {
+		t.Errorf("voice_service.image = %v after the second update, want %s: the hop's move is not a key the next run undoes", got, r.credentialsRef())
+	}
+}
