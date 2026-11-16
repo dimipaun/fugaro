@@ -19,8 +19,8 @@ settled and estimated spend drift apart.
 | `day-leaves.md` | Not written yet: task SA5.6 adds it, to say what each new day-counter leaf holds |
 
 **Headline:**
-- `price_policy: highest` exists, but `fugaro update --repo` still refuses it: `catalogShipped` was never flipped
-  after 0.7.5 (F3).
+- `fugaro update --repo` refused `price_policy: highest` until SA1.1: `catalogShipped` was never flipped after 0.7.5
+  (F3, RS1). It deploys the two route keys from that task on.
 - The dogfood override prices v4.1-flash cache reads at $0.000588/M (F5).
 - `diagnose` already compares reported with charged spend per run (F1).
 - The day counters mix billed and notional dollars in one leaf per model (F9).
