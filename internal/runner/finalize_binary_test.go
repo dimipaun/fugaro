@@ -192,6 +192,36 @@ func commitIntentToAddBinary(t *testing.T, req agent.Request, name string) {
 	shell(t, req, "git add -N "+name+" && git commit -qam 'Add a vendored tool'")
 }
 
+// selfCommitBinaryClaimedText is the payload with the one line that changes
+// git's own answer about it: a committed .gitattributes marking the path
+// diffable, which makes `git diff --numstat` count its lines and report it as
+// text. The bytes are what the rule reads; this is the answer it must not.
+func selfCommitBinaryClaimedText(t *testing.T, req agent.Request, name string) {
+	t.Helper()
+	compiledBinary(t, req, name)
+	if err := os.WriteFile(filepath.Join(req.Dir, ".gitattributes"), []byte(name+" diff\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	shell(t, req, "git add -A && git commit -qm 'Add a vendored tool'")
+}
+
+// selfCommitBinaryReplaced is the payload with a ref planted under
+// refs/replace: HEAD is pointed at a commit carrying the base's own tree, so a
+// reader that follows replacement refs diffs a commit that added nothing while
+// the commit the branch really carries holds the payload. The doctored commit
+// keeps HEAD's parent and message, so the substitution is invisible to every
+// other reading.
+func selfCommitBinaryReplaced(t *testing.T, req agent.Request, name string) {
+	t.Helper()
+	compiledBinary(t, req, name)
+	shell(t, req, "git add -A && git commit -qm 'Add a vendored tool'")
+	head := strings.TrimSpace(testutil.Git(t, req.Dir, "rev-parse", "HEAD"))
+	base := strings.TrimSpace(testutil.Git(t, req.Dir, "rev-parse", "HEAD~1"))
+	tree := strings.TrimSpace(testutil.Git(t, req.Dir, "rev-parse", "HEAD~1^{tree}"))
+	doctored := strings.TrimSpace(testutil.Git(t, req.Dir, "commit-tree", tree, "-p", base, "-m", "Add a vendored tool"))
+	shell(t, req, "git replace "+head+" "+doctored)
+}
+
 // selfCommitImage is the same commit at a path the project's policy admits and
 // over its cap: the payload is the run's own asset, and the size is the one the
 // rule refuses it for.

@@ -242,7 +242,14 @@ type restored struct {
 }
 
 // sessionGit runs a read-only git command in repo; tests may replace it.
+//
+// --no-replace-objects is passed to every call, as every read in gitops passes
+// it: the checkout is the agent's, so refs/replace is a ref it can plant, and a
+// read that follows one answers about a commit the run never made — a range
+// that diffs as a run which added nothing, while the commit the branch really
+// carries holds what the rule is looking for.
 var sessionGit = func(ctx context.Context, repo *gitops.Repo, args ...string) (string, error) {
+	args = append([]string{"--no-replace-objects"}, args...)
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = repo.Dir
 	cmd.Env = repo.Environ()

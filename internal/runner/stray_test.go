@@ -262,6 +262,57 @@ func TestAGitAddIntentToAddBinaryFailsTheRun(t *testing.T) {
 	}
 }
 
+// TestAPayloadClaimedAsTextIsStillRefused: git's answer about a path is the
+// checkout's to make, and one committed .gitattributes line is enough to change
+// it — with `test_dup_case2 diff` in it, `git diff --numstat` counts the
+// payload's lines and calls it text, so a reading that trusts that answer sees
+// the run's ordinary work. The bytes are what the rule reads (the review input
+// re-checks the same way, in reviewinput.go's reviewTextDiff), and what it
+// finds is an unadmitted binary like any other.
+func TestAPayloadClaimedAsTextIsStillRefused(t *testing.T) {
+	const path = "test_dup_case2"
+	b := policyRun(t, gwConfig(t, ""), "off", "", binariesNode(`"website/public/**"`, "1048576"))
+	rec, err := b.run(t, implementCommitting(path, selfCommitBinaryClaimedText), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("record = status %s, outcome %s, reason %q; want a draft: a .gitattributes line changes git's answer, never the bytes", rec.Status, rec.Outcome, rec.Reason)
+	}
+	for _, want := range []string{path, "it is not text"} {
+		if !strings.Contains(rec.Reason, want) {
+			t.Errorf("reason = %q; want it to name %q", rec.Reason, want)
+		}
+	}
+	if !slices.Contains(branchFiles(t, b.harness, rec.Branch), path) {
+		t.Errorf("the branch does not carry the commit the agent made: %v", branchFiles(t, b.harness, rec.Branch))
+	}
+}
+
+// TestAReplaceRefCannotHideThePayload: refs/replace is a ref the agent can
+// plant in its own checkout, and a reader that follows it reads a commit the
+// run never made — here one carrying the base's tree, so the range diffs as a
+// run that added nothing while the commit the branch really carries holds the
+// payload. Every read of the run's own range is replacement-blind for that
+// reason, so the payload is found and the run refused over the object HEAD
+// really is.
+func TestAReplaceRefCannotHideThePayload(t *testing.T) {
+	const path = "test_dup_case2"
+	b := policyRun(t, gwConfig(t, ""), "off", "", binariesNode(`"website/public/**"`, "1048576"))
+	rec, err := b.run(t, implementCommitting(path, selfCommitBinaryReplaced), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("record = status %s, outcome %s, reason %q; want a draft: a replacement ref must not hide the run's own commit", rec.Status, rec.Outcome, rec.Reason)
+	}
+	for _, want := range []string{path, "it is not text"} {
+		if !strings.Contains(rec.Reason, want) {
+			t.Errorf("reason = %q; want it to name %q", rec.Reason, want)
+		}
+	}
+}
+
 // TestAModifiedTrackedBinaryIsNotRefused: §2.1's deliberate tolerance, read
 // from the committed side. `M` on a tracked binary is the repository's own file
 // being replaced, and what reaches the branch is bytes the pull request's

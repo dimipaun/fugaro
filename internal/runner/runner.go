@@ -1519,7 +1519,7 @@ func (r *run) unstampedCommits(ctx context.Context) (total, unstamped int, err e
 	// gitops.readableBounds: a base branch's tip that this checkout never
 	// fetched is a bound git ignores rather than a git that refuses the whole
 	// range, so a base the remote moved on to cannot cost the run its count.
-	args := []string{"--no-replace-objects", "log", "--ignore-missing",
+	args := []string{"log", "--ignore-missing",
 		"--format=%H%x09%(trailers:key=" + gitops.TrailerRun + ",valueonly)",
 		"--end-of-options", since + "..HEAD"}
 	for _, e := range except {

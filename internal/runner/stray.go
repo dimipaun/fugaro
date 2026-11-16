@@ -13,6 +13,7 @@ import (
 
 	"github.com/bmatcuk/doublestar/v4"
 
+	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
@@ -128,6 +129,24 @@ func (r *run) committedBinaries(ctx context.Context) ([]strayArtifact, error) {
 		return nil, err
 	}
 	added, binary := addedBinaries(raw, numstat)
+	// Which added paths are binary is read from the bytes and not from git's
+	// own answer: that answer is the checkout's to make, and one committed
+	// .gitattributes line (`test_dup_case2 diff`) makes numstat count a
+	// payload's lines and report it as text, which is the widening D986 exists
+	// to stop. Every path git called text is therefore read again, the way the
+	// review input re-checks the diff it carries (reviewinput.go's
+	// reviewTextDiff). A path git called binary is left as it is: that answer
+	// refuses more rather than less, and a repository that marks its own text
+	// file binary has refused its own file.
+	for _, path := range added {
+		if b, named := binary[path]; named && !b {
+			carries, err := diffCarriesBytes(ctx, r.repo, rng, path)
+			if err != nil {
+				return nil, err
+			}
+			binary[path] = carries
+		}
+	}
 	sized := make([]string, 0, len(added))
 	for _, path := range added {
 		if b, named := binary[path]; named && b {
@@ -203,6 +222,26 @@ func addedBinaries(raw []rawChange, numstat []reviewChange) ([]string, map[strin
 		}
 	}
 	return added, binary
+}
+
+// diffCarriesBytes reports whether the range's own diff of path carries a byte
+// git would not print as text: a NUL, the test the untracked reading makes of
+// the file in the tree (readHead) and the review input makes of the diff it
+// carries (reviewinput.go's reviewTextDiff).
+//
+// The path's own diff is what is read, and not the blob: the answer the rule
+// needs is about the bytes the range added, the same reading the rest of this
+// file works from. --no-textconv and --no-ext-diff so no filter the checkout
+// configures can answer in the file's place, and the path is passed as a
+// literal so a name that is pathspec magic is a name.
+func diffCarriesBytes(ctx context.Context, repo *gitops.Repo, rng, path string) (bool, error) {
+	out, err := sessionGit(ctx, repo, "--literal-pathspecs", "diff",
+		"--no-color", "--no-ext-diff", "--no-textconv", "--no-renames",
+		"--end-of-options", rng, "--", path)
+	if err != nil {
+		return false, err
+	}
+	return strings.ContainsRune(out, 0), nil
 }
 
 // binaryRefusal is why the project's binary rule refuses a file of size bytes
