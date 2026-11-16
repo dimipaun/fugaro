@@ -1298,14 +1298,18 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, w pricing.Micros, p
 	// D2650) are recorded where the charge records the report and not
 	// wherever the response carried one: a call the table settled itself, and
 	// a call on a route that reports no cost, are in no split the run's
-	// report total carries. The band is the charge's own arithmetic at the
-	// row's ends -- no route fee, the same multiple -- taken over the usage
-	// the report is over, which for a partial call is the usage the provider
-	// sent and not the output it reserved.
+	// report total carries. The band is the table's own charge at the row's
+	// ends -- no route fee, and no multiple either: the conservative tier and
+	// surprise multiples are what the charge adds to an estimate (F12), while
+	// the band is the price a report is read against, and a doubled band
+	// would put every reported call of a tier the table does not price below
+	// its own floor. It is taken over the usage the report is over, which for
+	// a partial call is the usage the provider sent and not the output it
+	// reserved.
 	if !partial {
 		o.amount, o.settled = max(reported, floor), settledUsage
 		if pr != nil && t.acc.hasReported {
-			o.charge.recordReport(t.acc.reported, lo, hi, mult, u, haveRow) // a record for comparison: it prices the call only where it floors a tier charge
+			o.charge.recordReport(t.acc.reported, lo, hi, u, haveRow) // a record for comparison: it prices the call only where it floors a tier charge
 		}
 		return o
 	}
@@ -1322,7 +1326,7 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, w pricing.Micros, p
 		// where the record carries a report -- would go silent on the run
 		// that needs it. A partial call the floor does not price keeps
 		// recording nothing, as it always has.
-		o.charge.recordReport(t.acc.reported, lo, hi, mult, u, haveRow)
+		o.charge.recordReport(t.acc.reported, lo, hi, u, haveRow)
 	}
 	return o
 }

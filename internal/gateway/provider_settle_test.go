@@ -466,8 +466,11 @@ func TestUnpricedTierFloorOnAPartialCall(t *testing.T) {
 	}
 	// And the band is over the usage that report is over -- the input the
 	// call sent -- not over the output it reserved, which the provider never
-	// produced and which would put the report below the band for good.
-	band := satMul(cost(t, dsModel, pricing.Usage{Input: 10}), pricing.ConservativeTierMultiplier)
+	// produced and which would put the report below the band for good. It is
+	// the row's own charge, with no multiple: the conservative tier multiple
+	// is what the charge adds to an estimate, and the band is the price the
+	// report is read against (F12, D2650).
+	band := cost(t, dsModel, pricing.Usage{Input: 10})
 	if rep.TableLoBy[dsModel] != band || rep.TableHiBy[dsModel] != band {
 		t.Errorf("band %v-%v, want %d each over the reported usage", rep.TableLoBy, rep.TableHiBy, band)
 	}

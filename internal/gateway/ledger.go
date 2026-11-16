@@ -212,14 +212,16 @@ type charge struct {
 	hasReport bool
 	// tableLo and tableHi are what the price table would have charged this
 	// call at the cheapest and dearest end of the row it was priced at, with
-	// no route fee and the same multiple the charge carries (D2650, SA1.6).
-	// They are taken over the usage the report is over, never the reserved
-	// output a partial call is charged for: the provider never produced that
-	// output, and pricing it into the band would put the call's report below
-	// the band for good. hasRow says the call has both ends: it is a call
-	// whose row the table knows, which a call priced at the table's maximum
-	// has only when its pin is known (RS7). A call with neither end is in no
-	// band and no drift alarm.
+	// no route fee and no multiple either (D2650, SA1.6): the multiple the
+	// charge carries is what an estimate adds at a tier the table does not
+	// price (F12), and a band that carried it would put every reported call
+	// of such a tier below its own band. They are taken over the usage the
+	// report is over, never the reserved output a partial call is charged
+	// for: the provider never produced that output, and pricing it into the
+	// band would put the call's report below the band for good. hasRow says
+	// the call has both ends: it is a call whose row the table knows, which a
+	// call priced at the table's maximum has only when its pin is known
+	// (RS7). A call with neither end is in no band and no drift alarm.
 	tableLo, tableHi pricing.Micros
 	hasRow           bool
 	// agentID is Claude Code's x-claude-code-agent-id for this call: the
@@ -269,14 +271,20 @@ type charge struct {
 // does not floor) would leave the split and the band describing calls the
 // run's own report total leaves out.
 //
+// The band is the row's own charge, with no route fee and no multiple: the
+// conservative tier and surprise multiples are what a charge adds to an
+// estimate (F12), and a band that carried them would sit above the report of
+// every call at a tier the table does not price -- doubled on a flat-ended
+// row, which is where the drift alarm reads it.
+//
 // u is the usage the report is over: a partial call is charged for the output
 // it reserved, but the provider reported on what it sent, and a band over the
 // reserved output would sit above the report by the output that never came.
-func (c *charge) recordReport(rep pricing.Micros, lo, hi pricing.Rates, mult int64, u pricing.Usage, haveRow bool) {
+func (c *charge) recordReport(rep pricing.Micros, lo, hi pricing.Rates, u pricing.Usage, haveRow bool) {
 	c.reported, c.hasReport = rep, true
 	c.hasRow = haveRow
 	if haveRow {
-		c.tableLo, c.tableHi = satMul(lo.Cost(u), mult), satMul(hi.Cost(u), mult)
+		c.tableLo, c.tableHi = lo.Cost(u), hi.Cost(u)
 	}
 }
 
