@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"reflect"
 	"slices"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -19,7 +21,7 @@ import (
 // write_publish_test.go drives the after-write hook (N3, D2602): the stages a
 // semantic command's write owes, run in process after the write landed.
 //
-// Six things it pins: the variable C1's seam is held in points at this file's
+// Seven things it pins: the variable C1's seam is held in points at this file's
 // hook and not at the stub's no-op (TestAfterWriteIsWiredToTheHook); the policy
 // stage publishes the node and the local change is live
 // (TestAfterWritePublishesThePolicyStage), and it is the installation the
@@ -28,7 +30,9 @@ import (
 // one sentence (TestAfterWriteFailureKeepsTheLocalChange, and the sentence itself
 // in TestAfterWriteSentenceIsOneHelper); a coding agent's session publishes
 // nothing a plan gate may not judge, whatever the gate's marks say
-// (TestAfterWriteUnderTheAgentMarkerPublishesNothing); and the stages a write
+// (TestAfterWriteUnderTheAgentMarkerPublishesNothing), while the Claude Code IDE
+// extension's own marker at a terminal is a person's own session whose write is
+// published (TestAfterWriteFromAnIDETerminalPublishes); and the stages a write
 // owes come from the key's own registry row and the layer the command wrote in,
 // which is what decides the layer stage for a project-layer key
 // (TestAfterWriteRunsTheLayerStageForAProjectLayerKey and
@@ -242,6 +246,77 @@ func TestAfterWriteUnderTheAgentMarkerPublishesNothing(t *testing.T) {
 		change := afterWriteChange{Key: "default_claude_account", Store: settings.StoreLocal}
 		agentPublishedNothing(t, r, db, cmd, out, change)
 	})
+}
+
+// TestAfterWriteFromAnIDETerminalPublishes is that boundary's other side, and
+// the reason the hook empties the reader its own run reads from rather than the
+// command's stdin. The Claude Code IDE extension sets CLAUDE_CODE_SSE_PORT in a
+// person's integrated terminal too, and agentenv.Session reads that marker as a
+// coding agent's session exactly when the run has no terminal on its input
+// (agentenv's package doc) — so a hook that handed its run an emptied command
+// input would tell the loop nobody is there, and the person who just typed
+// `fugaro settings set` in VS Code would be refused as an agent and left with a
+// write that is "saved and is not live yet". With the marker set and a terminal
+// on the command's input the write is published; the same marker with no
+// terminal is still an agent's session, which is the classification read and not
+// deleted.
+func TestAfterWriteFromAnIDETerminalPublishes(t *testing.T) {
+	isolateGateCredentials(t)
+
+	t.Run("a person at the IDE extension's terminal", func(t *testing.T) {
+		t.Setenv(agentenv.IDEMarker, "1")
+		_, db := afterWriteFixture(t)
+		cmd, out := afterWriteCmd(t, "settings", "set")
+		ideTerminalStdin(t, cmd)
+		change := afterWriteChange{Key: "orchestrator.max_running", Store: settings.StoreLocal}
+		if err := publishAfterWrite(t.Context(), cmd, change); err != nil {
+			t.Fatalf("a person's own IDE terminal was refused %q:\n%s", ErrorText(err), out.String())
+		}
+		if v := nodeVersionOn(t, db); v != projectpolicy.Version {
+			t.Errorf("the published node is version %d, want the %d the stage migrates it to:\n%s", v, projectpolicy.Version, out.String())
+		}
+		if got := out.String(); strings.Contains(got, "a coding agent's session") {
+			t.Errorf("the person's own terminal was read as a coding agent's session:\n%s", got)
+		}
+	})
+
+	t.Run("the same marker with no terminal", func(t *testing.T) {
+		noTerminal(t)
+		t.Setenv(agentenv.IDEMarker, "1")
+		_, db := afterWriteFixture(t)
+		cmd, out := afterWriteCmd(t, "settings", "set")
+		change := afterWriteChange{Key: "orchestrator.max_running", Store: settings.StoreLocal}
+		err := publishAfterWrite(t.Context(), cmd, change)
+		if err == nil {
+			t.Fatalf("a session with no terminal published the change:\n%s", out.String())
+		}
+		if got, want := ErrorText(err), ErrorText(afterWriteNotLive(change)); got != want {
+			t.Errorf("the refused session ends the command on %q, want the one sentence %q", got, want)
+		}
+		if v := nodeVersionOn(t, db); v != 3 {
+			t.Errorf("the node moved to version %d in a session with no terminal:\n%s", v, out.String())
+		}
+		if got := out.String(); !strings.Contains(got, agentenv.IDEMarker) {
+			t.Errorf("the refusal names no marker, so it is not the classification's:\n%s", got)
+		}
+	})
+}
+
+// ideTerminalStdin stubs stdinIsTerminal with the one fact its real body reads
+// (init.go: the reader is a file whose descriptor is a terminal): the answer is
+// true for the reader the command was handed and false for every other, which is
+// what that descriptor says about a reader this process made itself.
+// fakeTerminal's stub — true for any reader — cannot tell the command's own
+// input from one a run swapped in, and telling those two apart is the whole of
+// what the test above is about: the emptied reader the hook gives its own run
+// must not be read as the command's terminal, and the command's own input must
+// not be read as nobody.
+func ideTerminalStdin(t *testing.T, cmd *cobra.Command) {
+	t.Helper()
+	in := cmd.InOrStdin()
+	old := stdinIsTerminal
+	stdinIsTerminal = func(r io.Reader) bool { return r == in }
+	t.Cleanup(func() { stdinIsTerminal = old })
 }
 
 // managedForTheHook is the world a coding agent's session meets a managed

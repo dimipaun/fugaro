@@ -67,11 +67,21 @@ func publishAfterWrite(ctx context.Context, cmd *cobra.Command, change afterWrit
 	// the command's write, where every question is answered already, and a
 	// confirmation that waited on this command's input would be a command that
 	// hangs on a prompt the person has no reason to expect (docs/no-prompt-policy,
-	// D1540). The stdin is put back before this returns, so the command that
-	// called keeps whatever it held.
-	stdin := cmd.InOrStdin()
-	cmd.SetIn(strings.NewReader(""))
-	defer cmd.SetIn(stdin)
+	// D1540).
+	//
+	// What is emptied is the reader the run itself reads from (initRun.in, which
+	// every confirmation and every value entry goes through) and not the
+	// command's own stdin: whether a person is there is read off that input all
+	// over the loop, and an emptied one answers "nobody" — which agentenv.Session
+	// turns into a coding agent's session for the Claude Code IDE extension's own
+	// marker alone (CLAUDE_CODE_SSE_PORT is set in a person's integrated
+	// terminal, where the person typing `fugaro settings set` is not an agent).
+	// A hook that took the command's input away would refuse that person as an
+	// agent and end their write not live, which is the one outcome this hook
+	// exists to prevent; the run gets an empty reader instead, and the one fact
+	// about who is there is read off the input as it arrived, before it is
+	// handed over.
+	terminal := stdinIsTerminal(cmd.InOrStdin())
 	// The command's own stdout is the answer of the command that called, and a
 	// stage prints its diff and its banner there (accountsAddRunStages' own
 	// swap): for the length of the run they are the run's lines and they go to
@@ -80,6 +90,7 @@ func publishAfterWrite(ctx context.Context, cmd *cobra.Command, change afterWrit
 	cmd.SetOut(cmd.ErrOrStderr())
 	defer cmd.SetOut(answer)
 	r := newInitRun(cmd, o)
+	r.in = strings.NewReader("")
 	r.setProject(lc)
 	// The stages of a subset are a slice of an update (stagesNamed), and the
 	// slice `fugaro update` runs them in takes the workdir lock: the layer stage
@@ -100,10 +111,16 @@ func publishAfterWrite(ctx context.Context, cmd *cobra.Command, change afterWrit
 	// person at their own terminal is asked nothing the gate stood in for. The
 	// read is made here rather than by e.managedStage because that helper asks
 	// `fugaro update`'s door, and this run's door is the command that called.
-	if agentMarker(os.Getenv, r.stdinTerminal()) != "" {
-		r.gate = afterWriteGate(ctx, lc, o.door, r.stdinTerminal())
+	if agentMarker(os.Getenv, terminal) != "" {
+		r.gate = afterWriteGate(ctx, lc, o.door, terminal)
 	}
 	opts := e.options()
+	// The loop is told the session read above and not a second reading of it:
+	// e.options derives the pair from the run's command, which this hook leaves
+	// where it found it, and the gate's own read was given the same value — so
+	// the session the gate judges and the session the loop applies for cannot
+	// come to be two different ones.
+	opts.Terminal, opts.Agent = terminal, agentMarker(os.Getenv, terminal)
 	// The gate stands in for the stages it judges and for those only: the same
 	// two conditions initEngine.managedStage asks, with the door and the
 	// plan-only flag already settled by this run's own construction.
