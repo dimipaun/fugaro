@@ -14,6 +14,7 @@ package github
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -204,6 +205,55 @@ func TestGitHubReadIssueRefusesAPullRequest(t *testing.T) {
 	}
 	if want := "reading issue #11: GitHub reports it as a pull request"; err.Error() != want {
 		t.Errorf("ReadIssue error = %q, want %q", err.Error(), want)
+	}
+}
+
+// TestGitHubReadIssueRefusesAnotherIssuesAnswer: the number the answer names
+// is what the caller acts on -- the item's external id, the brief built from
+// the body -- so an answer for another issue is refused rather than that
+// issue's text handed back under the number asked for. A transferred issue is
+// how one arrives in practice: GitHub redirects, a following client lands
+// somewhere else, and the body that comes back is not the one approved.
+//
+// Mutation (return raw.read() whatever its number): the read succeeds and this
+// test fails on the missing error.
+func TestGitHubReadIssueRefusesAnotherIssuesAnswer(t *testing.T) {
+	p := issueProvider(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" || r.URL.Path != "/repos/acme/web/issues/7" {
+			t.Errorf("%s %s, want GET /repos/acme/web/issues/7", r.Method, r.URL.Path)
+		}
+		serveJSON(t, w, r, 200, `{"number": 8, "title": "Opening a pull request fails",
+			"body": "Another issue's text.", "state": "open"}`)
+	})
+	_, err := p.ReadIssue(ctx, 7)
+	if err == nil {
+		t.Fatal("ReadIssue answered with issue #8 for a request for #7")
+	}
+	if want := "reading issue #7: the response is for #8"; err.Error() != want {
+		t.Errorf("ReadIssue error = %q, want %q", err.Error(), want)
+	}
+}
+
+// TestGitHubReadIssueRefusesANonNumber: a number that is not one is refused
+// before any request is made. GitHub has no issue #0, so asking spends a
+// request of the route's per-repository budget on an answer no caller wants,
+// and the refusal is the route's to report.
+//
+// Mutation (drop the number <= 0 guard): a request arrives for /issues/0 and
+// this test fails on it.
+func TestGitHubReadIssueRefusesANonNumber(t *testing.T) {
+	p := issueProvider(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("%s %s: a number that is not an issue number was asked for", r.Method, r.URL.Path)
+		serveJSON(t, w, r, 404, `{"message": "Not Found"}`)
+	})
+	for _, number := range []int{0, -1} {
+		_, err := p.ReadIssue(ctx, number)
+		if err == nil {
+			t.Fatalf("ReadIssue(%d) answered a number that is not an issue number", number)
+		}
+		if want := fmt.Sprintf("reading issue #%d: not an issue number", number); err.Error() != want {
+			t.Errorf("ReadIssue(%d) error = %q, want %q", number, err.Error(), want)
+		}
 	}
 }
 
