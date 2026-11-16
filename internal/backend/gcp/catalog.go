@@ -523,17 +523,20 @@ echo "smoked $$ref"`},
 // It refuses an image that carries a credential of the build's anywhere the
 // scan looks: a token in the image config's environment, a .netrc, a
 // credential-helper store, or a git config that carries one — in any layer, and
-// in the .git/config of a checkout baked into it. The entry's build is what
-// puts them there: an entry's source is built from a checkout the clone step
-// made, and today's derived Dockerfiles clone with the credential inside the
-// build (B8's own hole, closed for the entry step and not for its builds).
+// in the .git/config of a checkout baked into it. It is the second fence F19
+// names and not the first: the clone step alone holds the credential and its
+// checkout is stripped before the entry's build sees it (B8), and this scan
+// asks what a credential looks like rather than what an entry copied — a token
+// a build's own tools wrote into a config, an ENV or a .netrc, or one the
+// strip missed.
 //
 // The script and its Trivy rules travel in the request, base64, because a
-// catalog build reads no checkout to run them from (images.ScanScript,
-// images.TrivySecretConfig, which this package embeds through the images
-// package). It is the same script and the same rules CI runs, so the build and
-// CI cannot disagree about what a leak is — the step writes both out and runs
-// the script, rather than growing a second copy of the checks.
+// catalog build reads no checkout to run them from: images.ScanScript and
+// images.TrivySecretConfig are images/scan.sh and images/trivy-secret.yaml as
+// the submitting binary carries them. It is the same script and the same rules
+// CI runs, so the build and CI cannot disagree about what a leak is — the step
+// writes both out and runs the script, rather than growing a second copy of
+// the checks.
 //
 // The trivy container needs nothing of the network and no registry credential:
 // it reads the image out of the worker's own docker daemon, which is where the

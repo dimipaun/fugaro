@@ -6,13 +6,13 @@
 # scan.sh --secrets IMAGE scans every layer (each one separately, so a file a
 # later layer deletes is still seen) and the image config (its history and
 # environment, where a leaked build argument would show) for secrets, fails on
-# any finding not allowed by images/trivy-secret.yaml, and then runs the two
-# checks Trivy's own rules cannot state (leaks, below): the image's
-# environment, and a `.git/config`. A catalog build runs this route before it
-# promotes (internal/backend/gcp's catalog-scan step, B3, R2), so an image
-# that carries a credential of the build's -- a git config, a `.netrc`, a
-# credential-helper store, a variable in the environment -- is refused rather
-# than promoted.
+# any finding not allowed by images/trivy-secret.yaml, and then runs the checks
+# Trivy's own rules cannot state (leaks, below): a variable named like a
+# credential in the environment the config sets, a credential file in the
+# filesystem the image ends with, and the `.git/config` of a checkout baked
+# into it, which Trivy's walk skips. A catalog build runs this route before it
+# promotes (internal/backend/gcp's catalog-scan step, B3, R2), so an image that
+# carries a credential of the build's is refused rather than promoted.
 set -eu
 mode=vuln
 if [ "${1:-}" = --secrets ]; then
@@ -43,7 +43,8 @@ trivy() {
 # rules -- a config's own rules reach the filesystem and not the config, so the
 # name is what this check reads. It is matched case-insensitively, anchored on
 # a separator at each end so that a name which merely contains one of these
-# words (DISABLE_AUTOUPDATER, COREPACK_HOME) is not a finding.
+# words -- the base image's COREPACK_ENABLE_DOWNLOAD_PROMPT, say, or a
+# TOKENIZER_PATH -- is not a finding.
 env_credential_names='(^|_)(TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|CREDENTIALS|API_KEY|ACCESS_KEY|PRIVATE_KEY)($|_)'
 # git_config_credential is images.GitConfigCredentialText verbatim (a test
 # pins it there), the same text images/trivy-secret.yaml's
