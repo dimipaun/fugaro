@@ -5782,8 +5782,14 @@ will change, asks once, and then does each step as far as it can:
   1. this machine's project config: the repository's repos: entry
   2. this machine's project config: its repo-to-image mapping
   3. the published policy's allow_repos
-  4. the publish of the policy node
-  5. the repository's job set and its run.invoker grant
+  4. the project's job set (fugaro update's installation stage)
+  5. the repository's own root in its checkout: its job set and its
+     run.invoker grant (fugaro update's repository stage)
+  6. the publish of the policy node (fugaro update's policy stage)
+
+Steps 4 to 6 are `fugaro update`'s own stages, run here in the registered
+order they are invoked in, so the policy node is published last: a step
+that stops before it leaves the node as it was.
 
 Every step is idempotent: a repository already enrolled converges to the
 same state, and a step that has nothing to do says so instead of writing
@@ -5799,10 +5805,12 @@ creates its job and its grant. The first image build is not part of this
 map merged with this entry, never over it. Nothing here asks a run to
 finish, and nothing rewrites what a run in flight holds.
 
---allow-list-only is the older, narrow behaviour: * is the allow-list's own
-entry for every repository and not a repository, so it is written with that
-flag and refused without it. With it, only allow_repos changes, exactly as
-before.
+--allow-list-only is the older, narrow behaviour: a pattern — *, owner/*,
+or a * inside a segment — is the allow-list's own entry for the
+repositories it matches and not a repository, since a pattern has no
+provider, no checkout, no workflow list and no image. It is written with
+that flag and refused without it. With it, only allow_repos changes,
+exactly as before.
 
 Usage: `fugaro project repos add <provider/owner/name | owner/name>`
 
@@ -5810,7 +5818,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `--allow-list-only` | bool | `false` | no | Write only the allow-list entry, as this command did before the whole enrolment converged (required for *) |
+| `--allow-list-only` | bool | `false` | no | Write only the allow-list entry, as this command did before the whole enrolment converged (required for * and any other pattern) |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for add |

@@ -109,8 +109,14 @@ func newProjectReposAddCmd() *cobra.Command {
 			"  1. this machine's project config: the repository's repos: entry\n" +
 			"  2. this machine's project config: its repo-to-image mapping\n" +
 			"  3. the published policy's allow_repos\n" +
-			"  4. the publish of the policy node\n" +
-			"  5. the repository's job set and its run.invoker grant\n" +
+			"  4. the project's job set (fugaro update's installation stage)\n" +
+			"  5. the repository's own root in its checkout: its job set and its\n" +
+			"     run.invoker grant (fugaro update's repository stage)\n" +
+			"  6. the publish of the policy node (fugaro update's policy stage)\n" +
+			"\n" +
+			"Steps 4 to 6 are `fugaro update`'s own stages, run here in the registered\n" +
+			"order they are invoked in, so the policy node is published last: a step\n" +
+			"that stops before it leaves the node as it was.\n" +
 			"\n" +
 			"Every step is idempotent: a repository already enrolled converges to the\n" +
 			"same state, and a step that has nothing to do says so instead of writing\n" +
@@ -126,10 +132,12 @@ func newProjectReposAddCmd() *cobra.Command {
 			"map merged with this entry, never over it. Nothing here asks a run to\n" +
 			"finish, and nothing rewrites what a run in flight holds.\n" +
 			"\n" +
-			"--allow-list-only is the older, narrow behaviour: * is the allow-list's own\n" +
-			"entry for every repository and not a repository, so it is written with that\n" +
-			"flag and refused without it. With it, only allow_repos changes, exactly as\n" +
-			"before.",
+			"--allow-list-only is the older, narrow behaviour: a pattern — *, owner/*,\n" +
+			"or a * inside a segment — is the allow-list's own entry for the\n" +
+			"repositories it matches and not a repository, since a pattern has no\n" +
+			"provider, no checkout, no workflow list and no image. It is written with\n" +
+			"that flag and refused without it. With it, only allow_repos changes,\n" +
+			"exactly as before.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if o.allowListOnly {
@@ -139,7 +147,7 @@ func newProjectReposAddCmd() *cobra.Command {
 		},
 	}
 	addCloudFlags(cmd, &o.cloud)
-	cmd.Flags().BoolVar(&o.allowListOnly, "allow-list-only", false, "Write only the allow-list entry, as this command did before the whole enrolment converged (required for *)")
+	cmd.Flags().BoolVar(&o.allowListOnly, "allow-list-only", false, "Write only the allow-list entry, as this command did before the whole enrolment converged (required for * and any other pattern)")
 	return cmd
 }
 

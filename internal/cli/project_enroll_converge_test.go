@@ -119,10 +119,10 @@ func (r *addRig) enrolTyping(t *testing.T, typed string, args ...string) (string
 	return executeStdin(t, typed+"\n", append([]string{"project", "repos", "add"}, args...)...)
 }
 
-// TestProjectReposAddEnrolsInOneRun is the whole of RE1 in one run: the five
+// TestProjectReposAddEnrolsInOneRun is the whole of RE1 in one run: the six
 // steps land, each read from the repository's own checkout and from the
-// project, and the plan printed before the question named all five in the
-// order the task orders them.
+// project, the plan printed before the question named them in the order the
+// command works in, and the answer after it says what each of them did.
 func TestProjectReposAddEnrolsInOneRun(t *testing.T) {
 	r := enrolRig(t)
 	out, errOut, err := r.enrol(t, enrolRepo)
@@ -130,14 +130,17 @@ func TestProjectReposAddEnrolsInOneRun(t *testing.T) {
 		t.Fatalf("project repos add %s: %v\nstdout:\n%s\nstderr:\n%s", enrolRepo, err, out, errOut)
 	}
 
-	// The plan is printed before the question, in the task's order.
+	// The plan is printed before the question, in the order the command works
+	// in: its own three writes first, then the three stages it invokes, in the
+	// registered order initflow.Validate sorts them into — the publish last.
 	plan := out[:strings.Index(out, "⚠ CONFIRM")]
 	at := func(needle string) int { return strings.Index(plan, needle) }
 	for _, pair := range [][2]string{
 		{"local config:", "image map:"},
 		{"image map:", "allow-list:"},
-		{"allow-list:", "publish:"},
-		{"publish:", "job:"},
+		{"allow-list:", "job:"},
+		{"job:", "repository:"},
+		{"repository:", "publish:"},
 	} {
 		if at(pair[0]) < 0 || at(pair[1]) < 0 || at(pair[0]) >= at(pair[1]) {
 			t.Fatalf("the plan does not name %q before %q:\n%s", pair[0], pair[1], plan)
@@ -162,6 +165,27 @@ func TestProjectReposAddEnrolsInOneRun(t *testing.T) {
 	// 3. the published allow-list.
 	if p := r.policy(t); !slices.Contains(p.AllowRepos, enrolEntry) {
 		t.Errorf("allow_repos = %v, want %s on it beside the entry that was there", p.AllowRepos, enrolEntry)
+	}
+
+	// 4. the three stages, as the report's own rows: the line under each label
+	// is the stage's own answer, read off its result, so a stage dropped from
+	// the list the run is given — the one failure the plan and the three writes
+	// above cannot show — answers "not run" here instead of the run quietly
+	// accounting for fewer steps than the plan named.
+	for _, tc := range []struct{ label, want string }{
+		{"job", "the project's job set (fugaro update's installation stage)"},
+		// The repository stage is invoked and answers here too; its answer is
+		// the reason it could not converge rather than "the checkout's own
+		// root", because this fixture's checkout holds no remote-tracking ref
+		// to read a default branch from and a repository root is applied
+		// against installation state a rig this size does not stand up. What
+		// the row pins is the same thing the two above pin: the stage ran.
+		{"repository", "skipped: no origin/HEAD, origin/main or origin/master ref here"},
+		{"publish", "the node " + projectpolicy.PathShared() + " carries this repository's admission and this machine's config"},
+	} {
+		if got := accountsAddRow(t, out, tc.label); !strings.Contains(got, tc.want) {
+			t.Errorf("the answer's %s row is %q, want the stage's own answer to carry %q\nstdout:\n%s", tc.label, got, tc.want, out)
+		}
 	}
 }
 
@@ -304,25 +328,62 @@ func TestProjectReposAddRefusesAnAnswerThatIsNotTheName(t *testing.T) {
 	}
 }
 
-// TestProjectReposAddRefusesStar is the one refusal the task names: * is the
-// list's own entry for every repository and not a repository, so the converge
-// has nothing to converge — and the flag that writes exactly that wide list is
-// the only way to ask for it.
+// TestProjectReposAddRefusesStar is the one refusal the task names, in every
+// spelling of it: a pattern is the list's own entry for the repositories it
+// matches and not a repository, so the converge has nothing to converge — and
+// the flag that writes exactly that entry is the only way to ask for it. A
+// pattern refused by the provider read behind this one would be a refusal
+// whose remedy is the next refusal (D2404): the read names
+// `fugaro settings set repos.<pattern>.provider`, which leads into the
+// workflow refusal behind it and so to hand-writing a pattern's provider and
+// workflow list into the config — which is the write that flag exists for.
 func TestProjectReposAddRefusesStar(t *testing.T) {
+	for _, arg := range []string{"*", "owner/*", "github/owner/*", "github/owner/re*"} {
+		r := enrolRig(t)
+		before := r.cfgText(t)
+		_, _, err := r.enrol(t, arg)
+		if err == nil || !strings.Contains(err.Error(), "--allow-list-only") {
+			t.Fatalf("project repos add %s: err = %v, want the refusal that names --allow-list-only", arg, err)
+		}
+		if got := r.cfgText(t); got != before {
+			t.Errorf("project repos add %s wrote the local config:\n%s", arg, got)
+		}
+	}
 	r := enrolRig(t)
-	before := r.cfgText(t)
-	_, _, err := r.enrol(t, "*")
-	if err == nil || !strings.Contains(err.Error(), "--allow-list-only") {
-		t.Fatalf("project repos add *: err = %v, want the refusal that names --allow-list-only", err)
-	}
-	if got := r.cfgText(t); got != before {
-		t.Errorf("the refused run wrote the local config:\n%s", got)
-	}
 	if _, _, err := r.enrol(t, "*", "--allow-list-only"); err != nil {
 		t.Fatalf("project repos add * --allow-list-only: %v", err)
 	}
 	if p := r.policy(t); !slices.Contains(p.AllowRepos, "*") {
 		t.Errorf("allow_repos = %v, want * on it", p.AllowRepos)
+	}
+}
+
+// TestProjectReposAddReadsTheProviderFromTheCanonicalArgument: the argument
+// `project repos ls` and `project show` print as the remedy is the canonical
+// one (enrollableArg: "the canonical form is the one that stands on its own"),
+// so it has to be a command that works. The provider it names is a fact the
+// operator typed, and this is the machine that has nothing else to read it
+// from: the local config lists the repository — which is where the workflow
+// list comes from, and nothing here guesses one — without a provider, and the
+// working directory is not a checkout of it.
+func TestProjectReposAddReadsTheProviderFromTheCanonicalArgument(t *testing.T) {
+	local := strings.Replace(enrolRigLocal,
+		"  owner/repo-a: { provider: github, github_app_id: \"12345\", workflows: [web] }\n",
+		"  owner/repo-a: { provider: github, github_app_id: \"12345\", workflows: [web] }\n"+
+			"  "+enrolRepo+": { workflows: [web] }\n", 1)
+	r := newAddRigWith(t, local)
+	t.Chdir(t.TempDir())
+
+	out, _, err := r.enrol(t, enrolEntry)
+	if err != nil {
+		t.Fatalf("project repos add %s, the form the listings print: %v\n%s", enrolEntry, err, out)
+	}
+	entry, ok := r.addLocal(t).Repos[enrolRepo]
+	if !ok || entry.Provider != "github" {
+		t.Errorf("repos[%s] = %+v, want the provider the canonical argument names\nstdout:\n%s", enrolRepo, entry, out)
+	}
+	if p := r.policy(t); !slices.Contains(p.AllowRepos, enrolEntry) {
+		t.Errorf("allow_repos = %v, want %s on it", p.AllowRepos, enrolEntry)
 	}
 }
 

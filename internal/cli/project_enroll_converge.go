@@ -8,8 +8,9 @@ package cli
 // order — the `repos:` entry, the image map entry, the published allow-list,
 // the publish, and `fugaro update --repo` for the job and its run.invoker
 // grant — and the HARD RULE (CLAUDE.md, "Things that bite") says the
-// documented commands do the whole job. One confirmation, five steps, each of
-// them idempotent, is that promise kept for enrolment.
+// documented commands do the whole job. One confirmation, six steps, each of
+// them idempotent, is that promise kept for enrolment: this command's own
+// three writes and the three stages `fugaro update` runs for it.
 //
 // What this half does NOT do is invent a second copy of the steps: the
 // published node is still written by the one ETag-guarded writer
@@ -104,13 +105,21 @@ type reposEnrolment struct {
 // runProjectReposEnroll is the convergent path: read, show, ask once, write.
 func runProjectReposEnroll(cmd *cobra.Command, o *projectReposOptions, arg string) error {
 	ctx := cmd.Context()
-	// `*` is the allow-list's own entry for every repository and not a
-	// repository: it has no provider, no workflow list and no image, so a
-	// convergence over it has nothing to converge. Refused rather than
-	// silently doing the narrow thing, and the flag that writes exactly the
-	// wide list is named — a person who typed `*` meant that list.
-	if arg == "*" {
-		return userErr("`*` is the allow-list's entry for every repository and not a repository, so there is nothing here to enrol: no provider, no workflow list and no image mapping. `fugaro project repos add * --allow-list-only` writes the wide list and nothing else")
+	// A pattern — `*` alone, or any name carrying a `*` segment — is the
+	// allow-list's own entry for every repository it matches and not a
+	// repository: it has no provider, no checkout, no workflow list and no
+	// image, so a convergence over it has nothing to converge. Every one of
+	// them is refused here rather than by the provider read below, whose
+	// remedy (`fugaro settings set repos.<pattern>.provider`) leads into the
+	// workflow refusal behind it and so to hand-writing a pattern's provider
+	// and its workflow list into the config — after which the converge would
+	// write the wildcard anyway, which is exactly what D2404 puts behind
+	// `--allow-list-only` because a pattern has no checkout, no fugaro.yaml
+	// and no image. The flag that writes the list entry is named instead: a
+	// person who typed a pattern meant that.
+	if reposEnrolmentPattern(arg) {
+		return userErr("%s is a pattern the allow-list matches repositories with, and not a repository: there is nothing here to enrol — a pattern has no provider, no checkout, no workflow list and no image mapping. `fugaro project repos add %s --allow-list-only` writes that entry into the published allow-list and nothing else",
+			pluginwire.Printable(arg), pluginwire.Printable(arg))
 	}
 	// SD8, and the same refusal `repos rm` and `policy publish` carry: this
 	// writes the published node, the job set and an IAM grant, so it is a
@@ -165,6 +174,19 @@ func runProjectReposEnroll(cmd *cobra.Command, o *projectReposOptions, arg strin
 	return reposEnrolmentApply(ctx, cmd, o, lc, db, configPath, plan)
 }
 
+// reposEnrolmentPattern is whether the argument carries a `*` at all. No
+// repository identifier has one (task's own repoRE is [A-Za-z0-9._-] over
+// every segment), while every allow-list pattern does: whole-segment
+// (`github/acme/*`) or inside a segment (`github/acme/re*`), both of which
+// projectpolicy.ValidPattern admits and MatchRepo matches with. So a `*`
+// anywhere is a person asking for a pattern and never for a repository, and it
+// is read off the whole argument rather than off its segments so that every
+// pattern is refused here, where the flag is named, instead of by a read
+// further down whose remedy is the next refusal.
+func reposEnrolmentPattern(arg string) bool {
+	return strings.Contains(arg, "*")
+}
+
 // refuseEnrolmentOfBelong refuses the one installation the owner-run live
 // checks never touch, which is the checks' own rule kept here in their own
 // shape (internal/agentenv; internal/e2e's TestLiveCredsRules refuses
@@ -184,13 +206,13 @@ func refuseEnrolmentOfBelong(lc *localcfg.Config) error {
 // failure that should have come first.
 func reposEnrolmentRead(ctx context.Context, o *projectReposOptions, lc *localcfg.Config, db *rtdb.Client, arg string) (reposEnrolment, error) {
 	var plan reposEnrolment
-	ownerName, err := reposEnrolmentName(arg)
+	ownerName, typed, err := reposEnrolmentName(arg)
 	if err != nil {
 		return plan, err
 	}
 	plan.ownerName = ownerName
 	plan.entryNow, plan.entryKnown = configRepo(lc, ownerName)
-	provider, err := reposEnrolmentProvider(ctx, ownerName, plan.entryNow, plan.entryKnown)
+	provider, err := reposEnrolmentProvider(ctx, ownerName, plan.entryNow, plan.entryKnown, typed)
 	if err != nil {
 		return plan, err
 	}
@@ -235,21 +257,26 @@ func reposEnrolmentRead(ctx context.Context, o *projectReposOptions, lc *localcf
 
 // reposEnrolmentName is the operator's argument as the local config keys a
 // repository: owner/name, with the provider segment dropped when the name was
-// written canonically. A path of more than two segments is kept whole — a
-// nested group is a repository path like any other, and it is what the
-// allow-list matches and what the config keys by.
-func reposEnrolmentName(arg string) (string, error) {
+// written canonically — answered as the second value, so that the provider the
+// operator typed is a fact the read below can fall back on instead of a
+// segment thrown away. The canonical form is the one `project repos ls` and
+// `project show` print as the remedy (enrollableArg: "the canonical form is
+// the one that stands on its own"), so what it carries has to be readable. A
+// path of more than two segments is kept whole — a nested group is a
+// repository path like any other, and it is what the allow-list matches and
+// what the config keys by.
+func reposEnrolmentName(arg string) (string, string, error) {
 	parts := strings.Split(strings.Trim(task.ASCIILower(arg), "/"), "/")
 	switch {
 	case len(parts) == 2 && parts[0] != "" && parts[1] != "":
-		return parts[0] + "/" + parts[1], nil
+		return parts[0] + "/" + parts[1], "", nil
 	case len(parts) > 2:
-		if _, ok := providerKind(parts[0]); ok {
-			return strings.Join(parts[1:], "/"), nil
+		if kind, ok := providerKind(parts[0]); ok {
+			return strings.Join(parts[1:], "/"), kind, nil
 		}
-		return strings.Join(parts, "/"), nil
+		return strings.Join(parts, "/"), "", nil
 	}
-	return "", userErr("%q is not a repository: write it as provider/owner/name (github/acme/app), or as owner/name for a repository this machine's config lists", arg)
+	return "", "", userErr("%q is not a repository: write it as provider/owner/name (github/acme/app), or as owner/name for a repository this machine's config lists", arg)
 }
 
 // providerKind reports whether a segment names a git provider this program
@@ -264,9 +291,13 @@ func providerKind(kind string) (string, bool) {
 // reposEnrolmentProvider is the repository's git provider, read and never
 // guessed: the config's own entry first (an enrolled repository keeps the
 // provider it was enrolled with), then the checkout's fugaro.yaml, then the
-// checkout's origin host. A repository with none of the three is refused, and
-// the sentence names the one command that supplies it.
-func reposEnrolmentProvider(ctx context.Context, ownerName string, entry localcfg.Repo, known bool) (string, error) {
+// checkout's origin host, and last the provider the argument itself named when
+// it was written canonically — a fact the operator typed rather than one this
+// program read, which is what makes the remedy the listings print
+// (`fugaro project repos add github/owner/name`) a command that works on a
+// machine that has neither the entry nor a checkout. A repository with none of
+// the four is refused, and the sentence names the one command that supplies it.
+func reposEnrolmentProvider(ctx context.Context, ownerName string, entry localcfg.Repo, known bool, typed string) (string, error) {
 	if known && entry.Provider != "" {
 		return entry.Provider, nil
 	}
@@ -279,6 +310,9 @@ func reposEnrolmentProvider(ctx context.Context, ownerName string, entry localcf
 		if p, ok := providerFromOrigin(ctx); ok {
 			return p, nil
 		}
+	}
+	if typed != "" {
+		return typed, nil
 	}
 	return "", userErr("cannot tell which git provider %s is on, and nothing here reads it: run this from its checkout, whose origin remote says which, or write it with 'fugaro settings set repos.%s.provider github' and run this again",
 		pluginwire.Printable(ownerName), ownerName)
@@ -579,8 +613,12 @@ func allowStepWhy(have []string, canonical string) string {
 }
 
 // reposEnrolmentPlan prints the whole list of what the command will change, in
-// the order the enrolment is read in: the local config entry, the image map,
-// the allow-list, the publish, and the job with its invoker grant.
+// the order the command changes it and not the order this file reads it in:
+// this command's own three writes first (reposEnrolmentApply), then the three
+// stages it invokes, in the order initflow.Validate puts them (the
+// installation's job set, the repository's own root, and the policy node
+// last). The rows are the ones reposEnrolmentReport prints, so the answer and
+// the plan label the same step the same way.
 //
 // It is printed BEFORE the one question and it is the whole of what the
 // question is about: a plan that named fewer steps than the command runs would
@@ -598,8 +636,9 @@ func reposEnrolmentPlan(w io.Writer, lc *localcfg.Config, plan reposEnrolment) {
 		"local config: " + plan.entryWhy,
 		"image map: " + image,
 		"allow-list: " + plan.allowWhy,
+		"job: the project's job set (fugaro update's installation stage)",
+		"repository: " + reposEnrolmentRepoLine(plan),
 		"publish: the policy node " + projectpolicy.PathShared() + ", from this machine's config (fugaro update's policy stage)",
-		"job: " + reposEnrolmentJobLine(plan),
 	}
 	for i, l := range lines {
 		fmt.Fprintf(w, "  %d. %s\n", i+1, l)
@@ -612,27 +651,32 @@ func reposEnrolmentPlan(w io.Writer, lc *localcfg.Config, plan reposEnrolment) {
 	fmt.Fprintf(w, "the first image build is not part of this: it is billable and it waits for `fugaro image build <entry>`\n")
 }
 
-// reposEnrolmentJobLine is the job step's line: what it does here, or the one
-// command that does it where the checkout is.
-func reposEnrolmentJobLine(plan reposEnrolment) string {
+// reposEnrolmentRepoLine is the repository step's line: the checkout's own root
+// converged from here, which is what creates the repository's job and its
+// roles/run.invoker grant — or the one command that does it where the checkout
+// is. The plan's "job" step is the installation's, the project's whole job set,
+// which needs no checkout of this repository.
+func reposEnrolmentRepoLine(plan reposEnrolment) string {
 	if plan.checkout == "" {
-		return "left for you: this machine has no checkout of " + plan.canonical + ", and a job is deployed from one — run `fugaro update --repo` in its checkout"
+		return "left for you: this machine has no checkout of " + plan.canonical + ", and its own root is converged from one — run `fugaro update --repo` in its checkout, which creates its job and its run.invoker grant"
 	}
-	return "deploy the repository's job set and its roles/run.invoker grant on the credentials service, from the checkout at " + safetext.Field(plan.checkout)
+	return "the checkout's own root at " + safetext.Field(plan.checkout) + ": its job set and its roles/run.invoker grant"
 }
 
-// reposEnrolmentWhat is the sentence the one question is about.
+// reposEnrolmentWhat is the sentence the one question is about. Its clauses
+// are in the order the plan numbers them and the order the command works in,
+// which is why the publish is the last of them.
 func reposEnrolmentWhat(lc *localcfg.Config, plan reposEnrolment) string {
-	job := "deploy its job set and its run.invoker grant"
+	repo := "converge the checkout's own root (its job set and its run.invoker grant)"
 	if plan.checkout == "" {
-		job = "deploy nothing here (this machine has no checkout of it: fugaro update --repo in one creates its job)"
+		repo = "leave its own root for you (this machine has no checkout of it: fugaro update --repo in one creates its job)"
 	}
-	return fmt.Sprintf("enrol %s in project %s: write its repos: entry and its image mapping, add it to the published allow-list, publish the node from this machine's config, and %s",
-		pluginwire.Printable(plan.canonical), pluginwire.Printable(lc.Name), job)
+	return fmt.Sprintf("enrol %s in project %s: write its repos: entry and its image mapping, add it to the published allow-list, deploy the project's job set, %s, and publish the node from this machine's config",
+		pluginwire.Printable(plan.canonical), pluginwire.Printable(lc.Name), repo)
 }
 
-// reposEnrolmentApply runs the five steps in the order the plan printed them.
-// Each is idempotent and each says what it did: a repository already enrolled
+// reposEnrolmentApply runs the steps in the order the plan printed them. Each
+// is idempotent and each says what it did: a repository already enrolled
 // converges to the same state, and a step with nothing to do says so rather
 // than writing the same bytes again.
 func reposEnrolmentApply(ctx context.Context, cmd *cobra.Command, o *projectReposOptions, lc *localcfg.Config, db *rtdb.Client, configPath string, plan reposEnrolment) error {
@@ -850,9 +894,6 @@ func reposEnrolmentReport(cmd *cobra.Command, lc *localcfg.Config, plan reposEnr
 		row("image map", plan.imageWhy)
 	}
 	row("allow-list", plan.allowWhy)
-	row("publish", enrolStageLine(plan, stages[initflow.Policy], func() string {
-		return "the node " + projectpolicy.PathShared() + " carries this repository's admission and this machine's config"
-	}))
 	row("job", enrolStageLine(plan, stages[initflow.Installation], func() string {
 		return "the project's job set (fugaro update's installation stage)"
 	}))
@@ -861,9 +902,12 @@ func reposEnrolmentReport(cmd *cobra.Command, lc *localcfg.Config, plan reposEnr
 		fmt.Fprintf(w, "%s has no checkout here, so its own repository root was not converged: run `fugaro update --repo` in one — that is what creates its job and its run.invoker grant\n", pluginwire.Printable(plan.canonical))
 	default:
 		if st, ok := stages[initflow.Repository]; ok {
-			row("repository", enrolStageLine(plan, st, func() string { return "the checkout's own root" }))
+			row("repository", enrolStageLine(plan, st, func() string { return "the checkout's own root: its job set and its roles/run.invoker grant" }))
 		}
 	}
+	row("publish", enrolStageLine(plan, stages[initflow.Policy], func() string {
+		return "the node " + projectpolicy.PathShared() + " carries this repository's admission and this machine's config"
+	}))
 	fmt.Fprintf(w, "enrolled %s in project %s: fugaro run --repo %s is ready once its job is deployed\n", pluginwire.Printable(plan.canonical), pluginwire.Printable(lc.Name), plan.canonical)
 }
 
