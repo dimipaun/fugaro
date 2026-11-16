@@ -266,7 +266,8 @@ func projectJobs(lc *localcfg.Config, bucket string, vertex bool, carried []stri
 		// deployer skipped is a review the launcher would ask Cloud Run for
 		// and never find. The loop is the axis itself, so the two are
 		// deployed without this function naming them: it builds one job per
-		// value config.ProjectJobAccounts yields, whichever value that is.
+		// value the axis yields, whichever value that is, less the names the
+		// paragraph below filters out of it.
 		//
 		// Each account's job gets its own copy of the profile's mounts — the
 		// token of one account must never ride on another's job — its own copy
