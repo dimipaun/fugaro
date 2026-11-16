@@ -40,6 +40,17 @@ var planTaskReaders = map[string]string{
 	"internal/task/task.go": "defines task.Spec.PlanTask and PlanTaskProblem, the shape the launcher applies on write and task.Parse on read",
 	// The launch record it is read from, which is the untrusted object.
 	"internal/runstore/launch.go": "defines runstore.Launch.PlanTask, the launch.json field itself",
+	// The id a run carries out in its own record, which is the field and not a
+	// read of it. runstore.DiscoveredItem.PlanTask is what the run's own agent
+	// reported discovering, bounded at write and again at read, and the daemon
+	// folds it add-only into a plan's graph (E3): an edge in front of an item
+	// that has not launched, which un-approves that item so the person sees why
+	// and approves again (D2740), or at most one graph_suspect fact for an item
+	// this run needed, which reorders nothing (D2709). So the worst a forged id
+	// can do is draw an edge a screen shows and a person re-approves; it admits
+	// no run, budgets nothing and launches nothing, and a fold that would make a
+	// cycle or pass the node's cap is refused outright.
+	"internal/runstore/discovered.go": "defines runstore.DiscoveredItem.PlanTask, the id a run's own record carries out for the daemon to fold, add-only, into a graph a screen draws",
 	// The one writer of both records: fugaro run stores the id in the task
 	// (so --retry and the recovery path keep it) and in launch.json, and
 	// gates the launch on the image whose runner can read it.
