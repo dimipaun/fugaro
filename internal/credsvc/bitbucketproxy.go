@@ -100,8 +100,10 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/bbtokens"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/gitproxy"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // gitUpstreamTimeout bounds one proxied git call, headers and body. It is
@@ -170,6 +172,88 @@ func gitproxyAct(kind gitproxy.Kind) (purpose, credential string) {
 	return PurposeGit, config.BitbucketSecret
 }
 
+// buildGitproxyAct is gitproxyAct for a BUILD's call (B1, rule 9): the same two
+// kinds and the same credential — the installation's own Bitbucket token, which
+// is what this route forwards with for a build exactly as it does for a run —
+// under the build's own two purposes, so an operator reads a build's calls
+// apart from a run's without a second field. Which of the two a call asked for
+// is the classification's answer and nothing else, here as there.
+func buildGitproxyAct(kind gitproxy.Kind) (purpose, credential string) {
+	if kind == gitproxy.KindREST {
+		return PurposeBuildBitbucket, config.BitbucketSecret
+	}
+	return PurposeBuildGit, config.BitbucketSecret
+}
+
+// buildCall reports whether an identity is a BUILD's rather than a run's
+// (Identity.BuildID): the two halves of this route differ in what admits them —
+// a run's identity headers against a build's ID token and its pairing — and in
+// what their lines name, and every place that asks asks this one question.
+func buildCall(id Identity) bool { return id.BuildID != "" }
+
+// The classes the build half's OWN refusals carry, in the vocabulary this route
+// already uses for what the classification did not say: each is what the
+// service's own log line carries (logProxyRefusal), because a git client reports
+// the status of an answer and not its body — and the caller's answer is the
+// wire's own type either way.
+const (
+	// refusalBuildRunIdentity is a call that presented a run identity: this half
+	// takes none, exactly as the build route takes none.
+	refusalBuildRunIdentity = "run_identity"
+	// refusalBuildID is a call that named no build id of the shape one has: the
+	// id is the second half of the key a pairing is stored under, and a key is a
+	// path (buildIDRE).
+	refusalBuildID = "build_id"
+	// refusalBuildPairing is a pairing that is not there, has ended, or could not
+	// be read: the build has nothing this route may serve, and the cause names
+	// which of the three it was.
+	refusalBuildPairing = "build_pairing"
+	// refusalBuildStopped is a call of this half taken while the operator's stop
+	// switches are on, or while they could not be read — which is one refusal to
+	// the caller and two incidents to the operator, exactly as it is on the run's
+	// half (the two are told apart by the cause on the service's own line). It is
+	// a class of its own and not one of the pairing's three: a stopped service
+	// serves nothing at all, whatever a build's pairing says, so an operator who
+	// greps this class is reading the operator's own act and not a build's.
+	refusalBuildStopped = "stopped"
+)
+
+// pairingCovers reports whether a build's pairing reaches the repository a
+// classified call names, and answers the installation's own key for it when it
+// does.
+//
+// The two spellings are the two the repository already has everywhere else: the
+// record holds the names the grant answered and the published image map keys a
+// repository by (task.CanonicalRepo, "acme/app"), while the classification names
+// one canonically and provider-qualified (projectpolicy.Canonical,
+// gitproxy.Request.Repo). The comparison is made with the one function that
+// relates the two rather than with a second spelling of it here, and the slug
+// comes out of the installation's own table — the relation buildEntryRepos
+// checked when it wrote the pairing, read again from the table rather than
+// stored beside it.
+//
+// Anything the comparison cannot make is false and not an error: a record this
+// release cannot read is one no call is served for (fail closed), and the caller
+// is answered the rules' own class either way.
+func (s *Server) pairingCovers(repos []string, repo string) (string, bool) {
+	if repo == "" {
+		return "", false
+	}
+	for _, name := range repos {
+		canonical, err := projectpolicy.Canonical(gitprov.KindBitbucket, name)
+		if err != nil || canonical != repo {
+			continue
+		}
+		for slug, held := range s.cfg.Repos {
+			if held == repo {
+				return slug, true
+			}
+		}
+		return "", false
+	}
+	return "", false
+}
+
 // proxyIdentity is what the rules are told about the run asking: B1.4's own
 // Identity, filled from the verified identity's claims and from the class of
 // the job it called from, and from nothing the request carries.
@@ -188,8 +272,15 @@ func proxyIdentity(id Identity) gitproxy.Identity {
 		PRs:    id.PRs,
 		// The review class is F16's read-only job: it is served a read-only
 		// credential on every other route (mintPermissions, D1065), so a
-		// write of it here would be reach that set exists to not have.
-		ReadOnly: id.JobClass == ClassReview,
+		// write of it here would be reach that set exists to not have. A
+		// build is read-only for the same reason and one more of its own
+		// (rule 1): its credential is read-only wherever the provider can say
+		// so, and here the provider cannot — the token is the
+		// installation's, and what keeps a build from writing with it is
+		// this line. A build has no branch and no pull request either, so its
+		// push is refused on the ref as well; the read-only answer is the one
+		// that says why without reading a pack.
+		ReadOnly: id.JobClass == ClassReview || buildCall(id),
 	}
 }
 
@@ -375,6 +466,141 @@ func (b bundleTokens) LogValue() slog.Value { return slog.StringValue(b.String()
 //     service will not record is not made (C1.13, D143), and what "not made"
 //     means here is that the answer reaches nobody — the upstream's bytes are
 //     dropped rather than relayed.
+//
+// buildProxy serves one Bitbucket call of a project's BUILD identity (B1, rule
+// 9): the data plane of the pairing the build route's grant recorded, and the
+// second of the two routes of this service a build reaches (ServeHTTP's branch
+// ahead of the shared parse is what sends a call here).
+//
+// It is this route's admission with the shared parse taken out of it, and what
+// stands where the run identity stands is the pairing:
+//
+//   - the caller proves itself with the build identity's own ID token
+//     (VerifyBuildCaller, the contract's own answer to "what does a build's git
+//     present": the grant is not a secret, and the token reaches the generated
+//     clone step alone). It is the same class list the build route admits, so
+//     what a build's git holds buys nothing on any other route of this service;
+//   - the build id the call names (HeaderBuild) is held to the shape a build id
+//     has, because it is the second half of the key the pairing is stored under
+//     and a key is a path (B1's own buildIDRE, the one the grant route checks
+//     its request against);
+//   - the pairing is read for that identity and that id, and a pairing that is
+//     absent, ended or unreadable refuses the call: a build with no live pairing
+//     reaches no forge, which is what a grant that could not be recorded leaves
+//     it with, and what a build that outlived its credential gets;
+//   - and the repositories the pairing holds are the fence around everything
+//     that follows (pairingCovers, inside bitbucketProxy, and gitproxy.Decide
+//     after it): the repository the call names must be one of them, and the
+//     class the call is served as is read-only.
+//
+// The run identity headers are refused BY NAME, as the build route refuses them:
+// a build holds no run identity, so a call presenting one is a call of a shape
+// this route does not have. The order is the build route's own — the headers
+// before the call's own fields — and the refusals before the pairing is read are
+// the ones a verified caller is answered without the service having read
+// anything of its own.
+func (s *Server) buildProxy(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	tok, err := bearerFromHTTP(r)
+	if err != nil {
+		// No line: the call is refused before its caller was verified, which is
+		// the one refusal of this route with nothing to name.
+		s.refuse(w, StatusUnverified, ErrorUnverifiedJobIdentity, err.Error())
+		return
+	}
+	caller, err := s.cfg.Auth.VerifyBuildCaller(ctx, tok)
+	if err != nil {
+		// The class's own refusal, answered the way the build route answers it:
+		// a typed refusal and no line, because nothing is verified yet.
+		s.refuseVerifier(w, err)
+		return
+	}
+	id := Identity{JobAccount: caller, BuildID: r.Header.Get(HeaderBuild)}
+	if r.Header.Get(HeaderRunIdentity) != "" {
+		s.refuseBuildProxy(ctx, w, id, refusalBuildRunIdentity, StatusUnverified, ErrorUnverifiedRunIdentity,
+			"this route takes no run identity: it serves the git of a project's build, which holds none, and a caller presenting a run is a call of a shape it does not have", nil)
+		return
+	}
+	if r.Header.Get(HeaderRunJob) != "" {
+		s.refuseBuildProxy(ctx, w, id, refusalBuildRunIdentity, StatusUnverified, ErrorUnverifiedRunIdentity,
+			"this route takes no run identity: it serves the git of a project's build, which holds none, and a caller naming a job is a call of a shape it does not have", nil)
+		return
+	}
+	if !buildIDRE.MatchString(id.BuildID) {
+		s.refuseBuildProxy(ctx, w, id, refusalBuildID, StatusRequestRefused, ErrorRequestRefused,
+			requestRefused+"the call names no build id of the shape a build has, and the repositories a build may reach are recorded under the build id that asked for them", nil)
+		return
+	}
+	// The operator's stop switches, read here as every other route of this
+	// service reads them and at the build route's own point: after the call's
+	// shape is settled and before anything this service holds is read (there the
+	// policy, here the pairing). A build's git is traffic this service forwards
+	// with the installation's own Bitbucket token, so a stopped service forwards
+	// none of it — not even for a build holding a live pairing, which is the
+	// state a switch turned on after a grant leaves it in.
+	//
+	// The scope is the global one, which is the build route's: a build names no
+	// repository of its own, and the repository this call is about is the
+	// pairing's answer, read after this.
+	on, which, err := s.cfg.Kills.Stop(ctx, "")
+	if err != nil {
+		// An unreadable switch is not an off switch (budget's own rule), so the
+		// call is refused rather than served. The cause reaches the service's own
+		// log line and nothing else.
+		s.refuseBuildProxy(ctx, w, id, refusalBuildStopped, StatusUnavailable, ErrorStateUnavailable,
+			"the operator's stop switches could not be read", err)
+		return
+	}
+	if on {
+		s.refuseBuildProxy(ctx, w, id, refusalBuildStopped, StatusUnavailable, ErrorStateUnavailable,
+			"the credentials service is stopped by the "+which+" kill switch", nil)
+		return
+	}
+	if s.cfg.BuildPairs == nil {
+		s.refuseBuildProxy(ctx, w, id, refusalBuildPairing, StatusUnavailable, ErrorStateUnavailable,
+			"this installation's credentials service cannot read the pairing a build's grant records", nil)
+		return
+	}
+	pair, found, err := s.cfg.BuildPairs.BuildPair(ctx, caller, id.BuildID)
+	if err != nil {
+		// The cause reaches the service's own log line and nothing else: an
+		// unreadable record is not the caller's refusal, and nothing is served
+		// out of a pairing this service could not read.
+		s.refuseBuildProxy(ctx, w, id, refusalBuildPairing, StatusUnavailable, ErrorStateUnavailable,
+			"the build's pairing could not be read, so this service does not know what this build's git may reach", err)
+		return
+	}
+	if !found {
+		s.refuseBuildProxy(ctx, w, id, refusalBuildPairing, StatusRequestRefused, ErrorRequestRefused,
+			requestRefused+"no pairing is recorded for this build: a build's git reaches what the credential it asked for recorded, and this build is paired by none", nil)
+		return
+	}
+	if !pair.Live(s.now()) {
+		s.refuseBuildProxy(ctx, w, id, refusalBuildPairing, StatusRequestRefused, ErrorRequestRefused,
+			requestRefused+"the build's pairing has ended: a build's credential is short-lived, and a build that needs it longer asks for another", nil)
+		return
+	}
+	// The pairing is what the call is served against, and the story of where the
+	// repository comes from ends here: the binding inside bitbucketProxy holds
+	// the request to these repositories and to no other.
+	id.BuildRepositories = pair.Repositories
+	s.bitbucketProxy(ctx, w, r, id, "")
+}
+
+// refuseBuildProxy answers one refusal the build half takes before the call was
+// classified, and records it in the form this route uses for every refusal: the
+// class on the service's own log line (logProxyRefusal) and the build route's
+// own audited line (refuseBuild), because a verified caller's refusal that wrote
+// no line would be a call this service answered without saying so.
+//
+// The purpose is the one a build's unclassifiable call carries
+// (PurposeBuildProxy) and the credential is empty: no kind was named, so no
+// credential's name can be either — the two travel together on a line, and a
+// credential is not something a call gets to name for itself.
+func (s *Server) refuseBuildProxy(ctx context.Context, w http.ResponseWriter, id Identity, class string, status int, typ, message string, cause error) {
+	s.logProxyRefusal(id, PurposeBuildProxy, class, cause)
+	s.refuseBuild(ctx, w, id.JobAccount, PurposeBuildProxy, "", status, typ, message)
+}
+
 func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *http.Request, id Identity, canonical string) {
 	req, err := classifyProxy(r)
 	if err != nil {
@@ -403,11 +629,53 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 		// line names their class. It carries no cause, because the class IS
 		// the cause's whole content here (the refusal's error is the rule's
 		// name and nothing else).
-		s.logProxyRefusal(id, "", reason, nil)
-		s.refuseCall(ctx, w, id, "", "", "", StatusRequestRefused, ErrorRequestRefused, requestRefused+reason)
+		//
+		// The empty purpose is the RUN half's answer, and a build's is
+		// different for a reason of its own: a run's line has the run and the
+		// job to name, while a build's has a verified CALLER and no job at all
+		// — and a line naming one without the other is admitted only for a
+		// purpose that carries no job (callerWithoutJobPurpose), which the
+		// empty purpose does not. So a build's unclassifiable call is recorded
+		// under the purpose that says what it was rather than under a kind the
+		// classification never answered (PurposeBuildProxy).
+		linePurpose := ""
+		if buildCall(id) {
+			linePurpose = PurposeBuildProxy
+		}
+		s.logProxyRefusal(id, linePurpose, reason, nil)
+		s.refuseCall(ctx, w, id, linePurpose, "", "", StatusRequestRefused, ErrorRequestRefused, requestRefused+reason)
 		return
 	}
 	purpose, credential := gitproxyAct(req.Kind)
+	if buildCall(id) {
+		purpose, credential = buildGitproxyAct(req.Kind)
+		// A build's own binding (B1, rule 9), in the one place the run's is
+		// made and standing where the job account's repository stands for a
+		// per-repository caller: the repository this call names must be one the
+		// pairing recorded for this build id. A call that names none — a REST
+		// call outside a repository, GET /user included — is refused here for
+		// the same reason and not admitted as a run's is: a run's identity may
+		// ask who the token is, and a build's pairing is a fence around
+		// repositories, so a call about none of them is about something this
+		// build was never paired for. The class is the rules' own
+		// (gitproxy.ReasonOtherRepository), which is what Decide answers the
+		// same request with for a run.
+		slug, paired := s.pairingCovers(id.BuildRepositories, req.Repo)
+		if !paired {
+			s.refuseProxy(ctx, w, id, purpose, credential, gitproxy.ReasonOtherRepository)
+			return
+		}
+		// The repository a build's line names is the INSTALLATION's key for the
+		// repository this call was served for, which is the one spelling an
+		// audit line carries (checked) and the one every other line of this
+		// log is grepped by. A build's identity has no slug claim and no run
+		// for one to come from, so the admission fills it here.
+		id.Slug = slug
+		// The repository the call is served for is then the pairing's own
+		// answer for it, and Decide still holds the request to it and to the
+		// published block below (G3, G9): a build widens nothing here.
+		canonical = req.Repo
+	}
 
 	// A push's update request, read in front of the pack and bounded (B1.3):
 	// everything the rules decide on is in it, and what was read is forwarded
