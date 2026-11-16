@@ -361,8 +361,6 @@ gives it a command — with the converge flag that changes it when the two doors
 | `endpoints.service_usage` | — |
 | `endpoints.storage` | — |
 | `image_source` | `--image-source` |
-| `layer.jobs.catalog_check.paused` | — |
-| `layer.jobs.reports.paused` | — |
 | `layer_generation` | — |
 | `local.gcp_project` | `--gcp-project` |
 | `local.version` | — |
@@ -407,7 +405,11 @@ gives it a command — with the converge flag that changes it when the two doors
   until somebody needs it changed.
 - **A key the generic writer carries is not an installation fact**, whatever its owner column says:
   `commit_name`, `commit_email` and `update_check` are `setup`'s by owner and `settings set`'s by the
-  allowlist (D1179), so no row here names them.
+  allowlist (D1179), so no row here names them. R1 of docs/config-ownership/ added two more of the same
+  shape: `layer.jobs.catalog_check.paused` and `layer.jobs.reports.paused` were this table's rows with
+  the owner `update`, and D2603 hands the two switches to the generic path — `settings set` owns and
+  writes them, so both rows left the table in the same change, which is what the predicate behind this
+  table asks for.
 
 ## 7. What this design is not
 

@@ -227,6 +227,9 @@
       "type": "object",
       "description": "Every key of the registry and its built-in default, the DEFAULT column's own source (D841). A generator would be a go generate step a release must remember and a diff nobody reads, so this is written out and pinned to settings.Rows() by TestSettingsSchema in schemas_test.go.",
       "properties": {
+        "ab.rate": {
+          "default": "unset = the project layer's ab.rate, or 0: no run is a challenger"
+        },
         "agent.adversarial_rounds": {
           "default": "unset = the run's rigor mode decides (rigor.AdversarialDefault)"
         },
@@ -540,6 +543,24 @@
         },
         "credentials.*.type": {
           "default": "unset = required: the provider that serves it, one of openrouter, anthropic, claude-oauth"
+        },
+        "credentials.backoff.cap": {
+          "default": "unset = 5h: the longest wait the doubling reaches (projectpolicy.DefaultBackoffCap)"
+        },
+        "credentials.backoff.initial": {
+          "default": "unset = 15m: the first wait of a credential backed off with no reset time (projectpolicy.DefaultBackoffInitial)"
+        },
+        "credentials.concurrency_per_token": {
+          "default": "unset = 1: how many runs may hold one shared credential at a time (projectpolicy.DefaultConcurrencyPerToken), where a written 0 is no cap at all"
+        },
+        "credentials.fallback": {
+          "default": "unset = oauth-only: a run does not fail over to the paid tier (projectpolicy.FallbackOAuthOnly), and the one value that spends the project's money is written by an operator"
+        },
+        "credentials.stop_after_exhaustion_per_window": {
+          "default": "unset = true: a credential exhausted within its window stops the runs that need it (projectpolicy.Credentials.StopsAfterExhaustion)"
+        },
+        "credentials.wait_threshold": {
+          "default": "unset = 15m: how long a run waits for an exhausted credential's reset before failing over (projectpolicy.DefaultWaitThreshold)"
         },
         "credentials_service.url": {
           "default": "unset = none: the credentials service is not deployed"
@@ -1516,6 +1537,9 @@
         },
         "workflows.*.job_profile": {
           "default": "unset = the project policy's default job profile"
+        },
+        "workflows.*.needs": {
+          "default": "unset = none: the job needs no tag of the entry the run picks"
         },
         "workflows.*.profile": {
           "default": "unset = the project layer's default_profile"

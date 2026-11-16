@@ -69,6 +69,17 @@ var settingsFamilyCommands = map[string]string{
 	// clone-url` is that command, and the refusal names it rather than
 	// `fugaro project`, which writes the project's other policy keys.
 	"project clone-url": "fugaro project clone-url",
+	// The security paths' family (D2613, M4 of docs/config-ownership): the
+	// project's list and the layer's own rows are entries added and removed by
+	// their key field, which no scalar write can express — a removal has to name
+	// the path it takes away — so the rows name this command rather than this
+	// path, and M4 registers its writers. The token is here before the command
+	// is, which is the one shape both halves allow: the write resolves a row's
+	// owner through this map rather than through the command tree, and the read's
+	// vocabulary test (TestSettingsOwnerStringsAreAClosedVocabulary) accepts a
+	// family's word for exactly this reason — a family command is one this map
+	// names, whether or not the task that builds it has landed.
+	"rigor security": "fugaro rigor security",
 }
 
 // settingsGenericKeys is the allowlist of spec §4.4: the exact keys `settings
@@ -262,6 +273,35 @@ var settingsGenericKeys = map[string]bool{
 	"repos.*.base_branch":   true,
 	"repos.*.workflows":     true,
 	"repos.*.github_app_id": true,
+	// R1's own group (docs/config-ownership): the rows whose owner column named
+	// a writer that does not write them and which D2603 hands to this path —
+	// a scalar, a flag or a list in a file this command writes. Naming a key
+	// here is the whole of what makes it writable, so the two moves are one
+	// edit: a row moved to `settings set` and left out of this list is a row
+	// saying a command writes a key it refuses (F13), and
+	// TestSettingsOwnerStringsAreAClosedVocabulary is what fails on it.
+	//
+	// The orchestrator block and the two nudge thresholds are the machine's own
+	// config, `triage`, `verifier_accounts` and the two schedules are local and
+	// project keys this path already writes the file of, and
+	// `planning.decoupling` is the fifth of the four file-carrier rows G12 left
+	// with the layer file's token while its repository half was never in that
+	// file. Every one of them is named rather than reached by a prefix: a
+	// prefix is not the reason a wildcard row resolves, and a key no list here
+	// names is a read row no write lands on.
+	"orchestrator.max_running":              true,
+	"orchestrator.batch_size":               true,
+	"orchestrator.spawn_per_minute":         true,
+	"orchestrator.spawn_per_hour":           true,
+	"orchestrator.spawn_per_day":            true,
+	"orchestrator.decision_model_per_class": true,
+	"issues.nudge_after_days":               true,
+	"issues.nudge_recurrence":               true,
+	"triage":                                true,
+	"verifier_accounts":                     true,
+	"layer.jobs.reports.paused":             true,
+	"layer.jobs.catalog_check.paused":       true,
+	"planning.decoupling":                   true,
 }
 
 // settingsGenericPrefixes are the blocks spec §4.4 hands to the generic path
@@ -1104,6 +1144,16 @@ var settingsEntryBlocks = map[string]settingsEntryBlock{
 	// writes through could never find one. It is in the table so the refusal a
 	// person gets is that sentence rather than "takes no entry".
 	"layer.profiles.*.cache": {kind: settingsEntryList},
+	// The orchestrator's decision-model map (R1 of docs/config-ownership): a
+	// class's model is one member of a map, which is the shape --add-entry
+	// writes (D1162) and the reason the row is the generic path's rather than a
+	// family's — there is no per-class key for a scalar write to land on, so the
+	// entry is the only spelling the block has. It is the second block of the
+	// local config the entry pair reaches (a repository's and the layer's blocks
+	// are the others), and policy.ValidOrchestrator is what decides whether the
+	// class and the model are ones the daemon reads, exactly as it does for a
+	// block written by hand.
+	"orchestrator.decision_model_per_class": {kind: settingsEntryMap},
 }
 
 // settingsEntryBlockOrder is the table's own order, and the lookup walks it
@@ -1120,6 +1170,7 @@ var settingsEntryBlockOrder = []string{
 	"layer.ab",
 	"layer.profiles.*.commands.rerun_failed",
 	"layer.profiles.*.cache",
+	"orchestrator.decision_model_per_class",
 }
 
 // settingsEntryBlockOf is the block a key names, matched the way

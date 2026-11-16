@@ -219,9 +219,20 @@ const (
 // write makes -- and both are local-only, because a launcher who could write
 // the block into the shared file would be admitting its own payload to every
 // teammate's runs (D986).
+//
+// R1 of docs/config-ownership/ is the last mover, by eight rows and by
+// thirteen: the registry gains the repository's `ab.rate` opt-out, its
+// `workflows.*.needs` key and the policy node's own cascade block (six rows),
+// and the thirteen scalars and flags D2603 hands the generic path take the owner
+// `settings set` in place of a family that does not write them (the six
+// orchestrator ceilings, the two nudge thresholds, `triage`, `verifier_accounts`,
+// the two `layer.jobs.*.paused` switches and `planning.decoupling`). The cascade
+// rows are the eight that move the registry and not the allowlist: their owner
+// is the `accounts` family, which settingsFamilyCommands maps, so the generic
+// path refuses them by name.
 const (
-	cfmRegistryRows   = 449
-	cfmAllowlistNamed = 105
+	cfmRegistryRows   = 457
+	cfmAllowlistNamed = 118
 )
 
 func TestDocsConfigManagementIsWritten(t *testing.T) {

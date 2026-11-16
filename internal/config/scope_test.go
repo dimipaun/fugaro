@@ -296,6 +296,9 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 		"workflows.*.inputs.max_files":       InProfile | InRepo,
 		"workflows.*.inputs.max_bytes":       InProfile | InRepo,
 		"workflows.*.inputs.max_total_bytes": InProfile | InRepo,
+		"workflows.*.needs":                  InRepo,
+
+		"ab.rate": InRepo,
 
 		"followup.trusted":      InRepo,
 		"followup.allow_public": InRepo,
