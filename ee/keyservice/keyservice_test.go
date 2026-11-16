@@ -18,8 +18,8 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -854,16 +854,51 @@ func signEvent(secret []byte, at time.Time, body []byte) string {
 
 // deliver posts one event the merchant signed, as the merchant's webhook does.
 //
+// The body is Paddle's own notification and not this service's canonical event:
+// a case writes the event it means and `paddleBody` spells it the way the
+// merchant does, so every case here drives the adapter (paddleevents.go) beside
+// the paid path it is about (P4.2, F16).
+//
 // The signature's timestamp is the instant the delivery is made and not the
 // instant the event says it occurred: those are two different things, and an
 // event that arrives late is exactly what §5.2's ordering rule is about.
 func (f *fixture) deliver(e Event) *httptest.ResponseRecorder {
 	f.t.Helper()
-	body, err := json.Marshal(e)
-	if err != nil {
-		f.t.Fatalf("encoding the event: %v", err)
-	}
+	e = f.claimsOf(e)
+	body := paddleBody(f.t, e)
 	return f.deliverRaw(body, signEvent(f.secret, f.now, body))
+}
+
+// claimsOf fills in what one case's event does not state and the deployment
+// would: the transaction the API created at the checkout, and the records the
+// event is admitted by and granted against (F15, P4.2). What it writes is what
+// P4.1's checkout and P3.1's workspace list write — the two records an event
+// read outside a case has behind it — and it writes nothing for an event that
+// names neither.
+func (f *fixture) claimsOf(e Event) Event {
+	f.t.Helper()
+	if e.Type != EventPurchase {
+		return e
+	}
+	if e.Transaction == "" {
+		e.Transaction = "txn-" + e.Subscription
+	}
+	f.seed(checkoutTransactionsCollection, e.Transaction, checkoutTransaction{
+		ID:             e.Transaction,
+		OrganisationID: e.Organisation,
+		WorkspaceID:    e.WorkspaceID,
+		Seats:          e.Seats,
+		UID:            f.signIn.caller.UID,
+		Email:          e.Email,
+		CreatedAt:      f.now,
+	})
+	if e.Organisation != "" && e.WorkspaceID != "" {
+		f.seed(workspacesCollection, e.WorkspaceID, WireWorkspace{
+			ID: e.WorkspaceID, OrganisationID: e.Organisation,
+			Name: e.WorkspaceID, CreatedAt: f.now,
+		})
+	}
+	return e
 }
 
 func (f *fixture) deliverRaw(body []byte, header string) *httptest.ResponseRecorder {
@@ -878,9 +913,15 @@ func (f *fixture) deliverRaw(body []byte, header string) *httptest.ResponseRecor
 	return rec
 }
 
-// purchase delivers one live purchase event for a domain and answers the record
-// it minted; a purchase that minted nothing is a failure a test reads here
-// rather than three lines further down.
+// purchase delivers one live purchase event for a domain, binds the licence it
+// bought to a project, and answers the record of the key that binding minted.
+//
+// Two acts and not one, because that is the shape D2196 gives a licence: the
+// purchase grants the **entitlement** and mints nothing, and the customer's own
+// binding is what issues the key for their project (P3.1). A case that wants a
+// key in hand drives both, and a case about the purchase alone drives `deliver`
+// — which is what keeps "the purchase minted a key" from being a claim any test
+// here can still make.
 func (f *fixture) purchase(id, domain string, seats, termDays int) Record {
 	f.t.Helper()
 	before := len(f.records())
@@ -896,11 +937,69 @@ func (f *fixture) purchase(id, domain string, seats, termDays int) Record {
 		Seats:        seats,
 		TermDays:     termDays,
 	})
+	f.bind(domain, "sub-"+domain)
 	after := f.records()
 	if len(after) != before+1 {
 		f.t.Fatalf("the purchase of %d seat(s) for %s minted %d key(s), want one", seats, domain, len(after)-before)
 	}
 	return after[len(after)-1]
+}
+
+// bind binds the licence one subscription bought to the fixture's own project,
+// the way the customer does from the portal: the organisation the money was for,
+// the workspace it bought, and the key that binding mints.
+//
+// The project is read as present, because a case here is about the paid path and
+// not about D2205's check: a probe that reached Firebase would be a test that
+// needs a network, and the answers a real database gives are the one half of
+// that rule this repository cannot check (workspaces_test.go holds the cases
+// that are about it).
+func (f *fixture) bind(organisation, subscription string) Record {
+	f.t.Helper()
+	f.actsAsOwnerOf(organisation)
+	previous := probeInstallation
+	probeInstallation = projectInstallation{database: "https://%s.example", client: &http.Client{Transport: presentProject{}}}
+	f.t.Cleanup(func() { probeInstallation = previous })
+	origin, held, err := f.svc.origin(context.Background(), subscription)
+	if err != nil || !held {
+		f.t.Fatalf("the purchase of %s left no record of the subscription %s (held=%v, err=%v)", organisation, subscription, held, err)
+	}
+	if _, err := f.svc.bindEntitlement(context.Background(), f.signIn.caller, origin.EntitlementID, workspaceID); err != nil {
+		f.t.Fatalf("binding the licence %s to %s: %v", origin.EntitlementID, workspaceID, err)
+	}
+	records := f.records()
+	return records[len(records)-1]
+}
+
+// actsAsOwnerOf makes the fixture's caller the owner of the organisation named,
+// which is the membership a binding is made by: the money's organisation is the
+// checkout's own record and the portal's, and a caller who is not in it is told
+// the licence is not there.
+func (f *fixture) actsAsOwnerOf(organisation string) {
+	f.t.Helper()
+	caller := f.signIn.caller
+	if _, held := f.organisation(organisation); !held {
+		f.seed(organisationsCollection, organisation, WireOrganisation{
+			ID: organisation, Name: organisation, Type: orgTypeCustomer, CreatedAt: f.now,
+		})
+	}
+	f.seed(membershipsCollection, membershipID(organisation, caller.UID), WireMembership{
+		OrganisationID: organisation, UID: caller.UID, Email: caller.Email,
+		Role: roleOwner, CreatedAt: f.now,
+	})
+}
+
+// presentProject is D2205's read answered without a database: a refusal of
+// permission is a project whose rules are locked, which is an installation that
+// is there, and it is what a probe seam has to answer for a binding to proceed.
+type presentProject struct{}
+
+func (presentProject) RoundTrip(*http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusForbidden,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"error":"Permission denied"}`)),
+	}, nil
 }
 
 // event delivers one event whose fields the test sets, with the mode and the

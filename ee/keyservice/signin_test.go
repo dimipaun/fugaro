@@ -1174,10 +1174,11 @@ func TestSignInFlowTokenFromAnotherProjectIsRefused(t *testing.T) {
 func TestTokenFromARefundedSubscriptionStillSignsIn(t *testing.T) {
 	f, spy := signingIn(t)
 	refunded := f.purchase("evt-signin", signInOrg, 5, 365)
-	// The merchant's own refund of the key the purchase minted, signed as the
-	// merchant signs: the same event TestRefundRevokesTheKey delivers, and the
-	// one thing that happens is §8's entry for that key.
-	if rec := f.event(Event{ID: "evt-refund", Type: EventRefund, KeyID: refunded.KeyID}); rec.Code != http.StatusOK {
+	// The merchant's own refund of the subscription the purchase began, signed as
+	// the merchant signs: Paddle names the subscription and never a key, and what
+	// the event resolves to is the licence whose binding minted the key above
+	// (F16). The one thing that happens is §8's entry for that key.
+	if rec := f.event(Event{ID: "evt-refund", Type: EventRefund, Subscription: "sub-" + signInOrg}); rec.Code != http.StatusOK {
 		t.Fatalf("the refund answered %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 	listed := f.revocations()

@@ -1581,7 +1581,7 @@ func TestRefundRevokesTheKey(t *testing.T) {
 
 	body, err := json.Marshal(Event{
 		ID: "evt-3", Type: EventRefund, Mode: Live, OccurredAt: f.now,
-		Subscription: "sub-acme.example", KeyID: refunded.KeyID,
+		Subscription: "sub-acme.example",
 	})
 	if err != nil {
 		t.Fatalf("encoding the event: %v", err)
@@ -1650,7 +1650,7 @@ func TestRefundRevokesTheKey(t *testing.T) {
 	// state, and the licensor's word for it is what the list keeps.
 	f.advance(day)
 	chargedAt := f.now
-	f.event(Event{ID: "evt-4", Type: EventChargeback, OccurredAt: chargedAt, Subscription: "sub-widget.example", KeyID: other.KeyID})
+	f.event(Event{ID: "evt-4", Type: EventChargeback, OccurredAt: chargedAt, Subscription: "sub-widget.example"})
 	charged, held, err := f.store.Revocation(context.Background(), other.KeyID)
 	if err != nil || !held {
 		t.Fatalf("the chargeback left no entry for %s (held=%v, err=%v)", other.KeyID, held, err)
@@ -1678,7 +1678,7 @@ func TestRefundRevokesTheKey(t *testing.T) {
 	f.advance(day)
 	f.event(Event{ID: "evt-7", Type: EventSeatChange, Organisation: "late.example", Seats: 4, TermDays: 30})
 	older := f.now.Add(-time.Hour)
-	f.event(Event{ID: "evt-8", Type: EventRefund, OccurredAt: older, Subscription: "sub-late.example", KeyID: late.KeyID})
+	f.event(Event{ID: "evt-8", Type: EventRefund, OccurredAt: older, Subscription: "sub-late.example"})
 	entry, held, err = f.store.Revocation(context.Background(), late.KeyID)
 	if err != nil || !held {
 		t.Fatalf("a refund older than the subscription's own instant left no entry for %s (held=%v, err=%v), want the key it named withdrawn", late.KeyID, held, err)
@@ -1727,7 +1727,7 @@ func TestARefundRevokesTheWholeRotationChain(t *testing.T) {
 	setSubscription(t, f, third.KeyID, "")
 
 	at := f.now
-	f.event(Event{ID: "evt-3", Type: EventRefund, OccurredAt: at, Subscription: refunded.Subscription, KeyID: refunded.KeyID})
+	f.event(Event{ID: "evt-3", Type: EventRefund, OccurredAt: at, Subscription: refunded.Subscription})
 	for _, keyID := range []string{refunded.KeyID, second.KeyID, third.KeyID} {
 		entry, held, err := f.store.Revocation(context.Background(), keyID)
 		if err != nil || !held {
@@ -1754,7 +1754,7 @@ func TestARefundRevokesTheWholeRotationChain(t *testing.T) {
 		first[entry.KeyID] = entry
 	}
 	f.advance(2 * time.Hour)
-	f.event(Event{ID: "evt-3", Type: EventRefund, OccurredAt: at, Subscription: refunded.Subscription, KeyID: refunded.KeyID})
+	f.event(Event{ID: "evt-3", Type: EventRefund, OccurredAt: at, Subscription: refunded.Subscription})
 	after := f.revocations()
 	if len(after) != len(first) {
 		t.Fatalf("§8's list holds %d entry(ies) after the redelivery, want the %d the first delivery wrote", len(after), len(first))
@@ -1810,7 +1810,7 @@ func TestARefundRevokesEveryKeyOfTheLicence(t *testing.T) {
 	}
 
 	at := f.now
-	f.event(Event{ID: "evt-3", Type: EventRefund, OccurredAt: at, Subscription: refunded.Subscription, KeyID: refunded.KeyID})
+	f.event(Event{ID: "evt-3", Type: EventRefund, OccurredAt: at, Subscription: refunded.Subscription})
 	for _, keyID := range []string{refunded.KeyID, minted.Record.KeyID, reissued, rotated.KeyID} {
 		entry, held, err := f.store.Revocation(context.Background(), keyID)
 		if err != nil || !held {
@@ -1847,7 +1847,7 @@ func TestARefundOfAKeyNobodySoldTouchesNoOther(t *testing.T) {
 	withoutASubscription(t, f, first)
 	withoutASubscription(t, f, second)
 
-	f.event(Event{ID: "evt-1", Type: EventRefund, OccurredAt: f.now, Subscription: sold.Subscription, KeyID: first})
+	f.event(Event{ID: "evt-1", Type: EventRefund, OccurredAt: f.now, Subscription: sold.Subscription})
 	if _, held, _ := f.store.Revocation(context.Background(), first); !held {
 		t.Errorf("the refund of %s wrote no entry, want the key it named withdrawn", first)
 	}
@@ -1914,7 +1914,7 @@ func TestSeatChangeReissuesUnderANewKeyID(t *testing.T) {
 	// reissue beside it: the merchant's transaction resolves to the purchase, and
 	// both keys are the one licence the money has gone back for.
 	f.advance(day)
-	f.event(Event{ID: "evt-3", Type: EventRefund, OccurredAt: f.now, Subscription: "sub-acme.example", KeyID: first.KeyID})
+	f.event(Event{ID: "evt-3", Type: EventRefund, OccurredAt: f.now, Subscription: "sub-acme.example"})
 	for _, keyID := range []string{first.KeyID, reissued.KeyID} {
 		if entry, held, _ := f.store.Revocation(context.Background(), keyID); !held {
 			t.Errorf("the refund of %s wrote no entry for %s, want every key of the licence withdrawn", first.KeyID, keyID)
