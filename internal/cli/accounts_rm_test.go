@@ -2359,6 +2359,13 @@ func TestAccountsRmDoesNotWriteAJobForAHeldDefaultProfile(t *testing.T) {
 // and the value's own removal already answer for a typed entry (MC4, MC5,
 // MC22), which is what MC24's plan line calls the accounts' own guard. They are
 // kept here as the key types' regression coverage, not as the driving examples.
+//
+// Their own adds are addTyped and not add: a key credential's declaration puts
+// craft_credentials and crafts.NAME.access on the published node, so the
+// publish that carries it is the one a typed confirmation covers and --yes does
+// not (D846), and addTyped is the helper that stands at that terminal. Through
+// add, the step stops at policy with "the typed confirmation of this step needs
+// a real terminal" and the three tests never reach the removal they are about.
 
 // accountsRmKeyPoolLocal is a key credential a pool lists: the state an entry's
 // own removal may not proceed from, by this config's own rule (ValidatePools).
@@ -2398,7 +2405,7 @@ crafts:
 // removal.
 func TestAccountsRmRefusesAPoolMember(t *testing.T) {
 	r := newAddRigWith(t, accountsRmKeyPoolLocal)
-	r.add(t, "team-a", "--repos", "owner/repo-a")
+	r.addTyped(t, "team-a", "--repos", "owner/repo-a")
 	if v := r.sm.Latest(credentialSecretID("team-a")); v == nil {
 		t.Fatalf("the fixture's %s holds no value, so the refused delete would prove nothing", credentialSecretID("team-a"))
 	}
@@ -2432,7 +2439,7 @@ func TestAccountsRmRefusesAPoolMember(t *testing.T) {
 // — is left where it was.
 func TestAccountsRmClearsACraftAccess(t *testing.T) {
 	r := newAddRigWith(t, accountsRmKeyCraftLocal)
-	r.add(t, "team-a", "--repos", "owner/repo-a")
+	r.addTyped(t, "team-a", "--repos", "owner/repo-a")
 
 	out := r.rm(t, "team-a")
 
@@ -2470,7 +2477,7 @@ func TestAccountsRmClearsACraftAccess(t *testing.T) {
 // container the type decides.
 func TestAccountsRmRemovesTheValueToo(t *testing.T) {
 	r := newAddRigWith(t, accountsRmKeyCraftLocal)
-	r.add(t, "team-a", "--repos", "owner/repo-a")
+	r.addTyped(t, "team-a", "--repos", "owner/repo-a")
 	id := credentialSecretID("team-a")
 	if r.sm.Latest(id) == nil {
 		t.Fatalf("the fixture's %s holds no value, so the delete has nothing to take away", id)
