@@ -841,9 +841,49 @@
       "type": "integer",
       "minimum": 0,
       "description": "How many stage attempts this run threw away and ran again because the model's stream was closed before its response finished (issue #1827). It counts the retries the run spent, not the stages that ended that way; which stage, and why, is in the run's log, which says so under the stage's own name. Absent for a run that retried nothing, which is every record written before this field existed: the field is additive, so an old reader sees the record it always saw and `version` stays 1."
+    },
+    "discovered": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["blocks", "needed"],
+      "description": "What the run found out about the graph while it worked (docs/orchestrator-graph-estimates/implementation-plan.md X2, D2709): the items its own work blocks and the items it found it needed, which the daemon that owns the graph folds in add-only (E3). Every entry is the agent's own words, so the block is bounded and untrusted: at most 16 entries per list (runstore.MaxDiscoveredItems), each text at most 200 runes (runstore.MaxDiscoveredText), and runstore.NewDiscovered drops an entry that names no item, names two, or carries no why, so the record it writes is one this schema accepts. Absent — never an empty block — for a run that discovered nothing, which is every record written before this field existed: the field is additive, so an old reader sees the record it always saw and `version` stays 1. Go: internal/runstore/discovered.go.",
+      "properties": {
+        "blocks": {
+          "type": "array",
+          "maxItems": 16,
+          "description": "The items that must wait for this run's work, in the order the run named them. An entry reaches only items in the run's own plan node (or, for a run with no plan, its own repository's backlog items), and only one that has not launched (D2709). Never null: an empty array is the fact that this run blocked nothing.",
+          "items": { "$ref": "#/$defs/discovered_item" }
+        },
+        "needed": {
+          "type": "array",
+          "maxItems": 16,
+          "description": "The items this run found it needed, in the order the run named them. An entry cannot reorder a run already going, so the daemon records it as one graph_suspect fact per run rather than an edge (D2709). Never null: an empty array is the fact that this run needed nothing it did not already depend on.",
+          "items": { "$ref": "#/$defs/discovered_item" }
+        }
+      }
+    },
+    "conflict_paths": {
+      "type": "array",
+      "maxItems": 64,
+      "items": { "type": "string", "minLength": 1, "maxLength": 200 },
+      "description": "The paths a rebase or a push of this run met a conflict on, in the order it met them (X2, D2709, D2710): the sign the graph the run worked from was wrong, which the daemon reads beside the footprints of the items merged since the attempt began. Bounded at 64 paths (runstore.MaxConflictPaths), each clipped to 200 runes (runstore.MaxDiscoveredText), and emptied of empty paths by runstore.NewConflictPaths. Absent — never an empty list — for a run that met none, which is every record written before this field existed: the field is additive, so an old reader sees the record it always saw and `version` stays 1."
     }
   },
   "dependentRequired": {
     "patch_truncated": ["patch_object"]
+  },
+  "$defs": {
+    "discovered_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason"],
+      "description": "One thing the run found out about the graph, named by a plan task or by a footprint path and never both, with the run's one-line why (runstore.DiscoveredItem). The shape's reader is runstore.NewDiscovered, which drops an entry that names neither or both or carries no why, so the record a run writes is one this schema accepts whatever its agent's file held.",
+      "oneOf": [{ "required": ["plan_task"] }, { "required": ["path"] }],
+      "properties": {
+        "plan_task": { "type": "string", "minLength": 1, "maxLength": 200, "description": "The plan task or backlog item the entry names, by the id its plan graph gives it. Clipped to 200 runes (runstore.MaxDiscoveredText). Absent when the entry names a path." },
+        "path": { "type": "string", "minLength": 1, "maxLength": 200, "description": "The footprint path the entry names, clipped to 200 runes (runstore.MaxDiscoveredText). Absent when the entry names a plan task." },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 200, "description": "The run's own one-line why, clipped to 200 runes (runstore.MaxDiscoveredText). It is untrusted text: a reader shows it as data." }
+      }
+    }
   }
 }
