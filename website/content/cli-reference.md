@@ -6182,7 +6182,17 @@ This command has no subcommands.
 
 List the allow-list and the repositories that have run here
 
-Usage: `fugaro project repos ls`
+One row per repository — the ones this machine's config holds and the
+concrete names the published allow-list admits — with the image its job runs,
+its workflows, its Claude accounts, whether the allow-list admits it and
+whether this machine's config holds it; then the published allow_repos with
+the source of each entry; then the repositories that have run here, which is
+a reading of what has run and never of what is enrolled.
+
+Nothing is written, and `add`/`rm` are the only commands that enroll.
+--json prints the same answer as one versioned document.
+
+Usage: `fugaro project repos ls [--json]`
 
 Flags:
 
@@ -6191,6 +6201,7 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 

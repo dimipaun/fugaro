@@ -442,6 +442,31 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(managedStatusRetirements{}),
 		reflect.TypeOf(localcfg.UpdateProject{}),
 		reflect.TypeOf(localcfg.UpdateRetirement{}),
+		// §6.26's shapes (the repos-management plan's RE2, D2409/D2410): the
+		// listing's own document, the enrolment view it embeds and every shape
+		// under that view — the row, the workflow, the two halves of a row's
+		// enrolment, the allow-list, what has run here and this machine's own
+		// half. They are one set and serve both documents of the group: RE1's
+		// `status` prints the same view under a version of its own.
+		//
+		// This file is outside RE2's own file list -- the task names five, and
+		// this is not one of them -- and had to change with it: the two
+		// struct-derived checks here are what make the section a contract
+		// rather than a description, and a section whose shape is not listed
+		// here is one neither of them reads.
+		reflect.TypeOf(reposLsDoc{}),
+		reflect.TypeOf(reposView{}),
+		reflect.TypeOf(reposViewRepo{}),
+		reflect.TypeOf(reposViewWorkflow{}),
+		reflect.TypeOf(reposViewRepoPublished{}),
+		reflect.TypeOf(reposViewRepoLocal{}),
+		reflect.TypeOf(reposViewAllow{}),
+		reflect.TypeOf(reposViewSeen{}),
+		reflect.TypeOf(reposViewSeenRepo{}),
+		reflect.TypeOf(reposViewLocal{}),
+		reflect.TypeOf(reposViewNamed{}),
+		reflect.TypeOf(reposViewCredentials{}),
+		reflect.TypeOf(reposViewCredential{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command:
 		// ee/coordinator/cli/console_contract_test.go pins them against the
 		// tagged tree, which is the tree that still serves the console.
@@ -746,6 +771,25 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(securityPathsDoc{}), reflect.TypeOf(securityListDoc{}),
 		reflect.TypeOf(securityPattern{}), reflect.TypeOf(securityPathAnswer{}),
 		reflect.TypeOf(securityMatch{}),
+		// §6.26's shapes, the same set as the test above (the repos-management
+		// plan's RE2, D2409/D2410): the `ls` document and the enrolment view
+		// under it. They are here for this test's own reason — a field table
+		// that names a key no shape carries is a field invented rather than
+		// read — and the view is listed whole because a reader outside this
+		// binary builds against all of it.
+		reflect.TypeOf(reposLsDoc{}),
+		reflect.TypeOf(reposView{}),
+		reflect.TypeOf(reposViewRepo{}),
+		reflect.TypeOf(reposViewWorkflow{}),
+		reflect.TypeOf(reposViewRepoPublished{}),
+		reflect.TypeOf(reposViewRepoLocal{}),
+		reflect.TypeOf(reposViewAllow{}),
+		reflect.TypeOf(reposViewSeen{}),
+		reflect.TypeOf(reposViewSeenRepo{}),
+		reflect.TypeOf(reposViewLocal{}),
+		reflect.TypeOf(reposViewNamed{}),
+		reflect.TypeOf(reposViewCredentials{}),
+		reflect.TypeOf(reposViewCredential{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command,
 		// as in the test above.
 	}
@@ -1102,6 +1146,15 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	// (D1514 defers the screen) — but the document describes its two flags, so
 	// they are checked against this constructor like any other command's.
 	"security paths": newSecurityPathsCmd,
+	// §6.26 documents the group's listing (the repos-management plan's RE2,
+	// D2409/D2410): one versioned enrolment document, whose rows
+	// are the repositories this machine's config holds and the concrete names
+	// the published allow-list admits, with the allow-list and what has run
+	// kept apart from them. Its console row in §5.1 is that plan's RE5 and not
+	// this task's (D2413), so the console does not spawn it yet — but the
+	// document describes its flags, so they are checked against this
+	// constructor like any other command's.
+	"project repos ls": newProjectReposLsCmd,
 }
 
 // TestDocsDesktopConsoleContractNamesOnlyRealFlags: every --flag the document

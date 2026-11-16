@@ -3580,6 +3580,160 @@ three arguments and nothing that stands in for them.
 subtree, no token and no code. The move adds nothing to that list and nothing to
 the document — the request's `kind` is the only trace of which write it was.
 
+### 6.26 `fugaro project repos ls --json` — one row per repository, the allow-list and what has run
+
+**Command:** `internal/cli/project_repos_ls.go` `newProjectReposLsCmd` /
+`runProjectReposLs`, with the document built as `reposLsDoc`. The shape is
+**not** built here: it is the enrolment view's, `internal/cli/repos_view.go`
+`reposView`, and `ls` renders it (D2409, D2410). One read answers "what is this
+repository made of" and `ls`, `status` and `add` are all built from it, so the
+two documents the group prints are one view under two versions rather than two
+derivations that drift. Cited by symbol, not by line, for §6.11's reason.
+
+**The command is read-only, and its gate is the group's read gate** (D2414):
+`accessGateProjectRead` with `ActionViewProject`, taken after the cloud is
+opened and before anything is read. Neither the text listing nor the document
+writes a cloud object, and `add`/`rm` are the only commands that enroll.
+
+**The document is one object, and it carries a version** because it is a new
+wire format: a shape that grows a member under a reader this repository does not
+control is the drift the compatibility rule above exists to prevent.
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `version` | int | never | never | the document's own version, `1` (`reposLsDocVersion`). It belongs to the document and not to the view: the group's `status` document prints the same view under a version of its own, and a reader compares this against the shape it knows before it draws a row |
+| `project` | string | never | never | the installation the read was aimed at, as its config spells it. There is no state beside it: a project this command could not resolve is a failure with no document, not a member saying so |
+| `repos` | array | never | never | one row per repository, in canonical-name order, and the row table below. **`[]` is a true answer** — this machine's config holds no repository and no concrete name admits one — and never null |
+| `allow` | object | never | never | the published `allow_repos` with the generation it was read at, and the state of a read that did not answer; the table below |
+| `seen` | object | never | never | what has run here, **a member of its own and never a column of a row**: the table below |
+| `local` | object | never | never | this machine's own config's half; the table below |
+| `named` | object | **always** | never | never present in this document, and its absence is the command's argv: `ls` names no repository, so the view is built without one. The member exists for the group's `status`, which takes `[REPO]` and prints that repository's own name, whether anything `enrolled` it, and the `state` of an enrolment that could not be decided; a reader of this document never sees it |
+| `credentials` | object | **always** | never | never present here, for the reason the row table's own `credentials` member gives below: the credential rows are read for the one repository a caller named, and this command names none |
+
+**A row is one repository, and its two enrolment halves are two members and
+never one boolean** (D2409): a repository the allow-list admits that this machine
+has never configured is a different state from one configured here that the list
+does not admit — the first runs, the second does not — and a single `enrolled`
+figure would draw them the same.
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `canonical` | string | never | never | the repository's canonical name, `provider/owner/name`. The rows are this machine's config's repositories and the concrete names the published allow-list admits: a pattern (`github/acme/*`) is not a row — it names no repository, it admits them — and neither is a repository that appears only in `seen` |
+| `provider` | string | never | never | the git provider kind the name carries (`github`, `bitbucket`). It is read off the canonical name's own first segment |
+| `base_branch` | string | never | never | the branch this repository's runs start from, resolved through `config.EffectiveBaseBranch` in the order a launch takes: the working directory's checkout where its `fugaro.yaml` writes one, else this machine's own entry, else the project's (this installation's top-level one, else the published node's), else `main`. **Never `""`**: a repository no layer names is one whose runs start from `main`, which is what a launch of it resolves |
+| `workflows` | array | never | never | the repository's workflows, each with the catalog entry its job runs; the table below. `[]` is a true answer — a repository nothing states a workflow for — and never null |
+| `image_entry` | string | never | never | the catalog entry the repository's job runs, and `""` when its image is not a catalog entry's at all: a `checkout: clone` job runs the installation's base image and a `checkout: shared` job the shared layer image, and a resolution the resolver refused has no entry to name. The `""` is therefore a fact about the job and **not** a read that did not answer; `image_source` is what tells the two apart |
+| `image_source` | string | never | never | which answer chose the entry, from the closed set below |
+| `claude_accounts` | array | never | never | the accounts this repository's own runs may be served by, as this machine's config records them. `[]` is a true answer — this machine records none — and never null; `local.present` is the member that says why it records none |
+| `published` | object | never | never | the allow-list's half; the table below |
+| `local` | object | never | never | this machine's half; the table below |
+| `credentials` | object | **always** | never | absent on every row here: the credential rows are read per repository and only for the one a caller named (a Secret Manager call each), and this command names none. The member is not null and not `[]` — it is not in the document. Its own shape is the credential container's: a logical `name`, the container's `id`, whether it holds an `enabled` version and the `age_days` of the newest one — presence, a name and an age, and never a value (D2415) |
+
+**`image_source` is the view's own vocabulary, not the resolver's** (D2409),
+because the resolver's `Source` answers one word for three different reasons and
+the question an operator asks of their own file is *which* of the three it was.
+The set is exactly these seven, and no other value appears:
+`workflow` (the workflow's own catalog reference — its `image_name:`, or the
+tags its `needs:` states), `map` (the project's effective image map, D1906),
+`default` (the catalog's default entry, which is what a repository that names
+nothing runs), `repo` (the image this project builds for the repository, which
+is what a repository that names none of the first three runs), `base` and
+`shared` (the two checkout kinds whose job runs the installation's own image and
+for which the selection decides nothing), and `unresolved` (no source at all:
+the resolver refused this workflow's image, and the sentence saying why is that
+workflow's `state`).
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `name` | string | never | never | the workflow's name, as the repository states it |
+| `entry` | string | never | never | the catalog entry this workflow's job runs, and `""` when the resolution was refused — the row-level `image_entry`'s rule, per workflow |
+| `source` | string | never | never | which answer chose it, from the same set of seven. A repository whose workflows disagree is a state these per-workflow members carry, where the row's `image_source` is the summary a listing has room for: the repository's first workflow by name where it states any, and the project's own answer for the repository where it states none |
+| `warnings` | array | **yes** | never | the resolver's own deploy-time sentences about this workflow's image (D1146, D1900), in order. **Absent when there are none**, and never `[]`: the member is the resolver's, and an empty list would be a claim it did not make. Bounded text, sanitised by the resolver |
+| `state` | string | **yes** | never | the sentence for a resolution the resolver **refused**, and absent for one it answered: a pin the catalog does not hold and a docker-tagged entry on a backend with no daemon are both refusals, and a refused resolution has no entry to name. **Absent and not `""`** — a zero here would read as a workflow that runs nothing |
+
+**`published` and `local` are the two halves of the enrolment, and each names
+its own subject.**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `admitted` | bool | never | never | whether any entry of the published `allow_repos` admits this repository — by naming it, or as a pattern that matches it (`github/acme/*` admits `github/acme/app`). A document that carried only this member would draw "admitted by name" and "admitted by the project's wildcard" as one figure |
+| `pattern` | string | never | never | the entry that admits it: the repository's own canonical name where the list names it, and the wildcard entry otherwise. `""` when nothing admits it, which is what `admitted: false` says — the repository’s own entry wins over a pattern that also admits it, so this member does not depend on the order the list happens to hold |
+| `present` | bool | never | never | whether this machine's project config holds a `repos:` entry for the repository. It is the LOCAL half and is about this machine, never about the project: the same document read on another operator's machine has the same `published` and a different `local` |
+| `key` | string | never | never | the `repos:` key this machine holds the repository under — the operator's own spelling (`acme/app`), and **not** the canonical name: the allow-list is canonical and this file is not. `""` when `present` is false |
+
+**`allow` is the published list, the generation it was read at, and the state of
+a read that did not answer.**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `entries` | array | never | never | the published `allow_repos` as the node holds it, patterns included, in the node's own order. **`[]` with `state: ""` is a published policy that admits nothing** — a list that was read — and never null |
+| `generation` | string | never | never | the node's ETag as the read returned it, and `""` when there was no node to read. It is the generation a publisher compares against before it writes (D854), so a reader can tell a list that moved since it was printed |
+| `state` | string | never | never | the sentence for a read that **did not answer** — no policy is published for the project, or the database refused the read — and `""` for one that did. **It is the only thing that tells an unread list from an empty one**, and a reader that drew `entries: []` without it would report a read that failed as a project that admits nothing. The sentences are the view's own (`reposViewAllowOf`), and the text listing prints the same one under `allow_repos` |
+
+**A node that ANSWERED and that this build refuses is not a state, and it is not
+in this document: the command fails.** An unknown top-level key and a version
+this binary does not read are refusals every CLI reader of the node makes
+(`refuseUnknownPolicyKeys`; `publishedPolicyOf` for a writer's posture), and a
+document that carried the refusal as a sentence would be the one reader acting
+on the half of the policy that decoded. So `ls --json` exits non-zero and prints
+nothing at all, exactly as the text form does.
+
+**`seen` is what has RUN here, and it is never merged into `repos`** (D2409). A
+repository seen running that the allow-list no longer admits would read as
+enrolled, and one admitted that has never run would read as unenrolled — the two
+misreadings the separation exists for. It keeps its own header and its own
+bounded rendering in the text form for the same reason.
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `entries` | array | never | never | one entry per repository that has run here, in name order; the table below. `[]` is "no run of any repository has been recorded here", and never null |
+| `notes` | array | never | never | what one of the two sources could not answer — a project with no Firebase backend, a database with no history mark. They are **not** a failure: the allow-list is read either way, and a note is what keeps an empty list from reading as "nothing has ever run here". Bounded text; `[]` and never null when both sources answered |
+| `state` | string | never | never | the sentence for a read that did not answer **at all**, and `""` for one that did. A read that did not answer is not carried here as a shorter list: **this command fails closed on it** — it prints nothing and exits non-zero, in both forms, because the seen list is drawn as the whole of what has run here and a listing of the part of that read which answered is a shorter history drawn as the complete one (`docs/project-layer.md` §7). The state is `status`'s to print; `ls` refuses it |
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `name` | string | never | never | the canonical name when this machine's config names the repository, and the storage slug otherwise: a slug is a hash of the provider and the canonical name (`task.Slug`) and cannot be turned back into one |
+| `provider` | string | never | never | the provider the name carries, and `""` for a slug: nothing durable records which provider a slug was hashed from |
+| `sources` | array | never | never | the durable sources that recorded a run of it. **Where, never when**: the values are the two the listing reads, `the runs bucket` (the bucket's `runs/<slug>/` prefixes, `runstore.ListSlugs`) and `spendDaily` (Firestore's daily records) — the same two strings `seenNote` prints in the text form — and an entry that both sources hold carries both. It is never `[]`: an entry with no source would read as one that was never read from anywhere |
+
+**There is no window over the `seen` list, and no member may be one** (D2409,
+D2410). The list's two sources are not one window: the runs bucket's
+`runs/<slug>/` prefixes are listed with **no window at all** — `seenWindowDays`
+bounds a query rather than the history, and a repository whose runs are older
+than it is still named by the bucket — and only the `spendDaily` half is read
+over `seenWindowDays`. A window-length member beside the list would describe
+both halves at once, so it would label a runs-bucket entry older than the window
+as seen inside it. `sources` is what the document carries instead, and the
+contract test pins the `seen` object's members as an exact set so no such member
+can arrive unnoticed.
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `repos` | array | never | never | the canonical names this machine's project config holds, in name order. **`[]` is a true answer** — this machine's config holds nothing — and never null |
+| `state` | string | never | never | the sentence for a config whose entries **could not all be read as canonical names**, and `""` when every one was. An entry recorded without a provider is the case: its provider is the checkout's `fugaro.yaml` to decide, and a read that listed the rest silently would draw a machine that does not hold the repository (`reposViewLocalOf`) |
+
+**Exit status.** Zero for a listing, whether or not a member carries a state
+sentence — a policy nobody could read and a history nobody could read are
+answers, and the document says so. Non-zero, with **no document and no listing
+at all**, for the three cases the read cannot be made into one: the project
+cannot be resolved or the cloud cannot be opened; the read of what has run here
+was **refused** (a config pointed at another project's bucket or Firebase
+project — the identity checks of `checkCloudName` and `spendRepos` — or a
+`bucket_url` this machine cannot reach without credentials); and the published
+node answered with a key or a version this build refuses. Nothing is printed
+before the refusal, in either form: a listing that printed half of itself and
+then refused would read as one that had finished.
+
+**Flags** (`newProjectReposLsCmd`): `--json`, and the aiming pair `--project
+<name>` and `--config <path>` every project read carries; `--gcp-project <id>`
+and `--region <r>` come with `addCloudFlags` and are not part of a console's
+argv. The command takes no argument and writes nothing.
+
+**The console's operation allow-list gains nothing here** (D2413). It is the
+group's read and not a console row yet: the design's §5.1 table and
+`CONSOLE_OPERATIONS` take the two read verbs once both documents exist, which is
+a later task of the same plan.
+
 ## 7. The CLI gaps, settled against the code
 
 The console ships **without any of these** and must work, visibly degraded
