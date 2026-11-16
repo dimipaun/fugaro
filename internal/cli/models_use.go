@@ -165,6 +165,17 @@ func runModelsUse(cmd *cobra.Command, args []string, o *modelsUseOptions) error 
 		fmt.Fprintf(cmd.OutOrStdout(), "%s: %s already reads %s\n", target.path, base, config.CodeSpan(id))
 		return nil
 	}
+	// The role the write needs, asked once the document has answered that there
+	// is a write to make: the layer the write lands in is the surface, so a
+	// project-layer write is the project's own guardrails and takes admin at
+	// project scope, while a repository's file takes admin at a scope covering
+	// it (settingsAccessWrite, finding F19). It stands where `settings set`
+	// asks it, before the refusals that read the edited document, so the answer
+	// a caller without the role gets is about the role and not about the value.
+	command := modelsUseCommand(target, scope, base, id)
+	if err := settingsAccessWrite(ctx, lc, opts, target, command); err != nil {
+		return err
+	}
 	if err := settingsReparse(target, next); err != nil {
 		return err
 	}
@@ -185,7 +196,7 @@ func runModelsUse(cmd *cobra.Command, args []string, o *modelsUseOptions) error 
 		New:     next,
 		What:    modelsUseWhat(target, scope, kind, base, id),
 		Kind:    target.kind,
-		Command: modelsUseCommand(target, scope, base, id),
+		Command: command,
 	}
 	// layer.claude_models is a widening (D2617): it hands a route the ability to
 	// serve a Claude model to every repository that route lists, which is the
