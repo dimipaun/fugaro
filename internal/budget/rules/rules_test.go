@@ -2393,11 +2393,14 @@ func isNewEscalationReadPath(p string) bool {
 // job's alone — not the phone's `mu`, not a run's `fs`/`fr`, not a pairing
 // session's `pu`.
 //
-// Hand mutation this fails on: moving the grant up one node (the widening this
-// test exists for — a read on `state` or on `work_items` reaches every work
-// item's every field), granting the block to `USER` or to a run token, adding
-// a write beside the read, or writing a rule for the reports job onto a
-// sibling under /orchestrator.
+// Hand mutation this fails on: dropping the `rj != null` conjunct from the
+// claim (the guard asserted below, which is what keeps the rule shut where
+// /fugaro/project is absent — the golden is the only other test that notices,
+// and its message tells a reader to regenerate it), moving the grant up one
+// node (the widening this test exists for — a read on `state` or on
+// `work_items` reaches every work item's every field), granting the block to
+// `USER` or to a run token, adding a write beside the read, or writing a rule
+// for the reports job onto a sibling under /orchestrator.
 func TestRulesReportsJobReadsEscalationOnly(t *testing.T) {
 	got := map[string]map[string]any{}
 	walk(rulesTree(t), nil, func(path []string, attrs map[string]any) {
@@ -2437,11 +2440,21 @@ func TestRulesReportsJobReadsEscalationOnly(t *testing.T) {
 		t.Errorf("/%s = %v, want the `USER` read (%q) and the false write O2 shipped", PathOrchestrator, attrs, userClaim)
 	}
 
+	// The null guard is asserted as a conjunct of its own rather than left to
+	// the golden, whose message tells a reader to regenerate it. Without it the
+	// rule is fail-open: `/fugaro/project` is absent until an installation
+	// writes it (the generation-0 state check 82 documents), and the equality
+	// alone then compares null to null and admits any signed-in client to every
+	// work item's escalation block.
+	if !strings.Contains(reportsJobClaim, "auth.token.rj != null && ") {
+		t.Errorf("the reports job's read is %q, want the `auth.token.rj != null` conjunct before the project equality: without it the block is readable by any signed-in client wherever /fugaro/project is absent", reportsJobClaim)
+	}
+
 	// The claim names no other identity. Every one of these is a token some
 	// client of this installation holds, and the ledger is not theirs.
 	for _, claim := range []string{
 		"auth.token.mu", "auth.token.mc", "auth.token.pu",
-		"auth.token.fs", "auth.token.fr", "auth.token.rb",
+		"auth.token.fs", "auth.token.fr", "auth.token.fp", "auth.token.rb",
 	} {
 		if strings.Contains(reportsJobClaim, claim) {
 			t.Errorf("the reports job's read names %s: the escalation block is granted to the reports job's own claim and to no identity that already exists", claim)

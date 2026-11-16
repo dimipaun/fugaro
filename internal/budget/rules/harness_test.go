@@ -250,13 +250,13 @@ func (h *harness) client(a rtdb.Auth) *rtdb.Client {
 
 // claims of a token. Zero fields take the usual values.
 //
-// The first four are a run's; the rest are the mailbox identities (mobile plan
-// D112, D113b, D165), which are what the rules *read* and never mint. A token
-// normally carries none of them, and that is the point of keeping them separate
-// fields rather than a mode: a phone's token is one whose mu names an account,
-// a consumer's is one whose mc does, a pairing session's is one whose pu names
-// the one-shot pairing uid, and a plain signed-in user's is one with none of
-// them — admitted nowhere.
+// The first four are a run's; the mailbox identities (mobile plan D112, D113b,
+// D165) are what the rules *read* and never mint; rj is the reports job's
+// (E12, F27). A token normally carries none of them, and that is the point of
+// keeping them separate fields rather than a mode: a phone's token is one whose
+// mu names an account, a consumer's is one whose mc does, a pairing session's
+// is one whose pu names the one-shot pairing uid, and a plain signed-in user's
+// is one with none of them — admitted nowhere.
 type claims struct {
 	slug, run string
 	fx        int64  // deadline in ms; 0 = an hour from now
@@ -265,6 +265,7 @@ type claims struct {
 	mu        string // "" = no mu claim; otherwise the mailbox the token owns
 	mc        string // "" = no mc claim; otherwise the mailbox it serves
 	pu        string // "" = no pu claim; otherwise the pairing uid it names
+	rj        string // "" = no rj claim; otherwise the installation it was minted for
 	uid       string // "" = derived (mu, pu, else r~slug~run); the raw uid
 }
 
@@ -306,6 +307,9 @@ func (c claims) token() string {
 	}
 	if c.pu != "" {
 		m["pu"] = c.pu
+	}
+	if c.rj != "" {
+		m["rj"] = c.rj
 	}
 	return unsignedToken(m)
 }
@@ -371,6 +375,18 @@ func (h *harness) pairing(uid string) *rtdb.Client { return h.as(claims{pu: uid,
 // (D113b): an mc claim and no mailbox of its own, and no fp for the same
 // reason.
 func (h *harness) consumer(mb string) *rtdb.Client { return h.as(claims{mc: mb, fp: "-"}) }
+
+// reportsJob is the reports job's client (E12, F27): a custom-token claim
+// naming the installation the token was minted for, which is what the
+// escalation block's read compares this database's own /fugaro/project against.
+//
+// fp is "-" because this token is no run's: a token carrying fp satisfies TOKEN
+// and reaches the project's families as a run does, which would make a read
+// case pass for a reason that has nothing to do with the claim under test —
+// the same reason the phone's and the consumer's carry none.
+func (h *harness) reportsJob(installation string) *rtdb.Client {
+	return h.as(claims{rj: installation, fp: "-", uid: "reports-job"})
+}
 
 // aMac is a well-formed tag: 64 lowercase hex characters, the shape both the
 // shared schema and the rules require of every message and of the heartbeat

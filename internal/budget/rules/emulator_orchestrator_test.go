@@ -52,6 +52,7 @@ package rules
 
 import (
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -196,6 +197,66 @@ func TestOrchestratorSubtreeIsReadableOnlyBySignedInPeople(t *testing.T) {
 		h.mustReadDenied(h.consumer(mbAlice), p)
 		h.mustReadDenied(h.pairing(pairUid), p)
 	}
+}
+
+// TestOrchestratorReportsJobReadsEscalationOnly: E12's grant (F27), proved
+// against the rules engine rather than against the document alone — the admit
+// case and the refuse cases both, on the path the reports job really reads.
+//
+// The read is granted to a custom-token claim, and the claim's null guard is
+// the difference between the escalation block's read and the whole subtree's:
+// where /fugaro/project is absent, the equality alone compares null to null and
+// admits any signed-in client, which is why the last case deletes the node and
+// demands the refusal of a token that carries no rj claim.
+func TestOrchestratorReportsJobReadsEscalationOnly(t *testing.T) {
+	const (
+		orchItem       = orchState + "/work_items/w1"
+		orchEscalation = orchItem + "/escalation"
+	)
+	h := newHarness(t)
+	h.seed(leased(2 * usd))
+	h.set(orchState, map[string]any{"schemaVersion": 1, "phase": "idle"})
+	h.set(orchItem, map[string]any{"state": "escalated"})
+	h.set(orchEscalation, map[string]any{"rung": 3})
+
+	// The read the design grants, and the node it is granted on: the ledger's
+	// escalation block of a work item, which is where the ladder's record of the
+	// rungs it climbed lives.
+	job := h.reportsJob(projectID)
+	h.mustRead(job, orchEscalation)
+
+	// And nothing else of the database. The work items and the state node above
+	// the block are the widening this test exists for — a read there reaches
+	// every work item's every field — and the caps family is a positive control
+	// of the other kind: a node that holds data and that the identities the
+	// rules do admit read, refused to this one.
+	for _, p := range []string{
+		PathOrchestrator,
+		PathOrchestrator + "/" + orchID,
+		orchState,
+		orchState + "/work_items",
+		orchItem,
+		budget.PathCapsGlobal,
+	} {
+		h.mustReadDenied(job, p)
+	}
+
+	// The claim is this installation's: a token minted for another one is
+	// refused, and so is a client that carries no rj claim at all — this is the
+	// state a token is in before the job's mint exists (E12 ships the grant and
+	// not the mint), and it is refused for the guard's reason and not the
+	// equality's.
+	h.mustReadDenied(h.reportsJob("another-installation"), orchEscalation)
+	h.mustReadDenied(h.as(claims{uid: "no-claims", fp: "-"}), orchEscalation)
+
+	// And the guard itself, at the one state where it is the only thing between
+	// a signed-in client and the block: an installation whose /fugaro/project
+	// was never written (the generation-0 state check 82 documents), where a
+	// claim-less equality is null == null. Both a client with no rj and the
+	// reports job's own token are refused there.
+	h.adminDo(http.MethodDelete, "fugaro/project", nil)
+	h.mustReadDenied(h.as(claims{uid: "no-claims", fp: "-"}), orchEscalation)
+	h.mustReadDenied(h.reportsJob(projectID), orchEscalation)
 }
 
 // TestOrchestratorRefusesEveryTokenWriter: the write is `false` for every
