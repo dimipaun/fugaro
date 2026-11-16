@@ -900,8 +900,9 @@ func triageAccountNode(account string) string {
 //
 //   - No judge call is made. The script's own step for it is not there because
 //     the scripted agent fails a call no step answers, which is what the run
-//     did before this change: on the installation this exists for, that call
-//     came back `Invalid API key` and no verdict, 119 rounds out of 120.
+//     used to do here in a different way: the gateway refuses the call for the
+//     key the run does not hold, and that refusal is a failed stage that ended
+//     the run (TestTriageStageFailureEndsTheRun).
 //   - The record says so: the round is Skipped, is not Failed, and carries the
 //     one cause that names the fix (runstore.TriageCauseNoAccount). The
 //     fail-safe settles the round — every finding the mode's table blocks

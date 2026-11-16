@@ -91,20 +91,28 @@ account the published policy has to name, and a policy that names none for it
 leaves the stage with nothing to run on ([mixed
 credentials](design/mixed-credentials.md)) — and when the model the stage would
 run is one only Anthropic serves while the run's gateway is the api-key one
-holding no Anthropic key, the call could only come back as an auth failure with
-no verdict behind it. So the run makes no call, records the round as **skipped**
-with the same one-line **`cause`** a failure carries (in `skipped`, never
-`failed`: nothing failed, the run chose not to ask, and a reader tells the two
-apart by which field is set), and fails safe exactly as a failure does: **every
-finding the table blocks blocks**, so no decision changes. It is shown in the
-same three places a failed round is, with the same wording the failures use: an
-`ERROR` log line naming the cause; the status section's line above the stage
+holding no Anthropic key, the gateway refuses the call itself, for the key it
+does not hold, before the request reaches any service. **That refusal used to
+end the run**: it is a stage failure, so the triage stage failed, the review
+loop behind it had already been spent, and no triage round was written at all.
+Now the run makes no call, records the round as **skipped** with the same
+one-line **`cause`** a failure carries (in `skipped`, never `failed`: nothing
+failed, the run chose not to ask, and a reader tells the two apart by which
+field is set), and fails safe exactly as a failure does: **every finding the
+table blocks blocks**, so the fix round and the review after it work on what
+they were already going to be handed. A run in that shape finishes that way
+instead of stopping, which is the change it is for. It is shown in the same
+places a failed round is, with the same wording the failures use: an `ERROR` log
+line naming the cause; the status section's line above the stage
 table (`triage did not run for round N: …`); that round's row reading
 `triage (skipped: no account)` rather than a duration, because no call ran;
 and `fugaro diagnose`'s round summaries and its per-round lines, marked
-`SKIPPED` with the cause. A record written before the field existed reads
-`skipped` false, which is right: those rounds made the doomed call and are
-failed ones.
+`SKIPPED` with the cause. Only this shape is skipped: a run that holds an
+Anthropic key, or whose stage an account serves, makes the call as before, so a
+round whose cause is a service's `Invalid API key` is a failed one and not a
+skip. A record written before the field existed reads `skipped` false, which is
+right: such a round answered or failed, or the run ended at the refusal above
+without a round to record.
 
 ## The floor
 

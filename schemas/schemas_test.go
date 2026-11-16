@@ -1199,11 +1199,11 @@ func TestResultSchemaAcceptsTriage(t *testing.T) {
 		// rejects.
 		{Round: 2, Mode: rigor.Pro, Level: policy.LevelL3, Failed: true, Cause: "Invalid API key · Fix external API key",
 			Entries: []runstore.TriageEntry{}},
-		// And the round the run did not ask at all, whose call could only have
-		// come back as an auth failure: it carries a cause the same way and
-		// stays out of `failed`, because nothing failed — the run chose not to
-		// ask. Marshalled from the record, so a `skipped` the schema does not
-		// carry is an unknown key this test rejects.
+		// And the round the run did not ask at all, whose call the gateway would
+		// have refused for the key the run does not hold: it carries a cause the
+		// same way and stays out of `failed`, because nothing failed — the run
+		// chose not to ask. Marshalled from the record, so a `skipped` the schema
+		// does not carry is an unknown key this test rejects.
 		{Round: 3, Mode: rigor.Pro, Level: policy.LevelL3, Skipped: true, Cause: runstore.TriageCauseNoAccount,
 			Entries: []runstore.TriageEntry{}},
 	})

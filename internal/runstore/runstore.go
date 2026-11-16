@@ -769,10 +769,10 @@ const (
 	// than a failed one (TriageRound.Skipped): the stage resolved to no Claude
 	// account and the model it would run is one only Anthropic serves, so the
 	// run's gateway would refuse the call for the key it does not hold. The
-	// call is not made — a round that made it failed every time it ran, which
-	// is the whole reason the skip exists — and the fail-safe stands in for it
-	// exactly as it does for a failure: every finding the mode's table blocks
-	// blocks (D1846), so no decision changes.
+	// call is not made — a run in that shape used to end at the judge's own
+	// stage refusal, with no round recorded at all, which is the whole reason
+	// the skip exists — and the fail-safe stands in for it exactly as it does
+	// for a failure: every finding the mode's table blocks blocks (D1846).
 	//
 	// It names the fix the reader can act on and not the diagnosis alone: the
 	// account reaches the stage only through the policy's stage key or its
@@ -832,9 +832,10 @@ type TriageRound struct {
 	// "the judge was never asked" has to read the two off different members,
 	// and the fail-safe stands in for both (TriageCauseNoAccount).
 	//
-	// It is the field a record written before it existed carries false on, and
-	// that reading is the one such a record always had: those rounds made the
-	// doomed call and answered with a failure, which is Failed's own fact.
+	// It is additive, so a record written before it existed reads false here,
+	// and that is the reading such a record always had: the flag did not exist,
+	// and a round it describes either answered or failed — or the run ended at
+	// the judge's own stage refusal before any round was written.
 	Skipped bool `json:"skipped,omitempty"`
 	// Cause is why a round failed or was skipped, one line, and empty for a
 	// round that neither. It is the call's own first line where the call

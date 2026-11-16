@@ -120,18 +120,29 @@ func (r *run) triageOn() bool {
 //     the condition internal/gateway refuses such a call on (forward.go's
 //     missingAnthropicKey).
 //
-// All four together are the shape of an installation whose coder is on a
-// provider route: one of its runs buys a Claude model the gateway has no key
-// behind, and the endpoint answers `Invalid API key` — a *successful* result
-// that carries no verdict, so the round failed every time it ran. The skip
-// stops the doomed call; what the round decides is unchanged, because the
-// fail-safe settles it exactly as it settles a failure (D1846).
+// All four together are the shape of a keyless api-key run whose triage model
+// nothing routes: the gateway refuses the call itself, before it reaches any
+// service, and r.stage turns that refusal into a failed stage. So the round
+// this clause stops was never a round with a verdict in it: the run ended at
+// the judge's own stage, with the review loop behind it already spent and no
+// triage round written at all. Skipping changes that: the round is recorded,
+// the fail-safe blocks what the mode's table blocks (D1846), and the run
+// carries on to its fix round and its next review on the findings it was
+// already going to be handed. That is a real change to what such a run does —
+// it fails safe and finishes instead of ending — and the record's own
+// `skipped` flag is where a reader sees it happened.
+//
+// The clause covers that one shape and no other. A run that holds a key, or one
+// whose stage an account serves, returns false above and makes the call as
+// before, whatever answers: the rounds whose cause is a service's `Invalid API
+// key` reached a service, so this is not the clause that explains them.
 //
 // The two cases this deliberately does not cover are outside the clause: with
 // the gateway off every call goes straight to Anthropic on the run's own key,
 // which agent.BuildEnv refuses the run over when it is missing rather than
-// handing the agent a doomed one; and a stage the run's own account serves
-// goes to Anthropic on that account's token, where the run's key is nothing.
+// handing the agent a call it cannot make; and a stage the run's own account
+// serves goes to Anthropic on that account's token, where the run's key is
+// nothing.
 func (r *run) triageUnserved() bool {
 	if r.stageAccount(stageTriage) != "" {
 		return false
@@ -248,12 +259,13 @@ func (r *run) triageRound(ctx context.Context, round int, level policy.Level, v 
 	mode := r.reachedRigor()
 	in, findings := triageInputs(v.Findings)
 	// A round whose call the run knows it cannot serve is skipped instead of
-	// asked (triageUnserved): the call is not made, the round says so with the
-	// one cause that names the fix, and the fail-safe settles it exactly as it
-	// settles a failure — every finding the mode's table blocks blocks, so the
-	// loop and the fixer are handed what they were handed before (D1846).
-	// Nothing is bought by asking: on the installation this exists for, every
-	// round that made the call came back `Invalid API key` and no verdict.
+	// asked (triageUnserved): the gateway would refuse the call for the key the
+	// run does not hold, and a refused call is a failed stage that ends the run
+	// — so asking buys no verdict and loses the rest of the loop. The round is
+	// recorded instead, says so with the one cause that names the fix, and the
+	// fail-safe settles it exactly as it settles a failure: every finding the
+	// mode's table blocks blocks, so the fixer and the next review are handed
+	// what they would have been handed (D1846).
 	if r.triageUnserved() {
 		r.d.Log.Error("the triage round was skipped: no account serves the stage and the run's gateway holds no Anthropic key for its model, so every finding the mode's table blocks blocks",
 			"round", round, "cause", runstore.TriageCauseNoAccount)
@@ -332,11 +344,11 @@ func (r *run) triageRound(ctx context.Context, round int, level policy.Level, v 
 
 // triageCall is how one round's call went, and it is what the record's round
 // is written from: a round that was answered carries neither flag, one whose
-// call failed or was unreadable carries Failed, and one the run did not make
-// carries Skipped. The two are told apart because they are different facts a
-// reader acts on differently — a credential an installation must fix, against
-// a stage the policy does not serve — and only the record's own members can
-// carry that difference (runstore.TriageRound).
+// call went out and failed or was unreadable carries Failed, and one the run
+// refused to make carries Skipped. The two are told apart because they are
+// different facts a reader acts on differently — a call a service answered
+// badly, against a call this run knew it could not serve at all — and only the
+// record's own members can carry that difference (runstore.TriageRound).
 type triageCall int
 
 const (
