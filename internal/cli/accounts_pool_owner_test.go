@@ -498,9 +498,7 @@ func TestPoolAddClearsARecordedRemoval(t *testing.T) {
 // TestPoolArgvFillsTheSegmentPlaceholder is the registration's own half: a
 // template writes `<1>` where the pool's name goes, because the pool is a list
 // item and the name is the item's key rather than a word the command line
-// repeats, and ArgvFor fills it. It is written against the contract the
-// registry is registered under, and it starts running when CR1 lands: on C1
-// ArgvFor fills the whole key and leaves `<1>` as written.
+// repeats, and ArgvFor fills it from the key the row is asked about.
 func TestPoolArgvFillsTheSegmentPlaceholder(t *testing.T) {
 	for _, tc := range []struct {
 		key, want string
@@ -516,15 +514,7 @@ func TestPoolArgvFillsTheSegmentPlaceholder(t *testing.T) {
 			if !ok {
 				t.Fatalf("%s: no registered writer", tc.key)
 			}
-			// The template keeps `<1>` on both bases; whether ArgvFor fills it
-			// is the question, and it is asked of the filled argv rather than
-			// of the registration.
 			filled := w.ArgvFor(tc.key)
-			for _, word := range filled {
-				if word == "<1>" {
-					t.Skip("needs CR1 (#2842): per-segment argv placeholders")
-				}
-			}
 			if got := strings.Join(filled, " "); got != tc.want {
 				t.Errorf("WriterOf(%s).ArgvFor = %q, want %q", tc.key, got, tc.want)
 			}

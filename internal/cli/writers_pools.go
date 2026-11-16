@@ -17,11 +17,10 @@ import (
 // installation's own config and nothing else, and the node a pool is served
 // from is not this command's to write.
 //
-// The value a template leaves for the caller is written as the literal
-// "<value>" rather than as a constant: that is C1's own spelling of it, and
-// CR1's settings.ValuePlaceholder is the same string. The pool's name in a
-// template is `<1>`, the segment a `*` stands for — filled by ArgvFor once CR1
-// lands, and left as written until then.
+// A template carries the two words ArgvFor fills: settings.ValuePlaceholder
+// where the value the caller supplies goes, and `<1>` where the key's own
+// segment at the pattern's first `*` goes — the pool's name, which is the
+// item's key rather than a word the command line repeats.
 //
 // `pools.*.legacy_open` is deliberately NOT registered. The marker says a pool
 // predates owners and is open to every account of the installation (D1936,
@@ -45,22 +44,22 @@ var accountsPoolWriters = []struct {
 	}},
 	{"pools.*.strategy", settings.Writer{
 		Command: "fugaro accounts pool add",
-		Argv:    []string{"accounts", "pool", "add", "<1>", "--strategy", "<value>"},
+		Argv:    []string{"accounts", "pool", "add", "<1>", "--strategy", settings.ValuePlaceholder},
 		Store:   settings.StoreLocal,
 	}},
 	{"pools.*.members", settings.Writer{
 		Command: "fugaro accounts pool add",
-		Argv:    []string{"accounts", "pool", "add", "<1>", "<value>"},
+		Argv:    []string{"accounts", "pool", "add", "<1>", settings.ValuePlaceholder},
 		Store:   settings.StoreLocal,
 	}},
 	{"pools.*.owner", settings.Writer{
 		Command: "fugaro accounts pool add",
-		Argv:    []string{"accounts", "pool", "add", "<1>", "--owner", "<value>"},
+		Argv:    []string{"accounts", "pool", "add", "<1>", "--owner", settings.ValuePlaceholder},
 		Store:   settings.StoreLocal,
 	}},
 	{"pools.*.allowed_users", settings.Writer{
 		Command: "fugaro accounts pool add",
-		Argv:    []string{"accounts", "pool", "add", "<1>", "--allow-user", "<value>"},
+		Argv:    []string{"accounts", "pool", "add", "<1>", "--allow-user", settings.ValuePlaceholder},
 		Store:   settings.StoreLocal,
 	}},
 	// The removal record a pool's name is written into (F22, D2607). It is not
@@ -70,7 +69,7 @@ var accountsPoolWriters = []struct {
 	// leaves the name of a member to add.
 	{"node_removals.pools", settings.Writer{
 		Command: "fugaro accounts pool rm",
-		Argv:    []string{"accounts", "pool", "rm", "<value>"},
+		Argv:    []string{"accounts", "pool", "rm", settings.ValuePlaceholder},
 		Store:   settings.StoreLocal,
 	}},
 }
