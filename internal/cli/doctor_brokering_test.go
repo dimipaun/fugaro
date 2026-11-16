@@ -2342,6 +2342,13 @@ func TestDoctorBrokeringNamesWhyAnOAuthRepoIsOffTheSwitch(t *testing.T) {
 		if !strings.Contains(cs[0].Fix, "creds set "+config.ClaudeOAuthToken) {
 			t.Errorf("the fix does not name the command that fills the bundle: %q", cs[0].Fix)
 		}
+		// The gateway is not a route for this auth, and the fix must not offer
+		// it as one: an oauth run never starts a gateway (F30), so a line that
+		// said "turn the budget on" would send the operator to a switch that
+		// does nothing for this repository.
+		if strings.Contains(cs[0].Fix, "turn the budget on") || !strings.Contains(cs[0].Fix, "never starts one") {
+			t.Errorf("the fix offers the gateway for an oauth repository: %q", cs[0].Fix)
+		}
 		if checksFail(cs, true) {
 			t.Errorf("the line fails doctor under --strict: %+v", cs)
 		}
@@ -2376,6 +2383,12 @@ func TestDoctorBrokeringNamesBudgetOffForAnAPIKeyRepo(t *testing.T) {
 		if !strings.Contains(cs[0].Problem, want) {
 			t.Errorf("the line does not carry %q: %q", want, cs[0].Problem)
 		}
+	}
+	// The gateway is a route for this auth, and the fix offers it: an api-key
+	// run's key is the gateway's the moment the mode is on, whether or not a
+	// service is deployed.
+	if !strings.Contains(cs[0].Fix, "turn the budget on") || !strings.Contains(cs[0].Fix, "creds set "+config.AnthropicSecret) {
+		t.Errorf("the fix does not offer both routes: %q", cs[0].Fix)
 	}
 	// The mutant this kills is the check that reads the credentials service as
 	// the gateway's replacement rather than as the thing behind it: it reports

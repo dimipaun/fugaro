@@ -1494,20 +1494,33 @@ func doctorModelKeyInAgent(lc *localcfg.Config, rf *resolvedFile, repo string) *
 	case !installed:
 		why = fmt.Sprintf("the installation has no credentials service to hold it, and the switch would need %s in its bundle", needs)
 	default:
-		why = fmt.Sprintf("the credentials service is held off for this repository: the record %s left says its root was applied with the switch off, which is what a bundle holding no %s leaves behind", selfCommand()+" update", needs)
+		why = fmt.Sprintf("the credentials service is held off for this repository: %s records a root as applied with the switch on only where the service's bundle holds %s, and this repository's record does not say it was", selfCommand()+" update --repo", needs)
+	}
+	// The two routes are the auth's own. An api-key run reaches the service
+	// THROUGH the gateway, so turning the budget on holds the key whether or not
+	// a service is deployed, and the service route needs the same mode; an oauth
+	// run never starts a gateway (F30), so the service is the only route there
+	// and the mode is a condition of reaching it rather than a second way out.
+	route := fmt.Sprintf("put the installation's credentials service in front of it (an ordinary %s update deploys it, and its own %s update --repo switches this repository onto it once the budget mode is observe or enforce and the service's bundle holds %s: %s creds set %s)",
+		selfCommand(), selfCommand(), needs, selfCommand(), entries[0])
+	fix := "to take it out of the agent's reach, " + route + " — the gateway is no route of its own, because an oauth run never starts one"
+	if auth == "api-key" {
+		fix = "to take it out of the agent's reach, turn the budget on (budget.mode observe or enforce: the gateway holds the key), or " + route + " — the same mode is what the service is reached through"
 	}
 	return &doctorCheck{ID: "model-key-in-agent", Severity: "info",
 		Problem: fmt.Sprintf("this repository's workflows (%s) run with agent.auth %s, and the model credential reaches the agent's own environment as %s (%s)",
 			strings.Join(printableNames(slices.Sorted(maps.Keys(rf.Cfg.Workflows))), ", "), auth, env, why),
-		Fix: fmt.Sprintf("to take it out of the agent's reach, turn the budget on (budget.mode observe or enforce: the gateway holds the key), or put the installation's credentials service in front of it (an ordinary %s update deploys it, and its own %s update --repo switches this repository onto it once the bundle holds %s: %s creds set %s)",
-			selfCommand(), selfCommand(), needs, selfCommand(), entries[0])}
+		Fix: fix}
 }
 
-// oauthSwitchBundleEntries are the bundle's own document keys for an oauth
+// oauthSwitchBundleEntries are the bundle's own DOCUMENT keys for an oauth
 // repository's runs: one per account infra.WorkflowAccounts gives it — the
 // accounts its jobs exist for, which are the accounts a launch may name — with
-// this machine's aliases resolved first, because the bundle is keyed by the
-// account a name stands for (credentialsBundleServes). The set is never empty:
+// this machine's aliases resolved first, because a name that is an alias would
+// otherwise be held off for an account the bundle does hold
+// (credentialsBundleServes resolves the same way). The spelling is the document
+// key and not the account, because it is what `fugaro creds set` takes and what
+// the service's loader reads back as that account. The set is never empty:
 // AllowedClaudeAccounts always names the default account, which is why the
 // caller may read its first element as a name `fugaro creds set` takes.
 func oauthSwitchBundleEntries(cfg *config.Config, lc *localcfg.Config, repo string) []string {
