@@ -24,26 +24,16 @@ import (
 const day = 24 * time.Hour
 
 // TestPurchaseEventNeedsAValidSignature: §5.2 — the raw body is verified before
-// it is read, and a body whose signature does not verify is dropped without a
-// mint and without a store write.
+// it is read, and a body whose signature does not verify is dropped whole: it is
+// not **stored**, which is the half F16 adds to this rule, because the store is
+// written under Paddle's id and a body a stranger could write there would be the
+// forgery the real delivery is later read as.
 func TestPurchaseEventNeedsAValidSignature(t *testing.T) {
 	f := newFixture(t)
-	event := Event{
-		ID:           "evt-1",
-		Type:         EventPurchase,
-		Mode:         Live,
-		OccurredAt:   f.now,
-		Subscription: "sub-acme.example",
-		Organisation: "acme.example",
-		WorkspaceID:  workspaceID,
-		Email:        buyerAddress("acme.example"),
-		Seats:        5,
-		TermDays:     365,
-	}
-	body, err := json.Marshal(event)
-	if err != nil {
-		t.Fatalf("encoding the event: %v", err)
-	}
+	event := f.claimsOf(purchaseEvent("evt-1", "acme.example", 5, 365))
+	event.OccurredAt = f.now
+	body := paddleBody(t, event)
+
 	for _, tc := range []struct {
 		name   string
 		header string
@@ -61,17 +51,26 @@ func TestPurchaseEventNeedsAValidSignature(t *testing.T) {
 	if got := f.signer.calls; got != 0 {
 		t.Errorf("an unverified event signed %d key(s), want none", got)
 	}
-	if got := len(f.records()); got != 0 {
-		t.Errorf("an unverified event recorded %d key(s), want none", got)
+	if got := f.records(); len(got) != 0 {
+		t.Errorf("an unverified event recorded %d key(s), want none", len(got))
 	}
-	if _, held, _ := f.store.Subscription(context.Background(), "sub-acme.example"); held {
-		t.Error("an unverified event created a subscription, want the body dropped before it is read")
+	if got := f.events(t); len(got) != 0 {
+		t.Errorf("an unverified event left %d stored event(s), want none: the body is read and stored after the signature holds, and never before", len(got))
+	}
+	if _, held, _ := f.svc.origin(context.Background(), "sub-acme.example"); held {
+		t.Error("an unverified event recorded a subscription, want the body dropped before it is read")
 	}
 
-	// The merchant's own signature, and the same event mints.
-	f.deliverRaw(body, signEvent(f.secret, f.now, body))
-	if got := len(f.records()); got != 1 {
-		t.Errorf("the signed event recorded %d key(s), want one", got)
+	// The merchant's own signature, and the same event buys: one entitlement and
+	// no key, because the key is the customer's own binding (D2196).
+	if rec := f.deliverRaw(body, signEvent(f.secret, f.now, body)); rec.Code != http.StatusOK {
+		t.Fatalf("the signed event was answered %d, want 200: %s", rec.Code, rec.Body)
+	}
+	if got := f.entitlements(t); len(got) != 1 {
+		t.Errorf("the signed event granted %d licence(s), want one", len(got))
+	}
+	if got := f.records(); len(got) != 0 {
+		t.Errorf("the signed event recorded %d key(s), want none: a purchase creates an entitlement and never a key (D2196)", len(got))
 	}
 }
 
@@ -117,28 +116,23 @@ func TestPurchaseEventIsIdempotent(t *testing.T) {
 // resurrect a key.
 func TestReplayedOrOutOfOrderEventIsIgnored(t *testing.T) {
 	f := newFixture(t)
-	purchase := Event{
-		ID:           "evt-1",
-		Type:         EventPurchase,
-		Mode:         Live,
-		OccurredAt:   f.now,
-		Subscription: "sub-acme.example",
-		Organisation: "acme.example",
-		WorkspaceID:  workspaceID,
-		Email:        buyerAddress("acme.example"),
-		Seats:        5,
-		TermDays:     365,
+	body := f.boughtEvent(t, purchaseEvent("evt-1", "acme.example", 5, 365))
+	f.bind("acme.example", "sub-acme.example")
+	if got := f.signer.calls; got != 1 {
+		t.Fatalf("the purchase bid its licence to a project and signed %d key(s), want the one the binding mints", got)
 	}
-	f.deliver(purchase)
 	f.advance(day)
 	f.event(Event{ID: "evt-2", Type: EventCancellation, Organisation: "acme.example"})
 	if got := f.signer.calls; got != 1 {
 		t.Fatalf("the purchase and the cancellation signed %d key(s), want the purchase's one: a cancellation stops the reissue and withdraws nothing (§5.3)", got)
 	}
 
-	// The same purchase replayed, and a purchase the merchant never re-sent but
-	// that arrives late with an older instant on it.
-	f.deliver(purchase)
+	// The same purchase replayed — the merchant's own bytes, signed again — and a
+	// purchase the merchant never re-sent but that arrives late with an older
+	// instant on it.
+	if rec := f.deliverRaw(body, signEvent(f.secret, f.now, body)); rec.Code != http.StatusOK {
+		t.Fatalf("the replayed purchase was answered %d, want 200", rec.Code)
+	}
 	f.event(Event{ID: "evt-3", Type: EventPurchase, OccurredAt: f.now.Add(-2 * day), Organisation: "acme.example", Seats: 9, TermDays: 365})
 
 	if got := f.signer.calls; got != 1 {
@@ -470,39 +464,59 @@ func TestAPurchaseThatNamesNoWorkspaceIsRefused(t *testing.T) {
 // path.
 type olderMints struct{ Mints }
 
-// TestAPurchaseThroughAMinterThatCannotAnswerV1IsRefused: what a customer buys
-// is a v1 key — the format whose `key_id` a §8 revocation names and whose claims
+// TestABindingThroughAMinterThatCannotAnswerV1IsRefused: what a customer buys is
+// a v1 key — the format whose `key_id` a §8 revocation names and whose claims
 // carry the policy (D2130) — so an intake whose minter answers only the older
-// route is refused rather than handed a key no released verifier reads, and no
-// key is minted, mailed or recorded on the way.
-func TestAPurchaseThroughAMinterThatCannotAnswerV1IsRefused(t *testing.T) {
+// route is refused at the **binding**, which is the act that issues the key, and
+// no key is minted, mailed or recorded on the way.
+//
+// The sale itself is not the refusal any more: a purchase grants the licence and
+// mints nothing (D2196), so the money is taken and the grant stands even on a
+// deployment wired wrong. What fails is the customer's own binding, and the
+// licence is still there for a binding a working deployment serves.
+func TestABindingThroughAMinterThatCannotAnswerV1IsRefused(t *testing.T) {
 	f := newFixture(t)
 	f.deps.Mints = olderMints{Mints: f.deps.Mints}
 	f.start()
 
-	if rec := f.event(Event{ID: "evt-1", Type: EventPurchase, Organisation: "acme.example", Seats: 5, TermDays: 365}); rec.Code != http.StatusInternalServerError {
-		t.Errorf("a purchase through a minter that answers no v1 request was answered %d, want 500: the merchant's retry and the owner's alerting are what see a deployment wired wrong", rec.Code)
+	if rec := f.event(Event{ID: "evt-1", Type: EventPurchase, Organisation: "acme.example", Seats: 5, TermDays: 365}); rec.Code != http.StatusOK {
+		t.Fatalf("the purchase was answered %d, want 200: a sale grants the licence and reaches no minter at all (D2196)", rec.Code)
+	}
+	licence := f.onlyEntitlement(t)
+	mailed := len(f.mail.sent)
+
+	f.actsAsOwnerOf("acme.example")
+	previous := probeInstallation
+	probeInstallation = projectInstallation{database: "https://%s.example", client: &http.Client{Transport: presentProject{}}}
+	t.Cleanup(func() { probeInstallation = previous })
+	if _, err := f.svc.bindEntitlement(context.Background(), f.signIn.caller, licence.ID, workspaceID); err == nil {
+		t.Error("binding a licence through a minter that answers no v1 request was answered, want a refusal: the older format's key carries no key_id for a revocation to name")
 	}
 	if got := f.signer.calls; got != 0 {
-		t.Errorf("a purchase through a minter that answers no v1 request signed %d key(s), want none: the older format's key carries no key_id for a revocation to name", got)
+		t.Errorf("a binding through a minter that answers no v1 request signed %d key(s), want none", got)
 	}
 	if got := len(f.records()); got != 0 {
-		t.Errorf("a purchase through a minter that answers no v1 request recorded %d key(s), want none", got)
+		t.Errorf("a binding through a minter that answers no v1 request recorded %d key(s), want none", got)
 	}
-	if got := len(f.mail.sent); got != 0 {
-		t.Errorf("a purchase through a minter that answers no v1 request mailed %d message(s), want none", got)
+	if got := len(f.mail.sent) - mailed; got != 0 {
+		t.Errorf("a binding through a minter that answers no v1 request mailed %d message(s), want none", got)
 	}
-	if _, held, _ := f.store.Subscription(context.Background(), "sub-acme.example"); held {
-		t.Errorf("a purchase through a minter that answers no v1 request stored a subscription, want nothing written")
+	if bound := f.onlyEntitlement(t).BoundAt; bound != nil {
+		t.Errorf("the refused binding wrote the licence's own bound instant (%s), want the grant untouched so the customer's next binding is served", bound)
 	}
 }
 
-// TestAnEventForAnUnknownSubscriptionIsRefused: a cancellation or a seat change
-// the store has no subscription for is an event the service cannot place — it
-// arrived before the purchase it belongs to. Answering 200 drops it for good,
-// which is the reproduced failure: the purchase that follows is saved
-// uncancelled and the renewal mints a paid key for a customer who has left. The
-// merchant is told to send it again, and the retry is what applies it.
+// TestAnEventForAnUnknownSubscriptionIsRefused: an event the portal **admits** —
+// its transaction is the one the API created at the checkout — and whose
+// subscription the store does not hold is one the service cannot place yet: the
+// purchase it belongs to has not been written, and answering 200 drops it for
+// good. The merchant is told to send it again, and the retry is what applies it.
+//
+// Admission is what makes the difference, and F15 is the rule: an event neither
+// of whose records this API has is **parked** and answered 200, because a body
+// naming money this portal did not take is somebody else's sale
+// (TestForeignTransactionIsParked). This case holds the checkout's own record,
+// so the money is this portal's and the event is the portal's to lose.
 func TestAnEventForAnUnknownSubscriptionIsRefused(t *testing.T) {
 	f := newFixture(t)
 	// The cancellation happens first and is delivered first; the purchase it
@@ -510,9 +524,18 @@ func TestAnEventForAnUnknownSubscriptionIsRefused(t *testing.T) {
 	// out-of-order pair (the two are ordered by their own instants, §5.2).
 	bought := f.now
 	cancelled := bought.Add(time.Minute)
+	f.seed(checkoutTransactionsCollection, "txn-sub-acme.example", checkoutTransaction{
+		ID:             "txn-sub-acme.example",
+		OrganisationID: "acme.example",
+		WorkspaceID:    workspaceID,
+		Seats:          5,
+		UID:            f.signIn.caller.UID,
+		Email:          buyerAddress("acme.example"),
+		CreatedAt:      bought,
+	})
 	for _, e := range []Event{
-		{ID: "evt-1", Type: EventCancellation, Organisation: "acme.example", OccurredAt: cancelled},
-		{ID: "evt-2", Type: EventSeatChange, Organisation: "acme.example", Seats: 9, OccurredAt: cancelled},
+		{ID: "evt-1", Type: EventCancellation, Organisation: "acme.example", OccurredAt: cancelled, Transaction: "txn-sub-acme.example"},
+		{ID: "evt-2", Type: EventSeatChange, Organisation: "acme.example", Seats: 9, OccurredAt: cancelled, Transaction: "txn-sub-acme.example"},
 	} {
 		if rec := f.event(e); rec.Code != http.StatusInternalServerError {
 			t.Errorf("a %s for a subscription the store does not hold was answered %d, want 500: the merchant's retry is the only thing that can apply it", e.Type, rec.Code)
@@ -539,8 +562,8 @@ func TestAnEventForAnUnknownSubscriptionIsRefused(t *testing.T) {
 		Seats:        5,
 		TermDays:     365,
 	})
-	if got := len(f.records()); got != 1 {
-		t.Fatalf("the purchase recorded %d key(s), want the buyer's one", got)
+	if got := f.entitlements(t); len(got) != 1 {
+		t.Fatalf("the purchase granted %d licence(s), want one", len(got))
 	}
 
 	// The redelivery of the cancellation, carrying the instant it always carried.
@@ -564,46 +587,44 @@ func TestAnEventForAnUnknownSubscriptionIsRefused(t *testing.T) {
 }
 
 // TestAnEventWhosePurchaseWasNotSavedIsRefused is the same state reached the
-// other way: the purchase minted and mailed the key, the store refused the
-// subscription write, and the customer's cancellation arrives before the
-// merchant's retry of the purchase. It has to be a failure too — the shape has
-// no subscription to move yet — and the retry of the purchase is what finishes
-// the state the cancellation then lands on.
+// other way: the store refused the purchase's subscription write, and the
+// customer's cancellation arrives before the merchant's retry of the purchase.
+// It has to be a failure too — the shape has no subscription to move yet — and
+// the retry of the purchase is what finishes the state the cancellation then
+// lands on.
+//
+// The cancellation is admitted by the checkout's own record, which the purchase
+// wrote before the failure: without it F15 would park the event instead
+// (TestForeignTransactionIsParked), and a parked event is operations' to attach
+// rather than the merchant's to send again.
 func TestAnEventWhosePurchaseWasNotSavedIsRefused(t *testing.T) {
 	f, store := newFailingStore(t)
 	bought := f.now
 	cancelled := bought.Add(time.Minute)
-	purchase := Event{
-		ID:           "evt-1",
-		Type:         EventPurchase,
-		Mode:         ModeFor(f.env),
-		OccurredAt:   bought,
-		Subscription: "sub-acme.example",
-		Organisation: "acme.example",
-		WorkspaceID:  workspaceID,
-		Email:        buyerAddress("acme.example"),
-		Seats:        5,
-		TermDays:     365,
-	}
+	purchase := purchaseEvent("evt-1", "acme.example", 5, 365)
+	purchase.OccurredAt = bought
 	store.refuse = 1
 	if rec := f.deliver(purchase); rec.Code != http.StatusInternalServerError {
 		t.Fatalf("a purchase whose subscription write failed was answered %d, want 500", rec.Code)
 	}
-	if got := len(f.records()); got != 1 {
-		t.Fatalf("the failed purchase recorded %d key(s), want the one the customer holds", got)
+	if got := f.entitlements(t); len(got) != 1 {
+		t.Fatalf("the failed purchase granted %d licence(s), want the one the customer bought: the grant and the subscription write are not one act", len(got))
+	}
+	if _, held, _ := f.store.Subscription(context.Background(), "sub-acme.example"); held {
+		t.Fatal("the purchase the store refused saved a subscription, want the failure this test is about")
 	}
 
-	if rec := f.event(Event{ID: "evt-2", Type: EventCancellation, Organisation: "acme.example", OccurredAt: cancelled}); rec.Code != http.StatusInternalServerError {
+	if rec := f.event(Event{ID: "evt-2", Type: EventCancellation, Organisation: "acme.example", OccurredAt: cancelled, Transaction: "txn-sub-acme.example"}); rec.Code != http.StatusInternalServerError {
 		t.Errorf("a cancellation whose purchase was not saved was answered %d, want 500: dropped here it is lost, and the retried purchase would save an uncancelled subscription", rec.Code)
 	}
 
-	// The merchant's retry of the purchase finishes the state off the record, and
-	// the cancellation then applies.
+	// The merchant's retry of the purchase writes the state the event describes,
+	// and the cancellation then applies.
 	f.deliver(purchase)
 	if _, held, _ := f.store.Subscription(context.Background(), "sub-acme.example"); !held {
-		t.Fatal("the redelivered purchase left no subscription, want the state the record describes")
+		t.Fatal("the redelivered purchase left no subscription, want the state the event describes")
 	}
-	if rec := f.event(Event{ID: "evt-2", Type: EventCancellation, Organisation: "acme.example", OccurredAt: cancelled}); rec.Code != http.StatusOK {
+	if rec := f.event(Event{ID: "evt-2", Type: EventCancellation, Organisation: "acme.example", OccurredAt: cancelled, Transaction: "txn-sub-acme.example"}); rec.Code != http.StatusOK {
 		t.Fatalf("the retried cancellation was answered %d, want 200", rec.Code)
 	}
 	sub, _, err := f.store.Subscription(context.Background(), "sub-acme.example")
@@ -615,42 +636,34 @@ func TestAnEventWhosePurchaseWasNotSavedIsRefused(t *testing.T) {
 	}
 }
 
-// TestAPurchaseWhoseSubscriptionWasNotSavedKeepsItsWorkspace: the repair a
-// redelivered purchase gets from `completed` writes the state the record
-// describes, and the workspace binding a v1 key carries is **not** in that
-// record — the event is the only place it arrives (TN2, D2134). A repair that
-// left it behind would strand the customer for good: Renew refuses a
-// subscription whose record names no workspace with ErrNoClaims, no later event
-// carries the binding again, and the term they paid for could never be minted
-// (§5.1, §5.3).
+// TestAPurchaseWhoseSubscriptionWasNotSavedKeepsItsWorkspace: what a redelivered
+// purchase re-applies is the **grant** (D2196 — it mints nothing, so there is no
+// recorded source for a retry to stop at), and the workspace the event carries
+// has to survive it: the record a v1 key's workspace binding comes from is the
+// event's own (TN2, D2134). A repair that left it behind would strand the
+// customer for good — Renew refuses a subscription whose record names no
+// workspace with ErrNoClaims, no later event carries the binding again, and the
+// term they paid for could never be minted (§5.1, §5.3).
 func TestAPurchaseWhoseSubscriptionWasNotSavedKeepsItsWorkspace(t *testing.T) {
 	f, store := newFailingStore(t)
-	purchase := Event{
-		ID:           "evt-1",
-		Type:         EventPurchase,
-		Mode:         ModeFor(f.env),
-		OccurredAt:   f.now,
-		Subscription: "sub-acme.example",
-		Organisation: "acme.example",
-		WorkspaceID:  workspaceID,
-		Email:        buyerAddress("acme.example"),
-		Seats:        5,
-		TermDays:     365,
-	}
+	purchase := purchaseEvent("evt-1", "acme.example", 5, 365)
+	purchase.OccurredAt = f.now
 	store.refuse = 1
 	if rec := f.deliver(purchase); rec.Code != http.StatusInternalServerError {
 		t.Fatalf("a purchase whose subscription write failed was answered %d, want 500", rec.Code)
 	}
-	first := f.records()[0]
+	if got := f.records(); len(got) != 0 {
+		t.Fatalf("the purchase recorded %d key(s), want none: the key is the binding's and not the sale's (D2196)", len(got))
+	}
 	if _, held, _ := f.store.Subscription(context.Background(), "sub-acme.example"); held {
 		t.Fatal("the purchase the store refused saved a subscription, want the failure this test is about")
 	}
 
-	// The merchant's redelivery finishes the state off the record.
+	// The merchant's redelivery writes the state the event describes.
 	f.deliver(purchase)
 	sub, held, err := f.store.Subscription(context.Background(), "sub-acme.example")
 	if err != nil || !held {
-		t.Fatalf("the redelivered purchase left the subscription (held=%v, err=%v), want the state the record describes", held, err)
+		t.Fatalf("the redelivered purchase left the subscription (held=%v, err=%v), want the state the event describes", held, err)
 	}
 	if sub.WorkspaceID != workspaceID {
 		t.Errorf("the repaired subscription names the workspace %q, want the %q its purchase carried (TN2)", sub.WorkspaceID, workspaceID)
@@ -661,9 +674,8 @@ func TestAPurchaseWhoseSubscriptionWasNotSavedKeepsItsWorkspace(t *testing.T) {
 	if err != nil || !renewed {
 		t.Fatalf("the renewal of the repaired subscription answered (renewed=%v, err=%v), want the next key: the customer paid for the term", renewed, err)
 	}
-	claims := v1Verified(t, f, minted.Key)
-	if claims.WorkspaceID != workspaceID || claims.KeyID == first.KeyID {
-		t.Errorf("the renewal of the repaired subscription claims workspace %q and key id %q, want the %q its purchase bound and a key of its own", claims.WorkspaceID, claims.KeyID, workspaceID)
+	if claims := v1Verified(t, f, minted.Key); claims.WorkspaceID != workspaceID {
+		t.Errorf("the renewal of the repaired subscription claims workspace %q, want the %q its purchase bound", claims.WorkspaceID, workspaceID)
 	}
 }
 
@@ -1716,7 +1728,7 @@ func TestARefundRevokesTheWholeRotationChain(t *testing.T) {
 	// endpoint's chain alone (the merchant's own keys of one licence are
 	// TestARefundRevokesEveryKeyOfTheLicence's).
 	theSubscriptionCovers(t, f, refunded.KeyID)
-	second, secondSecret := renewThroughTheEndpoint(t, f, refunded.KeyID, mailedSecret(t, f, f.mintedKeys()[0]))
+	second, secondSecret := renewThroughTheEndpoint(t, f, refunded.KeyID, f.secretOf(t, f.mintedKeys()[0]))
 	theSubscriptionCovers(t, f, second.KeyID)
 	third, _ := renewThroughTheEndpoint(t, f, second.KeyID, secondSecret)
 	// The two successors are left naming no subscription, which is the shape a

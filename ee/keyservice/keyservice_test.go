@@ -187,6 +187,10 @@ type recordingMints struct {
 	inner   Mints
 	innerV1 MintsV1
 	keys    []string
+	// secrets is the renewal secret each v1 mint answered, in the same order as
+	// keys: a key's secret is what its holder renews with, and F3 mails no key —
+	// so the mint's own answer is the only record of it a test can reach.
+	secrets []string
 	// log, when a test sets it, is the order hook: a mint is written down where
 	// the key comes out, which is what makes "the audit line is written before
 	// the key is returned" a claim a test can read.
@@ -198,7 +202,7 @@ func (r *recordingMints) Mint(ctx context.Context, req Request) (Minted, error) 
 	if err != nil {
 		return Minted{}, err
 	}
-	r.recorded(minted.Key)
+	r.recorded(minted.Key, "")
 	return minted, nil
 }
 
@@ -207,15 +211,16 @@ func (r *recordingMints) MintV1(ctx context.Context, req RequestV1) (MintedV1, e
 	if err != nil {
 		return MintedV1{}, err
 	}
-	r.recorded(minted.Key)
+	r.recorded(minted.Key, minted.RenewalSecret)
 	return minted, nil
 }
 
-func (r *recordingMints) recorded(key string) {
+func (r *recordingMints) recorded(key, secret string) {
 	if r.log != nil {
 		r.log.add("mint")
 	}
 	r.keys = append(r.keys, key)
+	r.secrets = append(r.secrets, secret)
 }
 
 // ownerSpy is the project's identity in a test: the account a request arrives
@@ -705,6 +710,22 @@ func (f *fixture) start() {
 func (f *fixture) mintedKeys() []string {
 	f.t.Helper()
 	return append([]string(nil), f.recording.keys...)
+}
+
+// secretOf is the renewal secret the mint that produced this key answered, which
+// is what a test that walks a key's chain needs: the store keeps the secret's
+// digest and never the secret (§7.3), and since D2182 no notice carries a key —
+// the portal is where one is issued (F3), so the mint's own answer is the only
+// record of the secret its holder renews with.
+func (f *fixture) secretOf(t *testing.T, key string) string {
+	t.Helper()
+	for i, minted := range f.recording.keys {
+		if minted == key {
+			return f.recording.secrets[i]
+		}
+	}
+	t.Fatalf("no mint of this intake produced the key %q", key)
+	return ""
 }
 
 func (f *fixture) clock() time.Time { return f.now }
