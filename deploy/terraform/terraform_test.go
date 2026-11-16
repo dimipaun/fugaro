@@ -4308,6 +4308,104 @@ func TestProjectJobSecretGrantFollowsTheMount(t *testing.T) {
 	}
 }
 
+// TestProjectJobAccountGetsTheInvokerGrant is B5.2's Terraform half, and it is
+// the same grant modules/workflow/sa.tf makes for a repository's own job: the
+// job account's roles/run.invoker on the installation's credentials service,
+// one member, no condition, and the resource behind the job's own switch
+// (var.job.credentials_service, null for a profile the service does not serve).
+// Nothing else about the job moves — the mounts the run still holds are pinned
+// by the tftest's own two runs and by internal/infra's
+// TestProjectJobKeepsItsMountsBeforeTheFlip (G17).
+//
+// The switch reaches this module through ONE object attribute, so the two
+// documents that carry the object — the module's variable and both maps of the
+// installation root — have to admit it, or the whole plan is refused with
+// "unsupported attribute" the first time internal/infra writes one: that pair
+// is asserted here rather than left to the tftest, which spells the variable
+// itself and would notice nothing.
+//
+// Mutation (run, restore): drop the `== null ? 0 : 1` from the count — every
+// project job of every installation gets an invoker grant on a service some of
+// them are not admitted by, and a plan for a project with no service at all
+// fails on a null attribute.
+func TestProjectJobAccountGetsTheInvokerGrant(t *testing.T) {
+	path := "gcp/modules/project/sa.tf"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks := resourceBlocks(t, path, b, "google_cloud_run_v2_service_iam_member")
+	if len(blocks) != 1 {
+		t.Fatalf("%s has %d service-invoker resources, want the one the profile's switch drives", path, len(blocks))
+	}
+	body := blocks[0].body
+	for _, want := range []string{
+		// Null is the switch's own answer on this side, and the whole of it.
+		"count = var.job.credentials_service == null ? 0 : 1",
+		// The service's own name and the region it runs in: the two values
+		// internal/infra writes (infra.CredentialsServiceName and the
+		// installation's region), and never a URL.
+		"location = var.job.credentials_service.region",
+		"name     = var.job.credentials_service.name",
+		`role     = "roles/run.invoker"`,
+		// The job's own account and no other member, ever.
+		"member   = google_service_account.job.member",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("%s: google_cloud_run_v2_service_iam_member.credentials does not hold %q:\n%s", path, want, body)
+		}
+	}
+	if strings.Contains(body, `"allUsers"`) || strings.Contains(body, `"allAuthenticatedUsers"`) || strings.Contains(body, "**:") {
+		t.Errorf("%s: the invoker grant names something wider than the job's own account:\n%s", path, body)
+	}
+	// No IAM condition and no second resource: the grant is the front door the
+	// service admits a shared caller at, and the service's own class check is
+	// the fence behind it (B5.1, G21) — a condition here would be a second
+	// place for the reach to be wrong.
+	if strings.Contains(body, "condition {") || strings.Contains(body, "condition =") {
+		t.Errorf("%s: the invoker grant carries a condition, want none: the service's own name is what it reaches:\n%s", path, body)
+	}
+
+	// The object attribute, in the module and in both maps of the root: one
+	// document short of the three and the plan refuses the tfvars.
+	optionalObject := regexp.MustCompile(`(?m)^\s*credentials_service\s*=\s*optional\(object\(\{`)
+	for _, tc := range []struct {
+		file string
+		vars []string
+	}{
+		{"gcp/modules/project/variables.tf", []string{`variable "job"`}},
+		{"gcp/roots/installation/variables.tf", []string{`variable "project_jobs"`, `variable "project_review_jobs"`}},
+	} {
+		src, err := os.ReadFile(tc.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		code := stripComments(string(src))
+		for _, name := range tc.vars {
+			head := name + " {"
+			i := strings.Index(code, head)
+			if i < 0 {
+				t.Fatalf("%s holds no %s block", tc.file, name)
+			}
+			open := i + len(head) - 1
+			end := matchBrace(code, open)
+			if end < 0 {
+				t.Fatalf("%s: unbalanced braces in %s", tc.file, name)
+			}
+			decl := code[open+1 : end]
+			if !optionalObject.MatchString(decl) {
+				t.Errorf("%s: %s does not declare credentials_service = optional(object({...})), so a tfvars entry carrying it is refused as an unsupported attribute", tc.file, name)
+				continue
+			}
+			for _, field := range []string{"name", "region"} {
+				if !regexp.MustCompile(`(?m)^\s*` + field + `\s+=\s+string\s*$`).MatchString(decl) {
+					t.Errorf("%s: %s's credentials_service declares no %s string, want exactly the two values the module reads (name and region, never a URL)", tc.file, name, field)
+				}
+			}
+		}
+	}
+}
+
 // customRolePermissions is the snapshot of the permissions Google allows in a
 // custom role (GA, customRolesSupportLevel empty), for the service prefixes
 // the modules use. See the header of the file for how it is made and refreshed.
