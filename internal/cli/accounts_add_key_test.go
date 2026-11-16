@@ -796,3 +796,31 @@ func TestKeyCredentialWritesRefuseInAgentSession(t *testing.T) {
 		}
 	})
 }
+
+// TestAccountsLsNamesTheServingPathBesideTheStates is the same reading on the
+// other text path: with a state column the accounts are a table, and the
+// credentials block is written after it, one line each — so a line of the block
+// is never read as an account's state, which is what a listing somebody diffs
+// line by line turns on. The lines above it stay the accounts and their states.
+func TestAccountsLsNamesTheServingPathBesideTheStates(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.appendConfig(t, claudeAccountsConfig+"credentials:\n  - { name: acme-key, type: openrouter }\n")
+
+	out, _, err := execute(t, "accounts", "ls", "--repo", "acme/other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if got, want := lines[len(lines)-1], "acme-key (openrouter, served by a run's own gateway)"; got != want {
+		t.Fatalf("the last line reads %q, want %q:\n%s", got, want, out)
+	}
+	for _, line := range lines[:len(lines)-1] {
+		name, state, ok := strings.Cut(line, " ")
+		if !ok || strings.TrimSpace(state) == "" {
+			t.Fatalf("line %q carries no state: the account lines are the names and their states, and the credentials come after them:\n%s", line, out)
+		}
+		if name == "acme-key" {
+			t.Fatalf("the credential is listed as an account with a state:\n%s", out)
+		}
+	}
+}

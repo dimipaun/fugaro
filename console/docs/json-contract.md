@@ -981,8 +981,9 @@ they are the same credential (`creds.Mark`'s own doc). **Names and states only
 
 The text view of the same command is the plan's column — `available`,
 `exhausted until T`, `backed off`, `broken` — and falls back to one bare name
-per line when there is no state to show, which is the shape a console that
-passes `--json` never sees.
+per line when there is no state to show, with the credentials block below it as
+one `NAME (TYPE, served by HALF)` line per entry, which is the shape a console
+that passes `--json` never sees.
 
 ### 6.5a `fugaro accounts clear NAME` — the operator's write
 
