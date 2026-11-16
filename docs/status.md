@@ -56,6 +56,7 @@ As of 2026-11-16, read from `main`, the open pull requests and each plan's task 
 | Spec | State |
 | --- | --- |
 | repo-image-removal | parked by the owner: 2/11 merged, R2 to R10 deferred by the image setup skill (D1900), not scheduled in any release and not cancelled; no run or pull request open |
+| spend-accuracy | 0/23: plan only, no task approved; D2640–D2651 answered 2026-11-15 (D2643 not the recommendation; four amended after review); OR1 and Checks 650–651 owner-run |
 | troubleshoot-cloud | 0/12: plan only (spec, reconciliation and plan merged as #2723), no task approved; T-TC10 is owner-run |
 | voice-module, collateral, backlog, plans | no plan or not a spec |
 
