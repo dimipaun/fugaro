@@ -39,9 +39,10 @@ const (
 	ReasonServiceHeldKey = "service-held-key"
 	// ReasonChampionModel is a challenger that is the model the pair varies:
 	// the champion's own coder model for a coder pair (D555), and the model
-	// that level runs for a pair whose slot is a review level (O12, the
-	// owner's ruling of 2026-11-16). Either way the arms would differ in
-	// nothing.
+	// that level runs for a pair whose slot is a review level (the owner's
+	// ruling of 2026-11-16, docs/review-levels-ab-jobmax O12, where its own
+	// words and where they came from are). Either way the arms would differ
+	// in nothing.
 	ReasonChampionModel = "champion-model"
 	// ReasonNotAllowed is a challenger the run's allow-list leaves out: the
 	// merge of every layer that writes one, so a repository can only tighten

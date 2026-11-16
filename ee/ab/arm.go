@@ -89,7 +89,8 @@ const (
 // own, so a launch cannot replay a patch of a run other than the one it names.
 // The level is not an argument either: a launch asks for an arm through its
 // workflow's own key (workflows.<name>.ab.reviewer_arm, config.WorkflowAB —
-// the owner's ruling of 2026-11-16, O12) and never through a flag, so the ask
+// the owner's ruling of 2026-11-16, docs/review-levels-ab-jobmax O12) and
+// never through a flag, so the ask
 // and the image gate that judges whether a job's runner can carry the arm
 // (internal/cli's slotAsk) read one value, and a caller cannot ask this
 // function for a level its own file does not ask for. The level it does ask

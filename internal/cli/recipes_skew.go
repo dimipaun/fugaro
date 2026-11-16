@@ -2262,7 +2262,8 @@ func triageSubject(repo string, written *bool) (subject, alt string) {
 // that actually carries B1.2, the way it does for the other *Since constants.
 //
 // The launches that read it are the workflow that asks for a reviewer arm and
-// the arm's own (B1.4, ee/ab, and the owner's ruling of 2026-11-16): the ask
+// the arm's own (B1.4, ee/ab, and the owner's ruling of 2026-11-16,
+// docs/review-levels-ab-jobmax O12): the ask
 // is the workflow's own key (workflows.<name>.ab.reviewer_arm, config.WorkflowAB),
 // so the launch of the champion — the only run whose start can still be refused
 // before the money is spent — asks this gate about that key, exactly as the pair
