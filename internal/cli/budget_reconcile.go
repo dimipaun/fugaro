@@ -257,9 +257,8 @@ func runBudgetReconcile(cmd *cobra.Command, o *budgetReconcileOptions) error {
 	if err != nil {
 		return err
 	}
-	var err2 error
-	if o.repo, err2 = repoArg(cmd.Context(), o.cloud, o.repo); err2 != nil {
-		return err2
+	if o.repo, err = repoArg(cmd.Context(), o.cloud, o.repo); err != nil {
+		return err
 	}
 	ctx := cmd.Context()
 	env, err := openCloud(ctx, o.cloud)
