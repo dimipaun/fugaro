@@ -1429,6 +1429,42 @@ func pairDeviceRowFrom(uid string, raw json.RawMessage) pairDeviceRow {
 	return row
 }
 
+// pairPushRoot is the push node's parent (§3.4 of docs/mobile/design/
+// push-notifications.md): one child per paired account, holding the one
+// registration this installation made for it — the token, the platform, the
+// preferences and the sender's ledger. It is a SIBLING of the device node and
+// never a child of it, which is the design's whole reason for the shape: the
+// device node's existence IS the allowlist (rules.PathDevices, D166), and the
+// registration principal writes with database admin, so a node under
+// devices/** would let a registration that landed after a revoke re-admit the
+// device it was meant to have lost (§3.5 (b)).
+//
+// The path is spelled here rather than beside rules.PathDevices because no rule
+// names it: the deployed document denies config/admin to every client token,
+// and this node is written and deleted by database admin alone. There it would
+// read as a node the rules read, which is exactly what it is not.
+const pairPushRoot = "config/admin/push"
+
+// pairPushPath is one account's push node, the sibling `fugaro pair revoke`
+// deletes in the same act as config/admin/devices/$uid. The uid is the
+// DEVICE's, which is what makes the two nodes one account's: a pairing mints
+// it, the device node is keyed by it, and the registration principal writes
+// its token beside the same key.
+func pairPushPath(deviceUID string) string { return pairPushRoot + "/" + deviceUID }
+
+// pairPushLeftover is the clause a refusal carries when the push node's own
+// deletion failed as well as the thing that refusal is about. It is empty when
+// that deletion landed, which is the ordinary case. It exists because the two
+// leftovers are deleted by different means — the keychain item by hand and the
+// push node by hand or by the sender's reaping — and a refusal that named one
+// of them and not the other would leave a node nobody was told about.
+func pairPushLeftover(err error, deviceUID string) string {
+	if err == nil {
+		return ""
+	}
+	return fmt.Sprintf("; the push node %s could not be deleted either (%v), so the registration the installation made for that account is still there and must be deleted by hand", pairPushPath(deviceUID), oneLine(err.Error()))
+}
+
 type pairRevokeOptions struct {
 	cloudOptions
 	uid, name string
@@ -1446,8 +1482,11 @@ func newPairRevokeCmd() *cobra.Command {
 			"The order is the command (M4): the device node under config/admin/devices\n" +
 			"goes first, because the node's existence is what the rules read and its\n" +
 			"deletion revokes at once, without waiting for an ID token to expire; then\n" +
-			"this laptop's OS keychain item for that pairing's MAC key. Two deletions,\n" +
-			"and both are here.\n" +
+			"the account's push node under config/admin/push, the sibling that holds\n" +
+			"the one registration this installation made for it, so the phone's token\n" +
+			"goes with the pairing rather than outliving it (push design §3.4); then\n" +
+			"this laptop's OS keychain item for that pairing's MAC key. Three\n" +
+			"deletions, and all three are here.\n" +
 			"\n" +
 			"The pairing session's own node is not one of them. Its key is the p~ uid\n" +
 			"the session drew, and nothing on this laptop records that uid, so a revoke\n" +
@@ -1516,14 +1555,45 @@ func runPairRevoke(cmd *cobra.Command, o *pairRevokeOptions) error {
 	}
 	wrote := []string{rules.PathDevices + "/" + device.UID}
 
+	// §3.4's sibling, deleted in the same act: the whole node goes, so the
+	// registration's token, platform, prefs and the sender's ledger go with the
+	// pairing rather than outliving it on a timer (§7, Q10(i)). The device node
+	// is already gone, so this deletion is what stops the delivery rather than
+	// what stops the reads — the sender's condition is both nodes (§3.4 rule 2)
+	// — and a device that never registered holds no node at all, whose deletion
+	// is the no-op the database makes it.
+	//
+	// The failure is remembered rather than returned on, and the steps below
+	// run either way: the device node is gone by now, so a second `fugaro pair
+	// revoke` is refused as nothing to revoke, and the keychain item — the one
+	// thing this command could still take away — would be left with nothing
+	// that ever removes it. What closes the act is the refusal below, once the
+	// item is gone; a node this act could not delete is never reported as
+	// deleted.
+	pushErr := db.Patch(ctx, pairPushRoot, map[string]any{device.UID: nil})
+	if pushErr == nil {
+		wrote = append(wrote, pairPushPath(device.UID))
+	}
+
 	item, err := keychain.ParseItem(pairItemName(lc.Name, device.UID), lc.Name)
 	if err != nil {
 		return pairRefuseIn(ev, o.asJSON, pairRefusedKeychain,
-			fmt.Errorf("the device is off the allowlist, but the keychain item this pairing's MAC key lives at (%s) is not a name a key is stored under: %v; the item's name carries the project's own name (M5), so it is not derivable here and must be deleted by hand", pairItemName(lc.Name, device.UID), err))
+			fmt.Errorf("the device is off the allowlist, but the keychain item this pairing's MAC key lives at (%s) is not a name a key is stored under: %v; the item's name carries the project's own name (M5), so it is not derivable here and must be deleted by hand%s", pairItemName(lc.Name, device.UID), err, pairPushLeftover(pushErr, device.UID)))
 	}
 	if err := pairKeychain().Delete(ctx, item); err != nil {
 		return pairRefuseIn(ev, o.asJSON, pairRefusedKeychainDelete,
-			fmt.Errorf("the device node %s is deleted and the phone is off the allowlist, but this laptop's MAC key for the pairing could not be removed from the OS keychain at %s: %w; the key is still there and must be deleted by hand", wrote[0], item.Name(), err))
+			fmt.Errorf("the device node %s is deleted and the phone is off the allowlist, but this laptop's MAC key for the pairing could not be removed from the OS keychain at %s: %w; the key is still there and must be deleted by hand%s", wrote[0], item.Name(), err, pairPushLeftover(pushErr, device.UID)))
+	}
+	if pushErr != nil {
+		if errors.Is(pushErr, rtdb.ErrPermission) {
+			return pairRefuseIn(ev, o.asJSON, pairRefusedDatabaseAdmin,
+				fmt.Errorf("the device node %s is deleted and this laptop's MAC key is gone, but the deletion of its push node %s was refused: revoking a device deletes both nodes with roles/firebasedatabase.admin, which this credential does not hold on project %s's Firebase project (its owners and editors hold it, and terraform.budget_admins): %w",
+					wrote[0], pairPushPath(device.UID), lc.Name, pushErr))
+		}
+		cause := dbErr(lc, pushErr, true)
+		return pairRefuseIn(ev, o.asJSON, pairRefusalCode(cause, pairRefusedUnreachable),
+			fmt.Errorf("%w; the device node %s is deleted and this laptop's MAC key is gone, so the phone is off the allowlist and the sender — which sends only when both nodes exist (§3.4 rule 2) — delivers nothing to it, but the push node %s could not be deleted and still holds the installation's registration for that account: the token is there and must be deleted by hand",
+				cause, wrote[0], pairPushPath(device.UID)))
 	}
 
 	// The pairing session's own node is the third thing §4.3 names, and it is
@@ -1553,6 +1623,7 @@ func runPairRevoke(cmd *cobra.Command, o *pairRevokeOptions) error {
 		fmt.Fprintf(out, " (%s)", pairCell(device.Name))
 	}
 	fmt.Fprintf(out, ": deleted %s, so the phone is off %s's allowlist from its next request on\n", wrote[0], lc.Name)
+	fmt.Fprintf(out, "deleted its push node %s with it, so the registration this installation made for that account — its token, its platform and its preferences — is gone with the pairing\n", wrote[1])
 	fmt.Fprintf(out, "deleted this laptop's OS keychain item %s\n", item.Name())
 	fmt.Fprintf(out, "the %s Auth user is not deleted here — no role a Terraform grant gives an operator can delete one — and the history sweep removes it now that its device node is gone; an abandoned pairing node, if this pairing left one, is what the same sweep removes with it\n", device.UID)
 	return nil
