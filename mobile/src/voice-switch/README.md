@@ -122,7 +122,7 @@ will stop it is here, and `switch.test.js` is where it is proved.
 ## The mutation proof
 
 ```sh
-mobile/src/voice-switch/mutation-proof.sh    # 25 guards, one planted bug each
+mobile/src/voice-switch/mutation-proof.sh    # 28 guards, one planted bug each
 ```
 
 Every mutation disables exactly one guard and must make that guard's own suite
