@@ -1603,7 +1603,7 @@ func craftNamespaceClash(creds []config.Credential, pools []config.Pool) string 
 // that sets no craft is no block (the node's own rule, decodeCraftMembers), so
 // it keeps the node's exactly as a file that writes nothing does.
 func publishedCrafts(lc *localcfg.Config, old *projectpolicy.Policy) *config.Crafts {
-	node := craftsOf(old)
+	node := policyCraftsOf(old)
 	if lc.Crafts == (config.Crafts{}) {
 		return node
 	}
@@ -1658,7 +1658,7 @@ func craftPoolsOf(p *projectpolicy.Policy) []config.Pool {
 	return p.CraftPools
 }
 
-func craftsOf(p *projectpolicy.Policy) *config.Crafts {
+func policyCraftsOf(p *projectpolicy.Policy) *config.Crafts {
 	if p == nil {
 		return nil
 	}
