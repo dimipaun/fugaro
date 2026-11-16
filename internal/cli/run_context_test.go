@@ -3,13 +3,16 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"strings"
 	"testing"
 
 	accesslib "github.com/dimipaun/fugaro/internal/access"
+	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -381,5 +384,106 @@ func TestRunContextNotClonedYetIsSaid(t *testing.T) {
 	}
 	if strings.Contains(quiet, "does not clone") {
 		t.Fatalf("a launch naming no context repository printed the context line:\n%s", quiet)
+	}
+}
+
+// contextCascadeSharedPolicy is the shared-job fixture's own policy with the two
+// things a launch of an `agent.auth: cascade` repository needs to pass the
+// cascade's gate: the switch that turns the cascade on (routing.claude.via at
+// O2, which only the operator publishes) and the model allow-list the
+// credentials service holds every call of such a run to (C1.11). The profile,
+// the allow-list and the job are the fixture's own, so the launch this test
+// judges is a shared-job one for the reason it is about.
+func contextCascadeSharedPolicy() string {
+	return `{"version":` + jsonInt(projectpolicy.Version) + `,"allow_repos":["github/acme/*"],` +
+		`"routing":{"claude":{"via":"cascade"}},` +
+		`"budget":{"mode":"enforce","per_run_usd":5,"allowed_models":["claude-sonnet-5-5"]},` +
+		`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"}}}`
+}
+
+// TestContextReposRefusalJudgesTheDecidedJob: a launch whose document selects a
+// profile a shared project job holds runs on that job, and a shared project job
+// is never told the credentials service's address (credentialsServiceLaunchEnv:
+// the service refuses that job class whole, and the address would cost it the
+// App key it still mounts). So --context is refused there even though this
+// installation's service serves this repository — the case that answers "" for
+// every launch judges the repository's own job, and would pass a launch whose
+// run is then handed no address at all.
+func TestContextReposRefusalJudgesTheDecidedJob(t *testing.T) {
+	// The verdict that passes: a repository the published policy serves no
+	// profile for keeps its own job, which is handed the address, so the launch
+	// goes — and the address is on the execution, which is the same answer the
+	// gate read.
+	own := contextLaunchFixture(t)
+	publishAllowOnly(t, own, "github/acme/*")
+	var launchedEnv map[string]string
+	own.run.OnRun = func(c gcpfake.RunCall) { launchedEnv = c.Env }
+	if _, _, err := contextRun(t, own, "acme/lib"); err != nil {
+		t.Fatalf("--context on a launch that runs on the repository's own job: %v", err)
+	}
+	if got := launchedEnv[envCredentialsServiceURL]; got != launchCredsURL {
+		t.Fatalf("the launch passed the gate and the execution was handed %q, want %s: the gate and the execution disagree about the address", got, launchCredsURL)
+	}
+
+	// The same repository and the same switch, on a document that selects a
+	// shared project job.
+	cascadeShared := func() *projectJobFixture {
+		f := newProjectJobFixtureMode(t, "enforce")
+		publishPolicy(t, f.launchBudgetFixture, contextCascadeSharedPolicy())
+		f.db.Set(rules.PathCredsRulesMarker(), rules.CredsRulesVersion)
+		f.appendConfig(t, "credentials_service:\n  url: "+launchCredsURL+"\n")
+		markRepoCredentialsServiceReady(t, f.cloudFixture)
+		projectJobCheckoutYAML(t, projectJobCascadeRepoYAML)
+		return f
+	}
+	shared := cascadeShared()
+	_, _, err := runBudget(t, "--context", "acme/lib")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("--context on a launch that runs on a shared project job: err = %v (exit %d), want a refusal", err, ExitCode(err))
+	}
+	for _, want := range []string{"shared project job", shared.job, "no --context"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if launchedAny(shared.launchBudgetFixture) {
+		t.Fatal("a refused launch started an execution")
+	}
+	if storedTask(t, shared.cloudFixture) {
+		t.Error("the refused launch stored its task")
+	}
+	if n := len(shared.iam.SignCalls()); n != 0 {
+		t.Errorf("%d claim sets were signed for a refused launch", n)
+	}
+
+	// The job the gate judged is the job the launch runs on: the same launch
+	// with no context repository starts on it.
+	control := cascadeShared()
+	if _, _, err := runBudget(t); err != nil {
+		t.Fatalf("a launch naming no context repository on the same document: %v", err)
+	}
+	if profile, provider, _ := launchedProjectJob(t, control.cloudFixture); profile != "standard" || provider != "github" {
+		t.Fatalf("the launch ran on the %s/%s job, want the standard/github one the gate judged", profile, provider)
+	}
+	// And the pair the gate judges with: this repository's own job would be
+	// handed the address, the shared job it runs on is handed nothing.
+	env := memEnv(t, control.cloudFixture)
+	spec := readSpec(t, control.cloudFixture, budgetRun)
+	auth, deployed := env.repoServiceAuth(context.Background(), spec, io.Discard)
+	if got := credentialsServiceLaunchEnv(env.lc, "", spec.Repo, auth, deployed); len(got) == 0 {
+		t.Fatalf("a launch of %s on a repository's own job would be handed no address (auth %q, deployed %v): this fixture cannot tell the two jobs apart", spec.Repo, auth, deployed)
+	}
+	if got := credentialsServiceLaunchEnv(env.lc, control.job, spec.Repo, auth, deployed); len(got) != 0 {
+		t.Fatalf("the shared project job %s was handed %v", control.job, got)
+	}
+
+	// A review launch is the shape this gate judges as a repository's own
+	// however the repository's work is placed: its execution runs on the
+	// review-only variant, which its own deployment tells the address — never
+	// on the shared project job — so --context is not refused there.
+	review := &task.Spec{Version: 1, RunID: budgetRun, Repo: spec.Repo, Ref: spec.Ref, Workflow: spec.Workflow,
+		Mode: recipe.ModeReview, Task: "Read the graph", ContextRepos: []string{"acme/lib"}}
+	if err := contextReposRefusal(context.Background(), env, appSlug, review); err != nil {
+		t.Fatalf("--context on a review launch, whose job carries the service's address by its own deployment: %v", err)
 	}
 }

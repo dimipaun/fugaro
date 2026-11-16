@@ -4090,14 +4090,22 @@ func printRecipeNote(warn io.Writer, rr *resolvedRecipe, explicit bool) {
 //     brokering D496), so a context repository can be read there only for a
 //     GitHub run; a Bitbucket run's would be a repository nothing could fetch.
 //   - the installation must have opted into the credentials service, and this
-//     repository with it: the address the launch hands the job is what makes
-//     the service reachable at all, and the in-job mint path (an agent.auth
-//     that mounts its own credential) is deliberately not extended to context
-//     repositories — a run on that path would hold a token for its own
-//     repository and nothing else. The question is asked of the one function
-//     that decides it for the launch (credentialsServiceLaunchEnv, proxiedRepo's
-//     last question too), so this gate and the execution cannot disagree about
-//     whether the job was handed the service.
+//     repository with it, on the job *this launch* runs on: the address the
+//     launch hands the job is what makes the service reachable at all, and the
+//     in-job mint path (an agent.auth that mounts its own credential) is
+//     deliberately not extended to context repositories — a run on that path
+//     would hold a token for its own repository and nothing else. Both halves
+//     are asked of the functions the launch itself judges with — the job of
+//     launchProjectJobFor, which is the decision launchRun starts the
+//     execution on, and credentialsServiceLaunchEnv, which is the only place
+//     the switch and the job's identity are decided (proxiedRepo's last
+//     question too) — so this gate and the execution cannot disagree about
+//     whether the job was handed the service. Deciding the job here is what
+//     makes the pair one, and it puts the job decision's own refusals (a
+//     policy this CLI cannot read, profileAdmissionRefusal, the account axis)
+//     on this gate as well, a moment earlier than the launch makes them and
+//     still before the claim and before any write: what a gate refuses leaves
+//     no more behind than what the launch refuses.
 //
 // io.Discard is the reader's warning writer, the way proxiedRepo's and the
 // planner's are: the launch reads the same two documents and words the one
@@ -4117,8 +4125,37 @@ func contextReposRefusal(ctx context.Context, env *cloudEnv, slug string, spec *
 		return userErr("--context needs a GitHub repository, and %s is on %s: the credentials service brokers a fetch against the run's own repository and its installation (secrets-brokering D496), a path that serves GitHub alone, so a %s run could not read the repositories it was launched with. Drop --context, or run the task in the repository whose files it needs",
 			spec.Repo, kind, kind)
 	}
+	// The job this launch runs on, decided by the function the launch itself
+	// decides it with (project_job.go's launchProjectJobFor): a shared project
+	// job is never handed the service's address, so the question below is about
+	// this launch's job and not about the repository alone. A gate that asked
+	// it of the repository's own job for a launch that lands on a shared one
+	// would pass a launch whose run is handed no address at all.
+	//
+	// A review launch is not one of those: its execution runs on the
+	// review-only variant, which its own deployment tells the address
+	// (internal/infra's reviewVariant — the service is where a review's
+	// read-only token and its model calls come from), so a review launch is
+	// judged by the repository's own question, exactly as it was before the
+	// job was part of this one.
+	job, err := env.launchProjectJobFor(ctx, slug, spec)
+	if err != nil {
+		return err
+	}
+	jobName := ""
+	if job != nil && spec.Mode != recipe.ModeReview {
+		jobName = job.Name
+	}
 	auth, deployed := env.repoServiceAuth(ctx, spec, io.Discard)
-	if len(credentialsServiceLaunchEnv(env.lc, "", spec.Repo, auth, deployed)) == 0 {
+	if len(credentialsServiceLaunchEnv(env.lc, jobName, spec.Repo, auth, deployed)) == 0 {
+		if jobName != "" {
+			// A shared project job is never told the address whatever the
+			// installation's switch says, so the sentence below would be false
+			// there — and its remedy would be no remedy: the operator can deploy
+			// the service this launch already has and still be handed nothing.
+			return userErr("--context needs the credentials service's address on the job this launch runs on, and this launch runs on %s, a shared project job: the service refuses an account that belongs to one whole, before any route (that is the job class, not this repository or this installation), and the address is therefore never written on one — a shared project job told about the service would stop reading the App key it still mounts, because the same variable is what opens the git provider keyless, which breaks every GitHub run on it. So no launch on a shared project job is told about the service, a run of one could read no context repository, and this launch stops before any execution exists: run the task in the repository whose files it needs, with no --context, until a shared project job is moved onto the service (C3.9)",
+				pluginwire.Printable(jobName))
+		}
 		return userErr("--context needs a credentials service that serves %s, and this installation's does not: the service is what would read a context repository for a run, and the address it is reached at is written on the job only where the installation carries the service and this repository's runs use an auth it serves (today agent.auth: cascade alone). Run '%s update' in your own terminal to deploy the service where the installation can carry it, then set agent.auth: cascade in %s's fugaro.yaml and run '%s update --repo %s' to apply that repository's root with the switch on — or drop --context",
 			spec.Repo, selfCommand(), spec.Repo, selfCommand(), spec.Repo)
 	}
