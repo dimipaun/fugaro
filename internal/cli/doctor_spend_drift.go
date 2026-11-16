@@ -42,9 +42,9 @@ const spendDriftCheckID = "spend-drift"
 
 // doctorSpendDrift reads the two days and reports one warning per drifting
 // model, and nothing at all when nothing drifted: a model inside its band, one
-// under DriftMinSpend, a day whose counters predate the leaves and a day with
-// no counters at all are all silence, since a line there would be a finding
-// about a comparison the counters cannot make.
+// under DriftMinSpend, a model with no band because no call brought a report
+// back, and a day with no counters at all are all silence, since a line there
+// would be a finding about a comparison the counters cannot make.
 //
 // A read that did not answer is an info line carrying the unread marker rather
 // than silence or a pass: with the counters unreadable, whether nothing drifted
@@ -102,9 +102,9 @@ func spendDriftProblem(d watch.Drift) string {
 		end, where = "dearest end", "above"
 	}
 	band := watch.USD(d.TLo) + "-" + watch.USD(d.THi)
-	return fmt.Sprintf("%s's reported cost is %.2fx the %s of the price table's band over today and yesterday", d.Model, d.Factor(), end) +
-		fmt.Sprintf(". The provider reported %s for the calls that came back with a cost, against the table's band %s for those same calls, so the report is more than %d%% %s the %s",
-			watch.USD(d.Rep), band, watch.DriftGapPercent, where, end)
+	return fmt.Sprintf("%s's reported cost is %.2fx the %s of the price table's band over today and yesterday. "+
+		"The provider reported %s for the calls that came back with a cost, against the table's band %s for those same calls, so the report is more than %d%% %s the %s",
+		d.Model, d.Factor(), end, watch.USD(d.Rep), band, watch.DriftGapPercent, where, end)
 }
 
 // spendDriftFix is what the reader settles a drift with, and it is the two
