@@ -943,6 +943,7 @@ probe account carries predefined grants only).
 | 178 | The coordinator's key-gated sweep job ([`docs/subscriptions/`](subscriptions/implementation-plan.md), its Check 178, registered by task **S3.6** and run by you in task **S1.10**; **D524**, **O4** and the plan's S1.9): on a sandbox installation the coordinator's job runs the image built with the `ee` tag and mounts **no** key secret; one sweep's log shows the paid build rather than the core stub (E1.1, D522); and `fugaro coordinator status --from-store --all --json --project <name>` and the console's project view read the same stored view, with no key. **DEFERRED until enforcement**: a key check and its refusal come only with enforcement, so the two halves above are what can be read | See "Check 178" below; **you** run it, on a sandbox installation only, and **no agent runs any step of it** | One `fugaro update` and one sweep; no project written and no credential minted. **USER-RUN, NOT RUN.** |
 | 179 | The merchant's test mode and the staging pair ([`docs/subscriptions/`](subscriptions/implementation-plan.md), its Check 179, written by task **S3.6** and run by you in task **S3.7**; the design's §5 and §2's second rule; **D442**, **T25** and **T26**): a purchase in the merchant's **test mode** mints a **staging** key production verifiers refuse and the sandbox installation reads; the same event delivered twice mints once; a renewal issues 30 days before the current key expires and a seat change reissues; and a cancellation stops the reissue while the key in hand keeps working until it expires | See "Check 179" below; **you** run it, in the merchant's test mode, with the service's staging key id only, and **no agent runs any step of it** | The test-mode subscription cancelled in the merchant's dashboard; the staging keys are the sandbox's and may stay. **USER-RUN, NOT RUN.** |
 | 180 | One Bitbucket project or workspace access token serving many repositories, live ([`docs/bitbucket-workspace-token/`](bitbucket-workspace-token/implementation-plan.md), its Check 180, written by task **T1.3** and run by you in task **T1.4**; the reconciliation's **U1**–**U7**, **F3**, and D468 = no): on a sandbox installation and a **Premium** sandbox workspace, a **project access token** with `repository:write` and `pullrequest:write` is allow-listed for two sandbox repositories and stored project-wide, each repository's `fugaro update --repo` **asks nothing**, and one run per repository is recorded — a clone and a push the token authenticates, the pull request it opens and that pull request's author, `TestLiveBitbucket` and `GET /2.0/user`, whether **approve and merge** work with those scopes, and whether a repository **added to the Bitbucket project afterwards** is reachable; then the token is rotated and **the next run uses the new version**, and a second machine without the entry records what `fugaro update --repo <path> --plan-only` plans. It is the only place this path is ever measured with such a token: nothing offline can say what a Bitbucket token authenticates | See "Check 180" below; **you** run it, on a sandbox installation and a **Premium** sandbox workspace only, **never `belong`**, with the token file you name and the script never printing it — every argument is required, and the section below says what each is: `scripts/live-checks/check180.sh --installation <sandbox> --token-file <the token file> --repo <owner/name>=<checkout path> --repo <owner/name>=<checkout path> --probe-repo <owner/name>`. Its dry driver is `scripts/live-checks/check180_test.sh`, and **no agent runs any step of it** | A Premium sandbox workspace, one project access token created there with the two write scopes, two sandbox repositories in one Bitbucket project, one run per repository, one rotation and one approve-and-merge; the script's own Restore says what it leaves behind. **USER-RUN, NOT RUN.** |
+| 181 | A Bitbucket shared project job end to end, and the allow-list refusal at publish, at deploy and at the proxy ([`docs/bitbucket-workspace-token/`](bitbucket-workspace-token/implementation-plan.md), its Check 181, written by task **T2.6** and run by you in task **T2.7**; **D460**, **D466** and **D2302**; [`docs/shared-jobs-default/`](shared-jobs-default/README.md)): on a sandbox installation, a Bitbucket profile that mounts **no** Bitbucket credential admits two allow-listed sandbox repositories, the deploy puts **one** `fugaro-p-…` job on the project for it, and a run of each repository executes on that job and opens its pull request — while a third sandbox repository the allow-list does not name is refused: added to a profile that **mounts** `bitbucket-token` it makes `fugaro project policy publish` and `fugaro update` refuse through the subset rule `CheckBitbucketProfileRepos`, the credential put on the shared profile is refused by `CheckSharedJobProfile` at the publish and, once `bitbucket` is a shared provider, at the deploy, and launched by hand against the job its run is refused by the credentials service, whose Bitbucket proxy pairs each verified run identity to the repositories the job's own profile admits and to the node's own block (the runner-side check T2.9 would have added is not built and is not owed — the service's refusal is what this reads). It is the reading no hermetic test can produce: that one job serves two repositories with no token in it, and that each refusal names what it refuses | See "Check 181" below; **you** run it, on a sandbox installation and a sandbox Bitbucket workspace only, **never `belong`**, with the three commands it is typed from — `fugaro project policy publish`, `fugaro update` and `fugaro run --repo <owner/name>` — and **no agent runs any step of it** | One Bitbucket profile, the one `fugaro-p-…` job and its service account the deploy creates for it, the two runs and the pull requests they open on sandbox repositories, and the third repository left exactly as it was. **USER-RUN, NOT RUN.** |
 | 190 | git fetch, a blobless clone and a >32 MiB push through a throwaway, IAM-only Cloud Run proxy ([`docs/secrets-brokering/`](secrets-brokering/implementation-plan.md), its task **B0.4** and its "Checks 190–192"; the reconciliation's **F13**, **F14**, **U2**, **U7** and **U8**): against a sandbox Bitbucket repository, through a Cloud Run service deployed **with IAM required and no public invoker** — a **full clone** and a **blobless clone** (request count, bytes and time each), a **push above 32 MiB** on HTTP/1.1 (chunked) and what the front end answers, a **small push**, the **cold start** of the first git request after 35 idle minutes (D501: the service keeps scaling to zero), and what the front end does with a push held open past the service's **3600 s** timeout. It is the measurement S1's proxy is designed against: a large push that passes on HTTP/1.1 is what S1 is built on, and one that does not is what makes B1.5 serve h2c end to end | See "Check 190" below; **you** run it, on installation `fugaro` only (project `fugaro-dev`, region `us-east5`, hard-coded — the check refuses another installation), against a sandbox repository only, never `belong`, with the token file at mode `0600` that [secrets-brokering/check190-steps.md](secrets-brokering/check190-steps.md) writes; the script is `scripts/live-checks/check190.sh`, its own test `scripts/live-checks/check190_test.sh`, and **no agent runs any step of it** | One throwaway Cloud Run service with IAM required and no public invoker, the Artifact Registry repository and the image it is built into, the Secret Manager container that holds the sandbox repository's token for the proxy, its own staging bucket for the build's source, two grants to the installation's build account on those two only (registry writer, bucket object viewer), and one branch on the sandbox repository — every one of them deleted by the Restore, which asserts four counts read `0` and reads the bucket back; the installation's own `gs://fugaro-dev_cloudbuild` is not touched. **Wall clock, not money: about two hours at the terminal**, one build and one idle instance billed to the project while it runs. **USER-RUN. RUN 2026-10-30: FAILED — THE GATE** — the >32 MiB push answered **413** on HTTP/1.1, so S1 serves **h2c end to end** (B1.0, B1.5); the **3600 s** hold was **not measured** and the run's branch was left behind, both of them rows of the head that run read and both fixed afterwards (`f46ccf0a`, #1409), so what is left is a re-run of that row. The run's own facts are recorded in the section below. |
 | 191 | The Bitbucket proxy end to end ([`docs/secrets-brokering/`](secrets-brokering/implementation-plan.md), its task **B1.11** and its "Checks 190–192"; the reconciliation's **D493**; the plan's **G2**, **G4**, **G6** and **G7**): on installation `fugaro` with its credentials service on and a sandbox Bitbucket repository that is **on the credentials-service switch** (`agent.auth: cascade` for it, with a model credential in the service's bundle, its root re-applied) **and published with `proxy: true`** — the published half alone is **inert**: a repository off the switch holds its own Bitbucket token and is served by nothing — a throwaway run of that repository clones, commits one line, pushes its branch and opens its pull request **through the credentials service** — the job holds no Bitbucket token at all — and then the calls **that same run** makes are refused with the service's own words and **audited**: another repository (`other_repository`), a push to `main` (`other_ref`), a tag (`tag_ref`), a delete (`ref_delete`), a write to **another pull request of that same repository** (`other_pull_request` — a call naming another *repository* is refused for the repository before the pull-request rules are reached, so this attempt has to be a pull request of the run's own repository that is not the run's own), a merge and `/workspaces` (both `call_not_allowed`); a **review-only** run (launched with `--pr`, the working run's own pull request, which is what a review-mode recipe requires) has no branch of its own, so a push of it is refused and audited under one of the **two** classes `internal/gitproxy`'s rules can answer for a review identity — `read_only` (the installation's review-only job class, refused before the push's own rules are read) or `no_run_branch` (an identity that is not read-only and carries no `fb`) — and the row reads the class the service itself wrote rather than pinning one of the two; and a probe launched after its outcome node was **written by hand** is refused as an ended identity. Every row is a refusal, and only a run can ask for one: a run's identity is sealed to its own execution (a launch token and the job identity), so a call made from your machine is answered about **that** identity and not about a run's — which is why the check launches throwaway runs whose **own check command** makes the attempts and prints one line per attempt, **with no model in the loop at all**: the sandbox repository's `commands.test` is Check 191's probe (`scripts/live-checks/check191-probe.sh`, which you copy into that repository and name in its `fugaro.yaml`), and the runner runs it as shell, at the run's own identity and through the run's own loopback forwarder, before the run's first model call | See "Check 191" below; **you** run it, on installation `fugaro` only (project `fugaro-dev`, region `us-east5`, hard-coded, and a repository whose workspace is `belong` is refused by name), against **sandbox** Bitbucket repositories only, with the steps [secrets-brokering/check191-steps.md](secrets-brokering/check191-steps.md); the script is `scripts/live-checks/check191.sh`, its own test `scripts/live-checks/check191_test.sh`, and **no agent runs any step of it** — and `CHECK191_REPO` must be a sandbox repository that **carries the probe** (`scripts/live-checks/check191-probe.sh` copied into it and named in its own `commands.test`, the exact diff and command in the steps file): a repository that does not carry it is refused, exit `2`, rather than read as a proxy finding | Three throwaway runs of the sandbox repository (a working run, a review-only run and the ended-run probe), **one Realtime Database node** (`outcomes/<UTC epoch day>/<slug>/<run id>`, hand-written with your own credentials — the register's Check 95 step 3 is the same write — and deleted again by the restore, which reads it back), and the working run's branch and pull request, which **stay on the sandbox repository**: this check holds no Bitbucket credential of its own and cannot delete them. A run's own record stays, which is what `fugaro runs ls` shows. **Wall clock, not money: about 40 minutes per run** at the terminal. **USER-RUN, NOT RUN:** it runs on the **released** build whose **runner** carries the proxy — **0.22.0**: 0.21.0 is the first tag holding `internal/credsvc/bitbucketproxy.go` (the plan's Levels table gives the proxy chain 0.15.0, which has no proxy to measure) and was cut **without** the runner's, which landed in the release after it (`internal/cli/recipes_skew.go`'s `proxySince`) — and not on a development build — a build from a checkout resolves no released credentials-service image to deploy (`internal/cli/init_credentials.go`, `resolveCredentialsImage`), so `fugaro version` must not print `dev`. |
 | 192 | The flip ([`docs/secrets-brokering/`](secrets-brokering/implementation-plan.md), its task **B1.11**'s `--after-flip` mode; **D500**, **O7**; the plan's **G1** and **G9**): after the flip, the repository's jobs **no longer mount `bitbucket-token`** and its job accounts hold **no role on it**, a run of that repository still clones, pushes and opens its pull request (the credential now comes from the credentials service), `fugaro doctor` reports `bitbucket-direct` clean for it, and a Bitbucket repository of the same installation that the published policy does **not** proxy still mounts its token and still pushes and opens its pull request. It is the reading the flip is gated on: the mount and the accessor are the two things the flip takes away, and the two runs are what says it took them away from the repository that is proxied and from no other | See "Check 192" below; **you** run it, on installation `fugaro` only (project `fugaro-dev`, region `us-east5`, hard-coded, never `belong`), as `bash scripts/live-checks/check191.sh --after-flip` with `CHECK191_REPO` and `CHECK191_PLAIN_REPO` **from the proxied repository's own checkout** (or name it with `CHECK191_CHECKOUT`; its `doctor` row cannot be read anywhere else, so the check refuses a directory that is not that repository's before launching anything), after the flip has been applied; the steps are [secrets-brokering/check191-steps.md](secrets-brokering/check191-steps.md), the test is `scripts/live-checks/check191_test.sh`, and **no agent runs any step of it** | Two throwaway runs (one in the proxied repository, one in the plain one) and **nothing else**: no node is written and nothing is deleted — the branches and pull requests those two runs open stay on their sandbox repositories, and their rows are yours to settle. **Wall clock, not money: about 40 minutes per run.** **USER-RUN, NOT RUN.** |
@@ -3765,6 +3766,8 @@ gcloud services enable iamcredentials.googleapis.com --project="${P:?}"
 **This step has no commands, and it creates and probes nothing.** No Bitbucket workspace, project, repository, branch or token is created; no credential of any kind is made, handled or typed; and no repository is read from or pushed to. It is a **record of the owner's decision**, not a probe: the answer *is* the ruling, and the ruling is what the FACT line carries. The heading above still says "the four probes" because the plan's Task 3.0 named four — this one turned out to need no run at all.
 
 **FACT:** the ruling in the owner's own words, with its date; that it leaves Bitbucket on the per-repository path, so phase 3's shared jobs are GitHub's and Check 53 runs the GitHub path; that the design's D5 row and §13 entry are amended to match it (the plan's Task 0.5); and that **no probe was run, and no credential, project or repository was created for U1**.
+
+**Amended 2026-11-16: the ruling's second half has moved, and the first has not.** With the rulings **D460–D462** of 2026-10-27, recorded in [bitbucket-workspace-token/reconciliation-secrets-brokering.md](bitbucket-workspace-token/reconciliation-secrets-brokering.md), this step's first half stands exactly as it is: **no project-wide credential is scoped to a set of repositories**, so this check still runs no probe, creates no credential and has no token whose reach to measure. What moved is the second half, the consequences below: a shared project job holds **no token at all** (**D2302**, answered 2026-11-13; the model is [shared-jobs-default/spec.md](shared-jobs-default/spec.md)'s), the credentials service's proxy pairing the verified run identity to the repositories the job's own profile admits — so a Bitbucket repository's shared path is served by the proxy and not by a credential the job carries, and the shared job's own check, end to end and at the allow-list, is **Check 181** below. The date and the words above are kept as the record of what was ruled then; what a shared job is meant to be today is stated here and in Check 181.
 
 ### 3. U2 — does a Cloud Run **secret reference** work inside a container env override?
 
@@ -12139,6 +12142,163 @@ the live one from then on), and the project-wide secret, which
 `fugaro secrets rm bitbucket-token` removes — the container with every version in it and the
 `project_secrets` entry that made it reachable, in the same run — once no repository needs it.
 **Never run any step against `belong`**, and **no agent runs any step of it**.
+
+## Check 181: a Bitbucket shared project job end to end, and the allow-list refusal at publish, at deploy and at the proxy (installation `<sandbox>` only, sandbox workspace only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **T2.6** of the Bitbucket workspace-token plan
+([bitbucket-workspace-token/implementation-plan.md](bitbucket-workspace-token/implementation-plan.md), its
+"Checks this plan takes (Checks 180–189)"), and **run by you** in task **T2.7**. Check 180 beside it
+ships as a script; this one has no script at all — **you type three commands**,
+`fugaro project policy publish`, `fugaro update` and `fugaro run --repo <owner/name>`, on a sandbox
+installation and a sandbox Bitbucket workspace — and **no agent runs any step of it**.
+
+Nothing here has been run, and **it cannot run yet**: the four sides of a shared Bitbucket job are
+built on this tree — S1's deployer refuses a profile that mounts a Bitbucket credential and admits one
+that does not; S2's pairing serves the shared class at the credentials service's Bitbucket proxy;
+S3's runner reaches git only through it (`internal/runner`'s `TestSharedBitbucketJobHoldsNoToken` and
+`TestSharedBitbucketJobHaltsWhenTheProxyRefusesARepository`); S4's launcher resolves the profile —
+while the three that would put a working job in front of a user are not. `internal/infra`'s
+`sharedJobProviders` still admits `github` alone, the one-line change docs/shared-jobs-default calls
+**I1**; S5, which would have `fugaro update` write the default profile a shared Bitbucket job is
+deployed from, has not shipped; and **no deployment lets a shared job's account reach the credentials
+service at all** — which is two facts, and both of them are absent.
+
+The first is the one to know before step 5: the service's shared class is its table of
+`FUGARO_SHARED_JOB_ACCOUNTS` rows, nothing under `deploy/terraform/` renders that name
+(`internal/infra/tf`'s `CredentialsServiceEnvAwaitingTheModule` records it as the name the module does
+not carry yet), and an installation whose entry is absent starts with the empty set and **refuses the
+whole class** — the caller falls through to the per-repository table and is refused there
+(`internal/cli`'s `credentialsServiceSharedJobAccounts` and `internal/credsvc`'s authenticator) — so
+the runs of step 5 would be refused by the service before they cloned anything, on a job that holds no
+credential to fall back on.
+
+The second is the one to know before step 6, and it is the *earlier* of the two a caller meets: the
+deployment owes the shared job's service account **`roles/run.invoker` on the credentials service**,
+and `deploy/terraform/gcp/modules/project` writes no such member on any profile's account — the
+per-repository path's grant lives in `deploy/terraform/gcp/modules/workflow/sa.tf` (D135), and
+docs/secrets-brokering is where the project module gets its own — task **B5.2**, which names "the
+shared job account's `roles/run.invoker` on the service" among its parts and has not shipped. The
+service is IAM-only (its front end states `invoker_iam_disabled = false` and no `allUsers` member is
+written anywhere), so a caller without that bit is refused **403 by Cloud Run's own front end**,
+before the container starts — the request never reaches the proxy, the pairing or the allow-list step
+6 is about. An owner who lands I1, S5 and the table's rendering and launches anyway meets that 403
+first; it is **not** this section's refusal, and it is not a pass of step 6.
+
+So **no shared job serves a Bitbucket profile today**, step 4 below is where that shows: the profile
+it deploys a job for is one you write by hand, and with that entry unrendered the job's runs have no
+service to reach. Run this section once all of them have landed, and read the documents that say so
+as of 2026-11-16 — [git-providers.md](git-providers.md) and [project-layer.md](project-layer.md).
+
+**What the check settles** (**D460**–**D462**, **D466**, **D2302**; and F11 and F12 of the
+[reconciliation](bitbucket-workspace-token/reconciliation-secrets-brokering.md)): the shape a shared
+Bitbucket job is meant to have, end to end and at the allow-list — **one** Cloud Run job and **one**
+job service account serve every repository of one profile, the job holds **no Bitbucket token at
+all**, and its git traffic reaches Bitbucket only through the credentials service's Bitbucket proxy,
+which pairs the verified run identity to the repositories the job's own profile admits. Three
+readings make it: the token's block is the credential's reach — refused where the list is published
+for a profile that mounts it, and held to where a run is served for a job that does not; the job's own
+description is a job with the credentials service's address on it and no `bitbucket-token` anywhere
+in it; and a repository the allow-list does not name gets no git operation at all, on a job that
+could otherwise serve it. No offline test produces any of them — the runner's tests use a fake proxy
+and a fake deployment, and the deployer's refusal is a plan, not a project.
+
+**What you do** (task T2.7; every step on the sandbox installation and a sandbox workspace, never
+`belong`):
+
+1. **The token and its allow-list** (D461). In the sandbox workspace create a **project access
+   token** with `repository:write` and `pullrequest:write` — the narrower of the pair D461 allows,
+   no admin, webhook, pipeline or project-admin scope — and treat the two sandbox repositories of
+   one Bitbucket project as the repositories it is for. Write the
+   `project_secrets.bitbucket-token.allow_data_to` block naming those two, run `fugaro update` so
+   the project container exists, and store the token project-wide with
+   `fugaro secrets set bitbucket-token --project-wide < <token-file>`. Check 180's steps 1 and 2 are
+   the same two, and settle the token itself; this check reads the block as the allow-list the
+   publish and the pairing both answer with.
+2. **The profile a shared job is deployed for, which mounts no Bitbucket credential (D2302).** In
+   the installation's local config write a Bitbucket profile whose `allow_repos` names **the same two
+   repositories** the block names and whose `secrets` carry **nothing of Bitbucket's**: the
+   project-wide token is step 1's, and the job — shared by every repository the profile admits —
+   holds no credential of its own, so `bitbucket-token` is not on this profile at all. The rule that
+   says so is `internal/projectpolicy`'s `CheckSharedJobProfile`, and both doors ask it: the publish
+   and, one step later, the deployer (step 3 reads the refusal it makes). `fugaro project policy show`
+   is how you read back what the publish writes. The profile is the boundary a shared job is built
+   from — one service account serves every repository it admits, while the bucket condition on that
+   account is the same whole-prefix one every project job account carries, whatever its profile,
+   because a profile separates secrets and not bucket objects (SECURITY.md, "The Bitbucket git
+   proxy", and its "Known limits").
+3. **The lists, and the third repository's three readings** (D2302, and F11 of the
+   [reconciliation](bitbucket-workspace-token/reconciliation-secrets-brokering.md)). All three use
+   the same third sandbox repository — one the token's block does **not** name.
+   - **At the publish, through the subset rule.** Add it to the `allow_repos` of a profile that
+     **mounts** `bitbucket-token` — the per-repository shape, and the shape a Bitbucket profile had
+     before D2302; the shared profile of step 2 mounts nothing. `fugaro project policy publish`
+     **refuses** it through `internal/projectpolicy`'s `CheckBitbucketProfileRepos`, the rule that a
+     profile's list may only narrow the block's, naming the repository it is not allowed to admit
+     (the same rule is asked at `fugaro project profile` when a profile is edited), and `fugaro
+     update` refuses the same node before it plans anything. Record both refusals in their own words,
+     then take the credential off that profile and the third repository out of its list.
+   - **At the deploy, through the mount rule.** Put `bitbucket-token` on the profile of step 2 and
+     read what refuses it: `fugaro project policy publish` refuses the mount through `CheckSharedJobProfile`,
+     the same function the deployer asks — which is why a shared job is refused rather than deployed
+     with the mount dropped — and once `sharedJobProviders` admits `bitbucket` (I1) `fugaro update`
+     refuses the **job** one step later, at the deployer and not at the policy stage, which writes the
+     node the config states (the HARD RULE: an update converges). Take the entry off again.
+   - **On the profile a shared job is deployed for, through nothing at all.** With the credential off
+     that profile, as step 2 leaves it, the third repository added to its `allow_repos` is refused at
+     **no** door here: the block is not the profile's to mount, and the token's reach is the service's
+     to hold a call to. Record that too — it is the difference between the rule before D2302 and the
+     rule now, and the refusal you are looking for is step 6's.
+4. **The deploy.** `fugaro update` on the sandbox installation. The reading is the deployment it
+   leaves: **one** new Cloud Run job named `fugaro-p-…` for the profile — one job and one job
+   service account, named from a profile rather than from a repository
+   (`internal/backend/gcp`'s `ProjectJobName`) — with `FUGARO_CREDENTIALS_SERVICE_URL` in its
+   environment, written by the deployer because a job that holds no git credential cannot clone
+   without it (D2302; git-providers.md's amendment of 2026-11-16), and with **no** secret reference
+   to `bitbucket-token` in the job's spec. `gcloud run jobs describe` reads both, and a job that
+   carries that mount fails this step: S1's deployer refuses the profile that would produce it, so a
+   job holding one was built by something other than this path.
+5. **A run of each allow-listed repository.** `fugaro run --repo <owner/name>` for each of the two
+   sandbox repositories, one at a time or both at once — sharing the job is the point of the
+   profile. Each run has to execute **on that one job**: one `fugaro-p-…` execution, the same
+   service account, and no second job's name anywhere in the run's own record. Each has to get as
+   far as cloning, committing, pushing and opening its pull request, and that the push lands on a
+   job with no `bitbucket-token` in it is the reading: the credential on the wire is the service's,
+   paired to the repository the run's own profile admits. A run that never reached its clone has
+   skipped the reading rather than passed it, and the case to tell apart at once is a run halted by
+   a **403** — that is Cloud Run's front end refusing a caller without `roles/run.invoker`, the
+   missing grant the paragraph above names, and it says nothing about this profile: the service was
+   never asked.
+6. **The third repository, refused at the proxy.** Now launch a run of the repository that is not in
+   the allow-list, by hand and against the same shared job — `fugaro run --repo <owner/name>`, with
+   that repository already on the published node, which is what makes the run resolve the shared job
+   instead of one of its own. The credentials service's Bitbucket proxy **refuses** the run, because
+   the pairing resolves its identity against the published node and the repositories that profile is
+   bound to, and the runner holds no Bitbucket credential of its own to fall back on; the run halts
+   on that refusal instead of finding a way around it (S3's
+   `TestSharedBitbucketJobHaltsWhenTheProxyRefusesARepository` is that behaviour, offline). **Read
+   the refusal before you record it, because two different refusals end a run here and only one of
+   them is this step's.** The one this step is about is the **service's own**, after the pairing:
+   its words name the repository and the identity it resolved, it is answered by the proxy's code
+   with the audit line a refusal is recorded as, and it is the allow-list doing its job. The other
+   is **Cloud Run's front end**, a bare **403** with no repository in it — an account that holds no
+   `roles/run.invoker` on the service, or one the service's own table does not admit at all, is
+   stopped there before the container runs, so the request never reaches the proxy, the pairing or
+   the block. That 403 is the state the paragraph above describes, not a reading: **record it as
+   this step not having run**, not as the refusal, because a check recorded on it would claim the
+   allow-list held when nothing of the allow-list was ever asked. Record the refusal's own words
+   and the run's final row. **This is the step to be sure of**: if that run clones, the allow-list
+   is not the boundary the design says it is, and that is a finding no other check of the block
+   would show.
+7. **What is left behind.** The two pull requests of step 5 are the runs' own; they are the one
+   thing to look at afterwards, and nothing here approves or merges anything.
+
+**Restore.** No command of this check undoes itself: the sandbox repositories and scratch homes you
+made are yours to delete, the two pull requests are left open for a person to look at, the profile
+and its `fugaro-p-…` job stay on the sandbox installation until you remove them, and the
+project-wide secret goes with `fugaro secrets rm bitbucket-token` once no repository needs it — the
+container with every version in it and the `project_secrets` entry that made it reachable, in the
+same run. The token itself is revoked in the sandbox workspace, where you created it. **Never run
+any step against `belong`**, and **no agent runs any step of it**.
 
 ## Check 190: git fetch, a blobless clone and a >32 MiB push through a throwaway, IAM-only Cloud Run proxy (installation `fugaro` only, sandbox repository only, never `belong`; run by you; **RUN 2026-10-30: FAILED — THE GATE**, the >32 MiB push answered **413** on HTTP/1.1)
 
