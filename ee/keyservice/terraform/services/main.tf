@@ -147,6 +147,102 @@ data "google_kms_key_ring" "signing" {
   location = var.region
 }
 
+# The project's number, which a Cloud Run URL is spelled with. It is read rather
+# than left to the deploy: the URL below is what the API checks a scheduled
+# call's token against (P1.3, F33), and a value the deploy passed would be a
+# second spelling of the audience the jobs' tokens carry.
+data "google_project" "this" {
+  project_id = var.project
+}
+
+# The two services' environments, and the whole of them: every variable P1.7's
+# programs read before either one serves (ee/keyservice/config.go). Nothing else
+# sets them — P9.2's deploy hands `gcloud run deploy` an image and nothing more —
+# so a variable left out here is a revision that refuses at startup and never
+# becomes ready, which is a deploy that looks like a rollout and is a service
+# nothing answers on. The reader is strict in both directions, so this file and
+# that one are a pair: every FUGARO_ name below is one it reads, and every one it
+# reads is below. TestTheServicesSetEveryVariableTheProgramsRead is the machine's
+# half of that pair.
+#
+# **Why Terraform and not the deploy script.** This root owns both revisions'
+# templates: every apply rewrites a container's image, and the lifecycle blocks
+# below ignore only `client` and `client_version`. An environment set by
+# `gcloud run deploy` would be erased by the next apply — silently, and with a
+# service that then refuses to start — so the values live in the template itself.
+#
+# The minter's set is three names and not one secret, which is the identity
+# boundary reaching the deployment: this project's own apply is what keeps a
+# merchant secret, a mail key and a store out of the process that signs
+# (§3.3, Check 571).
+locals {
+  # The API's own URL, derived because a resource cannot read its own attribute:
+  # the scheduled calls' audience is `google_cloud_run_v2_service.api.uri` where
+  # scheduler.tf mints their tokens, and the API's own environment needs the same
+  # string. It is Cloud Run's own form, `<service>-<project number>.<region>`, the
+  # spelling deploy/terraform's coordinator uses for its issuer. A change in that
+  # form is a scheduled call refused for an audience nobody minted for, and the
+  # jobs go quiet rather than loud — the two places are one value, and this is the
+  # one of the two that cannot be an attribute.
+  api_url = "https://${var.api_service}-${data.google_project.this.number}.${var.region}.run.app"
+
+  # The KMS key version the minter signs with (S2.1): this environment's licence
+  # key, whose only version is the one Cloud KMS created with it. Rotation is a
+  # new key id published in all three verifiers (§11), so it moves the
+  # `cryptoKeys` segment above and never the version number — an asymmetric key
+  # has no primary version to fall forward to, and a signer naming a version
+  # nobody published signs nothing.
+  signer_key_version = "projects/${var.project}/locations/${var.region}/keyRings/${var.keyring}-${var.environment}/cryptoKeys/${var.keys[var.environment]}/cryptoVersions/1"
+
+  # Which container holds which secret: FUGARO_SECRETS, the config's own roles
+  # (knownSecretRoles) against this root's containers. The merchant's role is the
+  # webhook secret, the value merchant.go verifies a Paddle event's signature
+  # with. The DSN is named only when `var.secrets` names a container for it: a
+  # container nobody has filled has no version to read, so naming the role
+  # unconditionally would refuse a deployment that chose P1.6's off.
+  secret_roles = merge(
+    {
+      merchant       = var.secrets["paddle_webhook"]
+      admin          = var.secrets["admin_secret"]
+      paddle_api_key = var.secrets["paddle_api_key"]
+      resend_api_key = var.secrets["resend_api_key"]
+    },
+    contains(keys(var.secrets), "sentry_dsn") ? { sentry_dsn = var.secrets["sentry_dsn"] } : {},
+  )
+
+  api_env = {
+    FUGARO_ENVIRONMENT        = var.environment
+    FUGARO_KEYS               = jsonencode(var.keys)
+    FUGARO_URL                = var.portal_url
+    FUGARO_PLANS              = var.plans
+    FUGARO_FREE_MAIL_DOMAINS  = join(",", var.free_mail_domains)
+    FUGARO_VERIFICATION_TTL   = var.verification_ttl
+    FUGARO_CODE_HOSTS         = join(",", var.code_hosts)
+    FUGARO_MAX_REPOSITORIES   = tostring(var.max_repositories)
+    FUGARO_THROTTLE           = var.throttle
+    FUGARO_INVITE_RATE        = var.invite_rate
+    FUGARO_ADMIN_ACCOUNT      = var.admin_account
+    FUGARO_ADMIN_TOKEN_TTL    = var.admin_token_ttl
+    FUGARO_PADDLE_PRICE_ID    = var.paddle_price_id
+    FUGARO_SCHEDULER_AUDIENCE = local.api_url
+    FUGARO_SCHEDULER_ACCOUNT  = google_service_account.scheduler.email
+    FUGARO_SEALER_KEY_NAME    = google_kms_crypto_key.handover.id
+    FUGARO_TENANTS_COLLECTION = var.tenants_collection
+    FUGARO_TERMS_VERSION      = var.terms_version
+    FUGARO_SECRETS            = jsonencode(local.secret_roles)
+    FUGARO_PROJECT            = var.project
+    FUGARO_MINTER_URL         = google_cloud_run_v2_service.minter.uri
+    FUGARO_MAIL_FROM          = var.mail_from
+    FUGARO_NOTIFY_ADDRESS     = var.notify_address
+  }
+
+  minter_env = {
+    FUGARO_ENVIRONMENT        = var.environment
+    FUGARO_KEYS               = jsonencode(var.keys)
+    FUGARO_SIGNER_KEY_VERSION = local.signer_key_version
+  }
+}
+
 # The portal's one document store: its own native Firestore database, separate
 # from the installation's realtime database (spec §4, D2188). The rules it is
 # deployed with deny every client and live beside the SPA
@@ -262,6 +358,19 @@ resource "google_cloud_run_v2_service" "api" {
     containers {
       image = var.api_image
 
+      # The API's own set, one entry per variable its loader reads: `local.api_env`
+      # above, and the reader refuses a name that is not in its set, so an entry
+      # added here without a change in ee/keyservice/config.go is a revision that
+      # does not start.
+      dynamic "env" {
+        for_each = local.api_env
+
+        content {
+          name  = env.key
+          value = env.value
+        }
+      }
+
       resources {
         limits = {
           cpu    = "1"
@@ -309,6 +418,19 @@ resource "google_cloud_run_v2_service" "minter" {
 
     containers {
       image = var.minter_image
+
+      # The minter's three, and none of the API's: `local.minter_env` above. A
+      # deployment that handed this container the API's environment is refused by
+      # its own loader before it signs anything (Check 174), so the two sets are
+      # two fences rather than one list used twice.
+      dynamic "env" {
+        for_each = local.minter_env
+
+        content {
+          name  = env.key
+          value = env.value
+        }
+      }
 
       resources {
         limits = {
