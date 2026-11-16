@@ -34,6 +34,22 @@
       }
     },
     {
+      "id": "SA1.6",
+      "title": "the table knows both ends of a tier",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/pricing/pricing.go",
+          "internal/pricing/catalog_apply.go",
+          "internal/pricing/catalog_apply_test.go",
+          "internal/pricing/pricing_test.go"
+        ]
+      }
+    },
+    {
       "id": "SA1.1",
       "title": "price_policy can be deployed",
       "run": null,
@@ -46,6 +62,8 @@
           "internal/cli/models_add.go",
           "README.md",
           "docs/release.md",
+          "docs/multi-model.md",
+          "docs/gcp-live-checklist.md",
           "internal/cli/docs_providers_test.go",
           "internal/cli/project_cmd_test.go",
           "internal/cli/init_repo_gate_test.go",
@@ -65,6 +83,20 @@
         "paths": [
           "internal/localcfg/localcfg.go",
           "internal/localcfg/localcfg_test.go",
+          "internal/settings/registry.go",
+          "schemas/settings.schema.json"
+        ]
+      }
+    },
+    {
+      "id": "SA4.3",
+      "title": "the undercut check",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
           "internal/pricing/undercut.go",
           "internal/pricing/undercut_test.go"
         ]
@@ -81,11 +113,15 @@
         "paths": [
           "internal/budget/rules/rules.json.tmpl",
           "internal/budget/rules/testdata/rules.golden.json",
+          "internal/budget/rules/testdata/rules.generation5.json",
           "internal/budget/rules/rules_test.go",
           "internal/budget/rules/new_leaves_emulator_test.go",
           "internal/projectpolicy/version.go",
           "internal/cli/docs_mobile_auth_test.go",
-          "internal/cli/project_cmd.go"
+          "internal/cli/project_cmd.go",
+          "internal/cli/doctor_render.go",
+          "internal/cli/doctor_policy_test.go",
+          "internal/cli/update_converge_test.go"
         ]
       }
     },
@@ -116,6 +152,7 @@
         "paths": [
           "internal/gateway/forward.go",
           "internal/gateway/ledger.go",
+          "internal/gateway/gateway.go",
           "internal/gateway/ledger_test.go",
           "internal/gateway/provider_settle_test.go"
         ]
@@ -150,7 +187,9 @@
           "internal/cli/budget_reconcile_test.go",
           "internal/cli/budget.go",
           "website/content/cli-reference.md",
-          "internal/cli/report_census_test.go"
+          "internal/cli/report_exempt.go",
+          "internal/cli/report_json_fixtures_test.go",
+          "internal/cli/noprompt_harness_test.go"
         ]
       }
     },
@@ -179,7 +218,7 @@
         "paths": [
           "internal/cli/update_model_prices.go",
           "internal/cli/update_model_prices_test.go",
-          "internal/cli/update.go",
+          "internal/cli/init_stages.go",
           "internal/cli/validate.go",
           "internal/cli/validate_undercut_test.go"
         ]
@@ -228,7 +267,8 @@
         "paths": [
           "internal/cli/doctor_spend_drift.go",
           "internal/cli/doctor_spend_drift_test.go",
-          "internal/cli/doctor.go"
+          "internal/cli/doctor.go",
+          "internal/cli/doctor_render.go"
         ]
       }
     },
@@ -287,7 +327,11 @@
           "internal/cli/validate_test.go",
           "internal/cli/budget_test.go",
           "internal/cli/models_ls_test.go",
-          "internal/cli/diagnose_test.go"
+          "internal/cli/diagnose.go",
+          "internal/cli/diagnose_test.go",
+          "internal/projectpolicy/policy.go",
+          "internal/projectpolicy/policy_test.go",
+          "internal/runner/providers_test.go"
         ]
       }
     },
@@ -314,6 +358,7 @@
         "prediction": true,
         "paths": [
           "internal/runner/spend_accuracy_e2e_test.go",
+          "internal/runner/testdata/spend_accuracy_result.golden.json",
           "internal/cli/budget_reconcile_e2e_test.go"
         ]
       }
@@ -421,7 +466,37 @@
     {
       "task": "SA3.1",
       "needs": "SA2.2",
-      "reason": "same file diagnose_test.go"
+      "reason": "same files diagnose.go and diagnose_test.go"
+    },
+    {
+      "task": "SA3.1",
+      "needs": "SA1.6",
+      "reason": "same file catalog_apply.go"
+    },
+    {
+      "task": "SA1.2",
+      "needs": "SA1.6",
+      "reason": "reads the two ends SA1.6 adds"
+    },
+    {
+      "task": "SA4.3",
+      "needs": "SA1.6",
+      "reason": "reads the two ends SA1.6 adds"
+    },
+    {
+      "task": "SA4.2",
+      "needs": "SA4.3",
+      "reason": "calls the check SA4.3 adds"
+    },
+    {
+      "task": "SA0.1",
+      "needs": "SA1.1",
+      "reason": "same file docs/gcp-live-checklist.md"
+    },
+    {
+      "task": "SA5.3",
+      "needs": "SA5.0",
+      "reason": "same file doctor_render.go"
     },
     {
       "task": "SA5.4",

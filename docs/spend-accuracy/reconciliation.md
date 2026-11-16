@@ -163,7 +163,7 @@ later event can lower a call's settled cost, and a zero report would settle a ca
 the tier's cheapest end, and the provider route keeps the largest cost seen.
 
 **F23 (Gap, review round 1).** Tier-A notional per model. `StageReport.ByModel` holds every tier's money, and
-`Notional` is one scalar (`internal/gateway/ledger.go`). **Consequence:** SA1.0 adds `NotionalBy`, so a cascade
+`Notional` is one scalar (`StageReport` and `Ledger` in `internal/gateway/gateway.go`). **Consequence:** SA1.0 adds `NotionalBy`, so a cascade
 run's tier-A spend reaches the `notional` leaf per model.
 
 **F24 (Gap, review round 1; was U6).** A call settled after its stage's wait reaches the run's `model_usd` and
@@ -200,6 +200,27 @@ spec. It is listed as considered and declined here and left to the models-comman
 today plus yesterday, a window of 24 to 48 hours. **Consequence:** D2649 is amended to that window, and O4 asks the
 owner to confirm.
 
+**F31 (Gap, review round 2; answers U8).** The price table holds one bound per model. A catalog row carries the
+selected bound's `Rates`, plus `TierInputMax`/`TierOutputMax` in its provenance (`pricing.CatalogPrice`), and no
+minimum and no cache bounds. Once `highest` is the default, the cheapest end is not in the table at all.
+**Consequence:** a new task (SA1.6) gives a `pricing.Model` both ends' rates, set in `catalogModel`; for a row that is
+not catalog-priced, both ends equal its rates. SA1.2's band and SA2.1's floor read them.
+
+**F32 (Gap, review round 2).** A call priced `max` (a serving model the table does not know, or a serving model other
+than the pin; `fromUsage`) has no band of its own, and the table's maximum is Claude's rates. **Consequence:**
+resolution RS7.
+
+**F33 (Gap, review round 2).** "The day has the leaf" has no signal. `ModelUse` and `ModelTotals` hold integers, and
+`DayRecord`'s reader reads a missing field as 0, so a gateway-only model's real `notional` of 0 would look like an
+old day. **Consequence:** resolution RS8.
+
+**F34 (Gap, review round 2; answers U8).** No command removes one `model_prices` entry from the shared copy: the
+publish writes `MergeShared(published, local)` (`publishSharedWarn`, `internal/cli/sharedcfg.go`), which unions the
+two. Runs are unaffected, because a job's `FUGARO_MODEL_PRICES` is built from the owner's own local config
+(`lc.Overrides()` in `internal/infra/spec.go`). A teammate's CLI keeps the stale entry for its own estimates and
+`budget prices`. **Consequence:** OR1 fixes the runs. The shared copy's stale entry is O3, a follow-up outside this
+spec.
+
 ## Resolutions (one defensible answer)
 
 - **RS1.** Flip `catalogShipped` to `true`, with `catalogSince` left at `0.7.5`, and fix `modelsCatalogPriceNote` and
@@ -213,6 +234,14 @@ owner to confirm.
   max, tier or surprise).
 - **RS5 (review round 1).** Record and `--json` names avoid the existing `cost.estimate` (a bool). The new fields are
   `reported_by`, `table_lo_usd`, `table_hi_usd` and `unreported_calls`, and `diagnose --json` uses the same names.
+- **RS7 (review round 2, F32).** A call priced `max` takes its band and floor from the pin's row when the table
+  knows the pin. Otherwise it settles on its report with no floor, and is left out of the band and the alarm; its call
+  log line says so.
+- **RS8 (review round 2, F33).** Under generation 6, the writer writes `notional` with every `micros` write of that
+  model, including a 0, and the readers take the field's presence (a `NotionalSet` beside the value in `ModelUse` and
+  `ModelTotals`) as the signal. A day without it keeps `splitModel`. In the mixed-version window, a run in flight on an
+  older image writes notional into `micros` alone, and those dollars read as billed. That lasts until the run ends,
+  and is stated, not fixed.
 - **RS6 (review round 1).** Each code task keeps the docs tests green in its own pull request: a pinned sentence it
   makes false changes in that pull request (the "Docs are tested" rule). SA6.1 writes the narrative that remains.
 
@@ -248,10 +277,9 @@ compared.
 - **O2.** Reasoning tokens (spec cause 4) are U2. If OpenRouter bills reasoning outside `output_tokens`, D2640 already
   covers every call that carries a report, and only estimated calls would under-charge.
 
-- **O3.** How OR1's deletion reaches the shared copy. `MergeShared` unions the published copy with the local file, so
-  a deletion in the local file alone may leave the entry published. OR1 is verified by `fugaro budget prices`
-  showing v4.1-flash as catalog-priced. If it does not, removing the entry from the shared copy is the owner's next
-  step (U8).
+- **O3 (rewritten after review round 2, F34).** The shared copy keeps the dogfood override after OR1, and no command
+  removes one entry. Runs are not affected. Whether to add a removal (a `models rm` that also prunes the shared copy,
+  say) is the owner's call, and it is outside this spec.
 - **O4.** Confirm the amended D2649 window: today plus yesterday (UTC), which is 24 to 48 hours (F30).
 
 ## UNVERIFIED
@@ -268,5 +296,4 @@ compared.
 - **U6.** Withdrawn: settled by F24.
 - **U7.** Whether the console renders a new doctor check without a console change. A console maintainer settles it by
   reading the doctor view; if it does not, the console change is a follow-up task, which this plan does not add.
-- **U8.** Whether any command today removes one `model_prices` entry from the shared copy in the runs bucket. Read
-  `internal/cli/sharedcfg.go`'s publish path, or run OR1 and read the result.
+- **U8.** Withdrawn: settled by F34.
