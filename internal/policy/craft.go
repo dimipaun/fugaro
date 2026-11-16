@@ -91,7 +91,7 @@ type CraftLayer struct {
 	// may not introduce one.
 	Pools map[string]CraftPool
 	// Access is the credential or pool each craft's calls go out on, by craft
-	// name — the four of config.CraftNames, kept as the layer wrote them: a
+	// name — the five of config.CraftNames, kept as the layer wrote them: a
 	// name outside that vocabulary is refused where the block is written, by
 	// the strict decoder that owns it, and a merge that quietly dropped one it
 	// did not know would answer an unset craft. The first layer selects among

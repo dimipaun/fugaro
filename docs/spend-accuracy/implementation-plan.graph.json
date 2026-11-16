@@ -1,0 +1,592 @@
+{
+  "schema_version": 3,
+  "plan": "docs/spend-accuracy/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "SA0.1",
+      "title": "Checks 650 and 651 in the live checklist",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/gcp-live-checklist.md"
+        ]
+      }
+    },
+    {
+      "id": "SA1.0",
+      "title": "the cost fields a run records per model",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/gateway/gateway.go",
+          "internal/runstore/cost.go",
+          "schemas/result.schema.json",
+          "schemas/schemas_test.go",
+          "docs/spend-accuracy/cost-fields.md"
+        ]
+      }
+    },
+    {
+      "id": "SA1.6",
+      "title": "the table knows both ends of a tier",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/pricing/pricing.go",
+          "internal/pricing/catalog_apply.go",
+          "internal/pricing/catalog_apply_test.go",
+          "internal/pricing/pricing_test.go"
+        ]
+      }
+    },
+    {
+      "id": "SA1.1",
+      "title": "price_policy can be deployed",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/recipes_skew.go",
+          "internal/cli/models_add.go",
+          "README.md",
+          "docs/release.md",
+          "docs/multi-model.md",
+          "docs/gcp-live-checklist.md",
+          "internal/cli/docs_providers_test.go",
+          "internal/cli/project_cmd_test.go",
+          "internal/cli/init_repo_gate_test.go",
+          "internal/cli/models_add_test.go",
+          "internal/cli/docs_compute_backend_test.go",
+          "internal/cli/recipes_skew_test.go"
+        ]
+      }
+    },
+    {
+      "id": "SA4.1",
+      "title": "model_prices in dollars per million",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/localcfg/localcfg.go",
+          "internal/localcfg/localcfg_test.go",
+          "internal/settings/registry.go",
+          "schemas/settings.schema.json"
+        ]
+      }
+    },
+    {
+      "id": "SA4.3",
+      "title": "the undercut check",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/pricing/undercut.go",
+          "internal/pricing/undercut_test.go"
+        ]
+      }
+    },
+    {
+      "id": "SA5.0",
+      "title": "rules generation 6, the new leaves",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/budget/rules/rules.json.tmpl",
+          "internal/budget/rules/testdata/rules.golden.json",
+          "internal/budget/rules/testdata/rules.generation5.json",
+          "internal/budget/rules/rules_test.go",
+          "internal/budget/rules/new_leaves_emulator_test.go",
+          "internal/projectpolicy/version.go",
+          "internal/cli/docs_mobile_auth_test.go",
+          "internal/cli/project_cmd.go",
+          "internal/cli/doctor_render.go",
+          "internal/cli/doctor_policy_test.go",
+          "internal/cli/update_converge_test.go",
+          "docs/gcp-live-checklist.md"
+        ]
+      }
+    },
+    {
+      "id": "SA5.6",
+      "title": "the day shapes, through the rollup and the archive",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/budget/model.go",
+          "internal/budget/rollup.go",
+          "internal/budget/rollup_test.go",
+          "docs/spend-accuracy/day-leaves.md"
+        ]
+      }
+    },
+    {
+      "id": "SA1.2",
+      "title": "the gateway records the report and the band per model",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/gateway/forward.go",
+          "internal/gateway/ledger.go",
+          "internal/gateway/gateway.go",
+          "internal/gateway/ledger_test.go",
+          "internal/gateway/provider_settle_test.go"
+        ]
+      }
+    },
+    {
+      "id": "SA1.5",
+      "title": "the runner records them in result.json",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/gateway.go",
+          "internal/runner/runner.go",
+          "internal/runner/cost.go",
+          "internal/runner/cost_reported_test.go"
+        ]
+      }
+    },
+    {
+      "id": "SA1.3",
+      "title": "fugaro budget reconcile",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/budget_reconcile.go",
+          "internal/cli/budget_reconcile_test.go",
+          "internal/cli/budget.go",
+          "website/content/cli-reference.md",
+          "internal/cli/report_exempt.go",
+          "internal/cli/report_json_fixtures_test.go",
+          "internal/cli/noprompt_harness_test.go"
+        ]
+      }
+    },
+    {
+      "id": "SA2.2",
+      "title": "diagnose compares the report with the band",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/diagnose.go",
+          "internal/cli/diagnose_test.go"
+        ]
+      }
+    },
+    {
+      "id": "SA4.2",
+      "title": "update migrates the keys and reports undercuts",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/update_model_prices.go",
+          "internal/cli/update_model_prices_test.go",
+          "internal/cli/init_stages.go",
+          "internal/cli/validate.go",
+          "internal/cli/validate_undercut_test.go",
+          "internal/cli/update_converge_test.go"
+        ]
+      }
+    },
+    {
+      "id": "SA5.1",
+      "title": "the budget writes the new figures",
+      "run": null,
+      "version": null,
+      "size": 2.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/budget/lease.go",
+          "internal/budget/session.go",
+          "internal/runner/budget_session.go",
+          "internal/projectpolicy/read.go",
+          "internal/budget/session_test.go",
+          "internal/budget/by_tier_test.go"
+        ]
+      }
+    },
+    {
+      "id": "SA5.2",
+      "title": "report keeps billed dollars billed",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "ee/report/report.go",
+          "ee/report/report_test.go",
+          "ee/report/render.go"
+        ]
+      }
+    },
+    {
+      "id": "SA5.3",
+      "title": "the drift alarm in doctor",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/doctor_spend_drift.go",
+          "internal/cli/doctor_spend_drift_test.go",
+          "internal/cli/doctor.go",
+          "internal/cli/doctor_render.go"
+        ]
+      }
+    },
+    {
+      "id": "SA5.7",
+      "title": "the drift line in watch",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/watch/build.go",
+          "internal/watch/json.go",
+          "internal/watch/plain.go",
+          "internal/watch/console_parity_test.go",
+          "internal/cli/watch.go",
+          "console/docs/json-contract.md"
+        ]
+      }
+    },
+    {
+      "id": "SA2.1",
+      "title": "settle on the provider's figure",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/gateway/forward.go",
+          "internal/gateway/sse.go",
+          "internal/gateway/ledger.go",
+          "internal/gateway/provider_settle_test.go",
+          "internal/gateway/sse_test.go",
+          "internal/runner/provider_run_test.go"
+        ]
+      }
+    },
+    {
+      "id": "SA3.1",
+      "title": "highest is the default price policy",
+      "run": null,
+      "version": null,
+      "size": 2.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/config/providers.go",
+          "internal/config/providers_test.go",
+          "internal/pricing/catalog_apply.go",
+          "internal/pricing/catalog_apply_test.go",
+          "internal/cli/models_add.go",
+          "internal/cli/models_add_test.go",
+          "internal/config/pins_test.go",
+          "internal/config/pricetable_test.go",
+          "internal/runner/catalog_test.go",
+          "internal/cli/validate_test.go",
+          "internal/cli/budget_test.go",
+          "internal/cli/models_ls_test.go",
+          "internal/cli/diagnose.go",
+          "internal/cli/diagnose_test.go",
+          "internal/projectpolicy/policy.go",
+          "internal/projectpolicy/policy_test.go",
+          "internal/runner/providers_test.go",
+          "internal/runner/provider_run_test.go"
+        ]
+      }
+    },
+    {
+      "id": "SA5.4",
+      "title": "the day-counter leaves end to end",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/budget/rules/spend_leaves_emulator_test.go"
+        ]
+      }
+    },
+    {
+      "id": "SA1.4",
+      "title": "the cost fields end to end",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/spend_accuracy_e2e_test.go",
+          "internal/runner/testdata/spend_accuracy_result.golden.json",
+          "internal/cli/budget_reconcile_e2e_test.go"
+        ]
+      }
+    },
+    {
+      "id": "SA2.3",
+      "title": "what D2640 makes false elsewhere",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/gateway/gateway.go",
+          "schemas/result.schema.json",
+          "internal/runner/gateway.go",
+          "internal/runner/reported_gap_test.go",
+          "plugin/skills/working/SKILL.md"
+        ]
+      }
+    },
+    {
+      "id": "SA6.1",
+      "title": "the narrative documents",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/multi-model.md",
+          "docs/design/provider-price-catalog.md",
+          "docs/design/m10-multi-model.md",
+          "docs/design/v1.md",
+          "internal/cli/docs_spend_accuracy_test.go"
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "task": "SA1.2",
+      "needs": "SA1.0",
+      "reason": "fills the StageReport and Ledger fields SA1.0 declares"
+    },
+    {
+      "task": "SA1.5",
+      "needs": "SA1.0",
+      "reason": "reads SA1.0's gateway fields and writes its record fields; its tests hand-build stage reports"
+    },
+    {
+      "task": "SA1.3",
+      "needs": "SA1.0",
+      "reason": "reads the record fields SA1.0 declares; its tests use hand-written records"
+    },
+    {
+      "task": "SA2.2",
+      "needs": "SA1.0",
+      "reason": "reads the record fields SA1.0 declares; its tests use hand-written records"
+    },
+    {
+      "task": "SA5.1",
+      "needs": "SA1.0",
+      "reason": "reads the StageReport fields SA1.0 declares"
+    },
+    {
+      "task": "SA5.1",
+      "needs": "SA5.0",
+      "reason": "its generation gate is about the rules SA5.0 deploys"
+    },
+    {
+      "task": "SA5.1",
+      "needs": "SA5.6",
+      "reason": "writes the leaves whose shape SA5.6 declares"
+    },
+    {
+      "task": "SA5.2",
+      "needs": "SA5.6",
+      "reason": "reads ModelTotals as SA5.6 carries it; its tests use hand-written day records"
+    },
+    {
+      "task": "SA5.3",
+      "needs": "SA5.6",
+      "reason": "reads ModelUse as SA5.6 declares it; its tests use hand-written counters"
+    },
+    {
+      "task": "SA5.7",
+      "needs": "SA5.6",
+      "reason": "reads ModelUse as SA5.6 declares it"
+    },
+    {
+      "task": "SA4.2",
+      "needs": "SA4.1",
+      "reason": "the migration writes keys only SA4.1's parser accepts (behaviour)"
+    },
+    {
+      "task": "SA2.1",
+      "needs": "SA1.2",
+      "reason": "same files forward.go and ledger.go, and it settles against SA1.2's band"
+    },
+    {
+      "task": "SA3.1",
+      "needs": "SA1.1",
+      "reason": "same file models_add.go, and a default update --repo refuses cannot be tested end to end"
+    },
+    {
+      "task": "SA3.1",
+      "needs": "SA2.2",
+      "reason": "same files diagnose.go and diagnose_test.go"
+    },
+    {
+      "task": "SA3.1",
+      "needs": "SA1.6",
+      "reason": "same file catalog_apply.go"
+    },
+    {
+      "task": "SA1.2",
+      "needs": "SA1.6",
+      "reason": "reads the two ends SA1.6 adds"
+    },
+    {
+      "task": "SA4.3",
+      "needs": "SA1.6",
+      "reason": "reads the two ends SA1.6 adds"
+    },
+    {
+      "task": "SA4.2",
+      "needs": "SA4.3",
+      "reason": "calls the check SA4.3 adds"
+    },
+    {
+      "task": "SA0.1",
+      "needs": "SA5.0",
+      "reason": "same file docs/gcp-live-checklist.md"
+    },
+    {
+      "task": "SA5.0",
+      "needs": "SA1.1",
+      "reason": "same file docs/gcp-live-checklist.md"
+    },
+    {
+      "task": "SA3.1",
+      "needs": "SA2.1",
+      "reason": "same file internal/runner/provider_run_test.go"
+    },
+    {
+      "task": "SA4.2",
+      "needs": "SA5.0",
+      "reason": "same file internal/cli/update_converge_test.go"
+    },
+    {
+      "task": "SA5.3",
+      "needs": "SA5.0",
+      "reason": "same file doctor_render.go"
+    },
+    {
+      "task": "SA5.4",
+      "needs": "SA5.1",
+      "reason": "proves the writer under generations 5 and 6"
+    },
+    {
+      "task": "SA1.4",
+      "needs": "SA2.1",
+      "reason": "pins the settle rule SA2.1 sets"
+    },
+    {
+      "task": "SA1.4",
+      "needs": "SA1.3",
+      "reason": "proves reconcile reads a real record"
+    },
+    {
+      "task": "SA1.4",
+      "needs": "SA1.5",
+      "reason": "proves the runner writes the record"
+    },
+    {
+      "task": "SA1.4",
+      "needs": "SA2.2",
+      "reason": "proves diagnose reads a real record"
+    },
+    {
+      "task": "SA1.4",
+      "needs": "SA5.1",
+      "reason": "proves the session receives the per-model fields"
+    },
+    {
+      "task": "SA2.3",
+      "needs": "SA2.1",
+      "reason": "describes the behaviour SA2.1 sets"
+    },
+    {
+      "task": "SA2.3",
+      "needs": "SA1.5",
+      "reason": "same file internal/runner/gateway.go"
+    },
+    {
+      "task": "SA6.1",
+      "needs": "SA2.1",
+      "reason": "describes its behaviour"
+    },
+    {
+      "task": "SA6.1",
+      "needs": "SA3.1",
+      "reason": "describes its behaviour"
+    },
+    {
+      "task": "SA6.1",
+      "needs": "SA4.2",
+      "reason": "describes its behaviour"
+    },
+    {
+      "task": "SA6.1",
+      "needs": "SA5.3",
+      "reason": "describes its behaviour"
+    },
+    {
+      "task": "SA6.1",
+      "needs": "SA5.7",
+      "reason": "describes its behaviour"
+    }
+  ],
+  "decoupling": [],
+  "contract_changes": []
+}

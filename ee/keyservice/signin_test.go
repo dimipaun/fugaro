@@ -1881,6 +1881,106 @@ func TestAPIDeviceAnswersARepeatedConfirmFromTheSameApprover(t *testing.T) {
 	}
 }
 
+// TestAPIDeviceRefusesTheSameAccountsNewerSubscription: a code carries the
+// account that answered it AND the subscription that account's licence was
+// under, and a repeat is answered as the first answer was only when both are
+// still the approver's. An account that buys again holds a newer subscription —
+// the one accountLicence answers, and the one a handover would mint for — so a
+// code this account already approved stands for a licence it no longer holds,
+// and the confirm is refused exactly as another account's is. One person's
+// approval is never re-read under a subscription they did not answer for.
+func TestAPIDeviceRefusesTheSameAccountsNewerSubscription(t *testing.T) {
+	f, spy := subscribed(t)
+	start := f.startDevice(t, "acme-laptop")
+	token := f.acceptedToken(t)
+
+	read := f.apiAs(token, RouteAPIDevice, map[string]string{"user_code": typedCode(start.UserCode)})
+	if read.Code != http.StatusOK {
+		t.Fatalf("reading the code back answered %d, want %d: %s", read.Code, http.StatusOK, read.Body.String())
+	}
+	var ask DeviceAsk
+	if err := json.Unmarshal(read.Body.Bytes(), &ask); err != nil {
+		t.Fatalf("reading the answer %q: %v", read.Body.String(), err)
+	}
+	if done := f.apiAs(token, RouteAPIDevice, map[string]any{"user_code": ask.UserCode, "confirm": true}); done.Code != http.StatusNoContent {
+		t.Fatalf("the handover answered %d, want %d: %s", done.Code, http.StatusNoContent, done.Body.String())
+	}
+
+	// The same buyer's address buys again, under a subscription of its own and
+	// later than the first: the licence accountLicence answers for that address
+	// is now the newer one, and not the one the code carries.
+	if rec := f.event(Event{
+		ID: "evt-signin-again", Type: EventPurchase, OccurredAt: f.now.Add(time.Minute),
+		Subscription: "sub-acme.example-again", Organisation: signInOrg, Seats: 5, TermDays: 365,
+	}); rec.Code != http.StatusOK {
+		t.Fatalf("the second purchase was answered %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if held, found, err := f.svc.accountLicence(context.Background(), signInAddress); err != nil || !found || held.ID != "sub-acme.example-again" {
+		t.Fatalf("the account's licence is %q (found=%v, err=%v), want the newer subscription: what the confirm below is refused for", held.ID, found, err)
+	}
+
+	readAPIRefusal(t,
+		f.apiAs(token, RouteAPIDevice, map[string]any{"user_code": ask.UserCode, "confirm": true}),
+		http.StatusForbidden, deviceRefusedCode)
+
+	// The code is still the licence the first confirm answered for and the
+	// terminal collects the one key that approval stands for: the refusal
+	// re-read nothing.
+	f.pollBundle(t, start.DeviceCode)
+	if spy.minted() != 1 {
+		t.Errorf("the code minted %d key(s), want the one its first approval stands for", spy.minted())
+	}
+}
+
+// TestAPIDeviceRefusesAnotherAccountOnTheSameSubscription: the other half of the
+// same sentence. The subscription a code carries is the account's own licence,
+// and the account half is not the subscription's to answer. A subscription the
+// store now holds under another buyer's address — the same subscription id, a
+// purchase that named another address — is what accountLicence answers for that
+// other account, so a code that account never approved is refused exactly as a
+// code this service is not holding, though the subscription it carries is the
+// one that account's own licence names.
+func TestAPIDeviceRefusesAnotherAccountOnTheSameSubscription(t *testing.T) {
+	f, spy := subscribed(t)
+	start := f.startDevice(t, "acme-laptop")
+	token := f.acceptedToken(t)
+
+	read := f.apiAs(token, RouteAPIDevice, map[string]string{"user_code": typedCode(start.UserCode)})
+	if read.Code != http.StatusOK {
+		t.Fatalf("reading the code back answered %d, want %d: %s", read.Code, http.StatusOK, read.Body.String())
+	}
+	var ask DeviceAsk
+	if err := json.Unmarshal(read.Body.Bytes(), &ask); err != nil {
+		t.Fatalf("reading the answer %q: %v", read.Body.String(), err)
+	}
+	if done := f.apiAs(token, RouteAPIDevice, map[string]any{"user_code": ask.UserCode, "confirm": true}); done.Code != http.StatusNoContent {
+		t.Fatalf("the handover answered %d, want %d: %s", done.Code, http.StatusNoContent, done.Body.String())
+	}
+
+	// The subscription the store holds now names another buyer's address: the
+	// same subscription, and the licence it stands for is another account's.
+	if rec := f.event(Event{
+		ID: "evt-signin-moved", Type: EventPurchase, OccurredAt: f.now.Add(time.Minute),
+		Subscription: "sub-acme.example", Organisation: "other.example", Email: buyerAddress("other.example"), Seats: 5, TermDays: 365,
+	}); rec.Code != http.StatusOK {
+		t.Fatalf("the purchase that moved the subscription was answered %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if held, found, err := f.svc.accountLicence(context.Background(), buyerAddress("other.example")); err != nil || !found || held.ID != "sub-acme.example" {
+		t.Fatalf("the other account's licence is %q (found=%v, err=%v), want the code's own subscription: what the confirm below is refused for", held.ID, found, err)
+	}
+
+	other := f.tokenWith(t, "email", buyerAddress("other.example"))
+	readAPIRefusal(t,
+		f.apiAs(other, RouteAPIDevice, map[string]any{"user_code": ask.UserCode, "confirm": true}),
+		http.StatusForbidden, deviceRefusedCode)
+
+	// And the refusal handed nothing over: the code is still the first account's
+	// and no key was minted for the second.
+	if spy.minted() != 0 {
+		t.Errorf("a confirm another account was refused for minted %d key(s), want none", spy.minted())
+	}
+}
+
 // TestAPIDeviceRefusesWhatItWillNotApprove: the device step's refusals on the
 // API's face. A sign-in that does not verify is the uniform sentence whatever
 // was wrong with it; a request that is not the one this step reads and a code

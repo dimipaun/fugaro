@@ -52,7 +52,16 @@ type WireWorkspaceBind struct {
 	ProjectID     string `json:"project_id"`
 }
 
+// WireWorkspaceList is every workspace of the caller's organisation, which is
+// what `GET /api/workspaces` answers. The list is there whether or not it holds
+// anything: a reader that had to tell an absent list from an empty one would
+// draw an organisation it cannot see as one with a failure on it.
+type WireWorkspaceList struct {
+	Workspaces []WireWorkspace `json:"workspaces"`
+}
+
 func init() {
 	registerWire("workspaces.workspace", func() any { return new(WireWorkspace) })
 	registerWire("workspaces.bind", func() any { return new(WireWorkspaceBind) })
+	registerWire("workspaces.list", func() any { return new(WireWorkspaceList) })
 }

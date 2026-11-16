@@ -41,6 +41,7 @@ Subcommands:
 - `fugaro creds` -- Set and list the credentials service's one bundle secret (the owner)
 - `fugaro diagnose` -- Explain how a run went: status, tests, review findings, the agent's last word, logs
 - `fugaro doctor` -- Check that Fugaro is set up and ready, without changing anything
+- `fugaro escalation` -- Read what the escalation ladder has done to the project's pull requests
 - `fugaro estimate` -- Reprice one run's recorded tokens on another model
 - `fugaro followups` -- File the findings a merged run deferred as follow-up tasks
 - `fugaro graph` -- Print the project's dependency graph
@@ -49,6 +50,7 @@ Subcommands:
 - `fugaro issue` -- Read the issues saved on this machine, the ones you reported, and file one on GitHub
 - `fugaro licence` -- Install, read and renew the installation's licence key (Subscription Edition)
 - `fugaro logs` -- Print a run's logs from Cloud Logging
+- `fugaro mailbox` -- Consume this installation's mailbox: read the phone's messages and answer them
 - `fugaro managed` -- Act on a managed project (a project created by fugaro with the coding agent's refusal removed)
 - `fugaro models` -- Show the models this project can run, and where each is served
 - `fugaro orchestrator` -- Read and patch the project's orchestrator state
@@ -178,7 +180,11 @@ installation on it.
 
 It writes claude_accounts.<name>.allow_data_to — the repositories the account's
 token may be used by, and the field every other rule is built on — and adds the
-name to one profile's claude_accounts, so the profile's jobs may serve it.
+name to one profile's claude_accounts, so the profile's jobs may serve it. A key
+credential (--type openrouter or anthropic) is added to no profile's list and
+gets no job of its own: that list is what serves an account's Claude OAuth
+token, and a key credential's value is stored under the credential's own derived
+secret name, which no job mounts yet.
 
 --repos defaults to this checkout's origin repository. A profile that lists
 accounts must write its own allow_repos, and every account it lists must cover
@@ -189,18 +195,29 @@ silently is what that rule exists to prevent.
 --type declares the name as a typed credential as well, in this prefix's
 credentials block: the entry that lets a pool list the name as a member
 (fugaro accounts pool add). claude-oauth is the type this command's token step
-serves. vertex is built in and is never defined, and the two types the spec
-lists as future work are refused in words that say so. A type whose key no
-command stores yet is refused too: the entry would name a credential no run
-could authenticate with. Without the flag nothing but claude_accounts and the
-profile is written, which is what this command has always done.
+serves; openrouter and anthropic are the two key types, and a key is read the
+same way the token is — from stdin, or at the hidden prompt on your terminal —
+and stored project-wide under the credential's own derived secret name
+(credential-<name>-key) rather than the account's, so --profile is refused with
+them, and so is a name a profile already lists: a profile's list is what deploys
+the job mounting the account's token, and that job would read a container
+nothing writes. Take the name off that list first (fugaro accounts rm <name>
+--profile <profile>) or declare the key credential under another name. vertex is
+built in and is never
+defined, and the two types the spec lists as future work are refused in words
+that say so. What carries a key credential's key to a model call is not
+installed by this command yet: the credential is declared and its key stored,
+and a run serves it once that half ships. Without the flag nothing but
+claude_accounts and the profile is written, which is what this command has
+always done.
 
 Then it converges, in one command and behind the one sentence it prints: the
-token is stored project-wide as a new version of the account's own secret, the
-account's broken mark is cleared, and the publisher, the job set and this
-checkout's repository root are converged — the same stages fugaro update runs,
-invoked here rather than forked. It ends on the line that says what is left,
-which is a fugaro run and never an update.
+value is stored project-wide as a new version of the secret the name derives
+(the account's own Claude OAuth token, or, with --type, the credential's own
+key), the account's broken mark is cleared, and the publisher, the job set and
+this checkout's repository root are converged — the same stages fugaro update
+runs, invoked here rather than forked. It ends on the line that says what is
+left, which is a fugaro run and never an update.
 
 --claude runs Anthropic's own claude setup-token on your own terminal first,
 so the login is the one you would have run yourself: it gets your stdin, stdout
@@ -232,9 +249,9 @@ Flags:
 | `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this declaration would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed |
 | `--claude` | bool | `false` | no | run Anthropic's own claude setup-token login on this terminal first, then paste the token at the hidden prompt |
 | `-h`, `--help` | bool | `false` | no | help for add |
-| `--profile` | string | "" | no | the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one) |
+| `--profile` | string | "" | no | the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one); refused for a key credential, which is added to no profile's list |
 | `--repos` | string | "" | no | the repositories the token may be used by, as owner/name,owner/name (default: this checkout's origin) |
-| `--type` | string | "" | no | declare the name as a typed credential too, so a craft or a pool may spend it: claude-oauth, the one type this command's token step serves (without it, the name is declared in claude_accounts alone, as it always was) |
+| `--type` | string | "" | no | declare the name as a typed credential too, so a craft or a pool may spend it: claude-oauth (this command's OAuth token step), or a key type (openrouter or anthropic), whose value is read the same way and stored under the credential's own derived secret name (without it, the name is declared in claude_accounts alone, as it always was) |
 
 Subcommands:
 
@@ -485,7 +502,11 @@ List the names fugaro run --token NAME (and a repository's own agent.oauth_token
 accept for a repository: "default" (the repository's own unnamed
 claude-oauth-token secret, always allowed) first, then every claude_accounts
 name in the local config whose allow_data_to lists the repository, sorted
-(config.AllowedClaudeAccounts, the one place that decides the question).
+(config.AllowedClaudeAccounts, the one place that decides the question) and
+less every name the credentials block declares a key credential
+(config.ClaudeAccountTokenNames), whose value is the key its provider issued
+under the credential's own derived secret and not a Claude account's token at
+all.
 
 The names are a local, read-only lookup, offline whenever a project config is
 already selected on this machine: it reads the local config file the CLI would
@@ -564,6 +585,13 @@ starts from the first. A credential the config does not define, a repeated
 member, a name this command may not use and a strategy that is not failover or
 round-robin are all refused before the file is touched.
 
+A pool is served on one half of a run — the credentials service for a Claude
+OAuth or Anthropic-key member, a run's own gateway for an OpenRouter route or
+the built-in vertex — and neither half can walk an order that spans them, so a
+list naming both halves is refused too: name two pools, one per half, and let
+each craft's access name the one its stages need. A pool a config already holds
+that names both is left as it is and declared beside, not rewritten here.
+
 --strategy failover (the default) or round-robin. A pool that already exists
 keeps the strategy it has when the flag is left out, and this command replaces
 its members with the list on the command line: it is the whole list every time,
@@ -595,8 +623,11 @@ serves them.
 
 An OpenRouter or Vertex member is served by a run's own gateway; a Claude OAuth
 or Anthropic-key member by the credentials service, which selects by tier
-(OAuth before key: D154). A pool whose members need both is one that can only
-fail over where the credential is chosen again, at a stage boundary.
+(OAuth before key: D154). A pool is served on one of those halves and may not
+list members of both: a gateway holds one upstream per stage and the service
+selects by tier, so neither can walk an order that spans them, and a pool that
+names both is refused when it is declared. Name two pools, one per half, and let
+each craft's access name the one its stages need.
 
 The read is offline: it reads the selected project's config file and reaches no
 bucket, no database and no host.
@@ -625,10 +656,10 @@ Remove pools.<NAME> from this project's config: the pool goes, and a craft whose
 access names it is cleared with it rather than left pointing at nothing.
 
 It removes the pool from the installation's config only. A repository that
-selected the pool keeps its own file untouched, and this release's fugaro update
-leaves the pools the policy node already carries as they are: it never publishes
-this config's pools, which is MC4's job, so the removal withdraws nothing from
-the node.
+selected the pool keeps its own file untouched, and the published policy node
+keeps what it holds: fugaro update publishes the pools this file states — a pool
+with no owner is named and skipped — and never deletes a definition the file no
+longer states, so removing a pool here withdraws nothing from the node.
 
 Run it at your own terminal: a pool decides where a project's calls may be
 spent, so a coding agent's session is refused.
@@ -952,6 +983,7 @@ Flags:
 Subcommands:
 
 - `fugaro backends ls` -- List the compute backends this fugaro knows and which one the project uses
+- `fugaro backends use` -- Select the compute backend this project runs its jobs on
 
 ## `fugaro backends ls`
 
@@ -993,6 +1025,53 @@ Flags:
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro backends use`
+
+Select the compute backend this project runs its jobs on
+
+Select the backend this project's runs are launched on, by writing the
+backend: key of the selected project's own config:
+
+  cloud-run    Cloud Run jobs (the default, and the one every installation
+               runs on today)
+  cloud-batch  Cloud Batch jobs, one VM per run (the VM backend)
+
+The installation must already be provisioned for cloud-batch: its config has to
+carry a batch block -- the block fugaro setup --provision-batch writes, which
+names the machine type, the boot image, the network, the subnetwork and the
+account a run's VMs are built from -- and fugaro doctor's Batch checks have to
+pass. Selecting the name before either is refused, because a launch on an
+installation that is not provisioned there fails at create: nothing was
+written, and the refusal names what doctor reports and what fixes it.
+
+Selecting cloud-run is never refused: it is the default, and it is the
+direction back.
+
+The switch is one key of one file: every comment and every other byte of the
+project config is kept, the old file is backed up, and the write is atomic.
+Nothing is asked and nothing confirmed -- the checks above are what stands in
+front of the change -- and a coding agent's session does not write cloud-batch
+at all (run it yourself; it is the same fence the provisioning step carries).
+
+The change reaches the next run at once, and every launch of the installation
+follows it: on cloud-batch a run's job is a VM with a Docker daemon, so a
+workflow that needs Docker can run, and that VM and its job are the reaper's to
+sweep.
+
+Usage: `fugaro backends use <cloud-run|cloud-batch>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `-h`, `--help` | bool | `false` | no | help for use |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 
 Subcommands:
 
@@ -1371,7 +1450,7 @@ Flags:
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--mode` | string | "" | no | the rigor mode to preview: poc, startup, pro, critical, hotfix; it may raise the mode the repository resolves (its rigor: block, the project layer) and never lower it, so a mode below the resolved one changes nothing. This is the rigor mode, not the accounting mode budget set --mode takes (observe or enforce) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
-| `--recipe` | string | "" | yes | the recipe to preview (ab-judge, default, escalate, lint-fix, pick, premium, rebase, review-only, run-digest, solo, standard, test-and-fix) |
+| `--recipe` | string | "" | yes | the recipe to preview (ab-judge, default, escalate, lint-fix, merge-judge, pick, premium, rebase, review-only, run-digest, solo, standard, test-and-fix) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | the repository (owner/name, or a path inside its checkout); default: the checkout's origin |
 | `--runs` | int | `0` | yes | how many runs to estimate |
@@ -2595,14 +2674,14 @@ This command has no subcommands.
 
 Show the model and the credential or pool each craft runs on
 
-Show the four crafts: the coder, the first-line review, the senior review
-and the security review.
+Show the crafts: the coder, the first-line review, the senior review,
+the security review and the merge judge.
 
 Each craft runs a model and sends its calls out on a credential or a pool, and
-the two halves inherit separately: the first-line review follows the coder and
-the security review follows the senior review, so a craft that sets only one
-half keeps the other half it follows. A craft that sets no access anywhere
-resolves to the project's default credential.
+the two halves inherit separately: the first-line review and the merge judge
+follow the coder, and the security review follows the senior review, so a craft
+that sets only one half keeps the other half it follows. A craft that sets no
+access anywhere resolves to the project's default credential.
 
 Every half names where it came from: the layer that wrote it (repo, local or
 project), the craft it was inherited from, or default when nothing set it. A
@@ -2676,8 +2755,19 @@ NAME is the name in the document's own spelling — the name fugaro creds set
 takes. A named Claude account's row is claude-oauth-token-<account>, where <account>
 is the account the policy's accounts block speaks.
 
+A Bitbucket token carries more, because a name and a PRESENT answer are the
+same for a token that serves every call of its repository and for one Bitbucket
+refuses: its type, what it covers, the expiry the operator recorded, when the
+add-time check last proved it, the state the credential state store holds
+(available, exhausted, backed_off or broken), the time a hold ends when it has
+one, and how many requests it has served in the current window. bitbucket-token
+is the legacy key: the implicit untyped token, whose coverage is the
+project_secrets entry's allow_data_to list and whose expiry is the
+secret_expires entry of the same name.
+
 Nothing else is printed: never a value, never a prefix of one, never a length
-that would narrow a guess. --json carries the same shape.
+that would narrow a guess. --json carries the same shape, with those facts as
+fields of the row.
 
 The listing needs the container to exist, and it needs its newest version to be
 one the service could read: an absent container, a container with no version, an
@@ -2685,6 +2775,12 @@ unreadable payload, a document the service's own loader refuses, and a version
 that is DISABLED are each a named failure, never an empty list — a listing that
 answered nothing for any of them would read as "the bundle holds no credential"
 while the service is in fact issuing from one this command could not read.
+
+A document holding a Bitbucket token also needs the project's credential state,
+and a state store that does not answer is a named failure too, for the same
+reason: the row would say nothing about a token the store holds something
+about. A project with no Firebase backend has no such store, and its rows carry
+the record's facts alone.
 
 It is refused from a coding agent's session and from a run's process, before
 anything is read.
@@ -2725,6 +2821,7 @@ NAME is a credential the service can issue, in the document's own spelling:
   bitbucket-token                   the upstream Bitbucket token (no tier: the git proxy issues this entry for the repositories the published node admits with proxy: true, and every other Bitbucket run's job still uses its own mounted copy until the flip)
   bitbucket-read-consumer             the Bitbucket read consumer (no tier: the service's read mint exchanges it for a read-scoped token): a YAML mapping of key, secret and workspace, one field per line, so redirect it from a file — the hidden prompt takes one line
   provider-key                 the project's provider credential (tier C: the service's provider route authenticates upstream with it): a YAML mapping of key, base_url and auth, one field per line, so redirect it from a file — the hidden prompt takes one line. It is read by a credentials service from 0.22.0 on: where the service that serves the bundle is older, this write is refused and `fugaro update` is the one command that moves it
+  bitbucket-token--<name>   a typed Bitbucket access token (no tier: the service's git proxy issues this entry for the requests the published node's coverage admits, R13): the ONE NAME this command CHECKS before it writes, and the one whose write carries a record beside the entry. See "A typed Bitbucket token" below
   claude-oauth-token--review-signing  the default account's review-signing key (no tier: the service's sign
                                      route computes a MAC with it; written by --generate below)
   claude-oauth-token-<account>--review-signing     a named account's review-signing key (no tier, and --generate's NAME too)
@@ -2746,6 +2843,49 @@ crypto/rand and writes them into the bundle. Every other NAME is refused: an
 account's review-signing names are the only ones it takes, and the rotation
 window's own entry is not one of them — asked to write it, the command refuses,
 because it writes the current entry and derives the window's from it.
+
+A typed Bitbucket token (bitbucket-token--<name>) is the ONE NAME whose
+write is more than a value: the token's TYPE, what it COVERS and its optional
+expiry are facts the operator states (D2350, R1), so they are read here — as
+flags, or as the same questions at the terminal — and stored beside the entry.
+The value is read exactly as every other one is.
+
+  --type          repo, project or workspace
+  --coverage      what the token reaches: ws/repo for a repository token, ws/*
+                  for a workspace token, or the workspace slug alone for a
+                  project token. Repeat it for a token that names more than one
+  --project-uuid  a project token's project, as Bitbucket's API spells it
+  --project-key   the same project's key, for an operator who has only that:
+                  the check resolves it to the UUID, which is what is stored,
+                  and the key is kept for display
+  --expires       the day the token stops working, YYYY-MM-DD
+
+The check runs BEFORE anything is written, and it is the whole reason this
+NAME is not like the others: this command reads Bitbucket with the token, in
+the coverage the record itself states and nowhere outside it, and a token that
+does not work, or that does not reach what the record states, is refused with
+one precise message and NOTHING is written (D2352). The one thing it cannot
+prove is the write scope: Bitbucket has no dry run for a push or a pull
+request, so the two write scopes D470 tells the operator to tick are reported
+as NOT verified and the first real use is what tries them (D2353).
+
+A write that passes is three records of one token, and all three are written:
+the bundle entry, the project config's bitbucket_tokens record, and the check's
+own answer — when it last passed and the account UUID it returned — into the
+project's credential state. The identity is written ONLY here and is never read
+from the config, so a hand-edited record cannot state an identity a run would
+trust (R12). Nothing of the record reaches a run until the policy is published:
+run `fugaro update` to publish this token's coverage to runs.
+
+This is the one NAME whose facts are read as flags, and --json asks for them
+and nothing else: a machine has no terminal to answer at, so a --json write
+carries --type and --coverage (and --project-uuid or --project-key for a
+project token) or it is refused, naming the flag it needs. A terminal is asked
+for each fact that no flag gave.
+
+It is read by a credentials service from 0.24.0 on: where the
+service that serves the bundle is older, this write is refused before anything
+is read from you and before anything is written.
 
 Two runs ROTATE the key. The first writes a fresh value where the entry was;
 the second writes a fresh one again and carries the value it replaced, byte for
@@ -2803,12 +2943,17 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--coverage` | stringArray | `[]` | no | what a typed Bitbucket token reaches: ws/repo, ws/*, or a project token's workspace (repeatable; bitbucket-token--<name> only) |
+| `--expires` | string | "" | no | the day a typed Bitbucket token stops working, YYYY-MM-DD (bitbucket-token--<name> only) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `--generate` | bool | `false` | no | generate a fresh review-signing key instead of reading a value (the review-signing names only) |
 | `-h`, `--help` | bool | `false` | no | help for set |
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--project-key` | string | "" | no | a project token's project key, which the check resolves to its UUID (bitbucket-token--<name> only) |
+| `--project-uuid` | string | "" | no | a project token's project UUID (bitbucket-token--<name> only) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--type` | string | "" | no | a typed Bitbucket token's type: repo, project or workspace (bitbucket-token--<name> only) |
 
 Subcommands:
 
@@ -2856,10 +3001,13 @@ permissions Fugaro's runs ask for: that is the one thing that reads a secret's
 value (the App's private key, with your own credentials, held in memory only to
 sign, never printed), and it is refused in a coding agent's session. With
 --check-bitbucket-token, in your own terminal, it also reads the credentials
-service's bundle to see that it holds a Bitbucket token and asks Bitbucket
-whether it still accepts it, one GET /repositories/<repo> per proxied
-repository: that too reads a secret's value (with your own credentials, in
-memory only, never printed) and is refused in a coding agent's session.
+service's bundle to see which Bitbucket tokens it holds and asks Bitbucket
+whether it still accepts each of them, one GET /repositories/<repo> per proxied
+repository and per token that serves it (the narrowest token covering a
+repository is the one a run of it is served by): a repository no token covers,
+and a token the credential state holds as broken, are named too. That too reads
+a secret's value (with your own credentials, in memory only, never printed) and
+is refused in a coding agent's session.
 Otherwise it never prints a secret's value and never creates, enables or
 changes anything.
 
@@ -2920,7 +3068,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `--all` | bool | `false` | no | print every check, the informational and audit lines included |
-| `--check-bitbucket-token` | bool | `false` | no | also check the credentials service's bundle holds a Bitbucket token and that Bitbucket still accepts it: reads the bundle with your own credentials, in memory only, for one GET /repositories/<repo> per proxied repository (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it) |
+| `--check-bitbucket-token` | bool | `false` | no | also check the credentials service's bundle holds a Bitbucket token and that Bitbucket still accepts every token it holds: reads the bundle with your own credentials, in memory only, for one GET /repositories/<repo> per proxied repository, with the token that repository's runs are served by (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it) |
 | `--check-github-app` | bool | `false` | no | also check each recorded GitHub App is installed with the permissions runs ask for: reads the App's private key from Secret Manager with your own credentials, in memory only, for one signed token (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it) |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--dir` | string | `.` | no | a directory in the checkout, for the plugin wiring |
@@ -2933,6 +3081,98 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--security` | bool | `false` | no | also print the IAM and security sweep (who may read a credential, who may sign a budget token, what a launcher may start) |
 | `--strict` | bool | `false` | no | fail on a stale, unpinned or foreign plugin (CI mode); an un-wired checkout is information, not a failure |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro escalation`
+
+Read what the escalation ladder has done to the project's pull requests
+
+Read the project's escalation ladder: the rung each stalled pull request has
+reached, why it got there, how long it has been going, what it has cost and
+every rung transition it took (docs/outer-loop-escalation).
+
+ls lists every work item the ladder has acted on; show prints one of them in
+full, its transitions oldest first. A work item is the pull request the
+project's orchestrator is driving, so a row here is one pull request.
+
+Both commands only read: the ledger is the daemon's to write, and this command
+holds no lease, no ETag and no write path to the state node. The age and the
+cost are the item's own run records read out of the runs bucket, which is
+where the ladder's own reading of them comes from too; a run this machine
+cannot read leaves both unknown rather than short.
+
+Usage: `fugaro escalation`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for escalation |
+
+Subcommands:
+
+- `fugaro escalation ls` -- List the pull requests the escalation ladder has acted on
+- `fugaro escalation show` -- Show one pull request's escalation ledger and its transitions
+
+## `fugaro escalation ls`
+
+List the pull requests the escalation ladder has acted on
+
+List every work item of the project's orchestrator that carries an escalation
+ledger, with the rung it is at, the reason it entered it, how long it has been
+going, how many of the ladder's own runs it has spent and what its own runs
+have cost.
+
+--json prints a versioned document (schemas/escalation.schema.json). An item
+whose runs this machine cannot all read has no age and no cost, which the
+document writes as null and the table as unknown.
+
+Usage: `fugaro escalation ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro escalation show`
+
+Show one pull request's escalation ledger and its transitions
+
+Show the escalation ledger of one work item of the project's orchestrator,
+named by the id `fugaro orchestrator state` prints it under: the rung, the
+reason it entered it, how long it has been going, the ladder runs it has
+spent, what its own runs have cost, and every transition oldest first, with
+the head each one was decided at.
+
+--json prints a versioned document (schemas/escalation.schema.json). An item
+whose runs this machine cannot all read has no age and no cost, which the
+document writes as null and the table as unknown.
+
+Usage: `fugaro escalation show ITEM`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for show |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
@@ -4247,6 +4487,83 @@ Subcommands:
 
 This command has no subcommands.
 
+## `fugaro mailbox`
+
+Consume this installation's mailbox: read the phone's messages and answer them
+
+Consume the mailbox of each phone this project is paired with: take the
+lease on its heartbeat, read its inbox, verify each message's pairing MAC,
+decide which deliveries are new, and sign and write the answers to its
+outbox.
+
+The consumer acts on the operator's behalf, and a voice-originated message
+may never cause a destructive command (D128). The default is refusal: a
+message this build does not recognise is refused, and the confirmation
+record that would admit a destructive one is not built yet, so every message
+that would be acted on is refused and reported by code. A launch and a
+read-only report are the allowance D128's amendment names; it reaches a real
+message only once the confirmation record's consumer lands.
+
+Both directions of the wire are MAC-covered. Every inbox message is verified
+before it is acted on, and one that does not verify is refused and never
+acted on — and because nothing can retire it, it is read and refused again on
+every pass until an operator removes the node with their own credential.
+Every reply and every heartbeat is signed before it is written, so a value
+the signer refuses is not written at all.
+
+The heartbeat IS the lease, and the loop renews it on every pass: it is
+rewritten with the current instant under the same compare-and-swap a take
+uses, which is what tells the phone this consumer is present and what keeps
+the lease fresh. A renewal that finds the mailbox held by someone else writes
+nothing, and the next pass takes the lease rather than acting on one it has
+lost.
+
+The command stops at startup when there is no pairing key at the keychain
+items its project config names, rather than looping over a mailbox it could
+do nothing with. The pairing key is read from the OS keychain by item name
+and is never printed; the item's name is not a secret and appears in a
+diagnostic.
+
+The command writes only the outbox and the heartbeat, with the operator's own
+credential, which is what makes that write set a rule in this command's code
+rather than a fence the database enforces.
+
+Its own state is the ledger at
+$XDG_STATE_HOME/fugaro/mailbox/<project>/ledger.json, written 0o600 by
+tmp+rename: it holds the deliveries this consumer has consumed, and it is
+what stops a restart from acting on one twice. The ledger is committed before
+an action is performed, never after.
+
+Each pass prints one line, or with --json one JSON document, naming the
+pairing, the lease, what was read and what was refused (by code, never by
+text). A message's text, a MAC, a key and a keychain item's value are never
+printed.
+
+Without --once it loops until interrupted, one pass every --interval; with
+--once it runs one pass per configured pairing and exits, which is the
+scriptable mode. A pass that held no lease, or read nothing, is a completed
+pass and exits 0.
+
+Usage: `fugaro mailbox`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for mailbox |
+| `--interval` | duration | `5s` | no | how long to wait between passes; never less than one second |
+| `--json` | bool | `false` | no | one JSON document per pass instead of lines |
+| `--no-heartbeat` | bool | `false` | no | write no heartbeat, so no lease is taken and nothing is acted on |
+| `--once` | bool | `false` | no | run one pass per configured pairing and exit |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
 ## `fugaro managed`
 
 Act on a managed project (a project created by fugaro with the coding agent's refusal removed)
@@ -4554,9 +4871,11 @@ Subcommands:
 
 - `fugaro models add` -- Let this project run a model: claim it on a route and price it
 - `fugaro models ls` -- Show this project's routes, its models and what each repository runs
+- `fugaro models price` -- Write the price of one model in this project's config
+- `fugaro models provider` -- Write and remove the provider routes of this project's config
 - `fugaro models rm` -- Stop letting this project run a model: drop its claim, price and allow-list entry
 - `fugaro models search` -- Find a model in the built-in price catalog and the Claude table
-- `fugaro models use` -- Point one repository's own config at a model, in its working tree
+- `fugaro models use` -- Point a role or a model key at a model, in a repository or in the project layer
 
 ## `fugaro models add`
 
@@ -4624,6 +4943,180 @@ Flags:
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro models price`
+
+Write the price of one model in this project's config
+
+Write the model_prices entry this project prices a model by.
+
+A price is what a run charges a model's calls at, dollars per million tokens,
+and the entry replaces the built-in catalog's row for that model whole — which
+is what a model the catalog does not price needs at all. `models ls` shows
+what each model is priced at today.
+
+Usage: `fugaro models price`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for price |
+
+Subcommands:
+
+- `fugaro models price set` -- Write the price leaves of one model in this project's config
+
+## `fugaro models price set`
+
+Write the price leaves of one model in this project's config
+
+Set the fields of one model_prices entry.
+
+Only the flags you pass are written: every other leaf of the entry, every
+comment and every other key of the file is kept.
+
+An entry that is not there yet needs both --input-per-m and --output-per-m:
+a model_prices entry states the two rates it is billed at, and the cache and
+search rates default from them. On an entry the file already carries, any one
+of the six leaves can be changed on its own.
+
+Only the model_prices block is written: a model a provider route does not
+serve yet is claimed by `fugaro models add`. `fugaro update` publishes the
+policy node, which is what a run reads prices from.
+
+Usage: `fugaro models price set <id>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--cache-read` | float64 | `0` | no | cache-read price, as a multiple of the input price |
+| `--cache-write-1h` | float64 | `0` | no | cache-write price for the 1-hour TTL, as a multiple of the input price |
+| `--cache-write-5m` | float64 | `0` | no | cache-write price for the 5-minute TTL, as a multiple of the input price |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--input-per-m` | float64 | `0` | no | input price, US dollars per million tokens |
+| `--layer` | string | "" | no | the layer to write (local, project, repo) |
+| `--output-per-m` | float64 | `0` | no | output price, US dollars per million tokens |
+| `--web-search-per-1k` | float64 | `0` | no | web-search price, US dollars per 1,000 searches |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro models provider`
+
+Write and remove the provider routes of this project's config
+
+Write or remove one entry of the project config's providers block.
+
+A route is what a repository's code goes down: its endpoint, the credential it
+is sent with, the repositories whose code may be sent there and the fee added to
+its calls. `models provider set` writes the leaves of one entry and
+`models provider rm` takes one away whole; `models ls` shows the
+routes this project has.
+
+The change reaches a run through `fugaro update --repo .` in each
+repository whose code should go down the route: a run routes by the copy of the
+providers block in its own job's environment, and that command writes it.
+
+Usage: `fugaro models provider`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for provider |
+
+Subcommands:
+
+- `fugaro models provider rm` -- Remove a provider route from this project's config
+- `fugaro models provider set` -- Write the leaves of one provider route in this project's config
+
+## `fugaro models provider rm`
+
+Remove a provider route from this project's config
+
+Remove one entry of the project config's providers block whole.
+
+The route, its claim on the models it served, its fee and the repositories
+it allowed go together: what is left of the entry is the entry.
+
+A repository that pins a model only this route served is not refused (D783
+is about a model, and this is the route behind one). Each such repository's
+next run fails at launch with no provider for the model, until the model is
+claimed elsewhere or the pin is changed with `fugaro models use`.
+
+Only the key it removes is rewritten: every comment and every other key of
+the file is kept. `fugaro update --repo .` in a repository's own checkout is
+what takes the route out of that repository's runs.
+
+Usage: `fugaro models provider rm <name>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--layer` | string | "" | no | the layer to write (local, project, repo) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro models provider set`
+
+Write the leaves of one provider route in this project's config
+
+Set the fields of one entry of the project config's providers block.
+
+Only the flags you pass are written: every other leaf of the entry, every
+comment and every other key of the file is kept.
+
+The entry has to be in the file already: a name the config does not carry is
+refused, because a providers entry is not one until it lists the model IDs it
+serves (providers.<name>.models), and no flag here writes that list. Write
+the entry in the file — kind, base_url, auth, secret and models, as
+docs/multi-model.md §2 spells it — and its fields are this command's from
+then on, or claim one more model on a route that exists with
+`fugaro models add <id> --route <name>`.
+
+--secret names a stored secret and never carries the key itself: the value
+belongs in Secret Manager (`fugaro secrets set <name>`), and what lands in
+the file is that name. A value that looks like a key is refused, and the
+refusal never repeats it.
+
+--allow-data-to is the whole list of repositories (owner/name, or `*` for
+every repository) whose code may be sent down the route: the names it gives
+replace the ones the file carries.
+
+Four of these leaves widen the route — --base-url, --allow-data-to,
+--require-zdr and --route-fee-pct — so they are the owner's own step and a
+coding agent's session is refused them (D2617).
+
+`fugaro update --repo .` in a repository's own checkout is what puts the
+route in that repository's runs.
+
+Usage: `fugaro models provider set <name>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--allow-data-to` | string | "" | no | the repositories whose code may be sent down this route (owner/name, comma-separated; `*` is every repository) |
+| `--auth` | string | "" | no | how the credential is sent: bearer or x-api-key |
+| `--base-url` | string | "" | no | the endpoint this route's calls go to (https) |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--kind` | string | "" | no | the provider kind the endpoint speaks (anthropic-compat) |
+| `--layer` | string | "" | no | the layer to write (local, project, repo) |
+| `--price-policy` | string | "" | no | which end of the price range is charged: cheapest or highest |
+| `--require-zdr` | bool | `true` | no | price the route at the endpoints that hold no data (a boolean: --require-zdr=false turns it off) |
+| `--route-fee-pct` | float64 | `0` | no | the percentage added to every charge this route makes (0 is none) |
+| `--secret` | string | "" | no | the NAME of the secret holding the key (fugaro secrets set <name>), never the key |
 
 Subcommands:
 
@@ -4697,30 +5190,42 @@ This command has no subcommands.
 
 ## `fugaro models use`
 
-Point one repository's own config at a model, in its working tree
+Point a role or a model key at a model, in a repository or in the project layer
 
-Prepare the change to a repository's own fugaro.yaml that makes one role run
-a model, in the checkout's working tree for the owner to review and commit.
+Write the key that makes a role, a level, a recipe or the project's own model
+run what is named, and nothing else in the file: every comment, every other
+byte and the key order are kept.
 
-The switch is judged the way a launch judges it: a route of the project config
-must claim the model and its allow_data_to must name the repository, the model
-must be priced, budget.allowed_models must admit it, and the repository's own
+A role name is the shorthand for agent.models.<role> — coder, reviewer,
+background, vision and diagnose — and a key may be named in full
+(agent.model, agent.recipe, agent.levels.l2.model, agent.levels.l2.effort).
+--layer repo, the default, writes the repository's own fugaro.yaml in the
+checkout's working tree for the owner to review and commit; --layer project
+writes this machine's project layer file, where the key is the
+layer.defaults.agent.<same> one and applies to every repository of the
+project. layer.claude_models, the Claude models a project's routes may
+serve, is written as provider=anthropic/<id> at --layer project alone.
+
+A switch is judged the way a launch judges it: a route of the project config
+must claim the model and its allow_data_to must name the repository (every
+repository the project onboards, for a project-layer write), the model must
+be priced, budget.allowed_models must admit it, and the repository's own
 agent.auth and budget must support a provider model. A failure is a refusal
 with nothing written, and the message names the `fugaro models add` that would
 fix a missing claim or price.
 
-Only agent.models.<role> changes: every comment and every other byte of the
-file is kept. The command never commits, pushes or opens a pull request — the
+The command never commits, pushes or opens a pull request — a repository's
 change reaches runs when the owner's own branch is merged to the base branch,
 which is what every run reads.
 
-Usage: `fugaro models use <repo> <coder|reviewer|background|vision> <id>`
+Usage: `fugaro models use [<repo>] <role|key> <id>`
 
 Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for use |
+| `--layer` | string | "" | no | where the write lands: repo (a repository's own fugaro.yaml, the default), project (this machine's project layer file) or local |
 
 Subcommands:
 
@@ -5169,8 +5674,11 @@ its next request on.
 The order is the command (M4): the device node under config/admin/devices
 goes first, because the node's existence is what the rules read and its
 deletion revokes at once, without waiting for an ID token to expire; then
-this laptop's OS keychain item for that pairing's MAC key. Two deletions,
-and both are here.
+the account's push node under config/admin/push, the sibling that holds
+the one registration this installation made for it, so the phone's token
+goes with the pairing rather than outliving it (push design §3.4); then
+this laptop's OS keychain item for that pairing's MAC key. Three
+deletions, and all three are here.
 
 The pairing session's own node is not one of them. Its key is the p~ uid
 the session drew, and nothing on this laptop records that uid, so a revoke
@@ -6159,7 +6667,7 @@ List, show, validate and publish recipes, the task loop a run follows after impl
 
 A recipe is found by name in .fugaro/recipes/NAME.yaml in the repository, then in the
 project's fugaro/recipes/NAME.yaml in the runs bucket, then in the catalog
-(ab-judge, default, escalate, lint-fix, pick, premium, rebase, review-only, run-digest, solo, standard, test-and-fix). See docs/recipes.md.
+(ab-judge, default, escalate, lint-fix, merge-judge, pick, premium, rebase, review-only, run-digest, solo, standard, test-and-fix). See docs/recipes.md.
 
 Usage: `fugaro recipes`
 
@@ -6781,6 +7289,7 @@ Flags:
 | `--attempts` | int | `0` | no | launch N (2 to 4) independent runs of the same task, workflow, ref and recipe as a best-of-N batch (bestof-<first run id> unless --batch is given); refused with --pr, --run-id, --retry or a review-mode recipe |
 | `--batch` | string | "" | no | batch label, to group runs in fugaro runs ls |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--context` | stringArray | `[]` | no | a repository this run reads and never writes, as owner/name: repeatable, at most 5, each admitted by the project's allow_repos. The list is recorded on the task and in the run's own identity, which is what the release that reads it fetches with — this release's runner does not clone a context repository yet. Refused for a Bitbucket repository and where the installation's credentials service does not serve the repository |
 | `--continues` | string | "" | no | continue the chain of RUN (a run ID, or <repo-slug>/<run-id>): this launch inherits the chain's remaining limits, for a chain with no pull request — the run you name opened nothing to follow up. The chain's limit is read from the run that began it, and what it has spent from the chain's runs' budget ledgers; this launch's own --max-* may only tighten the remaining. Refused with --pr, --retry and --attempts, which name a chain's previous run themselves |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for run |
@@ -6797,7 +7306,7 @@ Flags:
 | `--plan-task` | string | "" | no | record the plan task this run works on, as <plan>/<task> (for example setup-wizard/W1.3): the id the console's graph joins this run to a node by; it changes nothing about what the run does, and a follow-up (--pr) records one only when given. A plan task that a run in flight, or a pull request a run of it left behind, already holds is refused (--allow-duplicate launches it anyway) |
 | `--pr` | intSlice | `[]` | no | continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions); with a mode: review --recipe, review PR N instead (repeatable, 1 to 4, any open PR) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
-| `--recipe` | string | "" | no | the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's (ab-judge, default, escalate, lint-fix, pick, premium, rebase, review-only, run-digest, solo, standard, test-and-fix); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's |
+| `--recipe` | string | "" | no | the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's (ab-judge, default, escalate, lint-fix, merge-judge, pick, premium, rebase, review-only, run-digest, solo, standard, test-and-fix); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's |
 | `--ref` | string | "" | no | base branch or ref the run is cut from (default: the branch this checkout is on, when origin has it and it is not the base branch; else the base branch (fugaro.yaml git.base_branch, then the local config's, then the project's base_branch, then main)) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | repository as owner/name, or a path inside its checkout (default: this checkout's origin) |
@@ -6836,6 +7345,7 @@ Subcommands:
 
 - `fugaro runs digest` -- Write a closed period's report of this repository into its own docs tree
 - `fugaro runs ls` -- List runs with their status, stage, cost and PR
+- `fugaro runs reports` -- Write every repository's closed-period reports into the runs bucket (the project's reports job)
 - `fugaro runs show` -- Show a run's chain and what is left of its limits
 - `fugaro runs stats` -- Aggregate run records by the person who started each run
 - `fugaro runs summary` -- Count the window's runs and their spend, without reading a run object
@@ -7029,6 +7539,59 @@ Flags:
 | `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
 | `--state` | string | "" | no | only runs in this state, a run's or its pull request's (cancelled, error, failed, halted, infra_error, launching, pending, running, succeeded, unlaunched, unreviewed, live, ready, stalled) |
 | `--watch` | bool | `false` | no | redraw until every run has settled |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro runs reports`
+
+Write every repository's closed-period reports into the runs bucket (the project's reports job)
+
+Write the project's stored reports: one report per repository and closed period,
+under reports/<slug>/<YYYY>/<key>.md of the runs bucket -- D321's layout, in the
+bucket rather than in a repository's docs tree.
+
+With --job, as the project's reports job runs it, the whole assignment is the JSON
+document in FUGARO_REPORTS_JOB_SPEC, which the installation renders: the project,
+the runs bucket, the repository slugs to report and the period kinds to close. The
+job has no checkout and no local config, so nothing here reads either, and without
+the document the command refuses to start rather than writing reports somewhere
+nobody named. It refuses too outside a Cloud Run job, which is where it runs.
+
+Each kind's most recently closed period is taken from this run's own clock (a day
+is yesterday, the week is the one that ended on Sunday, the month and the year are
+the ones that ended yesterday): which periods have closed is the one thing a nightly
+run cannot be handed in advance. A rerun compares every report with the stored one
+first -- equal means the object is left as it is, so a re-fired schedule writes
+nothing the second time, and a period whose records changed is overwritten.
+
+The bytes are internal/digest's own writer, so a stored report is the file fugaro
+runs digest writes for the same repository and period. Each report's pattern rules
+read the series already stored -- the reports before it -- and a yearly report is
+the stored monthly ones of that year added up, because the run records are kept 90
+days.
+
+Nothing in a report is a person or a task's own words (G1, D323). The command
+writes with the job's own credentials and nothing else: no git credential, no model
+credential, no secret, and reports/ is the only prefix it may write.
+
+Then it writes the project's own aggregate of each period, beside them at
+reports/<YYYY>/<key>.md: the one document that names every repository, which adds
+the repositories' stored reports up -- a year's is the stored monthly aggregates of
+that year -- and names no rule and no pattern (E2, E7).
+
+Without --job there is nothing to report: a person reads or writes one repository's
+report of one period in a checkout with fugaro runs digest.
+
+Usage: `fugaro runs reports`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for reports |
+| `--job` | bool | `false` | no | run as the project's reports job (reads FUGARO_REPORTS_JOB_SPEC) |
 
 Subcommands:
 

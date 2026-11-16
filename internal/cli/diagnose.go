@@ -212,10 +212,18 @@ type TriageRound struct {
 	// fail-safe blocks every finding the mode's table blocks (D1846), and the
 	// fix round that follows works on those findings, which no judge weighed.
 	Failed bool `json:"failed,omitempty"`
-	// Cause is why the round failed, one line, and absent for a round that did
-	// not (runstore.TriageRound.Cause): the call's own first line where it
-	// answered nothing shaped like a verdict, or `unreadable verdict` where it
-	// answered one the reader refused.
+	// Skipped is whether the round was not asked at all, because the stage
+	// resolved to no Claude account and the run's gateway held no Anthropic
+	// key for the model it would run (runstore.TriageRound.Skipped). It is not
+	// Failed — nothing failed, the run chose not to ask — and the fail-safe
+	// settles such a round the same way, which is why a reader takes the two
+	// together.
+	Skipped bool `json:"skipped,omitempty"`
+	// Cause is why the round failed or was skipped, one line, and absent for a
+	// round that neither (runstore.TriageRound.Cause): the call's own first
+	// line where it answered nothing shaped like a verdict, `unreadable
+	// verdict` where it answered one the reader refused, or the run's own
+	// sentence about the account no policy names where the round was skipped.
 	Cause string `json:"cause,omitempty"`
 	// Sources is the round's placements counted by where they came from. The
 	// four sum to the entries the record holds, which is Total unless the
@@ -558,36 +566,44 @@ func reviewsOf(reviews []runstore.ReviewSummary, red func(string) string) []runs
 }
 
 // triageFlag is the line a diagnosis carries at the top when any triage round
-// failed, "" for a run whose rounds all answered and for one that triaged
-// nothing: the rounds whose calls failed with the cause of each, and what the
-// fail-safe did with the findings — every finding the mode's table blocks
-// blocked, which is what the fix round that follows was handed (D1846). It is
-// the summary of the block below it, written from the same reading, so the two
-// cannot say different things about one round.
+// failed or was skipped, "" for a run whose rounds all answered and for one that
+// triaged nothing: which rounds bought no verdict and what became of each call,
+// and what the fail-safe did with the findings — every finding the mode's table
+// blocks blocked, which is what the fix round that follows was handed (D1846).
+// It is the summary of the block below it, written from the same reading, so the
+// two cannot say different things about one round.
+//
+// Each round's clause is runstore's — TriageFailureClause for a call that went
+// out and bought no verdict, TriageSkipClause for a round the run did not ask —
+// and each is one shared with the pull request's status section
+// (internal/runner's triageStatusLine): a judge that answered nothing, a judge
+// whose answer could not be read and a judge that was never asked are three
+// different facts, and the two readers of the record must not tell them apart
+// differently. The clauses stand in the record's order, so a run that skipped a
+// round and failed a later one reads in the order it happened.
 func triageFlag(rounds []TriageRound) string {
 	var parts []string
 	for _, r := range rounds {
-		if !r.Failed {
-			continue
+		switch {
+		case r.Skipped:
+			parts = append(parts, runstore.TriageSkipClause(r.Level, r.Round, r.Cause))
+		case r.Failed:
+			parts = append(parts, runstore.TriageFailureClause(r.Level, r.Round, r.Cause))
 		}
-		part := fmt.Sprintf("round %d", r.Round)
-		if r.Cause != "" {
-			part += ": " + r.Cause
-		}
-		parts = append(parts, part)
 	}
 	if len(parts) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("failed (%s); the fail-safe blocked every finding the mode's table blocks",
+	return fmt.Sprintf("%s; the fail-safe blocked every finding the mode's table blocks",
 		strings.Join(parts, "; "))
 }
 
 // triageLine is one triage round as the human block prints it: the round it
 // judged, the mode and level it ran under, the model and the account that
 // answered where the record names them, the findings it read and how they were
-// placed, counted by source — and, for a round whose call failed, the word
-// FAILED and the cause the record kept for it.
+// placed, counted by source — and, for a round whose call failed or which was
+// not asked at all, the word FAILED or SKIPPED and the cause the record kept
+// for it.
 //
 // All four counts are printed, zeros included, because a reader comparing two
 // rounds must not have to tell "nothing came from the fail-safe" from "the
@@ -604,10 +620,14 @@ func triageLine(r TriageRound) string {
 	line := fmt.Sprintf("round %d (%s): %s — agent %d, table %d, fail_safe %d, cap %d",
 		r.Round, strings.Join(where, ", "), runner.Plural(r.Total, "finding"),
 		r.Sources.Agent, r.Sources.Table, r.Sources.FailSafe, r.Sources.Cap)
-	if !r.Failed {
+	switch {
+	case r.Skipped:
+		line += "; SKIPPED"
+	case r.Failed:
+		line += "; FAILED"
+	default:
 		return line
 	}
-	line += "; FAILED"
 	if r.Cause != "" {
 		line += ": " + r.Cause
 	}
@@ -643,6 +663,7 @@ func triageRoundsOf(t *runstore.TriageRecord, red func(string) string) []TriageR
 			Model:   red(r.Model),
 			Account: red(r.Account),
 			Failed:  r.Failed,
+			Skipped: r.Skipped,
 			Cause:   red(r.Cause),
 			Total:   r.Total,
 		}

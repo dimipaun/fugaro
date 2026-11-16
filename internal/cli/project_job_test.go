@@ -3162,7 +3162,7 @@ func TestReviewJobVariantIsHandedNoToken(t *testing.T) {
 	// which is why the nil below is this rule and not a config with no
 	// service in it. The other two halves of the switch are the record above
 	// and the cascade repository a checked-out launch reads its auth from.
-	if env := credentialsServiceLaunchEnv(lc, "", "acme/app", config.AuthCascade, false, false); len(env) != 1 || env[0] != providers.EnvCredentialsServiceURL+"="+credentialsServiceFixtureURL {
+	if env := credentialsServiceLaunchEnv(lc, "", "acme/app", config.AuthCascade, "", false, false); len(env) != 1 || env[0] != providers.EnvCredentialsServiceURL+"="+credentialsServiceFixtureURL {
 		t.Fatalf("a repository launch on this config is handed %v, want the service's address alone: the fixture is not an opted-in installation", env)
 	}
 	for _, account := range []string{"acme-personal", ""} {
@@ -3179,7 +3179,7 @@ func TestReviewJobVariantIsHandedNoToken(t *testing.T) {
 			t.Errorf("the launcher resolves the review job %s, which the installation does not deploy (%v): a launcher cannot launch a job that does not exist", job.Name, slices.Sorted(maps.Keys(deployed)))
 			continue
 		}
-		if env := credentialsServiceLaunchEnv(lc, job.Name, "acme/app", config.AuthCascade, false, true); env != nil {
+		if env := credentialsServiceLaunchEnv(lc, job.Name, "acme/app", config.AuthCascade, "", false, true); env != nil {
 			t.Errorf("a launch on the review job %s hands the execution %v: the variant carries the service's address from its deployment, and a per-launch entry is a value an execution object records", job.Name, env)
 		}
 		if got := v.Env[providers.EnvCredentialsServiceURL]; got != credentialsServiceFixtureURL {
@@ -3309,7 +3309,7 @@ func TestLaunchKeepsAnUnswitchedProjectJobOffTheService(t *testing.T) {
 		recorded bool
 	}{
 		{"a record that says off", projectJobCascadeRepoYAML, false},
-		{"an auth the service does not serve", projectJobRepoYAML, true},
+		{"an auth the service does not serve", strings.Replace(projectJobRepoYAML, "auth: api-key", "auth: vertex", 1), true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newCascadeProjectJobFixture(t, tc.repo)

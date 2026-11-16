@@ -360,7 +360,7 @@ func TestImageEnvIsNilWithoutTheStamp(t *testing.T) {
 			"NEXUS_BASEURL=https://example.invalid/repository/maven-public/",
 		},
 	} {
-		if got := imageEnvRun(env).imageEnv(nil); got != nil {
+		if got := imageEnvRun(env).imageEnv(nil, nil); got != nil {
 			t.Errorf("imageEnv = %v, want nil: a job with no stamp passes nothing, whatever its environment holds", got)
 		}
 	}
@@ -381,7 +381,7 @@ func TestImageEnvDropsTheJobsUndeclaredSecrets(t *testing.T) {
 		"DEPLOY_KEY=deploy-key-placeholder",
 		"NEXUS_BASEURL=https://example.invalid/repository/maven-public/",
 	})
-	got := r.imageEnv([]string{"NPM_TOKEN"})
+	got := r.imageEnv([]string{"NPM_TOKEN"}, []string{"NPM_TOKEN"})
 	if got["NPM_TOKEN"] != "npm-token-placeholder" {
 		t.Errorf("a declared secret name is absent from the passthrough: %v", got)
 	}
@@ -395,9 +395,25 @@ func TestImageEnvDropsTheJobsUndeclaredSecrets(t *testing.T) {
 		t.Errorf("the passthrough registered %v with the redactor, want nothing: a passed value is not a secret", secrets)
 	}
 	// A review run declares none of the workflow's secrets (bootstrap's
-	// secretEnvs is empty for it), so every mounted name is dropped there.
-	if got := r.imageEnv(nil); got["NPM_TOKEN"] != "" || got["DEPLOY_KEY"] != "" {
-		t.Errorf("a run that declares nothing still passes a mounted secret name: %v", got)
+	// secretEnvs is empty for it), so every name its workflow holds is dropped
+	// there — including after the flip, when the job names none of them in
+	// FUGARO_SECRET_ENVS and the run fetched their values instead (held, B3.4):
+	// a fetched value reaching a review run's agent here would be G12 broken.
+	held := []string{"NPM_TOKEN", "DEPLOY_KEY"}
+	if got := r.imageEnv(nil, held); got["NPM_TOKEN"] != "" || got["DEPLOY_KEY"] != "" {
+		t.Errorf("a run that declares nothing still passes a secret name: %v", got)
+	}
+	flipped := imageEnvRun([]string{
+		ImageEntryEnv + "=base",
+		"NPM_TOKEN=npm-token-placeholder",
+		"DEPLOY_KEY=deploy-key-placeholder",
+		"NEXUS_BASEURL=https://example.invalid/repository/maven-public/",
+	})
+	if got := flipped.imageEnv(nil, held); got["NPM_TOKEN"] != "" || got["DEPLOY_KEY"] != "" {
+		t.Errorf("a job that mounts nothing and names nothing still passes a fetched secret to a run that declares nothing: %v", got)
+	}
+	if got := flipped.imageEnv(held, held); got["NPM_TOKEN"] != "npm-token-placeholder" {
+		t.Errorf("a run that declares them keeps a fetched secret name out of its own passthrough: %v", got)
 	}
 }
 
@@ -418,7 +434,7 @@ func TestImageEnvDropsThePlatformNames(t *testing.T) {
 	for _, name := range backend.PlatformEnvNames {
 		env = append(env, name+"=us-east5")
 	}
-	got := imageEnvRun(env).imageEnv(nil)
+	got := imageEnvRun(env).imageEnv(nil, nil)
 	for _, name := range env {
 		k, _, _ := strings.Cut(name, "=")
 		if k == "NEXUS_BASEURL" {

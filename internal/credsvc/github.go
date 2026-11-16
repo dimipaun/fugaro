@@ -82,6 +82,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/gitprov/httpjson"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // MintPath is the path a run asks for an installation token on. It is not an
@@ -89,10 +91,20 @@ import (
 // and the two Anthropic paths stay the only ones a run's model traffic takes.
 const MintPath = "/v1/github/installation-token"
 
+// ContextTokenPath is the path a run asks for read-only installation tokens
+// for its context repositories on (C5b, D613). It is a route of its own and not
+// a field of MintPath, and that is the point: a mint call carries no repository
+// and must go on carrying none (docs/git-providers.md, C2.1), while this call's
+// whole subject is the repositories the run asks to read — which are the ones
+// its own identity's claim names, and nothing a caller can widen.
+const ContextTokenPath = "/v1/github/context-tokens"
+
 // maxMintRequestBytes bounds a mint call's body. The whole request is one
 // small field ({"app_id":"1234"}), so the bound is tiny on purpose: an
 // installation token is minted from this body, and a body larger than this is
-// not a mint call.
+// not a mint call. A context mint's body is the App's ID and at most
+// task.MaxContextRepos repository names, which is smaller still, so the same
+// bound holds it.
 const maxMintRequestBytes = 4 << 10
 
 // appIDRE is the shape of a GitHub App ID: 1 to 20 digits, the rule
@@ -128,6 +140,14 @@ var (
 	// not hand a run a credential it could not write a line for (D143's
 	// fail-closed rule), and a token cannot be unminted.
 	ErrMintUnaudited = errors.New("credsvc: the mint could not be audited, so no installation token was issued")
+	// ErrContextGitHub is GitHub refusing a context mint, or the call to it
+	// failing. A run halts on it, exactly as it does on ErrMintGitHub (D143):
+	// the job holds no App key to fall back to.
+	ErrContextGitHub = errors.New("credsvc: GitHub did not mint an installation token for a context repository")
+	// ErrContextUnaudited is a context mint GitHub granted and C1.13's auditor
+	// could not record. The tokens exist at GitHub and reach nobody, the rule
+	// ErrMintUnaudited keeps for the write mint, and they cannot be unminted.
+	ErrContextUnaudited = errors.New("credsvc: the context mint could not be audited, so no installation token was issued")
 )
 
 // MintRequest is the body of a mint call: the GitHub App's ID, and nothing
@@ -162,6 +182,46 @@ type MintResponse struct {
 	Token      string    `json:"token"`
 	ExpiresAt  time.Time `json:"expires_at"`
 	Repository string    `json:"repository"`
+}
+
+// ContextTokenRequest is the body of a context mint call (C5b, D613): the
+// GitHub App's ID and the repositories the run asks to read.
+//
+// The list is the caller's ASK and never its reach. The repositories a run may
+// be served are the ones the run identity's fcr claim names — minted by the
+// launcher from the task the launch was given — and a repository the claim does
+// not name is refused by name and audited, so an agent that calls this service
+// with the run's own identity gains nothing beyond its launch. Unlike the write
+// mint's body, this one has a repository field, and that is what the two routes
+// are apart for: there is no widening here either, because the field is read
+// against the claim and never trusted.
+//
+// The names are the canonical "owner/name" the task and the claim hold them in
+// (task.CanonicalRepo's form), which is the key space the published policy is
+// read in: what the service compares is then a name and not a spelling a caller
+// chose.
+type ContextTokenRequest struct {
+	AppID        string   `json:"app_id"`
+	Repositories []string `json:"repositories"`
+}
+
+// ContextTokenResponse is a context mint's answer: one installation token per
+// App installation the call's repositories belong to.
+//
+// One per installation and not one for the whole list: a GitHub App
+// installation belongs to the owner, and a run's context list may name
+// repositories under different owners (D613), so a list spanning two owners is
+// answered two tokens — and a single token cannot cover both, because GitHub
+// scopes a token to the repositories of the installation it was minted for.
+//
+// Tokens is internal/gitprov/github's own ContextToken and not a second
+// spelling of the same fields: the service writes what the mint built, so this
+// wire has one type at both ends and nothing to keep in step. It is never empty
+// on an answered call — a call naming no repository is refused before the
+// answer is built — and every token in it is read-only
+// (github.ContextTokenPermissions).
+type ContextTokenResponse struct {
+	Tokens []github.ContextToken `json:"tokens"`
 }
 
 // readMintRequest reads a mint call's body. It is bounded and decoded strictly
@@ -451,4 +511,264 @@ func writeMintAnswer(w http.ResponseWriter, body []byte) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
+}
+
+// readContextTokenRequest reads a context mint call's body. It is bounded and
+// decoded strictly (Convention 6), and it holds every name to the canonical
+// form the claim and the published policy are read in, so what the handler
+// compares is a name and not a spelling the caller chose.
+//
+// Its refusals are VALUES only in the shape they break and never in what they
+// carried: the body is the caller's text, and a name that is not owner/name is
+// refused without being repeated.
+func readContextTokenRequest(r *http.Request) (ContextTokenRequest, error) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxMintRequestBytes+1))
+	if err != nil {
+		return ContextTokenRequest{}, errors.New("the body could not be read")
+	}
+	if len(body) > maxMintRequestBytes {
+		return ContextTokenRequest{}, fmt.Errorf("the body is larger than the %d bytes this service accepts", maxMintRequestBytes)
+	}
+	var req ContextTokenRequest
+	if err := decodeStrict(body, &req); err != nil {
+		return ContextTokenRequest{}, errors.New("the body is not one JSON object of this contract's fields")
+	}
+	if !appIDRE.MatchString(req.AppID) {
+		return ContextTokenRequest{}, errors.New("the call carries no GitHub App ID (1 to 20 digits), and a context token is signed as the App")
+	}
+	if len(req.Repositories) == 0 {
+		return ContextTokenRequest{}, errors.New("the call names no repository: a context token covers exactly the repositories the call lists, and a call naming none asks for nothing")
+	}
+	if len(req.Repositories) > task.MaxContextRepos {
+		return ContextTokenRequest{}, fmt.Errorf("the call names more than %d repositories, and a run's context list is bounded there (task.MaxContextRepos)", task.MaxContextRepos)
+	}
+	seen := make(map[string]bool, len(req.Repositories))
+	for _, repo := range req.Repositories {
+		canonical, err := task.CanonicalRepo(repo)
+		if err != nil {
+			return ContextTokenRequest{}, errors.New("the call names a repository that is not owner/name")
+		}
+		if canonical != repo {
+			return ContextTokenRequest{}, errors.New("the call names a repository that is not in its canonical form: a repository is lower-cased owner/name, as acme/lib")
+		}
+		if seen[repo] {
+			return ContextTokenRequest{}, errors.New("the call names the same repository twice")
+		}
+		seen[repo] = true
+	}
+	return req, nil
+}
+
+// contextAdmission is the claim-and-policy answer for one context mint call:
+// nil when every repository asked for may be read, and the refusal to answer
+// with otherwise.
+//
+// It carries the refusal's own status and type because the two halves are
+// refused differently, the split the build route's narrowing draws (buildRepos):
+// a repository the claim or the policy does not name is the CALLER's request
+// refused — an agent reaching past its launch, or a launch whose repository has
+// since left the project — while a policy this service could not read is the
+// service unable to answer, which is no caller's fault and is answered
+// state_unavailable.
+type contextAdmission struct {
+	status  int
+	typ     string
+	message string
+}
+
+func (a *contextAdmission) Error() string { return a.message }
+
+// admitContextRepos holds one call's repositories to the two lists that decide
+// them, and answers the first one that refuses.
+//
+// The CLAIM is read first, and it is the boundary: the repositories a run may
+// read are the ones the launcher signed into its identity (C5a), so a call
+// naming any other repository is refused by name before the policy is consulted
+// at all — an agent calling this service with the job's identity gains nothing
+// beyond its launch, and an operator reading the line reads a request that
+// asked for something it was never granted.
+//
+// The POLICY is read second and re-read on every call, because the claim is the
+// launch's answer and the policy is the project's: the launcher admits a
+// context repository the way it admits the run's own (the project's
+// allow_repos), and `fugaro project repos rm` narrows that list afterwards. A
+// repository the claim names and the policy no longer admits is refused here
+// rather than served a token the project has withdrawn — the same re-read the
+// run's own mint gets from the pairing (pairShared).
+//
+// A policy that is not published is not read as an empty allow-list: it refuses
+// the call, which is the fail-closed direction the launcher takes for the same
+// repository (a launch naming a context repository needs a published policy).
+func (s *Server) admitContextRepos(ctx context.Context, id Identity, repos []string) error {
+	claimed := make(map[string]bool, len(id.ContextRepos))
+	for _, repo := range id.ContextRepos {
+		claimed[repo] = true
+	}
+	for _, repo := range repos {
+		if !claimed[repo] {
+			return &contextAdmission{status: StatusRequestRefused, typ: ErrorRequestRefused,
+				message: requestRefused + "the repository " + repo + " is not one this run's context repositories name, and a context token covers the repositories the launch recorded and no others"}
+		}
+	}
+	shared, found, err := s.cfg.Policy.Shared(ctx)
+	if err != nil || !found {
+		// A node that is not there is not a read that failed (labelRead answers a
+		// nil err as nil), so the two share one sentence: there is no allow-list
+		// to admit a context repository, and a run is never served a repository
+		// the project's own list does not name.
+		return &contextAdmission{status: StatusUnavailable, typ: ErrorStateUnavailable,
+			message: "the project's policy could not be read, so no allow_repos admits a context repository"}
+	}
+	for _, repo := range repos {
+		canonical, err := projectpolicy.Canonical(gitprov.KindGitHub, repo)
+		if err != nil {
+			// Unreachable through this route — readContextTokenRequest held the
+			// name to the same rule — and kept rather than assumed: the
+			// alternative to refusing is comparing a name this code could not
+			// read against an allow-list, which would admit nothing and say so
+			// as a different refusal.
+			return &contextAdmission{status: StatusUnavailable, typ: ErrorStateUnavailable,
+				message: "the call names a context repository this service cannot read, and no allow_repos can admit one it cannot read"}
+		}
+		if !projectpolicy.AdmitRepo(shared.AllowRepos, canonical) {
+			// NotAdmitted's own sentence, which is the one the runner's
+			// admission and the launcher's advisory twin already answer with:
+			// one refusal for the same repository, worded once, so an operator
+			// reading the service's line and the launcher's report reads the
+			// same repository and the same fix.
+			return &contextAdmission{status: StatusRequestRefused, typ: ErrorRequestRefused,
+				message: requestRefused + projectpolicy.NotAdmitted(shared.AllowRepos, canonical)}
+		}
+	}
+	return nil
+}
+
+// contextTokens answers one context mint call (C5b, D613). The caller has been
+// verified and paired before this is reached (ServeHTTP), so what is left is:
+// read the body, hold the repositories to the run's own claim and to the
+// project's policy, read the App key, mint one token per installation, and
+// answer.
+//
+// The order is the boundary's and not an accident. The claim and the policy are
+// read before the bundle, so a call that may not be served reads no credential
+// at all; the policy is read before the key because it is what decides whether
+// there is a call to serve; and GitHub is asked last, so the two refusals a
+// caller causes itself are answered without this service having signed anything
+// at the App.
+//
+// What this route adds to the run's reach is one read-only token per installed
+// owner (github.ContextTokenPermissions), for repositories the launch recorded
+// — and nothing else. No Terraform and no grant come with it: the service still
+// holds its one bundle grant and mints from the App key it already holds
+// (TestCredentialsServiceGrantsAreTheOneBundle is unchanged).
+func (s *Server) contextTokens(ctx context.Context, w http.ResponseWriter, r *http.Request, id Identity) {
+	req, err := readContextTokenRequest(r)
+	if err != nil {
+		s.refuseContextTokens(ctx, w, id, StatusRequestRefused, ErrorRequestRefused, requestRefused+err.Error())
+		return
+	}
+	if err := s.admitContextRepos(ctx, id, req.Repositories); err != nil {
+		var refused *contextAdmission
+		if errors.As(err, &refused) {
+			s.refuseContextTokens(ctx, w, id, refused.status, refused.typ, refused.message)
+			return
+		}
+		// Unreachable through this route — admitContextRepos answers its
+		// refusals as contextAdmission and nothing else — and kept rather than
+		// assumed, the shape the build route's own narrowing keeps: answering
+		// is what a call that got here needs, and a panic inside the one act
+		// that hands out a credential is the one thing not to do.
+		s.refuseContextTokens(ctx, w, id, StatusUnavailable, ErrorStateUnavailable,
+			"the call's context repositories could not be read")
+		return
+	}
+	b, err := s.cfg.Bundles.Load(ctx)
+	if err != nil {
+		s.refuseContextTokens(ctx, w, id, StatusUnavailable, ErrorStateUnavailable, BundleRefusal(err))
+		return
+	}
+	key, err := appKey(b)
+	if err != nil {
+		s.refuseContextTokens(ctx, w, id, StatusUnavailable, ErrorStateUnavailable, err.Error())
+		return
+	}
+	tokens, err := github.MintContextTokens(ctx, github.Options{
+		AppID: req.AppID, PrivateKey: key, HTTP: s.cfg.Client, Now: s.now,
+	}, req.Repositories, github.ContextTokenPermissions())
+	if err != nil {
+		// The write mint's rule for the same failure: the operator gets the
+		// class of it and, when GitHub answered, its status — and never a byte
+		// of GitHub's own text, which can quote the body of a request that
+		// carried the App's JWT.
+		attrs := []any{
+			"purpose", PurposeContextToken, "credential", config.GitHubAppKeySecret,
+			"repository", id.Slug, "run", id.Run,
+		}
+		var se *httpjson.StatusError
+		if errors.As(err, &se) {
+			attrs = append(attrs, "status", se.Status)
+		}
+		s.log.Warn("credsvc: an installation token for a context repository could not be minted", attrs...)
+		s.refuseContextTokens(ctx, w, id, StatusUnavailable, ErrorStateUnavailable, ErrContextGitHub.Error())
+		return
+	}
+	s.answerContextTokens(ctx, w, id, tokens)
+}
+
+// answerContextTokens builds the context mint's answer, audits the issuance and
+// writes it, in that order and for the reasons answerMint keeps: an answer the
+// service cannot build writes the refusal's own line and no issuance line, and
+// an issuance whose line cannot be written is a refusal, because a token cannot
+// be unminted and what "not made" means is that it reaches nobody.
+//
+// The answer is written by writeMintAnswer, which is the same writer the write
+// mint uses: both answers carry a credential's value, both are no-store, and
+// neither carries a header of the forward path. It also means there is one
+// place in this service where a token is put on the wire.
+func (s *Server) answerContextTokens(ctx context.Context, w http.ResponseWriter, id Identity, tokens []github.ContextToken) {
+	body, err := json.Marshal(ContextTokenResponse{Tokens: tokens})
+	if err != nil {
+		s.log.Error("credsvc: the context mint's answer could not be built", "error", err)
+		s.refuseContextTokens(ctx, w, id, StatusUnavailable, ErrorStateUnavailable, mintAnswerRefusal)
+		return
+	}
+	if err := s.auditContextTokens(ctx, id, StatusOK); err != nil {
+		s.log.Error("credsvc: the context mint's audit line was not written", "error", err)
+		s.refuseContextTokens(ctx, w, id, StatusUnavailable, ErrorStateUnavailable, ErrContextUnaudited.Error())
+		return
+	}
+	writeMintAnswer(w, body)
+}
+
+// refuseContextTokens audits a refused context mint and answers it, refuseMint's
+// shape for this route: one refusal sink, one audit sink, and the purpose and
+// credential read from routeAct — the ONE rule — so this route's refusals and
+// its issuance line cannot name the act or the credential two ways.
+//
+// The status and the type are the caller's, because this route has two classes
+// of refusal: the request's own (a repository the claim or the policy does not
+// name) and the service's (a bundle, a key, or GitHub). Both are audited before
+// the answer is written, the rule every refusal of this service keeps (C1.13).
+func (s *Server) refuseContextTokens(ctx context.Context, w http.ResponseWriter, id Identity, status int, typ, message string) {
+	purpose, credential := routeAct(ContextTokenPath)
+	s.refuseCall(ctx, w, id, purpose, credential, "", status, typ, message)
+}
+
+// auditContextTokens writes one context mint's line through C1.13's auditor, the
+// write mint's shape (auditMint): the event is completed from the identity the
+// service verified — the run, its repository slug, the job it reported and the
+// account that called — the credential is the App key's NAME, the purpose is
+// this route's own, and there is no tier, because the App key is not a model
+// credential and was spent on no call. A tier here would be a tier the service
+// never assigned, and the auditor refuses one rather than recording it.
+//
+// What the line does NOT carry is which repositories were served: a line's
+// repository field is the run's own (Identity.Audit), and the context list is a
+// property of the call rather than of the run. The refusal's own sentence names
+// the repository a call was refused for, which is where an operator reads it —
+// and the line says, by its purpose, that a run read something beyond its own
+// repository at that instant.
+func (s *Server) auditContextTokens(ctx context.Context, id Identity, status string) error {
+	purpose, credential := routeAct(ContextTokenPath)
+	return s.auditCall(ctx, id, purpose, credential, "", status)
 }

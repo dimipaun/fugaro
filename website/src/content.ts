@@ -62,8 +62,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { spawnSync } from 'node:child_process'
-import { PLANS as MATRIX_PLANS, STATUSES as MATRIX_STATUSES, validateSnapshot } from './lib/feature-matrix-model.mjs'
-import { buildSnapshot } from './lib/feature-matrix-stub.mjs'
+import { PLANS as MATRIX_PLANS, STATUSES as MATRIX_STATUSES, readSnapshotBlock } from './lib/feature-matrix-model.mjs'
 
 /**
  * The site's own directory: `website/`.
@@ -1654,6 +1653,12 @@ export const FEATURE_STATUSES: string[] = MATRIX_STATUSES
  */
 export const FEATURE_PLANS: string[] = MATRIX_PLANS
 
+/**
+ * The generator's output, at the repository root and beside `README.md` (D2446): the one file
+ * this page's rows come from, and the reason the build reads no part of `docs/status.md` (R2).
+ */
+const FEATURES_FILE = 'FEATURES.md'
+
 /** One row of the feature matrix: the feature, how far it has got, and the plans it is in. */
 export interface FeatureRow {
   /** The feature's slug, which is public: it is the row's key in the snapshot and in FEATURES.md. */
@@ -1693,21 +1698,22 @@ export interface FeatureMatrixFacts {
  * `docs/status.md`, not a line to rewrite on the page, and a status the snapshot stops carrying
  * is a status the page stops printing.
  *
- * **The snapshot is read through the stub for now.** `buildSnapshot` is
- * `website/src/lib/feature-matrix-stub.mjs`, which answers with the contract's fixture
- * (`website/test/fixtures/feature-matrix/snapshot.json`) and reads none of its four arguments —
- * so the call passes none, and this is the one line task I1 changes: it deletes the stub, hands
- * the real builder status.md's text, the parsed mapping, the previous snapshot block and the
- * release being stamped, and reads FEATURES.md's own block as this page's rows. Until then the
- * stub's signature is the real one, so nothing about the page or its test moves with that change.
+ * **The rows come out of FEATURES.md's own block.** That file, at the repository root, is the
+ * generator's output — built at release from `docs/status.md` and the mapping — and the block
+ * under its table is the snapshot itself, so the page and the markdown cannot disagree about a
+ * row (R5, D2446). This is also what keeps the build off `docs/status.md`: that page changes
+ * several times a day through status sweeps, and the build reads no part of it (R2).
  *
- * **`validateSnapshot` is what makes an unreadable matrix a failed build rather than a page with
- * a hole in it** — an unknown status, a plan that is set while the plan below it is not, a row
- * with no plan at all — and it returns the snapshot, so nothing below reads a field it has not
- * had checked (the same reading `loadCompatibility()` gives its file).
+ * **The block's own reader is what makes an unreadable matrix a failed build rather than a page
+ * with a hole in it** — a document with no block, two of them, a block that is not JSON, an
+ * unknown status, a plan that is set while the plan below it is not — and it returns the
+ * snapshot, so nothing below reads a field it has not had checked (the same reading
+ * `loadCompatibility()` gives its file).
  */
 export function loadFeatures(): FeatureMatrixFacts {
-  const snapshot = validateSnapshot(buildSnapshot({}))
+  const snapshot = readSnapshotBlock(
+    readBytes(path.join(REPO_ROOT, FEATURES_FILE), 'the feature matrix, which the generator writes from `docs/status.md` and `docs/feature-matrix/mapping.yaml` (the feature matrix\'s plan, task I1)'),
+  )
   return { asOf: snapshot.as_of, rows: snapshot.rows }
 }
 

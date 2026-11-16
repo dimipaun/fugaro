@@ -229,7 +229,7 @@ func newCoreRoot() *cobra.Command {
 	root.PersistentFlags().BoolP(verboseFlag, "v", false, "print the run's full output as it goes, not one line per step")
 	root.AddCommand(
 		newVersionCmd(), newValidateCmd(), newConfigCmd(), newVerifyCmd(), newExecCmd(), newImageCmd(),
-		newRunCmd(), newFollowUpsCmd(), newRecipesCmd(), newRunsCmd(), newEstimateCmd(), newStatsCmd(), newSeatsCmd(), newArtifactsCmd(), newLogsCmd(), newDiagnoseCmd(), newCancelCmd(), newSecretsCmd(), newCredsCmd(), newAccountsCmd(), newBackendsCmd(), newSetupCmd(), newUpdateCmd(), newRetiredInitCmd(), newBudgetCmd(), newWatchCmd(), newUpdateSkillsCmd(), newDoctorCmd(), newProjectCmd(), newSettingsCmd(), newWorkflowCmd(), newRigorCmd(), newAllowDeleteCmd(), newManagedCmd(), newRestoreCmd(), newPlanCmd(), newReaperCmd(), newBacklogCmd(), newIssueCmd(), newPairCmd(), newUserCmd(), newModelsCmd(), newCraftCmd(), newWorkspaceCmd(),
+		newRunCmd(), newFollowUpsCmd(), newRecipesCmd(), newRunsCmd(), newEstimateCmd(), newStatsCmd(), newSeatsCmd(), newArtifactsCmd(), newLogsCmd(), newDiagnoseCmd(), newCancelCmd(), newSecretsCmd(), newCredsCmd(), newAccountsCmd(), newBackendsCmd(), newSetupCmd(), newUpdateCmd(), newRetiredInitCmd(), newBudgetCmd(), newWatchCmd(), newUpdateSkillsCmd(), newDoctorCmd(), newProjectCmd(), newSettingsCmd(), newWorkflowCmd(), newRigorCmd(), newAllowDeleteCmd(), newManagedCmd(), newRestoreCmd(), newPlanCmd(), newReaperCmd(), newBacklogCmd(), newIssueCmd(), newPairCmd(), newMailboxCmd(), newUserCmd(), newModelsCmd(), newCraftCmd(), newWorkspaceCmd(),
 		// The independent review's own command. It is registered like any other
 		// core command, and its launch still refuses where one of E7's two
 		// halves is missing — an installation with no credentials service, or a
@@ -248,6 +248,11 @@ func newCoreRoot() *cobra.Command {
 		// project's orchestrator state (the stateless-orchestrator plan's O5,
 		// D1223). It reads and writes the node its project's daemon keeps.
 		newOrchestratorCmd(),
+		// What the escalation ladder has done to the project's stalled pull
+		// requests (the outer-loop-escalation plan's E13): the ledger E7 keeps
+		// on each work item, read-only. A person's window onto the ladder that
+		// otherwise only the daemon acts on.
+		newEscalationCmd(),
 		// The credentials service's own entry point: hidden, and the only
 		// thing the service's image runs (credentials_serve.go, plan task
 		// C1.14). It is registered like every other command so `fugaro

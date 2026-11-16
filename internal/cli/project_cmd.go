@@ -23,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/coordpath"
+	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -304,12 +305,20 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		if err != nil {
 			return publishFailure(err, narrowedSoFar)
 		}
+		// The identities the node's bitbucket_tokens key carries (R12) are read
+		// here, once, and handed to the build both doors share: the state store
+		// is where the add-time check wrote them, and the node is the only
+		// document the credentials service reads.
+		identities, err := bitbucketTokenIdentities(ctx, db, lc)
+		if err != nil {
+			return publishFailure(err, narrowedSoFar)
+		}
 		// The one build both doors take (policyNodeForPublish): `fugaro update`'s
 		// policy stage writes the node the local config states from the same
 		// flags, and two builds of one node from one config is a node that
 		// depends on which door the operator came through
 		// (TestUpdateStageAndTheExplicitDoorBuildTheSameNode).
-		body, pol, sources, err := policyNodeForPublish(ctx, lc, old, raw, exists, o.seedRepos, o.removeRouting)
+		body, pol, sources, err := policyNodeForPublish(ctx, lc, old, raw, exists, o.seedRepos, o.removeRouting, identities)
 		if err != nil {
 			return publishFailure(err, narrowedSoFar)
 		}
@@ -430,7 +439,7 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 			// while this ran, or the credential may not write it — left the
 			// node exactly as it was, so a diff printed first would have the
 			// operator reading a change that did not happen.
-			printPolicyDiff(out, old, pol, sources, lc.CloneURLs == nil, lc.Binaries == nil)
+			printPolicyDiff(out, old, pol, sources, lc)
 			fmt.Fprintf(out, "set %s\n", projectpolicy.PathShared())
 			// The generation this write moved the node to is recorded in the file
 			// it was built from, the same record the policy stage keeps (D854): the
@@ -566,6 +575,10 @@ const rulesDeviceGeneration = 3
 // coordinator's read grant (coordinator plan P3, D194).
 const rulesCoordinatorGeneration = 4
 
+// rulesVoiceGeneration is the rules generation that added the voice policy node
+// (mobile plan task P5.3.1).
+const rulesVoiceGeneration = 5
+
 // rulesMarkerOlderText is the sentence for the state between the two
 // generations: at or above PolicyRulesVersion and below RulesVersion. Nothing
 // refuses here — Read reads the policy the marker's rules carry and
@@ -578,10 +591,15 @@ const rulesCoordinatorGeneration = 4
 // Each branch names the one thing the next generation adds, so the sentence
 // never sends the operator after a grant the deployed rules already carry: a
 // marker at rulesDeviceGeneration already has the mailbox and the device
-// binding, and one at rulesCoordinatorGeneration already has the coordinator's
-// read grant, so for it the sentence names the voice policy node (mobile plan
-// task P5.3.1).
+// binding, one at rulesCoordinatorGeneration already has the coordinator's read
+// grant and only the voice policy node is new to it (mobile plan task P5.3.1),
+// and one at rulesVoiceGeneration already has that node too and only the
+// registration kind's fields are new to it (mobile plan task P5.2.2).
 func rulesMarkerOlderText(gen int) string {
+	if gen >= rulesVoiceGeneration {
+		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox, the device binding, the coordinator's read grant and the voice policy node, so runs, a published policy, the mobile app and the coordinator are unaffected — what they predate is this release's own document, which adds the fields a push registration carries (the `token`, `platform` and `prefs` fields of a mailbox message of the new `registration` kind, mobile plan task P5.2.2): the app writes one into its own inbox, and until this is deployed the database refuses that message with no error, so the phone is registered with nothing; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
+			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, projectpolicy.RulesVersion)
+	}
 	if gen >= rulesCoordinatorGeneration {
 		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox, the device binding and the coordinator's read grant, so runs, a published policy, the mobile app and the coordinator are unaffected — what they predate is this release's own document, which adds the voice policy node %s/{shared,repos/$slug} (mobile plan task P5.3.1): a run token reads its own project's node there, and no client writes either node; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
 			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, rules.PathVoice, projectpolicy.RulesVersion)
@@ -602,6 +620,42 @@ func readPolicyNode(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) (
 		return "", false, nil, dbErr(lc, err, false)
 	}
 	return etag, found, raw, nil
+}
+
+// bitbucketTokenIdentities is the half of the node's bitbucket_tokens key the
+// local config does not state (R12, R5): the account UUID the add-time check
+// proved for each typed token, keyed by the token's DOCUMENT KEY — the key
+// `creds set` writes the token's status under (T6), so the store's own map is
+// handed to the derivation without re-keying it.
+//
+// It is read only when the local config names a typed token, and that is R3's
+// half of the rule rather than an optimization: an installation holding the
+// legacy bitbucket-token alone publishes no such key at all, so its update must
+// reach no state store and converge with no step — the read is a cloud read of
+// the project's own database, and a project with no record has nothing for it
+// to answer.
+//
+// A name the store does not hold, and one it holds with an empty identity,
+// contribute nothing: an absent identity is what a repository token has and all
+// it has (R14), never a value to be guessed. A read that fails is an error
+// rather than an empty set, because an empty set is a legal answer here and a
+// failed read that wore it would publish a node claiming the project's tokens
+// have no account.
+func bitbucketTokenIdentities(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) (map[string]string, error) {
+	if len(lc.BitbucketTokens) == 0 {
+		return nil, nil
+	}
+	statuses, err := (&creds.RTDBStore{DB: db}).TokenStatuses(ctx)
+	if err != nil {
+		return nil, dbErr(lc, err, false)
+	}
+	out := make(map[string]string, len(statuses))
+	for name, st := range statuses {
+		if st.Identity != "" {
+			out[name] = st.Identity
+		}
+	}
+	return out, nil
 }
 
 // refuseNewerPolicy refuses a node written by a newer Fugaro (P8, the other
@@ -936,7 +990,7 @@ func refuseAProfileMountingTheBitbucketCredential(lc *localcfg.Config) error {
 // step 3, design §4.1(1)), and a publish that dropped an entry would silently
 // move them to the provider's usual URL. printPolicyDiff says which side each
 // entry came from.
-func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.Policy, removeRouting bool) (*projectpolicy.Policy, bool, error) {
+func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.Policy, removeRouting bool, identities map[string]string) (*projectpolicy.Policy, bool, error) {
 	if lc.Budget == nil || lc.Budget.Mode == "" {
 		return nil, false, userErr("this project's config sets no budget.mode, and a published policy's budget block must name one (off, observe or enforce): the mode decides whether the caps bite, and a block that leaves it out would take it from each job's environment, which nobody reading the policy can see; set budget: { mode: ... } in %s, or leave the policy unpublished", lc.Name)
 	}
@@ -950,6 +1004,27 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		if _, ok := lc.Profiles[projectpolicy.DefaultProfileName]; !ok {
 			return nil, false, userErr("this project's config sets profiles: and does not define %q, the profile every workflow that names none runs on: a repository selecting it would have every run refused; define it in %s, or remove the profiles: block (a policy with no profiles block sets no profile at all)",
 				projectpolicy.DefaultProfileName, lc.Name)
+		}
+		// R8, D2310: one default per provider the block serves, not `standard`
+		// alone. A workflow that names no job profile resolves to the default
+		// of its repository's provider (the runner's ProjectJobDefaultProfile:
+		// `standard` when that profile serves the provider and
+		// `standard-<provider>` when the policy defines one), so a block that
+		// serves a provider without defining its default is a block whose
+		// repositories on that provider resolve to no profile at all: they
+		// keep the per-repository jobs the block was published to replace, and
+		// nothing says why. It is refused here, where the file it came from can
+		// be named, and the fix is the one command: `fugaro update` writes the
+		// default profile of every provider a project uses.
+		served := servedProviders(lc)
+		first := firstDefaultProvider(lc, served)
+		for _, provider := range served {
+			name := projectpolicy.DefaultProfileNameFor(provider, provider == first)
+			if _, ok := lc.Profiles[name]; ok {
+				continue
+			}
+			return nil, false, userErr("this project's config sets profiles: and serves %s with them but defines no %q, the default profile of a %s repository whose workflow names none: that workflow would resolve to no profile and keep its per-repository job instead of the shared job this block is published for; run %s (it writes the default profile of every provider a project uses), or define %s in %s",
+				provider, name, provider, selfCommand()+" update", name, lc.Name)
 		}
 		for _, name := range slices.Sorted(maps.Keys(lc.Profiles)) {
 			// A profile's allow_repos is either written or not, and the node
@@ -1042,6 +1117,22 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	// that same decode) rather than to a copy of it here: one rule, at the one
 	// point a root can be written.
 	token, err := projectpolicy.DeriveBitbucketToken(profiles, lc.ProjectSecrets)
+	if err != nil {
+		return nil, false, userErr("%v", err)
+	}
+	// The typed tokens are derived beside that block and from the other half of
+	// the same file (R5): the legacy untyped record's coverage IS the block
+	// above, while each record of the config's bitbucket_tokens block is a
+	// token of its own, and the key is the one place the credentials service
+	// learns what each of them reaches. identities is the half the file does
+	// not state (R12): the account UUID `creds set` proved for a token is in
+	// the creds state store, and the caller reads it there, so a hand-edited
+	// file cannot add one.
+	//
+	// A project that names no record derives no key at all, which is what
+	// leaves the node of an installation holding the legacy bitbucket-token
+	// alone byte for byte what it was (R3).
+	tokens, err := projectpolicy.DeriveBitbucketTokens(lc.BitbucketTokens, identities)
 	if err != nil {
 		return nil, false, userErr("%v", err)
 	}
@@ -1234,6 +1325,7 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		Profiles:             profiles,
 		Accounts:             accounts,
 		BitbucketToken:       token,
+		BitbucketTokens:      tokens,
 		BitbucketAPIRoots:    lc.BitbucketAPIRoots,
 		ReviewFloor:          floor,
 		VerifierAccounts:     verifierAccounts,
@@ -1307,20 +1399,6 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		// publishedPolicyOf before a publish gets here, and what this assignment
 		// re-encodes is therefore the whole of the operator's block.
 		pol.Credentials = old.Credentials
-		// The crafts' credentials, their pools and the crafts that choose among
-		// them are kept for the same reason (docs/model-crafts, plan MC1): no
-		// command of this release writes them, so the node's are the only ones,
-		// and a publish that dropped them would take away definitions the owner
-		// put there — silently, since this release reads none of them yet. They
-		// are copied as the typed values, the credentials block's way: each of
-		// the three is strict inside, so a member this Fugaro does not model is
-		// refused by publishedPolicyOf before a publish gets here, and what the
-		// assignment re-encodes is the whole of what the node held. MC4 is where
-		// the operator's config becomes their writer, and where they gain the
-		// diff lines the other operator-written blocks have.
-		pol.CraftCredentials = old.CraftCredentials
-		pol.CraftPools = old.CraftPools
-		pol.Crafts = old.Crafts
 		// The model grades are kept for the binaries member's reason, and they
 		// are the sharper case of it: no key of this release's config states
 		// them on the node — the project layer's defaults.model_grades is what
@@ -1341,7 +1419,250 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		// line) and what the node is built from.
 		pol.ModelGrades = old.ModelGrades
 	}
+	// The crafts' credentials, their pools and the crafts that choose among
+	// them are the operator's own blocks from this release on (docs/model-crafts
+	// §1–3, MC18, D1667): the local config is their carrier, and this publish
+	// writes what it states. It is written outside the `old != nil` guard above
+	// because it is the one member of the group whose source is the file rather
+	// than the node — a first publish writes the file's blocks, and the node's
+	// own stand for every name the file does not state (craftMembersForPublish).
+	creds, pools, crafts, err := craftMembersForPublish(lc, old)
+	if err != nil {
+		return nil, false, err
+	}
+	pol.CraftCredentials, pol.CraftPools, pol.Crafts = creds, pools, crafts
 	return pol, keepRouting, nil
+}
+
+// craftMembersForPublish is the craft_credentials, craft_pools and crafts block
+// the node is written with: the definitions the operator's config states, and
+// the node's own for every name it does not state.
+//
+// The merge direction is the clone_urls rule and the reason for it is the same
+// one, one block over: a file that states a definition is the operator's own
+// edit and wins, and a file that states none leaves the node's exactly as it
+// was — a machine whose config predates the keys, and an owner who declined to
+// write them, keep a project whose runs resolve their crafts as they did. What
+// is NOT in the merge is a removal: a definition the node holds and the file
+// does not mention stays, because the node is what a run resolves a craft
+// against, and a pool that disappeared because one machine's file happened to
+// be silent would take a grant away with no refusal and no line (the removal of
+// a published definition is the explicit unset's; docs/config-ownership, A1).
+//
+// The one thing that can make the node unreadable is refused here rather than
+// left to the writer's own check: a credential and a pool share one namespace
+// in a published block (config.ValidatePools), so a credential the file defines
+// under a name the node already publishes a pool of would be a node this
+// Fugaro cannot decode — and a refusal that names the two and the fix is what
+// the operator can act on, where checkPolicyBytes' own sentence says only that
+// the document cannot be read back.
+func craftMembersForPublish(lc *localcfg.Config, old *projectpolicy.Policy) ([]config.Credential, []config.Pool, *config.Crafts, error) {
+	creds := publishedCraftCredentials(lc, old)
+	pools, _ := publishedCraftPools(lc, old, creds)
+	if clash := craftNamespaceClash(creds, pools); clash != "" {
+		return nil, nil, nil, userErr("%s; a craft's access names a credential or a pool and does not say which, so the node this publish would write is one no reader can decode. Rename one of the two in this machine's config, or in the published node by hand, and publish again", clash)
+	}
+	return creds, pools, publishedCrafts(lc, old), nil
+}
+
+// publishedCraftCredentials is the craft_credentials block the node is written
+// with: the definitions the config states, in the config's order, and the
+// node's own for every name it does not state. A definition the config states
+// replaces the node's entry of that name — a credential is a name and a type,
+// so a file that changes the type is an edit like any other.
+func publishedCraftCredentials(lc *localcfg.Config, old *projectpolicy.Policy) []config.Credential {
+	node := craftCredentialsOf(old)
+	if len(lc.Credentials) == 0 {
+		return node
+	}
+	out := slices.Clone(lc.Credentials)
+	stated := make(map[string]bool, len(out))
+	for _, c := range out {
+		stated[c.Name] = true
+	}
+	for _, c := range node {
+		if !stated[c.Name] {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// publishedCraftPools is the craft_pools block the node is written with, and
+// the diff lines the operator reads about a pool of the config the node cannot
+// carry.
+//
+// A pool the config states wins the node's copy of its name member by member —
+// the members, the strategy and the allowed users are the config's where it
+// states them, and the owner comes from the node's copy where the config states
+// none (docs/config-ownership, A1's "a written value wins field by field"). The
+// node's legacy-open marker is the one member that is never the config's: it is
+// what the D1942 migration writes for a pool that predates owners, it serves
+// the pool to everyone, and a marking written in a file would be a false claim
+// about the node's own history (D2608). A pool the config marks and the node
+// does not carries no marker, so it is published only if its own owner says who
+// answers for it.
+//
+// A pool neither the config nor the node can publish — an ownerless one the
+// node has no copy of, which is what `fugaro accounts pool add` writes today —
+// is left out and NAMED in one line: the node would be one this Fugaro refuses
+// to read back (config.ValidatePublishedPools refuses an ownerless published
+// pool, and both doors write through checkPolicyBytes), and neither door fails
+// on it (D2608). The check is the block's own and is asked of the pool in the
+// block it is being written into, so a pool of the config whose name the node
+// defines a credential of is left out here rather than refused: a craft's
+// access resolves to that credential, and the line says which name it was.
+func publishedCraftPools(lc *localcfg.Config, old *projectpolicy.Policy, creds []config.Credential) ([]config.Pool, []string) {
+	node := craftPoolsOf(old)
+	if len(lc.Pools) == 0 {
+		return node, nil
+	}
+	var out []config.Pool
+	var lines []string
+	stated := make(map[string]bool, len(lc.Pools))
+	for _, p := range lc.Pools {
+		stated[p.Name] = true
+		q, held := craftPoolNamed(old, p.Name)
+		pub := p
+		// The marker is never the config's (D2608), so it starts cleared and is
+		// taken from the node alone, and only while nothing else answers for the
+		// pool: a pool that names an owner now is not one that predates owners.
+		pub.LegacyOpen = false
+		if held {
+			if pub.Owner == "" {
+				pub.Owner = q.Owner
+			}
+			if len(pub.AllowedUsers) == 0 {
+				pub.AllowedUsers = q.AllowedUsers
+			}
+			pub.LegacyOpen = q.LegacyOpen && pub.Owner == "" && len(pub.AllowedUsers) == 0
+		}
+		if ps := config.ValidatePublishedPools([]config.Pool{pub}, creds); len(ps) > 0 {
+			why := ps[0].Message
+			if p.LegacyOpen && !pub.LegacyOpen {
+				// The pool was written with the migration's marker and this
+				// publish does not carry it, so the validator's own sentence
+				// ("mark a pool that predates owners as legacy_open") would be
+				// advice the operator has already taken: say what happened to
+				// the key instead.
+				why = "legacy_open is the marker the migration writes for a pool that predates owners, and a pool in this file is never published with it: name the pool's owner"
+			}
+			lines = append(lines, fmt.Sprintf("  craft_pools %s not published: %s", pub.Name, why))
+			continue
+		}
+		out = append(out, pub)
+	}
+	for _, q := range node {
+		if !stated[q.Name] {
+			out = append(out, q)
+		}
+	}
+	return out, lines
+}
+
+// craftPoolNamed is the node's pool of this name, and whether it holds one.
+func craftPoolNamed(old *projectpolicy.Policy, name string) (config.Pool, bool) {
+	for _, q := range craftPoolsOf(old) {
+		if q.Name == name {
+			return q, true
+		}
+	}
+	return config.Pool{}, false
+}
+
+// craftNamespaceClash is the name a credential of the published block and a
+// pool of it both carry, "" when the two blocks are as they must be. It is the
+// rule config.ValidatePools applies to one document, asked here of the document
+// this publish would write — whose two halves come from two sources, which is
+// why it can arise at all when neither the file nor the node breaks it alone.
+func craftNamespaceClash(creds []config.Credential, pools []config.Pool) string {
+	if len(creds) == 0 || len(pools) == 0 {
+		return ""
+	}
+	named := make(map[string]bool, len(creds))
+	for _, c := range creds {
+		named[c.Name] = true
+	}
+	for _, p := range pools {
+		if named[p.Name] {
+			return fmt.Sprintf("this machine's config defines the credential %s and the published node holds a pool of that name", p.Name)
+		}
+	}
+	return ""
+}
+
+// publishedCrafts is the crafts block the node is written with: the config's
+// crafts, each half filled from the node's craft of the same name where the
+// config sets none, and the node's whole block where the config states no craft
+// at all.
+//
+// The merge is per half and not per craft, which is the pools' rule and the
+// spec's own shape: a craft sets its model and its access independently
+// (config.Craft), so a file that writes one of the two has said nothing about
+// the other, and the answer the node carries stands. A block the config writes
+// that sets no craft is no block (the node's own rule, decodeCraftMembers), so
+// it keeps the node's exactly as a file that writes nothing does.
+func publishedCrafts(lc *localcfg.Config, old *projectpolicy.Policy) *config.Crafts {
+	node := policyCraftsOf(old)
+	if lc.Crafts == (config.Crafts{}) {
+		return node
+	}
+	out := config.Crafts{}
+	for _, name := range config.CraftNames {
+		c := lc.Crafts.Of(name)
+		if node != nil {
+			q := node.Of(name)
+			if c.Model == "" {
+				c.Model = q.Model
+			}
+			if c.Access == "" {
+				c.Access = q.Access
+			}
+		}
+		out = withCraft(out, name, c)
+	}
+	return &out
+}
+
+// withCraft is the block with one craft written into it. The crafts are a
+// struct of four fields rather than a map (config.Crafts says why), so the name
+// is the only way in.
+func withCraft(c config.Crafts, name string, craft config.Craft) config.Crafts {
+	switch name {
+	case config.CraftCoder:
+		c.Coder = craft
+	case config.CraftReview:
+		c.Review = craft
+	case config.CraftSeniorReview:
+		c.SeniorReview = craft
+	case config.CraftSecurityReview:
+		c.SecurityReview = craft
+	}
+	return c
+}
+
+// craftCredentialsOf, craftPoolsOf and craftsOf are the node's own three
+// members, with a node that is not there — and one that holds none — read as no
+// member at all.
+func craftCredentialsOf(p *projectpolicy.Policy) []config.Credential {
+	if p == nil {
+		return nil
+	}
+	return p.CraftCredentials
+}
+
+func craftPoolsOf(p *projectpolicy.Policy) []config.Pool {
+	if p == nil {
+		return nil
+	}
+	return p.CraftPools
+}
+
+func policyCraftsOf(p *projectpolicy.Policy) *config.Crafts {
+	if p == nil {
+		return nil
+	}
+	return p.Crafts
 }
 
 // nodeRoutesClaude reports whether the node being replaced carries a routing
@@ -2122,7 +2443,14 @@ func repoAdmissions(pol *projectpolicy.Policy) (map[string][]string, error) {
 // allow-list, every field of every provider entry, and every price override —
 // so the operator reads the values about money and data sharing that this
 // publish replaces rather than a count of them.
-func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[string]string, keepCloneURLs, keepBinaries bool) {
+//
+// lc is the operator's own config, and the two members whose source it is read
+// off it rather than passed beside it (the clone_urls and binaries blocks are
+// the config's where it states them): the diff says which side an entry came
+// from, and the craft members' lines are the same question asked of a third
+// family of blocks.
+func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[string]string, lc *localcfg.Config) {
+	keepCloneURLs, keepBinaries := lc.CloneURLs == nil, lc.Binaries == nil
 	if old == nil {
 		fmt.Fprintf(out, "%s: not published yet; writing version %d\n", projectpolicy.PathShared(), new.Version)
 	} else {
@@ -2241,6 +2569,47 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	// operator who hand-wrote a grade would read that silence as "it is gone".
 	if new.ModelGrades != nil {
 		fmt.Fprintf(out, "  model_grades kept: %s\n", modelGradesText(new.ModelGrades))
+	}
+	// The crafts, their credentials and their pools are the operator's own
+	// blocks (docs/model-crafts §1–3, MC18, D1667), so a publish that writes
+	// them names them: a credential by its name and its type, a pool by its
+	// members, its strategy and the people it is served to, and a craft by the
+	// model and the access it sets. The line is the credentials block's kept
+	// line's reason twice over — the three are a spending and an egress grant
+	// (F12, D1628), and a line that named only the member would hide the pool
+	// that gained a member or the craft that moved onto another credential.
+	credsBefore, credsNow := craftCredentialLines(old), craftCredentialLines(new)
+	poolsBefore, poolsNow := craftPoolLines(old), craftPoolLines(new)
+	craftsBefore, craftsNow := craftLines(old), craftLines(new)
+	diffLines(out, credsBefore, credsNow)
+	diffLines(out, poolsBefore, poolsNow)
+	diffLines(out, craftsBefore, craftsNow)
+	// A block this machine's file says nothing about is the node's own and this
+	// publish only leaves it standing, which is a fact the operator reading the
+	// diff has to be told (the clone URLs' line, the binaries block's and the
+	// model grades'): the block is unchanged, so no +/- line above mentions it,
+	// and an operator who never wrote the keys would read that silence as "they
+	// are gone". A file that states one writes it, and then the +/- lines above
+	// are that file's own edit read back.
+	if old != nil {
+		if len(lc.Credentials) == 0 && len(credsNow) > 0 {
+			fmt.Fprintf(out, "  craft_credentials kept: %s\n", craftKeptText("craft_credentials", credsNow))
+		}
+		if len(lc.Pools) == 0 && len(poolsNow) > 0 {
+			fmt.Fprintf(out, "  craft_pools kept: %s\n", craftKeptText("craft_pools", poolsNow))
+		}
+		if lc.Crafts == (config.Crafts{}) && len(craftsNow) > 0 {
+			fmt.Fprintf(out, "  crafts kept: %s\n", craftKeptText("crafts", craftsNow))
+		}
+	}
+	// And a pool the file states that the node cannot carry is neither written
+	// nor dropped in silence: the line names it and says what it needs (D2608),
+	// asked of the publisher's own function so the line and the omission cannot
+	// part company.
+	if _, lines := publishedCraftPools(lc, old, new.CraftCredentials); len(lines) > 0 {
+		for _, line := range lines {
+			fmt.Fprintln(out, line)
+		}
 	}
 	// The floor is the one member a publish keeps when the config is silent
 	// about it (buildProjectPolicy), and a kept member that prints nothing is
@@ -2364,6 +2733,100 @@ func binariesText(b *projectpolicy.Binaries) string {
 		parts = append(parts, fmt.Sprintf("max_bytes %d", b.MaxBytes))
 	}
 	return strings.Join(parts, ", ")
+}
+
+// craftCredentialLines is one line per credential the node carries, for the
+// diff: a credential is a name and a type, so the entry's whole change is the
+// type beside it.
+func craftCredentialLines(p *projectpolicy.Policy) map[string]string {
+	if p == nil {
+		return nil
+	}
+	out := make(map[string]string, len(p.CraftCredentials))
+	for _, c := range p.CraftCredentials {
+		out["craft_credentials "+c.Name] = c.Type
+	}
+	return out
+}
+
+// craftPoolLines is one line per pool, and the line carries every member that
+// decides who may spend and where code goes: the members in the order the pool
+// tries them, the strategy it resolves to, the owner and the users it is served
+// to (D1936) — and the migration's marker where the node carries it, because a
+// pool served to everyone is not one an operator may read as a pool of one
+// person's tokens.
+func craftPoolLines(p *projectpolicy.Policy) map[string]string {
+	if p == nil {
+		return nil
+	}
+	out := make(map[string]string, len(p.CraftPools))
+	for _, pool := range p.CraftPools {
+		parts := []string{"members " + strings.Join(pool.Members, ", "), "strategy " + pool.StrategyOrDefault()}
+		if pool.Owner != "" {
+			parts = append(parts, "owner "+pool.Owner)
+		}
+		if len(pool.AllowedUsers) > 0 {
+			parts = append(parts, "allowed_users "+strings.Join(pool.AllowedUsers, ", "))
+		}
+		if pool.LegacyOpen {
+			parts = append(parts, "legacy_open (served to everyone: the migration's marker)")
+		}
+		out["craft_pools "+pool.Name] = strings.Join(parts, ", ")
+	}
+	return out
+}
+
+// craftLines is one line per craft the block sets: the model it runs and the
+// credential or pool its calls go out on, each named only where the craft sets
+// it — the line is what the node says, and a craft that sets neither half is no
+// craft the node writes (config.Crafts drops it), so it has no line.
+func craftLines(p *projectpolicy.Policy) map[string]string {
+	if p == nil || p.Crafts == nil {
+		return nil
+	}
+	out := map[string]string{}
+	for _, name := range config.CraftNames {
+		c := p.Crafts.Of(name)
+		var parts []string
+		if c.Model != "" {
+			parts = append(parts, "model "+c.Model)
+		}
+		if c.Access != "" {
+			parts = append(parts, "access "+c.Access)
+		}
+		if len(parts) > 0 {
+			out["crafts "+name] = strings.Join(parts, ", ")
+		}
+	}
+	return out
+}
+
+// craftAccessLines is the access half of craftLines: one line per craft that
+// names the credential or pool its calls go out on, keyed for the member that
+// decides whose credential a craft spends rather than for the craft's model,
+// which decides what a stage runs and not what it spends.
+func craftAccessLines(p *projectpolicy.Policy) map[string]string {
+	if p == nil || p.Crafts == nil {
+		return nil
+	}
+	out := map[string]string{}
+	for _, name := range config.CraftNames {
+		if access := p.Crafts.Of(name).Access; access != "" {
+			out["crafts "+name+".access"] = access
+		}
+	}
+	return out
+}
+
+// craftKeptText is one of those members' lines as a single line, for the `kept`
+// line the diff prints: the name each line is keyed by, without the member's
+// prefix, and the value it carries.
+func craftKeptText(prefix string, lines map[string]string) string {
+	parts := make([]string, 0, len(lines))
+	for _, k := range slices.Sorted(maps.Keys(lines)) {
+		parts = append(parts, strings.TrimPrefix(k, prefix+" ")+": "+lines[k])
+	}
+	return strings.Join(parts, "; ")
 }
 
 // skewWarning is the lines that tell the operator what publishing these

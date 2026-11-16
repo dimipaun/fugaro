@@ -43,6 +43,12 @@
  * (it names the *Project* group as the candidate). `website/test/base-styles.mjs`'s
  * `GROUPS_WANTED` carries the route from the same commit.
  *
+ * **The page answers what runs where, and it sends a reader on once.** What the product does
+ * today is the features page's question, so the lead carries one line to `/features/` (the
+ * feature matrix's plan, Task T7 — the features page links back). It is the page's one link,
+ * and it is a sentence about where the other answer is rather than a claim about the product,
+ * which is the same rule the rows are held to.
+ *
  * **What a reader will not find here.** No price (the file's own rule, and the matrix is not
  * a pricing page), no date (the schedule of anything unbuilt is the owner's, D1523) and none
  * of the file's `never_say` phrases — the sentences a reader of the spec would expect and the
@@ -161,6 +167,17 @@ for (const edition of COMPATIBILITY_EDITIONS) {
         <span class="gradient-text">{TITLE}</span>
       </h1>
       <p class="compat-lead">{LEAD}</p>
+
+      {/* The line beside the lead, and the page's one link: what the product does today is the
+          feature matrix's question, and the page that answers it is `/features/` (the feature
+          matrix's plan, Task T7 — the features page links back to this one). It sits inside the
+          band because it is the page's opening rather than a section of it — a reader who came
+          for the other answer does not scroll for it — and **its words are inside the lead
+          region D188 reads** (`budget.mjs`: the text between the `h1` and the first `h2`), so
+          they are counted against the 40-word lead ceiling with the lead's own. */}
+      <p class="compat-more">
+        What Fugaro does today is on the <a href="/features/">features page</a>.
+      </p>
     </div>
 
     {/* The legend: the five statuses' marks and words, and the one line that dates the whole
@@ -267,6 +284,15 @@ for (const edition of COMPATIBILITY_EDITIONS) {
     color: var(--text-muted);
     font-size: var(--font-size-xl);
     line-height: var(--leading-snug);
+  }
+
+  /* The line under the lead: the body's own type size, because it is a sentence a reader acts
+     on rather than the page's opening prose, and the lead's measure so the opening block has
+     one right edge. The room above it is `.compat-hero`'s flex gap rather than a margin, which
+     would be added to that gap rather than being it. */
+  .compat-more {
+    margin: 0;
+    max-width: var(--measure);
   }
 
   /* One section: the legend and then a table per group, each with the same room above it, so
