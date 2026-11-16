@@ -94,6 +94,10 @@ type probeServer struct {
 	// refuses is a server that is not there at all, which is the third answer
 	// D2205 names: no answer binds unchecked.
 	refuses bool
+	// during is one step a case runs while the database is being read — the
+	// window a competing request has to get through, since the probe is where
+	// this service waits on another system. It runs once.
+	during func()
 
 	server *httptest.Server
 	closed bool
@@ -104,8 +108,12 @@ func (p *probeServer) install(t *testing.T) {
 	p.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p.mu.Lock()
 		p.asked = append(p.asked, strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/"), "/.json"))
-		status, body, refuses := p.status, p.body, p.refuses
+		status, body, refuses, during := p.status, p.body, p.refuses, p.during
+		p.during = nil
 		p.mu.Unlock()
+		if during != nil {
+			during()
+		}
 		if refuses {
 			// A connection closed with no answer at all: what a project whose
 			// database cannot be reached looks like from here.
@@ -1391,6 +1399,57 @@ func TestABindingIntoAWorkspaceLicensedByAnotherGrant(t *testing.T) {
 	}
 	if licensed, _ := f.workspace(workspace.ID); licensed.EntitlementID == nil || *licensed.EntitlementID != winner.ID {
 		t.Errorf("the workspace is licensed by %v, want the grant it points at, %s", licensed.EntitlementID, winner.ID)
+	}
+}
+
+// TestARebindThatRacesAnotherDoesNotRevokeTheWinnersKey: two rebinds of one
+// licence at once both read the same live key, and the one that commits first
+// mints the key the licence is on from then. What the other withdraws is the key
+// it read (D2198) and never the winner's: a withdrawal of a key it never saw
+// would leave the licence bound to the winner's project with every key it has
+// ever minted revoked and the next rebind thirty days away.
+func TestARebindThatRacesAnotherDoesNotRevokeTheWinnersKey(t *testing.T) {
+	f := newBindingFixture(t)
+	_, workspace, held := f.licensingWorkspace(t)
+	if rec := f.bind(t, held.ID, exampleProject); rec.Code != http.StatusOK {
+		t.Fatalf("binding answered %d: %s", rec.Code, rec.Body)
+	}
+	replaced := f.mints.answers[0].Record.KeyID
+
+	// The competing rebind commits while this request waits on the project's
+	// database: it moves the licence to its own project and mints the key that is
+	// live from then on.
+	f.probe.during = func() {
+		if _, err := f.svc.bindEntitlement(context.Background(), f.signIn.caller, held.ID, secondProject); err != nil {
+			t.Errorf("the rebind this case runs during the probe failed: %v", err)
+		}
+	}
+
+	rec := f.bind(t, held.ID, exampleProject)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("the rebind that lost the race answered %d, want 429: %s", rec.Code, rec.Body)
+	}
+	if code := f.refused(rec); code != "rebind_too_soon" {
+		t.Errorf("the refusal's code is %q, want rebind_too_soon", code)
+	}
+	if len(f.mints.answers) != 3 {
+		t.Fatalf("the binding and the two rebinds minted %d keys, want one each", len(f.mints.answers))
+	}
+	winner := f.mints.answers[1].Record.KeyID
+	if withdrawn, found, err := f.store.Revocation(context.Background(), winner); err != nil || found {
+		t.Errorf("the key the rebind that won minted is %+v (found=%v err=%v), want it live: the loser revoked a key it never read",
+			withdrawn, found, err)
+	}
+	loser := f.mints.answers[2].Record.KeyID
+	if withdrawn, found, err := f.store.Revocation(context.Background(), loser); err != nil || !found || withdrawn.Reason != ReasonUnrecorded {
+		t.Errorf("the key the losing rebind minted is %+v (found=%v err=%v), want it withdrawn as unrecorded", withdrawn, found, err)
+	}
+	if withdrawn, found, err := f.store.Revocation(context.Background(), replaced); err != nil || !found || withdrawn.Reason != ReasonRebind {
+		t.Errorf("the key both rebinds replace is %+v (found=%v err=%v), want it withdrawn as a rebind", withdrawn, found, err)
+	}
+	// And the licence is where the winner put it, with the key it minted there.
+	if licensed, _ := f.workspace(workspace.ID); licensed.ProjectID == nil || *licensed.ProjectID != secondProject {
+		t.Errorf("the workspace is bound to %v, want the winning rebind's project %s", licensed.ProjectID, secondProject)
 	}
 }
 

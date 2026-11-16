@@ -271,6 +271,19 @@ func (s *Service) bindEntitlement(ctx context.Context, actor Caller, entitlement
 			return WireWorkspace{}, errRebindTooSoon
 		}
 	}
+	// The keys a rebind replaces are read here, at the instant it decides to
+	// rebind, and not when the mint returns: two rebinds of one licence at once
+	// are two requests that read the same live key, and the one that commits
+	// first mints the key the other would withdraw if the list were read again
+	// below. The probe (D2205) is the slow step both of them wait on, and the
+	// mint is slower still.
+	var replacing []string
+	if rebinding {
+		replacing, err = s.bindingKeys(ctx, entitlement.ID)
+		if err != nil {
+			return WireWorkspace{}, err
+		}
+	}
 	workspace, err := s.bindingWorkspace(ctx, entitlement, projectID, now)
 	if err != nil {
 		return WireWorkspace{}, err
@@ -318,10 +331,10 @@ func (s *Service) bindEntitlement(ctx context.Context, actor Caller, entitlement
 	// installation it moved away from, and what a rebind that fails anywhere below
 	// must not leave behind is a licence that moved. Revoking first is what makes
 	// both true — everything under this door refuses or fails with nothing bound,
-	// and the one thing it did is put the old key on the store's revocation list,
-	// which is idempotent and which the person's retry repeats.
-	if rebinding {
-		if err := s.revokeReplacedBindingKeys(ctx, entitlement.ID); err != nil {
+	// and the one thing it did is put the keys it read on the store's revocation
+	// list, which is idempotent and which the person's retry repeats.
+	if len(replacing) > 0 {
+		if err := s.revokeReplacedBindingKeys(ctx, replacing); err != nil {
 			return WireWorkspace{}, err
 		}
 	}
@@ -468,31 +481,48 @@ func bindingSource(entitlementID string) (string, error) {
 	return bindingPrefix + entitlementID + ":" + nonce, nil
 }
 
-// revokeReplacedBindingKeys puts every key this licence bound before into the
-// store's revocation list (D2198). The key a rebind replaces is the key of a
-// workspace the licence has moved away from, and the installation holding it is
-// one nobody is looking at any more: it is revoked rather than left to run,
-// which is what makes a leaked installation's key stop at the rebind.
+// bindingKeys answers the keys this licence has bound, as the store's issuance
+// list stands at the instant it is read: the key a rebind replaces, and the ones
+// earlier rebinds already withdrew. The store's source is an idempotency key and
+// this area's own names every binding by the licence it belongs to
+// (bindingPrefix), which is the one way the list is read back.
 //
-// It is called before the rebind mints, which is why every key of this licence's
-// bindings is revoked and none is kept: the successor does not exist yet, and a
-// key that was already on the list is revoked again rather than looked up, which
-// is what makes a retry of a failed rebind finish the same list.
+// What is read here is what a rebind replaces, so it is read once, before the
+// probe: a key minted after this read belongs to a binding this request did not
+// see and is not its to withdraw.
+func (s *Service) bindingKeys(ctx context.Context, entitlementID string) ([]string, error) {
+	issued, err := s.store.Issuances(ctx)
+	if err != nil {
+		return nil, err
+	}
+	prefix := bindingPrefix + entitlementID + ":"
+	keys := make([]string, 0, 1)
+	for _, record := range issued {
+		if strings.HasPrefix(record.Source, prefix) {
+			keys = append(keys, record.KeyID)
+		}
+	}
+	return keys, nil
+}
+
+// revokeReplacedBindingKeys puts the keys one rebind read into the store's
+// revocation list (D2198). The key a rebind replaces is the key of a workspace
+// the licence has moved away from, and the installation holding it is one nobody
+// is looking at any more: it is revoked rather than left to run, which is what
+// makes a leaked installation's key stop at the rebind.
+//
+// It is called before the rebind mints, which is why the key of the binding it
+// replaces is in the list it is handed and its successor is not: the successor
+// does not exist yet. A key that was already on the list is revoked again rather
+// than looked up, which is what makes a retry of a failed rebind finish the same
+// list.
 //
 // What the list is read by is §8's renewal and status, so a revoked key's
 // renewal secret fetches nothing at all — no successor and no answer about where
 // the licence went.
-func (s *Service) revokeReplacedBindingKeys(ctx context.Context, entitlementID string) error {
-	issued, err := s.store.Issuances(ctx)
-	if err != nil {
-		return err
-	}
-	prefix := bindingPrefix + entitlementID + ":"
-	for _, record := range issued {
-		if !strings.HasPrefix(record.Source, prefix) {
-			continue
-		}
-		if err := s.store.Revoke(ctx, Revocation{KeyID: record.KeyID, Reason: ReasonRebind, At: s.now()}); err != nil {
+func (s *Service) revokeReplacedBindingKeys(ctx context.Context, keyIDs []string) error {
+	for _, keyID := range keyIDs {
+		if err := s.store.Revoke(ctx, Revocation{KeyID: keyID, Reason: ReasonRebind, At: s.now()}); err != nil {
 			return err
 		}
 	}
