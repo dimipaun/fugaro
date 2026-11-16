@@ -90,26 +90,51 @@ func (f *mailboxFixture) signed(t *testing.T, id string, extra map[string]any, a
 	return record
 }
 
+// mailboxRunID is the run a confirmed cancel in these tests names. It has a real
+// run id's shape — the runner's own `YYYYMMDD-HHMMSS-xxxx` — because a record's
+// target is read by the same reader the phone's confirmation machine uses, and a
+// target that reader refuses would be a test about the wrong thing.
+const mailboxRunID = "20261018-125859-d3c8"
+
+// mailboxConfirmationLag is how long after a confirmation the record is
+// still inside D173's six-hour command window, with room to spare: the tests
+// that need an *expired* confirmation age it past six hours themselves, and one
+// that needs a fresh one sits a minute behind the clock.
+const mailboxConfirmationLag = time.Minute
+
+// writeAction is a confirmed action record: a cancel of mailboxRunID whose
+// confirmation is `conf-<id>`, spoken a minute before the message, signed by the
+// pairing's key — so nothing refuses it for its shape, its target or its
+// window, and what it reaches is the runner.
+func (f *mailboxFixture) writeAction(t *testing.T, id string, at int64) {
+	t.Helper()
+	f.writeConfirm(t, id, map[string]any{
+		"id":           "act-" + id,
+		"verb":         "cancel",
+		"target":       map[string]any{"run": mailboxRunID},
+		"confirmation": map[string]any{"id": "conf-" + id, "at": at - mailboxConfirmationLag.Milliseconds()},
+	}, at)
+}
+
+// writeConfirm seeds one action record verbatim: the record's own `action`
+// object, so a test can vary its verb, its target, its confirmation and its
+// ids. Everything outside that object — the message's own fields and the tag —
+// is the fixture's, so a record a test wrote is a record that verifies.
+func (f *mailboxFixture) writeConfirm(t *testing.T, id string, action map[string]any, at int64) {
+	t.Helper()
+	f.writeRecord(t, id, map[string]any{"kind": "action", "action": action}, at, mailboxKeyMaterial)
+}
+
+// writeFreeText is a plain message carrying a sentence rather than a record.
+func (f *mailboxFixture) writeFreeText(t *testing.T, id, text string, at int64) {
+	t.Helper()
+	f.writeRecord(t, id, map[string]any{"text": text}, at, mailboxKeyMaterial)
+}
+
 // writeMessage is one plain message, correctly signed by the pairing's key.
 func (f *mailboxFixture) writeMessage(t *testing.T, id string, at int64) {
 	t.Helper()
 	f.writeRecord(t, id, nil, at, mailboxKeyMaterial)
-}
-
-// writeAction is a message D128 is about: an action record asking to cancel a
-// run, signed by the pairing's key, so it reaches §9's fence and nothing else
-// refuses it first.
-func (f *mailboxFixture) writeAction(t *testing.T, id string, at int64) {
-	t.Helper()
-	f.writeRecord(t, id, map[string]any{
-		"kind": "action",
-		"action": map[string]any{
-			"id":           "act-1",
-			"verb":         "cancel",
-			"target":       map[string]any{"run": "20261018-125859-d3c8"},
-			"confirmation": map[string]any{"id": "conf-1", "at": at},
-		},
-	}, at, mailboxKeyMaterial)
 }
 
 // seedConsumed records a delivery as this machine's ledger already consumed it,
@@ -188,13 +213,96 @@ func (f *mailboxFixture) heartbeat() any {
 	return f.db.Value("mailbox/" + mailboxUID + "/heartbeat")
 }
 
+// consumer is a running consumer over this fixture's own project, database and
+// pairings, built the way the command builds one: a test that drives `pass`
+// directly rather than through the command tree is driving the same object.
+func (f *mailboxFixture) consumer(t *testing.T, holder string) *mailboxConsumer {
+	t.Helper()
+	ctx := context.Background()
+	lc, db, err := openBudget(ctx, cloudOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pairings, err := mailboxKeyring(ctx, lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := mailbox.OpenLedger(mailbox.LedgerOptions{Project: lc.Name, PromptTtlMs: mailboxPromptTtlMs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	memory, err := mailbox.OpenConfirmMemory(mailbox.ConfirmMemoryOptions{
+		Project:     lc.Name,
+		RetentionMs: mailboxPromptRetentionMs(),
+		MaxPrompts:  mailbox.ConfirmMaxPrompts,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &mailboxConsumer{
+		lc: lc, db: db, ledger: ledger, memory: memory, pairings: pairings,
+		held: map[string]mailbox.LeaseRun{}, holder: holder, out: &strings.Builder{},
+	}
+}
+
+// offers replaces the orchestrator's channel with a recorder, so a test can see
+// what a pass handed over — and, because the recorder keeps the whole offer,
+// that the text was handed over and not printed.
+func (f *mailboxFixture) offers(t *testing.T) *[]mailboxOffer {
+	t.Helper()
+	offers := &[]mailboxOffer{}
+	prev := mailboxHandOff
+	mailboxHandOff = func(_ context.Context, offer mailboxOffer) error {
+		*offers = append(*offers, offer)
+		return nil
+	}
+	t.Cleanup(func() { mailboxHandOff = prev })
+	return offers
+}
+
+// cancels replaces this CLI's own cancel path with a recorder: the path itself
+// opens the operator's cloud and a backend, which no test here has.
+func (f *mailboxFixture) cancels(t *testing.T) *[]string {
+	t.Helper()
+	cancelled := &[]string{}
+	prev := mailboxCancelRun
+	mailboxCancelRun = func(_ context.Context, _ *mailboxConsumer, runID string) error {
+		*cancelled = append(*cancelled, runID)
+		return nil
+	}
+	t.Cleanup(func() { mailboxCancelRun = prev })
+	return cancelled
+}
+
+// promptMemory opens the consumer's own state for this fixture's project, the
+// way the command opens it: a test that has to seed a pending prompt, or an id
+// this machine has already spent, writes it here, and the pass the command runs
+// reads that same file.
+func (f *mailboxFixture) promptMemory(t *testing.T) *mailbox.ConfirmMemory {
+	t.Helper()
+	ctx := context.Background()
+	lc, _, err := openBudget(ctx, cloudOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	memory, err := mailbox.OpenConfirmMemory(mailbox.ConfirmMemoryOptions{
+		Project:     lc.Name,
+		RetentionMs: mailboxPromptRetentionMs(),
+		MaxPrompts:  mailbox.ConfirmMaxPrompts,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return memory
+}
+
 func mailboxNowMs() int64 { return time.Now().UTC().UnixMilli() }
 
 // TestMailboxIntervalBelowOneSecondIsRefused is §4.4's bad-flag row, and it is
 // decided before anything is opened: the store is never reached.
 func TestMailboxIntervalBelowOneSecondIsRefused(t *testing.T) {
 	f := newMailboxFixture(t, "")
-	f.writeAction(t, "msg-1", mailboxNowMs())
+	f.writeMessage(t, "msg-1", mailboxNowMs())
 	_, _, err := execute(t, "mailbox", "--once", "--interval", "500ms")
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, code %d, want exit 1", err, ExitCode(err))
@@ -270,7 +378,7 @@ func TestMailboxEmptyInboxExitsZero(t *testing.T) {
 // nothing is clause 1 failing, which is exit 0 (§7, §4.4).
 func TestMailboxWithoutAHeartbeatExitsZero(t *testing.T) {
 	f := newMailboxFixture(t, "")
-	f.writeAction(t, "msg-1", mailboxNowMs())
+	f.writeMessage(t, "msg-1", mailboxNowMs())
 	out, _, err := execute(t, "mailbox", "--once", "--no-heartbeat")
 	if err != nil {
 		t.Fatalf("err = %v, want exit 0", err)
@@ -319,7 +427,7 @@ func TestMailboxDuplicatePassExitsZero(t *testing.T) {
 // consumers from acting on one mailbox.
 func TestMailboxASecondConsumerReadsNothing(t *testing.T) {
 	f := newMailboxFixture(t, "")
-	f.writeAction(t, "msg-1", mailboxNowMs())
+	f.writeFreeText(t, "msg-1", "fugaro cancel "+mailboxRunID, mailboxNowMs())
 	if _, _, err := execute(t, "mailbox", "--once"); err == nil {
 		t.Fatal("the first pass acted on nothing, so it must be M12's exit 1")
 	}
@@ -344,30 +452,15 @@ func TestMailboxASecondConsumerReadsNothing(t *testing.T) {
 // second one refuses the delivery it already consumed as a duplicate.
 func TestMailboxHoldsTheLeaseItTook(t *testing.T) {
 	f := newMailboxFixture(t, "")
+	f.offers(t)
 	f.writeMessage(t, "msg-1", mailboxNowMs())
 	ctx := context.Background()
-	lc, db, err := openBudget(ctx, cloudOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	pairings, _, err := mailboxKeyring(ctx, lc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ledger, err := mailbox.OpenLedger(mailbox.LedgerOptions{Project: lc.Name, PromptTtlMs: mailboxPromptTtlMs})
-	if err != nil {
-		t.Fatal(err)
-	}
-	out := &strings.Builder{}
-	c := &mailboxConsumer{
-		lc: lc, db: db, ledger: ledger, pairings: pairings,
-		held: map[string]mailbox.LeaseRun{}, holder: "boot-hold-test", out: out,
-	}
+	c := f.consumer(t, "boot-hold-test")
 	for _, want := range []struct {
 		state      mailbox.LeaseVerdict
 		duplicates int
 	}{{mailbox.LeaseHeld, 0}, {mailbox.LeaseHeld, 1}} {
-		pass, err := c.pass(ctx, pairings[0])
+		pass, err := c.pass(ctx, c.pairings[0])
 		if err != nil {
 			t.Fatalf("pass: %v", err)
 		}
@@ -409,32 +502,17 @@ func TestMailboxRenewsTheHeartbeatEveryPass(t *testing.T) {
 	at := time.Now().UTC().Truncate(time.Second)
 	f.db.SetClock(func() time.Time { return at })
 	msgAt := at.UnixMilli()
+	f.offers(t)
 	f.writeMessage(t, "msg-1", msgAt)
 	ctx := context.Background()
-	lc, db, err := openBudget(ctx, cloudOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	pairings, _, err := mailboxKeyring(ctx, lc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ledger, err := mailbox.OpenLedger(mailbox.LedgerOptions{Project: lc.Name, PromptTtlMs: mailboxPromptTtlMs})
-	if err != nil {
-		t.Fatal(err)
-	}
-	out := &strings.Builder{}
-	c := &mailboxConsumer{
-		lc: lc, db: db, ledger: ledger, pairings: pairings,
-		held: map[string]mailbox.LeaseRun{}, holder: "boot-renew-test", out: out,
-	}
-	first, err := c.pass(ctx, pairings[0])
+	c := f.consumer(t, "boot-renew-test")
+	first, err := c.pass(ctx, c.pairings[0])
 	if err != nil {
 		t.Fatalf("the first pass: %v", err)
 	}
 	if first.lease.State != string(mailbox.LeaseHeld) || first.verdict.read != 1 ||
-		first.verdict.refused != 1 || first.verdict.actionRefused != 1 {
-		t.Fatalf("the first pass = %+v, want a held lease over one delivery it refused at the action seam", first)
+		first.verdict.delivered != 1 {
+		t.Fatalf("the first pass = %+v, want a held lease over one delivery it handed over", first)
 	}
 	took := heartbeatAt(t, f.heartbeat())
 	if took != at.UnixMilli() {
@@ -449,25 +527,24 @@ func TestMailboxRenewsTheHeartbeatEveryPass(t *testing.T) {
 	at = at.Add(mailbox.ClaimTTL*time.Millisecond + time.Second)
 	f.db.SetClock(func() time.Time { return at })
 	var heartbeat json.RawMessage
-	if _, err := db.Get(ctx, "mailbox/"+mailboxUID+"/heartbeat", &heartbeat); err != nil {
+	if _, err := c.db.Get(ctx, "mailbox/"+mailboxUID+"/heartbeat", &heartbeat); err != nil {
 		t.Fatalf("placing the second pass after the database's clock moved: %v", err)
 	}
 	f.writeMessage(t, "msg-2", msgAt)
 
-	second, err := c.pass(ctx, pairings[0])
+	second, err := c.pass(ctx, c.pairings[0])
 	if err != nil {
 		t.Fatalf("the second pass: %v", err)
 	}
 	if second.lease.State != string(mailbox.LeaseHeld) {
 		t.Fatalf("the second pass's lease = %q, want held: the pass renewed the heartbeat it holds", second.lease.State)
 	}
-	// Two refusals, as §7's loop counts them: the second delivery refused at the
-	// action seam, and the first one refused again as the duplicate it is — a
-	// pass that did not renew would have acted on neither, and its refusals
-	// would be empty.
+	// The second delivery is handed over and the first is refused as the
+	// duplicate it is — a pass that did not renew would have acted on neither,
+	// and would have delivered nothing.
 	if second.verdict.read != 2 || second.verdict.duplicates != 1 ||
-		second.verdict.refused != 2 || second.verdict.actionRefused != 1 {
-		t.Fatalf("the second pass = %+v, want the delivery it had not seen refused at the action seam and the one it had seen refused as a duplicate: a stale claim stops the pass acting and refuses nothing", second.verdict)
+		second.verdict.delivered != 1 || second.verdict.refused != 1 {
+		t.Fatalf("the second pass = %+v, want the delivery it had not seen handed over and the one it had seen refused as a duplicate: a stale claim stops the pass acting and delivers nothing", second.verdict)
 	}
 	if renewed := heartbeatAt(t, f.heartbeat()); renewed < at.UnixMilli() || renewed == took {
 		t.Fatalf("the heartbeat is at %d after the second pass, want the renewal's own instant (%d or later) in place of the take's %d: the loop renews it every pass, and the phone's presence reading is what it renews", renewed, at.UnixMilli(), took)
@@ -520,11 +597,14 @@ func TestRefusedMessageStillExitsZero(t *testing.T) {
 // TestMailboxRefusedActionAloneExitsOne is §4.4's second exit-1 row and M12's
 // one pass-level predicate, all four clauses at once: one message read, no
 // action performed, every message read refused, and one of those refusals
-// D128's. §9's fence refuses every message until the confirmation record's
-// consumer lands, so this is what the operator gets for asking.
+// D128's. The message asks for a cancel in words rather than in a record — free
+// text is the channel D128 was written for, and no confirmation can arrive that
+// way — so the operator asked for one thing and nothing happened.
 func TestMailboxRefusedActionAloneExitsOne(t *testing.T) {
 	f := newMailboxFixture(t, "")
-	f.writeAction(t, "msg-1", mailboxNowMs())
+	f.offers(t)
+	f.cancels(t)
+	f.writeFreeText(t, "msg-1", "fugaro cancel "+mailboxRunID, mailboxNowMs())
 	out, _, err := execute(t, "mailbox", "--once", "--json")
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, code %d, want exit 1", err, ExitCode(err))
@@ -534,7 +614,7 @@ func TestMailboxRefusedActionAloneExitsOne(t *testing.T) {
 		t.Fatalf("refused[0].code = %q, want %s", code, mailboxCodeActionRefused)
 	}
 	if got := mailboxCount(t, doc, "delivered"); got != 0 {
-		t.Fatalf("delivered = %d, want 0: nothing is performed while §9's fence refuses everything", got)
+		t.Fatalf("delivered = %d, want 0: free text that asks for a destructive command is refused, never delivered", got)
 	}
 	if _, err := os.Stat(filepath.Join(os.Getenv("XDG_STATE_HOME"), "fugaro", "mailbox", "aurora", "ledger.json")); err != nil {
 		t.Fatalf("ledger: %v — the record the fence refused a delivery for is still written", err)
@@ -542,23 +622,26 @@ func TestMailboxRefusedActionAloneExitsOne(t *testing.T) {
 }
 
 // TestMailboxRefusedActionWithADeliveredMessageExitsZero is the other side of
-// clause 2: the same refused action, in a pass that also performed something,
-// is 0 — the operator asked for one thing and the pass did another. It is T6's
-// to reach with a real action; here the seam answers the delivery so the
-// predicate is exercised on both sides of its second clause.
+// clause 2: the same refused free text, in a pass that also performed something,
+// is 0 — the operator asked for one thing and the pass did another.
 func TestMailboxRefusedActionWithADeliveredMessageExitsZero(t *testing.T) {
 	f := newMailboxFixture(t, "")
-	f.writeAction(t, "msg-1", mailboxNowMs())
-	prev := mailboxPerform
-	mailboxPerform = func(context.Context, mailboxAction) *mailbox.Refusal { return nil }
-	t.Cleanup(func() { mailboxPerform = prev })
+	f.offers(t)
+	f.cancels(t)
+	at := mailboxNowMs()
+	f.writeMessage(t, "msg-1", at)
+	f.writeFreeText(t, "msg-2", "fugaro cancel "+mailboxRunID, at+1)
 
 	out, _, err := execute(t, "mailbox", "--once", "--json")
 	if err != nil {
 		t.Fatalf("err = %v, want exit 0: the pass did something else", err)
 	}
-	if got := mailboxCount(t, mailboxJSON(t, out), "delivered"); got != 1 {
+	doc := mailboxJSON(t, out)
+	if got := mailboxCount(t, doc, "delivered"); got != 1 {
 		t.Fatalf("delivered = %d, want 1", got)
+	}
+	if code := mailboxRefusedCode(t, doc, 0); code != string(mailboxCodeActionRefused) {
+		t.Fatalf("refused[0].code = %q, want %s", code, mailboxCodeActionRefused)
 	}
 }
 
@@ -569,7 +652,7 @@ func TestMailboxRefusedActionWithADeliveredMessageExitsZero(t *testing.T) {
 // be signed is a lease this consumer does not take.
 func TestMailboxSignerRefusedWriteExitsZero(t *testing.T) {
 	f := newMailboxFixture(t, "")
-	f.writeAction(t, "msg-1", mailboxNowMs())
+	f.writeMessage(t, "msg-1", mailboxNowMs())
 	prev := mailboxHeartbeatSigner
 	mailboxHeartbeatSigner = func(keychain.Key) mailbox.LeaseSigner {
 		return func(mailbox.Heartbeat) (string, error) {
@@ -625,7 +708,9 @@ func TestMailboxUnreachableDatabaseIsExitTwo(t *testing.T) {
 // verified with.
 func TestMailboxJSONIsTheDocumentAndCarriesNoText(t *testing.T) {
 	f := newMailboxFixture(t, "")
-	f.writeAction(t, "msg-1", mailboxNowMs())
+	f.offers(t)
+	f.cancels(t)
+	f.writeFreeText(t, "msg-1", "fugaro cancel "+mailboxRunID, mailboxNowMs())
 	out, _, err := execute(t, "mailbox", "--once", "--json")
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want exit 1", err)
