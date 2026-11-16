@@ -641,6 +641,29 @@ variable "intake" {
   }
 }
 
+variable "voice_service" {
+  description = "The voice hop (P5.3.3, design docs/mobile/design/voice-evaluation-switch.md §4.4): the installation's own Cloud Run service that a paired phone calls before its speech reaches a provider. It verifies the phone's Firebase Auth ID token for a device uid of D165's `m~` family, checks that the device's node config/admin/devices/$uid still exists (D166; revocation is the node's deletion) and enforces the project's voice policy node. OFF by default (null): with it off this module creates no account, no service and no invoker binding, and the installation is exactly what it was before the hop existed. account_id and service are the account's ID and the Cloud Run service's name; image is the released image, pinned BY DIGEST and never by a tag — the same rule and the same reason as credentials_service.image, because this account reads the whole database instance and the repository grants roles/artifactregistry.writer to every operator (iam.tf). What the process is CONFIGURED with is not here: the Firebase project whose ID tokens it verifies and the database whose device nodes and policy it reads are credentials_service's own two members (firebase_project, rtdb_url), which voice.tf reads, because the same `fugaro update` writes both blocks from one config and a second copy could be pulled apart by a hand edit. There is deliberately no url member either, and that is the one real difference from credentials_service and intake: this service's audience is the Firebase project and not its own URL, so nothing has to read a URL back from this module's output and no second apply exists for it."
+  type = object({
+    account_id = string
+    service    = string
+    image      = string
+  })
+  default = null
+
+  # The image is a DIGEST and never a tag, held to credentials.tf's own rule
+  # and for its reason: an operator can push a tag, and the account this
+  # process runs as holds the instance-wide read of the installation's
+  # database.
+  validation {
+    condition = var.voice_service == null ? true : (
+      can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.voice_service.account_id)) &&
+      can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.voice_service.service)) &&
+      can(regex("^[A-Za-z0-9][A-Za-z0-9._/@:-]*@sha256:[0-9a-f]{64}$", var.voice_service.image))
+    )
+    error_message = "voice_service needs a service account ID (6-30 characters of a-z, 0-9 and -, starting with a letter), a Cloud Run service name, and an image pinned by digest (an image reference ending in @sha256: and 64 lower-case hex digits — never a tag: an operator can push a tag)."
+  }
+}
+
 variable "managed_deployer_scoped" {
   description = "Whether to create the managed deployer's seven conditioned roles (fugaroDeployerStorage, Secret, Account, ApiKey, Repository, RunJob, SchedulerJob) and their seven conditioned bindings. OFF by default, and set by fugaro for an installation that uses managed projects (the module's variable is written from the project's own creation fact, internal/cli/init.go's installRoot): managed projects ship in 0.10.0. What is NOT settled is whether the fence works: the redesigned fmgd- prefix fence has not been measured live yet (docs/design/managed-deployer-fence.md, Check 68 of the live checklist), so an apply that creates these bindings is the first thing to find out whether IAM accepts them. Before 0.10.0 this flag created one scoped role under one condition, and that condition could not be expressed as a GCP IAM condition at all (17 logical operators where IAM allows 12, resource.name.contains() is not a supported function, and resource.name is not supported for Artifact Registry repositories, Cloud Run jobs, Cloud Scheduler jobs, service accounts or API keys), so setIamPolicy would have rejected it and stopped the whole apply."
   type        = bool

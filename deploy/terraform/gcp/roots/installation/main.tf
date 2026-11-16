@@ -54,6 +54,7 @@ module "installation" {
   reports                   = var.reports
   credentials_service       = var.credentials_service
   intake                    = var.intake
+  voice_service             = var.voice_service
   project_secrets           = var.project_secrets
   managed_deployer_scoped   = var.managed_deployer_scoped
 }

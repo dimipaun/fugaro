@@ -1886,24 +1886,39 @@ var runAccountGrants = setOf(
 	// and the member is the ID this scan already knows from the bundle
 	// container's grant above.
 	`google_project_iam_member | "projects/${var.credentials_service.firebase_project}/roles/fugaroCredentialsDatabase" | project=var.credentials_service.firebase_project | google_service_account.credentials[0].member | for_each= | perms=firebasedatabase.instances.get,firebasedatabase.instances.update`,
-	// Reviewed for O16b (D2020 (a)): the front door's own account, on the
-	// get-only role the same module declares for it
-	// (modules/installation/state_read.tf), in the coordinator's Firebase
-	// project — where the orchestrator's node lives (D1220) and where the
-	// database is (D6). It is the ONE grant that lets the state group's two
-	// read tools answer, and the role's whole permission list is
-	// firebasedatabase.instances.get: no storage permission at all, nothing
-	// that grants itself a role, nothing that acts as or mints for another
-	// account, and a target that is neither the runs bucket nor the
+	// Reviewed for O16b (D2020 (a)) and, for the row after it, for P5.3.3:
+	// the two readers' own accounts, on the get-only role the same module
+	// declares for them both (modules/installation/state_read.tf), in the
+	// Firebase project the database belongs to (D6) — where the orchestrator's
+	// node lives (D1220) — which the module's state_read_firebase_project
+	// local names, and which is where the role is declared. The front door's
+	// binding is the ONE grant that lets the state group's two read tools
+	// answer; the voice hop's is the ONE that lets the hop read the device
+	// node and the project's voice policy before a phone's speech leaves it.
+	//
+	// Both are admitted for the same reason, and the role's whole permission
+	// list is firebasedatabase.instances.get: no storage permission at all,
+	// nothing that grants itself a role, nothing that acts as or mints for
+	// another account, and a target that is neither the runs bucket nor the
 	// installation's own project. The write is deliberately not in the list —
 	// firebasedatabase.instances.update, the only one there is, because a node
 	// write is an update: apply_patch is served by nothing (D2021) and the
 	// state's writes stay with `fugaro orchestrator patch` and the person's own
-	// credential (D1223, D1241) — so nothing here can reach the runs bucket's
-	// root. Three tests refuse a widening of this row: this one, internal/infra's
-	// TestFrontDoorHoldsNoDatabaseWrite, and the module's own
+	// credential (D1223, D1241) — so neither reader can reach the runs bucket's
+	// root through this role.
+	//
+	// What this row does NOT claim is that either reader is confined to its own
+	// nodes: RTDB IAM has no path-level scope, so the grant is a read of every
+	// node of the instance, `creds/` and the mailbox included, and what narrows
+	// each reader is its own code (internal/voicesvc's paths for the hop, which
+	// voice.tf's header and SECURITY.md state). A binding of this role to a
+	// THIRD account is the finding this allowlist is for.
+	//
+	// Three tests refuse a widening of the front door's half: this one,
+	// internal/infra's TestFrontDoorHoldsNoDatabaseWrite, and the module's own
 	// TestFrontDoorStateRoleHoldsNoDatabaseWrite.
-	`google_project_iam_member | "projects/${var.coordinator.firebase_project}/roles/fugaroStateRead" | project=var.coordinator.firebase_project | google_service_account.mcp_server[0].member | for_each= | perms=firebasedatabase.instances.get`,
+	`google_project_iam_member | "projects/${local.state_read_firebase_project}/roles/fugaroStateRead" | project=local.state_read_firebase_project | google_service_account.mcp_server[0].member | for_each= | perms=firebasedatabase.instances.get`,
+	`google_project_iam_member | "projects/${local.state_read_firebase_project}/roles/fugaroStateRead" | project=local.state_read_firebase_project | google_service_account.voice[0].member | for_each= | perms=firebasedatabase.instances.get`,
 	// Reviewed for C1.18: each job's account may invoke the credentials
 	// service. roles/run.invoker carries no storage permission at all — it is
 	// the right to send a request to a Cloud Run service — and the target is
@@ -1969,6 +1984,33 @@ var runAccountGrants = setOf(
 	// (internal/infra/tf), so the owner confirms this binding in so many
 	// words.
 	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=google_cloud_run_v2_service.coordinator_front_door[0].name | "allUsers" | for_each= | perms=`,
+	// Reviewed for P5.3.3: the voice hop is the SECOND memberless binding in
+	// the tree, and the reason is the front door's own written the other way
+	// round. The front door mints a bearer token and every path behind the
+	// port is refused without one (spec.md §8); the hop's caller is a phone,
+	// whose only identity is a Firebase Auth ID token minted for the
+	// installation's Firebase project — it has no Google account and no
+	// relation to this project, so there is no `user:` and no
+	// `serviceAccount:` a binding could name, and Cloud Run's own IAM check
+	// cannot read the token the device presents. The gate is therefore the
+	// process: internal/voicesvc verifies the ID token as a device and refuses
+	// anything that is not one, then checks the device node this same database
+	// read reaches.
+	//
+	// What the member reaches is roles/run.invoker on the hop's own service:
+	// no storage permission, no permission to grant a role, no actAs and no
+	// token minting. The container behind the port runs as the hop's OWN
+	// account, whose whole reach in this tree is the one row above (the
+	// instance-wide database read) — not the coordinator's, whose account
+	// holds the App key, a Bitbucket read and the FP's database admin, none of
+	// which may sit behind a public endpoint. The process holds the provider
+	// key (the forwarding half, P5.3.5) and no model or forge credential
+	// beyond it. The service exists only on an installation whose owner asked
+	// for it (var.voice_service), and the plan that creates it is refused by
+	// init's cover (internal/infra/tf's voicePublicGrant, and the cover's own
+	// unknown-member refusal for an allUsers member on anything else), so the
+	// owner confirms this binding in so many words — as with the front door's.
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=google_cloud_run_v2_service.voice[0].name | "allUsers" | for_each= | perms=`,
 	// Reviewed for M4: the front door's own account's whole reach, and it is
 	// two grants. objectViewer on the runs bucket is what a run's recorded
 	// artefacts — its logs and its diff (D932) — are read with; it carries no

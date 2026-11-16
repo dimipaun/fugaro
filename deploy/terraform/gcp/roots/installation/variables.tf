@@ -274,6 +274,29 @@ variable "intake" {
   default = null
 }
 
+# The voice hop (P5.3.3, design docs/mobile/design/voice-evaluation-switch.md
+# §4.4): the third service this installation may run, beside the credentials
+# service and the intake, and the one a phone calls. account_id and service are
+# its own account's ID and the Cloud Run service's name, image is the released
+# binary's digest pin — internal/infra.Voice computes all three and writes them
+# beside the credentials service's block, because the hop's configuration is
+# that block's: the Firebase project whose ID tokens it verifies and the
+# database whose device nodes and policy it reads are credentials_service's own
+# members (firebase_project, rtdb_url), which modules/installation/voice.tf
+# reads rather than repeating here. There is deliberately no url member and no
+# fill step: the audience a device's token must carry is that Firebase project
+# and not the service's own URL. Absent, the module creates nothing, which is
+# every installation until it asks for the hop; the type is the module's, and
+# its validations are the ones that hold the three to their shape.
+variable "voice_service" {
+  type = object({
+    account_id = string
+    service    = string
+    image      = string
+  })
+  default = null
+}
+
 variable "credentials_service" {
   type = object({
     account_id       = string

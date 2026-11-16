@@ -1708,20 +1708,29 @@ var (
 	// than by shape. The binding itself is not covered — the managed cover
 	// admits no project-level IAM — so it is the member's own typed
 	// confirmation that admits it.
+	// google_service_account.voice[0] is the voice hop's own account
+	// (P5.3.3, modules/installation/voice.tf): the account the service the
+	// installation's phones call runs as, created on the same one switch
+	// (var.voice_service) as that service. Its own reach in this tree is ONE
+	// row — the get-only state-reader role on the Firebase project's database,
+	// bound in state_read.tf beside the front door's own binding of the same
+	// role — and it is a member here for the same reason the credentials
+	// service's account is: the account is created by a module and named by a
+	// grant.
 	//
 	// "allUsers" is deliberately NOT on this list, and the absence is the
-	// point: D920's public invoker binding is one resource in one file, and a
-	// member expression admitted here is admitted for every IAM resource of
-	// every module and root — a `member = "allUsers"` on the runs bucket's
-	// reader, on the credentials service or on a project binding would have
-	// passed this whole suite while it was written that way. The one resource
-	// that may carry it is named in publicMemberPath/publicMemberBlock, and
-	// memberAllowed is what every IAM block is held to
+	// point: a member expression admitted here is admitted for every IAM
+	// resource of every module and root — a `member = "allUsers"` on the runs
+	// bucket's reader, on the credentials service or on a project binding would
+	// have passed this whole suite while it was written that way. The resources
+	// that may carry it are named one by one in publicMembers, and memberAllowed
+	// is what every IAM block is held to
 	// (TestAllUsersIsRefusedOnEveryOtherResource is its own mutation proof).
 	// The narrowing is not what makes the plan covered either:
 	// internal/infra/tf's grant rules do NOT accept an allUsers member, so the
-	// update whose plan carries this grant asks its own typed confirmation.
-	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier|intake)\[0\]\.member|google_service_account\.(catalog_check|reports)\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|workspace_service_account|installation\.scheduler_service_account|installation\.catalog_check_service_account)\}")$`)
+	// update whose plan carries one of these grants asks its own typed
+	// confirmation.
+	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier|intake|voice)\[0\]\.member|google_service_account\.(catalog_check|reports)\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|workspace_service_account|installation\.scheduler_service_account|installation\.catalog_check_service_account)\}")$`)
 
 	// workspaceRolePath and workspaceRoleType name the ONE custom role in this
 	// tree no module creates: the workspace root's own (W3 of the workspaces
@@ -1747,10 +1756,16 @@ var (
 	// project variables are accepted because the Firebase project is where three
 	// of the installation's own roles live: the credentials service's database
 	// role (credentials.tf), the catalog check job's (catalogcheck.tf, D1554)
-	// and the front door's state read (state_read.tf), each for the same reason — an unknown role is a grant the cover
-	// cannot read. All four are known at plan time, and the ID must be one the
-	// modules create (tf.FugaroRoles), checked below.
-	projectRoleLiteralRE = regexp.MustCompile(`^"projects/\$\{var\.(project|credentials_service\.firebase_project|catalog_check\.firebase_project|coordinator\.firebase_project)\}/roles/([A-Za-z0-9_.]+)"$`)
+	// and the state readers' (state_read.tf), each for the same reason — an unknown role is a grant the cover
+	// cannot read. The state readers' role names its project through a LOCAL
+	// rather than through one of the four variables, because it is created when
+	// EITHER of two readers is on and an installation that turned the voice hop
+	// on and asked for no front door has no var.coordinator at all: the local is
+	// the same plan-time-known string (state_read.tf's own comment says which
+	// variable wins), so the plan still carries a literal role path and the
+	// cover can still read it. All of them are known at plan time, and the ID
+	// must be one the modules create (tf.FugaroRoles), checked below.
+	projectRoleLiteralRE = regexp.MustCompile(`^"projects/\$\{(?:var\.(?:project|credentials_service\.firebase_project|catalog_check\.firebase_project|coordinator\.firebase_project)|local\.state_read_firebase_project)\}/roles/([A-Za-z0-9_.]+)"$`)
 
 	// Roles that reach the budget backend (RTDB, Firestore, Identity
 	// Platform, API keys, the token signer, IAM or project policy), or that
@@ -1760,18 +1775,65 @@ var (
 	backendRoleRE = regexp.MustCompile(`^roles/(firebase[A-Za-z.]*|datastore\.[A-Za-z]+|identitytoolkit\.[A-Za-z]+|serviceusage\.[A-Za-z]+|apikeys\.[A-Za-z]+|owner|editor|viewer|resourcemanager\.[A-Za-z]+|iam\.(admin|roleAdmin|securityAdmin|securityReviewer|serviceAccount[A-Za-z]*|workloadIdentity[A-Za-z]*|organizationRoleAdmin|denyAdmin)|run\.(admin|developer)|cloudfunctions\.[A-Za-z]+|aiplatform\.admin|cloudbuild\.[A-Za-z.]+|appengine\.[A-Za-z]+|compute\.[A-Za-z]*[aA]dmin|logging\.admin|secretmanager\.admin)$`)
 )
 
-// publicMemberPath and publicMemberBlock are the ONE resource in this tree an
-// allUsers member is reviewed on: D920's public invoker binding, which the
-// owner decided on 2026-11-04 — the endpoint is public, the handler is the
-// gate, and a standard MCP client reaches it with no Google identity. It is a
-// literal in the module because it must be readable in the plan, and it is
-// named here by path AND block so that neither copying the resource under
-// another name nor writing the same member into another file can pass: the
-// member is admitted for exactly one grant.
+// publicMemberPath and publicMemberBlock name the FRONT DOOR's entry of
+// publicMembers below, and they keep their names because the mutation fixtures
+// and their messages read them; the voice hop's pair is the two consts beside
+// them.
 const (
 	publicMemberPath  = "gcp/modules/installation/coordinator.tf"
 	publicMemberBlock = "google_cloud_run_v2_service_iam_member.coordinator_front_door_public"
+
+	voiceMemberPath  = "gcp/modules/installation/voice.tf"
+	voiceMemberBlock = "google_cloud_run_v2_service_iam_member.voice_public"
 )
+
+// publicMember is one resource in this tree an allUsers member is reviewed on:
+// the file, the block, and the reason — so that a second public endpoint is an
+// entry somebody writes and a reviewer reads, rather than a bound somebody
+// widens.
+type publicMember struct {
+	path  string
+	block string
+	why   string
+}
+
+// publicMembers is every one of them, and there are exactly two. Each is a
+// public endpoint whose handler is the gate, and neither is an ordinary grant:
+//
+//   - the front door's (D920, decided by the owner on 2026-11-04): the endpoint
+//     is public, the handler is the gate, and a standard MCP client reaches it
+//     with no Google identity.
+//   - the voice hop's (P5.3.3, modules/installation/voice.tf). The caller is a
+//     phone holding a Firebase Auth ID token, whose subject is a Firebase uid
+//     (D165's `m~` family, D166's node) and not a Google identity, so there is
+//     no member an invoker binding could name: `user:` and `serviceAccount:`
+//     admit a Google identity rather than a device, and an installation-issued
+//     credential compiled into the app is the third credential item on a device
+//     the owner's ruling of 2026-10-19 refused (the design's §4.4). Here too the
+//     endpoint is public and the handler is the gate — the first thing the
+//     process does with a request is VerifyDevice (internal/voicesvc/auth.go),
+//     which is why voice.tf's own header states the reach and its cost.
+//
+// Both resources are literals in the module, because a public grant must be
+// readable in the plan, and each is named here by path AND block: the member is
+// admitted for exactly these pairs, so copying the resource under another name
+// or writing the same member into another file is refused.
+// TestAllUsersIsRefusedOnEveryOtherResource runs its fixtures against every
+// entry, so that property holds for both and not for a set's size.
+var publicMembers = []publicMember{
+	{publicMemberPath, publicMemberBlock, "D920's public invoker binding"},
+	{voiceMemberPath, voiceMemberBlock, "the voice hop's public invoker binding (P5.3.3)"},
+}
+
+// publicMemberReviews names the reviewed pairs as one sentence, for the refusal
+// a reader meets when the member is written on anything else.
+func publicMemberReviews() string {
+	parts := make([]string, 0, len(publicMembers))
+	for _, m := range publicMembers {
+		parts = append(parts, m.path+"'s "+m.block)
+	}
+	return strings.Join(parts, ", or on ")
+}
 
 // reportsJobPrefix is the name prefix the installation module requires of the
 // reports job (reports.tf, slice P): its alert filters on it, and the prefix
@@ -1781,11 +1843,16 @@ const (
 // internal/backend/gcp beside CheckJobName's.
 const reportsJobPrefix = "fugarorpt-"
 
-// memberAllowed is allowedMemberExprs plus the one exception above, and it is
-// the single decision every IAM block of this tree is held to.
+// memberAllowed is allowedMemberExprs plus the reviewed exceptions above, and
+// it is the single decision every IAM block of this tree is held to.
 func memberAllowed(path, name, member string) bool {
 	if member == `"allUsers"` {
-		return path == publicMemberPath && name == publicMemberBlock
+		for _, m := range publicMembers {
+			if path == m.path && name == m.block {
+				return true
+			}
+		}
+		return false
 	}
 	return member != "" && allowedMemberExprs.MatchString(member)
 }
@@ -1822,8 +1889,8 @@ func TestIAMResourcesUseKnownExpressions(t *testing.T) {
 				t.Errorf("%s: %s has no role attribute the scan can read", path, blk.name)
 			case strings.HasPrefix(role, `"`):
 				if m := projectRoleLiteralRE.FindStringSubmatch(role); m != nil {
-					if !slices.Contains(tf.FugaroRoles, m[2]) && !(path == workspaceRolePath && m[2] == tf.WorkspaceDatabaseRoleID) {
-						t.Errorf("%s: %s: role %s names the custom role %s, which the modules do not create (the one role outside them is the workspace root's own, %s in %s)", path, blk.name, role, m[2], tf.WorkspaceDatabaseRoleID, workspaceRolePath)
+					if !slices.Contains(tf.FugaroRoles, m[1]) && !(path == workspaceRolePath && m[1] == tf.WorkspaceDatabaseRoleID) {
+						t.Errorf("%s: %s: role %s names the custom role %s, which the modules do not create (the one role outside them is the workspace root's own, %s in %s)", path, blk.name, role, m[1], tf.WorkspaceDatabaseRoleID, workspaceRolePath)
 					}
 					break
 				}
@@ -1836,7 +1903,7 @@ func TestIAMResourcesUseKnownExpressions(t *testing.T) {
 			}
 			switch {
 			case member == `"allUsers"` && !memberAllowed(path, blk.name, member):
-				t.Errorf("%s: %s: an allUsers member is reviewed on %s's %s and nowhere else (D920): a public member is admitted for one resource, and this is another", path, blk.name, publicMemberPath, publicMemberBlock)
+				t.Errorf("%s: %s: an allUsers member is reviewed on %s and nowhere else: each reviewed entry is one public endpoint whose handler is the gate, and a public member is admitted for those pairs alone", path, blk.name, publicMemberReviews())
 			case !memberAllowed(path, blk.name, member):
 				t.Errorf("%s: %s: member expression %q is not on the allowlist", path, blk.name, member)
 			}
@@ -1917,65 +1984,93 @@ func withPublicMember(t *testing.T, path, src, block string) string {
 // run's artefacts — passed this package's whole suite.
 //
 // Every fixture is the tree's OWN file with exactly that edit, read back
-// through the same parser the scan uses, and each must be refused; the last one
-// proves the other half of the rule, that the resource name alone is not enough
-// (the same binding under another path is another resource's grant).
+// through the same parser the scan uses, and each must be refused. The
+// property is per ENTRY and not a set's size: each reviewed binding is admitted
+// where it is and refused under another path, and each reviewed binding's
+// member is refused under the OTHER entry's path and under another block name — a
+// second entry must be as narrow as the first, or committing one would have
+// loosened this rule for everybody.
 func TestAllUsersIsRefusedOnEveryOtherResource(t *testing.T) {
-	// Non-vacuity first: the binding D920 decided is admitted exactly where it
-	// is, or every fixture below would pass on a rule that refuses allUsers
-	// everywhere.
-	frontDoor, err := fs.ReadFile(FS, publicMemberPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var sawPublic bool
-	for _, blk := range allResourceBlocks(t, publicMemberPath, frontDoor) {
-		if blk.name != publicMemberBlock {
-			continue
+	// Non-vacuity first, over every reviewed entry: each binding is admitted
+	// exactly where it is, or the fixtures below would pass on a rule that
+	// refuses allUsers everywhere.
+	for _, reviewed := range publicMembers {
+		file, err := fs.ReadFile(FS, reviewed.path)
+		if err != nil {
+			t.Fatal(err)
 		}
-		sawPublic = true
-		if member := firstAttr(blk.body, "member"); member != `"allUsers"` {
-			t.Fatalf("%s: %s sets member = %s, want the literal allUsers this exception is for", publicMemberPath, publicMemberBlock, member)
+		var sawPublic bool
+		for _, blk := range allResourceBlocks(t, reviewed.path, file) {
+			if blk.name != reviewed.block {
+				continue
+			}
+			sawPublic = true
+			if member := firstAttr(blk.body, "member"); member != `"allUsers"` {
+				t.Fatalf("%s: %s sets member = %s, want the literal allUsers %s is for", reviewed.path, reviewed.block, member, reviewed.why)
+			}
+		}
+		if !sawPublic {
+			t.Fatalf("%s declares no %s: this test read the wrong file", reviewed.path, reviewed.block)
+		}
+		if !memberAllowed(reviewed.path, reviewed.block, `"allUsers"`) {
+			t.Fatalf("%s's %s is refused, so the exception this rule carries no longer admits the grant it was reviewed for", reviewed.path, reviewed.block)
 		}
 	}
-	if !sawPublic {
-		t.Fatalf("%s declares no %s: this test read the wrong file", publicMemberPath, publicMemberBlock)
-	}
-	if !memberAllowed(publicMemberPath, publicMemberBlock, `"allUsers"`) {
-		t.Fatalf("D920's public invoker binding is refused, so the exception this rule carries no longer admits the grant the owner decided on")
+	if len(publicMembers) != 2 {
+		t.Fatalf("this tree has %d reviewed allUsers entries, and this test's fixtures cover two (the front door's and the voice hop's): a third is a public endpoint nobody has mutation-proved", len(publicMembers))
 	}
 
 	for name, m := range map[string]struct {
-		file  string // the file read and mutated
-		path  string // the path the scan is told it is — not the file's, for one fixture
-		block string
+		file   string // the file read and mutated
+		path   string // the path the scan is told it is — not the file's, for two fixtures
+		block  string
+		rename string // "old=new", when the edit is the resource copied under another name
 	}{
 		// The review's own mutation: the runs bucket's reader, a public read of
 		// every run's artefacts.
-		"the coordinator's runs-bucket reader": {"gcp/modules/installation/coordinator.tf", "gcp/modules/installation/coordinator.tf", "google_storage_bucket_iam_member.coordinator_runs_reader"},
+		"the coordinator's runs-bucket reader": {file: "gcp/modules/installation/coordinator.tf", path: "gcp/modules/installation/coordinator.tf", block: "google_storage_bucket_iam_member.coordinator_runs_reader"},
 		// The front door's own account's one grant, made public one line away
 		// from the account whose reach this rule exists to bound.
-		"the front door account's runs-bucket read": {"gcp/modules/installation/coordinator.tf", "gcp/modules/installation/coordinator.tf", "google_storage_bucket_iam_member.mcp_server_runs_reader"},
+		"the front door account's runs-bucket read": {file: "gcp/modules/installation/coordinator.tf", path: "gcp/modules/installation/coordinator.tf", block: "google_storage_bucket_iam_member.mcp_server_runs_reader"},
 		// The account's other grant, and the worse one to make public: the
 		// store D935 moves the token records, the client registrations and the
 		// audit into, where an allUsers read is every record of the front door
 		// rather than one run's artefacts.
-		"the front door account's store": {"gcp/modules/installation/mcpauth_store.tf", "gcp/modules/installation/mcpauth_store.tf", "google_storage_bucket_iam_member.mcpauth_store"},
+		"the front door account's store": {file: "gcp/modules/installation/mcpauth_store.tf", path: "gcp/modules/installation/mcpauth_store.tf", block: "google_storage_bucket_iam_member.mcpauth_store"},
 		// Another module: a run account's write grant on the runs bucket.
-		"a run account's runs-bucket grant": {"gcp/modules/workflow/sa.tf", "gcp/modules/workflow/sa.tf", "google_storage_bucket_iam_member.job"},
+		"a run account's runs-bucket grant": {file: "gcp/modules/workflow/sa.tf", path: "gcp/modules/workflow/sa.tf", block: "google_storage_bucket_iam_member.job"},
 		// The credentials bundle, which is every model credential the
 		// installation holds.
-		"the credentials bundle's reader": {"gcp/modules/installation/credentials.tf", "gcp/modules/installation/credentials.tf", "google_secret_manager_secret_iam_member.credentials_bundle"},
+		"the credentials bundle's reader": {file: "gcp/modules/installation/credentials.tf", path: "gcp/modules/installation/credentials.tf", block: "google_secret_manager_secret_iam_member.credentials_bundle"},
 		// And the resource NAME is not the rule: the same binding, read as a
 		// path another file's, is refused.
-		"the public binding under another path": {publicMemberPath, "gcp/modules/installation/iam.tf", publicMemberBlock},
+		"the public binding under another path": {file: publicMemberPath, path: "gcp/modules/installation/iam.tf", block: publicMemberBlock},
+		// ... and each of the two halves of that property is run against the
+		// SECOND entry as well, or committing it would have been the act that
+		// loosened this rule for the first: the hop's binding under the front
+		// door's path...
+		"the hop's binding under the front door's path": {file: voiceMemberPath, path: publicMemberPath, block: voiceMemberBlock},
+		// ... and the hop's own file with the resource copied under another
+		// name, which is the edit this rule exists to refuse.
+		"the hop's binding under another name": {file: voiceMemberPath, path: voiceMemberPath, block: "google_cloud_run_v2_service_iam_member.voice", rename: "voice_public=voice"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			src, err := fs.ReadFile(FS, m.file)
 			if err != nil {
 				t.Fatal(err)
 			}
-			mutated := withPublicMember(t, m.path, string(src), m.block)
+			body := string(src)
+			if m.rename != "" {
+				old, new, ok := strings.Cut(m.rename, "=")
+				if !ok {
+					t.Fatalf("%q is not an old=new rename", m.rename)
+				}
+				if !strings.Contains(body, old) {
+					t.Fatalf("%s does not name %s, so this fixture's rename would be a no-op and it would assert nothing", m.file, old)
+				}
+				body = strings.ReplaceAll(body, old, new)
+			}
+			mutated := withPublicMember(t, m.path, body, m.block)
 			var hit bool
 			for _, blk := range allResourceBlocks(t, m.path, []byte(mutated)) {
 				if blk.name != m.block {
@@ -1987,7 +2082,7 @@ func TestAllUsersIsRefusedOnEveryOtherResource(t *testing.T) {
 					t.Fatalf("the mutation did not take: %s.%s reads member = %s", m.path, m.block, member)
 				}
 				if memberAllowed(m.path, blk.name, member) {
-					t.Errorf("%s: %s admits member = \"allUsers\": a public member is reviewed on %s's %s and nowhere else, and this grant reaches what that binding never does", m.path, m.block, publicMemberPath, publicMemberBlock)
+					t.Errorf("%s: %s admits member = \"allUsers\": a public member is reviewed on %s and nowhere else, and this grant reaches what those bindings never do", m.path, m.block, publicMemberReviews())
 				}
 			}
 			if !hit {
@@ -2300,27 +2395,31 @@ func TestCustomRolesNeverReachTheBackend(t *testing.T) {
 			// whole-database write) is not bound to the workspace's account at
 			// all. TestMemberUpdateBindsNoWriteOnTheMembersDatabase is the
 			// exact pin.
-			// The front door's read of the installation's database
-			// (installation/state_read.tf, O16b, D2020 (a)): the third knowing
-			// exception, and the narrowest of the three — the instance's read
-			// and no write at all. The state group's two tools answer
-			// get_state and get_events as the front door's own account, and
-			// apply_patch is served by nothing (D2021), so the write
-			// (instances.update, the only one RTDB has) is withheld by its
-			// absence from this list rather than by a handler: a later
-			// revision of the front door has none to reach for. The exact list
-			// is pinned by tf.RolePermissions and by the module's own
+			// The state readers' read of the installation's database
+			// (installation/state_read.tf, O16b, D2020 (a) for the front door
+			// and P5.3.3 for the voice hop): the third knowing exception, and
+			// the narrowest of the three — the instance's read and no write at
+			// all. The state group's two tools answer get_state and get_events
+			// as the front door's own account and the hop reads the device
+			// node and the project's voice policy as its own, and apply_patch
+			// is served by nothing (D2021), so the write (instances.update, the
+			// only one RTDB has) is withheld by its absence from this list
+			// rather than by a handler: a later revision of either reader has
+			// none to reach for. The exact list is pinned by tf.RolePermissions
+			// and by the module's own
 			// TestFrontDoorStateRoleHoldsNoDatabaseWrite; this ban continues
 			// past it because the role reaches further than "read one node" —
-			// no path-level scope exists — and it is bound to the front door's
-			// account alone.
+			// no path-level scope exists — and it is bound to those two
+			// accounts alone (the module's own
+			// TestTheStateReadGrantIsTheTwoReadersOwnAccountsAndNoOneElses is
+			// the pin on the two bindings).
 			if blk.name == "google_project_iam_custom_role.state_read" {
 				if !strings.HasPrefix(path, "gcp/modules/installation/state_read") {
 					t.Errorf("%s: %s is not in the installation module's state_read.tf", path, blk.name)
 				}
 				for _, p := range quotedPerm.FindAllStringSubmatch(m[1], -1) {
 					if !slices.Contains(tf.MCPStateReadPermissions, p[1]) {
-						t.Errorf("%s: %s holds %s: the front door's database role is the instance's read and nothing else", path, blk.name, p[1])
+						t.Errorf("%s: %s holds %s: the state readers' database role is the instance's read and nothing else", path, blk.name, p[1])
 					}
 				}
 				continue
@@ -5776,17 +5875,17 @@ func findGrant(t *testing.T, grants []moduleGrant, name string) moduleGrant {
 }
 
 // customRoleID is the role ID of a grant's role expression when it names a
-// custom role of one of this run's projects ("projects/${var.project}/roles/x"
-// and its Firebase-project twin), and "" otherwise. The modules spell these
-// LITERALLY (credentials.tf's reason: a role read from the role resource's own
-// name attribute reaches the plan as unknown, and internal/infra/tf's cover
-// cannot then say which role a grant is).
+// custom role of one of this run's projects ("projects/${var.project}/roles/x",
+// its Firebase-project twin, and the state readers' local), and "" otherwise.
+// The modules spell these LITERALLY (credentials.tf's reason: a role read from
+// the role resource's own name attribute reaches the plan as unknown, and
+// internal/infra/tf's cover cannot then say which role a grant is).
 func customRoleID(role string) string {
 	m := projectRoleLiteralRE.FindStringSubmatch(role)
 	if m == nil {
 		return ""
 	}
-	return m[2]
+	return m[1]
 }
 
 // customRolePermissions returns every custom role the installation module
