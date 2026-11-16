@@ -1152,8 +1152,8 @@ func SecretMounts(gitSecret string, cfg *config.Config, name, token string, w co
 // the same list, so the two cannot disagree about which tokens are mounted.
 //
 // A name the local config declares a KEY credential is not one of them
-// (tokenAccounts), and the reason is the mount rather than the name: every job
-// of this set exists to carry an account's Claude token,
+// (config.ClaudeAccountTokenNames), and the reason is the mount rather than the
+// name: every job of this set exists to carry an account's Claude token,
 // config.ClaudeAccountSecret(name) as CLAUDE_CODE_OAUTH_TOKEN
 // (SecretMounts), and a key credential's value is stored under its own derived
 // name instead (config.CredentialSecret, D1670) — no run ever writes a version
@@ -1167,7 +1167,7 @@ func SecretMounts(gitSecret string, cfg *config.Config, name, token string, w co
 func WorkflowAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []string {
 	switch cfg.Agent.Auth {
 	case "oauth":
-		return tokenAccounts(lc, config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo))
+		return config.ClaudeAccountTokenNames(lc.Credentials, config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo))
 	case "api-key":
 		out := []string{config.DefaultClaudeAccount}
 		for _, name := range mixedStageAccounts(cfg, lc, repo) {
@@ -1175,29 +1175,9 @@ func WorkflowAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []st
 				out = append(out, name)
 			}
 		}
-		return tokenAccounts(lc, out)
+		return config.ClaudeAccountTokenNames(lc.Credentials, out)
 	}
 	return []string{config.DefaultClaudeAccount}
-}
-
-// tokenAccounts is names less the ones the local config declares a key
-// credential: the credential's type says its value lives under its own derived
-// secret (config.CredentialSecret, config.KeyCredentialType) and not under the
-// account's token name the jobs below mount, so such a name is no account a
-// repository's run may hold. A name no credentials entry mentions — every
-// account declared before the credentials block existed — is kept unchanged,
-// and the answer is a fresh slice: callers compare it (tests) and append to it
-// (the api-key arm above), and neither may reach the caller's own list or the
-// one config.AllowedClaudeAccounts built.
-func tokenAccounts(lc *localcfg.Config, names []string) []string {
-	out := make([]string, 0, len(names))
-	for _, name := range names {
-		if c, ok := config.CredentialNamed(lc.Credentials, name); ok && config.KeyCredentialType(c.Type) {
-			continue
-		}
-		out = append(out, name)
-	}
-	return out
 }
 
 // RequiredSecrets is every logical secret name the jobs of repo's workflows

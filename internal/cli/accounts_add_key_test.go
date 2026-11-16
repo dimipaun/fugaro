@@ -392,6 +392,50 @@ func TestARerunWithoutTypeWritesOnlyTheCredentialsOwnSecret(t *testing.T) {
 	}
 }
 
+// TestAccountsRmTakesAKeyCredentialsOwnContainer is the removal half of the
+// pair `accounts add --type` writes, and the container is what it turns on: a
+// key credential's value is the key its provider issued, under the credential's
+// own derived secret name (config.CredentialSecret), so the account's own
+// claude-oauth-token-<name> is another credential's container and holds nothing
+// of this one's to delete. Asking Secret Manager for that one left the live
+// provider key in the project with no command able to remove it, kept
+// credentials.<name> beside it, and printed the account gone from an
+// installation it was still in — the one state this command's own contract may
+// not leave behind.
+func TestAccountsRmTakesAKeyCredentialsOwnContainer(t *testing.T) {
+	r := newAddRigWith(t, accountsAddKeyCredentialLocal)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	id := credentialSecretID("team-a")
+	if r.sm.Latest(id) == nil {
+		t.Fatalf("the fixture's %s holds no value, so the delete has nothing to take away", id)
+	}
+
+	out := r.rm(t, "team-a")
+
+	if got, want := r.sm.Deleted(), []string{id}; !slices.Equal(got, want) {
+		t.Errorf("the secret deletes were %v, want only %v, the container the credential's value is really in", got, want)
+	}
+	if v := r.sm.Latest(id); v != nil {
+		t.Errorf("the secret %s still holds a value after the delete: %q", id, v)
+	}
+	if got := accountsAddRow(t, out, "secret"); !strings.Contains(got, config.CredentialSecret("team-a")) {
+		t.Errorf("the block's secret line reads %q, and the container this run deleted is %s", got, config.CredentialSecret("team-a"))
+	}
+	if strings.Contains(out, config.ClaudeAccountSecret("team-a")) {
+		t.Errorf("the report names %s, the container a key credential's value is never stored in:\n%s", config.ClaudeAccountSecret("team-a"), out)
+	}
+	lc := r.addLocal(t)
+	if _, ok := lc.ClaudeAccounts["team-a"]; ok {
+		t.Errorf("claude_accounts.team-a is still declared: the declaration and the value its allow_data_to bounds go together")
+	}
+	if slices.ContainsFunc(lc.Credentials, func(c config.Credential) bool { return c.Name == "team-a" }) {
+		t.Errorf("the credentials block still declares team-a: %v, want the typed entry gone with the account it named", lc.Credentials)
+	}
+	if p := r.policy(t); len(p.Accounts) != 0 {
+		t.Errorf("the published node still carries accounts = %v, want the account gone", slices.Sorted(maps.Keys(p.Accounts)))
+	}
+}
+
 // TestNotYetTypesRefuse is D1623's half of the type rule, unchanged by this
 // task: the two types the spec lists as future work refuse in words that name
 // them, and a type that is no type of this release is refused by the config's

@@ -497,7 +497,11 @@ List the names fugaro run --token NAME (and a repository's own agent.oauth_token
 accept for a repository: "default" (the repository's own unnamed
 claude-oauth-token secret, always allowed) first, then every claude_accounts
 name in the local config whose allow_data_to lists the repository, sorted
-(config.AllowedClaudeAccounts, the one place that decides the question).
+(config.AllowedClaudeAccounts, the one place that decides the question) and
+less every name the credentials block declares a key credential
+(config.ClaudeAccountTokenNames), whose value is the key its provider issued
+under the credential's own derived secret and not a Claude account's token at
+all.
 
 The names are a local, read-only lookup, offline whenever a project config is
 already selected on this machine: it reads the local config file the CLI would
