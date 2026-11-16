@@ -313,6 +313,18 @@ func (s *Service) bindEntitlement(ctx context.Context, actor Caller, entitlement
 		}
 		request.RenewalSecretHash = digest(dropped)
 	}
+	// D2198's revocation is the step before the mint and not a step after the
+	// commit: what a recorded rebind must not leave behind is a live key at the
+	// installation it moved away from, and what a rebind that fails anywhere below
+	// must not leave behind is a licence that moved. Revoking first is what makes
+	// both true — everything under this door refuses or fails with nothing bound,
+	// and the one thing it did is put the old key on the store's revocation list,
+	// which is idempotent and which the person's retry repeats.
+	if rebinding {
+		if err := s.revokeReplacedBindingKeys(ctx, entitlement.ID); err != nil {
+			return WireWorkspace{}, err
+		}
+	}
 	answer, err := s.paid(ctx, request, "", source, "")
 	if err != nil {
 		return WireWorkspace{}, err
@@ -369,21 +381,20 @@ func (s *Service) bindEntitlement(ctx context.Context, actor Caller, entitlement
 		if err := putRecord(ctx, tx, entitlementsCollection, held.ID, held); err != nil {
 			return err
 		}
+		if entitlement.AirGapped {
+			// D2206's file is written with the binding and not after it: the file
+			// is the licence, so a binding committed without one is an air-gapped
+			// customer whose page offers a download that answers nothing, and no
+			// other act of this service ever writes it.
+			if err := keepLicenceFile(ctx, tx, entitlement.ID, answer); err != nil {
+				return err
+			}
+		}
 		answered = current
 		return nil
 	})
 	if err != nil {
 		return WireWorkspace{}, errors.Join(err, s.withdrawUnrecorded(ctx, answer.Record.KeyID))
-	}
-	if rebinding {
-		if err := s.revokeReplacedBindingKeys(ctx, entitlement.ID, answer.Record.KeyID); err != nil {
-			return WireWorkspace{}, err
-		}
-	}
-	if entitlement.AirGapped {
-		if err := s.keepLicenceFile(ctx, entitlement.ID, answer); err != nil {
-			return WireWorkspace{}, err
-		}
 	}
 	return answered, nil
 }
@@ -463,17 +474,22 @@ func bindingSource(entitlementID string) (string, error) {
 // one nobody is looking at any more: it is revoked rather than left to run,
 // which is what makes a leaked installation's key stop at the rebind.
 //
+// It is called before the rebind mints, which is why every key of this licence's
+// bindings is revoked and none is kept: the successor does not exist yet, and a
+// key that was already on the list is revoked again rather than looked up, which
+// is what makes a retry of a failed rebind finish the same list.
+//
 // What the list is read by is §8's renewal and status, so a revoked key's
 // renewal secret fetches nothing at all — no successor and no answer about where
 // the licence went.
-func (s *Service) revokeReplacedBindingKeys(ctx context.Context, entitlementID, keep string) error {
+func (s *Service) revokeReplacedBindingKeys(ctx context.Context, entitlementID string) error {
 	issued, err := s.store.Issuances(ctx)
 	if err != nil {
 		return err
 	}
 	prefix := bindingPrefix + entitlementID + ":"
 	for _, record := range issued {
-		if record.KeyID == keep || !strings.HasPrefix(record.Source, prefix) {
+		if !strings.HasPrefix(record.Source, prefix) {
 			continue
 		}
 		if err := s.store.Revoke(ctx, Revocation{KeyID: record.KeyID, Reason: ReasonRebind, At: s.now()}); err != nil {
@@ -483,12 +499,12 @@ func (s *Service) revokeReplacedBindingKeys(ctx context.Context, entitlementID, 
 	return nil
 }
 
-// keepLicenceFile writes the file an air-gapped licence is issued as (D2206).
-// The file is the signed key text and nothing else: it holds no secret, which is
-// what makes it a file a customer can keep, and what is stored is what the first
-// download served, so reading it again is the same bytes rather than a second
-// issue.
-func (s *Service) keepLicenceFile(ctx context.Context, entitlementID string, answer MintedV1) error {
+// keepLicenceFile writes the file an air-gapped licence is issued as (D2206),
+// inside the transaction that commits the binding it belongs to. The file is the
+// signed key text and nothing else: it holds no secret, which is what makes it a
+// file a customer can keep, and what is stored is what the first download served,
+// so reading it again is the same bytes rather than a second issue.
+func keepLicenceFile(ctx context.Context, tx Tx, entitlementID string, answer MintedV1) error {
 	doc, err := storedDoc(WireLicenceFile{
 		KeyID:       answer.Record.KeyID,
 		Licence:     answer.Key,
@@ -497,7 +513,7 @@ func (s *Service) keepLicenceFile(ctx context.Context, entitlementID string, ans
 	if err != nil {
 		return err
 	}
-	return s.docs.Put(ctx, licenceFilesCollection, entitlementID, doc)
+	return tx.Put(ctx, licenceFilesCollection, entitlementID, doc)
 }
 
 // currentOrganisation is the organisation a route without one in its path reads:

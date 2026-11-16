@@ -22,6 +22,7 @@ package keyservice
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -53,12 +54,23 @@ type bindingFixture struct {
 // can reach Firebase or the key ring by forgetting one.
 func newBindingFixture(t *testing.T) *bindingFixture {
 	t.Helper()
+	return newBindingFixtureWith(t, nil)
+}
+
+// newBindingFixtureWith is the same fixture with one change of a case's own made
+// before the intake is built from it, which is where a case that has to fail a
+// write puts the store that fails it.
+func newBindingFixtureWith(t *testing.T, edit func(*fixture)) *bindingFixture {
+	t.Helper()
 	mints := &bundleMints{}
 	probe := &probeServer{status: http.StatusUnauthorized, body: `{"error":"Permission denied"}`}
 	f := newFixtureWith(t, Production, func(f *fixture) {
 		mints.inner = f.recording
 		f.deps.Mints = mints
 		probe.install(t)
+		if edit != nil {
+			edit(f)
+		}
 	})
 	// The sign-ins these cases make are Google's, which is what an organisation's
 	// own members sign in with and what no SSO rule refuses.
@@ -955,6 +967,154 @@ func TestAirGappedIsIssuedOnce(t *testing.T) {
 	if len(f.mints.answers) != 1 {
 		t.Errorf("the refused rebind minted a second key: %d are out, and a file nothing can revoke is issued once",
 			len(f.mints.answers))
+	}
+}
+
+// refusingDocs is the fixture's store with the one failure these cases have to be
+// able to make: a transaction that cannot commit. Its reads and its writes are
+// the fixture's own, so a request runs exactly as far as the commit.
+type refusingDocs struct {
+	*docsSpy
+	refuses bool
+}
+
+func (d *refusingDocs) Update(ctx context.Context, fn func(context.Context, Tx) error) error {
+	if d.refuses {
+		return errors.New("keyservice: the store refused the write")
+	}
+	return d.docsSpy.Update(ctx, fn)
+}
+
+// refusingStore is the wrapper the intake of such a case reaches, whose flag is
+// what makes the next commit fail.
+func (f *bindingFixture) refusingStore(t *testing.T) *refusingDocs {
+	t.Helper()
+	store, ok := f.deps.Docs.(*refusingDocs)
+	if !ok {
+		t.Fatalf("the fixture's store is %T, want the wrapper this case built it with", f.deps.Docs)
+	}
+	return store
+}
+
+// TestARebindThatCannotCommitHasRevokedTheKeyItReplaces: D2198's revocation is
+// the step before the mint and not a step after the commit. A rebind whose write
+// fails therefore leaves the licence exactly where it was — the predecessor
+// already revoked, the successor withdrawn, and the retry that follows finishing
+// the same list — rather than a licence moved with its window shut for thirty
+// days and the key it left behind still live.
+func TestARebindThatCannotCommitHasRevokedTheKeyItReplaces(t *testing.T) {
+	f := newBindingFixtureWith(t, func(f *fixture) {
+		f.deps.Docs = &refusingDocs{docsSpy: f.docs}
+	})
+	store := f.refusingStore(t)
+	org := f.seededOrganisation("org-dana", "Dana Ltd", orgTypeCustomer, danaUID, danaEmail, roleOwner)
+	workspace := f.seedWorkspace("ws-1", org.ID, "Dana's portal")
+	held := f.grant(t, entitlementGrant{
+		At:             f.now,
+		OrganisationID: org.ID,
+		WorkspaceID:    &workspace.ID,
+		Source:         entitlementSourcePurchase,
+		Row:            PolicyTeamAnnual,
+		Seats:          3,
+		StartsAt:       f.now,
+	})
+	if rec := f.bind(t, held.ID, exampleProject); rec.Code != http.StatusOK {
+		t.Fatalf("the first binding answered %d: %s", rec.Code, rec.Body)
+	}
+	if len(f.mints.answers) != 1 {
+		t.Fatalf("the first binding minted %d keys, want the one it bound", len(f.mints.answers))
+	}
+	replaced := f.mints.answers[0].Record.KeyID
+
+	store.refuses = true
+	if rec := f.bind(t, held.ID, secondProject); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("a rebind whose store refused the write answered %d (%s), want this service's own failure", rec.Code, rec.Body)
+	}
+	store.refuses = false
+
+	revoked, found, err := f.store.Revocation(context.Background(), replaced)
+	if err != nil || !found {
+		t.Fatalf("the replaced key %s is not revoked after a rebind that could not commit (found=%v err=%v)", replaced, found, err)
+	}
+	if revoked.Reason != ReasonRebind {
+		t.Errorf("the replaced key's reason is %q, want %q", revoked.Reason, ReasonRebind)
+	}
+	// The key the failed rebind minted is gone: nothing of an act that did not
+	// happen is left live.
+	if len(f.mints.answers) != 2 {
+		t.Fatalf("the rebind minted %d keys in all, want the one it could not record", len(f.mints.answers))
+	}
+	unrecorded := f.mints.answers[1].Record.KeyID
+	if withdrawn, found, err := f.store.Revocation(context.Background(), unrecorded); err != nil || !found || withdrawn.Reason != ReasonUnrecorded {
+		t.Errorf("the key the uncommitted rebind minted is %+v (found=%v err=%v), want it withdrawn as unrecorded",
+			withdrawn, found, err)
+	}
+	// And the licence is where it was: the old project, bound, with no window shut
+	// against the retry.
+	bound, _ := f.entitlement(held.ID)
+	if bound.WorkspaceID == nil || *bound.WorkspaceID != workspace.ID {
+		t.Errorf("the licence names the workspace %v after a rebind that could not commit", bound.WorkspaceID)
+	}
+	if bound.RebindableAt != nil {
+		t.Errorf("the rebind that did not happen set the window at %s", *bound.RebindableAt)
+	}
+	if licensed, _ := f.workspace(workspace.ID); licensed.ProjectID == nil || *licensed.ProjectID != exampleProject {
+		t.Errorf("the workspace is bound to %v after a rebind that could not commit, want %s", licensed.ProjectID, exampleProject)
+	}
+
+	if rec := f.bind(t, held.ID, secondProject); rec.Code != http.StatusOK {
+		t.Fatalf("the retry answered %d: %s", rec.Code, rec.Body)
+	}
+	if licensed, _ := f.workspace(workspace.ID); licensed.ProjectID == nil || *licensed.ProjectID != secondProject {
+		t.Errorf("the retry bound the workspace to %v, want %s", licensed.ProjectID, secondProject)
+	}
+}
+
+// TestAnAirGappedLicenceIsBoundWithItsFileOrNotAtAll: D2206's file is written in
+// the binding's own transaction, so an air-gapped licence is either bound with
+// the file it is issued as or not bound at all. No act of this service writes one
+// later, and a commit without it would be a customer whose page offers a download
+// that answers nothing.
+func TestAnAirGappedLicenceIsBoundWithItsFileOrNotAtAll(t *testing.T) {
+	f := newBindingFixtureWith(t, func(f *fixture) {
+		f.deps.Docs = &refusingDocs{docsSpy: f.docs}
+	})
+	store := f.refusingStore(t)
+	org := f.seededOrganisation("org-dana", "Dana Ltd", orgTypeCustomer, danaUID, danaEmail, roleOwner)
+	workspace := f.seedWorkspace("ws-1", org.ID, "Dana's air gap")
+	held := f.grant(t, entitlementGrant{
+		At:             f.now,
+		OrganisationID: org.ID,
+		WorkspaceID:    &workspace.ID,
+		Source:         entitlementSourceOperations,
+		Row:            PolicyEnterpriseAirGapped,
+		Seats:          5,
+		StartsAt:       f.now,
+	})
+
+	store.refuses = true
+	if rec := f.bind(t, held.ID, exampleProject); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("binding an air-gapped licence whose store refused the write answered %d (%s), want this service's own failure",
+			rec.Code, rec.Body)
+	}
+	store.refuses = false
+
+	if _, found := heldRecord[WireLicenceFile](f.fixture, licenceFilesCollection, held.ID); found {
+		t.Errorf("a licence file is held for a binding that did not commit: the record and the file are one write (D2206)")
+	}
+	if after, _ := f.entitlement(held.ID); after.BoundAt != nil {
+		t.Errorf("the licence is bound at %s although the binding did not commit", *after.BoundAt)
+	}
+	if licensed, _ := f.workspace(workspace.ID); licensed.ProjectID != nil {
+		t.Errorf("the workspace names the project %v although the binding did not commit", *licensed.ProjectID)
+	}
+
+	// The binding that does commit carries its file with it.
+	if rec := f.bind(t, held.ID, exampleProject); rec.Code != http.StatusOK {
+		t.Fatalf("the binding after the failed one answered %d: %s", rec.Code, rec.Body)
+	}
+	if _, found := heldRecord[WireLicenceFile](f.fixture, licenceFilesCollection, held.ID); !found {
+		t.Errorf("the committed air-gapped binding holds no licence file (D2206)")
 	}
 }
 
