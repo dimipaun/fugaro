@@ -49,6 +49,7 @@ Subcommands:
 - `fugaro issue` -- Read the issues saved on this machine, the ones you reported, and file one on GitHub
 - `fugaro licence` -- Install, read and renew the installation's licence key (Subscription Edition)
 - `fugaro logs` -- Print a run's logs from Cloud Logging
+- `fugaro mailbox` -- Consume this installation's mailbox: read the phone's messages and answer them
 - `fugaro managed` -- Act on a managed project (a project created by fugaro with the coding agent's refusal removed)
 - `fugaro models` -- Show the models this project can run, and where each is served
 - `fugaro orchestrator` -- Read and patch the project's orchestrator state
@@ -4242,6 +4243,76 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--url` | bool | `false` | no | print the execution's Cloud console link instead of the logs |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro mailbox`
+
+Consume this installation's mailbox: read the phone's messages and answer them
+
+Consume the mailbox of each phone this project is paired with: take the
+lease on its heartbeat, read its inbox, verify each message's pairing MAC,
+decide which deliveries are new, and sign and write the answers to its
+outbox.
+
+The consumer acts on the operator's behalf, and a voice-originated message
+may never cause a destructive command (D128). The default is refusal: a
+message this build does not recognise is refused, and the confirmation
+record that would admit a destructive one is not built yet, so every message
+that would be acted on is refused and reported by code. A launch and a
+read-only report are the allowance D128's amendment names; it reaches a real
+message only once the confirmation record's consumer lands.
+
+Both directions of the wire are MAC-covered. Every inbox message is verified
+before it is acted on, and one that does not verify is refused and never
+acted on — and because nothing can retire it, it is read and refused again on
+every pass until an operator removes the node with their own credential.
+Every reply and every heartbeat is signed before it is written, so a value
+the signer refuses is not written at all.
+
+The command stops at startup when there is no pairing key at the keychain
+items its project config names, rather than looping over a mailbox it could
+do nothing with. The pairing key is read from the OS keychain by item name
+and is never printed; the item's name is not a secret and appears in a
+diagnostic.
+
+The command writes only the outbox and the heartbeat, with the operator's own
+credential, which is what makes that write set a rule in this command's code
+rather than a fence the database enforces.
+
+Its own state is the ledger at
+$XDG_STATE_HOME/fugaro/mailbox/<project>/ledger.json, written 0o600 by
+tmp+rename: it holds the deliveries this consumer has consumed, and it is
+what stops a restart from acting on one twice. The ledger is committed before
+an action is performed, never after.
+
+Each pass prints one line, or with --json one JSON document, naming the
+pairing, the lease, what was read and what was refused (by code, never by
+text). A message's text, a MAC, a key and a keychain item's value are never
+printed.
+
+Without --once it loops until interrupted, one pass every --interval; with
+--once it runs one pass per configured pairing and exits, which is the
+scriptable mode. A pass that held no lease, or read nothing, is a completed
+pass and exits 0.
+
+Usage: `fugaro mailbox`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for mailbox |
+| `--interval` | duration | `5s` | no | how long to wait between passes; never less than one second |
+| `--json` | bool | `false` | no | one JSON document per pass instead of lines |
+| `--no-heartbeat` | bool | `false` | no | write no heartbeat, so no lease is taken and nothing is acted on |
+| `--once` | bool | `false` | no | run one pass per configured pairing and exit |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
