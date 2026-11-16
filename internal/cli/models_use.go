@@ -525,7 +525,7 @@ func modelsUseLevelCheck(lc *localcfg.Config, launch modelsUseLaunch, target set
 func modelsUseLevelProblems(lc *localcfg.Config, launch modelsUseLaunch, target settingsTarget, agent config.Agent) []config.Problem {
 	cfg := *launch.doc
 	cfg.Agent = agent
-	problems, _ := reviewLevelProblems(filepath.Dir(target.path), &cfg, lc, nil, lc.Providers)
+	problems, _ := reviewLevelProblems(filepath.Dir(target.path), &cfg, lc, nil, lc.Providers, nil)
 	return problems
 }
 
