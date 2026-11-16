@@ -83,7 +83,7 @@
 // a registration message as an unknown kind and a writer that predates it
 // cannot produce one — fail-closed skew in both directions — while every
 // existing kind's field set, bytes and tag are untouched.
-
+//
 // There is **no expiry field**. Under D168 as amended a prompt expires at
 // D118's mailbox TTL, computed by the CONSUMER from `at` and its own clock, so
 // an `expires_at` would be the phone's clock deciding — the clock D117 refuses
@@ -244,8 +244,8 @@ export const BOOT_MAX = 64;
 /**
  * The permitted length of a registration token, in UTF-16 code units: 256,
  * against the tokens that really exist. An FCM registration token is the
- * longest of them at roughly 150–200 characters (the classic one is 152), an
- * APNs device token is 64 hex characters and an Expo push token is about 41.
+ * longest of them at roughly 150–200 characters, an APNs device token is 64 hex
+ * characters and an Expo push token is about 41.
  * The number is chosen to be above every one of those with room for the
  * provider to grow and far below TEXT_MAX, because a token is an identity
  * string and not a body — that distance is what makes "bounded" mean something

@@ -433,37 +433,43 @@ canonical-byte cases: 62 tests across the module's two test files — the 58 in
 [`vectors.bounds.json`](vectors.bounds.json), the bound vectors **both** ends
 consume (`internal/mailbox`'s `TestTheSharedBoundVectorsHold` is the Go half).
 
-**Every guard is mutation-proved**, not merely covered — 96 mutations over `index.js`
+**Every guard is mutation-proved**, not merely covered — 112 mutations over `index.js`
 and `mac.js`: one for most guards, and two for the bounds that can be missed in
 either direction — a comparison narrowed by a code unit, and the same one widened:
 
 ```sh
 shared/mailbox-schema/mutation-proof.sh
-# control       the pristine suite passes, 480 tests, 0 failures
+# control       the pristine suite passes, 521 tests, 0 failures
 # killed        control: refuse() always succeeds (must be killed)
 # killed        not-an-object guard (null/array/primitive)
-# ...                                                        (95 more)
-# --- control killed; 96 guards: 96 killed, 0 survived, 0 not applied
+# ...                                                       (111 more)
+# --- control killed; 112 guards: 112 killed, 0 survived, 0 not applied
 ```
 
-That block is the run's own output with the middle elided: the harness prints **97**
+That block is the run's own output with the middle elided: the harness prints **113**
 `killed` lines — the negative control's, then one per guard — of which the two above
-are the first, so 95 follow. The script disables one guard at a time — the object check,
+are the first, so 111 follow. The script disables one guard at a time — the object check,
 the unknown-field check, each type check, each bound, each character rule, the surrogate
 and separator rules, the timestamp range, the ack's type check, the deep freeze and the
 copy, then P6.3's: the kind vocabulary and its (kind, field) table, the agent and
 option shapes, the action record's verbs and both target shapes, the argv alphabets and
 the head SHA, the required tag, the canonical serialisation — including the code-point
 sort and the strings it refuses — and, in `mac.js`, that the tag is computed over the
-canonical bytes and that `verifyMac` answers `false` rather than throwing.
+canonical bytes and that `verifyMac` answers `false` rather than throwing. P5.2.1's
+are the last eleven: the registration's required token and platform, the two-sided
+(kind, field) table, the platform vocabulary, the prefs' required set, their boolean
+type and their unknown-field guard, the window's closed field set and its
+completeness, the zone's shape, the minute's range, and the two ends that must
+differ. Four more are section 6's, the token's and the zone's bounds, each in both
+directions.
 
 Section 6 is the group about the bounds. Most of its rows **move a comparison by
 one** — `> MAX` to `>= MAX`, and to `> MAX + 1` — because that, rather than a
 deleted check, is the mutation this module has actually been wrong about:
-thirteen of the eighteen do it. Four more drop a term of a rule instead — the
+seventeen of the twenty-two do it. Four more drop a term of a rule instead — the
 carriage return from the line-break rule, DEL from each of the two character
 rules, and the second head-SHA length from the SHA rule, which is the same class
-of mistake one step further from the check's edge. The last does neither: it
+of mistake one step further from the check's edge. The twenty-second does neither: it
 replaces the SHA rule's equality test with a range test (`action: the head SHA
 may be any length from SHA_MIN to SHA_MAX`), and a refusal of a head SHA between
 the two lengths is what kills it. `repo.length > TARGET_MAX` narrowed to

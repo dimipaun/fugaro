@@ -7,7 +7,7 @@
 # `npm test` fail. A guard whose mutation survives is a guard no test defends,
 # which for this module -- the protocol P1.1, P3.6 and P4.1 speak -- is the
 # difference between a fence and a comment. Section 6 is the group about the
-# bounds: thirteen of its eighteen rows move a comparison by one, which is the
+# bounds: seventeen of its twenty-two rows move a comparison by one, which is the
 # mutation this module has actually been wrong about; four more narrow a rule by
 # removing one of its terms instead (the carriage return from the line-break
 # rule, DEL from the two character rules, and the second head-SHA length from the
@@ -381,12 +381,6 @@ run "registration: the platform is required" \
 run "registration: the (kind, field) table is two-sided for its own three fields" \
   "  for (const field of ['options', 'reply_to', 'action', 'token', 'platform', 'prefs']) {" \
   "  for (const field of ['options', 'reply_to', 'action']) {"
-run "registration: the token's length bound, widened by one" \
-  "  return stringField(value, 'token', TOKEN_MAX, false);" \
-  "  return stringField(value, 'token', TOKEN_MAX + 1, false);"
-run "registration: the token's length bound, narrowed by one" \
-  "  return stringField(value, 'token', TOKEN_MAX, false);" \
-  "  return stringField(value, 'token', TOKEN_MAX - 1, false);"
 run "registration: the platform is one of the two" \
   "  if (!PLATFORMS.includes(value)) return { bad: refuse(REFUSALS.UNKNOWN_PLATFORM, 'platform') };" \
   ""
@@ -416,9 +410,6 @@ run "registration: a quiet-hours window is complete" \
 run "registration: a zone is an IANA-shaped name" \
   "  if (!ZONE_PATTERN.test(zone.value)) {" \
   "  if (false) {"
-run "registration: the zone's length bound, widened by one" \
-  "  const zone = stringField(value.zone, 'prefs.quiet_hours.zone', ZONE_MAX, false);" \
-  "  const zone = stringField(value.zone, 'prefs.quiet_hours.zone', ZONE_MAX + 1, false);"
 run "registration: a minute is inside the local day" \
   "  if (!Number.isSafeInteger(value) || value < 0 || value > MINUTE_MAX) {" \
   "  if (false) {"
@@ -482,13 +473,13 @@ run "canonicalBytes: -0 is refused" \
 #
 # Every guard above is DISABLED: a check deleted, a pattern replaced by `false`.
 # None of them moves a comparison by one, and that is the mutation this module
-# was actually wrong about. Thirteen of the eighteen rows below move one
+# was actually wrong about. Seventeen of the twenty-two rows below move one
 # instead. Four more drop a term of a rule without moving anything: `string: a
 # body loses the carriage return` drops the `code === 0x0d` term of the
 # line-break rule, `string: DEL is no longer refused` and `id: DEL is no longer
 # refused` drop the `|| code === 0x7f` term of a character rule, and `action: the
 # second head-SHA length is dropped` drops the `&& value.length !== SHA_MAX`
-# conjunct of the SHA rule. The eighteenth does neither: `action: the head SHA
+# conjunct of the SHA rule. The twenty-second does neither: `action: the head SHA
 # may be any length from SHA_MIN to SHA_MAX` replaces the SHA rule's equality
 # test with a range test, and what kills it is a refusal of a head SHA between
 # the two lengths — the module's own, and the shared file's. They are here for
@@ -512,8 +503,9 @@ run "canonicalBytes: -0 is refused" \
 # TestTheSharedBoundVectorsHold on the Go side.
 #
 # So: add a bound to the schema, and it needs a row in vectors.bounds.json AND a
-# mutant here. A bound with a row and no mutant is a row that can be deleted by
-# an edit to bounds.test.js without this harness noticing.
+# mutant here — the last four rows are P5.2.1's, the token's and the zone's, each
+# in both directions. A bound with a row and no mutant is a row that can be
+# deleted by an edit to bounds.test.js without this harness noticing.
 # ---------------------------------------------------------------------------
 run "id: the length bound, narrowed by one (the bound itself refused)" \
   "  if (value.length > ID_MAX) return { bad: refuse(REFUSALS.TOO_LONG, field) };" \
@@ -569,6 +561,19 @@ run "action: the second head-SHA length is dropped" \
 run "action: a pull request may be numbered nought" \
   "  if (!Number.isSafeInteger(pr) || pr < 1) return { bad: refuse(REFUSALS.BAD_TARGET, 'action.target.pr') };" \
   "  if (!Number.isSafeInteger(pr) || pr < 0) return { bad: refuse(REFUSALS.BAD_TARGET, 'action.target.pr') };"
+
+run "registration: the token's length bound, widened by one" \
+  "  return stringField(value, 'token', TOKEN_MAX, false);" \
+  "  return stringField(value, 'token', TOKEN_MAX + 1, false);"
+run "registration: the token's length bound, narrowed by one" \
+  "  return stringField(value, 'token', TOKEN_MAX, false);" \
+  "  return stringField(value, 'token', TOKEN_MAX - 1, false);"
+run "registration: the zone's length bound, widened by one" \
+  "  const zone = stringField(value.zone, 'prefs.quiet_hours.zone', ZONE_MAX, false);" \
+  "  const zone = stringField(value.zone, 'prefs.quiet_hours.zone', ZONE_MAX + 1, false);"
+run "registration: the zone's length bound, narrowed by one" \
+  "  const zone = stringField(value.zone, 'prefs.quiet_hours.zone', ZONE_MAX, false);" \
+  "  const zone = stringField(value.zone, 'prefs.quiet_hours.zone', ZONE_MAX - 1, false);"
 
 # ---------------------------------------------------------------------------
 # 7. mac.js, and the boundary that keeps the entry point loadable by the phone.
