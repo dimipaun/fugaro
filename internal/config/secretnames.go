@@ -61,6 +61,59 @@ func HarnessOAuthSecret(name string) bool {
 	return ClaudeOAuthSecret(name) || CodexOAuthSecret(name)
 }
 
+// CredentialSecretPrefix and CredentialKeySuffix build a KEY credential's own
+// secret name: <prefix><name><suffix>, the container `fugaro accounts add
+// --type openrouter|anthropic` stores its value in and the one name the value
+// is ever read back under (MC22). Like a named Claude account's it is DERIVED
+// and never written in the config (craft.go's Credential: a credential carries
+// a name and a type and no grant of its own), so two documents cannot come to
+// disagree about where a credential's value lives.
+//
+// The suffix is what keeps a later family out of the way: a type that
+// authenticates with something else — an OAuth token, which is what the
+// claude-oauth type already has under the Claude family — can hang its own
+// <prefix><name><that suffix> beside this one without either name being a
+// second meaning for the other, and the changed suffix is why.
+const (
+	CredentialSecretPrefix = "credential-"
+	CredentialKeySuffix    = "-key"
+)
+
+// CredentialSecret is the secret a credential's value is stored under:
+// CredentialSecret("<name>") for the credential `<name>`, whatever its type's
+// serving half is.
+func CredentialSecret(name string) string {
+	return CredentialSecretPrefix + name + CredentialKeySuffix
+}
+
+// KeyCredentialSecret reports whether name is a key credential's derived
+// secret name. The whole namespace is one, whether or not the credential it
+// names exists in a config: a name merely shaped like one is a name that would
+// become a credential's the day the credential is defined, so nothing else may
+// be stored under it (ReservedSecrets' rule for the platform's own names, and
+// the CodexOAuthToken ruling of 2026-10-18 for a name with no writer yet).
+func KeyCredentialSecret(name string) bool {
+	return strings.HasPrefix(name, CredentialSecretPrefix)
+}
+
+// CredentialBySecret is KeyCredentialSecret read backwards: the credential
+// name secret belongs to, and whether it is one at all. A name whose
+// credential part is not one a credential may be named — empty, over
+// MaxClaudeAccountNameLen, or outside ClaudeAccountNameRE — is not one, which
+// is the rule ReviewSigningKeyAccount applies to its own family: a name the
+// config path can never produce is a credential that cannot be written either.
+func CredentialBySecret(secret string) (name string, ok bool) {
+	rest, found := strings.CutPrefix(secret, CredentialSecretPrefix)
+	if !found {
+		return "", false
+	}
+	name, found = strings.CutSuffix(rest, CredentialKeySuffix)
+	if !found || len(name) > MaxClaudeAccountNameLen || !ClaudeAccountNameRE.MatchString(name) {
+		return "", false
+	}
+	return name, true
+}
+
 // CredentialsBundleSecret is the logical name of the ONE Secret Manager
 // container the credentials service reads (Q6, docs/credentials-service's
 // implementation plan, C1.11; the reservation is its review finding n2). It

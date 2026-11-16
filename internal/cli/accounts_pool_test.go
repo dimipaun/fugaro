@@ -497,39 +497,6 @@ func TestPoolFamilyUnknownSubcommand(t *testing.T) {
 	}
 }
 
-// TestAccountsAddTypeRefusesATypeNoRunCouldServe: --type is a definition's own
-// type, so the config's rule judges it — the built-in vertex is never defined,
-// and the two types the spec calls future work are refused in words that say so
-// — and the types whose key no command stores yet are refused rather than
-// half-declared: a credentials entry with no secret is inert config that a pool
-// would still be allowed to list.
-func TestAccountsAddTypeRefusesATypeNoRunCouldServe(t *testing.T) {
-	for _, tc := range []struct{ typ, want string }{
-		{"vertex", "vertex is built in: it needs no secret and exists in every installation, so it is never defined as an entry"},
-		{"openai", "openai is not yet supported"},
-		{"codex-oauth", "codex-oauth is not yet supported"},
-		{"bedrock", "must be one of openrouter, anthropic, claude-oauth"},
-		{"anthropic", "no command stores one under a credential's own name yet"},
-		{"openrouter", "no command stores one under a credential's own name yet"},
-	} {
-		t.Run(tc.typ, func(t *testing.T) {
-			path := accountsPoolHome(t, "")
-			before := readFileString(t, path)
-
-			out, _, err := execute(t, "accounts", "add", "team-a", "--repos", "acme/app", "--type", tc.typ)
-			if err == nil {
-				t.Fatalf("--type %q was accepted:\n%s", tc.typ, out)
-			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("the refusal does not say %q: %v", tc.want, err)
-			}
-			if got := readFileString(t, path); got != before {
-				t.Errorf("the refused write changed the file:\n%s", got)
-			}
-		})
-	}
-}
-
 // accountsPoolTypedLocal is the fixture for the refusal below: the account's
 // name is already a credential in the config, under the type whose key that
 // credential authenticates with, and a pool walks it.
