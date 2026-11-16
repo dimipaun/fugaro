@@ -1063,6 +1063,16 @@ func runInit(r *initRun) error {
 						return err
 					}
 				}
+				// And the jobs of the accounts this config declares a KEY
+				// credential under, which this release composes none for: it is
+				// the same record and the same reason, and a print that left
+				// out the job the next plan keeps would be a reading the owner
+				// cannot trust.
+				if len(spec.CarriedProjectJobAccounts) > 0 {
+					if data, err = infra.CarriedProjectJobAccounts(data, prev, spec.CarriedProjectJobAccounts); err != nil {
+						return err
+					}
+				}
 			}
 		}
 		// Printed without a cloud call, so without discovery: stdout stays
@@ -2802,6 +2812,22 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 	if len(spec.CarriedProjectJobs) > 0 {
 		for _, prev := range documents {
 			if vars, err = infra.CarriedProjectJobs(vars, prev, spec.CarriedProjectJobs); err != nil {
+				return nil, userErr("reading the installation's tfvars: %v", err)
+			}
+		}
+	}
+	// And the jobs of the accounts the config declares a KEY credential under,
+	// on the same records: a name such a credential is declared for gets no job
+	// at all from this release's composer (D1670, the filter ProjectJobs
+	// applies), so a document without the job the state holds is the plan of
+	// that job's destruction — and RefuseProjectJobDeletes stops the whole
+	// update on it, with "restore the profile as it was" as its remedy, which
+	// here is putting back the very name the filter drops the job for.
+	// CarriedProjectJobAccounts keeps each of them, whole, from the record the
+	// release behind deployed them in.
+	if len(spec.CarriedProjectJobAccounts) > 0 {
+		for _, prev := range documents {
+			if vars, err = infra.CarriedProjectJobAccounts(vars, prev, spec.CarriedProjectJobAccounts); err != nil {
 				return nil, userErr("reading the installation's tfvars: %v", err)
 			}
 		}
