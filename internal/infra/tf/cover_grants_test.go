@@ -2323,6 +2323,14 @@ func TestOrchestratorAccountIsItsOwnPrincipalKind(t *testing.T) {
 			map[string]any{"member": member, "role": "roles/storage.objectUser", "bucket": bucketName}, map[string]any{}, false},
 		{"the write under a job's own prefix condition", "google_storage_bucket_iam_member",
 			map[string]any{"member": member, "role": "roles/storage.objectUser", "bucket": bucketName, "condition": jobCond}, map[string]any{}, false},
+		// The title on its own is not the condition: a grant carrying the
+		// launchers' title with an expression over the whole bucket —
+		// objects/, and so the bucket root, where the managed marker
+		// fugaro/managed.json is written (design §6 rule 2) — reads as the
+		// launchers' row to anything that compares titles, and is not it.
+		{"the write under the launchers' title with a whole-bucket expression", "google_storage_bucket_iam_member",
+			map[string]any{"member": member, "role": "roles/storage.objectUser", "bucket": bucketName,
+				"condition": []any{map[string]any{"title": gcp.LauncherBucketConditionTitle, "expression": "resource.name.startsWith(\"projects/_/buckets/" + bucketName + "/objects/\")", "description": nil}}}, map[string]any{}, false},
 		{"the write under the launchers' condition on another bucket", "google_storage_bucket_iam_member",
 			map[string]any{"member": member, "role": "roles/storage.objectUser", "bucket": "someone-elses-bucket", "condition": launcherCond}, map[string]any{}, false},
 		{"the read under a condition", "google_storage_bucket_iam_member",
