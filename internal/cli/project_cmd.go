@@ -2709,6 +2709,23 @@ func craftLines(p *projectpolicy.Policy) map[string]string {
 	return out
 }
 
+// craftAccessLines is the access half of craftLines: one line per craft that
+// names the credential or pool its calls go out on, keyed for the member that
+// decides whose credential a craft spends rather than for the craft's model,
+// which decides what a stage runs and not what it spends.
+func craftAccessLines(p *projectpolicy.Policy) map[string]string {
+	if p == nil || p.Crafts == nil {
+		return nil
+	}
+	out := map[string]string{}
+	for _, name := range config.CraftNames {
+		if access := p.Crafts.Of(name).Access; access != "" {
+			out["crafts "+name+".access"] = access
+		}
+	}
+	return out
+}
+
 // craftKeptText is one of those members' lines as a single line, for the `kept`
 // line the diff prints: the name each line is keyed by, without the member's
 // prefix, and the value it carries.

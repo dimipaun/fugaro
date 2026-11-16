@@ -681,6 +681,119 @@ func policyAccountWidening(old, new *projectpolicy.Policy) []policyCeiling {
 	return out
 }
 
+// policyCraftWidening is the craft grants this publish would ADD or REWRITE
+// where the node it replaces carries them not at all or carries another value:
+// a credential the node does not name, a credential whose type changes, a pool
+// the node does not name or one whose members, strategy, owner or users change,
+// and a craft's access.
+//
+// They are the node's spending and egress grant (F12/D1628): a credential is a
+// token a run's calls go out on, a pool is the set of them a craft may be served
+// by, and a craft's access is which of the two that craft's calls use — so a
+// publish that adds one hands every run of the project a credential it did not
+// hold, and one that repoints an access moves a craft's calls onto another
+// credential. That is the account-choice members' own class rather than a
+// ceiling settingsLoosens reads (a credential and a pool are no member of
+// policyCeilingMembers), so their comparison is asked beside it, and MC18's
+// publish — which writes the three blocks from the installation's config — is
+// what makes them a change this node can meet at all.
+//
+// A member this publish REMOVES is not a widening, exactly as the account
+// members' removal is not: it takes a grant away from the node. Nor is a craft's
+// MODEL, which decides what a stage runs and not whose credential it spends, so
+// only the access half of the craft block is measured.
+//
+// Nor is the member MC4's conversion derives where the node holds none
+// (craftGrantDerived): the credential an account of the installation's own keys
+// is written down as, and the craft key naming it. The account is the
+// installation's already — its token, its allow_data_to, and the stage keys that
+// reach it — and the craft key is the account that craft's stages already run
+// on, which is F17's whole contract ("a run before and after resolves the same
+// model and credential"). Counting it here would make the migration a step the
+// owner has to answer for by name, and the first `fugaro update` after this
+// release the one that stops for it: the HARD RULE's own loss, on an
+// installation whose config predates these keys and which has nothing to do but
+// run the command.
+func policyCraftWidening(old, new *projectpolicy.Policy, lc *localcfg.Config) []policyCeiling {
+	was, now := policyCraftGrantValues(old), policyCraftGrantValues(new)
+	names := map[string]bool{}
+	for _, side := range []map[string]string{was, now} {
+		for name := range side {
+			names[name] = true
+		}
+	}
+	var out []policyCeiling
+	for _, member := range slices.Sorted(maps.Keys(names)) {
+		after := now[member]
+		// A member the node states nothing for is the grant this publish
+		// REMOVES, skipped above; one the two state alike is no change at all.
+		if after == "" || after == was[member] {
+			continue
+		}
+		// Only a member the node does NOT hold can be the migration's: a value
+		// it does hold and this publish rewrites is the operator's own, whatever
+		// it names.
+		if was[member] == "" && craftGrantDerived(lc, member, after) {
+			continue
+		}
+		before := was[member]
+		if before == "" {
+			before = "(not set)"
+		}
+		out = append(out, policyCeiling{Member: member, Was: before, Now: after})
+	}
+	return out
+}
+
+// craftGrantDerived is whether a craft member is the one MC4's conversion
+// derives for an installation whose config predates the craft keys
+// (init_craft_migrate.go): a credential of type claude-oauth under the name of an
+// account the installation's own keys declare — the account written down as the
+// typed credential this release reads (spec §1) — and the craft access naming
+// such a name, which is the account that craft's stages run on.
+//
+// The names are read off the config's own account keys (lc.ClaudeAccounts) and
+// never off the node's accounts block: that block is derived from the profiles
+// and the repositories that name an account (projectpolicy.DeriveAccounts), so
+// an installation whose stages name an account nothing else does holds none of
+// it. Every name the conversion writes is one of the config's own, the alias a
+// stage key may carry resolved to the account it stands for first (D2092).
+func craftGrantDerived(lc *localcfg.Config, member, value string) bool {
+	if lc == nil || value == "" {
+		return false
+	}
+	if name, ok := strings.CutPrefix(member, "craft_credentials "); ok {
+		return value == config.CredentialTypeClaudeOAuth && craftAccountNamed(lc, name)
+	}
+	if strings.HasPrefix(member, "crafts ") && strings.HasSuffix(member, ".access") {
+		return craftAccountNamed(lc, value)
+	}
+	return false
+}
+
+// craftAccountNamed is whether the installation's own keys declare an account
+// under a name.
+func craftAccountNamed(lc *localcfg.Config, name string) bool {
+	_, ok := lc.ClaudeAccounts[name]
+	return ok
+}
+
+// policyCraftGrantValues is a node's craft grants keyed and spelled the way the
+// publish diff spells them — the very lines whose change the operator reads
+// there — so a sentence naming one names the text the diff above it shows. The
+// three blocks are the diff's own three: a credential by its type, a pool by the
+// members and the answers that decide who it is served to, and an access alone.
+func policyCraftGrantValues(p *projectpolicy.Policy) map[string]string {
+	out := map[string]string{}
+	if p == nil {
+		return out
+	}
+	for _, lines := range []map[string]string{craftCredentialLines(p), craftPoolLines(p), craftAccessLines(p)} {
+		maps.Copy(out, lines)
+	}
+	return out
+}
+
 // policyAccountValues is a node's account-choice members, keyed the way the
 // node's own document spells them, with the members it states nothing for left
 // out. It is the node side of configAccountValues, and the two are one
@@ -704,9 +817,10 @@ func policyAccountValues(p *projectpolicy.Policy) map[string]string {
 // loosening is this run's publish measured against the node it replaces, and it
 // is empty for every run that publishes nothing: Migrate moves a version and
 // derives the members the config states, and a member it derives is not a
-// ceiling the operator's config states. The account-choice members are asked
-// beside the ceilings (policyAccountWidening) rather than through them, since a
-// node's account is not a member settingsLoosens reads.
+// ceiling the operator's config states. The account-choice members and the
+// craft grants are asked beside the ceilings (policyAccountWidening,
+// policyCraftWidening) rather than through them, since neither a node's account
+// nor its credentials, pools and accesses is a member settingsLoosens reads.
 //
 // A FIRST publish is the one publish with no node to measure against, and it is
 // a widening by its own name rather than an empty comparison: the document it
@@ -732,11 +846,15 @@ func (m *policyMigration) loosening() []policyCeiling {
 	if m.firstPublish {
 		return []policyCeiling{{Member: projectpolicy.PathShared()}}
 	}
-	// The account keys are not ceilings, so settingsLoosens has nothing to say
-	// about them and their own comparison is asked beside it: setting one is the
-	// same class of decision — who is admitted, and on whose credential — that
-	// the typed name guards here.
-	return append(policyLoosening(m.node, m.pub.pol), policyAccountWidening(m.node, m.pub.pol)...)
+	// The account keys and the craft grants are not ceilings, so settingsLoosens
+	// has nothing to say about them and their own comparisons are asked beside
+	// it: setting one is the same class of decision — who is admitted, and on
+	// whose credential — that the typed name guards here, and a credential, a
+	// pool or an access this publish adds is the grant itself
+	// (policyCraftWidening).
+	out := policyLoosening(m.node, m.pub.pol)
+	out = append(out, policyAccountWidening(m.node, m.pub.pol)...)
+	return append(out, policyCraftWidening(m.node, m.pub.pol, m.lc)...)
 }
 
 // accountChoiceOnly is whether the whole of this publish's loosening is the
@@ -748,6 +866,12 @@ func (m *policyMigration) loosening() []policyCeiling {
 // ceiling raised in the same publish is the separate one D846 reserves for the
 // project's own hand and keeps its typed name.
 //
+// A craft grant carried in the same publish is not this either: a credential,
+// a pool or an access the publish adds is the spending and egress grant itself
+// (policyCraftWidening), and the door's own decision — which account the
+// project's stages go out on — does not cover it, so that publish keeps the
+// typed name.
+//
 // A project's FIRST node is never this, whatever it carries: the node it writes
 // is the whole of the project's policy, which is what the first publish's own
 // sentence says and what its Typed class is about. So is a run with no node to
@@ -756,7 +880,7 @@ func (m *policyMigration) accountChoiceOnly(loosening []policyCeiling) bool {
 	if m.firstPublish || m.pub == nil || len(loosening) == 0 {
 		return false
 	}
-	return len(policyLoosening(m.node, m.pub.pol)) == 0
+	return len(policyLoosening(m.node, m.pub.pol)) == 0 && len(policyCraftWidening(m.node, m.pub.pol, m.lc)) == 0
 }
 
 // looseningWhy is the sentence the typed confirmation shows and the refusal

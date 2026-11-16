@@ -166,6 +166,30 @@ func accountMembersOn(t *testing.T, db *gcpfake.RTDB) (string, map[string]string
 	return account, stages
 }
 
+// craftMembersOn is the published node's three craft members as one comparable
+// line: encoding/json sorts the keys of every map it writes, so two documents
+// carrying the same members print the same text whatever order they were built
+// in. A member the node carries nothing for is left out, which is what a refusal
+// that wrote nothing reads as.
+func craftMembersOn(t *testing.T, db *gcpfake.RTDB) string {
+	t.Helper()
+	n, ok := db.Value(projectpolicy.PathShared()).(map[string]any)
+	if !ok {
+		t.Fatalf("the node at %s is %T (%v)", projectpolicy.PathShared(), db.Value(projectpolicy.PathShared()), db.Value(projectpolicy.PathShared()))
+	}
+	out := map[string]any{}
+	for _, k := range []string{"crafts", "craft_credentials", "craft_pools"} {
+		if v, ok := n[k]; ok {
+			out[k] = v
+		}
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
 // ceilingOn is nodeCeiling for a database held without a fixture — the tests
 // that hold the fake itself. The database hands numbers back as
 // json.Number when the write came over HTTP and as float64 when the fake was
@@ -3048,6 +3072,162 @@ func TestPublishDiffNamesTheCraftLines(t *testing.T) {
 		if pool.Name == "acme-loose" {
 			t.Errorf("the publish wrote the ownerless pool: %+v", pool)
 		}
+	}
+}
+
+// TestPolicyCraftWideningNamesTheGrants: the craft members are the node's
+// spending and egress grant (F12/D1628), so a publish that adds or rewrites one
+// is the class the typed name guards — and which members those are is read here,
+// one by one, because the gate's decision is this comparison and nothing else
+// (update_managed.go's gateStep). A pool is compared whole: a member added to it,
+// a strategy, an owner or a roster that moves is one grant another run is served
+// by, so it is as much a widening as the pool itself.
+//
+// Two things are NOT widenings and are pinned beside them: a craft's model, which
+// decides what a stage runs and not whose credential it spends, and the member
+// MC4's conversion derives on an installation whose config predates the craft
+// keys (init_craft_migrate.go) — a credential under an account's own name and the
+// craft key naming it. Counting that one would make the first `fugaro update`
+// after this release a step the owner has to answer for by name, and the HARD
+// RULE's own migration is not the operator's decision to confirm.
+func TestPolicyCraftWideningNamesTheGrants(t *testing.T) {
+	const acmeCoder = "claude-opus-5-5"
+	policyOf := func(creds []config.Credential, pools []config.Pool, crafts *config.Crafts) *projectpolicy.Policy {
+		return &projectpolicy.Policy{CraftCredentials: creds, CraftPools: pools, Crafts: crafts}
+	}
+	crafts := func(coder config.Craft) *config.Crafts { return &config.Crafts{Coder: coder} }
+	creds := func(cs ...config.Credential) []config.Credential { return cs }
+	pools := func(ps ...config.Pool) []config.Pool { return ps }
+	pool := func(ps ...func(*config.Pool)) config.Pool {
+		p := config.Pool{Name: "acme-pool", Strategy: config.PoolStrategyFailover, Members: []string{"acme-main"}, Owner: "owner@example.com"}
+		for _, edit := range ps {
+			edit(&p)
+		}
+		return p
+	}
+	// The migration's own fixture: the installation one release behind, whose
+	// account keys are team-a and team-b (init_craft_migrate_test.go).
+	lc := parseLocalConfig(t, previousInstallation)
+
+	for _, tc := range []struct {
+		name     string
+		old, new *projectpolicy.Policy
+		want     []string
+	}{
+		{
+			name: "a credential the node does not hold",
+			new:  policyOf(creds(config.Credential{Name: "acme-main", Type: config.CredentialTypeOpenRouter}), nil, nil),
+			want: []string{"craft_credentials acme-main (not set) -> " + config.CredentialTypeOpenRouter},
+		},
+		{
+			name: "a credential whose type changes",
+			old:  policyOf(creds(config.Credential{Name: "acme-main", Type: config.CredentialTypeOpenRouter}), nil, nil),
+			new:  policyOf(creds(config.Credential{Name: "acme-main", Type: config.CredentialTypeAnthropic}), nil, nil),
+			want: []string{"craft_credentials acme-main " + config.CredentialTypeOpenRouter + " -> " + config.CredentialTypeAnthropic},
+		},
+		{
+			name: "a pool the node does not hold",
+			new:  policyOf(nil, pools(pool()), nil),
+			want: []string{"craft_pools acme-pool (not set) -> members acme-main, strategy failover, owner owner@example.com"},
+		},
+		{
+			name: "a member added to a pool",
+			old:  policyOf(nil, pools(pool()), nil),
+			new:  policyOf(nil, pools(pool(func(p *config.Pool) { p.Members = []string{"acme-main", "vertex"} })), nil),
+			want: []string{"craft_pools acme-pool members acme-main, strategy failover, owner owner@example.com -> members acme-main, vertex, strategy failover, owner owner@example.com"},
+		},
+		{
+			name: "a pool's strategy",
+			old:  policyOf(nil, pools(pool()), nil),
+			new:  policyOf(nil, pools(pool(func(p *config.Pool) { p.Strategy = config.PoolStrategyRoundRobin })), nil),
+			want: []string{"craft_pools acme-pool members acme-main, strategy failover, owner owner@example.com -> members acme-main, strategy " + config.PoolStrategyRoundRobin + ", owner owner@example.com"},
+		},
+		{
+			name: "a pool's owner",
+			old:  policyOf(nil, pools(pool()), nil),
+			new:  policyOf(nil, pools(pool(func(p *config.Pool) { p.Owner = "other@example.com" })), nil),
+			want: []string{"craft_pools acme-pool members acme-main, strategy failover, owner owner@example.com -> members acme-main, strategy failover, owner other@example.com"},
+		},
+		{
+			name: "a pool's roster",
+			old:  policyOf(nil, pools(pool()), nil),
+			new:  policyOf(nil, pools(pool(func(p *config.Pool) { p.AllowedUsers = []string{"dev@example.com"} })), nil),
+			want: []string{"craft_pools acme-pool members acme-main, strategy failover, owner owner@example.com -> members acme-main, strategy failover, owner owner@example.com, allowed_users dev@example.com"},
+		},
+		{
+			// The access alone: the model beside it is no grant, which the case
+			// below pins from the other side.
+			name: "a craft's access",
+			old:  policyOf(nil, nil, crafts(config.Craft{Model: acmeCoder, Access: "acme-main"})),
+			new:  policyOf(nil, nil, crafts(config.Craft{Model: acmeCoder, Access: "acme-pool"})),
+			want: []string{"crafts coder.access acme-main -> acme-pool"},
+		},
+		{
+			name: "nothing for a craft's model",
+			old:  policyOf(nil, nil, crafts(config.Craft{Model: acmeCoder})),
+			new:  policyOf(nil, nil, crafts(config.Craft{Model: "claude-sonnet-5"})),
+		},
+		{
+			name: "nothing for a grant the node already holds and this publish does not change",
+			old:  policyOf(creds(config.Credential{Name: "acme-main", Type: config.CredentialTypeOpenRouter}), nil, nil),
+			new:  policyOf(creds(config.Credential{Name: "acme-main", Type: config.CredentialTypeOpenRouter}), nil, nil),
+		},
+		{
+			name: "nothing for a grant this publish takes away",
+			old:  policyOf(creds(config.Credential{Name: "acme-main", Type: config.CredentialTypeOpenRouter}), nil, nil),
+			new:  policyOf(nil, nil, nil),
+		},
+		{
+			name: "nothing for the migration's credential and the craft key naming it",
+			new: policyOf(
+				creds(config.Credential{Name: "team-a", Type: config.CredentialTypeClaudeOAuth}),
+				nil,
+				crafts(config.Craft{Model: acmeCoder, Access: "team-a"}),
+			),
+		},
+		{
+			// The name is the account's and the type is not: a key credential of
+			// the operator's own under an account's name is not what the
+			// conversion writes, and it spends a different secret.
+			name: "a credential under an account's name of another type",
+			new: policyOf(
+				creds(config.Credential{Name: "team-a", Type: config.CredentialTypeOpenRouter}),
+				nil,
+				crafts(config.Craft{Model: acmeCoder, Access: "team-a"}),
+			),
+			want: []string{"craft_credentials team-a (not set) -> " + config.CredentialTypeOpenRouter},
+		},
+		{
+			// The whole of the member and not its name: a value the node holds
+			// and this publish repoints is the operator's own, whoever writes it.
+			name: "a craft's access repointed onto an account the config declares",
+			old:  policyOf(nil, nil, crafts(config.Craft{Model: acmeCoder, Access: "acme-main"})),
+			new:  policyOf(nil, nil, crafts(config.Craft{Model: acmeCoder, Access: "team-a"})),
+			want: []string{"crafts coder.access acme-main -> team-a"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			old := tc.old
+			if old == nil {
+				old = &projectpolicy.Policy{}
+			}
+			got := policyCraftWidening(old, tc.new, lc)
+			if len(got) != len(tc.want) {
+				t.Fatalf("policyCraftWidening = %+v, want each of %v", got, tc.want)
+			}
+			for i, c := range got {
+				if line := c.Member + " " + c.Was + " -> " + c.Now; line != tc.want[i] {
+					t.Errorf("widening %d = %q, want %q", i, line, tc.want[i])
+				}
+			}
+			// The same comparison spells a member the same way the diff does:
+			// this is what the operator reads, in both places.
+			for _, c := range got {
+				if _, ok := policyCraftGrantValues(tc.new)[c.Member]; !ok {
+					t.Errorf("the widening names %q, which is no member of the diff's own lines", c.Member)
+				}
+			}
+		})
 	}
 }
 
