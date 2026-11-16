@@ -234,7 +234,7 @@ type InstallationOutputs struct {
 // Cloud Run service that alone holds the model credentials. One type serves
 // both ends of the contract — the installation root's output of that name and
 // the repository root's installation.credentials_service — because both carry
-// the same two values.
+// the same values.
 //
 // Null means the installation has not opted in (D147), and null is what every
 // reader gates on: with it off, every job keeps its model-secret accessors,
@@ -247,10 +247,21 @@ type CredentialsService struct {
 	// tokens are minted for (C1.14) — and it is the INSTALLATION root's: the
 	// module's output carries it (outputs.tf, the service resource's uri) and
 	// the init stage writes it into var.credentials_service on the apply
-	// after the one that created the service. A repository root reads the
-	// first two fields and nothing else, so the object it writes into its own
-	// tfvars is built without it (repoCredentialsService).
+	// after the one that created the service. A repository root reads it not
+	// at all, so the object it writes into its own tfvars is built without it
+	// (repoCredentialsService).
 	URL string `json:"url,omitempty"`
+	// Account is the email of the service's own account (D2074), which a
+	// repository root grants roles/secretmanager.secretAccessor per mounted
+	// workflow secret to — the service reads the container a run asks it for
+	// (B3.5). It is written into the repository root's tfvars and never read
+	// by this binary: the module turns it into the IAM member.
+	//
+	// Empty in the outputs of an installation applied before the field
+	// existed, and empty is inert there: modules/workflow plans the grant for
+	// no account, so a repository root against such an installation plans
+	// exactly what it planned, and the next `fugaro update` fills it in.
+	Account string `json:"account,omitempty"`
 }
 
 // IntakeService is the installation root's `intake` output (DS2.2, D1931): the
@@ -390,13 +401,20 @@ func ModelSecretsServed(serves bool, auth string) string {
 }
 
 // repoCredentialsService is the installation's credentials service as a
-// REPOSITORY root reads it: the name and the region the workflow module turns
-// into each job account's roles/run.invoker grant, or nil when the switch is
-// held off for this repository (CredentialsServiceServes). The URL is left
-// behind because the module's variable carries no such attribute — an object
-// conversion in Terraform silently DROPS an extra attribute rather than
-// refusing it, so passing it would read as a value the repository root agreed
-// on while nothing used it.
+// REPOSITORY root reads it: the name, the region and the account the workflow
+// module turns into each job account's roles/run.invoker grant, the
+// per-container secretAccessor the service's own account gets (D2074), or nil
+// when the switch is held off for this repository
+// (CredentialsServiceServes). The URL is left behind because the module's
+// variable carries no such attribute — an object conversion in Terraform
+// silently DROPS an extra attribute rather than refusing it, so passing it
+// would read as a value the repository root agreed on while nothing used it.
+//
+// The account travels with an empty value when the installation's outputs
+// predate it, and that is deliberate: the module plans no grant for an empty
+// account, so the release that added the field changes no repository root's
+// plan until the installation itself is applied (outputs.tf carries it from
+// the service's own resource, so the next apply of that root does).
 //
 // nil is the whole of the switch's first flip, and it needs no Terraform
 // change: modules/workflow/sa.tf gates the mount drop on the variable being
@@ -407,7 +425,7 @@ func repoCredentialsService(s *CredentialsService, on bool) *CredentialsService 
 	if s == nil || !on {
 		return nil
 	}
-	return &CredentialsService{Name: s.Name, Region: s.Region}
+	return &CredentialsService{Name: s.Name, Region: s.Region, Account: s.Account}
 }
 
 // RoleIDs are the custom roles' full names, projects/<p>/roles/<id>.

@@ -1894,6 +1894,136 @@ run "credentials_service_off_job" {
     condition     = length(google_cloud_run_v2_service_iam_member.credentials) == 0
     error_message = "with the credentials service off there is no service to invoke, so no invoker grant"
   }
+  assert {
+    condition     = length(google_secret_manager_secret_iam_member.service) == 0
+    error_message = "with the credentials service off the module grants the service's account nothing: the per-container grants of D2074 hang on the same null the accessor drop does"
+  }
+}
+
+# D2074 (B3.3): with the service ON, the service's OWN account may read every
+# workflow secret this job mounts — one accessor per container, beside the
+# job's own grant and never a move of it. What the service reads them for is
+# B3.4 (a run whose job no longer mounts a secret fetches it from the service);
+# this run is the reach the service is given to do it, and it is the half the
+# repository root's plan carries: the container set is the job's own mounts, so
+# the two cannot drift apart (deploy/terraform's
+# TestServiceWorkflowSecretGrantsMatchTheJobsMounts holds the source of both to
+# each other and this holds the planned objects).
+#
+# The account is the installation's own output (modules/installation/
+# outputs.tf, the service account's email): a repository root never derives it,
+# and the member is that email spelled as an IAM member.
+run "credentials_service_reads_the_jobs_containers" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project         = var.bitbucket.project
+    fugaro_project  = var.bitbucket.fugaro_project
+    region          = var.bitbucket.region
+    name            = "web"
+    repo_label      = var.bitbucket.repo.label
+    workflow        = var.bitbucket.repo.workflows.web
+    secrets         = var.bitbucket.repo.secrets
+    runs_bucket     = var.bitbucket.installation.runs_bucket
+    job_runner_role = var.bitbucket.installation.role_ids.job_runner
+    credentials_service = {
+      name    = "fugaro-credentials"
+      region  = "us-east5"
+      account = "fugaro-credentials@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  override_resource {
+    target          = google_service_account.job
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition = tomap({ for k, m in google_secret_manager_secret_iam_member.service : k => m.secret_id }) == tomap({
+      CLAUDE_CODE_OAUTH_TOKEN = "fugaro-acme-sandbox-claude-oauth-token-d68d08fb66f32201"
+      FUGARO_BITBUCKET_TOKEN  = "fugaro-acme-sandbox-bitbucket-token-a9273afb5a2f66ba"
+      SANDBOX_PROBE           = "fugaro-acme-sandbox-sandbox-probe-8ed07eaf4b722cd8"
+    })
+    error_message = "the service's account must hold an accessor on every secret this job mounts — the model credential it serves (claude-oauth-token), the git credential, and the workflow's own secret — one container per mount, and no container the job does not mount"
+  }
+  assert {
+    condition = alltrue([for m in google_secret_manager_secret_iam_member.service :
+      m.project == "proj-1234" &&
+      m.role == "roles/secretmanager.secretAccessor" &&
+    m.member == "serviceAccount:fugaro-credentials@proj-1234.iam.gserviceaccount.com"])
+    error_message = "each grant is a secret-level secretAccessor in this project to the account the installation's outputs carry, and to nothing else"
+  }
+  assert {
+    condition = (length(google_secret_manager_secret_iam_member.service) == length([for e in google_cloud_run_v2_job.this[0].template[0].template[0].containers[0].env : e if length(e.value_source) > 0]) &&
+    toset([for m in google_secret_manager_secret_iam_member.service : m.secret_id]) == toset([for e in google_cloud_run_v2_job.this[0].template[0].template[0].containers[0].env : e.value_source[0].secret_key_ref[0].secret if length(e.value_source) > 0]))
+    error_message = "the two sets are equal, container for container: the service may read each secret the job's own container mounts and no other, so a mount added or dropped without the grant (or the other way round) fails here"
+  }
+  assert {
+    condition = tomap({ for k, m in google_secret_manager_secret_iam_member.job : k => m.secret_id }) == tomap({
+      bitbucket-token = "fugaro-acme-sandbox-bitbucket-token-a9273afb5a2f66ba"
+      sandbox-probe   = "fugaro-acme-sandbox-sandbox-probe-8ed07eaf4b722cd8"
+    })
+    error_message = "the job's own grant is untouched: with the service on it is exactly what C1.18 leaves — the model credential's accessor gone, the rest kept — and the service's grants sit beside it on the same containers"
+  }
+}
+
+# The inert half of D2074, and the reason `account` is optional rather than
+# required: an installation applied before the outputs carried it has no
+# account to grant to, and a repository root planned against one must plan
+# exactly what it planned — no new grant at all. That is what makes this
+# release harmless on an installation the owner has not re-applied yet; a
+# required attribute would instead fail every repository root's plan until
+# they did.
+run "credentials_service_without_an_account_reads_nothing" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project         = var.bitbucket.project
+    fugaro_project  = var.bitbucket.fugaro_project
+    region          = var.bitbucket.region
+    name            = "web"
+    repo_label      = var.bitbucket.repo.label
+    workflow        = var.bitbucket.repo.workflows.web
+    secrets         = var.bitbucket.repo.secrets
+    runs_bucket     = var.bitbucket.installation.runs_bucket
+    job_runner_role = var.bitbucket.installation.role_ids.job_runner
+    credentials_service = {
+      name   = "fugaro-credentials"
+      region = "us-east5"
+    }
+  }
+
+  override_resource {
+    target          = google_service_account.job
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition     = length(google_secret_manager_secret_iam_member.service) == 0
+    error_message = "the service's account is unknown on an installation whose outputs predate it, so no grant is planned: an empty for_each creates nothing, and the plan is the one this root planned before D2074 existed"
+  }
+  assert {
+    condition     = length(google_cloud_run_v2_service_iam_member.credentials) == 1
+    error_message = "the rest of the opt-in is unchanged with the account missing: the job account still gains its invoker grant, and only the account-bearing grant waits for the installation's next apply"
+  }
 }
 
 # The GitHub App's private key, with the service ON (C2.3). It is the second

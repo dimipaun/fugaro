@@ -116,11 +116,16 @@ output "catalog_check_service_account" {
 }
 
 output "credentials_service" {
-  description = "The credentials service's Cloud Run service name and region, or null while the installation has not opted in (D147). A repository root grants each job account roles/run.invoker on it from these, and drops the job's model-secret accessors with it. url is the service's own URL as Cloud Run assigned it (the resource's uri), which is the audience a caller's Google ID token is minted for: it is what C1.20's stage writes back into var.credentials_service.url, because nothing inside the service resource can read its own uri (credentials.tf)."
+  description = "The credentials service's Cloud Run service name, its region and the email of its own account, or null while the installation has not opted in (D147). A repository root grants each job account roles/run.invoker on it from these, drops the job's model-secret accessors with it, and grants the service's account itself a secretAccessor on each secret that repository's jobs mount (D2074, account). url is the service's own URL as Cloud Run assigned it (the resource's uri), which is the audience a caller's Google ID token is minted for: it is what C1.20's stage writes back into var.credentials_service.url, because nothing inside the service resource can read its own uri (credentials.tf)."
   value = var.credentials_service == null ? null : {
     name   = google_cloud_run_v2_service.credentials[0].name
     region = var.region
     url    = google_cloud_run_v2_service.credentials[0].uri
+    # The account the repository roots grant D2074's reads to. It is this
+    # module's own resource rather than an input, so it is known on the same
+    # apply that created the service — unlike url, which only the apply after
+    # it can read.
+    account = google_service_account.credentials[0].email
   }
 }
 
