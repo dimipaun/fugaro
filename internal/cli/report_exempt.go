@@ -225,6 +225,7 @@ var exemptAnswers = map[string]string{
 	"issue dismiss":          "marks one issue as not worth filing, and prints the mark it wrote",
 	"issue submit":           "shows the issue it would file on GitHub, and files it under --ask",
 	"issue sync":             "uploads this machine's pending issues, printing its own account of the upload by hand",
+	"mailbox":                "runs the mailbox consumer loop, one line per pass naming the lease it holds and what it read, which no step account of a single run fits",
 	"models add":             "writes the claim, the price and the allow-list entry, and prints what it wrote",
 	"models rm":              "drops the claim, the price and the allow-list entry, and prints what it dropped",
 	"models use":             "writes one repository's own config in its working tree, and prints the line it wrote",
