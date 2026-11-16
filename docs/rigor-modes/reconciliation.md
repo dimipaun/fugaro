@@ -909,7 +909,12 @@ section, none of them run — moved the table's row from 139 to 140.)
 `internal/cli/docs_check311_test.go`, the CLI-output plan's pin over its
 owner-run Check 311 in the register — the PowerShell script the Windows half of
 the output work ships, its row and its section, and the sibling test
-`scripts/live_checks_test.go` drives — moved the table's row from 140 to 141.) They
+`scripts/live_checks_test.go` drives — moved the table's row from 140 to 141.)
+(Amended 2026-11-16: `internal/cli/docs_registry_readers_test.go`, the
+forge-authorship-images plan's C6, re-pointed by its owner's answer of
+2026-11-16 — the pin over
+`SECURITY.md`'s paragraph on the source an image carries and who can read it —
+moved the table's row from 141 to 142.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
