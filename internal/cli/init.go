@@ -736,6 +736,16 @@ type initRun struct {
 	credsRecord    bool
 	credsBitbucket bool
 
+	// credsUnreadMarker is the marker of a session whose own rule kept the
+	// bundle unopened — a coding agent's session or a Fugaro run's own process
+	// (credentialsBundleReady's two refusals before the read) — and it is empty
+	// wherever a read was attempted, whether it answered or failed. The two are
+	// not the same fact to a caller: no reading may be JUDGED on, so the gate on
+	// the flip's drop goes on with a warning under a marker and refuses where the
+	// read failed, which is a state the person can be sent to fix
+	// (refuseTheProxiedDrop, update_proxied.go).
+	credsUnreadMarker string
+
 	// managed is true once this run read that the project it installs into
 	// is managed (managedProject): a guard refusal's text is then the managed
 	// one. Only true is remembered; false and an error are read again.

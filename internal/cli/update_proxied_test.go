@@ -298,6 +298,69 @@ func TestUpdateRefusesTheProxiedDropWithoutTheToken(t *testing.T) {
 	}
 }
 
+// TestUpdateRefusesTheDropWhenTheBundleWasNotRead: the O8 gate is judged on a
+// READING, so a read that FAILED is not a reason to go on — the record the
+// switch reads is the last reading's (recordCredentialsServiceReady leaves it
+// as it found it when there is nothing to write), so a repository recorded on
+// still plans the drop, and applying it would take the mount away on the word
+// of a read that never happened.
+//
+// The state is the one a member of the installation who is not the bundle's
+// owner is in: the record on from a run that read it, and this run's own read
+// refused — the fixture's bundle is not there at all, which is what the store's
+// own first call answers for a container the read fails on. It is the state the
+// gate must refuse and not warn about: the two markers — a coding agent's
+// session and a Fugaro run's own process — are the only sessions that may not
+// answer the question at all, and a person's own terminal with a read that
+// failed is not one of them.
+func TestUpdateRefusesTheDropWhenTheBundleWasNotRead(t *testing.T) {
+	r, db := proxiedDropRig(t)
+	publishProxiedNode(t, db, true, proxiedRepoCanonical(t))
+	markRepoSwitchOn(t, r)
+	dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", checkoutYAML("bitbucket", "cascade", "aurora", ""))
+	t.Chdir(dir)
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update", "--repo", "--no-build")
+	text := out + errOut
+	if err == nil {
+		t.Fatalf("the run applied a root that takes this repository's Bitbucket token away on the word of a read that did not happen\nstdout:\n%s\nstderr:\n%s", out, errOut)
+	}
+	if got := ExitCode(err); got != ExitUserError {
+		t.Errorf("exit %d, want %d: the read is the person's to make work at their own terminal\n%s", got, ExitUserError, text+ErrorText(err))
+	}
+	for _, want := range []string{
+		"the credentials service's bundle was not read",
+		"could not check whether the credentials service's bundle holds a " + config.BitbucketSecret,
+		"Nothing has been applied",
+	} {
+		if !strings.Contains(text+ErrorText(err), want) {
+			t.Errorf("the refusal does not carry %q, so it is not the gate's own sentence over a failed read\n%s%s", want, text, ErrorText(err))
+		}
+	}
+	if n := len(r.ran(t, "apply")); n != 0 {
+		t.Errorf("the run refused the drop and applied anyway (%d time(s)): %q", n, r.calls(t))
+	}
+}
+
+// markRepoSwitchOn writes the switch's record on for the rig's acme/sandbox
+// entry, which is what a run that read the bundle leaves in the local config
+// (recordCredentialsServiceReady). A run whose read FAILS writes nothing, so
+// this is the only way the drop is planned in the test above.
+func markRepoSwitchOn(t *testing.T, r *initRig) {
+	t.Helper()
+	b, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), switchRepos) {
+		t.Fatalf("the rig's local config no longer holds %q:\n%s", switchRepos, b)
+	}
+	on := strings.Replace(switchRepos, "workflows: [web] }", "workflows: [web], credentials_service_ready: true }", 1)
+	if err := os.WriteFile(r.cfg, []byte(strings.Replace(string(b), switchRepos, on, 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestUpdateAppliesTheProxiedDropWithTheToken is the other side of the ruling:
 // the bundle holds the upstream token, which is every installation whose proxy
 // is in use, since the service has nothing to forward with otherwise. The run

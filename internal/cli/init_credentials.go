@@ -148,12 +148,21 @@ const credsServiceSince = "0.10.0"
 // apply, so a second read would let them answer from two documents — and it is
 // false wherever there was no reading and wherever the bundle holds no
 // document, which is the fact said twice rather than a fourth state.
+//
+// The marker of a session that may not open the bundle is remembered beside
+// them (credsUnreadMarker), because a caller has to tell that no-reading from a
+// read that FAILED: the first is a question the session may not answer at all,
+// and the second is a state a person can be sent to fix — so the gate above
+// goes on under the first and refuses on the second, and a branch added here
+// that answers without a read is refused on by default.
 func (r *initRun) credentialsBundleReady(ctx context.Context, lc *localcfg.Config) (ready, record bool) {
 	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
+		r.credsUnreadMarker = m
 		r.warn(fmt.Sprintf("the credentials service's bundle was not read (%s is set, so this is a coding agent's session) and the switch's record is left as this machine last wrote it: the bundle holds every model credential the service issues, and a person's own %s reads it", m, selfCommand()))
 		return false, false
 	}
 	if m := managedFlagRunMarker(os.Getenv); m != "" {
+		r.credsUnreadMarker = m
 		r.warn(fmt.Sprintf("the credentials service's bundle was not read (%s is set, so this process is a Fugaro run's) and the switch's record is left as this machine last wrote it: the bundle holds every model credential the service issues, and a person's own %s reads it", m, selfCommand()))
 		return false, false
 	}

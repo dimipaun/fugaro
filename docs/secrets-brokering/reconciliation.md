@@ -477,15 +477,20 @@ the proxy (S1) is 0.14.0.
   published node admits this repository with `proxy: true`, and `config.ProxiedGitSecretNames` names
   the token) and on the run's ONE reading of the bundle (`credentialsBundleReady`'s third answer,
   `credsBitbucket`), so exactly the applies that would take the mount away are judged and never a
-  second reading of the secret. It refuses where that reading says the bundle holds nothing; where
-  there is no reading to answer from — a coding agent's session, a Fugaro run's own process, both of
-  which `credsOwnerOnly` keeps out of the bundle — the run warns what the drop costs and goes on,
+  second reading of the secret. It refuses where that reading says the bundle holds nothing, and on
+  a read that FAILED: the record the switch is judged by is left as the last reading wrote it
+  (`recordCredentialsServiceReady`), so the drop is still planned and an apply would make it on the
+  word of a read that did not happen. Where the session itself may not open the bundle — a coding
+  agent's session, a Fugaro run's own process, both of which `credsOwnerOnly` keeps out of it, and
+  the only two no-readings the run goes on under — it warns what the drop costs and goes on instead,
   because refusing there would stop an ordinary update over a question that session may not answer,
-  and the drop is one a person puts back by storing the token and applying the root again.
+  and the drop is one a person puts back by storing the token and applying the root again
+  (`credsUnreadMarker` is what tells the two kinds of no-reading apart).
   `--plan-only` is exempt, like the other refusals that stop a change rather than report a
   contradiction (refuseClonesNotShipped, Readiness's D11 gate). Pinned by
   `internal/cli/update_proxied_test.go`'s `TestUpdateRefusesTheProxiedDropWithoutTheToken` (the
-  refusal, its one command and no apply), `TestUpdateAppliesTheProxiedDropWithTheToken`,
+  refusal, its one command and no apply), `TestUpdateRefusesTheDropWhenTheBundleWasNotRead` (a read
+  that failed with the record on: refused, and nothing applied), `TestUpdateAppliesTheProxiedDropWithTheToken`,
   `TestUpdateAppliesWhereNothingIsDropped` (the two halves of the condition) and
   `TestUpdateRepoPlanOnlyDoesNotRefuseTheDrop`, and by `internal/infra/spec_test.go`'s
   `TestDropsBitbucketTokenIsTheDropThePlanMakes`, which holds the predicate to the drop Readiness

@@ -39,6 +39,16 @@ import (
 // would stop an ordinary `fugaro update` in a coding agent's session over a
 // question that session may not answer at all, and the drop is one a person
 // can put back by storing the token and applying the root again.
+//
+// A read that FAILED is not one of those two: the session may read the bundle
+// and the read did not happen — an identity the container or its version
+// refuses, a listing that failed, a document that does not parse — so the
+// gate refuses rather than warns (credsUnreadMarker is what tells the two
+// apart). The record the switch reads is left as the last reading wrote it
+// there, so a repository previously recorded on still plans the drop, and
+// going on would take the mount away on the word of a read that did not
+// happen: the state a person at their own terminal can be sent to fix, which
+// warning at them would not do.
 
 // refuseTheProxiedDrop is repoEngine's gate, called once the spec of the root
 // this run is about to apply exists and before any cloud call of that apply:
@@ -65,16 +75,20 @@ func (r *initRun) refuseTheProxiedDrop(ctx context.Context, lc *localcfg.Config,
 	}
 	held, read := r.bundleBitbucketToken(ctx, credentialsServiceProbe(lc, outs))
 	if !read {
-		r.warn(fmt.Sprintf("the credentials service's bundle was not read, so whether it holds a %s credential is unknown, and this apply drops %s's mount of the %s secret and its job account's accessor on it (the published policy admits the repository with proxy: true and the credentials service serves this installation): if the bundle holds no token, a run of the repository is refused when it asks the service for its git credential, with no copy of its own left to read. A person's own %s --check-bitbucket-token reads what the bundle holds",
-			config.BitbucketSecret, spec.Name, config.BitbucketSecret, selfCommand()))
-		return nil
+		if r.credsUnreadMarker != "" {
+			r.warn(fmt.Sprintf("the credentials service's bundle was not read, so whether it holds a %s credential is unknown, and this apply drops %s's mount of the %s secret and its job account's accessor on it (the published policy admits the repository with proxy: true and the credentials service serves this installation): if the bundle holds no token, a run of the repository is refused when it asks the service for its git credential, with no copy of its own left to read. A person's own %s doctor --check-bitbucket-token reads what the bundle holds",
+				config.BitbucketSecret, spec.Name, config.BitbucketSecret, selfCommand()))
+			return nil
+		}
+		return userErr("this update could not check whether the credentials service's bundle holds a %s credential: the bundle was not read (the warning above says why), and this session is neither a coding agent's nor a Fugaro run's own process — the two the read is refused by, and the only sessions an update goes on without an answer under. Nothing has been applied. The published policy admits %s with proxy: true and the credentials service serves this installation, so the root applied here drops the job's mount of the %s secret and its job account's accessor on it, and a run of the repository whose bundle holds no token is left with nothing to fetch its git credential from. A person whose identity may read the bundle answers it at their own terminal (%s doctor --check-bitbucket-token reads what the bundle holds today and names the command that stores it when it holds none), and this command is the one to run after it",
+			config.BitbucketSecret, spec.Name, config.BitbucketSecret, selfCommand())
 	}
 	if held {
 		fmt.Fprintf(r.w, "%s: the credentials service's bundle holds a %s credential, so this apply takes the job's mount of it and its job account's accessor on it away, and the repository's runs fetch their git credential from the service instead\n",
 			spec.Name, config.BitbucketSecret)
 		return nil
 	}
-	return userErr("this update would take %s's Bitbucket token away: the published policy admits the repository with proxy: true and the credentials service serves this installation, so the root applied here drops the job's mount of the %s secret and its job account's accessor on it — and the credentials service's bundle holds no %s credential, so nothing would be left to fetch instead and a run of the repository is refused when it asks the service for its git credential. Nothing has been applied. A person stores that credential at their own terminal:\n  %s\nand this command is the one to run after it (%s --check-bitbucket-token reads what the bundle holds today)",
+	return userErr("this update would take %s's Bitbucket token away: the published policy admits the repository with proxy: true and the credentials service serves this installation, so the root applied here drops the job's mount of the %s secret and its job account's accessor on it — and the credentials service's bundle holds no %s credential, so nothing would be left to fetch instead and a run of the repository is refused when it asks the service for its git credential. Nothing has been applied. A person stores that credential at their own terminal:\n  %s\nand this command is the one to run after it (%s doctor --check-bitbucket-token reads what the bundle holds today)",
 		spec.Name, config.BitbucketSecret, config.BitbucketSecret, selfCommand()+" creds set "+config.BitbucketSecret, selfCommand())
 }
 
@@ -88,12 +102,13 @@ func (r *initRun) refuseTheProxiedDrop(ctx context.Context, lc *localcfg.Config,
 // read=false is every state in which the bundle was not opened or not read —
 // a coding agent's session, a Fugaro run's own process, a container this
 // machine's identity may not read, a document the loader refuses — and it is
-// not an answer about the token: the caller warns and goes on rather than
-// refusing a change on the word of a read that did not happen. held=false with
-// read=true is the fact this gate exists for: an empty container, a newest
-// version that is DISABLED, a document that parses without the entry, and a
-// local config and installation outputs that name no service at all (which the
-// spec's own condition answers before this is reached).
+// not an answer about the token: the caller refuses the drop on it, except
+// under the two markers, where the session may not read the bundle at all and
+// the caller warns and goes on instead (credsUnreadMarker is that fact).
+// held=false with read=true is the fact this gate exists for: an empty
+// container, a newest version that is DISABLED, a document that parses without
+// the entry, and a local config and installation outputs that name no service
+// at all (which the spec's own condition answers before this is reached).
 func (r *initRun) bundleBitbucketToken(ctx context.Context, lc *localcfg.Config) (held, read bool) {
 	if _, read := r.credentialsBundleReady(ctx, lc); !read {
 		return false, false
