@@ -475,7 +475,7 @@ else:
     # name off the row, and the row is the pass it is either way.
     write("logs/%s.json" % review_id,
           calls([("review", reviewer,
-                  "p" * number("FIX_REVIEW_LOG_SERVING_PAD", 0)
+                  "p" * number("FIX_REVIEW_LOG_SERVING_PAD", "0")
                   + s("FIX_REVIEW_LOG_SERVING", reviewer),
                   s("FIX_REVIEW_LOG_ROUTE", ""), 400000)]))
 

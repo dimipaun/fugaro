@@ -138,6 +138,36 @@ fact() { # fact KEY PASS|FAIL|INFO "detail"
   printf '%s|%s|%s\n' "$1" "$2" "$3" >>"$FACTS_FILE"
 }
 
+# Reading a criterion row out of the block is a match against a shell string,
+# never a pipeline: `grep -q` ends at its first match and closes the pipe, and
+# under `set -o pipefail` a pipeline's status is then its WRITER's, so
+# `printf … | grep -q` answers with printf's SIGPIPE (141) rather than with the
+# match whenever the rows after the matched one do not fit the pipe's buffer
+# (64 KiB). A FAILed criterion would then read as absent and the check would exit
+# 0 beside its own finding: the block is big enough for that wherever a row
+# carries a long name or a list — the review log's serving model, the review
+# job's environment names — and CI saw it in this check.
+facts_has() { # facts_has FACTS KEY... — a row whose key is one of these
+  local facts=$1 key
+  shift
+  for key in "$@"; do
+    case "$facts" in
+    "$key|"* | *$'\n'"$key|"*) return 0 ;;
+    esac
+  done
+  return 1
+}
+facts_failed() { # facts_failed FACTS KEY... — a row whose key is one of these, FAILed
+  local facts=$1 key
+  shift
+  for key in "$@"; do
+    case "$facts" in
+    "$key|FAIL|"* | *$'\n'"$key|FAIL|"*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
 # unmeasured KEY "detail": a row this check could NOT read, for a reason that is
 # not a finding about the release — a document that is not there, a log read
 # that answered nothing, an execution nobody can name. It reads FAIL in the
@@ -1154,7 +1184,7 @@ step_verdict() {
   facts=$(cat "$FACTS_FILE" 2>/dev/null || true)
   status=0
   for key in budget log-coder log-review review-dollars route-by contrast review-launch review-env review-log; do
-    if printf '%s\n' "$facts" | grep -q "^$key|FAIL|"; then status=1; fi
+    if facts_failed "$facts" "$key"; then status=1; fi
   done
   keys=$(awk '!seen[$0]++' "$UNMEASURED_FILE" 2>/dev/null | paste -sd, - 2>/dev/null || true)
   if [ -n "$keys" ]; then
@@ -1253,7 +1283,7 @@ finish() {
   # --help printed the usage on its own and read nothing: it is not a run, so it
   # gets no block and no verdict.
   if [ "$HELPED" = yes ]; then exit 0; fi
-  if [ -n "$ABORT_REASON" ] && ! printf '%s' "$facts" | grep -q '^aborted|'; then
+  if [ -n "$ABORT_REASON" ] && ! facts_has "$facts" aborted; then
     facts="${facts}"$'\n'"aborted|FAIL|$ABORT_REASON"
   fi
   # A run that never reached its verdict ends honestly, whatever stopped it: bash
@@ -1262,7 +1292,7 @@ finish() {
   # a FAILed criterion row as an answer about the api-key review when the reads
   # that would have filled it never ran.
   if [ "$REACHED_END" = no ]; then
-    if ! printf '%s' "$facts" | grep -q '^aborted|'; then
+    if ! facts_has "$facts" aborted; then
       facts="${facts}"$'\n'"aborted|FAIL|the run ended before it reached its verdict (exit ${status}): the rows that read 'not reached' were NOT read, which is this script ending on an error rather than an answer about the api-key review"
     fi
     if [ "$status" -eq 0 ] || [ "$status" -eq 1 ]; then status=2; fi
