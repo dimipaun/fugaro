@@ -7323,6 +7323,7 @@ Flags:
 | `--attach` | stringArray | `[]` | no | attach a file to the run: repeatable, uploaded to the run's own inputs/ and downloaded by a mode: artifact run into the checkout's inputs/ (needs a mode: artifact recipe; refused on a run ID that already has a task) |
 | `--attempts` | int | `0` | no | launch N (2 to 4) independent runs of the same task, workflow, ref and recipe as a best-of-N batch (bestof-<first run id> unless --batch is given); refused with --pr, --run-id, --retry or a review-mode recipe |
 | `--batch` | string | "" | no | batch label, to group runs in fugaro runs ls |
+| `--change-set` | bool | `false` | no | launch one run per repository named by --repo (2 to 5) as members of one change set: every member's task carries the set's ID and the whole member list, and the members' pull requests are linked as siblings. Part of Fugaro Subscription Edition, and not available yet in any build: the settle step that flips a set's pull requests ready ships after this release, and a set launched now would stay in draft with nothing able to lift it |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--context` | stringArray | `[]` | no | a repository this run reads and never writes, as owner/name: repeatable, at most 5, each admitted by the project's allow_repos. The list is recorded on the task and in the run's own identity, which is what the release that reads it fetches with — this release's runner does not clone a context repository yet. Refused for a Bitbucket repository and where the installation's credentials service does not serve the repository |
 | `--continues` | string | "" | no | continue the chain of RUN (a run ID, or <repo-slug>/<run-id>): this launch inherits the chain's remaining limits, for a chain with no pull request — the run you name opened nothing to follow up. The chain's limit is read from the run that began it, and what it has spent from the chain's runs' budget ledgers; this launch's own --max-* may only tighten the remaining. Refused with --pr, --retry and --attempts, which name a chain's previous run themselves |
@@ -7344,7 +7345,7 @@ Flags:
 | `--recipe` | string | "" | no | the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's (ab-judge, default, escalate, lint-fix, merge-judge, pick, premium, rebase, review-only, run-digest, solo, standard, test-and-fix); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's |
 | `--ref` | string | "" | no | base branch or ref the run is cut from (default: the branch this checkout is on, when origin has it and it is not the base branch; else the base branch (fugaro.yaml git.base_branch, then the local config's, then the project's base_branch, then main)) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--repo` | string | "" | no | repository as owner/name, or a path inside its checkout (default: this checkout's origin) |
+| `--repo` | stringArray | `[]` | no | repository as owner/name, or a path inside its checkout (default: this checkout's origin); repeatable only with --change-set, which launches one run per repository named, 2 to 5 |
 | `--retry` | string | "" | no | launch the stored task of RUN (a full run ID, or <repo-slug>/<run-id>) that never started: a run an ending names is never launched, since the bucket cannot vouch for which run an ending means |
 | `--review-levels` | string | "" | no | read the run's own review levels from this YAML file, or - for stdin: the block the task stores as review_levels (l1, l2, l3, each of model, effort, none and focus), decoded strictly, with no key on no level meaning the configuration decides it. Asking for levels needs a job image whose runner acts on them, so a launch on an older one is refused and names fugaro image refresh; without the flag the run resolves its levels from its configuration and its mode alone |
 | `--run-id` | string | "" | no | run ID to use; repeating one reports its launch instead of starting another |
@@ -7378,7 +7379,7 @@ Flags:
 
 Subcommands:
 
-- `fugaro runs digest` -- Write a closed period's report of this repository into its own docs tree
+- `fugaro runs digest` -- Write a closed period's report of this repository, or print the stored one
 - `fugaro runs ls` -- List runs with their status, stage, cost and PR
 - `fugaro runs reports` -- Write every repository's closed-period reports into the runs bucket (the project's reports job)
 - `fugaro runs show` -- Show a run's chain and what is left of its limits
@@ -7388,7 +7389,7 @@ Subcommands:
 
 ## `fugaro runs digest`
 
-Write a closed period's report of this repository into its own docs tree
+Write a closed period's report of this repository, or print the stored one
 
 Write one closed period's report of this repository, from its run records, into
 the repository's own docs tree: <dir>/<YYYY>/<key>.md, plus the index
@@ -7436,6 +7437,19 @@ ones up rather than reading records.
 block and the patterns as {repo, period, summary, patterns[], skipped[]}. Neither
 writes a file, so a caller can read a report before committing it.
 
+--stored <period> prints a report that is already stored instead: the one the
+project's reports job wrote for this repository and that period into the runs
+bucket, at reports/<slug>/<YYYY>/<key>.md (fugaro runs reports --job). The period
+is the key itself -- 2026-10-25, 2026-W43, 2026-10 or 2026 -- and nothing else is
+read: no run record, no folder, and nothing is written. The bytes are the object's
+own, which are the file --stdout prints for that period, so a report outlives the
+90 days its records are kept and is read back long after. The read is the caller's
+own credential's: a launcher's bucket-wide read reaches reports/, and no launcher
+may write there, because the project's reports job is its one writer (E1, E4) --
+so --stored never writes, and a report is written from a checkout with --dir
+alone. --period, --date, --dir, --stdout, --json and --submit-draft have nothing
+to act on beside it and are refused by name.
+
 --due is the cadence's own reading: it names the periods that have closed with no
 report under --dir, newest first -- the period that ended most recently is the
 first line, and of two that ended on the same day the longer one comes first --
@@ -7475,6 +7489,7 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | the repository to report (owner/name, or a path inside its checkout); default: this checkout's origin |
 | `--stdout` | bool | `false` | no | print the report instead of writing it |
+| `--stored` | string | "" | no | print the report of this period the project's reports job stored in the runs bucket |
 | `--submit-draft` | bool | `false` | no | print a redacted learning draft for a "Skill learning" issue; sends nothing |
 
 Subcommands:
