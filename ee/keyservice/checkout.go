@@ -268,10 +268,9 @@ func (s *Service) recordCheckout(ctx context.Context, record checkoutTransaction
 // transaction's own record, which is what a refund or a chargeback naming the
 // transaction resolves to (F16, F29).
 //
-// The record is left alone when the store does not hold it: the transaction is
-// Paddle's and the record is this service's, and a transaction whose checkout
-// record went away is one the event was admitted by, so nothing here is the
-// first thing to fail.
+// A checkout record the store does not hold is left alone: the licence has
+// already been granted by the time this runs, and a `500` would send the
+// merchant back through a purchase that is done rather than fix anything.
 func (s *Service) recordBought(ctx context.Context, transactionID, entitlementID string) error {
 	record, held, err := getRecord[checkoutTransaction](ctx, s.docs, checkoutTransactionsCollection, transactionID)
 	if err != nil {
