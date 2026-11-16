@@ -1026,7 +1026,10 @@ paragraph nobody re-reads.
 module (`shared/confirm`, with `vectors.json`) **is** in the tree, and P6.7 — the record's *consumer*
 — is built: a Go implementation of those rules, held to the vectors by a parity test and run over
 every action record before anything is performed, plus the ledger of used action and confirmation ids
-that survives a restart. A record is refused unless it is correctly signed, names an action id the
+that survives a restart. The vectors are streams of the *phone's* machine — events in, state out — so
+what the parity test replays is that machine; the consumer's re-validation is the same rule table read
+the other way round, over the one record a message carries, and the P6.7 tests are what pin it. A
+record is refused unless it is correctly signed, names an action id the
 ledger has not spent, sits inside the six-hour window and points at a target and a head that have not
 moved; a correct one **is executed** by the command itself, not only by a test that builds a
 **synthetic** record. The refusal was **unconditional until P6.7**, and it is unconditional still for

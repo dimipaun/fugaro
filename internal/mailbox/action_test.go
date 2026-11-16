@@ -231,6 +231,51 @@ func TestConfirmMemoryQueueFullAtTheBoundary(t *testing.T) {
 	}
 }
 
+// TestConfirmMemorySettledPromptsDoNotFillTheQueuesCap: the cap bounds the
+// prompts still to be **answered**, and a settled prompt stays in the memory
+// until the retention window ends, because it is how an answer already handed
+// back is known to have been handed back. So a memory that has settled a cap's
+// worth of prompts still opens, and the next prompt is still admitted: a reader
+// that counted every entry against the cap would refuse the file the writer had
+// just written, and no later pass could repair it -- the parse gate fails before
+// anything that could prune.
+func TestConfirmMemorySettledPromptsDoNotFillTheQueuesCap(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pending.json")
+	start := int64(1_700_000_000_000)
+	capped := 2
+	m := openTestMemory(t, path, capped)
+	// Three prompts, each settled in turn, so the memory holds one more entry
+	// than the cap while nothing is waiting.
+	for i, id := range []string{"pr_1", "pr_2", "pr_3"} {
+		if _, _, err := m.NotePrompt(ConfirmPrompt{ID: id, At: start + int64(i), Mailbox: "m~a", Safe: "yes"}, start+int64(i)); err != nil {
+			t.Fatalf("noting %s: %v", id, err)
+		}
+		if _, settled, err := m.AnswerPrompt("m~a", id, "yes", start+int64(i)+1); err != nil || !settled {
+			t.Fatalf("settling %s: settled=%v err=%v", id, settled, err)
+		}
+	}
+
+	// A restart reads the file the writer wrote: three settled prompts, and a
+	// queue of none.
+	restarted := openTestMemory(t, path, capped)
+	added, refusal, err := restarted.NotePrompt(ConfirmPrompt{ID: "pr_4", At: start + 10, Mailbox: "m~a", Safe: "yes"}, start+10)
+	if err != nil || refusal != nil || !added {
+		t.Fatalf("a prompt after a cap's worth was settled: added=%v refusal=%v err=%v", added, refusal, err)
+	}
+	// And the cap is still a cap on what is live: the second live prompt is
+	// admitted, the third is refused.
+	if _, _, err := restarted.NotePrompt(ConfirmPrompt{ID: "pr_5", At: start + 11, Mailbox: "m~a", Safe: "yes"}, start+11); err != nil {
+		t.Fatalf("the second live prompt: %v", err)
+	}
+	added, refusal, err = restarted.NotePrompt(ConfirmPrompt{ID: "pr_6", At: start + 12, Mailbox: "m~a", Safe: "yes"}, start+12)
+	if err != nil {
+		t.Fatalf("the third live prompt: %v", err)
+	}
+	if added || refusal == nil || refusal.Code != CodeConfirmQueueFull {
+		t.Fatalf("a third live prompt past a cap of two: added=%v refusal=%v", added, refusal)
+	}
+}
+
 // TestConfirmMemoryExpiresAPromptExactlyOnce: the safe answer is handed back at
 // the TTL, and a second pass over the same memory -- a restart, or the next
 // sweep -- hands back nothing.

@@ -409,6 +409,37 @@ func TestMailboxMalformedHeadSHAIsRefused(t *testing.T) {
 	}
 }
 
+// TestMailboxTamperedHeadSHAIsRefused is the head SHA's half of the same pinned
+// edit as TestMailboxTamperedRecordIsRefused's target: the SHA a merge is
+// confirmed against is covered by the tag, so a record whose head was changed
+// after the phone signed it is refused by the gate and `gh` is never run — not
+// even to read the head it would have compared against.
+func TestMailboxTamperedHeadSHAIsRefused(t *testing.T) {
+	f := newMailboxFixture(t, "")
+	offers := f.offers(t)
+	calls := testutil.FakeCommand(t, "gh", "echo '{\"headRefOid\":\""+mailboxHeadSHA+"\"}'\n")
+	at := mailboxNowMs()
+	record := f.signed(t, "msg-1", mailboxActionExtra(
+		mailboxMergeAction("act-1", "conf-1", at, "acme/app", 41, mailboxHeadSHA)), at, mailboxKeyMaterial)
+	action, _ := record["action"].(map[string]any)
+	action["head_sha"] = strings.Repeat("f", 40)
+	f.writeRaw(t, "msg-1", record)
+
+	out, _, err := execute(t, "mailbox", "--once", "--json")
+	if err != nil {
+		t.Fatalf("err = %v, want exit 0: a tampered head is refused by the gate", err)
+	}
+	if code := mailboxRefusedCode(t, mailboxJSON(t, out), 0); code != string(mailbox.CodeBadMAC) {
+		t.Fatalf("refused[0].code = %q, want %s: the head SHA is covered by the tag", code, mailbox.CodeBadMAC)
+	}
+	if data, err := os.ReadFile(calls); err == nil {
+		t.Fatalf("gh ran for a record whose head was edited after signing: %q", data)
+	}
+	if len(*offers) != 0 {
+		t.Fatalf("a tampered merge was handed to the orchestrator: %v", *offers)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // The ids: spent once, across a restart
 // ---------------------------------------------------------------------------
@@ -591,6 +622,35 @@ func TestMailboxTimestampsAheadOfTheClockAreRefused(t *testing.T) {
 		}
 		if len(*cancelled) != 0 {
 			t.Fatal("a confirmation dated six minutes ahead authorised a cancel")
+		}
+	})
+
+	t.Run("this machine's clock, not the store's", func(t *testing.T) {
+		f := newMailboxFixture(t, "")
+		cancelled := f.cancels(t)
+		f.offers(t)
+		// D117: the store's clock is the one the windows are measured with, and
+		// a machine whose own clock is a few minutes slow reads the same `at` as
+		// further ahead than the store does. The store here runs three minutes
+		// ahead of this machine's clock, so the message is four minutes ahead of
+		// the store — inside the tolerance, and a delivery to act on — and seven
+		// ahead of this machine, which is the reading a gate on `time.Now` would
+		// refuse it for.
+		at := time.Now().UTC().Truncate(time.Second).Add(3 * time.Minute)
+		f.db.SetClock(func() time.Time { return at })
+		msgAt := at.UnixMilli() + 4*60*1_000
+		f.writeRecord(t, "msg-1", mailboxActionExtra(mailboxCancelAction("act-1", "conf-1", msgAt)),
+			msgAt, mailboxKeyMaterial)
+
+		out, _, err := execute(t, "mailbox", "--once", "--json")
+		if err != nil {
+			t.Fatalf("err = %v, want exit 0: a message inside the store's tolerance is a completed pass", err)
+		}
+		if len(*cancelled) != 1 || (*cancelled)[0] != mailboxRunID {
+			t.Fatalf("the cancel path was asked for %v, want exactly [%s]", *cancelled, mailboxRunID)
+		}
+		if got := mailboxActedOutcome(t, mailboxJSON(t, out), 0); got != mailboxOutcomeCancelled {
+			t.Fatalf("acted[0].outcome = %q, want %q", got, mailboxOutcomeCancelled)
 		}
 	})
 }
@@ -959,6 +1019,12 @@ func TestMailboxLaunchNeedsNoConfirmationRecord(t *testing.T) {
 // whole, so a sentence that merely *mentions* one is refused too, and the
 // operator's answer is to say it again without the word. A false refusal costs a
 // second sentence; a false admission merges a pull request.
+//
+// The forms a spoken sentence actually uses are the reason the fold exists: the
+// `-ing` shape of an e-final verb drops the `e` ("merging", "deleting") and a
+// short verb doubles its last consonant ("cancelling"), so a recogniser that
+// only stripped the ending would read "I am merging acme/app#41" as a request it
+// may pass on.
 func TestMailboxDestructiveFreeTextIsRefused(t *testing.T) {
 	for _, text := range []string{
 		"fugaro cancel " + mailboxRunID,
@@ -966,6 +1032,11 @@ func TestMailboxDestructiveFreeTextIsRefused(t *testing.T) {
 		"please confirm that for me",
 		"approve the pull request",
 		"delete the branch and revoke the token",
+		"it is merging acme/app#41",
+		"I am approving the pull request",
+		"it is deleting the branch",
+		"we are cancelling the run",
+		"it has been revoked",
 	} {
 		t.Run(text, func(t *testing.T) {
 			f := newMailboxFixture(t, "")

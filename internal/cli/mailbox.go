@@ -521,7 +521,7 @@ type mailboxPairing struct {
 // §8.3's availability row: exit 1, no pass run, nothing written. A keychain that
 // cannot be used at all is the keychain package's backend failure, and it is
 // exit 2 (§4.4).
-func mailboxKeyring(ctx context.Context, lc *localcfg.Config) ([]mailboxPairing, error) {
+func mailboxKeyring(ctx context.Context, lc *localcfg.Config, now func() time.Time) ([]mailboxPairing, error) {
 	m := lc.Mailbox
 	if m == nil || len(m.KeychainItem) == 0 {
 		return nil, userErr("project %s has no mailbox configured: its project config has no mailbox.keychain_item block, so there is no pairing whose key this command could read; run `fugaro pair` and record the item name it prints as mailbox.keychain_item[<device uid>]", lc.Name)
@@ -558,7 +558,7 @@ func mailboxKeyring(ctx context.Context, lc *localcfg.Config) ([]mailboxPairing,
 		pairings = append(pairings, mailboxPairing{
 			uid:       uid,
 			item:      item.Name(),
-			gate:      mailbox.NewGate(key, mailbox.GateOptions{}),
+			gate:      mailbox.NewGate(key, mailbox.GateOptions{Now: now}),
 			signer:    mailboxOutboxSigner(key),
 			heartbeat: mailboxHeartbeatSigner(key),
 		})
@@ -594,7 +594,7 @@ func runMailbox(cmd *cobra.Command, o *mailboxOptions) error {
 	if err != nil {
 		return err
 	}
-	pairings, err := mailboxKeyring(ctx, lc)
+	pairings, err := mailboxKeyring(ctx, lc, mailboxClock(db))
 	if err != nil {
 		return err
 	}
@@ -1134,11 +1134,22 @@ func (c *mailboxConsumer) leaseOptions(ctx context.Context, pairing mailboxPairi
 // only until then. §6's lease and the ledger both refuse a `now` that runs
 // backwards, so the reading is taken once per pairing pass and never per
 // message.
-func (c *mailboxConsumer) now() int64 {
-	if t, ok := c.db.ServerNow(); ok {
-		return t.UnixMilli()
+func (c *mailboxConsumer) now() int64 { return mailboxClock(c.db)().UnixMilli() }
+
+// mailboxClock is that reading as the gate can ask for it. The gate's five-minute
+// future tolerance and the ledger's are the same check about the same kind of
+// field, judged by one clock: the store's (D117), never this machine's. A gate
+// left on `time.Now` refuses, on a machine whose own clock is slow, a message
+// the store's clock reads as inside the tolerance — so a delivery that was in
+// time is recorded as one dated in the future, and the phone's retry is refused
+// with it.
+func mailboxClock(db *rtdb.Client) func() time.Time {
+	return func() time.Time {
+		if t, ok := db.ServerNow(); ok {
+			return t
+		}
+		return mailboxNow().UTC()
 	}
-	return mailboxNow().UTC().UnixMilli()
 }
 
 // mailboxInbox is one child of the inbox node as the reader got it: the record,
@@ -1540,19 +1551,26 @@ func mailboxReadsAsDestructive(text string) bool {
 }
 
 // mailboxDestructiveStems is one word as the forms of it this recogniser
-// compares: the word itself and the word with a regular ending folded off. It is
-// deliberately not a stemmer — "merges" and "merging" are the forms a spoken
-// sentence uses, and a rule that folded more would reach into words nobody said.
+// compares: the word itself, the word with a regular ending folded off, and the
+// two respellings that fold needs — "merging" is "merge" and "cancelling" is
+// "cancel". It is deliberately not a stemmer: the forms above are the ones a
+// spoken sentence uses, and a stem of any other shape matches nothing in the
+// list, so the folding reaches into no word nobody said.
 func mailboxDestructiveStems(word string) []string {
 	stems := []string{word}
 	for _, suffix := range []string{"ing", "ed", "es", "s"} {
-		if len(word) <= len(suffix)+2 {
+		if !strings.HasSuffix(word, suffix) || len(word) <= len(suffix)+2 {
 			continue
 		}
 		stem := word[:len(word)-len(suffix)]
 		stems = append(stems, stem)
+		if n := len(stem); n >= 2 && stem[n-1] == stem[n-2] {
+			stems = append(stems, stem[:n-1])
+		}
 		if strings.HasSuffix(stem, "e") {
 			stems = append(stems, stem[:len(stem)-1])
+		} else {
+			stems = append(stems, stem+"e")
 		}
 	}
 	return stems

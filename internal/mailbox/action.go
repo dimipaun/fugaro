@@ -1554,7 +1554,14 @@ func (m *ConfirmMemory) parse(data []byte) *Refusal {
 		}
 		seen[key] = true
 	}
-	if len(file.Prompts) > m.opts.MaxPrompts {
+	// The cap bounds the prompts **still to be answered**, which is what the
+	// writer counts and what "queue full" means; a settled prompt is kept until
+	// the retention window ends, because it is how an answer already handed back
+	// is known to be handed back, so a memory that has settled its cap's worth is
+	// the writer's own output and not a corruption (counting every entry here
+	// would refuse the file the writer just wrote, and nothing else would repair
+	// it).
+	if livePrompts(file.Prompts) > m.opts.MaxPrompts {
 		return refuse(CodeConfirmQueueFull, "prompts")
 	}
 	seen = map[string]bool{}
@@ -1619,13 +1626,7 @@ func (m *ConfirmMemory) NotePrompt(prompt ConfirmPrompt, now int64) (bool, *Refu
 			return false, nil, nil
 		}
 	}
-	live := 0
-	for _, known := range m.state.Prompts {
-		if !known.Done {
-			live++
-		}
-	}
-	if live+1 > m.opts.MaxPrompts {
+	if livePrompts(m.state.Prompts)+1 > m.opts.MaxPrompts {
 		return false, refuse(CodeConfirmQueueFull, "prompts"), nil
 	}
 	next := m.state
@@ -1637,6 +1638,19 @@ func (m *ConfirmMemory) NotePrompt(prompt ConfirmPrompt, now int64) (bool, *Refu
 	}
 	m.state = next
 	return true, nil, nil
+}
+
+// livePrompts is how many of these prompts are still to be answered: the cap's
+// own count, in the reader and the writer alike, so the two cannot disagree
+// about a file one of them wrote.
+func livePrompts(prompts []ConfirmPrompt) int {
+	live := 0
+	for _, prompt := range prompts {
+		if !prompt.Done {
+			live++
+		}
+	}
+	return live
 }
 
 // Prompts is the queue, oldest first: the prompts still to be answered, and the
@@ -1823,6 +1837,12 @@ func (m *ConfirmMemory) commit(state confirmMemoryFile) error {
 	body, err := json.Marshal(confirmMemoryFile{Now: state.Now, Spent: spent, Prompts: prompts})
 	if err != nil {
 		return fmt.Errorf("mailbox: writing the consumer's memory: %w", err)
+	}
+	// A memory past the read bound is one this command would refuse to open at its
+	// next pass — leaving the operator a file to delete and the spent ids in it
+	// gone — so the write is refused instead, and what is on disk stays readable.
+	if len(body) > maxConfirmMemoryBytes {
+		return fmt.Errorf("mailbox: the consumer's memory would be %d bytes, past the %d this command reads; nothing was written, so the memory on disk stands", len(body), maxConfirmMemoryBytes)
 	}
 	dir := filepath.Dir(m.path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
