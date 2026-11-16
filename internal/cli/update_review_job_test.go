@@ -58,32 +58,47 @@ const anchoredYAML = "version: 1\nproject: aurora\ngcp_project: " + initProject 
 //
 // Its red step is NOT the one the plan names. The plan says "with
 // CarriedProjectReviewJobs removed from the update path the new test fails"; it
-// does not. Both mutations below were run on the merged tree and restored
-// (`git status` clean between them), with
+// does not, and the mutation this file first recorded — the removal of
+// e.specReviewJobsOfTheService() from the carried branch of
+// ensureCredentialsService — no longer fails it either. Both were run and
+// restored (`git status` clean between them), with
 // `GOGC=40 GOMAXPROCS=2 GOFLAGS=-p=1 go test ./internal/cli/ -run
 // UpdateAddsTheImplicitReviewJobAndLeavesARunInFlightRunning -count=1` — the
 // smaller heap is what this container's memory limit leaves the cli test
 // binary's compile:
 //
 //   - CarriedProjectReviewJobs removed from BOTH of its call sites in the
-//     update path (internal/cli/init.go:1044, the --print-vars path, and :2756,
-//     prepare): the test still PASSES (ok, 15.4s). The carry only keeps a job
-//     the previous tfvars document already holds, and the installation under
-//     test is one whose previous version never deployed the job — there is
-//     nothing in that document for the carry to put back.
+//     update path (init.go's --print-vars path and prepare): the test still
+//     PASSES (ok, 14.1s). The carry only keeps a job the previous tfvars
+//     document already holds, and the installation under test is one whose
+//     previous version never deployed the job — there is nothing in that
+//     document for the carry to put back.
 //
 //   - e.specReviewJobsOfTheService() removed from the carried branch of
-//     ensureCredentialsService (internal/cli/init_stages.go:786): the test
-//     FAILS (13.1s), on the assertion that reads the job out of the
-//     installation root's tfvars:
+//     ensureCredentialsService (init_stages.go): the test PASSES too (ok,
+//     13.7s), and the reason is S5 of docs/shared-jobs-default. The run writes
+//     the default profile of every provider in use into the local config before
+//     the installation stage plans (createDefaultProfiles), and the review
+//     variant of that profile IS this job — the same name under the same
+//     (profile, provider, account) triple, because the implicit one is defined
+//     as the variant the default profile would have if the project declared one
+//     (infra's implicitReviewVariant, which composes nothing at all when a
+//     profile derives the same name). The job reaches terraform whether or not
+//     the migration runs, so this fixture cannot tell the two apart.
 //
-//     after one fugaro update the installation hands terraform no review job
-//     fugaro-p-standard-github-default-rev-04644ca962ed: project_review_jobs = map[]
+// What the two mutations together do show is that the job is what the test
+// reads, and that each composer delivers it on its own: with the default-profile
+// write disabled as well, the migration still hands the job over (ok, 13.8s),
+// and with both disabled the test FAILS (13.2s) on the assertion that reads the
+// job out of the installation root's tfvars:
 //
-//     That call is the migration RJ4 is about: it recomposes the review set
-//     with the credentials service opted in (credentialsServiceOptedIn), which
-//     is what passes the implicit job's own gate on an installation whose
-//     config records no service.
+//	after one fugaro update the installation hands terraform no review job
+//	fugaro-p-standard-github-default-rev-04644ca962ed: project_review_jobs = map[]
+//
+// That call is the migration RJ4 is about: it recomposes the review set with
+// the credentials service opted in (credentialsServiceOptedIn), which is what
+// passes the implicit job's own gate on an installation whose config records no
+// service.
 func TestUpdateAddsTheImplicitReviewJobAndLeavesARunInFlightRunning(t *testing.T) {
 	r := newConvergeRigYAML(t, v3Node(nil), anchoredYAML)
 	// The credentials service an installation at the previous version holds:
