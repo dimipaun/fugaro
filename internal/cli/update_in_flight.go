@@ -70,6 +70,12 @@ import (
 // a run. It is never a request to wait, and it is not a question unless --ask
 // asks for one.
 //
+// The steps it names are read off the installation, and the door builds the
+// clients they read through when the run reaches here without them — which is
+// every run whose own arguments shape the installation, since those keep the
+// gate's own read whole and pay for no read at all (setupCloud, the work
+// syncAccess makes a moment later; the note in the count's own branch below).
+//
 // A count that could not be read is silence and not an error. The note is
 // information, and the writes it is about are guarded where they are made: an
 // update that could not reach the budget database says so in the stages that
@@ -94,6 +100,25 @@ func (e *initEngine) announceRunsInFlight(ctx context.Context) (bool, error) {
 		n, err = runsInFlight(ctx, db, lc)
 	}
 	if err == nil && n > 0 {
+		// The steps are reads of the installation — the project's managed fact
+		// and its creation fact — and this door reaches the note before
+		// anything has built the clients they read through: a run whose own
+		// arguments shape the installation rather than converge it as it is
+		// keeps the M6 gate read whole and pays for no read at all (gateable),
+		// and that read is what builds the clients on every other run
+		// (readUpdateGate). Without them the note answers "not managed" for a
+		// project that is, drops the budget mode's line, and prints "no step of
+		// it can reach them" over the one step the audit found able to bind a
+		// run in flight.
+		//
+		// It is setupCloud and not the clients alone because it is the same
+		// work syncAccess makes a few lines later, done once (the engine's
+		// fields are its guard), and a failure is the stage's to report rather
+		// than the note's: a door that failed here over a note would invent a
+		// new way for the one command the upgrade is to stop.
+		if e.c == nil {
+			_ = e.setupCloud(ctx)
+		}
 		steps = e.inFlightSteps(ctx, db)
 	}
 	if check != nil {

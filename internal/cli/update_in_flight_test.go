@@ -330,6 +330,40 @@ func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 	}
 }
 
+// TestUpdateInFlightNoteReadsTheInstallationOnAShapingRun is the door on a run
+// whose own arguments shape the installation rather than converge it as it is
+// (shapesTheInstallation): the gate keeps the M6 read whole and pays for no read
+// at all (gateable), so nothing has built the clients the note reads the
+// installation through when the note is computed — the note is printed before
+// syncAccess, whose own setupCloud is what builds them on every other run. A
+// note without them answers "not managed" for a project that is, drops the
+// budget mode's line, and prints "no step of it can reach them" over the one
+// step the audit found able to bind a run in flight.
+func TestUpdateInFlightNoteReadsTheInstallationOnAShapingRun(t *testing.T) {
+	r := convergeRigWithMarker(t, markerNowFact)
+	// The mode the raise is for: an installation left on observe is the one
+	// raiseBudgetMode moves to enforce, which a run in flight meets at its next
+	// lease — and the caps the raise is refused without are the fixture's.
+	r.db.Set(budget.PathMode, budget.ModeObserve)
+	r.db.Set("agents", map[string]any{"proj-1234": map[string]any{"run-1": map[string]any{"repo": "github/acme/app"}}})
+	currentRelease(t)
+	fakeTerminal(t)
+
+	out, errOut, err := executeStdin(t, "", "update", "--no-log-isolation")
+	if err != nil {
+		t.Fatalf("fugaro update --no-log-isolation stopped at %s (exit %d):\n%s\n%s", stoppedStage(out), ExitCode(err), out, errOut)
+	}
+	note := inFlightNoteOf(t, out)
+	for _, want := range []string{"1 run(s) are in flight", "budget mode", "raise to enforce"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("the note does not say %q over a shaping run on a managed project whose mode the raise moves:\n%s", want, note)
+		}
+	}
+	if strings.Contains(note, "no step of it can reach them") {
+		t.Errorf("the note claims no step can reach a run in flight while the budget mode's raise does:\n%s", note)
+	}
+}
+
 // TestUpdateInFlightAskOffersToStopBeforeAnythingIsWritten is the owner's
 // second ask of 2026-11-15: after the note, at a real terminal, the person who
 // read it may stop the update there — and stopping means the installation is
