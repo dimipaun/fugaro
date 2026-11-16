@@ -2006,10 +2006,13 @@ var runAccountGrants = setOf(
 	// which may sit behind a public endpoint. The process holds the provider
 	// key (the forwarding half, P5.3.5) and no model or forge credential
 	// beyond it. The service exists only on an installation whose owner asked
-	// for it (var.voice_service), and the plan that creates it is refused by
-	// init's cover (internal/infra/tf's voicePublicGrant, and the cover's own
-	// unknown-member refusal for an allUsers member on anything else), so the
-	// owner confirms this binding in so many words — as with the front door's.
+	// for it (var.voice_service), and the plan that creates it is one init's
+	// cover does not classify: `allUsers` is a member no kind of its grant
+	// table carries, exactly as the front door's own binding is not, so the
+	// update that carries this binding shows the finding and applies it —
+	// while deploy/terraform's TestAllUsersIsRefusedOnEveryOtherResource is
+	// what refuses it anywhere else, and this allowlist is what refuses a
+	// public member on a resource it does not name.
 	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=google_cloud_run_v2_service.voice[0].name | "allUsers" | for_each= | perms=`,
 	// Reviewed for M4: the front door's own account's whole reach, and it is
 	// two grants. objectViewer on the runs bucket is what a run's recorded

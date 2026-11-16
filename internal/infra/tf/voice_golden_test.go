@@ -181,9 +181,13 @@ func TestGoldenVoiceHopCarriesItsTwoNamesAndNoOther(t *testing.T) {
 // Google identity, so there is no member an invoker binding could name and the
 // process's own VerifyDevice is the gate (voice.tf, SECURITY.md). What this
 // holds is that the plan carries it exactly where the module writes it — the
-// hop's service, roles/run.invoker, this run's project — because every other
-// shape of it is refused by voicePublicGrant and by
-// deploy/terraform's TestAllUsersIsRefusedOnEveryOtherResource.
+// hop's service, roles/run.invoker, this run's project. Every other shape of
+// it is refused by deploy/terraform's
+// TestAllUsersIsRefusedOnEveryOtherResource, which names the one path and the
+// one block an allUsers member is admitted on; init's cover carries no such
+// member at all (cover.go's toVoice, the front door's own state), so the
+// update that carries this binding shows it as a finding and applies it
+// rather than passing it as covered.
 func TestGoldenVoiceHopKeepsNoInstanceWarmAndAdmitsEveryoneOnPurpose(t *testing.T) {
 	f := voiceGoldenFixture(t)
 	p := goldenPlan(t, "installation-voice")
@@ -212,8 +216,8 @@ func TestGoldenVoiceHopKeepsNoInstanceWarmAndAdmitsEveryoneOnPurpose(t *testing.
 	}
 
 	bind := resource(t, p, "module.installation.google_cloud_run_v2_service_iam_member.voice_public[0]")
-	if got := str(bind.Change.After["member"]); got != publicInvokerMember {
-		t.Errorf("the hop's binding admits %q, want %q", got, publicInvokerMember)
+	if got := str(bind.Change.After["member"]); got != "allUsers" {
+		t.Errorf("the hop's binding admits %q, want allUsers", got)
 	}
 	if got := str(bind.Change.After["role"]); got != "roles/run.invoker" {
 		t.Errorf("the hop's public binding grants %q, want roles/run.invoker: the invoker bit is what lets a caller reach the container, and the container's handler is the gate", got)

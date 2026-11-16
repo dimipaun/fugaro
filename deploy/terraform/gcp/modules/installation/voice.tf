@@ -231,9 +231,11 @@ resource "google_cloud_run_v2_service" "voice" {
 # deploy/terraform/terraform_test.go names the two bindings of this tree an
 # allUsers member is admitted on, by path and by block, so that neither copying
 # this resource under another name nor writing the member into another file can
-# pass. internal/infra/tf's cover does NOT carry an allUsers member (its grant
-# rules never name one), so the update whose plan carries this binding shows it
-# and takes its own step confirmation rather than the run's.
+# pass. internal/infra/tf's cover carries no allUsers member, exactly as it
+# carries none for the front door, so the update whose plan holds this binding
+# is a step the run's confirmation does not cover: it shows the finding, and it
+# is applied (D1545's content class, internal/cli/init_review.go's askOrdinary)
+# rather than passing as a plan somebody had already classified.
 #
 # WHY THE HOP IS PUBLIC, and the alternative that was refused. Cloud Run's
 # invoker check admits a GOOGLE IAM principal. A phone has none to offer: what

@@ -164,19 +164,16 @@ const (
 	// which is also the front door's), and voiceStateReadGrant narrows it
 	// further to that role, on the project the module declares it in, under no
 	// condition. Appended rather than inserted, for toReports' reason.
+	//
+	// The hop's OTHER reach — the allUsers member on its own invoker binding —
+	// is deliberately NOT a kind here, which is the front door's own state and
+	// the front door's own reason (coordinator.tf): no member of this tree is
+	// everybody, so a plan that grants to `allUsers` is a plan with a principal
+	// nobody classified, and the update that carries it shows that finding and
+	// applies it rather than passing it as covered. What closes the reach is
+	// the Terraform suite's TestAllUsersIsRefusedOnEveryOtherResource (by path
+	// and by block) and internal/infra/managed's refusal, not a row here.
 	toVoice
-	// VoicePublic is the voice hop's public invoker binding (P5.3.3) — the one
-	// grant in this tree whose member is NOBODY (`allUsers`). It is a kind of
-	// its own rather than a row on toVoice because the two are different
-	// principals and different resource types: toVoice is the hop's account on
-	// the project's read role, and this is everyone on the internet, on the
-	// service's own invoker binding. Exactly one row carries the bit, and
-	// voicePublicGrant closes it to that one service, that one role and this
-	// run's project — so `allUsers` on anything else is refused, which is the
-	// property D920's front door binding is also held to (its own review, and
-	// deploy/terraform's TestAllUsersIsRefusedOnEveryOtherResource on the
-	// module's side).
-	toVoicePublic
 )
 
 // customKey is how grantRules names a custom role of the installation (by its
@@ -390,7 +387,7 @@ var grantRules = map[string]map[string]who{
 	// runs. It is Fugaro's own account, on the same switch as the service, and
 	// it comes with nothing wider.
 	"google_cloud_run_v2_service_iam_member": {
-		"roles/run.invoker": toAccounts | toPeople | toCoordinator | toVerifier | toVoice | toVoicePublic,
+		"roles/run.invoker": toAccounts | toPeople | toCoordinator | toVerifier | toVoice,
 	},
 	"google_logging_log_view_iam_member": {
 		"roles/logging.viewAccessor": toPeople,
@@ -1058,94 +1055,10 @@ func (c Cover) isIntakeMember(m string) bool {
 // in the installation's project: the account voice.tf creates and the service
 // runs as (VoiceAccountID). It classifies the account's PROJECT grant — the one
 // read role — and nothing else: the hop's other grant is to nobody at all, and
-// the member it names is allUsers (voicePublicGrant).
+// the member it names is allUsers, which no kind here carries (toVoice).
 func (c Cover) isVoiceMember(m string) bool {
 	p := c.installationProject()
 	return p != "" && m == "serviceAccount:"+VoiceAccountID+"@"+p+".iam.gserviceaccount.com"
-}
-
-// publicInvokerMember is the member of the one grant in this tree that names
-// nobody: the voice hop's invoker binding (voice.tf, P5.3.3). It is a constant
-// so that the bit the grant table carries (toVoicePublic) and the closing rule
-// (voicePublicGrant) name the same spelling, and so that a plan carrying
-// `allUsers` anywhere else is refused as an unknown member rather than
-// classified and then narrowed.
-const publicInvokerMember = "allUsers"
-
-// voicePublicResource is the block name voice.tf gives the hop's public
-// invoker binding, which is the resource voicePublicGrant admits an allUsers
-// member on and no other. It is a literal here for the same reason
-// voiceServiceResource is: a copy of the block under another name — the shape
-// a hand edit or a second service would take — has to fail the check rather
-// than pass as "a public binding somebody reviewed".
-const voicePublicResource = "voice_public"
-
-// resourceBlockName is the resource's own name inside its module, for the
-// counted or uncounted address of one type: "voice" for
-// module.installation.google_service_account.voice[0], "" for another type or
-// another module. It is cloudRunServiceName's read without that function's
-// type, so a rule about a resource that is not a Cloud Run service itself —
-// the hop's invoker binding — can name the block it admits.
-func resourceBlockName(rc ResourceChange, typ string) string {
-	if rc.Type != typ {
-		return ""
-	}
-	pre := modulePrefix(rc)
-	if pre == "" {
-		return ""
-	}
-	rest, found := strings.CutPrefix(rc.Address, pre+"."+rc.Type+".")
-	if !found {
-		return ""
-	}
-	name, _, _ := strings.Cut(rest, "[")
-	return name
-}
-
-// voicePublicGrant says why an invoker grant to nobody is not the hop's own
-// reachability, "" when it is (the whole of the reasoning for WHY the hop is
-// public at all is voice.tf's own comment). Three things must be exactly the
-// module's:
-//
-//   - the resource. It is a binding on the hop's own service and not on another
-//     Cloud Run service of the installation (the credentials service's, whose
-//     account reads the bundle; the intake's; or a job's), so the address's
-//     resource name must be voiceServiceResource — which is also what makes
-//     copying voice.tf's block under another resource name fail here rather
-//     than pass as "a public binding somebody reviewed".
-//   - the role. roles/run.invoker and nothing else: an allUsers member on any
-//     other role is a reach this tree never wrote.
-//   - the project and the region. The binding's project must be this run's,
-//     and its location the service's own (the plan carries the location
-//     literally, so a binding that pointed at another region's service of the
-//     same name would be admitted by the address check alone).
-//
-// A condition is refused on it as well: an allUsers binding under a condition
-// is a reach that looks narrower than it is, and the hop's own binding carries
-// none (RTDB IAM and Cloud Run's invoker check cannot scope a caller by the
-// Firebase identity it presents).
-func (c Cover) voicePublicGrant(rc ResourceChange) string {
-	ch := rc.Change
-	if resourceBlockName(rc, "google_cloud_run_v2_service_iam_member") != voicePublicResource {
-		return "admits everyone to " + rc.Address + ", and the hop's public binding is the one block voice.tf declares (" + voicePublicResource + "): no other binding of this installation is reachable by an unauthenticated caller"
-	}
-	if project := str(ch.After["project"]); !slices.Contains(c.Projects, project) {
-		return "admits everyone to a service in a project that is not this run's"
-	}
-	if location := str(ch.After["location"]); location != c.Region {
-		return "admits everyone to a service in " + location + ", and this run's services are in " + c.Region
-	}
-	if role := str(ch.After["role"]); role != "roles/run.invoker" {
-		return "admits everyone to " + role + ", and the hop's public binding is " + "roles/run.invoker" + ": the invoker bit is what lets a caller reach the container, and the container's own handler is the gate"
-	}
-	conds, why := grantConditions(ch, "the hop's public binding")
-	switch {
-	case why != "":
-		return why
-	case len(conds) != 0:
-		return "admits everyone to the hop under a condition, which voice.tf never sets: the hop's callers are phones whose Firebase identity the invoker check cannot read, so a condition here would look like a fence and fence nothing"
-	}
-	return ""
 }
 
 // voiceStateReadGrant is mcpauthStateReadGrant's rule for the hop's own
@@ -1990,18 +1903,15 @@ func (c Cover) grant(rc ResourceChange, creates, createdSAIDs, heldSAIDs map[str
 	if why == "" && t == "google_project_iam_member" && c.isVoiceMember(str(rc.Change.After["member"])) {
 		why = c.voiceStateReadGrant(rc)
 	}
-	// ... and the one grant of this tree whose member is nobody: the hop's
-	// public invoker binding, which voicePublicGrant closes to the one service,
-	// the one role and the one region voice.tf writes (P5.3.3). It is the
-	// cover's first allUsers member, and it is admitted on purpose rather than
-	// by widening the member classification: the row above names toVoicePublic
-	// for exactly one resource type and one role, and this is what narrows that
-	// row to one resource — which is the property the front door's own binding
-	// has on the module's side (deploy/terraform's
-	// TestAllUsersIsRefusedOnEveryOtherResource).
-	if why == "" && t == "google_cloud_run_v2_service_iam_member" && str(rc.Change.After["member"]) == publicInvokerMember {
-		why = c.voicePublicGrant(rc)
-	}
+	// The hop's public invoker binding (voice.tf) is deliberately NOT checked
+	// here, and its absence is the check: `allUsers` is a member no kind of
+	// this table carries, so the classification above refuses it as a principal
+	// nobody named and the step that carries it shows the finding — which is
+	// D920's front door binding's own state (coordinator.tf) and D1545's rule
+	// (a new kind of principal is one nobody refuses for me). What holds the
+	// binding to the one service, role and region voice.tf writes is
+	// deploy/terraform's TestAllUsersIsRefusedOnEveryOtherResource and
+	// internal/infra/managed, both of which refuse rather than warn.
 	if why == "" && t == "google_project_iam_member" {
 		why = c.dynamicSecretsGrant(rc)
 	}
@@ -2277,17 +2187,6 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, creates
 			// address would otherwise be able to grant it any toAccounts row's
 			// role.
 			kind = toVoice
-		case m == publicInvokerMember:
-			// ... and the voice hop's public invoker binding (P5.3.3), which is
-			// the tree's ONLY grant to nobody: voicePublicGrant closes it to the
-			// one service, the one role and the one project voice.tf writes, so
-			// `allUsers` anywhere else — and any other role or resource on this
-			// service — is refused and the update that carries it asks its owner.
-			// It is checked here rather than left to the default arm's "not on
-			// the review screen" because the hop's binding is on purpose: a
-			// device presents a Firebase ID token and no Google identity, so
-			// there is no member an invoker binding could name (voice.tf).
-			kind = toVoicePublic
 		case slices.Contains(c.Listed, m):
 			if !strings.HasPrefix(m, "user:") && !strings.HasPrefix(m, "group:") && !strings.HasPrefix(m, "serviceAccount:") {
 				return fmt.Sprintf("grants to %s, which is not a user, group or service account", m)

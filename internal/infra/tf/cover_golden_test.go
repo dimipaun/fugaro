@@ -78,13 +78,17 @@ func TestGoldenPlansAreCovered(t *testing.T) {
 		// image pin as the credentials service's golden beside it, with the
 		// hop's service (min instances 0, args `voice serve`, its own two
 		// environment names), its account, its one role binding and the one
-		// allUsers invoker member a phone reaches it through. The member is why
-		// this plan's grants are the cover's own affair rather than the front
-		// door's: it is nobody's identity and there is no member a device could
-		// name (voice.tf), so the cover carries it on purpose. The fixture is
-		// the credentials golden's own, operator and all, so this plan carries
-		// that operator's grants too — and the same one of them the cover does
-		// not reach (below).
+		// allUsers invoker member a phone reaches it through. That member is
+		// why this plan is the tree's first golden to carry a grant the run's
+		// confirmation does NOT cover: `allUsers` is a principal no kind of the
+		// grant table names (cover.go's toVoice), exactly as on the front
+		// door's own binding, so it is pinned below as a finding rather than
+		// quietly classified — the member is on purpose (voice.tf), and what
+		// refuses it anywhere else is deploy/terraform's
+		// TestAllUsersIsRefusedOnEveryOtherResource. The fixture is the
+		// credentials golden's own, operator and all, so this plan carries that
+		// operator's grants too — and the same one of them the cover does not
+		// reach (below).
 		"installation-voice": {"user:person-1@example.com"},
 		// The coordinator's opt-in ON (coordinator plan P5): its account, the
 		// account's two reads, its job and schedule, and the Firebase root's
@@ -114,16 +118,30 @@ func TestGoldenPlansAreCovered(t *testing.T) {
 			// the runs bucket alone, because `fugaro setup` creates the state
 			// bucket before any Terraform runs (Cover.Buckets,
 			// internal/cli/init_review.go). So this one grant is outside what the
-			// review announced and its step asks its own typed confirmation —
+			// review announced and its step reads the note and is applied —
 			// which is what happens to every operator added to a running
 			// installation, on main as much as here, and is a fact about that
 			// bucket and not about the read mint's grant. Pinned whole, in both
 			// directions: any other refusal fails this test, and so does this
 			// refusal going away, which is what would say the cover learned the
 			// bucket and this exception is stale.
+			//
+			// installation-voice is the tree's one plan that carries a grant to
+			// NOBODY: the hop's public invoker binding (voice.tf). The grant
+			// table names no kind for `allUsers` — the same state the front
+			// door's own binding is in, and deliberately so (cover.go's toVoice)
+			// — so the binding is refused here as a principal nobody
+			// classified, which is what puts it in front of the operator on
+			// every update that plans it. Pinned for the state bucket's reason
+			// and one more: a row here would be the cover quietly carrying a
+			// public endpoint, and the plan order below is what the golden
+			// really emits.
 			want := []string{}
+			if name == "installation-voice" {
+				want = append(want, `module.installation.google_cloud_run_v2_service_iam_member.voice_public[0] (grants to allUsers, who is not on the review screen)`)
+			}
 			if name == "installation-credentials" || name == "installation-voice" {
-				want = []string{`module.installation.google_storage_bucket_iam_member.state["user:person-1@example.com"] (on bucket fugaro-tfstate-proj-1234, which is not this run's)`}
+				want = append(want, `module.installation.google_storage_bucket_iam_member.state["user:person-1@example.com"] (on bucket fugaro-tfstate-proj-1234, which is not this run's)`)
 			}
 			if !slices.Equal(got, want) {
 				t.Fatalf("a real %s plan is not covered: %q, want %q", name, got, want)

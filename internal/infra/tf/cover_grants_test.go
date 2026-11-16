@@ -227,8 +227,9 @@ func TestGrantRulesNameOnlyKnownTypesAndRoles(t *testing.T) {
 		for key, w := range row {
 			// The bits the table may name, enumerated so that a new kind is a
 			// deliberate line here and not a row nobody classified (P5.3.3
-			// added the hop's account and its public binding).
-			if w == 0 || w&^(toPeople|toAccounts|toDeployer|toCredentials|toCoordinator|toVerifier|toCatalogCheck|toMCP|toIntake|toReports|toVoice|toVoicePublic) != 0 {
+			// added the hop's account; the hop's allUsers binding is
+			// deliberately not a kind — cover.go's toVoice says why).
+			if w == 0 || w&^(toPeople|toAccounts|toDeployer|toCredentials|toCoordinator|toVerifier|toCatalogCheck|toMCP|toIntake|toReports|toVoice) != 0 {
 				t.Errorf("%s %s: bad principal kinds %d", typ, key, w)
 			}
 			if id, ok := strings.CutPrefix(key, customKey); ok {
