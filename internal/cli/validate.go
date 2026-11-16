@@ -735,6 +735,15 @@ func craftOnly(ps []config.Problem, crafts []config.CraftModel) []config.Problem
 // a run of this repository carries (runner.ProvidersFor) and the price table the
 // run's gateway charges from.
 //
+// Which crafts the caller hands it is the one thing the two surfaces differ in,
+// and it is the caller's to decide: `fugaro validate` judges every craft the
+// documents resolve, because a model written at a craft's key is a problem of
+// the file whatever a run of it would do with the model, while a launch narrows
+// to the crafts the run it would start reads (launchCraftsRead) — a craft whose
+// level that run leaves off is a craft it charges nothing for and refuses
+// nothing for, so refusing the launch for one would be a refusal the run does
+// not make.
+//
 // A configuration that is not this installation's own project judges nothing,
 // the guard budgetProblems, providerProblems and cascadeProblems carry: another
 // project's routes, prices and credentials are not this file's to be refused by.

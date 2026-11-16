@@ -1911,13 +1911,19 @@ func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, 
 	// writes — so a configuration that cannot be served stops the launch here,
 	// where the task is not yet written and no job is paid for.
 	//
+	// The crafts judged are the ones this run reads (launchCraftsRead), not
+	// every craft the layers resolve: the sentence below says the run refuses
+	// the same configuration, and a craft whose level the run's own layers left
+	// off reaches no slot at all, so the run neither runs it nor refuses it.
+	//
 	// The documents the access half is judged against are the installation's own
 	// (env.lc's credentials, pools and accounts) and not the node's, which is
 	// where the crafts were resolved from: they are the owner's writes (F12,
 	// D1628) and the node is that config published, so a name the node carries
 	// is a name this config holds — and this is the read slipCredentialNames
 	// makes for the same half, for the same reason.
-	if ps := craftModelProblems(cfg, env.lc, spec.Repo, claimed, launchFileSubject, cr.crafts); len(ps) > 0 {
+	if ps := craftModelProblems(cfg, env.lc, spec.Repo, claimed, launchFileSubject,
+		launchCraftsRead(cr.crafts, cr.models, levels)); len(ps) > 0 {
 		lines := make([]string, 0, len(ps))
 		for _, p := range ps {
 			lines = append(lines, p.String())
@@ -1926,6 +1932,46 @@ func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, 
 			strings.Join(lines, "; "))
 	}
 	return reviewLevelsAsk(levels, spec.ReviewLevels, cfg, floor, recipeUnknown), nil
+}
+
+// launchCraftsRead is the crafts whose model the run this launch resolved
+// really reads, out of every craft the layers resolve (MC12's write,
+// internal/runner/craftmodel.go's applyCrafts).
+//
+// The coder's model goes into agent.models.coder and the senior review's into
+// agent.models.reviewer whatever the levels are, and the first-line review's
+// and the security review's go into their own level's slot alone: applyCrafts
+// writes those two only where the level runs and wrote no model of its own
+// (F14 — a craft decides a level's model, never whether it runs), and a craft
+// written nowhere the run looks is a craft the run charges nothing for and
+// refuses nothing for. Judging one at a launch would refuse a launch the run
+// serves, with a sentence saying the run refuses the same configuration, and
+// the way out would be editing a key the refused run never reads.
+//
+// The levels answer the last clause rather than a second copy of the rule: a
+// level that wrote its own model resolved to it, so `models[craft]` is in no
+// slot — while a level that wrote none resolved to the craft's model, which is
+// what the slot carries and so what the run's own allow-list, route, price and
+// access checks judge. Where a level wrote a model and the craft names the same
+// ID, the two are one model and the craft's is judged, which is what the run
+// charges. Level 2's slot is not asked about: its model comes from the senior
+// review's role slot, which is judged above whatever the level resolved to.
+func launchCraftsRead(crafts []config.CraftModel, models map[string]string, levels config.Levels) []config.CraftModel {
+	out := make([]config.CraftModel, 0, len(crafts))
+	for _, c := range crafts {
+		switch c.Craft {
+		case config.CraftReview:
+			if !levels.L1.On || levels.L1.Model != models[config.CraftReview] {
+				continue
+			}
+		case config.CraftSecurityReview:
+			if !levels.L3.On || levels.L3.Model != models[config.CraftSecurityReview] {
+				continue
+			}
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 // launchFileSubject is what a launch's own model messages call the file the

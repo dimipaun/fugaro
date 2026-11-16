@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -190,6 +191,82 @@ func TestLaunchRefusesTheSameModelForL1AndL2ThroughCrafts(t *testing.T) {
 	if storedTask(t, f) {
 		t.Error("the refused launch stored its task")
 	}
+}
+
+// launchCraftOffLevelYAML is the file the two launches below commit: two crafts
+// name a model the allow-list leaves out — the first-line review's and the
+// security review's — and the allow-list is the only rule in it, so what each
+// launch does with those two crafts is the whole question. first_line_review is
+// off here and turned on for the second launch; level 3 is off in both, which
+// is what it is outside a task that asks for the strongest review.
+const launchCraftOffLevelYAML = `version: 1
+project: aurora
+git: { provider: github, base_branch: develop }
+budget: { allowed_models: [claude-sonnet-5-5] }
+agent:
+  auth: api-key
+  model: claude-sonnet-5-5
+  first_line_review: %s
+  crafts:
+    review: { model: claude-opus-4-1 }
+    security-review: { model: claude-opus-4-1 }
+workflows:
+  svc: { commands: { build: sh build.sh, test: sh test.sh } }
+`
+
+// TestLaunchServesACraftWhoseLevelIsOff: a launch judges the crafts the run
+// reads, not every craft the layers resolve (launchCraftsRead). A craft's model
+// reaches a slot only where the level it belongs to runs and wrote no model of
+// its own — MC12's write, and F14's rule that a craft decides a level's model
+// and never whether the level runs — so a level the run's own layers left off
+// leaves its craft's model unread, uncharged and unrefused.
+//
+// The two launches are one file apart, and the difference is the point: level
+// 1's switch is the file's, so the same document launches for the task that
+// runs no first-line review and is refused for the one that does. A launch that
+// refused both would refuse a configuration the run serves, and would send the
+// reader to a key nothing in the refused run reads.
+func TestLaunchServesACraftWhoseLevelIsOff(t *testing.T) {
+	t.Run("the levels are off, so the crafts are not read", func(t *testing.T) {
+		noAgentSession(t)
+		f := newCloudFixture(t)
+		configSkewCheckout(t, f, fmt.Sprintf(launchCraftOffLevelYAML, "off"))
+		writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releasePolicy)
+		if _, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task"); err != nil {
+			t.Fatalf("the launch refused a craft whose level does not run: %v", err)
+		}
+		if n := len(f.run.Executions()); n != 1 {
+			t.Errorf("%d executions were created, want one: the launch was served", n)
+		}
+	})
+	t.Run("the level runs, so the craft is judged", func(t *testing.T) {
+		noAgentSession(t)
+		f := newCloudFixture(t)
+		configSkewCheckout(t, f, fmt.Sprintf(launchCraftOffLevelYAML, "on"))
+		writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releasePolicy)
+		_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("the launch: err = %v (exit %d), want the crafts refused", err, ExitCode(err))
+		}
+		for _, want := range []string{
+			"the crafts this run would resolve cannot be served",
+			"agent.crafts.review.model",
+			"`claude-opus-4-1` is not an allowed model",
+		} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not say %q: %v", want, err)
+			}
+		}
+		// The security review's model is unread in this launch too — level 3 is
+		// off in both files — so the refusal names the craft the run reads and
+		// not the one it does not.
+		if strings.Contains(err.Error(), "agent.crafts.security-review.model") {
+			t.Errorf("the refusal names a craft level 3 does not run: %v", err)
+		}
+		if storedTask(t, f) {
+			t.Error("the refused launch stored its task")
+		}
+	})
 }
 
 // cropLayerNoReviewCraft is craftProjectLayer without the first-line review's
