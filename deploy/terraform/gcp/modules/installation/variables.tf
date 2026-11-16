@@ -661,7 +661,7 @@ variable "orchestrator" {
     condition = var.orchestrator == null ? true : (
       can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.orchestrator.account_id)) &&
       can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.orchestrator.firebase_project)) &&
-      endswith(var.orchestrator.token_signer, "@" + var.orchestrator.firebase_project + ".iam.gserviceaccount.com")
+      endswith(var.orchestrator.token_signer, "@${var.orchestrator.firebase_project}.iam.gserviceaccount.com")
     )
     error_message = "orchestrator needs a service account ID (6-30 characters of a-z, 0-9 and -, starting with a letter), the Firebase project the signer account lives in, and the signer's own address on that project — the token-minter grant is bound on that account, and a signer address in another project would bind it nowhere the role exists."
   }

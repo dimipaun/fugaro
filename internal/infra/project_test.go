@@ -266,6 +266,13 @@ func TestCoverNamesAreTheCodes(t *testing.T) {
 	if CoordinatorAccountID != tf.CoordinatorAccountID || has(tf.FugaroAccounts, CoordinatorAccountID) {
 		t.Errorf("the coordinator's writer %s must be tf.CoordinatorAccountID (%s), its own kind, and not one of tf.FugaroAccounts", CoordinatorAccountID, tf.CoordinatorAccountID)
 	}
+	// The resident orchestrator is the coordinator's case one step over: one
+	// account of its own, granted section 4.3's rows one binding at a time. It
+	// must NOT be in tf.FugaroAccounts, because every rule that admits that set
+	// admits an account for every job — and this one is never a launcher.
+	if OrchestratorAccountID != tf.OrchestratorAccountID || has(tf.FugaroAccounts, OrchestratorAccountID) {
+		t.Errorf("the resident orchestrator %s must be tf.OrchestratorAccountID (%s), its own kind, and not one of tf.FugaroAccounts", OrchestratorAccountID, tf.OrchestratorAccountID)
+	}
 	c := tf.Cover{Projects: []string{"proj-1"}}
 	for _, id := range []string{gcp.ServiceAccountID("acme-web", "web"), gcp.BuildServiceAccountID("acme-web")} {
 		if p := &(tf.Plan{ResourceChanges: []tf.ResourceChange{{Address: "m.google_project_iam_member.x", Type: "google_project_iam_member",

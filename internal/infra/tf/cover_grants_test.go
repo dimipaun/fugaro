@@ -2274,8 +2274,13 @@ func TestOrchestratorAccountIsItsOwnPrincipalKind(t *testing.T) {
 			map[string]any{"member": member, "role": "projects/proj-1/roles/fugaroLauncher", "project": "proj-1"}, map[string]any{}, true},
 		{"the job runner's role on an installation job, as the root writes it", "google_cloud_run_v2_job_iam_member",
 			map[string]any{"member": member, "role": "projects/proj-1/roles/fugaroJobRunner"}, map[string]any{}, true},
-		{"the job runner's role as the plan really carries it, computed from the role resource beside it", "google_cloud_run_v2_job_iam_member",
-			map[string]any{"member": member}, map[string]any{"role": true}, true},
+		// A role the plan leaves UNKNOWN is refused where no custom role is
+		// created with it in the same module: nobody reading the plan can name
+		// the role, and the root spells it out as a literal for exactly this
+		// reason — internal/infra's plan test pins that the literal equals the
+		// role_id of the role the same plan creates.
+		{"the job runner's role left unknown by the plan", "google_cloud_run_v2_job_iam_member",
+			map[string]any{"member": member}, map[string]any{"role": true}, false},
 		{"the token minter's role on the signer account, in the Firebase project", "google_service_account_iam_member",
 			map[string]any{"member": member, "role": "projects/fp-2/roles/fugaroTokenMinter", "service_account_id": "projects/fp-2/serviceAccounts/" + signer}, map[string]any{}, true},
 		{"the runs bucket's conditional write, under the launchers' own condition", "google_storage_bucket_iam_member",
