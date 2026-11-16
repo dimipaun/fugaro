@@ -767,6 +767,38 @@ const (
 	TriageCauseNoAnswer = "the call answered nothing"
 )
 
+// TriageFailureClause is one failed triage round as one clause of the sentence
+// its readers write: which review round's judge bought no verdict, and what
+// became of the call that should have been one.
+//
+// It is here, beside the two causes that are the record's own vocabulary and
+// not internal/runner's or internal/cli's, because two readers say it — the
+// pull request's status section (internal/runner's triageFailureLine) and
+// `fugaro diagnose` (internal/cli's triageFlag) — and one cause read two ways is
+// the drift this exists to prevent. What it says is what the record knows and
+// no more: TriageCauseUnreadable is a judge that ran and whose answer the
+// reader refused, so the clause says the answer could not be read;
+// TriageCauseNoAnswer is no words at all, which "did not answer" says on its
+// own; anything else is the call's own words — an auth failure, an upstream
+// error, a stream cut before the answer — quoted after the colon. A failed
+// round carrying no cause at all — a record written before the field existed,
+// and the shape a hand-edited one has — is read with those two: the record says
+// the round bought no verdict and does not say which way, and "did not answer"
+// is the one claim the pair has in common.
+//
+// The cause reaches a markdown table cell in the runner and a terminal line in
+// the CLI, so a caller that has to escape or clip it does so before calling:
+// the clause is the record's own words and nothing else.
+func TriageFailureClause(round int, cause string) string {
+	switch cause {
+	case TriageCauseUnreadable:
+		return fmt.Sprintf("the judge's answer for round %d could not be read", round)
+	case TriageCauseNoAnswer, "":
+		return fmt.Sprintf("the judge did not answer for round %d", round)
+	}
+	return fmt.Sprintf("the judge did not answer for round %d: %s", round, cause)
+}
+
 // TriageRecord is what a run's triage decided (docs/post-review-triage, D1850):
 // one entry per round the stage ran, in the order it ran them, so a reader can
 // see how each finding was placed, by which model, and what a failed call left
@@ -1211,6 +1243,15 @@ type StageTiming struct {
 	// mixed one's two -- so a reader must not read the empty value as "no
 	// credential".
 	Credential string `json:"credential,omitempty"`
+	// Round is the review round this attempt served, for a stage the run runs
+	// once per round: the triage judge's row carries the round it judged, the
+	// same number the round's own record keeps (TriageRound.Round), so the
+	// report pairs a row with its round's failure by a key and not by counting
+	// the rows back from the end -- a stage's retried attempt records a row of
+	// its own, and position then marks one round's row with another's (D1846).
+	// Absent for every stage that is not tied to a round and in records written
+	// before the field existed, so a reader must not read it as round 0.
+	Round int `json:"round,omitempty"`
 	// ServedBy names the credential this stage's model calls ran on, the run's
 	// own included -- which is the case Credential's stated meaning excludes,
 	// and the reason this is a field of its own rather than a second value

@@ -559,27 +559,29 @@ func reviewsOf(reviews []runstore.ReviewSummary, red func(string) string) []runs
 
 // triageFlag is the line a diagnosis carries at the top when any triage round
 // failed, "" for a run whose rounds all answered and for one that triaged
-// nothing: the rounds whose calls failed with the cause of each, and what the
-// fail-safe did with the findings — every finding the mode's table blocks
+// nothing: which rounds bought no verdict and what became of each call, and what
+// the fail-safe did with the findings — every finding the mode's table blocks
 // blocked, which is what the fix round that follows was handed (D1846). It is
 // the summary of the block below it, written from the same reading, so the two
 // cannot say different things about one round.
+//
+// Each round's clause is runstore.TriageFailureClause's, which the pull
+// request's status section writes its own line with (internal/runner's
+// triageFailureLine): a judge that answered nothing and one whose answer could
+// not be read are two different failures, and the two readers of the record must
+// not tell them apart differently.
 func triageFlag(rounds []TriageRound) string {
 	var parts []string
 	for _, r := range rounds {
 		if !r.Failed {
 			continue
 		}
-		part := fmt.Sprintf("round %d", r.Round)
-		if r.Cause != "" {
-			part += ": " + r.Cause
-		}
-		parts = append(parts, part)
+		parts = append(parts, runstore.TriageFailureClause(r.Round, r.Cause))
 	}
 	if len(parts) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("failed (%s); the fail-safe blocked every finding the mode's table blocks",
+	return fmt.Sprintf("%s; the fail-safe blocked every finding the mode's table blocks",
 		strings.Join(parts, "; "))
 }
 

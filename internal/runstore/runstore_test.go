@@ -630,6 +630,34 @@ func TestNewTriageKeepsACauseOnlyForAFailedRound(t *testing.T) {
 	}
 }
 
+// TestTriageFailureClauseSaysWhatEachCauseIs: the clause two readers of the
+// record write a failed round in — the pull request's status section and
+// `fugaro diagnose` — is true of the cause it is given, which is the whole of
+// why it exists: a judge that answered nothing and a judge whose answer could
+// not be read are two different facts, and "the judge did not run" is true of
+// neither the second one nor a call a service refused with words of its own.
+func TestTriageFailureClauseSaysWhatEachCauseIs(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		round int
+		cause string
+		want  string
+	}{
+		{"an answer the reader refused", 2, TriageCauseUnreadable,
+			"the judge's answer for round 2 could not be read"},
+		{"no words at all", 1, TriageCauseNoAnswer, "the judge did not answer for round 1"},
+		{"a service's own words", 3, "Invalid API key", "the judge did not answer for round 3: Invalid API key"},
+		// A record written before the field existed, or a hand-edited one: the
+		// round says it bought no verdict and does not say which way, so the
+		// clause claims only what both readings share.
+		{"a round with no cause kept", 1, "", "the judge did not answer for round 1"},
+	} {
+		if got := TriageFailureClause(tc.round, tc.cause); got != tc.want {
+			t.Errorf("%s: TriageFailureClause(%d, %q) = %q, want %q", tc.name, tc.round, tc.cause, got, tc.want)
+		}
+	}
+}
+
 // TestTriageSourcesCoverTheStagesVocabulary: the record's four sources hold
 // internal/triage's three, spelled the same way, and add the cap's. The two
 // vocabularies are separate declarations — the record restates the stage's

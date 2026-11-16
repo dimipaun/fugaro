@@ -4454,6 +4454,13 @@ type stageOpts struct {
 	// under review in reach is what the empty tool list and the empty
 	// setting sources are there to prevent (F25).
 	Dir string
+	// Round is the review round this stage's call serves, for a stage the run
+	// runs once per round: the triage stage is the one today, and the number
+	// reaches the record on each of its attempt's rows so that the report pairs
+	// a row with its round's failure by a key and not by position
+	// (runstore.StageTiming.Round, D1846). 0 for every stage that is not tied
+	// to a round.
+	Round int
 }
 
 // transientRetries is the run's own bound on the retry a closed model stream
@@ -4976,7 +4983,9 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	// and repeats, for every auth mode (task-governance T1.3, T1.4).
 	res.SubAgents = relay.SubAgents
 	res.Repeats = relay.Repeats
-	r.rec.Stages = append(r.rec.Stages, r.stageTiming(name, started, res.CostUSD, res.SubAgents, res.Repeats))
+	st := r.stageTiming(name, started, res.CostUSD, res.SubAgents, res.Repeats)
+	st.Round = opts.Round
+	r.rec.Stages = append(r.rec.Stages, st)
 	var errText any // the agent's error may carry a key an upstream echoed
 	if err != nil {
 		errText = r.redact(err.Error())

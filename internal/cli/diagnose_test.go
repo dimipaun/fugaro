@@ -306,7 +306,7 @@ func TestDiagnosePrintsTriageRounds(t *testing.T) {
 	for _, want := range []string{
 		// The flag above the status block: a reader who stops there must not
 		// come away thinking the run's rounds were all judged.
-		"Triage:   failed (round 1: " + answer + " [REDACTED]); the fail-safe blocked every finding the mode's table blocks",
+		"Triage:   the judge did not answer for round 1: " + answer + " [REDACTED]; the fail-safe blocked every finding the mode's table blocks",
 		"Triage\n",
 		"round 1 (startup, l2, claude-opus-5-5, account bmb): 2 findings — agent 0, table 1, fail_safe 1, cap 0; FAILED: " + answer,
 		"round 2 (startup, l2, claude-opus-5-5): 2 findings — agent 1, table 0, fail_safe 0, cap 1",
