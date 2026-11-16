@@ -16,9 +16,11 @@ run: **R0, R1 and R8 are merged**, and the two commands this family was for are 
 and the review floor are one command each. **R6** is the documentation, the skill and the release
 notes; **R7** and **W** are open, each on its own draft pull request (#2538, #2576), and **neither is
 merged**. The CLI tasks were 0.15.0's when this was written and the family has landed across the
-releases since — R1's `Layer` stage in 0.15.0, `fugaro rigor set` in 0.23.0, and `fugaro rigor floor`
-in 0.26.0, which is where R6's own notes announce it; the console half is not a task here (D836) — it
-is the read-only project view, and it queues for console 0.117.0 with the rest of that work.
+releases since — R1's `Layer` stage in 0.15.0, and `fugaro rigor set` and `fugaro rigor floor` both
+in **0.23.0**, whose notes named only the first: R6's own notes are the floor command's **first
+announcement**, and 0.26.0 is the release they are written for, not the one the command landed in;
+the console half is not a task here (D836) — it is the read-only project view, and it queues for
+console 0.117.0 with the rest of that work.
 
 **The owner's ruling of 2026-11-10: this plan's duplicates are closed, and the settings and
 config-management plans win.** Four tasks here build the same command, key or writer as a task of
