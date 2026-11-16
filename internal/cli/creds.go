@@ -899,7 +899,7 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool, bt
 			return credsStepFailed(st, err)
 		}
 		btJSON = &credsSetBitbucketResult{
-			Name: btRec.Name, Type: btRec.Type, Coverage: btRec.Coverage,
+			Name: name, Type: btRec.Type, Coverage: btRec.Coverage,
 			ProjectUUID: btRec.ProjectUUID, ProjectKey: btRec.ProjectKey, Expires: btRec.Expires,
 			Identity: btRes.Identity, WriteVerified: btRes.WriteVerified,
 		}
@@ -965,6 +965,10 @@ type credsSetResult struct {
 // its value, and WriteVerified is the machine-readable half of the "write
 // scopes not verified" line.
 type credsSetBitbucketResult struct {
+	// Name is the token's DOCUMENT KEY and not the bare account suffix (R5):
+	// it is the name this command was given, the name the bundle entry and the
+	// state store's node are spelled with, and the name every audit line
+	// carries.
 	Name          string   `json:"name"`
 	Type          string   `json:"type"`
 	Coverage      []string `json:"coverage"`

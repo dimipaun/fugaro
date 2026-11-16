@@ -2725,6 +2725,7 @@ NAME is a credential the service can issue, in the document's own spelling:
   bitbucket-token                   the upstream Bitbucket token (no tier: the git proxy issues this entry for the repositories the published node admits with proxy: true, and every other Bitbucket run's job still uses its own mounted copy until the flip)
   bitbucket-read-consumer             the Bitbucket read consumer (no tier: the service's read mint exchanges it for a read-scoped token): a YAML mapping of key, secret and workspace, one field per line, so redirect it from a file — the hidden prompt takes one line
   provider-key                 the project's provider credential (tier C: the service's provider route authenticates upstream with it): a YAML mapping of key, base_url and auth, one field per line, so redirect it from a file — the hidden prompt takes one line. It is read by a credentials service from 0.22.0 on: where the service that serves the bundle is older, this write is refused and `fugaro update` is the one command that moves it
+  bitbucket-token--<name>   a typed Bitbucket access token (no tier: the service's git proxy issues this entry for the requests the published node's coverage admits, R13): the ONE NAME this command CHECKS before it writes, and the one whose write carries a record beside the entry. See "A typed Bitbucket token" below
   claude-oauth-token--review-signing  the default account's review-signing key (no tier: the service's sign
                                      route computes a MAC with it; written by --generate below)
   claude-oauth-token-<account>--review-signing     a named account's review-signing key (no tier, and --generate's NAME too)
@@ -2746,6 +2747,49 @@ crypto/rand and writes them into the bundle. Every other NAME is refused: an
 account's review-signing names are the only ones it takes, and the rotation
 window's own entry is not one of them — asked to write it, the command refuses,
 because it writes the current entry and derives the window's from it.
+
+A typed Bitbucket token (bitbucket-token--<name>) is the ONE NAME whose
+write is more than a value: the token's TYPE, what it COVERS and its optional
+expiry are facts the operator states (D2350, R1), so they are read here — as
+flags, or as the same questions at the terminal — and stored beside the entry.
+The value is read exactly as every other one is.
+
+  --type          repo, project or workspace
+  --coverage      what the token reaches: ws/repo for a repository token, ws/*
+                  for a workspace token, or the workspace slug alone for a
+                  project token. Repeat it for a token that names more than one
+  --project-uuid  a project token's project, as Bitbucket's API spells it
+  --project-key   the same project's key, for an operator who has only that:
+                  the check resolves it to the UUID, which is what is stored,
+                  and the key is kept for display
+  --expires       the day the token stops working, YYYY-MM-DD
+
+The check runs BEFORE anything is written, and it is the whole reason this
+NAME is not like the others: this command reads Bitbucket with the token, in
+the coverage the record itself states and nowhere outside it, and a token that
+does not work, or that does not reach what the record states, is refused with
+one precise message and NOTHING is written (D2352). The one thing it cannot
+prove is the write scope: Bitbucket has no dry run for a push or a pull
+request, so the two write scopes D470 tells the operator to tick are reported
+as NOT verified and the first real use is what tries them (D2353).
+
+A write that passes is three records of one token, and all three are written:
+the bundle entry, the project config's bitbucket_tokens record, and the check's
+own answer — when it last passed and the account UUID it returned — into the
+project's credential state. The identity is written ONLY here and is never read
+from the config, so a hand-edited record cannot state an identity a run would
+trust (R12). Nothing of the record reaches a run until the policy is published:
+run `fugaro update` to publish this token's coverage to runs.
+
+This is the one NAME whose facts are read as flags, and --json asks for them
+and nothing else: a machine has no terminal to answer at, so a --json write
+carries --type and --coverage (and --project-uuid or --project-key for a
+project token) or it is refused, naming the flag it needs. A terminal is asked
+for each fact that no flag gave.
+
+It is read by a credentials service from 0.24.0 on: where the
+service that serves the bundle is older, this write is refused before anything
+is read from you and before anything is written.
 
 Two runs ROTATE the key. The first writes a fresh value where the entry was;
 the second writes a fresh one again and carries the value it replaced, byte for
@@ -2803,12 +2847,17 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--coverage` | stringArray | `[]` | no | what a typed Bitbucket token reaches: ws/repo, ws/*, or a project token's workspace (repeatable; bitbucket-token--<name> only) |
+| `--expires` | string | "" | no | the day a typed Bitbucket token stops working, YYYY-MM-DD (bitbucket-token--<name> only) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `--generate` | bool | `false` | no | generate a fresh review-signing key instead of reading a value (the review-signing names only) |
 | `-h`, `--help` | bool | `false` | no | help for set |
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--project-key` | string | "" | no | a project token's project key, which the check resolves to its UUID (bitbucket-token--<name> only) |
+| `--project-uuid` | string | "" | no | a project token's project UUID (bitbucket-token--<name> only) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--type` | string | "" | no | a typed Bitbucket token's type: repo, project or workspace (bitbucket-token--<name> only) |
 
 Subcommands:
 

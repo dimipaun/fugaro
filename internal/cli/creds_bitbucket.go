@@ -31,6 +31,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -124,18 +125,43 @@ func bitbucketTokenRecord(cmd *cobra.Command, asJSON bool, f *bitbucketTokenFlag
 		coverage = []string{entry}
 	}
 	rec.Coverage = coverage
-	if rec.ProjectUUID, err = bitbucketTokenField(cmd, asJSON, f.projectUUID, "--project-uuid", "the project's UUID, as Bitbucket spells it (braces included), or nothing when you will give the key instead"); err != nil {
-		return rec, err
+	rec.ProjectUUID, rec.ProjectKey = f.projectUUID, f.projectKey
+	// The project is asked about only for the ONE type that has one, and only
+	// when neither half was given: a repository or workspace record carrying
+	// either member is refused by the config's own rule below, and a question
+	// about a project a token cannot name is a question with no answer.
+	//
+	// The two halves are asked in turn rather than folded into one question, so
+	// nothing has to guess a key from a UUID by shape: an operator who knows
+	// only Bitbucket's UI answers the second, and the check resolves it.
+	if rec.Type == config.BitbucketTokenTypeProject && rec.ProjectUUID == "" && rec.ProjectKey == "" {
+		if rec.ProjectUUID, err = bitbucketTokenField(cmd, asJSON, "", "--project-uuid", "the project's UUID, as Bitbucket spells it (braces included), or nothing to give its key instead"); err != nil {
+			return rec, err
+		}
+		if rec.ProjectUUID == "" {
+			if rec.ProjectKey, err = bitbucketTokenField(cmd, asJSON, "", "--project-key", "the project's key, which the check resolves to its project UUID"); err != nil {
+				return rec, err
+			}
+		}
 	}
-	if rec.ProjectKey, err = bitbucketTokenField(cmd, asJSON, f.projectKey, "--project-key", "the project's key, or nothing when you gave the UUID"); err != nil {
-		return rec, err
-	}
-	// The expiry is the one fact of the five that may be left out, and the
-	// prompt for it is the one question whose empty answer is an answer: a
-	// press of Enter records none, which is what an operator who does not know
-	// the day has (R6 — it is the only expiry source a typed token has).
-	if rec.Expires, err = bitbucketTokenField(cmd, asJSON, f.expires, "--expires", "the day the token stops working, or nothing if it has none (YYYY-MM-DD)"); err != nil {
-		return rec, err
+	// The expiry is the one fact of the five that may be left out, and it is
+	// therefore the one fact that is not refused where nobody can answer: an
+	// expiry of none is a record the config holds (R6 — this is the only expiry
+	// source a typed token has), so a managed project, a run or a pipe records
+	// none rather than failing over a fact it was never going to be told. Where
+	// a person is at the terminal the question is asked, and Enter — or the
+	// input ending — answers it with none.
+	if rec.Expires = f.expires; rec.Expires == "" && !asJSON && stdinIsTerminal(cmd.InOrStdin()) {
+		b, err := readValueIn(cmd.Context(), cmd.InOrStdin(), cmd.ErrOrStderr(), valueSpec{what: "the day the token stops working, or nothing if it has none (YYYY-MM-DD)", flag: "--expires"})
+		switch {
+		case errors.Is(err, io.EOF):
+			// The input ended on the empty line: readValueIn answers io.EOF for
+			// that, and it is an answer here rather than a failure.
+		case err != nil:
+			return rec, err
+		default:
+			rec.Expires = string(b)
+		}
 	}
 	if ps := config.ValidateBitbucketTokens([]config.BitbucketToken{rec}); len(ps) > 0 {
 		return rec, userErr("nothing was written: %s", ps[0].String())
