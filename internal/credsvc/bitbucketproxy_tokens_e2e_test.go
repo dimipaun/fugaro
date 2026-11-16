@@ -217,6 +217,8 @@ func proxyTokensWorldOf(t *testing.T, node string, doc []byte, values map[string
 // other path is a 404, so a call this fixture does not answer is not silently
 // served.
 func (w *proxyTokensWorld) answers(projects map[string]string) {
+	w.up.mu.Lock()
+	defer w.up.mu.Unlock()
 	w.up.answer = func(r *http.Request) proxyAnswer {
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/2.0/repositories/"):
