@@ -117,9 +117,10 @@ type labelFake struct {
 	// pull is what a pull request read answers: the head branch, the head
 	// repository and the author the write is corroborated against.
 	pull labelPR
-	// pullStatus and mintStatus, when not 2xx, are what those calls answer with
-	// instead: the pull request read failing, and the mint failing.
-	pullStatus, mintStatus int
+	// appStatus, pullStatus and mintStatus, when not 2xx, are what those calls
+	// answer with instead: the App's own identity failing to be read, the pull
+	// request read failing, and the mint failing.
+	appStatus, pullStatus, mintStatus int
 	// labels are the label definitions the fake holds, by name: what an ensure
 	// of a name already there answers with. It is a set of names and not the
 	// text, because the text a second creation carries is what the route must
@@ -157,7 +158,7 @@ func (f *labelFake) serve(w http.ResponseWriter, r *http.Request) {
 	f.seen = append(f.seen, ghSeen{method: r.Method, path: r.URL.Path, body: string(body), auth: r.Header.Get("Authorization")})
 	slug, token, expires := f.slug, f.token, f.expires
 	open, pull := f.open, f.pull
-	pullStatus, mintStatus := f.pullStatus, f.mintStatus
+	appStatus, pullStatus, mintStatus := f.appStatus, f.pullStatus, f.mintStatus
 	known := map[string]bool{}
 	for name, there := range f.known {
 		known[name] = there
@@ -166,6 +167,10 @@ func (f *labelFake) serve(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/app":
+		if appStatus != 0 && appStatus/100 != 2 {
+			w.WriteHeader(appStatus)
+			return
+		}
 		f.write(w, http.StatusOK, map[string]any{"slug": slug, "id": 99})
 	case r.Method == http.MethodGet && r.URL.Path == f.repoPath("/installation"):
 		f.write(w, http.StatusOK, map[string]any{"id": 777})
@@ -704,6 +709,33 @@ func TestLabelRouteCorroboratesPullRequest(t *testing.T) {
 		}
 		if e := refusal(t, resp.StatusCode, body); e.Error != ErrorStateUnavailable {
 			t.Errorf("the refusal is %q, want %q: %s", e.Error, ErrorStateUnavailable, e.Message)
+		}
+	})
+
+	// An App identity the service cannot read is the same kind of answer for
+	// the same reason, and it is the one the author check has to be careful
+	// about: PRHead.Self is false when GET /app never named the App, exactly
+	// as it is false for another account's author, so a route that read Self
+	// alone would refuse a call it must retry — a 502 is an outage that may
+	// pass, not a caller that named the wrong run. The route asks the App
+	// explicitly before it calls the author someone else's.
+	t.Run("the App's identity the service cannot read", func(t *testing.T) {
+		s, gh := labelRouteSvc(t)
+		gh.appStatus = http.StatusBadGateway
+		before := len(gh.writes())
+		resp, body := s.labelWrite(t, creds.LabelActionAdd, wantRunningName)
+		if resp.StatusCode != StatusUnavailable {
+			t.Fatalf("a write whose App identity could not be read was answered %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
+		}
+		e := refusal(t, resp.StatusCode, body)
+		if e.Error != ErrorStateUnavailable {
+			t.Errorf("the refusal is %q, want %q: %s", e.Error, ErrorStateUnavailable, e.Message)
+		}
+		if !strings.Contains(e.Message, ErrLabelGitHub.Error()) {
+			t.Errorf("the refusal does not name the read that failed: %s", e.Message)
+		}
+		if after := len(gh.writes()); after != before {
+			t.Errorf("the write refused for an unreadable identity reached GitHub %d times, want none", after-before)
 		}
 	})
 }

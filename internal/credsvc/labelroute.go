@@ -642,7 +642,10 @@ func (s *Server) labelUpstreamRefusal(ctx context.Context, w http.ResponseWriter
 //     fork can carry a branch of that name (PRHead.Fork fails closed when GitHub
 //     reports no head repository at all, which is a deleted fork);
 //   - its author is Fugaro's own identity, the App's own bot login as
-//     gitprov.PRHead.Self reports it.
+//     gitprov.PRHead.Self reports it — and where Self is false, a read that
+//     names the App explicitly, because Self is false for an identity that
+//     could not be read as well as for another account's author, and only the
+//     second is a call to refuse.
 //
 // What it does NOT read is the pull request's state: clearing the status labels
 // of a pull request that has merged or closed is exactly what the two status
@@ -652,7 +655,9 @@ func (s *Server) labelUpstreamRefusal(ctx context.Context, w http.ResponseWriter
 // Two reads make it: the pull request, for its head branch and head repository,
 // and the head read, for the author. Both are made through the provider, and the
 // second is what needs the App's key — Self is decidable only by asking GitHub
-// who this App is, which is the one read an installation token cannot make.
+// who this App is, which is the one read an installation token cannot make. A
+// third read of that same App identity is made only where Self comes back false,
+// where the two reasons for it have to be told apart.
 func (s *Server) labelCorroborate(ctx context.Context, p *github.Provider, number int, runID, base string) error {
 	info, err := p.PullRequest(ctx, number)
 	if err != nil {
@@ -670,6 +675,17 @@ func (s *Server) labelCorroborate(ctx context.Context, p *github.Provider, numbe
 	case head.Fork:
 		return fmt.Errorf("%w: its head is a fork", ErrLabelNotCorroborated)
 	case !head.Self:
+		// Self is false both for an author that is another account's and for
+		// the read that would have named Fugaro's own identity failing: the
+		// adapter fails closed, which is right for a gate that must not trust
+		// a stranger's pull request and wrong here, where an outage is not a
+		// bad call and the daemon retries rather than reporting a refusal
+		// (F17, the route's own rule). Ask who the App is, explicitly, so the
+		// two are told apart; a read that succeeds here says the author
+		// really is someone else's, which is the call to refuse.
+		if _, err := p.AppIdentity(ctx); err != nil {
+			return fmt.Errorf("%w: the App's own identity could not be read: %w", ErrLabelGitHub, err)
+		}
 		return fmt.Errorf("%w: its author is not Fugaro's own identity", ErrLabelNotCorroborated)
 	}
 	return nil
