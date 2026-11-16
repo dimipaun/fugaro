@@ -1898,6 +1898,103 @@ func TestReportsGrantsAreTheConditions(t *testing.T) {
 	}
 }
 
+// licenceMember is the renewal job's account as a plan names it.
+const licenceMember = "serviceAccount:" + LicenceAccountID + "@proj-1234.iam.gserviceaccount.com"
+
+// licenceGrantPlan is one of the renewal job's two bucket grants as a plan
+// carries it: the account created in the same module (a computed member, which
+// is what the first apply's plan writes) or named outright (an update plan),
+// and the one condition the case writes.
+func licenceGrantPlan(computed bool, role string, cnd map[string]any) *Plan {
+	conds := []any{}
+	if cnd != nil {
+		conds = []any{cnd}
+	}
+	after := map[string]any{"bucket": cbBucket, "role": role, "condition": conds}
+	unk := map[string]any{"condition": []any{map[string]any{}}}
+	if computed {
+		unk["member"] = true
+	} else {
+		after["member"] = licenceMember
+	}
+	return &Plan{ResourceChanges: []ResourceChange{
+		{Address: "module.installation.google_service_account.licence", Type: "google_service_account",
+			Change: Change{Actions: []string{"create"}, After: map[string]any{"account_id": LicenceAccountID}}},
+		{Address: "module.installation.google_storage_bucket_iam_member.licence_read", Type: "google_storage_bucket_iam_member",
+			Change: Change{Actions: []string{"create"}, After: after, AfterUnknown: unk}},
+	}}
+}
+
+// TestLicenceGrantsAreTheConditions: the two rows that accept the renewal
+// job's account accept exactly the two bindings the module writes, and the
+// CONDITION is what makes them the modules' own — one prefix of one of this
+// run's buckets under the title built from that account, byte for byte
+// gcp.LicenceReadCondition or gcp.LicenceWriteCondition.
+//
+// The shape the account may NOT hold is the one the reports job's rule already
+// refuses and the comment beside the licence bits claims for this account too:
+// an UNCONDITIONED bucket-wide grant. Every other account's unconditioned
+// objectViewer is a job reading the whole bucket, which is the modules' choice
+// for them; this account holds the two conditioned grants and nothing else, so
+// a whole-bucket read would reach the run records, the prompts, the
+// transcripts, the sealed tokens, the cache, the locks and the issue store,
+// none of which the job has any business reading (plan K4.2, D524).
+func TestLicenceGrantsAreTheConditions(t *testing.T) {
+	c := Cover{Projects: []string{"proj-1234"}, Buckets: []string{cbBucket}, Listed: []string{cbPerson}, Region: testCover.Region}
+	read := cond(gcp.LicenceReadConditionTitle(LicenceAccountID), gcp.LicenceReadCondition(cbBucket))
+	write := cond(gcp.LicenceWriteConditionTitle(LicenceAccountID), gcp.LicenceWriteCondition(cbBucket))
+	for _, tc := range []struct {
+		name     string
+		role     string
+		cond     map[string]any
+		computed bool
+		covered  bool
+		want     string
+	}{
+		{"the job reads its three objects", "roles/storage.objectViewer", read, false, true, ""},
+		{"the job writes the licence object", "roles/storage.objectUser", write, false, true, ""},
+		{"a first plan's computed member reads its three objects", "roles/storage.objectViewer", read, true, true, ""},
+		// The read role under the write condition's title, and the read
+		// condition carrying the write's bytes: the title says which of the
+		// two grants the plan meant to write, so neither is read as the other.
+		{"the job reads under the write condition's title", "roles/storage.objectViewer",
+			cond(gcp.LicenceWriteConditionTitle(LicenceAccountID), gcp.LicenceReadCondition(cbBucket)), false, false, "not its three-object read of this run's bucket"},
+		{"the job reads under the read title with the write's bytes", "roles/storage.objectViewer",
+			cond(gcp.LicenceReadConditionTitle(LicenceAccountID), gcp.LicenceWriteCondition(cbBucket)), false, false, "not the licence condition of this run's bucket"},
+		// The two roles swapped: each is bound to its own condition and to no
+		// other, so the write role under the read condition is refused rather
+		// than read as either grant.
+		{"the job writes under the read condition", "roles/storage.objectUser", read, false, false, "is not the licence object's own"},
+		// ... and the whole bucket, which is the grant no module writes: the
+		// account's reach is the two conditioned rows above and nothing else.
+		{"unconditioned objectViewer", "roles/storage.objectViewer", nil, false, false, "unconditioned, to the installation's licence renewal job"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := c.NotCovered(licenceGrantPlan(tc.computed, tc.role, tc.cond), nil)
+			if tc.covered {
+				if len(got) != 0 {
+					t.Errorf("NotCovered = %q, want the module's own grant", got)
+				}
+				return
+			}
+			if len(got) == 0 {
+				t.Fatal("NotCovered = nil, want a refusal: only the module's two bindings are the module's own")
+			}
+			if !strings.Contains(got[0], tc.want) {
+				t.Errorf("NotCovered = %q, want it to contain %q", got[0], tc.want)
+			}
+		})
+	}
+
+	// The account alone is not the grant: the same rule for a lookalike in
+	// another project, under the right bytes and the right title.
+	lookalike := licenceGrantPlan(false, "roles/storage.objectViewer", read)
+	lookalike.ResourceChanges[1].Change.After["member"] = "serviceAccount:" + LicenceAccountID + "@fp-2.iam.gserviceaccount.com"
+	if got := c.NotCovered(lookalike, nil); len(got) == 0 {
+		t.Errorf("the three-object read of %s@fp-2 is covered: the account is the installation's own", LicenceAccountID)
+	}
+}
+
 // TestMCPAccountIsItsOwnPrincipalKind: the front door's own account (D920,
 // D935) is a principal of its own kind, like the credentials service's, the
 // coordinator's, the verifier's and the project's catalog check job, and for

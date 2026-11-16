@@ -2795,6 +2795,16 @@ func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[st
 		if c.isReportsMember(str(ch.After["member"])) {
 			return "grants " + role + " on the bucket, unconditioned, to the project's reports job: the modules give it objectViewer under its runs/ condition and objectUser under its reports/ one, and nothing else (ruling E4)"
 		}
+		// ... and the renewal job's account for the same reason and with the
+		// same two conditioned rows (plan K4.2): objectViewer under its
+		// three-object read and objectUser under the licence object's own
+		// condition are the module's whole reach on the bucket, so an
+		// unconditioned grant of either role is the bucket-wide one — every
+		// run record, prompt, transcript, token, cache, lock and issue, none
+		// of which the job reads (D524).
+		if c.isLicenceMember(str(ch.After["member"])) {
+			return "grants " + role + " on the bucket, unconditioned, to the installation's licence renewal job: the module gives it objectViewer under its three-object read and objectUser under the licence object's own condition, and nothing else (plan K4.2)"
+		}
 	case role == "roles/storage.objectUser" && person:
 		for _, b := range c.Buckets {
 			// A configured bucket name is not charset-checked everywhere it is
