@@ -23,8 +23,10 @@
 // that document.
 //
 // The service side is the build route (B1); the build side is the bake plan
-// (B2) and the generated clone step (B8). Until the route exists, stub.go
-// answers the shape and nothing else, and I2 deletes it.
+// (B2), the generated clone step (B8) and the client I2 wired to the route
+// (internal/cli/gitcred_build.go). The stub C2 shipped while the two halves were
+// built side by side is gone: a shipped path that still held one would bake an
+// image with no credential at all.
 package buildtoken
 
 import (
@@ -149,8 +151,10 @@ type Response struct {
 	Proxy *ProxyGrant `json:"proxy,omitempty"`
 }
 
-// Client asks for a build's credential. The implementation that talks to the
-// service is I2's, beside the route it calls; until then stub.go answers.
+// Client asks for a build's credential. The only implementation is the one I2
+// wired to the service, beside the route it calls
+// (internal/cli/gitcred_build.go); the stub that stood in while the two halves
+// were built side by side is deleted.
 type Client interface {
 	// Mint asks the service for the credential a build clones the entry's
 	// repositories with.

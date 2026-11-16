@@ -325,12 +325,25 @@ func (s *steps) index(step string) int {
 //
 // It answers a query's documents in no particular order, which is what a store
 // with no order does: a test that is about an order asks for one.
+//
+// A withdrawal a rebind makes through a transaction (Tx.Revoke) goes to the key
+// store the case reads, because a deployment's two seams are one document store:
+// firestore_store.go's NewDocStore is handed the database the portal's seam is
+// reached over, and the key store's records live in it beside the portal's
+// documents. A case that reads a revocation back from f.store is therefore
+// reading the same place the service wrote it, and a case that needs the store's
+// own rules — a transaction that cannot commit, a write that lands beside this
+// seam's — wires one document store behind both seams instead
+// (workspaces_test.go's docsOnDocstore).
 type docsSpy struct {
-	mu   sync.Mutex
-	held map[string]Doc
+	mu    sync.Mutex
+	held  map[string]Doc
+	store Store
 }
 
-func newDocsSpy() *docsSpy { return &docsSpy{held: map[string]Doc{}} }
+func newDocsSpy(store Store) *docsSpy {
+	return &docsSpy{held: map[string]Doc{}, store: store}
+}
 
 func (d *docsSpy) Get(_ context.Context, collection, id string) (Doc, error) {
 	d.mu.Lock()
@@ -353,6 +366,21 @@ func (d *docsSpy) Delete(_ context.Context, collection, id string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	delete(d.held, collection+"/"+id)
+	return nil
+}
+
+// Revoke withdraws keys into the store this seam stands on, one store call each:
+// in a deploy the two seams are one document store, and here they are one test
+// store. This spy has no transactions of its own to nest, which is exactly what
+// makes it unable to tell a withdrawal committed with the caller's transaction
+// from one committed beside it — a case that has to tell them apart wires a real
+// document store behind both seams (workspaces_test.go's docsOnDocstore).
+func (d *docsSpy) Revoke(ctx context.Context, revocations []Revocation) error {
+	for _, r := range revocations {
+		if err := d.store.Revoke(ctx, r); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -575,7 +603,7 @@ func newFixtureWith(t *testing.T, env Environment, edit func(*fixture)) *fixture
 	f.stepUp = &stepUpSpy{accept: true, accepts: stepUpCode}
 	f.notifier = &notifierSpy{}
 	f.auditor = &auditorSpy{}
-	f.docs = newDocsSpy()
+	f.docs = newDocsSpy(f.store)
 	f.signIn = &signInSpy{caller: Caller{
 		UID: "uid-1", Email: ownerAccount, Provider: "google.com", AuthTime: f.now,
 	}}

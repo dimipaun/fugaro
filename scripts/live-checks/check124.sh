@@ -500,7 +500,7 @@ step_doctor() {
     return 0
   fi
   if [ -z "$lines" ]; then
-    fact doctor FAIL "fugaro doctor --all printed no 'batch-' line at all, not even the info one — an installation with no batch: block in its project config is one doctorBatchChecks returns nothing for, and this check is about the Batch backend: this is the first thing to fix, and the rest of 124a-5 says nothing about it. doctor's whole output: $(printf '%s' "$out" | oneline)"
+    fact doctor FAIL "fugaro doctor --all printed no 'batch-' line at all, not even the info one — an installation with no batch: block in its project config is one doctorBatchChecks returns nothing for, and this check is about the Batch backend: this is the first thing to fix, and the rest of 124a-6 says nothing about it. doctor's whole output: $(printf '%s' "$out" | oneline)"
     return 0
   fi
   local summary
@@ -543,7 +543,7 @@ part_a() {
     step_doctor
     step_validate
   fi
-  step_manual "paste this block into the register's Check 124a section: the three before-state counts, the plan-only output, the two read-backs (every batch- line whole with its severity word, the --strict exit code, and whether any batch- line appeared at all), and whether fugaro validate said '<path> is valid' — with the date, the commit, and whether you had to type the apply's confirmation in this sitting"
+  step_manual "paste this block into the register's Check 124a section: the three before-state counts, the plan-only output, the selection's own reading (fugaro backends use cloud-batch's whole output and exit code, its two refusals — a config carrying no batch block, and one doctor refuses — the coding agent's session it is refused in, and the read-back that backend: is not shared, so another machine of the project still runs on cloud-run), the two read-backs (every batch- line whole with its severity word, the --strict exit code, and whether any batch- line appeared at all), and whether fugaro validate said '<path> is valid' — with the date, the commit, and whether you had to type the apply's confirmation in this sitting"
 }
 
 print_plan_a() {
@@ -553,6 +553,7 @@ print_plan_a() {
   say "  [cloud]  gcloud batch jobs list / compute instances list / compute instance-templates list --project=${P} — the before-state, written to ${W:-<the work directory>}/jobs-before.txt, instances-before.txt and templates-before.txt"
   say "  [cloud]  fugaro setup --plan-only --provision-batch --project ${INSTALL} — the installation root's plan, applying nothing and asking nothing"
   say "  [yours]  fugaro setup --provision-batch --project ${INSTALL} — NOT run by this script: it asks you to type the installation's name, and a coding agent's session is refused that stage"
+  say "  [yours]  fugaro backends use cloud-batch --project ${INSTALL} — NOT run by this script either: the selection is the step that moves every launch of the installation onto VMs, so a coding agent's session is refused it, and it is refused until the block is written and doctor's Batch checks pass"
   say "  [cloud]  fugaro doctor --all --project ${INSTALL} and fugaro doctor --strict --project ${INSTALL} — every batch- line whole (--all is what prints the info boundary line), and the strict exit code"
   say "  [local]  fugaro validate — the offline half: <path> is valid, and not the old 'is not enabled yet' refusal"
   say "and its Restore removes the scratch directory ${SCRATCH} and nothing else: the work directory is kept (124d diffs against it) and the installation's own provisioning stays"
@@ -1193,7 +1194,7 @@ step_diff() {
 }
 
 step_whole() {
-  # --all, for the same reason 124a-5 runs it: the boundary line this row
+  # --all, for the same reason 124a-6 runs it: the boundary line this row
   # compares against 124a is a measurement, and the default view prints none.
   run_capture "$SCRATCH/doctor.out" "$SCRATCH/doctor.err" fugaro doctor --all --project "$INSTALL"
   local out failing lines
@@ -1213,7 +1214,7 @@ step_whole() {
   if [ -n "$bad" ]; then
     fact whole FAIL "${bad}the read-back verbatim: batch- lines [$(printf '%s' "$lines" | oneline)], doctor's summary [$(printf '%s\n' "$out" | grep -m1 '^fugaro doctor:' | oneline)], the preload images [$(printf '%s' "$images" | oneline)]"
   else
-    fact whole PASS "the installation is whole after the whole check: the same batch- lines 124a-5 read ('$(printf '%s' "$lines" | oneline)'), doctor's summary '$(printf '%s\n' "$out" | grep -m1 '^fugaro doctor:' | oneline)', and the preload family still there — $(printf '%s' "$images" | oneline). NOTHING was torn down anywhere in this check: the two APIs are still on, the run accounts' IAM is untouched, the reaper's and the preload's accounts and their two custom roles stand, the Cloud NAT and its router stand, both scheduler jobs stand, the reaper job stands, and a teardown of the compute root is NOT this check's restore step — it would take the installation's backend apart, and the two custom roles would keep counting against the project's custom-role limit for seven days after it"
+    fact whole PASS "the installation is whole after the whole check: the same batch- lines 124a-6 read ('$(printf '%s' "$lines" | oneline)'), doctor's summary '$(printf '%s\n' "$out" | grep -m1 '^fugaro doctor:' | oneline)', and the preload family still there — $(printf '%s' "$images" | oneline). NOTHING was torn down anywhere in this check: the two APIs are still on, the run accounts' IAM is untouched, the reaper's and the preload's accounts and their two custom roles stand, the Cloud NAT and its router stand, both scheduler jobs stand, the reaper job stands, and a teardown of the compute root is NOT this check's restore step — it would take the installation's backend apart, and the two custom roles would keep counting against the project's custom-role limit for seven days after it"
   fi
 }
 

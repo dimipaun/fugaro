@@ -556,6 +556,49 @@ func declares(cfg *config.Config, name string) bool {
 	return false
 }
 
+// platformSecretName reports whether name is one of the credentials the
+// platform decides the scope of rather than a repository's own declared
+// secret, whatever the local config holds: a model provider's own key
+// (config.ProviderBySecret), a provider's conventional name
+// (config.ReservedProviderSecret — `<provider>-api-key`, reserved for that
+// provider whatever its .secret is written as) and a Claude account's token
+// (config.ClaudeAccountBySecret).
+//
+// It is what tells D2313's repository-level secret from those, and both readers
+// of the ruling need it for the same reason: a repository-scope provider's key
+// and a repository copy of a reserved name are live credentials a job of that
+// repository really mounts, so `fugaro secrets set` must go on storing them and
+// `fugaro secrets rm` must go on refusing them — the ruling disables the
+// secrets a repository declares in its own fugaro.yaml, and reading one of
+// these as that would tell a person a name is ignored when its value is
+// mounted, or take the store away from an operator who asked for it.
+//
+// A name that is neither, and that no workflow of the checkout declares either
+// (secretsSet's own check, which runs first), is the disabled feature's.
+func platformSecretName(lc *localcfg.Config, name string) bool {
+	if _, ok := config.ProviderBySecret(lc.Providers, name); ok {
+		return true
+	}
+	if _, ok := config.ReservedProviderSecret(lc.Providers, name); ok {
+		return true
+	}
+	if _, ok := config.ClaudeAccountBySecret(lc.ClaudeAccounts, name); ok {
+		return true
+	}
+	return false
+}
+
+// repoSecretsDisabled is D2313's answer to a secrets command whose subject is
+// a repository-level secret (config.RepoLevelSecret): the notice, printed, so
+// the command changes nothing and exits 0. It is the shape
+// repoImagesDisabled answers a repository's own image with (image.go) — the
+// ruling the owner modelled this one on — and the sentence itself is
+// config.RepoSecretsDisabledNotice, where the ruling lives.
+func repoSecretsDisabled(w io.Writer) error {
+	fmt.Fprintln(w, config.RepoSecretsDisabledNotice)
+	return nil
+}
+
 func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 	if _, reserved := config.ReservedSecrets[name]; !reserved && !config.SecretNameRE.MatchString(name) {
 		// The name is not quoted: a value typed in its place must not be echoed.
@@ -739,6 +782,22 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 		if !declares(cfg, name) {
 			return userErr("no workflow in this checkout's fugaro.yaml declares that secret NAME; add it under a workflow's secrets: first")
 		}
+	}
+	if config.RepoSecretsOff && config.RepoLevelSecret(name) && !platformSecretName(env.lc, name) {
+		// D2313: a repository-level secret is disabled for now, and everything
+		// below this line is a write into one repository's own container — the
+		// store, the notes about which copy wins and the step that files a log.
+		// So the command answers the notice instead and writes nothing.
+		//
+		// The check sits after the name checks above and not at the command's
+		// door: a name a provider claims, or one no workflow of the checkout
+		// declares, is refused in the words it was refused in before this
+		// ruling — and a name that is one of the platform's own credentials is
+		// stored exactly as it was (platformSecretName), because the ruling
+		// disables the secrets a repository declares in its own fugaro.yaml and
+		// not the credentials Fugaro's own scope machinery decides. What is
+		// left is the repository-level secret this ruling is about.
+		return repoSecretsDisabled(cmd.OutOrStdout())
 	}
 	if repo != "" && projectScopeName(env.lc, name, "") {
 		// The name has a project-wide meaning that does not reach this

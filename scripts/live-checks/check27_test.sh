@@ -1369,6 +1369,38 @@ test_a_run_records_its_project_and_the_next_one_refuses_another() {
   expect_no_calls "the second run makes no tool call"
 }
 
+test_a_run_adds_its_project_to_the_sections_own_vars_env() {
+  setup_case root-project-append
+  # The file the section's own guard block writes is the file a person who
+  # followed the steps by hand already has, and it records C= alone
+  # (`[ -f "$CHK27/vars.env" ] || printf 'C=%s\n'` in the block). The check's own
+  # write must ADD the project to that file rather than leave it as the block
+  # left it: that line is the whole of what arms the guard for the next run, and
+  # a case that only ever starts from no file cannot see it — the fresh path
+  # writes the file either way, so a write that replaced the block's file and
+  # dropped the project would still pass there.
+  mkdir -p "$dir/root"
+  printf 'C=%s\n' "$dir/root/config" >"$dir/root/vars.env"
+  run27_default
+  expect_status "$status" 0 "a run over the section's own vars.env"
+  expect_no_fails "a run over the section's own vars.env"
+  local recorded
+  recorded=$(cat "$dir/root/vars.env")
+  expect_contains "$recorded" "CHK27_PROJECT=$PROJECT" \
+    "the project the run added to the file the section's block wrote"
+  # C= is what the block's own write puts there, and the check's file is the
+  # block's file: one that led with the project would be a second shape for a
+  # file two writers share.
+  [ "$(printf '%s\n' "$recorded" | head -1)" = "C=$dir/root/config" ] ||
+    fail "the run's write moved C= off the first line of $dir/root/vars.env: got $(printf '%s' "$recorded" | tr '\n' '|')"
+  : >"$dir/state/calls.gcloud"
+  : >"$dir/state/calls.fugaro"
+  run27 --project fugaro-live-chk27-b --billing-account "$ACCOUNT" --repo "$REPO"
+  expect_status "$status" 2 "a second run against another throwaway, over the file the first one armed"
+  expect_contains "$out" "records CHK27_PROJECT=$PROJECT" "the row names the project the first run added"
+  expect_no_calls "the armed guard stops the second run before any tool call"
+}
+
 test_the_negative_uses_a_config_root_of_its_own() {
   setup_case neg-root
   run27_default
@@ -1509,6 +1541,7 @@ t test_a_vars_env_recording_the_same_project_is_accepted
 t test_a_vars_env_naming_another_project_is_refused
 t test_a_vars_env_recording_only_the_root_is_accepted
 t test_a_run_records_its_project_and_the_next_one_refuses_another
+t test_a_run_adds_its_project_to_the_sections_own_vars_env
 t test_the_negative_uses_a_config_root_of_its_own
 t test_usage_and_arguments
 t test_a_region_that_is_not_one_is_refused

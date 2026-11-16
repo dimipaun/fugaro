@@ -44,8 +44,13 @@ type seenRequest struct {
 	scheme string
 	host   string
 	path   string
-	query  string
-	auth   string
+	// rawPath is the path as it went on the wire, with any escaping kept: path
+	// is what the fake answers by and Go has decoded it, so the one thing a
+	// case about escaping can see — a nested repository path addressed as
+	// itself rather than as one escaped segment — is only here.
+	rawPath string
+	query   string
+	auth    string
 }
 
 // fakeBitbucket stands in for api.bitbucket.org. Every call the check makes
@@ -133,12 +138,13 @@ type fakeTransport struct {
 
 func (h *fakeTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	h.fake.record(seenRequest{
-		method: r.Method,
-		scheme: r.URL.Scheme,
-		host:   r.URL.Host,
-		path:   r.URL.Path,
-		query:  r.URL.RawQuery,
-		auth:   r.Header.Get("Authorization"),
+		method:  r.Method,
+		scheme:  r.URL.Scheme,
+		host:    r.URL.Host,
+		path:    r.URL.Path,
+		rawPath: r.URL.EscapedPath(),
+		query:   r.URL.RawQuery,
+		auth:    r.Header.Get("Authorization"),
 	})
 	if r.URL.Scheme != "https" || r.URL.Host != "api.bitbucket.org" {
 		return nil, fmt.Errorf("the check addressed %s://%s, and Bitbucket's API root is https://api.bitbucket.org alone", r.URL.Scheme, r.URL.Host)
@@ -265,6 +271,42 @@ func TestVerifyRepoWorkspaceAndProjectCoverage(t *testing.T) {
 		checksValid(t, rec)
 		if want := []string{"repository:read", "pullrequest:read"}; !slices.Equal(res.ReadScopes, want) {
 			t.Errorf("read scopes = %v, want each proven once, %v", res.ReadScopes, want)
+		}
+	})
+
+	t.Run("a repository token covering a nested repository", func(t *testing.T) {
+		// Bitbucket's API path nests wherever the coverage pattern does
+		// (ValidBitbucketTokenCoverage admits "bitbucket/acme/group/app"), and
+		// the read has to be addressed at that nested path: escaping the
+		// repository as ONE segment would ask for a repository named
+		// "group/app", which is not the one the record names. The fake answers
+		// by the decoded path either way, so what this case reads is rawPath.
+		f := newFakeBitbucket(t, map[string]fakeAnswer{
+			"GET /2.0/repositories/acme/group/app":              {status: 200, body: `{"full_name":"acme/group/app"}`},
+			"GET /2.0/repositories/acme/group/app/pullrequests": {status: 200, body: `{"values":[]}`},
+			"GET /2.0/user": {status: 200, body: `{"uuid":"{aaaa-2222}","kind":"repository_access_token"}`},
+		})
+		rec := repoRecord()
+		rec.Coverage = []string{"bitbucket/acme/group/app"}
+		res := f.verifier().Verify(context.Background(), testToken, rec)
+		if !res.OK {
+			t.Fatalf("OK = false, message %q", res.Message)
+		}
+		checksValid(t, rec)
+		if want := []string{"repository:read", "pullrequest:read"}; !slices.Equal(res.ReadScopes, want) {
+			t.Errorf("read scopes = %v, want %v", res.ReadScopes, want)
+		}
+		var got []string
+		for _, r := range f.requests() {
+			got = append(got, r.rawPath)
+		}
+		want := []string{
+			"/2.0/repositories/acme/group/app",
+			"/2.0/repositories/acme/group/app/pullrequests",
+			"/2.0/user",
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("the check addressed %v, want %v: a nested repository is read at the path the API nests at, not as one escaped segment", got, want)
 		}
 	})
 
