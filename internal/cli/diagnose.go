@@ -541,6 +541,22 @@ func reviewLine(r runstore.ReviewSummary) string {
 // not: they are strings on the wire, and the block's own enums are redacted for
 // the same reason (toleratedOf). nil for a record with none, so the key is
 // absent rather than an empty list.
+func reviewsOf(reviews []runstore.ReviewSummary, red func(string) string) []runstore.ReviewSummary {
+	if len(reviews) == 0 {
+		return nil
+	}
+	out := make([]runstore.ReviewSummary, 0, min(len(reviews), diagnoseReviews))
+	for _, r := range reviews {
+		if len(out) == diagnoseReviews {
+			break
+		}
+		r.Tier, r.Verdict = red(r.Tier), red(r.Verdict)
+		r.Model, r.Effort, r.Head = red(r.Model), red(r.Effort), red(r.Head)
+		out = append(out, r)
+	}
+	return out
+}
+
 // triageFlag is the line a diagnosis carries at the top when any triage round
 // failed, "" for a run whose rounds all answered and for one that triaged
 // nothing: the rounds whose calls failed with the cause of each, and what the
@@ -596,22 +612,6 @@ func triageLine(r TriageRound) string {
 		line += ": " + r.Cause
 	}
 	return line
-}
-
-func reviewsOf(reviews []runstore.ReviewSummary, red func(string) string) []runstore.ReviewSummary {
-	if len(reviews) == 0 {
-		return nil
-	}
-	out := make([]runstore.ReviewSummary, 0, min(len(reviews), diagnoseReviews))
-	for _, r := range reviews {
-		if len(out) == diagnoseReviews {
-			break
-		}
-		r.Tier, r.Verdict = red(r.Tier), red(r.Verdict)
-		r.Model, r.Effort, r.Head = red(r.Model), red(r.Effort), red(r.Head)
-		out = append(out, r)
-	}
-	return out
 }
 
 // triageRoundsOf is the record's triage rounds for the document: the record's

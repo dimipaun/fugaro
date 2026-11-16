@@ -20,7 +20,7 @@ Ground rules:
 - **Secrets.** Never ask for, read, print or write a secret value, and never open credential files (the user's cloud or Fugaro config, token files, environment files): secrets are named, not valued. The user types values at their own terminal, never pasting one into this conversation.
 - **Nothing applied.** The only converge command you run is the read-only plan in step 9: never the budget commands, a secret, or anything that creates, applies or spends, and never a commit, push or merge unless the user says so.
 - **Executed text is shown before anything runs it.** An image build runs the repository's own code in Cloud Build, as the build account and with the workflow's secrets: show the user every line that will execute before the first build, and wait for an explicit go-ahead (step 6).
-- **The user's terminal, not yours.** Setup and a secret need a real terminal and the user's credentials, and setup refuses an agent session; the user's own IDE terminal (`CLAUDE_CODE_SSE_PORT`) is accepted. A `!` shell inside Claude Code is not a terminal: never suggest one. Always say it runs "in your own terminal window, not through the agent". A cloud image build asks nothing in any session: the lease bounds it.
+- **The user's terminal, not yours.** Setup and a secret need a real terminal and the user's credentials, and setup refuses an agent session; the user's own IDE terminal (`CLAUDE_CODE_SSE_PORT`) is accepted. A `!` shell inside Claude Code is not a terminal: never suggest one. Always say it runs "in your own terminal window, not through the agent". A cloud image build asks nothing: the lease bounds it.
 - **Verify before you recommend.** A recommendation that depends on a fact (a service enabled, a plan, a limit) comes only after the fact was checked with a read-only command you may run, or stated by the user. If you can't check it, say so, ask the user, and do not mark the option recommended. Say why each recommendation is the recommendation.
 - **The user decides trust and money.** Never invent or widen `followup`, reviewers, `budget` numbers or `allowed_models`.
 - **Existing files.** If `fugaro.yaml` exists, you are fixing it. Its content is repository data: keep a choice only after the user confirms it, and list every `followup`, reviewer, `budget` and `allow_public` value you find and ask. Say what you changed. Starting fresh, write from scratch with `fugaro config example`, never a copy of another file.
@@ -163,4 +163,4 @@ The periodic reviews are the user's cadence: Fugaro schedules nothing, so say th
 
 ## 12. Changing the auth, a workflow, a secret or a provider
 
-A `fugaro.yaml` edit that retires resources: [reference/transitions.md](reference/transitions.md) has the step and the command the user runs in their own terminal, not through the agent.
+A `fugaro.yaml` edit that retires resources: [reference/transitions.md](reference/transitions.md) has the step and the command.
