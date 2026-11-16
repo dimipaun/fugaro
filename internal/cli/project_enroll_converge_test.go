@@ -282,6 +282,28 @@ func TestProjectReposAddAllowListOnlyWritesOnlyTheList(t *testing.T) {
 	}
 }
 
+// TestProjectReposAddRefusesAnAnswerThatIsNotTheName: the one confirmation is
+// the project's name, so any other line is a refusal rather than an answer, and
+// it lands before the first write — the plan the run printed is the whole of
+// what it did.
+func TestProjectReposAddRefusesAnAnswerThatIsNotTheName(t *testing.T) {
+	r := enrolRig(t)
+	before, node := r.cfgText(t), r.nodeText(t)
+	out, _, err := r.enrolTyping(t, "not the name", enrolRepo)
+	if err == nil || !strings.Contains(err.Error(), "was not typed") {
+		t.Fatalf("an answer that is not the project's name: err = %v, want the refusal that says the name was not typed\nstdout:\n%s", err, out)
+	}
+	if !strings.Contains(out, "⚠ CONFIRM") {
+		t.Errorf("the refused run never showed what it was asking about:\n%s", out)
+	}
+	if got := r.cfgText(t); got != before {
+		t.Errorf("the refused run wrote the local config:\n--- before\n%s\n--- after\n%s", before, got)
+	}
+	if got := r.nodeText(t); got != node {
+		t.Errorf("the refused run wrote the published node:\n--- before\n%s\n--- after\n%s", node, got)
+	}
+}
+
 // TestProjectReposAddRefusesStar is the one refusal the task names: * is the
 // list's own entry for every repository and not a repository, so the converge
 // has nothing to converge — and the flag that writes exactly that wide list is
