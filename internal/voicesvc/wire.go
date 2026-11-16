@@ -51,6 +51,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -342,6 +343,9 @@ func ReadStatusRequest(r *http.Request) (StatusRequest, error) {
 	if len(body) == 0 {
 		return StatusRequest{}, fmt.Errorf("the request carries no body: the query is a JSON object naming the project")
 	}
+	if err := onlyMembers(body, "project"); err != nil {
+		return StatusRequest{}, err
+	}
 	if err := decodeStrict(body, &req); err != nil {
 		return StatusRequest{}, err
 	}
@@ -353,6 +357,31 @@ func ReadStatusRequest(r *http.Request) (StatusRequest, error) {
 		return StatusRequest{}, fmt.Errorf("the request names no project: a project is a slug — the lowercase repository name, a dash and its sixteen hex digits — which is the key the policy node is written under")
 	}
 	return req, nil
+}
+
+// onlyMembers refuses a document carrying a member name that is not one of
+// want, spelled exactly.
+//
+// The exactness is the point and it is not what encoding/json does: the
+// decoder folds a member's name to the struct field's case-insensitively, so
+// `{"Project": …}` decodes into a struct whose field is tagged `project`.
+// internal/projectpolicy checks its own members for the same reason
+// (checkMemberNames): a wire format this tree reads has one spelling per
+// member, and a caller that wrote another one wrote something no writer of
+// this contract produces.
+func onlyMembers(body []byte, want ...string) error {
+	var written map[string]json.RawMessage
+	if err := json.Unmarshal(body, &written); err != nil {
+		return fmt.Errorf("the request body is not this contract's: %w", err)
+	}
+	for name := range written {
+		if !slices.Contains(want, name) {
+			// The name is not repeated: it is a caller's string, bounded only
+			// by the body's own bound.
+			return fmt.Errorf("the request carries a member this contract does not have: the query is a JSON object naming the project, and nothing else")
+		}
+	}
+	return nil
 }
 
 // decodeStrict decodes one JSON document, refusing an unknown member and
