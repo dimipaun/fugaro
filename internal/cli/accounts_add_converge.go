@@ -289,7 +289,13 @@ func accountsAddRunStages(ctx context.Context, cmd *cobra.Command, run *stepRun,
 		return nil, err
 	}
 	defer unlock()
-	spec, err := installOptions(o, lc)
+	// installSpec and not installOptions: this door composes the same spec
+	// `fugaro update` does and plans the same jobs, so a config that can no
+	// longer compose the job of a default profile this installation holds must
+	// not stop it (init_policy_migrate.go's heldDefaultProfiles answers every
+	// door). A refusal here would leave the operator unable to add or remove an
+	// account of a project their own `fugaro update` converges.
+	spec, err := installSpec(o, lc, r.warn)
 	if err != nil {
 		return nil, err
 	}

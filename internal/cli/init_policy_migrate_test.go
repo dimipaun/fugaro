@@ -2079,3 +2079,46 @@ func firstPublishRigErr(t *testing.T, extra string, terminal bool, o *initOption
 	}
 	return h, f, policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, true, false, h.s.e.r.conditions(), inflightAsk)
 }
+
+// TestPublishRequiresADefaultPerProviderInUse is S5's publish half (R8, D2310).
+// A block that serves two providers must define a default for each of them: this
+// block serves GitHub (standard) and Bitbucket (svc), the fixture's
+// repositories are on both, and a Bitbucket workflow that names no profile
+// would resolve to no profile at all (the runner's ProjectJobDefaultProfile) —
+// it would keep the per-repository job the block was published to replace, with
+// nothing saying why. The refusal names the profile to define and the one
+// command that writes it: `fugaro update` writes the default profile of every
+// provider a project uses, so the config an update carries always passes this
+// check.
+func TestPublishRequiresADefaultPerProviderInUse(t *testing.T) {
+	const profiles = "profiles:\n" +
+		"  standard: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h }\n" +
+		"  svc: { provider: bitbucket, cpu: 4, memory: 8Gi, timeout_class: 6h }\n"
+	f := newProjectFixture(t, profiles)
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatalf("publishing a block that serves Bitbucket with no Bitbucket default succeeded:\n%s", out)
+	}
+	for _, want := range []string{projectpolicy.DefaultProfileName + "-bitbucket", "bitbucket", selfCommand() + " update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q, so nobody knows which profile to define or with what: %v", want, err)
+		}
+	}
+	if f.db.Value(projectpolicy.PathShared()) != nil {
+		t.Error("a refused publish wrote the node")
+	}
+
+	// The other half: a block that defines the default of every provider it
+	// serves publishes, and the node carries both.
+	defined := newProjectFixture(t, profiles+
+		"  standard-bitbucket: { provider: bitbucket, cpu: 2, memory: 4Gi, timeout_class: 6h }\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatalf("publishing a block that defines a default for each provider it serves failed: %v", err)
+	}
+	p := publishedPolicy(t, defined)
+	for _, name := range []string{projectpolicy.DefaultProfileName, projectpolicy.DefaultProfileName + "-bitbucket"} {
+		if _, ok := p.Profiles[name]; !ok {
+			t.Errorf("the published node carries no profiles.%s: %v", name, p.ProfileNames())
+		}
+	}
+}
