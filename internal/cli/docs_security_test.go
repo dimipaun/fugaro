@@ -546,6 +546,18 @@ func TestSecurityMdNamesTheCredentialsServicesKnownLimits(t *testing.T) {
 // section -- "The agent can act as the run at the proxy (R3, O1)." -- fails
 // this on that pin and on the "one repository" sentence that follows it.
 //
+// The pins T14 of docs/bitbucket-token-types added are the three paragraphs
+// this section gained (any mix of the three token types and the narrowest
+// covering one; a failing token marked, and the node's facts readable and
+// trusted at the writer's level; a rolled-back service refusing the whole
+// bundle), the widening of the first paragraph's "the one Bitbucket token the
+// bundle carries" to the plural, and the two banned spellings of that singular
+// -- the red step this task was written around: the plural pin and the banned
+// singular fail together until SECURITY.md and its pins move. The ban is the
+// whole phrase and never the word "one", because the section says "that one
+// token" and "a wider one" about what a request is served with, which is a
+// different claim and still true.
+//
 // Second mutation (verified, run and restored), from the review of B1.10: the
 // D504 paragraph put back as it was written first -- cancel "cancels the
 // execution" once the run has launched, and "a cancelled run still finishes
@@ -587,6 +599,48 @@ func TestSecurityMdStatesTheBitbucketGitProxy(t *testing.T) {
 		// The build account's copy until S4.
 		"build account still holds the token",
 		"until S4",
+		// The three token types (T14 of docs/bitbucket-token-types, D2350,
+		// D2355): the bundle holds any mix, the narrowest covering one serves
+		// each request, a reader of this page has to know that coverage is not
+		// permission, and one run can carry several bot identities because the
+		// token is chosen per request (D472, D2354). The plural is the whole
+		// point of this round and the sentence that used to stand here -- the
+		// bundle carrying "the one Bitbucket token" -- is banned below.
+		"holds the Bitbucket tokens the bundle carries",
+		"**The bundle may hold any mix of the three token types, and the narrowest covering one serves each request (D2350, D2355).**",
+		"`fugaro creds set bitbucket-token--<name>`",
+		"Every request is then served by the **narrowest token whose coverage admits the repository it names**",
+		"carry **several bot identities**, because each token is a different author at Bitbucket (D472)",
+		"so **coverage never widens what a run may reach** (D2354)",
+		"A repository no usable token covers is refused **naming the repository** (`token_not_covered`), never served by a wider token that does not admit it.",
+		// A failing token is marked, and the mark is a limit of this release:
+		// the state store is the operator's to clear, no command here clears
+		// it, and the mark is a node of its own so no reader takes a token for
+		// a model account (R4, R12).
+		"**A token that fails is marked, not trusted, and the node's facts are readable by every run.**",
+		"a 403 or a 404 marks nothing and evicts the cached project match",
+		"the **legacy** untyped `bitbucket-token` entry is never marked, because an installation holding only it keeps today's behaviour with no step (R3)",
+		"the mark lives under the token's own subtree of the credential state store (`creds/tokens/<name>`)",
+		"**No Fugaro command clears a Bitbucket token's mark in this release**",
+		// What the published node says, who may read it, and whom it is
+		// trusted to (F21, R5, R12), including the skew the new top-level key
+		// brings to a CLI of the release behind.
+		"**The published node is readable by every run token of the job, and that is deliberate (F21, R5).**",
+		"never a value and never a secret version",
+		"**The identity set is trusted at the level of the node's writer (F21, R12):**",
+		// The set can be partial, and R14 is why: a repository token answers no
+		// GET /user, so a set naming fewer accounts than the bundle holds
+		// tokens is the honest state and never a missing entry.
+		"it can be **partial**, because a repository token answers no `GET /user` at all, so a set that names fewer accounts than the bundle holds tokens is the honest state and not a missing entry (R14)",
+		"a hand-edited config states no identity, because the identity is never read from config",
+		"**And a node carrying the key is a skew (R5):**",
+		"a **CLI of the previous release refuses an unknown top-level key**",
+		"a runner of the previous release tolerates the key and falls back to its single `GET /user` identity for a run already in flight",
+		// The rollback the key family brings (T1, T11): the loader refuses the
+		// whole document, so the service moves before the write.
+		"**An older service refuses the whole bundle, so the service moves first.**",
+		"the bundle loader refuses a document with a key it does not know **whole** — every credential in it, the model credentials included",
+		"`docs/credentials-service/runbook.md` §11",
 		// D501: cold starts on the critical path, and no redundancy.
 		"scales to zero",
 		"cold start",
@@ -654,6 +708,11 @@ func TestSecurityMdStatesTheBitbucketGitProxy(t *testing.T) {
 		// (internal/cli/cancel.go:76-84, 235-321).
 		"once the run has launched, cancels the execution",
 		"a cancelled run still finishes what it was launched to do",
+		// The singular that was true before the three token types and is now
+		// false twice over: the bundle carries a set of Bitbucket tokens, and
+		// which one serves a request is decided per request (T14, D2350).
+		"the one Bitbucket token the bundle carries",
+		"the Bitbucket token the bundle carries",
 	} {
 		if strings.Contains(flattenDoc(s), banned) {
 			t.Errorf("SECURITY.md says %q: the proxy narrows the run, and the flip that takes the mount has not landed on this tree", banned)

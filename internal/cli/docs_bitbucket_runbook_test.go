@@ -308,3 +308,62 @@ func TestDocsBitbucketRunbookReadConsumerSectionIsLast(t *testing.T) {
 		t.Errorf("%s puts the read consumer's section before the proxy's: the numbers would then name the wrong secret", bitbucketRunbook)
 	}
 }
+
+// TestDocsBitbucketRunbookTokenTypes: §11 of the runbook is what the owner
+// reads to store, rotate and recover a proxy token, so it carries the order the
+// service and the write have to be taken in, the two ways out of a broken mark,
+// and the fact that a rotation is one write or two depending on which
+// credential is being rotated.
+//
+// Mutations (verified, run and restored): the rollback bullet's "a deployed
+// service older than the release that knows the family refuses the whole
+// bundle" deleted -> FAIL on that pin, which is T1's fact and the reason the
+// order is stated before the command rather than after it; the two ways out of a
+// broken mark reduced to "no Fugaro command clears it" -> FAIL, which is the
+// state that sends an operator looking for a command that does not exist; the
+// rotation paragraph's "**A typed** token (`bitbucket-token--<name>`) is the
+// **proxy's alone**" clause deleted -> FAIL, because the section then tells an
+// operator that every rotation is two writes, which is true of the legacy entry
+// alone.
+func TestDocsBitbucketRunbookTokenTypes(t *testing.T) {
+	doc := flattenDoc(readDoc(t, bitbucketRunbook))
+	const heading = "## 11. The Bitbucket proxy"
+	if !strings.Contains(doc, heading) {
+		t.Fatalf("%s has no `%s` section: it is the operator's page for the proxy's tokens, and the section is where they are rotated and recovered", bitbucketRunbook, heading)
+	}
+	section := flattenDoc(docSection(t, bitbucketRunbook, doc, heading))
+	for _, want := range []string{
+		// The types, the command, and the order around it.
+		"The proxy accepts any mix of the three token types — repository, project and workspace — and several at once, each stored under its own name",
+		"`fugaro creds set bitbucket-token--<name>` asks for the type, the coverage and an optional expiry, checks the token against Bitbucket, and writes nothing at all when the check fails",
+		"Because the token is chosen per request, one run can carry **more than one Bitbucket identity**, one per token that acted (D472)",
+		"the audit line's `credential` is what says which token made one",
+		"**The service moves first: `fugaro update`, then the write, then `fugaro update` again.**",
+		// T1: the whole-bundle refusal a rolled-back service brings, and the
+		// guard in the command that is not the whole of the care.
+		"a deployed service older than the release that knows the family refuses the whole bundle",
+		"the loader refuses a document carrying a key it does not know **whole** — every credential in it, the model credentials included",
+		"fugaro creds set bitbucket-token--<name>` refuses that write itself where the deployed service is too old to read it",
+		"**run `fugaro update` before the write**",
+		"**nothing of the token reaches a run until the policy is published.**",
+		// The mark: where it lives, what shows it, and the two ways out of one
+		// no command clears.
+		"A 401 that a read of a repository the token covers confirms marks **that one token** `broken`; a 429 marks it `exhausted` until `Retry-After`; a 403 or a 404 marks nothing.",
+		"a **different node from the model half's** `creds/marks/<name>`, so `fugaro accounts clear` clears a model credential and never a Bitbucket token",
+		"`credential` names the token that served the call and `status` carries the reaction it took",
+		"**a token a 401 marked broken stays out of service, and no Fugaro command clears a Bitbucket token's mark in this release**",
+		"**store the replacement under a name of its own**",
+		"**clear the node by hand** — remove `creds/tokens/<name>` from the database",
+		"a token that is merely throttled comes back by itself and one that is broken does not",
+		// F21/R5 read the other way round: the node is readable by every run,
+		// and this page is where the operator sees that saying so is not a
+		// promise that no run may read a token's reach.
+		"**A rotation writes one copy per credential the proxy and a build both hold, while S4 is open.**",
+		"A **typed** token (`bitbucket-token--<name>`) is the **proxy's alone**",
+		"so rotating it is two writes of one new value and a rotation that misses the second leaves every build of the repository cloning with the token you just revoked",
+	} {
+		if !strings.Contains(section, strings.Join(strings.Fields(want), " ")) {
+			t.Errorf("`%s` of %s does not say %q: the owner rotates and recovers the proxy's tokens from this section, and the order and the recovery are the two things a missing sentence costs them", heading, bitbucketRunbook, want)
+		}
+	}
+}
