@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/testutil"
+	"github.com/dimipaun/fugaro/internal/yamledit"
 )
 
 // enrolRigLocal is addRigLocal with the project's image catalog: the image-map
@@ -321,6 +323,76 @@ func TestReposAddConvergesAHalfDoneEnrolment(t *testing.T) {
 	}
 	if p := r.policy(t); !slices.Contains(p.AllowRepos, "github/owner/repo-a") {
 		t.Errorf("allow_repos = %v: the entry that was already there was dropped", p.AllowRepos)
+	}
+}
+
+// TestReposAddPublishesOverTheGenerationItsAllowListWriteLanded is the state
+// every installation is in once it has published anything: this machine's config
+// records the generation its policy keys were written from (D854), and that is
+// the generation the node is at. Step 4 writes the node, which moves it, so the
+// stages of steps 5 and 6 have to be handed the config as step 4 left it: a
+// config read before that write states a generation the node has moved past, and
+// the policy stage answers that with D854's re-seed — writing the node's values
+// into the file, over the two local steps that just landed, instead of
+// publishing.
+func TestReposAddPublishesOverTheGenerationItsAllowListWriteLanded(t *testing.T) {
+	r := enrolRig(t)
+	gen := enrolNodeGeneration(t, r)
+	enrolRecordGeneration(t, r, gen)
+	out, errOut, err := r.enrol(t, enrolRepo)
+	if err != nil {
+		t.Fatalf("project repos add %s over a config that records its policy generation: %v\nstdout:\n%s\nstderr:\n%s", enrolRepo, err, out, errOut)
+	}
+	if strings.Contains(out, "re-seeded") {
+		t.Errorf("the run re-seeded this machine's config from the node rather than publishing:\n%s", out)
+	}
+	after := r.addLocal(t)
+	// The two local steps are the ones a re-seed takes away with it: it writes
+	// the node's values into the file, and the node carries neither a repos entry
+	// for this repository nor a repo-to-image map.
+	if got := after.ImageMap[enrolMapKey]; got != "base" {
+		t.Errorf("image_map[%s] = %q after the run, want the mapping step 3 wrote: %v", enrolMapKey, got, after.ImageMap)
+	}
+	if _, ok := after.Repos[enrolRepo]; !ok {
+		t.Errorf("repos has no entry for %s after the run: %v", enrolRepo, after.Repos)
+	}
+	// The file and the node agree at the end of the run, which is the invariant
+	// the generation record exists for: a file left naming the generation from
+	// before this command's own write refuses the operator's next edit.
+	if want := enrolNodeGeneration(t, r); after.PolicyGeneration != want {
+		t.Errorf("policy_generation = %q, want the generation the node is at (%q)", after.PolicyGeneration, want)
+	}
+}
+
+// enrolNodeGeneration is the generation the published node is at, read the way
+// the command reads it: the ETag of the document at the shared path.
+func enrolNodeGeneration(t *testing.T, r *addRig) string {
+	t.Helper()
+	db, err := newBudgetClient(t.Context(), r.db.URL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	etag, found, _, err := readPolicyNode(t.Context(), db, r.addLocal(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatalf("no policy node at %s", projectpolicy.PathShared())
+	}
+	return etag
+}
+
+// enrolRecordGeneration writes gen into the local config as its recorded
+// policy_generation, which is the record every publish and every allow-list edit
+// leaves behind (putAllowRepos, D854).
+func enrolRecordGeneration(t *testing.T, r *addRig, gen string) {
+	t.Helper()
+	out, err := yamledit.SetScalar([]byte(readFileString(t, r.cfg)), []string{"policy_generation"}, gen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.cfg, out, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 

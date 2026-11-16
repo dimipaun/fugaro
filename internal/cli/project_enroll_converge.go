@@ -680,14 +680,26 @@ func reposEnrolmentWhat(lc *localcfg.Config, plan reposEnrolment) string {
 // policy write; and the last two are `fugaro update`'s stages.
 func reposEnrolmentApply(ctx context.Context, cmd *cobra.Command, o *projectReposOptions, lc *localcfg.Config, db *rtdb.Client, configPath string, plan reposEnrolment) error {
 	out := cmd.OutOrStdout()
-	cur, err := reposEnrolmentWriteLocal(out, plan)
-	if err != nil {
+	if err := reposEnrolmentWriteLocal(out, plan); err != nil {
 		return err
 	}
 	if err := reposEnrolmentWriteAllow(ctx, out, configPath, lc, db, plan); err != nil {
 		return err
 	}
-	return reposEnrolmentStages(ctx, cmd, o, cur, plan)
+	// Steps 5 and 6 are `fugaro update`'s stages, and what they read is this
+	// machine's config file. Step 4 wrote the published node, and that write
+	// moves the generation the file's policy keys are read at, so it records the
+	// generation it landed in the file (putAllowRepos, D854). A config read
+	// before that record — the one the four steps above were made from — states a
+	// generation the node has moved past, and the policy stage answers that state
+	// with D854's re-seed of the file from the node rather than publishing, which
+	// takes the two local steps above with it. So the stages are handed the file
+	// read back now: the config every write of this command has left.
+	after, err := localcfg.Load(plan.path)
+	if err != nil {
+		return userErr("reading back %s: %v", safetext.Field(plan.path), err)
+	}
+	return reposEnrolmentStages(ctx, cmd, o, after, plan)
 }
 
 // reposEnrolmentWriteLocal is steps 2 and 3: the `repos:` entry and the image
@@ -695,10 +707,12 @@ func reposEnrolmentApply(ctx context.Context, cmd *cobra.Command, o *projectRepo
 // second write is made from the file the first one left, and a step with
 // nothing to change writes nothing at all (userSave is not reached).
 //
-// It answers the config the file holds when the steps are done, which is what
-// the stages below read: they are `fugaro update`'s, and that command reads the
-// file.
-func reposEnrolmentWriteLocal(out io.Writer, plan reposEnrolment) (*localcfg.Config, error) {
+// The file is read back through the loader when both writes are done, which is
+// the one read that says the document is what this command thinks it is: a file
+// this command left unparseable is refused here, before step 4 writes the
+// published node against it. What the stages below read is read again, after
+// that write (reposEnrolmentApply).
+func reposEnrolmentWriteLocal(out io.Writer, plan reposEnrolment) error {
 	cur, old := plan.local, plan.old
 	if !reposEntryEqual(plan.entryNow, plan.entry) {
 		next := *cur
@@ -708,7 +722,7 @@ func reposEnrolmentWriteLocal(out io.Writer, plan reposEnrolment) (*localcfg.Con
 		}
 		next.Repos[plan.localKey] = plan.entry
 		if err := userSave(out, plan.path, old, &next); err != nil {
-			return nil, err
+			return err
 		}
 		cur = &next
 		fmt.Fprintf(out, "repos.%s: %s\n", plan.localKey, reposEntryLine(plan.entry))
@@ -723,25 +737,20 @@ func reposEnrolmentWriteLocal(out io.Writer, plan reposEnrolment) (*localcfg.Con
 		// parsed value is not the same bytes as the document it was parsed from.
 		data, err := os.ReadFile(plan.path)
 		if err != nil {
-			return nil, userErr("reading %s: %v", safetext.Field(plan.path), err)
+			return userErr("reading %s: %v", safetext.Field(plan.path), err)
 		}
 		if err := userSave(out, plan.path, data, &next); err != nil {
-			return nil, err
+			return err
 		}
-		cur = &next
 		fmt.Fprintf(out, "image_map[%s] = %s\n", plan.ownerName, pluginwire.Printable(plan.imageEntry))
 		if plan.imageSeeded {
 			fmt.Fprintf(out, "note: this machine's project config names no repo-to-image map, so the mapping is written beside the one the published node holds rather than over it\n")
 		}
 	}
-	// The stages read the file, not this value, and they read it through the
-	// loader: the one read that says the document is what this command thinks
-	// it is.
-	written, err := localcfg.Load(plan.path)
-	if err != nil {
-		return nil, userErr("reading back %s: %v", safetext.Field(plan.path), err)
+	if _, err := localcfg.Load(plan.path); err != nil {
+		return userErr("reading back %s: %v", safetext.Field(plan.path), err)
 	}
-	return written, nil
+	return nil
 }
 
 // reposEnrolmentWriteAllow is step 4: one entry in the published allow-list,
