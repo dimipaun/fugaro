@@ -58,14 +58,23 @@ import (
 // config.ProjectJobAccounts is the one function the deployer, the runner and
 // this launcher compute the account with.
 
-// launchProjectJob is the shared project job a launch runs on, and the two
-// things about it a launch needs.
+// launchProjectJob is the shared project job a launch runs on, and the things
+// about it a launch needs.
 type launchProjectJob struct {
 	// Name is the job's own name (gcp.ProjectJobName), as Cloud Run deployed
 	// it.
 	Name string
 	// Profile is the profile's name, for messages.
 	Profile string
+	// Provider and Account are the job's other two axes, as the published
+	// policy computes its name from them (gcp.ProjectJobName): they are what
+	// the job's own service account is derived from
+	// (gcp.ProjectServiceAccountID, the one derivation internal/infra's
+	// ProjectJobs deployed the job's account with), which is the account every
+	// execution on the job calls as — and the account the credentials service
+	// checks a run's slip claim against (D1937).
+	Provider string
+	Account  string
 	// Timeout is the job's own task timeout: the profile's timeout_class plus
 	// the slack every job's template carries (internal/infra's ProjectJobs).
 	// It bounds this run's execution, and it is the budget token's window: a
@@ -274,12 +283,13 @@ func (e *cloudEnv) projectJobOfRecord(ctx context.Context, job string) (*launchP
 	if !found || p == nil {
 		return nil, false, nil
 	}
-	profile, _, _, ok := runner.ProjectJobOfPolicy(p, job)
+	profile, provider, account, ok := runner.ProjectJobOfPolicy(p, job)
 	if !ok {
 		return nil, false, nil
 	}
 	timeout, _ := config.ParseDuration(p.Profiles[profile].TimeoutClass)
-	return &launchProjectJob{Name: job, Profile: profile, Timeout: timeout + backend.TaskTimeoutSlack}, true, nil
+	return &launchProjectJob{Name: job, Profile: profile, Provider: provider, Account: account,
+		Timeout: timeout + backend.TaskTimeoutSlack}, true, nil
 }
 
 // launchProjectJobFor resolves the project job spec runs on, and returns nil
@@ -469,9 +479,11 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, slug string, spec *t
 	// (contract.md: the runner matches CLOUD_RUN_JOB against this same
 	// computation).
 	return &launchProjectJob{
-		Name:    gcp.ProjectJobName(choice.Profile, pr.Provider, account),
-		Profile: choice.Profile,
-		Timeout: timeout + backend.TaskTimeoutSlack,
+		Name:     gcp.ProjectJobName(choice.Profile, pr.Provider, account),
+		Profile:  choice.Profile,
+		Provider: pr.Provider,
+		Account:  account,
+		Timeout:  timeout + backend.TaskTimeoutSlack,
 	}, nil
 }
 

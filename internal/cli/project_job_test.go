@@ -3232,6 +3232,64 @@ func TestLaunchHandsTheServiceURLToASwitchedProjectJob(t *testing.T) {
 	}
 }
 
+// TestTheSlipOfASwitchedProjectJobNamesTheJobsOwnAccount is the account half of
+// the launch above, and it is the invariant the per-repository launch has pinned
+// since DS1.5 (run_slip_test.go's TestRunRequestsSlipWhenServiceServesIt): the
+// grant call names the account the EXECUTION will call as, because that is the
+// account the service checks the claim against (slipIsThisRuns, D1937). An
+// execution on a shared project job calls as the JOB's account — one per
+// (profile, provider, account) of the published policy
+// (gcp.ProjectServiceAccountID, what internal/infra's ProjectJobs deployed that
+// job's account with) — and never as the account the pair (slug, workflow)
+// derives, which is some per-repository job's: a slip recorded for an account
+// this execution cannot be is a slip it can never claim, so every launch would
+// set FUGARO_SLIP on an execution whose first model call is refused, and the
+// service would keep a grant the run's own audit line calls granted and nobody
+// spends.
+//
+// The address is the fixture's own record and nothing dials it, which is exactly
+// why the URL half of the launch above cannot see this: the grant call fails
+// there and the run starts without a slip (runSlipEnv's quiet failures). The
+// grant is faked here, so the request the launcher really makes is the one
+// asserted — the same seam the per-repository slip tests use.
+//
+// Red before the fix, where runSlipEnv derived the account from (slug, workflow)
+// for every launch: the per-repository account is not the shared job's.
+func TestTheSlipOfASwitchedProjectJobNamesTheJobsOwnAccount(t *testing.T) {
+	f := newCascadeProjectJobFixture(t, projectJobCascadeRepoYAML)
+	f.appendConfig(t, "credentials_service:\n  url: "+credentialsServiceFixtureURL+"\n")
+	markRepoCredentialsServiceReady(t, f.cloudFixture)
+	var asked credsvc.SlipGrantRequest
+	grants := 0
+	prev := slipGrant
+	slipGrant = func(_ context.Context, _ string, req credsvc.SlipGrantRequest) (credsvc.SlipGrantResponse, error) {
+		asked, grants = req, grants+1
+		return credsvc.SlipGrantResponse{Slip: fakeSlipID, MaxRuntimeSeconds: req.MaxRuntimeSeconds}, nil
+	}
+	t.Cleanup(func() { slipGrant = prev })
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261116-090003-dddd", "Add a feature"); err != nil {
+		t.Fatalf("a launch of a switched repository on the installation's shared job: %v", err)
+	}
+	if grants != 1 {
+		t.Fatalf("the launch made %d grant calls, want exactly one: a run has one slip", grants)
+	}
+	calls := f.run.RunRequests()
+	if len(calls) != 1 || calls[0].Job != f.job {
+		t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the shared job %s: this test is about the account of the job the execution lands on", len(calls), calls, f.job)
+	}
+	// The profile lists no Claude account and this run holds no token, so the
+	// job it lands on is the profile's no-account one and its account segment is
+	// empty (projectJobPolicy, config.ProjectJobAccounts).
+	want := gcp.ProjectServiceAccountID("standard", "github", "") + "@proj-1234.iam.gserviceaccount.com"
+	if asked.Account != want {
+		t.Errorf("the grant call named the account %q, want the shared job's own (%q): the claim is checked against the account the execution calls as, so any other one is a slip this run can never claim — the model call is refused mid-run and the grant stays unclaimed on the service", asked.Account, want)
+	}
+	if got := calls[0].Env[envSlip]; got != fakeSlipID {
+		t.Errorf("the execution carries %s = %q, want the slip the service granted (%q): the id is what the job claims the grant with", envSlip, got, fakeSlipID)
+	}
+}
+
 // TestLaunchKeepsAnUnswitchedProjectJobOffTheService is the same launch on
 // each half of the switch the shared path reads, and it is the direction that
 // has to fail closed: the address is also what opens the git provider keyless

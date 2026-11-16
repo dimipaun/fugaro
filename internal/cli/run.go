@@ -5488,8 +5488,28 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	// (DS1.3's two routes). It goes on THIS EXECUTION's environment and never
 	// into a stored document: the task object is the repository's own file, a
 	// repeated run ID repeats it byte for byte, and a slip is one run's.
+	//
+	// The account the slip names is the account THIS EXECUTION will call as,
+	// which is the job's own and not the repository's: a per-repository job is
+	// one account per (slug, workflow) (gcp.ServiceAccountID, the pair the
+	// backend derives the job's own name from), while the shared project job a
+	// switched profile's launch runs on is one account per (profile, provider,
+	// account) (gcp.ProjectServiceAccountID, the derivation internal/infra's
+	// ProjectJobs deployed that job's account with). The claim is checked
+	// against the account the grant named (slipIsThisRuns, D1937), so naming
+	// the per-repository account for a shared execution writes a slip that run
+	// can never claim: it spends its model call on the refusal, the service
+	// keeps the slip as a grant nobody claimed, and FUGARO_SLIP sits on an
+	// execution it cannot open. A review launch is named none: its variant
+	// carries the address from its own deployment rather than from this
+	// launch, so the gate below is closed for it (credentialsServiceLaunchEnv),
+	// and the triple in a review job's own axes is the coding job's.
+	slipAccount := gcp.ServiceAccountID(slug, variant) + "@" + env.lc.GCPProject + ".iam.gserviceaccount.com"
+	if job != nil {
+		slipAccount = gcp.ProjectServiceAccountID(job.Profile, job.Provider, job.Account) + "@" + env.lc.GCPProject + ".iam.gserviceaccount.com"
+	}
 	if url, ok := credentialsServiceURLOf(lspec.Env); ok {
-		lspec.Env = append(lspec.Env, runSlipEnv(hctx, env, spec, slug, variant, url)...)
+		lspec.Env = append(lspec.Env, runSlipEnv(hctx, env, spec, slug, slipAccount, url)...)
 	}
 	// The services the job's own catalog entry declares, on EVERY launch and
 	// empty where the deployed image is no catalog entry (backend.ServicesEnv
@@ -5932,7 +5952,13 @@ func checkSlipServiceURL(raw string) error {
 // launcher will not carry — starts the run it started before this task existed
 // and no more than that. The alternative, failing the launch, would break runs
 // that work today over the grant of a credential they may not even use.
-func runSlipEnv(ctx context.Context, env *cloudEnv, spec *task.Spec, slug, workflow, serviceURL string) []string {
+//
+// account is the account the execution this environment goes to will call as,
+// derived by the caller from the job that execution is on (launchRun): the
+// JOB's own account and not the repository's, because the claim is checked
+// against it and a slip named for any other account is one this run can never
+// claim.
+func runSlipEnv(ctx context.Context, env *cloudEnv, spec *task.Spec, slug, account, serviceURL string) []string {
 	names, why := slipCredentialNames(ctx, env, spec)
 	if why != "" {
 		// No slip rather than a slip that names less than the run will ask
@@ -5946,11 +5972,10 @@ func runSlipEnv(ctx context.Context, env *cloudEnv, spec *task.Spec, slug, workf
 	req := credsvc.SlipGrantRequest{
 		Slug: slug,
 		Run:  spec.RunID,
-		// The account the run will call as, derived exactly as the doctor's
-		// invoker check and the installation's own root derive it: one account
-		// is dedicated to one job per repository (D1937), and the claim is
-		// checked against it.
-		Account:           gcp.ServiceAccountID(slug, workflow) + "@" + env.lc.GCPProject + ".iam.gserviceaccount.com",
+		// The account the run will call as, which the caller derived from the
+		// job this execution is going on and from nothing else: one account is
+		// dedicated to one job (D1937), and the claim is checked against it.
+		Account:           account,
 		Credentials:       names,
 		MaxRuntimeSeconds: int64(slipRunTime(spec) / time.Second),
 	}
