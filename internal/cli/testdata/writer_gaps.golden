@@ -6,6 +6,8 @@
 agent.compression
 agent.crafts.coder.access
 agent.crafts.coder.model
+agent.crafts.merge-judge.access
+agent.crafts.merge-judge.model
 agent.crafts.review.access
 agent.crafts.review.model
 agent.crafts.security-review.access
@@ -61,6 +63,8 @@ compute_prices.conformance.gib_second_usd
 compute_prices.conformance.vcpu_second_usd
 crafts.coder.access
 crafts.coder.model
+crafts.merge-judge.access
+crafts.merge-judge.model
 crafts.review.access
 crafts.review.model
 crafts.security-review.access
@@ -134,6 +138,8 @@ layer.ab.rate
 layer.claude_models
 layer.defaults.agent.crafts.coder.access
 layer.defaults.agent.crafts.coder.model
+layer.defaults.agent.crafts.merge-judge.access
+layer.defaults.agent.crafts.merge-judge.model
 layer.defaults.agent.crafts.review.access
 layer.defaults.agent.crafts.review.model
 layer.defaults.agent.crafts.security-review.access
