@@ -604,13 +604,20 @@ func (l *Ledger) windowFor(kind string) int64 {
 	return l.opts.WindowMs
 }
 
-// KindOf is the kind the ledger judges a message under: a prompt by its own
-// TTL, and everything else as a command, which is the stricter of the two
-// windows. It is the module's own default (`KIND.COMMAND`), and it exists so
-// that the mapping from the schema's kind vocabulary to the module's is written
-// once rather than per caller.
+// KindOf is the kind the ledger judges a message under: a prompt — and the
+// answer to one, which is the same exchange and is owed the same 72 hours
+// (D173) — by its own TTL, and everything else as a command, which is the
+// stricter of the two windows. It is the module's own default
+// (`KIND.COMMAND`), and it exists so that the mapping from the schema's kind
+// vocabulary to the module's is written once rather than per caller.
+//
+// An `answer` is a prompt's reply travelling the other way, so a window that
+// expired it six hours after the phone spoke it would refuse an answer to a
+// prompt the consumer is still holding. A *destructive* answer is not judged
+// here at all: it arrives as an `action`, carries a confirmation, and takes the
+// command window with every other action record (D173).
 func KindOf(msg *Message) string {
-	if msg != nil && msg.Kind == "prompt" {
+	if msg != nil && (msg.Kind == "prompt" || msg.Kind == "answer") {
 		return KindPrompt
 	}
 	return KindCommand
