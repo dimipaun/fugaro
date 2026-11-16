@@ -283,6 +283,7 @@
         "prediction": true,
         "paths": [
           "internal/creds/labelroute.go",
+          "internal/creds/labelclient.go",
           "internal/credsvc/labelroute.go",
           "internal/credsvc/labelroute_bitbucket.go",
           "internal/credsvc/labelroute_bitbucket_test.go"
