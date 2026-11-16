@@ -20,7 +20,8 @@ import (
 // fugaro.yaml's — workflows.<name>.ab, the ask for an A/B reviewer arm (O12) —
 // while slotSince's is the task's own ab.slot. Every release decodes the file
 // with KnownFields, so the block alone is what an older runner refuses, and
-// 0.24.0 and 0.25.0 are both tagged with the slot and without the block.
+// 0.25.0 is tagged — it carries the task's ab.slot and the rules that read it,
+// and no config.WorkflowAB — which is why the two keys cannot share a number.
 
 // workflowABConfig is a configuration as the three gates read one: a file whose
 // workflows write their own ab: blocks.
@@ -36,9 +37,10 @@ func workflowABConfig(blocks map[string]string) *config.Config {
 // not tagged, so docs/release.md's Before-you-tag list is what holds the
 // constant to the release actually cut — the job every other *Since constant's
 // bullet does, and the one this constant's own comment claims. The bullet also
-// has to say why the number is not slotSince's: a release that verified it
-// against 0.24.0's tag, as the slot gate did, would ship a gate that admits the
-// very image the key kills at bootstrap.
+// has to say why the constant is not slotSince's: one number for the two keys
+// would ship a gate that admits an image whose runner dies at bootstrap on the
+// file's key, 0.25.0 being the tagged release that carries the slot and not the
+// block.
 func TestWorkflowABSinceHasAReleaseBullet(t *testing.T) {
 	var bullet string
 	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
@@ -63,8 +65,8 @@ func TestWorkflowABSinceHasAReleaseBullet(t *testing.T) {
 // TestRecipesSkewRefusesWorkflowABOnOldImage: a configuration that asks for an
 // A/B reviewer arm needs a job image whose runner knows the key (B1.4, O12). It
 // is not slotSince's gate: the ask is a key of the file the job decodes either
-// way, and 0.24.0 and 0.25.0 are tagged with no config.WorkflowAB, so an image
-// the slot gate admits dies at bootstrap on `field ab not found in type
+// way, and 0.25.0 is tagged with no config.WorkflowAB, so an image the slot
+// gate admits dies at bootstrap on `field ab not found in type
 // config.Workflow`. Every workflow of the file that writes a block is judged and
 // not only the one the task selects, because the file that fails to decode is
 // the whole file; a file that writes none, and one that could not be read at

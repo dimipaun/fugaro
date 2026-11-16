@@ -503,9 +503,10 @@ func TestRecipesSkewRefusesSlotOnOldImage(t *testing.T) {
 	// (workflowABSince, TestRecipesSkewRefusesWorkflowABOnOldImage).
 }
 
-// TestSlotSinceHasAReleaseBullet: slotSince names 0.24.0, which is not tagged,
-// so docs/release.md's Before-you-tag list is what holds the constant to the
-// release actually cut — the job every other *Since constant's bullet does.
+// TestSlotSinceHasAReleaseBullet: slotSince names 0.26.0, the untagged release
+// this work ships in — not the tagged release the field itself ships in — so
+// docs/release.md's Before-you-tag list is what holds the constant to the
+// release actually cut, the job every other *Since constant's bullet does.
 // Nothing else ties the number the gate accepts to the release whose runner
 // replays a reviewer pair's champion patch, and a release that landed the
 // replay elsewhere would otherwise keep refusing images that have it.
@@ -523,7 +524,7 @@ func TestSlotSinceHasAReleaseBullet(t *testing.T) {
 	if !strings.Contains(bullet, "currently `\""+slotSince+"\"`") {
 		t.Errorf("docs/release.md's slotSince bullet does not carry the constant's release (%q)", slotSince)
 	}
-	for _, want := range []string{"ab.slot", "not tagged yet", "checkSlotImage", "checkCloneSlotImage", "slotAsk"} {
+	for _, want := range []string{"ab.slot", "not tagged yet", "checkSlotImage", "checkCloneSlotImage", "slotAsk", "0.25.0"} {
 		if !strings.Contains(bullet, want) {
 			t.Errorf("docs/release.md's slotSince bullet does not say %q", want)
 		}

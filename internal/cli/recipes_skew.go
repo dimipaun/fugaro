@@ -2350,17 +2350,25 @@ func triageSubject(repo string, written *bool) (subject, alt string) {
 // a review slot, would run the whole task on the challenger's coder model —
 // publish: none keeps it harmless, and it is still a paid run of the entire
 // loop where the pair means one review, which is the "refuses too late"
-// failure proxySince's comment describes. It names 0.24.0, the release whose
-// task reader and runner carry the slot and the replay (B1.1, B1.2), which
-// docs/release.md's Before-you-tag list verifies against the tag actually cut,
-// the way it does for the other *Since constants.
+// failure proxySince's comment describes. The field's release and the replay's
+// are different releases, and 0.24.0 and 0.25.0 are the proof: both are tagged,
+// both carry the task's ab.slot and the pair rules that read it
+// (task.AB.EffectiveSlot), and neither release's internal/runner has the replay
+// at all (B1.2, the replay's own task) — so a gate naming either one admits
+// exactly the run this constant exists to refuse.
+//
+// It names 0.26.0, the release this work ships in (docs/release-streams.yaml
+// has 0.25.0 current and Wombat 0.26.0 next) and the release the replay ships
+// in when B1.2 lands in it: that one is not tagged yet, so docs/release.md's
+// Before-you-tag list verifies the number against the tag actually cut, the way
+// it does for the other *Since constants.
 //
 // The launch that reads it is a task that carries `ab.slot` itself, replayed or
 // hand-written (B1.1, B1.4). The workflow's own ask for a reviewer arm
 // (workflows.<name>.ab.reviewer_arm, config.WorkflowAB) is a different key in a
 // different file, and an older runner dies while decoding that file rather than
 // while replaying a slot, so it is gated by workflowABSince and not here.
-const slotSince = "0.24.0"
+const slotSince = "0.26.0"
 
 // slotKnows names, for the image gates' messages, what the job image's runner
 // has to know: the pair's slot and the champion run the replay reads.
@@ -2422,13 +2430,15 @@ func checkCloneSlotImage(lc *localcfg.Config, spec *task.Spec, subject string, w
 // before the job is paid for, dies there whatever the block says.
 //
 // It is a constant of its own and not slotSince, because the two keys are
-// written by different things at different moments: the ask is the repository's
-// file, read by the job's config reader before anything runs, while the slot is
-// the task the launcher writes and is read by the runner's review stage. A
-// release can carry one and not the other, and these two did: both 0.24.0 and
-// 0.25.0 are tagged, both carry `ab.slot` (task.AB.Slot), and neither has
-// config.WorkflowAB, so a slotSince gate would admit them and the paid job would
-// die at bootstrap on `field ab not found in type config.Workflow`.
+// different kinds of thing: the ask is the repository's file, read by the job's
+// config reader before anything runs, while the slot is the task the launcher
+// writes and is read by the runner's review stage. A release can carry one and
+// not the other, and 0.25.0 is why the two cannot share a number: it is tagged,
+// it carries the task's `ab.slot` (task.AB.Slot) and the pair rules that read
+// it, and it has no config.WorkflowAB, so a slotSince gate would admit it and
+// the paid job would die at bootstrap on `field ab not found in type
+// config.Workflow`. The two constants name the same release today only because
+// neither key's behaviour is in a tagged release yet.
 //
 // It names 0.26.0, the release this work ships in — docs/release-streams.yaml
 // has 0.25.0 current and Wombat 0.26.0 next — which is not tagged yet, so
@@ -3461,7 +3471,7 @@ func checkCloneJobsImage(ctx context.Context, env *cloudEnv, spec *task.Spec, wa
 // It names 0.24.0, the release this work ships in ("Uakari": docs/release-streams.yaml
 // has 0.23.0 current and Uakari 0.24.0 next), which is not tagged yet: the
 // release that tags it holds this number to the tag it cuts, as it does for
-// slotSince's 0.24.0 and jobsSince's 0.22.0. docs/release.md ("Before you tag")
+// slotSince's 0.26.0 and jobsSince's 0.22.0. docs/release.md ("Before you tag")
 // has the checklist verify it.
 const modelGradesSince = "0.24.0"
 

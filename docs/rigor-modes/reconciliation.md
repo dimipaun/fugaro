@@ -1015,11 +1015,11 @@ Amended 2026-11-16: `workflowABSince` — the release whose config reader knows
 `fugaro.yaml`'s `workflows.<name>.ab` block, the key a workflow asks its A/B
 reviewer arm with (docs/review-levels-ab-jobmax, the owner's ruling of
 2026-11-16, `internal/cli`'s `recipes_skew.go`) — is 0.26.0 and is a constant of
-its own rather than
-`slotSince`'s: 0.24.0 and 0.25.0 are tagged, both carry the task's `ab.slot` and
-neither has `config.WorkflowAB`, so the slot gate admitted images the key kills
-at bootstrap. It added one more image-skew `Since` constant and left the
-image-skew row at 48, so it moves to 49.
+its own rather than `slotSince`'s: the key is `fugaro.yaml`'s and the slot is
+the task's, and 0.25.0 is the tagged release that carries the task's `ab.slot`
+and no `config.WorkflowAB`, so one number for the two would admit an image whose
+runner dies at bootstrap on the file's key. It added one more image-skew `Since`
+constant and left the image-skew row at 48, so it moves to 49.
 
 The **67** is the convention this folder follows: there is no registry test over
 `docs/`, so a folder that wants its documents pinned writes its own file, and

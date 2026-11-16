@@ -44,7 +44,7 @@ func gradesLayerParsed(t *testing.T) *config.ProjectLayer {
 // moving apart would send an operator to a release that does not carry one of
 // them. It is written out because every other reader moves with the constant
 // and stays green at any number (docs/release-streams.yaml has 0.23.0 current
-// and Uakari 0.24.0 next, so it is the release slotSince names).
+// and Uakari 0.24.0 next, so it is the release the key ships in).
 func TestModelGradesSinceIsTheReleaseTheKeyShipsIn(t *testing.T) {
 	if modelGradesSince != "0.24.0" {
 		t.Errorf("modelGradesSince = %q: the model_grades key ships in CLI 0.24.0", modelGradesSince)
