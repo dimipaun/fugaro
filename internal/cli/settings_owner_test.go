@@ -116,22 +116,23 @@ func TestSettingsOwnerStringsAreAClosedVocabulary(t *testing.T) {
 // which applies the file the key is stated in` — a command that applies the file
 // and never edits it — and every test stayed green. Each file-carrier token
 // names the command that writes the file the key is stated in (D1515):
-// `fugaro config publish` carries the project layer, `fugaro config init` writes
-// a checkout's own `fugaro.yaml`, and `fugaro update` writes the machine's own
-// config.
+// `fugaro config publish` carries the project layer and `fugaro config init`
+// writes a checkout's own `fugaro.yaml`. There were three until R1: the machine's
+// own config was `config local`, and its last two rows — the nudge thresholds —
+// are `settings set`'s now (D2603), so the token went with them rather than
+// staying a sentence about a file no row is stated in.
 //
 // The second is the rows the sentence is about: nothing held a token's rows to
 // the file its sentence names, so `config` carried six orchestrator ceilings and
 // the two nudge thresholds — keys of the machine's own config, which
 // `fugaro config publish` never reads — and the read printed the layer file's
 // sentence beside a row whose own target_layer is `local`. The registry answers
-// which file a row is stated in, as the layer that file is: the project layer,
-// the repository's own file, the machine's own.
+// which file a row is stated in, as the layer that file is: the project layer
+// and the repository's own file.
 func TestSettingsOwnerFileCarriersNameTheCommandThatCarriesTheFile(t *testing.T) {
 	for _, tc := range []struct{ token, command, layer string }{
 		{"config", "fugaro config publish", settings.LayerProject},
 		{"config init", "fugaro config init", settings.LayerRepo},
-		{"config local", "fugaro update", settings.LayerLocal},
 	} {
 		owner, ok := settingsOwnerCommands[tc.token]
 		if !ok {
@@ -165,14 +166,15 @@ func TestSettingsOwnerFileCarriersNameTheCommandThatCarriesTheFile(t *testing.T)
 // in that family's name, and the read's word for that token is the family's bare
 // command. Neither is this task's to change.
 //
-// The six orchestrator ceilings are why the pin exists: one commit of this branch
+// The six orchestrator ceilings are why the pin exists: one commit of G12's branch
 // gave them the `project` token, which is a family's, so
 // `fugaro settings set orchestrator.max_running 8` answered `orchestrator.
 // max_running is written by fugaro project, not by the generic path` — a refusal
-// about a key no `fugaro project` subcommand edits, where before this task the
-// same write answered the allowlist's own words. The rule is asked of every row
-// the fixture moves, not of the six, so a later move onto a family token is red
-// in the same place.
+// about a key no `fugaro project` subcommand edits, where before that task the
+// same write answered the allowlist's own words. R1 moves the six the other way,
+// onto the generic path's own token, which the loop below reads the same: the key
+// is no longer refused at all, and the only refusals any moved key may meet are
+// the ones the write already had.
 //
 // The wildcard spellings are left out, as everywhere else: their literal `*` is
 // refused by the map rule whatever the row's owner, and it is their concrete
@@ -192,23 +194,47 @@ func TestSettingsOwnerMovesLeaveTheRefusalAlone(t *testing.T) {
 			}
 		}
 	}
+}
 
-	// The six, by name, refused in the words the write used before this task:
-	// the allowlist's own refusal rather than a family's. A move onto another
-	// family token is the loop above's; this is the pin a reading of the fixture
-	// cannot give, because it says which wording the keys keep.
+// TestGenericPathRefusesTheCascadeRows is R1's pin on the six cascade leaves
+// (docs/config-ownership, D2613): they keep the owner token `accounts`, the
+// family whose command K1 adds, so the generic path refuses them in that family's
+// name from level 0 until it lands. That is the window the `credentials.`
+// allowlist prefix would otherwise open — every other key under that prefix is
+// the generic path's — and the reason the rows name a family rather than taking
+// the default token like the rest of R1's rows.
+//
+// The policy node is the block's only store and no level's carrier holds it yet
+// (N1), so a write through the generic path would have nowhere to land even if
+// the spelling were admitted: the refusal is the family's until K1 writes the
+// carrier, and `fugaro settings` reads the same six rows as `accounts`'s.
+func TestGenericPathRefusesTheCascadeRows(t *testing.T) {
 	for _, key := range []string{
-		"orchestrator.max_running", "orchestrator.batch_size",
-		"orchestrator.spawn_per_minute", "orchestrator.spawn_per_hour",
-		"orchestrator.spawn_per_day", "orchestrator.decision_model_per_class",
+		"credentials.fallback",
+		"credentials.wait_threshold",
+		"credentials.backoff.initial",
+		"credentials.backoff.cap",
+		"credentials.stop_after_exhaustion_per_window",
+		"credentials.concurrency_per_token",
 	} {
-		_, err := settingsWriteRow(key)
-		if err == nil {
-			t.Errorf("%s: the generic path writes it, and its owner names the command that carries it (D1178)", key)
+		row, ok := settings.Lookup(key)
+		if !ok {
+			t.Errorf("%s: no registry row, and the cascade block's leaves each have one (R1)", key)
 			continue
 		}
-		if !strings.Contains(err.Error(), "is not a key the generic path writes") {
-			t.Errorf("%s: the write refuses it in %v, and a row this task moves is refused by the allowlist's words, not a family's (D1178, D853)", key, err)
+		if row.Owner != "accounts" {
+			t.Errorf("%s: Owner = %q, and the cascade rows name the accounts family until K1 registers its command (D2613)", key, row.Owner)
+		}
+		if len(row.Layers) != 1 || row.Layers[0] != settings.LayerPolicy {
+			t.Errorf("%s: Layers = %v, and the block is stated in the policy node alone (the carrier N1 adds is what the command edits, not a settings layer)", key, row.Layers)
+		}
+		_, err := settingsWriteRow(key)
+		if err == nil {
+			t.Errorf("%s: the generic path writes it, and the row's owner is the accounts family's until K1 (D2613)", key)
+			continue
+		}
+		if command := settingsFamilyCommands["accounts"]; !strings.Contains(err.Error(), "is written by "+command) {
+			t.Errorf("%s: the write refuses it in %v, and the six are refused in `%s`'s name until K1 registers it (D2613)", key, err, command)
 		}
 	}
 }
@@ -271,17 +297,25 @@ func TestSettingsRefusedRowsNameNoGenericWriter(t *testing.T) {
 // config init` for the four a checkout's `fugaro.yaml` is opened with, `fugaro
 // config publish` (the `config` token, D1515) for the layer file's own header
 // and for the two files' shared `planning.decoupling`.
-// The rest of the table is this task's own `config` token under review: a row of it
+// The rest of the table is G12's own `config` token under review: a row of it
 // whose key is stated in the machine's own config rather than in the layer file
-// printed a sentence about a file it is not in. The six orchestrator ceilings
-// name `project policy`, the token whose words are `fugaro project policy
-// publish` carrying the local block to the node (`buildProjectPolicy` copies it
-// there), and the two nudge thresholds name `config local`, the machine's own
-// file, which `fugaro update` writes — the same shape `config` and `config init`
-// name for their files. Neither the six nor the two name `project`, which is a
-// token of the write's own map: that would refuse the keys by name of
-// `fugaro project`, a wording of the write's this task does not touch, and print
-// the bare command D1178 asks a sentence in place of.
+// printed a sentence about a file it is not in. R1 (D2603) moves them the whole
+// way onto the generic path's token: the two nudge thresholds and the six
+// orchestrator ceilings are `settings set`'s now, the allowlist carries their
+// spellings, and the machine's own config is the file that command edits — so
+// `config local`, the token that named it, went with them. Neither the six nor
+// the two name `project`, which is a token of the write's own map: that would
+// refuse the keys by name of `fugaro project`, a wording of the write's G12 did
+// not touch, and print the bare command D1178 asks a sentence in place of.
+//
+// One group of R1's rows is deliberately not here. `ab.rate`,
+// `workflows.*.needs` and the six cascade leaves are rows R1 adds, not owners it
+// moves, and the test asks a move of every entry (a new row's `was` would be a
+// name no release ever held). The five security rows are not a move either: R1
+// considered handing them to M4's `fugaro rigor security` (D2613) and left them
+// on `config` instead, the token whose sentence names the file each of them is
+// stated in, so they keep the owner they had and this table has no entry for
+// them. The family's token arrives in M4's own commit, beside the command.
 var settingsOwnerChanges = []struct{ key, was, now string }{
 	{"base_branch", "config", "settings set"},
 	{"budget.max_run_tokens", "budget", "settings set"},
@@ -289,22 +323,26 @@ var settingsOwnerChanges = []struct{ key, was, now string }{
 	{"commit_email", "setup", "settings set"},
 	{"commit_name", "setup", "settings set"},
 	{"gcp_project", "settings set", "config init"},
-	{"issues.nudge_after_days", "config", "config local"},
-	{"issues.nudge_recurrence", "config", "config local"},
+	{"issues.nudge_after_days", "config", "settings set"},
+	{"issues.nudge_recurrence", "config", "settings set"},
 	{"layer.gcp_project", "settings set", "config"},
+	{"layer.jobs.catalog_check.paused", "update", "settings set"},
+	{"layer.jobs.reports.paused", "update", "settings set"},
 	{"layer.project", "settings set", "config"},
 	{"layer.version", "settings set", "config"},
 	{"max_parallel", "config", "settings set"},
-	{"orchestrator.batch_size", "config", "project policy"},
-	{"orchestrator.decision_model_per_class", "config", "project policy"},
-	{"orchestrator.max_running", "config", "project policy"},
-	{"orchestrator.spawn_per_day", "config", "project policy"},
-	{"orchestrator.spawn_per_hour", "config", "project policy"},
-	{"orchestrator.spawn_per_minute", "config", "project policy"},
-	{"planning.decoupling", "settings set", "config"},
+	{"orchestrator.batch_size", "config", "settings set"},
+	{"orchestrator.decision_model_per_class", "config", "settings set"},
+	{"orchestrator.max_running", "config", "settings set"},
+	{"orchestrator.spawn_per_day", "config", "settings set"},
+	{"orchestrator.spawn_per_hour", "config", "settings set"},
+	{"orchestrator.spawn_per_minute", "config", "settings set"},
+	{"planning.decoupling", "config", "settings set"},
 	{"profile", "settings set", "config init"},
 	{"project", "settings set", "config init"},
+	{"triage", "project", "settings set"},
 	{"update_check", "setup", "settings set"},
+	{"verifier_accounts", "secrets", "settings set"},
 	{"version", "settings set", "config init"},
 	{"watch.burn_alert_usd_per_hour", "budget", "settings set"},
 }

@@ -947,10 +947,10 @@ func reviewReport(rec *runstore.Record, location string, failedComments []int) s
 	for _, n := range failedComments {
 		fmt.Fprintf(&b, "**Note:** posting the review comment on PR #%d failed; see the run's log.\n\n", n)
 	}
-	// The same failure line and table the run's own report carries (report.go):
-	// a review class run triages nothing, and the two are written from one
-	// record so a report cannot say what the other does not.
-	b.WriteString(triageFailureLine(rec))
+	// The same status line and table the run's own report carries (report.go's
+	// triageStatusLine): a review class run triages nothing, and the two are
+	// written from one record so a report cannot say what the other does not.
+	b.WriteString(triageStatusLine(rec))
 	b.WriteString(stageTable(rec))
 	if rec.Cost != nil {
 		b.WriteString(CostLine(*rec.Cost) + "\n\n")

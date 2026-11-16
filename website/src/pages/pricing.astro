@@ -1,0 +1,352 @@
+---
+/**
+ * website/src/pages/pricing.astro — the pricing page (the subscriptions plan, Task S7.2; the
+ * owner's rulings D403, D430 and T22).
+ *
+ * **What the page is.** Three tiers — Community, Team, Enterprise — and the features each one
+ * includes, which is the "Tiers and features" table of `docs/subscriptions/spec.md` and nothing
+ * else. The plan's Change line for this task is exactly that page, and it is the page T22 asks
+ * for: self-serve buyers need to see the tiers before they buy.
+ *
+ * **Why the tiers and the rows are written HERE rather than in a component or in a loaded
+ * file.** `internal/cli/docs_subscriptions_test.go` (S0.1) is the gate that keeps a price,
+ * a discount, a fee rate and the Enterprise minimum out of this public repository, and it reads
+ * a page's copy *and its frontmatter* while it deliberately does not read the components a page
+ * composes (its own comment says so, and says this page is where the Team price would land). A
+ * page whose data sat behind a component would be a page whose figure the scan cannot see, so
+ * the data lives in the frontmatter of the file the scan reads. `website/test/pricing.mjs` reads
+ * the built page, and between the two a figure has nowhere to hide.
+ *
+ * **The price is published, not committed** (D430, T22). The subscription documents own every
+ * figure, the Team price is inserted at the owner's publication (S7.4), and what stands in its
+ * place here is `TEAM_PRICE` below — a sentence, not a number, because there is no number this
+ * repository may carry. The page's test pins that sentence and refuses a currency amount or a
+ * percentage anywhere on the page, so the publication is the commit that changes both, and it
+ * is the one edit that makes this page a price list.
+ *
+ * **The rows are the plan's, and the test is what holds them to it.** The twelve feature rows
+ * come from `docs/subscriptions/spec.md`, and `website/test/pricing.mjs` reads that table and
+ * holds the built page's rows to it — the same names, the same order and the same three answers
+ * per row. Reading the table at build time instead would put the site's own words at the mercy
+ * of a markdown edit (a table the plan reflows is a page that stops building), and it would take
+ * the row names out of the file S0.1's scan reads; a test keeps the two in step and fails loudly
+ * when a row moves, which is the failure the owner wants to see.
+ *
+ * **A cell is a mark or nothing, never a word.** The three columns are the same three tiers the
+ * features page prints as its plan columns, and they answer the same question, so they answer it
+ * the same way: a check where the tier includes the feature and an empty cell where it does not
+ * (`features.astro`'s rule, and the same reason — the page chooses no word for the state that is
+ * not a mark). The check is not `aria-hidden`: nothing beside it says what it is, so a reader who
+ * cannot see the glyph hears its own name, and the column's heading says which tier it answers.
+ *
+ * **The one call to action is a link the owner supplied.** Enterprise is "contact us" (T22), and
+ * the site's contact route is the booking link `website/data/landing.yaml` holds — the same value
+ * the campaign pages' Book a demo buttons use, read here through the same loader, so the link has
+ * one home and a link that moves moves everywhere. A plain `<a href>`: nothing is loaded from
+ * Calendly's host by this page, so no consent gate stands in front of it. No e-mail address is
+ * published anywhere on the site (the owner's ruling of 2026-10-19, held by `test/privacy.mjs`).
+ *
+ * **The three links under the table are the questions a reader of a price list has next**: what
+ * each feature does (`/features/`), what the software costs them beyond the subscription, since
+ * it runs in their own cloud project and pays its own model bill (`/caps-and-costs/`), and the
+ * agreement the paid tiers are sold under (`/legal/subscription-terms/`).
+ */
+import Base from '../layouts/Base.astro'
+import { loadLanding } from '../lib/landing.mjs'
+
+/** The route's word, and the page's `<h1>`. */
+const TITLE = 'Pricing'
+
+/**
+ * The page's lead, which is also its `<meta name="description">`: the three tiers in one
+ * sentence, so a search result carries what the page is. Nothing stands between the `h1` and
+ * this paragraph — D188 reads a page's lead as the text between its `h1` and its first `h2`
+ * (`budget.mjs`), and the ceiling is 40 words.
+ */
+const LEAD =
+  'Community is free forever, Team is self-serve and priced per seat, Enterprise is annual and invoiced. This page says what each one includes.'
+
+/**
+ * The Team price, and the whole of what this page may say about it while it is unpublished: the
+ * figure is published at the owner's publication (S7.4) and never enters this repository (D430,
+ * T22), so the price line carries the sentence below instead of a number. It is a constant with
+ * one use rather than a literal in the markup because the publication replaces this value and
+ * nothing else — see the file's header for why it sits in this page at all.
+ */
+const TEAM_PRICE = 'Price published at launch'
+
+/**
+ * The three tiers, in the order `spec.md` states them, each with the spec's own words for how it
+ * is bought: "Three tiers: Community (free forever), Team (self-serve, per seat) and Enterprise
+ * (annual, invoiced)". The spec's fourth fact about a tier — what it costs — is the one that is
+ * not here: it is either published (Team, at S7.4) or a contract's (Enterprise, whose contact
+ * link is the way in).
+ */
+const TIERS = [
+  { key: 'community', name: 'Community', sold: 'Free forever' },
+  { key: 'team', name: 'Team', sold: 'Self-serve, per seat' },
+  { key: 'enterprise', name: 'Enterprise', sold: 'Annual, invoiced' },
+] as const
+
+/**
+ * The plan's "Tiers and features" table, row for row: the feature's name as the spec writes it,
+ * and which of the three tiers includes it. A row a reader would ask about — the seat rule, the
+ * licence, the free programs — is not this page's to add: the table is the plan's, and
+ * `website/test/pricing.mjs` holds this list to it.
+ */
+const FEATURES = [
+  { name: 'CLI, cloud jobs, recipes, harnesses', community: true, team: true, enterprise: true },
+  { name: 'Spend caps, kill switch, credentials security service', community: true, team: true, enterprise: true },
+  { name: 'Rigor modes, including Hotfix', community: true, team: true, enterprise: true },
+  { name: 'Fugaro Watch dashboard', community: true, team: true, enterprise: true },
+  { name: 'Console and mobile app, single user', community: true, team: true, enterprise: true },
+  {
+    name: 'Console and mobile app, multi-user with viewer/operator/admin roles',
+    community: false,
+    team: true,
+    enterprise: true,
+  },
+  { name: 'Per-project coordinator agent', community: false, team: true, enterprise: true },
+  { name: 'Shared central orchestrators', community: false, team: true, enterprise: true },
+  { name: 'Hosted MCP server with policy-narrowing tokens', community: false, team: true, enterprise: true },
+  { name: 'Workspaces: shared identity, credentials, workspace-wide cap', community: false, team: false, enterprise: true },
+  { name: 'Audit and spend-history exports', community: false, team: false, enterprise: true },
+  { name: 'Contract terms, security review, invoicing', community: false, team: false, enterprise: true },
+] as const
+
+/** The Enterprise tier's way in: the owner's booking link, from `website/data/landing.yaml`. */
+const BOOKING_URL = loadLanding().calendlyURL
+---
+
+<Base title={TITLE} description={LEAD}>
+  <article class="pricing" data-pricing-page>
+    {/* The first screen: the page's word, then the lead. The band is a `<div>` and not a
+        `<header>`, because it is the page's opening and not a landmark — the site's landmarks
+        are the layout's (`website/test/a11y.mjs`). */}
+    <div class="pricing-hero">
+      <h1 class="pricing-title display-xl">
+        <span class="gradient-text">{TITLE}</span>
+      </h1>
+      <p class="pricing-lead">{LEAD}</p>
+    </div>
+
+    {/* The three tiers: one card each, in the spec's order, with the spec's own words for how
+        the tier is bought. The Team card carries the price line — the placeholder, until the
+        owner's publication puts the figure there — and the Enterprise card carries the one
+        call to action on the page. */}
+    <section class="pricing-section" aria-labelledby="pricing-tiers">
+      <h2 class="pricing-heading display-md" id="pricing-tiers">The three tiers</h2>
+
+      <ul class="pricing-tiers">
+        {
+          TIERS.map((tier) => (
+            <li class="card pricing-tier" data-tier={tier.key}>
+              <h3 class="pricing-tier-name">{tier.name}</h3>
+              <p class="pricing-tier-sold">{tier.sold}</p>
+              {tier.key === 'team' && <p class="pricing-tier-price">{TEAM_PRICE}</p>}
+              {tier.key === 'enterprise' && (
+                <p class="pricing-tier-contact">
+                  <a href={BOOKING_URL}>Contact us</a>
+                </p>
+              )}
+            </li>
+          ))
+        }
+      </ul>
+    </section>
+
+    {/* The table: one row per feature of the plan's table, and a column per tier. The feature's
+        name is the row's header cell, so the three marks beside it are read against a row a
+        screen reader has just named. */}
+    <section class="pricing-section" aria-labelledby="pricing-table">
+      <h2 class="pricing-heading display-md" id="pricing-table">What each tier includes</h2>
+
+      <table class="pricing-table">
+        <thead>
+          <tr>
+            <th scope="col">Feature</th>
+            {TIERS.map((tier) => <th scope="col" class="pricing-tier-head">{tier.name}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {
+            FEATURES.map((row) => (
+              <tr>
+                <th scope="row" class="pricing-feature">{row.name}</th>
+                {TIERS.map((tier) => (
+                  <td class="pricing-included">{row[tier.key] ? <span class="pricing-check">✓</span> : null}</td>
+                ))}
+              </tr>
+            ))
+          }
+        </tbody>
+      </table>
+    </section>
+
+    {/* The three questions a reader of a price list has next, each a link to the page that
+        answers it: what the features do, what the software costs them beyond the subscription,
+        and what the paid tiers are sold under. The seat rule is stated rather than linked — a
+        seat is what the per-seat price is charged for, and it is the one term a reader of this
+        page cannot be left to guess (D433's pricing rule). */}
+    <div class="pricing-notes">
+      <p class="pricing-note">
+        A seat is a person who launches jobs, by any means — the console, the app, the command line or an agent.
+      </p>
+      <p class="pricing-note">
+        What each feature does, and what is still to come, is on the <a href="/features/">features page</a>.
+      </p>
+      <p class="pricing-note">
+        Fugaro runs in your own cloud project, so the model and infrastructure bills are yours — the{' '}
+        <a href="/caps-and-costs/">caps and costs</a> page says how they are capped.
+      </p>
+      <p class="pricing-note">
+        The <a href="/legal/subscription-terms/">Subscription Terms</a> are the agreement the paid tiers are sold under.
+      </p>
+    </div>
+  </article>
+</Base>
+
+<style>
+  /* Tokens only (W1.2): every colour below is the palette in force, so the contrast the site's
+     accessibility check computes is the contrast a reader gets. The page adds no colour of its
+     own, no `z-index`, and moves nothing. */
+
+  .pricing-hero {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    padding-top: var(--space-2xl);
+    padding-bottom: var(--space-2xl);
+  }
+
+  /* The headline's own measure, so the one word does not run the width of a wide window. */
+  .pricing-title {
+    max-width: 20ch;
+  }
+
+  /* The lead: one step up the type scale, the quieter tone, and the measure — the shape the
+     site's other pages set their lead in. */
+  .pricing-lead {
+    margin: 0;
+    max-width: var(--measure);
+    color: var(--text-muted);
+    font-size: var(--font-size-xl);
+    line-height: var(--leading-snug);
+  }
+
+  .pricing-section {
+    padding-top: var(--space-xl);
+  }
+
+  .pricing-heading {
+    margin: 0 0 var(--space-sm);
+  }
+
+  /* The three cards: one column on a phone, three on a wide viewport, each card the same box
+     (`.card`) so the tiers read as one row of equal offers rather than three lists. */
+  .pricing-tiers {
+    display: grid;
+    gap: var(--space-md);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  @media (min-width: 48rem) {
+    .pricing-tiers {
+      grid-template-columns: repeat(3, 1fr);
+    }
+  }
+
+  /* A card: its own column, so the price line and the call to action sit under the name
+     whatever length the words above them are. */
+  .pricing-tier {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+  }
+
+  /* How the tier is bought — the spec's own words — is the card's one line of type at the
+     reading size: it is what a reader compares across the three cards. */
+  .pricing-tier-sold {
+    margin: 0;
+    font-size: var(--font-size-lg);
+    line-height: var(--leading-snug);
+  }
+
+  /* The price line: the quietest line of the card and the one that is a sentence while the
+     figure is unpublished, so it is set apart from how the tier is bought rather than beside
+     it. It is also what gives the Team card the room the Enterprise card's link needs, so the
+     three cards' lines start and end together. */
+  .pricing-tier-price {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    line-height: var(--leading-snug);
+  }
+
+  .pricing-tier-contact {
+    margin: var(--space-2xs) 0 0;
+  }
+
+  /* The table: the site's own defaults (`base.css`), with the room a table needs above it when
+     it follows a heading rather than a sentence. */
+  .pricing-table {
+    margin-top: var(--space-sm);
+  }
+
+  /* A fixed grid on a wide viewport, so a mark sits under its own tier's heading at every
+     width: the Feature column is what is left of the three tier columns, which are wide enough
+     for the longest tier name. A phone keeps the browser's own sizing, since `base.css` narrows
+     a table to the viewport there and fixed columns would leave the feature name no room. */
+  @media (min-width: 48rem) {
+    .pricing-table {
+      table-layout: fixed;
+      width: 100%;
+    }
+
+    .pricing-table thead th:first-child {
+      width: calc(100% - 24rem);
+    }
+
+    .pricing-tier-head {
+      width: 8rem;
+    }
+  }
+
+  .pricing-feature {
+    font-weight: var(--weight-normal);
+  }
+
+  /* A tier's name over its column, and the marks under it: centred, so the three columns read
+     as three answers a reader scans down. */
+  .pricing-tier-head,
+  .pricing-included {
+    text-align: center;
+  }
+
+  /* The mark in a column of its own, the width of a glyph, so the checks line up under their
+     headings rather than drifting with the row's text. It is the cell's whole content and it is
+     not `aria-hidden`: beside it there is no word saying yes, so a reader who cannot see it
+     hears the glyph's own name. */
+  .pricing-check {
+    display: inline-block;
+    width: 1em;
+  }
+
+  /* The four lines under the table: the page's last words, each a question a buyer asks next.
+     They are set in the quieter tone because they are notes rather than the offer — except the
+     links in them, which are the body's tone because they are what a reader acts on. */
+  .pricing-notes {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    margin-top: var(--space-xl);
+  }
+
+  .pricing-note {
+    margin: 0;
+    max-width: var(--measure);
+    color: var(--text-muted);
+  }
+</style>

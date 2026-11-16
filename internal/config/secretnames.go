@@ -61,6 +61,79 @@ func HarnessOAuthSecret(name string) bool {
 	return ClaudeOAuthSecret(name) || CodexOAuthSecret(name)
 }
 
+// CredentialSecretPrefix and CredentialKeySuffix build a KEY credential's own
+// secret name: <prefix><name><suffix>, the container `fugaro accounts add
+// --type openrouter|anthropic` stores its value in and the one name the value
+// is ever read back under (MC22). Like a named Claude account's it is DERIVED
+// and never written in the config (craft.go's Credential: a credential carries
+// a name and a type and no grant of its own), so two documents cannot come to
+// disagree about where a credential's value lives.
+//
+// The suffix is what keeps a later family out of the way: a type that
+// authenticates with something else — an OAuth token, which is what the
+// claude-oauth type already has under the Claude family — can hang its own
+// <prefix><name><that suffix> beside this one without either name being a
+// second meaning for the other, and the changed suffix is why.
+const (
+	CredentialSecretPrefix = "credential-"
+	CredentialKeySuffix    = "-key"
+)
+
+// CredentialSecret is the secret a credential's value is stored under:
+// CredentialSecret("<name>") for the credential `<name>`, whatever its type's
+// serving half is.
+func CredentialSecret(name string) string {
+	return CredentialSecretPrefix + name + CredentialKeySuffix
+}
+
+// KeyCredentialSecret reports whether name is a key credential's derived
+// secret name. The whole namespace is one, whether or not the credential it
+// names exists in a config: a name merely shaped like one is a name that would
+// become a credential's the day the credential is defined, so nothing else may
+// be stored under it (ReservedSecrets' rule for the platform's own names, and
+// the CodexOAuthToken ruling of 2026-10-18 for a name with no writer yet).
+func KeyCredentialSecret(name string) bool {
+	return strings.HasPrefix(name, CredentialSecretPrefix)
+}
+
+// CredentialBySecret is KeyCredentialSecret read backwards: the credential
+// name secret belongs to, and whether it is one at all. A name whose
+// credential part is not one a credential may be named — empty, over
+// MaxClaudeAccountNameLen, or outside ClaudeAccountNameRE — is not one, which
+// is the rule ReviewSigningKeyAccount applies to its own family: a name the
+// config path can never produce is a credential that cannot be written either.
+func CredentialBySecret(secret string) (name string, ok bool) {
+	rest, found := strings.CutPrefix(secret, CredentialSecretPrefix)
+	if !found {
+		return "", false
+	}
+	name, found = strings.CutSuffix(rest, CredentialKeySuffix)
+	if !found || len(name) > MaxClaudeAccountNameLen || !ClaudeAccountNameRE.MatchString(name) {
+		return "", false
+	}
+	return name, true
+}
+
+// CredentialValueSecret is the container the config's own declaration puts
+// name's value in: the credential's derived KEY name when the credentials block
+// declares the name a key type (CredentialSecret), and the account's own Claude
+// OAuth token name otherwise — including for a name no credentials entry
+// mentions, which is the account family's own.
+//
+// A name can be both things at once and the two are stored apart (MC22):
+// claude_accounts.<name>.allow_data_to bounds where the value may be sent,
+// whoever serves it, while credentials.<name>.type decides which container
+// holds it. Every reader that asks whether a name's value is stored — and every
+// fix line that hands the owner a command to store one — resolves the container
+// through this function, so a check and the command it names cannot come to ask
+// about two different secrets under one name.
+func CredentialValueSecret(creds []Credential, name string) string {
+	if c, ok := CredentialNamed(creds, name); ok && KeyCredentialType(c.Type) {
+		return CredentialSecret(name)
+	}
+	return ClaudeAccountSecret(name)
+}
+
 // CredentialsBundleSecret is the logical name of the ONE Secret Manager
 // container the credentials service reads (Q6, docs/credentials-service's
 // implementation plan, C1.11; the reservation is its review finding n2). It

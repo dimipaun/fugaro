@@ -166,6 +166,30 @@ func accountMembersOn(t *testing.T, db *gcpfake.RTDB) (string, map[string]string
 	return account, stages
 }
 
+// craftMembersOn is the published node's three craft members as one comparable
+// line: encoding/json sorts the keys of every map it writes, so two documents
+// carrying the same members print the same text whatever order they were built
+// in. A member the node carries nothing for is left out, which is what a refusal
+// that wrote nothing reads as.
+func craftMembersOn(t *testing.T, db *gcpfake.RTDB) string {
+	t.Helper()
+	n, ok := db.Value(projectpolicy.PathShared()).(map[string]any)
+	if !ok {
+		t.Fatalf("the node at %s is %T (%v)", projectpolicy.PathShared(), db.Value(projectpolicy.PathShared()), db.Value(projectpolicy.PathShared()))
+	}
+	out := map[string]any{}
+	for _, k := range []string{"crafts", "craft_credentials", "craft_pools"} {
+		if v, ok := n[k]; ok {
+			out[k] = v
+		}
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
 // ceilingOn is nodeCeiling for a database held without a fixture — the tests
 // that hold the fake itself. The database hands numbers back as
 // json.Number when the write came over HTTP and as float64 when the fake was
@@ -462,10 +486,14 @@ func TestUpdatePolicyPublishRefusesANodeItDoesNotModel(t *testing.T) {
 // the editor cannot place is one it refuses rather than rewrites around: a
 // budget block written in flow style takes a scalar splice now, but a list the
 // block does not hold yet would be a flow sequence inside a flow mapping, which
-// stays refused. The refusal is the whole of
-// what makes the record safe: a run that recorded the generation anyway would
-// leave the older file in place with a baseline claiming it was written from
-// the newer node, which is the overwrite D854 exists to prevent.
+// stays refused.
+//
+// The members it could splice are written all the same — the refusal names them
+// — and the generation is not: a file left holding the older value for a member
+// the refusal does not name is one the publish it recommends carries back over
+// the newer node, and a file whose record named a generation while a member was
+// still behind is the baseline D854 exists to prevent. The node itself is not
+// written either: the run returns on the error.
 func TestUpdatePolicyReseedRefusesAMemberItCannotSplice(t *testing.T) {
 	f := newProjectFixture(t, "")
 	setConfig(t, f, func(s string) string { return s + "policy_generation: etag-from-an-earlier-publish\n" })
@@ -482,7 +510,11 @@ func TestUpdatePolicyReseedRefusesAMemberItCannotSplice(t *testing.T) {
 	if err == nil {
 		t.Fatalf("the re-seed wrote a member it cannot splice:\n%s", out)
 	}
-	for _, want := range []string{"budget.allowed_models", "cannot be re-seeded", "the file was left as it is"} {
+	for _, want := range []string{
+		"budget.allowed_models",
+		"cannot be re-seeded",
+		"the node's own values for budget.per_run_usd were written there and no generation was recorded",
+	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
@@ -491,19 +523,117 @@ func TestUpdatePolicyReseedRefusesAMemberItCannotSplice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(before) != string(after) {
-		t.Errorf("the file was written behind a refusal:\nbefore %s\nafter  %s", before, after)
+	if string(before) == string(after) {
+		t.Error("the file is unchanged: the member the re-seed could splice was dropped instead of written")
+	}
+	lc, err := localcfg.Load(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lc.Budget.PerRunUSD != 9 {
+		t.Errorf("the file's budget.per_run_usd is %v, want the node's 9 before the publish is recommended", lc.Budget.PerRunUSD)
 	}
 	if gen := recordedGeneration(t, f); gen != "etag-from-an-earlier-publish" {
-		t.Errorf("policy_generation = %q: the refusal recorded a generation for a file it did not write", gen)
+		t.Errorf("policy_generation = %q: the refusal recorded a generation for a file it did not finish writing", gen)
 	}
 	if got := nodeCeiling(t, f); got != 9 {
 		t.Errorf("the node's ceiling is %v, want the other machine's 9: the publish was made anyway", got)
 	}
 	if backups, err := filepath.Glob(f.path + ".bak-*"); err != nil {
 		t.Fatal(err)
-	} else if len(backups) != 0 {
-		t.Errorf("a refused re-seed left backups behind: %v", backups)
+	} else if len(backups) == 0 {
+		t.Error("the spliced member was written with no backup of the file it replaced")
+	}
+}
+
+// TestUpdatePolicyReseedRefusalNamesThePublishForAnAccountKey: the members a
+// re-seed cannot write are two kinds, and the sentence written for one is the
+// wrong remedy for the other. An account choice has no published value a hand
+// edit could put into the file — the local config is its only store — and
+// `fugaro update` run again refuses this same file (publishPlanFor's generation
+// check), so a refusal that named only the hand edit and the update would leave
+// the operator exactly where the refusal found them. `fugaro project policy
+// publish` is the command that writes those members to the node, and it is the
+// one this sentence has to name.
+//
+// The node here also differs on a member the re-seed can splice (base_branch),
+// because that publish builds the node from this file: a refusal that dropped
+// the splicable member and recommended the publish would have the operator write
+// this file's older base_branch over the newer node's — the overwrite D854
+// refuses, made by the command the refusal recommends. The member is written
+// into the file before the publish is named, and the refusal says which one.
+func TestUpdatePolicyReseedRefusalNamesThePublishForAnAccountKey(t *testing.T) {
+	f := newProjectFixture(t, "")
+	setConfig(t, f, func(s string) string { return s + "policy_generation: etag-from-an-earlier-publish\n" })
+	node := staleBudgetNode()
+	node["default_claude_account"] = "team-b"
+	node["base_branch"] = "develop"
+	f.db.Set(projectpolicy.PathShared(), node)
+	h := newMigrationRig(t, f, &initOptions{})
+
+	out, err := h.apply(t, true)
+	if err == nil {
+		t.Fatalf("the re-seed carried an account key it cannot splice:\n%s", out)
+	}
+	for _, want := range []string{
+		"default_claude_account",
+		"`fugaro project policy publish`",
+		"`fugaro settings set default_claude_account <name>`",
+		"the node's own values for budget.per_run_usd, base_branch were written there and no generation was recorded",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "put the published values") {
+		t.Errorf("the refusal sends an account key to a hand edit, and there is no published value for one: %v", err)
+	}
+	lc, err := localcfg.Load(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lc.BaseBranch != "develop" {
+		t.Errorf("base_branch = %q, want the node's %q: the publish the refusal recommends would carry this file's stale branch over the newer node", lc.BaseBranch, "develop")
+	}
+	if gen := recordedGeneration(t, f); gen != "etag-from-an-earlier-publish" {
+		t.Errorf("policy_generation = %q: the refusal recorded a generation for a file that still differs from the node", gen)
+	}
+}
+
+// TestUpdatePolicyReseedRefusalOrdersTheHandEditBeforeThePublish: when the
+// members it cannot write are of both kinds, the sentence names two remedies
+// and their order is the whole of their being safe. The publish builds the node
+// from this file, so a publish made before the hand edits writes this file's
+// older values for those members over the node's — the overwrite D854 refuses,
+// made by the command the refusal just recommended. The remedy that reads first
+// is therefore the one to run first, and the sentence says so.
+func TestUpdatePolicyReseedRefusalOrdersTheHandEditBeforeThePublish(t *testing.T) {
+	f := newProjectFixture(t, "")
+	setConfig(t, f, func(s string) string { return s + "policy_generation: etag-from-an-earlier-publish\n" })
+	node := staleBudgetNode()
+	node["budget"] = map[string]any{"mode": "enforce", "per_run_usd": 9, "allowed_models": []string{"claude-sonnet-5-5"}}
+	node["default_claude_account"] = "team-b"
+	f.db.Set(projectpolicy.PathShared(), node)
+	h := newMigrationRig(t, f, &initOptions{})
+
+	out, err := h.apply(t, true)
+	if err == nil {
+		t.Fatalf("the re-seed carried members it cannot splice:\n%s", out)
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"put the published values of budget.allowed_models",
+		"once this file states the node's own values for the members above",
+		"would write this file's older values for them over the node's",
+		"`fugaro project policy publish`",
+		"the node's own values for budget.per_run_usd were written there and no generation was recorded",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if hand, publish := strings.Index(msg, "put the published values"), strings.Index(msg, "publish it with"); hand < 0 || publish < 0 || hand > publish {
+		t.Errorf("the two remedies are not in the order that keeps the file safe (hand edit at %d, publish at %d): %v", hand, publish, err)
 	}
 }
 
@@ -2796,4 +2926,661 @@ func TestImageTokensInAPolicyIsRefusedForAnOlderImage(t *testing.T) {
 	if _, _, _, err := policyNodeForPublish(t.Context(), lc, &projectpolicy.Policy{}, nil, false, false, false, nil); err != nil {
 		t.Fatalf("the publish of a current installation was refused: %v", err)
 	}
+}
+
+// craftMembersYAML is the operator's three craft blocks in the local config's
+// own spelling (localcfg's `credentials`, `pools` and `crafts`): a named
+// credential, a pool of it with an owner, and the crafts that choose among
+// them. MC18 makes the publish their writer, so every test below that is about
+// the config's own blocks publishes this file.
+const craftMembersYAML = "credentials:\n" +
+	"  - { name: acme-main, type: openrouter }\n" +
+	"pools:\n" +
+	"  - { name: acme-pool, strategy: failover, members: [acme-main, vertex], owner: owner@example.com }\n" +
+	"crafts:\n" +
+	"  coder: { model: claude-opus-5-5, access: acme-pool }\n" +
+	"  security-review: { access: acme-main }\n"
+
+// craftLoosePoolYAML is that file with a second pool that names no owner, which
+// is what `fugaro accounts pool add` writes today (its --owner flag is the
+// config-ownership plan's, N4): a pool that is saved in the file, is never
+// published, and is named in one line (D2608).
+const craftLoosePoolYAML = "credentials:\n" +
+	"  - { name: acme-main, type: openrouter }\n" +
+	"pools:\n" +
+	"  - { name: acme-pool, strategy: failover, members: [acme-main, vertex], owner: owner@example.com }\n" +
+	"  - { name: acme-loose, members: [acme-main] }\n" +
+	"crafts:\n" +
+	"  coder: { model: claude-opus-5-5, access: acme-pool }\n" +
+	"  security-review: { access: acme-main }\n"
+
+// craftMemberKeys is the three members of a node a craft family writes: the
+// crafts, their credentials and their pools.
+var craftMemberKeys = []string{"crafts", "craft_credentials", "craft_pools"}
+
+// craftMembersOf is the three members of a node as the document they are, for a
+// comparison that is about them and nothing else. A test that wants "the
+// publish left them alone" compares two of these rather than two whole nodes:
+// every other member of the node is the publish's own business.
+func craftMembersOf(t *testing.T, f *projectFixture) map[string]any {
+	t.Helper()
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(nodeJSON(t, f, projectpolicy.PathShared())), &doc); err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]any{}
+	for _, k := range craftMemberKeys {
+		if v, ok := doc[k]; ok {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// nodeMembersExcept is the whole node without the members named, which is the
+// other half of "these members and nothing else moved": craftMembersOf returns
+// those three and nothing else, so a comparison that deleted them from its
+// answer would compare {} with {} whatever the publish did.
+func nodeMembersExcept(t *testing.T, f *projectFixture, except ...string) map[string]any {
+	t.Helper()
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(nodeJSON(t, f, projectpolicy.PathShared())), &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range except {
+		delete(doc, k)
+	}
+	return doc
+}
+
+// membersText is a map of node members as one comparable string: encoding/json
+// sorts the keys of every map it writes, so two documents that carry the same
+// members print the same line whatever order they were built in.
+func membersText(t *testing.T, m map[string]any) string {
+	t.Helper()
+	b, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// TestPublishWritesTheCraftsFromTheConfig is MC18's red step: the node's
+// crafts, their credentials and their pools are the operator's own config, so a
+// publish that carried the node's copies over left the file's credential, pool
+// and crafts reaching no run at all.
+//
+// The entry the file states under a name the node already holds is the sharpest
+// half of it — the file's type and the file's members win the node's — and the
+// other half is the entry it does not state: a definition this file says
+// nothing about is the node's own and stays, because a publish never drops a
+// definition (D2608's plan keeps the removal for the explicit unset, and
+// `fugaro update` must converge over a node another machine wrote).
+func TestPublishWritesTheCraftsFromTheConfig(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	node := f.db.Value(projectpolicy.PathShared()).(map[string]any)
+	node["craft_credentials"] = []any{
+		map[string]any{"name": "acme-main", "type": "anthropic"},
+		map[string]any{"name": "other-main", "type": "anthropic"},
+	}
+	node["craft_pools"] = []any{
+		map[string]any{"name": "acme-pool", "members": []any{"other-main"}, "owner": "other@example.com"},
+		map[string]any{"name": "other-pool", "members": []any{"other-main"}, "owner": "other@example.com"},
+	}
+	node["crafts"] = map[string]any{"coder": map[string]any{"model": "claude-sonnet-5", "access": "other-pool"}}
+	f.db.Set(projectpolicy.PathShared(), node)
+
+	rewriteProjectConfig(t, f, craftMembersYAML)
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	p := publishedPolicy(t, f)
+	if len(p.CraftCredentials) != 2 {
+		t.Fatalf("craft_credentials = %+v, want the config's credential beside the node's own", p.CraftCredentials)
+	}
+	if got := p.CraftCredentials[0]; got.Name != "acme-main" || got.Type != config.CredentialTypeOpenRouter {
+		t.Errorf("craft_credentials[0] = %+v, want acme-main of type %s: the file's entry is what the node is written with", got, config.CredentialTypeOpenRouter)
+	}
+	if got := p.CraftCredentials[1]; got.Name != "other-main" || got.Type != config.CredentialTypeAnthropic {
+		t.Errorf("craft_credentials[1] = %+v, want the node's own other-main: the file states nothing about it", got)
+	}
+	if len(p.CraftPools) != 2 {
+		t.Fatalf("craft_pools = %+v, want the config's pool beside the node's own", p.CraftPools)
+	}
+	if got := p.CraftPools[0]; got.Name != "acme-pool" || !slices.Equal(got.Members, []string{"acme-main", "vertex"}) ||
+		got.StrategyOrDefault() != config.PoolStrategyFailover || got.Owner != "owner@example.com" {
+		t.Errorf("craft_pools[0] = %+v, want the file's pool: its members, its strategy and its owner", got)
+	}
+	if got := p.CraftPools[1]; got.Name != "other-pool" {
+		t.Errorf("craft_pools[1] = %+v, want the node's own other-pool", got)
+	}
+	if p.Crafts == nil {
+		t.Fatal("crafts = nil, want the block the file states")
+	}
+	if got := p.Crafts.Coder; got.Model != "claude-opus-5-5" || got.Access != "acme-pool" {
+		t.Errorf("crafts.coder = %+v, want the file's model and access", got)
+	}
+	if got := p.Crafts.SecurityReview; got.Model != "" || got.Access != "acme-main" {
+		t.Errorf("crafts.security-review = %+v, want the access the file states and no model", got)
+	}
+}
+
+// TestPublishIsTheNodeTheOperatorWrote: a project that has never published a
+// node gets exactly the three blocks its config states, member by member. It is
+// the first-publish half of the rule above — there is no node to carry anything
+// over from — and it is what makes the pair of them a publish that is the
+// operator's document rather than a merge in one direction.
+func TestPublishIsTheNodeTheOperatorWrote(t *testing.T) {
+	f := newProjectFixture(t, craftMembersYAML)
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	p := publishedPolicy(t, f)
+	if want := []config.Credential{{Name: "acme-main", Type: config.CredentialTypeOpenRouter}}; !slices.Equal(p.CraftCredentials, want) {
+		t.Errorf("craft_credentials = %+v, want %+v", p.CraftCredentials, want)
+	}
+	want := []config.Pool{{Name: "acme-pool", Strategy: config.PoolStrategyFailover,
+		Members: []string{"acme-main", "vertex"}, Owner: "owner@example.com"}}
+	if len(p.CraftPools) != 1 || p.CraftPools[0].Name != want[0].Name ||
+		!slices.Equal(p.CraftPools[0].Members, want[0].Members) ||
+		p.CraftPools[0].Strategy != want[0].Strategy || p.CraftPools[0].Owner != want[0].Owner {
+		t.Errorf("craft_pools = %+v, want %+v", p.CraftPools, want)
+	}
+	if p.Crafts == nil {
+		t.Fatal("crafts = nil, want the block the config states")
+	}
+	wantCrafts := config.Crafts{
+		Coder:          config.Craft{Model: "claude-opus-5-5", Access: "acme-pool"},
+		SecurityReview: config.Craft{Access: "acme-main"},
+	}
+	if *p.Crafts != wantCrafts {
+		t.Errorf("crafts = %+v, want %+v", *p.Crafts, wantCrafts)
+	}
+}
+
+// TestPublishOfAConfigWithNoCraftsKeepsTheNodes: a machine whose file states
+// none of the three keeps the node's blocks, byte for byte. It is the rule that
+// leaves a config predating the keys, and an owner who never wrote one, with
+// the node exactly as it was — the alternative is not a refusal but a deletion,
+// silently, since this release reads the blocks that would go.
+//
+// The two spellings of "no crafts" are one answer, which is the node's own rule
+// (an empty crafts block is no block): a file that writes `crafts: {}` keeps
+// the node's block exactly as one that writes nothing does.
+func TestPublishOfAConfigWithNoCraftsKeepsTheNodes(t *testing.T) {
+	// The blocks as the publisher itself writes them, from a config that states
+	// all three: what a later release, another machine or the hand that wrote
+	// them by hand leaves on a node.
+	writer := newProjectFixture(t, craftMembersYAML)
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	held := craftMembersOf(t, writer)
+
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	node := f.db.Value(projectpolicy.PathShared()).(map[string]any)
+	for k, v := range held {
+		node[k] = v
+	}
+	f.db.Set(projectpolicy.PathShared(), node)
+
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := membersText(t, craftMembersOf(t, f)); got != membersText(t, held) {
+		t.Errorf("the publish of a config that states none changed the node's members:\n got %s\nwant %s", got, membersText(t, held))
+	}
+	// A kept member that printed nothing is the diff an operator who deleted the
+	// key reads as "it is gone": the value is unchanged, so no +/- line of the
+	// diff mentions it.
+	for _, want := range []string{"craft_credentials kept:", "craft_pools kept:", "crafts kept:"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the diff does not say the member is kept (%q):\n%s", want, out)
+		}
+	}
+	// The empty block is the absent one, so it keeps them too.
+	rewriteProjectConfig(t, f, "crafts: {}\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if got := membersText(t, craftMembersOf(t, f)); got != membersText(t, held) {
+		t.Errorf("a file that writes an empty crafts block changed the node's members:\n got %s\nwant %s", got, membersText(t, held))
+	}
+}
+
+// TestPublishDiffNamesTheCraftLines: the three members are a spending and an
+// egress grant (F12, D1628), so a publish that wrote them prints the line every
+// other operator-written block prints. A credential is one line per name, a
+// pool one line per name carrying its members, its strategy and the people it
+// is served to, and a craft one line per craft with the model and the access it
+// sets — a line that said only "craft_pools acme-pool" would hide a member
+// added to the pool, which is the whole of what the operator is reading for.
+//
+// And a pool the node cannot carry — the ownerless one `accounts pool add`
+// writes — is named in one line rather than written: the node would be one this
+// Fugaro refuses to read back (config.ValidatePublishedPools), so a publish
+// that wrote it would stop both doors, and one that dropped it silently would
+// leave the operator with a pool in the file and nothing anywhere saying why no
+// run serves it (D2608).
+func TestPublishDiffNamesTheCraftLines(t *testing.T) {
+	f := newProjectFixture(t, craftMembersYAML)
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"+ craft_credentials acme-main: openrouter",
+		"+ craft_pools acme-pool: members acme-main, vertex, strategy failover, owner owner@example.com",
+		"+ crafts coder: model claude-opus-5-5, access acme-pool",
+		"+ crafts security-review: access acme-main",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the diff does not name the member (%q):\n%s", want, out)
+		}
+	}
+	rewriteProjectConfig(t, f, craftLoosePoolYAML)
+	out, _, err = execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatalf("a config holding an ownerless pool failed the publish: %v", err)
+	}
+	if !strings.Contains(out, "craft_pools acme-loose not published: owner is required") {
+		t.Errorf("the diff does not name the pool the node cannot carry:\n%s", out)
+	}
+	p := publishedPolicy(t, f)
+	for _, pool := range p.CraftPools {
+		if pool.Name == "acme-loose" {
+			t.Errorf("the publish wrote the ownerless pool: %+v", pool)
+		}
+	}
+}
+
+// TestUpdateNamesThePoolTheNodeCannotCarry: D2608's answer is one line at both
+// doors — an ownerless local pool is saved, is not published, and is named, and
+// neither door fails on it — and the update door's diff is not the explicit
+// door's: it is built from the drift, and a pool that can never reach the node
+// is deliberately no drift row (a row reporting it would fire on every run and
+// never converge, the HARD RULE's own loss). So the line is printed beside that
+// diff from the publisher's own function, and an operator whose update carries
+// such a pool reads what happened to it instead of finding a pool in the file
+// and nothing anywhere saying why no run serves it.
+//
+// The pool is the only craft member the file states, and its member is the
+// built-in vertex, so the publish adds no grant the gate would ask a name for:
+// what this test is about is the line, not the widening.
+func TestUpdateNamesThePoolTheNodeCannotCarry(t *testing.T) {
+	f := newProjectFixture(t, "pools:\n  - { name: acme-loose, members: [vertex] }\n")
+	f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
+	h := newMigrationRig(t, f, &initOptions{})
+
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("a config holding an ownerless pool failed the update: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "craft_pools acme-loose not published: owner is required") {
+		t.Errorf("the update's diff does not name the pool the node cannot carry:\n%s", out)
+	}
+	if got := publishedPolicy(t, f).CraftPools; len(got) != 0 {
+		t.Errorf("the update wrote the ownerless pool: %+v", got)
+	}
+}
+
+// TestPolicyCraftWideningNamesTheGrants: the craft members are the node's
+// spending and egress grant (F12/D1628), so a publish that adds or rewrites one
+// is the class the typed name guards — and which members those are is read here,
+// one by one, because the gate's decision is this comparison and nothing else
+// (update_managed.go's gateStep). A pool is compared whole: a member added to it,
+// a strategy, an owner or a roster that moves is one grant another run is served
+// by, so it is as much a widening as the pool itself.
+//
+// Two things are NOT widenings and are pinned beside them: a craft's model, which
+// decides what a stage runs and not whose credential it spends, and the member
+// MC4's conversion derives on an installation whose config predates the craft
+// keys (init_craft_migrate.go) — a credential under an account's own name, and a
+// craft key that is the account THAT craft's stages run on. Counting that one
+// would make the first `fugaro update` after this release a step the owner has to
+// answer for by name, and the HARD RULE's own migration is not the operator's
+// decision to confirm. The account's own NAME is not the exemption: a craft moved
+// onto ANOTHER account the config declares is a widening, and the two cases below
+// pin one craft each: the review craft's derived key exempt, the coder craft's
+// key naming the account its stages do not run on reported.
+func TestPolicyCraftWideningNamesTheGrants(t *testing.T) {
+	const acmeCoder = "claude-opus-5-5"
+	policyOf := func(creds []config.Credential, pools []config.Pool, crafts *config.Crafts) *projectpolicy.Policy {
+		return &projectpolicy.Policy{CraftCredentials: creds, CraftPools: pools, Crafts: crafts}
+	}
+	crafts := func(coder config.Craft) *config.Crafts { return &config.Crafts{Coder: coder} }
+	creds := func(cs ...config.Credential) []config.Credential { return cs }
+	pools := func(ps ...config.Pool) []config.Pool { return ps }
+	pool := func(ps ...func(*config.Pool)) config.Pool {
+		p := config.Pool{Name: "acme-pool", Strategy: config.PoolStrategyFailover, Members: []string{"acme-main"}, Owner: "owner@example.com"}
+		for _, edit := range ps {
+			edit(&p)
+		}
+		return p
+	}
+	// The migration's own fixture: the installation one release behind, whose
+	// account keys are team-a and team-b (init_craft_migrate_test.go).
+	lc := parseLocalConfig(t, previousInstallation)
+
+	for _, tc := range []struct {
+		name     string
+		old, new *projectpolicy.Policy
+		want     []string
+	}{
+		{
+			name: "a credential the node does not hold",
+			new:  policyOf(creds(config.Credential{Name: "acme-main", Type: config.CredentialTypeOpenRouter}), nil, nil),
+			want: []string{"craft_credentials acme-main (not set) -> " + config.CredentialTypeOpenRouter},
+		},
+		{
+			name: "a credential whose type changes",
+			old:  policyOf(creds(config.Credential{Name: "acme-main", Type: config.CredentialTypeOpenRouter}), nil, nil),
+			new:  policyOf(creds(config.Credential{Name: "acme-main", Type: config.CredentialTypeAnthropic}), nil, nil),
+			want: []string{"craft_credentials acme-main " + config.CredentialTypeOpenRouter + " -> " + config.CredentialTypeAnthropic},
+		},
+		{
+			name: "a pool the node does not hold",
+			new:  policyOf(nil, pools(pool()), nil),
+			want: []string{"craft_pools acme-pool (not set) -> members acme-main, strategy failover, owner owner@example.com"},
+		},
+		{
+			name: "a member added to a pool",
+			old:  policyOf(nil, pools(pool()), nil),
+			new:  policyOf(nil, pools(pool(func(p *config.Pool) { p.Members = []string{"acme-main", "vertex"} })), nil),
+			want: []string{"craft_pools acme-pool members acme-main, strategy failover, owner owner@example.com -> members acme-main, vertex, strategy failover, owner owner@example.com"},
+		},
+		{
+			name: "a pool's strategy",
+			old:  policyOf(nil, pools(pool()), nil),
+			new:  policyOf(nil, pools(pool(func(p *config.Pool) { p.Strategy = config.PoolStrategyRoundRobin })), nil),
+			want: []string{"craft_pools acme-pool members acme-main, strategy failover, owner owner@example.com -> members acme-main, strategy " + config.PoolStrategyRoundRobin + ", owner owner@example.com"},
+		},
+		{
+			name: "a pool's owner",
+			old:  policyOf(nil, pools(pool()), nil),
+			new:  policyOf(nil, pools(pool(func(p *config.Pool) { p.Owner = "other@example.com" })), nil),
+			want: []string{"craft_pools acme-pool members acme-main, strategy failover, owner owner@example.com -> members acme-main, strategy failover, owner other@example.com"},
+		},
+		{
+			name: "a pool's roster",
+			old:  policyOf(nil, pools(pool()), nil),
+			new:  policyOf(nil, pools(pool(func(p *config.Pool) { p.AllowedUsers = []string{"dev@example.com"} })), nil),
+			want: []string{"craft_pools acme-pool members acme-main, strategy failover, owner owner@example.com -> members acme-main, strategy failover, owner owner@example.com, allowed_users dev@example.com"},
+		},
+		{
+			// The access alone: the model beside it is no grant, which the case
+			// below pins from the other side.
+			name: "a craft's access",
+			old:  policyOf(nil, nil, crafts(config.Craft{Model: acmeCoder, Access: "acme-main"})),
+			new:  policyOf(nil, nil, crafts(config.Craft{Model: acmeCoder, Access: "acme-pool"})),
+			want: []string{"crafts coder.access acme-main -> acme-pool"},
+		},
+		{
+			name: "nothing for a craft's model",
+			old:  policyOf(nil, nil, crafts(config.Craft{Model: acmeCoder})),
+			new:  policyOf(nil, nil, crafts(config.Craft{Model: "claude-sonnet-5"})),
+		},
+		{
+			name: "nothing for a grant the node already holds and this publish does not change",
+			old:  policyOf(creds(config.Credential{Name: "acme-main", Type: config.CredentialTypeOpenRouter}), nil, nil),
+			new:  policyOf(creds(config.Credential{Name: "acme-main", Type: config.CredentialTypeOpenRouter}), nil, nil),
+		},
+		{
+			name: "nothing for a grant this publish takes away",
+			old:  policyOf(creds(config.Credential{Name: "acme-main", Type: config.CredentialTypeOpenRouter}), nil, nil),
+			new:  policyOf(nil, nil, nil),
+		},
+		{
+			name: "nothing for the migration's credential and the craft key naming it",
+			new: policyOf(
+				creds(config.Credential{Name: "team-a", Type: config.CredentialTypeClaudeOAuth}),
+				nil,
+				crafts(config.Craft{Model: acmeCoder, Access: "team-a"}),
+			),
+		},
+		{
+			// The exemption is read per craft: the review craft's stages run on
+			// team-b (stages.review_first), which is the account the conversion
+			// writes for IT — so the account that is not the coder's derived key
+			// is this craft's own, and its key is no widening.
+			name: "nothing for the migration's craft key on the account that craft runs on",
+			new: policyOf(
+				creds(config.Credential{Name: "team-b", Type: config.CredentialTypeClaudeOAuth}),
+				nil,
+				&config.Crafts{Review: config.Craft{Model: acmeCoder, Access: "team-b"}},
+			),
+		},
+		{
+			// And it is the derived VALUE and not the account's name: the
+			// coder's stages run on team-a, so this access is one the conversion
+			// does not write, and it moves the craft's calls onto an account with
+			// its own allow_data_to. A session that edits the config alone
+			// publishes it nowhere.
+			name: "a craft's access moved onto another account the config declares",
+			new: policyOf(
+				creds(config.Credential{Name: "team-b", Type: config.CredentialTypeClaudeOAuth}),
+				nil,
+				crafts(config.Craft{Model: acmeCoder, Access: "team-b"}),
+			),
+			want: []string{"crafts coder.access (not set) -> team-b"},
+		},
+		{
+			// The name is the account's and the type is not: a key credential of
+			// the operator's own under an account's name is not what the
+			// conversion writes, and it spends a different secret.
+			name: "a credential under an account's name of another type",
+			new: policyOf(
+				creds(config.Credential{Name: "team-a", Type: config.CredentialTypeOpenRouter}),
+				nil,
+				crafts(config.Craft{Model: acmeCoder, Access: "team-a"}),
+			),
+			want: []string{"craft_credentials team-a (not set) -> " + config.CredentialTypeOpenRouter},
+		},
+		{
+			// The whole of the member and not its name: a value the node holds
+			// and this publish repoints is the operator's own, whoever writes it.
+			name: "a craft's access repointed onto an account the config declares",
+			old:  policyOf(nil, nil, crafts(config.Craft{Model: acmeCoder, Access: "acme-main"})),
+			new:  policyOf(nil, nil, crafts(config.Craft{Model: acmeCoder, Access: "team-a"})),
+			want: []string{"crafts coder.access acme-main -> team-a"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			old := tc.old
+			if old == nil {
+				old = &projectpolicy.Policy{}
+			}
+			got := policyCraftWidening(old, tc.new, lc)
+			if len(got) != len(tc.want) {
+				t.Fatalf("policyCraftWidening = %+v, want each of %v", got, tc.want)
+			}
+			for i, c := range got {
+				if line := c.Member + " " + c.Was + " -> " + c.Now; line != tc.want[i] {
+					t.Errorf("widening %d = %q, want %q", i, line, tc.want[i])
+				}
+			}
+			// The same comparison spells a member the same way the diff does:
+			// this is what the operator reads, in both places.
+			for _, c := range got {
+				if _, ok := policyCraftGrantValues(tc.new)[c.Member]; !ok {
+					t.Errorf("the widening names %q, which is no member of the diff's own lines", c.Member)
+				}
+			}
+		})
+	}
+}
+
+// TestPolicyVersionUnchangedByTheCraftMembers: the three members have existed
+// since 0.24.0 with the types they have, and what this release changes is which
+// VALUES are in them (D1667). A value is not a shape, so the node's version
+// does not move — and a release that bumped it here would refuse every older
+// CLI the project's own node for a change no runner has to enforce.
+func TestPolicyVersionUnchangedByTheCraftMembers(t *testing.T) {
+	if projectpolicy.Version != 8 {
+		t.Fatalf("the policy Version is %d, and this test is written for 8: update it deliberately with the version", projectpolicy.Version)
+	}
+	f := newProjectFixture(t, craftMembersYAML)
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := nodeAt(f.db.Value(projectpolicy.PathShared()), "version"); fmt.Sprintf("%v", got) != "8" {
+		t.Errorf("the published version = %v (%T), want 8: the craft members move no version", got, got)
+	}
+	if p := publishedPolicy(t, f); p.Version != 8 {
+		t.Errorf("the node decodes at version %d, want 8", p.Version)
+	}
+	if len(publishedPolicy(t, f).CraftCredentials) == 0 {
+		t.Error("the node carries no craft_credentials, so this test says nothing about the version they are written at")
+	}
+}
+
+// TestNoPublishedCraftTurnsLevelThreeOn: the security-review craft decides the
+// model and the access of the adversarial review WHEN it runs, and nothing
+// else: the switch that turns level 3 on is the review levels' own (F14,
+// internal/rigor and internal/recipe). So a publish of a config that states the
+// security-review craft writes the craft and moves nothing else — the two nodes
+// here differ in the three craft members and in nothing at all, and the floor
+// the operator wrote is the floor the runs read, with no level added to it.
+func TestNoPublishedCraftTurnsLevelThreeOn(t *testing.T) {
+	const floor = "review_floor:\n  critical: [l2]\n"
+	f := newProjectFixture(t, floor+craftMembersYAML)
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	g := newProjectFixture(t, floor)
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	p := publishedPolicy(t, f)
+	if p.Crafts == nil || p.Crafts.SecurityReview.Access == "" {
+		t.Fatalf("the node carries no security-review craft: %+v", p.Crafts)
+	}
+	// Everything but the three members is the same node: the craft key added no
+	// member beside itself, and the floor is one of them.
+	if got, want := membersText(t, nodeMembersExcept(t, f, craftMemberKeys...)), membersText(t, nodeMembersExcept(t, g, craftMemberKeys...)); got != want {
+		t.Errorf("the craft members moved another member of the node:\n got %s\nwant %s", got, want)
+	}
+	floorNow, ok := nodeAt(f.db.Value(projectpolicy.PathShared()), "review_floor")
+	if !ok {
+		t.Fatal("the node carries no review_floor, so this test says nothing about level 3")
+	}
+	if got := fmt.Sprintf("%v", floorNow); got != "map[critical:[l2]]" {
+		t.Errorf("review_floor = %s, want map[critical:[l2]]: no craft key turns a level on", got)
+	}
+}
+
+// TestTheNodeRefusesACraftAccessItCannotServe: the two documents are held to
+// their own rules, and neither the config nor the node is written against the
+// other's. A craft's access is a credential's or a pool's name (ValidateCrafts)
+// and a published pool names its owner (ValidatePublishedPools), so an access
+// no name could be is refused where the file is read — before the node is built
+// — and a node carrying a pool the reader cannot serve is refused where the node
+// is read, before it is replaced. Both are the write path's own gates rather
+// than a second copy of the rules in this package.
+func TestTheNodeRefusesACraftAccessItCannotServe(t *testing.T) {
+	// The config's half: a craft's access is held to the name rule wherever the
+	// layer that writes it is, so the publish refuses the file and writes no
+	// node at all.
+	f := newProjectFixture(t, "crafts:\n  coder: { access: \"Not A Name\" }\n")
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err == nil || !strings.Contains(err.Error(), "must match") {
+		t.Fatalf("a config whose craft access is no name was published: %v\n%s", err, out)
+	}
+	if f.db.Value(projectpolicy.PathShared()) != nil {
+		t.Error("the refused publish wrote the node anyway")
+	}
+	// The node's half: the published node is read before it is replaced, so a
+	// pool that names no owner is refused there rather than read as a pool
+	// nobody answers for.
+	g := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	node := g.db.Value(projectpolicy.PathShared()).(map[string]any)
+	node["craft_credentials"] = []any{map[string]any{"name": "acme-main", "type": "openrouter"}}
+	node["craft_pools"] = []any{map[string]any{"name": "acme-loose", "members": []any{"acme-main"}}}
+	g.db.Set(projectpolicy.PathShared(), node)
+	held := nodeJSON(t, g, projectpolicy.PathShared())
+	if _, _, err := execute(t, "project", "policy", "publish"); err == nil || !strings.Contains(err.Error(), "owner is required") {
+		t.Fatalf("a node whose pool names no owner was replaced: %v", err)
+	}
+	if got := nodeJSON(t, g, projectpolicy.PathShared()); got != held {
+		t.Errorf("the refused publish changed the node:\n got %s\nwant %s", got, held)
+	}
+}
+
+// TestPublishRefusesANameThatMeansTwoThings: a credential and a pool share one
+// namespace in a published block (config.ValidatePools), because a craft's
+// access names either of them and does not say which — so one name may mean
+// only one of the two. Neither document breaks it alone: since MC18 the two
+// halves of the node a publish writes come from two sources (the blocks the
+// file states, the node's own for every name it does not), and the clash exists
+// only in the one document those sources make together.
+//
+// The two directions are answered differently, and deliberately. A credential
+// of the file under a name the node publishes a pool of is refused by the build
+// itself, naming the two and the fix: nothing else would catch it, and a node
+// written anyway is one no reader decodes — the NEXT door would fail instead
+// (checkPolicyBytes' sentence about a document it cannot read back, which names
+// neither the name nor the two blocks it came from). The other way round — a
+// pool of the file under a name the node defines a credential of — is the
+// pool's own not-published path, which every unpublished pool takes: the
+// credential is the one a run resolves, so the pool is named in one line and
+// left out, and the publish succeeds (D2608's shape).
+func TestPublishRefusesANameThatMeansTwoThings(t *testing.T) {
+	// The node both halves read: a credential of the name one case writes a pool
+	// of, and a pool of the name the other writes a credential of.
+	seed := func(t *testing.T) (*projectFixture, string) {
+		t.Helper()
+		f := newProjectFixture(t, "")
+		if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+			t.Fatal(err)
+		}
+		node := f.db.Value(projectpolicy.PathShared()).(map[string]any)
+		node["craft_credentials"] = []any{map[string]any{"name": "acme-main", "type": "openrouter"}}
+		node["craft_pools"] = []any{map[string]any{
+			"name": "other-pool", "strategy": "failover", "members": []any{"acme-main"}, "owner": "owner@example.com"}}
+		f.db.Set(projectpolicy.PathShared(), node)
+		return f, nodeJSON(t, f, projectpolicy.PathShared())
+	}
+
+	t.Run("a credential of the file against a pool of the node", func(t *testing.T) {
+		f, held := seed(t)
+		rewriteProjectConfig(t, f, "credentials:\n  - { name: other-pool, type: openrouter }\n")
+		out, _, err := execute(t, "project", "policy", "publish")
+		if err == nil ||
+			!strings.Contains(err.Error(), "defines the credential other-pool and the published node holds a pool of that name") ||
+			!strings.Contains(err.Error(), "Rename one of the two") {
+			t.Fatalf("a name that means a credential and a pool was published: %v\n%s", err, out)
+		}
+		if got := nodeJSON(t, f, projectpolicy.PathShared()); got != held {
+			t.Errorf("the refused publish changed the node:\n got %s\nwant %s", got, held)
+		}
+	})
+
+	t.Run("a pool of the file against a credential of the node", func(t *testing.T) {
+		f, _ := seed(t)
+		rewriteProjectConfig(t, f, "pools:\n  - { name: acme-main, strategy: failover, members: [vertex], owner: owner@example.com }\n")
+		out, _, err := execute(t, "project", "policy", "publish")
+		if err != nil {
+			t.Fatalf("the pool the node's credential names was a failed publish: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "craft_pools acme-main not published: a credential of this name is defined in the same block") {
+			t.Errorf("the diff does not name the pool it left out:\n%s", out)
+		}
+		p := publishedPolicy(t, f)
+		if want := []config.Credential{{Name: "acme-main", Type: config.CredentialTypeOpenRouter}}; !slices.Equal(p.CraftCredentials, want) {
+			t.Errorf("craft_credentials = %+v, want the node's own %+v", p.CraftCredentials, want)
+		}
+		if len(p.CraftPools) != 1 || p.CraftPools[0].Name != "other-pool" {
+			t.Errorf("craft_pools = %+v, want the node's own pool alone", p.CraftPools)
+		}
+	})
 }

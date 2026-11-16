@@ -594,6 +594,48 @@ func TestInitSecretsListsEveryAllowedName(t *testing.T) {
 	}
 }
 
+// TestInitSecretsAsksNoTokenForAKeyCredential is the secrets stage's half of
+// the same reader: a name the credentials block declares a key credential has
+// no claude-oauth-token-<name> and never will — its value is the key its
+// provider issued, stored under the credential's own derived secret name by
+// `fugaro accounts add --type`, which is also the command this stage would
+// otherwise hand the operator. Asking for the account's container left the
+// stage waiting on a value nothing could store, under a name no command of the
+// line it printed writes.
+func TestInitSecretsAsksNoTokenForAKeyCredential(t *testing.T) {
+	r := newSecretsRig(t, githubOrigin, strings.NewReader(""))
+	r.e.lc.ClaudeAccounts = map[string]config.ClaudeAccount{
+		"acme-personal": {AllowDataTo: []string{"acme/app"}},
+		"acme-key":      {AllowDataTo: []string{"acme/app"}},
+	}
+	r.e.lc.Credentials = []config.Credential{{Name: "acme-key", Type: config.CredentialTypeOpenRouter}}
+	r.e.lc.Profiles = map[string]config.JobProfile{"standard": {ClaudeAccounts: []string{"acme-personal", "acme-key"}}}
+	res, err := r.run(t)
+	if err != nil || len(res.Left) != 1 {
+		t.Fatalf("%v, left %v", err, res.Left)
+	}
+	// The whole list again, so a stage that asked for the key credential's
+	// token under another wording fails here too: the default's pair, then the
+	// ordinary named account's one command, and nothing for the key credential.
+	wantCmds := []string{
+		"fugaro secrets set github-app-key < PATH-TO-THE-KEY-FILE",
+		"claude setup-token",
+		"fugaro secrets set claude-oauth-token --repo acme/app",
+		"fugaro accounts add acme-personal --repos acme/app --profile standard",
+	}
+	if got := res.Left[0].Commands; fmt.Sprint(got) != fmt.Sprint(wantCmds) {
+		t.Errorf("commands %q, want %q", got, wantCmds)
+	}
+	cmds := strings.Join(res.Left[0].Commands, "\n")
+	if strings.Contains(cmds, config.ClaudeAccountSecret("acme-key")) {
+		t.Errorf("the stage asks for %s, and a key credential's value is stored under %s: %q",
+			config.ClaudeAccountSecret("acme-key"), config.CredentialSecret("acme-key"), cmds)
+	}
+	if strings.Contains(cmds, "accounts add acme-key") {
+		t.Errorf("the stage hands over a command `accounts add` refuses for a key credential: %q", cmds)
+	}
+}
+
 // TestInitSecretsNamesTheProfileThatServesTheAccount: the one command init
 // hands the operator for a named account's token carries the profile whose
 // claude_accounts already lists it. A project with several profiles refuses a

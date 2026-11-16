@@ -289,11 +289,37 @@ var jsonCases = map[string]jsonCase{
 			return []string{"managed", "status", "--project", "aurora"}
 		},
 	},
+	// The mailbox consumer's --json is one document per pass, and --once is the
+	// one pass this pin can hold it to. The fixture is the world a pass needs:
+	// a pairing the config names and a keychain of the test's holding its key,
+	// and one message in its inbox so the document it prints is a pass over
+	// something rather than an empty one.
+	"mailbox": {
+		run: func(t *testing.T) []string {
+			f := newMailboxFixture(t, "")
+			f.writeAction(t, "msg-1", mailboxNowMs())
+			return []string{"mailbox", "--once"}
+		},
+	},
 	"models ls": {
 		reads: true,
 		run: func(t *testing.T) []string {
 			jsonCloud(t)
 			return []string{"models", "ls"}
+		},
+	},
+	"escalation ls": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			escalationRig(t)
+			return []string{"escalation", "ls"}
+		},
+	},
+	"escalation show": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			escalationRig(t)
+			return []string{"escalation", "show", escalationItemID}
 		},
 	},
 	"models search": {

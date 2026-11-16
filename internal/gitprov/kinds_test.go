@@ -54,6 +54,7 @@ var forgeKindGoSites = map[string]string{
 	"internal/cli/image_build_catalog.go":      "the GitHub App ID a catalog build hands to infra",
 	"internal/cli/imagecheck.go":               "`fugaro image check`'s credential per provider",
 	"internal/cli/init.go":                     "the init flow's GitHub App check",
+	"internal/cli/init_credentials.go":         "the git credential the switch's record requires of a GitHub repository's bundle, the App key, since the URL it hands out opens that far without one",
 	"internal/cli/init_firebase.go":            "the Firebase init's GitHub repositories",
 	"internal/cli/init_repo_target.go":         "init's GitHub App check on the provider a repository already names",
 	"internal/cli/launch_budget.go":            "the proxied-Bitbucket read a launch makes",
