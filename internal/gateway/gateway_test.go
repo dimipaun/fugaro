@@ -215,9 +215,14 @@ func msgBlocks(model string, maxTokens int64, blocks string, extra ...string) st
 // where a price comes from.
 func dsPrices() *pricing.Table {
 	t := pricing.Embedded()
+	r := pricing.Rates{InputPerM: 1, OutputPerM: 4, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.1}
+	// Both ends are the row's own rates: a row that is one number has no
+	// range to carry, which is what the table does for an override and an
+	// embedded row (SA1.6). The gateway's band reads them, so a row built
+	// here without them would read a band of nothing.
 	t.Models[dsModel] = pricing.Model{
 		ID: dsModel, ContextTokens: 200_000, MaxOutputTokens: 64_000,
-		Rates: pricing.Rates{InputPerM: 1, OutputPerM: 4, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.1},
+		Rates: r, Lo: r, Hi: r,
 	}
 	return t
 }
