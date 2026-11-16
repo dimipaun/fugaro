@@ -16,8 +16,9 @@ import (
 // packages the MIT build keeps, and the tripwires that read them are what
 // moves to ee/governance (R2, D521). This file is the seam between the two:
 // the runner asks for a stage's own bound and for the decision when that bound
-// fires, and this build answers both out of the core until ee/register sets
-// the pair.
+// fires, for the decision when the gateway stopped a stage, and for the one
+// before a review round, and this build answers all of them out of the core
+// until ee/register sets the hook.
 //
 // What does not move is as load-bearing as what does. The halt itself stays
 // here — governanceHalt, the checkpoint report, the reason vocabulary — so an
@@ -95,13 +96,13 @@ type StageFuncs struct {
 	Before func(v StageView) StageDecision
 }
 
-// stageHooks is the installed pair. Only ee/register may call SetStage: a
+// stageHooks is the installed hook. Only ee/register may call SetStage: a
 // second caller could halve the enforcement a tagged binary registered, and
 // the core never sets it, so an untagged build bounds no stage by governance.
 var stageHooks = coreStageFuncs()
 
-// stageHooksSet records that a caller installed a pair, which only SetStage
-// does. The test-only seam that installs the untagged build's pair clears it
+// stageHooksSet records that a caller installed the hook, which only SetStage
+// does. The test-only seam that installs the untagged build's set clears it
 // again, so the rule this enforces is "one production caller", not "one
 // caller in the process".
 var stageHooksSet bool
@@ -122,7 +123,7 @@ func SetStage(f StageFuncs) error {
 	return nil
 }
 
-// stageHook is the installed pair, read at every stage.
+// stageHook is the installed hook, read at every stage.
 func stageHook() StageFuncs { return stageHooks }
 
 // governanceHaltReasons are the reasons a stage hook may leave: the five
