@@ -126,8 +126,11 @@ func dropMount(ws WorkflowSpec, logical string) {
 //     attached by the route that spends it, so the service hands back no
 //     provider credential, and a mount taken away for one would leave the
 //     run's own route with nothing to spend (R6, D1634).
-//   - none: nothing, which is a call this function never gets from its one
-//     caller — the empty case is answered before the call, in workflow().
+//   - none: nothing, which is also what its one caller's guard answers before
+//     the call (workflow()): the empty case is one this function refuses as
+//     well, because the state it would otherwise produce is a job of the very
+//     repository the release must leave untouched without the credential its
+//     runs read.
 //
 // A job whose account keeps its accessor while a mount goes, or the reverse,
 // is a job Cloud Run refuses to create: it checks the mounting account's read
@@ -143,10 +146,21 @@ func dropMount(ws WorkflowSpec, logical string) {
 // its destruction (which prevent_destroy refuses, failing the whole plan) and
 // make Retirements report a live container as retired. Only the mount goes;
 // the container is left exactly where it is.
+// `none` is answered here rather than left to the caller: it is the value a
+// switched `api-key` or `oauth` repository carries on this branch, so a caller
+// that lost its guard would take away the credential a run of exactly the
+// repository this release must not touch still reads (D2072, G17). The arm is
+// the empty answer, and a value this release does not know is answered the same
+// way: fail closed toward keeping the mount, never toward dropping it.
 func dropModelMounts(ws *WorkflowSpec, served string) {
-	held := config.IsModelSecretEnv
-	if served == config.ModelSecretServedAnthropic {
+	var held func(string) bool
+	switch served {
+	case config.ModelSecretServedAll:
+		held = config.IsModelSecretEnv
+	case config.ModelSecretServedAnthropic:
 		held = func(env string) bool { return slices.Contains(config.ModelSecretEnvs, env) }
+	default:
+		return
 	}
 	for env := range ws.SecretEnv {
 		if held(env) {
