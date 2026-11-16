@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "run_id": "20260926-221530-abcd",
+  "repo": "acme/app",
+  "workflow": "app",
+  "status": "succeeded",
+  "stage": "writeback",
+  "outcome": "ready",
+  "pr": {
+    "number": 1,
+    "url": "https://example.invalid/pr/1",
+    "desc": "e386fa02b2cf8fe1ccc3e9fb61b173c9"
+  },
+  "reviews": [
+    {
+      "round": 1,
+      "verdict": "ship",
+      "findings": 0,
+      "model": "claude-sonnet-5-5"
+    }
+  ],
+  "cost_usd": 0.000447,
+  "cost": {
+    "model_usd": 0.000447,
+    "compute_usd": 0,
+    "compute_estimated": false,
+    "total_usd": 0,
+    "estimate": true,
+    "model_basis": "api-list",
+    "model_source": "gateway",
+    "model_by": {
+      "deepseek/deepseek-v4-flash": 0.000447
+    },
+    "route_by": {
+      "openrouter": 0.000447
+    },
+    "reported_usd": 0.0025,
+    "reported_by": {
+      "deepseek/deepseek-v4-flash": 0.0025
+    },
+    "table_lo_usd": 0.00027,
+    "table_hi_usd": 0.00272,
+    "unreported_calls": 1,
+    "model_tokens": {
+      "deepseek/deepseek-v4-flash": {
+        "input": 3000,
+        "output": 1500,
+        "cache_read": 0,
+        "cache_write_5m": 0,
+        "cache_write_1h": 0
+      }
+    }
+  },
+  "stages": [
+    {
+      "name": "implement",
+      "started_at": "0001-01-01T00:00:00Z",
+      "duration_s": 0,
+      "calls": 3,
+      "agents": 0,
+      "repeats": 0,
+      "model_usd": 0.000447,
+      "model": "deepseek/deepseek-v4-flash",
+      "served_by": "api-key"
+    },
+    {
+      "name": "review",
+      "started_at": "0001-01-01T00:00:00Z",
+      "duration_s": 0,
+      "calls": 0,
+      "agents": 0,
+      "repeats": 0,
+      "model": "claude-sonnet-5-5",
+      "served_by": "api-key"
+    }
+  ],
+  "started_at": "2026-01-01T00:00:00Z",
+  "finalize_reserve_s": 30,
+  "policy": {
+    "effective": {
+      "per_run_usd": 42.5,
+      "mode": "enforce",
+      "max_output_tokens": {
+        "coder": 4096,
+        "reviewer": 4096
+      }
+    },
+    "sources": {
+      "max_output_tokens.coder": "branch",
+      "max_output_tokens.reviewer": "branch",
+      "mode": "ceiling",
+      "per_run_usd": "ceiling"
+    }
+  },
+  "recipe": {
+    "name": "default",
+    "source": "catalog",
+    "sha256": "0c42726a0cc37a5415cfac83a74d25cfc041eb1d5a52a7d0533fcdcffb5202fc"
+  },
+  "config_sha256": "eaa7e0eacd56c6a58396ab5c7da433a9580167994c55b8da188d3c1e4995c85f",
+  "changed_files": {
+    "paths": [
+      "feature.txt"
+    ],
+    "total": 1
+  },
+  "rigor": {
+    "mode": "pro",
+    "from": "default",
+    "at": "bootstrap",
+    "revision": "origin/main"
+  },
+  "review_scope": {
+    "applicable": true,
+    "implement_files": [
+      "feature.txt"
+    ],
+    "review_files": [
+      "feature.txt"
+    ]
+  }
+}
