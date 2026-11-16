@@ -59,6 +59,7 @@ release could observe or lose.
 | repository | Terraform root `repo` for the checkout's repository: the workflow jobs, the job service accounts, the mounts, the check job | A job whose name changes (a workflow added, removed or renamed in `fugaro.yaml`) is ForceNew: Terraform destroys the old job and creates a new one. Whether that reaches a *running* execution of the old job is a property of the platform, not of this repository — **UNVERIFIED** | Needs care, guarded | `newRepositoryStage`, `deploy/terraform/gcp/modules/repo/workflows.tf`, `deletion_protection` in `modules/workflow/job.tf` |
 | rules | Generates this release's rules document and deploys it, then writes `config/limits/policyRules`, `…/credsRules`, `…/orchestratorRules` | The generator may only **add**: `TestRulesPreexistingPathsUnchanged` diffs the frozen generation-3 document and fails on any pre-existing rule that changed, and `TestRunTokenWritesSurviveThePolicyEdit` fails when any run-writable location loses its grant. A rule that only adds a deny for a path the old runner never writes is therefore compatible by construction | Safe | `newRulesStage`, `internal/cli/init_rules_stage.go`; `infra.DB.Plan`/`Apply`, `internal/infra/firebasedb.go`; `rules.Generate`, `internal/budget/rules/rules.go` |
 | policy | Migrates and/or publishes `config/policy/shared` in place, from the local config, under the ETag it read | The node is memoized once by the runner, so a non-cascade run keeps the ceiling it bootstrapped with. A **cascade** call does re-read it: the credentials service reads the policy per call (`internal/credsvc/cascade.go`, `bitbucketproxy.go`), so a run of a cascade project is held to the node from its next call. A migration preserves the values it carries, so a plain upgrade changes no run's ceiling; a config the operator changed is the operator's own publish | Safe by intent, named in the line | `newPolicyMigrateStage`, `internal/cli/init_policy_migrate.go`; `policyRead`, `internal/runner/projectpolicy.go` |
+| policy, the `bitbucket_tokens` half | The same stage publishes the typed Bitbucket tokens the local config records, each with the coverage it reaches and the identity the creds state store proved (R5, R12). A project naming no record derives no key at all, so an installation holding the legacy `bitbucket-token` alone converges with no step and no read of the store (R3) | A **proxied** call re-reads the node on every request it serves (`bitbucketproxy.go`: the selection is made from the node's coverage), so the first call after the publish may be served by a different token than the call before it — a record the operator added takes over a repository it covers, and one they narrowed stops serving it, which is their own records taking effect. A run of the release behind meets the key too and does not refuse it: its runner tolerates an unknown top-level key and falls back to its single `GET /user` identity (R5). Nothing of the run is rewritten, and no run is asked to finish first | Safe, named in the line | `buildProjectPolicy`, `policyConfigDrift`, `internal/cli/init_policy_publish.go`; `bitbucketTokenIdentities`, `internal/cli/project_cmd.go`; `tokensPublishReachesRuns`, `internal/cli/update_in_flight.go` |
 | credentials-service | Moves the installation's recorded credentials image onto this release's, then applies the installation root with it | The service reads the published node once per cascade and Bitbucket-proxied call and refuses a node its own binary does not understand, so this apply may not run before the policy stage's migration; it follows it in the stage immediately after, with nothing between the two, and it is an apply of tfvars alone — every image it needs was published by the images stage. What the order cannot reach is the release behind's own service, which refuses the migrated node until this apply lands: the window is that one apply, and the binary that reads it was released. A run that replaces no service raises no node either: the policy stage holds its write at the version it found — a coding agent's session and a development build both replace nothing, and the image the move would pin is resolved **before** that write, so a resolve this run cannot make fails with the node exactly where it was | Safe by intent, named in the line: the policy clause names the cascade read, and this row's window is named when the same run raises the node's version and moves the service | `newCredentialsStage`, `moveCredentialsImage`, `credentialsMoveHeld`, `credentialsResolveBeforeRaise`, `internal/cli/init_stages.go`; `credentialsWindowOpens`, `internal/cli/update_in_flight.go` |
 | workspace | Migrates and/or publishes the workspace record `workspaces/<name>` in the workspace's own database | No run reads the workspace record: it is the workspace owner's document (`docs/workspaces/spec.md`). A member's run makes no request for it at all | Safe | `newWorkspaceStage`, `internal/cli/update_workspace.go` |
 | layer | Publishes the project layer object and seeds/re-seeds the local file | A run's layer travels with its task and is parsed at bootstrap (`resolveConfig`, `internal/runner/runner.go`); there is no mid-run re-read | Safe | `newLayerStage`, `internal/cli/init_layer_stage.go` |
@@ -220,15 +221,20 @@ off the door rather than taking it as a parameter). The one line above is the
 update door's and is not printed by those doors.
 
 The rows that are not simply safe are the ones the line has to own, and they are
-three (`inFlightSteps`, `internal/cli/update_in_flight.go`): the budget-mode
+five (`inFlightSteps`, `internal/cli/update_in_flight.go`): the budget-mode
 raise, which can bound a run that bootstrapped under `observe` from its next
 lease and is the operator's own caps becoming effective rather than the update
 stopping a run — recorded here rather than deferred, the alternative being the
 update asking a person to stop work for it; the published policy, which a
-cascade project's every model call re-reads; and a retirement, which deletes an
-orphaned job and takes the executions running on it. Each clause is the question
-its own step is gated on rather than the whole of its decision
-(`budgetModeBindsRuns`, `policyReadsLive`, `retireTakesExecutions`), so the line
+cascade project's every model call re-reads; the Bitbucket tokens that same write
+carries, which a proxied call re-reads per request, so the call after the publish
+may be served by a different token than the call before it; the window between
+that write and the credentials service's own replacement, which is the release
+behind's service meeting a node its own binary does not understand; and a
+retirement, which deletes an orphaned job and takes the executions running on it.
+Each clause is the question its own step is gated on rather than the whole of its
+decision (`budgetModeBindsRuns`, `policyReadsLive`, `tokensPublishReachesRuns`,
+`credentialsWindowOpens`, `retireTakesExecutions`), so the line
 errs towards naming a step that may not end up doing anything over claiming the
 update cannot reach a run when it can; the budget raise's shape for the owner is
 in the pull request.
@@ -239,9 +245,11 @@ converges under `fugaro update` while a run of its own repository is in flight,
 and that run's later writes — its lease, the ledger and the counters the report
 settles, the outcome it ends with, its record and its review session — still
 land under the new rules and the migrated policy.
-`TestUpdateInFlightLineNamesEveryStepThatCanReachARun` turns each of the three
-steps on alone and asserts the clause is there and the others are not, so a step
-that can reach a run and is not named fails the suite.
+`TestUpdateInFlightLineNamesEveryStepThatCanReachARun` turns each step on alone
+and asserts the clause is there and the others are not, so a step
+that can reach a run and is not named fails the suite;
+`TestUpdateInFlightLineNamesTheBitbucketTokensPublish` does the same for the
+typed tokens a proxied call re-reads.
 `TestTheRefusingInflightAnswerStopsTheWrite` and
 `TestSetupPolicyStepKeepsTheRunsInFlightAnswer`
 (`internal/cli/init_policy_migrate_test.go`) pin the refusal where it is kept —

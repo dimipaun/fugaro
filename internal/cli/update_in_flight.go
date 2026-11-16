@@ -29,19 +29,21 @@ import (
 // internal/budget/rules); and no step of the update writes a run's registry
 // entry, its ledger, its day counters or its record.
 //
-// Four steps can still reach one, and the line names every one of them that
+// Five steps can still reach one, and the line names every one of them that
 // this run can take — naming a step and why, rather than either claiming a
 // safety that is not there or dropping the claim: the budget mode's raise to
 // enforce, which a session re-reads on every lease and every report while the
 // policy node is read once (`Session.readConfig`); the policy node itself, which
 // a project routed through the credentials cascade re-reads on EVERY model call
 // (`internal/credsvc`), so a run in flight is held to the node this update
-// publishes from its next call; the window between that write and the
-// credentials service's own replacement, which is the release before this one's
-// service meeting a node it cannot read for the length of one apply; and a
-// retirement, which deletes an orphaned Cloud Run job and takes the executions
-// running on it with it (`deleteOrphanedJob`, init_retire.go). None of the four
-// is the update stopping a run, and none of them is asked to wait.
+// publishes from its next call; the Bitbucket tokens that node's write carries,
+// which a proxied call re-reads per request, so the call after the publish may
+// be served by a different token than the call before it; the window between
+// that write and the credentials service's own replacement, which is the release
+// before this one's service meeting a node it cannot read for the length of one
+// apply; and a retirement, which deletes an orphaned Cloud Run job and takes the
+// executions running on it with it (`deleteOrphanedJob`, init_retire.go). None
+// of the five is the update stopping a run, and none of them is asked to wait.
 
 // announceRunsInFlight prints the update door's one line about the runs in
 // flight, and nothing at all when there are none (an installation with an empty
@@ -142,6 +144,10 @@ func (e *initEngine) inFlightSteps(ctx context.Context, db *rtdb.Client) []inFli
 	if e.credentialsWindowOpens(ctx, db) {
 		steps = append(steps, inFlightStep{
 			why: "the credentials service this update replaces, which reads the published node on every call it serves: this run raises the node's version in one stage and moves the service in the next, and a call landing between the two meets the previous release's service with a node its own binary does not understand"})
+	}
+	if e.tokensPublishReachesRuns(ctx, db) {
+		steps = append(steps, inFlightStep{
+			why: "the Bitbucket tokens this update publishes, which a proxied call re-reads on every request (bitbucketproxy.go): the call after the publish may be served by a different token than the call before it, and it is the operator's own records taking effect"})
 	}
 	if e.markerConverges(ctx) {
 		steps = append(steps, inFlightStep{
@@ -264,6 +270,49 @@ func (e *initEngine) credentialsWindowOpens(ctx context.Context, db *rtdb.Client
 		return false
 	}
 	return credentialsImageStale(releaseVersion(), image)
+}
+
+// tokensPublishReachesRuns is whether this update's policy stage can publish a
+// node whose bitbucket_tokens key a run in flight then meets: the local config
+// names typed Bitbucket token records (so the stage derives the key and the
+// drift comparison finds it) and the published node turns the credentials
+// service's Bitbucket route on (`bitbucket_token.proxy`, the operator's
+// per-installation switch), which is what sends a run's Bitbucket calls through
+// the service rather than to the provider with the job's own mounted token.
+//
+// The route re-reads the node on every request it serves — the selection is made
+// from the node's coverage, and the record it builds is derived from the node
+// alone (`internal/credsvc/bitbucketproxy.go`) — where the runner's own read is
+// memoized at bootstrap. So the first call after this update's write may be
+// served by a different token than the call before it: a record the operator has
+// just added takes over a repository it covers, and one they narrowed stops
+// serving it. That is the operator's own records taking effect on a run already
+// running, which is why it is named rather than passed over.
+//
+// A run of the release behind sees the key too, and neither half of the gate is
+// about that: its runner tolerates an unknown top-level key and falls back to
+// its single `GET /user` identity (R5), and the row for this step in
+// docs/design/update-in-flight.md names it. What this asks is the pair the
+// per-call re-read is gated on, and it errs towards naming the step, as every
+// clause here: whether the publish turns out to change the key at all (the
+// records may be exactly what the node already carries) is the stage's own
+// decision, and so is whether this run gets as far as writing it.
+//
+// Both reads answer silence the way the rest of this file does: a node that is
+// not there is a project with no proxy switch to read, and a read that failed is
+// the answer every other clause treats as "no". The node is read through
+// ReadCarriedForward for policyReadsLive's reason — the node every installation
+// holds while this update runs may be written in the version behind, and Read
+// would refuse it and answer "no proxy" for the project that has one.
+func (e *initEngine) tokensPublishReachesRuns(ctx context.Context, db *rtdb.Client) bool {
+	if e.lc == nil || len(e.lc.BitbucketTokens) == 0 {
+		return false
+	}
+	p, found, err := projectpolicy.ReadCarriedForward(ctx, db)
+	if err != nil || !found || p == nil || p.BitbucketToken == nil {
+		return false
+	}
+	return p.BitbucketToken.Proxy
 }
 
 // markerConverges is whether this update rewrites the installation's creation
