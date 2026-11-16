@@ -401,8 +401,16 @@ type Where struct {
 
 // Tx is the reads and the writes one transaction makes together (plan P1.2):
 // what it writes is committed with what it read, or the store runs it again.
+//
+// A Query is one of those reads and not a listing beside them: the documents it
+// answers are part of what the transaction read, so a writer that puts one into
+// that collection is a conflict — the transaction runs again on the state that
+// includes it — rather than a document it never saw. That is what makes a check
+// about a collection hold inside the transaction that writes one (P3.1's one
+// project id bound once), and it is why a check made outside one holds nothing.
 type Tx interface {
 	Get(ctx context.Context, collection, id string) (Doc, error)
+	Query(ctx context.Context, collection string, where Where) ([]Doc, error)
 	Put(ctx context.Context, collection, id string, doc Doc) error
 	Delete(ctx context.Context, collection, id string) error
 }

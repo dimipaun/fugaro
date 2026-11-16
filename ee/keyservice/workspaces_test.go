@@ -1003,8 +1003,10 @@ func (d readBeforeWrite) Update(ctx context.Context, fn func(context.Context, Tx
 	})
 }
 
-// readBeforeWriteTx is one transaction under that rule. Query is not on api.go's
-// Tx at all: a transaction here reads documents by id and cannot look one up.
+// readBeforeWriteTx is one transaction under that rule. Both of a transaction's
+// reads answer it: a document and a query are the same read of the store as far
+// as this rule is concerned, and a query taken after a write is one the deploy's
+// store refuses too.
 type readBeforeWriteTx struct {
 	Tx
 	written bool
@@ -1015,6 +1017,13 @@ func (t *readBeforeWriteTx) Get(ctx context.Context, collection, id string) (Doc
 		return nil, docstore.ErrReadAfterWrite
 	}
 	return t.Tx.Get(ctx, collection, id)
+}
+
+func (t *readBeforeWriteTx) Query(ctx context.Context, collection string, where Where) ([]Doc, error) {
+	if t.written {
+		return nil, docstore.ErrReadAfterWrite
+	}
+	return t.Tx.Query(ctx, collection, where)
 }
 
 func (t *readBeforeWriteTx) Put(ctx context.Context, collection, id string, doc Doc) error {

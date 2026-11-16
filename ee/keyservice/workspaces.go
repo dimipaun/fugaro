@@ -276,7 +276,9 @@ func (s *Service) bindEntitlement(ctx context.Context, actor Caller, entitlement
 	// are two requests that read the same live key, and the one that commits
 	// first mints the key the other would withdraw if the list were read again
 	// below. The probe (D2205) is the slow step both of them wait on, and the
-	// mint is slower still.
+	// mint is slower still. What is read here is not revoked here: the
+	// transaction below revokes it, and only if the state this request read is
+	// still the state the store holds.
 	var replacing []string
 	if rebinding {
 		replacing, err = s.bindingKeys(ctx, entitlement.ID)
@@ -288,7 +290,10 @@ func (s *Service) bindEntitlement(ctx context.Context, actor Caller, entitlement
 	if err != nil {
 		return WireWorkspace{}, err
 	}
-	if err := s.refuseBoundProject(ctx, projectID, workspace.ID); err != nil {
+	// The cheap half of D2204's check: it answers a project somebody already
+	// bound without a probe and a mint, and the transaction's own query is the
+	// half that holds.
+	if err := s.refuseBoundProject(ctx, s.docs, projectID, workspace.ID); err != nil {
 		return WireWorkspace{}, err
 	}
 	if err := probeInstallation.ask(ctx, projectID); err != nil {
@@ -326,18 +331,6 @@ func (s *Service) bindEntitlement(ctx context.Context, actor Caller, entitlement
 		}
 		request.RenewalSecretHash = digest(dropped)
 	}
-	// D2198's revocation is the step before the mint and not a step after the
-	// commit: what a recorded rebind must not leave behind is a live key at the
-	// installation it moved away from, and what a rebind that fails anywhere below
-	// must not leave behind is a licence that moved. Revoking first is what makes
-	// both true — everything under this door refuses or fails with nothing bound,
-	// and the one thing it did is put the keys it read on the store's revocation
-	// list, which is idempotent and which the person's retry repeats.
-	if len(replacing) > 0 {
-		if err := s.revokeReplacedBindingKeys(ctx, replacing); err != nil {
-			return WireWorkspace{}, err
-		}
-	}
 	answer, err := s.paid(ctx, request, "", source, "")
 	if err != nil {
 		return WireWorkspace{}, err
@@ -373,6 +366,28 @@ func (s *Service) bindEntitlement(ctx context.Context, actor Caller, entitlement
 		}
 		if current.OrganisationID != entitlement.OrganisationID {
 			return errNoSuchEntitlement
+		}
+		// D2204's one project, one installation: asked here, inside the transaction
+		// that writes the binding, and not only above. A query outside a transaction
+		// is a check two binds of one project id pass together — the store commits
+		// the second without knowing the first happened — and this query is part of
+		// what the transaction read, so a competing bind is either seen here or a
+		// conflict that runs this again on the state that includes it.
+		if err := s.refuseBoundProject(ctx, tx, projectID, current.ID); err != nil {
+			return err
+		}
+		// D2198's revocation is made here and not on the way in: what a recorded
+		// rebind must not leave behind is a live key at the installation it moved
+		// away from, and what a rebind that loses its race must not leave behind is a
+		// key withdrawn from the binding somebody else's request just made. The keys
+		// were read before the probe, and every guard above has re-read the state
+		// that read decided on, so a rebind that has lost the race returns there and
+		// revokes nothing at all — which is the whole of what keeps a winner's key
+		// live.
+		if rebinding {
+			if err := s.revokeReplacedBindingKeys(ctx, replacing, now); err != nil {
+				return err
+			}
 		}
 		project := projectID
 		current.ProjectID = &project
@@ -455,8 +470,15 @@ func (s *Service) bindingWorkspace(ctx context.Context, entitlement WireEntitlem
 // The workspace being bound is not another workspace, which is what makes a
 // rebind to the project the workspace already holds an ordinary rebind rather
 // than a collision (D2198).
-func (s *Service) refuseBoundProject(ctx context.Context, projectID, workspaceID string) error {
-	held, err := recordsWhere[WireWorkspace](ctx, s.docs, workspacesCollection, Where{Field: "project_id", Value: projectID})
+//
+// It is asked twice: once against the store, which answers the ordinary case of a
+// project somebody already bound without a probe and a mint, and once inside the
+// transaction that writes the binding, which is the one that holds — a query is
+// part of what a transaction read (api.go's Tx), so the second of two bindings of
+// one project id is either seen there or runs the transaction again on the state
+// that holds it.
+func (s *Service) refuseBoundProject(ctx context.Context, from recordReader, projectID, workspaceID string) error {
+	held, err := recordsWhere[WireWorkspace](ctx, from, workspacesCollection, Where{Field: "project_id", Value: projectID})
 	if err != nil {
 		return err
 	}
@@ -489,7 +511,10 @@ func bindingSource(entitlementID string) (string, error) {
 //
 // What is read here is what a rebind replaces, so it is read once, before the
 // probe: a key minted after this read belongs to a binding this request did not
-// see and is not its to withdraw.
+// see. What keeps such a key from being withdrawn is not this read but the
+// transaction that revokes: the list held here is one the store may have added
+// to since, and it is the guards there that decide whether anything on it is
+// revoked at all.
 func (s *Service) bindingKeys(ctx context.Context, entitlementID string) ([]string, error) {
 	issued, err := s.store.Issuances(ctx)
 	if err != nil {
@@ -511,18 +536,21 @@ func (s *Service) bindingKeys(ctx context.Context, entitlementID string) ([]stri
 // is looking at any more: it is revoked rather than left to run, which is what
 // makes a leaked installation's key stop at the rebind.
 //
-// It is called before the rebind mints, which is why the key of the binding it
-// replaces is in the list it is handed and its successor is not: the successor
-// does not exist yet. A key that was already on the list is revoked again rather
-// than looked up, which is what makes a retry of a failed rebind finish the same
-// list.
+// It is called from inside the transaction that moves the licence, after every
+// guard there has re-read the state this list was read against, which is the one
+// thing that keeps it from withdrawing a key that belongs to a binding another
+// request made in between: the list holds the keys this rebind read, and the
+// store may have added to them since. A key that was already on the list is
+// revoked again rather than looked up, which is what makes a retry of a failed
+// rebind finish the same list, and why repeating this call — a store that runs
+// the transaction again, a person who tries again — changes nothing.
 //
 // What the list is read by is §8's renewal and status, so a revoked key's
 // renewal secret fetches nothing at all — no successor and no answer about where
 // the licence went.
-func (s *Service) revokeReplacedBindingKeys(ctx context.Context, keyIDs []string) error {
+func (s *Service) revokeReplacedBindingKeys(ctx context.Context, keyIDs []string, at time.Time) error {
 	for _, keyID := range keyIDs {
-		if err := s.store.Revoke(ctx, Revocation{KeyID: keyID, Reason: ReasonRebind, At: s.now()}); err != nil {
+		if err := s.store.Revoke(ctx, Revocation{KeyID: keyID, Reason: ReasonRebind, At: at}); err != nil {
 			return err
 		}
 	}
