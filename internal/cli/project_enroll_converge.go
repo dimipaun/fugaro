@@ -292,10 +292,10 @@ func providerKind(kind string) (string, bool) {
 
 // reposEnrolmentProvider is the repository's git provider, read and never
 // guessed: the config's own entry first (an enrolled repository keeps the
-// provider it was enrolled with), then the checkout's fugaro.yaml, then the
-// checkout's origin host — and the provider the argument itself named when it
-// was written canonically, which is a fact the operator typed rather than one
-// this program read, and is what makes the remedy the listings print
+// provider it was enrolled with), then the origin host of the checkout here —
+// and the provider the argument itself named when it was written canonically,
+// which is a fact the operator typed rather than one this program read, and is
+// what makes the remedy the listings print
 // (`fugaro project repos add github/owner/name`) a command that works on a
 // machine that has neither the entry nor a checkout. A repository nothing here
 // reads a provider for is refused, and the sentence names the one command that
@@ -308,7 +308,10 @@ func providerKind(kind string) (string, bool) {
 // would enrol a repository the operator did not name — a substitution visible
 // only in the plan, between the confirmation and the write.
 func reposEnrolmentProvider(ctx context.Context, ownerName string, entry localcfg.Repo, known bool, typed string) (string, error) {
-	read, source := reposEnrolmentProviderRead(ctx, ownerName, entry, known)
+	read, source, err := reposEnrolmentProviderRead(ctx, ownerName, entry, known)
+	if err != nil {
+		return "", err
+	}
 	if typed != "" {
 		if read != "" && read != typed {
 			return "", userErr("nothing was enrolled: you wrote %s, and %s says %s. The provider is half of the canonical name the published allow-list admits, so those are two repositories, and the one this command enrols is the one it reads: write `fugaro project repos add %s` for that one, or correct %s first",
@@ -325,42 +328,62 @@ func reposEnrolmentProvider(ctx context.Context, ownerName string, entry localcf
 
 // reposEnrolmentProviderRead is the half of the provider that is read rather
 // than typed, with what said it for the refusal above: the local config's entry
-// for a repository it lists, then the checkout's own fugaro.yaml, then that
-// checkout's origin host. Both values are empty when nothing here reads one,
-// which is the case the argument's own provider covers.
-func reposEnrolmentProviderRead(ctx context.Context, ownerName string, entry localcfg.Repo, known bool) (string, string) {
+// for a repository it lists, then the checkout here — whose provider is its
+// origin host's and nothing else's (reposEnrolmentCheckoutProvider). The
+// checkout's own fugaro.yaml is not a source: a checkout is matched by
+// owner/name alone (checkoutRoot knows no host), so that file is the one thing
+// a clone on an arbitrary host writes itself, and its word would enrol a
+// repository no provider there serves. Both values are empty when nothing here
+// reads one, which is the case the argument's own provider covers.
+func reposEnrolmentProviderRead(ctx context.Context, ownerName string, entry localcfg.Repo, known bool) (string, string, error) {
 	if known && entry.Provider != "" {
-		return entry.Provider, "this machine's config entry for " + pluginwire.Printable(ownerName)
+		return entry.Provider, "this machine's config entry for " + pluginwire.Printable(ownerName), nil
 	}
-	if cfg := checkoutConfig(ctx, ownerName); cfg != nil {
-		if p, ok := providerKind(cfg.Git.Provider); ok {
-			return p, "the fugaro.yaml of the checkout here"
-		}
+	if checkoutRoot(ctx, ownerName) == "" {
+		return "", "", nil
 	}
-	if checkoutRoot(ctx, ownerName) != "" {
-		if p, ok := providerFromOrigin(ctx); ok {
-			return p, "the origin remote of the checkout here"
-		}
+	provider, err := reposEnrolmentCheckoutProvider(ctx, ownerName)
+	if err != nil {
+		return "", "", err
 	}
-	return "", ""
+	if provider == "" {
+		return "", "", nil
+	}
+	return provider, "the origin remote of the checkout here", nil
 }
 
-// providerFromOrigin is the provider of the checkout in the working
-// directory, read from its origin remote's host: the one remote read this
-// program makes (originRepo), reduced to the host, against the two providers
-// the remote parsers know.
-func providerFromOrigin(ctx context.Context) (string, bool) {
-	out, err := gitCmd(ctx, ".", "remote", "get-url", "origin").Output()
-	if err != nil {
-		return "", false
+// reposEnrolmentCheckoutProvider is the provider of the checkout here: its
+// origin host's, read through providerForHost, which project.go names as the
+// only source a checkout's repository is named by. The file the checkout
+// carries is read as a second opinion and never as the answer — the same
+// shape repoSlug gives a disagreement — and a checkout whose fugaro.yaml says
+// a provider its own origin does not is refused rather than one of the two
+// preferred: either way the name this command would enrol is one the checkout
+// does not stand for, and the provider is half of the canonical name the
+// published allow-list admits.
+//
+// A host no provider lives on (a GitHub Enterprise or self-hosted Bitbucket
+// box) names nothing, and that is not a disagreement: the checkout's
+// fugaro.yaml may still say github, but this command takes no word for it, so
+// the read is empty and the refusal above — which names the command that does
+// supply a provider — is the one the operator sees.
+func reposEnrolmentCheckoutProvider(ctx context.Context, ownerName string) (string, error) {
+	host := ""
+	if out, err := gitCmd(ctx, ".", "remote", "get-url", "origin").Output(); err == nil {
+		host = originHost(strings.TrimSpace(string(out)))
 	}
-	switch host := originHost(strings.TrimSpace(string(out))); {
-	case host == "github.com" || strings.HasSuffix(host, ".github.com"):
-		return "github", true
-	case host == "bitbucket.org" || strings.HasSuffix(host, ".bitbucket.org"):
-		return "bitbucket", true
+	fromHost := providerForHost(host)
+	fromYAML := ""
+	if cfg := checkoutConfig(ctx, ownerName); cfg != nil {
+		if p, ok := providerKind(cfg.Git.Provider); ok {
+			fromYAML = p
+		}
 	}
-	return "", false
+	if fromHost != "" && fromYAML != "" && fromYAML != fromHost {
+		return "", userErr("nothing was enrolled: the fugaro.yaml of the checkout here says %s is on %s, and that checkout's origin is %s, where a repository is on %s. The origin's host is what decides which provider a checkout is a checkout of — the fugaro.yaml is a file the checkout itself writes — so %s will not be named from it: run this from the checkout of the repository you mean, or write the provider this machine should use with 'fugaro settings set repos.%s.provider %s'",
+			pluginwire.Printable(ownerName), fromYAML, host, fromHost, pluginwire.Printable(fromYAML+"/"+ownerName), ownerName, fromHost)
+	}
+	return fromHost, nil
 }
 
 // originHost is the host of a remote URL written https, ssh or scp-like:
@@ -924,7 +947,14 @@ func reposEnrolmentRunStages(ctx context.Context, cmd *cobra.Command, run *stepR
 		return nil, err
 	}
 	defer unlock()
-	spec, err := installOptions(o, lc)
+	// installSpec and not installOptions: this door converges the whole
+	// enrolment, the installation's spec and its job set included, so a config
+	// that can no longer compose the job of a default profile this installation
+	// holds must not stop it, for the reason accountsAddRunStages states — a
+	// refusal here lands after the person's one confirmation and after the
+	// local config, the image map and the published allow-list are written, and
+	// leaves the enrolment half done with no stage run.
+	spec, err := installSpec(o, lc, r.warn)
 	if err != nil {
 		return nil, err
 	}

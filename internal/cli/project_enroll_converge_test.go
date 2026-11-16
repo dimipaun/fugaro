@@ -14,6 +14,7 @@ package cli
 import (
 	"encoding/json"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -21,6 +22,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -501,13 +503,15 @@ func TestProjectReposAddRefusesAProviderThatDisagrees(t *testing.T) {
 			t.Chdir(t.TempDir())
 			return r
 		}, "this machine's config entry for " + enrolRepo},
-		{"the checkout's fugaro.yaml", func(t *testing.T) *addRig {
-			return enrolRig(t)
-		}, "the fugaro.yaml of the checkout here"},
 		// The checkout is a checkout of this owner/name whatever host its
-		// origin names, which is why the typed provider is not simply ignored:
-		// this is the case the finding is about.
+		// origin names (checkoutRoot matches by owner/name alone), so its own
+		// fugaro.yaml is not what says which provider the repository is on: the
+		// origin's host is, and the file is a second opinion that has to agree
+		// with it rather than one that overrules it.
 		{"the checkout's origin remote", func(t *testing.T) *addRig {
+			return enrolRig(t)
+		}, "the origin remote of the checkout here"},
+		{"the checkout's origin remote, the file naming none", func(t *testing.T) *addRig {
 			r := newAddRigWith(t, enrolRigLocal)
 			atEnrolCheckoutYAML(t, strings.Replace(enrolCheckoutYAML, "git: { provider: github }\n", "", 1))
 			return r
@@ -532,6 +536,151 @@ func TestProjectReposAddRefusesAProviderThatDisagrees(t *testing.T) {
 				t.Errorf("the refused run admitted the repository: allow_repos = %v", p.AllowRepos)
 			}
 		})
+	}
+}
+
+// TestProjectReposAddRefusesACheckoutThatDisagreesWithItsOrigin: providerForHost
+// is the only source of the provider a checkout's repository is named by
+// (project.go), because a checkout is matched by owner/name alone — checkoutRoot
+// knows no host — while the fugaro.yaml in it is a file the checkout itself
+// writes, so a clone on an arbitrary host can put any provider in it. A file
+// that names another provider is therefore refused rather than preferred, the
+// shape repoSlug gives the same disagreement: the provider is half of the
+// canonical name the published allow-list admits, and the refusal lands before
+// the plan and before anything is written.
+func TestProjectReposAddRefusesACheckoutThatDisagreesWithItsOrigin(t *testing.T) {
+	r := newAddRigWith(t, enrolRigLocal)
+	atEnrolCheckoutYAML(t, strings.Replace(enrolCheckoutYAML,
+		"git: { provider: github }", "git: { provider: bitbucket }", 1))
+	before := r.cfgText(t)
+
+	out, _, err := r.enrol(t, enrolRepo)
+	if err == nil {
+		t.Fatalf("repos add %s from a checkout whose fugaro.yaml says bitbucket and whose origin is github.com: the command ran, want the refusal\n%s", enrolRepo, out)
+	}
+	for _, want := range []string{
+		"nothing was enrolled",
+		"says " + enrolRepo + " is on bitbucket",
+		"that checkout's origin is github.com",
+		"will not be named from it",
+		"fugaro settings set repos." + enrolRepo + ".provider",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q:\n%v", want, err)
+		}
+	}
+	if got := r.cfgText(t); got != before {
+		t.Errorf("the refused run wrote the local config:\n%s", got)
+	}
+	if p := r.policy(t); slices.Contains(p.AllowRepos, enrolEntry) || slices.Contains(p.AllowRepos, "bitbucket/"+enrolRepo) {
+		t.Errorf("the refused run admitted the repository: allow_repos = %v", p.AllowRepos)
+	}
+}
+
+// secondAppIDInConfig makes the project's GitHub repositories record different
+// GitHub App IDs, which is the state a default profile's job cannot be composed
+// from: no single App ID is the project's any more, so installOptions refuses
+// where `fugaro update` carries the job the installation already holds.
+func secondAppIDInConfig(t *testing.T, path string) {
+	t.Helper()
+	lc, err := localcfg.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, ok := lc.Repos[enrolRepo]
+	if !ok {
+		t.Fatalf("the first enrolment wrote no %s entry to the config", enrolRepo)
+	}
+	repo.GitHubAppID = "987654321"
+	lc.Repos[enrolRepo] = repo
+	data, err := lc.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestProjectReposAddConvergesAConfigTheInstallationHoldsAProfileOf: this door
+// converges the installation's spec and its job set, not only its own three
+// writes, so the hold `fugaro update` applies to a default profile it can no
+// longer compose applies here too (init_policy_migrate.go's heldDefaultProfiles;
+// the accounts door's own test is the same case). The installation is the one
+// the first enrolment converges, whose record holds the standard profile's job;
+// the act is the same repository enrolled again while the config records two
+// GitHub App IDs, after which the spec composes no job for that profile at all.
+// The door converges, the jobs the record holds are kept whole
+// (infra.CarriedProjectJobs), and the enrolment's own writes still land — a
+// refusal here would come after the person's one confirmation and after the
+// local config, the image map and the published allow-list are written, and none
+// of the three stages would run.
+//
+// Mutation (run, restore): compose with installOptions instead of installSpec
+// (project_enroll_converge.go's door), and this test fails on the refusal
+// installOptions raises for a config that records two GitHub App IDs.
+func TestProjectReposAddConvergesAConfigTheInstallationHoldsAProfileOf(t *testing.T) {
+	r := enrolRig(t)
+	if out, errOut, err := r.enrol(t, enrolRepo); err != nil {
+		t.Fatalf("the first enrolment: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
+	}
+	deployed := r.projectJobs(t)
+	if len(deployed) == 0 {
+		t.Fatalf("the first enrolment deployed no job at all, so this test has no record to hold")
+	}
+	secondAppIDInConfig(t, r.cfg)
+
+	out, errOut, err := r.enrol(t, enrolRepo)
+	if err != nil {
+		t.Fatalf("project repos add %s on a config recording two GitHub App IDs: %v\nstdout:\n%s\nstderr:\n%s", enrolRepo, err, out, errOut)
+	}
+	if kept := r.projectJobs(t); !reflect.DeepEqual(kept, deployed) {
+		t.Errorf("the door wrote a job set of its own for a profile it cannot compose:\n--- written\n%v\n--- the record the installation holds\n%v\n%s",
+			slices.Sorted(maps.Keys(kept)), slices.Sorted(maps.Keys(deployed)), out)
+	}
+	if p := r.policy(t); !slices.Contains(p.AllowRepos, enrolEntry) {
+		t.Errorf("allow_repos = %v: the steps this command runs itself did not land", p.AllowRepos)
+	}
+}
+
+// TestProjectReposAddTakesNoProvidersWordFromACheckoutOnAnotherHost is
+// project.go's hostile clone: a checkout on a host no provider lives on whose
+// fugaro.yaml says github (`https://git.evil.example/acme/app.git`, with
+// `git.provider: github`). checkoutRoot matches a checkout by owner/name alone,
+// so that clone is "the checkout here" for acme/app, and a read that took the
+// file's word would enrol and publish github/acme/app — a name github.com does
+// not serve, admitted by a line the checkout itself controls. providerForHost
+// answers nothing for that host, so the read is empty and the refusal is the one
+// for a repository nothing here reads a provider for, naming the command that
+// supplies it instead.
+func TestProjectReposAddTakesNoProvidersWordFromACheckoutOnAnotherHost(t *testing.T) {
+	const hostile = "acme/app"
+	dir := filepath.Join(t.TempDir(), "clone")
+	gitCheckout(t, dir, enrolCheckoutYAML)
+	testutil.Git(t, dir, "remote", "add", "origin", "https://git.evil.example/"+hostile+".git")
+	testutil.Git(t, dir, "add", "fugaro.yaml")
+	testutil.Git(t, dir, "commit", "-q", "-m", "fugaro.yaml")
+	r := newAddRigWith(t, enrolRigLocal)
+	t.Chdir(dir)
+	before := r.cfgText(t)
+
+	_, _, err := r.enrol(t, hostile)
+	if err == nil {
+		t.Fatalf("repos add %s from a clone on a host no provider lives on: the command ran, want the refusal", hostile)
+	}
+	for _, want := range []string{
+		"cannot tell which git provider " + hostile + " is on",
+		"fugaro settings set repos." + hostile + ".provider",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q:\n%v", want, err)
+		}
+	}
+	if got := r.cfgText(t); got != before {
+		t.Errorf("the refused run wrote the local config:\n%s", got)
+	}
+	if p := r.policy(t); slices.Contains(p.AllowRepos, "github/"+hostile) || slices.Contains(p.AllowRepos, "bitbucket/"+hostile) {
+		t.Errorf("the refused run admitted the repository: allow_repos = %v", p.AllowRepos)
 	}
 }
 
