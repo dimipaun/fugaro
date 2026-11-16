@@ -6360,11 +6360,20 @@ Un-enroll a repository: remove its enrolment, its jobs and its state
 Remove a repository's enrolment in one step, the way `fugaro project repos add`
 writes it: the published allow-list entry, this machine's repos: entry, this
 machine's image mapping, the published per-repository admission
-(config/policy/repos/<slug>), the repository's Cloud Run jobs and its state
-under the installation's state bucket. Every step is the writer the enrolment
-used, one confirmation covers them all, and a store that holds nothing says so
-rather than failing — so a removal left half done by an earlier failure is
-finished by running it again.
+(config/policy/repos/<slug>), the repository's Cloud Run jobs (its workflow job
+and its check job), its Cloud Scheduler job and its state under the
+installation's state bucket. Every step is the writer the enrolment used, one
+confirmation covers them all, and a store that holds nothing says so rather
+than failing. The allow-list entry is written last, because it is the store
+this command reads to know the repository is enrolled at all — so a removal
+left half done by an earlier failure is finished by running it again.
+
+The grants of the repository's job accounts are the one thing it cannot take
+away: they are the repository root's own IAM members, only an apply of that
+root deletes them, and that apply reads the state this command removes. Run
+`fugaro update --repo . --retire` from a checkout that no longer lists the
+repository, before this command, to have it take them. It says so before the
+confirmation and after the write.
 
 Removing an allowed repository stops its runs — a run of a repository the list
 does not admit is refused before it mints a git token — unless another entry on

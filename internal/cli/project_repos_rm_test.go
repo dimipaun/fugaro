@@ -17,8 +17,9 @@ package cli
 // Hermetic, as the plan requires: every cloud answer is internal/gcpfake's, the
 // files are t.TempDir()'s, and nothing here reaches the network, a home
 // directory or a real project. The state bucket is the installation's own fake,
-// with object versioning on, because the removal refuses to delete a
-// repository's state out of a bucket whose versioning is off.
+// with object versioning on — the removal refuses to delete a repository's
+// state out of a bucket whose versioning is off, and
+// TestReposRmRefusesAnUnversionedStateBucket is the one test that turns it off.
 //
 // The confirmation is the owner's own: nothing on the command line answers it
 // (F5, D2403 — `--yes` is gone), so every run below stands at both streams and
@@ -49,6 +50,11 @@ const (
 	// rmRegion is the region the fixture's config names, which is where its
 	// Cloud Run jobs live.
 	rmRegion = "us-east5"
+	// rmSchedulerRegion is where the fixture's Scheduler jobs live: Scheduler is
+	// not offered in us-east5, so the spec's own rule (gcp.SchedulerRegion)
+	// places them in the nearest location that has it, and `rm` derives the same
+	// one from the same config.
+	rmSchedulerRegion = "us-east4"
 	// rmRunID is the run the fixture's registry holds for rmRepoA when a test
 	// wants one in flight.
 	rmRunID = "run-4f2a1c"
@@ -138,6 +144,19 @@ func rmLabel(t *testing.T, repo string) string {
 	return repoLabel(t, rmSlug(t, repo))
 }
 
+// rmSchedulerEmail is the installation's Scheduler service account, which the
+// module mints the check job's OAuth token from. It is not part of what the
+// removal checks — the target URI is — but a fixture that left it out would
+// seed a job shaped unlike any the module writes.
+const rmSchedulerEmail = "fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+
+// rmCheckURI is the target the repository root writes into the repository's
+// Scheduler job: its check job's :run endpoint, in the repository's own region
+// (modules/repo/check.tf), which is the identity `rm` checks before it deletes.
+func rmCheckURI(slug string) string {
+	return "https://run.googleapis.com/v2/projects/" + initProject + "/locations/" + rmRegion + "/jobs/" + gcp.CheckJobName(slug) + ":run"
+}
+
 // rmRigFor is the fixture, ready to run `rm`. local is the fixture's own file
 // when a test wants one that differs from rmRigLocal, and "" means rmRigLocal
 // itself; gone names the stores that are already empty.
@@ -201,11 +220,15 @@ func (r *rmRig) seed(t *testing.T, gone rmGone) {
 		chkA := infra.OrphanLabels(specA)
 		chkA[gcp.LabelRole] = gcp.RoleCheck
 		r.run.SetJob(gcp.CheckJobName(r.slugA), chkA, "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc")
+		r.sched.SetJob(initProject, rmSchedulerRegion, gcp.SchedulerJobName(r.slugA), rmCheckURI(r.slugA), rmSchedulerEmail)
 	}
 	specB := infra.RepoSpec{Name: rmRepoB, Slug: r.slugB, Label: r.labelB, GCPProject: initProject, Region: rmRegion}
 	webB := infra.OrphanLabels(specB)
 	webB[gcp.LabelWorkflow] = "web"
 	r.run.SetJob(gcp.JobName(r.slugB, "web"), webB, "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc")
+	// The other repository's Scheduler job, which no path here may touch: it is
+	// the second half of the same assertion the jobs above carry.
+	r.sched.SetJob(initProject, rmSchedulerRegion, gcp.SchedulerJobName(r.slugB), rmCheckURI(r.slugB), rmSchedulerEmail)
 	// The repository's own secret container: labelled with the repository's
 	// label and the logical name, holding a version. It is the one resource of
 	// the repository that a whole-repository read turns up and that no path of
@@ -356,11 +379,43 @@ func TestReposRmRemovesTheSixAndNamesTheSixItLeaves(t *testing.T) {
 	if !rmHasObject(t, r.gcs, initStateBucket, infra.RepoStatePrefix(r.slugB)+"/default.tfstate") {
 		t.Errorf("the state of %s was deleted too", rmRepoB)
 	}
+	// 7. the Scheduler job, which no retire path can reach (Orphans reads labels
+	// and the module gives this resource none) and which the removal therefore
+	// deletes itself, through the Scheduler API and after checking the job's own
+	// target. The other repository's is the second half.
+	chkA := infra.SchedulerJobName(initProject, rmSchedulerRegion, gcp.SchedulerJobName(r.slugA))
+	if got := r.sched.Deleted(); len(got) != 1 || got[0] != chkA {
+		t.Errorf("Scheduler deletes = %v, want [%s]", got, chkA)
+	}
+	if r.sched.HasJob(chkA) {
+		t.Errorf("the Scheduler job of %s survived", rmRepoA)
+	}
+	if !r.sched.HasJob(infra.SchedulerJobName(initProject, rmSchedulerRegion, gcp.SchedulerJobName(r.slugB))) {
+		t.Errorf("the removal deleted %s's Scheduler job", rmRepoB)
+	}
+	if !strings.Contains(out, "deleted the Scheduler job "+gcp.SchedulerJobName(r.slugA)) {
+		t.Errorf("the output does not say the Scheduler job went:\n%s", out)
+	}
+	// 8. the order, which is the property that makes a failed removal
+	// finishable rather than stranding the repository: the allow-list entry is
+	// the store this command's own read gates on, so it is written last and
+	// every store a failure could leave behind is written before it. A removal
+	// that wrote it first would answer "nothing to remove" on the next run over
+	// a repository whose jobs and state are already gone — the very state
+	// TestReposRmConvergesAHalfDoneRemoval is the fixture of.
+	if i, last := strings.Index(out, "allow_repos: "), strings.LastIndex(out, "\ndeleted "); i < 0 || last < 0 || i < last {
+		t.Errorf("the allow-list write is not last (allow_repos at %d, the last delete at %d):\n%s", i, last, out)
+	}
 
-	// The one thing this door cannot reach, named rather than left to be
-	// discovered: the resources that are the repository root's own.
-	if !strings.Contains(out, "the repository's Scheduler job and the grants of its job account") {
-		t.Errorf("the output does not name what the repository root's own apply removes:\n%s", out)
+	// The one part of the repository this door cannot reach at all, named rather
+	// than left to be discovered: the grants, which are the repository root's own
+	// IAM members, before the question and again after the write.
+	want := "it does not remove the grants of " + rmRepoA + "'s job accounts"
+	if !strings.Contains(warning, want) {
+		t.Errorf("the warning does not name what the repository root's own apply removes:\n%s", warning)
+	}
+	if !strings.Contains(after, want) {
+		t.Errorf("the output after the write does not name it either:\n%s", after)
 	}
 }
 
@@ -448,6 +503,72 @@ func TestReposRmIsStrictWhileARunIsGoing(t *testing.T) {
 	if v := r2.db.Value(projectpolicy.PathRepo(r2.slugA)); v != nil {
 		t.Errorf("%s still holds %v after the typed confirmation", projectpolicy.PathRepo(r2.slugA), v)
 	}
+	// The sentence is not the whole of D2407: the job the run is executing is
+	// still there, and the line says so. The check job is not held by anything —
+	// no run executes it — so the removal still takes it, which is what makes
+	// this an assertion about the run's job rather than about the whole cloud
+	// step having been skipped.
+	if !r2.run.HasJob(gcp.JobName(r2.slugA, "web")) {
+		t.Errorf("the removal deleted the job the in-flight run %s is executing", rmRunID)
+	}
+	if r2.run.HasJob(gcp.CheckJobName(r2.slugA)) {
+		t.Errorf("the removal kept the check job of %s, which no run holds", rmRepoA)
+	}
+	if !strings.Contains(out2, "it stays until they end") {
+		t.Errorf("the removal does not say it kept the run's job:\n%s", out2)
+	}
+}
+
+// TestReposRmRefusesAnUnversionedStateBucket is the guard between this removal
+// and an unrecoverable delete: the state objects go outright, and only the
+// bucket's own object versioning keeps a copy of what a rollback would need, so
+// a bucket whose versioning is off is refused — forgetRepo's own check
+// (init.go), for its own reason.
+//
+// The refusal is asserted where it has to be, before anything at all is
+// written: the allow-list entry, both local entries, the admission, both Cloud
+// Run jobs, the Scheduler job and the state are all still there afterwards, and
+// no confirmation was asked. That is what makes running the command again the
+// whole of the recovery — the help says a half-done removal is finished by
+// running it again, and this is the state that claim depends on — and it is the
+// property a mutation that dropped the guard would break, because the same run
+// would then delete the repository's state out of a bucket that cannot give it
+// back.
+func TestReposRmRefusesAnUnversionedStateBucket(t *testing.T) {
+	r := rmRigFor(t, "", rmGone{})
+	r.gcs.SetVersioning(initStateBucket, false)
+	ownerAtTheTerminal(t)
+	out, _, err := executeOwnerStdin(t, initProjectName+"\n", "project", "repos", "rm", rmEntryA)
+	if err == nil || !strings.Contains(err.Error(), "has no object versioning") {
+		t.Fatalf("err = %v, want the versioning refusal\nstdout:\n%s", err, out)
+	}
+	if !strings.Contains(err.Error(), "nothing was removed") {
+		t.Errorf("the refusal does not say nothing was removed: %v", err)
+	}
+	// Read before the warning and before the question, so the operator is not
+	// asked to confirm a removal that will not happen.
+	if strings.Contains(out, "⚠ CONFIRM") {
+		t.Errorf("the removal asked for confirmation before refusing:\n%s", out)
+	}
+	// Nothing was removed, in any of the seven stores.
+	if allow := allowReposOf(t, r.db); len(allow) != 2 {
+		t.Errorf("allow_repos = %v after the refusal", allow)
+	}
+	if lc := r.rmLocal(t); len(lc.Repos) != 2 || len(lc.ImageMap) != 2 {
+		t.Errorf("the local config changed after the refusal: %d repos, %d image_map entries", len(lc.Repos), len(lc.ImageMap))
+	}
+	if r.db.Value(projectpolicy.PathRepo(r.slugA)) == nil {
+		t.Errorf("the admission of %s was removed after the refusal", rmRepoA)
+	}
+	if !r.run.HasJob(gcp.JobName(r.slugA, "web")) || !r.run.HasJob(gcp.CheckJobName(r.slugA)) {
+		t.Errorf("a Cloud Run job was deleted after the refusal")
+	}
+	if !r.sched.HasJob(infra.SchedulerJobName(initProject, rmSchedulerRegion, gcp.SchedulerJobName(r.slugA))) {
+		t.Errorf("the Scheduler job was deleted after the refusal")
+	}
+	if !rmHasObject(t, r.gcs, initStateBucket, infra.RepoStatePrefix(r.slugA)+"/default.tfstate") {
+		t.Errorf("the state was deleted after the refusal")
+	}
 }
 
 // rmPutRunInFlight records one run of rmRepoA in the registry, which is what
@@ -484,6 +605,7 @@ func TestReposRmConvergesAHalfDoneRemoval(t *testing.T) {
 		"left alone: this machine's repo-to-image map holds no entry for " + rmRepoA,
 		projectpolicy.PathRepo(r.slugA) + ": already absent",
 		"already absent: " + rmRepoA + " has no Cloud Run job in " + initProject,
+		"already absent: " + rmRepoA + " has no Scheduler job in " + rmSchedulerRegion,
 		"already absent: gs://" + initStateBucket + "/" + infra.RepoStatePrefix(r.slugA) + "/ holds nothing",
 	} {
 		if !strings.Contains(out, want) {

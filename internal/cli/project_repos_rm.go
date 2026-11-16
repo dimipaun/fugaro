@@ -94,7 +94,7 @@ type reposRemoval struct {
 	// repository. D2407: a run in flight is never disturbed, so the removal
 	// asks the strict confirmation and names the run.
 	inflight int
-	runs     []string
+	runs     []reposRemovalRun
 	// stateBucket is the state bucket this machine's project config records,
 	// which is where the repository's state lives and the one condition under
 	// which this command looks at the project's own cloud resources at all.
@@ -176,6 +176,15 @@ func runProjectReposRm(cmd *cobra.Command, o *projectReposOptions, arg string) e
 	if err != nil {
 		return err
 	}
+	// The removal's one precondition, read before the warning and before the
+	// question: the state bucket's versioning, which is what keeps a copy of
+	// the state this command deletes. Every refusal here changes nothing —
+	// that is the whole reason it is read here rather than inside the writes
+	// — and it is the only refusal that needs the cloud.
+	c, err := reposRemovalGuard(ctx, lc, plan)
+	if err != nil {
+		return err
+	}
 	out := cmd.OutOrStdout()
 	what := reposRemovalWarning(plan)
 	fmt.Fprintln(out, what)
@@ -190,7 +199,47 @@ func runProjectReposRm(cmd *cobra.Command, o *projectReposOptions, arg string) e
 	} else if err := confirmRemoval(cmd, lc, o.yes, what); err != nil {
 		return err
 	}
-	return reposRemovalApply(ctx, cmd, o, lc, db, configPath, plan)
+	return reposRemovalApply(ctx, cmd, o, lc, db, configPath, c, plan)
+}
+
+// reposRemovalGuard reads the one cloud fact this removal refuses on, before it
+// writes anything: the versioning of the bucket the repository's state lives
+// in. The state objects are deleted and only the bucket's own versioning keeps
+// a copy of what a rollback would need, so a bucket without it is a refusal —
+// forgetRepo's own check (init.go), for its own reason.
+//
+// It is read here, and only here, for the property that makes this command
+// resumable: everything the removal writes is written after this returns, so a
+// refusal that changes nothing is not one the operator has already typed their
+// project's name at. It also builds the clients the cloud step uses, so one
+// `rm` reads its credentials once.
+//
+// A machine whose config records no state bucket has nothing to read and
+// nothing to refuse: the cloud step says so and skips itself.
+func reposRemovalGuard(ctx context.Context, lc *localcfg.Config, plan reposRemoval) (*infra.Clients, error) {
+	if plan.stateBucket == "" {
+		return nil, nil
+	}
+	c, err := newInitClients(ctx, lc)
+	if err != nil {
+		return nil, err
+	}
+	objects, err := infra.RepoStateObjects(ctx, c, plan.stateBucket, plan.slug)
+	if err != nil {
+		return nil, remote(err)
+	}
+	if len(objects) == 0 {
+		return c, nil
+	}
+	versioned, err := infra.StateBucketVersioned(ctx, c, plan.stateBucket)
+	if err != nil {
+		return nil, remote(err)
+	}
+	if !versioned {
+		return nil, userErr("gs://%s has no object versioning, so the state objects of %s could not be restored once deleted; turn versioning on (gcloud storage buckets update gs://%s --versioning) and run this again; nothing was removed",
+			plan.stateBucket, pluginwire.Printable(plan.ownerName), plan.stateBucket)
+	}
+	return c, nil
 }
 
 // reposRemovalRead reads everything the warning is built from. It writes
@@ -346,28 +395,45 @@ func reposRemovalImage(plan *reposRemoval, p *projectpolicy.Policy) {
 	}
 }
 
+// reposRemovalRun is one run of this repository the registry holds: its ID,
+// which the strict confirmation names, and the workflow it is executing, which
+// is what says which of the repository's jobs it is holding.
+type reposRemovalRun struct {
+	ID       string
+	Workflow string
+}
+
 // reposRemovalRuns reads the run registry once: every entry the `agents` node
 // holds is a run that is going, which is the same source `fugaro budget show`
 // lists as running. The count is the whole registry's, the way the group's own
 // removal reads it (runsInFlight), and the named runs are this repository's, so
 // the strict sentence can name the run it is protecting without claiming a run
 // of another repository is this one's.
-func reposRemovalRuns(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, slug, ownerName string) (int, []string, error) {
+func reposRemovalRuns(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, slug, ownerName string) (int, []reposRemovalRun, error) {
 	var agents map[string]map[string]budget.AgentEntry
 	if _, err := db.Get(ctx, "agents", &agents); err != nil {
 		return 0, nil, dbErr(lc, err, false)
 	}
-	n, mine := 0, []string{}
+	n, mine := 0, []reposRemovalRun{}
 	for at, runs := range agents {
 		for run, e := range runs {
 			n++
 			if at == slug || task.ASCIILower(e.Repo) == ownerName {
-				mine = append(mine, run)
+				mine = append(mine, reposRemovalRun{ID: run, Workflow: e.Workflow})
 			}
 		}
 	}
-	slices.Sort(mine)
+	slices.SortFunc(mine, func(a, b reposRemovalRun) int { return strings.Compare(a.ID, b.ID) })
 	return n, mine, nil
+}
+
+// reposRemovalRunIDs are the runs' IDs, which is what the sentences name.
+func reposRemovalRunIDs(runs []reposRemovalRun) []string {
+	out := make([]string, len(runs))
+	for i, r := range runs {
+		out[i] = r.ID
+	}
+	return out
 }
 
 // reposRemovalInflight is the clause the strict confirmation carries: which run
@@ -378,7 +444,7 @@ func reposRemovalRuns(ctx context.Context, db *rtdb.Client, lc *localcfg.Config,
 func reposRemovalInflight(plan reposRemoval) string {
 	if len(plan.runs) > 0 {
 		return fmt.Sprintf("run(s) %s are going on %s: its job, its record and its ledger stay until they end (fugaro runs ls), and nothing here rewrites what they hold",
-			strings.Join(plan.runs, ", "), pluginwire.Printable(plan.ownerName))
+			strings.Join(reposRemovalRunIDs(plan.runs), ", "), pluginwire.Printable(plan.ownerName))
 	}
 	return fmt.Sprintf("%d run(s) of other repositories are in flight: nothing here rewrites what they hold, and this removal asks no run to finish", plan.inflight)
 }
@@ -387,8 +453,13 @@ func reposRemovalInflight(plan reposRemoval) string {
 // kept half, again after the write (D2406): removalWarning's own sentence about
 // what the removal stops — which depends on whether another entry of the list
 // still admits the repository — and then the six things it deliberately leaves.
+//
+// The third part is what the removal cannot reach at all, and it is printed
+// here, before the question, for the same reason the six are: the operator is
+// deciding about a removal whose leftovers they should know before they type
+// their project's name, not after.
 func reposRemovalWarning(plan reposRemoval) string {
-	return removalWarning(plan.allow, plan.canonical) + "\n" + reposRemovalKept(plan)
+	return removalWarning(plan.allow, plan.canonical) + "\n" + reposRemovalKept(plan) + "\n" + reposRemovalRootOwned(plan)
 }
 
 // reposRemovalKept is the kept half on its own, so the sentence after the write
@@ -397,23 +468,33 @@ func reposRemovalKept(plan reposRemoval) string {
 	return "it leaves, and nothing here touches: " + strings.Join(reposRemovalLeaves, "; ") + "."
 }
 
-// reposRemovalApply runs the removals the warning named, in an order that keeps
-// every write of one store behind the read the next one is made against.
+// reposRemovalRootOwned is the one part of the repository this command cannot
+// remove at all: the grants of its job accounts, which are the repository
+// root's own Terraform IAM members — on the project, on the runs bucket, on the
+// repository's secrets and on its image registry. Only an apply of that root
+// removes them, and that apply reads the state this command deletes, so they
+// are removed before this command or not at all. Saying nothing would make this
+// removal read as one that took everything the enrolment created, which is the
+// one thing the list above exists to prevent.
+func reposRemovalRootOwned(plan reposRemoval) string {
+	return fmt.Sprintf("it does not remove the grants of %s's job accounts (the repository root's own IAM members: on the project, on the runs bucket, on the repository's secrets and on its image registry): only an apply of that root removes them, and it reads the state this command deletes, so the one command that reaches them is `fugaro update --repo . --retire` from a checkout that no longer lists the repository, run before this one",
+		pluginwire.Printable(plan.ownerName))
+}
+
+// reposRemovalApply runs the removals the warning named, in an order that
+// makes a failure finishable rather than stranding the repository half removed.
 //
 // The two local removals land in one document and go first, because the
 // admission below is derived from that document: the publish narrows the
 // per-repository node from the config it is handed, and a config still holding
-// the `repos:` entry still admits the repository. The allow-list entry goes
-// through the one ETag-guarded editor, and the config is read back afterwards,
-// because that write records the generation it landed in the file (putAllowRepos,
-// D854) and a config read before it states a generation the node has moved past.
-func reposRemovalApply(ctx context.Context, cmd *cobra.Command, o *projectReposOptions, lc *localcfg.Config, db *rtdb.Client, configPath string, plan reposRemoval) error {
+// the `repos:` entry still admits the repository. The jobs and the state go
+// next, and the allow-list entry is written last — it is the store the READ
+// above gates on, so a failure anywhere before it leaves a machine on which
+// this command still reads the repository and finishes the removal. A failure
+// in that last write leaves the same state, and its own sentence says so.
+func reposRemovalApply(ctx context.Context, cmd *cobra.Command, o *projectReposOptions, lc *localcfg.Config, db *rtdb.Client, configPath string, c *infra.Clients, plan reposRemoval) error {
 	out := cmd.OutOrStdout()
 	if err := reposRemovalWriteLocal(out, plan); err != nil {
-		return err
-	}
-	allow := slices.DeleteFunc(slices.Clone(plan.allow), func(r string) bool { return r == plan.canonical })
-	if err := putAllowRepos(ctx, out, configPath, lc, db, plan.etag, plan.raw, plan.allow, nonNil(allow)); err != nil {
 		return err
 	}
 	after, err := localcfg.Load(plan.path)
@@ -423,11 +504,21 @@ func reposRemovalApply(ctx context.Context, cmd *cobra.Command, o *projectReposO
 	if err := reposRemovalAdmission(ctx, out, db, after, plan); err != nil {
 		return err
 	}
-	if err := reposRemovalCloud(ctx, cmd, out, after, plan); err != nil {
+	if err := reposRemovalCloud(ctx, cmd, out, c, after, plan); err != nil {
 		return err
+	}
+	allow := slices.DeleteFunc(slices.Clone(plan.allow), func(r string) bool { return r == plan.canonical })
+	if err := putAllowRepos(ctx, out, configPath, lc, db, plan.etag, plan.raw, plan.allow, nonNil(allow)); err != nil {
+		// putAllowRepos' own sentences are written for a caller whose write is
+		// its first act — `add`'s, and the group's edit — and this one's is its
+		// last, so "nothing was written" would read as a removal that never
+		// happened. What is true is that one store is left.
+		return userErr("%v; the removal's other stores are already gone — this machine's config entry, the published admission, the Cloud Run jobs and the state — and %s is the one store left, so running this command again finishes it",
+			err, plan.canonical)
 	}
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, reposRemovalKept(plan))
+	fmt.Fprintln(out, reposRemovalRootOwned(plan))
 	return nil
 }
 
@@ -553,14 +644,19 @@ func reposRemovalAdmission(ctx context.Context, out io.Writer, db *rtdb.Client, 
 // because that record is what says this machine has converged the installation
 // and knows where the repository lives: without it nothing here looks at the
 // project at all, and the sentence says which command writes it.
-func reposRemovalCloud(ctx context.Context, cmd *cobra.Command, out io.Writer, lc *localcfg.Config, plan reposRemoval) error {
+//
+// A job an in-flight run of this repository is executing is never deleted
+// (D2407): the registry names the runs and their workflows, the job's own
+// `fugaro_workflow` label says which variant it is, and a job whose variant is
+// one of those workflows is the job that run holds — including the
+// per-account variant of it, which is why the match is the workflow and its
+// `_<account>` suffixes rather than the name alone. The run's record, its
+// ledger and its counters are untouched by every path here; this is the one
+// place a run could be disturbed at all, and it says so instead.
+func reposRemovalCloud(ctx context.Context, cmd *cobra.Command, out io.Writer, c *infra.Clients, lc *localcfg.Config, plan reposRemoval) error {
 	if plan.stateBucket == "" {
 		fmt.Fprintf(out, "left alone: this machine's project config records no terraform state bucket, so nothing here knows where %s's state and its jobs are — `fugaro update` records it; run that and run this again\n", pluginwire.Printable(plan.ownerName))
 		return nil
-	}
-	c, err := newInitClients(ctx, lc)
-	if err != nil {
-		return err
 	}
 	// The spec is this one repository's and produces nothing: an empty workflow
 	// map and no check job make every labelled job of the repository a
@@ -588,10 +684,18 @@ func reposRemovalCloud(ctx context.Context, cmd *cobra.Command, out io.Writer, l
 	// which is the case apiDeleted answers the API delete to whatever the state
 	// holds.
 	api, _, _ := infra.RetireSplit(nil, spec, rets)
-	deleted := 0
+	deleted, held := 0, 0
 	for _, ret := range api {
 		want, ok := infra.JobDeleteLabels(spec, ret)
 		if !ok {
+			continue
+		}
+		switch why, err := reposRemovalHeld(ctx, c, spec, ret, plan.runs); {
+		case err != nil:
+			return remote(err)
+		case why != "":
+			fmt.Fprintf(out, "%s\n", why)
+			held++
 			continue
 		}
 		if err := deleteOrphanedJob(ctx, c, spec.GCPProject, spec.Region, ret.Job, want); err != nil {
@@ -600,8 +704,11 @@ func reposRemovalCloud(ctx context.Context, cmd *cobra.Command, out io.Writer, l
 		fmt.Fprintf(out, "deleted the %s %s\n", ret.Kind, ret.Job)
 		deleted++
 	}
-	if deleted == 0 {
+	if deleted == 0 && held == 0 {
 		fmt.Fprintf(out, "already absent: %s has no Cloud Run job in %s\n", plan.ownerName, spec.GCPProject)
+	}
+	if err := reposRemovalScheduler(ctx, out, c, lc, plan); err != nil {
+		return err
 	}
 	objects, err := infra.RepoStateObjects(ctx, c, plan.stateBucket, plan.slug)
 	if err != nil {
@@ -610,16 +717,11 @@ func reposRemovalCloud(ctx context.Context, cmd *cobra.Command, out io.Writer, l
 	if len(objects) == 0 {
 		fmt.Fprintf(out, "already absent: gs://%s/%s/ holds nothing\n", plan.stateBucket, infra.RepoStatePrefix(plan.slug))
 	} else {
-		// The versioning check is forgetRepo's own (init.go), for its reason:
-		// the objects are deleted, and only the bucket's own versioning keeps a
-		// copy of what a rollback would need.
-		switch versioned, err := infra.StateBucketVersioned(ctx, c, plan.stateBucket); {
-		case err != nil:
-			return remote(err)
-		case !versioned:
-			return userErr("gs://%s has no object versioning, so the state objects of %s could not be restored once deleted; turn versioning on (gcloud storage buckets update gs://%s --versioning) and run this again; nothing else was removed either way",
-				plan.stateBucket, pluginwire.Printable(plan.ownerName), plan.stateBucket)
-		}
+		// The versioning was read by the guard above, before anything was
+		// written, and it is not read again here: a bucket whose versioning
+		// goes off between the two is a race this command cannot close from
+		// inside itself, and a second read would only narrow it by the
+		// milliseconds between the two calls.
 		gone, err := infra.ForgetRepoState(ctx, c, plan.stateBucket, plan.slug)
 		if err != nil {
 			return remote(err)
@@ -628,12 +730,111 @@ func reposRemovalCloud(ctx context.Context, cmd *cobra.Command, out io.Writer, l
 			fmt.Fprintf(out, "deleted gs://%s/%s\n", plan.stateBucket, name)
 		}
 	}
-	// The two resources this door cannot reach, named rather than left for the
-	// operator to discover: they are the repository root's own, and the apply
-	// that deletes them is `fugaro update --repo`'s (`--retire`), which is the
-	// one command that removes what a configuration no longer produces. Saying
-	// nothing here would make this command read as a removal that took
-	// everything, which is the one thing the six-thing list exists to prevent.
-	fmt.Fprintf(out, "not removed here: the repository's Scheduler job and the grants of its job account are the repository root's own resources, and only its apply deletes them — run `fugaro update --repo . --retire` from a checkout of %s\n", pluginwire.Printable(plan.ownerName))
 	return nil
+}
+
+// reposRemovalHeld is whether a job about to be deleted is one an in-flight run
+// of this repository is executing, and the line that says so. It reads the job's
+// own labels rather than the registry's `Workflow` alone: the registry names the
+// workflow a run resolved, and the job's label names the variant it was deployed
+// as (`<workflow>` for the default account, `<workflow>_<account>` for a named
+// one), so the two are compared as a workflow with its account suffixes.
+//
+// A job that is already gone is not held, and a job that cannot be read at all
+// is an error rather than a silent delete: the read is the same one
+// deleteOrphanedJob makes a moment later, and a permission that refuses it is
+// reported the same way on both.
+func reposRemovalHeld(ctx context.Context, c *infra.Clients, spec infra.RepoSpec, ret infra.Retirement, runs []reposRemovalRun) (string, error) {
+	if len(runs) == 0 {
+		return "", nil
+	}
+	name := "projects/" + spec.GCPProject + "/locations/" + spec.Region + "/jobs/" + ret.Job
+	live, err := c.Run.Projects.Locations.Jobs.Get(name).Context(ctx).Do()
+	if err != nil {
+		if isNotFound(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("reading the %s %s (run.jobs.get): %w", ret.Kind, ret.Job, err)
+	}
+	variant := live.Labels[gcp.LabelWorkflow]
+	if variant == "" {
+		return "", nil
+	}
+	for _, run := range runs {
+		if variant == run.Workflow || strings.HasPrefix(variant, run.Workflow+"_") {
+			return fmt.Sprintf("kept: the %s %s is the %s job run(s) %s are executing, and it stays until they end (fugaro runs ls)",
+				ret.Kind, ret.Job, variant, strings.Join(reposRemovalRunIDs(runs), ", ")), nil
+		}
+	}
+	return "", nil
+}
+
+// reposRemovalScheduler deletes the repository's Cloud Scheduler job — the one
+// that fires its daily check — through the Scheduler API.
+//
+// It is the one resource of D2405's list that no retire path can reach: the
+// module gives it no label (so Orphans, which reads labels, never sees it), it
+// is not a Cloud Run job (so JobDeleteLabels and the API delete never see it
+// either), and it is not protected, so the apply that would delete it is an
+// apply of a state this command has just deleted. Its name is Fugaro's own
+// derivation from the repository's slug (gcp.SchedulerJobName), and the check
+// before the delete is the job's own target: the URI it posts to is exactly the
+// one the module writes for this repository's check job (check.tf), which is
+// the same identity test discovery makes before it adopts a Scheduler job
+// (infra.discovery.schedulerJob, through checkRunURI). A job that targets
+// anything else is left alone with a line rather than deleted, the way every
+// other delete here checks what it is about to delete first.
+//
+// The region is the config's scheduler_region when it names one and the
+// nearest Scheduler location to the repository's region otherwise (the spec's
+// own rule, spec.go). A region with no Scheduler location this program knows of
+// is not a failure of the removal: it is a line, and the operator has the one
+// command that deletes the job by hand.
+func reposRemovalScheduler(ctx context.Context, out io.Writer, c *infra.Clients, lc *localcfg.Config, plan reposRemoval) error {
+	if c.Scheduler == nil {
+		return nil
+	}
+	region := lc.SchedulerRegion
+	if region == "" {
+		r, err := gcp.SchedulerRegion(lc.Region)
+		if err != nil {
+			fmt.Fprintf(out, "left alone: %s; the repository's Scheduler job, if it has one, is deleted by hand (gcloud scheduler jobs delete %s --location <region> --project %s)\n",
+				oneLine(err.Error()), gcp.SchedulerJobName(plan.slug), lc.GCPProject)
+			return nil
+		}
+		region = r
+	}
+	short := gcp.SchedulerJobName(plan.slug)
+	name := infra.SchedulerJobName(lc.GCPProject, region, short)
+	job, err := c.Scheduler.Projects.Locations.Jobs.Get(name).Context(ctx).Do()
+	if isNotFound(err) {
+		fmt.Fprintf(out, "already absent: %s has no Scheduler job in %s\n", plan.ownerName, region)
+		return nil
+	}
+	if err != nil {
+		return remote(fmt.Errorf("reading the Scheduler job %s: %w", name, err))
+	}
+	if job.HttpTarget == nil || job.HttpTarget.Uri != reposRemovalCheckURI(lc, plan) {
+		fmt.Fprintf(out, "left alone: the Scheduler job %s does not target the check job of %s, so it is not this repository's to delete; check it by hand (gcloud scheduler jobs describe %s --location %s --project %s)\n",
+			short, pluginwire.Printable(plan.ownerName), short, region, lc.GCPProject)
+		return nil
+	}
+	if _, err := c.Scheduler.Projects.Locations.Jobs.Delete(name).Context(ctx).Do(); err != nil {
+		if isNotFound(err) {
+			fmt.Fprintf(out, "already absent: %s has no Scheduler job in %s\n", plan.ownerName, region)
+			return nil
+		}
+		return remote(fmt.Errorf("deleting the Scheduler job %s: %w", name, err))
+	}
+	fmt.Fprintf(out, "deleted the Scheduler job %s\n", short)
+	return nil
+}
+
+// reposRemovalCheckURI is the URI the repository root writes into the
+// repository's Scheduler job: its own check job's :run endpoint, in the
+// repository's region. It is infra.checkRunURI's string, spelled here because
+// that one takes a whole RepoSpec (whose check half needs the base images and
+// the workflows this command never reads) and this one has the slug.
+func reposRemovalCheckURI(lc *localcfg.Config, plan reposRemoval) string {
+	return "https://run.googleapis.com/v2/projects/" + lc.GCPProject + "/locations/" + lc.Region + "/jobs/" + gcp.CheckJobName(plan.slug) + ":run"
 }
