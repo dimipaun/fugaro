@@ -169,6 +169,46 @@ func TestFinalizeRefusesAnIntentToAddBinary(t *testing.T) {
 	}
 }
 
+// commitPayload is the payload one step further along than stagedBinary: the
+// agent commits it itself, so no listing finalize's untracked check reads names
+// it — it is in a commit, and the run's own diff is the only reader that sees
+// it (spec.md §4.2).
+type commitPayload func(t *testing.T, req agent.Request, name string)
+
+// selfCommitBinary is that payload in its ordinary shape: the agent writes the
+// artifact and commits its work, `git add -A` and all.
+func selfCommitBinary(t *testing.T, req agent.Request, name string) {
+	t.Helper()
+	compiledBinary(t, req, name)
+	shell(t, req, "git add -A && git commit -qm 'Add a vendored tool'")
+}
+
+// commitIntentToAddBinary is F4's shape: `git add -N` records the path in the
+// index without its content and the commit that follows carries the bytes
+// anyway, so the payload is in a commit and in no listing either.
+func commitIntentToAddBinary(t *testing.T, req agent.Request, name string) {
+	t.Helper()
+	compiledBinary(t, req, name)
+	shell(t, req, "git add -N "+name+" && git commit -qam 'Add a vendored tool'")
+}
+
+// implementCommitting is implement where the agent commits a payload itself:
+// the work implementLeaving leaves for finalize's own commit, committed before
+// the suite runs, so the run's verified test is the one it earned and the
+// binary rule is the only thing that can end it.
+func implementCommitting(name string, commit commitPayload) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo feature > feature.txt && git add -A && git commit -qm 'Add feature'")
+		commit(t, req, name)
+		verifyTest(t, ctx, req)
+		pr := filepath.Join(envValue(req.Env, "FUGARO_STATE_DIR"), "pr.md")
+		if err := os.WriteFile(pr, []byte("# Add feature\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return agent.Result{CostUSD: 1}, nil
+	}
+}
+
 // TestFinalizeCommitsAnUntrackedScript: what the rule deliberately leaves
 // alone. A file the run left executable and forgot to commit is a script
 // someone wrote — text, which a reviewer can read — and the leftover commit is

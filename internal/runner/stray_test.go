@@ -160,6 +160,36 @@ func TestAnUnadmittedBinaryIsStillRefused(t *testing.T) {
 	}
 }
 
+// TestASelfCommittedBinaryFailsTheRun: the residual the untracked check cannot
+// see, and the reason AR4 exists (D997, spec.md §4.2). #1476's reading lists
+// what a commit would carry and no commit has; a payload the agent committed
+// itself is in a commit, so it passes that reading untouched and this run used
+// to end succeeded/ready with an unreadable megabyte in its pull request. The
+// run's own diff is the reader that sees it.
+//
+// The commit stays on the branch: the run refuses the run, never the history
+// (D989), which is why the ending is a draft a person can read and delete from
+// rather than a push that never happened.
+func TestASelfCommittedBinaryFailsTheRun(t *testing.T) {
+	const path = "test_dup_case2"
+	b := policyRun(t, gwConfig(t, ""), "off", "", binariesNode(`"website/public/**"`, "1048576"))
+	rec, err := b.run(t, implementCommitting(path, selfCommitBinary), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("record = status %s, outcome %s, reason %q; want a draft: the run's own commits added a binary nothing admits", rec.Status, rec.Outcome, rec.Reason)
+	}
+	for _, want := range []string{path, "it is not text"} {
+		if !strings.Contains(rec.Reason, want) {
+			t.Errorf("reason = %q; want it to name %q", rec.Reason, want)
+		}
+	}
+	if !slices.Contains(branchFiles(t, b.harness, rec.Branch), path) {
+		t.Errorf("the branch does not carry the commit the agent made: %v", branchFiles(t, b.harness, rec.Branch))
+	}
+}
+
 // outsideThePattern is two files a prefix reading of an admitted directory
 // would admit and its glob does not: a deeper path under it, and another
 // extension directly in it.
