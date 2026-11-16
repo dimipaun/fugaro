@@ -87,7 +87,14 @@
 # budget.rtdb_url), CHECK193_DRY_RUN and CHECK193_KEEP_SCRATCH. None of them can
 # point this check at another project or another region: those two are constants
 # in this file.
-set -euo pipefail
+#
+# -E (errtrace) as well as -e: without it a command that fails inside a command
+# substitution ends the shell with a bare exit 1 and NO error trap — the block
+# would print later rows as `FAIL — not reached` and the owner would get no line
+# saying where the run broke. With it, every such failure reaches on_error and
+# ends as one that could not measure (exit 2), which is what its own contract
+# says of that.
+set -Eeuo pipefail
 
 # No xtrace, whatever the shell it was started from had: the block this check
 # prints is pasted into a pull request, and `bash -x` would print every command
@@ -233,15 +240,22 @@ finish() {
   else
     facts="${facts}"$'\n'"scratch-removed|$([ "$SCRATCH_REMOVED" = yes ] && echo PASS || echo FAIL)|the scratch directory $([ "$SCRATCH_REMOVED" = yes ] && echo "is gone" || echo "is still there, at $SCRATCH")"
   fi
-  case "$facts" in
-  *'|FAIL|'*)
+  # A row that reads FAIL is one of two things, and the verdict says which: a
+  # criterion that did not hold (exit 1), or a row this check could not measure
+  # — every unmeasured row is recorded FAIL as well, so that it is never read as
+  # a pass, and its own contract names exit 2 ("could not measure"). Telling
+  # them apart by the keys UNMEASURED_KEYS names is the only way to reach the
+  # second: a block with any other FAILed row in it is the first, and it wins.
+  local key hard=no
+  for key in $(printf '%s\n' "$facts" | sed -n 's/^\([^|]*\)|FAIL|.*/\1/p'); do
+    case " ${UNMEASURED_KEYS} " in
+    *" $key "*) ;;
+    *) hard=yes ;;
+    esac
+  done
+  if [ "$hard" = yes ]; then
     if [ "$status" = 0 ]; then status=1; fi
-    ;;
-  esac
-  # An unmeasured row is not a criterion that did not hold: the verdict is the
-  # one its own contract names for it — the check could not measure — and it is
-  # taken LAST so that a real FAIL still reads as a FAIL.
-  if [ -n "$UNMEASURED_KEYS" ]; then
+  elif [ -n "$UNMEASURED_KEYS" ]; then
     if [ "$status" = 0 ]; then status=2; fi
   fi
   if [ -z "$PRINTED" ]; then
@@ -887,6 +901,7 @@ step_switch() {
   local listed=$SCRATCH/jobs.json got n
   gcloud run jobs list --project="$P" --region="$L" --format=json >"$listed" 2>"$SCRATCH/jobs.err" || {
     fact switch FAIL "gcloud run jobs list exited non-zero: $(last_lines "$SCRATCH/jobs.err"). Nothing about the switch is settled by it"
+    SWITCH_STOP=yes
     return 0
   }
   local repo
@@ -895,10 +910,12 @@ step_switch() {
     n=$(field_of jobs "$got")
     if [ "${n:-0}" -lt 1 ]; then
       unmeasured switch "no job of ${repo} carries its FUGARO_REMOTE in 'gcloud run jobs list', so there is no job whose env could be read: run 'fugaro update --repo' in ${repo} and this check again"
+      SWITCH_STOP=yes
       return 0
     fi
     if [ "$(field_of urls "$got")" -lt 1 ]; then
       fact switch FAIL "$n job(s) of ${repo} in the installation's job list and NONE of them carries FUGARO_CREDENTIALS_SERVICE_URL: this repository is OFF the credentials-service switch, so its runs are served by nothing and every row below would be a row about a repository this check is not about. Turn the switch on for it (the repository's own fugaro.yaml, then 'fugaro update --repo') and run this check again"
+      SWITCH_STOP=yes
       return 0
     fi
     say "${repo}: $(field_of urls "$got") of ${n} job(s) carry the credentials service's URL"
@@ -910,6 +927,7 @@ step_switch() {
   case "$mode" in
   off)
     fact switch FAIL "the installation's budget mode is 'off' and both repositories are switched: the mode is read at 'fugaro update', and a switched repository whose mode is off is one whose jobs hold no mount and whose runs have nothing to be served from. Raise it ('fugaro project policy publish', observe or enforce) and run this check again"
+    SWITCH_STOP=yes
     return 0
     ;;
   esac
@@ -1065,7 +1083,10 @@ step_declared_account() {
   *) want="claude-oauth-token-${declared}" ;;
   esac
   named=$(audit_named "$lines" "$rid")
-  others=$(printf '%s\n' "$named" | sed -n 's/^\(claude-oauth-token[-A-Za-z0-9._]*\)|A$/\1/p' | grep -v "^${want}\$" | sort -u | tr '\n' ' ')
+  # `|| true`: the arm below this one is the run whose tier-A lines name the
+  # declared account and nothing else, and `grep -v` finding no such other line
+  # is exactly that case — not a failure of the pipeline.
+  others=$(printf '%s\n' "$named" | sed -n 's/^\(claude-oauth-token[-A-Za-z0-9._]*\)|A$/\1/p' | grep -v "^${want}\$" | sort -u | tr '\n' ' ' || true)
   if [ -n "$others" ]; then
     fact declared-account FAIL "the oauth run (${rid}) of ${OAUTH_REPO} declared ${declared} and the service served it ANOTHER account's token as well: its lines name ${want} and ${others% }. The service narrows an oauth call to the account the call itself declared (narrowToRepoAuth, D2070 (a): keepCandidates keeps tier A and Name == the declared account), so a line naming a second one of the record's accounts is a run served an account it did not declare — this is the row Check 193 exists for. Read that run's lines ('gcloud logging read') and the service's own code path before anything else"
     return 0
@@ -1091,9 +1112,14 @@ step_proxy() {
   local repo got admits proxy lines rid label key
   repo=$PROXY_REPO
   if [ -z "$repo" ]; then
+    # BOTH, because the proxy is one switch for the whole published Bitbucket
+    # block (projectpolicy's BitbucketToken.proxy) and it is the ADMISSION that
+    # says which repositories that switch covers: a repository the node does not
+    # admit is not proxied by it, whatever the switch reads, and picking one on
+    # the switch alone would read a repository the policy never covered.
     for repo in "$REPO_ONE" "$REPO_TWO"; do
       got=$(reader policy "$SCRATCH/policy.json" "$repo")
-      if [ "$(field_of proxy "$got")" = yes ]; then break; fi
+      if [ "$(field_of proxy "$got")" = yes ] && [ "$(field_of admits "$got")" = yes ]; then break; fi
       repo=""
     done
   fi
@@ -1121,14 +1147,18 @@ step_proxy() {
   # are `forward` — and a person's read mint is `bitbucket_read`, which carries
   # a repository and no run at all: matching a line by the word `bitbucket`
   # would let a mint that is not this run's answer this row.
-  local purposes creds
-  purposes=$(reader audit "$lines" "$rid" | sed -n 's/^audit=[^|]*|[^|]*|[^|]*|\([^|]*\)|.*/\1/p' | sort -u | tr '\n' ' ')
+  local purposes purposes_list creds
+  # One purpose per line, because the match below is a whole-line one: joined
+  # into a single line ('forward git') nothing would ever match it. purposes
+  # is the same list for the messages the rows print.
+  purposes_list=$(reader audit "$lines" "$rid" | sed -n 's/^audit=[^|]*|[^|]*|[^|]*|\([^|]*\)|.*/\1/p' | sort -u)
+  purposes=$(printf '%s' "$purposes_list" | tr '\n' ' ')
   creds=$(reader audit "$lines" "$rid" | sed -n 's/^audit=ok|\([^|]*\)|\([^|]*\)|\(git\|bitbucket-api\)|.*/\1/p' | sort -u | tr '\n' ' ')
   if [ "$proxy" != yes ]; then
     unmeasured proxy "${repo} is NOT published with proxy: true (admits=${admits}), so nothing about the proxy is measured: a repository the published node does not proxy keeps its Bitbucket token mounted on its job and its runs push straight to the provider, which is the state F29 names. Publish proxy: true for it (fugaro project policy publish) and run this check again"
     return 0
   fi
-  if ! printf '%s\n' "$purposes" | grep -qE '^(git|bitbucket-api)$'; then
+  if ! printf '%s\n' "$purposes_list" | grep -qE '^(git|bitbucket-api)$'; then
     fact proxy FAIL "${repo} is published with proxy: true and on the credentials-service switch, and the service wrote no git line for its run (${rid}): the purposes its lines carry are '$(printf '%s' "$purposes" | sed 's/ *$//')' and none of them is 'git' or 'bitbucket-api'. F29's reading is that a switched Bitbucket repository published with proxy: true pushes THROUGH the service (internal/runner's project.go's proxiedBitbucket), which writes a line of that run's own for the traffic — a run whose push never reached the service pushed with the credential its job mounts, which is the state S2 exists to end. Read that run's lines ('gcloud logging read') and run this check again"
     return 0
   fi
@@ -1258,6 +1288,11 @@ step_inflight() {
 # ---------------------------------------------------------------------- 193
 run_193() {
   step_switch
+  # A switch that is off, unread, or on an installation whose budget mode is off
+  # is a state this check cannot read a served run out of, and each run it
+  # launches commits to a sandbox repository and opens a pull request: the rows
+  # below read `not reached` rather than costing two of them.
+  [ -z "$SWITCH_STOP" ] || return 0
   step_records
   if [ -z "$API_REPO" ] || [ -z "$OAUTH_REPO" ]; then
     unmeasured served-api-key "the two repositories could not be assigned to their auths (see the record row), so no run was launched"
@@ -1283,6 +1318,10 @@ run_193_flip() {
     unmeasured served-oauth "the two repositories could not be assigned to their auths (see the record row), so no run was launched"
     return 0
   fi
+  # The mount rows above are the flip's whole reading and are readable whatever
+  # the switch says — a job with no mount is the state the flip exists to reach,
+  # switched or not — so only the two runs wait for the switch row.
+  [ -z "$SWITCH_STOP" ] || return 0
   step_run "$API_REPO" api-key flip-one served-api-key
   step_run "$OAUTH_REPO" oauth flip-two served-oauth
 }
@@ -1422,6 +1461,11 @@ REPO_ONE=""
 REPO_TWO=""
 API_REPO=""
 OAUTH_REPO=""
+# Set by step_switch when the switch itself could not be read or does not hold:
+# the runs this check launches are not free (each commits to a sandbox
+# repository and opens a pull request), so nothing is launched on a state whose
+# rows below could only read `not reached`.
+SWITCH_STOP=""
 CONFIG_FILE=${CHECK193_CONFIG:-${HOME:-}/.config/fugaro/projects/fugaro.yaml}
 # The Realtime Database URL, read out of the installation's own local config
 # (budget.rtdb_url): the one place a machine set up for this installation

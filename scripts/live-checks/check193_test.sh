@@ -1,0 +1,967 @@
+#!/usr/bin/env bash
+# Tests for scripts/live-checks/check193.sh, with fake `fugaro`, `gcloud` and
+# `curl` on PATH: NOTHING here reaches a cloud, a project, a repository or the
+# network, no agent runs a live command, and the fake tools record every
+# argument they are given so the test can assert that no command ever named
+# anything but the sandbox installation's project and that nothing was written
+# anywhere (Check 193 creates no cloud resource and writes no record).
+#
+# The fakes are a small project of their own: two sandbox repositories with a
+# Cloud Run job each, a credentials-service switch the test turns on and off, a
+# published policy that proxies one of them, one `creds/repoauth` record per
+# repository that the fake `curl` serves out of the installation's Realtime
+# Database, throwaway runs that are launched, listed and then answered by the
+# service's own `credsvc: audit` lines — which is where every row of the check
+# comes from.
+#
+# Usage: bash scripts/live-checks/check193_test.sh
+set -euo pipefail
+
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+script=$here/check193.sh
+work=$(mktemp -d)
+kept=()
+cleanup_all() {
+  local d
+  for d in ${kept[@]+"${kept[@]}"}; do rm -rf "$d" 2>/dev/null || true; done
+  if [ -n "${CHECK193_TEST_KEEP:-}" ]; then echo "kept: $work" >&2; else rm -rf "$work"; fi
+}
+trap cleanup_all EXIT
+
+failures=0
+fail() {
+  echo "FAIL: $*" >&2
+  failures=$((failures + 1))
+}
+expect_contains() { # haystack needle what
+  case "$1" in
+  *"$2"*) ;;
+  *) fail "$3: expected to contain '$2'; got: $(printf '%s' "$1" | head -c ${CHECK193_TEST_TAIL:-700})" ;;
+  esac
+}
+expect_absent() {
+  case "$1" in
+  *"$2"*) fail "$3: found '$2' where it must never appear" ;;
+  esac
+}
+expect_status() { # status want what
+  [ "$1" = "$2" ] || fail "$3: expected exit $2, got $1"
+}
+
+# The two sandbox repositories every case runs against: one whose record says
+# api-key and one whose says oauth, which is the pair the check needs.
+REPOS_DEFAULT="acme/sandbox-api,acme/sandbox-oauth"
+
+# --------------------------------------------------------------------- fakes
+write_fake_fugaro() { # dir
+  mkdir -p "$1/bin"
+  cat >"$1/bin/fugaro" <<'FUGARO_EOF'
+#!/usr/bin/env python3
+"""A stand-in for `fugaro`, for scripts/live-checks/check193.sh's test only.
+
+It answers the four things the check asks it: which installation this is
+(`doctor`), its own version, a launch (`run`, which only RECORDS the run — no
+task, no repository and no cloud is touched) and the listing (`runs ls`) whose
+rows the check polls and reads.
+"""
+import json, os, sys
+
+LOG = os.environ["FAKE_LOG_DIR"]
+STATE = os.environ["FAKE_GCLOUD_STATE"]
+mode = os.environ.get("FAKE_FUGARO_MODE", "ok")
+repos = [r for r in os.environ.get("FAKE_REPOS", "").split(",") if r]
+
+with open(os.path.join(LOG, "fugaro.calls"), "a") as fh:
+    fh.write("fugaro " + " ".join(sys.argv[1:]) + "\n")
+
+args = sys.argv[1:]
+
+
+def flag(name, default=""):
+    """Both the --name=value and the --name value spellings: the check passes
+    flags the way an owner would on a command line."""
+    for i, a in enumerate(args):
+        if a.startswith(name + "="):
+            return a[len(name) + 1:]
+        if a == name:
+            return args[i + 1] if len(args) > i + 1 else ""
+    return default
+
+
+def positional(n):
+    ps = [a for a in args if not a.startswith("-")]
+    return ps[n] if len(ps) > n else ""
+
+
+def runs_state():
+    path = os.path.join(STATE, "fugaro.runs")
+    if not os.path.exists(path):
+        return []
+    return [l.split(" ", 1) for l in open(path).read().splitlines() if l.strip()]
+
+
+def record_run(repo, rid):
+    with open(os.path.join(STATE, "fugaro.runs"), "a") as fh:
+        fh.write("%s %s\n" % (repo, rid))
+
+
+def account_for(repo):
+    """The account a run of this repository declares: the oauth repository's is
+    FAKE_OAUTH_ACCOUNT ('default' unless a case says otherwise), and an api-key
+    repository's run declares none — its credential is the paid key."""
+    if repo == (repos[1] if len(repos) > 1 else ""):
+        return os.environ.get("FAKE_OAUTH_ACCOUNT", "default")
+    return ""
+
+
+if args[:1] == ["version"]:
+    # `fugaro version` prints the version and nothing else (cli.root's
+    # versionTemplate): `dev` on a checkout build, the release's number on a
+    # released one.
+    print("dev" if mode == "dev" else "0.13.0")
+elif args[:1] == ["doctor"]:
+    # Faithful to the real doctor: its checks first, then the project: line, and
+    # exit 1 as soon as a check of its own failed — which has nothing to do with
+    # which installation this is, and is why the guard must read the line.
+    if mode == "failing":
+        print("check: credentials FAIL (no usable credentials)")
+        print("project: fugaro (GCP fugaro-dev, us-east5)")
+        sys.exit(1)
+    if mode == "other":
+        print("project: fugaro (GCP someone-else-prod, us-east5)")
+    else:
+        print("project: fugaro (GCP fugaro-dev, us-east5)")
+elif args[:1] == ["run"]:
+    repo = flag("--repo")
+    rid = flag("--run-id")
+    task = flag("--task-file")
+    if repo not in repos:
+        sys.stderr.write("fugaro: the repository %s is not one of the two sandbox repositories this test names\n" % repo)
+        sys.exit(1)
+    if not rid or not task or not os.path.exists(task):
+        sys.stderr.write("fugaro: a launch needs --run-id and a task file that exists\n")
+        sys.exit(1)
+    text = open(task).read()
+    if not text.startswith("# Task: "):
+        sys.stderr.write("fugaro: the task's first line must be the '# Task: <title>' line\n")
+        sys.exit(1)
+    if mode == "launch-fails":
+        sys.stderr.write("fugaro: the launch was refused (test)\n")
+        sys.exit(1)
+    record_run(repo, rid)
+    print(json.dumps({"run_id": rid, "repo": repo, "status": "queued"}))
+elif args[:1] == ["runs"]:
+    repo = flag("--repo")
+    if mode == "listing-fails":
+        sys.stderr.write("fugaro: the listing could not be read (test)\n")
+        sys.exit(1)
+    rows = []
+    if os.environ.get("FAKE_INFLIGHT", "") and repo == os.environ.get("FAKE_INFLIGHT_REPO", repos[0] if repos else ""):
+        rows.append(os.environ["FAKE_INFLIGHT"])
+    for r, rid in runs_state():
+        if r != repo:
+            continue
+        rows.append(rid)
+    out = []
+    for rid in rows:
+        row = {"run_id": rid, "repo": repo, "status": os.environ.get("FAKE_ROW_STATUS", "succeeded"),
+               "terminal": True, "outcome": "ready", "pushed": True, "pr": 7,
+               "started_at": os.environ.get("FAKE_ROW_STARTED", "2026-11-16T08:30:00Z")}
+        acct = account_for(repo)
+        if acct:
+            row["oauth_account"] = acct
+        if row["status"] != "succeeded":
+            row["reason"] = "the run failed (test)"
+            row["pr"] = 0
+            row["pushed"] = False
+            halt = {"reason": "agent", "detail": "the agent stopped before opening a pull request (test)"}
+            row["halt"] = halt
+        out.append(row)
+    print(json.dumps({"runs": out}))
+elif args[:1] == ["project"] and args[1:2] == ["policy"]:
+    if mode == "policy-fails":
+        sys.stderr.write("fugaro: the published policy could not be read (test)\n")
+        sys.exit(1)
+    proxy_repo = os.environ.get("FAKE_PROXY_REPO", repos[1] if len(repos) > 1 else "")
+    allow = ["bitbucket/" + proxy_repo] if proxy_repo else []
+    print(json.dumps({"policy": {
+        "version": 9,
+        "budget": {"mode": "off" if mode == "mode-off" else "observe"},
+        "allow_repos": ["bitbucket/%s/*" % (repos[0].split("/")[0] if repos else "acme")],
+        "bitbucket_token": {"allow_repos": allow,
+                            "proxy": mode != "no-proxy"}}}))
+else:
+    sys.stderr.write("fugaro: unknown command: %s\n" % " ".join(args))
+    sys.exit(2)
+FUGARO_EOF
+  chmod +x "$1/bin/fugaro"
+}
+
+write_fake_gcloud() { # dir
+  mkdir -p "$1/bin"
+  cat >"$1/bin/gcloud" <<'GCLOUD_EOF'
+#!/usr/bin/env python3
+"""A stand-in for `gcloud`, for scripts/live-checks/check193.sh's test only: no
+socket is opened and nothing is created.
+
+It answers three reads: the installation's job list (and one job's own
+specification), the access token the installation's Realtime Database record is
+read with, and Cloud Logging — whose lines for a run are the service's own
+`credsvc: audit` lines, built here from the mode the case names.
+"""
+import json, os, re, sys
+
+LOG = os.environ["FAKE_LOG_DIR"]
+STATE = os.environ["FAKE_GCLOUD_STATE"]
+mode = os.environ.get("FAKE_GCLOUD_MODE", "ok")
+repos = [r for r in os.environ.get("FAKE_REPOS", "").split(",") if r]
+
+with open(os.path.join(LOG, "gcloud.calls"), "a") as fh:
+    fh.write("gcloud " + " ".join(sys.argv[1:]) + "\n")
+
+args = sys.argv[1:]
+positionals = [a for a in args if not a.startswith("-")]
+# Like the real CLI, a subcommand or a flag that does not exist is an error: a
+# misspelled one therefore cannot hide in any call this check makes.
+ALLOWED = {
+    ("auth", "print-access-token"): (),
+    ("run", "jobs", "list"): ("--project", "--region", "--format"),
+    ("run", "jobs", "describe"): ("--project", "--region", "--format"),
+    ("logging", "read"): ("--project", "--freshness", "--limit", "--format"),
+}
+sub = None
+for n in (3, 2):
+    if tuple(positionals[:n]) in ALLOWED:
+        sub = tuple(positionals[:n])
+        break
+if sub is None:
+    sys.stderr.write("ERROR: (gcloud) unknown command: %s\n" % " ".join(args))
+    sys.exit(2)
+for a in args:
+    if a.startswith("--") and a.split("=")[0] not in ALLOWED[sub]:
+        sys.stderr.write("ERROR: (gcloud) unrecognized argument: %s\n" % a)
+        sys.exit(2)
+
+
+def flag(name, default=""):
+    """Both the --name=value and the --name value spellings: the check passes
+    flags the way an owner would on a command line."""
+    for i, a in enumerate(args):
+        if a.startswith(name + "="):
+            return a[len(name) + 1:]
+        if a == name:
+            return args[i + 1] if len(args) > i + 1 else ""
+    return default
+
+
+PROJECT = flag("--project")
+if PROJECT and PROJECT != "fugaro-dev":
+    sys.stderr.write("ERROR: (gcloud) this check runs on fugaro-dev only\n")
+    sys.exit(1)
+
+# The moment `fugaro update --repo` last reached the repositories' jobs, and the
+# moment the runs of the cases below started: an in-flight run is one that
+# started BEFORE the update, which is the order the check's own arithmetic reads.
+UPDATE = "2026-11-16T09:00:00.000000Z"
+
+
+def job_name(repo):
+    return "%s-0123456789abcdef" % repo.lower().replace("/", "-")
+
+
+def job_doc(repo):
+    envs = [{"name": "FUGARO_REMOTE", "value": "https://bitbucket.org/%s.git" % repo}]
+    if mode != "no-url":
+        envs.append({"name": "FUGARO_CREDENTIALS_SERVICE_URL",
+                     "value": "https://fugaro-credentials-fake-ue.a.run.app"})
+    if mode == "mounted" and repo == (repos[1] if len(repos) > 1 else ""):
+        # The mount the flip exists to take off: the container the paid key is
+        # served from, as the deployment mounts it (config.ModelSecretEnvs and
+        # the derived Secret Manager ID behind it).
+        envs.append({"name": "ANTHROPIC_API_KEY",
+                     "valueSource": {"secretKeyRef": {"secret": "anthropic-api-key-abcdef", "key": "latest"}}})
+    if mode == "provider-key":
+        envs.append({"name": "FUGARO_PROVIDER_KEY_OPENROUTER",
+                     "valueSource": {"secretKeyRef": {"secret": "openrouter-key-abcdef", "key": "latest"}}})
+    name = job_name(repo)
+    return {"apiVersion": "run.googleapis.com/v1", "kind": "Job",
+            "metadata": {"name": name, "labels": {"fugaro_repo": name}, "updateTime": UPDATE},
+            "spec": {"template": {"spec": {"template": {"spec": {
+                "containers": [{"name": "workflow", "env": envs}],
+                "serviceAccountName": "fugaro-" + name}}}}}}
+
+
+if sub == ("auth", "print-access-token"):
+    print("fake-access-token-for-the-check-test")
+elif sub == ("run", "jobs", "list"):
+    if mode == "jobs-list-fails":
+        sys.stderr.write("ERROR: (gcloud) run.jobs.list was refused: the session has expired\n")
+        sys.exit(1)
+    docs = [] if mode == "no-jobs" else [job_doc(r) for r in repos]
+    print(json.dumps(docs))
+elif sub == ("run", "jobs", "describe"):
+    want = positionals[3] if len(positionals) > 3 else ""
+    for r in repos:
+        if job_name(r) == want:
+            print(json.dumps(job_doc(r)))
+            break
+    else:
+        sys.stderr.write("ERROR: (gcloud) run.jobs.get: the job %s was not found\n" % want)
+        sys.exit(1)
+elif sub == ("logging", "read"):
+    filt = positionals[2] if len(positionals) > 2 else ""
+    m = re.search(r'jsonPayload\.run="([^"]*)"', filt)
+    rid = m.group(1) if m else ""
+    inflight = os.environ.get("FAKE_INFLIGHT", "")
+    repo_of_run = ""
+    path = os.path.join(STATE, "fugaro.runs")
+    if os.path.exists(path):
+        for line in open(path).read().splitlines():
+            parts = line.split(" ", 1)
+            if len(parts) == 2 and parts[1] == rid:
+                repo_of_run = parts[0]
+    if rid == inflight:
+        repo_of_run = os.environ.get("FAKE_INFLIGHT_REPO", repos[0] if repos else "")
+    proxy_repo = os.environ.get("FAKE_PROXY_REPO", repos[1] if len(repos) > 1 else "")
+    oauth_repo = repos[1] if len(repos) > 1 else ""
+    account = os.environ.get("FAKE_OAUTH_ACCOUNT", "default")
+    want = "claude-oauth-token" if account in ("", "default") else "claude-oauth-token-" + account
+
+    def line(credential, tier, purpose):
+        p = {"message": "credsvc: audit", "run": rid, "repository": repo_of_run.replace("/", "-"),
+             "job": job_name(repo_of_run or (repos[0] if repos else "")),
+             "caller": "fugaro-%s@fugaro-dev.iam.gserviceaccount.com" % job_name(repo_of_run or "x"),
+             "status": "ok", "credential": credential, "purpose": purpose}
+        if tier:
+            p["tier"] = tier
+        return {"jsonPayload": p}
+
+    lines = []
+    if rid and rid != inflight and mode != "no-audit":
+        if repo_of_run == oauth_repo:
+            lines.append(line(want, "A", "forward"))
+            if mode == "second-account":
+                lines.append(line("claude-oauth-token-other", "A", "forward"))
+        else:
+            lines.append(line("claude-oauth-token" if mode == "wrong-credential" else "anthropic-api-key",
+                              "A" if mode == "wrong-credential" else "B", "forward"))
+    if mode == "inflight-served" and rid == inflight:
+        lines.append(line("anthropic-api-key", "B", "forward"))
+    if rid and repo_of_run == proxy_repo and mode != "no-git" and mode != "no-audit" and rid != inflight:
+        # The run's own git traffic, forwarded to bitbucket.org: the purpose is
+        # `git` and the credential is the bundle's Bitbucket token, which — like
+        # every credential that is not a model credential — carries no tier.
+        lines.append(line("bitbucket-token", "", "git"))
+    print(json.dumps(lines))
+GCLOUD_EOF
+  chmod +x "$1/bin/gcloud"
+}
+
+write_fake_curl() { # dir
+  mkdir -p "$1/bin"
+  cat >"$1/bin/curl" <<'CURL_EOF'
+#!/usr/bin/env python3
+"""A stand-in for `curl`, for scripts/live-checks/check193.sh's test only: no
+socket is opened.
+
+It answers the one GET the check makes — the installation's own Realtime
+Database, at the path `fugaro update` writes a repository's record to
+(creds/repoauth/<slug>) — out of the two records the case names, and it refuses
+the GET the way the real database does when the node is not there (404). The
+record it hands back is READ by the check and never written by it, which is the
+only thing this fake has to get right: nothing here accepts a write.
+"""
+import os, sys
+
+LOG = os.environ["FAKE_LOG_DIR"]
+mode = os.environ.get("FAKE_CURL_MODE", "ok")
+repos = [r for r in os.environ.get("FAKE_REPOS", "").split(",") if r]
+args = sys.argv[1:]
+
+with open(os.path.join(LOG, "curl.calls"), "a") as fh:
+    fh.write("curl " + " ".join(args) + "\n")
+
+if "-X" in args or "--request" in args or any(a.startswith("-d") or a.startswith("--data") for a in args):
+    sys.stderr.write("curl: this check READS the record and must never write one\n")
+    sys.exit(3)
+
+
+def value_of(name):
+    for i, a in enumerate(args):
+        if a == name:
+            return args[i + 1] if len(args) > i + 1 else ""
+        if a.startswith(name):
+            return a[len(name):].lstrip("=")
+    return ""
+
+
+out = value_of("-o")
+url = ""
+for a in args:
+    if a.startswith("http"):
+        url = a
+    elif a.startswith("--url"):
+        url = a.split("=", 1)[-1]
+fmt = ""
+for i, a in enumerate(args):
+    if a == "-w" or a == "--write-out":
+        fmt = args[i + 1] if len(args) > i + 1 else ""
+    elif a.startswith("--write-out=") or a.startswith("-w="):
+        fmt = a.split("=", 1)[1]
+
+
+def body_for(slug):
+    """The two records: the api-key repository's and the oauth one's. The oauth
+    record names TWO accounts (the default and one other), which is what makes
+    the declared-account row measurable at all — a record naming one account has
+    nothing the run could have been served besides it."""
+    if mode == "record-cascade":
+        return {"version": 1, "auth": "cascade", "accounts": []}
+    if mode == "record-both-api-key":
+        return {"version": 1, "auth": "api-key", "accounts": []}
+    if slug == (repos[1].lower().replace("/", "-") if len(repos) > 1 else ""):
+        if mode == "record-one-account":
+            return {"version": 1, "auth": "oauth", "accounts": ["default"]}
+        return {"version": 1, "auth": "oauth", "accounts": ["default", "other"]}
+    return {"version": 1, "auth": "api-key", "accounts": []}
+
+
+slug = url.rsplit("/creds/repoauth/", 1)[-1].replace(".json", "") if "/creds/repoauth/" in url else ""
+code = "200"
+if mode == "record-missing":
+    code = "404"
+elif mode == "record-unreadable":
+    code = "500"
+elif not slug:
+    code = "404"
+if code == "200" and out:
+    with open(out, "w") as fh:
+        fh.write(__import__("json").dumps(body_for(slug)))
+if code != "200" and out:
+    with open(out, "w") as fh:
+        fh.write("null")
+sys.stdout.write(fmt.replace("%{http_code}", code) if fmt else "")
+sys.stdout.write("\n")
+CURL_EOF
+  chmod +x "$1/bin/curl"
+}
+
+# ------------------------------------------------------------------- harness
+status=0
+out=""
+err=""
+scratch=""
+
+# run_it DIR SCRIPT ARG...: one run of the check (or of a copy of it) with the
+# fakes on PATH and the installation's own config under an empty $HOME. An
+# argument carrying an `=` is an environment assignment for that run; anything
+# else is one of the check's own command-line flags. Every case reads back
+# `status`, `out` (the owner's RESULT block, which the check writes to fd 3),
+# `err` (what it said while it ran) and `scratch`.
+run_it() {
+  local dir=$1 sh=$2
+  shift 2
+  mkdir -p "$dir/state" "$dir/logs"
+  : >"$dir/logs/gcloud.calls"
+  : >"$dir/logs/fugaro.calls"
+  : >"$dir/logs/curl.calls"
+  # CHECK193_TEST_XTRACE starts the shell the way an owner might by habit: with
+  # tracing on, which is the one leak this check's own redaction cannot catch.
+  local -a envs=() cli=() runner=(bash) a
+  for a in "$@"; do
+    case "$a" in
+    CHECK193_TEST_XTRACE=*) runner=(bash -x) ;;
+    esac
+    case "$a" in
+    *=*) envs+=("$a") ;;
+    *) cli+=("$a") ;;
+    esac
+  done
+  status=0
+  env \
+    PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
+    FAKE_LOG_DIR="$dir/logs" FAKE_GCLOUD_STATE="$dir/state" \
+    FAKE_REPOS="$REPOS_DEFAULT" \
+    CHECK193_REPOS="$REPOS_DEFAULT" \
+    CHECK193_RUN_SECONDS=0 CHECK193_POLL_SECONDS=0 CHECK193_LOG_WAIT_SECONDS=0 \
+    CHECK193_LOG_POLL_SECONDS=0 \
+    ${envs[@]+"${envs[@]}"} \
+    "${runner[@]}" "$sh" ${cli[@]+"${cli[@]}"} >"$dir/out" 2>"$dir/err" || status=$?
+  out=$(cat "$dir/out")
+  err=$(cat "$dir/err")
+  scratch=$(sed -n 's/^.*scratch directory: \([^ ]*\).*/\1/p' "$dir/err" | head -n 1)
+}
+
+run193() { # dir arg...: the check itself
+  local dir=$1
+  shift
+  run_it "$dir" "$script" "$@"
+}
+
+run_copy() { # dir copy arg...: the same run against a mutated copy of the check
+  local dir=$1 copy=$2
+  shift 2
+  run_it "$dir" "$copy" "$@"
+}
+
+
+prepare() { # dir
+  mkdir -p "$1/home/.config/fugaro/projects" "$1/tmp" "$1/state" "$1/logs"
+  : >"$1/logs/gcloud.calls"
+  : >"$1/logs/fugaro.calls"
+  : >"$1/logs/curl.calls"
+  write_fake_fugaro "$1"
+  write_fake_gcloud "$1"
+  write_fake_curl "$1"
+  # The installation's own local config, which is where the check reads the
+  # Realtime Database's URL from (budget.rtdb_url) — the same file an owner's
+  # machine holds for installation fugaro.
+  cat >"$1/home/.config/fugaro/projects/fugaro.yaml" <<'CONFIG_EOF'
+name: fugaro
+gcp_project: fugaro-dev
+budget:
+  rtdb_url: https://fugaro-dev-fake.firebaseio.com
+endpoints:
+  no_auth: false
+CONFIG_EOF
+}
+
+# --------------------------------------------------------------- the tests
+# --dry-run is the mode the checklist has the owner try FIRST, on a machine that
+# may have no credentials at all: it must print the plan and call NOTHING. Not
+# even the installation's project is read, which is why the fugaro log is empty
+# too — the two guards that read the cloud are not reached.
+test_dry_run() {
+  local dir=$work/dry
+  prepare "$dir"
+  run193 "$dir" CHECK193_DRY_RUN=1
+  expect_status "$status" 0 "dry run: the verdict"
+  expect_contains "$out" "CHECK 193 RESULT" "dry run: the block"
+  expect_contains "$out" "FACT repos: PASS" "dry run: the two repositories"
+  expect_contains "$out" "FACT xtrace: PASS" "dry run: the shell is not tracing"
+  expect_contains "$out" "FACT project-region: FAIL" "dry run: the cloud guards are not run"
+  expect_contains "$out" "FACT project-region: FAIL — not reached" "dry run: the row says it was not reached"
+  expect_contains "$out" "FACT switch: FAIL" "dry run: nothing was read"
+  expect_contains "$out" "not reached (the run stopped before this step)" "dry run: the row says it was not reached"
+  expect_contains "$out" "FACT dry-run: PASS" "dry run: the marker fact"
+  expect_contains "$out" "FACT restore: PASS" "dry run: nothing was created"
+  expect_contains "$out" "FACT scratch-removed: PASS" "dry run: the scratch directory"
+  expect_contains "$out" "CHECK 193 RESULT END (exit 0)" "dry run: the end line"
+  expect_contains "$err" "creds/repoauth/<slug>.json" "dry run: the plan names the record it would read"
+  expect_contains "$err" "fugaro run --repo" "dry run: the plan names the runs it would launch"
+  expect_contains "$err" "gcloud run jobs list --project=fugaro-dev --region=us-east5" "dry run: the plan carries the hard-coded project and region"
+
+  local calls
+  calls=$(cat "$dir/logs/gcloud.calls" "$dir/logs/fugaro.calls" "$dir/logs/curl.calls")
+  if [ -n "$calls" ]; then
+    fail "dry run: a tool was called: $(printf '%s' "$calls" | head -c 300)"
+  fi
+  [ -n "$scratch" ] || fail "dry run: the script did not say where its scratch directory is"
+  if [ -d "$scratch" ]; then fail "dry run: the scratch directory $scratch survived"; fi
+}
+
+# doctor exits 1 whenever any check of its own failed — billing, credentials,
+# the update check — and none of those says which installation this is. The
+# guard must read the project: LINE and not the status, or a check that failed
+# for an unrelated reason would stop a run that should go.
+test_the_project_guard_reads_the_line_not_doctors_status() {
+  local dir=$work/doctorfails
+  prepare "$dir"
+  run193 "$dir" FAKE_FUGARO_MODE=failing
+  expect_status "$status" 0 "doctor exit 1: the run goes on"
+  expect_absent "$err" "not the fugaro-dev installation" "doctor exit 1: no stop"
+  expect_contains "$out" "FACT served-oauth: PASS" "doctor exit 1: the check ran to the end"
+}
+
+test_project_guard() {
+  local dir=$work/other
+  prepare "$dir"
+  run193 "$dir" FAKE_FUGARO_MODE=other
+  expect_status "$status" 1 "project guard: the verdict"
+  expect_contains "$err" "not the fugaro-dev installation" "project guard: the stop"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "run" "project guard: nothing was read"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run --repo" "project guard: no run was launched"
+  if [ -d "$scratch" ]; then fail "project guard: the scratch directory survived"; fi
+}
+
+# A trace would print every command this check runs into the log the owner
+# pastes, including the `gcloud auth print-access-token` line it mints the
+# record's read with — which is the one thing the check's own redaction cannot
+# catch, because it is bash that writes those lines and not this script.
+test_xtrace_is_refused() {
+  local dir=$work/xtrace
+  prepare "$dir"
+  run193 "$dir" CHECK193_TEST_XTRACE=1
+  expect_status "$status" 1 "xtrace: the verdict"
+  expect_contains "$err" "is tracing" "xtrace: the stop"
+  expect_contains "$out" "FACT xtrace: FAIL" "xtrace: the row"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "run --repo" "xtrace: no run was launched"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "print-access-token" "xtrace: no token was minted"
+  if [ -d "$scratch" ]; then fail "xtrace: the scratch directory survived"; fi
+}
+
+# The two knobs are the check's whole input, and both are read before anything
+# is called: a run that named one repository, three, the same one twice, or the
+# owner's own workspace must stop with nothing launched and nothing read.
+test_the_repos_guard() {
+  local dir=$work/reposguard case_
+  prepare "$dir"
+  for case_ in "one:acme/sandbox-api" "three:acme/a,acme/b,acme/c" "twice:acme/a,acme/a" "belong:belong/app,acme/ok"; do
+    status=0
+    env PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
+      FAKE_LOG_DIR="$dir/logs" FAKE_GCLOUD_STATE="$dir/state" FAKE_REPOS="$REPOS_DEFAULT" \
+      CHECK193_REPOS="${case_#*:}" \
+      bash "$script" >"$dir/out" 2>"$dir/err" || status=$?
+    out=$(cat "$dir/out")
+    err=$(cat "$dir/err")
+    expect_status "$status" 1 "CHECK193_REPOS ${case_%%:*}: the verdict"
+    expect_contains "$out" "FACT aborted: FAIL" "CHECK193_REPOS ${case_%%:*}: the block says it stopped"
+    expect_absent "$(cat "$dir/logs/fugaro.calls")" "run --repo" "CHECK193_REPOS ${case_%%:*}: no run was launched"
+    expect_absent "$(cat "$dir/logs/gcloud.calls")" "logging read" "CHECK193_REPOS ${case_%%:*}: nothing was read"
+    : >"$dir/logs/fugaro.calls"
+    : >"$dir/logs/gcloud.calls"
+  done
+}
+
+# A repository whose jobs carry no credentials service URL is OFF the switch:
+# its runs are served by nothing, so every row below it would be a row about a
+# repository this check is not about. It must stop before a run is launched —
+# the runs are the expensive part, and a FAIL that costs two of them is worse
+# than one that costs none.
+test_a_repository_off_the_switch_is_a_failure() {
+  local dir=$work/offswitch
+  prepare "$dir"
+  run193 "$dir" FAKE_GCLOUD_MODE=no-url
+  expect_status "$status" 1 "off the switch: the verdict"
+  expect_contains "$out" "FACT switch: FAIL" "off the switch: the row"
+  expect_contains "$out" "OFF the credentials-service switch" "off the switch: the row says why"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "run --repo" "off the switch: no run was launched"
+}
+
+# The budget mode is read at `update` (D2071), and a switched repository whose
+# mode is off is one whose jobs hold no mount and whose runs have nothing to be
+# served from: the three legs of the switch are read together for that reason.
+test_a_budget_mode_of_off_is_a_failure() {
+  local dir=$work/modeoff
+  prepare "$dir"
+  run193 "$dir" FAKE_FUGARO_MODE=mode-off
+  expect_status "$status" 1 "mode off: the verdict"
+  expect_contains "$out" "FACT switch: FAIL" "mode off: the row"
+  expect_contains "$out" "budget mode is 'off'" "mode off: the row says why"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "run --repo" "mode off: no run was launched"
+}
+
+# The record is the boundary every row below is read against (D2070 (a)): a
+# pair of repositories whose records are not one api-key and one oauth is a pair
+# this check cannot read its rows against, and a repository recorded `cascade`
+# is served the whole cascade and is not what this check is about.
+test_a_pair_that_is_not_one_api_key_and_one_oauth_stops() {
+  local dir=$work/pair
+  prepare "$dir"
+  run193 "$dir" FAKE_CURL_MODE=record-both-api-key
+  expect_status "$status" 1 "the pair: the verdict"
+  expect_contains "$out" "FACT record: FAIL" "the pair: the row"
+  expect_contains "$out" "not one api-key and one oauth" "the pair: the row says why"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "run --repo" "the pair: no run was launched"
+
+  local dir2=$work/cascade
+  prepare "$dir2"
+  run193 "$dir2" FAKE_CURL_MODE=record-cascade
+  expect_status "$status" 1 "cascade: the verdict"
+  expect_contains "$out" "FACT record: FAIL" "cascade: the row"
+  expect_contains "$out" "is served the whole cascade" "cascade: the row says why"
+  expect_absent "$(cat "$dir2/logs/fugaro.calls")" "run --repo" "cascade: no run was launched"
+}
+
+# A record that is not there is the state of an installation whose `fugaro
+# update --repo` has not run since the release that writes one: no row below can
+# be measured, and the check says so rather than reading an absent record as an
+# answer.
+test_a_record_that_is_not_there_is_unmeasured() {
+  local dir=$work/norecord
+  prepare "$dir"
+  run193 "$dir" FAKE_CURL_MODE=record-missing
+  expect_status "$status" 2 "no record: the check could not measure"
+  expect_contains "$out" "FACT record: FAIL" "no record: the row"
+  expect_contains "$out" "HTTP 404" "no record: the row names what came back"
+  expect_contains "$out" "update --repo" "no record: the row names the fix"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "run --repo" "no record: no run was launched"
+}
+
+# THE HAPPY PATH, and the one the check exists for: both repositories on the
+# switch, both records written, an api-key run served the paid key at tier B and
+# an oauth run served an account's token at tier A, the oauth repository
+# published with proxy: true and its run's git traffic forwarded by the service.
+test_the_happy_path() {
+  local dir=$work/happy
+  prepare "$dir"
+  run193 "$dir"
+  expect_status "$status" 0 "happy path: the verdict"
+  expect_contains "$out" "FACT switch: PASS" "happy path: the switch"
+  expect_contains "$out" "FACT record: PASS" "happy path: the records"
+  expect_contains "$out" "FACT served-api-key: PASS" "happy path: the paid key served the api-key run"
+  expect_contains "$out" "anthropic-api-key|B" "happy path: the credential and its tier"
+  expect_contains "$out" "FACT served-oauth: PASS" "happy path: an account's token served the oauth run"
+  expect_contains "$out" "claude-oauth-token|A" "happy path: the account's token and its tier"
+  expect_contains "$out" "FACT declared-account: PASS" "happy path: the account it declared"
+  expect_contains "$out" "FACT proxy: PASS" "happy path: the proxied repository"
+  expect_contains "$out" "bitbucket-token" "happy path: the git line's credential"
+  expect_contains "$out" "CHECK 193 RESULT END (exit 0)" "happy path: the end line"
+
+  local calls launches
+  calls=$(cat "$dir/logs/fugaro.calls")
+  launches=$(printf '%s\n' "$calls" | grep -c '^fugaro run --repo' || true)
+  expect_status "$launches" 2 "happy path: two throwaway runs and no more"
+  expect_contains "$calls" "--repo acme/sandbox-api" "happy path: the api-key repository"
+  expect_contains "$calls" "--repo acme/sandbox-oauth" "happy path: the oauth repository"
+  expect_contains "$calls" "--project fugaro" "happy path: the installation"
+  expect_absent "$calls" "--total-timeout" "happy path: no total timeout is ever passed"
+  # The record is READ and never written: the check holds no write of its own to
+  # the installation's database at all.
+  local curls
+  curls=$(cat "$dir/logs/curl.calls")
+  expect_contains "$curls" "creds/repoauth/acme-sandbox-api.json" "happy path: the api-key repository's record"
+  expect_contains "$curls" "creds/repoauth/acme-sandbox-oauth.json" "happy path: the oauth repository's record"
+  expect_absent "$curls" "-X " "happy path: nothing was written to the database"
+  if [ -d "$scratch" ]; then fail "happy path: the scratch directory survived"; fi
+}
+
+# A run whose model calls were answered by something other than the service is
+# exactly what this check is for: a switched repository's runs are served the
+# credential its own RECORD names, and a run served another one is the boundary
+# not holding.
+test_a_run_served_the_wrong_credential_is_a_failure() {
+  local dir=$work/wrongcred
+  prepare "$dir"
+  run193 "$dir" FAKE_GCLOUD_MODE=wrong-credential
+  expect_status "$status" 1 "wrong credential: the verdict"
+  expect_contains "$out" "FACT served-api-key: FAIL" "wrong credential: the row"
+  expect_contains "$out" "no line of this run names the paid key" "wrong credential: the row says why"
+  expect_contains "$out" "FACT served-oauth: PASS" "wrong credential: the other repository is unaffected"
+}
+
+# The oauth half of the boundary: the service narrows a call to the account that
+# call declared, so a line naming a SECOND account of the repository's own
+# record is a run served an account it did not declare.
+test_a_second_account_served_is_a_failure() {
+  local dir=$work/second
+  prepare "$dir"
+  run193 "$dir" FAKE_GCLOUD_MODE=second-account
+  expect_status "$status" 1 "second account: the verdict"
+  expect_contains "$out" "FACT declared-account: FAIL" "second account: the row"
+  expect_contains "$out" "ANOTHER account's token" "second account: the row says why"
+  expect_contains "$out" "claude-oauth-token-other" "second account: the row names it"
+}
+
+# The declared-account row is measurable only where the record names more than
+# one account: a record naming one has nothing the run could have been served
+# besides it, and a row read there would be a row about nothing. This is a state
+# the check cannot measure, not a criterion that failed — so the row reads FAIL
+# and the verdict is the one its own contract names for it.
+test_a_record_with_one_account_leaves_the_row_unmeasured() {
+  local dir=$work/oneacct
+  prepare "$dir"
+  run193 "$dir" FAKE_CURL_MODE=record-one-account
+  expect_status "$status" 2 "one account: the check could not measure"
+  expect_contains "$out" "FACT declared-account: FAIL" "one account: the row is a FAIL and never a pass"
+  expect_contains "$out" "names 1 account(s)" "one account: the row reads the record"
+  expect_contains "$out" "a row about nothing" "one account: the row says why it measures nothing"
+  expect_contains "$out" "FACT served-oauth: PASS" "one account: everything above it still holds"
+}
+
+# A repository published with proxy: true whose runs never reached the service
+# is F29 exactly: the proxy switch is on and the repository is on the switch,
+# and its push still went straight to the provider with the credential its job
+# mounts.
+test_a_proxied_repository_whose_run_did_not_reach_the_service_is_a_failure() {
+  local dir=$work/nogit
+  prepare "$dir"
+  run193 "$dir" FAKE_GCLOUD_MODE=no-git
+  expect_status "$status" 1 "no git line: the verdict"
+  expect_contains "$out" "FACT proxy: FAIL" "no git line: the row"
+  expect_contains "$out" "no git line for its run" "no git line: the row says why"
+}
+
+# A repository the published policy does not admit with proxy: true measures
+# nothing about the proxy — its runs push straight to the provider by design —
+# so the row says so instead of reading the direct path as the proxy.
+test_a_policy_without_the_proxy_leaves_the_row_unmeasured() {
+  local dir=$work/noproxy
+  prepare "$dir"
+  run193 "$dir" FAKE_FUGARO_MODE=no-proxy
+  expect_status "$status" 2 "no proxy: the check could not measure"
+  expect_contains "$out" "FACT proxy: FAIL" "no proxy: the row"
+  expect_contains "$out" "with proxy: true" "no proxy: the row says why"
+  expect_contains "$out" "publish proxy: true" "no proxy: the row names the fix"
+}
+
+# --after-flip's first half, and the one the plan names in as many words: no job
+# of either repository mounts its model credential any more. A job that still
+# carries one is the flip not having reached it.
+test_after_flip_refuses_a_job_that_still_mounts_the_model_credential() {
+  local dir=$work/flipmount
+  prepare "$dir"
+  run193 "$dir" --after-flip \
+    FAKE_GCLOUD_MODE=mounted \
+    CHECK193_INFLIGHT=20261116-070000-aaaa \
+    FAKE_INFLIGHT=20261116-070000-aaaa FAKE_INFLIGHT_REPO=acme/sandbox-api
+  expect_status "$status" 1 "after the flip: the verdict"
+  expect_contains "$out" "MODE: flip" "after the flip: the block's mode"
+  expect_contains "$out" "FACT no-model-mounts: FAIL" "after the flip: the mount row"
+  expect_contains "$out" "anthropic-api-key-abcdef" "after the flip: the row names the container the job is fed from"
+  expect_contains "$out" "FACT inflight-mount: PASS" "after the flip: the untaken rows are still read"
+  expect_absent "$out" "FACT declared-account" "after the flip: a row of the other mode is not in this block"
+}
+
+# The same run on a repository whose jobs mount nothing: every flip row holds,
+# and the runs still finish with no mount on their jobs.
+test_after_flip_passes_when_no_job_mounts_a_model_credential() {
+  local dir=$work/flipok
+  prepare "$dir"
+  run193 "$dir" --after-flip \
+    FAKE_GCLOUD_MODE=provider-key \
+    CHECK193_INFLIGHT=20261116-070000-aaaa \
+    FAKE_INFLIGHT=20261116-070000-aaaa FAKE_INFLIGHT_REPO=acme/sandbox-api
+  expect_status "$status" 0 "after the flip: the verdict"
+  expect_contains "$out" "FACT no-model-mounts: PASS" "after the flip: the mount row"
+  expect_contains "$out" "FACT no-model-mounts-detail: INFO" "after the flip: the provider keys left behind"
+  expect_contains "$out" "2 provider-key variable(s)" "after the flip: R6's keys are counted and not a finding"
+  expect_contains "$out" "FACT served-api-key: PASS" "after the flip: a run still succeeds"
+  expect_contains "$out" "FACT served-oauth: PASS" "after the flip: and the other repository too"
+  expect_contains "$out" "FACT inflight-run: PASS" "after the flip: the run that was in flight"
+  expect_contains "$out" "FACT inflight-mount: PASS" "after the flip: it kept its own mount"
+}
+
+# U9: an execution created before the re-apply carries no service URL, so no
+# call of it can reach the service. A line of its own means the re-apply reached
+# into a run that was already going.
+test_an_inflight_run_the_service_answered_is_a_failure() {
+  local dir=$work/inflightserved
+  prepare "$dir"
+  run193 "$dir" --after-flip \
+    FAKE_GCLOUD_MODE=inflight-served \
+    CHECK193_INFLIGHT=20261116-070000-aaaa \
+    FAKE_INFLIGHT=20261116-070000-aaaa FAKE_INFLIGHT_REPO=acme/sandbox-api
+  expect_status "$status" 1 "in flight, served: the verdict"
+  expect_contains "$out" "FACT inflight-mount: FAIL" "in flight, served: the row"
+  expect_contains "$out" "reached into a run that was already going" "in flight, served: the row says why"
+}
+
+# A run that started AFTER the re-apply is not the U9 case at all — it was
+# launched by the template the re-apply wrote — so its mount must not be read as
+# the one a run in flight kept.
+test_a_run_that_started_after_the_reapply_is_not_the_u9_case() {
+  local dir=$work/inflightlate
+  prepare "$dir"
+  run193 "$dir" --after-flip \
+    CHECK193_INFLIGHT=20261116-120000-bbbb \
+    FAKE_INFLIGHT=20261116-120000-bbbb FAKE_INFLIGHT_REPO=acme/sandbox-api \
+    FAKE_ROW_STARTED=2026-11-16T12:00:00Z
+  expect_status "$status" 1 "started late: the verdict"
+  expect_contains "$out" "FACT inflight-run: FAIL" "started late: the row"
+  expect_contains "$out" "not before" "started late: the row says why"
+}
+
+# A run that did not finish is not an answer about the boundary: nothing was
+# served to it that ended in a push and a pull request.
+test_a_run_that_did_not_finish_is_a_failure() {
+  local dir=$work/runfailed
+  prepare "$dir"
+  run193 "$dir" FAKE_ROW_STATUS=failed
+  expect_status "$status" 1 "a failed run: the verdict"
+  expect_contains "$out" "FACT run-api-key: FAIL" "a failed run: the row"
+  expect_contains "$out" "no pull request was opened" "a failed run: the row says why"
+  expect_contains "$out" "FACT run-oauth: FAIL" "a failed run: and the other repository's run too"
+}
+
+# A development build is not the release this check is about: it resolves no
+# released credentials-service image to deploy, and the whole reading is about
+# what that image does.
+test_a_development_build_is_a_failure() {
+  local dir=$work/devbuild
+  prepare "$dir"
+  run193 "$dir" FAKE_FUGARO_MODE=dev
+  expect_status "$status" 1 "a dev build: the verdict"
+  expect_contains "$out" "FACT fugaro-version: FAIL" "a dev build: the row"
+  expect_contains "$out" "development build" "a dev build: the row says why"
+}
+
+# The check is about ONE installation, and the project and the region are
+# constants in it: no gcloud command may name another project, and no command at
+# all may name the owner's own workspace.
+test_never_belong() {
+  local dir=$work/never
+  prepare "$dir"
+  run193 "$dir"
+  expect_status "$status" 0 "never belong: the run went on"
+  local projects p all
+  all=$(cat "$dir/logs/gcloud.calls" "$dir/logs/fugaro.calls" "$dir/logs/curl.calls")
+  expect_absent "$all" "belong" "never belong: no command named it"
+  projects=$(grep -o -- '--project=[^ ]*' "$dir/logs/gcloud.calls" | sort -u || true)
+  [ -n "$projects" ] || fail "never belong: no gcloud --project argument was recorded, so this test checks nothing"
+  for p in $projects; do
+    [ "$p" = "--project=fugaro-dev" ] || fail "never belong: a gcloud command named $p"
+  done
+}
+
+# The check's own tools are looked for before anything is done, and a machine
+# missing one is told which: nothing is called and nothing is created.
+test_a_missing_tool_stops_before_anything_is_called() {
+  local dir=$work/notools
+  prepare "$dir"
+  mkdir -p "$dir/empty"
+  status=0
+  env PATH="$dir/empty:/usr/bin:/bin" HOME="$dir/home" TMPDIR="$dir/tmp" \
+    FAKE_LOG_DIR="$dir/logs" FAKE_GCLOUD_STATE="$dir/state" \
+    CHECK193_REPOS="$REPOS_DEFAULT" \
+    bash "$script" >"$dir/out" 2>"$dir/err" || status=$?
+  out=$(cat "$dir/out")
+  err=$(cat "$dir/err")
+  expect_status "$status" 2 "no gcloud on PATH: the verdict"
+  expect_contains "$err" "needs 'gcloud' on PATH" "no gcloud on PATH: the stop"
+}
+
+# Sharding, so a Go test could run these side by side: CHECK_TEST_SHARD="i/n"
+# runs every n-th test starting at i (each test works in its own directory under
+# $work), CHECK_TEST_ONLY=name runs that one test alone. Neither set: all run.
+test_index=0
+t() {
+  local i=$test_index
+  test_index=$((test_index + 1))
+  if [ -n "${CHECK_TEST_ONLY:-}" ]; then
+    [ "$1" = "$CHECK_TEST_ONLY" ] || return 0
+  elif [ -n "${CHECK_TEST_SHARD:-}" ]; then
+    [ $((i % ${CHECK_TEST_SHARD#*/})) -eq "${CHECK_TEST_SHARD%/*}" ] || return 0
+  fi
+  "$1"
+}
+
+t test_dry_run
+t test_the_project_guard_reads_the_line_not_doctors_status
+t test_project_guard
+t test_xtrace_is_refused
+t test_the_repos_guard
+t test_a_repository_off_the_switch_is_a_failure
+t test_a_budget_mode_of_off_is_a_failure
+t test_a_pair_that_is_not_one_api_key_and_one_oauth_stops
+t test_a_record_that_is_not_there_is_unmeasured
+t test_the_happy_path
+t test_a_run_served_the_wrong_credential_is_a_failure
+t test_a_second_account_served_is_a_failure
+t test_a_record_with_one_account_leaves_the_row_unmeasured
+t test_a_proxied_repository_whose_run_did_not_reach_the_service_is_a_failure
+t test_a_policy_without_the_proxy_leaves_the_row_unmeasured
+t test_after_flip_refuses_a_job_that_still_mounts_the_model_credential
+t test_after_flip_passes_when_no_job_mounts_a_model_credential
+t test_an_inflight_run_the_service_answered_is_a_failure
+t test_a_run_that_started_after_the_reapply_is_not_the_u9_case
+t test_a_run_that_did_not_finish_is_a_failure
+t test_a_development_build_is_a_failure
+t test_never_belong
+t test_a_missing_tool_stops_before_anything_is_called
+
+if [ "$failures" -ne 0 ]; then
+  echo "check193_test.sh: $failures failure(s)" >&2
+  exit 1
+fi
+echo "check193_test.sh: ok"
