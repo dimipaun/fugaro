@@ -210,8 +210,15 @@ type Aggregate struct {
 
 // ProjectAggregate is the project's aggregate of one period, from the
 // repositories' own stored reports of it: one line per repository and the
-// period's figures, by the same reading a year's roll-up uses (RollUp), so the
-// two cannot disagree about what adding summaries up means.
+// period's figures.
+//
+// The figures are added up the way a year's roll-up adds its months up: the
+// same fields, the same saturating dollars, the same flag names and the same
+// closed class vocabulary. They are written out again here rather than shared
+// with RollUp, which is the year's reader and refuses a key that is not a
+// year's, so what the two have in common is one reading in two places: they are
+// changed together, or a figure here stops being the figure a yearly report's
+// months hold.
 //
 // A repository whose line was not read contributes nothing and is not a zero
 // (G5), and the total is the figures of the repositories that were read.
