@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -22,6 +23,18 @@ import (
 // back the way every command reads it.
 func viewOf(t *testing.T, path string, fake *gcpfake.RTDB, canonical string) *reposView {
 	t.Helper()
+	v, err := viewErrOf(t, path, fake, canonical)
+	if err != nil {
+		t.Fatalf("newReposView: %v", err)
+	}
+	return v
+}
+
+// viewErrOf is viewOf with the error as the answer: the view refuses a config
+// pointed at another project's sources, and a test that expects that refusal
+// reads it here.
+func viewErrOf(t *testing.T, path string, fake *gcpfake.RTDB, canonical string) (*reposView, error) {
+	t.Helper()
 	lc, err := localcfg.Load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -30,11 +43,7 @@ func viewOf(t *testing.T, path string, fake *gcpfake.RTDB, canonical string) *re
 	if err != nil {
 		t.Fatal(err)
 	}
-	v, err := newReposView(context.Background(), lc, db, canonical)
-	if err != nil {
-		t.Fatalf("newReposView: %v", err)
-	}
-	return v
+	return newReposView(context.Background(), lc, db, canonical)
 }
 
 // viewRow is the row for one canonical name, and a failure naming the rows that
@@ -205,6 +214,70 @@ func TestReposViewSeenIsNotEnrolment(t *testing.T) {
 	if named.Named == nil || named.Named.Enrolled || named.Named.State != "" {
 		t.Errorf("a repository neither half names is not decided as not enrolled: %+v", named.Named)
 	}
+}
+
+// The reads of what has run here are the ones that carry the project's identity
+// — the runs bucket's marker and Firestore's installation mark — and a config
+// pointed at another project's sources is refused rather than drawn (D2409).
+// `project repos ls` stops on exactly this error, which its own comment calls
+// the half of the command that can fail on the way to the data and
+// TestProjectReposRefusesAnotherProjectsSources pins as the one way it could
+// print another installation's data; this view is what `ls` and `status` read,
+// so a state sentence here would draw the allow-list, the rows built from it
+// and the named repository's credential containers for a project whose data is
+// not this one's.
+//
+// The other half is the arm beside it, and the two are the distinction the
+// answer rests on: a read that was attempted and did not answer is a state
+// sentence with the rows still drawn, and a refusal is not.
+//
+// Mutation (verified, run and restored): flip the class refusedBySeen reads
+// (ExitUserError to ExitRemoteError) — all three cases below fail: the two
+// refusals answer with a view carrying the other project's allow-list, the rows
+// built from it and the named repository's credential containers, and the read
+// that did not answer is returned instead of stated.
+func TestReposViewRefusesAnotherProjectsSources(t *testing.T) {
+	t.Run("runs bucket", func(t *testing.T) {
+		f := newProjectFixture(t, "")
+		viewCatalogNode(t, f.db, []string{"github/acme/app"})
+		writeRunsMarker(t, filepath.Join(f.dir, "runs"), "someone-else", "proj-9999")
+
+		v, err := viewErrOf(t, f.path, f.db, "github/acme/app")
+		if err == nil {
+			t.Fatalf("another project's runs bucket was read and the view answered: %+v", v)
+		}
+		if !strings.Contains(err.Error(), "someone-else") {
+			t.Errorf("the refusal does not name the project the bucket belongs to: %v", err)
+		}
+	})
+	t.Run("installation mark", func(t *testing.T) {
+		f := newSeenFixture(t)
+		viewCatalogNode(t, f.db, []string{"github/acme/app"})
+		f.fs.Set(budget.MetaCollection, budget.MarkDocument, map[string]any{"project": "someone-else", "version": int64(1)})
+
+		v, err := viewErrOf(t, f.path, f.db, "github/acme/app")
+		if err == nil {
+			t.Fatalf("another project's Firestore database was read and the view answered: %+v", v)
+		}
+		if !strings.Contains(err.Error(), "someone-else") {
+			t.Errorf("the refusal does not name the project the database belongs to: %v", err)
+		}
+	})
+	t.Run("a source that did not answer", func(t *testing.T) {
+		f := newProjectFixture(t, "")
+		viewCatalogNode(t, f.db, []string{"github/acme/app"})
+		setConfig(t, f, func(s string) string {
+			return strings.Replace(s, "bucket_url: file://"+filepath.Join(f.dir, "runs"), "bucket_url: nosuch://runs", 1)
+		})
+
+		v := viewOf(t, f.path, f.db, "")
+		if v.Seen.State == "" {
+			t.Errorf("a bucket that could not be opened left no state sentence: %+v", v.Seen)
+		}
+		if got, want := canonicalsOf(v), []string{"bitbucket/acme/other", "github/acme/app"}; !slices.Equal(got, want) {
+			t.Errorf("rows are %v, want the repositories this machine's config holds (%v)", got, want)
+		}
+	})
 }
 
 // A repository a published pattern admits is enrolled, and it has a row of its

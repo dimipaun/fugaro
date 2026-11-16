@@ -20,6 +20,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -359,6 +360,11 @@ type reposViewCredential struct {
 // be reached and a local config whose entries cannot be spelled as canonical
 // names each leave their own state sentence (F14), because the alternative —
 // an empty list — is a claim about the project drawn from a failure to read it.
+//
+// A read this run refuses is the other half, and the one thing that is
+// returned rather than stated: the sources that carry the project's identity
+// belong to it, and what a listing would draw from another project's is another
+// installation's data (refusedBySeen).
 func newReposView(ctx context.Context, lc *localcfg.Config, db *rtdb.Client, canonical string) (*reposView, error) {
 	if lc == nil {
 		return nil, userErr("the enrolment view needs this machine's project config: select one, or run this from a checkout of the repository")
@@ -373,9 +379,22 @@ func newReposView(ctx context.Context, lc *localcfg.Config, db *rtdb.Client, can
 	v.Repos = nonNil(v.Repos)
 
 	seen, notes, err := seenRepos(ctx, lc, budgetNow())
-	if err != nil {
+	switch {
+	case refusedBySeen(err):
+		// A refusal and not a read that did not answer: the reads of what has
+		// run here are the ones that carry the project's identity — the runs
+		// bucket's marker and Firestore's installation mark (checkCloudName,
+		// spendRepos) — and each refuses a config pointed at another project's
+		// sources. `project repos ls` stops on exactly this error, which is the
+		// one thing that keeps a listing from printing another installation's
+		// data, and this view is what `ls` and `status` read: a state sentence
+		// here would draw the allow-list, the rows built from it and the named
+		// repository's credential names and ages for a project whose sources
+		// are not its own.
+		return nil, err
+	case err != nil:
 		v.Seen.State = "the repositories that have run here could not be read: " + oneLineCLI(err.Error())
-	} else {
+	default:
 		v.Seen.Notes = notes
 		for _, r := range seen {
 			v.Seen.Entries = append(v.Seen.Entries, reposViewSeenRepo{Name: r.Name, Provider: r.Provider, Sources: nonNil(r.Sources)})
@@ -415,6 +434,17 @@ func newReposView(ctx context.Context, lc *localcfg.Config, db *rtdb.Client, can
 		}
 	}
 	return v, nil
+}
+
+// refusedBySeen is whether the read of what has run here was refused rather
+// than failing to answer. A refusal is what this package states as a user error
+// (exit 1): the identity checks — the runs bucket's marker, Firestore's
+// installation mark — an incomplete config, and a source the config cannot
+// reach without credentials. A remote failure (exit 2) is not one: the read was
+// attempted and did not answer, which is the state sentence's own case.
+func refusedBySeen(err error) bool {
+	var ee *ExitError
+	return errors.As(err, &ee) && ee.Code == ExitUserError
 }
 
 // reposViewCanonicalOf is the named repository, in the one spelling the rows
