@@ -223,6 +223,103 @@ func TestDiagnoseRedactsEveryStringOfAToleratedFinding(t *testing.T) {
 	}
 }
 
+// TestDiagnosePrintsTriageRounds: every triage round the record carries is in
+// the document with what served it, whether its call failed, why it failed and
+// how its findings were placed, counted by source -- and in the human
+// diagnosis a failed round is flagged both above the status block and in the
+// Triage block below it. A run a judge weighed looks judged from its findings
+// alone, which is what a failed call makes untrue: the fail-safe blocks every
+// finding the mode's table blocks (D1846), and the block is where a reader
+// learns that this round's fix round was handed findings no judge saw.
+func TestDiagnosePrintsTriageRounds(t *testing.T) {
+	const secret = "ghp_test0123456789abcdef"
+	t.Setenv("FUGARO_BITBUCKET_TOKEN", secret)
+	const answer = "Invalid API key · Fix external API key"
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abd9"
+	exec := seedRun(t, f, id, "", "someone@example.com", true)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	s := runstore.Open(b, appSlug, id)
+	rec := &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+		Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady,
+		Stages: []runstore.StageTiming{{Name: "triage"}},
+		Triage: runstore.NewTriage([]runstore.TriageRound{
+			// The round run 20261115-194116-0846 bought: a call the endpoint
+			// refused the credential for, at the model and account the record
+			// named, with the mode's table placing both of the round's
+			// findings because no verdict was read (D1846).
+			{Round: 1, Mode: rigor.Startup, Level: policy.LevelL2, Model: "claude-opus-5-5", Account: "bmb",
+				Failed: true, Cause: answer + " " + secret,
+				Entries: []runstore.TriageEntry{
+					{Key: "k1", Verdict: runstore.VerdictBlock, Reason: "the table's own call", Source: runstore.TriageSourceTable},
+					{Key: "k2", Verdict: runstore.VerdictBlock, Reason: "no verdict was read", Source: runstore.TriageSourceFailSafe},
+				}},
+			// The round that answered, with one placement of each of the
+			// remaining two sources and no cause at all.
+			{Round: 2, Mode: rigor.Startup, Level: policy.LevelL2, Model: "claude-opus-5-5",
+				Entries: []runstore.TriageEntry{
+					{Key: "k1", Verdict: runstore.VerdictDefer, Reason: "doc drift", Source: runstore.TriageSourceAgent},
+					{Key: "k3", Verdict: runstore.VerdictDefer, Reason: "trailing cleanup", Source: runstore.TriageSourceCap},
+				}},
+		})}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, secret) {
+		t.Fatalf("the document carries the secret:\n%s", out)
+	}
+	var d Diagnosis
+	if err := json.Unmarshal([]byte(out), &d); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if len(d.Triage) != 2 {
+		t.Fatalf("triage = %+v, want the record's two rounds", d.Triage)
+	}
+	failed := d.Triage[0]
+	if failed.Round != 1 || failed.Mode != rigor.Startup || failed.Level != policy.LevelL2 ||
+		failed.Model != "claude-opus-5-5" || failed.Account != "bmb" {
+		t.Errorf("the failed round = %+v, want the round, mode, level, model and account the record named", failed)
+	}
+	if !failed.Failed || failed.Cause != answer+" [REDACTED]" {
+		t.Errorf("the failed round = %+v, want it marked failed with the record's own cause, redacted", failed)
+	}
+	if failed.Sources != (TriageSources{Table: 1, FailSafe: 1}) || failed.Total != 2 {
+		t.Errorf("the failed round's placements = %+v of %d, want one table, one fail_safe and both findings", failed.Sources, failed.Total)
+	}
+	answered := d.Triage[1]
+	if answered.Failed || answered.Cause != "" {
+		t.Errorf("the round that answered = %+v, want it unflagged and without a cause", answered)
+	}
+	if answered.Sources != (TriageSources{Agent: 1, Cap: 1}) || answered.Total != 2 {
+		t.Errorf("the round that answered = %+v of %d, want one agent, one cap and both findings", answered.Sources, answered.Total)
+	}
+	human, _, err := execute(t, "diagnose", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		// The flag above the status block: a reader who stops there must not
+		// come away thinking the run's rounds were all judged.
+		"Triage:   failed (round 1: " + answer + " [REDACTED]); the fail-safe blocked every finding the mode's table blocks",
+		"Triage\n",
+		"round 1 (startup, l2, claude-opus-5-5, account bmb): 2 findings — agent 0, table 1, fail_safe 1, cap 0; FAILED: " + answer,
+		"round 2 (startup, l2, claude-opus-5-5): 2 findings — agent 1, table 0, fail_safe 0, cap 1",
+	} {
+		if !strings.Contains(human, want) {
+			t.Errorf("the human diagnosis lacks %q:\n%s", want, human)
+		}
+	}
+	if strings.Contains(human, secret) {
+		t.Fatalf("the human diagnosis carries the secret:\n%s", human)
+	}
+}
+
 // TestDiagnoseOmitsStagesAndToleratedWhenEmpty: both keys are omitempty, so a
 // run whose record carries neither -- a run that never recorded a stage, and
 // one with no record at all -- prints a document without them rather than an
@@ -249,10 +346,10 @@ func TestDiagnoseOmitsStagesAndToleratedWhenEmpty(t *testing.T) {
 		if err := json.Unmarshal([]byte(out), &d); err != nil {
 			t.Fatal(err)
 		}
-		if d.Stages != nil || d.Tolerated != nil {
-			t.Fatalf("%s: stages %+v, tolerated %+v", id, d.Stages, d.Tolerated)
+		if d.Stages != nil || d.Tolerated != nil || d.Triage != nil {
+			t.Fatalf("%s: stages %+v, tolerated %+v, triage %+v", id, d.Stages, d.Tolerated, d.Triage)
 		}
-		for _, key := range []string{`"stages"`, `"tolerated"`} {
+		for _, key := range []string{`"stages"`, `"tolerated"`, `"triage"`} {
 			if strings.Contains(out, key) {
 				t.Fatalf("%s prints %s for a run that recorded none:\n%s", id, key, out)
 			}

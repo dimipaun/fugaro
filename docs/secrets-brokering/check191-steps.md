@@ -105,9 +105,11 @@ and because nothing carries a value into a run's container but the repository's 
 
    `CHK191_PROBE_OTHER_REPO` is the same value as `CHECK191_OTHER_REPO` (a **second** sandbox
    repository), and `CHK191_PROBE_OTHER_PR` is the same value as `CHECK191_OTHER_PR` (**an open pull
-   request of this repository that is not the run's own**). A probe given neither does not guess: it
-   reports all seven attempts as ones it did not make (`refused=none`, `answer=no_other_repository_named`
-   or `no_other_pull_request_named`), and the rows that needed them are recorded as not measured.
+   request of this repository that is not the run's own**). A probe given neither does not guess: the
+   **three** attempts that name one of those values — `other-repository`, `other-pull-request` and
+   `merge` — are reported as ones it did not make (`refused=none`, `answer=no_other_repository_named`
+   or `no_other_pull_request_named`), the other four are still made, and the rows that needed those
+   three are recorded as not measured.
 
 3. Commit that too, and run the check with the same two values. A mismatch between what the repository
    carries and what the check was handed shows up as rows that cannot be read.
