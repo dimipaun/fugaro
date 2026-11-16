@@ -2087,6 +2087,32 @@ func mountsServiceHeldSecret(ws WorkflowSpec, name string, proxied bool) bool {
 	return held
 }
 
+// DropsBitbucketToken reports whether this root's plan takes the Bitbucket
+// token away from the repository's jobs: the job's mount of it (Readiness's
+// drop, and the module's job_mounts with it) and its account's secretAccessor
+// on it (the mirror in Addresses, and modules/workflow/sa.tf beside it).
+//
+// It is Readiness's own two conditions, stated once for a caller that has to
+// decide BEFORE a plan runs: `fugaro update` refuses the drop while the
+// credentials service's bundle holds no token to fetch instead (B1.13 part
+// two, the owner's ruling O8, internal/cli's update_proxied.go), and a second
+// statement of the condition there would be a second answer about one plan —
+// the state where the gate answers false and the apply drops the mount is
+// exactly the one the ruling forbids. The name is read from
+// config.ProxiedGitSecretNames, so a list that stopped naming the token
+// answers false here as it drops nothing there.
+//
+// The drop is pinned where the plan makes it (spec_test.go's
+// TestFilledProxiedListDropsMountAndAccessor, its empty-list counterfactual
+// TestEmptyProxiedListKeepsTheMountAndAccessor and
+// TestFilledProxiedListKeepsNonProxiedRepositories), and
+// TestDropsBitbucketTokenIsTheDropThePlanMakes holds this answer to that drop
+// on the same fixtures, so the two cannot part company without a test failing.
+func (rs RepoSpec) DropsBitbucketToken() bool {
+	return rs.Installation.CredentialsService != nil && rs.BitbucketProxied &&
+		slices.Contains(config.ProxiedGitSecretNames, config.BitbucketSecret)
+}
+
 // Schedule is the check's daily cron schedule: a minute between 05:00 and
 // 06:59 UTC derived from the slug, so repositories don't all build at once.
 func Schedule(slug string) string {

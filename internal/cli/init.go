@@ -727,10 +727,14 @@ type initRun struct {
 	// installation's bundle and one secret read; a read that FAILED answers
 	// nothing at all — the entry keeps the record the last reading left on it,
 	// and credsRecord is what carries that answer to this run's second door —
-	// and the warning it prints is why.
-	credsRead   bool
-	credsReady  bool
-	credsRecord bool
+	// and the warning it prints is why. credsBitbucket is the same reading's
+	// other answer, whether the bundle holds the upstream Bitbucket token,
+	// which the gate on the flip's drop reads before it applies a proxied
+	// repository's root (bundleBitbucketToken, update_proxied.go).
+	credsRead      bool
+	credsReady     bool
+	credsRecord    bool
+	credsBitbucket bool
 
 	// managed is true once this run read that the project it installs into
 	// is managed (managedProject): a guard refusal's text is then the managed
@@ -4444,6 +4448,19 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		return initErr(err)
 	}
 	printWorkflowWarnings(r, spec)
+	// The flip's drop, refused here rather than left to the plan: this is the
+	// apply that gives a proxied repository's jobs up their Bitbucket token,
+	// and it runs only while the credentials service's bundle holds one to
+	// fetch instead (update_proxied.go, the owner's ruling O8). Judged on the
+	// spec just built, so exactly the applies that would take the mount away
+	// are judged; and on the run's one bundle reading, taken above by
+	// recordCredentialsServiceReady, never a second one. The place is this
+	// one: past the spec (the fact is in it), past the version gates (they
+	// refuse on the checkout's own config) and before the apply's first cloud
+	// call.
+	if err := r.refuseTheProxiedDrop(ctx, lc, outs, spec); err != nil {
+		return err
+	}
 	if err := t.Init(ctx, backend); err != nil {
 		return remote(err)
 	}

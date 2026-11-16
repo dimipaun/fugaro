@@ -3745,14 +3745,13 @@ func TestFilledProxiedListKeepsNonProxiedRepositories(t *testing.T) {
 // `--allow-delete` and no second command is owed, and the update applies the
 // flip in one run.
 //
-// What it does NOT prove is the token itself, and the pull request has to say
-// so rather than this test: the credential a proxied run's git traffic is
-// served with is the bundle's, whose only writer is `fugaro creds set
-// bitbucket-token`, and nothing in the update's plan reads the bundle — so the
-// Terraform converges whether or not the installation's bundle holds one, and
-// a proxied repository whose bundle holds none has nothing to be served with.
-// The bundle-first order the plan's B1.13 asks for is therefore not built;
-// `fugaro doctor` is what names it today.
+// What it does NOT prove is the token itself, and that is the CLI's half:
+// Terraform converges whether or not the installation's bundle holds one, so
+// the bundle-first order B1.13 asks for is a step of `fugaro update` and not
+// of this plan — refuseTheProxiedDrop (internal/cli's update_proxied.go)
+// refuses the drop while the bundle holds no token and names the one command
+// that stores it (O8). Here the plan is read alone: what this test says is that
+// the flip needs no flag and no second run once the token is there.
 func TestTheFlipConvergesThroughTheUpdatesOwnRetirement(t *testing.T) {
 	if !slices.Contains(config.ProxiedGitSecretNames, config.BitbucketSecret) {
 		t.Fatalf("config.ProxiedGitSecretNames = %v does not name %s: with the list empty the address below is produced by both sides and the retirement this test is about is empty", config.ProxiedGitSecretNames, config.BitbucketSecret)
@@ -3807,6 +3806,53 @@ func TestTheFlipConvergesThroughTheUpdatesOwnRetirement(t *testing.T) {
 	}
 	if got := RetireAllowDelete(planDeleting(bitbucketTokenAccessor), rets); !slices.Contains(got, bitbucketTokenAccessor) {
 		t.Errorf("the guard's allow-list for the flip's plan = %v, want %s among them: the retirement's own addresses are what the update may delete in the run that retires them (D502, the HARD RULE)", got, bitbucketTokenAccessor)
+	}
+}
+
+// TestDropsBitbucketTokenIsTheDropThePlanMakes holds RepoSpec.DropsBitbucketToken
+// to the drop the plan actually makes. The predicate is what `fugaro update`'s
+// gate reads before it applies a repository root (O8, internal/cli's
+// update_proxied.go), and it has to answer for exactly the plans Readiness
+// takes the token out of: a gate answering false while the apply dropped the
+// mount is the stranded repository the ruling forbids, and one answering true
+// while nothing was dropped refuses an upgrade nobody was at risk of.
+//
+// The three rows are the tests above, read through it: the proxied repository
+// (the drop is made, and the predicate says so), a repository the node does not
+// admit, and an installation that did not opt in (nothing is dropped, and it
+// says that) — so a condition added to one side and not the other fails here
+// rather than in a plan.
+func TestDropsBitbucketTokenIsTheDropThePlanMakes(t *testing.T) {
+	if !slices.Contains(config.ProxiedGitSecretNames, config.BitbucketSecret) {
+		t.Fatalf("config.ProxiedGitSecretNames = %v does not name %s: the drop this test holds the predicate to does not happen on this tree, and every row below would read as agreement", config.ProxiedGitSecretNames, config.BitbucketSecret)
+	}
+	notOptedIn := func() Inputs {
+		in := sandboxInputs(t, m5Additions+proxiedLocalEntry)
+		in.Policy = publishedNode(t, true, "acme/sandbox")
+		return in
+	}
+	for name, tc := range map[string]struct {
+		in   Inputs
+		want bool
+	}{
+		"a repository the node admits with proxy: true": {proxiedSandboxInputs(t, proxiedLocalEntry, publishedNode(t, true, "acme/sandbox")), true},
+		"a repository the node does not admit":          {proxiedSandboxInputs(t, "", publishedNode(t, true, "workspace-b/other")), false},
+		"an installation that did not opt in":           {notOptedIn(), false},
+	} {
+		spec, err := Repo(tc.in)
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		got := spec.DropsBitbucketToken()
+		ready, _, _ := readinessOf(t, newCloud(t), spec)
+		_, mounted := ready.Workflows["web"].SecretEnv[bitbucketTokenEnv]
+		if got != tc.want {
+			t.Errorf("%s: DropsBitbucketToken = %v, want %v: the gate on the flip's drop reads this answer, and it is the plan's own condition (the installation opted in, the node proxies this repository, and %s is on config.ProxiedGitSecretNames)", name, got, tc.want, config.BitbucketSecret)
+		}
+		if got == mounted {
+			t.Errorf("%s: Readiness left the mount: %v, and the predicate says the drop is made: %v — the two answer one question, and a plan that dropped a mount this refused would be a repository whose runs are refused at their first git call", name, mounted, got)
+		}
 	}
 }
 

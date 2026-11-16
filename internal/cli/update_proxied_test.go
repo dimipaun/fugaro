@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -210,6 +211,176 @@ func TestUpdateConvergesAProxiedV4NodeInOneRun(t *testing.T) {
 	}
 	if !strings.Contains(out, "migrated the published policy from version "+strconv.Itoa(projectpolicy.Version-1)+" to "+strconv.Itoa(projectpolicy.Version)) {
 		t.Errorf("the run's account does not name the migration this test is about:\n%s", out)
+	}
+}
+
+// proxiedDropRig is proxiedRepoRig for an APPLYING run of a cascade
+// repository: the installation's outputs carry the service's URL, which is what
+// credentialsServiceProbe hands credentialsBundleReady — the probe takes the
+// block from the outputs only where it has one, so without a URL there is
+// nothing to read and the switch's record comes out off — and the base image is moved
+// past cascadeSince, which refuseCascadeSkew measures an applying cascade
+// checkout against (a --plan-only run is exempt from that gate, which is why
+// the tests above sit at 0.4.0 and these cannot).
+func proxiedDropRig(t *testing.T) (*initRig, *gcpfake.RTDB) {
+	t.Helper()
+	r, db := proxiedRepoRig(t)
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"credentials_service": credentialsServiceOutput()})}
+	// A plan with something in it: repoReady leaves the rig up to date, and a
+	// run with no change to make applies nothing, which is not the apply this
+	// file is about.
+	r.script["plan"] = map[string]any{"exit": 2}
+	r.save(t)
+	rewriteConfigLine(t, "fugaro-base:0.4.0", "fugaro-base:"+shiftRelease(t, cascadeSince, 1))
+	return r, db
+}
+
+// proxiedRepoCanonical is acme/sandbox as the published node spells it: the
+// one repository every row of this file is about.
+func proxiedRepoCanonical(t *testing.T) string {
+	t.Helper()
+	c, err := projectpolicy.Canonical("bitbucket", "acme/sandbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// proxiedRepoBundle is the bundle document as the installation that has
+// stored one model credential leaves it: enough for the switch's record and
+// nothing for the git credential the drop takes away. The rows below add
+// config.BitbucketSecret to it with brokeringBundleDoc where the token is the
+// thing that moved.
+func proxiedRepoBundle(t *testing.T) []byte {
+	t.Helper()
+	return []byte(config.AnthropicSecret + ": " + credsValue(t, "model") + "\n")
+}
+
+// TestUpdateRefusesTheProxiedDropWithoutTheToken is the owner's ruling of
+// 2026-11-15 (O8, docs/secrets-brokering/reconciliation.md §7) as a run: the
+// apply that gives a proxied repository's jobs up their Bitbucket token — the
+// job's mount of it and its account's accessor on it — does not run while the
+// credentials service's bundle holds no token to fetch instead. Everything
+// else in the world says the drop is the right plan: the installation opted in
+// and serves this repository, the node admits it with proxy: true, the
+// checkout's agent.auth is cascade, and the bundle holds a model credential,
+// so the switch's record is on. The token is the one thing missing, and the
+// refusal is the one command that stores it and never a second step for the
+// person to remember: the HARD RULE is that `fugaro update` is the whole
+// upgrade, which is why the operator draft's "creds set before the re-apply"
+// stays removed.
+func TestUpdateRefusesTheProxiedDropWithoutTheToken(t *testing.T) {
+	r, db := proxiedDropRig(t)
+	publishProxiedNode(t, db, true, proxiedRepoCanonical(t))
+	putSwitchBundle(t, r, proxiedRepoBundle(t))
+	dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", checkoutYAML("bitbucket", "cascade", "aurora", ""))
+	t.Chdir(dir)
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update", "--repo", "--no-build")
+	text := out + errOut + ErrorText(err)
+	if err == nil {
+		t.Fatalf("the run applied a root that takes this repository's Bitbucket token away while the bundle holds no credential to fetch instead\nstdout:\n%s\nstderr:\n%s", out, errOut)
+	}
+	if got := ExitCode(err); got != ExitUserError {
+		t.Errorf("exit %d, want %d: the state is the person's to fix at their own terminal\n%s", got, ExitUserError, text)
+	}
+	for _, want := range []string{
+		"acme/sandbox",
+		"creds set " + config.BitbucketSecret,
+		"Nothing has been applied",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the refusal does not carry %q, so it is not the gate's own sentence\n%s", want, text)
+		}
+	}
+	if n := len(r.ran(t, "apply")); n != 0 {
+		t.Errorf("the refused run applied %d time(s): %q", n, r.calls(t))
+	}
+}
+
+// TestUpdateAppliesTheProxiedDropWithTheToken is the other side of the ruling:
+// the bundle holds the upstream token, which is every installation whose proxy
+// is in use, since the service has nothing to forward with otherwise. The run
+// applies the root and says the drop out loud, so the operator reads which
+// credential the jobs now fetch instead of mounting.
+func TestUpdateAppliesTheProxiedDropWithTheToken(t *testing.T) {
+	r, db := proxiedDropRig(t)
+	publishProxiedNode(t, db, true, proxiedRepoCanonical(t))
+	putSwitchBundle(t, r, []byte(brokeringBundleDoc(t, credsValue(t, "token"))))
+	dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", checkoutYAML("bitbucket", "cascade", "aurora", ""))
+	t.Chdir(dir)
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update", "--repo", "--no-build")
+	if err != nil {
+		t.Fatalf("the run refused a drop the bundle can serve: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
+	}
+	if got := out + errOut; !strings.Contains(got, "holds a "+config.BitbucketSecret+" credential") {
+		t.Errorf("the run does not say the jobs fetch the credential from the service from now on:\n%s", got)
+	}
+	if n := len(r.ran(t, "apply")); n == 0 {
+		t.Errorf("the run did not apply the repository's root: %q", r.calls(t))
+	}
+}
+
+// TestUpdateAppliesWhereNothingIsDropped: the gate is the plan's own
+// condition, so the applies that would take no token away are not judged and
+// the missing credential does not stop them. The node that does not proxy this
+// repository and the installation that never opted in are the two halves of
+// infra.RepoSpec.DropsBitbucketToken, and each is a root whose jobs keep their
+// mount (internal/infra's Readiness and the workflow module read the same two
+// facts).
+func TestUpdateAppliesWhereNothingIsDropped(t *testing.T) {
+	canonical := proxiedRepoCanonical(t)
+	for name, tc := range map[string]struct{ optedIn, proxy bool }{
+		"the node admits the repository and forwards nothing": {true, false},
+		"the installation never opted in":                     {false, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r, db := proxiedDropRig(t)
+			if !tc.optedIn {
+				// The installation's outputs name no credentials service:
+				// there is no switch to turn on, whatever the node admits.
+				r.script["output"] = map[string]any{"stdout": outputsJSON(t)}
+				r.save(t)
+			}
+			publishProxiedNode(t, db, tc.proxy, canonical)
+			putSwitchBundle(t, r, proxiedRepoBundle(t))
+			dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", checkoutYAML("bitbucket", "cascade", "aurora", ""))
+			t.Chdir(dir)
+			fakeTerminal(t)
+			out, errOut, err := executeStdin(t, "", "update", "--repo", "--no-build")
+			if err != nil {
+				t.Fatalf("the run refused an apply that takes no token away: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
+			}
+			if got := out + errOut; strings.Contains(got, "creds set "+config.BitbucketSecret) {
+				t.Errorf("the run sent the operator to store a credential for a drop it does not make:\n%s", got)
+			}
+			if n := len(r.ran(t, "apply")); n == 0 {
+				t.Errorf("the run did not apply the repository's root: %q", r.calls(t))
+			}
+		})
+	}
+}
+
+// TestUpdateRepoPlanOnlyDoesNotRefuseTheDrop: --plan-only applies nothing, so
+// nothing is dropped and the gate has nothing to refuse — the same exemption
+// the other refusals that stop a CHANGE carry (refuseClonesNotShipped,
+// Readiness's D11 gate), unlike the disagreement above, which is a
+// contradiction in the configuration itself. The row is the plan-only run of
+// the refusal's own world: cascade checkout, node proxying the repository, and
+// a bundle with no token.
+func TestUpdateRepoPlanOnlyDoesNotRefuseTheDrop(t *testing.T) {
+	r, db := proxiedDropRig(t)
+	publishProxiedNode(t, db, true, proxiedRepoCanonical(t))
+	putSwitchBundle(t, r, proxiedRepoBundle(t))
+	dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", checkoutYAML("bitbucket", "cascade", "aurora", ""))
+	t.Chdir(dir)
+	out, errOut, err := executeStdin(t, "", "update", "--repo", "--plan-only")
+	if err != nil {
+		t.Fatalf("a --plan-only run was refused over a drop it does not make: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
+	}
+	if n := len(r.ran(t, "apply")); n != 0 {
+		t.Errorf("a --plan-only run applied %d time(s): %q", n, r.calls(t))
 	}
 }
 
