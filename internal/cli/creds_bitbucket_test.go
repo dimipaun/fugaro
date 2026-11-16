@@ -581,6 +581,138 @@ func TestCredsSetBitbucketTokenAFamilyWriteBesideTheProviderEntry(t *testing.T) 
 	}
 }
 
+// TestCredsSetBitbucketTokenRefusesTheNewestReleaseOfTheEntriesItLeaves is the
+// newest-entry rule as a REFUSAL, which the test above cannot be: a document
+// holding the provider entry needs a service that reads the provider key, and a
+// write of a family entry into that same document needs the LATER of the two
+// releases — so a service between them (0.23.0, which reads the provider key and
+// not the family) must refuse this write.
+//
+// This is the arm that makes the rule load-bearing rather than harmless: judged
+// by the older entry alone, the service would be taken for one that can read the
+// document and the command would write a key that service refuses whole — every
+// caller of it halted, coding runs included — which is the halt the guard is
+// here to prevent.
+func TestCredsSetBitbucketTokenRefusesTheNewestReleaseOfTheEntriesItLeaves(t *testing.T) {
+	const name = "bitbucket-token--ci"
+	f := newBitbucketFixture(t, "0.23.0", repoTokenAnswers())
+	f.seed(t, []byte(providerEntryNode(t)))
+	before := f.value(t)
+
+	_, _, err := executeStdin(t, bitbucketTokenValue+"\n", setArgs(name, repoTokenFlags(name)...)...)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("creds set %s into a bundle holding the provider entry against a 0.23.0 service = %v, want a user error", name, err)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, name) {
+		t.Errorf("the refusal does not name the entry that makes the document unreadable: %v", err)
+	}
+	if !strings.Contains(msg, bitbucketTokenSince) {
+		t.Errorf("the refusal does not name the release the entry needs (%s): %v", bitbucketTokenSince, err)
+	}
+	if !strings.Contains(msg, "fugaro update") {
+		t.Errorf("the refusal names no way out: %v", err)
+	}
+	assertNoValue(t, msg, bitbucketTokenValue)
+	if n := f.writes(); n != 0 {
+		t.Fatalf("%d version(s) written, want none", n)
+	}
+	if got := f.value(t); got != before {
+		t.Errorf("the bundle changed:\n%s", got)
+	}
+	if len(f.skew.asked()) == 0 {
+		t.Error("the guard judged no service: the refusal above is not this test's")
+	}
+	// Nothing was asked of Bitbucket: the guard stands before the value.
+	if seen := f.site.paths(); len(seen) != 0 {
+		t.Errorf("the check ran before the guard refused the write: %v", seen)
+	}
+}
+
+// TestCredsSetRefusesAFamilyEntryInTheDocumentItWouldRewrite is the guard's other
+// trigger (bundleHoldsFamilyEntry), the one that holds when the write is about
+// some OTHER credential: an ordinary credential's own reader is as old as the
+// bundle, but the document this write would leave in place holds a family entry,
+// so the document needs the family's release and a service older than it must
+// refuse the write.
+//
+// Without that half the write lands: this tree's loader knows the entry, so
+// `credsvc.ParseBundle` accepts the document, and the older service refuses the
+// WHOLE document (`ErrBundleUnknownKey`) at its next read. What the refusal names
+// is the family, by the family's spelling rather than one token's own key: the
+// entry the operator has not written yet is not the one this run could name.
+func TestCredsSetRefusesAFamilyEntryInTheDocumentItWouldRewrite(t *testing.T) {
+	// write is the command under test: claude-oauth-token — a credential whose
+	// own reader is as old as the bundle — into a document that holds a family
+	// entry or does not, against a service whose serving revision is serving.
+	write := func(t *testing.T, holds bool, serving string) (*credsFixture, error) {
+		t.Helper()
+		skew := newRunServiceSkew(t)
+		f, _ := credsSkewFixture(t, "none", skew)
+		doc := config.ClaudeOAuthToken + ": " + credsValue(t, "existing") + "\n"
+		if holds {
+			doc += config.BitbucketTokenKey("ci") + ": " + credsValue(t, "family") + "\n"
+		}
+		f.seed(t, []byte(doc))
+		skew.deployedService(credentialsImage(serving), credentialsImage(serving))
+		_, _, err := executeStdin(t, credsValue(t, "replacement")+"\n", "creds", "set", config.ClaudeOAuthToken)
+		return f, err
+	}
+
+	t.Run("a service older than the family refuses it", func(t *testing.T) {
+		f, err := write(t, true, "0.23.0")
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("writing an ordinary credential into a bundle holding a family entry against a 0.23.0 service = %v, want a user error", err)
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, config.BitbucketTokenPrefix) {
+			t.Errorf("the refusal does not name the family whose entry makes the document unreadable: %v", err)
+		}
+		if !strings.Contains(msg, bitbucketTokenSince) {
+			t.Errorf("the refusal does not name the release the family needs (%s): %v", bitbucketTokenSince, err)
+		}
+		if !strings.Contains(msg, "fugaro update") {
+			t.Errorf("the refusal names no way out: %v", err)
+		}
+		if strings.Contains(msg, credsValue(t, "replacement")) {
+			t.Errorf("the refusal repeated the value: %v", err)
+		}
+		if n := f.writes(); n != 0 {
+			t.Fatalf("%d version(s) written, want none", n)
+		}
+	})
+
+	t.Run("a service that reads the family is written", func(t *testing.T) {
+		f, err := write(t, true, bitbucketTokenSince)
+		if err != nil {
+			t.Fatalf("writing an ordinary credential into a bundle holding a family entry against a current service: %v", err)
+		}
+		if n := f.writes(); n != 1 {
+			t.Fatalf("%d version(s) written, want one", n)
+		}
+		b, err := credsvc.ParseBundle([]byte(f.value(t)))
+		if err != nil {
+			t.Fatalf("the document written is one the loader refuses: %v", err)
+		}
+		if got := bundleEntryValue(t, b, config.BitbucketTokenKey("ci")); got != credsValue(t, "family") {
+			t.Errorf("the entry this write was not about is %q", got)
+		}
+	})
+
+	t.Run("a bundle without the family is written against the same service", func(t *testing.T) {
+		f, err := write(t, false, "0.23.0")
+		if err != nil {
+			t.Fatalf("writing an ordinary credential into a bundle holding no family entry: %v", err)
+		}
+		if n := f.writes(); n != 1 {
+			t.Fatalf("%d version(s) written, want one", n)
+		}
+		if ok := bundleHoldsFamilyEntry([]byte(f.value(t))); ok {
+			t.Errorf("the written document holds a family entry:\n%s", f.value(t))
+		}
+	})
+}
+
 // TestCredsSetBitbucketTokenRefusesARecordItsOwnRuleRefuses: R1's agreement of
 // type and coverage is the config's rule and this command's, asked BEFORE the
 // value is read — so a record whose halves disagree is refused with the sentence
