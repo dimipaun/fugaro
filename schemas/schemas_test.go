@@ -1182,7 +1182,7 @@ func TestResultSchemaAcceptsTriage(t *testing.T) {
 		t.Fatalf("schema rejects a record whose triage blocks are nil: %v", err)
 	}
 	rec.Triage = runstore.NewTriage([]runstore.TriageRound{
-		{Round: 1, Mode: rigor.Startup, Level: policy.LevelL2, Account: "team-a", Model: "claude-opus-5-5",
+		{Ordinal: 1, Round: 1, Mode: rigor.Startup, Level: policy.LevelL2, Account: "team-a", Model: "claude-opus-5-5",
 			Entries: []runstore.TriageEntry{
 				{Index: 0, Key: "9f2a1c", Verdict: runstore.VerdictDefer, Reason: "doc drift, not the main path", Group: "docs", Source: runstore.TriageSourceAgent},
 				{Index: 1, Key: "3b7e05", Verdict: runstore.VerdictBlock, Reason: "the build breaks on the new import", Source: runstore.TriageSourceAgent},
@@ -1195,7 +1195,7 @@ func TestResultSchemaAcceptsTriage(t *testing.T) {
 		// by. It is marshalled from the record and not written out here, so a
 		// `cause` the schema does not carry is an unknown key this test
 		// rejects.
-		{Round: 2, Mode: rigor.Pro, Level: policy.LevelL3, Failed: true, Cause: "Invalid API key · Fix external API key",
+		{Ordinal: 2, Round: 2, Mode: rigor.Pro, Level: policy.LevelL3, Failed: true, Cause: "Invalid API key · Fix external API key",
 			Entries: []runstore.TriageEntry{}},
 	})
 	rec.Deferred = runstore.NewDeferred([]runstore.DeferredFinding{
@@ -1217,6 +1217,8 @@ func TestResultSchemaAcceptsTriage(t *testing.T) {
 		{"a round the run never numbered", `,"triage":{"rounds":[{"round":0,"mode":"pro","level":"l2","total":0,"entries":[]}]}`},
 		{"a mode outside the vocabulary", `,"triage":{"rounds":[{"round":1,"mode":"paranoid","level":"l2","total":0,"entries":[]}]}`},
 		{"a level outside the vocabulary", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l4","total":0,"entries":[]}]}`},
+		{"an ordinal the run never counted", `,"triage":{"rounds":[{"ordinal":0,"round":1,"mode":"pro","level":"l2","total":0,"entries":[]}]}`},
+		{"an ordinal that is not a number", `,"triage":{"rounds":[{"ordinal":"1","round":1,"mode":"pro","level":"l2","total":0,"entries":[]}]}`},
 		{"a round with no entries list", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":0}]}`},
 		{"a round with no total", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","entries":[]}]}`},
 		{"a failed that is not a boolean", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","failed":"yes","total":0,"entries":[]}]}`},
@@ -1252,7 +1254,7 @@ func TestResultSchemaAcceptsTriage(t *testing.T) {
 	}
 	// The positive control: the same literal shape the refusals are built from
 	// is accepted when every member is one the block may carry.
-	good := head + `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","account":"team-a","model":"claude-opus-5-5","total":1,"entries":[{"index":0,"key":"9f2a1c","verdict":"defer","reason":"doc drift","group":"docs","source":"agent"}]}]}` +
+	good := head + `,"triage":{"rounds":[{"ordinal":1,"round":1,"mode":"pro","level":"l2","account":"team-a","model":"claude-opus-5-5","total":1,"entries":[{"index":0,"key":"9f2a1c","verdict":"defer","reason":"doc drift","group":"docs","source":"agent"}]}]}` +
 		`,"deferred":{"findings":[{"key":"9f2a1c","summary":"a long comment","reason":"doc drift","group":"docs","source":"agent"}],"total":1}}`
 	if err := validateLit(good); err != nil {
 		t.Fatalf("schema rejects a well-formed triage block: %v\n%s", err, good)
@@ -1821,13 +1823,16 @@ func TestResultSchemaStageCredential(t *testing.T) {
 }
 
 // TestResultSchemaStageRound pins the schema half of the round a per-round
-// stage's attempt served and of the level that round belongs to (docs/triage.md,
-// D1846, D1847): both members are optional — every stage but the triage judge's,
-// and every record written before they existed, carries neither — and where
-// they are there they are values the triage block's own `round` and `level`
-// could carry, so the report can pair a row with its round's failure by a key
-// instead of by position. The level is the half that makes the pair a key: two
-// levels of one run both number a round 1, so the number alone names two rounds.
+// stage's attempt served, of the level that round belongs to and of the
+// triage round's own ordinal (docs/triage.md, D1846, D1847, D727): every
+// member is optional — every stage but the triage judge's, and every record
+// written before they existed, carries none of them — and where they are there
+// they are values the triage block's own `round`, `level` and `ordinal` could
+// carry, so the report can pair a row with its round's failure by a key
+// instead of by position. The ordinal is the key: the round and the level
+// beside it are a description, because both halves repeat — two levels of one
+// run both number a round 1, and a bounce numbers a level's rounds from 1
+// again.
 func TestResultSchemaStageRound(t *testing.T) {
 	sch := compile(t, "result.schema.json")
 	validate := func(stage string) error {
@@ -1850,6 +1855,8 @@ func TestResultSchemaStageRound(t *testing.T) {
 		{"the pair of a level 2 round 1", head + `,"round":1,"level":"l2"}`},
 		{"the pair of a level 1 round 1", head + `,"round":1,"level":"l1"}`},
 		{"the level alone", head + `,"level":"l3"}`},
+		{"the ordinal of a row", head + `,"ordinal":3}`},
+		{"the ordinal with the round and level it describes", head + `,"ordinal":3,"round":1,"level":"l1"}`},
 	} {
 		if err := validate(tc.stage); err != nil {
 			t.Errorf("schema rejects a stage with %s: %v", tc.name, err)
@@ -1867,6 +1874,10 @@ func TestResultSchemaStageRound(t *testing.T) {
 		{"a level in another spelling", head + `,"round":1,"level":"level 2"}`},
 		{"a level as a number", head + `,"round":1,"level":2}`},
 		{"an empty level", head + `,"round":1,"level":""}`},
+		{"ordinal zero", head + `,"ordinal":0}`},
+		{"a negative ordinal", head + `,"ordinal":-1}`},
+		{"a fractional ordinal", head + `,"ordinal":1.5}`},
+		{"an ordinal as a string", head + `,"ordinal":"2"}`},
 	} {
 		if err := validate(tc.stage); err == nil {
 			t.Errorf("schema accepts %s: %s", tc.name, tc.stage)

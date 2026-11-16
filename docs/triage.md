@@ -86,9 +86,11 @@ answer could not be read — and that the fail-safe blocked every finding the
 mode's table blocks; that round's
 row in the same table reads `triage (failed: <cause>)` rather than a bare
 duration, the row being paired with its round by what the row itself carries —
-its round and the level that round belongs to (`stages[].round`,
-`stages[].level`), since each level numbers its own rounds from 1 — and never by
-its place in the table; and `fugaro
+the round's own ordinal, its place in the run's count of triage rounds
+(`stages[].ordinal`, the block's `triage.rounds[].ordinal`) — and never by its
+place in the table, nor by the round and level it judged: those two repeat, since
+each level numbers its own rounds from 1 and a bounce runs a level's again; and
+`fugaro
 diagnose` lists every round with its placements counted by source, and the failed
 ones flagged above the rest with their cause.
 

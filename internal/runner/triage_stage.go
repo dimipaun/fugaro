@@ -186,13 +186,21 @@ func triageOutcomeOf(v Verdict, out triage.Outcome) triageOutcome {
 // numbered it (ReviewSummary.Round), and level is the review level that ran it
 // (D1847): a level 1 round and a level 2 round of the same run are two triage
 // rounds, and which level's question the judge answered is what the record
-// says beside each.
+// says beside each. Neither names the triage round: the pair repeats where a
+// bounce runs a level's numbering again from 1 (D727), and the ordinal this
+// function hands the stage is the round's own place in the record
+// (r.triageRounds), which is what the report's row marks are keyed on.
 func (r *run) triageRound(ctx context.Context, round int, level policy.Level, v Verdict) (triageOutcome, bool) {
 	if !r.triageOn() {
 		r.forgetRoundDeferred(ctx, v)
 		return triageOutcome{}, true
 	}
 	mode := r.reachedRigor()
+	// The ordinal is read before anything is recorded: recordTriage appends this
+	// round to r.triageRounds, so the round's place in that list is one past
+	// what the run has recorded so far, and every path below — the recorded
+	// failure with no call behind it included — knows it before it writes.
+	ordinal := len(r.triageRounds) + 1
 	in, findings := triageInputs(v.Findings)
 	// The judge is asked from a directory that holds nothing of the run: the
 	// brief carries the round's findings and the task's goal as text, and a
@@ -207,7 +215,7 @@ func (r *run) triageRound(ctx context.Context, round int, level policy.Level, v 
 		r.d.Log.Error("the triage stage's own working directory could not be made; the round is recorded as failed and every finding the mode's table blocks blocks",
 			"round", round, "cause", cause)
 		out := triage.Apply(mode, in, triage.Verdict{}, false)
-		r.recordTriage(ctx, round, level, v, out, false, cause)
+		r.recordTriage(ctx, ordinal, round, level, v, out, false, cause)
 		return triageOutcomeOf(v, out), true
 	}
 	defer os.RemoveAll(dir)
@@ -231,7 +239,7 @@ func (r *run) triageRound(ctx context.Context, round int, level policy.Level, v 
 		Tools:           []string{},
 		StrictMCPConfig: true,
 	}
-	res, ok, err := r.stage(ctx, stageTriage, req, stageOpts{Skippable: true, Dir: dir, Round: round, Level: level})
+	res, ok, err := r.stage(ctx, stageTriage, req, stageOpts{Skippable: true, Dir: dir, Ordinal: ordinal, Round: round, Level: level})
 	r.countTokens(res)
 	var skipped skippedError
 	if !ok && !errors.As(err, &skipped) {
@@ -254,7 +262,7 @@ func (r *run) triageRound(ctx context.Context, round int, level policy.Level, v 
 			"round", round, "cause", cause)
 	}
 	out := triage.Apply(mode, in, verdict, parsed)
-	r.recordTriage(ctx, round, level, v, out, parsed, cause)
+	r.recordTriage(ctx, ordinal, round, level, v, out, parsed, cause)
 	return triageOutcomeOf(v, out), true
 }
 
@@ -277,7 +285,7 @@ func (r *run) triageRound(ctx context.Context, round int, level policy.Level, v 
 // own words, or the reader's own `unreadable verdict` (TriageRound.Cause). read
 // and cause are one fact and are passed together: a round that was read carries
 // no cause, and NewTriage drops a cause from a round that is not failed.
-func (r *run) recordTriage(ctx context.Context, round int, level policy.Level, v Verdict, out triage.Outcome, read bool, cause string) {
+func (r *run) recordTriage(ctx context.Context, ordinal int, round int, level policy.Level, v Verdict, out triage.Outcome, read bool, cause string) {
 	placed := make(map[int]triage.Placed, len(out.Blocking)+len(out.Deferred))
 	for _, p := range out.Blocking {
 		placed[p.Index] = p
@@ -304,6 +312,7 @@ func (r *run) recordTriage(ctx context.Context, round int, level policy.Level, v
 		})
 	}
 	r.triageRounds = append(r.triageRounds, runstore.TriageRound{
+		Ordinal: ordinal,
 		Round:   round,
 		Mode:    r.reachedRigor(),
 		Level:   level,

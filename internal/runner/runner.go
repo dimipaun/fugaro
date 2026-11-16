@@ -4454,18 +4454,19 @@ type stageOpts struct {
 	// under review in reach is what the empty tool list and the empty
 	// setting sources are there to prevent (F25).
 	Dir string
-	// Round is the review round this stage's call serves, for a stage the run
-	// runs once per round: the triage stage is the one today, and the number
-	// reaches the record on each of its attempt's rows so that the report pairs
-	// a row with its round's failure by a key and not by position
-	// (runstore.StageTiming.Round, D1846). 0 for every stage that is not tied
-	// to a round.
+	// Ordinal is which of the run's triage rounds this stage's call serves: the
+	// triage stage is the one today, and it reaches the record on each of the
+	// stage's attempt rows so that the report pairs a row with its round's
+	// failure by a key and not by position (runstore.StageTiming.Ordinal,
+	// D1846). It is the row's key where Round and Level are not: a level numbers
+	// its own rounds from 1 and a bounce starts that numbering again (D727,
+	// D1847), so the pair repeats where this does not. 0 for every stage that is
+	// not tied to a round.
+	Ordinal int
+	// Round is the review round this stage's call serves, and Level is the
+	// level that round belongs to; both are set wherever Ordinal is. They say
+	// which review round a row is for a reader, and not which triage round.
 	Round int
-	// Level is the review level that round belongs to, and it is set wherever
-	// Round is: a level numbers its own rounds from 1 (D1847), so the number
-	// alone names two rounds of a run that reviewed at two levels, and the
-	// report keys on the pair. Empty for every stage that is not tied to a
-	// round.
 	Level policy.Level
 }
 
@@ -4990,6 +4991,7 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	res.SubAgents = relay.SubAgents
 	res.Repeats = relay.Repeats
 	st := r.stageTiming(name, started, res.CostUSD, res.SubAgents, res.Repeats)
+	st.Ordinal = opts.Ordinal
 	st.Round = opts.Round
 	st.Level = opts.Level
 	r.rec.Stages = append(r.rec.Stages, st)
