@@ -12,11 +12,14 @@
 # beside it, and the signer is there and not here (Check 174).
 #
 # Cloud Run sets no command and no args for a service, so this image's own
-# entrypoint is what a revision runs: the program serves, and its
-# `seed-operations <address>` subcommand is run by the deploy with the
-# platform's `gcloud run jobs`-free path — an owner's one-off
-# `gcloud run services` exec is not a thing, so the seed is run from this image
-# as a job or from a machine with the project's credentials (P0.5, P9.2).
+# entrypoint is what a revision runs: the program serves. Its one subcommand,
+# `seed-operations <address>`, is what the deployment's seed job runs: the
+# services root declares that job (`google_cloud_run_v2_job.seed`, the same image
+# and the API's own environment) and the deploy executes it, because the seed
+# builds the API's own service before it writes anything and so needs the
+# twenty-three variables a revision's environment carries — which no shell on
+# anybody's machine has, and none of which the project's credentials stand in for
+# (P0.5, P9.2).
 #
 # **This file's first two lines are the ee/ notice**, which is why there is no
 # `# syntax=` directive: BuildKit reads that directive only above every other

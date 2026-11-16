@@ -25,10 +25,11 @@
 #                        <region>-docker.pkg.dev/<project>/fugaro-portal).
 #   --seed-operations <address>
 #                        after the deploy, write the operations organisation and
-#                        invite <address> as its first owner, by running the API
-#                        program's one-time seed-operations subcommand with the
-#                        operator's own credentials. Once per installation: the
-#                        subcommand itself refuses a second time.
+#                        invite <address> as its first owner, by executing the
+#                        seed job the services root declares (var.seed_job: the
+#                        API's image in the API's own environment) with
+#                        `--args=seed-operations,<address>`. Once per
+#                        installation: the seed itself refuses a second time.
 #   --dry-run            install if needed and build the SPA, then print the cloud
 #                        commands instead of running them. Nothing is deployed and
 #                        nothing is seeded.
@@ -53,7 +54,24 @@
 # -var api_image and -var minter_image set to the two images just pushed, or the
 # root has to stop managing template[0].containers[0].image (a change in that
 # root, not in this script). Until one of the two is done, what is running and
-# what Terraform would apply are the same only until that apply.
+# what Terraform would apply are the same only until that apply. The seed job
+# below is that root's as well and takes var.api_image, so the one value covers
+# what it runs too.
+#
+# WHY THE SEED IS A JOB AND NOT THIS SHELL. Seeding runs the API program's one
+# subcommand, and that program builds the service the API serves from before it
+# seeds: its own configuration, its own secrets, its own store, all read out of
+# the environment a revision runs in and all required -- twenty-three FUGARO_
+# variables and five Secret Manager containers, every one of them refused when it
+# is missing (ee/keyservice/config.go). An operator's own credentials carry the
+# project and nothing else, so a terminal cannot start the seed at all: it refuses
+# before it writes anything, and it refuses after the site and both services are
+# already deployed. The seed is therefore the services root's job (var.seed_job),
+# which carries that environment because the root that declares the API declares
+# it too, and this script only revises the job to the image just pushed and
+# executes it with the address. That job is the root's, so the apply that created
+# it has to have run -- P0.4's services apply, before this script in the plan's own
+# order.
 #
 # Authentication is whatever `gcloud auth login` and `firebase login` the operator
 # already did. This script never reads, prints or takes a token or a key, and
@@ -68,6 +86,11 @@ set -euo pipefail
 DEFAULT_PROJECT=fugaro-prod
 DEFAULT_REGION=us-east5
 DEFAULT_CONFIG=ee/portal/firebase.json
+# The seed's Cloud Run job, which ee/keyservice/terraform/services declares and
+# names by its own default: the deploy-executed job and the applied one are one
+# resource, and a name spelled differently in the two places is an execution of
+# nothing.
+DEFAULT_SEED_JOB=fugaro-portal-seed
 
 usage() {
   awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"
@@ -244,12 +267,19 @@ run_or_print gcloud run deploy fugaro-key-minter \
 run_or_print firebase deploy --only hosting,firestore:rules --project "$project" --config "$config"
 
 if [[ -n $seed_address ]]; then
-  if [[ $dry_run == true ]]; then
-    echo "deploy-portal: would run: GOOGLE_CLOUD_PROJECT=$project go run ./ee/keyservice/cmd/portal-api seed-operations $seed_address"
-  else
-    echo "deploy-portal: seeding the operations organisation for $seed_address"
-    GOOGLE_CLOUD_PROJECT=$project go run ./ee/keyservice/cmd/portal-api seed-operations "$seed_address"
-  fi
+  # The job is the services root's and the image is this script's, so it is
+  # revised to the image just pushed before it runs: the root writes the job's
+  # image from var.api_image, which is still the previous image until an apply
+  # carries the new one, and the seed is one execution against a first install --
+  # which revision ran it is not something anybody can read afterwards.
+  run_or_print gcloud run jobs update "$DEFAULT_SEED_JOB" \
+    --image "$image_base/fugaro-portal-api:$tag" --project "$project" --region "$region"
+  echo "deploy-portal: seeding the operations organisation for $seed_address"
+  # --wait is what makes this the deploy's own step rather than a submission: the
+  # execution's exit status is this line's, so a seed that refused is a deploy
+  # that failed and says so.
+  run_or_print gcloud run jobs execute "$DEFAULT_SEED_JOB" \
+    --args="seed-operations,$seed_address" --project "$project" --region "$region" --wait
 fi
 
 if [[ $dry_run == true ]]; then
