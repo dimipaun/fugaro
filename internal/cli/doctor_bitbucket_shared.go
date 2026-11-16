@@ -23,11 +23,15 @@ import (
 // A repository is on a shared Bitbucket job exactly when the launcher puts it
 // there, read the way the launcher reads it: the provider's default profile
 // (runner.ProjectJobDefaultProfile, which launchProjectJobFor and the runner's
-// candidate logic both call), a profile that passes projectpolicy.
-// CheckSharedJobProfile — the rule a shared job's profile is deployed under —
-// and a node that admits the repository to it. A workflow that names another
-// profile is not this check's business: doctor resolves the provider default
-// and says nothing about a selection only the repository's fugaro.yaml knows.
+// candidate logic both call), whether a shared job serves that profile's
+// provider at all (sharedJobProvider — internal/infra's SharedJobProvider,
+// which the deployer skips the profile by and launchProjectJobFor keeps the
+// repository on its per-repository job for), a profile that passes
+// projectpolicy.CheckSharedJobProfile — the rule a shared job's profile is
+// deployed under — and a node that admits the repository to it. A workflow that
+// names another profile is not this check's business: doctor resolves the
+// provider default and says nothing about a selection only the repository's
+// fugaro.yaml knows.
 //
 // It is deliberately not projectpolicy.SharedBitbucketProfile: that predicate
 // is the per-repository job's (the provider AND the token mount, D473) and
@@ -72,7 +76,7 @@ func doctorBitbucketOwnTokenSharedJob(ctx context.Context, lc *localcfg.Config, 
 		out = append(out, doctorCheck{ID: "bitbucket-own-token-shared-job", Severity: "warning",
 			Problem: fmt.Sprintf("%s's own %s copy holds an enabled version: its shared job holds no token and the proxy serves it from the project's token; its own copy applies only to its per-repository jobs",
 				pluginwire.Printable(r.name), config.BitbucketSecret),
-			Fix: "leave it as it is if this repository still has a per-repository job, which is what mounts it, or remove it with '" + selfCommand() + " secrets rm " + config.BitbucketSecret + "' if it has none"})
+			Fix: "leave the copy as it is if this repository still has a per-repository job, which is what reads it, or disable the repository copy's versions (gcloud secrets versions disable) if it has none: " + selfCommand() + " secrets rm is the project-wide copy's command and does not reach a repository's own"})
 	}
 	return out
 }
@@ -116,6 +120,15 @@ func doctorBitbucketSharedRepos(lc *localcfg.Config, p *projectpolicy.Policy) []
 		}
 		pr, err := p.ProfileFor(profile)
 		if err != nil {
+			continue
+		}
+		if !sharedJobProvider(pr.Provider) {
+			// No shared job serves this provider at all, so the launcher keeps
+			// the repository on its per-repository job — the one that mounts the
+			// copy. internal/infra.SharedJobProvider is the same predicate the
+			// deployer skips a profile by and the launcher refuses a shared job
+			// with (github alone until Bitbucket is admitted), and it is asked of
+			// the profile's provider, as the launcher asks it.
 			continue
 		}
 		if err := projectpolicy.CheckSharedJobProfile("profiles."+profile, pr); err != nil {

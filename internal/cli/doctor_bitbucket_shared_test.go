@@ -55,7 +55,13 @@ func seedOwnBitbucketToken(t *testing.T, r *doctorRig, slug string) {
 // the proxy serves it from the project's, so its own copy is read by its
 // per-repository jobs alone. The warning names the repository, says that
 // sentence, and never fails doctor without --strict.
+//
+// Bitbucket is admitted to a shared job for the length of this test: until
+// internal/infra's list carries it, no installation can be in this state, and
+// the launcher's own predicate is what the check reads (the test below pins
+// that side).
 func TestDoctorWarnsABitbucketOwnCopyOnASharedProfile(t *testing.T) {
+	admitSharedJobProvider(t, "bitbucket")
 	r, _ := doctorPolicyRig(t, bitbucketOwnTokenSharedPolicy(), bitbucketOwnTokenSharedConfig)
 	seedOwnBitbucketToken(t, r, mustSlug("bitbucket", "workspace-a/repo-a"))
 
@@ -75,16 +81,47 @@ func TestDoctorWarnsABitbucketOwnCopyOnASharedProfile(t *testing.T) {
 	if !strings.Contains(c.Problem, "its shared job holds no token and the proxy serves it from the project's token; its own copy applies only to its per-repository jobs") {
 		t.Errorf("the warning does not carry the sentence the task pins: %q", c.Problem)
 	}
-	if !strings.Contains(c.Fix, "secrets rm "+config.BitbucketSecret) {
-		t.Errorf("the fix does not name how to remove the copy: %q", c.Fix)
+	// The fix has to be a move that reaches the repository's own copy. It is
+	// gcloud that does — no Fugaro command removes a repository-scoped
+	// container — and `secrets rm` is the project-wide copy's command, which in
+	// this very state is the credential the proxy serves the shared job from,
+	// so the line keeps the reader off it rather than naming it as the removal.
+	if !strings.Contains(c.Fix, "gcloud secrets versions disable") {
+		t.Errorf("the fix does not name the move that reaches a repository's own copy: %q", c.Fix)
+	}
+	if !strings.Contains(c.Fix, "secrets rm is the project-wide copy's command and does not reach a repository's own") {
+		t.Errorf("the fix does not say that the project-wide removal is not this copy's: %q", c.Fix)
+	}
+}
+
+// TestDoctorIsQuietWhereNoSharedJobServesBitbucket: the launcher's own
+// provider predicate is the first gate, and internal/infra's list is github
+// alone today, so a Bitbucket repository is kept on its per-repository job
+// whatever its profile says — the job that mounts the copy. Every other fact
+// here is the warning test's, so the only thing keeping doctor quiet is that
+// no shared job serves Bitbucket: without this gate the check would warn about
+// a state no installation can be in.
+func TestDoctorIsQuietWhereNoSharedJobServesBitbucket(t *testing.T) {
+	r, _ := doctorPolicyRig(t, bitbucketOwnTokenSharedPolicy(), bitbucketOwnTokenSharedConfig)
+	seedOwnBitbucketToken(t, r, mustSlug("bitbucket", "workspace-a/repo-a"))
+
+	c, ok, err := bitbucketOwnTokenCheck(t)
+	if ok {
+		t.Fatalf("the check warned while no shared job serves Bitbucket: %+v", c)
+	}
+	if err != nil {
+		t.Fatalf("a repository on its per-repository job must not fail doctor: %v", err)
 	}
 }
 
 // TestDoctorIsQuietWithoutABitbucketOwnCopy: the same shared job, and nothing
 // of the repository's own to warn about — no container at all, and one whose
-// only version is disabled, which is not an enabled version.
+// only version is disabled, which is not an enabled version. Bitbucket is
+// admitted as in the warning test, so what these two hold is the own copy and
+// not the provider gate.
 func TestDoctorIsQuietWithoutABitbucketOwnCopy(t *testing.T) {
 	t.Run("no own container", func(t *testing.T) {
+		admitSharedJobProvider(t, "bitbucket")
 		doctorPolicyRig(t, bitbucketOwnTokenSharedPolicy(), bitbucketOwnTokenSharedConfig)
 		if c, ok, err := bitbucketOwnTokenCheck(t); ok {
 			t.Fatalf("a repository with no own copy warned: %+v (err %v)", c, err)
@@ -92,6 +129,7 @@ func TestDoctorIsQuietWithoutABitbucketOwnCopy(t *testing.T) {
 	})
 
 	t.Run("an own container with no enabled version", func(t *testing.T) {
+		admitSharedJobProvider(t, "bitbucket")
 		r, _ := doctorPolicyRig(t, bitbucketOwnTokenSharedPolicy(), bitbucketOwnTokenSharedConfig)
 		slug := mustSlug("bitbucket", "workspace-a/repo-a")
 		seedOwnBitbucketToken(t, r, slug)
@@ -106,8 +144,11 @@ func TestDoctorIsQuietWithoutABitbucketOwnCopy(t *testing.T) {
 // the token is the *per-repository* job's predicate, and CheckSharedJobProfile
 // refuses it — so its repositories are not on a shared job and their own copy
 // is exactly what their job mounts. A check that read SharedBitbucketProfile
-// would warn here, which is the mutation this test fails.
+// would warn here, which is the mutation this test fails — and the provider is
+// admitted as in the warning test, so the refusal the mutation goes around is
+// the only thing keeping the line off.
 func TestDoctorIsQuietForAProfileThatMountsTheBitbucketToken(t *testing.T) {
+	admitSharedJobProvider(t, "bitbucket")
 	r, _ := doctorPolicyRig(t, doctorPolicy(func(p *projectpolicy.Policy) {
 		p.AllowRepos = []string{"bitbucket/workspace-a/repo-a"}
 		p.Profiles = map[string]projectpolicy.Profile{"standard": {JobProfile: config.JobProfile{
