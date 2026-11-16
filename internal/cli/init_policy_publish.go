@@ -1232,7 +1232,7 @@ func applyPolicyReseed(cmd *cobra.Command, path string, lc *localcfg.Config, p *
 				strings.Join(rest, ", "), selfCommand()+" update"))
 		}
 		if len(accounts) > 0 {
-			remedies = append(remedies, fmt.Sprintf("%s is your own account choice, which the local config is the only store of: write it with `fugaro settings set default_claude_account <name>` or `fugaro settings set stages.<stage>.claude_account <name>`, then publish it with `fugaro project policy publish` at your own terminal, which builds the node from this file and writes it there (%s is the upgrade and its policy stage refuses this file until that publish has landed)",
+			remedies = append(remedies, fmt.Sprintf("%s: an account choice is your own, and the local config is its only store — write the choice with `fugaro settings set default_claude_account <name>` or `fugaro settings set stages.<stage>.claude_account <name>`, then publish it with `fugaro project policy publish` at your own terminal, which builds the node from this file and writes it there (%s is the upgrade, and its policy stage refuses this file until that publish has landed)",
 				strings.Join(accounts, ", "), selfCommand()+" update"))
 		}
 		return nil, userErr("the published policy node's %s cannot be re-seeded into %s by one edit, so the file was left as it is: %s",
