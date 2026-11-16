@@ -137,6 +137,20 @@ func TestReadinessBringsUpARepositoryThatDeclaresASecret(t *testing.T) {
 			t.Errorf("a step is still listed for %s: %v", ignoredProbe, st.Commands)
 		}
 	}
+	// And the first image build is offered, not held back by the ignored name.
+	// NeedsBuild reads the mounts of the spec Readiness returned, where the name
+	// is no longer one (dropMount above), so it holds nothing on it: the one
+	// command that brings a repository up -- update builds what NeedsBuild names
+	// and plans again, and that plan is the job -- can do it. A gate here would
+	// leave the job with no image and no offered way to get one: the same
+	// "cannot be brought up" the mount and the gate above are about.
+	names, err := NeedsBuild(ctx, f.c, got, versions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(names, "web") {
+		t.Errorf("the first image build of web is not offered (%v): a name the ruling ignores holds it back, and the job it is meant to deploy can never come", names)
+	}
 
 	// The control: with the door off, the same state is what it was before the
 	// ruling — the job waits for the name and the fix is the repository's own
@@ -157,6 +171,16 @@ func TestReadinessBringsUpARepositoryThatDeclaresASecret(t *testing.T) {
 	}
 	if _, ok := before.Workflows["web"].SecretEnv["SANDBOX_PROBE"]; !ok {
 		t.Errorf("with the door off the job does not mount SANDBOX_PROBE: %v", before.Workflows["web"].SecretEnv)
+	}
+	// The build gate too: with the door off the name is required and missing, so
+	// no build is offered for a job that could not run -- the machinery the
+	// ruling keeps, and the reason the assertion above is about the ruling.
+	names, err = NeedsBuild(ctx, f.c, before, versions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(names, "web") {
+		t.Errorf("with the door off the first image build is offered for a workflow whose secret is missing (%v)", names)
 	}
 }
 
