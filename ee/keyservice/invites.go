@@ -86,8 +86,20 @@ const operationsOrganisationName = "Fugaro Operations"
 // routeInvitation is the portal page an invitation's mail leads to. The
 // invitation's id is in the link and it is not a secret (invites.schema.json):
 // what makes the invitation usable is the sign-in Firebase Auth sends to the
-// address, and the screen then accepts the invitation it names.
+// address, and the page then accepts the invitation it names. The page is the
+// portal's and P2.3's to build, beside the sign-in screen it hands the invited
+// organisation's type to (that screen's own comment names this task).
 const routeInvitation = "/invite"
+
+// The two labels the site's hosts differ by: the intake answers on `keys.` plus
+// the site's canonical host (§3.1, and S3.5's Terraform attaches that domain),
+// and the portal on its own subdomain, `app.` (spec §7). They are what
+// portalOrigin reads, and they are here rather than in a config field because
+// the deployment states one origin (Config.URL) and the two are the same site.
+const (
+	intakeHostLabel = "keys"
+	portalHostLabel = "app"
+)
 
 // invitationSubject is a constant, so that nothing an owner typed reaches a
 // header through the invitation's mail (§7.2's rule, read at this mail path).
@@ -121,6 +133,9 @@ var (
 	// errOperationsSeeded is the seed asked for a deployment that is already
 	// seeded.
 	errOperationsSeeded = errors.New("keyservice: the operations organisation is already seeded")
+	// errNoPortalOrigin is a deployment whose intake origin is not the form the
+	// portal's own origin is read from, so no invitation's link can be built.
+	errNoPortalOrigin = errors.New("keyservice: the portal's own origin cannot be read from this deployment's intake origin")
 )
 
 // The actions this area writes, spelled `noun.verb` as wire_audit.go requires.
@@ -186,18 +201,57 @@ func validInviteRole(role string) bool {
 	return false
 }
 
+// portalOrigin answers the portal's own origin, which is where an invitation's
+// link has to point: the app is served there and the API is reached at
+// `/api/**` through hosting's rewrite (F21, the plan's P1.0: "no CORS (Hosting
+// rewrites `/api/**` to the service)"). A page on the intake's host is the
+// wrong app entirely — nothing serves an invitation's page there, so a link
+// built from Config.URL is a 404 and no invitation can ever be accepted.
+//
+// It is read from the intake's origin because that is the one origin a
+// deployment states, and the two are the same site under the two labels the
+// site's hosts differ by: the intake is `keys.` plus the canonical host (§3.1)
+// and the portal is `app.` plus it (spec §7's `app.fugaro.dev` beside the
+// design's `keys.fugaro.dev`, staging's host as the same pair). Nothing a
+// request carries is read here, so a caller cannot make this service mail a link
+// to a site of their own choosing (§7.2's rule, which the verification link
+// keeps the same way).
+//
+// An intake origin that is not that form is refused rather than guessed at. A
+// deployment that serves its portal elsewhere — its own host, a proxy in front
+// of both — is one whose portal origin has to be stated, and until it is, the
+// invitation that was not sent is a better failure than the mail that leads
+// somebody to a page that is not there.
+func portalOrigin(intakeOrigin string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(intakeOrigin))
+	if err != nil {
+		return "", fmt.Errorf("%w: the intake's URL %q does not parse: %v", errNoPortalOrigin, intakeOrigin, err)
+	}
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return "", fmt.Errorf("%w: the intake's URL %q states no scheme", errNoPortalOrigin, intakeOrigin)
+	}
+	label, site, found := strings.Cut(parsed.Host, ".")
+	if !found || label != intakeHostLabel || site == "" {
+		return "", fmt.Errorf("%w: the intake answers on %q, and the portal's origin is read from `%s.` plus the site's canonical host",
+			errNoPortalOrigin, parsed.Host, intakeHostLabel)
+	}
+	return parsed.Scheme + "://" + portalHostLabel + "." + site, nil
+}
+
 // invitationURL is the link an invitation's mail carries: the portal's own page
-// for it, built from the deployment's origin and never from the request's Host
-// header (§7.2's rule, as verificationMail's link is).
+// for it, built from the deployment's own origin (portalOrigin) and never from
+// the request's Host header (§7.2's rule, as verificationMail's link is).
 func invitationURL(origin, invitationID string) string {
 	return strings.TrimSuffix(origin, "/") + routeInvitation + "?invitation=" + url.QueryEscape(invitationID)
 }
 
 // invitationMail is the invitation as the person receives it: who is asking,
-// which address it is for, and the link that leads to it. The link is the whole
-// of what the mail carries — never a key and never a secret (D2182, F3) — and
-// the organisation's name is folded onto one line before it is written, because
-// a name is text an owner typed and a mail line is one line.
+// which address it is for, and the link that leads to it. The origin is the
+// PORTAL's (portalOrigin) and not the intake's, because that is where the page
+// the link names is served. The link is the whole of what the mail carries —
+// never a key and never a secret (D2182, F3) — and the organisation's name is
+// folded onto one line before it is written, because a name is text an owner
+// typed and a mail line is one line.
 func invitationMail(origin, organisation string, invitation WireInvite, ttl time.Duration) Message {
 	name := strings.Join(strings.Fields(organisation), " ")
 	return Message{
@@ -320,6 +374,13 @@ func (s *Service) createInvitation(ctx context.Context, actor Caller, organisati
 			return WireInvite{}, errInviteDomainRefused
 		}
 	}
+	// The origin the mail's link is built from, read before anything is written:
+	// a deployment this service cannot build a usable link for refuses the
+	// invitation rather than leaving one nobody can accept behind it.
+	origin, err := portalOrigin(s.cfg.URL)
+	if err != nil {
+		return WireInvite{}, err
+	}
 	id, err := newID()
 	if err != nil {
 		return WireInvite{}, err
@@ -341,7 +402,7 @@ func (s *Service) createInvitation(ctx context.Context, actor Caller, organisati
 	if err := s.putInvitation(ctx, invitation); err != nil {
 		return WireInvite{}, err
 	}
-	if err := s.mail.Send(ctx, invitationMail(s.cfg.URL, held.Organisation.Name, invitation, inviteTTL)); err != nil {
+	if err := s.mail.Send(ctx, invitationMail(origin, held.Organisation.Name, invitation, inviteTTL)); err != nil {
 		return WireInvite{}, err
 	}
 	if err := s.recordAudit(ctx, actor, auditEntry{
@@ -562,6 +623,14 @@ func (s *Service) SeedOperations(ctx context.Context, address string) (WireOrgan
 	if _, err := access.Member(address); err != nil {
 		return WireOrganisation{}, fmt.Errorf("%w: %v", errInviteEmailRefused, err)
 	}
+	// Read before anything is written, for the reason createInvitation reads it
+	// there: a deployment whose portal origin cannot be read from its intake's is
+	// one whose seeded invitation nobody could accept, and an operator learns it
+	// from the command rather than from a person who says the link does not work.
+	origin, err := portalOrigin(s.cfg.URL)
+	if err != nil {
+		return WireOrganisation{}, err
+	}
 	held, err := recordsWhere[WireOrganisation](ctx, s.docs, organisationsCollection,
 		Where{Field: "type", Value: orgTypeOperations})
 	if err != nil {
@@ -631,7 +700,7 @@ func (s *Service) SeedOperations(ctx context.Context, address string) (WireOrgan
 	if err != nil {
 		return WireOrganisation{}, err
 	}
-	if err := s.mail.Send(ctx, invitationMail(s.cfg.URL, org.Name, invitation, inviteTTL)); err != nil {
+	if err := s.mail.Send(ctx, invitationMail(origin, org.Name, invitation, inviteTTL)); err != nil {
 		return WireOrganisation{}, err
 	}
 	return org, nil

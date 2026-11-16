@@ -35,6 +35,12 @@ const (
 	samEmail = "sam@example.com"
 )
 
+// portalOriginHere is the portal's own origin for the case that reads the mail
+// path on its own, with no fixture: an invitation's link is built from the
+// portal's origin (portalOrigin), so a message handed to the mailer carries a
+// link to a page the portal serves.
+const portalOriginHere = "https://app.fugaro.example"
+
 // The routes this area registers, spelled here as the SPA spells them: the
 // members screen's own calls are `/orgs/{id}/invites` and the withdrawal beside
 // them (ee/portal/src/screens/members/members.tsx), and the accepting call is
@@ -119,6 +125,121 @@ func (f *fixture) lastMail() Message {
 	return f.mail.sent[len(f.mail.sent)-1]
 }
 
+// portalOriginOf is the fixture deployment's portal origin, which is what an
+// invitation's link is built from, and it is read the way the service reads it
+// so that a case about a link is a case about the origin the mail really names.
+func portalOriginOf(f *fixture) string {
+	f.t.Helper()
+	origin, err := portalOrigin(f.cfg.URL)
+	if err != nil {
+		f.t.Fatalf("reading the portal's origin from the deployment's intake origin %q: %v", f.cfg.URL, err)
+	}
+	return origin
+}
+
+// linkIn is whether one message's body carries a link to one invitation, checked
+// against the portal origin rather than the intake's: the page the link names is
+// served by the portal, so a mail built from the intake's own origin is a link
+// to a 404 and no invitation can be accepted through it.
+func linkIn(f *fixture, mail Message, invitationID string) bool {
+	f.t.Helper()
+	return strings.Contains(mail.Body, invitationURL(portalOriginOf(f), invitationID))
+}
+
+// auditedInvitation is whether the log holds one invitation action against one
+// organisation and one invitation: it is D456's line for the acts that write,
+// and for the operations membership acting in another organisation it is the
+// line beside the read across that got it there.
+func (f *fixture) auditedInvitation(action, organisationID, invitationID string) bool {
+	f.t.Helper()
+	for _, entry := range f.auditEntries() {
+		if entry.Action != action || entry.TargetID == nil || *entry.TargetID != invitationID {
+			continue
+		}
+		if entry.OrganisationID != nil && *entry.OrganisationID == organisationID {
+			return true
+		}
+	}
+	return false
+}
+
+// TestTheInvitationLinkPointsAtThePortal: an invitation's link names the page
+// that accepts it, and that page is the portal's. The intake answers on `keys.`
+// plus the site's canonical host (§3.1) and serves no portal route, so a mail
+// built from the deployment's intake origin is a link to a 404 and no invitation
+// can be accepted through it (F40). The portal's origin is read from that one
+// configured origin — the pair is a deployment convention, spec §7 — and a
+// deployment it cannot be read from refuses the invitation rather than writing
+// one and mailing a link nobody can follow.
+func TestTheInvitationLinkPointsAtThePortal(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		intake string
+		want   string
+	}{
+		{name: "the site's canonical host", intake: "https://keys.fugaro.dev", want: "https://app.fugaro.dev"},
+		{name: "the staging host", intake: "https://keys.staging.fugaro.dev", want: "https://app.staging.fugaro.dev"},
+		{name: "an origin with a trailing slash", intake: "https://keys.fugaro.dev/", want: "https://app.fugaro.dev"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			origin, err := portalOrigin(tc.intake)
+			if err != nil {
+				t.Fatalf("reading the portal's origin from %q: %v", tc.intake, err)
+			}
+			if origin != tc.want {
+				t.Errorf("the portal's origin is %q, want %q", origin, tc.want)
+			}
+			if link := invitationURL(origin, "inv_1"); !strings.HasPrefix(link, tc.want+routeInvitation) {
+				t.Errorf("an invitation's link is %q, want it under %s%s", link, tc.want, routeInvitation)
+			}
+		})
+	}
+
+	for _, tc := range []struct{ name, intake string }{
+		{name: "an intake on no label of its own", intake: "https://intake.fugaro.dev"},
+		{name: "the site's canonical host itself", intake: "https://fugaro.dev"},
+		{name: "an origin with no scheme", intake: "keys.fugaro.dev"},
+		{name: "nothing at all", intake: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if origin, err := portalOrigin(tc.intake); err == nil {
+				t.Errorf("an intake origin of %q answered the portal's origin %q, want the refusal: the portal's origin is `%s.` plus the site's canonical host and nothing else",
+					tc.intake, origin, portalHostLabel)
+			}
+		})
+	}
+
+	// A deployment whose configured origin is not that shape: no invitation is
+	// written and none is mailed, because the link it would carry leads nowhere.
+	f := newFixtureWith(t, Production, func(b *fixture) { b.cfg.URL = "https://intake.fugaro.dev" })
+	customer := f.signedUp(danaUID, danaEmail, "Example Ltd")
+	f.actsAs(danaUID, danaEmail, signInGoogle)
+
+	rec := f.inviteAs(customer.ID, samEmail, roleMember)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("inviting from a deployment whose portal origin cannot be read answered %d (%s), want 500", rec.Code, rec.Body)
+	}
+	if held := f.invitationsOf(customer.ID); len(held) != 0 {
+		t.Errorf("the refused invitation was written anyway: %+v", held)
+	}
+	if len(f.mail.sent) != 0 {
+		t.Error("the refused invitation mailed a link to a page nobody serves")
+	}
+
+	// The seed reads the same origin and refuses the same deployment, before it
+	// writes the operations organisation: the mail is the whole of what leads
+	// its first owner to it.
+	if _, err := f.svc.SeedOperations(context.Background(), opsEmail); err == nil {
+		t.Error("the seed accepted a deployment whose invitation link cannot be built")
+	}
+	if orgs := f.organisations(); len(orgs) != 1 || orgs[0].ID != customer.ID {
+		t.Errorf("the refused seed wrote %+v, want the one organisation that was already there", orgs)
+	}
+	if len(f.mail.sent) != 0 {
+		t.Error("the refused seed mailed a link to a page nobody serves")
+	}
+}
+
 // TestInvitationIsBoundToItsAddress: an invitation is an address and a role, and
 // it is accepted by that address alone — the comparison goes through
 // access.Member on both sides, so the invitation's spelling and the sign-in's
@@ -158,12 +279,14 @@ func TestInvitationIsBoundToItsAddress(t *testing.T) {
 	// The mail carries the link and never the invitation's state: what makes an
 	// invitation usable is the sign-in link Firebase Auth sends to the address,
 	// and the id in the mail is not a secret (invites.schema.json's own words).
+	// The link names the PORTAL's own origin, which is where the page is served
+	// (TestTheInvitationLinkPointsAtThePortal is the rule's own case).
 	mail := f.lastMail()
 	switch {
 	case mail.To != samEmail:
 		t.Errorf("the invitation was mailed to %q, want the invited address %q", mail.To, samEmail)
-	case !strings.Contains(mail.Body, invitationURL(intakeOrigin, invitation.ID)):
-		t.Errorf("the invitation's mail carries no link to %s: %s", invitationURL(intakeOrigin, invitation.ID), mail.Body)
+	case !linkIn(f, mail, invitation.ID):
+		t.Errorf("the invitation's mail carries no link to %s: %s", invitationURL(portalOriginOf(f), invitation.ID), mail.Body)
 	}
 
 	// Another account accepting it is refused, and refused the same way an
@@ -204,6 +327,12 @@ func TestInvitationIsBoundToItsAddress(t *testing.T) {
 	}
 	if stored, _ := f.invitation(invitation.ID); stored.State != inviteAccepted {
 		t.Errorf("the store holds the invitation %q, want it %q: the state is what makes it single use", stored.State, inviteAccepted)
+	}
+	// Who joined which organisation, and when, is the line the log is read for
+	// (D456): an acceptance nobody can read months later is an acceptance nobody
+	// can account for.
+	if !f.auditedInvitation(actionInvitationAccept, org.ID, invitation.ID) {
+		t.Error("the acceptance left no audit line, and every invitation action is written to the log (D456)")
 	}
 }
 
@@ -248,6 +377,9 @@ func TestInvitationIsSingleUse(t *testing.T) {
 	}
 	if withdrawn, _ := f.invitation(second.ID); withdrawn.State != inviteRevoked {
 		t.Errorf("the withdrawn invitation is %q, want %q", withdrawn.State, inviteRevoked)
+	}
+	if !f.auditedInvitation(actionInvitationRevoke, org.ID, second.ID) {
+		t.Error("the withdrawal left no audit line, and every invitation action is written to the log (D456)")
 	}
 	refused := f.acceptAs(erinUID, erinEmail, signInGoogle, second.ID)
 	if refused.Code != http.StatusConflict {
@@ -559,13 +691,27 @@ func TestAnOperationsMemberReadsButDecidesNothing(t *testing.T) {
 	if held := f.invitationsOf(customer.ID); len(held) != 1 || held[0].ID != invitation.ID {
 		t.Errorf("the refused invitation wrote %+v, want the one invitation that was already there", held)
 	}
+	// A refused act is not an act: the log holds what happened, so neither
+	// refusal left the operations member an invitation line (D456).
+	for _, entry := range f.auditEntries() {
+		if entry.ActorUID == opsUID && (entry.Action == actionInvitationCreate || entry.Action == actionInvitationRevoke) {
+			t.Errorf("the refused operations member left an %s line: %+v", entry.Action, entry)
+		}
+	}
 
 	f.setRole(operations.ID, opsUID, roleOwner)
-	if created := f.invited(customer.ID, "another@example.com", roleMember); created.OrganisationID != customer.ID {
+	created := f.invited(customer.ID, "another@example.com", roleMember)
+	if created.OrganisationID != customer.ID {
 		t.Errorf("an operations owner's invitation names %q, want the organisation the request named", created.OrganisationID)
+	}
+	if !f.auditedInvitation(actionInvitationCreate, customer.ID, created.ID) {
+		t.Error("an operations owner inviting somebody into another organisation left no audit line, and every operations act in a customer's organisation is written to the log (D456, F9)")
 	}
 	if rec := f.apiAsCaller(http.MethodDelete, apiOrgInvitePathOf(customer.ID, invitation.ID), ""); rec.Code != http.StatusNoContent {
 		t.Errorf("an operations owner withdrawing the invitation answered %d (%s), want 204", rec.Code, rec.Body)
+	}
+	if !f.auditedInvitation(actionInvitationRevoke, customer.ID, invitation.ID) {
+		t.Error("an operations owner withdrawing another organisation's invitation left no audit line, and the withdrawal is what the customer's log has to show (D456, F9)")
 	}
 }
 
@@ -613,7 +759,7 @@ func TestSeedIsAnInvitationBoundAtFirstSignIn(t *testing.T) {
 	case seeded.InvitedBy != opsEmail:
 		t.Errorf("the seeded invitation was invited by %q, want the address the seed names: the operator who runs the seed is who asked for it", seeded.InvitedBy)
 	}
-	if mail := f.lastMail(); mail.To != opsEmail || !strings.Contains(mail.Body, invitationURL(intakeOrigin, seeded.ID)) {
+	if mail := f.lastMail(); mail.To != opsEmail || !linkIn(f, mail, seeded.ID) {
 		t.Errorf("the seed mailed %+v, want the invitation's own link to %s", mail, opsEmail)
 	}
 
@@ -652,6 +798,47 @@ func TestSeedIsRefusedOnceSeeded(t *testing.T) {
 	}
 }
 
+// TestSeedIsRefusedOnceAnOperationsMemberExists: the seed's "already seeded"
+// predicate is a member or a live invitation, and they are two doors. Here the
+// seeded invitation was accepted and spent, so no pending invitation is left to
+// refuse on and the member is the whole of what stops a re-run — and a re-run is
+// the one write that reaches the live operations organisation without consulting
+// its email-domain list, so a second seed with any address would mail an owner
+// invitation into the team that reads across every customer's records.
+func TestSeedIsRefusedOnceAnOperationsMemberExists(t *testing.T) {
+	f := newFixture(t)
+
+	seeded, err := f.svc.SeedOperations(context.Background(), opsEmail)
+	if err != nil {
+		t.Fatalf("seeding the operations organisation: %v", err)
+	}
+	held := f.invitationsOf(seeded.ID)
+	if len(held) != 1 {
+		t.Fatalf("the seed wrote %d invitation(s), want one", len(held))
+	}
+	f.accepted(opsUID, opsEmail, held[0].ID)
+	if spent, _ := f.invitation(held[0].ID); spent.State != inviteAccepted {
+		t.Fatalf("the seeded invitation is %q, want it spent, so the member is the only thing the next seed can refuse on", spent.State)
+	}
+	mailed := len(f.mail.sent)
+
+	if _, err := f.svc.SeedOperations(context.Background(), samEmail); err == nil {
+		t.Fatal("a second seed was accepted into a live operations organisation, and a re-run mails an owner invitation to any address it is given")
+	}
+	if orgs := f.organisations(); len(orgs) != 1 || orgs[0].ID != seeded.ID {
+		t.Errorf("the refused seed wrote %+v, want the one organisation the first seed wrote", orgs)
+	}
+	if now := f.invitationsOf(seeded.ID); len(now) != 1 || now[0].ID != held[0].ID {
+		t.Errorf("the refused seed wrote %+v, want the invitation the first seed wrote and nothing else", now)
+	}
+	if member, found := f.membership(seeded.ID, opsUID); !found || member.Role != roleOwner {
+		t.Errorf("the refused seed left the operations organisation's member %+v (found %v), want the owner the first seed's invitation made", member, found)
+	}
+	if len(f.mail.sent) != mailed {
+		t.Error("the refused seed mailed something, and the address it names is one this deployment never decided about")
+	}
+}
+
 // TestSeedRefusesAnAddressThatIsNoMember: the seed's address is the one thing a
 // person types into a one-time command, and an address that is no member of this
 // tree is refused before anything is written — a member is what an invitation is
@@ -686,7 +873,7 @@ func TestResendMailerSendsNoKey(t *testing.T) {
 		CreatedAt: time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC),
 		ExpiresAt: time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC),
 	}
-	message := invitationMail(intakeOrigin, "Example Ltd", invitation, inviteTTL)
+	message := invitationMail(portalOriginHere, "Example Ltd", invitation, inviteTTL)
 
 	var asked *http.Request
 	var body []byte
@@ -742,7 +929,7 @@ func TestResendMailerSendsNoKey(t *testing.T) {
 	case sent.Text != message.Body:
 		t.Errorf("the mail's text is %q, want the body the service built: the mailer is a transport and not a renderer", sent.Text)
 	}
-	if !strings.Contains(sent.Text, invitationURL(intakeOrigin, invitation.ID)) {
+	if !strings.Contains(sent.Text, invitationURL(portalOriginHere, invitation.ID)) {
 		t.Errorf("the invitation's mail carries no link, and the link is the whole of what leads the person to it: %s", sent.Text)
 	}
 
