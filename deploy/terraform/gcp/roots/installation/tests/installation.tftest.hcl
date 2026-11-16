@@ -2707,6 +2707,13 @@ run "credentials_service_on" {
   # that is not a list of addresses) is refused by the process itself, by name,
   # and is C1.14's tests.
   #
+  # FUGARO_BUILD_ACCOUNTS is in this map because it is not conditional on
+  # anything this file's variables name: the account is created by the same
+  # apply that turns the service on, so every run of this test that deploys the
+  # service renders the entry with the one address the module derives from the
+  # project (B5, D2301 — the literal account ID, which is what makes the address
+  # a fact of the configuration rather than of the apply).
+  #
   # This run also names two review job accounts, so the EIGHTH name is
   # rendered: the review class's admitted set, which the class is dead without
   # (a deployment carrying the coding table alone admits no review caller, and
@@ -2728,6 +2735,7 @@ run "credentials_service_on" {
       FUGARO_REVIEW_JOB_ACCOUNTS     = "[{\"account\":\"default\",\"profile\":\"standard\",\"provider\":\"github\"},{\"account\":\"acme-personal\",\"profile\":\"standard\",\"provider\":\"github\"}]"
       FUGARO_VERIFIER_ACCOUNTS       = "[\"person-1@example.com\",\"fugaro-coordinator@proj-1234.iam.gserviceaccount.com\"]"
       FUGARO_PERSON_ACCOUNTS         = "[\"operator@example.com\"]"
+      FUGARO_BUILD_ACCOUNTS          = "[\"fugaro-build-identity@proj-1234.iam.gserviceaccount.com\"]"
     })
     error_message = "the container's environment is the names the service reads and nothing else: no secret ID, no credential value, and no entry beyond the ones the module sets for this run"
   }

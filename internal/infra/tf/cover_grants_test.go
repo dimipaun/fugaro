@@ -115,6 +115,12 @@ func TestGrantRulesMatrix(t *testing.T) {
 	// service's invoker, and every other cell refuses it.
 	const verifier = "serviceAccount:" + VerifierAccountID + "@proj-1.iam.gserviceaccount.com"
 	const coordinator = "serviceAccount:" + CoordinatorAccountID + "@proj-1.iam.gserviceaccount.com"
+	// The project's build identity (B5, D2301) is a sixth, and it is in this
+	// map for the verifier's reason: its one row is the same service's invoker
+	// bit, that row's grant needs no condition for the check to accept it, so
+	// every other cell of the table has to refuse it here rather than in a test
+	// of its own.
+	const buildIdentity = "serviceAccount:" + BuildIdentityAccountID + "@proj-1.iam.gserviceaccount.com"
 	all := map[string]bool{}
 	for _, row := range grantRules {
 		for k := range row {
@@ -127,7 +133,7 @@ func TestGrantRulesMatrix(t *testing.T) {
 	for typ, row := range grantRules {
 		for key := range all {
 			role := grantRoleString(key)
-			for kind, member := range map[who]string{toPeople: person, toAccounts: account, toDeployer: "serviceAccount:" + DeployerAccount("proj-1"), toCredentials: credentials, toCoordinator: coordinator, toVerifier: verifier} {
+			for kind, member := range map[who]string{toPeople: person, toAccounts: account, toDeployer: "serviceAccount:" + DeployerAccount("proj-1"), toCredentials: credentials, toCoordinator: coordinator, toVerifier: verifier, toBuildIdentity: buildIdentity} {
 				want := row[key]&kind != 0
 				after := map[string]any{"member": member, "role": role, "bucket": "fugaro-runs-proj-1"}
 				if acct := deployerGrantAccountFor(typ, role); acct != "" {
@@ -225,7 +231,7 @@ func TestGrantRulesNameOnlyKnownTypesAndRoles(t *testing.T) {
 			t.Errorf("%s has no roles", typ)
 		}
 		for key, w := range row {
-			if w == 0 || w&^(toPeople|toAccounts|toDeployer|toCredentials|toCoordinator|toVerifier|toCatalogCheck|toMCP|toIntake|toReports) != 0 {
+			if w == 0 || w&^(toPeople|toAccounts|toDeployer|toCredentials|toCoordinator|toVerifier|toCatalogCheck|toMCP|toIntake|toReports|toBuildIdentity) != 0 {
 				t.Errorf("%s %s: bad principal kinds %d", typ, key, w)
 			}
 			if id, ok := strings.CutPrefix(key, customKey); ok {
