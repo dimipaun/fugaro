@@ -5622,8 +5622,17 @@ func (r *run) finalize(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listing what the run left untracked: %w", err)
 	}
-	if len(strays) > 0 {
-		r.fail(strayRefusal(strays))
+	// And the other end of the same reading: a binary the run's own commits
+	// added is in a commit, so the untracked listing above cannot see it and no
+	// commit finalize makes would carry it (stray.go, spec.md §4.2, D997). Both
+	// are answers of one predicate, and a run refused by both is refused once,
+	// with both lists named.
+	added, err := r.committedBinaries(ctx)
+	if err != nil {
+		return fmt.Errorf("reading the run's own diff for binaries it added: %w", err)
+	}
+	if len(strays) > 0 || len(added) > 0 {
+		r.fail(strayRefusal(strays, added))
 	}
 	committed, err := r.repo.CommitAllExcept(ctx, leftover, strayPaths(strays))
 	if err != nil {

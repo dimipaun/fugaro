@@ -103,6 +103,108 @@ func (r *run) strayArtifact(path string) *strayArtifact {
 	return &strayArtifact{path: path, why: why}
 }
 
+// committedBinaries is the same predicate over the other reading of the run:
+// the paths the run's own diff adds that carry bytes no reviewer can read and
+// that the project's policy does not admit (spec.md §4.2, D997).
+//
+// It is not a second rule. strayArtifacts reads what a commit finalize would
+// make — the untracked files and the ones the agent staged — and a path the
+// agent committed itself is in neither listing, because it is in a commit;
+// this reads the run's own diff (`<reviewRev>...HEAD`, the range the review
+// stage is handed) and asks the same question of the paths it adds. A binary
+// the run merely *edited* is not an addition and is left alone, the same
+// tolerance §2.1 gives a file the base commit already holds.
+func (r *run) committedBinaries(ctx context.Context) ([]strayArtifact, error) {
+	if r.repo == nil {
+		return nil, nil
+	}
+	rng := r.reviewRev(ctx) + "...HEAD"
+	raw, err := rawChanges(ctx, r.repo, rng)
+	if err != nil {
+		return nil, err
+	}
+	numstat, err := reviewChanges(ctx, r.repo, rng)
+	if err != nil {
+		return nil, err
+	}
+	added, binary := addedBinaries(raw, numstat)
+	sized := make([]string, 0, len(added))
+	for _, path := range added {
+		if b, named := binary[path]; named && b {
+			sized = append(sized, path)
+		}
+	}
+	var sizes map[string]int64
+	if len(sized) > 0 {
+		// The size of the blob at HEAD, which is the one the branch carries:
+		// `git ls-tree -l` reads the size without reading the bytes.
+		if sizes, err = treeSizes(ctx, r.repo, "HEAD", sized); err != nil {
+			return nil, err
+		}
+	}
+	var strays []strayArtifact
+	for _, path := range added {
+		isBinary, named := binary[path]
+		if named && !isBinary {
+			continue
+		}
+		size, sized := sizes[path]
+		if !named || !sized {
+			// Nothing read this path's bytes: the numstat reading does not name
+			// it, or HEAD's tree does not hold it although the raw reading says
+			// it added it there. An unreadable file is refused rather than
+			// passed, the same as a file in the working tree that cannot be read.
+			strays = append(strays, strayArtifact{path: path, why: "it could not be read"})
+			continue
+		}
+		if why := r.binaryRefusal(path, size); why != "" {
+			strays = append(strays, strayArtifact{path: path, why: why})
+		}
+	}
+	return strays, nil
+}
+
+// addedBinaries is §4.2's pairing of the two readings of one range: the paths
+// the raw reading adds, and which of them the numstat reading calls binary. The
+// pairing is by path and never by index (F14): the two readings are separate
+// git invocations whose orders nothing promises to agree, and a pairing by
+// index would answer about the wrong file with nothing to show for it.
+//
+// A path whose new blob is a blob a delete row in the same range carries is a
+// move of a tracked file, not an addition: --no-renames reports a rename as a
+// delete and an add, the branch's work is unchanged, and §2.1 leaves a tracked
+// binary alone. Both ids come from the raw reading, so the rule costs no third
+// read and no rename detection. A move that also edits the bytes has two
+// different ids and is an addition of bytes nothing admits, which is the honest
+// reading of it.
+//
+// A path the returned map does not name is one the numstat reading never
+// paired: the caller refuses it rather than trusting a file nothing read.
+func addedBinaries(raw []rawChange, numstat []reviewChange) ([]string, map[string]bool) {
+	moved := make(map[string]bool, len(raw))
+	for _, c := range raw {
+		if c.status == statusDeleted {
+			moved[c.oldBlob] = true
+		}
+	}
+	how := make(map[string]bool, len(numstat))
+	for _, c := range numstat {
+		how[c.path] = c.binary
+	}
+	var added []string
+	binary := make(map[string]bool)
+	for _, c := range raw {
+		if c.status != statusAdded || moved[c.newBlob] {
+			continue
+		}
+		added = append(added, c.path)
+		if b, named := how[c.path]; named {
+			binary[c.path] = b
+		}
+	}
+	return added, binary
+}
+
 // binaryRefusal is why the project's binary rule refuses a file of size bytes
 // at path, or "" when it admits it (D988, spec.md §4.1).
 //
@@ -168,17 +270,40 @@ func readHead(path string, n int) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(f, int64(n)))
 }
 
-// strayRefusal is finalize's reason for the artifacts it refused: every path
+// strayRefusal is finalize's reason for the binaries it refused: every path
 // with the reason it was refused, so the file can be dealt with by name, and
 // the rule it met — the project's binaries.allow, which admits the paths a
 // binary may be added at, within its cap.
-func strayRefusal(strays []strayArtifact) string {
+//
+// Both readings of the rule are named in the one sentence, because a run can be
+// refused by both at once and `fail` keeps the reason it is handed first: a
+// sentence per reading, written where each is read, would drop one of the two
+// lists from the record with nothing saying so. The two clauses are not the
+// same news — what the run left untracked is held out of its own leftover
+// commit, so the branch does not carry it, while what the run's own commits
+// added is already on the branch, because the run does not rewrite the agent's
+// history (D989) and a person has to delete the file.
+func strayRefusal(untracked, committed []strayArtifact) string {
+	var parts []string
+	if len(untracked) > 0 {
+		parts = append(parts, "finalize refused to commit what the run left untracked, so the branch does not carry it: "+
+			artifactsWithWhy(untracked))
+	}
+	if len(committed) > 0 {
+		parts = append(parts, "finalize refused the run over what its own commits added, which the branch carries all the same, because the run does not rewrite the commits the agent made: "+
+			artifactsWithWhy(committed))
+	}
+	return strings.Join(parts, "; ") +
+		"; a binary is admitted by the project's binaries.allow, at the paths it names and within its cap, and what it does not admit is a build's artifact rather than the run's work"
+}
+
+// artifactsWithWhy is refused paths with the reason each was refused.
+func artifactsWithWhy(strays []strayArtifact) string {
 	parts := make([]string, 0, len(strays))
 	for _, a := range strays {
 		parts = append(parts, a.path+" ("+a.why+")")
 	}
-	return "finalize refused to commit what the run left untracked, so the branch does not carry it: " +
-		strings.Join(parts, ", ") + "; a binary is admitted by the project's binaries.allow, at the paths it names and within its cap, and what it does not admit is a build's artifact rather than the run's work"
+	return strings.Join(parts, ", ")
 }
 
 // strayPaths is the paths of the artifacts finalize holds back from its own

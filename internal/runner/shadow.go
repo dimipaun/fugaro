@@ -348,11 +348,27 @@ func (r *run) shadowFinalize(ctx context.Context) error {
 	// The champion's leftover commit holds back the artifacts finalize refuses
 	// (stray.go), and this arm holds back the same ones, so the two arms'
 	// changed paths and patch objects describe the same checkout of the same
-	// work — which is what a pair is scored on (D559). Nothing is recorded as
-	// refused here: this arm has no branch for a refusal to be about.
+	// work — which is what a pair is scored on (D559). It records the refusal
+	// for the same reason: a refusal is what the champion's own record carries,
+	// and an arm whose record said succeeded while the champion's said failed
+	// would be a pair read as two runs of different work (D555). What this arm
+	// has no branch for is the push, not the answer.
 	strays, err := r.strayArtifacts(ctx)
 	if err != nil {
 		return fmt.Errorf("listing what the run left untracked: %w", err)
+	}
+	// The champion's other reading of the rule runs here too, over the same
+	// policy and the same range, and it is recorded the same way (stray.go's
+	// committedBinaries, spec.md §4.2). The bytes are not the same risk —
+	// nothing of a challenger's reaches the developer (shadow.go's own note) —
+	// which is why this is a call to the champion's check and not a second
+	// enforcement point with an answer of its own.
+	added, err := r.committedBinaries(ctx)
+	if err != nil {
+		return fmt.Errorf("reading the run's own diff for binaries it added: %w", err)
+	}
+	if len(strays) > 0 || len(added) > 0 {
+		r.fail(strayRefusal(strays, added))
 	}
 	committed, err := r.repo.CommitAllExcept(ctx, leftover, strayPaths(strays))
 	if err != nil {
