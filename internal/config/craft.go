@@ -411,6 +411,33 @@ func SupportedCredentialTypes() []string {
 	return []string{CredentialTypeOpenRouter, CredentialTypeAnthropic, CredentialTypeClaudeOAuth}
 }
 
+// KeyCredentialType reports whether a credential of this type authenticates with
+// a key the installation stores under the credential's own derived secret name
+// (CredentialSecret): the two types whose key a call sends to a provider's API.
+// claude-oauth is not one — its token is a named Claude account's, stored under
+// that account's own name — and neither is the built-in vertex, which carries no
+// key at all.
+//
+// It is the one place "which type's value lives under CredentialSecret" is
+// decided, so the command that stores such a value (fugaro accounts add --type),
+// the store path's own eligibility rules and anything that reads the value back
+// cannot name two containers for one credential.
+func KeyCredentialType(typ string) bool {
+	return typ == CredentialTypeOpenRouter || typ == CredentialTypeAnthropic
+}
+
+// CredentialNamed is the credential of creds named name, and whether the block
+// defines one. A block that defines two entries under one name cannot reach a
+// caller (ValidateCredentials refuses it), so the first is the answer.
+func CredentialNamed(creds []Credential, name string) (Credential, bool) {
+	for _, c := range creds {
+		if c.Name == name {
+			return c, true
+		}
+	}
+	return Credential{}, false
+}
+
 // ValidatePools reports every rule a pools block breaks. creds is the
 // credentials block of the same document: a pool's members name credentials of
 // it, or the built-in vertex, so a pool that names a credential the document

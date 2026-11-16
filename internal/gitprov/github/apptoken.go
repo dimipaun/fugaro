@@ -204,6 +204,32 @@ var personReadTokenPermissions = map[string]string{
 // own test holds it to exactly these three.
 func PersonReadTokenPermissions() map[string]string { return maps.Clone(personReadTokenPermissions) }
 
+// contextTokenPermissions is what a run's CONTEXT repository tokens ask for
+// (C5b of docs/forge-authorship-images/implementation-plan.md, D613): the read
+// a clone of a repository the run only READS needs, and no value carrying a
+// write anywhere.
+//
+// Two permissions, and both are load-bearing: contents: read is the clone
+// itself, which is the whole of what a context repository is for, and
+// metadata: read is what GitHub requires of any request at all. Nothing of a
+// context repository is ever written — it is cloned outside the work tree and
+// given no push URL (C5c) — so a token that could write would be reach a
+// stolen credential would have for nothing.
+//
+// It is a set of its own rather than the build's or the challenger arm's
+// reused, although the three ask for the same two permissions today: what an
+// image build reads, what a challenger arm may reach and what a context
+// repository is read with are three reaches with three reasons, and a later
+// change to any one of them must not silently widen the other two.
+// TestContextTokenIsReadOnly holds this set to exactly these two and to the
+// body the mint sends with it.
+var contextTokenPermissions = map[string]string{"contents": "read", "metadata": "read"}
+
+// ContextTokenPermissions are the permissions of a context repository's
+// installation token, a copy the caller may keep: nothing here asks to write
+// anything.
+func ContextTokenPermissions() map[string]string { return maps.Clone(contextTokenPermissions) }
+
 // GitUsername is the HTTPS username git uses with an installation token.
 const GitUsername = gitUsername
 
@@ -293,10 +319,144 @@ func repositoryNames(repos []string) ([]string, error) {
 	return out, nil
 }
 
-// appClient is the App-authenticated API client both mints above sign with:
+// ContextToken is one installation token a run's context repositories are read
+// with, and the repositories of one App installation it covers.
+type ContextToken struct {
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expires_at"`
+	// Repositories are the repositories this token is scoped to, as "owner/name"
+	// (task.CanonicalRepo's form, which is what the caller named them by), in
+	// the order the caller named them. It is exactly the set GitHub scoped the
+	// token to: GitHub answers a
+	// token covering the names in the request and no others, so an answer that
+	// named a different set — or the owner's every repository — would be a
+	// credential whose reach it misstates.
+	Repositories []string `json:"repositories"`
+}
+
+// MintContextTokens mints ONE installation token per App installation for the
+// context repositories in repos, each scoped to exactly that installation's
+// repositories and to perms, and each valid for at least half an hour (C5b,
+// D613).
+//
+// One token per installation is what a run's context repositories need and not
+// a choice: a GitHub App installation belongs to the owner, the endpoint below
+// is that installation's, and a run's context list may name repositories under
+// different owners, so a list spanning two owners is served by two tokens. One
+// token cannot cover both, because GitHub scopes a token to the repositories of
+// the installation it was minted for.
+//
+// It is MintRepositoriesToken's sibling and not a widening of it: a build's
+// token covers its entry's repositories and this one a run's context list, and
+// both are read-only only because of the permission set the caller passes
+// (ContextTokenPermissions). What it adds is the grouping — which installation
+// each repository belongs to — so that a caller holding a list of canonical
+// names is served the tokens that list is read with and has no installation to
+// work out for itself.
+//
+// The repositories are "owner/name" pairs — the form task.CanonicalRepo
+// reduces a repository to, which the run's task and the identity's own claim
+// hold them in — and are held to that shape here rather than sent to GitHub,
+// for MintRepositoriesToken's reason: a name this code cannot read is a name
+// whose answer would be a token covering less than the caller asked for, and a
+// clone that failed somewhere further away from the cause. The provider is not
+// part of the name, because the name is asked at THIS provider: the caller
+// that has a canonical name has already read whose provider it is.
+func MintContextTokens(ctx context.Context, o Options, repos []string, perms map[string]string) ([]ContextToken, error) {
+	if o.AppID == "" || o.PrivateKey == nil {
+		return nil, errors.New("github: an App ID and private key are required")
+	}
+	if len(perms) == 0 {
+		return nil, errors.New("github: an installation token needs its permissions")
+	}
+	groups, err := contextGroups(repos)
+	if err != nil {
+		return nil, err
+	}
+	app, o := appClient(o)
+	out := make([]ContextToken, 0, len(groups))
+	for _, g := range groups {
+		src := &tokenSource{app: app, owner: g.owner, repo: g.names[0], repos: g.names, now: o.Now, permissions: maps.Clone(perms)}
+		tok, exp, err := src.Token(ctx, buildTokenMinValid)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ContextToken{Token: tok, ExpiresAt: exp, Repositories: g.repos})
+	}
+	return out, nil
+}
+
+// contextGroup is the context repositories of ONE owner: the repositories as
+// the endpoint takes them (names within the owner) and the canonical names
+// those are, which is what the answer states.
+type contextGroup struct {
+	owner string
+	names []string
+	repos []string
+}
+
+// contextGroups holds a context list to what the mint endpoint takes: the
+// repositories of one owner together, in the order they were given, and no
+// repository twice.
+//
+// The order is the caller's and not a map's: the two lists of an owner are
+// appended in the order the repositories arrived, so the same list answers in
+// the same order twice, and an operator reading two answers of one run reads
+// one order. A repository named twice is refused rather than deduplicated — a
+// name repeated is a caller's mistake, and the set a token covers is a set.
+func contextGroups(repos []string) ([]contextGroup, error) {
+	if len(repos) == 0 {
+		return nil, errors.New("github: a context token needs at least one repository")
+	}
+	var groups []contextGroup
+	at := make(map[string]int, len(repos))
+	seen := make(map[string]bool, len(repos))
+	for _, canonical := range repos {
+		owner, name, err := contextRepository(canonical)
+		if err != nil {
+			return nil, err
+		}
+		if seen[canonical] {
+			return nil, errors.New("github: the same context repository is named twice")
+		}
+		seen[canonical] = true
+		i, ok := at[owner]
+		if !ok {
+			groups = append(groups, contextGroup{owner: owner})
+			i = len(groups) - 1
+			at[owner] = i
+		}
+		groups[i].names = append(groups[i].names, name)
+		groups[i].repos = append(groups[i].repos, canonical)
+	}
+	return groups, nil
+}
+
+// contextRepository splits one "owner/name" of a context list into the owner
+// and the repository name GitHub's endpoint takes.
+//
+// The two refusals are the write mint's own (credsvc's mintRepository, which
+// splits the calling job's repository the same way, and for the same reason):
+// a name that is not two non-empty segments, and a name with a further "/" in
+// it — a nested group, which this program's repository names allow and GitHub
+// has no repository for. The token is scoped to what these two strings say, and
+// GitHub takes them as given, so a name this code cannot read is a name it must
+// not guess a repository out of: "a/b/c" sent as owner "a" and name "b/c" would
+// be answered a token covering something the caller did not name, and one sent
+// as owner "a/b" would be a repository of another owner's installation.
+func contextRepository(repo string) (owner, name string, err error) {
+	owner, name, ok := strings.Cut(repo, "/")
+	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
+		return "", "", errors.New("github: a context repository is an owner and a name, and not a nested group")
+	}
+	return owner, name, nil
+}
+
+// appClient is the App-authenticated API client every mint above signs with:
 // the API's own headers, and an Authorization that is a JWT the App's key
 // signs. It holds nothing about WHAT is minted, which is what lets a run's
-// mint and a build's share one spelling of the endpoint's shape.
+// mint, a build's and a context list's share one spelling of the endpoint's
+// shape.
 //
 // It returns the options it was given with BaseURL and Now filled in, because
 // the caller needs the clock the client signs with: a test that states the
@@ -458,6 +618,14 @@ func (s *tokenSource) Token(ctx context.Context, minValid time.Duration) (string
 const (
 	// ServiceTokenPath is where the service mints a run's installation token.
 	ServiceTokenPath = "/v1/github/installation-token"
+	// ServiceContextTokenPath is where the service mints a run's read-only
+	// context-repository tokens (C5b, D613). It is a route of its own and not a
+	// field of the mint above: the write mint carries no repository and must go
+	// on carrying none (docs/git-providers.md says so, and
+	// internal/cli's docs test pins it against MintRequest), while this call's
+	// whole subject is the repositories the run asks to read — which are the
+	// ones its own identity's claim names, and nothing a caller can widen.
+	ServiceContextTokenPath = "/v1/github/context-tokens"
 	// ServiceHeaderRunIdentity carries the run's own Firebase ID token: the
 	// identity the service verifies the run by (credsvc.HeaderRunIdentity).
 	ServiceHeaderRunIdentity = "X-Fugaro-Run-Identity"
@@ -493,6 +661,30 @@ type serviceMintRequest struct {
 type serviceMintAnswer struct {
 	Token     string    `json:"token"`
 	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// serviceContextTokenRequest is a context mint call's body and
+// serviceContextTokenAnswer its answer (credsvc.ContextTokenRequest and
+// ContextTokenResponse): the App's ID and the repositories the run asks to
+// read.
+//
+// The list is the caller's ASK and never its reach. The repositories it may be
+// served are the ones its own identity's claim names (C5a), which is what the
+// service holds the ask to — so the field widens nothing, and a call naming a
+// repository the launch did not record is refused and audited.
+//
+// The names are the ones the task and the claim hold them in: canonical
+// "owner/name" (task.CanonicalRepo's form), which is the key space the
+// published policy is read in, so what the service compares is a name and not
+// a spelling a caller chose. The answer names each token's repositories in
+// that same form.
+type serviceContextTokenRequest struct {
+	AppID        string   `json:"app_id"`
+	Repositories []string `json:"repositories"`
+}
+
+type serviceContextTokenAnswer struct {
+	Tokens []ContextToken `json:"tokens"`
 }
 
 // serviceWireError is the error code an answer carries when the service
@@ -605,75 +797,21 @@ func (s *ServiceTokens) Token(ctx context.Context, minValid time.Duration) (stri
 	return s.token, s.expires, nil
 }
 
-// mint makes one mint call and returns its token.
+// mint makes one write-mint call and returns its token.
 //
-// Nothing here can put a value in an error: the identities and the token are
-// never formatted into one, and the service's own answer is read for the
-// status and the error code alone. The message beside that code is the
-// service's text -- a sentence this project wrote, but written for the
-// operator's log and not for a run, and an answer's body is another writer's
-// to fill -- so it is dropped rather than relayed, exactly as the forward
-// path's refusals are (credsvc/github.go's mint logs GitHub's status and
-// never its text, for the same reason in the other direction).
+// The call itself is `call`'s (the identities, the transport, the status); what
+// is here is the answer's own three rules, and each of them reaches nobody
+// with a value: a token that is missing, or that could not satisfy minValid,
+// is refused rather than returned, and no field of the answer is ever
+// formatted into the refusal.
 func (s *ServiceTokens) mint(ctx context.Context, minValid time.Duration) (string, time.Time, error) {
-	if s.URL == "" || s.AppID == "" || s.IDToken == nil || s.RunIDToken == nil {
-		return "", time.Time{}, fmt.Errorf("%w: this run has no credentials service to mint at", ErrServiceTokensIdentity)
-	}
-	// The URL is checked before anything is sent to it. A mint presents the
-	// run's own Firebase ID token, which is a bearer credential for the whole
-	// run: over plain http it would travel in cleartext, and a URL whose
-	// scheme nobody chose is not one to hand it to. https, or http on a
-	// loopback address, is the rule the model path already holds its own URL
-	// to (internal/gateway's checkBaseURL, internal/runner's serviceUpstream).
-	if err := checkServiceURL(s.URL); err != nil {
-		return "", time.Time{}, err
-	}
-	run := s.RunIDToken()
-	if run == "" {
-		return "", time.Time{}, fmt.Errorf("%w: the run's own identity token is not available, and a mint under the job's identity alone is not one the service verifies", ErrServiceTokensIdentity)
-	}
-	id, err := s.IDToken(ctx)
-	if err != nil {
-		return "", time.Time{}, fmt.Errorf("%w: the job's identity token could not be minted: %v", ErrServiceTokensIdentity, err)
-	}
-	if id == "" {
-		return "", time.Time{}, fmt.Errorf("%w: the metadata server answered with no identity token", ErrServiceTokensIdentity)
-	}
 	body, err := json.Marshal(serviceMintRequest{AppID: s.AppID})
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("%w: the mint's request could not be built", ErrServiceTokens)
 	}
-	// One clean header value each: a token with a newline in it is refused
-	// here rather than sent, the rule internal/runner keeps for the same two
-	// values on the forward path.
-	for _, v := range []string{run, id} {
-		if !printableValue(v) {
-			return "", time.Time{}, fmt.Errorf("%w: an identity token is not one header value", ErrServiceTokensIdentity)
-		}
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(s.URL, "/")+ServiceTokenPath, bytes.NewReader(body))
+	data, err := s.call(ctx, ServiceTokenPath, body)
 	if err != nil {
-		return "", time.Time{}, fmt.Errorf("%w: the mint's request could not be built", ErrServiceTokens)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+id)
-	req.Header.Set(ServiceHeaderRunIdentity, run)
-	req.Header.Set(ServiceHeaderRunJob, s.Job)
-	resp, err := serviceMintClient(s.HTTP).Do(req)
-	if err != nil {
-		return "", time.Time{}, fmt.Errorf("%w: the credentials service could not be reached", ErrServiceTokens)
-	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxServiceAnswerBytes+1))
-	if err != nil {
-		return "", time.Time{}, fmt.Errorf("%w: the service's answer could not be read", ErrServiceTokens)
-	}
-	if len(data) > maxServiceAnswerBytes {
-		return "", time.Time{}, fmt.Errorf("%w: the service's answer is larger than a mint's", ErrServiceTokens)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", time.Time{}, fmt.Errorf("%w: the service answered %d%s", ErrServiceTokens, resp.StatusCode, refusalCode(data))
+		return "", time.Time{}, err
 	}
 	var ans serviceMintAnswer
 	if err := json.Unmarshal(data, &ans); err != nil {
@@ -693,6 +831,139 @@ func (s *ServiceTokens) mint(ctx context.Context, minValid time.Duration) (strin
 		return "", time.Time{}, fmt.Errorf("%w: the token the service minted expires too soon to satisfy the requested %s validity", ErrServiceTokens, minValid)
 	}
 	return ans.Token, ans.ExpiresAt, nil
+}
+
+// call makes one call of this service's contract and returns its answer's
+// bytes.
+//
+// It is what the two mints of this client have in common -- the fields a run
+// must hold, the URL's scheme, the two identities as one header value each, the
+// bounded answer and a refusal read for its status and error code alone -- and
+// the reason it is one function is that those rules are the run's own
+// presentation of itself and not a mint's: a rule added to one call (a header,
+// the URL's scheme, the size of what may come back) that the other missed would
+// be a second, weaker way for a run to reach the service.
+//
+// Nothing here can put a value in an error: neither identity token is ever
+// formatted into one, and the service's own answer is read for the status and
+// the error code alone. The message beside that code is the service's text --
+// a sentence this project wrote, but written for the operator's log and not for
+// a run, and an answer's body is another writer's to fill -- so it is dropped
+// rather than relayed, exactly as the forward path's refusals are
+// (credsvc/github.go's mint logs GitHub's status and never its text, for the
+// same reason in the other direction). An answer over the bound is refused
+// rather than read: it is a small object by contract, so a longer one is not
+// one the service wrote.
+func (s *ServiceTokens) call(ctx context.Context, path string, body []byte) ([]byte, error) {
+	if s.URL == "" || s.AppID == "" || s.IDToken == nil || s.RunIDToken == nil {
+		return nil, fmt.Errorf("%w: this run has no credentials service to call", ErrServiceTokensIdentity)
+	}
+	// The URL is checked before anything is sent to it. A call presents the
+	// run's own Firebase ID token, which is a bearer credential for the whole
+	// run: over plain http it would travel in cleartext, and a URL whose
+	// scheme nobody chose is not one to hand it to. https, or http on a
+	// loopback address, is the rule the model path already holds its own URL
+	// to (internal/gateway's checkBaseURL, internal/runner's serviceUpstream).
+	if err := checkServiceURL(s.URL); err != nil {
+		return nil, err
+	}
+	run := s.RunIDToken()
+	if run == "" {
+		return nil, fmt.Errorf("%w: the run's own identity token is not available, and a call under the job's identity alone is not one the service verifies", ErrServiceTokensIdentity)
+	}
+	id, err := s.IDToken(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("%w: the job's identity token could not be minted: %v", ErrServiceTokensIdentity, err)
+	}
+	if id == "" {
+		return nil, fmt.Errorf("%w: the metadata server answered with no identity token", ErrServiceTokensIdentity)
+	}
+	// One clean header value each: a token with a newline in it is refused
+	// here rather than sent, the rule internal/runner keeps for the same two
+	// values on the forward path.
+	for _, v := range []string{run, id} {
+		if !printableValue(v) {
+			return nil, fmt.Errorf("%w: an identity token is not one header value", ErrServiceTokensIdentity)
+		}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(s.URL, "/")+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("%w: the call's request could not be built", ErrServiceTokens)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+id)
+	req.Header.Set(ServiceHeaderRunIdentity, run)
+	req.Header.Set(ServiceHeaderRunJob, s.Job)
+	resp, err := serviceMintClient(s.HTTP).Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%w: the credentials service could not be reached", ErrServiceTokens)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxServiceAnswerBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("%w: the service's answer could not be read", ErrServiceTokens)
+	}
+	if len(data) > maxServiceAnswerBytes {
+		return nil, fmt.Errorf("%w: the service's answer is larger than this contract's", ErrServiceTokens)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%w: the service answered %d%s", ErrServiceTokens, resp.StatusCode, refusalCode(data))
+	}
+	return data, nil
+}
+
+// ContextTokens asks the service for read-only installation tokens over repos,
+// one per App installation (C5b, D613).
+//
+// The repositories are canonical names (task.CanonicalRepo's "owner/name"),
+// the spelling the task and the run identity's own claim hold them in, and they
+// are the caller's ASK: the service serves the ones the run's identity names
+// and refuses any other, so this method cannot widen what the launch granted.
+//
+// Nothing is cached, and that is the difference from Token: the token above is
+// what the whole run makes its API calls with, so one mint per hour per run is
+// the rule that keeps the audit log readable, while this is asked once for the
+// list the run was launched to read and the answer is the caller's to hold.
+// A caller that asked again would be asking the service to audit a second time
+// for a credential it already has.
+func (s *ServiceTokens) ContextTokens(ctx context.Context, repos []string) ([]ContextToken, error) {
+	body, err := json.Marshal(serviceContextTokenRequest{AppID: s.AppID, Repositories: repos})
+	if err != nil {
+		return nil, fmt.Errorf("%w: the context mint's request could not be built", ErrServiceTokens)
+	}
+	data, err := s.call(ctx, ServiceContextTokenPath, body)
+	if err != nil {
+		return nil, err
+	}
+	var ans serviceContextTokenAnswer
+	if err := json.Unmarshal(data, &ans); err != nil {
+		return nil, fmt.Errorf("%w: the service's answer is not a context mint's", ErrServiceTokens)
+	}
+	if len(ans.Tokens) == 0 {
+		// A served call names at least one repository, so it is answered at
+		// least one token: an answer carrying none is not this contract's, and
+		// it must never be cached or read as "there was nothing to read".
+		return nil, fmt.Errorf("%w: the service's answer carries no token", ErrServiceTokens)
+	}
+	for _, tok := range ans.Tokens {
+		if tok.Token == "" {
+			// An empty token is no token: it would fail the clone as an
+			// authentication error, further away from the cause, exactly as an
+			// empty one from the write mint would.
+			return nil, fmt.Errorf("%w: the service's answer carries a token that is empty", ErrServiceTokens)
+		}
+		if len(tok.Repositories) == 0 {
+			return nil, fmt.Errorf("%w: the service's answer carries a token that names no repository", ErrServiceTokens)
+		}
+		if tok.ExpiresAt.Sub(s.now()) < buildTokenMinValid {
+			// The same rule the write mint is held to: a token that is already
+			// close to expiring cannot be what a clone is made with, and it has
+			// been minted and audited at the service, so it reaches nobody.
+			return nil, fmt.Errorf("%w: a token the service minted expires too soon to read a context repository with", ErrServiceTokens)
+		}
+	}
+	return ans.Tokens, nil
 }
 
 // checkServiceURL refuses a credentials service URL this code will not send a

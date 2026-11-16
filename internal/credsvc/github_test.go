@@ -125,6 +125,11 @@ type ghFake struct {
 	failBody string
 	// installation is the id the installation lookup answers. 0 is 777.
 	installation int64
+	// installations is the id the lookup answers with, by OWNER, which is what
+	// a context mint needs: a run's context list may name repositories under
+	// two owners, two owners are two App installations and so two tokens
+	// (C5b). An owner the map does not name answers with installation.
+	installations map[string]int64
 	// token is the token the token call answers with.
 	token string
 	// expires is the instant the token call says the token expires.
@@ -147,9 +152,14 @@ func (f *ghFake) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	f.seen = append(f.seen, ghSeen{method: r.Method, path: r.URL.Path, body: string(body), auth: r.Header.Get("Authorization")})
 	status, failBody, installation, token, expires := f.status, f.failBody, f.installation, f.token, f.expires
+	byOwner := make(map[string]int64, len(f.installations))
+	maps.Copy(byOwner, f.installations)
 	f.mu.Unlock()
 	switch {
 	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/installation"):
+		if id := byOwner[ghOwner(r.URL.Path)]; id != 0 {
+			installation = id
+		}
 		if installation == 0 {
 			installation = 777
 		}
@@ -168,6 +178,17 @@ func (f *ghFake) serve(w http.ResponseWriter, r *http.Request) {
 		f.t.Errorf("the fake GitHub was asked for %s %s, and a mint makes two calls and no others", r.Method, r.URL.Path)
 		w.WriteHeader(http.StatusNotFound)
 	}
+}
+
+// ghOwner is the owner of the repository an installation lookup names, read
+// out of "/repos/{owner}/{name}/installation": the segment a per-owner fake
+// answers by, and the one thing about the path a fake has to read.
+func ghOwner(path string) string {
+	parts := strings.Split(path, "/")
+	if len(parts) < 3 {
+		return ""
+	}
+	return parts[2]
 }
 
 func (f *ghFake) write(w http.ResponseWriter, status int, body any) {

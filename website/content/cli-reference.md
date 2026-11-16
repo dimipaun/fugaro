@@ -180,7 +180,11 @@ installation on it.
 
 It writes claude_accounts.<name>.allow_data_to — the repositories the account's
 token may be used by, and the field every other rule is built on — and adds the
-name to one profile's claude_accounts, so the profile's jobs may serve it.
+name to one profile's claude_accounts, so the profile's jobs may serve it. A key
+credential (--type openrouter or anthropic) is added to no profile's list and
+gets no job of its own: that list is what serves an account's Claude OAuth
+token, and a key credential's value is stored under the credential's own derived
+secret name, which no job mounts yet.
 
 --repos defaults to this checkout's origin repository. A profile that lists
 accounts must write its own allow_repos, and every account it lists must cover
@@ -191,18 +195,29 @@ silently is what that rule exists to prevent.
 --type declares the name as a typed credential as well, in this prefix's
 credentials block: the entry that lets a pool list the name as a member
 (fugaro accounts pool add). claude-oauth is the type this command's token step
-serves. vertex is built in and is never defined, and the two types the spec
-lists as future work are refused in words that say so. A type whose key no
-command stores yet is refused too: the entry would name a credential no run
-could authenticate with. Without the flag nothing but claude_accounts and the
-profile is written, which is what this command has always done.
+serves; openrouter and anthropic are the two key types, and a key is read the
+same way the token is — from stdin, or at the hidden prompt on your terminal —
+and stored project-wide under the credential's own derived secret name
+(credential-<name>-key) rather than the account's, so --profile is refused with
+them, and so is a name a profile already lists: a profile's list is what deploys
+the job mounting the account's token, and that job would read a container
+nothing writes. Take the name off that list first (fugaro accounts rm <name>
+--profile <profile>) or declare the key credential under another name. vertex is
+built in and is never
+defined, and the two types the spec lists as future work are refused in words
+that say so. What carries a key credential's key to a model call is not
+installed by this command yet: the credential is declared and its key stored,
+and a run serves it once that half ships. Without the flag nothing but
+claude_accounts and the profile is written, which is what this command has
+always done.
 
 Then it converges, in one command and behind the one sentence it prints: the
-token is stored project-wide as a new version of the account's own secret, the
-account's broken mark is cleared, and the publisher, the job set and this
-checkout's repository root are converged — the same stages fugaro update runs,
-invoked here rather than forked. It ends on the line that says what is left,
-which is a fugaro run and never an update.
+value is stored project-wide as a new version of the secret the name derives
+(the account's own Claude OAuth token, or, with --type, the credential's own
+key), the account's broken mark is cleared, and the publisher, the job set and
+this checkout's repository root are converged — the same stages fugaro update
+runs, invoked here rather than forked. It ends on the line that says what is
+left, which is a fugaro run and never an update.
 
 --claude runs Anthropic's own claude setup-token on your own terminal first,
 so the login is the one you would have run yourself: it gets your stdin, stdout
@@ -234,9 +249,9 @@ Flags:
 | `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this declaration would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed |
 | `--claude` | bool | `false` | no | run Anthropic's own claude setup-token login on this terminal first, then paste the token at the hidden prompt |
 | `-h`, `--help` | bool | `false` | no | help for add |
-| `--profile` | string | "" | no | the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one) |
+| `--profile` | string | "" | no | the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one); refused for a key credential, which is added to no profile's list |
 | `--repos` | string | "" | no | the repositories the token may be used by, as owner/name,owner/name (default: this checkout's origin) |
-| `--type` | string | "" | no | declare the name as a typed credential too, so a craft or a pool may spend it: claude-oauth, the one type this command's token step serves (without it, the name is declared in claude_accounts alone, as it always was) |
+| `--type` | string | "" | no | declare the name as a typed credential too, so a craft or a pool may spend it: claude-oauth (this command's OAuth token step), or a key type (openrouter or anthropic), whose value is read the same way and stored under the credential's own derived secret name (without it, the name is declared in claude_accounts alone, as it always was) |
 
 Subcommands:
 
@@ -487,7 +502,11 @@ List the names fugaro run --token NAME (and a repository's own agent.oauth_token
 accept for a repository: "default" (the repository's own unnamed
 claude-oauth-token secret, always allowed) first, then every claude_accounts
 name in the local config whose allow_data_to lists the repository, sorted
-(config.AllowedClaudeAccounts, the one place that decides the question).
+(config.AllowedClaudeAccounts, the one place that decides the question) and
+less every name the credentials block declares a key credential
+(config.ClaudeAccountTokenNames), whose value is the key its provider issued
+under the credential's own derived secret and not a Claude account's token at
+all.
 
 The names are a local, read-only lookup, offline whenever a project config is
 already selected on this machine: it reads the local config file the CLI would
