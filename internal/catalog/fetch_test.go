@@ -503,7 +503,8 @@ func inlineEntry(def string) config.Entry {
 // TestDockerfileSecretArgRefused: a definition that names a credential in an
 // ARG or an ENV is refused wherever it came from — an inline entry and a file
 // fetched out of a repository both reach the same bucket key and the same
-// build — and the refusal names the secret mount a build uses instead. The
+// build — and the refusal names the clone step that supplies the checkout
+// instead (D2311: an entry carries no secret of its own). The
 // name is enough on its own: an ARG whose default is empty still carries the
 // value a --build-arg passes through the layer.
 //
@@ -627,8 +628,8 @@ func TestDockerfileSecretArgRefused(t *testing.T) {
 		_, err := Resolve(ctx, nil, gitprov.KindGitHub, inlineEntry(def))
 		if err == nil {
 			t.Errorf("the inline definition %q was accepted", def)
-		} else if !strings.Contains(err.Error(), "--mount=type=secret") {
-			t.Errorf("the inline refusal does not name the secret mount: %v", err)
+		} else if !strings.Contains(err.Error(), "the clone step supplies the checkout") {
+			t.Errorf("the inline refusal does not name the clone step: %v", err)
 		}
 		o := &fetchOpener{
 			p:    &fake.Provider{Repo: "acme/app", State: fake.State{Files: map[string]string{"docker/agent.Dockerfile": def}}},
@@ -637,8 +638,8 @@ func TestDockerfileSecretArgRefused(t *testing.T) {
 		_, err = Resolve(ctx, o.open, gitprov.KindGitHub, dockerfileEntry("agent", "docker/agent.Dockerfile", ""))
 		if err == nil {
 			t.Errorf("the fetched definition %q was accepted", def)
-		} else if !strings.Contains(err.Error(), "--mount=type=secret") {
-			t.Errorf("the fetched refusal does not name the secret mount: %v", err)
+		} else if !strings.Contains(err.Error(), "the clone step supplies the checkout") {
+			t.Errorf("the fetched refusal does not name the clone step: %v", err)
 		}
 	}
 	for _, def := range []string{
@@ -695,8 +696,9 @@ func TestDockerfileSecretArgRefused(t *testing.T) {
 
 // TestDockerfileUserinfoURLRefused: a definition that carries a URL with
 // userinfo is refused, inline and fetched alike, and the refusal names the
-// secret mount — the shape the project's own builds use (D1150, the
-// git-credentials mount) rather than a token written into the definition.
+// clone step that supplies the checkout rather than a token written into the
+// definition (D2311; the credential is B8's generated step's, and no entry
+// RUN can read it).
 //
 // The token is built at run time and asserted absent from the refusal: a
 // message that named the URL would leak into the log exactly the credential
@@ -724,8 +726,8 @@ func TestDockerfileUserinfoURLRefused(t *testing.T) {
 		if err == nil {
 			t.Errorf("the inline definition %q was accepted", def)
 		} else {
-			if !strings.Contains(err.Error(), "--mount=type=secret") {
-				t.Errorf("the inline refusal does not name the secret mount: %v", err)
+			if !strings.Contains(err.Error(), "the clone step supplies the checkout") {
+				t.Errorf("the inline refusal does not name the clone step: %v", err)
 			}
 			if strings.Contains(err.Error(), token) {
 				t.Errorf("the refusal carries the credential: %v", err)
@@ -750,6 +752,114 @@ func TestDockerfileUserinfoURLRefused(t *testing.T) {
 	} {
 		if _, err := Resolve(ctx, nil, gitprov.KindGitHub, inlineEntry(def)); err != nil {
 			t.Errorf("the definition %q was refused: %v", def, err)
+		}
+	}
+}
+
+// TestCatalogRefusesAnEntryThatMountsASecret: an entry that asks a build for a
+// secret of its own is refused, inline and fetched alike, whichever way the
+// Dockerfile asks — a RUN that mounts one (--mount=type=secret) or a builder
+// flag that names one (--secret) — and the refusal names the line it is written
+// on and says the clone step supplies the checkout (D2311, B9).
+//
+// The line is named and never quoted. What is written on it is the secret the
+// entry is refused over, and a refusal that echoed the line would put into the
+// log exactly what the ruling keeps out of the definition; a number cannot.
+//
+// What an entry may still ask a build for is every other mount: a cache, a
+// bind and a tmpfs carry no credential, and refusing them would refuse the
+// dependency warm-up mount the base image itself writes
+// (internal/image/render.go).
+func TestCatalogRefusesAnEntryThatMountsASecret(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct{ def, line string }{
+		{"FROM example.invalid/base\nRUN --mount=type=secret,id=git-credentials git clone \"$REPO_URL\" /work/repo\n", "line 2"},
+		{"FROM example.invalid/base\nRUN --mount=type=secret,id=git-credentials,uid=1000 sh finalize.sh\n", "line 2"},
+		{"FROM example.invalid/base\nRUN --mount=type=cache,id=c --mount=type=secret,id=git-credentials git clone x /y\n", "line 2"},
+		// The flag's value may be quoted, the way the parser reads it
+		// (extractBuilderFlags): read raw, the word is `"type=secret"` and a
+		// mount the entry asks for goes unseen.
+		{"FROM example.invalid/base\nRUN --mount=\"type=secret,id=git-credentials\" true\n", "line 2"},
+		// The shorthand spelling of the same request.
+		{"FROM example.invalid/base\nRUN --secret=id=git-credentials true\n", "line 2"},
+		// Instructions are case-insensitive to a build, so the flag is one here
+		// too.
+		{"FROM example.invalid/base\nrun --mount=type=secret,id=x true\n", "line 2"},
+		// A stage's FROM, an ENV and a comment in front: the number a refusal
+		// prints is the instruction's own physical line, not the count of the
+		// instructions before it.
+		{"ARG FUGARO_BASE\nFROM ${FUGARO_BASE}\nENV A=1\n# clone below\nRUN --mount=type=secret,id=x true\n", "line 5"},
+		// An ONBUILD RUN is a RUN a child image performs, so the mount is the
+		// same request one image down.
+		{"FROM example.invalid/base\nONBUILD RUN --mount=type=secret,id=x true\n", "line 2"},
+		// The mount written across a continuation is one flag when the lines
+		// are joined, which is how a build reads it: joined, the flag is
+		// --mount=type=secret and the line it starts on is the one refused.
+		{"FROM example.invalid/base\nRUN --mount=type=secret,\\\n    id=git-credentials true\n", "line 2"},
+	} {
+		_, err := Resolve(ctx, nil, gitprov.KindGitHub, inlineEntry(tc.def))
+		if err == nil {
+			t.Errorf("the inline definition %q was accepted", tc.def)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.line) {
+			t.Errorf("the inline refusal of %q does not name %s: %v", tc.def, tc.line, err)
+		}
+		if !strings.Contains(err.Error(), "the clone step supplies the checkout") {
+			t.Errorf("the inline refusal of %q does not say the clone step supplies the checkout: %v", tc.def, err)
+		}
+		o := &fetchOpener{
+			p:    &fake.Provider{Repo: "acme/app", State: fake.State{Files: map[string]string{"docker/agent.Dockerfile": tc.def}}},
+			cred: fakeCredential(t),
+		}
+		_, err = Resolve(ctx, o.open, gitprov.KindGitHub, dockerfileEntry("agent", "docker/agent.Dockerfile", ""))
+		if err == nil {
+			t.Errorf("the fetched definition %q was accepted", tc.def)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.line) || !strings.Contains(err.Error(), "the clone step supplies the checkout") {
+			t.Errorf("the fetched refusal of %q is not the entry's own: %v", tc.def, err)
+		}
+	}
+	for _, def := range []string{
+		"FROM example.invalid/base\nRUN --mount=type=cache,id=fugaro-mise,target=/home/fugaro/.cache/mise true\n",
+		"FROM example.invalid/base\nRUN --mount=type=bind,source=/src,target=/dst true\n",
+		"FROM example.invalid/base\nRUN --mount=type=tmpfs,target=/tmp true\n",
+		"FROM example.invalid/base\nRUN --mount=\"type=cache,id=x\" npm ci\n",
+		// A comment that names the shape is a comment: nothing on the line asks
+		// a build for anything, and the guard reads instructions.
+		"FROM example.invalid/base\n# the clone used to be RUN --mount=type=secret,id=git-credentials\nRUN true\n",
+	} {
+		if _, err := Resolve(ctx, nil, gitprov.KindGitHub, inlineEntry(def)); err != nil {
+			t.Errorf("the definition %q was refused: %v", def, err)
+		}
+	}
+}
+
+// TestCatalogGuidanceNoLongerTeachesTheGitCredentialMount: the refusals an
+// author reads no longer teach the mount this release refuses. Both of the
+// guards that used to name it — the credential-shaped ARG or ENV and the URL
+// with userinfo — say what supplies the checkout instead, and neither names a
+// mount: a definition that followed the old advice would be refused by the
+// guard the same advice was printed beside (D2311, B9).
+func TestCatalogGuidanceNoLongerTeachesTheGitCredentialMount(t *testing.T) {
+	ctx := context.Background()
+	token := fakeCredential(t)
+	for _, def := range []string{
+		"FROM example.invalid/base\nARG NPM_TOKEN=value\n",
+		"FROM example.invalid/base\nRUN git clone https://user:" + token + "@example.invalid/acme/app.git /work/repo\n",
+	} {
+		_, err := Resolve(ctx, nil, gitprov.KindGitHub, inlineEntry(def))
+		if err == nil {
+			t.Fatalf("the definition %q was accepted", def)
+		}
+		if !strings.Contains(err.Error(), "the clone step supplies the checkout") {
+			t.Errorf("the refusal of %q does not say what supplies the checkout: %v", def, err)
+		}
+		for _, taught := range []string{"--mount=type=secret", "mount the credential", "mount the value", "git-credentials"} {
+			if strings.Contains(err.Error(), taught) {
+				t.Errorf("the refusal of %q still teaches %q: %v", def, taught, err)
+			}
 		}
 	}
 }

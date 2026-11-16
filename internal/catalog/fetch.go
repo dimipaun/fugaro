@@ -293,13 +293,18 @@ func definition(e config.Entry, data []byte) ([]byte, error) {
 }
 
 // refuseCredentialIn refuses a definition whose own text carries a credential:
-// an ARG or an ENV whose name is credential-shaped, or a URL with userinfo in
-// it (the https://user:token@host shape). Either one puts the value into the
-// definition itself — which is copied into the project's bucket and read by a
-// build — and a build argument or an environment variable reaches an image
-// layer, which is what D1150 and the runtime contract keep a secret out of. The
-// shape the project supports instead is the BuildKit secret mount
-// (RUN --mount=type=secret,id=git-credentials ...), so both refusals name it.
+// an ARG or an ENV whose name is credential-shaped, a URL with userinfo in it
+// (the https://user:token@host shape), or a secret of its own — a RUN that
+// mounts one (RUN --mount=type=secret) or a builder flag that names one
+// (--secret). The first two put the value into the definition itself — which is
+// copied into the project's bucket and read by a build — and a build argument or
+// an environment variable reaches an image layer, which is what D1150 and the
+// runtime contract keep a secret out of. The third asks a build for a secret no
+// catalog entry may have (D2311): the checkout the entry's build needs is
+// supplied by a step Fugaro generates entirely, which alone holds that
+// credential and which no entry RUN can reach (B8), so an entry that mounts one
+// is refused rather than served — and the refusal names the line it is written
+// on, because that is where its author has to take it out.
 //
 // It reads the text and not the built image: a credential a repository's own
 // build step passes in behind a secret mount is not this guard's to see, and a
@@ -336,7 +341,10 @@ func definition(e config.Entry, data []byte) ([]byte, error) {
 func refuseCredentialIn(e config.Entry, data []byte) error {
 	lines, esc := dockerfileLines(data)
 	for _, line := range lines {
-		if err := refuseCredentialNames(e, line, esc); err != nil {
+		if asksForASecret(line.text) {
+			return SecretRefusal(nameOf(e), line.line)
+		}
+		if err := refuseCredentialNames(e, line.text, esc); err != nil {
 			return err
 		}
 	}
@@ -348,11 +356,98 @@ func refuseCredentialIn(e config.Entry, data []byte) error {
 	// is copied into the project's bucket whole, comments and all, so that token
 	// is in the project whether or not a build reads the line it is written on.
 	// (A comment on a line of its own is a logical line and is read by both.)
-	if urlUserinfoRE.MatchString(strings.Join(lines, "\n")) || urlUserinfoRE.Match(data) {
-		return fmt.Errorf("the catalog entry %s: its Dockerfile carries a URL with a credential in its userinfo, the part between // and @; a clone URL with a token in it reaches the image, so mount the credential with RUN --mount=type=secret instead",
+	if urlUserinfoRE.MatchString(joinTexts(lines)) || urlUserinfoRE.Match(data) {
+		return fmt.Errorf("the catalog entry %s: its Dockerfile carries a URL with a credential in its userinfo, the part between // and @; a clone URL with a token in it reaches the image, so write the URL without a credential — the clone step supplies the checkout",
 			nameOf(e))
 	}
 	return nil
+}
+
+// AskSecret is the reading of one definition's text that `fugaro doctor` and
+// `fugaro update` make of an entry already published in the project's bucket:
+// the line a definition asks for a secret of its own on, and whether it has one
+// at all (SecretRefusal).
+//
+// It is the same reading the refusal makes of an entry a person publishes now,
+// exported for the entries nobody can publish any more: an object written by a
+// release behind this one is in the bucket until somebody changes the entry's
+// Dockerfile and builds it again, and a build of it would submit exactly the
+// shape D2311 refuses. The readers of that object are what tell its owner, so
+// they read it rather than trust the copy that was accepted once.
+func AskSecret(data []byte) (int, bool) {
+	lines, _ := dockerfileLines(data)
+	for _, l := range lines {
+		if asksForASecret(l.text) {
+			return l.line, true
+		}
+	}
+	return 0, false
+}
+
+// SecretRefusal is the sentence an entry that asks for a secret of its own gets,
+// naming the line it is written on. It is one function so the refusal a publish
+// gets and the report `fugaro doctor` and `fugaro update` print for an entry
+// already in the bucket cannot word the same fact two ways.
+//
+// The line is a number and never the line's text: the text is what carries the
+// secret, and a refusal that echoed it would put into the log exactly what this
+// guard keeps out of the definition (the rule the URL refusal follows too).
+func SecretRefusal(entry string, line int) error {
+	return fmt.Errorf("the catalog entry %s: line %d of its Dockerfile asks for a secret; a catalog entry carries no secret of its own — the clone step supplies the checkout — so remove it",
+		entry, line)
+}
+
+// asksForASecret reports whether one logical line asks a build for a secret: a
+// RUN whose builder flags mount one (--mount=type=secret) or name one
+// (--secret), and the same on an ONBUILD RUN, which a child image runs.
+//
+// Only a RUN is read, because a builder flag is only legal on one and a flag on
+// any other instruction is a definition the parser refuses whole. The id the
+// flag names is not read: every secret a build is offered comes from the one
+// place that holds credentials, and an entry asking for any of them is asking
+// for something no entry may have (D2311).
+func asksForASecret(line string) bool {
+	inst, flags, rest := splitFlags(line)
+	if inst == "ONBUILD" {
+		inst, flags, _ = splitFlags(rest)
+	}
+	if inst != "RUN" {
+		return false
+	}
+	for _, flag := range flags {
+		name, value, _ := strings.Cut(unquoteFlag(flag), "=")
+		if name == "--secret" {
+			return true
+		}
+		if name != "--mount" {
+			continue
+		}
+		for _, field := range strings.Split(value, ",") {
+			if strings.TrimSpace(field) == "type=secret" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// unquoteFlag strips the quotes a builder flag may be written with, so that a
+// flag's name and value are read the way the parser reads them
+// (extractBuilderFlags): --mount="type=secret" asks a build for the same mount
+// as the unquoted spelling, and a guard that tested the raw word would miss it.
+func unquoteFlag(flag string) string {
+	return strings.NewReplacer(`"`, "", `'`, "").Replace(flag)
+}
+
+// joinTexts is a definition's logical lines as one text, which is the shape the
+// URL reading below wants: a URL whose credential is split across a
+// continuation is one URL again once the lines are joined.
+func joinTexts(lines []dockerLine) string {
+	texts := make([]string, 0, len(lines))
+	for _, l := range lines {
+		texts = append(texts, l.text)
+	}
+	return strings.Join(texts, "\n")
 }
 
 // refuseCredentialNames checks one logical line's ARG and ENV names, and the
@@ -374,7 +469,7 @@ func refuseCredentialNames(e config.Entry, line string, esc byte) error {
 	}
 	for _, v := range instructionVars(inst, rest, esc) {
 		if credentialShaped(v.name) && !pathValue(v.value) {
-			return fmt.Errorf("the catalog entry %s: its Dockerfile sets %s %s, a name a credential is carried in; a build argument or an environment variable with a secret in it reaches the image, so mount the value with RUN --mount=type=secret instead",
+			return fmt.Errorf("the catalog entry %s: its Dockerfile sets %s %s, a name a credential is carried in; a build argument or an environment variable with a secret in it reaches the image, so name no credential here — the clone step supplies the checkout",
 				nameOf(e), inst, pluginwire.Printable(v.name))
 		}
 	}
@@ -390,8 +485,8 @@ type instructionVar struct{ name, value string }
 // pathValue reports whether a value a definition gives a variable is a path
 // rather than a credential. A value that begins with `/`, `./`, `../` or `~/`
 // names a location, and a location is not a secret: the credential, where there
-// is one, is the file behind it — which is the shape the BuildKit secret mount
-// this guard's refusal names also produces — while a token written into a
+// is one, is the file behind it — which is the shape the generated clone step
+// the refusal names hands the checkout in — while a token written into a
 // Dockerfile does not begin with a path separator (NPM's npm_..., GitHub's
 // ghp_..., AWS's AKIA... and base64 with one lead byte of 64 chance at the
 // most).
@@ -399,8 +494,8 @@ type instructionVar struct{ name, value string }
 // The test is on the value rather than on the name because the name cannot
 // carry the difference: GOOGLE_APPLICATION_CREDENTIALS, AWS_SHARED_CREDENTIALS_FILE,
 // API_KEY_PATH and SSH_PRIVATE_KEY_PATH are pointers — the platform's own
-// variables name files, and the guard's own refusal (mount the value with
-// RUN --mount=type=secret) tells an author to write exactly that shape — and
+// variables name files, and the path literals an author writes for them are
+// values that carry no credential — and
 // refusing them would refuse a definition that carries no credential at all,
 // with a remedy (rename the variable) that is not open to a reserved name.
 // docs/gcp-live-checklist.md's Check 291 builds such a Dockerfile.
@@ -443,16 +538,23 @@ func pathValue(value string) bool {
 // It returns the lines and the escape character it read the definition with,
 // which a caller needs as well: the same character decides how a line is cut
 // into the words an instruction is parsed from (dockerfileWords).
-func dockerfileLines(data []byte) ([]string, byte) {
+//
+// Each line carries the physical line it starts on, 1-based, which is what a
+// refusal names: an entry refused over something written on a line is told
+// which line, and the number is what the refusal prints rather than the line's
+// text, which may be what carries the secret.
+func dockerfileLines(data []byte) ([]dockerLine, byte) {
 	// A byte-order mark is stripped from the first line and nowhere else, as
 	// the parser strips it: left in place it becomes part of the first
 	// instruction's name, and an ARG under one is an ARG no longer.
 	text := strings.TrimPrefix(string(data), "\ufeff")
 	esc := dockerfileEscape(text)
-	var lines []string
+	var lines []dockerLine
 	var cont strings.Builder
 	joining := false
-	for _, physical := range strings.Split(text, "\n") {
+	start := 0
+	for i, physical := range strings.Split(text, "\n") {
+		num := i + 1
 		// Every trailing carriage return goes, as the parser trims them all
 		// (trimNewline is bytes.TrimRight(src, "\r\n")): one left behind is a
 		// character of the line, and a line that ends `\r\r` then hides its own
@@ -468,13 +570,14 @@ func dockerfileLines(data []byte) ([]string, byte) {
 				// A comment is dropped whole and continues nothing, so a
 				// backslash at the end of one is text and not a join.
 				if !joining {
-					lines = append(lines, strings.TrimLeftFunc(line, unicode.IsSpace))
+					lines = append(lines, dockerLine{text: strings.TrimLeftFunc(line, unicode.IsSpace), line: num})
 				}
 				continue
 			}
 		}
 		if !joining {
 			line = strings.TrimLeftFunc(line, unicode.IsSpace)
+			start = num
 		}
 		body, more := trimContinuation(line, esc)
 		cont.WriteString(body)
@@ -482,14 +585,22 @@ func dockerfileLines(data []byte) ([]string, byte) {
 			joining = true
 			continue
 		}
-		lines = append(lines, cont.String())
+		lines = append(lines, dockerLine{text: cont.String(), line: start})
 		cont.Reset()
 		joining = false
 	}
 	if cont.Len() > 0 {
-		lines = append(lines, cont.String())
+		lines = append(lines, dockerLine{text: cont.String(), line: start})
 	}
 	return lines, esc
+}
+
+// dockerLine is one logical line of a definition with the physical line it
+// starts on. The text is what the guard reads; the number is what a refusal
+// names, because the text is what may carry the secret.
+type dockerLine struct {
+	text string
+	line int
 }
 
 // trimContinuation removes a line's continuation escape character and the
@@ -577,6 +688,30 @@ const dockerSpace = " \t\v\f\r"
 // argument of ARG or ENV. A blank line, a comment and the parser directive
 // return no instruction.
 func splitInstruction(line string) (string, string) {
+	inst, args := splitRawInstruction(line)
+	if inst == "" {
+		return "", ""
+	}
+	_, rest := builderFlags(args)
+	return inst, rest
+}
+
+// splitFlags cuts one logical line into its instruction, the builder flags the
+// parser would take off the front of its arguments, and the arguments that are
+// left. It is splitInstruction's sibling, and the secret reading (askForASecret)
+// is what needs the flags themselves: a mount is asked for by a flag, which
+// splitInstruction drops by design.
+func splitFlags(line string) (inst string, flags []string, rest string) {
+	inst, args := splitRawInstruction(line)
+	flags, rest = builderFlags(args)
+	return inst, flags, rest
+}
+
+// splitRawInstruction cuts one logical line into its instruction, upper-cased
+// because Dockerfile instructions are case-insensitive, and its arguments with
+// the builder flags still on them. A blank line, a comment and the parser
+// directive return no instruction.
+func splitRawInstruction(line string) (string, string) {
 	line = strings.TrimSpace(line)
 	if line == "" || strings.HasPrefix(line, "#") {
 		return "", ""
@@ -585,35 +720,40 @@ func splitInstruction(line string) (string, string) {
 	if i < 0 {
 		return strings.ToUpper(line), ""
 	}
-	return strings.ToUpper(line[:i]), withoutBuilderFlags(strings.TrimLeft(line[i:], dockerSpace))
+	return strings.ToUpper(line[:i]), strings.TrimLeft(line[i:], dockerSpace)
 }
 
-// withoutBuilderFlags removes the builder flags from the front of a line's
-// arguments, the way the parser does before an instruction is parsed
-// (splitCommand's extractBuilderFlags): a leading run of words that begin with
-// `--` is flags, and a bare `--` ends the run and is a flag itself. Without
-// this, a bare `--` reads here as the first name and the name a build sets —
-// `ENV -- NPM_TOKEN=1` is the environment variable NPM_TOKEN — goes unchecked;
-// the flags may be quoted, so a word is cut the same way the parser cuts it.
+// builderFlags cuts the builder flags off the front of a line's arguments, the
+// way the parser does before an instruction is parsed (splitCommand's
+// extractBuilderFlags): a leading run of words that begin with `--` is flags,
+// and a bare `--` ends the run and is a flag itself. Without this, a bare `--`
+// reads as the first name and the name a build sets — `ENV -- NPM_TOKEN=1` is
+// the environment variable NPM_TOKEN — goes unchecked; the flags may be quoted,
+// so a word is cut the same way the parser cuts it.
 //
-// What is returned is the arguments with the whitespace around them trimmed,
-// which is splitCommand's own last step (strings.TrimSpace(args)). The trim is
-// not decoration: without it the arguments after a bare `--` begin with the
-// space the `--` left behind, and a leading space is a name to the legacy form
-// of an ENV (ENV -- NPM_TOKEN value sets NPM_TOKEN to a build) while the empty
-// name it reads here is credential-shaped in no way at all.
-func withoutBuilderFlags(rest string) string {
+// The remainder is the arguments with the whitespace around them trimmed, which
+// is splitCommand's own last step (strings.TrimSpace(args)). The trim is not
+// decoration: without it the arguments after a bare `--` begin with the space
+// the `--` left behind, and a leading space is a name to the legacy form of an
+// ENV (ENV -- NPM_TOKEN value sets NPM_TOKEN to a build) while the empty name it
+// reads here is credential-shaped in no way at all.
+//
+// A flag word is returned as it was written, quotes and all: the one reader that
+// takes them apart is unquoteFlag's, at the point where a flag's name and value
+// are read.
+func builderFlags(rest string) ([]string, string) {
 	const (
 		inSpaces = iota // looking for start of a word
 		inWord
 		inQuote
 	)
+	var flags []string
 	phase, wordStart := inSpaces, 0
 	var quote byte
 	for pos := 0; pos <= len(rest); pos++ {
 		if phase == inSpaces {
 			if pos == len(rest) {
-				return ""
+				return flags, ""
 			}
 			if unicode.IsSpace(rune(rest[pos])) {
 				continue
@@ -621,21 +761,24 @@ func withoutBuilderFlags(rest string) string {
 			// Only a word that starts with `--` is a flag; the run of them ends
 			// at the first word that does not, which is where the arguments are.
 			if rest[pos] != '-' || pos+1 == len(rest) || rest[pos+1] != '-' {
-				return strings.TrimSpace(rest[pos:])
+				return flags, strings.TrimSpace(rest[pos:])
 			}
 			phase, wordStart = inWord, pos
 			continue
 		}
 		if pos == len(rest) {
 			// The last word ran to the end of the line: a flag, or nothing.
-			return ""
+			return append(flags, rest[wordStart:pos]), ""
 		}
 		switch phase {
 		case inWord:
 			if unicode.IsSpace(rune(rest[pos])) {
 				if rest[wordStart:pos] == "--" {
-					return strings.TrimSpace(rest[pos:])
+					// A bare `--` is a flag itself, and the run of flags ends
+					// with it (extractBuilderFlags).
+					return append(flags, rest[wordStart:pos]), strings.TrimSpace(rest[pos:])
 				}
+				flags = append(flags, rest[wordStart:pos])
 				phase = inSpaces
 				continue
 			}
@@ -657,7 +800,7 @@ func withoutBuilderFlags(rest string) string {
 			}
 		}
 	}
-	return ""
+	return flags, ""
 }
 
 // instructionVars returns the variables one ARG or ENV line sets, each with the
