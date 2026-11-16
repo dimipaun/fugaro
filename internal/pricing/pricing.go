@@ -55,6 +55,18 @@ type Model struct {
 	MaxOutputTokens int64    // the model's output maximum; 0: DefaultMaxOutputTokens (more is refused)
 	ImageTokens     int64    // per-image token ceiling (conservative); 0: images refused
 	Rates           Rates
+	// Lo and Hi are the two ends of the price the row stands for, each a
+	// whole set of rates so a call's band is priced exactly as its charge
+	// is (cache dimensions included, and each cache ratio taken at that
+	// end's own prices, not the charged end's). A catalog-priced row's ends
+	// are the selected tier's cheapest and dearest endpoint (design D6: the
+	// cheapest bound alone undercharges, so the range is carried and not
+	// only the bound charged); every other row is one number, so both ends
+	// are its Rates. The charged Rates are one of the ends on a catalog row
+	// and between them everywhere else: the cheapest end is the floor a
+	// settlement may not go below, and the dearest the ceiling a report is
+	// measured against.
+	Lo, Hi Rates
 	// Unverified marks a placeholder row nobody has checked against the
 	// provider's price: it caps money but is not trusted, so pins on it
 	// warn until the owner sets the real price under model_prices (which
@@ -361,6 +373,7 @@ func (t *Table) With(o Overrides) (*Table, error) {
 		r := ov.Rates.clone()
 		if m, ok := out.Lookup(key); ok {
 			m.Rates = r
+			m.flatEnds()
 			if ov.ImageTokens != nil {
 				m.ImageTokens = *ov.ImageTokens
 			}
@@ -371,6 +384,7 @@ func (t *Table) With(o Overrides) (*Table, error) {
 			continue
 		}
 		m := Model{ID: key, Rates: r}
+		m.flatEnds()
 		if ov.ImageTokens != nil {
 			m.ImageTokens = *ov.ImageTokens
 		}
@@ -424,11 +438,17 @@ func (t *Table) clone() *Table {
 			c := *m.Catalog
 			m.Catalog = &c
 		}
-		m.Rates = m.Rates.clone()
+		m.Rates, m.Lo, m.Hi = m.Rates.clone(), m.Lo.clone(), m.Hi.clone()
 		out.Models[id] = m
 	}
 	return out
 }
+
+// flatEnds gives a row whose price is one number both ends of its band: an
+// owner's override and the embedded rows are not compiled from a tier, so
+// there is no range to carry and the row's own rates are the whole of it.
+// Nothing that reads an end then has to ask where the row came from.
+func (m *Model) flatEnds() { m.Lo, m.Hi = m.Rates, m.Rates }
 
 func (r Rates) clone() Rates {
 	if r.LongContext != nil {
