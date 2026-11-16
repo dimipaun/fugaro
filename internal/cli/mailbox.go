@@ -354,8 +354,9 @@ func cancelFromMailbox(ctx context.Context, c *mailboxConsumer, runID string) er
 // the same reason every other spawn in this tree is: a test puts a fake in front
 // of it on PATH and reads the argv back. D169 names the command exactly —
 // `gh pr merge <n> --repo <owner/name>`, by the consumer, under the operator's
-// own `gh` login — and the two subcommands this file runs are that one and the
-// read of the head it is checked against.
+// own `gh` login, with the merge method and the confirmed head SHA on it — and
+// the two subcommands this file runs are that one and the read of the head it is
+// checked against.
 var mailboxGH = "gh"
 
 // mailboxKeychain is the OS keychain the pairings' MAC keys are read from (M5).
@@ -1453,9 +1454,21 @@ func (c *mailboxConsumer) runAction(ctx context.Context, pairing mailboxPairing,
 
 // merge is D169's merge: re-read the pull request's head, refuse if it has moved
 // since the confirmation read it back, and only then merge — as
-// `gh pr merge <n> --repo <owner/name>`, by this consumer, under the operator's
-// own `gh` login, with the number and the repository as separate argv elements
-// and never a shell (M11).
+// `gh pr merge <n> --repo <owner/name> --squash --match-head-commit <head>`, by
+// this consumer, under the operator's own `gh` login, with the number and the
+// repository as separate argv elements and never a shell (M11).
+//
+// The two flags are what make that command run at all, and what make it run
+// against the head the operator confirmed. `gh pr merge` refuses without one of
+// `--merge`, `--squash` and `--rebase` when it is not on a terminal — and this
+// one is never on a terminal (M11: a buffer, no stdin) — so a merge without one
+// is refused by `gh` after the record's confirmation has already been spent, and
+// the operator's answer to that is a new confirmation for a merge that would
+// have worked. `--squash` is this repository's own choice for a merge it runs
+// itself (`scripts/land-prs.sh`), and `--match-head-commit` is D169's read-back
+// made atomic: the check above and the merge are two calls, and the SHA in the
+// flag is the one the *server* compares at the merge, so a push that lands
+// between them is refused by GitHub rather than merged.
 func (c *mailboxConsumer) merge(ctx context.Context, record *mailbox.ConfirmRecord) error {
 	number := strconv.FormatInt(record.Target.PR, 10)
 	head, err := c.gh(ctx, "pr", "view", number, "--repo", record.Target.Repo, "--json", "headRefOid")
@@ -1471,7 +1484,8 @@ func (c *mailboxConsumer) merge(ctx context.Context, record *mailbox.ConfirmReco
 	if !strings.EqualFold(strings.TrimSpace(view.HeadOID), record.Target.HeadSHA) {
 		return errMailboxHeadMoved
 	}
-	_, err = c.gh(ctx, "pr", "merge", number, "--repo", record.Target.Repo)
+	_, err = c.gh(ctx, "pr", "merge", number, "--repo", record.Target.Repo,
+		"--squash", "--match-head-commit", record.Target.HeadSHA)
 	return err
 }
 

@@ -928,6 +928,27 @@ func TestMailboxRevokedPairingDropsItsPromptsAndRefusesItsKey(t *testing.T) {
 // Merge: D169's read-back
 // ---------------------------------------------------------------------------
 
+// mailboxFakeGH is the fake `gh` the merge tests put on PATH: it answers the head
+// read with `head`, and it refuses a merge the way the real one does. `gh pr
+// merge` requires one of `--merge`, `--squash` and `--rebase` when it is not
+// running interactively — and this consumer's `gh` never is (M11: a buffer for
+// stdout, nothing on stdin) — so a fake that accepted any argv would let a merge
+// with no method pass every test here and then fail on the operator's machine,
+// with the record's confirmation already spent.
+func mailboxFakeGH(t *testing.T, head string) (calls string) {
+	t.Helper()
+	return testutil.FakeCommand(t, "gh",
+		"case \"$*\" in\n"+
+			"*\"pr merge\"*)\n"+
+			"  case \"$*\" in\n"+
+			"  *--merge*|*--squash*|*--rebase*) ;;\n"+
+			"  *) echo \"--merge, --rebase, or --squash required when not running interactively\" >&2; exit 1 ;;\n"+
+			"  esac\n"+
+			"  ;;\n"+
+			"esac\n"+
+			"echo '{\"headRefOid\":\""+head+"\"}'\n")
+}
+
 // TestMailboxMergeRefusesAHeadThatMoved is D169's read-back: the consumer
 // re-reads the pull request's head and refuses the merge if it differs from the
 // head the confirmation named. `gh pr merge` is never reached — the recorded
@@ -937,7 +958,7 @@ func TestMailboxRevokedPairingDropsItsPromptsAndRefusesItsKey(t *testing.T) {
 func TestMailboxMergeRefusesAHeadThatMoved(t *testing.T) {
 	f := newMailboxFixture(t, "")
 	f.offers(t)
-	calls := testutil.FakeCommand(t, "gh", "echo '{\"headRefOid\":\"fedcba9876543210fedcba9876543210fedcba98\"}'\n")
+	calls := mailboxFakeGH(t, "fedcba9876543210fedcba9876543210fedcba98")
 	at := mailboxNowMs()
 	f.writeRecord(t, "msg-1", mailboxActionExtra(
 		mailboxMergeAction("act-1", "conf-1", at, "acme/app", 41, mailboxHeadSHA)), at, mailboxKeyMaterial)
@@ -958,12 +979,20 @@ func TestMailboxMergeRefusesAHeadThatMoved(t *testing.T) {
 
 // TestMailboxMergeRunsGHAgainstTheConfirmedHead is the accepting side: the head
 // the confirmation named is the head the pull request has, so the merge runs —
-// `gh pr merge <n> --repo <owner/name>`, as D169 says, with the number, the
-// repository and the flags as separate argv elements and no shell.
+// `gh pr merge <n> --repo <owner/name> --squash --match-head-commit <head>`, as
+// D169 says, with the number, the repository and the flags as separate argv
+// elements and no shell.
+//
+// The two flags are asserted, not assumed. Without a merge method `gh` refuses
+// when it is not on a terminal, which is always here, and the record's
+// confirmation would already have been spent by then; without
+// `--match-head-commit` the read-back above and the merge are two calls, and a
+// push between them is merged anyway — the exact case the read-back exists to
+// refuse, left open by the gap between the two.
 func TestMailboxMergeRunsGHAgainstTheConfirmedHead(t *testing.T) {
 	f := newMailboxFixture(t, "")
 	f.offers(t)
-	calls := testutil.FakeCommand(t, "gh", "echo '{\"headRefOid\":\""+mailboxHeadSHA+"\"}'\n")
+	calls := mailboxFakeGH(t, mailboxHeadSHA)
 	at := mailboxNowMs()
 	f.writeRecord(t, "msg-1", mailboxActionExtra(
 		mailboxMergeAction("act-1", "conf-1", at, "acme/app", 41, mailboxHeadSHA)), at, mailboxKeyMaterial)
@@ -975,8 +1004,9 @@ func TestMailboxMergeRunsGHAgainstTheConfirmedHead(t *testing.T) {
 	if got := mailboxActedOutcome(t, mailboxJSON(t, out), 0); got != mailboxOutcomeMerged {
 		t.Fatalf("acted[0].outcome = %q, want %q", got, mailboxOutcomeMerged)
 	}
-	if argv := readCalls(t, calls); !strings.Contains(argv, "pr merge 41 --repo acme/app") {
-		t.Fatalf("the merge was run as %q, want `gh pr merge 41 --repo acme/app`", argv)
+	want := "pr merge 41 --repo acme/app --squash --match-head-commit " + mailboxHeadSHA
+	if argv := readCalls(t, calls); !strings.Contains(argv, want) {
+		t.Fatalf("the merge was run as %q, want `gh %s`", argv, want)
 	}
 }
 
