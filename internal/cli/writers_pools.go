@@ -13,9 +13,20 @@ import (
 // where the name goes. The removal record beside the block is the one row here
 // that is not a leaf of a pool, and it carries no varying segment of its own.
 //
-// The store of every one of them is local: `accounts pool` writes the
-// installation's own config and nothing else, and the node a pool is served
-// from is not this command's to write.
+// The store of every one of them is local: that is where the argv writes, and
+// the installation's own config is what the conformance test asserts the key
+// changed in. It is not the only place the value is served from, so every row
+// states Node as well: the published node carries a pool to every run, which is
+// the one fact a store cannot hold (D2615, docs/contracts/config-ownership.md
+// §2). A hook reading the store alone would run no stage for a pool the owner
+// declares and the pool would never reach a run — the `policy` stage is owed
+// exactly when the store is `node` or the key's writer says Node.
+//
+// The removal record is the same fact one step further out (F22, D2607): the
+// node keeps a pool this config says nothing about, so the name written beside
+// the block is what says the pool was taken away and what the next publish acts
+// on. The write lands locally and the node's content is what changes, which is
+// why that row states Node too.
 //
 // A template carries the two words ArgvFor fills: settings.ValuePlaceholder
 // where the value the caller supplies goes, and `<1>` where the key's own
@@ -41,26 +52,31 @@ var accountsPoolWriters = []struct {
 		Command: "fugaro accounts pool add",
 		Argv:    []string{"accounts", "pool", "add", "<1>", config.CredentialVertex},
 		Store:   settings.StoreLocal,
+		Node:    true,
 	}},
 	{"pools.*.strategy", settings.Writer{
 		Command: "fugaro accounts pool add",
 		Argv:    []string{"accounts", "pool", "add", "<1>", "--strategy", settings.ValuePlaceholder},
 		Store:   settings.StoreLocal,
+		Node:    true,
 	}},
 	{"pools.*.members", settings.Writer{
 		Command: "fugaro accounts pool add",
 		Argv:    []string{"accounts", "pool", "add", "<1>", settings.ValuePlaceholder},
 		Store:   settings.StoreLocal,
+		Node:    true,
 	}},
 	{"pools.*.owner", settings.Writer{
 		Command: "fugaro accounts pool add",
 		Argv:    []string{"accounts", "pool", "add", "<1>", "--owner", settings.ValuePlaceholder},
 		Store:   settings.StoreLocal,
+		Node:    true,
 	}},
 	{"pools.*.allowed_users", settings.Writer{
 		Command: "fugaro accounts pool add",
 		Argv:    []string{"accounts", "pool", "add", "<1>", "--allow-user", settings.ValuePlaceholder},
 		Store:   settings.StoreLocal,
+		Node:    true,
 	}},
 	// The removal record a pool's name is written into (F22, D2607). It is not
 	// a pool leaf — the name is an item of a list beside the pools block, not a
@@ -71,6 +87,7 @@ var accountsPoolWriters = []struct {
 		Command: "fugaro accounts pool rm",
 		Argv:    []string{"accounts", "pool", "rm", settings.ValuePlaceholder},
 		Store:   settings.StoreLocal,
+		Node:    true,
 	}},
 }
 

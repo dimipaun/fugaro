@@ -524,9 +524,10 @@ func TestPoolArgvFillsTheSegmentPlaceholder(t *testing.T) {
 
 // TestPoolWritersAreRegisteredAndDisjoint is the registration's other half: the
 // leaves `accounts pool add` writes are registered under the pool's own
-// patterns, one pattern per leaf, with the argv that changes exactly that leaf
-// and the store it lands in — and no pool pattern collides with another family's
-// or with a sibling leaf's, which is what RegisterWriter refuses.
+// patterns, one pattern per leaf, with the argv that changes exactly that leaf,
+// the store it lands in and the node that serves it — and no pool pattern
+// collides with another family's or with a sibling leaf's, which is what
+// RegisterWriter refuses.
 func TestPoolWritersAreRegisteredAndDisjoint(t *testing.T) {
 	for _, key := range []string{
 		"pools.team.name",
@@ -546,6 +547,15 @@ func TestPoolWritersAreRegisteredAndDisjoint(t *testing.T) {
 		if w.Store != settings.StoreLocal {
 			t.Errorf("%s: Store = %q, want %q", key, w.Store, settings.StoreLocal)
 		}
+		// The store is where the argv writes and not the only place the value is
+		// served from: the published node carries a pool to every run, so the row
+		// states Node and the write owes the `policy` stage. `pools.*.*` is the
+		// contract's canonical case for it (docs/contracts/config-ownership.md §2),
+		// and it has to rest on this registration: a row this test made up would
+		// pin the document and leave the command's own writer saying something else.
+		if !w.Node {
+			t.Errorf("%s: Node = false, want true: the write lands in the local config and the published node serves the pool, so a hook reading the store alone runs no stage for it (D2615)", key)
+		}
 		if len(w.Argv) == 0 {
 			t.Errorf("%s: no argv, so the conformance test has nothing to run", key)
 		}
@@ -558,13 +568,16 @@ func TestPoolWritersAreRegisteredAndDisjoint(t *testing.T) {
 	}
 	// The removal record is registered under its own key, because a command does
 	// write it: the name goes in through `accounts pool rm`, which is the argv a
-	// refusal for that key prints.
+	// refusal for that key prints. It states the node as well, and for the pool's
+	// reason one step further out: the write lands in the local config, and what
+	// changes for the node is that the pool is gone — a record nothing reconciles
+	// is a pool the owner removed and the node goes on serving (F22, D2607).
 	w, ok := settings.WriterOf("node_removals.pools")
 	if !ok {
 		t.Fatal("node_removals.pools: no registered writer, so the removal record names no command")
 	}
-	if w.Command != "fugaro accounts pool rm" || w.Store != settings.StoreLocal {
-		t.Errorf("node_removals.pools: %+v, want the pool family's removal in the local config", w)
+	if w.Command != "fugaro accounts pool rm" || w.Store != settings.StoreLocal || !w.Node {
+		t.Errorf("node_removals.pools: %+v, want the pool family's removal in the local config, with the node served beside it", w)
 	}
 }
 
