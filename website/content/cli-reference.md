@@ -6147,27 +6147,58 @@ Flags:
 
 Subcommands:
 
-- `fugaro project repos add` -- Enroll a repository: add it to the policy's allow-list
+- `fugaro project repos add` -- Enroll a repository: one confirmation for the whole enrolment
 - `fugaro project repos ls` -- List the allow-list and the repositories that have run here
 - `fugaro project repos rm` -- Un-enroll a repository: remove it from the allow-list
 - `fugaro project repos set` -- Write a repository's workflow selection or a job profile, in this machine's project config
 
 ## `fugaro project repos add`
 
-Enroll a repository: add it to the policy's allow-list
+Enroll a repository: one confirmation for the whole enrolment
 
-Add a canonical repository (github/acme/app, bitbucket/acme/*) to the
-published policy's allow_repos, through the same ETag-guarded write the
-publisher uses, and print the change. A bare owner/name takes its provider
-from this machine's project config, and * is the list's own entry for every
-repository: it is written as it is. Only allow_repos changes.
+Enrol a repository in the project, behind one confirmation. The command
+reads what it can and never guesses one: the provider from this machine's
+config, then the checkout's own fugaro.yaml, then its origin remote; the
+workflows and the base branch from that fugaro.yaml; the image its job runs
+from the workflow's catalog reference, then this project's effective image
+map, then the catalog's default; the GitHub App ID and the Claude accounts
+from the project's other repositories. It prints the whole list of what it
+will change, asks once for the project's name, and then does each step as
+far as it can:
 
-Usage: `fugaro project repos add <provider/owner/name | owner/name | *>`
+  1. the repository's own fugaro.yaml: read, never written
+  2. this machine's project config: the repository's repos: entry
+  3. this machine's project config: its repo-to-image mapping
+  4. the published policy's allow_repos
+  5. the publish of the policy node (fugaro update's policy stage)
+  6. the repository's job set and its roles/run.invoker grant
+
+Every step is idempotent and the command is resumable: over a repository
+already enrolled nothing is written and each step says so, and over an
+enrolment a failure or a Ctrl-C left half done the missing steps are done
+and the ones already done are left alone. A value it cannot read it refuses
+with the one command that supplies it, and never guesses one.
+
+Step 6 converges the repository's own root, which is deployed from a
+checkout of it, so run this from that checkout: without one the command
+refuses and names --allow-list-only. The catalog's entry for the repository
+is mapped and never built — the first image build is billable and it is
+`fugaro image build <entry>`'s — and the map step merges the entry into the
+map the published node holds, so enrolling one repository cannot take
+another's mapping away. Nothing here asks a run to finish, and nothing
+rewrites what a run in flight holds.
+
+--allow-list-only writes the published allow-list entry and nothing else,
+as this command did before the enrolment converged: it is what * needs, and
+it is the whole of what a pattern such as owner/* can want.
+
+Usage: `fugaro project repos add <provider/owner/name | owner/name>`
 
 Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--allow-list-only` | bool | `false` | no | Write only the allow-list entry, as this command did before the whole enrolment converged (required for *) |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for add |

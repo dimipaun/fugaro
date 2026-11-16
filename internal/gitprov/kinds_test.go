@@ -59,6 +59,7 @@ var forgeKindGoSites = map[string]string{
 	"internal/cli/init_repo_target.go":         "init's GitHub App check on the provider a repository already names",
 	"internal/cli/launch_budget.go":            "the proxied-Bitbucket read a launch makes",
 	"internal/cli/project_enroll.go":           "the kind `project sync --bitbucket` lists a workspace's repositories through, and the kind each listed name is canonicalised as",
+	"internal/cli/project_enroll_converge.go":  "the kind the enrolment reads off a repository's origin remote, and the GitHub-only App ID its repos: entry is built with",
 	"internal/cli/reviewverify.go":             "reading a pull request's head per provider",
 	"internal/cli/run.go":                      "the kind a launch resolves for the slug it runs on, refused for a read-only context repository the credentials service cannot fetch",
 	"internal/config/validate.go":              "config.Providers, the config-side list, and the per-provider identity checks — held to runner.jobProviderKinds by internal/cli's TestProviderKindsAgreeWithTheConfigsList",
