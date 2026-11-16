@@ -268,7 +268,7 @@ func TestRunDuplicateRefusalNamesTheWaysOut(t *testing.T) {
 		for _, want := range []string{
 			"plan task " + duplicatePlan,
 			"nothing was launched",
-			"fugaro run --pr 7",
+			"fugaro run --pr 7 --repo acme/app",
 			"run " + task.ShortRun(dupLeft) + " left pull request #7 of acme/app",
 			"--allow-duplicate",
 		} {
@@ -404,7 +404,12 @@ func TestRunDuplicateWaysOutRun(t *testing.T) {
 		f := duplicateRig(t)
 		dupFinishedRun(t, f, dupLeft, duplicatePlan, 7, runstore.OutcomeReady)
 		msg := dupRefused(t, f, "already being worked on", "run", "--repo", "acme/app", "--run-id", dupNext, "--plan-task", duplicatePlan, "Add a feature")
+		// Both arguments are read out of the printed sentence, the repository
+		// included: the refusal names the caller's own <owner/name>, and a
+		// launch copied without it is refused outside a checkout or aimed at
+		// whatever repository the caller happens to stand in.
 		pr := dupPrinted(t, msg, "--pr ")
+		repo := dupPrinted(t, msg, "--repo ")
 		ref := dupRef(dupLeft)
 		// The two commands the refusal does not print, each held to what it
 		// really does with the run it would have named -- not to the error it
@@ -420,8 +425,8 @@ func TestRunDuplicateWaysOutRun(t *testing.T) {
 			t.Fatalf("%d executions after the two commands the refusal does not print, want none", n)
 		}
 		// And what it does print is a way out rather than another refusal: the
-		// launch it names happens.
-		if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", pr, "--run-id", dupOther, "Add a feature"); err != nil {
+		// launch it names happens, with the repository it printed.
+		if _, _, err := execute(t, "run", "--pr", pr, "--repo", repo, "--run-id", dupOther, "Add a feature"); err != nil {
 			t.Fatalf("the printed --pr way out was refused: %v", err)
 		}
 		if n := len(f.run.Executions()); n != 1 {

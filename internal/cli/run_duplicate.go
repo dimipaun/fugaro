@@ -137,6 +137,12 @@ func (d duplicateOf) what(planTask, repo string) string {
 // leaves it empty) whose row carries the pull request and no task -- so naming
 // --pr in either case would be one more dead end, and the pull request's own
 // listing is the way out instead.
+//
+// Every launch a way out prints carries --repo, and the listings carry it too:
+// the caller that reads the refusal may be in another checkout, or in none at
+// all (a launch that resolves the repository from the flag), and a launch
+// without it is refused there or silently aimed at the checkout's own
+// repository -- the duplicate this refusal exists to stop, one repository over.
 func (d duplicateOf) refusal(planTask, repo string) string {
 	second := "launch a deliberate second attempt of the same task with --allow-duplicate"
 	var ways string
@@ -162,7 +168,7 @@ func (d duplicateOf) refusal(planTask, repo string) string {
 		// refuses, and the caller has to hear that before it reaches for the
 		// flag.
 		second += " (the run records, and not the code host, are where that pull request is read from, so one since merged or closed refuses too)"
-		ways = fmt.Sprintf("continue that pull request with fugaro run --pr %d, or %s", d.pr, second)
+		ways = fmt.Sprintf("continue that pull request with fugaro run --pr %d --repo %s, or %s", d.pr, repo, second)
 	}
 	return fmt.Sprintf("%s, so this launch would be its second run: nothing was launched. %s.", d.what(planTask, repo), ways)
 }
