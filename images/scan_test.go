@@ -23,15 +23,18 @@ type scanFixture struct {
 
 // cleanFixture is an image the scan passes. Its config carries the variables a
 // base image's own, one of which merely contains a credential word
-// (DISABLE_AUTOUPDATER), and its files hold a git config with a name and a
-// remote URL that carries no userinfo: what the checks must not refuse.
+// (DISABLE_AUTOUPDATER), and its files hold the git configs a base image really
+// has: /etc/gitconfig as images/base/byproducts.sh writes it (git-lfs's four
+// filter keys), a user config whose only useful line is an ssh mirror, and a
+// baked checkout whose remote is an https URL with no userinfo.
 var cleanFixture = scanFixture{
 	env: []string{"PATH=/usr/local/bin:/usr/bin", "LANG=C.UTF-8", "DISABLE_AUTOUPDATER=1"},
 	files: map[string]string{
-		"etc/os-release":  "ID=debian\n",
-		"root/.gitconfig": "[user]\n\tname = Fugaro\n",
-		"src/.git/config": "[remote \"origin\"]\n\turl = https://github.com/owner/repo.git\n",
-		"workspace/notes": "nothing here\n",
+		"etc/gitconfig":          "[filter \"lfs\"]\n\tclean = git-lfs clean -- %f\n\tsmudge = git-lfs smudge -- %f\n\tprocess = git-lfs filter-process\n\trequired = true\n",
+		"etc/os-release":         "ID=debian\n",
+		"home/fugaro/.gitconfig": "[url \"ssh://git@github.com/\"]\n\tinsteadOf = https://github.com/\n[user]\n\tname = Fugaro\n",
+		"src/.git/config":        "[remote \"origin\"]\n\turl = https://github.com/owner/repo.git\n",
+		"workspace/notes":        "nothing here\n",
 	},
 }
 
@@ -194,6 +197,21 @@ func TestScanRefusesAnImageWithAGitCredential(t *testing.T) {
 				t.Errorf("the refusal does not name %s: %s", c.want, out)
 			}
 		})
+	}
+}
+
+// TestScanPassesAnSshMirror is the boundary of the refusals below: a git config
+// whose only unusual line is a mirror naming ssh://git@host carries no secret —
+// the user there is ssh's own, not a credential a build injected — so the scan
+// must not refuse an image over it. The checkout strip and the smoke refuse an
+// ssh URL for a different reason (credential injection cannot use one), which
+// is not the question a leak scan asks.
+func TestScanPassesAnSshMirror(t *testing.T) {
+	f := cleanFixture
+	f.files = map[string]string{"home/fugaro/.gitconfig": "[url \"ssh://git@github.com/\"]\n\tinsteadOf = https://github.com/\n[user]\n\tname = Fugaro\n"}
+	out, _, err := runScan(t, f, "0", "--secrets", "fugaro-base:ci")
+	if err != nil {
+		t.Fatalf("the scan refused a config that holds no credential: %v\n%s", err, out)
 	}
 }
 
