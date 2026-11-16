@@ -57,11 +57,18 @@ workflows:
   web: { commands: { build: sh build.sh, test: sh test.sh } }
 `
 
+// apiKeyLaunchYAML is oauthLaunchYAML with the one word that makes it the other
+// auth. The repository, the workflow and the git provider are the same, so the
+// pair is what a test about the auth's own condition (D2071) needs.
+var apiKeyLaunchYAML = strings.Replace(oauthLaunchYAML, "auth: oauth", "auth: api-key", 1)
+
 // launchWithCredentialsService launches the fixture's run for a checkout
 // carrying yaml against an installation whose local config carries the
 // service's block with url (empty for an installation that never deployed it,
 // where the block is absent altogether) and the per-repository record when
-// ready is true, and returns what the backend was handed.
+// ready is true, and returns what the backend was handed. It publishes no
+// policy node, which is the state of a project that has never published one and
+// reads as `off` for this switch (launchWithCredentialsServiceMode).
 //
 // The checkout is the test's own, and that is the switch's third condition: it
 // is the repository's agent.auth, read from the document the run will read —
@@ -70,9 +77,26 @@ workflows:
 // cannot switch on.
 func launchWithCredentialsService(t *testing.T, yaml, url string, ready bool) (plain, secret []string) {
 	t.Helper()
+	return launchWithCredentialsServiceMode(t, yaml, url, ready, "", false)
+}
+
+// launchWithCredentialsServiceMode is launchWithCredentialsService with the
+// switch's fourth condition (D2071) in the test's hand: the project's
+// PUBLISHED policy node, carrying mode, which is where the launch reads the
+// budget mode from (cloudEnv.policyMode — the node and not this machine's
+// config, because the runner writes the node's mode over the deploy-time one).
+//
+// published false is the fixture every other test in this file uses: no node at
+// all, which this switch reads exactly as it reads `off`, and which is the state
+// of an installation that has never published a policy.
+func launchWithCredentialsServiceMode(t *testing.T, yaml, url string, ready bool, mode string, published bool) (plain, secret []string) {
+	t.Helper()
 	f := newLaunchBudget(t, "enforce")
 	if url != "" {
 		f.appendConfig(t, "credentials_service:\n  url: "+url+"\n")
+	}
+	if published {
+		publishPolicy(t, f, cascadePolicyWithMode(mode))
 	}
 	projectJobCheckoutYAML(t, yaml)
 	if ready {
@@ -142,6 +166,92 @@ func TestTheCredentialsServiceURLReachesTheJobEnv(t *testing.T) {
 	}
 }
 
+// TestLaunchEnvCarriesTheURLForASwitchedAPIKeyRepository is the arm this task
+// adds to the switch: a repository whose agent.auth is `api-key` or `oauth` is
+// handed the service's address like a cascade one, and only while the project's
+// published policy carries a budget mode — the service is reached through the
+// gateway, and the gateway exists in `observe` and `enforce` alone (D2071).
+//
+// The address is NOT inert (F29, R6): with it set the GitHub provider opens
+// keyless and the run mints at the service
+// (internal/gitprov/providers/providers.go, gated on the very name this entry
+// carries), which is the whole of what makes the switch worth turning on for
+// these two auths — and it is why every mount is still there at the same time
+// (D2072, G17): `api-key` hashes its own key, `oauth` runs on its own
+// subscription, and neither is handed back by the service until the flip
+// (config.ServiceServedAuths is empty, so the mount drop answers `none` for
+// every non-cascade repository: internal/infra's
+// TestEmptyServiceServedAuthsKeepsEveryNonCascadeMount is the plan's half of
+// that pair).
+//
+// A node nobody published and a node whose mode is `off` are the same answer
+// here, and both are the state an api-key repository is held off in today: the
+// launch reads the mode from the NODE (cloudEnv.policyMode) and not from this
+// machine's config, because a run's mode is the node's — a project that lowered
+// it after the last apply would otherwise be handed an address its own runner
+// refuses to use.
+func TestLaunchEnvCarriesTheURLForASwitchedAPIKeyRepository(t *testing.T) {
+	want := envCredentialsServiceURL + "=" + launchCredsURL
+	for name, tc := range map[string]struct {
+		yaml      string
+		mode      string
+		published bool
+		ready     bool
+		on        bool
+	}{
+		"an api-key repository where the budget is observed":          {apiKeyLaunchYAML, config.BudgetObserve, true, true, true},
+		"an api-key repository where the budget is enforced":          {apiKeyLaunchYAML, config.BudgetEnforce, true, true, true},
+		"an oauth repository where the budget is observed":            {oauthLaunchYAML, config.BudgetObserve, true, true, true},
+		"an oauth repository where the budget is enforced":            {oauthLaunchYAML, config.BudgetEnforce, true, true, true},
+		"an api-key repository where the budget is off":               {apiKeyLaunchYAML, config.BudgetOff, true, true, false},
+		"an api-key repository on a project that published no policy": {apiKeyLaunchYAML, "", false, true, false},
+		"an api-key repository whose root no apply switched on":       {apiKeyLaunchYAML, config.BudgetEnforce, true, false, false},
+	} {
+		plain, secret := launchWithCredentialsServiceMode(t, tc.yaml, launchCredsURL, tc.ready, tc.mode, tc.published)
+		for _, kv := range secret {
+			if strings.HasPrefix(kv, envCredentialsServiceURL+"=") {
+				t.Errorf("%s: the launch carried %q in its secret entries: the address is the service's public address and the audience the ID token is minted for, and a Batch task refuses a secret entry outright (backend.LaunchSpec.SecretEnv)", name, kv)
+			}
+		}
+		if tc.on {
+			if len(plain) != 1 || plain[0] != want {
+				t.Errorf("%s: the launch's plain Env = %v, want exactly [%s]: a repository the service serves under a live budget mode is switched on, and its runs mint through the service from here", name, plain, want)
+			}
+			continue
+		}
+		if len(plain) != 0 {
+			t.Errorf("%s: the launch's plain Env = %v, want none: a project whose budget is `off` (or that published no node), and a root no apply switched on, both leave the repository on its own credentials — the address is what opens the git provider keyless, and the service is reached through a gateway that does not exist there", name, plain)
+		}
+	}
+}
+
+// TestSwitchedAPIKeyGitHubRunMintsThroughTheService is the positive of the pair
+// above for the provider this repository uses, and the state F29 is about: the
+// GitHub App key of a switched `api-key` repository is held by the service, so
+// the job opens the provider keyless and the mint that replaces its own App
+// token is the service's (internal/gitprov/github's ServiceHeldKey path, over
+// the address this entry names).
+//
+// The readiness the address is conditioned on is the repository's record, which
+// on a real installation is written by an apply whose bundle held the git
+// credential this provider needs (recordCredentialsServiceReady): a repository
+// whose provider credential is not in the bundle is held off
+// (update_switch_test.go's TestUpdateSwitchHoldsOffARepoWhoseGitCredentialIsNotInTheBundle),
+// and with every mount kept that costs such a run the address and nothing
+// else — it runs on its own App key exactly as it does today (D2072).
+func TestSwitchedAPIKeyGitHubRunMintsThroughTheService(t *testing.T) {
+	plain, _ := launchWithCredentialsServiceMode(t, apiKeyLaunchYAML, launchCredsURL, true, config.BudgetEnforce, true)
+	url, ok := credentialsServiceURLOf(plain)
+	if !ok || url != launchCredsURL {
+		t.Fatalf("the launch of a switched api-key GitHub repository put %v in the plain Env, want %s=%s: this entry is the whole of the keyless path (internal/gitprov/providers/providers.go gates it on this name), so without it the run mints with the App key mounted on its job instead of at the service", plain, envCredentialsServiceURL, launchCredsURL)
+	}
+
+	heldOff, _ := launchWithCredentialsServiceMode(t, apiKeyLaunchYAML, launchCredsURL, false, config.BudgetEnforce, true)
+	if len(heldOff) != 0 {
+		t.Errorf("a GitHub repository whose entry carries no record launched with %v: the record is written by the apply whose bundle held this provider's credential, so a launch that filled it in from what it can see would open the provider keyless on the strength of a bundle nobody checked", heldOff)
+	}
+}
+
 // TestAnInstallationWithoutTheServiceSetsNoCredentialsServiceVariable: the
 // absence of the block is the off position, and off is byte for byte what this
 // tree launched before the variable existed — no entry, no empty value, nothing
@@ -197,14 +307,13 @@ func TestACascadeRepositoryAppliedHeldOffIsNotHandedTheService(t *testing.T) {
 // only be reached by a Config built in Go, and reading it as "off" is the
 // fail-closed direction: the job gets no address rather than an empty one.
 //
-// The switch's own two refusals are here beside them, because they are the
-// whole of what the helper answers with this release
-// (infra.CredentialsServiceServes): a block whose bundle the record does not
-// vouch for, and a repository whose agent.auth the service cannot serve. Both
-// hand the job nothing, which is the state every repository of a converged
-// installation is in until an operator stores a credential in the bundle —
-// and, for an `oauth` or `api-key` repository, the state it stays in, because
-// the service has no route that would serve it one.
+// The switch's own refusals are here beside them, because they are the whole
+// of what the helper answers with (infra.CredentialsServiceServes): a block
+// whose bundle the record does not vouch for, a project whose published budget
+// mode is not one the gateway exists in, and a job that is the shared project
+// job. Every one of them hands the job nothing, which is the state every
+// repository of a converged installation is in until an operator stores a
+// credential in the bundle.
 //
 // A SHARED PROJECT JOB is off whatever the config says, and that is the job
 // argument's whole job: the service refuses an account that belongs to one
@@ -246,6 +355,19 @@ func TestCredentialsServiceLaunchEnv(t *testing.T) {
 	if len(got) != 1 || got[0] != envCredentialsServiceURL+"="+launchCredsURL {
 		t.Errorf("credentialsServiceLaunchEnv = %v, want [%s=%s]", got, envCredentialsServiceURL, launchCredsURL)
 	}
+	// The auths this release adds (B2.3): an `api-key` or `oauth` repository is
+	// handed the same address a cascade one is, and the MODE is what decides —
+	// the service is reached through the gateway, and the gateway exists in
+	// `observe` and `enforce` alone (D2071). A cascade repository was the only
+	// one of the three served before this.
+	for _, auth := range []string{config.AuthAPIKey, config.AuthOAuth} {
+		for _, mode := range []string{config.BudgetObserve, config.BudgetEnforce} {
+			got := credentialsServiceLaunchEnv(optedIn, "", "acme/app", auth, mode, false)
+			if len(got) != 1 || got[0] != envCredentialsServiceURL+"="+launchCredsURL {
+				t.Errorf("credentialsServiceLaunchEnv(auth %s, mode %s) = %v, want [%s=%s]: this release switches such a repository on, and its job's mounts are all still there (config.ServiceServedAuths)", auth, mode, got, envCredentialsServiceURL, launchCredsURL)
+			}
+		}
+	}
 	for name, tc := range map[string]struct {
 		lc       *localcfg.Config
 		auth     string
@@ -255,8 +377,10 @@ func TestCredentialsServiceLaunchEnv(t *testing.T) {
 		"no record yet": {
 			lc:   &localcfg.Config{CredentialsService: &localcfg.CredentialsService{URL: launchCredsURL}},
 			auth: config.AuthCascade,
+			mode: config.BudgetEnforce,
 		},
-		"a repository the service cannot serve": {lc: optedIn, auth: "oauth"},
+		"an api-key repository where the budget is off":              {lc: optedIn, auth: config.AuthAPIKey, mode: config.BudgetOff},
+		"an oauth repository nobody has published a budget mode for": {lc: optedIn, auth: config.AuthOAuth},
 		"no document, and the root carries no service": {
 			lc:       &localcfg.Config{CredentialsService: &localcfg.CredentialsService{URL: launchCredsURL}},
 			deployed: false,
