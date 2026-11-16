@@ -60,13 +60,26 @@ jobs:
       - run: go vet -tags terraform ./...
       # Type-checks the emulator tests of the database rules (the rules job runs them).
       - run: go vet -tags firebase ./...
-  # The Go tests run on parallel runners: scripts and internal/runner are split
-  # by test name (a stable hash of the name, mod the shard count, so a new test
-  # lands in a shard on its own and none is dropped or run twice), internal/cli
-  # and internal/issues each get a runner, and one runner takes every other
-  # package. internal/cli is not split: its update tests hang when a subset of
-  # the package runs without the tests that precede them, so the package has to
-  # run whole. A runner that is a whole package has of: 1.
+  # The Go tests run on parallel runners, and every runner here is under seven
+  # minutes on the 2026-11-15 run this matrix was measured against, where the
+  # longest, `scripts-live-0`, took 598s: three runners ran the whole live
+  # suite each because their -run filter matched no subtest, and `rest`,
+  # `issues` and four of the eight `cli` shards were over the line as well.
+  # A family is split by test name -- a stable
+  # hash of the name, mod the shard count, so a new test lands in a shard on
+  # its own and none is dropped or run twice -- by package path for everything
+  # else, and by LIVE_CHECK_SHARD for the live checks, whose filter cannot be
+  # spelled as a -run pattern (see that step). internal/cli is not split by the
+  # hash alone: its update tests hang when a subset of the package runs without
+  # the tests that precede them, so cli-update takes them whole and the other
+  # shards take everything else. A runner that is a whole package has of: 1.
+  #
+  # internal/backend/gcp, images and plugin have a runner each rather than
+  # taking a hash of the rest family's 138 packages: each holds one test that
+  # walks the whole repository (271s, 201s and 145s of test time), and a hash
+  # puts a shard of that length together whenever one of them lands beside
+  # anything else. They are excluded from that grep below and named in the
+  # matrix, so the pair can only move together.
   shard:
     needs: changes
     if: needs.changes.outputs.docs_only != 'true'
@@ -93,11 +106,17 @@ jobs:
           - {name: scripts-1, pkg: ./scripts, index: 1, of: 2, only: nonlive}
           - {name: runner-0, pkg: ./internal/runner, index: 0, of: 2}
           - {name: runner-1, pkg: ./internal/runner, index: 1, of: 2}
-          - {name: issues, pkg: ./internal/issues, index: 0, of: 1}
-          - {name: rest-0, pkg: rest, index: 0, of: 4}
-          - {name: rest-1, pkg: rest, index: 1, of: 4}
-          - {name: rest-2, pkg: rest, index: 2, of: 4}
-          - {name: rest-3, pkg: rest, index: 3, of: 4}
+          - {name: issues-0, pkg: ./internal/issues, index: 0, of: 2}
+          - {name: issues-1, pkg: ./internal/issues, index: 1, of: 2}
+          - {name: rest-0, pkg: rest, index: 0, of: 6}
+          - {name: rest-1, pkg: rest, index: 1, of: 6}
+          - {name: rest-2, pkg: rest, index: 2, of: 6}
+          - {name: rest-3, pkg: rest, index: 3, of: 6}
+          - {name: rest-4, pkg: rest, index: 4, of: 6}
+          - {name: rest-5, pkg: rest, index: 5, of: 6}
+          - {name: rest-gcp, pkg: ./internal/backend/gcp, index: 0, of: 1}
+          - {name: rest-images, pkg: ./images, index: 0, of: 1}
+          - {name: rest-plugin, pkg: ./plugin, index: 0, of: 1}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -114,7 +133,9 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$PKG" = rest ]; then
-            go list ./... | grep -vE '/(internal/cli|scripts|internal/runner|internal/issues)$' | while read -r p; do
+            # The three packages with a runner of their own are left out here
+            # and named in the matrix above: a package can only be in one place.
+            go list ./... | grep -vE '/(internal/cli|scripts|internal/runner|internal/issues|internal/backend/gcp|images|plugin)$' | while read -r p; do
               if [ $(( $(printf '%s' "$p" | cksum | cut -d' ' -f1) % OF )) -eq "$INDEX" ]; then
                 echo "$p"
               fi
@@ -128,10 +149,22 @@ jobs:
             exit 0
           fi
           if [ "${ONLY:-}" = live ]; then
-            go test -race -timeout 40m -json -run "^TestLiveCheckScripts\$/^[^/]+\$/^shard${INDEX}\$" "$PKG" | tee test.json | jq -rj 'select(.Action=="output").Output'
+            # TestLiveCheckScripts builds its items here and runs them through
+            # a worker pool, so they are not subtests and no -run pattern can
+            # choose between them: a top-level test whose name matches the
+            # first element of a multi-element pattern runs whatever its
+            # subtests do, and there are none. The split is the variable, read
+            # by the test itself; an unreadable value fails the runner rather
+            # than running everything (scripts/live_checks_test.go).
+            LIVE_CHECK_SHARD="$INDEX/$OF" \
+              go test -race -timeout 40m -json -run '^TestLiveCheckScripts$' "$PKG" | tee test.json | jq -rj 'select(.Action=="output").Output'
             exit 0
           fi
-          go test -list '.*' "$PKG" | grep -E '^(Test|Example|Fuzz)' | sort > all.txt
+          # -race, so that the run below finds this build rather than making a
+          # second one: without it the package is compiled twice per runner,
+          # once without the race detector and once with, and the two builds
+          # are most of what a cli runner's seven minutes hold.
+          go test -race -list '.*' "$PKG" | grep -E '^(Test|Example|Fuzz)' | sort > all.txt
           case "${ONLY:-}" in
             update) grep -E '^TestUpdate' all.txt > sel.txt || true; mv sel.txt all.txt ;;
             other) grep -vE '^TestUpdate' all.txt > sel.txt || true; mv sel.txt all.txt ;;
