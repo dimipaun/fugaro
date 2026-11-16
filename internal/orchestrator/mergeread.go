@@ -66,11 +66,6 @@ const (
 	MergeClosed MergeState = "closed"
 )
 
-// Known reports whether s is one of the three states.
-func (s MergeState) Known() bool {
-	return s == MergeOpen || s == MergeMerged || s == MergeClosed
-}
-
 // ErrMergeNoReadConsumer is the credentials service refusing a Bitbucket read
 // for want of a read consumer: the installation holds none, so no pull request
 // of that repository can be read until one is set (G5, D2736).
@@ -162,6 +157,12 @@ func (c *cycle) merge(ctx context.Context) error {
 func (c *cycle) mergeOps(ctx context.Context) []Op {
 	seams := &c.tick.Merge
 	mem := seams.memory()
+	// recorded is the repositories this cycle has already written the missing
+	// consumer's fact for, seeded from the node: the fact is the record and the
+	// node is where it lives, so a write that did not land is a fact the next
+	// cycle writes, and a daemon that restarted does not write what is already
+	// there.
+	recorded := map[string]bool{}
 	var ops []Op
 	for _, g := range mergeGroups(c.state) {
 		if !mem.due(g.repo, c.now) {
@@ -171,7 +172,7 @@ func (c *cycle) mergeOps(ctx context.Context) []Op {
 		// that would not answer is a host to ask again in a minute, not one to
 		// ask again on the next wake.
 		mem.markRead(g.repo, c.now)
-		ops = append(ops, c.mergeRepo(ctx, seams, mem, g)...)
+		ops = append(ops, c.mergeRepo(ctx, seams, recorded, g)...)
 	}
 	return ops
 }
@@ -227,7 +228,7 @@ type mergeItem struct {
 // listing of what the host reports open, and a `get` for each item the listing
 // does not carry (D2742) — or for each item at all, where the host has no
 // listing (Bitbucket).
-func (c *cycle) mergeRepo(ctx context.Context, seams *MergeSeams, mem *mergeMemory, g mergeGroup) []Op {
+func (c *cycle) mergeRepo(ctx context.Context, seams *MergeSeams, recorded map[string]bool, g mergeGroup) []Op {
 	items, err := c.mergeItems(ctx, g)
 	if err != nil {
 		warnMerge(ctx, seams, fmt.Sprintf("the pull requests of %s could not be read: %s",
@@ -236,7 +237,7 @@ func (c *cycle) mergeRepo(ctx context.Context, seams *MergeSeams, mem *mergeMemo
 	}
 	open, supported, err := seams.Reader.ListOpen(ctx, g.repo)
 	if err != nil {
-		return mergeRefusal(ctx, seams, mem, g.repo, err)
+		return c.mergeRefusal(ctx, seams, recorded, g.repo, err)
 	}
 	var ops []Op
 	for _, it := range items {
@@ -249,7 +250,7 @@ func (c *cycle) mergeRepo(ctx context.Context, seams *MergeSeams, mem *mergeMemo
 		}
 		state, err := seams.Reader.State(ctx, g.repo, it.number)
 		if err != nil {
-			ops = append(ops, mergeRefusal(ctx, seams, mem, g.repo, err)...)
+			ops = append(ops, c.mergeRefusal(ctx, seams, recorded, g.repo, err)...)
 			continue
 		}
 		if op, ok := c.mergeOp(g.repo, it, state); ok {
@@ -327,17 +328,18 @@ func (c *cycle) mergeOp(repo string, it mergeItem, state MergeState) (Op, bool) 
 //
 // The items are left in `review` by both: a read that failed is not an answer,
 // and the wait it was reading for goes on.
-func mergeRefusal(ctx context.Context, seams *MergeSeams, mem *mergeMemory, repo string, err error) []Op {
+func (c *cycle) mergeRefusal(ctx context.Context, seams *MergeSeams, recorded map[string]bool, repo string, err error) []Op {
 	if !errors.Is(err, ErrMergeNoReadConsumer) {
 		warnMerge(ctx, seams, fmt.Sprintf("the pull requests of %s could not be read: %s",
 			repo, safetext.OneLine(err.Error())))
 		return nil
 	}
-	if mem.didRecordRefusal(repo) {
+	key := mergeFactKey(repo)
+	if _, ok := c.state.Facts[key]; ok || recorded[repo] {
 		return nil
 	}
-	mem.markRefusal(repo)
-	return []Op{{Op: OpFactSet, Fact: &FactOp{Key: mergeFactKey(repo), Value: mergeFactValue(repo)}}}
+	recorded[repo] = true
+	return []Op{{Op: OpFactSet, Fact: &FactOp{Key: key, Value: mergeFactValue(repo)}}}
 }
 
 // mergeFactKey is the fact key of one repository. A fact key is a name
@@ -373,28 +375,26 @@ func warnMerge(ctx context.Context, seams *MergeSeams, line string) {
 	seams.Log.Warn(ctx, line)
 }
 
-// mergeMemory is what a daemon carries between ticks, and it holds only what
-// is worth not repeating (D2742): when each repository was last read, and the
-// repositories whose missing read consumer has already been recorded as a fact.
+// mergeMemory is what a daemon carries between ticks, and it holds the one
+// thing worth not repeating (D2742): when each repository was last read.
 //
 // Neither what a host answered nor which items it answered for is kept: the
 // node says which items wait, and what a host reports is read again on the next
-// cadence, which is what makes a daemon that restarted the daemon it would have
-// been a minute later. The fact's own bookkeeping is kept because the write is
-// the record and not the read: recording the same fact every cadence would
-// leave a patch on the node every minute saying what it already says.
+// cadence, which is what makes a daemon that restarted behave as the daemon it
+// was a minute earlier. The fact a missing read consumer leaves is not kept
+// either — it lives on the node, which is what makes it once per repository
+// rather than once per daemon, and what makes a write that did not land one the
+// next cycle tries again.
 type mergeMemory struct {
-	at       map[string]time.Time
-	refusals map[string]bool
+	at map[string]time.Time
 }
 
 // memory is this seam's memory, made on first use. A daemon that restarted is
-// a daemon whose memory is empty, which costs one read per repository before
-// its cadence is known and, for a repository whose read consumer is missing,
-// one fact that says what the node already said.
+// a daemon whose memory is empty, which costs one read per repository before its
+// cadence is known.
 func (s *MergeSeams) memory() *mergeMemory {
 	if s.kept == nil {
-		s.kept = &mergeMemory{at: map[string]time.Time{}, refusals: map[string]bool{}}
+		s.kept = &mergeMemory{at: map[string]time.Time{}}
 	}
 	return s.kept
 }
@@ -413,16 +413,4 @@ func (m *mergeMemory) due(repo string, now time.Time) bool {
 // markRead records that one repository has been read at this reading.
 func (m *mergeMemory) markRead(repo string, now time.Time) {
 	m.at[repo] = now
-}
-
-// didRecordRefusal reports whether the fact of one repository's missing read
-// consumer has already been written by this daemon.
-func (m *mergeMemory) didRecordRefusal(repo string) bool {
-	return m.refusals[repo]
-}
-
-// markRefusal records that the fact of one repository's missing read consumer
-// has been written.
-func (m *mergeMemory) markRefusal(repo string) {
-	m.refusals[repo] = true
 }

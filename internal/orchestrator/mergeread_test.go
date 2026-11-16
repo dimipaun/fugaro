@@ -476,11 +476,14 @@ func TestBitbucketMergeReadGetsEachItem(t *testing.T) {
 func TestNoReadConsumerRecordsOneFact(t *testing.T) {
 	now := o6Now()
 	approvedAt := now.Add(-time.Hour)
-	w, it := mergeReviewItem("wi-1", mergeBitbucket, mergeRunA, approvedAt)
-	h := newMergeHarness(t, tickState(t, now, []orchestrator.WorkItem{w}, []orchestrator.Intent{it}), now)
-	h.reader.reports = []orchestrator.RunReport{mergeReport(mergeRunA, 12)}
+	a, itA := mergeReviewItem("wi-1", mergeBitbucket, mergeRunA, approvedAt)
+	b, itB := mergeReviewItem("wi-2", mergeBitbucket, mergeRunB, approvedAt)
+	h := newMergeHarness(t, tickState(t, now,
+		[]orchestrator.WorkItem{a, b}, []orchestrator.Intent{itA, itB}), now)
+	h.reader.reports = []orchestrator.RunReport{mergeReport(mergeRunA, 12), mergeReport(mergeRunB, 14)}
 	h.reads.noList[mergeBitbucket] = true
 	h.reads.stateErr[mergeKey(mergeBitbucket, 12)] = orchestrator.ErrMergeNoReadConsumer
+	h.reads.stateErr[mergeKey(mergeBitbucket, 14)] = orchestrator.ErrMergeNoReadConsumer
 
 	h.step()
 
@@ -501,8 +504,13 @@ func TestNoReadConsumerRecordsOneFact(t *testing.T) {
 	if !strings.Contains(value, "fugaro creds set bitbucket-read-consumer") {
 		t.Errorf("the fact %q reads %q, and it names the fix", key, value)
 	}
-	if got := h.mergePhase("wi-1"); got != orchestrator.PhaseReview {
-		t.Errorf("the item is %q, and a read that could not be made says nothing about its pull request", got)
+	for _, id := range []string{"wi-1", "wi-2"} {
+		if got := h.mergePhase(id); got != orchestrator.PhaseReview {
+			t.Errorf("the item %s is %q, and a read that could not be made says nothing about its pull request", id, got)
+		}
+	}
+	if got := len(h.reads.gets); got != 2 {
+		t.Errorf("the cycle read %d pull requests, and a host with no listing is read one per item", got)
 	}
 
 	// The next cadence: the read is tried again — a consumer set since has to
@@ -511,8 +519,8 @@ func TestNoReadConsumerRecordsOneFact(t *testing.T) {
 	h.clock.at = now.Add(orchestrator.MergeReadEvery)
 	h.step()
 
-	if got := len(h.reads.gets); got != 2 {
-		t.Errorf("the pull request was read %d times over two cadences, and the read is what heals (D2742)", got)
+	if got := len(h.reads.gets); got != 4 {
+		t.Errorf("the pull requests were read %d times over two cadences, and the read is what heals (D2742)", got)
 	}
 	if got := len(h.state().Facts); got != 1 {
 		t.Errorf("the node carries %d facts after a second cadence, and the fact is recorded once per repository", got)
