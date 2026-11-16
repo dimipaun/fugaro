@@ -674,6 +674,54 @@ func TestUpdateClearsOnlyTheStagesItRan(t *testing.T) {
 	}
 }
 
+// TestUpdateKeepsAStepQueuedWhileItsRunWasGoing: the record is a machine's file
+// and an `update` is minutes of Terraform, so a management command run with
+// --no-apply in another terminal queues into it while the update goes. The step
+// it queued is a change this run never published — the stage that would have
+// published it had already gone past — and update clears only the entries it
+// read before its own first stage, so that step stays owed (D1563). The entry
+// the run itself read and answered is still cleared, which is the half that
+// says the record is settled rather than left alone.
+func TestUpdateKeepsAStepQueuedWhileItsRunWasGoing(t *testing.T) {
+	// The managed project and the session are what let a full `update` run in
+	// this rig at all (update_managed_test.go's own note).
+	r := updateManagedRig(t)
+	updating(t, r)
+	owed(t, initflow.Installation, apply.Change{Kind: apply.Setting, Key: "layer.defaults.agent.model"})
+	queuedDuringRun(t, func() {
+		owed(t, initflow.Plugin, apply.Change{Kind: apply.Setting, Key: "layer.defaults.agent.model"})
+	})
+
+	got, err := updateRun(t, r, "update")
+	if !strings.Contains(got, markDone+" "+initflow.Installation) || !strings.Contains(got, markDone+" "+initflow.Plugin) {
+		t.Fatalf("the run did not answer the steps this test owes (%v):\n%s", err, got)
+	}
+	steps := pendingSteps(record(t))
+	if slices.Contains(steps, initflow.Installation) {
+		t.Errorf("update answered the installation step and left it owed: %v", steps)
+	}
+	if !slices.Contains(steps, initflow.Plugin) {
+		t.Errorf("update cleared the step queued while it was going, whose change it never published: %v\n%s", steps, got)
+	}
+}
+
+// TestApplyKeptLineNeverPromisesASecondRunForAStepItCannotAnswer: this sentence
+// is the whole of what the reader of a kept step is given, and a second
+// `fugaro apply` is not the fix for a step this command can never answer — the
+// workspace's own project confirms its grant by a name typed at a terminal no
+// run of apply has, so the command named has to be the one that reaches that
+// terminal.
+func TestApplyKeptLineNeverPromisesASecondRunForAStepItCannotAnswer(t *testing.T) {
+	var b strings.Builder
+	applyKeptLine(&b, []string{initflow.WorkspaceProject})
+	if got := b.String(); strings.Contains(got, "Run `fugaro apply` again") {
+		t.Errorf("a kept workspace-project is sent back to the command that left it:\n%s", got)
+	}
+	if !strings.Contains(b.String(), "Run `fugaro update`") {
+		t.Errorf("a kept workspace-project does not name the door that can answer it:\n%s", b.String())
+	}
+}
+
 // pendingSteps is a record's entries as step names, in the order they are
 // written: what a test about clearing reads, where the order the steps run in
 // is not what it is asking about.

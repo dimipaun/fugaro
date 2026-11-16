@@ -589,6 +589,37 @@ func TestWorkspaceProjectStageNeverConfirmsByTheRunsOwnAnswer(t *testing.T) {
 	}
 }
 
+// TestWorkspaceProjectStageAtTheApplyDoorNamesTheDoorThatCanConfirmIt: `fugaro
+// apply` runs with no terminal of its own by construction, so this stage's
+// question is never reached there — the run ends leaving the step. What it
+// leaves has to name the command that reaches the question, and apply's own
+// command is not one: it asks apply to run apply again, and the second run says
+// what the first said (the no-prompt rule reaches every refusal this way). The
+// door that asks is `fugaro update`, in the owner's own terminal.
+func TestWorkspaceProjectStageAtTheApplyDoorNamesTheDoorThatCanConfirmIt(t *testing.T) {
+	fakeTerminal(t)
+	g := newWSCreateOwnerRig(t, wsProjectName+"\n")
+	// The apply door's own run, opened the way `fugaro apply` opens it
+	// (applyRunSteps): the door, the run's own answer, and no terminal.
+	g.e.r.o.door, g.e.r.o.yes, g.e.r.o.nonInteractive = applyName, true, true
+	g.ri.setPlanAt(t, "workspace", wsAccountChange("create"), wsGrantChange("create"))
+
+	_, err := g.apply(t, initflow.Env{Interactive: false})
+	var needs *initflow.NeedsYouError
+	if !asNeedsYou(err, &needs) {
+		t.Fatalf("apply = %v, want the step left for the operator", err)
+	}
+	if needs.Left.Stage != initflow.WorkspaceProject || needs.Left.Kind != initflow.LeftCommand {
+		t.Errorf("the step left for the operator is not this stage's own command: %+v", needs.Left)
+	}
+	if cmd := strings.Join(needs.Left.Commands, " "); cmd != "fugaro update" {
+		t.Errorf("the command left for the operator is %q, want the door that can ask this step's question", cmd)
+	}
+	if applied := g.ri.ran(t, "apply"); len(applied) != 0 {
+		t.Errorf("the apply door applied the workspace root: %q", applied)
+	}
+}
+
 // TestWorkspaceProjectStageRefusesAPlanThatIsNotTheAccountAndItsOneGrant: the
 // root's whole cover (tf.WorkspaceNotCovered). A plan carrying a job — the
 // thing a workspace never owns (spec §9) — is refused by name, and nothing is

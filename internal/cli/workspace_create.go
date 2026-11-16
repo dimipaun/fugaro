@@ -82,8 +82,32 @@ func (workspaceProjectStage) Name() string { return initflow.WorkspaceProject }
 // would never be published by that session.
 func (workspaceProjectStage) SelfConfirming() {}
 
+// Left is the step this stage leaves when its own typed word cannot be given,
+// and the door decides which command that is (workspaceConfirmLeft).
 func (s *workspaceProjectStage) Left() initflow.Left {
+	if s.e.r.o.door == applyName {
+		return workspaceConfirmLeft()
+	}
 	return promptLeft(initflow.WorkspaceProject, "type the project's name at the workspace's confirmation", s.e.r.o.doorName())
+}
+
+// workspaceConfirmLeft is the left of a run that cannot ask this stage's
+// question: the command that can, in the shape the repository gate's own left
+// uses (enrolLeft).
+//
+// The question is a name typed at a prompt and `fugaro apply` runs with no
+// terminal of its own by construction — its run is nonInteractive, so the
+// stage's askTyped answers "not reachable" rather than waiting, and the run
+// ends needing the person. A left naming `fugaro apply` there would send the
+// reader back to the command that just said it: the answer would be the
+// question again, for ever, which is the no-prompt rule's own failure (a
+// refusal names the fix that reaches it, and this is not one). `fugaro update`
+// in the owner's own terminal is the door that reaches this stage's plan and
+// asks.
+func workspaceConfirmLeft() initflow.Left {
+	cmd := selfCommand() + " " + updateDoor.name
+	return initflow.Left{Stage: initflow.WorkspaceProject, Kind: initflow.LeftCommand,
+		Text: cmd, Commands: []string{cmd}}
 }
 
 // workspaceAccount is the address of the workspace's own service account: the

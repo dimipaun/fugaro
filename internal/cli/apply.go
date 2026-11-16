@@ -440,10 +440,24 @@ func applyRecordNote(w io.Writer, recorded, current bool) {
 // is per repository (D1574), so a machine with no checkout of the repository
 // the change was made for cannot run that step, and the answer has to say so
 // rather than send the person to the same machine again.
+//
+// A kept workspace-project says where too, for a reason of this command's own:
+// its step is a grant confirmed by a typed name, and no run of `fugaro apply`
+// can give that word, so the command it names is `fugaro update`.
 func applyKeptLine(w io.Writer, kept []string) {
 	fmt.Fprintf(w, "saved, not live yet: %s still owed\n", strings.Join(kept, ", "))
 	if slices.Contains(kept, initflow.Repository) {
 		fmt.Fprintln(w, "Run `fugaro apply` in a checkout of the repository the change was made for: the redeploy is that repository's own Terraform root, and this machine has none of it.")
+		return
+	}
+	// A kept workspace-project is not a step this command can ever answer: its
+	// confirmation is a name typed at a prompt (workspace_create.go) and apply
+	// runs with no terminal of its own, so "run `fugaro apply` again" would
+	// promise a second run that reaches the same wall and says the same thing.
+	// The door that asks the question is `fugaro update`, in the owner's own
+	// terminal.
+	if slices.Contains(kept, initflow.WorkspaceProject) {
+		fmt.Fprintln(w, "Run `fugaro update` in your own terminal window, not through a coding agent or a pipe: the workspace's own project confirms this step by the name typed at its terminal, and no flag and no run of this command can give that word.")
 		return
 	}
 	fmt.Fprintln(w, "Run `fugaro apply` again to finish the job: every step checks the state first, so the ones that already ran cost nothing.")
@@ -526,12 +540,18 @@ func (e *initEngine) clearAnsweredSteps(res *initflow.Result) {
 	if e.r.o.door != updateDoor.name || res == nil || e.lc == nil || e.lc.Name == "" {
 		return
 	}
-	pending, _, err := loadPendingSteps(e.lc)
-	if err != nil {
-		fmt.Fprintf(e.r.notes(), "fugaro: warning: the steps saved for later were not read, so none were cleared: %v\n", err)
-		return
-	}
-	if len(pending.Steps) == 0 {
+	// What is dropped is the entry the run READ, and nothing else: an update is
+	// minutes of Terraform and the record is a file another terminal writes —
+	// a management command run with --no-apply, for a change this run's own
+	// stage has already gone past. Clearing by name would drop that change
+	// unrun while the record read as settled, which is what ClearUnchanged
+	// exists for, and it is the shape the apply side settles with
+	// (applyRunSteps). Nothing read before the first stage is nothing cleared:
+	// an unread record is not a licence to drop entries.
+	if e.owedBefore == nil {
+		if e.owedBeforeErr != nil {
+			fmt.Fprintf(e.r.notes(), "fugaro: warning: the steps saved for later were not read, so none were cleared: %v\n", e.owedBeforeErr)
+		}
 		return
 	}
 	var cleared []string
@@ -546,10 +566,42 @@ func (e *initEngine) clearAnsweredSteps(res *initflow.Result) {
 	if len(cleared) == 0 {
 		return
 	}
-	pending.Clear(cleared...)
+	pending, _, err := applyRecordRead(e.lc)
+	if err != nil {
+		fmt.Fprintf(e.r.notes(), "fugaro: warning: the steps saved for later were not read, so none were cleared: %v\n", err)
+		return
+	}
+	if len(pending.Steps) == 0 {
+		return
+	}
+	pending.ClearUnchanged(e.owedBefore, cleared...)
 	if err := apply.SavePending(os.Getenv, e.lc.Name, pending); err != nil {
 		fmt.Fprintf(e.r.notes(), "fugaro: warning: %s still recorded as owed: %v\n", strings.Join(cleared, ", "), err)
 	}
+}
+
+// readOwedBefore reads the record as this door finds it, before the first stage
+// plans: clearAnsweredSteps drops at the end only the entries still identical
+// to these, so a step another terminal queued — or one a stage re-queued after
+// failing — while the run was going stays owed, and a change nothing published
+// is never recorded as settled (D1563).
+//
+// It is the update door's alone, which is the door that clears, and a read that
+// fails is no reason to stop: the record is a hint (D1575) and `update` is the
+// one command that has to work. The error is kept for clearAnsweredSteps to say,
+// because nothing read is nothing cleared — the entries stay owed, which is the
+// side the record fails on (`fugaro apply` runs them again for nothing, and
+// every step checks the state first).
+func (e *initEngine) readOwedBefore() {
+	if e.r.o.door != updateDoor.name || e.lc == nil || e.lc.Name == "" {
+		return
+	}
+	pending, _, err := applyRecordRead(e.lc)
+	if err != nil {
+		e.owedBeforeErr = err
+		return
+	}
+	e.owedBefore = pending
 }
 
 // printApplyStatus is `fugaro apply --status`: what is owed, in the order it

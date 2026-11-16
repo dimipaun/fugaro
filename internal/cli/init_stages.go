@@ -9,6 +9,7 @@ import (
 	"slices"
 
 	accesslib "github.com/dimipaun/fugaro/internal/access"
+	"github.com/dimipaun/fugaro/internal/apply"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
@@ -51,6 +52,13 @@ type initEngine struct {
 	fpChecked  string // "", "yes" or "no": the Firebase project's verification, once
 	defaulted  string // the member a new config's launchers and operators defaulted to (init_members.go)
 	newMachine string // set when the installation stage wrote a new machine's config from an existing installation instead of applying
+
+	// What the record owed as this run found it, read before the first stage
+	// plans (readOwedBefore): the update door clears only the entries of the
+	// steps it answered that are still these (clearAnsweredSteps), and a step
+	// another terminal queued while the run was going stays owed.
+	owedBefore    *apply.Pending
+	owedBeforeErr error
 
 	// The one confirmation's review screen is built from the preview's stages
 	// and the two stages it asks about (init_review.go).
@@ -448,6 +456,11 @@ func (e *initEngine) converge(ctx context.Context) error {
 	// starts rather than after. It asks nothing and it refuses nothing, and it
 	// is silent when there is nothing running (update_in_flight.go).
 	e.announceRunsInFlight(ctx)
+	// The record as this door finds it, read before the first stage: what
+	// clearAnsweredSteps drops when the run ends are the entries still
+	// identical to these, so a step queued while the run was going — which no
+	// stage of this run published — stays owed (D1563).
+	e.readOwedBefore()
 	res, err := initflow.Run(ctx, stages, e.options())
 	// The steps this run answered are steps nothing owes any more: `update`
 	// runs every stage, and the entries of the stages it ran successfully are
